@@ -33,6 +33,7 @@ import {
   type AliasMap,
 } from '../eval/longmemeval/extract.ts';
 import { extractCandidateEntities } from '../core/think/entity-extract.ts';
+import { splitProviderModelId } from '../core/model-id.ts';
 import { resolveEntitySlugWithSource, type ResolutionSource } from '../core/entities/resolve.ts';
 import { formatTrajectoryBlock } from '../core/trajectory-format.ts';
 
@@ -469,14 +470,22 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
   });
 
   // Wrap Anthropic SDK so its `.messages.create` shape matches ThinkLLMClient.
-  // Same pattern as src/core/think/index.ts:247-249.
+  // Same pattern as src/core/think/index.ts:247-249 — EXCEPT think's default
+  // client routes through the gateway, which parses `provider:model` recipe
+  // ids. This eval's client is a raw SDK by design (hermetic, no gateway
+  // dependency), and resolveModel returns RECIPE ids (`anthropic:claude-…`);
+  // passing one through unstripped 404s every answer/extractor call, which
+  // surfaces downstream as all-upstream_error batches in the nightly probe.
+  const toSdkModel = (m: string): string => splitProviderModelId(m).model || m;
   const realClient = new Anthropic();
   const client: ThinkLLMClient = runOpts.client ?? {
-    create: (params, callOpts) => realClient.messages.create(params, callOpts),
+    create: (params, callOpts) =>
+      realClient.messages.create({ ...params, model: toSdkModel(params.model) }, callOpts),
   };
   // v0.40.2.0 — separate extractor client (defaults to same SDK).
   const extractorClient: ThinkLLMClient = runOpts.extractorClient ?? {
-    create: (params, callOpts) => realClient.messages.create(params, callOpts),
+    create: (params, callOpts) =>
+      realClient.messages.create({ ...params, model: toSdkModel(params.model) }, callOpts),
   };
   const trajectoryEnabled = !opts.noTrajectory;
   const extractorModel = trajectoryEnabled
@@ -751,6 +760,11 @@ async function runOneQuestion(
     // v0.40.1.0 (Track D / T2) — copy question_type into the row so the
     // by_type_summary can be rebuilt from the file on resume runs.
     question_type: q.question_type,
+    // Gold answer for downstream consumers that verify correctness (the
+    // cross-modal --batch judge folds it into the task; evaluate_qa.py
+    // ignores unknown fields). Without it a judge can't validate a terse
+    // factual hypothesis against a haystack it never saw.
+    ...(q.answer !== undefined ? { answer: q.answer } : {}),
     hypothesis,
     retrieved_session_ids: retrievedSessionIds,
     ...(recallHit !== undefined ? { recall_hit: recallHit } : {}),

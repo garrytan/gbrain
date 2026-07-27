@@ -94,6 +94,11 @@
     const params = new URLSearchParams(location.search);
     const persona = (params.get('persona') || 'venus').toLowerCase();
     const TEST_MODE = params.get('test') === '1';
+    // #1851: a per-topic call link carries topicId (+ optional topicName). We
+    // forward ONLY these to /session — the server resolves the topic's recent
+    // conversation from the brain. Topic content never travels in a URL.
+    const topicId = params.get('topicId') || '';
+    const topicName = params.get('topicName') || '';
 
     document.getElementById('personaBadge').textContent = `persona: ${persona}`;
     if (TEST_MODE) document.getElementById('testBadge').style.display = '';
@@ -232,7 +237,9 @@
         await pc.setLocalDescription(offer);
 
         setStatus('sending SDP offer to /session...');
-        const sessionUrl = `/session?persona=${encodeURIComponent(persona)}`;
+        let sessionUrl = `/session?persona=${encodeURIComponent(persona)}`;
+        if (topicId) sessionUrl += `&topicId=${encodeURIComponent(topicId)}`;
+        if (topicName) sessionUrl += `&topicName=${encodeURIComponent(topicName)}`;
         const res = await fetch(sessionUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/sdp' },

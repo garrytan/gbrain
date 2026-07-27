@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "recipe": "retrieval-reflex",
+  "version": "0.1.0",
+  "install_kind": "copy-into-host-repo",
+  "description": "src → target mapping consumed by `gbrain integrations install retrieval-reflex`. Policy-only recipe: ships one SKILL.md into the host resolver and appends a resolver row. The deterministic pointer layer lives in the gbrain context engine and needs no install.",
+  "target_root_relative_to_host_repo": "skills/retrieval-reflex",
+  "skills_target_root_relative_to_host_repo": "skills",
+  "files": [],
+  "skills": [
+    { "src": "skills/retrieval-reflex/SKILL.md", "target": "skills/retrieval-reflex/SKILL.md", "mode": "0644" }
+  ],
+  "resolver_rows_to_append": [
+    "retrieval-reflex | a named person/company/project/place becomes the subject; a brain-page pointer appears in context; \"who is\", \"what do we know about\", \"tell me about\"; about to assert a non-trivial detail about a named entity"
+  ]
+}

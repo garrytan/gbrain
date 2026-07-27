@@ -23,6 +23,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { configureGateway } from '../core/ai/gateway.ts';
 import { loadConfig } from '../core/config.ts';
 import { runEval, DEFAULT_MODEL_PANEL } from '../core/takes-quality-eval/runner.ts';
+import { resolveCycleDefault, cycleDefaultSuffix } from '../core/eval/cycle-default.ts';
 import { writeReceipt } from '../core/takes-quality-eval/receipt-write.ts';
 import { loadReceiptFromDisk } from '../core/takes-quality-eval/replay.ts';
 import { compareReceipts } from '../core/takes-quality-eval/regress.ts';
@@ -138,7 +139,11 @@ export async function runEvalTakesQuality(engine: BrainEngine, args: string[]): 
 
   if (subcmd === 'run') {
     const limit = parseIntFlag(argv, '--limit', 100);
-    const cycles = parseIntFlag(argv, '--cycles', process.stdout.isTTY ? 3 : 1);
+    // #1784: keep parseIntFlag for value validation; resolveCycleDefault drives
+    // the banner annotation when the value is the silent non-TTY fallback.
+    const cycleDef = resolveCycleDefault(undefined, process.stdout.isTTY === true);
+    const cycles = parseIntFlag(argv, '--cycles', cycleDef.cycles);
+    const cyclesSuffix = getFlag(argv, '--cycles') === undefined ? cycleDefaultSuffix(cycleDef) : '';
     const budgetStr = getFlag(argv, '--budget-usd');
     const budgetUsd = budgetStr === undefined ? null : Number(budgetStr);
     if (budgetStr !== undefined && !Number.isFinite(budgetUsd)) {
@@ -153,7 +158,7 @@ export async function runEvalTakesQuality(engine: BrainEngine, args: string[]): 
     if (!json) {
       process.stderr.write(
         `[eval takes-quality] sampling ${limit} take(s) from ${source}; ` +
-        `panel: ${models.join(', ')}; cycles: ${cycles}` +
+        `panel: ${models.join(', ')}; cycles: ${cycles}${cyclesSuffix}` +
         (budgetUsd === null ? '' : `; budget: $${budgetUsd.toFixed(2)}`) +
         '\n',
       );
@@ -208,11 +213,14 @@ export async function runEvalTakesQuality(engine: BrainEngine, args: string[]): 
       process.exit(2);
     }
     const limit = parseIntFlag(argv, '--limit', 100);
-    const cycles = parseIntFlag(argv, '--cycles', process.stdout.isTTY ? 3 : 1);
+    // #1784: same annotation treatment as the run subcommand.
+    const cycleDef = resolveCycleDefault(undefined, process.stdout.isTTY === true);
+    const cycles = parseIntFlag(argv, '--cycles', cycleDef.cycles);
+    const cyclesSuffix = getFlag(argv, '--cycles') === undefined ? cycleDefaultSuffix(cycleDef) : '';
 
     const prior = loadReceiptFromDisk(againstPath);
     if (!json) {
-      process.stderr.write(`[eval takes-quality regress] running fresh eval to compare against ${againstPath}\n`);
+      process.stderr.write(`[eval takes-quality regress] running fresh eval (cycles: ${cycles}${cyclesSuffix}) to compare against ${againstPath}\n`);
     }
     const result = await runEval(engine, {
       limit,

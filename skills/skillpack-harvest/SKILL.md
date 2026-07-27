@@ -266,4 +266,5 @@ editorial pass.
   (e.g. `src/commands/<slug>.ts` if the host SKILL.md declares it
   in frontmatter)
 - gbrain's `openclaw.plugin.json` — adds the slug to `skills:`
-  array, sorted alphabetically
+  array, sorted alphabetically, without removing OpenClaw-native plugin fields
+  like `id`, `configSchema`, or `contracts`

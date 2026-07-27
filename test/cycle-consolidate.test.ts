@@ -10,6 +10,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { configureGateway } from '../src/core/ai/gateway.ts';
 import { runPhaseConsolidate } from '../src/core/cycle/phases/consolidate.ts';
 
 let engine: PGLiteEngine;
@@ -17,6 +18,20 @@ let engine: PGLiteEngine;
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
+  // initSchema() bakes the facts.embedding dim from the gateway's configured
+  // embedding model; the default is now 1280-d (ZE). This file's fixtures are
+  // 1536-d, so pin the legacy 1536-d OpenAI config (matching
+  // test/helpers/legacy-embedding-preload.ts) right before initSchema. The
+  // global preload sets this, but a co-sharded test that calls resetGateway()
+  // in its teardown nulls it, leaving initSchema to fall back to the 1280-d
+  // default and build a halfvec(1280) column the 1536-d inserts can't fill.
+  // Re-pinning here makes the schema deterministic regardless of shard
+  // neighbors (surfaced when #1972's new test files reshuffled the shards).
+  configureGateway({
+    embedding_model: 'openai:text-embedding-3-large',
+    embedding_dimensions: 1536,
+    env: { ...process.env },
+  });
   await engine.initSchema();
 });
 

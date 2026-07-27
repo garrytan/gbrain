@@ -15,6 +15,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { resolveAutopilotDispatchTimeoutMs } from '../src/commands/autopilot-timeout.ts';
 
 const AUTOPILOT_SRC = readFileSync(
   join(import.meta.dir, '..', 'src', 'commands', 'autopilot.ts'),
@@ -28,8 +29,11 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     );
   });
 
-  test('imports resolveFanoutMax (so PGLite gets fanoutMax=1 per codex P1-3)', () => {
-    expect(AUTOPILOT_SRC).toMatch(/resolveFanoutMax/);
+  test('imports resolveEffectiveFanoutMax (clamps to worker concurrency; PGLite base still 1)', () => {
+    // #2194 fix #1: autopilot now resolves the CLAMPED fan-out (gated on a live
+    // supervisor) instead of the raw resolveFanoutMax. The clamp wraps
+    // resolveFanoutMax, so PGLite's base-1 still holds (codex P1-3).
+    expect(AUTOPILOT_SRC).toMatch(/resolveEffectiveFanoutMax/);
   });
 
   test('calls dispatchPerSource within the shouldFullCycle branch', () => {
@@ -43,6 +47,21 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     const fullCycleIdx = AUTOPILOT_SRC.indexOf('shouldFullCycle');
     expect(fullCycleIdx).toBeGreaterThan(-1);
     expect(Math.abs(dispatchIdx - fullCycleIdx)).toBeLessThan(3000);
+  });
+
+  test('applies the 30-minute timeout floor only to full-cycle dispatch', () => {
+    const baseIntervalSeconds = 60;
+    const intervalDerivedTimeoutMs = Math.max(baseIntervalSeconds * 2 * 1000, 300_000);
+
+    expect(resolveAutopilotDispatchTimeoutMs(baseIntervalSeconds, true)).toBeGreaterThanOrEqual(30 * 60_000);
+    expect(resolveAutopilotDispatchTimeoutMs(baseIntervalSeconds, false)).toBe(intervalDerivedTimeoutMs);
+
+    expect(AUTOPILOT_SRC).toContain(
+      'const timeoutMs = resolveAutopilotDispatchTimeoutMs(baseInterval, false);',
+    );
+    expect(AUTOPILOT_SRC).toMatch(
+      /dispatchPerSource\(engine, queue, \{[\s\S]{0,300}timeoutMs: resolveAutopilotDispatchTimeoutMs\(baseInterval, true\)/,
+    );
   });
 
   test('updates lastFullCycleAt on dispatch (so the 60-min floor is honored)', () => {

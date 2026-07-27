@@ -32,10 +32,13 @@ The user wants to:
   + epsilon=0.05 margin against the sel-set before SKILL.md gets rewritten.
 - **Frontmatter mutation is FORBIDDEN.** The optimizer only edits the body.
   Routing surface (`triggers:`, `brain_first:`) stays invariant.
-- **Bundled skills require explicit opt-in.** Skills shipping with gbrain
-  cannot be auto-mutated; user passes `--allow-mutate-bundled` or
-  `--no-mutate` (default for the dream-cycle phase) writes proposed.md
-  for review.
+- **Bundled skills require explicit opt-in AND an independent held-out set.**
+  Skills shipping with gbrain cannot be auto-mutated. To rewrite one in place
+  the user passes BOTH `--allow-mutate-bundled` AND `--held-out <path>` with
+  at least 5 benchmark-disjoint tasks; without the held-out set the run
+  hard-refuses (exit 2). Drop `--allow-mutate-bundled` (or pass `--no-mutate`,
+  the default for the dream-cycle phase) to write proposed.md for review
+  instead — no held-out needed for review-only output.
 - **Bootstrap output requires human review.** Both `--bootstrap-from-skill`
   and `--bootstrap-from-routing` write a sentinel; you must review + STRENGTHEN
   the generated judges, delete the sentinel, and re-run with
@@ -127,8 +130,9 @@ attach >=2 rule checks each, save to `skills/X/skillopt-benchmark.jsonl`, run wi
 | Skill has a `routing-eval.jsonl` and you want a head start | `gbrain skillopt foo --bootstrap-from-routing` → review the generated tasks → `--bootstrap-reviewed` (routing tasks test dispatch; tighten them into quality tasks before trusting) |
 | Iterating on an existing skill | `gbrain skillopt foo --benchmark skills/foo/skillopt-benchmark.jsonl` |
 | Costly run, want preview | Add `--dry-run` |
-| Bundled skill (skills/ in gbrain repo) | Default writes proposed.md; add `--allow-mutate-bundled` to commit |
-| Want to review changes before applying | Add `--no-mutate` |
+| Bundled skill (skills/ in gbrain repo) | Default writes proposed.md; to commit in place add `--allow-mutate-bundled` AND `--held-out <path>` (>=5 benchmark-disjoint tasks) — else it hard-refuses |
+| Want to review changes before applying | Add `--no-mutate` (writes proposed.md, no held-out needed) |
+| Guard against benchmark overfitting | Add `--held-out <path>` — a candidate that beats the benchmark but regresses on the held-out set is refused |
 | Mid-run crash | `gbrain skillopt foo --resume <run-id>` |
 
 ## Output Format
@@ -146,8 +150,11 @@ When invoked, this skill produces:
 
 - **Don't bypass the validation gate.** The median-of-3 + epsilon=0.05 is
   load-bearing; without it, the optimizer accepts noise as improvement.
-- **Don't optimize bundled skills without `--allow-mutate-bundled`.** They
-  ship with gbrain and are load-bearing for downstream agents.
+- **Don't optimize bundled skills without `--allow-mutate-bundled` AND
+  `--held-out`.** They ship with gbrain and are load-bearing for downstream
+  agents. In-place mutation requires both flags (held-out >=5 benchmark-disjoint
+  tasks); without the held-out set the run hard-refuses and points you at
+  proposed.md.
 - **Don't use bootstrap output without strengthening it.** Both
   `--bootstrap-from-skill` and `--bootstrap-from-routing` have the optimizer
   model invent success criteria — generic and weak by default. Review and
@@ -163,7 +170,11 @@ When invoked, this skill produces:
 ```
 {
   outcome: 'accepted' | 'no_improvement' | 'aborted' | 'errored',
-  receipt: { run_id, skill_sha8, benchmark_sha8, models, scores, cost },
+  receipt: {
+    run_id, skill_sha8, benchmark_sha8, models, cost,
+    baseline_sel_score, best_sel_score,   // real measured baseline (no longer hardcoded 0)
+    baseline_test_score, test_score,      // final held-out test-split eval
+  },
   finalText: string,
   mutatedSkillFile: boolean,
   proposedPath?: string

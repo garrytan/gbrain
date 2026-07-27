@@ -90,6 +90,19 @@ describe('installRecipeIntoHostRepo — happy path', () => {
     expect(agentsMd).toContain('voice-post-call');
   });
 
+  // #1981 fence-parameterization regression: a SECOND copy-into-host-repo recipe
+  // must fence its rows by ITS OWN recipe id, not the hardcoded agent-voice id.
+  it('fences resolver rows by the recipe id (retrieval-reflex, not agent-voice)', async () => {
+    await installRecipeIntoHostRepo('retrieval-reflex', { target: scratch });
+    const agentsMd = readFileSync(join(scratch, 'AGENTS.md'), 'utf8');
+    expect(agentsMd).toContain('gbrain:retrieval-reflex:resolver-rows');
+    expect(agentsMd).toContain('/gbrain:retrieval-reflex:resolver-rows');
+    expect(agentsMd).not.toContain('gbrain:agent-voice:resolver-rows');
+    expect(agentsMd).toContain('retrieval-reflex |');
+    // the policy skill landed
+    expect(existsSync(join(scratch, 'skills/retrieval-reflex/SKILL.md'))).toBe(true);
+  });
+
   it('respects file modes from the manifest', async () => {
     await installRecipeIntoHostRepo('agent-voice', { target: scratch });
     const serverPath = join(scratch, 'services/voice-agent/code/server.mjs');

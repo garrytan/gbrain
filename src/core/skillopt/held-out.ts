@@ -29,10 +29,20 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { loadBenchmark } from './benchmark.ts';
+import { D_SEL_MIN_SIZE } from './types.ts';
 import type { BenchmarkTask } from './types.ts';
-import { runValidationGate } from './validate-gate.ts';
+import { scoreSkillOnTasks } from './validate-gate.ts';
 
 const CAPTURE_CONFIG_KEY = 'skillopt.capture_enabled';
+
+/**
+ * Minimum held-out task count required to gate a BUNDLED-skill mutation. A
+ * too-small (or empty) held-out set passes the gate vacuously, which would
+ * re-open the benchmark-gaming hole the gate exists to close. Derived from the
+ * D_sel floor so the two can't silently desync (the comment used to claim a
+ * mirror that the code didn't enforce).
+ */
+export const MIN_HELD_OUT_SIZE = D_SEL_MIN_SIZE;
 
 export function capturesDir(): string {
   const home = process.env.GBRAIN_HOME ?? process.env.HOME ?? '';
@@ -123,28 +133,19 @@ export async function runHeldOutGate(opts: HeldOutGateOpts): Promise<HeldOutGate
     return { baselineScore: 0, candidateScore: 0, passed: true };
   }
 
-  const baseline = await runValidationGate({
+  const scoreOpts = {
     engine: opts.engine,
-    candidateSkillText: opts.baselineSkillText,
-    selSet: opts.heldOutTasks,
-    bestScore: -1, // any score accepts; we want the score itself
+    tasks: opts.heldOutTasks,
     targetModel: opts.targetModel,
     judgeModel: opts.judgeModel,
     ...(opts.abortSignal ? { abortSignal: opts.abortSignal } : {}),
-  });
-  const candidate = await runValidationGate({
-    engine: opts.engine,
-    candidateSkillText: opts.candidateSkillText,
-    selSet: opts.heldOutTasks,
-    bestScore: -1,
-    targetModel: opts.targetModel,
-    judgeModel: opts.judgeModel,
-    ...(opts.abortSignal ? { abortSignal: opts.abortSignal } : {}),
-  });
+  };
+  const baselineScore = await scoreSkillOnTasks({ ...scoreOpts, skillText: opts.baselineSkillText });
+  const candidateScore = await scoreSkillOnTasks({ ...scoreOpts, skillText: opts.candidateSkillText });
 
   return {
-    baselineScore: baseline.selScore,
-    candidateScore: candidate.selScore,
-    passed: candidate.selScore >= baseline.selScore,
+    baselineScore,
+    candidateScore,
+    passed: candidateScore >= baselineScore,
   };
 }

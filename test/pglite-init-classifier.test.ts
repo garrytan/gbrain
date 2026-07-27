@@ -17,6 +17,7 @@ import { describe, test, expect } from 'bun:test';
 import {
   classifyPgliteInitError,
   buildPgliteInitErrorMessage,
+  stringifyPgliteInitError,
 } from '../src/core/pglite-engine.ts';
 
 describe('classifyPgliteInitError', () => {
@@ -51,6 +52,22 @@ describe('classifyPgliteInitError', () => {
   test('case-insensitive matching on bunfs marker', () => {
     expect(classifyPgliteInitError('SYSCALL ENOENT on /$$BUNFS/root')).toBe('bunfs');
   });
+
+  // #2348 — corrupted PGLite data dir (concurrent open trashed catalog/extension).
+  test('corrupt verdict for the 58P01 internal_load_library signature', () => {
+    const msg = 'error: relation "content_chunks" does not exist\n  code: 58P01\n  file: "dfmgr.c"\n  routine: "internal_load_library"';
+    expect(classifyPgliteInitError(msg)).toBe('corrupt');
+  });
+
+  test('corrupt verdict when the vector type can no longer load', () => {
+    expect(classifyPgliteInitError('type "vector" does not exist')).toBe('corrupt');
+  });
+
+  test('corrupt verdict beats the wasm-runtime match (58P01 wins over "wasm runtime")', () => {
+    // A message mentioning both must classify as corrupt, not macos-26-3 —
+    // recovery guidance, not the wrong macOS-WASM hint.
+    expect(classifyPgliteInitError('wasm runtime: 58P01 internal_load_library')).toBe('corrupt');
+  });
 });
 
 describe('buildPgliteInitErrorMessage — hint routing', () => {
@@ -73,18 +90,60 @@ describe('buildPgliteInitErrorMessage — hint routing', () => {
     expect(msg).not.toContain('Bun vfs');
   });
 
-  test('unknown verdict surfaces the doctor + #223 fallback AND original error', () => {
-    const msg = buildPgliteInitErrorMessage('unknown', original);
+  // #2674: the unknown-verdict hint is platform-gated. The macOS 26.3
+  // attribution (#223) only appears on darwin; elsewhere the hint names
+  // the causes that are actually plausible off-macOS.
+  test('unknown verdict on darwin surfaces the doctor + #223 fallback AND original error', () => {
+    const msg = buildPgliteInitErrorMessage('unknown', original, 'darwin');
     expect(msg).toContain('gbrain doctor');
     expect(msg).toContain('issues/223');
     expect(msg).toContain(original);
   });
 
+  test('unknown verdict on non-darwin does NOT mention macOS 26.3', () => {
+    for (const platform of ['linux', 'win32'] as const) {
+      const msg = buildPgliteInitErrorMessage('unknown', original, platform);
+      expect(msg).not.toContain('macOS 26.3');
+      expect(msg).not.toContain('issues/223');
+      expect(msg).toContain('gbrain doctor');
+      expect(msg).toContain('gbrain reinit-pglite');
+      expect(msg).toContain(original);
+    }
+  });
+
+  test('corrupt verdict surfaces the reinit-pglite recovery, NOT the macOS hint', () => {
+    const msg = buildPgliteInitErrorMessage('corrupt', original);
+    expect(msg).toContain('gbrain reinit-pglite');
+    expect(msg).toContain('corrupted');
+    expect(msg).toContain(original);
+    expect(msg).not.toContain('issues/223');
+  });
+
   test('all verdicts produce the canonical header line', () => {
-    for (const v of ['bunfs', 'macos-26-3', 'unknown'] as const) {
+    for (const v of ['bunfs', 'macos-26-3', 'corrupt', 'unknown'] as const) {
       const msg = buildPgliteInitErrorMessage(v, original);
       expect(msg.startsWith('PGLite failed to initialize its WASM runtime.')).toBe(true);
     }
+  });
+});
+
+describe('stringifyPgliteInitError — non-Error rejections (#2674)', () => {
+  test('Error instance yields its message', () => {
+    expect(stringifyPgliteInitError(new Error('boom'))).toBe('boom');
+  });
+
+  test('plain object with message yields the message, not "[object Object]"', () => {
+    const emscriptenAbort = { message: 'Aborted(). Build with -sASSERTIONS for more info.' };
+    expect(stringifyPgliteInitError(emscriptenAbort)).toBe(
+      'Aborted(). Build with -sASSERTIONS for more info.',
+    );
+  });
+
+  test('primitive rejections stringify as-is', () => {
+    expect(stringifyPgliteInitError('raw string')).toBe('raw string');
+    expect(stringifyPgliteInitError(42)).toBe('42');
+    expect(stringifyPgliteInitError(null)).toBe('null');
+    expect(stringifyPgliteInitError(undefined)).toBe('undefined');
   });
 });
 

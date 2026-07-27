@@ -29,6 +29,12 @@ export interface SkilloptPhaseOpts {
   engine: BrainEngine;
   dryRun?: boolean;
   signal?: AbortSignal;
+  /**
+   * issue #2860 — `gbrain dream --phase skillopt --once`. Bypasses the
+   * `cycle.skillopt.enabled` feature flag for THIS call only; never reads
+   * or writes config. Per-skill + brain-wide cost caps still apply.
+   */
+  once?: boolean;
 }
 
 export interface SkilloptPhaseResult {
@@ -63,13 +69,19 @@ export async function runPhaseSkillopt(opts: SkilloptPhaseOpts): Promise<Skillop
     enabled = v === 'true';
   } catch { /* default OFF */ }
   if (!enabled) {
-    return {
-      phase: 'skillopt',
-      status: 'skipped',
-      duration_ms: Date.now() - start,
-      summary: 'feature flag off (gbrain config set cycle.skillopt.enabled true to enable)',
-      details: { reason: 'feature_flag_off' },
-    };
+    if (!opts.once) {
+      return {
+        phase: 'skillopt',
+        status: 'skipped',
+        duration_ms: Date.now() - start,
+        summary: 'feature flag off (gbrain config set cycle.skillopt.enabled true to enable)',
+        details: { reason: 'feature_flag_off' },
+      };
+    }
+    process.stderr.write(
+      '[dream] --once: cycle.skillopt.enabled is false but ' +
+      '--phase skillopt --once forces this run (config untouched)\n',
+    );
   }
 
   // Per-skill + brain-wide cost caps.

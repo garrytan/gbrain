@@ -29,7 +29,7 @@ mock.module('../../src/core/embedding.ts', () => ({
   currentEmbeddingSignature: () => 'test:model:1536',
 }));
 
-const { runCycle } = await import('../../src/core/cycle.ts');
+const { runCycle, ALL_PHASES } = await import('../../src/core/cycle.ts');
 
 const skip = !hasDatabase();
 const describeE2E = skip ? describe.skip : describe;
@@ -99,17 +99,13 @@ describeE2E('E2E: runCycle against real Postgres', () => {
     });
 
     expect(report.schema_version).toBe('1');
-    // Cycle ran all 16 phases (or skipped the ones that don't support dry-run).
-    // Phase history:
-    //   v0.23     = 8 phases (lint → backlinks → sync → synthesize → extract → patterns → embed → orphans)
-    //   v0.26.5   = 9  (added `purge` after orphans)
-    //   v0.29     = 10 (added `recompute_emotional_weight` between patterns and embed)
-    //   v0.31     = 11 (added `consolidate` between recompute_emotional_weight and embed)
-    //   v0.32.2   = 12 (added `extract_facts` between extract and patterns)
-    //   v0.33.3   = 13 (added `resolve_symbol_edges` between extract_facts and patterns)
-    //   v0.36.1.0 = 16 (added propose_takes + grade_takes + calibration_profile — hindsight calibration wave)
-    //   v0.39.0.0 = 17 (added `schema-suggest` between orphans and purge — T12 schema cathedral)
-    expect(report.phases.length).toBe(19); // v0.41: +extract_atoms, +synthesize_concepts
+    // Every phase in ALL_PHASES pushes exactly one result (pack-gated phases
+    // like extract_atoms / synthesize_concepts push a 'skipped' result), so
+    // the full dry-run cycle's phase count always equals ALL_PHASES.length.
+    // Assert against the live constant rather than a hardcoded number so this
+    // doesn't go stale every time a phase is added (it drifted to 19 while the
+    // real count was 20 — the conversation_facts_backfill phase was missed).
+    expect(report.phases.length).toBe(ALL_PHASES.length);
 
     // Nothing got written.
     const afterPages = await conn.unsafe(`SELECT count(*)::int AS n FROM pages`);

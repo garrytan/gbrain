@@ -62,3 +62,33 @@ export function splitProviderModelId(input: string | null | undefined): SplitPro
 
   return { provider: null, model: trimmed };
 }
+
+/**
+ * v0.41.x (#1698) — canonical `provider:model` normalizer shared by every chat-adapter
+ * site that used to inline the colon-only `x.includes(':') ? x : `anthropic:${x}`` check.
+ * That inline silently mangled slash form: `anthropic/claude-sonnet-4-6` (no colon) became
+ * the malformed `anthropic:anthropic/claude-sonnet-4-6`, which `resolveRecipe` accepted at
+ * the provider level and only blew up later inside `gateway.chat()`.
+ *
+ * Behavior (built on `splitProviderModelId`, so it inherits colon-first precedence):
+ *   - `anthropic/claude-sonnet-4-6`        → `anthropic:claude-sonnet-4-6`  (slash → colon)
+ *   - `claude-sonnet-4-6`                  → `anthropic:claude-sonnet-4-6`  (bare → default)
+ *   - `anthropic:claude-sonnet-4-6`        → unchanged                      (colon identity)
+ *   - `openrouter:anthropic/claude-4.6`    → unchanged   (nested: inner slash preserved)
+ *   - ''/'   ' (empty/whitespace)          → returned as-is (downstream throws loudly)
+ *   - `:claude-sonnet-4-6` / `/claude-...` → returned as-is (malformed leading separator —
+ *                                            empty-string provider; downstream throws loudly)
+ */
+export function normalizeModelId(input: string, defaultProvider = 'anthropic'): string {
+  const { provider, model } = splitProviderModelId(input);
+  // Return unchanged (so resolveRecipe throws loudly — #1698) when:
+  //   - empty/whitespace input (`model === ''`), or
+  //   - a malformed leading separator (`:foo` / `/foo`) — splitProviderModelId yields an
+  //     EMPTY-STRING provider for those. Without this guard the `provider ?` truthiness
+  //     below treats `''` as "no provider" and silently coerces the model to the default
+  //     (e.g. `:claude-sonnet-4-6` → `anthropic:claude-sonnet-4-6`), masking a typo as a
+  //     valid Anthropic model. A `null` provider (bare name like `claude-opus-4-7`) still
+  //     defaults — that's the intended path.
+  if (!model || provider === '') return input;
+  return provider ? `${provider}:${model}` : `${defaultProvider}:${model}`;
+}

@@ -39,6 +39,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { gbrainPath, loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
+import { VERSION } from '../version.ts';
 import {
   buildSyncStatusReport,
   type SyncStatusReport,
@@ -104,6 +105,10 @@ export interface AutopilotStatus {
 
 export interface StatusReport {
   schema_version: typeof SCHEMA_VERSION;
+  /** #1984: the local gbrain CLI version, so a poller can pin behavior to a build. */
+  version: string;
+  /** #1984: the remote brain server's version (thin-client only; present when reported). */
+  remote_version?: string;
   generated_at: string;
   mode: 'local' | 'thin-client';
   sync?: SyncStatusReport;
@@ -113,6 +118,33 @@ export interface StatusReport {
   queue?: QueueCounts | { local_only_remote: true };
   autopilot?: AutopilotStatus | { local_only_remote: true };
   warnings?: string[];
+  /** #1984: true when a --deadline-ms budget elided one or more sections. */
+  partial?: boolean;
+  /** #1984: names of the sections skipped/timed-out under the deadline. */
+  stale_sections?: string[];
+}
+
+/**
+ * #1984: race a section's work against the remaining deadline budget. Returns
+ * the value, or undefined if the budget elapses first (the underlying query is
+ * abandoned — the process is a one-shot, so a stranded read is fine). `ms`
+ * undefined / <=0 means "no deadline" and the promise is awaited as-is.
+ */
+export async function withSectionDeadline<T>(
+  p: Promise<T>,
+  ms: number | undefined,
+  onTimeout: () => void,
+): Promise<T | undefined> {
+  if (ms === undefined || ms <= 0) return p;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => { onTimeout(); resolve(undefined); }, ms);
+  });
+  try {
+    return await Promise.race([p, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -305,6 +337,8 @@ function buildAutopilotStatus(): AutopilotStatus {
 
 interface BuildOpts {
   sections?: Set<Section>;
+  /** #1984: total wall-clock budget; sections share it, later ones get the remainder. */
+  deadlineMs?: number;
 }
 
 async function buildLocalReport(
@@ -313,23 +347,44 @@ async function buildLocalReport(
 ): Promise<StatusReport> {
   const want = (s: Section) => !opts.sections || opts.sections.has(s);
   const warnings: string[] = [];
+  const staleSections: string[] = [];
   const report: StatusReport = {
     schema_version: SCHEMA_VERSION,
+    version: VERSION,
     generated_at: new Date().toISOString(),
     mode: 'local',
   };
 
+  // #1984: a shared budget so `gbrain status --deadline-ms=N` never blocks a
+  // poller past N. Each async section is raced against the REMAINING budget, so
+  // one slow/hung section (cross-region DB, lock contention) can't strand the
+  // whole snapshot — it's marked stale and the rest still return.
+  const deadlineAt = opts.deadlineMs && opts.deadlineMs > 0 ? Date.now() + opts.deadlineMs : null;
+  const remaining = (): number | undefined =>
+    deadlineAt === null ? undefined : Math.max(1, deadlineAt - Date.now());
+  const markStale = (name: Section) => {
+    staleSections.push(name);
+    report.partial = true;
+    warnings.push(`${name} section exceeded the --deadline-ms budget (returned stale)`);
+  };
+
   if (want('sync')) {
     try {
-      const sources = await engine.executeRaw<{
-        id: string;
-        name: string;
-        local_path: string | null;
-        config: Record<string, unknown> | null;
-      }>(`SELECT id, name, local_path, config FROM sources ORDER BY id`);
-      report.sync = await buildSyncStatusReport(
-        engine,
-        sources.map((s) => ({ id: s.id, name: s.name, local_path: s.local_path, config: s.config ?? {} })),
+      report.sync = await withSectionDeadline(
+        (async () => {
+          const sources = await engine.executeRaw<{
+            id: string;
+            name: string;
+            local_path: string | null;
+            config: Record<string, unknown> | null;
+          }>(`SELECT id, name, local_path, config FROM sources ORDER BY id`);
+          return buildSyncStatusReport(
+            engine,
+            sources.map((s) => ({ id: s.id, name: s.name, local_path: s.local_path, config: s.config ?? {} })),
+          );
+        })(),
+        remaining(),
+        () => markStale('sync'),
       );
     } catch (err) {
       warnings.push(`sync section failed: ${(err as Error).message}`);
@@ -337,23 +392,24 @@ async function buildLocalReport(
   }
   if (want('cycle')) {
     try {
-      report.cycle = await buildCycleSnapshot(engine);
+      report.cycle = await withSectionDeadline(buildCycleSnapshot(engine), remaining(), () => markStale('cycle'));
     } catch (err) {
       warnings.push(`cycle section failed: ${(err as Error).message}`);
     }
   }
   if (want('locks')) {
-    report.locks = await buildLocks(engine);
+    report.locks = await withSectionDeadline(buildLocks(engine), remaining(), () => markStale('locks'));
   }
   if (want('workers')) {
     report.workers = buildWorkerSummary();
   }
   if (want('queue')) {
-    report.queue = await buildQueueCounts(engine);
+    report.queue = await withSectionDeadline(buildQueueCounts(engine), remaining(), () => markStale('queue'));
   }
   if (want('autopilot')) {
     report.autopilot = buildAutopilotStatus();
   }
+  if (staleSections.length > 0) report.stale_sections = staleSections;
   if (warnings.length > 0) report.warnings = warnings;
   return report;
 }
@@ -366,20 +422,51 @@ async function buildThinClientReport(
   const warnings: string[] = [];
   const report: StatusReport = {
     schema_version: SCHEMA_VERSION,
+    version: VERSION,
     generated_at: new Date().toISOString(),
     mode: 'thin-client',
   };
 
   if (want('sync') || want('cycle')) {
     try {
-      const raw = await callRemoteTool(cfg!, 'get_status_snapshot', {});
-      const payload = unpackToolResult<{
-        schema_version: number;
-        sync: SyncStatusReport;
-        cycle: CycleSnapshot;
-      }>(raw);
-      if (want('sync')) report.sync = payload.sync;
-      if (want('cycle')) report.cycle = payload.cycle;
+      const payload = await withSectionDeadline(
+        (async () => {
+          // #1984: pass the budget as the request timeout so the LOSING side of
+          // the race actually cancels the in-flight MCP call instead of leaking
+          // it (the section deadline only abandons the promise locally).
+          const raw = await callRemoteTool(
+            cfg!,
+            'get_status_snapshot',
+            {},
+            opts.deadlineMs && opts.deadlineMs > 0 ? { timeoutMs: opts.deadlineMs } : {},
+          );
+          return unpackToolResult<{
+            schema_version: number;
+            version?: string;
+            sync: SyncStatusReport;
+            cycle: CycleSnapshot;
+          }>(raw);
+        })(),
+        opts.deadlineMs && opts.deadlineMs > 0 ? opts.deadlineMs : undefined,
+        () => {
+          report.partial = true;
+          // Only name the sections the caller actually requested; the remote
+          // fetch backs both sync+cycle, but `--section sync` must not report
+          // `cycle` (a section it excluded) as stale. Matches the local path.
+          const elided: Section[] = [
+            ...(want('sync') ? (['sync'] as Section[]) : []),
+            ...(want('cycle') ? (['cycle'] as Section[]) : []),
+          ];
+          report.stale_sections = [...(report.stale_sections ?? []), ...elided];
+          warnings.push('remote snapshot exceeded the --deadline-ms budget (returned stale)');
+        },
+      );
+      if (payload) {
+        // #1984: surface the brain server's version for thin-client parity.
+        if (payload.version) report.remote_version = payload.version;
+        if (want('sync')) report.sync = payload.sync;
+        if (want('cycle')) report.cycle = payload.cycle;
+      }
     } catch (err) {
       warnings.push(`remote snapshot failed: ${(err as Error).message}`);
     }
@@ -401,7 +488,13 @@ function renderHuman(report: StatusReport): string {
   lines.push('');
   lines.push('GBrain Status');
   lines.push('=============');
-  lines.push(`Mode: ${report.mode}  ·  ${report.generated_at}`);
+  const ver = report.remote_version && report.remote_version !== report.version
+    ? `v${report.version} (remote v${report.remote_version})`
+    : `v${report.version}`;
+  lines.push(`Mode: ${report.mode}  ·  ${ver}  ·  ${report.generated_at}`);
+  if (report.partial) {
+    lines.push(`⚠ partial snapshot — stale sections: ${(report.stale_sections ?? []).join(', ')} (--deadline-ms budget hit)`);
+  }
   lines.push('');
 
   // Sync
@@ -528,6 +621,36 @@ function renderHuman(report: StatusReport): string {
  *   - Set<Section> → only these sections
  *   - 'usage_error' → bad section name (caller exits 2)
  */
+/** #1984: `--fast` preset budget (ms) when no explicit `--deadline-ms` is given. */
+export const FAST_DEADLINE_MS = 2000;
+
+/**
+ * #1984: parse the status deadline budget. `--deadline-ms=N` (or `--deadline-ms N`)
+ * wins; bare `--fast` applies FAST_DEADLINE_MS. Returns undefined (no budget),
+ * a positive ms value, or 'usage_error' on a non-positive / non-numeric value.
+ */
+export function parseDeadlineFlag(args: string[]): number | undefined | 'usage_error' {
+  let raw: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--deadline-ms') {
+      // #1984: a bare `--deadline-ms` with no following value is a usage error,
+      // not a silent fall-through to no-budget / --fast (which would mask a
+      // typo'd budget and let a poller hang it never meant to).
+      if (i + 1 >= args.length) return 'usage_error';
+      raw = args[i + 1];
+      break;
+    }
+    if (a.startsWith('--deadline-ms=')) { raw = a.slice('--deadline-ms='.length); break; }
+  }
+  if (raw == null) {
+    return args.includes('--fast') ? FAST_DEADLINE_MS : undefined;
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 'usage_error';
+  return n;
+}
+
 export function parseSectionFlag(args: string[]): Set<Section> | undefined | 'usage_error' {
   let raw: string | undefined;
   for (let i = 0; i < args.length; i++) {
@@ -575,19 +698,25 @@ export async function runStatus(
   const sections = sectionFlag;
   const json = args.includes('--json');
 
+  const deadlineMs = parseDeadlineFlag(args);
+  if (deadlineMs === 'usage_error') {
+    stderr('gbrain status: --deadline-ms must be a positive number of milliseconds\n');
+    return { exitCode: 2 };
+  }
+
   const cfg = loadConfig();
   const useThinClient = cfg ? isThinClient(cfg) : false;
 
   let report: StatusReport;
   try {
     if (useThinClient) {
-      report = await buildThinClientReport(cfg, { sections });
+      report = await buildThinClientReport(cfg, { sections, deadlineMs });
     } else {
       if (!engine) {
         stderr('gbrain status: no engine connected (DB unreachable?). Run `gbrain doctor` to diagnose.\n');
         return { exitCode: 1 };
       }
-      report = await buildLocalReport(engine, { sections });
+      report = await buildLocalReport(engine, { sections, deadlineMs });
     }
   } catch (err) {
     stderr(`gbrain status: snapshot failed: ${(err as Error).message}\n`);

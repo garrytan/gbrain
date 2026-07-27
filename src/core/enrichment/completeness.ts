@@ -112,7 +112,8 @@ function nonRedundancy(page: Page): number {
 }
 
 function hasTitle(page: Page): number {
-  return page.title && page.title.trim().length > 0 ? 1 : 0;
+  // Coerce (issue #1939): a malformed YAML date/number title could be non-string.
+  return String(page.title ?? '').trim().length > 0 ? 1 : 0;
 }
 
 function hasBody(page: Page): number {

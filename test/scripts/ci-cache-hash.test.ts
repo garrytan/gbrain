@@ -400,6 +400,50 @@ describe("ci-cache-hash.sh — edge cases", () => {
   });
 });
 
+describe("ci-cache-hash.sh — policy-doc re-admit (test-affecting docs under docs/)", () => {
+  // These docs live under docs/ (normally deny-listed) but carry CI/release/
+  // test contracts the suite reads. The re-admit must make edits to them
+  // invalidate the hash, WITHOUT un-denying ordinary docs.
+  const POLICY_FILES: Record<string, string> = {
+    ...BASELINE_FILES,
+    "docs/TESTING.md": "# Testing\n\ntest tiers + isolation lint\n",
+    "docs/RELEASING.md": "# Releasing\n\nversion locations + ship process\n",
+  };
+
+  function withSandbox(test: (sb: Sandbox) => void) {
+    const sb = makeSandbox(POLICY_FILES);
+    try {
+      test(sb);
+    } finally {
+      rmSync(sb.dir, { recursive: true, force: true });
+    }
+  }
+
+  it("docs/TESTING.md edit MUST change hash (re-admitted policy doc)", () => {
+    withSandbox((sb) => {
+      const before = hash(sb);
+      modify(sb, "docs/TESTING.md", "# Testing\n\nNEW POLICY\n");
+      expect(hash(sb)).not.toBe(before);
+    });
+  });
+
+  it("docs/RELEASING.md edit MUST change hash (re-admitted policy doc)", () => {
+    withSandbox((sb) => {
+      const before = hash(sb);
+      modify(sb, "docs/RELEASING.md", "# Releasing\n\nNEW SHIP RULE\n");
+      expect(hash(sb)).not.toBe(before);
+    });
+  });
+
+  it("docs/guide.md edit STILL produces same hash (re-admit is scoped, not a blanket docs un-deny)", () => {
+    withSandbox((sb) => {
+      const before = hash(sb);
+      modify(sb, "docs/guide.md", "# Guide v3\n");
+      expect(hash(sb)).toBe(before);
+    });
+  });
+});
+
 describe("ci-cache-hash.sh — usage errors", () => {
   it("--bogus arg exits 2", () => {
     const r = spawnSync("bash", [SCRIPT_SRC, "--bogus"], {

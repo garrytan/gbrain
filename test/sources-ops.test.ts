@@ -15,6 +15,7 @@ import {
 } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { execFileSync } from 'child_process';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
   addSource,
@@ -23,9 +24,13 @@ import {
   getSourceStatus,
   recloneIfMissing,
   isPathContained,
+  isOwnedClone,
+  unownedHint,
   defaultCloneDir,
   SourceOpError,
 } from '../src/core/sources-ops.ts';
+import { readdirSync } from 'fs';
+import { runSources } from '../src/commands/sources.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -297,6 +302,41 @@ describe('listSources', () => {
 // ---------------------------------------------------------------------------
 
 describe('removeSource — clone-cleanup', () => {
+  test('counts soft-deleted pages for destructive removal while list/status show active pages', async () => {
+    await withEnv2(async () => {
+      await addSource(engine, { id: 'soft-only', localPath: '/tmp/soft-only-fixture' });
+      await engine.putPage(
+        'notes/recoverable',
+        {
+          type: 'note',
+          title: 'Recoverable',
+          compiled_truth: 'still recoverable during the soft-delete window',
+          timeline: '',
+          frontmatter: {},
+        },
+        { sourceId: 'soft-only' },
+      );
+      expect(await engine.softDeletePage('notes/recoverable', { sourceId: 'soft-only' }))
+        .toEqual({ slug: 'notes/recoverable' });
+
+      const listed = await listSources(engine);
+      expect(listed.find((s) => s.id === 'soft-only')?.page_count).toBe(0);
+      const status = await getSourceStatus(engine, 'soft-only');
+      expect(status.page_count).toBe(0);
+
+      const dryRun = await removeSource(engine, { id: 'soft-only', dryRun: true });
+      expect(dryRun.pages_deleted).toBe(1);
+
+      try {
+        await removeSource(engine, { id: 'soft-only' });
+        throw new Error('expected throw');
+      } catch (e) {
+        expect(e).toBeInstanceOf(SourceOpError);
+        expect((e as SourceOpError).message).toContain('with 1 pages');
+      }
+    });
+  });
+
   test('removes clone IFF managed (local_path under $GBRAIN_HOME/clones/ + remote_url set)', async () => {
     await withEnv2(async () => {
       const row = await addSource(engine, {
@@ -319,7 +359,10 @@ describe('removeSource — clone-cleanup', () => {
       const userPath = join(GBRAIN_HOME, 'user-managed-fixture');
       mkdirSync(userPath, { recursive: true });
       writeFileSync(join(userPath, 'file'), 'hi');
-      await addSource(engine, { id: 'cleanup-no', localPath: userPath });
+      // #2707: this fixture is intentionally not a git repo (unrelated to
+      // what this test covers — clone-cleanup ownership) — force past the
+      // registration-time git check.
+      await addSource(engine, { id: 'cleanup-no', localPath: userPath, force: true });
       const result = await removeSource(engine, {
         id: 'cleanup-no',
         confirmDestructive: true,
@@ -446,8 +489,10 @@ describe('getSourceStatus', () => {
       // path-only source still gets validateRepoState — but with no expected
       // URL, it just probes existence + .git. Path exists with no .git → 'no-git'.
       // To match contract docstring we'd want 'not-applicable' only when
-      // local_path is null. Test the truthful behavior:
-      await addSource(engine, { id: 'status-no-url', localPath: userPath });
+      // local_path is null. Test the truthful behavior. #2707: this fixture
+      // is deliberately no-git (that's what's under test for getSourceStatus)
+      // — force past the registration-time git check to construct it.
+      await addSource(engine, { id: 'status-no-url', localPath: userPath, force: true });
       const s = await getSourceStatus(engine, 'status-no-url');
       // local_path set but no .git: returns 'no-git'
       expect(s.clone_state).toBe('no-git');
@@ -505,6 +550,519 @@ describe('recloneIfMissing — T4 restore + autopurge recovery', () => {
       const recloned = await recloneIfMissing(engine, 't4-no-url');
       expect(recloned).toBe(false);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #1881 — ownership guard: recloneIfMissing must NEVER delete a user working
+// tree. Ownership (config.managed_clone OR default-location equality), not
+// path-containment.
+// ---------------------------------------------------------------------------
+
+describe('isOwnedClone — ownership predicate', () => {
+  test('marker config.managed_clone:true → owned (even at an external path)', async () => {
+    await withEnv2(async () => {
+      expect(
+        isOwnedClone({
+          id: 'x',
+          local_path: '/some/external/path',
+          config: { remote_url: 'https://github.com/example/repo', managed_clone: true },
+        }),
+      ).toBe(true);
+    });
+  });
+
+  test('default-location clone, no marker → owned (back-compat equality)', async () => {
+    await withEnv2(async () => {
+      expect(
+        isOwnedClone({
+          id: 'legacy',
+          local_path: defaultCloneDir('legacy'),
+          config: { remote_url: 'https://github.com/example/repo' },
+        }),
+      ).toBe(true);
+    });
+  });
+
+  test('external path, no marker → NOT owned (the #1881 federated shape)', async () => {
+    await withEnv2(async () => {
+      expect(
+        isOwnedClone({
+          id: 'gstack-code-app-abc',
+          local_path: '/Users/dev/tt-flutter-app',
+          config: { remote_url: 'https://github.com/example/repo', federated: true },
+        }),
+      ).toBe(false);
+    });
+  });
+
+  test('null local_path → NOT owned', async () => {
+    await withEnv2(async () => {
+      expect(isOwnedClone({ id: 'x', local_path: null, config: {} })).toBe(false);
+    });
+  });
+
+  test('config as JSON string (DB shape) is parsed', async () => {
+    await withEnv2(async () => {
+      expect(
+        isOwnedClone({
+          id: 'x',
+          local_path: '/external',
+          config: JSON.stringify({ managed_clone: true }),
+        }),
+      ).toBe(true);
+    });
+  });
+});
+
+describe('unownedHint — healthy vs degraded guidance', () => {
+  test('healthy: read-only guidance, no "missing clone" framing', () => {
+    const msg = unownedHint({ id: 'x', local_path: '/Users/dev/repo' }, 'healthy');
+    expect(msg).toMatch(/read-only/);
+    expect(msg).toMatch(/drop config\.remote_url/);
+    expect(msg).not.toMatch(/not a usable git repo/);
+  });
+
+  test('degraded: names the state and does not suggest dropping remote_url alone recovers it', () => {
+    const msg = unownedHint({ id: 'x', local_path: '/Users/dev/repo' }, 'no-git');
+    expect(msg).toMatch(/not a usable git repo/);
+    expect(msg).toMatch(/no-git/);
+  });
+});
+
+describe('recloneIfMissing — refuses to delete an unowned working tree (#1881)', () => {
+  test('external local_path + remote_url, no marker → throws unmanaged_path, tree survives', async () => {
+    await withEnv2(async () => {
+      // Simulate the gstack orchestrator's federated row: remote_url set, but
+      // local_path points at a live user working tree (no .git → no-git state),
+      // and NO managed_clone marker.
+      const userTree = join(FAKE_GIT_DIR, 'user-working-tree');
+      rmSync(userTree, { recursive: true, force: true });
+      mkdirSync(userTree, { recursive: true });
+      const sentinel = join(userTree, 'KEEP_ME.txt');
+      writeFileSync(sentinel, 'two unpushed commits live here');
+
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, local_path, config)
+           VALUES ('gstack-code-app-abc', 'flutter', $1,
+                   '{"remote_url":"https://github.com/example/repo","federated":true}'::jsonb)`,
+        [userTree],
+      );
+
+      let threw: SourceOpError | null = null;
+      try {
+        await recloneIfMissing(engine, 'gstack-code-app-abc');
+      } catch (e) {
+        threw = e as SourceOpError;
+      }
+      expect(threw).toBeInstanceOf(SourceOpError);
+      expect(threw?.code).toBe('unmanaged_path');
+      // The working tree and its sentinel MUST survive untouched.
+      expect(existsSync(userTree)).toBe(true);
+      expect(existsSync(sentinel)).toBe(true);
+    });
+  });
+
+  test('sync-shape: same refusal surfaces before any filesystem op', async () => {
+    await withEnv2(async () => {
+      // A degraded unowned path (the path does not exist at all → missing).
+      const ghost = join(FAKE_GIT_DIR, 'ghost-tree');
+      rmSync(ghost, { recursive: true, force: true });
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, local_path, config)
+           VALUES ('ghost', 'g', $1,
+                   '{"remote_url":"https://github.com/example/repo"}'::jsonb)`,
+        [ghost],
+      );
+      await expect(recloneIfMissing(engine, 'ghost')).rejects.toThrow(/unmanaged_path|not a clone gbrain created/);
+    });
+  });
+});
+
+describe('recloneIfMissing — symlink TOCTOU + EXDEV-safe swap', () => {
+  test('symlink at an owned default-location path → symlink_escape, target untouched', async () => {
+    await withEnv2(async () => {
+      // Owned by equality: local_path === defaultCloneDir(id). But the path is a
+      // symlink to a real dir → reclone must refuse rather than rename through it.
+      const id = 'sym-owned';
+      const target = join(FAKE_GIT_DIR, 'sym-target');
+      rmSync(target, { recursive: true, force: true });
+      mkdirSync(target, { recursive: true });
+      const targetSentinel = join(target, 'precious.txt');
+      writeFileSync(targetSentinel, 'do not delete');
+
+      mkdirSync(CLONE_ROOT, { recursive: true });
+      const clonePath = defaultCloneDir(id); // = CLONE_ROOT/sym-owned
+      symlinkSync(target, clonePath);
+
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, local_path, config)
+           VALUES ($1, 's', $2,
+                   '{"remote_url":"https://github.com/example/repo"}'::jsonb)`,
+        [id, clonePath],
+      );
+
+      let threw: SourceOpError | null = null;
+      try {
+        await recloneIfMissing(engine, id);
+      } catch (e) {
+        threw = e as SourceOpError;
+      }
+      expect(threw?.code).toBe('symlink_escape');
+      // Symlink target and its contents survive.
+      expect(existsSync(targetSentinel)).toBe(true);
+    });
+  });
+
+  test('owned no-git clone reclones; no .gbrain-reclone-* / .old-* residue left', async () => {
+    await withEnv2(async () => {
+      const row = await addSource(engine, {
+        id: 'swap-clean',
+        remoteUrl: 'https://github.com/example/repo',
+      });
+      // Degrade to no-git so reclone fires.
+      rmSync(join(row.local_path!, '.git'), { recursive: true, force: true });
+
+      const recloned = await recloneIfMissing(engine, 'swap-clean');
+      expect(recloned).toBe(true);
+      expect(existsSync(join(row.local_path!, '.git'))).toBe(true);
+
+      // Parent (CLONE_ROOT) must hold no swap residue.
+      const residue = readdirSync(CLONE_ROOT).filter(
+        (e) => e.startsWith('.gbrain-reclone-') || e.includes('.old-'),
+      );
+      expect(residue).toEqual([]);
+    });
+  });
+});
+
+describe('sources restore — unowned source (CV3)', () => {
+  test('restore of an unowned remote_url row: DB row restored, tree survives, correct guidance', async () => {
+    await withEnv2(async () => {
+      // Archived federated row: remote_url set, local_path = a live user tree
+      // (no .git, no managed_clone marker). Restore calls recloneIfMissing,
+      // which now throws unmanaged_path; runRestore must catch it, keep the tree,
+      // and NOT print the misleading "missing clone, try sync to recover" hint.
+      const userTree = join(FAKE_GIT_DIR, 'restore-user-tree');
+      rmSync(userTree, { recursive: true, force: true });
+      mkdirSync(userTree, { recursive: true });
+      const sentinel = join(userTree, 'KEEP_ME.txt');
+      writeFileSync(sentinel, 'live repo');
+
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, local_path, config, archived)
+           VALUES ('restore-unowned', 'flutter', $1,
+                   '{"remote_url":"https://github.com/example/repo","federated":false}'::jsonb,
+                   true)`,
+        [userTree],
+      );
+
+      const errs: string[] = [];
+      const origErr = console.error;
+      console.error = (...a: unknown[]) => { errs.push(a.join(' ')); };
+      try {
+        // Real CLI dispatch → runRestore. Must not throw.
+        await runSources(engine, ['restore', 'restore-unowned']);
+      } finally {
+        console.error = origErr;
+      }
+
+      // DB row un-archived (restore succeeded).
+      const rows = await engine.executeRaw<{ archived: boolean }>(
+        `SELECT archived FROM sources WHERE id = 'restore-unowned'`,
+      );
+      expect(rows[0].archived).toBe(false);
+      // Working tree untouched.
+      expect(existsSync(userTree)).toBe(true);
+      expect(existsSync(sentinel)).toBe(true);
+      // Guidance is the read-only one, NOT the misleading "missing clone" hint.
+      const joined = errs.join('\n');
+      expect(joined).toMatch(/read-only/);
+      expect(joined).not.toMatch(/on-disk clone is missing/);
+    });
+  });
+});
+
+describe('addSource --url — writes ownership marker', () => {
+  test('config carries managed_clone:true', async () => {
+    await withEnv2(async () => {
+      await addSource(engine, {
+        id: 'marked',
+        remoteUrl: 'https://github.com/example/repo',
+      });
+      const rows = await engine.executeRaw<{ config: unknown }>(
+        `SELECT config FROM sources WHERE id = 'marked'`,
+      );
+      const cfg =
+        typeof rows[0].config === 'string'
+          ? JSON.parse(rows[0].config as string)
+          : (rows[0].config as Record<string, unknown>);
+      expect(cfg.managed_clone).toBe(true);
+    });
+  });
+
+  test('--clone-dir clone (external path) is owned via marker and reclones', async () => {
+    await withEnv2(async () => {
+      const externalClone = join(FAKE_GIT_DIR, 'custom-clone-dir');
+      rmSync(externalClone, { recursive: true, force: true });
+      const row = await addSource(engine, {
+        id: 'cdir',
+        remoteUrl: 'https://github.com/example/repo',
+        cloneDir: externalClone,
+      });
+      expect(row.local_path).toBe(externalClone);
+      // Remove the leaf → reclone must succeed (owned via marker, NOT containment).
+      rmSync(externalClone, { recursive: true, force: true });
+      const recloned = await recloneIfMissing(engine, 'cdir');
+      expect(recloned).toBe(true);
+      expect(existsSync(join(externalClone, '.git'))).toBe(true);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// addSource --path — #2707 git-repo validation at registration time
+//
+// Deliberately does NOT run under withEnv2 (the fake-git harness above):
+// writeFakeGit()'s catch-all `exit 0` would make `rev-parse --show-toplevel`
+// (and therefore isInsideGitRepo) succeed unconditionally for any path,
+// which defeats the point of these tests. Real system git applies here.
+// ---------------------------------------------------------------------------
+
+describe('addSource --path — #2707 git-repo validation', () => {
+  const SANDBOX = join(tmpdir(), `gbrain-2707-git-validate-${process.pid}`);
+
+  beforeEach(() => {
+    rmSync(SANDBOX, { recursive: true, force: true });
+    mkdirSync(SANDBOX, { recursive: true });
+  });
+  afterAll(() => {
+    rmSync(SANDBOX, { recursive: true, force: true });
+  });
+
+  test('rejects an existing non-git directory with an actionable error', async () => {
+    const plainDir = join(SANDBOX, 'plain');
+    mkdirSync(plainDir, { recursive: true });
+    writeFileSync(join(plainDir, 'notes.md'), 'not committed anywhere');
+
+    let threw: SourceOpError | undefined;
+    try {
+      await addSource(engine, { id: 'plain-src', localPath: plainDir });
+    } catch (e) {
+      threw = e as SourceOpError;
+    }
+    expect(threw).toBeInstanceOf(SourceOpError);
+    expect(threw?.code).toBe('not_a_git_repo');
+    expect(threw?.message).toContain(plainDir);
+    expect(threw?.message).toContain('--force');
+    expect(threw?.message).toMatch(/git .*init/);
+
+    // Source was never registered — no partial row left behind.
+    const rows = await engine.executeRaw<{ id: string }>(
+      `SELECT id FROM sources WHERE id = 'plain-src'`,
+    );
+    expect(rows.length).toBe(0);
+  });
+
+  test('rejects a git-initialized directory with zero commits (codex round 1)', async () => {
+    const unbornDir = join(SANDBOX, 'unborn');
+    mkdirSync(unbornDir, { recursive: true });
+    execFileSync('git', ['-C', unbornDir, 'init', '-q']);
+    // No `git add` / `git commit` — isInsideGitRepo alone would pass this.
+
+    let threw: SourceOpError | undefined;
+    try {
+      await addSource(engine, { id: 'unborn-src', localPath: unbornDir });
+    } catch (e) {
+      threw = e as SourceOpError;
+    }
+    expect(threw).toBeInstanceOf(SourceOpError);
+    expect(threw?.code).toBe('not_a_git_repo');
+  });
+
+  test('rejects an empty-commit repo whose files are untracked (codex round 2)', async () => {
+    // git commit --allow-empty gives a resolvable HEAD (so a bare "has a
+    // commit" check would wrongly pass this) but the tree is empty; files
+    // written afterward are untracked and invisible to the sync walker.
+    const emptyCommitDir = join(SANDBOX, 'empty-commit');
+    mkdirSync(emptyCommitDir, { recursive: true });
+    execFileSync('git', ['-C', emptyCommitDir, 'init', '-q']);
+    execFileSync('git', ['-C', emptyCommitDir, 'config', 'user.email', 'test@example.com']);
+    execFileSync('git', ['-C', emptyCommitDir, 'config', 'user.name', 'Test']);
+    execFileSync('git', ['-C', emptyCommitDir, 'commit', '--allow-empty', '-q', '-m', 'empty']);
+    writeFileSync(join(emptyCommitDir, 'notes.md'), 'never committed');
+
+    let threw: SourceOpError | undefined;
+    try {
+      await addSource(engine, { id: 'empty-commit-src', localPath: emptyCommitDir });
+    } catch (e) {
+      threw = e as SourceOpError;
+    }
+    expect(threw).toBeInstanceOf(SourceOpError);
+    expect(threw?.code).toBe('not_a_git_repo');
+  });
+
+  test('rejects an untracked subdirectory of an otherwise-real git repo (codex round 2)', async () => {
+    const parent = join(SANDBOX, 'partial-repo');
+    const trackedFile = join(parent, 'README.md');
+    const untrackedSub = join(parent, 'untracked-sub');
+    mkdirSync(untrackedSub, { recursive: true });
+    writeFileSync(trackedFile, '# fixture');
+    execFileSync('git', ['-C', parent, 'init', '-q']);
+    execFileSync('git', ['-C', parent, 'config', 'user.email', 'test@example.com']);
+    execFileSync('git', ['-C', parent, 'config', 'user.name', 'Test']);
+    execFileSync('git', ['-C', parent, 'add', 'README.md']);
+    execFileSync('git', ['-C', parent, 'commit', '-q', '-m', 'initial import']);
+    writeFileSync(join(untrackedSub, 'x.md'), 'never git add-ed');
+
+    let threw: SourceOpError | undefined;
+    try {
+      await addSource(engine, { id: 'partial-repo-src', localPath: untrackedSub });
+    } catch (e) {
+      threw = e as SourceOpError;
+    }
+    expect(threw).toBeInstanceOf(SourceOpError);
+    expect(threw?.code).toBe('not_a_git_repo');
+  });
+
+  test('registers a repo with many tracked entries without buffer-size false rejection (codex round 3)', async () => {
+    // Codex round 3 (P2): the earlier `git ls-tree` listing implementation
+    // buffered the whole tree and could exceed execFileSync's default 1 MiB
+    // maxBuffer on a large repo, causing an incorrect rejection. The
+    // rev-parse HEAD:./ + empty-tree-SHA-comparison implementation reads a
+    // fixed ~40-byte SHA regardless of tree size — this locks that in.
+    const bigDir = join(SANDBOX, 'many-entries');
+    mkdirSync(bigDir, { recursive: true });
+    for (let i = 0; i < 300; i++) {
+      writeFileSync(join(bigDir, `file-${i}.md`), `# entry ${i}`);
+    }
+    execFileSync('git', ['-C', bigDir, 'init', '-q']);
+    execFileSync('git', ['-C', bigDir, 'config', 'user.email', 'test@example.com']);
+    execFileSync('git', ['-C', bigDir, 'config', 'user.name', 'Test']);
+    execFileSync('git', ['-C', bigDir, 'add', '-A']);
+    execFileSync('git', ['-C', bigDir, 'commit', '-q', '-m', 'many files']);
+
+    const row = await addSource(engine, { id: 'many-entries-src', localPath: bigDir });
+    expect(row.local_path).toBe(bigDir);
+  });
+
+  // Codex round 4 (P2): the empty-tree OID is hash-algorithm-specific — a
+  // hardcoded SHA-1 constant silently mismatched (and so accepted) an empty
+  // SHA-256 repo. --object-format=sha256 needs git 2.29+; skip rather than
+  // hard-fail on an older CI git.
+  const SHA256_SUPPORTED = (() => {
+    try {
+      const probe = join(tmpdir(), `gbrain-2707-sha256-probe-${process.pid}`);
+      mkdirSync(probe, { recursive: true });
+      execFileSync('git', ['-C', probe, 'init', '-q', '--object-format=sha256'], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      rmSync(probe, { recursive: true, force: true });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  test.skipIf(!SHA256_SUPPORTED)(
+    'rejects an empty-commit SHA-256 repo the same as a SHA-1 one (codex round 4)',
+    async () => {
+      const sha256Dir = join(SANDBOX, 'sha256-empty');
+      mkdirSync(sha256Dir, { recursive: true });
+      execFileSync('git', ['-C', sha256Dir, 'init', '-q', '--object-format=sha256']);
+      execFileSync('git', ['-C', sha256Dir, 'config', 'user.email', 'test@example.com']);
+      execFileSync('git', ['-C', sha256Dir, 'config', 'user.name', 'Test']);
+      execFileSync('git', ['-C', sha256Dir, 'commit', '--allow-empty', '-q', '-m', 'empty']);
+      writeFileSync(join(sha256Dir, 'notes.md'), 'never committed');
+
+      let threw: SourceOpError | undefined;
+      try {
+        await addSource(engine, { id: 'sha256-empty-src', localPath: sha256Dir });
+      } catch (e) {
+        threw = e as SourceOpError;
+      }
+      expect(threw).toBeInstanceOf(SourceOpError);
+      expect(threw?.code).toBe('not_a_git_repo');
+    },
+  );
+
+  test.skipIf(!SHA256_SUPPORTED)(
+    'registers a SHA-256 repo with real committed content (no regression)',
+    async () => {
+      const sha256Dir = join(SANDBOX, 'sha256-real');
+      mkdirSync(sha256Dir, { recursive: true });
+      writeFileSync(join(sha256Dir, 'README.md'), '# fixture');
+      execFileSync('git', ['-C', sha256Dir, 'init', '-q', '--object-format=sha256']);
+      execFileSync('git', ['-C', sha256Dir, 'config', 'user.email', 'test@example.com']);
+      execFileSync('git', ['-C', sha256Dir, 'config', 'user.name', 'Test']);
+      execFileSync('git', ['-C', sha256Dir, 'add', '-A']);
+      execFileSync('git', ['-C', sha256Dir, 'commit', '-q', '-m', 'initial import']);
+
+      const row = await addSource(engine, { id: 'sha256-real-src', localPath: sha256Dir });
+      expect(row.local_path).toBe(sha256Dir);
+    },
+  );
+
+  test('quotes a path with a space in the remediation command (codex round 1)', async () => {
+    const spacedDir = join(SANDBOX, 'has space here');
+    mkdirSync(spacedDir, { recursive: true });
+
+    let threw: SourceOpError | undefined;
+    try {
+      await addSource(engine, { id: 'spaced-src', localPath: spacedDir });
+    } catch (e) {
+      threw = e as SourceOpError;
+    }
+    expect(threw?.message).toContain(`'${spacedDir}'`);
+  });
+
+  test('--force bypasses the check and registers the plain directory as-is', async () => {
+    const plainDir = join(SANDBOX, 'plain-forced');
+    mkdirSync(plainDir, { recursive: true });
+
+    const row = await addSource(engine, {
+      id: 'plain-forced-src',
+      localPath: plainDir,
+      force: true,
+    });
+    expect(row.local_path).toBe(plainDir);
+  });
+
+  test('an already git-initialized directory registers unaffected (no regression)', async () => {
+    const gitDir = join(SANDBOX, 'gitrepo');
+    mkdirSync(gitDir, { recursive: true });
+    writeFileSync(join(gitDir, 'README.md'), '# fixture');
+    execFileSync('git', ['-C', gitDir, 'init', '-q']);
+    execFileSync('git', ['-C', gitDir, 'config', 'user.email', 'test@example.com']);
+    execFileSync('git', ['-C', gitDir, 'config', 'user.name', 'Test']);
+    execFileSync('git', ['-C', gitDir, 'add', '-A']);
+    execFileSync('git', ['-C', gitDir, 'commit', '-q', '-m', 'initial import']);
+
+    const row = await addSource(engine, { id: 'gitrepo-src', localPath: gitDir });
+    expect(row.local_path).toBe(gitDir);
+  });
+
+  test('a subdirectory of a git repo registers unaffected (#753/#774 parity with sync-time discovery)', async () => {
+    const gitDir = join(SANDBOX, 'gitrepo-parent');
+    const subDir = join(gitDir, 'sub');
+    mkdirSync(subDir, { recursive: true });
+    writeFileSync(join(subDir, 'README.md'), '# fixture');
+    execFileSync('git', ['-C', gitDir, 'init', '-q']);
+    execFileSync('git', ['-C', gitDir, 'config', 'user.email', 'test@example.com']);
+    execFileSync('git', ['-C', gitDir, 'config', 'user.name', 'Test']);
+    execFileSync('git', ['-C', gitDir, 'add', '-A']);
+    execFileSync('git', ['-C', gitDir, 'commit', '-q', '-m', 'initial import']);
+
+    const row = await addSource(engine, { id: 'subdir-src', localPath: subDir });
+    expect(row.local_path).toBe(subDir);
+  });
+
+  test('a not-yet-created path is unaffected (pre-existing lenient behavior, out of #2707 scope)', async () => {
+    const missingDir = join(SANDBOX, 'does-not-exist-yet');
+    expect(existsSync(missingDir)).toBe(false);
+
+    const row = await addSource(engine, { id: 'missing-src', localPath: missingDir });
+    expect(row.local_path).toBe(missingDir);
   });
 });
 

@@ -45,6 +45,33 @@ const HAIKU_MAX_TOKENS = 200;
 const DEFAULT_SYNOPSIS_MODEL = 'anthropic:claude-haiku-4-5-20251001';
 
 /**
+ * Hard cap on `documentText` length (chars) before send.
+ *
+ * 2026-05-25 fix wave: small local chat models (Gemma 4 E2B, Qwen3 4B) get
+ * dramatically slower on long contexts even with 131K-token windows declared.
+ * A 73K-char page synopsis on Gemma 4 E2B takes 60-120s, exceeding the
+ * worker's default 30s `lockDuration` and tripping `lock-lost` errors.
+ *
+ * Truncate to a budget that fits a small model's effective throughput while
+ * preserving enough document context for the synopsis to be useful. Truncates
+ * the TAIL because the head (title, frontmatter, intro) carries the
+ * document-level anchor the synopsis needs.
+ *
+ * Override per workload via `GBRAIN_SYNOPSIS_DOC_MAX_CHARS`. Default 32768
+ * (~8K tokens at 4 chars/tok) keeps small-model synopsis under ~30s.
+ * Anthropic Haiku is unaffected at this cap; bump higher when running
+ * frontier models if you want richer document anchoring.
+ */
+export const SYNOPSIS_DOC_MAX_CHARS = (() => {
+  const env = process.env.GBRAIN_SYNOPSIS_DOC_MAX_CHARS;
+  if (env && /^\d+$/.test(env)) {
+    const n = parseInt(env, 10);
+    if (n >= 512 && n <= 1_048_576) return n;
+  }
+  return 32768;
+})();
+
+/**
  * Synopsis prompt version. Folded into corpus_generation so prompt edits
  * invalidate prior embeddings via the v0.40.3.0 query_cache.page_generations
  * contract (D27 P1-5). Bump on any prompt-text change that meaningfully
@@ -188,11 +215,19 @@ function buildUserPrompt(
   documentText: string,
   chunkText: string,
 ): string {
+  // Tail-truncate `documentText` to `SYNOPSIS_DOC_MAX_CHARS` so small local
+  // chat models don't stall on >100KB pages. Head preserved (title block,
+  // frontmatter, intro paragraphs carry the document-level anchor).
+  let trimmedDoc = documentText;
+  if (documentText.length > SYNOPSIS_DOC_MAX_CHARS) {
+    trimmedDoc = documentText.slice(0, SYNOPSIS_DOC_MAX_CHARS) +
+      `\n\n[... ${documentText.length - SYNOPSIS_DOC_MAX_CHARS} chars truncated for synopsis budget ...]`;
+  }
   return [
     `<page_title>${pageTitle}</page_title>`,
     '',
     '<full_document>',
-    documentText,
+    trimmedDoc,
     '</full_document>',
     '',
     '<chunk>',

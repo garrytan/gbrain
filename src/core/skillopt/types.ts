@@ -157,6 +157,18 @@ export interface SkillOptOpts {
   heldOutPath?: string;
   json: boolean;
 
+  // ─── Eval-internal ablation knobs (NOT exposed on the CLI) ───────────────
+  // These exist so the gbrain-evals ablation (cat31) can run the orchestrator
+  // in degraded modes for an apples-to-apples comparison. Defaults preserve
+  // the full production pipeline. `disableValidationGate` MUST NOT be wired to
+  // any user-facing flag — it disables the core safety gate.
+  /** Ablation: 'failure-only' skips the D7 success reflect call. Default 'both'. */
+  reflectMode?: 'both' | 'failure-only';
+  /** Ablation: greedy-accept every applied edit, skip the D12 median+epsilon gate. Default false. */
+  disableValidationGate?: boolean;
+  /** Ablation: 'one-shot-rewrite' does ONE rewrite call, no loop, no gate. Default 'reflect'. */
+  optimizerMode?: 'reflect' | 'one-shot-rewrite';
+
   // Safety.
   maxCostUsd: number;
   maxRuntimeMin: number;
@@ -201,6 +213,11 @@ export interface RunReceipt {
   final_cost_usd?: number;
   total_steps?: number;
   epochs_completed?: number;
+  // Ablation provenance (cat31 replayability) — present when a non-default
+  // ablation knob was set.
+  reflect_mode?: 'both' | 'failure-only';
+  validation_gate_disabled?: boolean;
+  optimizer_mode?: 'reflect' | 'one-shot-rewrite';
 }
 
 export interface HistoryRow {
@@ -220,6 +237,12 @@ export interface HistoryRow {
 export const VALIDATION_EPSILON = 0.05;
 /** D12: number of judge runs per sel-task for noise rejection. */
 export const VALIDATION_RUNS_PER_TASK = 3;
+/**
+ * Score at/above which a forward-pass rollout counts as a "success" (fed to the
+ * success-reflect call) vs a "failure" (fed to the failure-reflect call). Single
+ * source of truth for the D7 partition — used by every forward-pass site.
+ */
+export const ROLLOUT_SUCCESS_THRESHOLD = 0.5;
 
 export interface GateInput {
   candidateSkillText: string;

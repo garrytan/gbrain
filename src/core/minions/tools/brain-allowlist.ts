@@ -27,6 +27,7 @@ import type { GBrainConfig } from '../../config.ts';
 import { operations } from '../../operations.ts';
 import type { Operation, OperationContext } from '../../operations.ts';
 import { paramDefToSchema } from '../../../mcp/tool-defs.ts';
+import { validateSourceId } from '../../utils.ts';
 import type { ToolCtx, ToolDef } from '../types.ts';
 
 /**
@@ -54,9 +55,19 @@ export const BRAIN_TOOL_ALLOWLIST: ReadonlySet<string> = new Set([
   'file_url',
   'get_backlinks',
   'traverse_graph',
+  // v114 (#1941): read-only provenance discovery. Edge-WRITE ops (add_link /
+  // remove_link) are deliberately NOT allowlisted — exposing graph writes to
+  // subagents is a separate trust decision.
+  'list_link_sources',
   'resolve_slugs',
   'get_ingest_log',
   'put_page',
+  // #2778: the canonical timeline-write op. Fenced exactly like put_page —
+  // operations.ts:enforceSubagentSlugFence confines the target slug to the
+  // trusted-workspace allow-list (or the wiki/agents/<id>/ namespace) when
+  // ctx.viaSubagent=true, so a subagent can only append timeline entries to
+  // pages it could have written anyway.
+  'add_timeline_entry',
   // v0.29 — Salience + Anomaly Detection. Both read-only. `get_recent_transcripts`
   // is intentionally NOT included: subagent calls always have ctx.remote=true,
   // and the v0.29 trust gate rejects remote callers — adding it here would be
@@ -89,9 +100,11 @@ export const BRAIN_TOOL_USAGE_HINTS: Readonly<Record<string, string>> = {
   file_url: 'Get a presigned URL for a brain-stored file. Read-only; expires.',
   get_backlinks: 'List every page that links TO the given slug. Use for "what references this".',
   traverse_graph: 'Walk the typed-edge graph starting from a slug (e.g. `works_at`, `founded`, `invested_in`). Use for relationship queries.',
+  list_link_sources: 'List the distinct link provenances in the brain with edge counts (e.g. `citation-graph`, `manual`). Use to discover which edge-writers have populated the graph.',
   resolve_slugs: 'Resolve free-form entity names to canonical slugs (e.g. "Alice" → `people/alice-example`). Use before any tool that takes a slug if the user gave a name not a slug.',
   get_ingest_log: 'Read the brain ingestion log for diagnostic / verification queries.',
   put_page: 'Write a markdown page to the gbrain DATABASE (NOT the local filesystem). Page becomes searchable + linkable. Slug must match the agent\'s allowed namespace.',
+  add_timeline_entry: 'Append a dated timeline entry to an existing page (the canonical timeline write). Use over rewriting the page body when recording a dated event. Slug must match the agent\'s allowed namespace.',
   get_recent_salience: 'Read pages ranked by emotional + activity salience over a recency window. Use for "what\'s been on my mind lately".',
   find_anomalies: 'Read cohort-level activity outliers (e.g. tag-cohort or type-cohort with unusual recent volume). Use for "what\'s unusual lately".',
 };
@@ -189,6 +202,13 @@ export interface BuildBrainToolsOpts {
    * SubagentHandlerData.allowed_slug_prefixes via the handler.
    */
   allowedSlugPrefixes?: readonly string[];
+  /**
+   * Brain source every tool-call OperationContext is scoped to (#1586).
+   * Trusted (flows from SubagentHandlerData.source_id, which only
+   * PROTECTED_JOB_NAMES-gated submitters can set); validated at build time.
+   * Unset → legacy 'default'.
+   */
+  sourceId?: string;
 }
 
 interface OpContextDeps {
@@ -199,6 +219,7 @@ interface OpContextDeps {
   signal?: AbortSignal;
   brainId?: string;
   allowedSlugPrefixes?: readonly string[];
+  sourceId?: string;
 }
 
 function buildOpContext(deps: OpContextDeps): OperationContext {
@@ -212,7 +233,8 @@ function buildOpContext(deps: OpContextDeps): OperationContext {
     },
     dryRun: false,
     remote: true,                // match MCP trust boundary for auto-link skip
-    sourceId: 'default',         // v0.34 D4: required; subagent tools default to host source
+    // #1586: cycle-resolved source when provided; legacy host default else.
+    sourceId: deps.sourceId ?? 'default',
     jobId: deps.jobId,
     subagentId: deps.subagentId,
     viaSubagent: true,           // FAIL-CLOSED: put_page etc. enforce namespace
@@ -235,6 +257,11 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
   const picked: Operation[] = operations.filter(
     op => BRAIN_TOOL_ALLOWLIST.has(op.name) && filter.has(op.name),
   );
+
+  // #1586: fail fast on a malformed source id before any tool executes
+  // (defense-in-depth — the seam is trusted, but the value round-trips
+  // through the job payload).
+  if (opts.sourceId !== undefined) validateSourceId(opts.sourceId);
 
   return picked.map<ToolDef>(op => {
     const schema = op.name === 'put_page'
@@ -265,6 +292,7 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
           signal: ctx.signal,
           brainId: opts.brainId,
           allowedSlugPrefixes: opts.allowedSlugPrefixes,
+          sourceId: opts.sourceId,
         });
         const params = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
         return op.handler(opCtx, params);

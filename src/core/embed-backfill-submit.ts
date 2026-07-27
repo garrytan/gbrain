@@ -35,6 +35,7 @@
  */
 import type { BrainEngine } from './engine.ts';
 import { MinionQueue } from './minions/queue.ts';
+import { parseUsdLimit, resolveSpendPosture, type SpendPosture } from './spend-posture.ts';
 
 export const COOLDOWN_CONFIG_KEY = 'embed.backfill_cooldown_min';
 export const SPEND_CAP_CONFIG_KEY = 'embed.backfill_max_usd_per_source_24h';
@@ -57,6 +58,13 @@ export interface SubmitEmbedBackfillResult {
   spend24hUsd?: number;
   /** Set when status === 'spend_capped'. Active cap. */
   spendCapUsd?: number;
+  /**
+   * Set true when `spend.posture=tokenmax` waved the job past the 24h spend
+   * cap (#2139). The spend is still LEDGERED by the per-job BudgetTracker —
+   * posture removes the ceiling, not the accounting. Cooldown is NOT bypassed
+   * (it's queue-churn protection, not a spend gate).
+   */
+  spendCapBypassed?: boolean;
 }
 
 export interface SubmitEmbedBackfillOpts {
@@ -72,6 +80,8 @@ export interface SubmitEmbedBackfillOpts {
   nowMs?: number;
   /** Job priority. Default 5 (lower than autopilot's 0; above default jobs). */
   priority?: number;
+  /** Override the resolved spend posture (tests). Default: read from config. */
+  postureOverride?: SpendPosture;
 }
 
 /**
@@ -133,9 +143,12 @@ export async function submitEmbedBackfill(
   const cooldownMin =
     opts.cooldownMinOverride ??
     (await readIntConfig(engine, COOLDOWN_CONFIG_KEY, DEFAULT_COOLDOWN_MIN));
+  // v0.42.42.0 (#2139): spend cap honors `off`/`unlimited`/`none` → Infinity.
+  // `0` still falls back to the default (off semantics ≠ 0).
   const spendCap =
     opts.spendCapUsdOverride ??
-    (await readIntConfig(engine, SPEND_CAP_CONFIG_KEY, DEFAULT_SPEND_CAP_USD));
+    (raw => parseUsdLimit(raw, DEFAULT_SPEND_CAP_USD))(await engine.getConfig(SPEND_CAP_CONFIG_KEY));
+  const posture = opts.postureOverride ?? (await resolveSpendPosture(engine));
 
   // ── Source-level cooldown ─────────────────────────────────────
   // Block re-submission if (a) an embed-backfill is currently active for this
@@ -172,9 +185,14 @@ export async function submitEmbedBackfill(
   }
 
   // ── 24h rolling spend cap ─────────────────────────────────────
+  // v0.42.42.0 (#2139): `spend.posture=tokenmax` waves past the cap (the
+  // operator declared cost isn't the constraint). The per-job BudgetTracker
+  // still ledgers the spend — posture removes the ceiling, not the accounting.
+  // An `off`/`unlimited` cap (Infinity) is likewise never tripped.
   const spend24hFn = opts.spend24hFn ?? defaultSpend24hForSource;
   const spend24h = await spend24hFn(engine, sourceId);
-  if (spend24h >= spendCap) {
+  const spendCapBypassed = posture === 'tokenmax' && spend24h >= spendCap;
+  if (spend24h >= spendCap && !spendCapBypassed) {
     return {
       status: 'spend_capped',
       spend24hUsd: spend24h,
@@ -194,7 +212,9 @@ export async function submitEmbedBackfill(
     },
   );
 
-  return { status: 'submitted', jobId: job.id };
+  return spendCapBypassed
+    ? { status: 'submitted', jobId: job.id, spendCapBypassed: true, spend24hUsd: spend24h }
+    : { status: 'submitted', jobId: job.id };
 }
 
 /** Round timestamp down to the nearest `bucketMs` boundary. */

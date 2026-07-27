@@ -1438,9 +1438,15 @@ export async function installRecipeIntoHostRepo(
       } catch { /* not present */ }
     }
     if (resolverPath) {
-      const rowsBlock = `\n\n<!-- gbrain:agent-voice:resolver-rows -->\n` +
+      // Fence the appended rows by the RECIPE id, not a hardcoded recipe name.
+      // The pre-v0.42 fence was literally `gbrain:agent-voice:resolver-rows`,
+      // so any second copy-into-host-repo recipe (e.g. retrieval-reflex) wrote
+      // an agent-voice-labeled block — and `--refresh`/uninstall keyed on the
+      // recipe id would never find it. Derive the fence from manifest.recipe.
+      const fenceId = manifest.recipe || 'gbrain';
+      const rowsBlock = `\n\n<!-- gbrain:${fenceId}:resolver-rows -->\n` +
         manifest.resolver_rows_to_append.map((r) => `- ${r}`).join('\n') +
-        '\n<!-- /gbrain:agent-voice:resolver-rows -->\n';
+        `\n<!-- /gbrain:${fenceId}:resolver-rows -->\n`;
       fsAppendFileSync(resolverPath, rowsBlock);
     } else {
       console.warn(

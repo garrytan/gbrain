@@ -42,7 +42,10 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // phase, extract, integrity, embed, or migrate-engine change.
   "src/core/cycle/extract-takes.ts": ["test/e2e/multi-source-bug-class.test.ts"],
   "src/core/cycle/patterns.ts": ["test/e2e/multi-source-bug-class.test.ts"],
-  "src/core/cycle/synthesize.ts": ["test/e2e/multi-source-bug-class.test.ts"],
+  "src/core/cycle/synthesize.ts": [
+    "test/e2e/multi-source-bug-class.test.ts",
+    "test/e2e/synthesize-bigint-job-id-postgres.test.ts",
+  ],
   "src/commands/embed.ts": ["test/e2e/multi-source-bug-class.test.ts"],
   "src/commands/extract.ts": ["test/e2e/multi-source-bug-class.test.ts"],
   "src/commands/migrate-engine.ts": ["test/e2e/multi-source-bug-class.test.ts"],
@@ -76,6 +79,10 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/mcp/**": ["test/e2e/mcp.test.ts", "test/e2e/http-transport.test.ts"],
   // Integrity batch-load fast path.
   "src/commands/integrity.ts": ["test/e2e/integrity-batch.test.ts"],
+  // gbrain connect — raw-bearer MCP smoke probe exercised end-to-end against
+  // a real serve --http (PGLite), so changes to either feed it.
+  "src/commands/connect.ts": ["test/e2e/connect-bearer.test.ts"],
+  "src/core/connect-probe.ts": ["test/e2e/connect-bearer.test.ts"],
   // Upgrade chains migration ledger; touches both runners.
   "src/commands/upgrade.ts": [
     "test/e2e/upgrade.test.ts",

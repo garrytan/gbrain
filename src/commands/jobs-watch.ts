@@ -9,15 +9,27 @@
  * 60fps; 1s keeps the SQL load nominal even when multiple watch sessions
  * point at the same brain).
  *
- * Rendering: manual ANSI cursor management (no TUI dep). Clears the
- * screen on first render, then redraws from the top each tick using
- * cursor-home + erase-down. On non-TTY (cron / wrapped redirect),
- * falls through to one snapshot line per tick in `--progress-json`
- * shape so wrappers can parse.
+ * Two independent axes (v0.42.11.0, #1784 — decoupled from `isTTY`):
+ *   - FORMAT (what data prints): human by default, JSON only when `--json` is
+ *     passed. NEVER gated on isTTY.
+ *   - LOOP (cadence): `--follow` streams continuously; default is `isTTY` —
+ *     continuous live dashboard in a terminal, ONE snapshot then exit when
+ *     non-TTY (pipe / cron / subagent). Identical data either way, so defaulting
+ *     the loop from isTTY is a cosmetic UX call, not a data gate.
  *
- * Quit: Ctrl-C (SIGINT), 'q', or stdin close — the watcher restores the
- * cursor + clears its own region on shutdown so the terminal isn't left
- * with a half-rendered dashboard.
+ * Resulting matrix:
+ *   TTY, no flags          → live ANSI dashboard (cursor-managed, loops)
+ *   non-TTY, no flags      → ONE human plain-text snapshot, exit
+ *   any + --json           → JSON snapshot (one-shot, or JSONL stream w/ --follow)
+ *   any + --follow         → continuous (human plain per tick, or JSONL w/ --json)
+ *
+ * Rendering: manual ANSI cursor management (no TUI dep) for the live dashboard
+ * only. Clears the screen on first render, then redraws from the top each tick
+ * using cursor-home + erase-down.
+ *
+ * Quit: in the live dashboard, Ctrl-C (SIGINT) or 'q' restores the cursor +
+ * clears its region. Non-TTY one-shots (nothing to quit); a non-TTY `--follow`
+ * stream runs until the process is killed.
  *
  * No SSE consumer in v0.41 — local polling against the brain engine is
  * the foundation. SSE wiring through `serve-http.ts` is filed as a
@@ -188,32 +200,63 @@ export async function readSnapshot(engine: BrainEngine): Promise<WatchSnapshot> 
 export interface WatchOptions {
   /** Refresh interval. Default 1000ms. */
   refreshMs?: number;
-  /** Stream JSON snapshots to stdout (non-TTY mode). */
+  /** FORMAT axis: emit JSON instead of human text. Default human. Explicit only. */
   json?: boolean;
+  /**
+   * LOOP axis: stream continuously. Default = `process.stdout.isTTY` — live
+   * dashboard in a terminal, one snapshot then exit when non-TTY. Pass `true`
+   * to force a continuous stream even off-TTY (cron tail / log pipe).
+   */
+  follow?: boolean;
+}
+
+export interface WatchMode {
+  /** FORMAT: emit JSON instead of human text. */
+  json: boolean;
+  /** LOOP: continuous stream vs one-shot. */
+  follow: boolean;
+  /** Live cursor-managed colored dashboard (TTY + human + looping only). */
+  useAnsiDashboard: boolean;
 }
 
 /**
- * Main entrypoint for `gbrain jobs watch`. Runs until SIGINT or 'q'
- * keypress (on TTY). Non-TTY mode loops with --progress-json output.
+ * Pure resolver for the format × loop matrix (extracted for unit-testing the
+ * exact TTY-gating contract this command fixes, #1784). The data printed never
+ * depends on isTTY; only the loop cadence + ANSI cursor management do.
+ *
+ * follow default = `isTTY && !json`: a terminal human view is the live
+ * dashboard (loops), but `--json` (any) and non-TTY both one-shot unless the
+ * caller passes `--follow` explicitly. Matches the file-header matrix.
+ */
+export function resolveWatchMode(opts: WatchOptions, isTTY: boolean): WatchMode {
+  const json = opts.json === true;             // FORMAT: explicit only — never from isTTY.
+  const follow = opts.follow ?? (isTTY && !json);
+  const useAnsiDashboard = isTTY && !json && follow;
+  return { json, follow, useAnsiDashboard };
+}
+
+/**
+ * Main entrypoint for `gbrain jobs watch`. See the file header for the
+ * format (`--json`) × loop (`--follow`) matrix. The data printed never depends
+ * on isTTY; only the loop cadence and the ANSI cursor management do.
  */
 export async function runWatch(engine: BrainEngine, opts: WatchOptions = {}): Promise<void> {
   const refreshMs = opts.refreshMs ?? 1000;
-  const isTTY = process.stdout.isTTY === true;
-  const json = opts.json || !isTTY;
+  const { json, follow, useAnsiDashboard } = resolveWatchMode(opts, process.stdout.isTTY === true);
 
   let stopped = false;
   const stop = () => {
     stopped = true;
   };
 
-  if (isTTY && !json) {
+  if (useAnsiDashboard) {
     process.stdout.write(ANSI.cursorHide + ANSI.clear + ANSI.cursorHome);
     process.on('SIGINT', () => {
       process.stdout.write(ANSI.cursorShow + ANSI.clear + ANSI.cursorHome);
       stop();
       process.exit(0);
     });
-    // Read stdin for 'q' keypress.
+    // Read stdin for 'q' keypress (terminal-only affordance).
     if (process.stdin.isTTY && process.stdin.setRawMode) {
       process.stdin.setRawMode(true);
       process.stdin.resume();
@@ -227,15 +270,19 @@ export async function runWatch(engine: BrainEngine, opts: WatchOptions = {}): Pr
     }
   }
 
-  while (!stopped) {
+  do {
     const snap = await readSnapshot(engine);
     if (json) {
       process.stdout.write(JSON.stringify({ event: 'jobs.watch.snapshot', ...snap }) + '\n');
-    } else {
-      // TTY: clear + cursor-home + render.
+    } else if (useAnsiDashboard) {
+      // Live dashboard: clear + cursor-home + colored render.
       process.stdout.write(ANSI.cursorHome + ANSI.eraseDown);
       process.stdout.write(renderSnapshot(snap, { useAnsi: true }));
+    } else {
+      // Non-TTY (or --follow without a terminal): plain human snapshot, no ANSI.
+      process.stdout.write(renderSnapshot(snap, { useAnsi: false }) + '\n');
     }
+    if (!follow) break;            // one-shot: render once, exit.
     await new Promise(r => setTimeout(r, refreshMs));
-  }
+  } while (!stopped);
 }

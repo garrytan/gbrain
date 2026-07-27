@@ -16,14 +16,92 @@
 
 import { mkdirSync, existsSync, readFileSync, writeFileSync, rmSync, statSync } from 'fs';
 import { join } from 'path';
+import { parseGlobalFlags } from './cli-options.ts';
 
 const LOCK_DIR_NAME = '.gbrain-lock';
 const LOCK_FILE = 'lock';
-const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes — embed jobs can be long
+
+// #2058: refresh the lock's `refreshed_at` while held so a long-running but
+// LIVE holder (embed jobs run for many minutes) is never mistaken for stale.
+const HEARTBEAT_INTERVAL_MS = 30_000;
+
+class LiveServeLockError extends Error {}
+
+function isServeCommand(lockData: { subcommand?: unknown; command?: unknown }): boolean {
+  // New lock files store the command after the same global-flag parsing used
+  // by cli.ts. This survives paths with spaces and forms such as
+  // `gbrain --quiet serve` without confusing `gbrain search serve`.
+  if (typeof lockData.subcommand === 'string') return lockData.subcommand === 'serve';
+
+  const command = lockData.command;
+  if (typeof command !== 'string') return false;
+  const parts = command.trim().split(/\s+/);
+  // Backward compatibility for locks created before `subcommand` was stored.
+  return parts[0] === 'serve' || parts[1] === 'serve';
+}
+
+// #2348: there is NO steal-on-stale-heartbeat anymore. A holder whose PID is
+// alive is NEVER reaped, regardless of how long its heartbeat has been stale.
+// PGLite/WASM is strictly single-writer; the heartbeat runs on the JS event
+// loop, which is BLOCKED during long synchronous imports/CHECKPOINTs, so a
+// genuinely working `gbrain dream`/embed holder can look stale while alive.
+// Reaping it (the old #2058 grace window) let a second OS process open the same
+// data dir and corrupt the catalog + pgvector extension state (58P01 /
+// internal_load_library / `type "vector" does not exist`), recoverable only by
+// wipe+restore. Only a DEAD PID is reaped now. A live serve-tagged holder gets
+// the immediate process-conflict explanation below; other wedged-but-alive or
+// PID-reused holders time out. Neither path steals the lock.
 
 export interface LockHandle {
   lockDir: string;
   acquired: boolean;
+  /**
+   * #2058: heartbeat timer + lock-file path, set when a real (on-disk) lock is
+   * held so `releaseLock` can stop refreshing. Absent for the in-memory engine
+   * (no lock file, no concurrent access possible).
+   */
+  heartbeat?: ReturnType<typeof setInterval>;
+  lockPath?: string;
+  /**
+   * Our ownership token (`<pid>:<acquired_at>`). Since #2348 a LIVE holder is
+   * never reaped, so reap-then-reacquire happens only after the original holder
+   * is dead — but the heartbeat and release STILL verify the on-disk lock is
+   * ours before touching it (defense-in-depth: a crash-then-restart on a reused
+   * PID, or a misclassification, must never let a stale handle refresh or delete
+   * the NEW owner's live lock and re-open the concurrent-writer hole).
+   */
+  ownerToken?: string;
+}
+
+/** The on-disk lock identity, used to detect "we were reaped and replaced". */
+function tokenOf(lockData: { pid?: unknown; acquired_at?: unknown }): string {
+  return `${lockData.pid}:${lockData.acquired_at}`;
+}
+
+/**
+ * #2058: keep the held lock's `refreshed_at` current so a concurrent acquirer
+ * can tell a live, working holder from a hung/dead one. Best-effort: if the
+ * file is gone (we're being reaped) the write simply fails. `.unref()` so the
+ * timer never keeps the process alive on its own. Ownership-checked: if the
+ * on-disk lock is no longer ours (we were reaped past grace and replaced), stop
+ * the heartbeat instead of clobbering the new owner's lock.
+ */
+function startHeartbeat(lockPath: string, ownerToken: string): ReturnType<typeof setInterval> {
+  const timer = setInterval(() => {
+    try {
+      const raw = JSON.parse(readFileSync(lockPath, 'utf-8'));
+      if (tokenOf(raw) !== ownerToken) {
+        // We were reaped and someone else owns it now — do NOT refresh their
+        // lock. Stand down.
+        clearInterval(timer);
+        return;
+      }
+      raw.refreshed_at = Date.now();
+      writeFileSync(lockPath, JSON.stringify(raw), { mode: 0o644 });
+    } catch { /* best-effort — file removed or transient FS error */ }
+  }, HEARTBEAT_INTERVAL_MS);
+  (timer as { unref?: () => void }).unref?.();
+  return timer;
 }
 
 function getLockDir(dataDir: string | undefined): string {
@@ -43,6 +121,35 @@ function isProcessAlive(pid: number): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+function formatLockTimestamp(value: unknown): string {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? new Date(value).toISOString()
+    : 'unknown time';
+}
+
+function pgliteLockTimeoutError(lockDir: string): Error {
+  const lockPath = join(lockDir, LOCK_FILE);
+  try {
+    const lockData = JSON.parse(readFileSync(lockPath, 'utf-8'));
+    const pid = String(lockData.pid ?? 'unknown');
+    const command = String(lockData.command ?? 'unknown');
+    const serveHint = command.includes('gbrain serve')
+      ? ' The holder looks like `gbrain serve`, so this is probably serve↔sync contention from an MCP/HTTP server; stop that server/client and rerun the command.'
+      : '';
+
+    return new Error(
+      `GBrain: Timed out waiting for PGLite data-dir lock. Process ${pid} has held it since ${formatLockTimestamp(lockData.acquired_at)} (command: ${command}). ` +
+      `Lock directory: ${lockDir}. If that process is dead, remove the lock directory and try again. ` +
+      `This is a PGLite data-dir lock, not the \`gbrain-sync:*\` advisory lock; \`gbrain sync --break-lock\` will not clear a live PGLite holder.` +
+      serveHint,
+    );
+  } catch {
+    return new Error(
+      `GBrain: Timed out waiting for PGLite lock. Remove ${lockDir} and try again.`
+    );
   }
 }
 
@@ -73,22 +180,35 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
       try {
         const lockData = JSON.parse(readFileSync(lockPath, 'utf-8'));
         const lockPid = lockData.pid as number;
-        const lockTime = lockData.acquired_at as number;
 
-        // Is the locking process still alive?
-        if (!isProcessAlive(lockPid)) {
-          // Stale lock — clean it up
+        // #2348: classify ONLY by PID liveness. A live holder is NEVER reaped
+        // (stealing a live single-writer is what corrupted the catalog/extension
+        // state). A long synchronous import blocks the heartbeat, so "stale
+        // heartbeat" is NOT evidence of death — only a dead PID is.
+        const alive = isProcessAlive(lockPid);
+        if (!alive) {
+          // Holder process is gone — reap and try to acquire.
           try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* race condition, try again */ }
-        } else if (Date.now() - lockTime > STALE_THRESHOLD_MS) {
-          // Lock held for too long — assume stale (e.g., process hung)
-          // Still alive but probably stuck — force remove
-          try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* race condition */ }
         } else {
-          // Lock is held by a live process — wait and retry
+          if (isServeCommand(lockData)) {
+            throw new LiveServeLockError(
+              `GBrain's local database is already open through \`gbrain serve\` (MCP, PID ${lockPid}). ` +
+              `This brain uses PGLite, so a separate CLI process cannot open it at the same time. ` +
+              `Stop \`gbrain serve\`, then retry this CLI command. ` +
+              `Or keep it running and use its MCP tools instead. ` +
+              `A process with the recorded PID is still running, so GBrain will not remove ${lockDir} automatically.`,
+            );
+          }
+          // Other live holders may be short-lived, so wait and retry. If one is
+          // genuinely wedged (or its PID was reused), the acquire times out;
+          // we never force-steal a live holder.
           await new Promise(r => setTimeout(r, 1000));
           continue;
         }
-      } catch {
+      } catch (err) {
+        // A live MCP server is not a stale or corrupt lock. Surface the useful
+        // explanation without touching the lock it still owns.
+        if (err instanceof LiveServeLockError) throw err;
         // Corrupt lock file — remove it
         try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* race condition */ }
       }
@@ -97,48 +217,56 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
     // Try to acquire lock (atomic mkdir)
     try {
       mkdirSync(lockDir, { recursive: false });
-      // We got the lock — write our PID
+      // We got the lock — write our PID. #2058: seed `refreshed_at` and start
+      // the heartbeat so this holder reads as alive-and-working to others.
       const lockPath = join(lockDir, LOCK_FILE);
+      const now = Date.now();
       writeFileSync(lockPath, JSON.stringify({
         pid: process.pid,
-        acquired_at: Date.now(),
+        acquired_at: now,
+        refreshed_at: now,
         command: process.argv.slice(1).join(' '),
+        subcommand: parseGlobalFlags(process.argv.slice(2)).rest[0] ?? null,
       }), { mode: 0o644 });
 
-      return { lockDir, acquired: true };
+      const ownerToken = tokenOf({ pid: process.pid, acquired_at: now });
+      return { lockDir, acquired: true, lockPath, ownerToken, heartbeat: startHeartbeat(lockPath, ownerToken) };
     } catch (e: unknown) {
       // mkdir failed — someone else grabbed it between our check and mkdir
       // This is fine, we'll retry
       if (Date.now() - startTime >= timeoutMs) {
-        // Timeout — report which process holds the lock
-        const lockPath = join(lockDir, LOCK_FILE);
-        try {
-          const lockData = JSON.parse(readFileSync(lockPath, 'utf-8'));
-          throw new Error(
-            `GBrain: Timed out waiting for PGLite lock. Process ${lockData.pid} has held it since ${new Date(lockData.acquired_at).toISOString()} (command: ${lockData.command}). ` +
-            `If that process is dead, remove ${lockDir} and try again.`
-          );
-        } catch (readErr) {
-          if (readErr instanceof Error && readErr.message.startsWith('GBrain')) throw readErr;
-          throw new Error(
-            `GBrain: Timed out waiting for PGLite lock. Remove ${lockDir} and try again.`
-          );
-        }
+        throw pgliteLockTimeoutError(lockDir);
       }
       // Brief wait before retry
       await new Promise(r => setTimeout(r, 500));
     }
   }
 
-  // Should not reach here, but just in case
-  throw new Error(`GBrain: Timed out waiting for PGLite lock.`);
+  throw pgliteLockTimeoutError(lockDir);
 }
 
 /**
  * Release a previously acquired lock.
  */
 export async function releaseLock(lock: LockHandle): Promise<void> {
+  // #2058: stop the heartbeat first so it can't recreate/rewrite the lock file
+  // after we remove it.
+  if (lock.heartbeat) {
+    clearInterval(lock.heartbeat);
+    lock.heartbeat = undefined;
+  }
   if (!lock.lockDir || !lock.acquired) return;
+
+  // #2058 (codex): only remove the lock if it is STILL ours. If we were reaped
+  // past the grace and another process re-acquired, removing its live lock
+  // would let a third process in alongside it — the corruption this fix exists
+  // to prevent. Unreadable/absent lock falls through to a best-effort remove.
+  if (lock.ownerToken) {
+    try {
+      const raw = JSON.parse(readFileSync(join(lock.lockDir, LOCK_FILE), 'utf-8'));
+      if (tokenOf(raw) !== lock.ownerToken) return; // someone else owns it now
+    } catch { /* unreadable/gone — fall through to best-effort cleanup */ }
+  }
 
   try {
     rmSync(lock.lockDir, { recursive: true, force: true });

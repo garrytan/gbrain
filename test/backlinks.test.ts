@@ -4,6 +4,7 @@ import {
   extractPageTitle,
   hasBacklink,
   buildBacklinkEntry,
+  parseBacklinksArgs,
 } from '../src/commands/backlinks.ts';
 
 describe('extractEntityRefs', () => {
@@ -102,5 +103,28 @@ describe('findBacklinkGaps dedupe (v0.36.x #967 regression)', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('parseBacklinksArgs', () => {
+  test('uses positional dir for check and fix subcommands', () => {
+    expect(parseBacklinksArgs(['check', '/tmp/brain']).brainDir).toBe('/tmp/brain');
+    expect(parseBacklinksArgs(['fix', '/tmp/brain']).brainDir).toBe('/tmp/brain');
+  });
+
+  test('defaults to cwd when no dir given', () => {
+    expect(parseBacklinksArgs(['check']).brainDir).toBe('.');
+  });
+
+  test('--dir overrides positional dir and preserves dry-run', () => {
+    const parsed = parseBacklinksArgs(['fix', '/tmp/ignored', '--dir', '/tmp/brain', '--dry-run']);
+    expect(parsed.subcommand).toBe('fix');
+    expect(parsed.brainDir).toBe('/tmp/brain');
+    expect(parsed.dryRun).toBe(true);
+  });
+
+  test('--dir missing its value falls back to positional dir', () => {
+    expect(parseBacklinksArgs(['check', '/tmp/brain', '--dir']).brainDir).toBe('/tmp/brain');
+    expect(parseBacklinksArgs(['check', '--dir', '--dry-run']).brainDir).toBe('.');
   });
 });

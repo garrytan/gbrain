@@ -24,6 +24,25 @@
  *   low surrogate:  U+DC00..U+DFFF
  */
 
+/**
+ * Make a string well-formed UTF-16: replace any unpaired surrogate half (lone
+ * high U+D800–U+DBFF / lone low U+DC00–U+DFFF) with U+FFFD, preserving valid
+ * pairs untouched. A lone surrogate is rejected by Postgres inside a `::jsonb`
+ * cast and aborts the WHOLE batch (#2011 — `extract --stale` died at ~1,550
+ * pages because `excerpt()` raw-sliced a window boundary through an emoji); it
+ * also crashes some JSON transports (the brainstorm cross-prompt path).
+ *
+ * Uses the Bun/JSC built-in (ES2024). `isWellFormed()` is the cheap guard that
+ * avoids the `toWellFormed()` allocation when the string is already clean — the
+ * common case. Prefer this over hand-rolled surrogate regexes: the two-pass
+ * lookbehind regex mishandles CONSECUTIVE lone low surrogates
+ * (`"\uDE80\uDE80"` → `"�\uDE80"`, still malformed), whereas the built-in
+ * handles every case (`→ "��"`).
+ */
+export function ensureWellFormed(s: string): string {
+  return s.isWellFormed() ? s : s.toWellFormed();
+}
+
 function isHighSurrogate(code: number): boolean {
   return code >= 0xd800 && code <= 0xdbff;
 }

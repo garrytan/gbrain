@@ -390,3 +390,51 @@ describe('bundleManifestFromSkillpack — adapter', () => {
     expect(bundle.shared_deps).toEqual([]);
   });
 });
+
+describe('brain-resident fields (issue #2180)', () => {
+  test('accepts brain_resident:true + schema_pack', () => {
+    const result = validateSkillpackManifest({
+      ...VALID_MANIFEST,
+      brain_resident: true,
+      schema_pack: 'gbrain-base',
+    });
+    expect(result.brain_resident).toBe(true);
+    expect(result.schema_pack).toBe('gbrain-base');
+  });
+
+  test('both absent still valid (backward compatible)', () => {
+    const result = validateSkillpackManifest(VALID_MANIFEST);
+    expect(result.brain_resident).toBeUndefined();
+    expect(result.schema_pack).toBeUndefined();
+  });
+
+  test('rejects non-boolean brain_resident', () => {
+    try {
+      validateSkillpackManifest({ ...VALID_MANIFEST, brain_resident: 'yes' });
+      throw new Error('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(SkillpackManifestError);
+      expect((err as SkillpackManifestError).code).toBe('manifest_invalid_field');
+      expect((err as SkillpackManifestError).detail?.field).toBe('brain_resident');
+    }
+  });
+
+  test('rejects non-kebab schema_pack', () => {
+    try {
+      validateSkillpackManifest({ ...VALID_MANIFEST, schema_pack: 'Not Kebab' });
+      throw new Error('should have thrown');
+    } catch (err) {
+      expect((err as SkillpackManifestError).code).toBe('manifest_invalid_field');
+      expect((err as SkillpackManifestError).detail?.field).toBe('schema_pack');
+    }
+  });
+
+  test('forward-compat: unknown extra fields are tolerated', () => {
+    const result = validateSkillpackManifest({
+      ...VALID_MANIFEST,
+      brain_resident: true,
+      some_future_field: { nested: 1 },
+    });
+    expect(result.brain_resident).toBe(true);
+  });
+});

@@ -133,6 +133,20 @@ export const METRIC_GLOSSARY: Readonly<Record<string, Readonly<MetricGlossEntry>
     eli10: '99th percentile wall-clock time per search call. The latency that 1% of users see — long-tail experience, not the average.',
     range: '0..unbounded. Warm-cache hits should be <50ms; tokenmax with expansion can exceed 200ms due to the Haiku call.',
   }),
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Result-sizing metrics (v0.42.3.0 autocut)
+  // ────────────────────────────────────────────────────────────────────────
+  'autocut.signal': Object.freeze({
+    industry_term: 'Autocut signal',
+    eli10: "Which signal autocut used to size the result set. 'rerank' means it found a real score cliff in the cross-encoder rerank scores and cut there; 'none' means no trustworthy cliff (no reranker, <2 scored results, or the gap was too small) so it returned the full list.",
+    range: "'rerank' | 'none'. 'none' is not a failure — it means autocut declined to cut because the signal didn't justify it.",
+  }),
+  'autocut.gap_ratio': Object.freeze({
+    industry_term: 'Autocut gap ratio',
+    eli10: 'The size of the largest score drop autocut found, as a fraction of the top result\'s score. A gap of 0.40 means the score fell by 40% of the top score at the steepest point. Autocut cuts there only when this clears the sensitivity threshold (autocut_jump, default 0.20).',
+    range: '0..1, higher = a sharper cliff (more confident cut). Below the autocut_jump threshold → no cut.',
+  }),
 });
 
 /**
@@ -210,6 +224,7 @@ export function renderMetricGlossaryMarkdown(): string {
     ['Set-Similarity / Stability Metrics', ['jaccard@k', 'top1_stability']],
     ['Statistical-Significance Metrics', ['p_value', 'confidence_interval']],
     ['Operational / Cost Metrics', ['cache_hit_rate', 'avg_results', 'avg_tokens', 'cost_per_query_usd', 'p99_latency_ms']],
+    ['Result-Sizing Metrics', ['autocut.signal', 'autocut.gap_ratio']],
   ];
 
   for (const [groupTitle, metrics] of groups) {

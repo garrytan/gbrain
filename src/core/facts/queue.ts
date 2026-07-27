@@ -18,6 +18,8 @@
  * concurrency + dropping under load.
  */
 
+import { registerBackgroundWorkDrainer } from '../background-work.ts';
+
 export interface FactsQueueCounters {
   enqueued: number;
   completed: number;
@@ -253,3 +255,17 @@ export function getFactsQueue(opts?: FactsQueueOpts): FactsQueue {
 export function __resetFactsQueueForTests(): void {
   _singleton = null;
 }
+
+// v0.42.20.0 — register as a background-work sink (order 0 — drained FIRST so
+// its abort-path DB logIngest gets the freshest live-engine window). `abort` =
+// shutdown(): sets shuttingDown=true (pump short-circuits) + fires internalAbort
+// (the facts:absorb job forwards it to gateway.chat, cancelling a hung Haiku the
+// drain-only fix can't). Registry AWAITS the abort so logIngest settles against
+// a live engine before disconnect (#1762). `drainPending` itself stays
+// non-aborting — the abort is the registry's separate post-drain step.
+registerBackgroundWorkDrainer({
+  name: 'facts',
+  order: 0,
+  drain: (ms) => getFactsQueue().drainPending({ timeout: ms }).then((r) => ({ unfinished: r.unfinished })),
+  abort: () => getFactsQueue().shutdown(),
+});

@@ -152,16 +152,26 @@ export async function runPhaseAutoThink(
         client: opts.client,
         model: modelId,
       });
+      // #1698: an empty synthesis (no LLM available / malformed output / empty-JSON answer)
+      // must NOT count as complete or advance the cooldown — that is the same silent-success
+      // the CLI + MCP think paths now guard against. runThink sets synthesisOk=false; the
+      // empty page is never written, and persistSynthesis returns slug '' + the
+      // SYNTHESIS_EMPTY_NOT_PERSISTED warning. Mark these 'partial' so `anyComplete` below
+      // stays false on empty-only runs and the cooldown timestamp isn't advanced (so the
+      // next cycle retries) — and surface the warning instead of dropping it.
+      const emptySynthesis = result.synthesisOk === false;
+      const warnings = [...result.warnings];
       let slug: string | undefined;
       if (config.autoCommit) {
         const persisted = await persistSynthesis(engine, result);
-        slug = persisted.slug;
+        slug = persisted.slug || undefined;  // '' = persist-skip signal (#1698)
+        warnings.push(...persisted.warnings);
       }
       results.push({
         question: q,
-        status: 'complete',
+        status: emptySynthesis ? 'partial' : 'complete',
         slug,
-        warnings: result.warnings.length ? result.warnings : undefined,
+        warnings: warnings.length ? warnings : undefined,
       });
     } catch (e) {
       results.push({

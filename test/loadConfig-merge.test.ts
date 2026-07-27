@@ -9,12 +9,16 @@ import { loadConfigWithEngine, type GBrainConfig } from '../src/core/config.ts';
 
 interface FakeEngine {
   getConfig(key: string): Promise<string | null | undefined>;
+  listConfigKeys?(prefix: string): Promise<string[]>;
 }
 
 function makeEngine(map: Record<string, string | null | undefined>): FakeEngine {
   return {
     async getConfig(key: string) {
       return map[key];
+    },
+    async listConfigKeys(prefix: string) {
+      return Object.keys(map).filter(key => key.startsWith(prefix));
     },
   };
 }
@@ -90,6 +94,31 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
     expect(merged?.embedding_multimodal).toBe(true);
     // DB fills in for ocr
     expect(merged?.embedding_image_ocr).toBe(true);
+  });
+
+  test('DB provider_base_urls.<provider> fills the gateway base URL map', async () => {
+    const base: GBrainConfig = { engine: 'pglite' };
+    const engine = makeEngine({
+      'provider_base_urls.llama-server-reranker': 'http://127.0.0.1:8091/v1',
+    });
+    const merged = await loadConfigWithEngine(engine, base);
+    expect(merged?.provider_base_urls?.['llama-server-reranker']).toBe('http://127.0.0.1:8091/v1');
+  });
+
+  test('provider_base_urls merge is per-provider: file value wins and DB fills siblings', async () => {
+    const base: GBrainConfig = {
+      engine: 'pglite',
+      provider_base_urls: {
+        'llama-server-reranker': 'http://file.example/v1',
+      },
+    };
+    const engine = makeEngine({
+      'provider_base_urls.llama-server-reranker': 'http://db.example/v1',
+      'provider_base_urls.openrouter': 'http://openrouter.example/v1',
+    });
+    const merged = await loadConfigWithEngine(engine, base);
+    expect(merged?.provider_base_urls?.['llama-server-reranker']).toBe('http://file.example/v1');
+    expect(merged?.provider_base_urls?.openrouter).toBe('http://openrouter.example/v1');
   });
 
   test('engine.getConfig throwing is non-fatal — file/env config still returned', async () => {
@@ -178,7 +207,7 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
   // dream.* — adding env shadows is a separate PR (out of scope for the
   // fix wave). These tests pin that contract.
   describe('dream.* DB-plane merge (v0.41.2.1)', () => {
-    test('DB value fills in for all 5 dream.synthesize.* keys when base unset', async () => {
+    test('DB value fills in for dream.synthesize.* keys when base unset', async () => {
       const base: GBrainConfig = { engine: 'pglite' };
       const engine = makeEngine({
         'dream.synthesize.session_corpus_dir': '/tmp/sessions',
@@ -186,6 +215,8 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
         'dream.synthesize.verdict_model': 'anthropic:claude-haiku-4-5',
         'dream.synthesize.max_prompt_tokens': '180000',
         'dream.synthesize.max_chunks_per_transcript': '32',
+        'dream.synthesize.subagent_timeout_ms': '600000',
+        'dream.synthesize.subagent_wait_timeout_ms': '900000',
       });
       const merged = await loadConfigWithEngine(engine, base);
       expect(merged?.dream?.synthesize?.session_corpus_dir).toBe('/tmp/sessions');
@@ -193,6 +224,8 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
       expect(merged?.dream?.synthesize?.verdict_model).toBe('anthropic:claude-haiku-4-5');
       expect(merged?.dream?.synthesize?.max_prompt_tokens).toBe(180000);
       expect(merged?.dream?.synthesize?.max_chunks_per_transcript).toBe(32);
+      expect(merged?.dream?.synthesize?.subagent_timeout_ms).toBe(600000);
+      expect(merged?.dream?.synthesize?.subagent_wait_timeout_ms).toBe(900000);
     });
 
     test('DB value fills in for both dream.patterns.* keys when base unset', async () => {

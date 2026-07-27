@@ -339,15 +339,17 @@ describe('BATCH_AUDIT_SITES typed enum + isBatchAuditSite guard (D10c codex)', (
     // Pin the set so a future "cleanup" PR can't silently drop a site and
     // break audit-attribution for the corresponding caller.
     const expected = new Set([
-      'addLinksBatch', 'addTimelineEntriesBatch', 'upsertChunks',
+      'addLinksBatch', 'addTimelineEntriesBatch', 'addTakesBatch', 'upsertChunks',
       'extract.links_inc', 'extract.timeline_inc',
       'extract.links_fs', 'extract.timeline_fs',
       'extract.links_db', 'extract.timeline_db',
       'extract.by_mention',
+      'extract.stale',
       'mcp.put_page.autolink',
       'sync.import_file',
       'reindex.markdown', 'reindex.multimodal',
       'backfill.outer',
+      'minion-lock',
     ]);
     expect(new Set<string>([...BATCH_AUDIT_SITES])).toEqual(expected);
   });

@@ -54,6 +54,38 @@ export class InitScaffoldError extends Error {
 
 const NAME_RE = /^[a-z][a-z0-9-]{1,63}$/;
 
+/** A planned file write: absolute path + content. */
+export interface WritePlanEntry {
+  path: string;
+  content: string;
+}
+
+/**
+ * Apply a write plan with the refuse-overwrite contract shared by
+ * `runInitScaffold` and `runInitBrainPack`: existing files are skipped (never
+ * clobbered), missing parent dirs are created, and `dryRun` reports intent
+ * without touching disk. Returns the split of written vs skipped paths.
+ */
+export function applyWritePlan(
+  plan: WritePlanEntry[],
+  opts: { dryRun?: boolean } = {},
+): { written: string[]; skipped: string[] } {
+  const written: string[] = [];
+  const skipped: string[] = [];
+  for (const p of plan) {
+    if (existsSync(p.path)) {
+      skipped.push(p.path);
+      continue;
+    }
+    if (!opts.dryRun) {
+      mkdirSync(join(p.path, '..'), { recursive: true });
+      writeFileSync(p.path, p.content);
+    }
+    written.push(p.path);
+  }
+  return { written, skipped };
+}
+
 /** Build the cathedral scaffold tree. */
 export function runInitScaffold(opts: InitScaffoldOptions): InitScaffoldResult {
   if (!NAME_RE.test(opts.name)) {
@@ -247,20 +279,8 @@ export function runInitScaffold(opts: InitScaffoldOptions): InitScaffoldResult {
     });
   }
 
-  // Apply plan.
-  const written: string[] = [];
-  const skipped: string[] = [];
-  for (const p of plan) {
-    if (existsSync(p.path)) {
-      skipped.push(p.path);
-      continue;
-    }
-    if (!opts.dryRun) {
-      mkdirSync(join(p.path, '..'), { recursive: true });
-      writeFileSync(p.path, p.content);
-    }
-    written.push(p.path);
-  }
+  // Apply plan (shared refuse-overwrite contract).
+  const { written, skipped } = applyWritePlan(plan, { dryRun: opts.dryRun });
 
   return {
     targetDir: opts.targetDir,

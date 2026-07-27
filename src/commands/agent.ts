@@ -66,7 +66,9 @@ USAGE
 SUBMITTING
   gbrain agent run <prompt>
     --subagent-def <name>        Named plugin subagent (from GBRAIN_PLUGIN_PATH)
-    --model <id>                 Anthropic model id (defaults to sonnet)
+    --model <id>                 Model id as provider:model (default: subagent tier model,
+                                  anthropic:claude-sonnet-4-6). Non-Anthropic providers need
+                                  agent.use_gateway_loop enabled — see NOTES below.
     --max-turns <n>              Max assistant turns (default 20)
     --tools a,b,c                Subset of registered tool names (comma list)
     --timeout-ms <n>             Per-job wall-clock timeout
@@ -74,8 +76,12 @@ SUBMITTING
     --follow                     Tail status until terminal (default on TTY)
     --detach                     Submit + print job id, exit immediately
 
-  Flags after \`run\` up to the first unrecognized token are parsed; the
-  remainder is the prompt. Use \`--\` to explicitly terminate flag parsing.
+  Flags before the prompt are parsed normally. The no-value switches
+  --detach, --follow and --no-follow are ALSO recognized when they trail
+  the prompt, so \`gbrain agent run "do X" --detach\` detaches. Any other
+  --word is treated as prompt text (no error). Use \`--\` to end flag
+  parsing and pass the rest verbatim:
+    gbrain agent run -- "literally --detach this, with --flags"
 
 VIEWING
   gbrain agent logs <job_id>
@@ -83,9 +89,22 @@ VIEWING
     --since <spec>               ISO-8601 timestamp OR relative ("5m","1h","2d")
 
 NOTES
-  Submitting subagent jobs is trusted-only; MCP submitters receive
-  permission_denied. The worker needs ANTHROPIC_API_KEY set, or the
-  first LLM turn of a claimed job fails.
+  This CLI path is trusted-only. (Remote MCP callers reach subagents through
+  the scoped submit_agent operation, not through this command.)
+
+  By default the worker runs the legacy Anthropic-direct path, which needs an
+  Anthropic key — from ANTHROPIC_API_KEY or from anthropic_api_key in
+  ~/.gbrain/config.json — or the first LLM turn of a claimed job fails.
+
+  To run --model on a non-Anthropic provider, enable the provider-neutral
+  gateway loop first, then supply whatever credential that provider needs
+  (an API key for most; some recipes use OAuth or a local endpoint):
+    gbrain config set agent.use_gateway_loop true
+  Accepted values: true / 1 / yes / on.
+
+  The gateway loop needs a provider whose recipe supports chat WITH tool
+  calling — not every recipe under src/core/ai/recipes/ qualifies. A model
+  that cannot call tools is refused at job start with the reason named.
 `);
 }
 
@@ -102,31 +121,86 @@ interface RunFlags {
   detach: boolean;
 }
 
+/** No-value switches that may also trail the prompt and get hoisted out (#1738). */
+const BOOLEAN_TAIL_FLAGS = new Set(['--follow', '--no-follow', '--detach']);
+
+function applyBooleanFlag(flags: RunFlags, a: string): void {
+  if (a === '--follow') flags.follow = true;
+  else if (a === '--no-follow') flags.follow = false;
+  else { flags.detach = true; flags.follow = false; } // --detach
+}
+
+/** Read the value for a value-flag, rejecting a missing or flag-shaped value. */
+function requireFlagValue(args: string[], i: number, flag: string): string {
+  const v = args[i];
+  if (v === undefined || v.startsWith('--')) {
+    throw new Error(`gbrain agent run: ${flag} requires a value. Run \`gbrain agent run --help\`.`);
+  }
+  return v;
+}
+
+function parseIntFlagValue(v: string, flag: string): number {
+  const n = parseInt(v, 10);
+  if (Number.isNaN(n)) {
+    throw new Error(`gbrain agent run: ${flag} expects a number, got "${v}".`);
+  }
+  return n;
+}
+
+/**
+ * Parse `agent run` args into flags + prompt (#1738).
+ *
+ *   args ──► [ leading flag zone ] [ ── ? ] [ prompt … (trailing booleans) ]
+ *
+ * Leading zone: known flags (value + boolean) are consumed left-to-right until
+ * the first positional token, an UNKNOWN --flag, or an explicit `--`. An
+ * unknown --flag is NOT an error — it begins the freeform prompt, so
+ * `agent run "--note: do X"` works without `--`. Value-flags missing their
+ * value throw a usage error instead of silently capturing `undefined`/`NaN`.
+ *
+ * Prompt zone: a trailing run of the no-value switches (--detach/--follow/
+ * --no-follow) is hoisted out so `agent run "do X" --detach` detaches. Only
+ * trailing switches are hoisted; a `--word` elsewhere in the prompt stays
+ * verbatim. After an explicit `--`, nothing is hoisted.
+ */
 function parseRunFlags(args: string[]): { flags: RunFlags; rest: string[] } {
   const flags: RunFlags = {
     follow: process.stdout.isTTY === true,
     detach: false,
   };
   let i = 0;
-  while (i < args.length) {
-    const a = args[i];
-    if (a === '--') { i++; break; }
-    if (!isKnownFlag(a!)) break;
+  let escaped = false;
+  for (; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === '--') { i++; escaped = true; break; }
+    if (!a.startsWith('--')) break;
+    let known = true;
     switch (a) {
-      case '--subagent-def': flags.subagentDef = args[++i]; i++; break;
-      case '--model':        flags.model = args[++i]; i++; break;
-      case '--max-turns':    flags.maxTurns = parseInt(args[++i] ?? '', 10); i++; break;
-      case '--tools':        flags.tools = (args[++i] ?? '').split(',').map(s => s.trim()).filter(Boolean); i++; break;
-      case '--timeout-ms':   flags.timeoutMs = parseInt(args[++i] ?? '', 10); i++; break;
-      case '--fanout-manifest': flags.fanoutManifest = args[++i]; i++; break;
-      case '--follow':       flags.follow = true; i++; break;
-      case '--no-follow':    flags.follow = false; i++; break;
-      case '--detach':       flags.detach = true; flags.follow = false; i++; break;
-      default:
-        throw new Error(`unknown flag: ${a}. Run \`gbrain agent run --help\` for usage.`);
+      case '--subagent-def':    flags.subagentDef = requireFlagValue(args, ++i, a); break;
+      case '--model':           flags.model = requireFlagValue(args, ++i, a); break;
+      case '--max-turns':       flags.maxTurns = parseIntFlagValue(requireFlagValue(args, ++i, a), a); break;
+      case '--tools':           flags.tools = requireFlagValue(args, ++i, a).split(',').map(s => s.trim()).filter(Boolean); break;
+      case '--timeout-ms':      flags.timeoutMs = parseIntFlagValue(requireFlagValue(args, ++i, a), a); break;
+      case '--fanout-manifest': flags.fanoutManifest = requireFlagValue(args, ++i, a); break;
+      case '--follow':          flags.follow = true; break;
+      case '--no-follow':       flags.follow = false; break;
+      case '--detach':          flags.detach = true; flags.follow = false; break;
+      default:                  known = false; break;
+    }
+    if (!known) break; // unknown --flag → first token of the (freeform) prompt
+  }
+  const rest = args.slice(i);
+  // An explicit `--` terminates flag parsing wherever it appears — leading
+  // zone (escaped) OR after a positional (the leading loop breaks before it,
+  // so `escaped` stays false). Honor both: when the prompt carries a literal
+  // `--`, hoist nothing, so `agent run note -- --detach` keeps `--detach`
+  // verbatim instead of silently flipping detach mode.
+  if (!escaped && !rest.includes('--')) {
+    while (rest.length > 0 && BOOLEAN_TAIL_FLAGS.has(rest[rest.length - 1]!)) {
+      applyBooleanFlag(flags, rest.pop()!);
     }
   }
-  return { flags, rest: args.slice(i) };
+  return { flags, rest };
 }
 
 export async function runAgentRun(engine: BrainEngine, args: string[]): Promise<void> {
@@ -251,7 +325,7 @@ async function runFanout(engine: BrainEngine, queue: MinionQueue, flags: RunFlag
   // do this after submission because each add() returns the committed
   // row's id; the aggregator's seed started with an empty array.
   await engine.executeRaw(
-    `UPDATE minion_jobs SET data = jsonb_set(data, '{children_ids}', $1::jsonb) WHERE id = $2`,
+    `UPDATE minion_jobs SET data = jsonb_set(data, '{children_ids}', $1::text::jsonb) WHERE id = $2`,
     [JSON.stringify(childIds), aggregator.id],
   );
 

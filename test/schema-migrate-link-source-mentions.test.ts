@@ -97,19 +97,21 @@ describe('fresh-init brain (post-migration v95) accepts link_source=mentions', (
     expect(rows.some(r => r.link_source === 'mentions')).toBe(true);
   });
 
-  test('CHECK still rejects an unknown source value (widening did not nullify the gate)', async () => {
+  test('CHECK still rejects a malformed source value (gate not nullified)', async () => {
     const slugA = `bad-source-a-${Math.random().toString(36).slice(2, 8)}`;
     const slugB = `bad-source-b-${Math.random().toString(36).slice(2, 8)}`;
     await engine.putPage(slugA, { type: 'note', title: 'A', compiled_truth: 'a', timeline: '', frontmatter: {} });
     await engine.putPage(slugB, { type: 'person', title: 'B', compiled_truth: 'b', timeline: '', frontmatter: {} });
-    // 'inferred' is NOT in allow-list ∪ {'mentions'} — must reject.
+    // v114 (#1941): the closed allowlist became a kebab-case regex, so a once-
+    // illegal-but-kebab value like 'inferred' is now ACCEPTED. The gate still
+    // bites on MALFORMED values — 'Inferred_X' has an uppercase + underscore.
     await expect(
       engine.addLinksBatch([
         {
           from_slug: slugA,
           to_slug: slugB,
           link_type: 'mentions',
-          link_source: 'inferred' as any,
+          link_source: 'Inferred_X' as any,
           context: 'should reject',
         },
       ]),

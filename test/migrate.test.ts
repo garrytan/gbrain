@@ -736,26 +736,46 @@ describe('migrate v66 — embed_stale_partial_index (D6)', () => {
     expect(v66!.sql).toBe('');
   });
 
-  test('v66 handler source: CONCURRENTLY + invalid-index cleanup on Postgres branch', async () => {
+  test('v66 handler source delegates invalid-remnant cleanup to the shared helper (#1178)', async () => {
     const { readFileSync } = await import('fs');
     const src = readFileSync('src/core/migrate.ts', 'utf-8');
     const v66Start = src.indexOf("name: 'embed_stale_partial_index'");
     expect(v66Start).toBeGreaterThan(-1);
     const v66Block = src.slice(v66Start, v66Start + 3000);
-    expect(v66Block).toContain('pg_index');
-    expect(v66Block).toContain('indisvalid');
-    expect(v66Block).toContain('DROP INDEX CONCURRENTLY IF EXISTS idx_chunks_embedding_null');
+    // #1178: `DO $$ BEGIN ... EXECUTE 'DROP INDEX CONCURRENTLY ...'; END $$;`
+    // is rejected by Postgres whenever the guard condition actually fires
+    // (CONCURRENTLY can't run from any function/EXECUTE context). The fix
+    // moves the probe + drop to the dropInvalidConcurrentIndex() helper
+    // (defined above MIGRATIONS, tested directly in
+    // test/e2e/migration-drop-invalid-concurrent-index.test.ts) — the
+    // migration body just calls it.
+    expect(v66Block).toContain("dropInvalidConcurrentIndex(engine, 66, 'idx_chunks_embedding_null')");
     expect(v66Block).toContain('CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chunks_embedding_null');
+    expect(v66Block).not.toMatch(/EXECUTE\s+'DROP INDEX CONCURRENTLY/);
     // Partial index predicate must match the production query in
     // postgres-engine.ts / pglite-engine.ts: `WHERE embedding IS NULL`.
     expect(v66Block).toContain('WHERE embedding IS NULL');
-    // DROP IF EXISTS must precede CREATE IF NOT EXISTS so a failed prior
+    // The cleanup call must precede CREATE IF NOT EXISTS so a failed prior
     // CONCURRENTLY build is cleaned before re-create.
-    const dropIdx = v66Block.indexOf('DROP INDEX CONCURRENTLY IF EXISTS');
+    const dropIdx = v66Block.indexOf('dropInvalidConcurrentIndex');
     const createIdx = v66Block.indexOf('CREATE INDEX CONCURRENTLY IF NOT EXISTS');
     expect(dropIdx).toBeLessThan(createIdx);
     // Branches on engine.kind (handler-pattern from v14).
     expect(v66Block).toContain('engine.kind');
+  });
+
+  test('dropInvalidConcurrentIndex helper itself probes pg_index.indisvalid and issues a standalone DROP (no DO block)', async () => {
+    const { readFileSync } = await import('fs');
+    const src = readFileSync('src/core/migrate.ts', 'utf-8');
+    const helperStart = src.indexOf('async function dropInvalidConcurrentIndex');
+    expect(helperStart).toBeGreaterThan(-1);
+    const helperBlock = src.slice(helperStart, helperStart + 1200);
+    expect(helperBlock).toContain('pg_index');
+    expect(helperBlock).toContain('indisvalid');
+    expect(helperBlock).toContain('executeRaw');
+    expect(helperBlock).toContain('DROP INDEX CONCURRENTLY IF EXISTS');
+    expect(helperBlock).not.toContain('DO $$');
+    expect(helperBlock).not.toContain('EXECUTE ');
   });
 
   test('v66 idempotent flag is true (re-run safety)', () => {
@@ -2139,3 +2159,107 @@ describe('migrate v89 — round-trip on PGLite', () => {
   });
 });
 
+// v0.42.7 (#1696): pages_links_extracted_at watermark migration.
+describe('v112 — pages_links_extracted_at', () => {
+  let engine: PGLiteEngine;
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  }, 60_000);
+  afterAll(async () => { if (engine) await engine.disconnect(); }, 60_000);
+
+  test('v112 entry exists with the documented name + transaction:false + handler', () => {
+    const m = MIGRATIONS.find(x => x.version === 112);
+    expect(m).toBeDefined();
+    expect(m!.name).toBe('pages_links_extracted_at');
+    expect(m!.transaction).toBe(false);
+    expect(typeof m!.handler).toBe('function');
+  });
+
+  test('LATEST_VERSION is at or above 112', () => {
+    expect(LATEST_VERSION).toBeGreaterThanOrEqual(112);
+  });
+
+  test('links_extracted_at column exists after initSchema, nullable, TIMESTAMPTZ', async () => {
+    const rows = await engine.executeRaw<{ is_nullable: string; data_type: string }>(
+      `SELECT is_nullable, data_type FROM information_schema.columns
+        WHERE table_name = 'pages' AND column_name = 'links_extracted_at'`, [],
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].is_nullable).toBe('YES');
+    expect(rows[0].data_type.toLowerCase()).toContain('timestamp');
+  });
+
+  test('composite index pages_links_extracted_at_idx exists after initSchema', async () => {
+    const rows = await engine.executeRaw<{ indexname: string }>(
+      `SELECT indexname FROM pg_indexes WHERE tablename = 'pages' AND indexname = 'pages_links_extracted_at_idx'`, [],
+    );
+    expect(rows.length).toBe(1);
+  });
+});
+
+
+// v0.43 (#2095): context_volunteer_events — push-based-context feedback log.
+describe('v117 — context_volunteer_events_table', () => {
+  let engine: PGLiteEngine;
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  }, 60_000);
+  afterAll(async () => { if (engine) await engine.disconnect(); }, 60_000);
+
+  test('v117 entry exists, named + idempotent', () => {
+    const m = MIGRATIONS.find(x => x.version === 117);
+    expect(m).toBeDefined();
+    expect(m!.name).toBe('context_volunteer_events_table');
+    expect(m!.idempotent).toBe(true);
+  });
+
+  test('LATEST_VERSION is at or above 117', () => {
+    expect(LATEST_VERSION).toBeGreaterThanOrEqual(117);
+  });
+
+  test('table exists after initSchema with the documented columns', async () => {
+    const rows = await engine.executeRaw<{ column_name: string; is_nullable: string }>(
+      `SELECT column_name, is_nullable FROM information_schema.columns
+        WHERE table_name = 'context_volunteer_events' ORDER BY ordinal_position`, [],
+    );
+    const byName = new Map(rows.map(r => [r.column_name, r.is_nullable]));
+    for (const required of ['source_id', 'slug', 'confidence', 'match_arm', 'rationale', 'channel', 'volunteered_at']) {
+      expect(byName.get(required)).toBe('NO');
+    }
+    // Caller-supplied attribution columns are nullable by contract (codex D9).
+    expect(byName.get('session_id')).toBe('YES');
+    expect(byName.get('turn')).toBe('YES');
+  });
+
+  test('both source-scoped indexes exist after initSchema', async () => {
+    const rows = await engine.executeRaw<{ indexname: string }>(
+      `SELECT indexname FROM pg_indexes WHERE tablename = 'context_volunteer_events'`, [],
+    );
+    const names = rows.map(r => r.indexname);
+    expect(names).toContain('context_volunteer_events_src_time_idx');
+    expect(names).toContain('context_volunteer_events_src_slug_idx');
+  });
+
+  test('insert + 90-day purge round-trip (purgeStaleVolunteerEvents)', async () => {
+    const { insertVolunteerEvents, purgeStaleVolunteerEvents } = await import('../src/core/context/volunteer-events.ts');
+    await insertVolunteerEvents(engine, [
+      { source_id: 'default', slug: 'people/alice-example', confidence: 0.9, match_arm: 'alias', rationale: 'alias match', channel: 'op' },
+      { source_id: 'default', slug: 'projects/acme-example', confidence: 0.8, match_arm: 'title', rationale: 'exact title', channel: 'reflex', session_id: 's1', turn: 3 },
+    ]);
+    // Age one row past the TTL, leave the other fresh.
+    await engine.executeRaw(
+      `UPDATE context_volunteer_events SET volunteered_at = now() - interval '120 days'
+        WHERE slug = 'projects/acme-example'`, [],
+    );
+    const purged = await purgeStaleVolunteerEvents(engine, 90);
+    expect(purged).toBe(1);
+    const left = await engine.executeRaw<{ slug: string }>(
+      `SELECT slug FROM context_volunteer_events`, [],
+    );
+    expect(left.map(r => r.slug)).toEqual(['people/alice-example']);
+  });
+});

@@ -63,6 +63,16 @@ export interface RemediationOpts {
   resumePlanHash?: string;
   /** Whether to attempt resume at all (default false). */
   resume?: boolean;
+  /**
+   * Caller-supplied RemediationStep entries threaded into the planner.
+   * Mirrors RemediationPlanOpts.extraRemediations so onboard's --apply
+   * --auto path (and MCP run_onboard auto modes) forward the same
+   * onboard-check remediations the --check path already passes through
+   * computeRemediationPlan. Without this the runner saw only generic
+   * brain_score remediations and reported "Nothing to do" whenever the
+   * only applicable work was an extra (e.g. extract-ner).
+   */
+  extraRemediations?: RemediationStep[];
 }
 
 /**

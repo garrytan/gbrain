@@ -31,7 +31,11 @@ describe('phantom-redirect lock contract', () => {
   test('IRON-RULE: acquireLockWithRetry call passes syncLockId(sourceId)', () => {
     // Banned: the bare `SYNC_LOCK_ID` constant slipped back in.
     // Required: the per-source helper threaded with the active sourceId.
-    expect(SRC).toMatch(/acquireLockWithRetry\s*\(\s*engine\s*,\s*syncLockId\s*\(\s*sourceId\s*\)\s*\)/);
+    // #1972: the call now threads an optional abort signal as a third arg
+    // (acquireLockWithRetry(engine, syncLockId(sourceId), signal)). The IRON-RULE
+    // is unchanged: it must pass the per-source syncLockId(sourceId), never bare
+    // SYNC_LOCK_ID. Allow the optional trailing signal arg.
+    expect(SRC).toMatch(/acquireLockWithRetry\s*\(\s*engine\s*,\s*syncLockId\s*\(\s*sourceId\s*\)\s*(?:,\s*signal\s*)?\)/);
     expect(SRC).not.toMatch(/acquireLockWithRetry\s*\(\s*engine\s*,\s*SYNC_LOCK_ID\s*\)/);
   });
 

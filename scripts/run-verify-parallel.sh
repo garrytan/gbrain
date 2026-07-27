@@ -38,6 +38,7 @@ CHECKS=(
   "check:proposal-pii"
   "check:test-names"
   "check:jsonb"
+  "check:search-path"
   "check:source-id-projection"
   "check:source-config-leak"
   "check:progress"
@@ -55,6 +56,7 @@ CHECKS=(
   "check:operations-filter-bypass"
   "check:gateway-routed"
   "check:worker-pool-atomicity"
+  "check:doc-history"
   "check:fixture-privacy"
   "check:conversation-parser"
   "check:resolver"
@@ -124,6 +126,7 @@ for c in "${CHECKS[@]}"; do
   (
     if [ -n "$TIMEOUT_BIN" ]; then
       "$TIMEOUT_BIN" "${TIMEOUT}s" bun run "$c" > "$LOG_FILE" 2>&1
+      rc=$?
     else
       bun run "$c" > "$LOG_FILE" 2>&1 &
       pid=$!
@@ -131,10 +134,20 @@ for c in "${CHECKS[@]}"; do
         sleep 5 && kill -KILL "$pid" 2>/dev/null ) &
       cap_pid=$!
       wait "$pid" 2>/dev/null
+      # Capture the check's exit code from ITS `wait`, before any watchdog
+      # teardown runs. The teardown commands below overwrite $? — the killed
+      # watchdog reports 143 — which used to get stamped into every sentinel
+      # on machines with no gtimeout/timeout: verify reported pass=0
+      # fail=<all> while every per-check log said OK.
+      rc=$?
+      # Reap the watchdog's `sleep` child too (pkill -P), then the watchdog.
+      # Killing only the subshell leaves the sleep orphaned until $TIMEOUT
+      # elapses — same quirk the heartbeat cleanup in run-unit-parallel.sh
+      # works around; CI's orphan-process sweep flags those.
+      pkill -P "$cap_pid" 2>/dev/null
       kill "$cap_pid" 2>/dev/null
       wait "$cap_pid" 2>/dev/null
     fi
-    rc=$?
     echo "$rc" > "$EXIT_FILE"
   ) &
   PIDS+=($!)

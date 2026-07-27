@@ -5,3 +5,4 @@
 {"intent":"Find patterns across my notes and group them into clusters","expected_skill":"concept-synthesis"}
 {"intent":"Build my intellectual map — what's canon vs riff","expected_skill":"concept-synthesis"}
 {"intent":"Trace idea evolution across years of my reflections","expected_skill":"concept-synthesis"}
+{"intent":"Trace idea evolution across years of my reflections and cluster the themes","expected_skill":"concept-synthesis"}

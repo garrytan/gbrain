@@ -35,6 +35,8 @@ interface ParsedFlags {
   dryRun: boolean;
   noMutate: boolean;
   allowMutateBundled: boolean;
+  /** F11: optional held-out test set path. REQUIRED (non-empty) to mutate a bundled skill. */
+  heldOutPath?: string;
   json: boolean;
   maxCostUsd: number;
   maxRuntimeMin: number;
@@ -193,6 +195,7 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
         noMutate: parsed.noMutate,
         allowMutateBundled: parsed.allowMutateBundled,
         bootstrapReviewed: parsed.bootstrapReviewed,
+        ...(parsed.heldOutPath ? { heldOutPath: parsed.heldOutPath } : {}),
         maxCostUsd: parsed.maxCostUsd,
         maxRuntimeMin: parsed.maxRuntimeMin,
         force: parsed.force,
@@ -246,6 +249,7 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
           dry_run: parsed.dryRun,
           no_mutate: parsed.noMutate,
           allow_mutate_bundled: parsed.allowMutateBundled,
+          ...(parsed.heldOutPath ? { held_out_path: parsed.heldOutPath } : {}),
           bootstrap_reviewed: parsed.bootstrapReviewed,
           max_cost_usd: parsed.maxCostUsd,
           max_runtime_min: parsed.maxRuntimeMin,
@@ -289,6 +293,7 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
     dryRun: parsed.dryRun,
     noMutate: parsed.noMutate,
     allowMutateBundled: parsed.allowMutateBundled,
+    ...(parsed.heldOutPath ? { heldOutPath: parsed.heldOutPath } : {}),
     bootstrapReviewed: parsed.bootstrapReviewed,
     json: parsed.json,
     maxCostUsd: parsed.maxCostUsd,
@@ -345,6 +350,7 @@ export function parseFlags(args: string[]): ParsedFlags {
   let dryRun = false;
   let noMutate = false;
   let allowMutateBundled = false;
+  let heldOutPath: string | undefined;
   let json = false;
   let maxCostUsd = 5.0;
   let maxRuntimeMin = 30;
@@ -390,6 +396,7 @@ export function parseFlags(args: string[]): ParsedFlags {
     if (a === '--dry-run') { dryRun = true; i += 1; continue; }
     if (a === '--no-mutate') { noMutate = true; i += 1; continue; }
     if (a === '--allow-mutate-bundled') { allowMutateBundled = true; i += 1; continue; }
+    if (a === '--held-out') { heldOutPath = args[++i]; i += 1; continue; }
     if (a === '--json') { json = true; i += 1; continue; }
     if (a === '--max-cost-usd') { maxCostUsd = mustFloat(args[++i], '--max-cost-usd'); i += 1; continue; }
     if (a === '--max-runtime-min') { maxRuntimeMin = mustInt(args[++i], '--max-runtime-min'); i += 1; continue; }
@@ -466,6 +473,7 @@ export function parseFlags(args: string[]): ParsedFlags {
     dryRun,
     noMutate,
     allowMutateBundled,
+    ...(heldOutPath !== undefined ? { heldOutPath } : {}),
     json,
     maxCostUsd,
     maxRuntimeMin,

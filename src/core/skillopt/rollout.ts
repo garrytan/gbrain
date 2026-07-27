@@ -18,6 +18,7 @@
 
 import { chat as gatewayChat, toolLoop, type ChatMessage, type ChatToolDef, type ToolHandler } from '../ai/gateway.ts';
 import { BRAIN_TOOL_ALLOWLIST } from '../minions/tools/brain-allowlist.ts';
+import { paramDefToSchema } from '../../mcp/tool-defs.ts';
 import { operations, type OperationContext } from '../operations.ts';
 import { loadConfig } from '../config.ts';
 import type { BrainEngine } from '../engine.ts';
@@ -207,12 +208,21 @@ function stripBrainPrefix(toolName: string): string {
   return toolName.startsWith('brain_') ? toolName.slice('brain_'.length) : toolName;
 }
 
-function paramsToSchema(params: Record<string, { type: string; description?: string; required?: boolean }>): Record<string, unknown> {
+/**
+ * Build a valid JSON Schema for a tool's params via the shared `paramDefToSchema`
+ * (the single source of truth, also used by the stdio MCP + subagent registries).
+ * The prior inline mapper dropped `items` on array params, producing an invalid
+ * `{type:'array'}` that AI SDK v6's tool-schema validation rejects — every real
+ * rollout crashed before this. Recursive on items/enum/default per param.
+ */
+function paramsToSchema(params: Record<string, unknown>): Record<string, unknown> {
   return {
     type: 'object' as const,
     properties: Object.fromEntries(
-      Object.entries(params).map(([k, v]) => [k, { type: v.type, description: v.description }]),
+      Object.entries(params).map(([k, v]) => [k, paramDefToSchema(v as never)]),
     ),
-    required: Object.entries(params).filter(([, v]) => v.required).map(([k]) => k),
+    required: Object.entries(params)
+      .filter(([, v]) => (v as { required?: boolean }).required === true)
+      .map(([k]) => k),
   };
 }

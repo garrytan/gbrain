@@ -6,9 +6,10 @@
  * degrades to gather-only output with a warning if missing.
  */
 import type { BrainEngine } from '../core/engine.ts';
-import { runThink, persistSynthesis } from '../core/think/index.ts';
+import { runThink, persistSynthesis, stripGapsSection } from '../core/think/index.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
+import { canonicalLookup } from '../core/model-pricing.ts';
 
 function flagValue(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -20,6 +21,27 @@ function flagPresent(args: string[], name: string): boolean {
   return args.includes(name);
 }
 
+/**
+ * think's own cost was previously unsurfaced anywhere: not in this CLI's own
+ * `--json` output, not in `budget_ledger`, and invisible to a wrapping
+ * caller's own token accounting (the LLM call `think` makes is its own,
+ * separate API call). Returns undefined when `usage` is absent (no-client/
+ * stub paths, or a remote-MCP call that didn't forward it) or when the
+ * resolved model has no entry in the canonical pricing table.
+ */
+export function computeThinkCostUsd(
+  usage: { input_tokens: number; output_tokens: number } | undefined,
+  modelUsed: string,
+): number | undefined {
+  if (!usage) return undefined;
+  const pricing = canonicalLookup(modelUsed);
+  if (!pricing) return undefined;
+  return Number(
+    ((usage.input_tokens / 1_000_000) * pricing.input
+      + (usage.output_tokens / 1_000_000) * pricing.output).toFixed(4),
+  );
+}
+
 export async function runThinkCli(engine: BrainEngine, args: string[]): Promise<void> {
   if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
     console.log(`Usage: gbrain think "<question>" [options]
@@ -29,17 +51,23 @@ Options:
   --rounds N               Multi-pass synthesis (default 1; gap-driven loop ships in v0.29)
   --save                   Persist a synthesis page under synthesis/<slug>-<date>.md
   --take                   Append a take row to the anchor page (requires --anchor)
-  --model <name>           Override the model (alias or full id)
+  --model <name>           Override the model: provider:model (preferred) or
+                           provider/model or a bare alias. An explicit --model that
+                           can't be resolved is a hard error (exit 1) — never a
+                           silent no-LLM degrade.
   --since YYYY-MM-DD       Start of temporal window
   --until YYYY-MM-DD       End of temporal window
   --json                   Output as JSON
   --help                   Show this help
 
 Without --save, the synthesis is printed to stdout and discarded. With --save,
-the synthesis page is persisted AND printed.
+the synthesis page is persisted AND printed. If --save is given but no synthesis
+was produced (no LLM available, or empty result), nothing is saved and the command
+exits non-zero.
 
-Set ANTHROPIC_API_KEY in the environment to run real synthesis. Without it,
-the gather phase still runs and prints what would have been the input.
+Set ANTHROPIC_API_KEY (or run: gbrain config set anthropic_api_key ...) to run
+real synthesis. Without it AND without --save, the gather phase still runs and
+prints what would have been the input (exit 0).
 `);
     return;
   }
@@ -102,27 +130,53 @@ the gather phase still runs and prints what would have been the input.
     }, { timeoutMs: 180_000 });
     result = unpackToolResult<any>(raw);
   } else {
-    result = await runThink(engine, {
-      question, anchor, rounds, save, take, model, since, until,
-      // v0.36.1.0 (E1) — opt-in anti-bias rewrite. Falls back to baseline
-      // think when no profile exists, with NO_CALIBRATION_PROFILE warning.
-      withCalibration,
-      ...(calibrationHolder ? { calibrationHolder } : {}),
-      // Local CLI: no MCP allow-list filter — operator owns the brain.
-    });
+    try {
+      result = await runThink(engine, {
+        question, anchor, rounds, save, take, model, since, until,
+        // #1698: explicit --model → hard error on an unresolvable model (no silent
+        // degrade to the no-LLM stub). Omitting --model keeps the graceful default path.
+        modelExplicit: !!model,
+        // v0.36.1.0 (E1) — opt-in anti-bias rewrite. Falls back to baseline
+        // think when no profile exists, with NO_CALIBRATION_PROFILE warning.
+        withCalibration,
+        ...(calibrationHolder ? { calibrationHolder } : {}),
+        // Local CLI: no MCP allow-list filter — operator owns the brain.
+      });
 
-    // Persist if --save (the runThink path doesn't auto-persist; CLI does it explicitly)
-    if (save) {
-      const persisted = await persistSynthesis(engine, result);
-      savedSlug = persisted.slug;
-      evidenceInserted = persisted.evidenceInserted;
-      for (const w of persisted.warnings) result.warnings.push(w);
+      // Persist if --save (the runThink path doesn't auto-persist; CLI does it explicitly)
+      if (save) {
+        const persisted = await persistSynthesis(engine, result);
+        savedSlug = persisted.slug || undefined;  // '' = persist-skip signal (#10)
+        evidenceInserted = persisted.evidenceInserted;
+        for (const w of persisted.warnings) result.warnings.push(w);
+        // #1698 (F2): --save requested but no synthesis was produced (no LLM, empty,
+        // or malformed) → exit non-zero. Saving nothing with exit 0 when the user
+        // explicitly asked to save is itself a silent failure.
+        if (!persisted.slug) {
+          console.error(
+            'think: --save requested but no synthesis was produced (no LLM available ' +
+            'or empty result) — nothing saved.',
+          );
+          process.exit(1);
+        }
+      }
+    } catch (e) {
+      // #1698: an unresolvable explicit --model throws here. Clean non-zero exit
+      // with the actionable message, not a stack trace.
+      console.error((e as Error).message);
+      process.exit(1);
     }
   }
+
+  const costUsd = computeThinkCostUsd(
+    (result as { usage?: { input_tokens: number; output_tokens: number } }).usage,
+    result.modelUsed,
+  );
 
   if (json) {
     console.log(JSON.stringify({
       ...result,
+      cost_usd: costUsd ?? null,
       saved_slug: savedSlug ?? null,
       evidence_inserted: evidenceInserted,
     }, null, 2));
@@ -131,7 +185,7 @@ the gather phase still runs and prints what would have been the input.
 
   // Human-readable output
   console.log(`# ${question}\n`);
-  console.log(result.answer);
+  console.log(stripGapsSection(result.answer));
   console.log('');
   if (result.gaps.length > 0) {
     console.log('## Gaps');
@@ -139,7 +193,8 @@ the gather phase still runs and prints what would have been the input.
     console.log('');
   }
   console.log('---');
-  console.log(`Model: ${result.modelUsed} | Pages: ${result.pagesGathered} | Takes: ${result.takesGathered} | Graph: ${result.graphHits} | Citations: ${result.citations.length}`);
+  const costSuffix = costUsd !== undefined ? ` | Cost: $${costUsd.toFixed(4)}` : '';
+  console.log(`Model: ${result.modelUsed} | Pages: ${result.pagesGathered} | Takes: ${result.takesGathered} | Graph: ${result.graphHits} | Citations: ${result.citations.length}${costSuffix}`);
   if (savedSlug) {
     console.log(`Saved: ${savedSlug} (${evidenceInserted} evidence rows)`);
   }

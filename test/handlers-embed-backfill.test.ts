@@ -48,6 +48,7 @@ function fakeJob(data: Record<string, unknown>): MinionJobContext {
     data,
     attempts_made: 0,
     signal: controller.signal,
+    deadlineAtMs: null,
     shutdownSignal: controller.signal,
     updateProgress: async () => {},
     updateTokens: async () => {},

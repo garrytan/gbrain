@@ -114,9 +114,9 @@ export async function applyReranker(
       seen.add(r.index);
       const item = head[r.index]!;
       // Stamp the reranker score onto the result so downstream callers
-      // (telemetry, debug) can see the new ordering signal. Doesn't
+      // (telemetry, debug, autocut) can see the new ordering signal. Doesn't
       // replace `score` — that's RRF and other consumers may depend on it.
-      (item as any).rerank_score = r.relevanceScore;
+      item.rerank_score = r.relevanceScore;
       // v0.40.4 attribution stamp (D12=A) — rank delta. Positive means
       // rank improved (moved closer to top). new_index is the next
       // push position in reorderedHead; original index was r.index.

@@ -257,7 +257,9 @@ function buildChapterPrompt(
 
   return `You are analyzing one chapter of "${bookTitle}"${authorLine} for the user.
 
-Your output is a markdown two-column table where the LEFT column preserves the chapter's actual content (stories, frameworks, statistics, named examples) and the RIGHT column maps each idea to the user's actual life using their words, situations, and patterns from the brain.
+Your output is a two-column HTML table where the LEFT column preserves the chapter's actual content (stories, frameworks, statistics, named examples) and the RIGHT column maps each idea to the user's actual life using their words, situations, and patterns from the brain.
+
+CRITICAL: Use an HTML <table> with valign="top" on EVERY cell — NOT a markdown pipe table. Markdown pipe tables have no way to set vertical alignment, so every renderer except GitHub middle-aligns the rows, which is unreadable when the two columns have different lengths. The HTML <table valign="top"> form top-aligns everywhere (GitHub, PDF, Obsidian).
 
 This is chapter ${chapter.index} of ${totalChapters}.
 
@@ -276,11 +278,12 @@ Return ONLY a single markdown section in this exact shape:
 ### Key Ideas
 [2-4 sentence thesis of the chapter — what the author is actually arguing.]
 
-| What the Author Says | How This Applies to You |
-|---|---|
-| [Detailed paragraph: a section/argument from the chapter, preserving stories, stats, frameworks, named examples. Use \`<br><br>\` for paragraph breaks within the cell.] | [Specific personal connection: name dates, people, exact quotes from the user, real situations. Same \`<br><br>\` for breaks.] |
-| [Next section] | [Next mirror] |
-| [4-10 rows depending on chapter density] |  |
+<table>
+  <tr><th align="left">What the Author Says</th><th align="left">How This Applies to You</th></tr>
+  <tr><td valign="top">[Detailed paragraph: a section/argument from the chapter, preserving stories, stats, frameworks, named examples. Use \`<br><br>\` for paragraph breaks within the cell.]</td><td valign="top">[Specific personal connection: name dates, people, exact quotes from the user, real situations. Same \`<br><br>\` for breaks.]</td></tr>
+  <tr><td valign="top">[Next section]</td><td valign="top">[Next mirror]</td></tr>
+  [4-10 rows depending on chapter density]
+</table>
 \`\`\`
 
 ## RULES
@@ -290,6 +293,7 @@ Return ONLY a single markdown section in this exact shape:
 - 4-10 rows per chapter. If a section honestly doesn't apply, write \`*This section is less directly relevant because [specific reason].*\` Don't force connections.
 - Never generic ("This might apply if you've ever felt..."). Never sycophantic. Never preach.
 - Use \`<br><br>\` for paragraph breaks inside table cells, not literal newlines.
+- EVERY <td> MUST carry valign="top". Never emit a markdown pipe table (| ... | ... |) — always the HTML <table> form above.
 
 You have ${DEFAULT_MAX_TURNS} turns and read-only tools (get_page, search). You CANNOT call put_page — your output is the markdown text in your final message. The CLI assembles all chapters and writes the brain page.
 
@@ -314,7 +318,7 @@ title: "${opts.title} — Personalized"
 type: book-analysis${authorLine}
 date: ${today}
 context: "${contextSummary.replace(/"/g, '\\"')}"
-tags: [book, personalized, two-column]
+tags: [book, personalized, two-column-htmltable-valign-top]
 ---`;
 
   const intro = `# ${opts.title} — Personalized

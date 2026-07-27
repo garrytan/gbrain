@@ -254,4 +254,34 @@ describe('performSync re-clone branch (driven by sync.ts:320 logic)', () => {
       expect(recloned).toBe(true);
     });
   });
+
+  // #1881: the sync branch must NOT re-clone over an unowned user working tree.
+  test('unowned local_path (remote_url, no marker): refuses, working tree survives', async () => {
+    await withEnv({ GBRAIN_HOME, PATH: fakePath() }, async () => {
+      // Federated row shape created by the gstack orchestrator: remote_url set,
+      // local_path = a live user tree OUTSIDE the clone root, no managed_clone.
+      const userTree = join(FAKE_GIT_DIR, 'sync-user-tree');
+      rmSync(userTree, { recursive: true, force: true });
+      mkdirSync(userTree, { recursive: true });
+      const sentinel = join(userTree, 'KEEP_ME.txt');
+      writeFileSync(sentinel, 'live repo');
+
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, local_path, config)
+           VALUES ('sync-unowned', 'flutter', $1,
+                   '{"remote_url":"https://github.com/example/repo","federated":true}'::jsonb)`,
+        [userTree],
+      );
+
+      // no-git → the sync branch would historically call recloneIfMissing →
+      // rm the tree. Now it must throw unmanaged_path and leave the tree intact.
+      const state = validateRepoState(userTree, 'https://github.com/example/repo');
+      expect(state).toBe('no-git');
+      await expect(recloneIfMissing(engine, 'sync-unowned')).rejects.toThrow(
+        /unmanaged_path|not a clone gbrain created/,
+      );
+      expect(existsSync(userTree)).toBe(true);
+      expect(existsSync(sentinel)).toBe(true);
+    });
+  });
 });

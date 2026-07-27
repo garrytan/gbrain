@@ -89,13 +89,15 @@ describe('embed.ts → worker-pool migration (T3)', () => {
     expect(callSites?.length ?? 0).toBeGreaterThanOrEqual(2);
   });
 
-  test('embedAllStale path still threads budgetSignal into pool', () => {
-    // The pre-migration code checked `!budgetSignal.aborted` in the
-    // worker loop. The migration moves that check into the helper via
-    // the `signal` option. If a future refactor drops the signal, the
-    // wall-clock budget cancellation regresses.
+  test('embedAllStale path still threads the cancellation signal into pool', () => {
+    // The pre-migration code checked `!budgetSignal.aborted` in the worker
+    // loop. The migration moves that check into the helper via the `signal`
+    // option. #1737 then composed the wall-clock budget with the caller's
+    // abort into `effectiveSignal` (anySignal(budgetSignal, externalSignal)) so
+    // a killed job stops the pool too. If a future refactor drops the signal,
+    // both wall-clock budget AND cooperative abort cancellation regress.
     expect(EMBED_SOURCE).toMatch(
-      /runSlidingPool\(\s*\{[\s\S]*?signal:\s*budgetSignal[\s\S]*?\}\)/,
+      /runSlidingPool\(\s*\{[\s\S]*?signal:\s*effectiveSignal[\s\S]*?\}\)/,
     );
   });
 

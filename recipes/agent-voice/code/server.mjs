@@ -124,12 +124,21 @@ async function handleSession(req, res) {
 
   const url = new URL(req.url, `http://${req.headers.host}`);
   const persona = (url.searchParams.get('persona') || DEFAULT_PERSONA).toLowerCase();
+  // #1851: a call link minted from a Telegram topic carries topicId (+ an
+  // optional display topicName). The id is the ONLY topic data we accept over
+  // the wire — buildSystemPrompt resolves the recent-conversation context from
+  // the brain server-side. We never accept topic CONTENT as a param (that would
+  // be prompt injection + a leak into URLs/referrers/access logs).
+  const topicId = url.searchParams.get('topicId') || undefined;
+  const topicName = url.searchParams.get('topicName') || undefined;
 
   // Build the persona-aware system prompt at session start.
   const systemPrompt = await buildSystemPrompt({
     persona,
     brainRoot: process.env.BRAIN_ROOT,
     timezone: process.env.TIMEZONE,
+    topicId,
+    topicName,
   });
 
   // Session config for OpenAI Realtime /v1/realtime/calls.

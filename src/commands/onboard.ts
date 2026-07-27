@@ -45,6 +45,13 @@ export async function runOnboard(engine: BrainEngine, args: string[]): Promise<v
   // No-op without a pack_upgrade_available finding.
   const explain = args.includes('--explain');
   const targetScore = parseInt10(args, '--target-score') ?? 90;
+  // v0.42.42.0 (#2139): `--max-usd off`/`unlimited`/`none` → run uncapped. maxUsd
+  // stays undefined, which runRemediation already treats as no ceiling (skips the
+  // est-cost refusal + BudgetTracker runs uncapped); `maxUsdOff` lifts the
+  // missing-cap refusal below. Spend is still ledgered.
+  const maxUsdIdx = args.indexOf('--max-usd');
+  const maxUsdVal = maxUsdIdx >= 0 ? (args[maxUsdIdx + 1] ?? '').trim().toLowerCase() : '';
+  const maxUsdOff = ['off', 'unlimited', 'none'].includes(maxUsdVal);
   const maxUsdRaw = parseFloat10(args, '--max-usd');
   const maxUsd = maxUsdRaw === null ? undefined : maxUsdRaw;
 
@@ -91,13 +98,23 @@ export async function runOnboard(engine: BrainEngine, args: string[]): Promise<v
   }
 
   // --auto refuses without --max-usd (cron-safety per A12 + A20).
+  // v0.42.42.0 (#2139, D15A): spend.posture=tokenmax lifts the refusal —
+  // --auto runs UNCAPPED (maxUsd stays undefined), spend still ledgered by the
+  // remediation budget tracker. An explicit --max-usd always wins.
   if (auto && maxUsd === undefined) {
-    process.stderr.write(
-      `gbrain onboard --auto refuses without --max-usd N.\n` +
-      `Set a cap to avoid surprise spend:\n` +
-      `  gbrain onboard --auto --max-usd 5\n`,
-    );
-    process.exit(2);
+    const { resolveSpendPosture } = await import('../core/spend-posture.ts');
+    const tokenmax = (await resolveSpendPosture(engine)) === 'tokenmax';
+    if (maxUsdOff || tokenmax) {
+      process.stderr.write(`${maxUsdOff ? '--max-usd off' : 'spend.posture=tokenmax'}: onboard --auto running uncapped, spend ledgered. docs: docs/operations/spend-controls.md\n`);
+    } else {
+      process.stderr.write(
+        `gbrain onboard --auto refuses without --max-usd N.\n` +
+        `Set a cap to avoid surprise spend:\n` +
+        `  gbrain onboard --auto --max-usd 5\n` +
+        `Or pass --max-usd off / set spend.posture=tokenmax to run uncapped. docs: docs/operations/spend-controls.md\n`,
+      );
+      process.exit(2);
+    }
   }
 
   // Build the plan: T4 checks supply extra remediations on top of T3's
@@ -125,12 +142,16 @@ export async function runOnboard(engine: BrainEngine, args: string[]): Promise<v
 
   // --auto path: runs through the T2 library orchestrator. Hooks emit CLI
   // progress to stderr; the final result lands as JSON on stdout (or human
-  // summary).
+  // summary). extraRemediations (gathered above from runAllOnboardChecks)
+  // is threaded into the runner so the onboard-check remediations
+  // (extract-ner, extract-timeline-from-meetings, etc.) reach the planner
+  // — the same wiring the --check path uses above.
   const result = await runRemediation(
     engine,
     {
       targetScore,
       maxUsd,
+      extraRemediations,
       // --auto --yes opts into the prompt_required tier too; library
       // doesn't distinguish auto_apply vs prompt_required, it just runs
       // every remediation in the plan. The plan-building side (T12 render)

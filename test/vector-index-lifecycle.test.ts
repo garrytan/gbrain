@@ -3,6 +3,8 @@ import {
   chunkEmbeddingIndexSql,
   applyChunkEmbeddingIndexPolicy,
   PGVECTOR_HNSW_VECTOR_MAX_DIMS,
+  PGVECTOR_HNSW_HALFVEC_MAX_DIMS,
+  hnswIndexExpected,
   checkActiveBuild,
   dropZombieIndexes,
   dropAndRebuild,
@@ -29,6 +31,15 @@ describe('chunkEmbeddingIndexSql — pre-v0.30.1 contract', () => {
     expect(at).toContain('CREATE INDEX');
     const above = chunkEmbeddingIndexSql(PGVECTOR_HNSW_VECTOR_MAX_DIMS + 1);
     expect(above).toContain('skipped');
+  });
+});
+
+describe('hnswIndexExpected', () => {
+  test('matches pgvector caps for vector and halfvec columns', () => {
+    expect(hnswIndexExpected('vector', PGVECTOR_HNSW_VECTOR_MAX_DIMS)).toBe(true);
+    expect(hnswIndexExpected('vector', PGVECTOR_HNSW_VECTOR_MAX_DIMS + 1)).toBe(false);
+    expect(hnswIndexExpected('halfvec', PGVECTOR_HNSW_HALFVEC_MAX_DIMS)).toBe(true);
+    expect(hnswIndexExpected('halfvec', PGVECTOR_HNSW_HALFVEC_MAX_DIMS + 1)).toBe(false);
   });
 });
 

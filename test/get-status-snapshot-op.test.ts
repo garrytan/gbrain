@@ -64,6 +64,8 @@ describe('get_status_snapshot handler shape', () => {
     expect(result.schema_version).toBe(1);
     expect(result).toHaveProperty('sync');
     expect(result).toHaveProperty('cycle');
+    // #1984: the op now also reports the brain server's version (thin-client parity).
+    expect(typeof result.version).toBe('string');
     expect(result).not.toHaveProperty('locks');
     expect(result).not.toHaveProperty('workers');
     expect(result).not.toHaveProperty('queue');

@@ -22,6 +22,7 @@
  */
 
 import type { BrainEngine } from '../core/engine.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { MARKDOWN_CHUNKER_VERSION } from '../core/chunkers/recursive.ts';
 import { importFromContent, importFromFile } from '../core/import-file.ts';
 import { serializeMarkdown } from '../core/markdown.ts';
@@ -150,7 +151,7 @@ export async function runReindex(engine: BrainEngine, args: string[]): Promise<R
     } else {
       process.stderr.write('Usage: gbrain reindex --markdown [--limit N] [--dry-run] [--json] [--repo PATH]\n');
     }
-    process.exitCode = 2;
+    setCliExitVerdict(2);
     return { pending: 0, reindexed: 0, skipped: 0, failed: 0, dryRun: !!opts.dryRun, chunkerVersion: MARKDOWN_CHUNKER_VERSION };
   }
 

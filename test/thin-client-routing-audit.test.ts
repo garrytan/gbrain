@@ -127,3 +127,49 @@ describe('thin-client routing audit — v0.32 ROUTE additions wire callRemoteToo
     expect(src).toContain(`callRemoteTool(cfg!, 'get_job'`);
   });
 });
+
+describe('thin-client routing audit — scratch-DB additions (jobs partial dispatch + config refusal)', () => {
+  // `jobs list|get` route over MCP but the CLI shell still connected a
+  // local engine first, fabricating an empty scratch PGLite in the
+  // thin-client GBRAIN_HOME and replaying the full migration chain on
+  // every invocation. `config` did the same with no remote path at all.
+
+  test('cli.ts dispatches thin-client jobs list/get engine-free (runJobs(null, ...))', () => {
+    expect(CLI_SOURCE).toMatch(/command === 'jobs'/);
+    expect(CLI_SOURCE).toMatch(/runJobs\(null, args\)/);
+  });
+
+  test('cli.ts refuses non-routable jobs subcommands on thin clients via refuseThinClient', () => {
+    const dispatchStart = CLI_SOURCE.indexOf("if (command === 'jobs') {");
+    expect(dispatchStart).toBeGreaterThan(-1);
+    const dispatchBlock = CLI_SOURCE.slice(dispatchStart, dispatchStart + 900);
+    expect(dispatchBlock).toContain('isThinClient');
+    expect(dispatchBlock).toContain("refuseThinClient('jobs'");
+  });
+
+  test("'config' is in THIN_CLIENT_REFUSED_COMMANDS with a hint", () => {
+    const setStart = CLI_SOURCE.indexOf('const THIN_CLIENT_REFUSED_COMMANDS = new Set([');
+    const setEnd = CLI_SOURCE.indexOf(']);', setStart);
+    expect(CLI_SOURCE.slice(setStart, setEnd)).toContain("'config'");
+    const hintsStart = CLI_SOURCE.indexOf(
+      'const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {',
+    );
+    const hintsEnd = CLI_SOURCE.indexOf('};', hintsStart);
+    expect(/\bconfig\s*:/.test(CLI_SOURCE.slice(hintsStart, hintsEnd))).toBe(true);
+  });
+
+  test("'jobs' is NOT in THIN_CLIENT_REFUSED_COMMANDS (partial dispatch owns it)", () => {
+    const setStart = CLI_SOURCE.indexOf('const THIN_CLIENT_REFUSED_COMMANDS = new Set([');
+    const setEnd = CLI_SOURCE.indexOf(']);', setStart);
+    expect(CLI_SOURCE.slice(setStart, setEnd)).not.toContain("'jobs'");
+  });
+
+  test('jobs.ts guards the null-engine path to list/get only', () => {
+    const src = readFileSync(
+      join(import.meta.dir, '..', 'src', 'commands', 'jobs.ts'),
+      'utf8',
+    );
+    expect(src).toContain('engineOrNull: BrainEngine | null');
+    expect(src).toMatch(/if \(!engineOrNull && sub !== 'list' && sub !== 'get'\)/);
+  });
+});

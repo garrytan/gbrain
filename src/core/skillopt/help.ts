@@ -40,7 +40,10 @@ Modes:
   --rewrite                     Allow full rewrites of sections
   --dry-run                     Plan + cost estimate, no LLM calls
   --no-mutate                   Write proposed.md without replacing SKILL.md
-  --allow-mutate-bundled        Required when target skill is bundled
+  --allow-mutate-bundled        Required to mutate a bundled skill in place.
+                                ALSO requires --held-out (>=5 rows); without it
+                                the run hard-refuses (exit 2). Drop this flag to
+                                get proposed.md for review instead.
   --json                        Machine-readable stdout
 
 Safety:
@@ -60,12 +63,11 @@ Batch + fleet + background:
                                 skills/<name>/skillopt/fleet/<slug>/
   --background                  Submit as a Minion job + print job_id; exits.
                                 Combine with --follow to attach.
-  --write-capture               Enable virtual put_page / submit_job /
-                                file_upload for write-flavored skills (no
-                                real writes — captured for judge inspection)
-  --held-out <path>             Independent held-out test set; gate refuses
-                                mutation if candidate's held-out score is
-                                below baseline.
+  --held-out <path>             Independent held-out test set (JSONL, same shape
+                                as the benchmark). The held-out gate refuses to
+                                promote a candidate whose held-out score is below
+                                baseline (benchmark-gaming defense). REQUIRED
+                                (>=5 rows) to mutate a bundled skill in place.
 
 Exit codes:
   0 = improved + accepted (or --no-mutate proposed.md written)
@@ -87,8 +89,9 @@ Examples:
   # Dry-run cost preview:
   gbrain skillopt meeting-prep --dry-run
 
-  # Optimize a bundled skill with explicit opt-in:
-  gbrain skillopt brain-ops --allow-mutate-bundled
+  # Optimize a bundled skill in place (requires an independent held-out set):
+  gbrain skillopt brain-ops --allow-mutate-bundled --held-out skills/brain-ops/held-out.jsonl
+  # ...or omit --allow-mutate-bundled to get proposed.md for manual review (no held-out needed).
 
   # Resume after interruption:
   gbrain skillopt meeting-prep --resume <run-id>

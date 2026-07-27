@@ -28,6 +28,15 @@ export interface ExtractTimelineFromMeetingsResult {
   entries_created: number;
   /** Distinct entity pages that received at least one new timeline entry. */
   entities_touched: number;
+  /**
+   * #2057: batches that failed to insert. Previously swallowed by a bare
+   * `catch {}`, which let a brain-wide timeline-write failure read as a clean
+   * "0 entries" run. Non-zero here means inserts are failing — surfaced on
+   * stderr too.
+   */
+  batch_errors: number;
+  /** First batch-insert error message, when batch_errors > 0. */
+  first_batch_error?: string;
 }
 
 interface MeetingRow {
@@ -71,7 +80,7 @@ export async function extractTimelineFromMeetings(
   );
 
   if (meetings.length === 0) {
-    return { meetings_scanned: 0, entries_created: 0, entities_touched: 0 };
+    return { meetings_scanned: 0, entries_created: 0, entities_touched: 0, batch_errors: 0 };
   }
 
   // 2. Fetch all 'attended' edges (one round-trip, scoped to the loaded
@@ -106,14 +115,23 @@ export async function extractTimelineFromMeetings(
   let entriesCreated = 0;
   const entitiesTouched = new Set<string>();
   let meetingsScanned = 0;
+  let batchErrors = 0;
+  let firstBatchError: string | undefined;
 
   async function flush() {
     if (batch.length === 0) return;
     if (!dryRun) {
       try {
         entriesCreated += await engine.addTimelineEntriesBatch(batch);
-      } catch {
-        // batch error — drop; per-meeting progress continues
+      } catch (e) {
+        // #2057: do NOT swallow. A bare `catch {}` here hid a brain-wide
+        // timeline-write failure (the run reported 0 entries with no error).
+        // Count + surface it on stderr; the per-meeting loop still continues so
+        // one bad batch isn't fatal to the rest.
+        batchErrors += 1;
+        const msg = e instanceof Error ? e.message : String(e);
+        if (!firstBatchError) firstBatchError = msg;
+        console.error(`[extract timeline] batch insert failed (${batch.length} row(s)): ${msg}`);
       }
     } else {
       entriesCreated += batch.length;
@@ -182,5 +200,7 @@ export async function extractTimelineFromMeetings(
     meetings_scanned: meetingsScanned,
     entries_created: entriesCreated,
     entities_touched: entitiesTouched.size,
+    batch_errors: batchErrors,
+    first_batch_error: firstBatchError,
   };
 }

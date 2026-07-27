@@ -1,5 +1,7 @@
 import type { BrainEngine } from './engine.ts';
 import { slugifyPath } from './sync.ts';
+import { getFtsLanguage } from './fts-language.ts';
+import { hnswMaxDimsForType } from './vector-index.ts';
 
 /**
  * Schema migrations — run automatically on initSchema().
@@ -108,6 +110,43 @@ export class MigrationRetryExhausted extends Error {
   }
 }
 
+/**
+ * Postgres-only: drops `indexName` iff it currently exists AND is invalid — the
+ * leftover of a `CREATE INDEX CONCURRENTLY` that failed partway through. Callers
+ * MUST already be inside an `engine.kind === 'postgres'` branch (PGLite has no
+ * concurrent-build invalid-index concept and no `pg_index` catalog in the same
+ * shape) and MUST run this before their own `CREATE INDEX CONCURRENTLY IF NOT
+ * EXISTS`, since a stale invalid entry blocks the create from ever landing.
+ *
+ * Deliberately does NOT wrap the drop in `DO $$ ... EXECUTE '...' END $$`
+ * (#1178): Postgres rejects `CONCURRENTLY` from any function/EXECUTE context —
+ * the guard condition works, but the EXECUTE that follows always throws
+ * "DROP INDEX CONCURRENTLY cannot be executed from a function". The validity
+ * probe runs as a plain application-level SELECT instead, and the DROP (when
+ * needed) runs as its own top-level `runMigration` call.
+ */
+async function dropInvalidConcurrentIndex(
+  engine: BrainEngine,
+  version: number,
+  indexName: string,
+): Promise<boolean> {
+  // to_regclass() resolves the unqualified name through search_path — the same
+  // resolution the unqualified DROP below relies on — instead of matching
+  // pg_class.relname bare, which could hit a same-named index in a different
+  // schema on a non-default search_path (codex review, #1178).
+  const rows = await engine.executeRaw<{ invalid: boolean }>(
+    `SELECT NOT i.indisvalid AS invalid
+       FROM pg_index i
+      WHERE i.indexrelid = to_regclass($1)`,
+    [indexName],
+  );
+  const isInvalid = rows.some((r) => r.invalid);
+  if (isInvalid) {
+    await engine.runMigration(version, `DROP INDEX CONCURRENTLY IF EXISTS ${indexName};`);
+  }
+  return isInvalid;
+}
+
 // Migrations are embedded here, not loaded from files.
 // Add new migrations at the end. Never modify existing ones.
 // Exported for tests that structurally assert migration contents (e.g., "v9 must
@@ -134,7 +173,10 @@ export const MIGRATIONS: Migration[] = [
           }
         }
       }
-      if (renamed > 0) console.log(`  Renamed ${renamed} slugs`);
+      // Migration progress goes to stderr — stdout must stay clean for
+      // callers parsing JSON (e.g. `gbrain doctor --json | jq`); migrations
+      // can run lazily inside ANY command's first DB connect.
+      if (renamed > 0) process.stderr.write(`  Renamed ${renamed} slugs\n`);
     },
   },
   {
@@ -862,7 +904,7 @@ export const MIGRATIONS: Migration[] = [
       DECLARE
         has_bypass BOOLEAN;
       BEGIN
-        SELECT rolbypassrls INTO has_bypass FROM pg_roles WHERE rolname = current_user;
+        SELECT EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) INTO has_bypass; -- #1385: superuser + inherited-role BYPASSRLS, not just the role's own rolbypassrls
         IF NOT has_bypass THEN
           -- Fail the migration loudly instead of WARNING + version-bump.
           -- The runner unconditionally records schema_version on success,
@@ -1151,7 +1193,7 @@ export const MIGRATIONS: Migration[] = [
         DECLARE
           has_bypass BOOLEAN;
         BEGIN
-          SELECT rolbypassrls INTO has_bypass FROM pg_roles WHERE rolname = current_user;
+          SELECT EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) INTO has_bypass; -- #1385: superuser + inherited-role BYPASSRLS, not just the role's own rolbypassrls
           IF NOT has_bypass THEN
             RAISE EXCEPTION 'v29 cathedral_ii_code_edges_rls: role % does not have BYPASSRLS privilege — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role). The migration will retry automatically on the next initSchema call.', current_user;
           END IF;
@@ -1239,7 +1281,7 @@ export const MIGRATIONS: Migration[] = [
       DECLARE
         has_bypass BOOLEAN;
       BEGIN
-        SELECT rolbypassrls INTO has_bypass FROM pg_roles WHERE rolname = current_user;
+        SELECT EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) INTO has_bypass; -- #1385: superuser + inherited-role BYPASSRLS, not just the role's own rolbypassrls
         IF has_bypass THEN
           ALTER TABLE takes              ENABLE ROW LEVEL SECURITY;
           ALTER TABLE synthesis_evidence ENABLE ROW LEVEL SECURITY;
@@ -1341,7 +1383,7 @@ export const MIGRATIONS: Migration[] = [
       DECLARE
         has_bypass BOOLEAN;
       BEGIN
-        SELECT rolbypassrls INTO has_bypass FROM pg_roles WHERE rolname = current_user;
+        SELECT EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) INTO has_bypass; -- #1385: superuser + inherited-role BYPASSRLS, not just the role's own rolbypassrls
         IF has_bypass THEN
           ALTER TABLE dream_verdicts ENABLE ROW LEVEL SECURITY;
         END IF;
@@ -1380,7 +1422,7 @@ export const MIGRATIONS: Migration[] = [
         DECLARE
           has_bypass BOOLEAN;
         BEGIN
-          SELECT rolbypassrls INTO has_bypass FROM pg_roles WHERE rolname = current_user;
+          SELECT EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) INTO has_bypass; -- #1385: superuser + inherited-role BYPASSRLS, not just the role's own rolbypassrls
           IF NOT has_bypass THEN
             RAISE EXCEPTION 'v31 eval_capture_tables: role % does not have BYPASSRLS privilege — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role). The migration will retry automatically on the next initSchema call.', current_user;
           END IF;
@@ -1499,7 +1541,7 @@ export const MIGRATIONS: Migration[] = [
       DECLARE
         has_bypass BOOLEAN;
       BEGIN
-        SELECT rolbypassrls INTO has_bypass FROM pg_roles WHERE rolname = current_user;
+        SELECT EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) INTO has_bypass; -- #1385: superuser + inherited-role BYPASSRLS, not just the role's own rolbypassrls
         IF has_bypass THEN
           ALTER TABLE oauth_clients ENABLE ROW LEVEL SECURITY;
           ALTER TABLE oauth_tokens ENABLE ROW LEVEL SECURITY;
@@ -1720,7 +1762,7 @@ export const MIGRATIONS: Migration[] = [
           has_bypass BOOLEAN;
           r record;
         BEGIN
-          SELECT rolbypassrls INTO has_bypass FROM pg_roles WHERE rolname = current_user;
+          SELECT EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) INTO has_bypass; -- #1385: superuser + inherited-role BYPASSRLS, not just the role's own rolbypassrls
           IF NOT has_bypass THEN
             -- Same posture as v24: raise to abort the migration so the runner
             -- leaves config.version unbumped and retries on the next call.
@@ -2112,7 +2154,7 @@ export const MIGRATIONS: Migration[] = [
       DECLARE
         has_bypass BOOLEAN;
       BEGIN
-        SELECT rolbypassrls INTO has_bypass FROM pg_roles WHERE rolname = current_user;
+        SELECT EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) INTO has_bypass; -- #1385: superuser + inherited-role BYPASSRLS, not just the role's own rolbypassrls
         IF has_bypass THEN
           ALTER TABLE drift_decisions ENABLE ROW LEVEL SECURITY;
         END IF;
@@ -2272,11 +2314,19 @@ export const MIGRATIONS: Migration[] = [
         useHalfvec = true;
       }
 
-      const vecType = useHalfvec ? 'HALFVEC' : 'VECTOR';
+      const columnType = useHalfvec ? 'halfvec' : 'vector';
+      const vecType = columnType.toUpperCase();
       // HNSW operator class must match the column type:
       //   VECTOR(n)  → vector_cosine_ops
       //   HALFVEC(n) → halfvec_cosine_ops
       const opclass = useHalfvec ? 'halfvec_cosine_ops' : 'vector_cosine_ops';
+      const hnswMaxDims = hnswMaxDimsForType(columnType);
+      const factsEmbeddingIndexSql = embeddingDim <= hnswMaxDims
+        ? `CREATE INDEX IF NOT EXISTS idx_facts_embedding_hnsw
+          ON facts USING hnsw (embedding ${opclass})
+          WHERE embedding IS NOT NULL AND expired_at IS NULL;`
+        : `-- idx_facts_embedding_hnsw skipped: pgvector HNSW ${columnType} indexes support
+        -- at most ${hnswMaxDims} dimensions; exact vector scans remain available.`;
       // FK to sources is added in a separate ALTER TABLE rather than inline
       // on the column. Inline `REFERENCES` worked on PGLite but silently
       // got dropped by postgres.js's `unsafe()` multi-statement path on
@@ -2350,9 +2400,7 @@ export const MIGRATIONS: Migration[] = [
           ON facts(source_id, entity_slug)
           WHERE consolidated_at IS NULL AND expired_at IS NULL;
 
-        CREATE INDEX IF NOT EXISTS idx_facts_embedding_hnsw
-          ON facts USING hnsw (embedding ${opclass})
-          WHERE embedding IS NOT NULL AND expired_at IS NULL;
+        ${factsEmbeddingIndexSql}
       `;
 
       await engine.runMigration(40, factsDDL);
@@ -2365,7 +2413,7 @@ export const MIGRATIONS: Migration[] = [
           DECLARE
             has_bypass BOOLEAN;
           BEGIN
-            SELECT rolbypassrls INTO has_bypass FROM pg_roles WHERE rolname = current_user;
+            SELECT EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) INTO has_bypass; -- #1385: superuser + inherited-role BYPASSRLS, not just the role's own rolbypassrls
             IF has_bypass THEN
               ALTER TABLE facts ENABLE ROW LEVEL SECURITY;
             END IF;
@@ -2866,8 +2914,16 @@ export const MIGRATIONS: Migration[] = [
         useHalfvec = true;
       }
 
-      const vecType = useHalfvec ? 'HALFVEC' : 'VECTOR';
+      const columnType = useHalfvec ? 'halfvec' : 'vector';
+      const vecType = columnType.toUpperCase();
       const opclass = useHalfvec ? 'halfvec_cosine_ops' : 'vector_cosine_ops';
+      const hnswMaxDims = hnswMaxDimsForType(columnType);
+      const queryCacheEmbeddingIndexSql = embeddingDim <= hnswMaxDims
+        ? `CREATE INDEX IF NOT EXISTS idx_query_cache_embedding_hnsw
+          ON query_cache USING hnsw (embedding ${opclass})
+          WHERE embedding IS NOT NULL;`
+        : `-- idx_query_cache_embedding_hnsw skipped: pgvector HNSW ${columnType} indexes support
+        -- at most ${hnswMaxDims} dimensions; exact vector scans remain available.`;
 
       const ddl = `
         CREATE TABLE IF NOT EXISTS query_cache (
@@ -2886,9 +2942,7 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_query_cache_source_created
           ON query_cache(source_id, created_at DESC);
 
-        CREATE INDEX IF NOT EXISTS idx_query_cache_embedding_hnsw
-          ON query_cache USING hnsw (embedding ${opclass})
-          WHERE embedding IS NOT NULL;
+        ${queryCacheEmbeddingIndexSql}
       `;
 
       await engine.runMigration(55, ddl);
@@ -3263,18 +3317,7 @@ export const MIGRATIONS: Migration[] = [
     sql: '',
     handler: async (engine) => {
       if (engine.kind === 'postgres') {
-        await engine.runMigration(
-          66,
-          `DO $$ BEGIN
-             IF EXISTS (
-               SELECT 1 FROM pg_index i
-               JOIN pg_class c ON c.oid = i.indexrelid
-               WHERE c.relname = 'idx_chunks_embedding_null' AND NOT i.indisvalid
-             ) THEN
-               EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS idx_chunks_embedding_null';
-             END IF;
-           END $$;`
-        );
+        await dropInvalidConcurrentIndex(engine, 66, 'idx_chunks_embedding_null');
         await engine.runMigration(
           66,
           `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chunks_embedding_null
@@ -4389,7 +4432,7 @@ export const MIGRATIONS: Migration[] = [
       DECLARE
         has_bypass BOOLEAN;
       BEGIN
-        SELECT rolbypassrls INTO has_bypass FROM pg_roles WHERE rolname = current_user;
+        SELECT EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) INTO has_bypass; -- #1385: superuser + inherited-role BYPASSRLS, not just the role's own rolbypassrls
         IF has_bypass THEN
           ALTER TABLE take_domain_assignments ENABLE ROW LEVEL SECURITY;
         END IF;
@@ -5023,6 +5066,664 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE search_telemetry ADD COLUMN IF NOT EXISTS rank1_high INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    version: 112,
+    name: 'pages_links_extracted_at',
+    // v0.42.7 (#1696) — link-extraction freshness watermark.
+    //
+    // Closes the "imported ≠ curated" root cause: extraction is the silent third
+    // leg of `sync → extract → embed`, and a brain with autopilot off (the common
+    // CLI / external-cron case) accumulated 0% typed-edge coverage with nothing
+    // surfacing it. This column lets `gbrain extract --stale` sweep the historical
+    // backlog incrementally and the `links_extraction_lag` doctor check warn when
+    // extraction has fallen behind.
+    //
+    // A page is stale for extraction when:
+    //   links_extracted_at IS NULL                      (never extracted)
+    //   OR links_extracted_at < LINK_EXTRACTOR_VERSION_TS (extractor logic bumped)
+    //   OR updated_at > links_extracted_at              (edited since last extract —
+    //                                                    MCP put_page / sync --no-extract)
+    //
+    // GRANDFATHER: no backfill. After this migration every existing page has NULL
+    // links_extracted_at, so the first `gbrain doctor` correctly surfaces the real
+    // backlog (the whole point). The doctor check is warn-only by default; it only
+    // hard-fails if GBRAIN_EXTRACTION_LAG_FAIL_PCT is set — so the upgrade never
+    // breaks a CI/cron pipeline that gates on `gbrain doctor` exit code.
+    //
+    // Composite index (source_id, links_extracted_at) backs the source-scoped
+    // staleness scans. Postgres path uses CREATE INDEX CONCURRENTLY (+ invalid-
+    // remnant pre-drop, mirroring v97); PGLite uses plain CREATE INDEX. ADD COLUMN
+    // with no DEFAULT (NULL) is metadata-only on Postgres 11+ / PGLite 17.5.
+    //
+    // Mirror lives in src/schema.sql + pglite-schema.ts (fresh-install column +
+    // index) and the applyForwardReferenceBootstrap probe set in both engines.
+    sql: '',
+    transaction: false,
+    handler: async (engine) => {
+      await engine.runMigration(
+        112,
+        `ALTER TABLE pages ADD COLUMN IF NOT EXISTS links_extracted_at TIMESTAMPTZ;`
+      );
+      if (engine.kind === 'postgres') {
+        await engine.runMigration(
+          112,
+          `DO $$ BEGIN
+             IF EXISTS (
+               SELECT 1 FROM pg_index i
+               JOIN pg_class c ON c.oid = i.indexrelid
+               WHERE c.relname = 'pages_links_extracted_at_idx' AND NOT i.indisvalid
+             ) THEN
+               EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS pages_links_extracted_at_idx';
+             END IF;
+           END $$;`
+        );
+        await engine.runMigration(
+          112,
+          `CREATE INDEX CONCURRENTLY IF NOT EXISTS pages_links_extracted_at_idx
+             ON pages (source_id, links_extracted_at);`
+        );
+      } else {
+        await engine.runMigration(
+          112,
+          `CREATE INDEX IF NOT EXISTS pages_links_extracted_at_idx
+             ON pages (source_id, links_extracted_at);`
+        );
+      }
+    },
+  },
+  {
+    version: 113,
+    name: 'links_link_source_widen_for_wikilink_basename',
+    // Issue #972: opt-in global-basename wikilink resolution (bare [[name]]
+    // resolved by slug tail) emits edges tagged
+    // `link_source = 'wikilink-resolved'`. Widen the CHECK to admit it.
+    //
+    // The FULL set is enumerated here — not just the new value — because
+    // DROP + re-ADD replaces the whole constraint. v95
+    // (links_link_source_check_includes_mentions) added 'mentions'; since
+    // this migration runs AFTER v95, omitting 'mentions' would silently
+    // clobber that widening. Keep both branches in sync with src/schema.sql
+    // and src/core/pglite-schema.ts.
+    //
+    // Renumbered v93 → v109 → v110 → v112 → v113 across successive master
+    // merges (upstream claimed through v112 — pages_links_extracted_at — in
+    // the interim). Idempotent via DROP ... IF EXISTS, so it no-ops on
+    // installs that never created the constraint.
+    idempotent: true,
+    sql: `
+      ALTER TABLE links DROP CONSTRAINT IF EXISTS links_link_source_check;
+      ALTER TABLE links ADD CONSTRAINT links_link_source_check
+        CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual', 'mentions', 'wikilink-resolved'));
+    `,
+    sqlFor: {
+      pglite: `
+        ALTER TABLE links DROP CONSTRAINT IF EXISTS links_link_source_check;
+        ALTER TABLE links ADD CONSTRAINT links_link_source_check
+          CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual', 'mentions', 'wikilink-resolved'));
+      `,
+    },
+  },
+  {
+    version: 114,
+    name: 'links_link_source_check_kebab_regex',
+    // Issue #1941: open link_source from a closed allowlist to a kebab-case
+    // format gate so external derivers (e.g. 'citation-graph') stamp their own
+    // provenance without a per-deriver gbrain migration. Format: lowercase
+    // kebab `^[a-z][a-z0-9]*(-[a-z0-9]+)*$` (rejects UPPER, leading digit/dash,
+    // trailing/double dash, underscore, space) + char_length <= 64 cap on the
+    // indexed free-text column. The five prior built-ins all satisfy the regex,
+    // so existing rows pass `VALIDATE` and the constraint swap never fails.
+    //
+    // DELIBERATELY diverges from the v95/v113 plain DROP+ADD pattern: on real
+    // Postgres a plain `ADD CONSTRAINT ... CHECK` takes ACCESS EXCLUSIVE + a
+    // full-table validation scan, which can stall writes on a large `links`
+    // table. The postgres branch instead does `ADD ... NOT VALID` (instant,
+    // no scan) then `VALIDATE CONSTRAINT` (scans under SHARE UPDATE EXCLUSIVE,
+    // does not block reads/writes). That two-phase form requires running
+    // OUTSIDE a transaction → `transaction: false`. PGLite (single-writer WASM,
+    // no lock concern) keeps the plain one-shot DROP+ADD, and is the branch the
+    // schema-version hash reads (pglite-engine.ts).
+    //
+    // Idempotent via DROP ... IF EXISTS; no-ops on installs that never created
+    // the constraint and safe to re-run.
+    idempotent: true,
+    transaction: false,
+    sql: '', // engine-specific via sqlFor (postgres two-phase vs pglite one-shot)
+    sqlFor: {
+      postgres: `
+        ALTER TABLE links DROP CONSTRAINT IF EXISTS links_link_source_check;
+        ALTER TABLE links ADD CONSTRAINT links_link_source_check
+          CHECK (link_source IS NULL OR (link_source ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*$' AND char_length(link_source) <= 64)) NOT VALID;
+        ALTER TABLE links VALIDATE CONSTRAINT links_link_source_check;
+      `,
+      pglite: `
+        ALTER TABLE links DROP CONSTRAINT IF EXISTS links_link_source_check;
+        ALTER TABLE links ADD CONSTRAINT links_link_source_check
+          CHECK (link_source IS NULL OR (link_source ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*$' AND char_length(link_source) <= 64));
+      `,
+    },
+  },
+  {
+    version: 115,
+    name: 'op_checkpoint_paths_append_table',
+    // #1794 cathedral: append-only delta storage for op checkpoints. The parent
+    // op_checkpoints.completed_keys JSONB was rewritten in full on every flush —
+    // O(N^2) write bytes over a 204K-file sync. This child table banks one row
+    // per completed path; sync's appendCompleted INSERTs only the delta. The FK
+    // ON DELETE CASCADE makes clearOpCheckpoint + the 7-day purge drop children
+    // automatically. Created empty so the composite-PK index build is instant;
+    // no CONCURRENTLY / transaction:false needed (mirrors v75 op_checkpoints).
+    // The PK (op,fingerprint,path) btree's (op,fingerprint) prefix serves every
+    // read/delete, so no separate index. Keep in sync with src/schema.sql,
+    // src/core/pglite-schema.ts, src/core/schema-embedded.ts.
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS op_checkpoint_paths (
+        op          TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        path        TEXT NOT NULL,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (op, fingerprint, path),
+        CONSTRAINT op_checkpoint_paths_parent_fk
+          FOREIGN KEY (op, fingerprint) REFERENCES op_checkpoints (op, fingerprint) ON DELETE CASCADE
+      );
+    `,
+  },
+  {
+    version: 116,
+    name: 'code_edges_source_backfill_and_callee_index',
+    // Repair + index pass for the call graph:
+    //
+    // 1. BACKFILL: importCodeFile built CodeEdgeInput rows without source_id,
+    //    so every extracted edge landed NULL. getCallersOf/getCalleesOf add
+    //    `AND source_id = <scoped>` whenever a worktree pin / --source is in
+    //    play — NULL never matches, so scoped call-graph queries silently
+    //    returned 0 rows on multi-source brains even though the edges
+    //    existed. The write path now stamps `sourceId ?? 'default'`; this
+    //    backfill repairs rows written before the fix by deriving each
+    //    edge's source from its own from_chunk's page (pages.source_id is
+    //    NOT NULL DEFAULT 'default', so COALESCE is belt-and-braces only).
+    //
+    // 2. INDEXES: getCalleesOf filters BOTH edge tables on
+    //    from_symbol_qualified, which had no index anywhere — every callee
+    //    lookup was a sequential scan, amplified per-BFS-node by the
+    //    recursive code walk (one getCalleesOf per frontier node, up to
+    //    maxNodes). With NULL edges repaired, scoped walks actually expand,
+    //    so the latent seq-scan cost becomes real. Plain CREATE INDEX (not
+    //    CONCURRENTLY): edge tables are modest (mirrors the v58 resolver
+    //    index). Keep in sync with src/schema.sql.
+    idempotent: true,
+    sql: `
+      UPDATE code_edges_symbol e
+         SET source_id = COALESCE(p.source_id, 'default')
+        FROM content_chunks c
+        JOIN pages p ON p.id = c.page_id
+       WHERE c.id = e.from_chunk_id
+         AND e.source_id IS NULL;
+
+      UPDATE code_edges_chunk e
+         SET source_id = COALESCE(p.source_id, 'default')
+        FROM content_chunks c
+        JOIN pages p ON p.id = c.page_id
+       WHERE c.id = e.from_chunk_id
+         AND e.source_id IS NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_from_symbol
+        ON code_edges_symbol (from_symbol_qualified);
+
+      CREATE INDEX IF NOT EXISTS idx_code_edges_chunk_from_symbol
+        ON code_edges_chunk (from_symbol_qualified);
+    `,
+  },
+  {
+    // Renumbered 116 -> 117 at merge: master's v0.42.41.0 triage wave
+    // claimed v116 (code_edges_source_backfill_and_callee_index) first.
+    version: 117,
+    name: 'context_volunteer_events_table',
+    // #2095 push-based context: feedback-loop log of every page the brain
+    // VOLUNTEERED (via the volunteer_context op, the retrieval-reflex pointer
+    // path, or `gbrain watch`). "Used" is derived later by joining
+    // pages.last_retrieved_at > volunteered_at — no second write path.
+    // session_id/turn are caller-supplied attribution (nullable). rationale is
+    // a deterministic template string, NEVER raw conversation text. Rows are
+    // pruned past 90 days by the dream cycle's purge phase
+    // (purgeStaleVolunteerEvents). No ::jsonb anywhere. RLS: covered by the
+    // v35 auto_rls_on_create_table event trigger on Postgres (same as
+    // v110/v115 tables); pinned by the volunteer-context Postgres e2e.
+    // Created empty; plain CREATE INDEX is instant — no CONCURRENTLY needed.
+    // Keep in sync with src/schema.sql, src/core/pglite-schema.ts,
+    // src/core/schema-embedded.ts.
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS context_volunteer_events (
+        id             BIGSERIAL PRIMARY KEY,
+        source_id      TEXT NOT NULL,
+        slug           TEXT NOT NULL,
+        confidence     DOUBLE PRECISION NOT NULL,
+        match_arm      TEXT NOT NULL,
+        rationale      TEXT NOT NULL DEFAULT '',
+        channel        TEXT NOT NULL DEFAULT 'op',
+        session_id     TEXT,
+        turn           INTEGER,
+        volunteered_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS context_volunteer_events_src_time_idx
+        ON context_volunteer_events (source_id, volunteered_at DESC);
+      CREATE INDEX IF NOT EXISTS context_volunteer_events_src_slug_idx
+        ON context_volunteer_events (source_id, slug);
+    `,
+  },
+  {
+    version: 118,
+    name: 'page_generation_clock_sequence_swap',
+    // v0.42.x — contention-free page-generation clock. The v107 single-row
+    // `UPDATE page_generation_clock SET value = value + 1 WHERE id = 1` took a
+    // transaction-length RowExclusiveLock on one tuple, serializing every
+    // concurrent page writer on the prior writer's COMMIT (sync ran at ~0.8
+    // cores regardless of worker count). Swap to a SEQUENCE: nextval() takes a
+    // microsecond LWLock, never a row lock. The Layer-1 cache bookmark reads
+    // `last_value` instead of the row.
+    //
+    // Correctness: `last_value` is non-transactional — it can reflect
+    // rolled-back or concurrent-uncommitted writers. That is the SAFE direction
+    // (cache OVER-invalidates, never serves stale). The clock's only contract is
+    // monotonic advancement on any page INSERT/UPDATE/DELETE.
+    //
+    // The setval is LOAD-BEARING: a fresh CREATE SEQUENCE has is_called=false,
+    // so the first nextval() returns the start value (1) and last_value would
+    // not visibly advance. The 2-arg setval (is_called=true) makes the first
+    // post-seed write strictly exceed the seed. Floor 1 (sequence MINVALUE);
+    // seed >= old clock and MAX(pages.generation) so monotonicity holds.
+    //
+    // We keep the table + trigger + function NAMES; only the function body and
+    // the three readers in query-cache-gate.ts repoint. DELETE FROM query_cache
+    // so no bookmark stamped under the old table-clock survives the swap.
+    // Mirrors: src/schema.sql, src/core/pglite-schema.ts (and the generated
+    // src/core/schema-embedded.ts) ship the sequence on fresh install.
+    //
+    // pages.generation (Layer 2) is assigned by the SEPARATE row-level trigger
+    // bump_page_generation_fn — untouched here.
+    idempotent: true,
+    sql: `
+      CREATE SEQUENCE IF NOT EXISTS page_generation_clock_seq;
+
+      SELECT setval('page_generation_clock_seq', GREATEST(
+        1,
+        COALESCE((SELECT last_value FROM page_generation_clock_seq), 0),
+        COALESCE((SELECT value FROM page_generation_clock WHERE id = 1), 0),
+        COALESCE((SELECT MAX(generation) FROM pages), 0)
+      ));
+
+      CREATE OR REPLACE FUNCTION bump_page_generation_clock_fn() RETURNS trigger AS $func$
+      BEGIN
+        PERFORM nextval('page_generation_clock_seq');
+        RETURN NULL;
+      END;
+      $func$ LANGUAGE plpgsql;
+
+      DROP TRIGGER IF EXISTS bump_page_generation_clock_trg ON pages;
+      CREATE TRIGGER bump_page_generation_clock_trg
+        AFTER INSERT OR UPDATE OR DELETE ON pages
+        FOR EACH STATEMENT
+        EXECUTE FUNCTION bump_page_generation_clock_fn();
+
+      DELETE FROM query_cache;
+    `,
+  },
+  {
+    version: 119,
+    name: 'op_checkpoints_completed_keys_array_check',
+    // v0.42.x — make the op_checkpoints scalar-corruption class structurally
+    // impossible. completed_keys is JSONB and the loader runs
+    // jsonb_array_elements_text(completed_keys); a non-array (scalar) value
+    // makes that throw "cannot extract elements from a scalar", which takes
+    // down the whole UNION load (including the valid op_checkpoint_paths child
+    // rows) and loses all checkpoint progress for that key. No current writer
+    // can produce a scalar, but an older binary / external script / future bug
+    // could — the CHECK is a DB-enforced, always-on guard (the correct pattern
+    // vs a migration verify-hook, which would not run on already-stamped
+    // brains). LOCK first so an out-of-band scalar write can't land between the
+    // repair and the ADD CONSTRAINT (no-op on single-connection PGLite). The
+    // repair resets any pre-existing scalar to '[]'; op_checkpoint_paths child
+    // rows are the append-only source of truth, so the reset loses nothing.
+    // Mirrored in src/schema.sql, src/core/pglite-schema.ts, and the generated
+    // src/core/schema-embedded.ts so fresh installs carry the same CHECK.
+    idempotent: true,
+    sql: `
+      LOCK TABLE op_checkpoints IN SHARE ROW EXCLUSIVE MODE;
+
+      UPDATE op_checkpoints
+         SET completed_keys = '[]'::jsonb, updated_at = now()
+       WHERE jsonb_typeof(completed_keys) <> 'array';
+
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+           WHERE conname = 'op_checkpoints_completed_keys_array'
+             AND conrelid = 'op_checkpoints'::regclass
+        ) THEN
+          ALTER TABLE op_checkpoints
+            ADD CONSTRAINT op_checkpoints_completed_keys_array
+            CHECK (jsonb_typeof(completed_keys) = 'array');
+        END IF;
+      END $$;
+    `,
+  },
+  {
+    version: 120,
+    name: 'schema_lint_hardening_search_path_security_invoker',
+    // v0.42 schema-lint hardening wave (#1647 / #171).
+    //
+    //   (b) security_invoker on the page_links view: pre-fix the view ran with
+    //       the definer/owner's privileges, so the anon / PostgREST role could
+    //       read `links` (which has RLS) THROUGH the view, bypassing RLS. This
+    //       is the single ERROR-severity Supabase lint. Postgres-only — PGLite
+    //       is embedded/single-user with no anon role and no PostgREST, so the
+    //       view has no RLS-bypass surface there (and security_invoker carries
+    //       no benefit). Guarded with IF EXISTS for very old brains.
+    //
+    //   (a)/(#171) search_path on every gbrain-owned trigger/event function:
+    //       an unqualified reference (e.g. `FROM timeline_entries`) resolves
+    //       through the caller's search_path, so a same-named object in a
+    //       user-controlled schema could shadow it. Pinning search_path closes
+    //       that. ALTER FUNCTION (NOT CREATE OR REPLACE) leaves each body
+    //       untouched — lowest drift risk, and critically safe for the
+    //       load-bearing `auto_enable_rls` event-trigger function (codex #3).
+    //       The IF EXISTS loop is engine-agnostic and skips functions a given
+    //       brain never created (e.g. auto_enable_rls + the NOTIFY/chunk
+    //       trigger functions are Postgres-only — codex #4).
+    //
+    // Regression guard is a doctor probe (pg_proc.proconfig) + scripts/
+    // check-search-path.sh, NOT a migration verify-hook — hooks don't run on
+    // brains already stamped past this version (learning: migration-verify-hook-
+    // never-runs-on-stamped-brains). Fresh installs are born correct: the
+    // function defs in schema.sql / pglite-schema.ts carry SET search_path too.
+    idempotent: true,
+    sql: '', // engine-specific via sqlFor
+    sqlFor: {
+      postgres: `
+        ALTER VIEW IF EXISTS page_links SET (security_invoker = on);
+
+        DO $$
+        DECLARE fn text;
+        BEGIN
+          FOREACH fn IN ARRAY ARRAY[
+            'bump_page_generation_fn','bump_page_generation_clock_fn',
+            'update_chunk_search_vector','update_page_search_vector',
+            'notify_minion_job_change','auto_enable_rls'
+          ] LOOP
+            IF EXISTS (
+              SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+              WHERE n.nspname = 'public' AND p.proname = fn
+            ) THEN
+              EXECUTE format('ALTER FUNCTION public.%I() SET search_path = pg_catalog, public', fn);
+            END IF;
+          END LOOP;
+        END $$;
+      `,
+      pglite: `
+        DO $$
+        DECLARE fn text;
+        BEGIN
+          FOREACH fn IN ARRAY ARRAY[
+            'bump_page_generation_fn','bump_page_generation_clock_fn',
+            'update_chunk_search_vector','update_page_search_vector',
+            'notify_minion_job_change'
+          ] LOOP
+            IF EXISTS (
+              SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+              WHERE n.nspname = 'public' AND p.proname = fn
+            ) THEN
+              EXECUTE format('ALTER FUNCTION public.%I() SET search_path = pg_catalog, public', fn);
+            END IF;
+          END LOOP;
+        END $$;
+      `,
+    },
+  },
+  {
+    version: 121,
+    name: 'timeline_entries_event_page_id',
+    // v0.42.x — Life Chronicle (#2390): the event→timeline projection pointer.
+    // A `type:event` page projects ONE date-index row into timeline_entries
+    // keyed to the depth/meeting page (page_id), with event_page_id pointing at
+    // the event page itself. Additive + idempotent: nullable FK + partial
+    // indexes; legacy rows keep event_page_id NULL so existing behavior is
+    // unchanged. The partial UNIQUE(event_page_id, date) makes re-extraction
+    // with a changed summary an UPDATE (not a duplicate). FK added via a guarded
+    // DO block (mirrors the facts_source_id_fkey pattern) so the ALTER is a
+    // no-op on re-runs. Mirrored in src/schema.sql, src/core/pglite-schema.ts,
+    // and the generated src/core/schema-embedded.ts for fresh installs.
+    idempotent: true,
+    sql: `
+      ALTER TABLE timeline_entries ADD COLUMN IF NOT EXISTS event_page_id INTEGER;
+
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+           WHERE conname = 'timeline_entries_event_page_id_fkey'
+             AND conrelid = 'timeline_entries'::regclass
+        ) THEN
+          ALTER TABLE timeline_entries
+            ADD CONSTRAINT timeline_entries_event_page_id_fkey
+            FOREIGN KEY (event_page_id) REFERENCES pages(id) ON DELETE CASCADE;
+        END IF;
+      END $$;
+
+      CREATE INDEX IF NOT EXISTS idx_timeline_event_page
+        ON timeline_entries(event_page_id) WHERE event_page_id IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_timeline_event_dedup
+        ON timeline_entries(event_page_id, date) WHERE event_page_id IS NOT NULL;
+    `,
+  },
+  {
+    version: 122,
+    name: 'facts_ontology_dimension',
+    // v0.42.x — Life Chronicle (#2390): the per-entity ontology rides the
+    // existing `facts` table. facts already gives bi-temporal validity
+    // (valid_from/valid_until/expired_at), supersession (superseded_by),
+    // remote redaction (visibility), confidence, provenance (source_markdown_slug),
+    // embedding, and corroboration (consolidated_into). The ONLY genuinely-new
+    // concept is a typed `dimension` (e.g. role, risk_tolerance) carrying a
+    // resolved `value` + a deterministic `value_hash` dedup key, plus a
+    // `dim_status` for quarantining novel/LLM-proposed dimensions. Plain facts
+    // keep dimension NULL → unchanged behavior. The partial UNIQUE is
+    // deterministic (no timestamp) so a crash-retry is idempotent. Additive;
+    // facts is migration-created (absent from static schema), so this migration
+    // is the single source for fresh + migrated brains.
+    idempotent: true,
+    sql: `
+      ALTER TABLE facts ADD COLUMN IF NOT EXISTS dimension  TEXT;
+      ALTER TABLE facts ADD COLUMN IF NOT EXISTS value      TEXT;
+      ALTER TABLE facts ADD COLUMN IF NOT EXISTS value_hash TEXT;
+      ALTER TABLE facts ADD COLUMN IF NOT EXISTS dim_status TEXT;
+
+      CREATE INDEX IF NOT EXISTS idx_facts_dimension
+        ON facts(source_id, entity_slug, dimension, valid_from DESC)
+        WHERE expired_at IS NULL AND dimension IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_facts_ontology_dedup
+        ON facts(source_id, entity_slug, dimension, value_hash, source_markdown_slug)
+        WHERE dimension IS NOT NULL;
+    `,
+  },
+  {
+    version: 123,
+    name: 'configurable_fts_language',
+    // Recreate the two search_vector trigger functions using the language
+    // configured via GBRAIN_FTS_LANGUAGE (default 'english'). Idempotent:
+    // CREATE OR REPLACE swaps the function body atomically; no trigger
+    // recreation needed since the trigger references the function by name.
+    //
+    // Why a handler instead of a static SQL string: Postgres tsvector
+    // functions don't accept parameterized config names — the language
+    // must be a literal in the SQL. getFtsLanguage() validates the value
+    // (lowercase letters/digits/underscores only) before interpolation.
+    //
+    // Function bodies mirror schema.sql / pglite-schema.ts exactly —
+    // INCLUDING the `SET search_path = pg_catalog, public` hardening from
+    // v120/#1647 (CREATE OR REPLACE resets proconfig, so omitting it here
+    // would silently strip the hardening on every upgraded brain). Only
+    // the text-search config name is parameterized. Keep all copies in
+    // sync when the trigger logic changes.
+    //
+    // Backfill: after recreating the functions, re-tokenize existing rows
+    // under the new language. Skipped when the configured language is
+    // 'english' (trigger output identical — re-tokenizing is wasted I/O).
+    // To change language after this migration has run, use
+    // `gbrain reindex-search-vector`.
+    sql: '',
+    handler: async (engine) => {
+      const lang = getFtsLanguage();
+
+      const recreatePagesFn = `
+        CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger SET search_path = pg_catalog, public AS $fn$
+        DECLARE
+          timeline_text TEXT;
+        BEGIN
+          SELECT coalesce(string_agg(summary || ' ' || detail, ' '), '')
+          INTO timeline_text
+          FROM timeline_entries
+          WHERE page_id = NEW.id;
+
+          NEW.search_vector :=
+            setweight(to_tsvector('${lang}', coalesce(NEW.title, '')), 'A') ||
+            setweight(to_tsvector('${lang}', coalesce(NEW.compiled_truth, '')), 'B') ||
+            setweight(to_tsvector('${lang}', coalesce(NEW.timeline, '')), 'C') ||
+            setweight(to_tsvector('${lang}', coalesce(timeline_text, '')), 'C');
+
+          RETURN NEW;
+        END;
+        $fn$ LANGUAGE plpgsql;
+      `;
+
+      const recreateChunksFn = `
+        CREATE OR REPLACE FUNCTION update_chunk_search_vector() RETURNS TRIGGER SET search_path = pg_catalog, public AS $fn$
+        BEGIN
+          NEW.search_vector :=
+            setweight(to_tsvector('${lang}', COALESCE(NEW.doc_comment, '')), 'A') ||
+            setweight(to_tsvector('${lang}', COALESCE(NEW.symbol_name_qualified, '')), 'A') ||
+            setweight(to_tsvector('${lang}', COALESCE(NEW.chunk_text, '')), 'B');
+          RETURN NEW;
+        END;
+        $fn$ LANGUAGE plpgsql;
+      `;
+
+      await engine.executeRaw(recreatePagesFn);
+      await engine.executeRaw(recreateChunksFn);
+
+      if (lang === 'english') {
+        // stderr, NOT stdout: migrations run lazily inside any command's
+        // first DB connect — a console.log here polluted `doctor --json`
+        // stdout and broke jq consumers (heavy-tests fm_wallclock).
+        process.stderr.write(`  v123: trigger functions recreated with language='english' (default — no backfill needed)\n`);
+        return;
+      }
+
+      // Backfill existing rows under the new tokenizer. UPDATE-to-same-value
+      // re-fires the pages trigger; chunks are rewritten directly with the
+      // same expression as the trigger.
+      await engine.executeRaw(`
+        UPDATE pages SET id = id
+        WHERE search_vector IS NOT NULL;
+      `);
+
+      await engine.executeRaw(`
+        UPDATE content_chunks
+        SET search_vector =
+          setweight(to_tsvector('${lang}', COALESCE(doc_comment, '')), 'A') ||
+          setweight(to_tsvector('${lang}', COALESCE(symbol_name_qualified, '')), 'A') ||
+          setweight(to_tsvector('${lang}', COALESCE(chunk_text, '')), 'B')
+        WHERE search_vector IS NOT NULL;
+      `);
+
+      process.stderr.write(`  v123: trigger functions recreated with language='${lang}' + backfilled existing rows\n`);
+    },
+  },
+  {
+    version: 124,
+    name: 'page_search_vector_drop_compiled_truth',
+    // #2704: a single markdown page whose compiled_truth exceeds Postgres's
+    // hard 1,048,575-byte tsvector cap made update_page_search_vector()
+    // throw "string is too long for tsvector" INSIDE the pages UPSERT
+    // transaction — not a per-file ledger entry, a transaction abort. The
+    // whole source's sync checkpoint stayed pinned (Sync BLOCKED) until the
+    // oversized file was fixed or manually skipped, even though every
+    // OTHER file in the run imported fine.
+    //
+    // Fix: drop compiled_truth (the unbounded whole-page body) from this
+    // trigger. It was already redundant — content_chunks.search_vector
+    // (Cathedral II Layer 3, v0.20.0) is the ACTUAL keyword-search source:
+    // searchKeyword() in postgres-engine.ts/pglite-engine.ts ranks and
+    // queries `cc.search_vector` exclusively; `pages.search_vector` is
+    // written by this trigger but never read by any query in this
+    // codebase (verified: no `pages.search_vector`/bare `search_vector`
+    // appears on either side of a WHERE/ts_rank anywhere outside this
+    // trigger's own definition and the reindex/backfill machinery that
+    // maintains it). And chunking already bounds each chunk_text well
+    // under the tsvector limit (chunkText() targets embedding-sized
+    // pieces, several orders of magnitude smaller than 1MB) — the overflow
+    // was specific to the whole-page grain this trigger no longer builds.
+    //
+    // title + timeline (both naturally small — a compiled_truth-sized
+    // title or timeline field would be its own bug) stay, so
+    // pages.search_vector keeps carrying SOME signal rather than going
+    // fully inert; a future PR can drop the column outright once its
+    // last non-search consumer (if any turns up) is confirmed gone.
+    //
+    // No backfill: existing rows keep whatever search_vector they already
+    // computed until their next UPDATE (harmless — nothing reads this
+    // column, so staleness has zero behavioral effect). The brains that
+    // actually hit this bug never successfully wrote a value for the
+    // oversized page in the first place, so there's nothing stale to fix
+    // for them specifically — the NEXT sync of that exact file is what
+    // proves the fix, not a backfill of already-working rows.
+    //
+    // Function body mirrors reindex-search-vector.ts's recreatePagesFn
+    // (documented contract there: keep both in lockstep) and the fresh-
+    // install baselines in pglite-schema.ts / schema-embedded.ts — all
+    // four updated in the same commit as this migration.
+    sql: '',
+    handler: async (engine) => {
+      const lang = getFtsLanguage();
+      await engine.executeRaw(`
+        CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger SET search_path = pg_catalog, public AS $fn$
+        DECLARE
+          timeline_text TEXT;
+        BEGIN
+          SELECT coalesce(string_agg(summary || ' ' || detail, ' '), '')
+          INTO timeline_text
+          FROM timeline_entries
+          WHERE page_id = NEW.id;
+
+          NEW.search_vector :=
+            setweight(to_tsvector('${lang}', coalesce(NEW.title, '')), 'A') ||
+            setweight(to_tsvector('${lang}', coalesce(NEW.timeline, '')), 'C') ||
+            setweight(to_tsvector('${lang}', coalesce(timeline_text, '')), 'C');
+
+          RETURN NEW;
+        END;
+        $fn$ LANGUAGE plpgsql;
+      `);
+      process.stderr.write(`  v124: update_page_search_vector() no longer indexes compiled_truth (was overflowing tsvector on large pages, #2704)
+`);
+    },
+  },
+  {
+    version: 125,
+    name: 'take_proposals_per_claim_idempotency',
+    // #2138: the original idempotency key was per page, so each INSERT after
+    // the first claim silently conflicted. md5(claim_text) makes it per claim
+    // without adding/backfilling a column. The new key is strictly finer than
+    // the old key and therefore preserves all existing rows.
+    idempotent: true,
+    sql: `
+      DROP INDEX IF EXISTS take_proposals_idempotency_idx;
+      CREATE UNIQUE INDEX IF NOT EXISTS take_proposals_idempotency_idx
+        ON take_proposals (source_id, page_slug, content_hash, prompt_version, md5(claim_text));
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
@@ -5361,6 +6062,26 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
   const sorted = [...MIGRATIONS].sort((a, b) => a.version - b.version);
 
   const pending = sorted.filter(m => m.version > current);
+
+  // #2038: schema-drift self-heal. A migration renumbered during a master
+  // merge (v102 timeline dedup, originally v99) can be recorded-as-applied
+  // without its DDL ever running — the version counter can't see it. Repair
+  // the known drift on EVERY pass, including when nothing is pending (the
+  // affected brains are stamped AHEAD of the missing migration, so they never
+  // reach the loop below). Best-effort + idempotent: a no-op on a healthy
+  // index; `doctor` surfaces it independently if this ever fails.
+  try {
+    const { repairTimelineDedupIndex } = await import('./timeline-dedup-repair.ts');
+    const r = await repairTimelineDedupIndex(engine);
+    if (r.repaired) {
+      console.error(
+        `[migrate] healed idx_timeline_dedup drift (#2038): ${r.before.join(',') || '(absent)'} ` +
+        `→ page_id,date,summary,source` +
+        (r.collapsedDuplicates > 0 ? ` (collapsed ${r.collapsedDuplicates} duplicate row(s))` : ''),
+      );
+    }
+  } catch { /* best-effort; doctor reports the drift if this couldn't run */ }
+
   if (pending.length === 0) {
     return { applied: 0, current };
   }

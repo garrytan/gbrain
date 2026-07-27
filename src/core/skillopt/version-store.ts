@@ -23,6 +23,7 @@
  *
  *   history.json
  *   best.md
+ *   proposed.md
  *   versions/
  *     v0001_e1_s1.md
  *     v0002_e1_s2.md
@@ -50,6 +51,10 @@ export function historyPath(skillsDir: string, skillName: string): string {
 
 export function bestPath(skillsDir: string, skillName: string): string {
   return path.join(skilloptDir(skillsDir, skillName), 'best.md');
+}
+
+export function proposedPath(skillsDir: string, skillName: string): string {
+  return path.join(skilloptDir(skillsDir, skillName), 'proposed.md');
 }
 
 export function skillPath(skillsDir: string, skillName: string): string {
@@ -168,6 +173,21 @@ export function acceptCandidate(input: AcceptInput): AcceptResult {
   writeHistory(skillsDir, skillName, updated);
 
   return { versionN, versionFilePath: verPath };
+}
+
+/**
+ * Write the candidate to both `best.md` and `proposed.md` WITHOUT touching
+ * SKILL.md or the history ledger. `best.md` remains the optimizer's current
+ * best pointer; `proposed.md` is the stable human-review artifact promised by
+ * `--no-mutate`. Returns the proposal path. Each write is atomic (.tmp + rename).
+ */
+export function writeProposed(skillsDir: string, skillName: string, candidateText: string): string {
+  const best = bestPath(skillsDir, skillName);
+  const proposed = proposedPath(skillsDir, skillName);
+  fs.mkdirSync(path.dirname(best), { recursive: true });
+  atomicWrite(best, candidateText);
+  atomicWrite(proposed, candidateText);
+  return proposed;
 }
 
 /**

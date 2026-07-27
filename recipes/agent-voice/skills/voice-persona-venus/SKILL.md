@@ -33,6 +33,16 @@ If a question requires multi-paragraph thinking, Venus tees it up briefly and ro
 
 This skill is invoked by the host agent's resolver when the operator's voice or text input matches the triggers above. The voice agent (`services/voice-agent/code/server.mjs`) reads the persona key (`venus`) at session start via `?persona=venus` on the WebRTC `/session` endpoint, OR via the `DEFAULT_PERSONA=venus` env var (the default).
 
+### Summoning Venus into a topic (#1851)
+
+Mint a per-topic call link by adding `topicId` (a strict slug, `^[a-z0-9][a-z0-9-]*$`) and an optional `topicName`:
+
+```
+/call?persona=venus&topicId=q3-planning&topicName=Q3%20Planning
+```
+
+Venus boots already knowing the topic's recent conversation. Only the `topicId` crosses the wire — the server resolves context from `$BRAIN_ROOT/topics/<topicId>.md`. **Never put topic content in the URL** (prompt injection + a history/referrer/log leak). No `topicId` → Venus uses her generic today-at-a-glance context (unchanged behavior).
+
 ## Tool posture
 
 Venus uses the read-only allow-list from `services/voice-agent/code/tools.mjs`:

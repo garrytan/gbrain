@@ -10,7 +10,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { truncateUtf8, safeSplitIndex } from '../src/core/text-safe.ts';
+import { truncateUtf8, safeSplitIndex, ensureWellFormed } from '../src/core/text-safe.ts';
 
 // 🚀 = U+1F680 (surrogate pair: 0xD83D 0xDE80; JS string length = 2).
 // 𝕏 = U+1D54F (surrogate pair: 0xD835 0xDD4F; JS string length = 2).
@@ -19,6 +19,8 @@ const ROCKET = '🚀';   // 🚀
 const MATH_X = '𝕏';   // 𝕏
 const NBMP_HAN = '𠀀'; // 𠀀
 const STRAY_HIGH = '\uD83D';     // orphaned high surrogate (invalid alone)
+const STRAY_LOW = '\uDE80';      // orphaned low surrogate (invalid alone)
+const REPLACEMENT = '�';    // U+FFFD, what toWellFormed() substitutes
 
 describe('truncateUtf8', () => {
   test('returns empty for empty input', () => {
@@ -70,6 +72,61 @@ describe('truncateUtf8', () => {
     const text = ROCKET + MATH_X + 'tail';
     // Cut at maxChars=10 ≥ length=8 → returns full text.
     expect(truncateUtf8(text, 10)).toBe(text);
+  });
+});
+
+describe('ensureWellFormed (#2011)', () => {
+  test('lone high surrogate → U+FFFD', () => {
+    const out = ensureWellFormed('before' + STRAY_HIGH + 'after');
+    expect(out).toBe('before' + REPLACEMENT + 'after');
+    expect(out.isWellFormed()).toBe(true);
+  });
+
+  test('lone low surrogate → U+FFFD', () => {
+    const out = ensureWellFormed('before' + STRAY_LOW + 'after');
+    expect(out).toBe('before' + REPLACEMENT + 'after');
+    expect(out.isWellFormed()).toBe(true);
+  });
+
+  test('consecutive lone low surrogates → both replaced (the case the old regex got wrong)', () => {
+    // The prior hand-rolled two-pass regex produced "�\uDE80" here (the second
+    // lookbehind consumed the just-inserted boundary, leaving the 2nd low
+    // surrogate orphaned). The built-in replaces both → "��".
+    const out = ensureWellFormed(STRAY_LOW + STRAY_LOW);
+    expect(out).toBe(REPLACEMENT + REPLACEMENT);
+    expect(out.isWellFormed()).toBe(true);
+  });
+
+  test('consecutive lone high surrogates → both replaced', () => {
+    const out = ensureWellFormed(STRAY_HIGH + STRAY_HIGH);
+    expect(out).toBe(REPLACEMENT + REPLACEMENT);
+    expect(out.isWellFormed()).toBe(true);
+  });
+
+  test('valid pairs (emoji / math / non-BMP CJK) preserved unchanged', () => {
+    const text = 'a' + ROCKET + 'b' + MATH_X + 'c' + NBMP_HAN + 'd';
+    expect(ensureWellFormed(text)).toBe(text);
+    expect(ensureWellFormed(text).isWellFormed()).toBe(true);
+  });
+
+  test('clean ASCII / empty input returns an equal well-formed value', () => {
+    expect(ensureWellFormed('plain text')).toBe('plain text');
+    expect(ensureWellFormed('')).toBe('');
+  });
+
+  test('mixed valid pair + lone half: pair kept, orphan replaced', () => {
+    // Valid 🚀 then a stray high then text.
+    const out = ensureWellFormed(ROCKET + STRAY_HIGH + 'x');
+    expect(out).toBe(ROCKET + REPLACEMENT + 'x');
+    expect(out.isWellFormed()).toBe(true);
+  });
+
+  test('output is JSON-serializable without orphaned escapes', () => {
+    // The #2011 failure was Postgres ::jsonb rejecting a lone surrogate.
+    // After ensureWellFormed, a JSON round-trip preserves the value.
+    const out = ensureWellFormed('emoji ' + STRAY_HIGH + ' tail');
+    expect(JSON.parse(JSON.stringify(out))).toBe(out);
+    expect(out.isWellFormed()).toBe(true);
   });
 });
 

@@ -38,7 +38,13 @@
 import { createAuditWriter, computeIsoWeekFilename } from './audit-writer.ts';
 import type { ContentSanityResult } from '../content-sanity.ts';
 
-export type ContentSanityEventType = 'hard_block' | 'soft_block' | 'warn';
+export type ContentSanityEventType =
+  | 'hard_block'   // legacy alias for the reject path (pre-v0.42)
+  | 'quarantine'   // junk → hidden, page landed with quarantine marker
+  | 'reject'       // junk → thrown (junk_disposition: reject)
+  | 'flag'         // fuzzy markup-heavy or oversize → content_flag, stays searchable
+  | 'soft_block'   // oversize → embed_skip
+  | 'warn';
 
 export interface ContentSanityAuditEvent {
   ts: string;
@@ -83,6 +89,12 @@ const writer = createAuditWriter<ContentSanityAuditEvent>({
  *  hard-block assessment recorded WITH bypass active is still an
  *  audit-worthy event but the page actually lands. The caller passes
  *  `bypass` explicitly so this function stays pure. */
+// NOTE: this fallback only knows the LEGACY event types (hard_block /
+// soft_block / warn). It can NEVER return the v0.42 tiers (quarantine /
+// reject / flag) — those are resolved by the caller AFTER the disposition
+// branch and passed via `opts.disposition`. A caller that forgets to pass
+// `disposition` on a quarantine/flag would mis-classify it as legacy
+// `hard_block`/`soft_block`; all current callers (import-file.ts) pass it.
 function classifyEventType(
   result: ContentSanityResult,
   bypass: boolean,
@@ -110,10 +122,16 @@ export function logContentSanityAssessment(
   slug: string,
   sourceId: string,
   result: ContentSanityResult,
-  opts: { bypass?: boolean } = {},
+  opts: { bypass?: boolean; disposition?: ContentSanityEventType } = {},
 ): void {
   const bypass = opts.bypass ?? false;
-  const event_type = classifyEventType(result, bypass);
+  // Codex #10: when the caller knows the resolved disposition (quarantine
+  // vs reject vs flag — decided AFTER assessment), it passes it explicitly
+  // so the event is accurate, not inferred. Bypass still forces 'warn'
+  // (the page landed regardless).
+  const event_type = bypass
+    ? 'warn'
+    : (opts.disposition ?? classifyEventType(result, bypass));
   // Skip rows that don't say anything: bytes under warn threshold AND
   // no patterns matched AND no bypass. The assessor result's reasons
   // array is empty in that case; we don't want every ingest of a
@@ -148,7 +166,14 @@ export function readRecentContentSanityEvents(
  *  shape so doctor can format consistently. */
 export interface ContentSanitySummary {
   total_events: number;
-  by_type: { hard_block: number; soft_block: number; warn: number };
+  by_type: {
+    hard_block: number;
+    quarantine: number;
+    reject: number;
+    flag: number;
+    soft_block: number;
+    warn: number;
+  };
   by_source: Record<string, number>;
   /** Top junk-pattern names by hit count (sorted desc). */
   top_patterns: Array<{ name: string; count: number }>;
@@ -157,7 +182,14 @@ export interface ContentSanitySummary {
 export function summarizeContentSanityEvents(
   events: ReadonlyArray<ContentSanityAuditEvent>,
 ): ContentSanitySummary {
-  const by_type = { hard_block: 0, soft_block: 0, warn: 0 };
+  const by_type = {
+    hard_block: 0,
+    quarantine: 0,
+    reject: 0,
+    flag: 0,
+    soft_block: 0,
+    warn: 0,
+  };
   const by_source: Record<string, number> = {};
   const patternCounts: Record<string, number> = {};
 

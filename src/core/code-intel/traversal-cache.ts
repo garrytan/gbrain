@@ -123,7 +123,7 @@ export async function putCachedTraversal<T>(
       `INSERT INTO code_traversal_cache
          (symbol_qualified, depth, source_id, response_json,
           max_chunk_updated_at, xmin_max, cluster_generation)
-       VALUES ($1, $2, $3, $4::jsonb, $5::timestamptz, $6, $7)
+       VALUES ($1, $2, $3, $4::text::jsonb, $5::timestamptz, $6, $7)
        ON CONFLICT (symbol_qualified, depth, source_id)
        DO UPDATE SET
          response_json = EXCLUDED.response_json,

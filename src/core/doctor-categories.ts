@@ -35,10 +35,11 @@
  *
  * The doctor renders both side by side.
  *
- * Drift contract: every check name that ships in doctor.ts MUST appear in
+ * Drift contract: every check name that ships through doctor MUST appear in
  * exactly one set below. The drift-guard test in
- * `test/doctor-categories.test.ts` enforces this by reading doctor.ts source
- * via a tagged-string scan and asserting set membership exactly.
+ * `test/doctor-categories.test.ts` enforces this by reading doctor check
+ * emitter sources via a tagged-string scan and asserting set membership
+ * exactly.
  *
  * If you add a new doctor check, you MUST add its name to the appropriate
  * set here. The categorize step in `src/commands/doctor.ts` falls through
@@ -58,6 +59,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'brain_score',
   'calibration_freshness',
   'child_table_orphans',
+  'chronicle_projection_health',
   'content_sanity_audit_recent',
   'contextual_retrieval_coverage',
   'contradictions',
@@ -66,13 +68,17 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'conversation_parser_probe_health',
   'cross_modal_modality_backfill',
   'cycle_freshness',
+  'dangling_aliases',
   'effective_date_health',
+  'embed_staleness',
   'embedding_column_registry',
   'embedding_env_override',
   'embedding_provider',
   'embedding_width_consistency',
   'embeddings',
+  'entity_link_coverage',
   'eval_drift',
+  'extract_atoms_backlog',
   'extract_health',
   'facts_embedding_width_consistency',
   'facts_extraction_health',
@@ -81,21 +87,30 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'grade_confidence_drift',
   'graph_coverage',
   'graph_signals_coverage',
+  'hidden_by_search_policy',
   'image_assets',
   'integrity',
   'jsonb_integrity',
+  'link_resolution_opportunity',
+  'links_extraction_lag',
   'markdown_body_completeness',
   'nightly_quality_probe_health',
   'ocr_health',
   'orphan_ratio',
   'oversized_pages',
+  'quarantined_pages',
+  'raw_provenance',
+  'flagged_pages',
   'salience_health',
   'scraper_junk_pages',
+  'source_config_shape',
   'source_routing_health',
   'stub_guard_24h',
   'sync_failures',
   'sync_freshness',
+  'takes_count',
   'takes_weight_grid',
+  'timeline_coverage',
   'unified_multimodal_coverage',
   'voice_gate_health',
 ]);
@@ -110,6 +125,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
  */
 export const SKILL_CHECK_NAMES: ReadonlySet<string> = new Set([
   'resolver_health',
+  'retrieval_reflex_health',
   'skill_brain_first',
   'skill_conformance',
   'whoknows_health',
@@ -120,6 +136,7 @@ export const SKILL_CHECK_NAMES: ReadonlySet<string> = new Set([
  */
 export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'alternative_providers',
+  'autopilot_fanout_concurrency',
   'autopilot_lock_scope',
   'batch_retry_health',
   'brainstorm_health',
@@ -131,17 +148,24 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'orphan_clones',
   'pgbouncer_prepare',
   'pgvector',
+  'pool_budget',
   'progressive_batch_audit_health',
   'queue_health',
   'reranker_health',
   'rls',
   'rls_event_trigger',
   'search_mode',
+  'pool_reap_health',
+  'self_upgrade_health',
   'stale_locks',
   'subagent_capability',
   'subagent_health',
   'supervisor',
+  'supervisor_niceness',
+  'supervisor_singleton',
   'sync_consolidation',
+  'wedged_queue',
+  'worker_oom_loop',
   'ze_embedding_health',
 ]);
 
@@ -154,11 +178,14 @@ export const META_CHECK_NAMES: ReadonlySet<string> = new Set([
   'eval_capture',
   'minions_migration',
   'multi_source_drift',
+  'pack_upgrade_available',
   'schema_pack_active',
   'schema_pack_consistency',
   'schema_pack_source_drift',
   'schema_version',
   'slug_fallback_audit',
+  'timeline_dedup_index',
+  'type_proliferation',
   'upgrade_errors',
 ]);
 

@@ -279,6 +279,7 @@ async function makeCrashedCtx(jobId: number, prompt: string, modelId: string): P
     data: { prompt, model: modelId },
     attempts_made: 1, // crashed once
     signal: abortCtrl.signal,
+    deadlineAtMs: null,
     shutdownSignal: shutdownCtrl.signal,
     updateProgress: async () => {},
     updateTokens: async () => {},

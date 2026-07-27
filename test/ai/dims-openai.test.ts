@@ -134,3 +134,30 @@ describe('dimsProviderOptions — OpenAI on openai-compatible adapter (Azure cas
     expect(JSON.stringify(opts)).not.toContain('input_type');
   });
 });
+
+describe('dimsProviderOptions — prefixed model IDs (OpenRouter / proxy providers)', () => {
+  test('openai/text-embedding-3-large at 1536d returns dimensions=1536', () => {
+    const opts = dimsProviderOptions('openai-compatible', 'openai/text-embedding-3-large', 1536);
+    expect(opts).toEqual({ openaiCompatible: { dimensions: 1536 } });
+  });
+
+  test('openai/text-embedding-3-small at 768d returns dimensions=768', () => {
+    const opts = dimsProviderOptions('openai-compatible', 'openai/text-embedding-3-small', 768);
+    expect(opts).toEqual({ openaiCompatible: { dimensions: 768 } });
+  });
+
+  test('openai/text-embedding-3-large at 5000d throws AIConfigError', () => {
+    expect(() => dimsProviderOptions('openai-compatible', 'openai/text-embedding-3-large', 5000))
+      .toThrow(AIConfigError);
+  });
+
+  test('error message preserves full prefixed model ID for clarity', () => {
+    try {
+      dimsProviderOptions('openai-compatible', 'openai/text-embedding-3-large', 5000);
+      throw new Error('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(AIConfigError);
+      expect((err as Error).message).toContain('openai/text-embedding-3-large');
+    }
+  });
+});

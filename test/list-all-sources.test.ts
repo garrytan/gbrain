@@ -43,6 +43,13 @@ async function seedSource(
   );
 }
 
+async function setRawConfig(id: string, rawJson: string): Promise<void> {
+  await engine.executeRaw(
+    `UPDATE sources SET config = $2::text::jsonb WHERE id = $1`,
+    [id, rawJson],
+  );
+}
+
 describe('engine.listAllSources', () => {
   test('returns empty array on fresh brain with only seeded default', async () => {
     // 'default' source seeded by migration; we'll just check it appears
@@ -134,5 +141,29 @@ describe('engine.updateSourceConfig', () => {
     expect(updated).toBe(true);
     const all = await engine.listAllSources();
     expect(all.find(s => s.id === 'delta')!.config.last_full_cycle_at).toBe('2026-05-22T11:00:00.000Z');
+  });
+
+  test('IS-JSON guard: non-JSON string config normalizes to {} on merge', async () => {
+    await seedSource('bad-string');
+    await setRawConfig('bad-string', JSON.stringify('garbage text'));
+    expect(await engine.updateSourceConfig('bad-string', { merged_key: 'v' })).toBe(true);
+    const all = await engine.listAllSources();
+    expect(all.find(source => source.id === 'bad-string')!.config).toEqual({ merged_key: 'v' });
+  });
+
+  test('historical array config is flattened safely before merge', async () => {
+    await seedSource('array-config');
+    await setRawConfig('array-config', JSON.stringify([
+      JSON.stringify(JSON.stringify({ remote_url: 'https://example.invalid/repo' })),
+      { federated: true },
+      'garbage',
+    ]));
+    expect(await engine.updateSourceConfig('array-config', { tracked_branch: 'main' })).toBe(true);
+    const all = await engine.listAllSources();
+    expect(all.find(source => source.id === 'array-config')!.config).toEqual({
+      remote_url: 'https://example.invalid/repo',
+      federated: true,
+      tracked_branch: 'main',
+    });
   });
 });

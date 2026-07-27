@@ -252,13 +252,16 @@ describe('buildPageGenerationsSnapshot (PGLite-backed)', () => {
 });
 
 describe('CACHE_GATE_WHERE_CLAUSE (SQL shape regression)', () => {
-  test('v0.41.19.0: Layer 1 reads page_generation_clock (not MAX(generation))', () => {
-    expect(CACHE_GATE_WHERE_CLAUSE).toContain('page_generation_clock');
+  test('v0.42.x: Layer 1 reads page_generation_clock_seq.last_value (not the locked row, not MAX)', () => {
+    expect(CACHE_GATE_WHERE_CLAUSE).toContain('page_generation_clock_seq');
+    expect(CACHE_GATE_WHERE_CLAUSE).toContain('last_value');
     expect(CACHE_GATE_WHERE_CLAUSE).toContain('qc.max_generation_at_store');
     // Negative regression guard: the old MAX(generation) read shape MUST
     // be gone (codex CDX-1/CDX-2: it silently served stale on
     // UPDATE-to-non-max and DELETE).
     expect(CACHE_GATE_WHERE_CLAUSE).not.toContain('MAX(generation) FROM pages');
+    // The locked single-row read (the BUG 1 contention source) MUST be gone.
+    expect(CACHE_GATE_WHERE_CLAUSE).not.toContain('value FROM page_generation_clock WHERE id');
   });
 
   test('contains Layer 2 per-page snapshot (jsonb_each + LEFT JOIN)', () => {

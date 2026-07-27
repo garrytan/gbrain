@@ -262,6 +262,27 @@ page_types:
     extractable: false
     expert_routing: false
 
+  # v0.42.x — Life Chronicle (#2390). `event` = timeline atom
+  # (when·where·who·what) backlinking to a depth page; `diary` = timestamped
+  # first-person interiority. Both `temporal` (events through time, not entity
+  # surfaces). `extractable: false`: events are already the atomic form, and
+  # diary interiority is NEVER mined into the facts table (privacy/consent).
+  - name: event
+    primitive: temporal
+    path_prefixes:
+      - life/events/
+    aliases: []
+    extractable: false
+    expert_routing: false
+
+  - name: diary
+    primitive: temporal
+    path_prefixes:
+      - life/diary/
+    aliases: []
+    extractable: false
+    expert_routing: false
+
   # Types with no path prefix (set explicitly via frontmatter).
   - name: code
     primitive: media

@@ -20,12 +20,13 @@
  *     - epochs × 1 slow-update reflect call (if no improvement that epoch)
  *     - 1× final test eval on D_test
  *
- * Prices come from existing per-model pricing tables (Anthropic +
- * embedding-pricing). For unknown providers we fail-loud — same posture
- * as BudgetTracker's TX2 contract.
+ * Prices come from the canonical pricing table (model-pricing.ts) via
+ * canonicalLookup. For unknown providers `lookupPrice` returns a warn-only
+ * Sonnet-tier fallback (preflight estimates, never gates) — the actual
+ * fail-loud gate is BudgetTracker's TX2 contract at run time.
  */
 
-import { ANTHROPIC_PRICING } from '../anthropic-pricing.ts';
+import { canonicalLookup } from '../model-pricing.ts';
 import { VALIDATION_RUNS_PER_TASK } from './types.ts';
 
 /** Conservative per-rollout token estimates (input + output). */
@@ -46,6 +47,13 @@ export interface PreflightOpts {
   targetModel: string;
   judgeModel: string;
   maxCostUsd: number;
+  /**
+   * Held-out task count (F11). When > 0, the held-out gate scores baseline +
+   * candidate on the held-out set at every accepted step. Conservatively
+   * priced as if EVERY step accepts (upper bound) so the cap is honest.
+   * 0 / omitted = no held-out gate.
+   */
+  heldOutSize?: number;
   /** When true, print the prompt to stderr + use Ctrl-C grace. Default false (non-TTY). */
   interactive?: boolean;
 }
@@ -82,16 +90,25 @@ export function estimateCost(opts: PreflightOpts): PreflightEstimate {
   const reflectsPerStep = 2; // D7: two reflect calls
   const sel_runs_per_step = opts.selSize * VALIDATION_RUNS_PER_TASK;
 
+  // F11 held-out: baseline + candidate scored on the held-out set at every
+  // accepted step. Upper-bound: assume every step accepts (2 = baseline+candidate).
+  const heldOutSize = opts.heldOutSize ?? 0;
+  const heldOutRollouts = heldOutSize > 0
+    ? totalSteps * heldOutSize * VALIDATION_RUNS_PER_TASK * 2
+    : 0;
+
   // Cumulative counts across the whole run.
   const rollout_calls = totalSteps * rolloutsPerStep
     + opts.selSize * VALIDATION_RUNS_PER_TASK // baseline sel eval
     + opts.selSize * VALIDATION_RUNS_PER_TASK * totalSteps // per-step sel validation
-    + opts.testSize; // final test eval
+    + opts.testSize * 2 // final test eval (best + baseline)
+    + heldOutRollouts; // F11 held-out gate (baseline+candidate per accepted step)
   const reflect_calls = totalSteps * reflectsPerStep
     + opts.epochs; // slow-update meta calls
   const judge_calls = opts.selSize // baseline (1 per task; median-of-3 is in the rollout count already? — no, judge runs per rollout)
     + opts.selSize * VALIDATION_RUNS_PER_TASK * totalSteps // per-step validation
-    + opts.testSize; // final test judges
+    + opts.testSize * 2 // final test judges (best + baseline)
+    + heldOutRollouts; // F11 held-out judges (1 per held-out rollout)
 
   // Cost per call type.
   const targetPrice = lookupPrice(opts.targetModel);
@@ -172,10 +189,10 @@ export function preflight(opts: PreflightOpts): PreflightResult {
 }
 
 function lookupPrice(model: string): { input: number; output: number } {
-  // Anthropic models — strip provider prefix.
-  const bare = model.startsWith('anthropic:') ? model.slice('anthropic:'.length) : model;
-  const anth = (ANTHROPIC_PRICING as Record<string, { input: number; output: number }>)[bare];
-  if (anth) return anth;
+  // Canonical lookup handles bare/colon/slash forms (fixes this site's prior
+  // bare-only limitation, which mispriced `anthropic/...` slash ids).
+  const p = canonicalLookup(model);
+  if (p) return p;
   // Conservative fallback: assume Sonnet-tier pricing for unknown providers.
   // Don't throw — preflight is for warning, not gating. The actual budget
   // tracker (BudgetTracker TX2) will fail-loud at run time if pricing is

@@ -105,4 +105,80 @@ describe('dream CLI flag wiring', () => {
       expect(dreamSrc).toContain('gbrain sources restore');
     });
   });
+
+  // issue #1678 — --drain bounded backlog drain wiring (structural).
+  describe('--drain wiring', () => {
+    test('declares --drain and --window flags', () => {
+      expect(dreamSrc).toContain("'--drain'");
+      expect(dreamSrc).toContain("'--window'");
+      expect(dreamSrc).toContain('windowSeconds');
+    });
+
+    test('--drain defaults to extract_atoms and rejects other phases', () => {
+      expect(dreamSrc).toContain("phase = 'extract_atoms'");
+      expect(dreamSrc).toContain('--drain currently supports only --phase extract_atoms');
+    });
+
+    test('drain routes through the shared helper with the resolved source (5A)', () => {
+      // v0.42.10.0 (#1685 GAP D / 5A): the lock+batch+count wiring moved into
+      // runExtractAtomsDrainForSource so the CLI, the Minion handler, and
+      // autopilot share ONE drain path. dream threads resolvedSourceId so the
+      // helper picks cycleLockIdFor(resolvedSourceId) — the same lock the routine
+      // cycle holds for that source. The lock-id contract is now pinned in
+      // test/extract-atoms-drain.test.ts ("shared wiring helper holds the cycle lock").
+      expect(dreamSrc).toContain('runExtractAtomsDrainForSource');
+      expect(dreamSrc).toContain('sourceId: resolvedSourceId');
+    });
+
+    test('drain reports remaining + exits non-zero when incomplete', () => {
+      expect(dreamSrc).toContain('EXIT_DRAIN_INCOMPLETE');
+      expect(dreamSrc).toContain('cycle_already_running');
+    });
+  });
+
+  // issue #2860 — --once one-shot phase-enabled-gate bypass (structural).
+  // Behavioral coverage: test/e2e/dream-patterns-pglite.test.ts (bypass +
+  // config-untouched) and test/core/cycle.serial.test.ts (non-leak across
+  // phases via CycleOpts.onceForPhase).
+  describe('--once wiring (issue #2860)', () => {
+    test('declares --once flag', () => {
+      expect(dreamSrc).toContain("'--once'");
+    });
+
+    test('rejects bare --once with no --phase (exit 2)', () => {
+      expect(dreamSrc).toContain('--once requires an explicit --phase <name>');
+      // --help must short-circuit this validation (Codex review finding) —
+      // see the "--help --once" test in test/dream.test.ts for the
+      // behavioral pin of this exact ordering.
+      expect(dreamSrc).toContain('if (once && !phaseWasExplicit && !wantsHelp)');
+    });
+
+    // Codex P3 finding: the derived `phase` value gets populated by
+    // --input/--drain BEFORE this validation used to run, so those two
+    // silently slipped past an `!phase`-based check. The fix validates
+    // against `phaseWasExplicit` (captured at `phaseIdx !== -1`, before
+    // any implicit defaulting) instead. Behavioral pins live in
+    // test/dream.test.ts.
+    test('validates against phaseWasExplicit, captured before --input/--drain defaulting', () => {
+      expect(dreamSrc).toContain('const phaseWasExplicit = phaseIdx !== -1;');
+      // Must be declared before the --input-implies-synthesize and
+      // --drain-implies-extract_atoms defaulting blocks so it captures
+      // presence prior to any implicit phase assignment.
+      const explicitIdx = dreamSrc.indexOf('const phaseWasExplicit = phaseIdx !== -1;');
+      const inputImpliesIdx = dreamSrc.indexOf("phase = 'synthesize'");
+      const drainImpliesIdx = dreamSrc.indexOf("phase = 'extract_atoms'");
+      expect(explicitIdx).toBeGreaterThan(-1);
+      expect(explicitIdx).toBeLessThan(inputImpliesIdx);
+      expect(explicitIdx).toBeLessThan(drainImpliesIdx);
+    });
+
+    test('threads onceForPhase to runCycle, gated on opts.once', () => {
+      expect(dreamSrc).toMatch(/onceForPhase:\s*opts\.once\s*\?\s*opts\.phase!\s*:\s*undefined/);
+    });
+
+    test('documents --once in --help output', () => {
+      expect(dreamSrc).toContain('--once');
+      expect(dreamSrc).toContain('Never reads or writes config');
+    });
+  });
 });

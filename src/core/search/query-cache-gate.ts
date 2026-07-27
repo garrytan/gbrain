@@ -5,9 +5,14 @@
  * Two pure helpers wired by query-cache.ts at store + lookup time. Pure
  * surface lets us unit-test the two-layer gate logic without a real cache.
  *
- * Layer 1 (cheap bookmark): `page_generation_clock.value` <=
+ * Layer 1 (cheap bookmark): `page_generation_clock_seq` last_value <=
  *   `query_cache.max_generation_at_store`. If true, no page write has
  *   happened since this row stored, so the row is fresh corpus-wide.
+ *   v0.42.x: the bookmark source switched from a locked single-row counter
+ *   (`page_generation_clock.value`) to a contention-free SEQUENCE bumped by
+ *   `nextval()` in the statement trigger. `last_value` is non-transactional —
+ *   it can reflect a rolled-back or concurrent-uncommitted writer, which only
+ *   ever OVER-invalidates (loses a cache hit), never serves stale.
  *
  * Layer 2 (per-page snapshot): if bookmark fires, fall through to the
  *   `page_generations JSONB` snapshot. For each `(page_id, stored_gen)`
@@ -98,7 +103,7 @@ export async function buildPageGenerationsSnapshot(
       // Per D20, empty-result cache rows trust Layer 1 exclusively;
       // bumping the clock on subsequent writes correctly invalidates them.
       const rows = await engine.executeRaw<{ v: number }>(
-        `SELECT COALESCE((SELECT value FROM page_generation_clock WHERE id = 1), 0)::bigint AS v`,
+        `SELECT COALESCE((SELECT last_value FROM page_generation_clock_seq), 0)::bigint AS v`,
       );
       snapshot.max_generation_at_store = Number(rows[0]?.v ?? 0);
       return snapshot;
@@ -117,7 +122,7 @@ export async function buildPageGenerationsSnapshot(
          FROM pages WHERE id = ANY($1::int[])
        UNION ALL
        SELECT 'CLOCK' AS k,
-              COALESCE((SELECT value FROM page_generation_clock WHERE id = 1), 0)::bigint AS v,
+              COALESCE((SELECT last_value FROM page_generation_clock_seq), 0)::bigint AS v,
               TRUE AS is_max`,
       [pageIds],
     );
@@ -132,12 +137,12 @@ export async function buildPageGenerationsSnapshot(
     }
     return snapshot;
   } catch {
-    // Pre-v105 brain (no `page_generation_clock` table yet). Return the
-    // empty snapshot with zero bookmark — every cache row will fall
-    // through to Layer 2 (which is stricter post-v0.41.19.0 and will
-    // invalidate empty snapshots). Acceptable upgrade-path one-time
-    // cache miss; migration v105 fills the table within the same
-    // initSchema() call so this branch is short-lived.
+    // Pre-sequence brain mid-upgrade (no `page_generation_clock_seq` yet).
+    // Return the empty snapshot with zero bookmark — every cache row will
+    // fall through to Layer 2 (which is stricter post-v0.41.19.0 and will
+    // invalidate empty snapshots). Acceptable upgrade-path one-time cache
+    // miss; migration v118 creates the sequence within the same initSchema()
+    // call so this branch is short-lived.
     return snapshot;
   }
 }
@@ -157,11 +162,12 @@ export async function buildPageGenerationsSnapshot(
  */
 export const CACHE_GATE_WHERE_CLAUSE = `
   (
-    -- Layer 1 (cheap bookmark): O(1) single-row read from page_generation_clock.
-    -- Bumped per-statement by bump_page_generation_clock_trg on every INSERT,
-    -- UPDATE, or DELETE on pages. If no statement has fired since this row
-    -- stored, the row is fresh corpus-wide.
-    COALESCE((SELECT value FROM page_generation_clock WHERE id = 1), 0)
+    -- Layer 1 (cheap bookmark): O(1) read of page_generation_clock_seq.last_value.
+    -- The sequence is advanced (nextval) per-statement by bump_page_generation_clock_trg
+    -- on every INSERT, UPDATE, or DELETE on pages. If no statement has fired
+    -- since this row stored, last_value is unchanged and the row is fresh
+    -- corpus-wide. Non-transactional read: only ever over-invalidates.
+    COALESCE((SELECT last_value FROM page_generation_clock_seq), 0)
       <= qc.max_generation_at_store
     OR
     -- Layer 2 (per-page snapshot): bookmark fired, but maybe THIS row's

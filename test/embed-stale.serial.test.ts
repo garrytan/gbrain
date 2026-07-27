@@ -227,4 +227,53 @@ describe('embedStaleForSource', () => {
     const otherStale = await engine.countStaleChunks({ sourceId: 'other' });
     expect(otherStale).toBe(3);
   });
+
+  test('preserves modality and code-symbol metadata across the merge round-trip', async () => {
+    // Regression: the merged ChunkInput[] used to rebuild rows with only 5
+    // fields; upsertChunks writes modality/symbol columns as EXCLUDED.<col>,
+    // so an image page with one stale TEXT chunk got its image row reset to
+    // modality='text' — permanently invisible to the image search arm.
+    await engine.putPage('media/mixed-page', {
+      type: 'image',
+      title: 'mixed',
+      compiled_truth: 'mixed modality page',
+    });
+    const imgVec = new Float32Array(1024).fill(0.03);
+    await engine.upsertChunks('media/mixed-page', [
+      {
+        chunk_index: 0,
+        chunk_text: 'field-photo.jpg',
+        chunk_source: 'image_asset',
+        modality: 'image',
+        embedding_image: imgVec,
+        // embedding intentionally present so this row is NOT stale.
+        embedding: new Float32Array(1536).fill(0.01),
+        token_count: 4,
+      },
+      {
+        chunk_index: 1,
+        chunk_text: 'ocr caption text needing embed',
+        chunk_source: 'compiled_truth',
+        language: 'python',
+        symbol_name: 'kept_symbol',
+        symbol_type: 'function',
+        symbol_name_qualified: 'mod::kept_symbol',
+        token_count: 6,
+        embedding: undefined, // stale — triggers the merge path
+      },
+    ]);
+
+    const result = await embedStaleForSource(engine, 'default', { embedFn: fakeEmbedFn });
+    expect(result.embedded).toBe(1);
+
+    const after = await engine.getChunks('media/mixed-page');
+    const imgRow = after.find((c) => c.chunk_index === 0)!;
+    const txtRow = after.find((c) => c.chunk_index === 1)!;
+    expect(imgRow.modality).toBe('image');
+    expect(txtRow.language).toBe('python');
+    expect(txtRow.symbol_name).toBe('kept_symbol');
+    expect(txtRow.symbol_name_qualified).toBe('mod::kept_symbol');
+    // The stale text row actually got its embedding.
+    expect(txtRow.embedded_at).not.toBeNull();
+  });
 });

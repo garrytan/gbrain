@@ -21,7 +21,8 @@
  */
 
 import type { ChatToolDef, ToolHandler } from '../ai/gateway.ts';
-import { operations, type OperationContext } from '../operations.ts';
+import { operations, type OperationContext, type ParamDef } from '../operations.ts';
+import { paramDefToSchema } from '../../mcp/tool-defs.ts';
 import { loadConfig } from '../config.ts';
 import { BRAIN_TOOL_ALLOWLIST } from '../minions/tools/brain-allowlist.ts';
 import type { BrainEngine } from '../engine.ts';
@@ -202,11 +203,13 @@ function buildOpContext(engine: BrainEngine): OperationContext {
   };
 }
 
-function paramsToSchema(params: Record<string, { type: string; description?: string; required?: boolean }>): Record<string, unknown> {
+function paramsToSchema(params: Record<string, ParamDef>): Record<string, unknown> {
   return {
     type: 'object' as const,
     properties: Object.fromEntries(
-      Object.entries(params).map(([k, v]) => [k, { type: v.type, description: v.description }]),
+      // Canonical ParamDef→JSON Schema mapper (shared with subagent + MCP + HTTP)
+      // so enum/default/items survive. Prior {type,description}-only map dropped them.
+      Object.entries(params).map(([k, v]) => [k, paramDefToSchema(v)]),
     ),
     required: Object.entries(params).filter(([, v]) => v.required).map(([k]) => k),
   };

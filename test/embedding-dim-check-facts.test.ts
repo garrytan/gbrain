@@ -122,9 +122,9 @@ describe('buildFactsAlterRecipe', () => {
   });
 
   test('vector recipe uses vector_cosine_ops + vector(N) USING cast', () => {
-    const recipe = buildFactsAlterRecipe(1024, 2048, 'vector');
-    expect(recipe).toContain('vector(2048)');
-    expect(recipe).toContain('USING embedding::vector(2048)');
+    const recipe = buildFactsAlterRecipe(1024, 1536, 'vector');
+    expect(recipe).toContain('vector(1536)');
+    expect(recipe).toContain('USING embedding::vector(1536)');
     expect(recipe).toContain('vector_cosine_ops');
     expect(recipe).not.toContain('halfvec_cosine_ops');
   });
@@ -141,6 +141,35 @@ describe('buildFactsAlterRecipe', () => {
     // on the partial HNSW index. The recipe must be DROP + ALTER + CREATE.
     const recipe = buildFactsAlterRecipe(1536, 1280, 'halfvec');
     expect(recipe).toMatch(/DROP INDEX[\s\S]*ALTER TABLE[\s\S]*CREATE INDEX/);
+  });
+
+  test('dimension change NULLs embeddings BEFORE the alter (pgvector refuses cross-dim casts)', () => {
+    // Same defect class fixed for content_chunks in embeddingMismatchMessage:
+    // pgvector aborts a cross-dimension ALTER while rows still hold old-width
+    // vectors. The dims-change recipe must wipe first; order pinned.
+    const recipe = buildFactsAlterRecipe(1536, 1280, 'halfvec');
+    const nullIdx = recipe.indexOf('UPDATE facts SET embedding = NULL');
+    const alterIdx = recipe.indexOf('ALTER TABLE facts ALTER COLUMN embedding TYPE');
+    expect(nullIdx).toBeGreaterThan(-1);
+    expect(alterIdx).toBeGreaterThan(-1);
+    expect(nullIdx).toBeLessThan(alterIdx);
+  });
+
+  test('same-dim type swap PRESERVES embeddings (no NULL wipe)', () => {
+    // halfvec(1536) <-> vector(1536): the USING cast is lossless and the
+    // whole point is keeping the data. A wipe here would destroy valid
+    // embeddings for no reason.
+    const recipe = buildFactsAlterRecipe(1536, 1536, 'vector');
+    expect(recipe).not.toContain('UPDATE facts SET embedding = NULL');
+    expect(recipe).toContain('USING embedding::vector(1536)');
+  });
+
+  test('halfvec recipe skips HNSW rebuild above pgvector cap', () => {
+    const recipe = buildFactsAlterRecipe(1536, 4096, 'halfvec');
+    expect(recipe).toContain('halfvec(4096)');
+    expect(recipe).toContain('Skip reindex');
+    expect(recipe).toContain("exceeds pgvector's HNSW cap of 4000");
+    expect(recipe).not.toMatch(/CREATE INDEX idx_facts_embedding_hnsw[\s\S]*USING hnsw/);
   });
 });
 

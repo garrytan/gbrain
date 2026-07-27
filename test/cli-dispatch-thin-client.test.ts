@@ -174,3 +174,47 @@ describe('regression — local config still passes through normally', () => {
     expect(r.stdout).not.toContain('"mode":"thin-client"');
   });
 });
+
+describe('thin-client scratch-DB guard — jobs partial dispatch + config refusal', () => {
+  test('`gbrain config set x y` is refused with pinpoint hint', async () => {
+    seedThinClientConfig();
+    const r = await run(['config', 'set', 'search.reranker.enabled', 'false']);
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain('gbrain config');
+    expect(r.stderr).toContain('not routable');
+    expect(r.stderr).toContain('thin-client of https://brain-host.example/mcp');
+  });
+
+  test('`gbrain jobs work` is refused with pinpoint hint (host-queue-bound)', async () => {
+    seedThinClientConfig();
+    const r = await run(['jobs', 'work']);
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain('gbrain jobs');
+    expect(r.stderr).toContain('not routable');
+    expect(r.stderr).toContain('thin-client of https://brain-host.example/mcp');
+  });
+
+  test('`gbrain jobs get` never fabricates a scratch local engine', async () => {
+    // The regression this pins: on a thin-client install with a PGLite
+    // engine key, `jobs get` connected a LOCAL engine before its remote
+    // routing branch ran — creating an empty scratch PGLite store in the
+    // thin-client GBRAIN_HOME and replaying the entire migration chain
+    // ("Schema version 1 → N") on every invocation. The remote call to
+    // brain-host.example will fail (unreachable) — irrelevant here. What
+    // matters: no local store is created and no migration replay runs.
+    seedThinClientConfig({ engine: 'pglite' });
+    const r = await run(['jobs', 'get', '999']);
+    const { existsSync } = await import('fs');
+    expect(existsSync(join(tmp, '.gbrain', 'brain.pglite'))).toBe(false);
+    expect(r.stdout + r.stderr).not.toContain('Schema version');
+    expect(r.stdout + r.stderr).not.toContain('migration(s) pending');
+  });
+
+  test('`gbrain jobs list` never fabricates a scratch local engine', async () => {
+    seedThinClientConfig({ engine: 'pglite' });
+    const r = await run(['jobs', 'list']);
+    const { existsSync } = await import('fs');
+    expect(existsSync(join(tmp, '.gbrain', 'brain.pglite'))).toBe(false);
+    expect(r.stdout + r.stderr).not.toContain('Schema version');
+  });
+});
