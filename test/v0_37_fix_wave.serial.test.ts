@@ -255,13 +255,6 @@ describe('v0.37 Lane C.3 — ZE key reaches buildGatewayConfig', () => {
     // compiles, the field exists. Body of the test is a runtime no-op.
     expect(true).toBe(true);
   });
-
-  test('GBrainConfig type includes openrouter_api_key field (TS compile guard)', async () => {
-    const { type } = await import('../src/core/config.ts').then(m => ({ type: undefined }));
-    // The type-level assertion happens at compile time. If this file
-    // compiles, the field exists. Body of the test is a runtime no-op.
-    expect(true).toBe(true);
-  });
 });
 
 // Lane D.1 — engine-kind branching already covered in test/embedding-dim-check.test.ts
