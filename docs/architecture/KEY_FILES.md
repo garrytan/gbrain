@@ -502,3 +502,5 @@ T1.5 wiring is partial in v0.40.7.0. Three follow-ups filed in TODOS.md under
 union widening (`'person' | 'company'` → `string`), facts/eligibility.ts
 pack-aware `ELIGIBLE_TYPES` wiring, and 3 doctor checks (schema_pack_coverage,
 schema_pack_writability, schema_pack_mutation_audit).
+
+- `src/core/vector-index.ts` + `src/commands/doctor.ts:embedding_column_registry` — shared pgvector HNSW eligibility policy. `hnswIndexExpected(columnType, dims)` derives the answer from the canonical `vector`/`halfvec` dimension caps already used by migration index generation. Doctor reports an HNSW-less active embedding column as a healthy exact-scan configuration when its declared width exceeds the applicable pgvector cap, and only emits the index repair recipe when an index is actually supported. Pinned at both cap boundaries by `test/vector-index-lifecycle.test.ts`.
