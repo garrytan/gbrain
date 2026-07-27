@@ -24,7 +24,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
 import { MinionQueue } from '../minions/queue.ts';
 import { waitForCompletion, TimeoutError } from '../minions/wait-for-completion.ts';
-import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
+import type { MinionJobInput, MinionJobStatus, SubagentHandlerData } from '../minions/types.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
 // #2415: allow-list + output-root resolution shared with the synthesize
@@ -181,7 +181,9 @@ export async function runPhasePatterns(
       allowProtectedSubmit: true,
     });
 
-    let outcome: string;
+    // Keep this typed to the queue's canonical terminal states. Minion jobs
+    // finish as `completed`; `complete` is reserved for tool-execution rows.
+    let outcome: MinionJobStatus | 'timeout';
     try {
       const final = await waitForCompletion(queue, job.id, {
         timeoutMs: budgets.waitTimeoutMs,
@@ -227,7 +229,7 @@ export async function runPhasePatterns(
     // returned status:ok even when the subagent timed out (e.g. no
     // subagent-capable worker slot free for the whole wait window) and zero
     // pattern pages were written — a silent no-op for days.
-    if (outcome !== 'complete') {
+    if (outcome !== 'completed') {
       if (writtenRefs.length === 0) {
         return {
           phase: 'patterns',
