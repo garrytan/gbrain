@@ -747,7 +747,16 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // to post-fix lookups. Same one-time global cold-miss pattern as the bumps
 // above (the hash is global, not per-provider); refills within
 // cache.ttl_seconds (3600s default).
-export const KNOBS_HASH_VERSION = 11;
+//
+// bump 11→12 (2026-07-16, #2825): the resolved hard-exclude slug-prefix list
+// (defaults ∪ GBRAIN_SEARCH_EXCLUDE ∪ exclude_slug_prefixes, minus
+// include_slug_prefixes) folds into the key via ctx.hardExcludes. It only
+// applied at DB-query build time (cache miss), so a process with
+// GBRAIN_SEARCH_EXCLUDE set could be served cached rows containing excluded
+// slugs written by a process without it, and vice versa. Same one-time
+// global cold-miss pattern as the bumps above; refills within
+// cache.ttl_seconds (3600s default).
+export const KNOBS_HASH_VERSION = 12;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -776,6 +785,16 @@ export interface KnobsHashContext {
    */
   schemaPack?: string;
   schemaPackVersion?: string;
+  /**
+   * v=12 (#2825): the RESOLVED effective hard-exclude prefix list — the same
+   * value resolveHardExcludes() produces at query-build time (defaults ∪
+   * GBRAIN_SEARCH_EXCLUDE ∪ per-call exclude_slug_prefixes, minus
+   * include_slug_prefixes). Folded (sorted, so input order is irrelevant)
+   * into the hash so a cache row written under one exclude policy can never
+   * be served to a lookup under another. Undefined falls back to the literal
+   * 'none' for legacy callers that don't thread excludes.
+   */
+  hardExcludes?: string[];
 }
 
 export function knobsHash(
@@ -863,6 +882,12 @@ export function knobsHash(
     // test/model-pricing.test.ts-style drift guards and the mode tests.
     `rel=${knobs.relationalRetrieval ? 1 : 0}`,
     `reld=${knobs.relational_retrieval_depth ?? 2}`,
+    // v=12 addition (#2825, append-only): resolved hard-exclude prefixes.
+    // Before this, resolveHardExcludes() only ran at DB-query build time
+    // (cache miss), so cached rows leaked GBRAIN_SEARCH_EXCLUDE'd slugs
+    // across processes. Sorted copy so ['a/','b/'] and ['b/','a/'] hash
+    // identically; undefined falls back to 'none' for legacy callers.
+    `hx=${ctx?.hardExcludes ? [...ctx.hardExcludes].sort().join(',') : 'none'}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));

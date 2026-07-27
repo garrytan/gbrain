@@ -6,9 +6,10 @@
  * degrades to gather-only output with a warning if missing.
  */
 import type { BrainEngine } from '../core/engine.ts';
-import { runThink, persistSynthesis } from '../core/think/index.ts';
+import { runThink, persistSynthesis, stripGapsSection } from '../core/think/index.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
+import { canonicalLookup } from '../core/model-pricing.ts';
 
 function flagValue(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -18,6 +19,27 @@ function flagValue(args: string[], name: string): string | undefined {
 
 function flagPresent(args: string[], name: string): boolean {
   return args.includes(name);
+}
+
+/**
+ * think's own cost was previously unsurfaced anywhere: not in this CLI's own
+ * `--json` output, not in `budget_ledger`, and invisible to a wrapping
+ * caller's own token accounting (the LLM call `think` makes is its own,
+ * separate API call). Returns undefined when `usage` is absent (no-client/
+ * stub paths, or a remote-MCP call that didn't forward it) or when the
+ * resolved model has no entry in the canonical pricing table.
+ */
+export function computeThinkCostUsd(
+  usage: { input_tokens: number; output_tokens: number } | undefined,
+  modelUsed: string,
+): number | undefined {
+  if (!usage) return undefined;
+  const pricing = canonicalLookup(modelUsed);
+  if (!pricing) return undefined;
+  return Number(
+    ((usage.input_tokens / 1_000_000) * pricing.input
+      + (usage.output_tokens / 1_000_000) * pricing.output).toFixed(4),
+  );
 }
 
 export async function runThinkCli(engine: BrainEngine, args: string[]): Promise<void> {
@@ -146,9 +168,15 @@ prints what would have been the input (exit 0).
     }
   }
 
+  const costUsd = computeThinkCostUsd(
+    (result as { usage?: { input_tokens: number; output_tokens: number } }).usage,
+    result.modelUsed,
+  );
+
   if (json) {
     console.log(JSON.stringify({
       ...result,
+      cost_usd: costUsd ?? null,
       saved_slug: savedSlug ?? null,
       evidence_inserted: evidenceInserted,
     }, null, 2));
@@ -157,7 +185,7 @@ prints what would have been the input (exit 0).
 
   // Human-readable output
   console.log(`# ${question}\n`);
-  console.log(result.answer);
+  console.log(stripGapsSection(result.answer));
   console.log('');
   if (result.gaps.length > 0) {
     console.log('## Gaps');
@@ -165,7 +193,8 @@ prints what would have been the input (exit 0).
     console.log('');
   }
   console.log('---');
-  console.log(`Model: ${result.modelUsed} | Pages: ${result.pagesGathered} | Takes: ${result.takesGathered} | Graph: ${result.graphHits} | Citations: ${result.citations.length}`);
+  const costSuffix = costUsd !== undefined ? ` | Cost: $${costUsd.toFixed(4)}` : '';
+  console.log(`Model: ${result.modelUsed} | Pages: ${result.pagesGathered} | Takes: ${result.takesGathered} | Graph: ${result.graphHits} | Citations: ${result.citations.length}${costSuffix}`);
   if (savedSlug) {
     console.log(`Saved: ${savedSlug} (${evidenceInserted} evidence rows)`);
   }

@@ -58,6 +58,7 @@ function makeJob(data: Record<string, unknown>): MinionJobContext {
     data,
     attempts_made: 1,
     signal: new AbortController().signal,
+    deadlineAtMs: null,
     shutdownSignal: new AbortController().signal,
     updateProgress: async () => {},
     updateTokens: async () => {},
@@ -159,6 +160,70 @@ describe('ingest_capture handler — validation + routing', () => {
     const result = await handler(makeJob({ event: ev }));
     expect(result.source_kind).toBe('inbox-folder');
     expect(result.source_uri).toBe('/Users/test/.gbrain/inbox/note.md');
+  });
+});
+
+describe('ingest_capture handler — provenance write-through (#1522)', () => {
+  async function pageRow(slug: string): Promise<{ source_id: string; source_kind: string | null; source_uri: string | null; ingested_via: string | null } | undefined> {
+    const rows = await engine.executeRaw<{ source_id: string; source_kind: string | null; source_uri: string | null; ingested_via: string | null }>(
+      `SELECT source_id, source_kind, source_uri, ingested_via FROM pages WHERE slug = $1`,
+      [slug],
+    );
+    return rows[0];
+  }
+
+  test('trusted event with a registered source id routes the page write there and persists source_kind/source_uri', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('m365-example', 'm365-example') ON CONFLICT (id) DO NOTHING`,
+    );
+    const handler = makeIngestCaptureHandler(engine);
+    const ev = makeEvent({
+      content: '# calendar event',
+      source_id: 'm365-example',
+      source_kind: 'm365-calendar',
+      source_uri: 'm365:event/abc-123',
+    });
+    const result = await handler(makeJob({ event: ev, slug: 'calendar/evt-1' }));
+    expect(result.status).toBe('imported');
+
+    const row = await pageRow('calendar/evt-1');
+    expect(row?.source_id).toBe('m365-example');
+    expect(row?.source_kind).toBe('m365-calendar');
+    expect(row?.source_uri).toBe('m365:event/abc-123');
+    expect(row?.ingested_via).toBe('ingest_capture');
+  });
+
+  test('unregistered emitter source_id (webhook-<clientId>) keeps default-source routing but still persists provenance', async () => {
+    const handler = makeIngestCaptureHandler(engine);
+    // makeEvent's source_id 'webhook-test' is NOT a registered source.
+    const ev = makeEvent({ content: '# webhook capture' });
+    const result = await handler(makeJob({ event: ev, slug: 'inbox/webhook-1' }));
+    expect(result.status).toBe('imported');
+
+    const row = await pageRow('inbox/webhook-1');
+    expect(row?.source_id).toBe('default');
+    expect(row?.source_kind).toBe('webhook');
+    expect(row?.source_uri).toBe('mcp-webhook:client-x:1234');
+    expect(row?.ingested_via).toBe('ingest_capture');
+  });
+
+  test('untrusted event cannot choose its write source even when the id is registered (fail-closed)', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('wiki', 'wiki') ON CONFLICT (id) DO NOTHING`,
+    );
+    const handler = makeIngestCaptureHandler(engine);
+    const ev = makeEvent({
+      content: '# untrusted payload',
+      source_id: 'wiki',
+      untrusted_payload: true,
+    });
+    const result = await handler(makeJob({ event: ev, slug: 'inbox/untrusted-1' }));
+    expect(result.status).toBe('imported');
+
+    const row = await pageRow('inbox/untrusted-1');
+    expect(row?.source_id).toBe('default');
+    // Provenance strings (no scoping power) still persist.
+    expect(row?.source_kind).toBe('webhook');
   });
 });
 

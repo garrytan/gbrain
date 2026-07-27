@@ -21,14 +21,17 @@ GBrain is tuned for the Supabase **Transaction pooler** (port 6543): it
 auto-disables prepared statements there and routes `engine.transaction()`
 (migrations, DDL, sync imports) to a derived **direct** connection
 (`db.<ref>.supabase.co:5432`). That direct host is IPv6-only, so on an
-IPv4-only host, reads work but sync **silently skips most pages**. This is the
-number one cause of "sync ran but nothing happened."
+IPv4-only host it is unreachable. When that happens gbrain now falls back to
+the pooler automatically (one stderr warning, then single-pool mode for the
+rest of the process) — but the pooler's ~2-min statement timeout can truncate
+very long migrations or bulk imports.
 
 Fix: make the direct connection reachable over IPv4. Either set
 `GBRAIN_DIRECT_DATABASE_URL` to the **Session pooler** string (port 5432 on the
-`pooler.supabase.com` host, IPv4), or enable Supabase's IPv4 add-on. Verify by
-running `gbrain sync` and checking that the page count in `gbrain stats` matches
-the syncable file count in the repo.
+`pooler.supabase.com` host, IPv4), or enable Supabase's IPv4 add-on.
+`GBRAIN_DISABLE_DIRECT_POOL=1` skips the direct pool (and the fallback warning)
+entirely. Verify by running `gbrain sync` and checking that the page count in
+`gbrain stats` matches the syncable file count in the repo.
 
 ### The Primitives
 
@@ -130,6 +133,16 @@ hashes match. If both a cron and `--watch` fire simultaneously, no conflict.
    or delete them, and fixing the file clears it on the next sync. A repository
    history rewrite still hard-blocks even with `--skip-failed`. Run
    `gbrain sync --skip-failed` to acknowledge a known-bad set yourself.
+
+5. **Import checkpoints name the import target, not the caller's CWD.**
+   Interrupted `gbrain import <dir>` runs may leave
+   `~/.gbrain/import-checkpoint.json` so the next import can resume. The
+   checkpoint `dir` is the absolute, resolved import target captured when
+   import starts. It is not a cleanup instruction and it must not be
+   re-derived from the process working directory. Checkpoints written by
+   gbrain include `schema_version: 1`, `owner: "gbrain"`, and
+   `kind: "import"` so downstream tools can validate the contract before
+   deciding whether to resume.
 
 ## How to Verify
 

@@ -736,26 +736,46 @@ describe('migrate v66 — embed_stale_partial_index (D6)', () => {
     expect(v66!.sql).toBe('');
   });
 
-  test('v66 handler source: CONCURRENTLY + invalid-index cleanup on Postgres branch', async () => {
+  test('v66 handler source delegates invalid-remnant cleanup to the shared helper (#1178)', async () => {
     const { readFileSync } = await import('fs');
     const src = readFileSync('src/core/migrate.ts', 'utf-8');
     const v66Start = src.indexOf("name: 'embed_stale_partial_index'");
     expect(v66Start).toBeGreaterThan(-1);
     const v66Block = src.slice(v66Start, v66Start + 3000);
-    expect(v66Block).toContain('pg_index');
-    expect(v66Block).toContain('indisvalid');
-    expect(v66Block).toContain('DROP INDEX CONCURRENTLY IF EXISTS idx_chunks_embedding_null');
+    // #1178: `DO $$ BEGIN ... EXECUTE 'DROP INDEX CONCURRENTLY ...'; END $$;`
+    // is rejected by Postgres whenever the guard condition actually fires
+    // (CONCURRENTLY can't run from any function/EXECUTE context). The fix
+    // moves the probe + drop to the dropInvalidConcurrentIndex() helper
+    // (defined above MIGRATIONS, tested directly in
+    // test/e2e/migration-drop-invalid-concurrent-index.test.ts) — the
+    // migration body just calls it.
+    expect(v66Block).toContain("dropInvalidConcurrentIndex(engine, 66, 'idx_chunks_embedding_null')");
     expect(v66Block).toContain('CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chunks_embedding_null');
+    expect(v66Block).not.toMatch(/EXECUTE\s+'DROP INDEX CONCURRENTLY/);
     // Partial index predicate must match the production query in
     // postgres-engine.ts / pglite-engine.ts: `WHERE embedding IS NULL`.
     expect(v66Block).toContain('WHERE embedding IS NULL');
-    // DROP IF EXISTS must precede CREATE IF NOT EXISTS so a failed prior
+    // The cleanup call must precede CREATE IF NOT EXISTS so a failed prior
     // CONCURRENTLY build is cleaned before re-create.
-    const dropIdx = v66Block.indexOf('DROP INDEX CONCURRENTLY IF EXISTS');
+    const dropIdx = v66Block.indexOf('dropInvalidConcurrentIndex');
     const createIdx = v66Block.indexOf('CREATE INDEX CONCURRENTLY IF NOT EXISTS');
     expect(dropIdx).toBeLessThan(createIdx);
     // Branches on engine.kind (handler-pattern from v14).
     expect(v66Block).toContain('engine.kind');
+  });
+
+  test('dropInvalidConcurrentIndex helper itself probes pg_index.indisvalid and issues a standalone DROP (no DO block)', async () => {
+    const { readFileSync } = await import('fs');
+    const src = readFileSync('src/core/migrate.ts', 'utf-8');
+    const helperStart = src.indexOf('async function dropInvalidConcurrentIndex');
+    expect(helperStart).toBeGreaterThan(-1);
+    const helperBlock = src.slice(helperStart, helperStart + 1200);
+    expect(helperBlock).toContain('pg_index');
+    expect(helperBlock).toContain('indisvalid');
+    expect(helperBlock).toContain('executeRaw');
+    expect(helperBlock).toContain('DROP INDEX CONCURRENTLY IF EXISTS');
+    expect(helperBlock).not.toContain('DO $$');
+    expect(helperBlock).not.toContain('EXECUTE ');
   });
 
   test('v66 idempotent flag is true (re-run safety)', () => {

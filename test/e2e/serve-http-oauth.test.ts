@@ -13,6 +13,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { createHash } from 'crypto';
 import { hasDatabase } from './helpers.ts';
 
 const skip = !hasDatabase();
@@ -24,6 +25,7 @@ if (skip) {
 
 const PORT = 19131; // Avoid collision with production 3131
 const BASE = `http://localhost:${PORT}`;
+const ADMIN_BOOTSTRAP_TOKEN = 'e2e-admin-bootstrap-token-000000000000';
 
 describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   let serverProcess: ReturnType<typeof import('child_process').spawn> | null = null;
@@ -71,7 +73,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
       '--enable-dcr',
     ], {
       cwd: process.cwd(),
-      env: process.env,
+      env: { ...process.env, GBRAIN_ADMIN_BOOTSTRAP_TOKEN: ADMIN_BOOTSTRAP_TOKEN },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -138,6 +140,18 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
       },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, ...(params ? { params } : {}) }),
     });
+  }
+
+  async function adminCookie(): Promise<string> {
+    const login = await fetch(`${BASE}/admin/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: ADMIN_BOOTSTRAP_TOKEN }),
+    });
+    expect(login.ok).toBe(true);
+    const match = (login.headers.get('set-cookie') || '').match(/gbrain_admin=([^;]+)/);
+    expect(match).toBeTruthy();
+    return `gbrain_admin=${match![1]}`;
   }
 
   // =========================================================================
@@ -210,6 +224,12 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     expect(meta.grant_types_supported).toContain('authorization_code');
     expect(meta.grant_types_supported).toContain('refresh_token');
     expect(meta.grant_types_supported).toContain('client_credentials');
+    expect(meta.token_endpoint_auth_methods_supported).toEqual(
+      expect.arrayContaining(['client_secret_post', 'client_secret_basic', 'none']),
+    );
+    expect(meta.revocation_endpoint_auth_methods_supported).toEqual(
+      expect.arrayContaining(['client_secret_post', 'client_secret_basic']),
+    );
   });
 
   test('OAuth metadata issuer matches public URL', async () => {
@@ -253,6 +273,46 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     const html = await res.text();
     expect(html).toContain('GBrain Admin');
   });
+
+  test('admin source access APIs enumerate sources and rescope an OAuth client', async () => {
+    const cookie = await adminCookie();
+    const sourcesRes = await fetch(`${BASE}/admin/api/sources`, {
+      headers: { Cookie: cookie },
+    });
+    expect(sourcesRes.ok).toBe(true);
+    const sources = await sourcesRes.json() as Array<{ id: string; name: string; federated: boolean }>;
+    expect(sources.some(source => source.id === 'default')).toBe(true);
+
+    const rescopeRes = await fetch(`${BASE}/admin/api/rescope-client`, {
+      method: 'POST',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clientId,
+        sourceId: 'default',
+        federatedRead: ['default'],
+      }),
+    });
+    expect(rescopeRes.ok).toBe(true);
+    expect(await rescopeRes.json()).toEqual({
+      clientId,
+      clientName: 'e2e-oauth-test',
+      sourceId: 'default',
+      federatedRead: ['default'],
+    });
+
+    const agentsRes = await fetch(`${BASE}/admin/api/agents`, {
+      headers: { Cookie: cookie },
+    });
+    expect(agentsRes.ok).toBe(true);
+    const agents = await agentsRes.json() as Array<{
+      id: string;
+      source_id: string | null;
+      federated_read: string[];
+    }>;
+    const agent = agents.find(row => row.id === clientId);
+    expect(agent?.source_id).toBe('default');
+    expect(agent?.federated_read).toEqual(['default']);
+  }, 15_000);
 
   // v0.36.1.x #1076: GET /mcp must return 405 (Method Not Allowed) per the
   // MCP Streamable HTTP spec, not 404. claude.ai + other probing clients
@@ -340,34 +400,10 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   });
 
   test('v0.28.10: /admin/api/full-stats with valid admin cookie returns getStats() body', async () => {
-    // Same magic-link cookie dance the existing single-use test uses.
-    // Skip gracefully if the bootstrap token isn't extractable — the 401
-    // case above pins the auth gate; this test pins the happy path.
-    const stderrBuf = (serverProcess as any)?._stderrBuffer || '';
-    const tokenMatch = String(stderrBuf).match(/Admin Token[\s\S]*?([a-f0-9]{32,64})/);
-    if (!tokenMatch) {
-      console.warn('[e2e] skipped /admin/api/full-stats happy path: could not extract bootstrap token');
-      return;
-    }
-    const bootstrapToken = tokenMatch[1];
-
-    const issueRes = await fetch(`${BASE}/admin/api/issue-magic-link`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bootstrapToken}` },
-      body: '{}',
-    });
-    expect(issueRes.ok).toBe(true);
-    const { url } = await issueRes.json() as any;
-
-    const click = await fetch(url, { redirect: 'manual' });
-    expect(click.status).toBe(302);
-    const setCookie = click.headers.get('set-cookie') || '';
-    const cookieMatch = setCookie.match(/gbrain_admin=([^;]+)/);
-    expect(cookieMatch).toBeTruthy();
-    const cookieValue = cookieMatch![1];
+    const cookie = await adminCookie();
 
     const statsRes = await fetch(`${BASE}/admin/api/full-stats`, {
-      headers: { Cookie: `gbrain_admin=${cookieValue}` },
+      headers: { Cookie: cookie },
     });
     expect(statsRes.ok).toBe(true);
     const stats = await statsRes.json() as any;
@@ -406,6 +442,194 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     const data = await res.json() as any;
     expect(data.error).toBe('invalid_grant');
   });
+
+  test('confidential client can revoke its token only with its valid secret', async () => {
+    const { access_token } = await mintToken('read');
+    const wrongSecret = await fetch(`${BASE}/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `token=${encodeURIComponent(access_token)}&client_id=${clientId}&client_secret=gbrain_cs_wrong_secret`,
+    });
+    expect(wrongSecret.status).toBe(401);
+    expect((await wrongSecret.json() as any).error).toBe('invalid_client');
+
+    // A rejected revoke request must leave the token usable.
+    expect((await mcpCall(access_token, 'tools/list')).status).toBe(200);
+
+    const revoke = await fetch(`${BASE}/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `token=${encodeURIComponent(access_token)}&client_id=${clientId}&client_secret=${clientSecret}`,
+    });
+    expect(revoke.status).toBe(200);
+    expect(revoke.headers.get('cache-control')).toBe('no-store');
+    expect((await mcpCall(access_token, 'tools/list')).status).toBe(401);
+  }, 15_000);
+
+  test('confidential client_secret_basic revoke returns canonical auth responses', async () => {
+    const { access_token: wrongSecretToken } = await mintToken('read');
+    const wrongBasic = Buffer.from(`${encodeURIComponent(clientId!)}:${encodeURIComponent('wrong-secret')}`).toString('base64');
+    const rejected = await fetch(`${BASE}/revoke`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization: `Basic ${wrongBasic}`,
+      },
+      body: `token=${encodeURIComponent(wrongSecretToken)}`,
+    });
+    expect(rejected.status).toBe(401);
+    expect(rejected.headers.get('www-authenticate')).toMatch(/^Basic /);
+    expect((await mcpCall(wrongSecretToken, 'tools/list')).status).toBe(200);
+
+    const { access_token } = await mintToken('read');
+    const validBasic = Buffer.from(`${encodeURIComponent(clientId!)}:${encodeURIComponent(clientSecret!)}`).toString('base64');
+    const revoked = await fetch(`${BASE}/revoke`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization: `Basic ${validBasic}`,
+      },
+      body: `token=${encodeURIComponent(access_token)}`,
+    });
+    expect(revoked.status).toBe(200);
+    expect(revoked.headers.get('cache-control')).toBe('no-store');
+    expect((await mcpCall(access_token, 'tools/list')).status).toBe(401);
+  }, 15_000);
+
+  test('revoke validates request shape and rejects mixed client authentication', async () => {
+    const { access_token } = await mintToken('read');
+    const validBasic = Buffer.from(`${encodeURIComponent(clientId!)}:${encodeURIComponent(clientSecret!)}`).toString('base64');
+
+    const mixed = await fetch(`${BASE}/revoke`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization: `Basic ${validBasic}`,
+      },
+      body: `token=${encodeURIComponent(access_token)}&client_id=${clientId}&client_secret=${clientSecret}`,
+    });
+    expect(mixed.status).toBe(400);
+    expect((await mixed.json() as any).error).toBe('invalid_request');
+
+    const repeatedToken = await fetch(`${BASE}/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `token=${encodeURIComponent(access_token)}&token=duplicate&client_id=${clientId}&client_secret=${clientSecret}`,
+    });
+    expect(repeatedToken.status).toBe(400);
+    expect((await repeatedToken.json() as any).error).toBe('invalid_request');
+
+    const missingToken = await fetch(`${BASE}/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `client_id=${clientId}&client_secret=${clientSecret}`,
+    });
+    expect(missingToken.status).toBe(400);
+    expect((await missingToken.json() as any).error).toBe('invalid_request');
+    expect((await mcpCall(access_token, 'tools/list')).status).toBe(200);
+  }, 15_000);
+
+  test('unknown and cross-client tokens are opaque 200 no-ops', async () => {
+    const unknown = await fetch(`${BASE}/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `token=unknown-token&client_id=${clientId}&client_secret=${clientSecret}`,
+    });
+    expect(unknown.status).toBe(200);
+
+    const { execSync } = await import('child_process');
+    const attackerRegistration = execSync(
+      `bun run src/cli.ts auth register-client e2e-revoke-attacker-${Date.now()} --grant-types client_credentials --scopes read`,
+      { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } },
+    );
+    const attackerId = attackerRegistration.match(/Client ID:\s+(gbrain_cl_\S+)/)?.[1];
+    const attackerSecret = attackerRegistration.match(/Client Secret:\s+(gbrain_cs_\S+)/)?.[1];
+    expect(attackerId).toBeTruthy();
+    expect(attackerSecret).toBeTruthy();
+    dcrClientIds.push(attackerId!);
+
+    const { access_token: ownerToken } = await mintToken('read');
+    const crossClient = await fetch(`${BASE}/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `token=${encodeURIComponent(ownerToken)}&client_id=${attackerId}&client_secret=${attackerSecret}`,
+    });
+    expect(crossClient.status).toBe(200);
+    expect((await mcpCall(ownerToken, 'tools/list')).status).toBe(200);
+  }, 30_000);
+
+  test('public client revoke falls through to the SDK handler', async () => {
+    const { execSync } = await import('child_process');
+    const registration = execSync(
+      `bun run src/cli.ts auth register-client e2e-revoke-public-${Date.now()} --grant-types authorization_code --scopes read --token-endpoint-auth-method none`,
+      { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } },
+    );
+    const publicClientId = registration.match(/Client ID:\s+(gbrain_cl_\S+)/)?.[1];
+    expect(publicClientId).toBeTruthy();
+    dcrClientIds.push(publicClientId!);
+
+    const publicToken = `gbrain_at_public_${Date.now()}`;
+    const tokenHash = createHash('sha256').update(publicToken).digest('hex');
+    const postgres = (await import('postgres')).default;
+    const sql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL || '', { prepare: false });
+    try {
+      await sql`
+        INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at)
+        VALUES (${tokenHash}, ${'access'}, ${publicClientId!}, ${sql.array(['read'])}, ${Math.floor(Date.now() / 1000) + 3600})
+      `;
+    } finally {
+      await sql.end();
+    }
+
+    expect((await mcpCall(publicToken, 'tools/list')).status).toBe(200);
+    const revoked = await fetch(`${BASE}/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `token=${encodeURIComponent(publicToken)}&client_id=${publicClientId}`,
+    });
+    expect(revoked.status).toBe(200);
+    expect((await mcpCall(publicToken, 'tools/list')).status).toBe(401);
+  }, 30_000);
+
+  test('retryable revoke backend failure returns 503 and leaves token usable', async () => {
+    const { access_token } = await mintToken('read');
+    const tokenHash = createHash('sha256').update(access_token).digest('hex');
+    const suffix = Date.now().toString();
+    const functionName = `e2e_fail_revoke_${suffix}`;
+    const triggerName = `e2e_fail_revoke_trigger_${suffix}`;
+    const postgres = (await import('postgres')).default;
+    const sql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL || '', { prepare: false });
+    try {
+      await sql.unsafe(`
+        CREATE FUNCTION ${functionName}() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF OLD.token_hash = '${tokenHash}' THEN
+            RAISE EXCEPTION 'injected retryable revoke failure' USING ERRCODE = '08006';
+          END IF;
+          RETURN OLD;
+        END;
+        $$
+      `);
+      await sql.unsafe(`
+        CREATE TRIGGER ${triggerName}
+        BEFORE DELETE ON oauth_tokens
+        FOR EACH ROW EXECUTE FUNCTION ${functionName}()
+      `);
+
+      const failed = await fetch(`${BASE}/revoke`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `token=${encodeURIComponent(access_token)}&client_id=${clientId}&client_secret=${clientSecret}`,
+      });
+      expect(failed.status).toBe(503);
+      expect((await failed.json() as any).error).toBe('temporarily_unavailable');
+      expect((await mcpCall(access_token, 'tools/list')).status).toBe(200);
+    } finally {
+      await sql.unsafe(`DROP TRIGGER IF EXISTS ${triggerName} ON oauth_tokens`);
+      await sql.unsafe(`DROP FUNCTION IF EXISTS ${functionName}()`);
+      await sql.end();
+    }
+  }, 30_000);
 
   // =========================================================================
   // v0.26.2: DCR /register response shape (RFC 7591 §3.2.1 number contract)
@@ -725,32 +949,10 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   });
 
   test('v0.26.3: magic-link nonce is single-use (second click fails)', async () => {
-    // Get a real bootstrap token from the spawned server's environment.
-    // The server prints it to stderr at startup but commit 16 removed our
-    // regex extractor. Use the issue-magic-link endpoint directly with the
-    // bootstrap token from process env — except that env var doesn't exist
-    // in the test fixture. The portable approach: extract from the server
-    // process's stderr.
-
-    // Pull the bootstrap token from server stderr by re-reading the
-    // spawn handle. The spawn already started so stderr has flushed.
-    // Skip if we can't extract — the test is best-effort coverage of the
-    // single-use semantic; the styled-401 test above covers the negative path.
-    const stderrBuf = (serverProcess as any)?._stderrBuffer || '';
-    const tokenMatch = String(stderrBuf).match(/Admin Token[\s\S]*?([a-f0-9]{32,64})/);
-    if (!tokenMatch) {
-      // No way to get the bootstrap token in this test fixture — skip gracefully.
-      // The unit-level coverage for nonce single-use is in oauth.test.ts and
-      // the styled-401 test above pins the consumed-nonce path.
-      console.warn('[e2e] skipped magic-link single-use: could not extract bootstrap token');
-      return;
-    }
-    const bootstrapToken = tokenMatch[1];
-
     // Mint a one-time nonce.
     const issueRes = await fetch(`${BASE}/admin/api/issue-magic-link`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bootstrapToken}` },
+      headers: { 'Content-Type': 'application/json', Authorization: ['Bearer', ADMIN_BOOTSTRAP_TOKEN].join(' ') },
       body: '{}',
     });
     expect(issueRes.ok).toBe(true);

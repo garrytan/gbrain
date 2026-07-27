@@ -3,7 +3,7 @@
  *
  * Covers:
  *   - PR #1461's 6 telegram-bracket cases verbatim (REGRESSION pin)
- *   - All 12 built-in patterns hit their test_positive samples
+ *   - All built-in patterns hit their test_positive samples
  *   - Date derivation precedence (D8)
  *   - Pattern priority scoring (D18) — overlap resolution
  *   - Quick-reject fast path (D11)
@@ -24,7 +24,10 @@ import {
   scorePattern,
   scorePatternFull,
 } from '../../src/core/conversation-parser/parse.ts';
-import { BUILTIN_PATTERNS } from '../../src/core/conversation-parser/builtins.ts';
+import {
+  BUILTIN_PATTERNS,
+  validatePatternEntry,
+} from '../../src/core/conversation-parser/builtins.ts';
 import type { Page } from '../../src/core/types.ts';
 
 // Helper to construct a minimal Page for date-derivation tests.
@@ -116,7 +119,7 @@ describe('parseConversation — REGRESSION PR #1461 (telegram-bracket)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// All 12 built-ins must parse their test_positive samples
+// All built-ins must parse their test_positive samples
 // ---------------------------------------------------------------------------
 
 describe('parseConversation — every built-in matches its test_positive sample', () => {
@@ -137,6 +140,35 @@ describe('parseConversation — every built-in matches its test_positive sample'
       expect(r.matched_pattern_id).toBe(entry.id);
     });
   }
+});
+
+test('validatePatternEntry rejects invalid capture indexes', () => {
+  const base = BUILTIN_PATTERNS[0];
+  const aboveRange = {
+    ...base,
+    id: 'invalid-text-capture',
+    captures: { ...base.captures, text_group: 99 },
+  };
+  const zeroSpeaker = {
+    ...base,
+    id: 'invalid-speaker-capture',
+    captures: { ...base.captures, speaker_group: 0 },
+  };
+  const negativeText = {
+    ...base,
+    id: 'negative-text-capture',
+    captures: { ...base.captures, text_group: -1 },
+  };
+
+  expect(() => validatePatternEntry(aboveRange)).toThrow(
+    "captures group 99 but regex only emits",
+  );
+  expect(() => validatePatternEntry(zeroSpeaker)).toThrow(
+    'speaker_group must be an integer >= 1',
+  );
+  expect(() => validatePatternEntry(negativeText)).toThrow(
+    'text_group must be an integer >= 0',
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -258,6 +290,40 @@ describe('parseConversation — multi-line continuation (D5)', () => {
       'first line\ncontinuation line\nanother continuation',
     );
     expect(r.messages[1].text).toBe('second message');
+  });
+});
+
+describe('parseConversation — iMessage time-only 12h and date headings (#2756)', () => {
+  test('parses the time-only 12-hour iMessage shape', () => {
+    const r = parseConversation('**Alice Example** (9:04 PM): hello', {
+      fallbackDate: '2024-03-15',
+    });
+    expect(r.matched_pattern_id).toBe('bold-paren-time-12h');
+    expect(r.messages).toHaveLength(1);
+    expect(r.messages[0].timestamp).toBe('2024-03-15T21:04:00Z');
+  });
+
+  test('markdown date headings advance the running date without becoming message text', () => {
+    const body = [
+      '## 2024-03-15',
+      '**Alice Example** (9:04 AM): first day',
+      '## 2024-03-16',
+      '**Bob Example** (10:05 PM): second day',
+    ].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2024-03-01' });
+    expect(r.matched_pattern_id).toBe('bold-paren-time-12h');
+    expect(r.messages.map((m) => m.timestamp)).toEqual([
+      '2024-03-15T09:04:00Z',
+      '2024-03-16T22:05:00Z',
+    ]);
+    expect(r.messages[0].text).toBe('first day');
+  });
+
+  test('date headings do not mutate the caller-provided context', () => {
+    const ctx = { fallbackDate: '2024-03-01', source: 'explicit' as const };
+    const pattern = BUILTIN_PATTERNS.find((p) => p.id === 'bold-paren-time-12h')!;
+    applyPattern('## 2024-03-16\n**Alice** (9:04 AM): hello', pattern, ctx);
+    expect(ctx.fallbackDate).toBe('2024-03-01');
   });
 });
 
@@ -479,6 +545,152 @@ describe('bold-paren-time pattern (Circleback meeting transcripts)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// bold-time-dash pattern (normalized Slack Markdown)
+// ---------------------------------------------------------------------------
+
+describe('bold-time-dash pattern (normalized Slack Markdown)', () => {
+  test('parses anchors, dash variants, and multi-line continuation text', () => {
+    const body = [
+      '# Team channel — 2026-04-09',
+      '**Alice Example** 09:15 — first line',
+      '- detailed bullet one',
+      '- detailed bullet two',
+      '**Summary Bot** 09:18 – second message',
+      '> continuation of second message',
+      '**Bob Example** 10:01 - final message',
+    ].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2026-04-09' });
+
+    expect(r.phase).toBe('regex_match');
+    expect(r.matched_pattern_id).toBe('bold-time-dash');
+    expect(r.messages).toHaveLength(3);
+    expect(r.messages[0]).toEqual({
+      speaker: 'Alice Example',
+      timestamp: '2026-04-09T09:15:00Z',
+      text: 'first line\n- detailed bullet one\n- detailed bullet two',
+    });
+    expect(r.messages[1]).toEqual({
+      speaker: 'Summary Bot',
+      timestamp: '2026-04-09T09:18:00Z',
+      text: 'second message\n> continuation of second message',
+    });
+    expect(r.messages[2]).toEqual({
+      speaker: 'Bob Example',
+      timestamp: '2026-04-09T10:01:00Z',
+      text: 'final message',
+    });
+  });
+
+  test('parses one anchor with a long Markdown continuation body', () => {
+    const continuation = Array.from(
+      { length: 30 },
+      (_, index) => `- supporting detail ${index + 1}`,
+    );
+    const body = [
+      '**Alice Example** 09:15 — summary',
+      ...continuation,
+    ].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2026-04-09' });
+
+    expect(r.matched_pattern_id).toBe('bold-time-dash');
+    expect(r.messages).toHaveLength(1);
+    expect(r.messages[0].text.split('\n')).toHaveLength(31);
+    expect(r.messages[0].text.endsWith('- supporting detail 30')).toBe(true);
+  });
+
+  test('does not treat one stray anchor in long prose as a conversation', () => {
+    const before = Array.from(
+      { length: 150 },
+      (_, index) => `Prose paragraph before ${index + 1}.`,
+    );
+    const after = Array.from(
+      { length: 150 },
+      (_, index) => `Prose paragraph after ${index + 1}.`,
+    );
+    const body = [
+      ...before,
+      '**Deadline** 09:15 — quoted schedule entry',
+      ...after,
+    ].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2026-04-09' });
+
+    expect(r.phase).toBe('no_match');
+    expect(r.messages).toEqual([]);
+  });
+
+  test('uses date headings to advance the frontmatter date anchor', () => {
+    const body = [
+      '## 2026-04-09',
+      '**Alice Example** 23:59 — day one',
+      '## 2026-04-10',
+      '**Bob Example** 00:01 — day two',
+    ].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2026-04-09' });
+
+    expect(r.matched_pattern_id).toBe('bold-time-dash');
+    expect(r.messages.map((message) => message.timestamp)).toEqual([
+      '2026-04-09T23:59:00Z',
+      '2026-04-10T00:01:00Z',
+    ]);
+  });
+
+  test('uses page date and preserves the time-only timezone policy', () => {
+    const body = '**Alice Example** 09:15 — hello';
+    const withoutTimezone = parseConversation(body, {
+      page: makePage({ date: '2026-04-09' }),
+    });
+    const withTimezone = parseConversation(body, {
+      page: makePage({
+        date: '2026-04-09',
+        timezone: 'America/Los_Angeles',
+      }),
+    });
+
+    expect(withoutTimezone.messages[0].timestamp).toBe(
+      '2026-04-09T09:15:00Z',
+    );
+    expect(withoutTimezone.timezone_warning).toContain('bold-time-dash');
+    // Current time-only policy records the captured wall-clock fields with Z;
+    // timezone metadata suppresses the warning but does not convert the time.
+    expect(withTimezone.messages[0].timestamp).toBe('2026-04-09T09:15:00Z');
+    expect(withTimezone.timezone_warning).toBeUndefined();
+  });
+
+  test('does not shadow existing bold transcript formats', () => {
+    const opts = { fallbackDate: '2026-04-09' };
+
+    expect(
+      parseConversation('**Alice Example** (00:00): hello', opts)
+        .matched_pattern_id,
+    ).toBe('bold-paren-time');
+    expect(
+      parseConversation('**Alice Example** (9:15 AM): hello', opts)
+        .matched_pattern_id,
+    ).toBe('bold-paren-time-12h');
+    expect(
+      parseConversation('**Alice Example:** hello', opts).matched_pattern_id,
+    ).toBe('bold-name-no-time');
+    expect(
+      parseConversation(
+        '**Alice Example** (2026-04-09 9:15 AM): hello',
+        opts,
+      ).matched_pattern_id,
+    ).toBe('imessage-slack');
+  });
+
+  test('rejects invalid 24-hour times', () => {
+    const body = [
+      '**Alice Example** 24:00 — invalid hour',
+      '**Bob Example** 09:60 — invalid minute',
+    ].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2026-04-09' });
+
+    expect(r.phase).toBe('no_match');
+    expect(r.messages).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // bold-name-no-time pattern (Circleback / Granola / Zoom transcripts with NO
 // per-line timestamp — `**Speaker:** text`). Additive pattern; the colon
 // inside the bold markers + the `(?!\[)` lookahead are what keep it from
@@ -581,6 +793,38 @@ describe('bold-name-no-time pattern (Circleback/Granola/Zoom, no timestamp)', ()
     }
     const body = lines.join('\n');
     const r = parseConversation(body, { fallbackDate: '2026-05-28' });
+    expect(r.phase).toBe('no_match');
+  });
+});
+
+describe('speaker-letter-no-time pattern (raw transcript sidecars)', () => {
+  test('parses plain Speaker A / Speaker B transcripts', () => {
+    const body = [
+      'Speaker A: That is exactly the issue.',
+      'Speaker B: Yeah, I know.',
+      'Speaker A: Let me ask him.',
+      'Speaker B: Sounds good.',
+    ].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2026-06-01' });
+    expect(r.phase).toBe('regex_match');
+    expect(r.matched_pattern_id).toBe('speaker-letter-no-time');
+    expect(r.messages).toHaveLength(4);
+    expect(r.messages[0]).toEqual({
+      speaker: 'Speaker A',
+      timestamp: '2026-06-01T00:00:00Z',
+      text: 'That is exactly the issue.',
+    });
+    expect(r.messages[1].speaker).toBe('Speaker B');
+    expect(r.messages[3].text).toBe('Sounds good.');
+  });
+
+  test('does not parse ordinary prose labels as transcript lines', () => {
+    const body = [
+      'Owner: Elliot',
+      'Decision: Ship the parser fix',
+      'Next step: rerun extraction',
+    ].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2026-06-01' });
     expect(r.phase).toBe('no_match');
   });
 });

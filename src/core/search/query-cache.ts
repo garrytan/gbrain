@@ -236,7 +236,7 @@ export class SemanticQueryCache {
       // the v0.40.3.0 IRON-RULE).
       await this.engine.executeRaw(
         `INSERT INTO query_cache (id, query_text, source_id, knobs_hash, embedding, results, meta, ttl_seconds, page_generations, max_generation_at_store, created_at)
-         VALUES ($1, $2, $3, $4, $5::vector, $6::jsonb, $7::jsonb, $8, $9::jsonb, $10, now())
+         VALUES ($1, $2, $3, $4, $5::vector, $6::text::jsonb, $7::text::jsonb, $8, $9::text::jsonb, $10, now())
          ON CONFLICT (id) DO UPDATE SET
            query_text = EXCLUDED.query_text,
            knobs_hash = EXCLUDED.knobs_hash,

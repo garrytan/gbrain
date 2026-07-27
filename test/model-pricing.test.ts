@@ -35,12 +35,24 @@ describe('CANONICAL_PRICING — table integrity', () => {
     }
   });
 
+  test('Opus 5 present at $5/$25 (same tier as Opus 4.8)', () => {
+    expect(CANONICAL_PRICING['anthropic:claude-opus-5']).toEqual({ input: 5.0, output: 25.0 });
+  });
+
   test('Opus 4.8 present at $5/$25 (closes gbrain#1819)', () => {
     expect(CANONICAL_PRICING['anthropic:claude-opus-4-8']).toEqual({ input: 5.0, output: 25.0 });
   });
 
   test('Opus 4.7 at $5/$25 (not the stale $15/$75)', () => {
     expect(CANONICAL_PRICING['anthropic:claude-opus-4-7']).toEqual({ input: 5.0, output: 25.0 });
+  });
+
+  test('Sonnet 5 present at $3/$15 (standard rate, intro discount not modeled)', () => {
+    expect(CANONICAL_PRICING['anthropic:claude-sonnet-5']).toEqual({ input: 3.0, output: 15.0 });
+  });
+
+  test('Fable 5 present at $10/$50', () => {
+    expect(CANONICAL_PRICING['anthropic:claude-fable-5']).toEqual({ input: 10.0, output: 50.0 });
   });
 
   test('Gemini 2.0 Flash reconciled to $0.10/$0.40; legacy alias agrees', () => {

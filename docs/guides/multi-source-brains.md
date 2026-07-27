@@ -114,8 +114,11 @@ Flip later with `gbrain sources federate <id>` / `unfederate <id>`.
 Full subcommand reference:
 
 ```
-gbrain sources add <id> --path <p> [--name <n>] [--federated|--no-federated]
+gbrain sources add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force]
                                Register a source. id: [a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?
+                               --path must be a git repo (or a subdirectory of one) — see
+                               "The git requirement for --path sources" below. --force
+                               skips that check to register before git-init exists.
 gbrain sources list [--json]   List all sources with page counts + federation state.
 gbrain sources remove <id> [--yes] [--dry-run] [--keep-storage]
                                Cascade-delete a source (pages, chunks, timeline).
@@ -127,6 +130,47 @@ gbrain sources detach          Remove .gbrain-source from CWD.
 gbrain sources federate <id>
 gbrain sources unfederate <id>
 ```
+
+## The git requirement for --path sources
+
+Every `--path` source must be a git repository (or live inside one — a
+subdirectory of a git repo works too) with at least one committed, tracked
+file under that path. `gbrain sources add` validates this at registration
+time and refuses a directory that doesn't qualify — no `.git` at all, a
+`git init` with no commit yet, or a commit made before `git add` — with an
+actionable error instead of silently registering a source that will fail
+(or worse, "succeed" while importing nothing) on its first `gbrain sync`.
+Fix it with:
+
+```bash
+git -C <path> init
+git -C <path> add -A
+git -C <path> commit -m "initial import"
+gbrain sources add <id> --path <path>
+```
+
+Two details that are easy to miss:
+
+- **Files must actually be committed, not just present.** The sync walker
+  reads files through git objects, so `git init` alone — even followed by an
+  empty commit (`git commit --allow-empty`) — isn't enough. Registration
+  checks for real tracked content (`git ls-tree HEAD` scoped to the path),
+  not just a resolvable `HEAD`, so this footgun is caught immediately
+  instead of surfacing later as a sync that imports nothing.
+- **`--force` registers the source anyway**, skipping the check. Use this if
+  you're registering a path before an automated pipeline gets around to
+  `git init`-ing it. GBrain never auto-`git init`s a `--path` source for
+  you — it's your directory, not a gbrain-managed clone (same consent
+  boundary as sync-time self-heal, which also never mutates a `--path`
+  source without an explicit ask).
+
+**If sync ever reports a problem with the sync anchor** (`last_commit`) —
+after a force-push, a history rewrite, or a from-scratch `git init` on a
+directory that was synced before — you do not need to reset anything by
+hand. `gbrain sync` detects an unreachable or non-ancestor anchor
+automatically and recovers: either a full reimport (anchor object missing)
+or a direct tree-to-tree diff against the orphaned bookmark (anchor present
+but rewritten), advancing the anchor to the new HEAD when it completes.
 
 ## Citation format for agents
 

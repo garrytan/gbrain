@@ -1,4 +1,12 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { mkdirSync, rmSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { withEnv } from './helpers/with-env.ts';
+import { logRerankFailure } from '../src/core/rerank-audit.ts';
 
 describe('doctor command', () => {
   test('doctor module exports runDoctor', async () => {
@@ -42,6 +50,81 @@ describe('doctor command', () => {
     };
     expect(check.issues).toHaveLength(1);
     expect(check.issues![0].action).toContain('trigger');
+  });
+
+  test('subagent_capability checks explicit models.subagent before tier/default fallbacks', async () => {
+    const { checkSubagentCapability } = await import('../src/commands/doctor.ts');
+    const config = new Map<string, string | null>([
+      ['models.subagent', 'openai:gpt-5.2'],
+      ['models.tier.subagent', 'anthropic:claude-sonnet-4-6'],
+      ['models.default', 'anthropic:claude-sonnet-4-6'],
+    ]);
+    const check = await checkSubagentCapability({
+      async getConfig(key: string): Promise<string | null> {
+        return config.get(key) ?? null;
+      },
+    } as any);
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('models.subagent is "openai:gpt-5.2"');
+    expect(check.message).toContain('prompt caching');
+  });
+
+  test('subagent_capability reports explicit models.subagent on the ok path', async () => {
+    const { checkSubagentCapability } = await import('../src/commands/doctor.ts');
+    const config = new Map<string, string | null>([
+      ['models.subagent', 'anthropic:claude-opus-4-7'],
+      ['models.tier.subagent', 'anthropic:claude-haiku-4-5'],
+    ]);
+    const check = await checkSubagentCapability({
+      async getConfig(key: string): Promise<string | null> {
+        return config.get(key) ?? null;
+      },
+    } as any);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('Subagent model resolves via models.subagent to "anthropic:claude-opus-4-7"');
+  });
+
+  test('subagent_capability checks models.default before tier fallback', async () => {
+    const { checkSubagentCapability } = await import('../src/commands/doctor.ts');
+    const config = new Map<string, string | null>([
+      ['models.tier.subagent', 'anthropic:claude-sonnet-4-6'],
+      ['models.default', 'openai:gpt-5.2'],
+    ]);
+    const check = await checkSubagentCapability({
+      async getConfig(key: string): Promise<string | null> {
+        return config.get(key) ?? null;
+      },
+    } as any);
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('models.default is "openai:gpt-5.2"');
+  });
+
+  test('reranker_health warns on repeated unknown rerank failures', async () => {
+    const { checkRerankerHealth } = await import('../src/commands/doctor.ts');
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-rerank-doctor-'));
+    try {
+      await withEnv({ GBRAIN_AUDIT_DIR: tmpDir }, async () => {
+        for (let i = 0; i < 3; i++) {
+          logRerankFailure({
+            model: 'zeroentropyai:zerank-2',
+            reason: 'unknown',
+            query_hash: `unknown${i}`,
+            doc_count: 30,
+            error_summary: 'ZeroEntropy reranker requires ZEROENTROPY_API_KEY.',
+          });
+        }
+        const check = await checkRerankerHealth({
+          async getConfig(key: string): Promise<string | null> {
+            return key === 'search.reranker.enabled' ? 'true' : null;
+          },
+        } as any);
+        expect(check.status).toBe('warn');
+        expect(check.message).toContain('unknown');
+        expect(check.message).toContain('ZEROENTROPY_API_KEY');
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   test('runDoctor accepts null engine for filesystem-only mode', async () => {
@@ -99,6 +182,43 @@ describe('doctor command', () => {
     expect(source).toMatch(/table:\s*'raw_data'.*col:\s*'data'/);
     expect(source).toMatch(/table:\s*'ingest_log'.*col:\s*'pages_updated'/);
     expect(source).toMatch(/table:\s*'files'.*col:\s*'metadata'/);
+  });
+
+  test('pgvector and jsonb_integrity checks use the active PGLite engine', async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const { pgvectorCheck, jsonbIntegrityCheck } = await import('../src/commands/doctor.ts');
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    try {
+      const pgvector = await pgvectorCheck(engine);
+      expect(pgvector.name).toBe('pgvector');
+      expect(pgvector.status).toBe('ok');
+
+      const jsonb = await jsonbIntegrityCheck(engine);
+      expect(jsonb.name).toBe('jsonb_integrity');
+      expect(jsonb.status).toBe('ok');
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
+  test('skill conformance derives a valid host manifest when manifest.json is absent', async () => {
+    const { skillConformanceCheck } = await import('../src/commands/doctor.ts');
+    const skillsDir = join(tmpdir(), `gbrain-doctor-skills-${crypto.randomUUID()}`);
+    mkdirSync(join(skillsDir, 'host-only'), { recursive: true });
+    writeFileSync(
+      join(skillsDir, 'host-only', 'SKILL.md'),
+      '---\nname: host-only\ndescription: host-owned skill\n---\n\n# Host-only\n',
+    );
+    try {
+      const check = skillConformanceCheck(skillsDir);
+      expect(check).toMatchObject({ name: 'skill_conformance', status: 'ok' });
+      expect(check.message).toContain('1/1 skills pass');
+      expect(check.message).toContain('derived from SKILL.md files');
+    } finally {
+      rmSync(skillsDir, { recursive: true, force: true });
+    }
   });
 
   // v0.31.2 — facts_extraction_health check added in PR1 commit 12.

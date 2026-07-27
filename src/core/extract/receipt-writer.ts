@@ -157,6 +157,11 @@ function buildReceiptFrontmatter(input: ExtractReceiptInput): Record<string, unk
   const fm: Record<string, unknown> = {
     type: 'extract_receipt',
     dream_generated: true,
+    // #1978: receipts record an operation, not a source document — the
+    // run_id/round fields ARE the provenance. Explicit exemption keeps the
+    // doctor raw_provenance check quiet.
+    raw_trace_exempt: true,
+    raw_trace_exempt_reason: 'operation receipt; provenance is run_id + round',
     kind: input.kind,
     source_id: input.source_id,
     run_id: input.run_id,

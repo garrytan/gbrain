@@ -160,6 +160,14 @@ export interface PatternEntry {
    */
   multi_line: boolean;
   /**
+   * When true, scoring may treat lines that fail `quick_reject` as message
+   * continuation rather than independent evidence. To preserve the global
+   * false-positive floor, the candidate-only score is used only after two
+   * anchors match, or when the first non-blank line is itself an anchor.
+   * Requires `multi_line: true` and a `quick_reject`.
+   */
+  score_continuations_as_body?: boolean;
+  /**
    * D11: optional cheap O(1) prefix check. If set, orchestrator runs
    * this FIRST per line; only tries `regex` if quick_reject matches.
    * Examples: `/^\*\*\[/` for telegram-bracket.

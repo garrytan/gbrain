@@ -1,9 +1,10 @@
 import type { Recipe } from '../types.ts';
 
 /**
- * Zhipu AI (智谱AI) BigModel Open Platform. OpenAI-compatible /embeddings
- * endpoint at open.bigmodel.cn. Hosts embedding-2 (1024d) and embedding-3
- * (Matryoshka up to 2048d).
+ * Zhipu AI (智谱AI) BigModel Open Platform. OpenAI-compatible /embeddings and
+ * /chat/completions endpoints at open.bigmodel.cn. Hosts embedding-2 (1024d),
+ * embedding-3 (Matryoshka up to 2048d), and the GLM chat family (glm-5.1 etc.)
+ * with native tool calling — usable for models.tier.subagent (#1157).
  *
  * embedding-3 at 2048 dims exceeds pgvector's HNSW cap of 2000 — those
  * brains fall back to exact vector scans (see
@@ -25,6 +26,20 @@ export const zhipu: Recipe = {
     setup_url: 'https://open.bigmodel.cn/',
   },
   touchpoints: {
+    chat: {
+      // Informational list (openai-compat tier: assertTouchpoint doesn't
+      // enforce it), so newer GLM ids pass without a recipe edit.
+      models: ['glm-5.1', 'glm-4.6', 'glm-4.5'],
+      supports_tools: true,
+      // gbrain-side stable tool ids (v0.38 D11) decoupled the loop from
+      // Anthropic response formats; GLM tool calling is stable through the
+      // OpenAI-compat path, same as deepseek/groq.
+      supports_subagent_loop: true,
+      // Anthropic-style cache_control markers are not honored on the
+      // OpenAI-compat path — the loop runs hot (degraded:no_caching warn).
+      supports_prompt_cache: false,
+      max_context_tokens: 128000,
+    },
     embedding: {
       models: ['embedding-3', 'embedding-2'],
       default_dims: 1024,
@@ -36,5 +51,5 @@ export const zhipu: Recipe = {
     },
   },
   setup_hint:
-    'Get an API key at https://open.bigmodel.cn/, then `export ZHIPUAI_API_KEY=...`',
+    'Get an API key at https://open.bigmodel.cn/, then `export ZHIPUAI_API_KEY=...`. Chat/subagent: use `zhipu:glm-5.1`.',
 };

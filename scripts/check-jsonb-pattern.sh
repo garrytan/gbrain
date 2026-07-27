@@ -44,3 +44,17 @@ if grep -rEn "$MAX_STALLED_PATTERN" src/schema.sql src/core/migrate.ts src/core/
 fi
 
 echo "OK: max_stalled defaults are 5 in all schema sources"
+
+# v0.42.x (#2339 / #2324): positional `$N::jsonb` + JSON.stringify double-encode.
+# The template-string grep above only catches `${JSON.stringify(x)}::jsonb`. It
+# MISSES the positional-param form — executeRaw(`... $N::jsonb ...`,
+# [JSON.stringify(x)]) — which is the exact shape that double-encoded the
+# op_checkpoints pin and aborted every sync in #2339. The AST-lite scanner below
+# catches it. `set -e` propagates its non-zero exit.
+if command -v node >/dev/null 2>&1; then
+  node scripts/check-jsonb-params.mjs
+elif command -v bun >/dev/null 2>&1; then
+  bun scripts/check-jsonb-params.mjs
+else
+  echo "WARN: neither node nor bun on PATH; skipping check-jsonb-params.mjs" >&2
+fi

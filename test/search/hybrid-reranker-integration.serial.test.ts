@@ -19,7 +19,11 @@
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { hybridSearch } from '../../src/core/search/hybrid.ts';
+import {
+  awaitPendingSearchCacheWrites,
+  hybridSearch,
+  hybridSearchCached,
+} from '../../src/core/search/hybrid.ts';
 import {
   configureGateway,
   resetGateway,
@@ -27,8 +31,23 @@ import {
 } from '../../src/core/ai/gateway.ts';
 import type { PageInput, SearchOpts } from '../../src/core/types.ts';
 import type { RerankInput, RerankResult } from '../../src/core/ai/gateway.ts';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 let engine: PGLiteEngine;
+
+// These tests stub the gateway at 1536 dims (DIMS). Since v0.36.3.0 hybridSearch
+// resolves the embedding column via loadConfig(), whose precedence is
+// cfg.embedding_dimensions > gateway dims > default — so a contributor's real
+// ~/.gbrain/config.json (e.g. text-embedding-3-small at 1280) outranks the stub,
+// the 1536-d stub vector then fails the gateway dim check, search silently falls
+// back to keyword-only, and the reranker never runs (0 docs → 4 tests fail). CI
+// is green only because a fresh runner has no config file (#1527). Isolate
+// GBRAIN_HOME to an empty tmpdir so loadConfig() returns null and the stub's dims
+// win — same idiom as emptyHome() in test/ai/gateway-probe-chat-model.test.ts.
+let prevGbrainHome: string | undefined;
+let isolatedHome: string;
 
 const DIMS = 1536; // gateway default embedding dim
 const FAKE_EMB = Array.from({ length: DIMS }, (_, j) => (j === 0 ? 1 : 0.01));
@@ -40,6 +59,12 @@ function stubEmbeddings(): void {
 }
 
 beforeAll(async () => {
+  // Hermetic config home: ignore the machine's real ~/.gbrain so its
+  // embedding_dimensions can't outrank the 1536-d stub (see note above, #1527).
+  prevGbrainHome = process.env.GBRAIN_HOME;
+  isolatedHome = mkdtempSync(join(tmpdir(), 'gbrain-rerank-home-'));
+  process.env.GBRAIN_HOME = isolatedHome;
+
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -79,12 +104,32 @@ beforeAll(async () => {
     env: { OPENAI_API_KEY: 'sk-test' },
   });
   stubEmbeddings();
+
+  await engine.putPage('mail/vector-first', {
+    type: 'note',
+    title: 'Vector-first email',
+    compiled_truth: 'vector first duplicate metadata evidence',
+    frontmatter: {
+      message_id: '<vector-first@example.com>',
+      thread_id: 'thread-vector-first',
+      subject: 'Vector-first exact subject',
+    },
+  });
+  await engine.upsertChunks('mail/vector-first', [{
+    chunk_index: 0,
+    chunk_text: 'vector first duplicate metadata evidence',
+    chunk_source: 'compiled_truth',
+    embedding: Float32Array.from(FAKE_EMB),
+  }]);
 });
 
 afterAll(async () => {
   __setEmbedTransportForTests(null);
   resetGateway();
   await engine.disconnect();
+  if (prevGbrainHome === undefined) delete process.env.GBRAIN_HOME;
+  else process.env.GBRAIN_HOME = prevGbrainHome;
+  rmSync(isolatedHome, { recursive: true, force: true });
 });
 
 describe('hybridSearch — reranker disabled (pass-through)', () => {
@@ -102,6 +147,28 @@ describe('hybridSearch — reranker disabled (pass-through)', () => {
     const out = await hybridSearch(engine, 'alpha', opts);
     expect(out.length).toBeGreaterThan(0);
     expect(called).toBe(0);
+  });
+});
+
+describe('hybridSearchCached — email metadata through vector-first fusion', () => {
+  test('fresh cache miss preserves metadata through vector-first RRF duplicate handling', async () => {
+    await engine.executeRaw(`DELETE FROM query_cache`);
+    let cacheStatus: string | undefined;
+    const out = await hybridSearchCached(engine, 'vector first duplicate metadata evidence', {
+      limit: 10,
+      useCache: true,
+      autocut: false,
+      graph_signals: false,
+      onMeta: (meta) => { cacheStatus = meta.cache?.status; },
+    });
+
+    expect(cacheStatus).toBe('miss');
+    const matches = out.filter(r => r.slug === 'mail/vector-first');
+    expect(matches).toHaveLength(1);
+    expect(matches[0].message_id).toBe('<vector-first@example.com>');
+    expect(matches[0].thread_id).toBe('thread-vector-first');
+    expect(matches[0].source_subject).toBe('Vector-first exact subject');
+    await awaitPendingSearchCacheWrites();
   });
 });
 

@@ -169,6 +169,46 @@ describe('shouldExclude — orphan filter regression (preserve curation)', () =>
 
   test('raw segment is excluded', () => {
     expect(shouldExclude('media/x/raw/post')).toBe(true);
+    expect(shouldExclude('raw/chats/claude-code/session')).toBe(true);
+  });
+
+  test('leading raw/ segment is excluded (same archive convention)', () => {
+    expect(shouldExclude('raw/whatsapp/2025-01/chat-log')).toBe(true);
+    expect(shouldExclude('raw/transcripts/meeting')).toBe(true);
+    // 'rawhide/...' must NOT match — prefix is 'raw/', not 'raw'.
+    expect(shouldExclude('rawhide/notes')).toBe(false);
+  });
+
+  test('daily-log pages are excluded (calendar/email integrations write these)', () => {
+    expect(shouldExclude('daily/calendar/2025/2025-01-01')).toBe(true);
+    expect(shouldExclude('daily/x/2025-06-13')).toBe(true);
+  });
+
+  test('outputs/ plural prefix is excluded like output/', () => {
+    expect(shouldExclude('outputs/render-batch-3')).toBe(true);
+  });
+
+  test('readme folder descriptors are excluded at any depth', () => {
+    expect(shouldExclude('readme')).toBe(true);
+    expect(shouldExclude('index')).toBe(true);
+    expect(shouldExclude('projects/readme')).toBe(true);
+    expect(shouldExclude('media/readme')).toBe(true);
+    // A page merely mentioning readme in its name is NOT excluded.
+    expect(shouldExclude('concepts/readme-driven-development')).toBe(false);
+  });
+
+  test('machine-generated extracts pages are excluded', () => {
+    expect(shouldExclude('extracts/2026-06-12/takes.proposed/host/propose-x/round-single')).toBe(true);
+  });
+
+  test('inbox intake-tray pages are excluded (same rationale as daily)', () => {
+    expect(shouldExclude('inbox/some-renewal-notice-2026-06-22')).toBe(true);
+  });
+
+  test('root schema and log pages are excluded', () => {
+    expect(shouldExclude('schema')).toBe(true);
+    expect(shouldExclude('log')).toBe(true);
+    expect(shouldExclude('concepts/schema-design')).toBe(false);
   });
 
   test('deny-prefixes are excluded', () => {
@@ -176,6 +216,8 @@ describe('shouldExclude — orphan filter regression (preserve curation)', () =>
     expect(shouldExclude('dashboards/_index')).toBe(true);
     expect(shouldExclude('scripts/build')).toBe(true);
     expect(shouldExclude('output/foo')).toBe(true);
+    // #2264 — auto_chronicle event volume (life/events/…) is a machine leaf.
+    expect(shouldExclude('life/events/2026-08-01-abc123')).toBe(true);
   });
 
   test('first-segment exclusions fire', () => {
@@ -183,11 +225,75 @@ describe('shouldExclude — orphan filter regression (preserve curation)', () =>
     expect(shouldExclude('thoughts/today')).toBe(true);
     expect(shouldExclude('catalog/movies')).toBe(true);
     expect(shouldExclude('entities/anonymous')).toBe(true);
+    expect(shouldExclude('atoms/fact-123')).toBe(true);
+    expect(shouldExclude('skills/gbrain-operations')).toBe(true);
+    expect(shouldExclude('dreaming/light/2026-07-20')).toBe(true);
+    expect(shouldExclude('daily/2026-07-20')).toBe(true);
+    expect(shouldExclude('agent-openclaw/daily/2026-07-20')).toBe(true);
+  });
+
+  test('workspace convention slugs are excluded', () => {
+    expect(shouldExclude('_brain-conventions')).toBe(true);
+    expect(shouldExclude('_templates/decision')).toBe(true);
+    expect(shouldExclude('extracts/2026-06-30/takes.proposed/round-single')).toBe(true);
+    expect(shouldExclude('2026-07-20')).toBe(true);
+    expect(shouldExclude('2026-07-20-qa-sweep')).toBe(true);
+    expect(shouldExclude('agents/arya/identity')).toBe(true);
+    expect(shouldExclude('agents/arya/memory/dreaming/deep/2026-07-20')).toBe(true);
   });
 
   test('regular slugs are NOT excluded', () => {
     expect(shouldExclude('people/alice')).toBe(false);
     expect(shouldExclude('companies/acme')).toBe(false);
     expect(shouldExclude('writing/post-1')).toBe(false);
+    expect(shouldExclude('agents/arya/qa-reports/launch-review')).toBe(false);
+    // #2264 — knowledge classes must STAY in the denominator so real graph decay still trips.
+    expect(shouldExclude('concepts/information-architecture')).toBe(false);
+    expect(shouldExclude('notes/some-note')).toBe(false);
+    expect(shouldExclude('projects/proj-x')).toBe(false);
+    // #2264 — only life/events/ is excluded; human-authored life/diary/ stays counted.
+    expect(shouldExclude('life/diary/2026-08-01-xyz')).toBe(false);
+  });
+});
+
+describe('getHealth orphan_pages uses shared exclusion policy', () => {
+  test('excluded convention islands do not count against health', async () => {
+    await engine.putPage('_templates/decision', {
+      type: 'template', title: 'Decision', compiled_truth: 'template', timeline: '', frontmatter: {},
+    });
+    await engine.putPage('skills/arya/source-check', {
+      type: 'concept', title: 'Skill', compiled_truth: 'skill', timeline: '', frontmatter: {},
+    });
+    await engine.putPage('agents/arya/identity', {
+      type: 'note', title: 'Identity', compiled_truth: 'identity', timeline: '', frontmatter: {},
+    });
+    await engine.putPage('people/alice', {
+      type: 'person', title: 'Alice', compiled_truth: 'real island', timeline: '', frontmatter: {},
+    });
+
+    const health = await engine.getHealth();
+
+    expect(health.orphan_pages).toBe(1);
+  });
+
+  test('per-brain config overrides (orphans.exclude_*) also apply to health', async () => {
+    await engine.putPage('my-private-folder/secret-ref', {
+      type: 'note', title: 'Ref', compiled_truth: 'ref', timeline: '', frontmatter: {},
+    });
+    await engine.putPage('one-off-fixture-page', {
+      type: 'note', title: 'Fixture', compiled_truth: 'fixture', timeline: '', frontmatter: {},
+    });
+    await engine.putPage('people/alice', {
+      type: 'person', title: 'Alice', compiled_truth: 'real island', timeline: '', frontmatter: {},
+    });
+
+    expect((await engine.getHealth()).orphan_pages).toBe(3);
+
+    await engine.setConfig('orphans.exclude_prefixes', 'my-private-folder/');
+    await engine.setConfig('orphans.exclude_slugs', 'one-off-fixture-page');
+    expect((await engine.getHealth()).orphan_pages).toBe(1);
+
+    await engine.unsetConfig('orphans.exclude_prefixes');
+    await engine.unsetConfig('orphans.exclude_slugs');
   });
 });

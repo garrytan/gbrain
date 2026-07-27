@@ -94,7 +94,7 @@ export interface BrainEngine {
 
 **Slug-based API, not ID-based.** Every method takes slugs, not numeric IDs. The engine resolves slugs to IDs internally. This keeps the interface portable... slugs are strings, IDs are database-specific.
 
-**Embedding is NOT in the engine.** The engine stores embeddings and searches by vector, but it doesn't generate embeddings. `src/core/embedding.ts` handles that. This is intentional: embedding is an external API call (OpenAI), not a storage concern. All engines share the same embedding service.
+**Embedding is NOT in the engine.** The engine stores embeddings and searches by vector, but it doesn't generate embeddings. `src/core/embedding.ts` handles that (a thin delegation to the provider-agnostic AI gateway in `src/core/ai/gateway.ts`). This is intentional: embedding is an external API call (OpenAI, Voyage, a local Ollama — whichever provider you configured), not a storage concern. All engines share the same embedding service.
 
 **Chunking is NOT in the engine.** Same logic. `src/core/chunkers/` handles chunking. The engine stores and retrieves chunks. All engines share the same chunkers.
 
@@ -148,6 +148,51 @@ RRF fusion, multi-query expansion, and 4-layer dedup are engine-agnostic. They o
 
 **Why not self-hosted for v0:** The brain should be infrastructure agents use, not something you maintain. Self-hosted Postgres with Docker is a welcome community PR, but v0 optimizes for zero ops.
 
+### Opt-in RLS source-scope binding (`GBRAIN_RLS_SCOPE_BINDING`)
+
+Defense-in-depth layer for Postgres deployments that want the database itself
+to enforce source isolation, in addition to the mandatory app-layer filters
+(`sourceScopeOpts` — layer 1, always on).
+
+**Mechanism.** With `GBRAIN_RLS_SCOPE_BINDING=1` (or `true`), the engine's
+source-scoped read methods wrap their queries in a transaction that first runs
+`SELECT set_config('app.scopes', $1, true)` — the value is a bound parameter
+(federated `sourceIds` CSV > scalar `sourceId` > `'*'` for unscoped internal
+reads), transaction-local (equivalent to `SET LOCAL`, which itself can't take
+bound params). An RLS policy can then filter rows by
+`current_setting('app.scopes', true)`.
+
+**Default off.** With the env var unset, reads call through on the shared pool
+exactly as before — no per-read transaction, no pool-slot hold (the search
+methods keep the transaction they always had for their `SET LOCAL
+statement_timeout`). Existing operators see zero behavior change.
+
+**Enabling it** (operator-managed SQL; gbrain ships no DDL for this):
+
+```sql
+ALTER TABLE pages ENABLE ROW LEVEL SECURITY;
+CREATE POLICY pages_scope_filter ON pages
+  USING (current_setting('app.scopes', true) = '*'
+         OR source_id = ANY(string_to_array(current_setting('app.scopes', true), ',')));
+
+-- Required: connections that don't run through the scoped read helper
+-- (admin, autopilot, cycle, writes) must default to unscoped, or they
+-- see zero rows once the policy exists:
+ALTER ROLE <runtime-role> SET app.scopes = '*';
+
+-- If the runtime role OWNS the table, RLS is skipped for it unless forced:
+ALTER TABLE pages FORCE ROW LEVEL SECURITY;
+```
+
+Safe to enable in either order: the env var without a policy is a no-op
+setting; a policy without the env var is enforced only via the role default.
+
+**Honest caveat:** only read paths routed through the scoped helper carry a
+per-request scope binding — unwrapped paths (writes, admin/maintenance reads)
+run under the role default and are not backstopped per caller. This is layer 2;
+the app-layer source filters remain layer 1 and stay mandatory. Behavioral pins
+live in `test/postgres-engine-rls-scope.test.ts`.
+
 ## PGLiteEngine (v0.7, ships)
 
 **Dependencies:** `@electric-sql/pglite` (v0.4.4+)
@@ -175,6 +220,39 @@ RRF fusion, multi-query expansion, and 4-layer dedup are engine-agnostic. They o
 | Backups | Manual (file copy) | Managed by Supabase |
 
 **Migration:** `gbrain migrate --to supabase` exports everything (pages, chunks, embeddings, links, tags, timeline) and imports into Supabase. `gbrain migrate --to pglite` goes the other direction. Bidirectional, lossless.
+
+## JSONB writes: never double-encode (the #2339 trap)
+
+Writing a JS value into a `jsonb` column has exactly two correct forms. Get this
+wrong and the write succeeds on PGLite but stores a **jsonb string scalar** on
+real Postgres — `col ->> 'k'` returns NULL, `jsonb_array_elements` throws, and a
+`jsonb_typeof = 'array'` CHECK rejects the row (this aborted every sync in #2339).
+
+| Form | Verdict |
+|---|---|
+| Template tag: `` sql`... ${sql.json(obj)}` `` (postgres-engine only) | ✅ native jsonb serialization |
+| Positional raw call, raw object: `executeRawJsonb(engine, sql, scalars, [obj])` | ✅ object reaches the wire as jsonb |
+| Positional raw call, stringified: `executeRaw(\`... $N::text::jsonb\`, [JSON.stringify(x)])` | ✅ binds as text, the cast parses it |
+| Positional raw call, BARE cast: `executeRaw(\`... $N::jsonb\`, [JSON.stringify(x)])` | ❌ **double-encodes** under postgres.js `.unsafe()` |
+| Template literal interpolation: `` `... ${JSON.stringify(x)}::jsonb` `` | ❌ double-encodes |
+
+**Why:** postgres.js `.unsafe(sql, params)` (the path behind `executeRaw` /
+`executeRawDirect`) binds a JS **string** as a text param. A bare `$N::jsonb`
+cast then wraps that already-JSON string into a jsonb scalar string instead of
+parsing it. Casting through `$N::text::jsonb` forces a text→jsonb parse.
+**PGLite's `db.query` parses text→jsonb natively, so it hides the bug** — which is
+why a regression only shows up on Postgres (and why the parity test must run there).
+
+**Two CI guards enforce this, both wired into `scripts/check-jsonb-pattern.sh`:**
+- the template-tag grep (`${JSON.stringify(x)}::jsonb`), and
+- `scripts/check-jsonb-params.mjs`, an AST-lite scanner for the positional
+  `$N::jsonb` + `JSON.stringify` form the grep misses. Sanctioned escapes:
+  `$N::text::jsonb`, `$N::text[]`, `executeRawJsonb`, `sql.json`, or an inline
+  `jsonb-guard-ok` comment.
+
+The real backstop is `test/e2e/op-checkpoint-jsonb-parity.test.ts` +
+`test/e2e/jsonb-roundtrip.test.ts`, which round-trip writes through real Postgres
+and assert `jsonb_typeof` — the assertion PGLite cannot make.
 
 ## Adding a new engine
 

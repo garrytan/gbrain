@@ -32,6 +32,7 @@ import { mkdirSync, appendFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { gbrainPath } from '../config.ts';
 import { ANTHROPIC_PRICING, type ModelPricing } from '../anthropic-pricing.ts';
+import { canonicalLookup } from '../model-pricing.ts';
 import { EMBEDDING_PRICING, lookupEmbeddingPrice } from '../embedding-pricing.ts';
 import { splitProviderModelId } from '../model-id.ts';
 import { isoWeekFilename, resolveAuditDir } from '../audit-week-file.ts';
@@ -166,9 +167,13 @@ const FREE_LOCAL_EMBED_PROVIDERS: ReadonlySet<string> = new Set([
  *     local-inference providers (FREE_LOCAL_EMBED_PROVIDERS) price at $0 so
  *     `--max-cost` callers don't hard-fail.
  *   - Rerank: try ANTHROPIC_PRICING (legacy path for any Claude-priced
- *     rerank); else if the provider half is in FREE_LOCAL_RERANK_PROVIDERS,
- *     return zero pricing so `--max-cost` callers don't TX2 hard-fail on
- *     local inference recipes (electricity, not tokens); else unknown.
+ *     rerank); else try lookupEmbeddingPrice — paid rerank providers (e.g.
+ *     ZeroEntropy's zerank-2) share the same provider:model-keyed,
+ *     $/1M-token table as their embedding siblings, so it's reused here
+ *     rather than duplicated into a third table; else if the provider half
+ *     is in FREE_LOCAL_RERANK_PROVIDERS, return zero pricing so `--max-cost`
+ *     callers don't TX2 hard-fail on local inference recipes (electricity,
+ *     not tokens); else unknown.
  */
 function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
   if (kind === 'embed') {
@@ -194,6 +199,14 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
     const tailHit = ANTHROPIC_PRICING[modelTail];
     if (tailHit) return tailHit;
   }
+  // Paid rerank providers (e.g. ZeroEntropy's zerank-2) aren't Claude-priced,
+  // so they miss the ANTHROPIC_PRICING checks above. Reuse the embedding
+  // pricing table (issue #3223) — same provider:model key shape, same
+  // $/1M-token unit — instead of hand-copying a third pricing surface.
+  if (kind === 'rerank') {
+    const hit = lookupEmbeddingPrice(modelId);
+    if (hit.kind === 'known') return { input: hit.pricePerMTok, output: 0 };
+  }
   // v0.40.6.1: zero-price local-inference rerank providers so the budget
   // tracker's TX2 hard-fail doesn't trip on `llama-server-reranker:<model>`
   // under `--max-cost`. Only the rerank kind — chat/embed already have
@@ -201,6 +214,12 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
   if (kind === 'rerank' && providerId && FREE_LOCAL_RERANK_PROVIDERS.has(providerId)) {
     return { input: 0, output: 0 };
   }
+  // Fall back to the full canonical pricing table so non-Anthropic chat
+  // models with a known price (openai:*, google:*, deepseek:*) resolve under
+  // --max-cost instead of TX2 no_pricing hard-failing at $0. ANTHROPIC_PRICING
+  // above is only the bare-keyed Claude view.
+  const canon = canonicalLookup(modelId);
+  if (canon) return canon;
   return null;
 }
 

@@ -115,6 +115,26 @@ function resolveFlushGraceMs(): number {
 const DEFAULT_DRAIN_TIMEOUT_MS = 2_000;
 
 /**
+ * Resolve the per-sink drain budget: `GBRAIN_DRAIN_TIMEOUT_MS` env override
+ * (slow-provider escape hatch, same env-only pattern as
+ * GBRAIN_TEARDOWN_DEADLINE_MS) over the 2000ms default. An explicit
+ * `drainTimeoutMs` from a call site still wins — the env replaces only the
+ * DEFAULT. The 2s default assumes a sub-second cloud chat provider; a
+ * self-hosted model (e.g. ollama at 10-20s per completion) can never finish a
+ * fire-and-forget facts:absorb extraction inside it, so every one-shot CLI
+ * exit — sync timers especially — aborts the in-flight chat and the
+ * extraction never lands, retrying (and re-aborting) on each subsequent sync
+ * of the same page. Raising the budget via env lets those installs drain
+ * instead of abort; computeTeardownDeadlineMs already scales the backstop
+ * from the resolved value, so the deadline widens with it.
+ */
+export function resolveDrainTimeoutMs(): number {
+  const env = Number(process.env.GBRAIN_DRAIN_TIMEOUT_MS);
+  if (Number.isFinite(env) && env > 0) return env;
+  return DEFAULT_DRAIN_TIMEOUT_MS;
+}
+
+/**
  * Backstop deadline for drain + disconnect COMBINED, computed from the bounds
  * it guards so it fires only when a component violated its own bound (#2084
  * eng-review D9 — a static 10s fired on healthy-but-slow bounded teardown:
@@ -262,7 +282,10 @@ export function flushThenExit(code: number, opts: FlushThenExitOpts = {}): void 
 export interface FinishCliTeardownOpts {
   /** Engine to disconnect. A disconnect throw is warned + swallowed (D3). */
   engine: { disconnect(): Promise<void> };
-  /** Per-sink drain budget. Default 2000 (the registry default). */
+  /**
+   * Per-sink drain budget. Default: `GBRAIN_DRAIN_TIMEOUT_MS` env override,
+   * else 2000 (the registry default).
+   */
   drainTimeoutMs?: number;
   /** Test seam — wins over the env override and the computed formula. */
   deadlineMs?: number;
@@ -284,7 +307,7 @@ export interface FinishCliTeardownOpts {
  * exit in here, and it means a component violated its own bound.
  */
 export async function finishCliTeardown(opts: FinishCliTeardownOpts): Promise<void> {
-  const drainTimeoutMs = opts.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS;
+  const drainTimeoutMs = opts.drainTimeoutMs ?? resolveDrainTimeoutMs();
   const warn = opts.warn ?? ((m: string) => console.warn(m));
   const drain = opts.drain ?? drainAllBackgroundWorkForCliExit;
   const deadlineMs =
