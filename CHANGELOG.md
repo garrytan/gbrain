@@ -2,6 +2,13 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.66.1] - 2026-07-27
+
+### Fixed
+
+- `gbrain doctor` now treats embedding columns wider than pgvector's HNSW limit as healthy exact-scan configurations instead of prescribing an index PostgreSQL cannot build.
+- Local CI now passes an empty Docker mount list correctly and compiles the embedded-WASM smoke binary from container-local storage on Docker Desktop.
+
 ## [0.42.66.0] - 2026-07-24
 
 **54 verified fixes from the community backlog: background enrichment stops wasting money on dead pages, autopilot stops killing its own healthy runs, and search respects your settings.**
