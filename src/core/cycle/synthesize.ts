@@ -1251,7 +1251,7 @@ async function collectChildPutPageSlugs(
   // cycle's resolved source via SubagentHandlerData.source_id, and stamps
   // the SAME source here so reverseWriteRefs / provenance reads target the
   // correct (source_id, slug) row. Unset → legacy 'default'.
-  const rows = await engine.executeRaw<{ job_id: number; slug: string }>(
+  const rows = await engine.executeRaw<{ job_id: number | bigint; slug: string }>(
     `SELECT job_id,
             COALESCE(input->>'slug', (input #>> '{}')::jsonb->>'slug') AS slug
        FROM subagent_tool_executions
@@ -1265,10 +1265,13 @@ async function collectChildPutPageSlugs(
   const rewritten = new Map<string, string | undefined>();
   for (const r of rows) {
     if (typeof r.slug !== 'string' || r.slug.length === 0) continue;
-    const ci = chunkInfo.get(r.job_id);
+    // Postgres decodes the BIGINT FK as bigint; both metadata maps are keyed
+    // by the INTEGER minion job id represented as a JavaScript number.
+    const jobId = Number(r.job_id);
+    const ci = chunkInfo.get(jobId);
     const slug = ci ? rewriteChunkedSlug(r.slug, ci.hash6, ci.idx) : r.slug;
     if (!rewritten.has(slug) || rewritten.get(slug) === undefined) {
-      rewritten.set(slug, jobRawSource?.get(r.job_id));
+      rewritten.set(slug, jobRawSource?.get(jobId));
     }
   }
   return Array.from(rewritten.keys()).sort().map(slug => {
