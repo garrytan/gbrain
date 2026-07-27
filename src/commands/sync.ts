@@ -239,11 +239,12 @@ export interface SyncResult {
 export function estimateSourceTreeTokens(
   localPath: string,
   strategy: 'markdown' | 'code' | 'auto',
+  opts: { includeGitignored?: boolean } = {},
 ): { tokens: number; files: number } {
   let tokens = 0;
   let files = 0;
   try {
-    const fileList = collectSyncableFiles(localPath, { strategy });
+    const fileList = collectSyncableFiles(localPath, { strategy, includeGitignored: opts.includeGitignored });
     for (const fullPath of fileList) {
       try {
         const stat = statSync(fullPath);
@@ -376,6 +377,7 @@ export function estimateInlineNewTokens(
     chunker_version: string | null;
   }>,
   currentChunkerVersion: string,
+  opts: { forceFullTree?: boolean } = {},
 ): InlineEstimate {
   let tokens = 0;
   let changedSources = 0;
@@ -397,6 +399,14 @@ export function estimateInlineNewTokens(
     if (cfg.syncEnabled === false) continue;
     const strategy = cfg.strategy ?? 'markdown';
     const localPath = src.local_path;
+
+    if (opts.forceFullTree) {
+      tokens += estimateSourceTreeTokens(localPath, strategy, { includeGitignored: true }).tokens;
+      changedSources++;
+      hadCeiling = true;
+      ceilingReasons.push('include_gitignored');
+      continue;
+    }
 
     // Rung 2: chunker drift forces a full re-chunk → full re-embed. CEILING.
     if (src.chunker_version !== currentChunkerVersion) {
@@ -542,6 +552,7 @@ interface CostGateContext {
   jsonOut: boolean;
   yesFlag: boolean;
   full: boolean;
+  includeGitignored?: boolean;
   /** Message prefix ('sync --all' | 'sync'). */
   label: string;
 }
@@ -626,7 +637,9 @@ async function runInlineCostGate(
   }
 
   // ── Inline path ───────────────────────────────────────────────
-  const inline = estimateInlineNewTokens(sources, String(CHUNKER_VERSION));
+  const inline = estimateInlineNewTokens(sources, String(CHUNKER_VERSION), {
+    forceFullTree: ctx.includeGitignored === true,
+  });
   // D7A: `--full` runs `performFullSync` → `runEmbedCore({stale:true})`, which
   // sweeps the pre-existing stale backlog INLINE on top of the delta. Price it.
   const costUsd = estimateEmbeddingCostUsd(inline.tokens) + (full ? staleCostUsd : 0);
@@ -764,6 +777,11 @@ export interface SyncOpts {
    * matching the #1433 metafile posture).
    */
   exclude?: string[];
+  /**
+   * Include files matched by .gitignore. Git cannot report untracked ignored
+   * changes in diffs, so sync uses the full filesystem walker when this is set.
+   */
+  includeGitignored?: boolean;
   /**
    * Number of parallel workers for the import phase. When > 1, each worker
    * gets its own small Postgres connection pool and files are dispatched via
@@ -2155,6 +2173,14 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
 
   // First sync
   if (!lastCommit) {
+    return performFullSync(engine, fullSyncRoots, headCommit, opts);
+  }
+
+  if (opts.includeGitignored) {
+    slog(
+      `[sync] --include-gitignored: running full filesystem reconcile because ` +
+      `git diff cannot report untracked ignored files.`,
+    );
     return performFullSync(engine, fullSyncRoots, headCommit, opts);
   }
 
@@ -3557,7 +3583,10 @@ async function performFullSync(
   // code --dry-run` always reported zero files even when ~1500 code
   // files were waiting.
   if (opts.dryRun) {
-    let allFiles = collectSyncableFiles(syncScopeRoot, { strategy: opts.strategy ?? 'markdown' });
+    let allFiles = collectSyncableFiles(syncScopeRoot, {
+      strategy: opts.strategy ?? 'markdown',
+      includeGitignored: opts.includeGitignored,
+    });
     if (opts.exclude && opts.exclude.length > 0) {
       allFiles = allFiles.filter(abs => !matchesAnyGlob(relative(syncScopeRoot, abs), opts.exclude));
     }
@@ -3591,6 +3620,7 @@ async function performFullSync(
   const { runImport } = await import('./import.ts');
   const importArgs = [syncScopeRoot];
   if (opts.noEmbed) importArgs.push('--no-embed');
+  if (opts.includeGitignored) importArgs.push('--include-gitignored');
   if (fullConcurrency > 1) importArgs.push('--workers', String(fullConcurrency));
   // v0.31.2: thread strategy through so code-strategy first sync
   // actually enumerates code files (closes bug 1).
@@ -3604,6 +3634,7 @@ async function performFullSync(
     strategy: opts.strategy,
     sourceId: opts.sourceId,
     exclude: opts.exclude,
+    includeGitignored: opts.includeGitignored,
     slugRoot,
     // issue #1939: performFullSync owns the failure ledger + bookmark via the
     // shared gate below; don't let runImport double-record or write its own.
@@ -3716,7 +3747,10 @@ async function performFullSync(
     // #774: scoped syncs store git-root-relative source_paths (slugRoot), so
     // relativize the walk to the same base — otherwise every page mismatches
     // and the mass-delete valve trips on a perfectly healthy scoped source.
-    const currentFiles = collectSyncableFiles(syncScopeRoot, { strategy: opts.strategy ?? 'markdown' })
+    const currentFiles = collectSyncableFiles(syncScopeRoot, {
+      strategy: opts.strategy ?? 'markdown',
+      includeGitignored: opts.includeGitignored,
+    })
       .map(abs => relative(slugRoot ?? syncScopeRoot, abs));
     const rows = await engine.executeRaw<{ slug: string; source_path: string | null }>(
       `SELECT slug, source_path FROM pages WHERE source_id = $1 AND source_path IS NOT NULL AND deleted_at IS NULL`,
@@ -4097,6 +4131,9 @@ Options:
                        subdirectory directly as --repo also works.
   --exclude <glob>     Exclude files matching the glob from sync (repeatable;
                        matched against the scope-relative path).
+  --include-gitignored Include otherwise-syncable files matched by .gitignore.
+                       Forces a full filesystem walk so periodic syncs see
+                       ignored untracked content.
   --dry-run            Show what would be synced without writing.
   --skip-failed        Acknowledge previously-recorded sync failures so
                        the bookmark can advance past unparseable files.
@@ -4147,6 +4184,7 @@ See also:
   const skipFailed = args.includes('--skip-failed');
   const retryFailed = args.includes('--retry-failed');
   const noSchemaPack = args.includes('--no-schema-pack'); // v0.41.37.0 #1569
+  const includeGitignored = args.includes('--include-gitignored');
   const syncAll = args.includes('--all');
   const jsonOut = args.includes('--json');
   const yesFlag = args.includes('--yes');
@@ -4403,7 +4441,7 @@ See also:
     if (!noEmbed) {
       const mode = willEmbedSynchronously({ v2Enabled, serialFlag, noEmbed });
       const gate = await runInlineCostGate(engine, {
-        sources, mode, dryRun, jsonOut, yesFlag, full, label: 'sync --all',
+        sources, mode, dryRun, jsonOut, yesFlag, full, includeGitignored, label: 'sync --all',
       });
       if (gate.action === 'stop') return;
       autoDeferEmbeds = gate.autoDeferEmbeds;
@@ -4501,6 +4539,7 @@ See also:
         noEmbed: effectiveNoEmbed,
         noExtract,
         skipFailed, retryFailed, noSchemaPack,
+        includeGitignored,
         sourceId: src.id,
         strategy: cfg.strategy,
         concurrency,
@@ -4725,7 +4764,7 @@ See also:
   const singleSourceInterrupt = new AbortController();
   const onSingleSourceSigint = () => { try { singleSourceInterrupt.abort(new Error('SIGINT')); } catch { /* */ } };
   const opts: SyncOpts = {
-    repoPath, dryRun, full, noPull, noEmbed, noExtract, skipFailed, retryFailed, noSchemaPack, sourceId,
+    repoPath, dryRun, full, noPull, noEmbed, noExtract, skipFailed, retryFailed, noSchemaPack, includeGitignored, sourceId,
     strategy: strategyArg, concurrency,
     srcSubpath,
     exclude: excludePatterns.length > 0 ? excludePatterns : undefined,
@@ -4754,7 +4793,7 @@ See also:
         chunker_version: gateRows[0].chunker_version,
       }];
       const gate = await runInlineCostGate(engine, {
-        sources: gateSources, mode: 'inline', dryRun: false, jsonOut, yesFlag, full, label: 'sync',
+        sources: gateSources, mode: 'inline', dryRun: false, jsonOut, yesFlag, full, includeGitignored, label: 'sync',
       });
       if (gate.action === 'stop') return;
       if (gate.autoDeferEmbeds) {
@@ -4964,6 +5003,7 @@ export async function syncOneSource(
     noSchemaPack?: boolean;
     /** v0.42.7 #1696: propagate --no-extract into every per-source sync. */
     noExtract?: boolean;
+    includeGitignored?: boolean;
   },
 ): Promise<{ result: SyncResult; log: string }> {
   const cfg = (src.config || {}) as { strategy?: 'markdown' | 'code' | 'auto' };
@@ -4978,6 +5018,7 @@ export async function syncOneSource(
     skipFailed: shared.skipFailed,
     retryFailed: shared.retryFailed,
     noSchemaPack: shared.noSchemaPack,
+    includeGitignored: shared.includeGitignored,
     sourceId: src.id,
     strategy: cfg.strategy,
     concurrency: shared.concurrency,
