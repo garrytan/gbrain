@@ -9,7 +9,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { VERSION } from '../../src/version.ts';
-import { isMinorOrMajorBump } from '../../src/commands/check-update.ts';
+import { isNewerVersion } from '../../src/commands/check-update.ts';
 
 // Check if we can reach GitHub
 async function hasNetwork(): Promise<boolean> {
@@ -98,9 +98,9 @@ describeE2E('E2E: Check-Update', () => {
 
   test('version comparison wiring works end-to-end', () => {
     // Smoke test that the exported function works correctly
-    expect(isMinorOrMajorBump('0.4.0', '0.5.0')).toBe(true);
-    expect(isMinorOrMajorBump('0.4.0', '0.4.1')).toBe(false);
-    expect(isMinorOrMajorBump('0.4.0', '1.0.0')).toBe(true);
-    expect(isMinorOrMajorBump('0.4.0', '0.4.0')).toBe(false);
+    expect(isNewerVersion('0.42.10.0', '0.42.66.0')).toBe(true);
+    expect(isNewerVersion('0.42.66.0', '0.42.66.1')).toBe(true);
+    expect(isNewerVersion('0.42.66.0', '1.0.0')).toBe(true);
+    expect(isNewerVersion('0.42.66.0', '0.42.66.0')).toBe(false);
   });
 });

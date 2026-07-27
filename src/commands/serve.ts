@@ -9,6 +9,17 @@ import { startMcpServer } from '../mcp/server.ts';
 // the dir, sees a dead PID, and removes it).
 const CLEANUP_DEADLINE_MS = 5_000;
 
+// Boot-readiness deadline (#3273). A serve process that wedges mid-boot
+// (e.g. an MCP boot step that never completes because a configured
+// upstream is unreachable) holds the PGLite write lock indefinitely: the
+// post-#2348 lock discipline never steals from a live holder, so every
+// CLI consumer times out until someone hunts down and kills the PID. If
+// startMcpServer hasn't finished connecting the transport within this
+// window, we release the engine (dropping the lock) and exit non-zero so
+// a supervisor can restart with backoff. Env-tunable via
+// GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS; 0 disables.
+const DEFAULT_BOOT_TIMEOUT_SECONDS = 60;
+
 // How often the parent-process watchdog polls the live kernel parent PID
 // (via `readLiveParentPid`, NOT the cached `process.ppid` — see that
 // helper's comment). We don't receive a signal when our parent dies (the
@@ -67,6 +78,10 @@ export interface ServeOptions {
   // transport.onclose still cover legitimate shutdown.
   // Defaults to `process.env.MCP_STDIO === '1'` when omitted.
   mcpStdio?: boolean;
+  // Test seam for the boot-readiness deadline (#3273). Milliseconds.
+  // Defaults to GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS (seconds; 60 when
+  // unset, 0 disables) when omitted.
+  bootTimeoutMs?: number;
 }
 
 export async function runServe(
@@ -142,12 +157,64 @@ export async function runServe(
   installStdioLifecycle(engine, args, opts);
 
   const start = opts.startMcpServer ?? startMcpServer;
-  await start(engine);
+
+  // Boot-readiness deadline (#3273): never sit on the PGLite write lock
+  // forever with a boot that never completes. On expiry: log, release the
+  // engine (drops the lock), exit non-zero so supervisors restart with
+  // backoff. The disconnect itself is raced against CLEANUP_DEADLINE_MS,
+  // same as the graceful-shutdown path, so a wedged WASM close can't trap
+  // us either.
+  const bootTimeoutMs = opts.bootTimeoutMs ?? resolveBootTimeoutMs();
+  let bootDeadline: ReturnType<typeof setTimeout> | null = null;
+  if (bootTimeoutMs > 0) {
+    const log = opts.log ?? ((msg: string) => console.error(msg));
+    const exit = opts.exit ?? ((code?: number) => { process.exit(code); });
+    bootDeadline = setTimeout(() => {
+      log(
+        `GBrain MCP server: boot did not complete within ${bootTimeoutMs}ms — releasing DB lock and exiting so other consumers unblock (check configured provider endpoints; tune via GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS, 0 disables)`,
+      );
+      const cleanup = setTimeout(() => { exit(1); }, CLEANUP_DEADLINE_MS);
+      cleanup.unref?.();
+      Promise.resolve()
+        .then(() => engine.disconnect())
+        .catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          log(`GBrain MCP server: boot-deadline cleanup error: ${msg}`);
+        })
+        .finally(() => {
+          clearTimeout(cleanup);
+          exit(1);
+        });
+    }, bootTimeoutMs);
+    bootDeadline.unref?.();
+  }
+
+  try {
+    await start(engine);
+  } finally {
+    if (bootDeadline) clearTimeout(bootDeadline);
+  }
   // startMcpServer's `await server.connect(transport)` resolves once the
   // SDK has wired up its stdin 'data' listener; that listener keeps the
   // event loop alive. We deliberately do NOT add `await new Promise(() =>
   // {})` here — it would block this async frame and stop the lifecycle
   // hooks from being able to call process.exit() cleanly.
+}
+
+// Env resolution for the boot deadline. Lenient (warn + default) rather
+// than throw: this is an incident-time escape hatch, and a typo'd env var
+// must not turn a boot-safety net into a boot failure of its own.
+function resolveBootTimeoutMs(): number {
+  const raw = process.env.GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS;
+  if (raw === undefined || raw.trim() === '') return DEFAULT_BOOT_TIMEOUT_SECONDS * 1000;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) {
+    console.error(
+      `[gbrain serve] ignoring invalid GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS=${JSON.stringify(raw)} — using default ${DEFAULT_BOOT_TIMEOUT_SECONDS}s`,
+    );
+    return DEFAULT_BOOT_TIMEOUT_SECONDS * 1000;
+  }
+  return n * 1000;
 }
 
 interface StdioLifecycleDeps {

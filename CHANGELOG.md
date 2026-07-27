@@ -2,6 +2,112 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.66.0] - 2026-07-24
+
+**54 verified fixes from the community backlog: background enrichment stops wasting money on dead pages, autopilot stops killing its own healthy runs, and search respects your settings.**
+
+This release is the second big sweep through the open pull-request backlog, with every change reviewed and tested individually before merging. The theme is trust in the background machinery. The overnight "dream" cycle now remembers which pages produced nothing and stops re-reading them every night, meters its small-model calls against your spend caps, and keeps claim proposals from silently overwriting each other. Long consolidation runs get a 30-minute deadline instead of being killed at 10 minutes mid-work. A wedged server boot now releases its database lock instead of blocking every later command.
+
+Search behaves the way you configured it: the recency-decay setting now actually applies to hybrid search, a local `list_pages` call returns as many rows as you asked for, and when a listing is cut short it says so instead of looking complete. Slack conversation exports parse cleanly, with an optional AI fallback for formats the parser does not know.
+
+New provider recipes: DashScope reranking, OpenRouter reranking, and a claude-cli recipe for dispatching subagents through the gateway.
+
+## To take advantage of v0.42.66.0
+
+`gbrain upgrade` should do this automatically. One schema migration ships in this release (v125, take-proposal idempotency); it is idempotent and needs no manual action.
+
+1. **Upgrade and verify:**
+   ```bash
+   gbrain upgrade
+   gbrain doctor
+   gbrain stats
+   ```
+2. **If `gbrain doctor` warns about a partial migration**, run the orchestrator manually:
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+3. **If any step fails,** please file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
+### Itemized changes
+
+#### Dream cycle, takes, and spend control
+
+- Pages whose extraction yields zero claims are memoized, so the cycle stops re-spending on them every night. (#2514, #3319, contributed by @ivandebot)
+- Zero-yield pages are tombstoned so `extract_atoms` stops rediscovering them. (#2144, #3304, contributed by @ChenyqThu)
+- `extract_atoms` Haiku calls are metered against the cost gate. (#2371, #3329, contributed by @TheRealMrSystem)
+- `extract_atoms` stamps concepts so `synthesize_concepts` has material to work with. (#2123, #3308, contributed by @ChenyqThu)
+- `extract_facts` requires a live backing page, not just a non-NULL entity slug. (#2497, #3321, contributed by @javieraldape)
+- Multi-claim pages keep every proposal instead of only the first (migration v125 makes the idempotency key per claim). (#3297, contributed by @rp-agent-bot)
+- Superseding a take now queries the active row first. (#3275, contributed by @arisgysel-design)
+- Takes keyword search matches words inside long claims via `word_similarity`. (#3267)
+- Dream-generated orphan pages stay scoped to their source. (#2368, #3344, contributed by @snvtac)
+- Drift detection is wired into the dream cycle, report-only for now. (#2653, #3317)
+
+#### Autopilot, jobs, and serve
+
+- Full consolidation cycles get a 30-minute timeout floor; lighter dispatches keep the interval-derived budget. (#2852, #3338, contributed by @sanchalr)
+- The cron wrapper exports `~/.bun/bin` onto PATH so autopilot survives minimal environments. (#2013, #3305, contributed by @klampatech)
+- Dead or cancelled jobs no longer block idempotent re-submission. (#2253, #3306, contributed by @rafaelreis-r)
+- Contextual reindex jobs get a default timeout. (#2611, #3323, contributed by @spiky02plateau)
+- Onboarding stops repeating the same auto-remediation within a single run. (#2854, #3342, contributed by @sanchalr)
+- A wedged `gbrain serve` boot hits a readiness deadline and releases the PGLite lock. (#3335)
+
+#### Search, retrieval, and health
+
+- The recency-decay config is honored on the hybrid search path. (#2386, #3312, contributed by @rwbaker)
+- `list_pages` honors explicit limits for local callers, warns on remote clamping, and threads `offset`. (#2591, #3322, contributed by @deacon-botdoctor)
+- Truncated `list_pages` results say so instead of silently capping. (#2865, #3341, contributed by @paul-0320)
+- Negative metrics no longer invert trajectory regression signals. (#2621, #3324, contributed by @morluto)
+- Per-chunk synopsis generation in contextual retrieval is concurrency-bounded. (#2628, #3326, contributed by @spiky02plateau)
+- Graph health metrics count `entity` pages. (#2639, #3330, contributed by @tylr-r)
+
+#### Ingestion, extraction, and links
+
+- Conversation parsing gains an opt-in LLM fallback for unknown formats. (#2247, #3371, contributed by @danwiggins)
+- Normalized Slack markdown parses into conversations. (#3289, #3372, contributed by @danwiggins)
+- Conversation backfill outcomes are durable, so completed pages skip on the next run. (#3293, #3373, contributed by @danwiggins)
+- Reference-style wikilinks are recognized during extraction. (#2071, #3303, contributed by @mzkarami)
+- `[[wikilink]]` frontmatter values resolve via global basename lookup. (#2406, #3313, contributed by @spiky02plateau)
+- Incremental push syncs extract links. (#2850, #3337, contributed by @patentsong)
+- `<think>` reasoning tags in extractor output are handled. (#2559, #3318, contributed by @qaz8545355)
+- Tiktoken special tokens no longer crash code-chunker token estimates. (#2453, #3315, contributed by @Jiglet)
+- Source config stops re-wrapping into a growing JSON string scalar. (#2829, #3334, contributed by @1alessio)
+
+#### Providers and recipes
+
+- DashScope reranking recipe (DashScope serves a plural `/reranks` endpoint under its compatible API). (#2644, #3328, contributed by @YiconZiwei)
+- OpenRouter reranking touchpoint. (#2164, #3302, contributed by @Hippityy)
+- claude-cli recipe for native gateway-based subagent dispatch. (#2277, #3310, contributed by @brettdavies)
+- Prefixed model IDs work on the openai-compatible embedding-dimensions path. (#2325, #3309, contributed by @noetherly)
+- Embeddings stamp the gateway-resolved model in `content_chunks.model`, not the compiled default. (#2846, #3343, contributed by @SailorJoe6)
+- Bun-on-Windows write-through EEXIST fixed, non-Anthropic `--max-cost` pricing works, dream pages excluded from enrich. (#2407, #3316, contributed by @nguyenchiviet)
+- Supabase signed URLs prepend `/storage/v1`. (#2565, #3320, contributed by @danwiggins)
+
+#### Sources, auth, and multi-brain
+
+- Federated-source pages are visible to `get_page`, `list_pages`, `resolve_slugs`, and no-grant MCP callers. (#3242, #3301)
+- Admin-gated rescope surface for DCR clients stuck on a default scope. (#3299)
+- `whoami` exposes OAuth source grants. (#3279, #3332, contributed by @boundless-forest)
+- Thin-client `--source` maps onto `source_id` for remote-routed operations. (#3086)
+
+#### CLI, doctor, and init
+
+- `gbrain doctor` stops claiming "Brain is at target" when the target is unreachable. (#2151, #3339, contributed by @brettdavies)
+- Doctor gains a raw-source persistence guarantee for synthesized pages, warn-only for now. (#3300)
+- Doctor timeline labels disambiguate entity coverage from the brain-score component. (#2298, #3073, contributed by @TurgutKural)
+- Unknown `gbrain init` flags are rejected before migrations run. (#2201, #3307, contributed by @caioribeiroclw-pixel)
+- The init soul-audit hint points at the conversational skill, not a nonexistent CLI verb. (#2486, #3314, contributed by @SeanGearin)
+- `--force` retry escapes completed migration-ledger entries. (#2616, #3325, contributed by @spiky02plateau)
+- PGLite data-dir lock contention gets a clear error message. (#2658, #3336, contributed by @zaycruz)
+- Frontmatter validation derives slugs from the brain root, not the absolute path. (#2340, #3311, contributed by @alessioalionco)
+
+#### For contributors
+
+- Docker network isolation guidance for co-located self-hosted Postgres. (#3270, #3331)
+- `CLAUDE.local.md` / `AGENTS.local.md` are gitignored. (#3290, contributed by @igbymyboy)
+- The hybrid-reranker integration test isolates `GBRAIN_HOME`. (#1527, #3327, contributed by @Willisbest)
+- Test-shard scripts capture the real exit code before watchdog teardown in the no-timeout fallback. (#2864, #3340, contributed by @paul-0320)
+
 ## [0.42.65.0] - 2026-07-23
 
 **A large maintenance release: 93 verified fixes and small features merged since v0.42.64.0, most of them community contributions.**

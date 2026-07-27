@@ -35,6 +35,10 @@ describe('CANONICAL_PRICING — table integrity', () => {
     }
   });
 
+  test('Opus 5 present at $5/$25 (same tier as Opus 4.8)', () => {
+    expect(CANONICAL_PRICING['anthropic:claude-opus-5']).toEqual({ input: 5.0, output: 25.0 });
+  });
+
   test('Opus 4.8 present at $5/$25 (closes gbrain#1819)', () => {
     expect(CANONICAL_PRICING['anthropic:claude-opus-4-8']).toEqual({ input: 5.0, output: 25.0 });
   });

@@ -53,6 +53,12 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('zeroentropy_api_key');
   });
 
+  test('registers only the live conversation-parser fallback key', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain('conversation_parser.llm_fallback_enabled');
+    expect(KNOWN_CONFIG_KEY_PREFIXES).not.toContain('conversation_parser.');
+    expect(KNOWN_CONFIG_KEYS).not.toContain('conversation_parser.llm_polish_enabled');
+  });
+
   test('no duplicate entries', () => {
     const set = new Set(KNOWN_CONFIG_KEYS);
     expect(set.size).toBe(KNOWN_CONFIG_KEYS.length);

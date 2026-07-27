@@ -45,13 +45,68 @@ export interface LoadAllSourcesOpts {
   federatedOnly?: boolean;
 }
 
-/** Parse `sources.config` to a plain object regardless of driver shape. */
-export function parseSourceConfig(config: unknown): Record<string, unknown> {
-  if (typeof config === 'string') {
-    try { return JSON.parse(config) as Record<string, unknown>; } catch { return {}; }
+/**
+ * #2829: max JSON.parse passes when unwrapping a possibly multiply-stringified
+ * `sources.config`. A re-wrapping bug could store config as a JSON *string
+ * scalar* ("{}", "\"{}\"", ...) that grows one layer per read→write cycle; the
+ * bound keeps a pathological value from spinning forever.
+ */
+const MAX_CONFIG_UNWRAP_DEPTH = 10;
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** Unwrap a value that may be JSON-stringified 0..N times. Bounded; never throws. */
+function unwrapConfigLayers(config: unknown): { value: unknown; layers: number } {
+  let value = config;
+  let layers = 0;
+  while (typeof value === 'string' && layers < MAX_CONFIG_UNWRAP_DEPTH) {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      break;
+    }
+    layers++;
   }
-  if (typeof config === 'object' && config !== null) return config as Record<string, unknown>;
+  return { value, layers };
+}
+
+/**
+ * #2829: coerce a config value to the underlying plain object before it is
+ * written back, fully unwrapping any accidental JSON-string nesting so a
+ * re-wrapping bug can't keep growing a layer on every write. Returns {} (with a
+ * warning) when the value never resolves to a plain object. Every `sources`
+ * config writer runs its config through this before `JSON.stringify` + the
+ * `$1::text::jsonb` cast, which converges the stored value back to a jsonb
+ * object.
+ */
+export function normalizeSourceConfig(config: unknown): Record<string, unknown> {
+  const { value } = unwrapConfigLayers(config);
+  if (isPlainObject(value)) return value;
+  console.warn(
+    `[gbrain] source config was not a JSON object (got ${value === null ? 'null' : typeof value}); ` +
+    `storing {} instead. Run 'gbrain doctor' to find affected sources.`,
+  );
   return {};
+}
+
+/**
+ * Parse `sources.config` to a plain object regardless of driver shape (Postgres
+ * returns an object; PGLite returns a JSON string). #2829: also unwraps a config
+ * that was accidentally stored as a nested JSON string scalar, and warns once
+ * when more than one unwrap layer is needed (one layer is the normal PGLite
+ * path; two or more means the value was re-wrapped and should be repaired).
+ */
+export function parseSourceConfig(config: unknown): Record<string, unknown> {
+  const { value, layers } = unwrapConfigLayers(config);
+  if (layers > 1) {
+    console.warn(
+      `[gbrain] source config was stored as a ${layers}-layer nested JSON string; ` +
+      `it will be repaired on the next config write. Run 'gbrain doctor' to find affected sources.`,
+    );
+  }
+  return isPlainObject(value) ? value : {};
 }
 
 /** True iff the source's config.federated field is the literal boolean true. */
