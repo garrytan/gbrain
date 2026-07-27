@@ -29,9 +29,15 @@ afterAll(async () => {
 });
 
 async function truncateAll() {
-  for (const t of ['content_chunks', 'links', 'tags', 'raw_data', 'timeline_entries', 'page_versions', 'ingest_log', 'pages']) {
+  for (const t of ['content_chunks', 'links', 'tags', 'raw_data', 'timeline_entries', 'page_versions', 'ingest_log', 'config', 'pages']) {
     await (engine as any).db.exec(`DELETE FROM ${t}`);
   }
+  // Re-seed the two config keys this file touches back to their documented
+  // defaults (both default to ON). This makes every test deterministic even if
+  // an earlier test threw before its finally restored auto_link/auto_timeline,
+  // and even though absent-key already resolves truthy via isAuto*Enabled.
+  await engine.setConfig('auto_link', 'true');
+  await engine.setConfig('auto_timeline', 'true');
 }
 
 function makeContext(): OperationContext {
@@ -77,10 +83,12 @@ describe('E2E graph quality (v0.10.1 pipeline)', () => {
     await runExtract(engine, ['links', '--source', 'db']);
     await runExtract(engine, ['timeline', '--source', 'db']);
 
-    // Verify graph populated.
+    // Verify graph populated. Concrete floors derived from the seeded fixtures:
+    //   resolvable entity refs: alice->acme, bob->acme, standup->alice, standup->bob = 4
+    //   timeline lines: alice(2) + bob(1) + acme(1) + standup(1) = 5
     const stats = await engine.getStats();
-    expect(stats.link_count).toBeGreaterThan(0);
-    expect(stats.timeline_entry_count).toBeGreaterThan(0);
+    expect(stats.link_count).toBeGreaterThanOrEqual(4);
+    expect(stats.timeline_entry_count).toBeGreaterThanOrEqual(5);
 
     // Verify typed link inference.
     const aliceLinks = await engine.getLinks('people/alice');
@@ -91,7 +99,16 @@ describe('E2E graph quality (v0.10.1 pipeline)', () => {
     const bobAcme = bobLinks.find(l => l.to_slug === 'companies/acme');
     expect(bobAcme?.link_type).toBe('invested_in');
 
+    // The standup meeting references both Alice and Bob as attendees. Assert the
+    // exact attendee edges are present and typed 'attended' (a plain .every()
+    // would silently pass if a meeting->company edge were misclassified or if the
+    // attendee edges were missing entirely).
     const meetingLinks = await engine.getLinks('meetings/standup');
+    const attended = new Set(
+      meetingLinks.filter(l => l.link_type === 'attended').map(l => l.to_slug),
+    );
+    expect(attended.has('people/alice')).toBe(true);
+    expect(attended.has('people/bob')).toBe(true);
     expect(meetingLinks.every(l => l.link_type === 'attended')).toBe(true);
   });
 
@@ -118,7 +135,9 @@ Attendees: [Alice](people/alice). Discussed [Acme](companies/acme).
     // The response should include auto_links results.
     expect((result as any).auto_links).toBeDefined();
     const autoLinks = (result as any).auto_links;
-    expect(autoLinks.created).toBeGreaterThan(0);
+    // The page references exactly two seeded, resolvable targets (Alice + Acme),
+    // so exactly two links are created.
+    expect(autoLinks.created).toBe(2);
     expect(autoLinks.errors).toBe(0);
 
     // Verify links actually exist in DB.
@@ -281,6 +300,53 @@ Mention of [Alice](people/alice).
     expect(paths.length).toBe(1);
     expect(paths[0].from_slug).toBe('people/alice');
     expect(paths[0].link_type).toBe('works_at');
+  });
+
+  test('graph-query traversal: direction out and both, plus depth:2 multi-hop', async () => {
+    // Seed a 2-hop chain: alice -works_at-> acme -partnered_with-> beta.
+    await engine.putPage('people/alice', { type: 'person', title: 'Alice', compiled_truth: '', timeline: '' });
+    await engine.putPage('companies/acme', { type: 'company', title: 'Acme', compiled_truth: '', timeline: '' });
+    await engine.putPage('companies/beta', { type: 'company', title: 'Beta', compiled_truth: '', timeline: '' });
+    await engine.addLink('people/alice', 'companies/acme', '', 'works_at');
+    await engine.addLink('companies/acme', 'companies/beta', '', 'partnered_with');
+
+    // direction:'out' from alice, depth 1 -> only the first hop.
+    const out1 = await engine.traversePaths('people/alice', { direction: 'out', depth: 1 });
+    expect(out1.length).toBe(1);
+    expect(out1[0].from_slug).toBe('people/alice');
+    expect(out1[0].to_slug).toBe('companies/acme');
+    expect(out1[0].depth).toBe(1);
+
+    // depth:2 -> both hops, depths 1 and 2.
+    const out2 = await engine.traversePaths('people/alice', { direction: 'out', depth: 2 });
+    const out2Edges = new Set(out2.map(p => `${p.from_slug}->${p.to_slug}@${p.depth}`));
+    expect(out2Edges.has('people/alice->companies/acme@1')).toBe(true);
+    expect(out2Edges.has('companies/acme->companies/beta@2')).toBe(true);
+    expect(out2.length).toBe(2);
+
+    // direction:'both' from acme depth 1 -> sees the inbound edge from alice AND
+    // the outbound edge to beta. Edges keep their natural from->to orientation.
+    const both = await engine.traversePaths('companies/acme', { direction: 'both', depth: 1 });
+    const bothEdges = new Set(both.map(p => `${p.from_slug}->${p.to_slug}`));
+    expect(bothEdges.has('people/alice->companies/acme')).toBe(true);
+    expect(bothEdges.has('companies/acme->companies/beta')).toBe(true);
+  });
+
+  test('graph-query cycle safety: A->B->A terminates and returns bounded results', async () => {
+    await engine.putPage('people/alice', { type: 'person', title: 'Alice', compiled_truth: '', timeline: '' });
+    await engine.putPage('people/bob', { type: 'person', title: 'Bob', compiled_truth: '', timeline: '' });
+    // Create a 2-cycle: alice -> bob -> alice.
+    await engine.addLink('people/alice', 'people/bob', '', 'knows');
+    await engine.addLink('people/bob', 'people/alice', '', 'knows');
+
+    // High depth must NOT loop forever; the visited-set guard bounds the walk.
+    const paths = await engine.traversePaths('people/alice', { direction: 'out', depth: 100 });
+    const edges = new Set(paths.map(p => `${p.from_slug}->${p.to_slug}`));
+    // Both edges of the cycle are reachable exactly once.
+    expect(edges.has('people/alice->people/bob')).toBe(true);
+    expect(edges.has('people/bob->people/alice')).toBe(true);
+    // Bounded: there are only two edges in the graph, so no path explosion.
+    expect(paths.length).toBe(2);
   });
 
   test('search backlink boost: well-connected pages rank higher', async () => {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { generateText, jsonSchema } from 'ai';
 import { MockLanguageModelV3 } from 'ai/test';
-import { toModelMessages, type ChatMessage } from '../../src/core/ai/gateway.ts';
+import { toAISDKTools, toModelMessages, type ChatMessage } from '../../src/core/ai/gateway.ts';
 
 // v0.42 AI SDK v6 fix — the regression guard that the original bug evaded.
 // Every gateway/toolLoop test stubs the chat transport, which short-circuits
@@ -36,13 +36,13 @@ const internalMessages: ChatMessage[] = [
 describe('gateway tool schema + message shape (real AI SDK v6)', () => {
   it('jsonSchema()-wrapped tools + adapted messages pass generateText without throwing', async () => {
     const model = mockModel();
-    // Built exactly as gateway.chat() builds it (the primary fix).
-    const tools = {
-      search: {
+    const tools = toAISDKTools([
+      {
+        name: 'search',
         description: 'search the brain',
-        inputSchema: jsonSchema({ type: 'object', properties: { q: { type: 'string' } } } as any),
+        inputSchema: { type: 'object', properties: { q: { type: 'string' } } },
       },
-    };
+    ]);
 
     const result = await generateText({
       model: model as any,

@@ -22,13 +22,23 @@ import type {
 import type { OAuthServerProvider, AuthorizationParams } from '@modelcontextprotocol/sdk/server/auth/provider.js';
 import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
 import type { AuthInfo as SdkAuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
-import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+import { InvalidTokenError, InvalidClientMetadataError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { hashToken, generateToken, isUndefinedColumnError } from './utils.ts';
+import { assertValidSourceId } from './source-id.ts';
 import { hasScope, assertAllowedScopes, parseScopeString, InvalidScopeError } from './scope.ts';
 import type { AuthInfo as CoreAuthInfo } from './operations.ts';
 import { parseLegacyTokenScope } from './legacy-token-scope.ts';
 import type { SqlQuery, SqlValue } from './sql-query.ts';
 export type { SqlQuery, SqlValue };
+
+export interface AgentClientBindings {
+  boundTools?: string[];
+  boundSourceId?: string;
+  boundBrainId?: string;
+  boundSlugPrefixes?: string[];
+  boundMaxConcurrent?: number;
+  budgetUsdPerDay?: string;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -183,6 +193,16 @@ interface GBrainOAuthProviderOptions {
    * before mcpAuthRouter ran).
    */
   dcrDisabled?: boolean;
+  /**
+   * Allow the consent-bypassing `client_credentials` grant on the unauthenticated
+   * Dynamic Client Registration path. Default false (#1353): a self-registered
+   * DCR client defaults to `authorization_code` (which goes through /authorize
+   * consent), and an explicit `client_credentials` request is rejected. Operators
+   * who genuinely need machine-to-machine DCR clients opt in via
+   * `--enable-dcr-insecure`. Manual CLI / admin registration is unaffected
+   * (operator-trusted, registers grants directly).
+   */
+  allowClientCredentialsDcr?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -190,7 +210,7 @@ interface GBrainOAuthProviderOptions {
 // ---------------------------------------------------------------------------
 
 class GBrainClientsStore implements OAuthRegisteredClientsStore {
-  constructor(private sql: SqlQuery) {}
+  constructor(private sql: SqlQuery, private allowClientCredentialsDcr = false) {}
 
   async getClient(clientId: string): Promise<OAuthClientInformationFull | undefined> {
     const rows = await this.sql`
@@ -243,6 +263,24 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     // registration entry points share one allow-list.
     const authMethod = validateTokenEndpointAuthMethod(client.token_endpoint_auth_method);
 
+    // v0.42 (#1353): the DCR path is the unauthenticated network entry point.
+    // `client_credentials` skips /authorize consent entirely, so a self-
+    // registered DCR client must NOT get it by default. Default the grant to
+    // `authorization_code` (the consent-bearing flow) when unspecified, and
+    // reject an explicit `client_credentials` request unless the operator opted
+    // in via `--enable-dcr-insecure`. Manual CLI/admin registration bypasses
+    // this store method, so operators can still mint machine clients directly.
+    const grantTypes = (client.grant_types && client.grant_types.length > 0)
+      ? client.grant_types
+      : ['authorization_code'];
+    if (!this.allowClientCredentialsDcr && grantTypes.includes('client_credentials')) {
+      throw new InvalidClientMetadataError(
+        'client_credentials grant is not permitted via dynamic client registration; ' +
+        'restart the server with --enable-dcr-insecure to allow it, or register the ' +
+        'client via the gbrain CLI / admin API.',
+      );
+    }
+
     const clientId = generateToken('gbrain_cl_');
     // v0.34.1 (#909): RFC 7591 §2 — clients that authenticate at the token
     // endpoint via PKCE alone declare `token_endpoint_auth_method: "none"`.
@@ -273,7 +311,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
                                     client_id_issued_at, source_id, federated_read)
         VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                 ${pgArray((client.redirect_uris || []).map(String))},
-                ${pgArray(client.grant_types || ['client_credentials'])},
+                ${pgArray(grantTypes)},
                 ${client.scope || ''}, ${authMethod},
                 ${now}, ${'default'}, ${pgArray(['default'])})
       `;
@@ -286,7 +324,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
                                         client_id_issued_at, source_id)
             VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                     ${pgArray((client.redirect_uris || []).map(String))},
-                    ${pgArray(client.grant_types || ['client_credentials'])},
+                    ${pgArray(grantTypes)},
                     ${client.scope || ''}, ${authMethod},
                     ${now}, ${'default'})
           `;
@@ -298,7 +336,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
                                           client_id_issued_at)
               VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                       ${pgArray((client.redirect_uris || []).map(String))},
-                      ${pgArray(client.grant_types || ['client_credentials'])},
+                      ${pgArray(grantTypes)},
                       ${client.scope || ''}, ${authMethod},
                       ${now})
             `;
@@ -313,7 +351,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
                                       client_id_issued_at)
           VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                   ${pgArray((client.redirect_uris || []).map(String))},
-                  ${pgArray(client.grant_types || ['client_credentials'])},
+                  ${pgArray(grantTypes)},
                   ${client.scope || ''}, ${authMethod},
                   ${now})
         `;
@@ -350,7 +388,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
 
   constructor(options: GBrainOAuthProviderOptions) {
     this.sql = options.sql;
-    this._clientsStore = new GBrainClientsStore(this.sql);
+    this._clientsStore = new GBrainClientsStore(this.sql, options.allowClientCredentialsDcr === true);
     this.dcrDisabled = options.dcrDisabled === true;
     this.tokenTtl = options.tokenTtl || 3600;
     this.refreshTtl = options.refreshTtl || 30 * 24 * 3600;
@@ -857,6 +895,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     sourceId: string = 'default',
     federatedRead?: string[],
     tokenEndpointAuthMethod?: string,
+    agentBindings?: AgentClientBindings,
   ): Promise<{ clientId: string; clientSecret?: string }> {
     // v0.28: ALLOWED_SCOPES allowlist. Reject `--scopes "read flying-unicorn"`
     // at registration so meaningless scope strings can't pile up in the DB.
@@ -889,16 +928,44 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     //                    has read scope == write scope, the v0.33 default)
     const federated = federatedRead && federatedRead.length > 0 ? federatedRead : [sourceId];
     try {
-      await this.sql`
-        INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
-                                    grant_types, scope, token_endpoint_auth_method,
-                                    client_id_issued_at,
-                                    source_id, federated_read)
-        VALUES (${clientId}, ${secretHash}, ${name},
-                ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${authMethod}, ${now},
-                ${sourceId}, ${pgArray(federated)})
-      `;
+      if (agentBindings) {
+        await this.sql`
+          INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                      grant_types, scope, token_endpoint_auth_method,
+                                      client_id_issued_at,
+                                      source_id, federated_read,
+                                      bound_tools, bound_source_id, bound_brain_id,
+                                      bound_slug_prefixes, bound_max_concurrent, budget_usd_per_day)
+          VALUES (${clientId}, ${secretHash}, ${name},
+                  ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${authMethod}, ${now},
+                  ${sourceId}, ${pgArray(federated)},
+                  ${agentBindings.boundTools ? pgArray(agentBindings.boundTools) : null},
+                  ${agentBindings.boundSourceId ?? null}, ${agentBindings.boundBrainId ?? null},
+                  ${agentBindings.boundSlugPrefixes ? pgArray(agentBindings.boundSlugPrefixes) : null},
+                  ${agentBindings.boundMaxConcurrent ?? 1}, ${agentBindings.budgetUsdPerDay ?? null})
+        `;
+      } else {
+        await this.sql`
+          INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                      grant_types, scope, token_endpoint_auth_method,
+                                      client_id_issued_at,
+                                      source_id, federated_read)
+          VALUES (${clientId}, ${secretHash}, ${name},
+                  ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${authMethod}, ${now},
+                  ${sourceId}, ${pgArray(federated)})
+        `;
+      }
     } catch (err) {
+      if (agentBindings && (
+        isUndefinedColumnError(err, 'bound_tools') ||
+        isUndefinedColumnError(err, 'bound_source_id') ||
+        isUndefinedColumnError(err, 'bound_brain_id') ||
+        isUndefinedColumnError(err, 'bound_slug_prefixes') ||
+        isUndefinedColumnError(err, 'bound_max_concurrent') ||
+        isUndefinedColumnError(err, 'budget_usd_per_day')
+      )) {
+        throw new Error('register-client --bound-* flags require an up-to-date OAuth schema; run `gbrain apply-migrations --yes` and retry.');
+      }
       // Pre-v60 / pre-v61 brain: column missing. Fall back through both
       // projections so registration still works until apply-migrations.
       if (isUndefinedColumnError(err, 'federated_read')) {
@@ -938,6 +1005,66 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     }
 
     return { clientId, clientSecret };
+  }
+
+  /**
+   * v0.42.x (#1914): admin-gated rescope for an existing OAuth client.
+   *
+   * DCR clients self-register with source_id='default' +
+   * federated_read=['default'] and MUST NOT be able to widen their own
+   * scope (fail-closed trust). This is the trusted-operator surface that
+   * changes it afterward: `gbrain auth rescope-client` (local CLI) and
+   * POST /admin/api/rescope-client (requireAdmin) both route here.
+   *
+   * Omitted fields are left untouched (COALESCE). Takes effect on the
+   * client's NEXT request even for already-issued tokens, because
+   * verifyAccessToken re-reads oauth_clients on every verification.
+   */
+  async rescopeClient(
+    clientId: string,
+    opts: { sourceId?: string; federatedRead?: string[] },
+  ): Promise<{ clientId: string; clientName: string; sourceId: string; federatedRead: string[] }> {
+    const { sourceId, federatedRead } = opts;
+    if (sourceId === undefined && federatedRead === undefined) {
+      throw new Error('rescope-client requires --source and/or --federated-read');
+    }
+    if (sourceId !== undefined) assertValidSourceId(sourceId);
+    if (federatedRead !== undefined) {
+      if (federatedRead.length === 0) {
+        throw new Error('--federated-read cannot be empty (pass at least one source id)');
+      }
+      for (const s of federatedRead) assertValidSourceId(s);
+    }
+    let rows: Record<string, unknown>[];
+    try {
+      rows = await this.sql`
+        UPDATE oauth_clients
+           SET source_id = COALESCE(${sourceId ?? null}::text, source_id),
+               federated_read = COALESCE(${federatedRead ? pgArray(federatedRead) : null}::text[], federated_read)
+         WHERE client_id = ${clientId}
+         RETURNING client_id, client_name, source_id, federated_read
+      `;
+    } catch (err) {
+      if (isUndefinedColumnError(err, 'source_id') || isUndefinedColumnError(err, 'federated_read')) {
+        throw new Error('rescope-client requires an up-to-date OAuth schema; run `gbrain apply-migrations --yes` and retry.');
+      }
+      // FK oauth_clients.source_id → sources(id): translate the raw 23503
+      // into an actionable message.
+      if ((err as { code?: string })?.code === '23503') {
+        throw new Error(`Source "${sourceId}" does not exist. Create it first: gbrain sources add ${sourceId} ...`);
+      }
+      throw err;
+    }
+    if (rows.length === 0) {
+      throw new Error(`No OAuth client found with id "${clientId}"`);
+    }
+    const row = rows[0];
+    return {
+      clientId: row.client_id as string,
+      clientName: (row.client_name as string | null) ?? '',
+      sourceId: (row.source_id as string | null) ?? 'default',
+      federatedRead: Array.isArray(row.federated_read) ? (row.federated_read as string[]) : [],
+    };
   }
 
   // -------------------------------------------------------------------------

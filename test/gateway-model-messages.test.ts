@@ -107,6 +107,63 @@ describe('toModelMessages — v6 ModelMessage shape', () => {
     ]);
   });
 
+  test('Date in tool-result json output serializes to ISO string (Postgres timestamptz)', () => {
+    // node-postgres returns timestamptz columns as JS Date; AI SDK v6's
+    // JSONValue schema rejects a raw Date, dead-lettering the tool loop.
+    const msgs: ChatMessage[] = [
+      {
+        role: 'user',
+        content: [{
+          type: 'tool-result',
+          toolCallId: 'c1',
+          toolName: 'brain_get_page',
+          output: { rows: [{ updated_at: new Date('2026-06-26T06:56:59.000Z'), nested: { created_at: new Date('2026-01-02T03:04:05.000Z') } }] },
+        }],
+      },
+    ];
+    const out = toModelMessages(msgs) as any[];
+    const value = out[0].content[0].output.value;
+    expect(out[0].content[0].output.type).toBe('json');
+    expect(value.rows[0].updated_at).toBe('2026-06-26T06:56:59.000Z');
+    expect(value.rows[0].nested.created_at).toBe('2026-01-02T03:04:05.000Z');
+    // No Date instance survives (would throw in AI SDK v6).
+    expect(value.rows[0].updated_at instanceof Date).toBe(false);
+  });
+
+  test('non-string text block is dropped (reasoning-model null-text guard)', () => {
+    // DeepSeek v4 / reasoning models can emit text:null/undefined thinking
+    // parts; AI SDK v6 rejects them. Dropped here; tool-call sibling kept.
+    const msgs: ChatMessage[] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: null as unknown as string },
+          { type: 'text', text: undefined as unknown as string },
+          { type: 'text', text: 'kept' },
+          { type: 'text', text: '' }, // empty string is valid — kept
+          { type: 'tool-call', toolCallId: 'c1', toolName: 'search', input: {} },
+        ],
+      },
+    ];
+    const out = toModelMessages(msgs) as any[];
+    expect(out[0].content).toEqual([
+      { type: 'text', text: 'kept' },
+      { type: 'text', text: '' },
+      { type: 'tool-call', toolCallId: 'c1', toolName: 'search', input: {} },
+    ]);
+  });
+
+  test('errored tool-result never throws on circular/bigint output (safeStringify)', () => {
+    const circular: any = {};
+    circular.self = circular;
+    const msgs: ChatMessage[] = [
+      { role: 'user', content: [{ type: 'tool-result', toolCallId: 'c1', toolName: 'x', output: circular, isError: true }] },
+    ];
+    const out = toModelMessages(msgs) as any[];
+    expect(out[0].content[0].output.type).toBe('error-text');
+    expect(typeof out[0].content[0].output.value).toBe('string');
+  });
+
   test('full multi-turn conversation: user → assistant(tool-call) → tool(result)', () => {
     const msgs: ChatMessage[] = [
       { role: 'user', content: 'find widget' },

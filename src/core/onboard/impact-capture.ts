@@ -120,7 +120,7 @@ export async function writeImpactLogRow(
          remediation_id, metric_name, metric_before, metric_after,
          job_id, source_id, brain_id, started_at, idempotency_key,
          applied_by, details
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)`,
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::text::jsonb)`,
       [
         attribution.remediation_id,
         metricName,

@@ -63,25 +63,26 @@ interface PluginCtx {
   [key: string]: unknown;
 }
 
+export function register(api: PluginApi) {
+  api.registerContextEngine(ENGINE_ID, (ctx: PluginCtx) => {
+    const hostResolver =
+      typeof ctx.resolveEntities === 'function'
+        ? ctx.resolveEntities
+        : typeof ctx.brainQuery === 'function'
+          ? ctx.brainQuery
+          : undefined;
+    return createGBrainContextEngine({
+      workspaceDir: ctx.workspaceDir,
+      resolveEntities: hostResolver,
+    });
+  });
+}
+
 const entry: PluginEntry = {
   id: 'gbrain-context-engine',
   name: 'GBrain Context Engine',
   description: 'Deterministic temporal/spatial context injection on every turn',
-
-  register(api: PluginApi) {
-    api.registerContextEngine(ENGINE_ID, (ctx: PluginCtx) => {
-      const hostResolver =
-        typeof ctx.resolveEntities === 'function'
-          ? ctx.resolveEntities
-          : typeof ctx.brainQuery === 'function'
-            ? ctx.brainQuery
-            : undefined;
-      return createGBrainContextEngine({
-        workspaceDir: ctx.workspaceDir,
-        resolveEntities: hostResolver,
-      });
-    });
-  },
+  register,
 };
 
 export default entry;

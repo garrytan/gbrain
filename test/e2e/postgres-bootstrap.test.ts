@@ -90,4 +90,31 @@ describe.skipIf(skip)('PostgresEngine forward-reference bootstrap (E2E)', () => 
     await engine.initSchema();
     expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
   });
+
+  // Migration v120 — schema-lint hardening (#1647 / #171). Postgres-only
+  // assertions (security_invoker has no surface on embedded PGLite).
+  test('v120: page_links view runs with security_invoker=on (#1647b)', async () => {
+    await engine.initSchema();
+    const rows = await engine.executeRaw<{ reloptions: string[] | null }>(
+      `SELECT c.reloptions FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = 'page_links' AND c.relkind = 'v'`,
+    );
+    expect(rows.length).toBe(1);
+    expect(JSON.stringify(rows[0].reloptions ?? [])).toContain('security_invoker=on');
+  });
+
+  test('v120: trigger + event-trigger functions pin search_path, incl auto_enable_rls (#1647a/#171)', async () => {
+    await engine.initSchema();
+    const rows = await engine.executeRaw<{ proname: string; proconfig: unknown }>(
+      `SELECT p.proname, p.proconfig FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'public'
+          AND p.proname IN ('bump_page_generation_fn','bump_page_generation_clock_fn',
+                            'update_chunk_search_vector','update_page_search_vector',
+                            'notify_minion_job_change','auto_enable_rls')`,
+    );
+    expect(rows.length).toBeGreaterThanOrEqual(5);
+    for (const r of rows) {
+      expect(JSON.stringify(r.proconfig ?? [])).toContain('search_path=');
+    }
+  });
 });

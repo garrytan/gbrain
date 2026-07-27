@@ -257,6 +257,55 @@ describe('resolveSchemaEmbeddingDim', () => {
     if (got.ok) expect(got.dim).toBe(768);
   });
 
+  // #2271 — trust_custom_dims passthrough for local / BYO-backend recipes.
+  test('ollama accepts a custom dim for a modern model via trust_custom_dims', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'ollama:qwen3-embed-8b',
+      embedding_dimensions: 4096,
+    });
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.dim).toBe(4096);
+  });
+
+  test('litellm accepts a user-declared custom dim via trust_custom_dims', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'litellm:bge-large',
+      embedding_dimensions: 1024,
+    });
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.dim).toBe(1024);
+  });
+
+  test('llama-server accepts a user-declared custom dim via trust_custom_dims', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'llama-server:nomic-embed-text-v1.5',
+      embedding_dimensions: 2560,
+    });
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.dim).toBe(2560);
+  });
+
+  test('[REGRESSION] openrouter (declares dims_options, NOT flagged) still fail-closed on an unlisted dim', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'openrouter:openai/text-embedding-3-small',
+      embedding_dimensions: 4096,
+    });
+    expect(got.ok).toBe(false);
+    if (!got.ok) expect(got.error).toMatch(/rejects custom dimensions 4096|does not support custom dimensions/);
+  });
+
+  test('[REGRESSION] trust_custom_dims does NOT bypass the pgvector column cap', () => {
+    // The passthrough tier trusts the user's dim, but the pgvector cap check runs
+    // BEFORE it — pin that ordering so a future refactor can't let an oversized
+    // dim through for a trusted local recipe.
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'ollama:qwen3-embed-8b',
+      embedding_dimensions: PGVECTOR_COLUMN_MAX_DIMS + 1,
+    });
+    expect(got.ok).toBe(false);
+    if (!got.ok) expect(got.error).toMatch(/exceed pgvector|column cap/i);
+  });
+
   test('unknown provider rejected with provider list hint', () => {
     const got = resolveSchemaEmbeddingDim({ embedding_model: 'notarealprovider:foo' });
     expect(got.ok).toBe(false);

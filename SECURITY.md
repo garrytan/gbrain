@@ -87,6 +87,18 @@ and the DCR `POST /register` path. Pre-v0.41.3 the CLI hard-coded
 operators to UPDATE `oauth_clients` rows by hand to make claude.ai work
 without `--enable-dcr`. That footgun is gone.
 
+### DCR consent default (v0.42.55+)
+
+The "disable `client_credentials`, only allow `authorization_code`" guidance
+above is now the built-in default for the DCR path, not just advice for custom
+wrappers. With `--enable-dcr` on, a self-registered client defaults to the
+`authorization_code` (browser-approval) grant, and an explicit
+`client_credentials` request is rejected with `invalid_client_metadata`.
+Operators who genuinely need the machine-to-machine grant on the registration
+endpoint opt in with `--enable-dcr-insecure` (which implies `--enable-dcr`); a
+startup WARNING prints whenever DCR is enabled, and a second when the insecure
+grant is allowed. Pre-registering clients via the CLI / admin API is unchanged.
+
 ### Token Management
 
 ```bash
@@ -122,6 +134,18 @@ design and the `access_tokens` / `mcp_request_log` tables don't exist in
 the PGLite schema. Local agents continue to use stdio (`gbrain serve`).
 Running `--http` against a PGLite-backed install fails fast with a clear
 error message at startup.
+
+### Docker network isolation (self-hosted Postgres)
+
+OAuth and source scoping enforce isolation on the `serve --http` path only.
+Raw Postgres reachability bypasses both: a container that shares Docker's
+default `bridge` network with the brain's Postgres can open a direct DB
+session without any token and read every source. Put the brain's Postgres on
+a user-defined Docker network with nothing untrusted on it, publish its port
+loopback-only (if at all), and never put `DATABASE_URL` or a Postgres
+password in untrusted agent containers — those should reach the brain
+exclusively via OAuth against `serve --http`. Full operator checklist:
+[docs/mcp/DEPLOY.md — Co-located Docker workloads](docs/mcp/DEPLOY.md#co-located-docker-workloads-self-hosted-postgres).
 
 ### CORS
 

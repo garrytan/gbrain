@@ -346,6 +346,12 @@ interface RegisterClientArgs {
   federatedRead: string[] | undefined;
   redirectUris: string[];
   tokenEndpointAuthMethod: string | undefined;
+  boundTools: string[] | undefined;
+  boundSourceId: string | undefined;
+  boundBrainId: string | undefined;
+  boundSlugPrefixes: string[] | undefined;
+  boundMaxConcurrent: number | undefined;
+  budgetUsdPerDay: string | undefined;
 }
 
 export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
@@ -356,6 +362,12 @@ export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
     federatedRead: undefined,
     redirectUris: [],
     tokenEndpointAuthMethod: undefined,
+    boundTools: undefined,
+    boundSourceId: undefined,
+    boundBrainId: undefined,
+    boundSlugPrefixes: undefined,
+    boundMaxConcurrent: undefined,
+    budgetUsdPerDay: undefined,
   };
   let i = 0;
   let grantTypesSet = false;
@@ -389,6 +401,34 @@ export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
       case '--token-endpoint-auth-method':
         out.tokenEndpointAuthMethod = requireValue();
         i += 2; break;
+      case '--bound-tools': {
+        const v = requireValue();
+        out.boundTools = v.split(',').map(s => s.trim()).filter(Boolean);
+        i += 2; break;
+      }
+      case '--bound-source': out.boundSourceId = requireValue(); i += 2; break;
+      case '--bound-brain': out.boundBrainId = requireValue(); i += 2; break;
+      case '--bound-slug-prefixes': {
+        const v = requireValue();
+        out.boundSlugPrefixes = v.split(',').map(s => s.trim()).filter(Boolean);
+        i += 2; break;
+      }
+      case '--bound-max-concurrent': {
+        const v = Number(requireValue());
+        if (!Number.isInteger(v) || v < 1) {
+          throw new Error('--bound-max-concurrent must be a positive integer');
+        }
+        out.boundMaxConcurrent = v;
+        i += 2; break;
+      }
+      case '--budget-usd-per-day': {
+        const v = requireValue();
+        if (!/^\d+(?:\.\d{1,2})?$/.test(v)) {
+          throw new Error('--budget-usd-per-day must be a non-negative decimal with at most 2 decimal places');
+        }
+        out.budgetUsdPerDay = v;
+        i += 2; break;
+      }
       default:
         throw new Error(`Unknown flag: ${flag}`);
     }
@@ -405,7 +445,7 @@ export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
 
 async function registerClient(name: string, args: string[]) {
   if (!name) {
-    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none]');
+    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none] [--bound-tools T1,T2] [--bound-source SOURCE] [--bound-brain BRAIN] [--bound-slug-prefixes P1,P2] [--bound-max-concurrent N] [--budget-usd-per-day USD]');
     process.exit(1);
   }
   let parsed: RegisterClientArgs;
@@ -413,17 +453,28 @@ async function registerClient(name: string, args: string[]) {
     parsed = parseRegisterClientArgs(args);
   } catch (e: any) {
     console.error(`Error: ${e.message}`);
-    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none]');
+    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none] [--bound-tools T1,T2] [--bound-source SOURCE] [--bound-brain BRAIN] [--bound-slug-prefixes P1,P2] [--bound-max-concurrent N] [--budget-usd-per-day USD]');
     process.exit(1);
   }
   const { grantTypes, scopes, sourceId, federatedRead, redirectUris, tokenEndpointAuthMethod } = parsed;
+  const agentBindings = parsed.boundTools || parsed.boundSourceId || parsed.boundBrainId ||
+    parsed.boundSlugPrefixes || parsed.boundMaxConcurrent !== undefined || parsed.budgetUsdPerDay !== undefined
+    ? {
+      boundTools: parsed.boundTools,
+      boundSourceId: parsed.boundSourceId,
+      boundBrainId: parsed.boundBrainId,
+      boundSlugPrefixes: parsed.boundSlugPrefixes,
+      boundMaxConcurrent: parsed.boundMaxConcurrent,
+      budgetUsdPerDay: parsed.budgetUsdPerDay,
+    }
+    : undefined;
 
   try {
     await withConfiguredSql(async (sql) => {
       const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
       const provider = new GBrainOAuthProvider({ sql });
       const { clientId, clientSecret } = await provider.registerClientManual(
-        name, grantTypes, scopes, redirectUris, sourceId, federatedRead, tokenEndpointAuthMethod,
+        name, grantTypes, scopes, redirectUris, sourceId, federatedRead, tokenEndpointAuthMethod, agentBindings,
       );
       const effectiveFederated = federatedRead && federatedRead.length > 0 ? federatedRead : [sourceId];
       const effectiveAuthMethod = tokenEndpointAuthMethod || 'client_secret_post';
@@ -441,13 +492,76 @@ async function registerClient(name: string, args: string[]) {
         console.log(`  Redirect URIs:       ${redirectUris.join(', ')}`);
       }
       console.log(`  Write source:        ${sourceId}`);
-      console.log(`  Federated reads:     ${effectiveFederated.join(', ')}\n`);
+      console.log(`  Federated reads:     ${effectiveFederated.join(', ')}`);
+      if (agentBindings) {
+        console.log(`  Bound tools:         ${(parsed.boundTools ?? []).join(', ') || '<none>'}`);
+        console.log(`  Bound source:        ${parsed.boundSourceId ?? '<none>'}`);
+        console.log(`  Bound brain:         ${parsed.boundBrainId ?? '<none>'}`);
+        console.log(`  Bound slug prefixes:${parsed.boundSlugPrefixes ? ' ' + parsed.boundSlugPrefixes.join(', ') : ' <none>'}`);
+        console.log(`  Max concurrency:     ${parsed.boundMaxConcurrent ?? 1}`);
+        console.log(`  Daily budget USD:    ${parsed.budgetUsdPerDay ?? '<none>'}`);
+      }
+      console.log('');
       if (clientSecret) {
         console.log('Save the client secret — it will not be shown again.');
       } else {
         console.log('Public client (PKCE-only) — no secret needed.');
       }
       console.log(`Revoke with: gbrain auth revoke-client "${clientId}"`);
+    });
+  } catch (e: any) {
+    console.error('Error:', e.message);
+    process.exit(1);
+  }
+}
+
+/**
+ * v0.42.x (#1914): rescope an existing OAuth client's write source and/or
+ * federated read scope. This is the operator surface the DCR registration
+ * comment promised ("rescope via the CLI later") — DCR clients land with
+ * source_id='default' / federated_read=['default'] and must not self-widen,
+ * so widening happens here (trusted local CLI) or via the requireAdmin
+ * /admin/api/rescope-client endpoint.
+ */
+async function rescopeClient(clientId: string, args: string[]) {
+  const usage = 'Usage: auth rescope-client <client_id> [--source SOURCE] [--federated-read SRC1,SRC2,...]';
+  if (!clientId) {
+    console.error(usage);
+    process.exit(1);
+  }
+  let sourceId: string | undefined;
+  let federatedRead: string[] | undefined;
+  for (let i = 0; i < args.length; i += 2) {
+    const flag = args[i];
+    const value = args[i + 1];
+    if (value === undefined || value.startsWith('--')) {
+      console.error(`Error: ${flag} requires a value`);
+      console.error(usage);
+      process.exit(1);
+    }
+    if (flag === '--source') sourceId = value;
+    else if (flag === '--federated-read') {
+      federatedRead = value.split(',').map(s => s.trim()).filter(Boolean);
+    } else {
+      console.error(`Error: Unknown flag: ${flag}`);
+      console.error(usage);
+      process.exit(1);
+    }
+  }
+  if (sourceId === undefined && federatedRead === undefined) {
+    console.error('Error: pass --source and/or --federated-read');
+    console.error(usage);
+    process.exit(1);
+  }
+  try {
+    await withConfiguredSql(async (sql) => {
+      const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
+      const provider = new GBrainOAuthProvider({ sql });
+      const result = await provider.rescopeClient(clientId, { sourceId, federatedRead });
+      console.log(`OAuth client rescoped: "${result.clientName}" (${result.clientId})\n`);
+      console.log(`  Write source:        ${result.sourceId}`);
+      console.log(`  Federated reads:     ${result.federatedRead.join(', ') || '<none>'}`);
+      console.log('\nTakes effect on the client\'s next request (existing tokens included).');
     });
   } catch (e: any) {
     console.error('Error:', e.message);
@@ -496,6 +610,7 @@ export async function runAuth(args: string[]): Promise<void> {
       return;
     }
     case 'register-client': await registerClient(rest[0], rest.slice(1)); return;
+    case 'rescope-client': await rescopeClient(rest[0], rest.slice(1)); return;
     case 'revoke-client': await revokeClient(rest[0]); return;
     case 'test': {
       const tokenIdx = rest.indexOf('--token');
@@ -527,6 +642,17 @@ Usage:
      --redirect-uri <https://...>                          (v0.41.3+; repeatable; required for authorization_code)
      --token-endpoint-auth-method <method>                 (v0.41.3+; client_secret_post | client_secret_basic | none;
                                                             'none' = public PKCE-only client, no secret minted)
+     --bound-tools <tool1,tool2>                           Bind submit_agent to an allow-list of tools
+     --bound-source <id>                                   Bind submit_agent jobs to a source id
+     --bound-brain <id>                                    Bind submit_agent jobs to a brain id
+     --bound-slug-prefixes <prefix1,prefix2>               Bind submit_agent writes to slug prefixes
+     --bound-max-concurrent <n>                            Bound submit_agent concurrency (default: 1)
+     --budget-usd-per-day <usd>                            Bound submit_agent daily spend cap
+  gbrain auth rescope-client <client_id> [options]        Change an existing client's source scope (e.g. a DCR
+                                                          client stuck on the 'default' source). Only the flags
+                                                          you pass change; the other axis is left as-is.
+     --source <id>                                        New write source
+     --federated-read <id1,id2,...>                       New read-scope source list
   gbrain auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
   gbrain auth test <url> --token <token>                  Smoke-test a remote MCP server
 `);

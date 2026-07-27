@@ -52,6 +52,7 @@ function makeCtx(
     data,
     attempts_made: 0,
     signal: opts.signal ?? new AbortController().signal,
+    deadlineAtMs: null,
     shutdownSignal: opts.shutdownSignal ?? new AbortController().signal,
     updateProgress: async () => {},
     updateTokens: async () => {},

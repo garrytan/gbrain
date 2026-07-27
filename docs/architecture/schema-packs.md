@@ -145,7 +145,7 @@ api_version: gbrain-schema-pack-v1
 name: my-pack
 version: 0.0.1
 gbrain_min_version: 0.39.0
-extends: gbrain-base   # inherits everything from base; add overrides below
+extends: gbrain-base   # inherits base's TYPES (see Merge contract below); add overrides
 description: |
   My personal pack.
 
@@ -169,6 +169,34 @@ frontmatter_links: []
 enrichable_types: []
 filing_rules: []
 ```
+
+## Merge contract (`extends` + `borrow_from`)
+
+`resolvePack` composes a pack against its `extends` chain (and any
+`borrow_from` targets) into the `resolved.manifest` every consumer reads
+(T20 / #1749). The rules:
+
+- **Six fields inherit, child-wins:** `page_types`, `link_types`,
+  `frontmatter_links`, `enrichable_types`, `filing_rules`, and `takes_kinds`.
+  A child value with the same key (type name, link name, etc.) overrides the
+  parent's; keys the child doesn't declare come through from the parent.
+- **`page_types` ordering:** overrides of a base type keep the base's declared
+  position (base's `inferType` prefix priority is authoritative); a genuinely
+  new type — from the child, a `borrow_from`, or a middle pack in the chain —
+  is prepended nearest-first, so a more-derived type's `path_prefix` wins
+  regardless of how deep the chain is.
+- **`takes_kinds` is UNION, not replace** — it carries a Zod default, so an
+  omitted field is indistinguishable from an explicit one. A child can ADD
+  kinds but **cannot narrow** `takes_kinds` below base ∪ parent. If you need a
+  smaller set, don't `extends` a pack that declares the larger one.
+- **`phases` and `calibration_domains` are NOT inherited** (child-only). They
+  gate real cycle execution, so each pack must declare its own participation
+  explicitly — inheriting them would silently make a child run phases it never
+  requested. This is why `gbrain-everything` re-declares all its phases and
+  calibration domains by hand. See `lens-packs.md` for the worked example.
+- **`borrow_from` is selective + non-transitive + fail-closed:** it pulls only
+  the named `types`/`link_types` from the target's OWN declarations (omitting a
+  category borrows none of it); a missing target throws `UnknownPackError`.
 
 ## Recovery + revert
 

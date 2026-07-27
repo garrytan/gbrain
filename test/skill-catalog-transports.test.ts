@@ -56,7 +56,7 @@ async function call(
   params: Record<string, unknown>,
   opts: { remote: boolean; auth?: AuthInfo },
 ) {
-  return unpack(await dispatchToolCall(engine, name, params, opts));
+  return unpack(await dispatchToolCall(engine, name, params, { sourceId: 'default', ...opts }));
 }
 
 describe('list_skills over dispatch', () => {

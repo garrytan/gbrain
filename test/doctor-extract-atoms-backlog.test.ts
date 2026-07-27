@@ -76,6 +76,17 @@ describe('countExtractAtomsBacklog (issue #1678)', () => {
     });
     expect(await countExtractAtomsBacklog(engine)).toBe(0);
   });
+
+  it('ignores raw source-holder pages (permanent no-progress backlog otherwise)', async () => {
+    await engine.putPage('wiki/raw-email-source', {
+      type: 'source',
+      title: 'Raw email source',
+      compiled_truth: BODY,
+      frontmatter: { raw: 'raw/email/example.md' },
+    });
+    expect(await countExtractAtomsBacklog(engine)).toBe(0);
+    expect(await countExtractAtomsBacklog(engine, 'default')).toBe(0);
+  });
 });
 
 describe('computeExtractAtomsBacklogCheck (issue #1678)', () => {

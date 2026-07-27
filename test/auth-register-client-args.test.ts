@@ -22,6 +22,12 @@ describe('parseRegisterClientArgs', () => {
     expect(out.federatedRead).toBeUndefined();
     expect(out.redirectUris).toEqual([]);
     expect(out.tokenEndpointAuthMethod).toBeUndefined();
+    expect(out.boundTools).toBeUndefined();
+    expect(out.boundSourceId).toBeUndefined();
+    expect(out.boundBrainId).toBeUndefined();
+    expect(out.boundSlugPrefixes).toBeUndefined();
+    expect(out.boundMaxConcurrent).toBeUndefined();
+    expect(out.budgetUsdPerDay).toBeUndefined();
   });
 
   test('--grant-types comma-separated → array', () => {
@@ -147,6 +153,26 @@ describe('parseRegisterClientArgs', () => {
     });
   });
 
+  describe('submit_agent binding flags', () => {
+    test('parses register-time submit_agent bindings', () => {
+      const out = parseRegisterClientArgs([
+        '--scopes', 'read agent',
+        '--bound-tools', 'search, get_page,put_page',
+        '--bound-source', 'dept-x',
+        '--bound-brain', 'company-brain',
+        '--bound-slug-prefixes', 'wiki/agents/alice/,notes/',
+        '--bound-max-concurrent', '3',
+        '--budget-usd-per-day', '12.50',
+      ]);
+      expect(out.boundTools).toEqual(['search', 'get_page', 'put_page']);
+      expect(out.boundSourceId).toBe('dept-x');
+      expect(out.boundBrainId).toBe('company-brain');
+      expect(out.boundSlugPrefixes).toEqual(['wiki/agents/alice/', 'notes/']);
+      expect(out.boundMaxConcurrent).toBe(3);
+      expect(out.budgetUsdPerDay).toBe('12.50');
+    });
+  });
+
   describe('error cases', () => {
     test('--redirect-uri without value → throws', () => {
       expect(() => parseRegisterClientArgs(['--redirect-uri'])).toThrow(/requires a value/);
@@ -158,6 +184,16 @@ describe('parseRegisterClientArgs', () => {
 
     test('unknown --flag throws', () => {
       expect(() => parseRegisterClientArgs(['--frobnicate', 'value'])).toThrow(/Unknown flag/);
+    });
+
+    test('--bound-max-concurrent requires a positive integer', () => {
+      expect(() => parseRegisterClientArgs(['--bound-max-concurrent', '0'])).toThrow(/positive integer/);
+      expect(() => parseRegisterClientArgs(['--bound-max-concurrent', '1.5'])).toThrow(/positive integer/);
+    });
+
+    test('--budget-usd-per-day requires a currency-shaped decimal', () => {
+      expect(() => parseRegisterClientArgs(['--budget-usd-per-day', '1.234'])).toThrow(/non-negative decimal/);
+      expect(() => parseRegisterClientArgs(['--budget-usd-per-day', 'abc'])).toThrow(/non-negative decimal/);
     });
   });
 });

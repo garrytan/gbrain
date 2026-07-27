@@ -65,6 +65,7 @@ import { invalidateQueryCache } from './query-cache-invalidator.ts';
 import { logMutationFailure, logMutationSuccess, type MutationActor, type MutationOp } from './mutate-audit.ts';
 import { runFilePlaneLintRules } from './lint-rules.ts';
 import { withPackLock, type PackLockOpts } from './pack-lock.ts';
+import { BUNDLED_PACK_NAMES as BUNDLED_PACK_NAME_LIST } from './bundled.ts';
 import type { BrainEngine } from '../engine.ts';
 
 export type PackFileFormat = 'json' | 'yaml';
@@ -93,7 +94,7 @@ export class SchemaPackMutationError extends Error {
   }
 }
 
-export const BUNDLED_PACK_NAMES = new Set(['gbrain-base', 'gbrain-recommended', 'gbrain-base-v2']);
+export const BUNDLED_PACK_NAMES = new Set<string>(BUNDLED_PACK_NAME_LIST);
 
 export interface MutateResult {
   /** Pack name that was mutated. */

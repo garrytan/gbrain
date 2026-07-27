@@ -1,0 +1,33 @@
+name: OSV-Scanner
+
+# Dependency vulnerability scan (#2182) via Google's official reusable
+# workflow. Runs weekly and on any PR that touches the dependency manifests.
+# Tokenless: needs zero secrets. Findings are reported in the job log and as
+# a SARIF artifact on the run; code-scanning upload is deliberately disabled
+# so the workflow stays read-only (no security-events: write).
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'bun.lock'
+      - 'package.json'
+  schedule:
+    - cron: '30 6 * * 1'  # weekly, Monday 06:30 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  osv-scan:
+    permissions:
+      actions: read
+      contents: read
+      # Required by the reusable workflow's own top-level permissions block —
+      # GitHub validates the caller grants a superset AT STARTUP, even with
+      # upload-sarif: false (nothing is actually uploaded; see #2117 upstream).
+      security-events: write
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@9a498708959aeaef5ef730655706c5a1df1edbc2  # v2.3.8
+    with:
+      upload-sarif: false

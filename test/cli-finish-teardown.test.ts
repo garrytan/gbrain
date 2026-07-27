@@ -14,6 +14,7 @@ import {
   finishCliTeardown,
   flushThenExit,
   computeTeardownDeadlineMs,
+  resolveDrainTimeoutMs,
   TEARDOWN_DEADLINE_FLOOR_MS,
   setCliExitVerdict,
   currentExitCode,
@@ -112,6 +113,67 @@ describe('computeTeardownDeadlineMs', () => {
     } finally {
       un1();
     }
+  });
+});
+
+describe('resolveDrainTimeoutMs', () => {
+  test('defaults to the 2000ms registry budget', () => {
+    expect(resolveDrainTimeoutMs()).toBe(2_000);
+  });
+
+  test('GBRAIN_DRAIN_TIMEOUT_MS env override wins over the default', async () => {
+    await withEnv({ GBRAIN_DRAIN_TIMEOUT_MS: '30000' }, async () => {
+      expect(resolveDrainTimeoutMs()).toBe(30_000);
+    });
+  });
+
+  test('garbage, zero, and negative env values fall back to the default', async () => {
+    await withEnv({ GBRAIN_DRAIN_TIMEOUT_MS: 'banana' }, async () => {
+      expect(resolveDrainTimeoutMs()).toBe(2_000);
+    });
+    await withEnv({ GBRAIN_DRAIN_TIMEOUT_MS: '0' }, async () => {
+      expect(resolveDrainTimeoutMs()).toBe(2_000);
+    });
+    await withEnv({ GBRAIN_DRAIN_TIMEOUT_MS: '-5' }, async () => {
+      expect(resolveDrainTimeoutMs()).toBe(2_000);
+    });
+  });
+
+  test('finishCliTeardown drains with the env-resolved budget when no explicit drainTimeoutMs', async () => {
+    await withEnv({ GBRAIN_DRAIN_TIMEOUT_MS: '12345' }, async () => {
+      let drainBudget = -1;
+      await finishCliTeardown({
+        engine: { disconnect: async () => {} },
+        deadlineMs: 250,
+        drain: async ({ timeoutMs }) => {
+          drainBudget = timeoutMs;
+        },
+        exit: () => {},
+        warn: () => {},
+        stdout: fakeStream(),
+        stderr: fakeStream(),
+      });
+      expect(drainBudget).toBe(12_345);
+    });
+  });
+
+  test('an explicit drainTimeoutMs still wins over the env override', async () => {
+    await withEnv({ GBRAIN_DRAIN_TIMEOUT_MS: '12345' }, async () => {
+      let drainBudget = -1;
+      await finishCliTeardown({
+        engine: { disconnect: async () => {} },
+        drainTimeoutMs: 777,
+        deadlineMs: 250,
+        drain: async ({ timeoutMs }) => {
+          drainBudget = timeoutMs;
+        },
+        exit: () => {},
+        warn: () => {},
+        stdout: fakeStream(),
+        stderr: fakeStream(),
+      });
+      expect(drainBudget).toBe(777);
+    });
   });
 });
 

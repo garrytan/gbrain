@@ -97,3 +97,46 @@ describe('WARN-6 — main `gbrain --help` lists capture/brainstorm/lsd', () => {
     expect(stdout).toContain('embed');
   });
 });
+
+describe('#2795 — `sync --install-cron` help line no longer promises an unbuilt feature', () => {
+  test('main `gbrain --help` does not advertise install-cron', () => {
+    // Pre-fix: `sync --install-cron  Install persistent sync daemon` was
+    // listed in the top-level help with no flag parsing or handler behind
+    // it anywhere in src/commands/sync.ts — `gbrain sync --install-cron`
+    // silently ran an ordinary sync instead of installing anything.
+    const { stdout, status } = runCli(['--help']);
+    expect(status).toBe(0);
+    expect(stdout).not.toContain('install-cron');
+    expect(stdout).not.toContain('Install persistent sync daemon');
+  });
+
+  test('main `gbrain --help` points sync users at the real continuous-daemon command', () => {
+    const { stdout } = runCli(['--help']);
+    // autopilot --install already runs sync+extract+embed on a schedule
+    // (docs/architecture/KEY_FILES.md); point discoverability there instead
+    // of promising a separate sync-only cron installer that never existed.
+    expect(stdout).toMatch(/sync --watch \[--interval N\][^\n]*\n\s*See also: autopilot --install/);
+  });
+
+  test('`gbrain sync --help` never listed install-cron either', () => {
+    const { stdout, status } = runCli(['sync', '--help']);
+    expect(status).toBe(0);
+    expect(stdout).not.toContain('install-cron');
+  });
+});
+
+describe('#1175 — main `gbrain --help` SOURCES block matches the real subcommand set', () => {
+  test('archive and its lifecycle siblings are listed', () => {
+    const { stdout, status } = runCli(['--help']);
+    expect(status).toBe(0);
+    // Pre-fix the SOURCES block listed only list/add/remove; the soft-delete
+    // alternative that `sources remove` itself recommends was undiscoverable.
+    expect(stdout).toMatch(/^\s*sources archive <id>\s/m);
+    expect(stdout).toMatch(/^\s*sources restore <id>\s/m);
+    expect(stdout).toMatch(/^\s*sources archived\s/m);
+    expect(stdout).toMatch(/^\s*sources purge/m);
+    expect(stdout).toMatch(/^\s*sources status\s/m);
+    // Pointer at the full per-subcommand help for the long tail.
+    expect(stdout).toMatch(/^\s*sources --help\s/m);
+  });
+});

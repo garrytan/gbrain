@@ -19,7 +19,7 @@ import type { CalibrationProfileRow } from '../src/commands/calibration.ts';
 
 function buildProfile(opts: Partial<CalibrationProfileRow> = {}): CalibrationProfileRow {
   return {
-    id: 1,
+    id: '1',
     source_id: 'default',
     holder: 'garry',
     wave_version: 'v0.36.1.0',

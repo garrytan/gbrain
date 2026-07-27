@@ -16,6 +16,7 @@ import { collectUsageShape } from './collect-usage-shape.ts';
 import { collectSetupSmells } from './collect-setup-smells.ts';
 import { collectUninstalledBrainPack } from './collect-uninstalled-brain-pack.ts';
 import { collectUninstalledBundled } from './collect-uninstalled-bundled.ts';
+import { collectChronicle } from './collect-chronicle.ts';
 
 /** Deterministic v1 collector order (also the secondary sort key for ranking). */
 export const COLLECTORS: AdvisorCollector[] = [
@@ -27,6 +28,7 @@ export const COLLECTORS: AdvisorCollector[] = [
   collectSetupSmells,
   collectUninstalledBrainPack,
   collectUninstalledBundled,
+  collectChronicle,
 ];
 
 const SEV_RANK: Record<AdvisorSeverity, number> = { critical: 0, warn: 1, info: 2 };

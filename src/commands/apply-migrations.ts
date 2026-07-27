@@ -133,14 +133,15 @@ function indexCompleted(entries: CompletedMigrationEntry[]): CompletedIndex {
  * Returns the resolved status for a migration based on its entries.
  *
  * Semantics (Bug 3 — keep "complete wins" safety):
- *   - If any entry is `complete`, the version is complete. Terminal state.
- *   - Otherwise, if the latest entry is `retry`, the version is pending
- *     (user requested a fresh attempt).
+ *   - If the latest entry is `retry`, the version is pending. This is the
+ *     explicit escape hatch written by `--force-retry`, and it overrides an
+ *     earlier `complete` entry without hand-editing the ledger.
+ *   - Otherwise, if any entry is `complete`, the version is complete.
  *   - Otherwise, if any entry is `partial`, the version is partial.
  *   - Otherwise, pending.
  *
- * `complete` never regresses. A later accidental `partial` append cannot
- * undo a completed migration.
+ * `complete` never regresses accidentally. A later `partial` append cannot
+ * undo a completed migration; only a trailing, explicit `retry` marker can.
  */
 function statusForVersion(
   version: string,
@@ -148,9 +149,9 @@ function statusForVersion(
 ): 'complete' | 'partial' | 'pending' | 'wedged' {
   const entries = idx.byVersion.get(version) ?? [];
   if (entries.length === 0) return 'pending';
-  if (entries.some(e => e.status === 'complete')) return 'complete';
   const latest = entries[entries.length - 1];
   if (latest.status === 'retry') return 'pending';
+  if (entries.some(e => e.status === 'complete')) return 'complete';
   // Bug 3 attempt cap — count consecutive partials from the end (stopping
   // at any 'retry' or 'complete'). If we hit MAX_CONSECUTIVE_PARTIALS,
   // the migration is wedged and needs explicit --force-retry to try again.
@@ -438,6 +439,13 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
       const result = await m.orchestrator(orchestratorOptsFrom(cli));
       if (result.status === 'failed') {
         console.error(`Migration v${m.version} reported status=failed.`);
+        // Surface each failed phase's detail — the ledger records it, but
+        // the operator needs it on stderr to act (#921).
+        for (const p of result.phases) {
+          if (p.status === 'failed') {
+            console.error(`  phase ${p.name}: ${p.detail ?? '(no detail)'}`);
+          }
+        }
         // Record the attempt as 'partial' (not 'complete') so the cap counts
         // it. Don't let a failed orchestrator look like it never ran.
         try {

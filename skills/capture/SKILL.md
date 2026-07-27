@@ -62,7 +62,7 @@ gbrain capture "..." --json           # structured output for agents
 - **Slug:** `inbox/YYYY-MM-DD-<hash8>` (stable for same content; the daemon's 24h dedup catches re-captures).
 - **Type:** `note` (override with `--type idea` etc.).
 - **Frontmatter stamps:** `captured_via: capture-cli`, `captured_at: <ISO>`.
-- **Title:** first non-empty line of the body, capped at 80 chars.
+- **Title:** first non-empty line of the body, capped at 80 chars (truncation appends `…`).
 
 ## Output Format
 

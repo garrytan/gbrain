@@ -45,6 +45,12 @@ import {
 export interface EnrichThinPhaseOpts {
   dryRun?: boolean;
   signal?: AbortSignal;
+  /**
+   * issue #2860 — `gbrain dream --phase enrich_thin --once`. Bypasses the
+   * `cycle.enrich_thin.enabled` gate for THIS call only; never reads or
+   * writes config. Per-source + brain-wide cost/walltime caps still apply.
+   */
+  once?: boolean;
 }
 
 export interface EnrichThinPhaseResult {
@@ -139,16 +145,22 @@ export async function runPhaseEnrichThin(
   const cfg = await loadCfg(engine);
 
   if (!cfg.enabled) {
-    return {
-      phase: 'enrich_thin',
-      status: 'skipped',
-      duration_ms: 0,
-      summary: 'cycle.enrich_thin.enabled=false (default OFF)',
-      details: {
-        reason: 'disabled',
-        enable_hint: 'gbrain config set cycle.enrich_thin.enabled true',
-      },
-    };
+    if (!opts.once) {
+      return {
+        phase: 'enrich_thin',
+        status: 'skipped',
+        duration_ms: 0,
+        summary: 'cycle.enrich_thin.enabled=false (default OFF)',
+        details: {
+          reason: 'disabled',
+          enable_hint: 'gbrain config set cycle.enrich_thin.enabled true',
+        },
+      };
+    }
+    process.stderr.write(
+      '[dream] --once: cycle.enrich_thin.enabled is false but ' +
+      '--phase enrich_thin --once forces this run (config untouched)\n',
+    );
   }
 
   const startedAt = Date.now();
