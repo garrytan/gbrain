@@ -112,8 +112,9 @@ export const azureOpenAI: Recipe = {
     }
     // Key mode: Azure uses `api-key:` (no Bearer); the unified seam routes this
     // through `headers` instead of the SDK's apiKey field to avoid any
-    // double-auth Authorization header sneaking in.
-    return { headerName: 'api-key', token: env.AZURE_OPENAI_API_KEY };
+    // double-auth Authorization header sneaking in. The key is present here:
+    // !isEntraMode(env) implies AZURE_OPENAI_API_KEY is set.
+    return { headerName: 'api-key', token: env.AZURE_OPENAI_API_KEY! };
   },
   resolveOpenAICompatConfig(env) {
     const endpoint = env.AZURE_OPENAI_ENDPOINT?.replace(/\/+$/, '');
