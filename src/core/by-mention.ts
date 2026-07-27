@@ -288,8 +288,8 @@ export async function buildGazetteer(
   const gazetteer: Gazetteer = new Map();
   for (const row of rows) {
     if (!row.title) continue;
-      if (!hasCJK(row.title) && row.title.length < MIN_NAME_LENGTH) continue;
-      if (hasCJK(row.title) && cjkCharCount(row.title) < MIN_CJK_NAME_LENGTH) continue;
+    if (!hasCJK(row.title) && row.title.length < MIN_NAME_LENGTH) continue;
+    if (hasCJK(row.title) && cjkCharCount(row.title) < MIN_CJK_NAME_LENGTH) continue;
     if (ignoreSet.has(row.title) && !existingTitles.has(row.title)) continue;
 
     const tokens = tokenizeTitle(row.title);

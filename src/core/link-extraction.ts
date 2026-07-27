@@ -1191,7 +1191,10 @@ export interface TimelineCandidate {
 // Match: `- **YYYY-MM-DD** | summary` or `- **YYYY-MM-DD** -- summary`
 // or `- **YYYY-MM-DD** - summary` or just `**YYYY-MM-DD** | summary`.
 const TIMELINE_LINE_RE = /^\s*-?\s*\*\*(\d{4}-\d{2}-\d{2})\*\*\s*[|\-–—]+\s*(.+?)\s*$/;
-const TIMELINE_LINE_RE_CN = /^\s*-?\s*(?:\*\*)?(\d{4})[年\-](\d{1,2})[月\-](\d{1,2})[日]?(?:\*\*)?\s*[|\-–—]+\s*(.+?)\s*$/;
+// Chinese date lines: `- 2020年1月2日 | summary` (bold optional). Requires the
+// 年/月 markers so plain ASCII `- 2020-01-02 - text` does NOT match — non-bold
+// ASCII dates were never timeline entries and must stay that way.
+const TIMELINE_LINE_RE_CN = /^\s*-?\s*(?:\*\*)?(\d{4})年(\d{1,2})月(\d{1,2})日?(?:\*\*)?\s*[|\-–—]+\s*(.+?)\s*$/;
 
 /**
  * Parse timeline entries from content. Looks at:
@@ -1209,7 +1212,7 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
   let i = 0;
   while (i < lines.length) {
     // Try English format first, then Chinese
-    let m = TIMELINE_LINE_RE.exec(lines[i]);
+    const m = TIMELINE_LINE_RE.exec(lines[i]);
     let date: string;
     let summary: string;
     if (m) {
@@ -1219,16 +1222,10 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
       const cm = TIMELINE_LINE_RE_CN.exec(lines[i]);
       if (!cm) { i++; continue; }
       // Normalize Chinese date to YYYY-MM-DD
-      const y = cm[1];
-      const mo = cm[2].padStart(2, '0');
-      const d = cm[3].padStart(2, '0');
-      date = `${y}-${mo}-${d}`;
+      date = `${cm[1]}-${cm[2].padStart(2, '0')}-${cm[3].padStart(2, '0')}`;
       summary = cm[4].trim();
-      m = cm as any;  // for the isNaN check below
     }
     if (!isValidDate(date) || summary.length === 0) { i++; continue; }
-
-
     // Collect optional detail lines (indented, until next date or heading).
     const detailLines: string[] = [];
     let j = i + 1;
