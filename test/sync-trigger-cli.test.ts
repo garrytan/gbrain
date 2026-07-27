@@ -13,6 +13,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runSyncTrigger } from '../src/commands/sync.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
 
@@ -102,6 +103,22 @@ describe('runSyncTrigger', () => {
     expect((job.data as { sourceId: string }).sourceId).toBe('default');
     expect((job.data as { noExtract: boolean }).noExtract).toBe(false);
     expect((job.data as { auto_embed_backfill: boolean }).auto_embed_backfill).toBe(true);
+  });
+
+  test('matching client-local checkout requires inline sync', async () => {
+    await withEnv({
+      GBRAIN_SOURCE: 'default',
+      GBRAIN_SOURCE_PATH: '/tmp/gbrain-client-local-trigger-test',
+    }, async () => {
+      const { stderr, exitCode } = await capture(['--source', 'default']);
+      expect(exitCode).toBe(2);
+      expect(stderr).toContain('client-local checkout');
+      expect(stderr).toContain('gbrain sync --source default');
+
+      const queue = new MinionQueue(engine);
+      const jobs = await queue.getJobs({ name: 'sync', limit: 5 });
+      expect(jobs).toHaveLength(0);
+    });
   });
 
   test('--priority normal maps to 0', async () => {

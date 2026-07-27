@@ -482,6 +482,45 @@ describe('getSourceStatus', () => {
     });
   });
 
+  test('public sources status reports the matching client-local checkout', async () => {
+    await withEnv2(async () => {
+      const row = await addSource(engine, {
+        id: 'status-client',
+        remoteUrl: 'https://github.com/example/repo',
+      });
+      const clientPath = join(GBRAIN_HOME, 'client-status-checkout');
+      mkdirSync(join(clientPath, '.git'), { recursive: true });
+
+      await withEnv(
+        { GBRAIN_SOURCE: 'status-client', GBRAIN_SOURCE_PATH: clientPath },
+        async () => {
+          const status = await getSourceStatus(engine, 'status-client');
+          expect(status.local_path).toBe(clientPath);
+
+          const originalLog = console.log;
+          const lines: string[] = [];
+          console.log = (...args: unknown[]) => {
+            lines.push(args.map(String).join(' '));
+          };
+          try {
+            await runSources(engine, ['status', '--json']);
+          } finally {
+            console.log = originalLog;
+          }
+
+          const report = JSON.parse(lines.join('\n')) as {
+            sources: Array<{ source_id: string; local_path: string | null }>;
+          };
+          expect(
+            report.sources.find((source) => source.source_id === 'status-client')?.local_path,
+          ).toBe(clientPath);
+        },
+      );
+
+      expect(row.local_path).not.toBe(clientPath);
+    });
+  });
+
   test('clone_state = "not-applicable" for path-only source (no remote)', async () => {
     await withEnv2(async () => {
       const userPath = join(GBRAIN_HOME, 'na-fixture');

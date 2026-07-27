@@ -27,6 +27,7 @@ import { StructuredAgentError } from '../core/errors.ts';
 import { serializeMarkdown } from '../core/markdown.ts';
 import { importFromContent } from '../core/import-file.ts';
 import { writePageThrough, type WriteThroughResult } from '../core/write-through.ts';
+import { resolveSourceId } from '../core/source-resolver.ts';
 import { randomBytes } from 'crypto';
 
 export interface BrainstormCliArgs {
@@ -248,6 +249,7 @@ async function runBrainstormCli(
   }
 
   const config = loadConfig() ?? {};
+  const sourceId = await resolveSourceId(engine, null);
   // Honor env-var skip for scripted environments that can't easily pass --yes.
   const skipPreview = parsed.yes || process.env.GBRAIN_NO_BRAINSTORM_PREVIEW === '1';
 
@@ -269,6 +271,7 @@ async function runBrainstormCli(
     result = await runBrainstorm(engine, config, {
       question: parsed.question,
       profile: effectiveProfile,
+      sourceId,
       skipCostPreview: skipPreview,
       // v0.39.0.0 T10 cost-cap surface — wired in master, preserved here.
       maxCostUsd: parsed.maxCost,
@@ -319,7 +322,12 @@ async function runBrainstormCli(
     const body = formatBrainstormMarkdown(result, { onlyPassed: false, includeMeta: true });
     const content = serializeMarkdown(fmObj, body, '', { type: 'note', title, tags: [] });
 
-    const outcome = await persistSavedIdea(engine, { slug, content, provenanceVia: profile.label });
+    const outcome = await persistSavedIdea(engine, {
+      slug,
+      content,
+      sourceId,
+      provenanceVia: profile.label,
+    });
     const msg = formatSaveOutcome(outcome, { profileLabel: profile.label, slug });
     if (msg.stdout) console.log(msg.stdout);
     for (const line of msg.stderr) console.error(line);

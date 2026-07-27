@@ -66,7 +66,11 @@ import {
   serr,
 } from '../core/console-prefix.ts';
 import { loadStorageConfig } from '../core/storage-config.ts';
-import { getDefaultSourcePath } from '../core/source-resolver.ts';
+import {
+  assertClientSourceCheckout,
+  getDefaultSourcePath,
+  resolveClientSourcePath,
+} from '../core/source-resolver.ts';
 // v0.41.32.0: stamp the durable newest-COMMIT timestamp at sync time so the
 // remote staleness path reads a column instead of shelling out to git.
 // lagFromContentMs is the remote/column comparator (buildSyncStatusReport
@@ -1416,6 +1420,15 @@ See also:
     process.exit(1);
   }
 
+  if (resolveClientSourcePath(sourceIdArg)) {
+    console.error(
+      `Error: source "${sourceIdArg}" uses a client-local checkout. ` +
+      `A queued sync cannot inherit GBRAIN_SOURCE_PATH, and GBrain will not persist that local path.`,
+    );
+    console.error(`Run inline in this client instead: gbrain sync --source ${sourceIdArg}`);
+    process.exit(2);
+  }
+
   const { MinionQueue } = await import('../core/minions/queue.ts');
   const queue = new MinionQueue(engine);
   const job = await queue.add(
@@ -1791,7 +1804,15 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // "hung with no output" into actionable diagnostic data.
   serr(`[gbrain phase] sync.resolve_repo`);
   // Resolve repo path
-  const repoPath = opts.repoPath || await readSyncAnchor(engine, opts.sourceId, 'repo_path');
+  const clientSourcePath =
+    !opts.repoPath && opts.sourceId
+      ? resolveClientSourcePath(opts.sourceId)
+      : null;
+  const repoPath =
+    opts.repoPath ||
+    clientSourcePath ||
+    await readSyncAnchor(engine, opts.sourceId, 'repo_path');
+  const persistRepoPath = clientSourcePath === null;
   if (!repoPath) {
     const hint = opts.sourceId
       ? `Source "${opts.sourceId}" has no local_path. Run: gbrain sources add ${opts.sourceId} --path <path>`
@@ -1861,6 +1882,12 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         case 'missing':
         case 'no-git':
         case 'not-a-dir':
+          if (clientSourcePath) {
+            throw new Error(
+              `Client-local checkout for source "${opts.sourceId}" at ${repoPath} is ${state}. ` +
+              `Clone the configured remote at that path or update GBRAIN_SOURCE_PATH.`,
+            );
+          }
           // #1881: only re-clone a clone gbrain owns. An unowned local_path
           // (the user's working tree) is refused loudly, never deleted.
           if (!isOwnedClone(ownSrc)) {
@@ -1945,7 +1972,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // the SCOPE path, so a follow-up bare `gbrain sync` auto-discovers the same
   // scope. Unchanged (the caller's repoPath spelling) when no --src-subpath.
   const anchorPath = opts.srcSubpath ? rawScopeRoot : repoPath;
-  const fullSyncRoots = { gitContextRoot, syncScopeRoot, anchorPath };
+  const fullSyncRoots = { gitContextRoot, syncScopeRoot, anchorPath, persistRepoPath };
 
   serr(`[gbrain phase] sync.detect_head`);
   // Detect detached HEAD up front so the working-tree fallback fires for both
@@ -3293,7 +3320,9 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // decoupled (its own resumable stale sweeps).
     await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(gitContextRoot, pin));
     await engine.setConfig('sync.last_run', new Date().toISOString());
-    await writeSyncAnchor(engine, opts.sourceId, 'repo_path', anchorPath);
+    if (persistRepoPath) {
+      await writeSyncAnchor(engine, opts.sourceId, 'repo_path', anchorPath);
+    }
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
     await clearOpCheckpoint(engine, ckpt.paths);
     await clearOpCheckpoint(engine, ckpt.target);
@@ -3346,7 +3375,9 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // checkpoint is INTENTIONALLY left in place — the banked completed set lets
     // the next run skip the drained files and re-attempt only the failures.
     await engine.setConfig('sync.last_run', new Date().toISOString());
-    await writeSyncAnchor(engine, opts.sourceId, 'repo_path', anchorPath);
+    if (persistRepoPath) {
+      await writeSyncAnchor(engine, opts.sourceId, 'repo_path', anchorPath);
+    }
     // v0.42.x (#1794): surface banked progress so a blocked run doesn't read as
     // total loss (last_commit is unchanged by design; the checkpoint is banked).
     serr(
@@ -3538,11 +3569,16 @@ async function performFullSync(
   //   syncScopeRoot  — where files are walked/imported (== gitContextRoot
   //                    when no subpath scope is active)
   //   anchorPath     — what gets written back to sync.repo_path/local_path
-  roots: { gitContextRoot: string; syncScopeRoot: string; anchorPath: string },
+  roots: {
+    gitContextRoot: string;
+    syncScopeRoot: string;
+    anchorPath: string;
+    persistRepoPath: boolean;
+  },
   headCommit: string,
   opts: SyncOpts,
 ): Promise<SyncResult> {
-  const { gitContextRoot, syncScopeRoot, anchorPath } = roots;
+  const { gitContextRoot, syncScopeRoot, anchorPath, persistRepoPath } = roots;
   // Scoped sync → slugs/source_path are git-root-relative (matches the
   // incremental path's git-diff paths). Unscoped → undefined (dir-relative,
   // the pre-#774 behavior, byte-for-byte).
@@ -3630,7 +3666,9 @@ async function performFullSync(
     // writeSyncAnchor so --source pins the right sources row.
     await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit, newestCommitMs(gitContextRoot));
     await engine.setConfig('sync.last_run', new Date().toISOString());
-    await writeSyncAnchor(engine, opts.sourceId, 'repo_path', anchorPath);
+    if (persistRepoPath) {
+      await writeSyncAnchor(engine, opts.sourceId, 'repo_path', anchorPath);
+    }
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
   };
 
@@ -3657,7 +3695,9 @@ async function performFullSync(
       );
     }
     await engine.setConfig('sync.last_run', new Date().toISOString());
-    await writeSyncAnchor(engine, opts.sourceId, 'repo_path', anchorPath);
+    if (persistRepoPath) {
+      await writeSyncAnchor(engine, opts.sourceId, 'repo_path', anchorPath);
+    }
     return {
       status: 'blocked_by_failures',
       fromCommit: null,
@@ -3774,7 +3814,10 @@ async function performFullSync(
         try {
           const { writePageThrough } = await import('../core/write-through.ts');
           for (const slug of dbOnlySlugs) {
-            const r = await writePageThrough(engine, slug, { sourceId: sid });
+            const r = await writePageThrough(engine, slug, {
+              sourceId: sid,
+              operationRoot: gitContextRoot,
+            });
             if (r.written) reExported++;
           }
         } catch { /* best-effort — pages are preserved either way */ }
@@ -4747,8 +4790,16 @@ See also:
       [sourceId],
     );
     if (gateRows.length > 0) {
+      const clientPath = repoPath ? null : resolveClientSourcePath(sourceId);
+      if (clientPath) {
+        assertClientSourceCheckout(sourceId, clientPath, gateRows[0].config);
+      }
       const gateSources = [{
-        local_path: gateRows[0].local_path ?? repoPath ?? null,
+        local_path:
+          repoPath ??
+          clientPath ??
+          gateRows[0].local_path ??
+          null,
         config: gateRows[0].config ?? {},
         last_commit: gateRows[0].last_commit,
         chunker_version: gateRows[0].chunker_version,

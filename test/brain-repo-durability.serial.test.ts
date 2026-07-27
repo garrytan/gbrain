@@ -11,6 +11,9 @@ import { execFileSync } from 'child_process';
 import {
   hardenBrainRepo, unhardenBrainRepo, acceptPat,
 } from '../src/core/brain-repo-durability.ts';
+import { runHarden, runPull } from '../src/commands/sources-harden.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const PAT = 'ghp_TESTSECRETTOKEN0123456789abcdef';
 
@@ -65,6 +68,31 @@ afterEach(() => {
 });
 
 describe('hardenBrainRepo', () => {
+  test('source commands reject a client checkout whose origin does not match the shared source', async () => {
+    const engine = {
+      executeRaw: async () => [{
+        id: 'wiki',
+        local_path: null,
+        config: { remote_url: join(root, 'other.git') },
+      }],
+    } as unknown as BrainEngine;
+    const before = git(work, 'rev-parse', 'HEAD');
+
+    await withEnv({
+      GBRAIN_SOURCE: 'wiki',
+      GBRAIN_SOURCE_PATH: work,
+      GBRAIN_GITHUB_PAT: undefined,
+    }, async () => {
+      await expect(
+        runHarden(engine, ['wiki', '--dry-run', '--no-cron', '--no-verify']),
+      ).rejects.toThrow(/url-drift/);
+      await expect(runPull(engine, ['wiki'])).rejects.toThrow(/url-drift/);
+    });
+
+    expect(git(work, 'rev-parse', 'HEAD')).toBe(before);
+    expect(existsSync(join(work, '.git', 'hooks', 'post-commit'))).toBe(false);
+  });
+
   test('installs hook (local, untracked, +x), helper, and AGENTS rules', async () => {
     const r = await harden();
     // hook

@@ -22,12 +22,13 @@
  */
 
 import { existsSync, statSync, mkdirSync, writeFileSync, renameSync, unlinkSync, readdirSync } from 'fs';
-import { basename, dirname, join } from 'path';
+import { basename, dirname, join, resolve } from 'path';
 import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import { serializePageToMarkdown, resolvePageFilePath } from './markdown.ts';
 import { isWriteTargetContained } from './path-confine.ts';
 import { isDurabilityHardened, commitWriteThroughFile } from './brain-repo-durability.ts';
+import { assertClientSourceCheckout, resolveClientSourcePath } from './source-resolver.ts';
 
 /** Minimal logger surface — structurally compatible with operations.ts `Logger`. */
 export interface WriteThroughLogger {
@@ -68,6 +69,12 @@ export interface WriteThroughResult {
 
 export interface WritePageThroughOpts {
   sourceId?: string;
+  /**
+   * Checkout root already resolved and validated by the surrounding operation.
+   * This wins over a matching process-local binding and shared legacy paths so
+   * one operation cannot scan one checkout and re-export into another.
+   */
+  operationRoot?: string;
   /** Merged over the page's own frontmatter at render time (e.g. provenance). */
   frontmatterOverrides?: Record<string, unknown>;
   logger?: WriteThroughLogger;
@@ -99,11 +106,20 @@ export async function writePageThrough(
     //      git repo (the reported bug). Skip instead.
     let filePath: string;
     let writeRoot: string;
-    const srcRows = await engine.executeRaw<{ local_path: string | null }>(
-      `SELECT local_path FROM sources WHERE id = $1`,
+    const srcRows = await engine.executeRaw<{ local_path: string | null; config: unknown }>(
+      `SELECT local_path, config FROM sources WHERE id = $1`,
       [sourceId],
     );
-    const sourceLocalPath = srcRows[0]?.local_path ?? null;
+    const operationRoot = opts.operationRoot ? resolve(opts.operationRoot) : null;
+    const clientLocalPath = operationRoot ? null : resolveClientSourcePath(sourceId);
+    if (clientLocalPath) {
+      assertClientSourceCheckout(sourceId, clientLocalPath, srcRows[0]?.config);
+    }
+    const sourceLocalPath =
+      operationRoot ??
+      clientLocalPath ??
+      srcRows[0]?.local_path ??
+      null;
     if (sourceLocalPath) {
       if (!existsSync(sourceLocalPath) || !statSync(sourceLocalPath).isDirectory()) {
         return { written: false, skipped: 'repo_not_found' };

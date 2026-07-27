@@ -53,7 +53,11 @@ import {
 } from './git-remote.ts';
 import { gbrainPath } from './config.ts';
 import { isValidSourceId } from './source-id.ts';
-import { resolveSourceWithTier, type SourceTier } from './source-resolver.ts';
+import {
+  resolveClientSourcePath,
+  resolveSourceWithTier,
+  type SourceTier,
+} from './source-resolver.ts';
 
 // ── Errors ──────────────────────────────────────────────────────────────────
 
@@ -784,15 +788,16 @@ export async function getSourceStatus(
   const archived = archivedRows[0]?.archived === true;
 
   const remoteUrl = getRemoteUrl(src.config);
+  const localPath = resolveClientSourcePath(id) ?? src.local_path;
   let cloneState: SourceStatus['clone_state'] = 'not-applicable';
-  if (src.local_path) {
-    cloneState = validateRepoState(src.local_path, remoteUrl ?? undefined);
+  if (localPath) {
+    cloneState = validateRepoState(localPath, remoteUrl ?? undefined);
   }
 
   return {
     id: src.id,
     name: src.name,
-    local_path: src.local_path,
+    local_path: localPath,
     remote_url: remoteUrl,
     federated: isFederated(src.config),
     page_count: await countVisiblePages(engine, id),

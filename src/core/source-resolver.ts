@@ -14,10 +14,12 @@
  */
 
 import { readFileSync, lstatSync, type Stats } from 'fs';
-import { join, dirname, resolve } from 'path';
+import { join, dirname, isAbsolute, resolve } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { SOURCE_ID_RE, isValidSourceId } from './source-id.ts';
 import { isTrustedDotfile, realpathOrResolve } from './path-confine.ts';
+import { validateRepoState } from './git-remote.ts';
+import { parseSourceConfig } from './sources-load.ts';
 
 const DOTFILE = '.gbrain-source';
 // Canonical SOURCE_ID_RE imported from `source-id.ts` (single source of truth).
@@ -245,6 +247,72 @@ async function assertSourceExists(engine: BrainEngine, id: string): Promise<void
 }
 
 /**
+ * Resolve the process-local checkout bound to one already-resolved source.
+ *
+ * `GBRAIN_SOURCE_PATH` is deliberately not a standalone global override: it
+ * only applies when paired with `GBRAIN_SOURCE`, and that id must match the
+ * source selected for the current operation. This lets multiple clients share
+ * one source row and remote identity without writing any client's absolute
+ * checkout path back to Postgres.
+ *
+ * Returns null when no client-local binding is supplied, preserving the
+ * existing shared `sources.local_path` / legacy `sync.repo_path` behavior.
+ */
+export function resolveClientSourcePath(
+  sourceId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const localPath = env.GBRAIN_SOURCE_PATH;
+  if (!localPath) return null;
+
+  const boundSourceId = env.GBRAIN_SOURCE;
+  if (!boundSourceId) {
+    throw new Error(
+      'GBRAIN_SOURCE_PATH requires GBRAIN_SOURCE so the local checkout is bound to one source identity.',
+    );
+  }
+  if (!SOURCE_ID_RE.test(boundSourceId)) {
+    throw new Error(`Invalid GBRAIN_SOURCE value "${boundSourceId}". Must match [a-z0-9-]{1,32}.`);
+  }
+  if (boundSourceId !== sourceId) {
+    return null;
+  }
+  if (!isAbsolute(localPath)) {
+    throw new Error('GBRAIN_SOURCE_PATH must be an absolute path.');
+  }
+  return resolve(localPath);
+}
+
+/**
+ * Verify that a client-local checkout still represents the source's shared
+ * remote identity before a caller mutates it.
+ *
+ * Path-only sources have no shared remote identity to compare and preserve the
+ * existing behavior. Remote-backed sources must be a healthy checkout whose
+ * origin exactly matches config.remote_url.
+ */
+export function assertClientSourceCheckout(
+  sourceId: string,
+  localPath: string,
+  sourceConfig: unknown,
+): void {
+  const config = parseSourceConfig(sourceConfig);
+  const expectedRemote =
+    typeof config.remote_url === 'string' && config.remote_url.length > 0
+      ? config.remote_url
+      : null;
+  if (!expectedRemote) return;
+
+  const state = validateRepoState(localPath, expectedRemote);
+  if (state !== 'healthy') {
+    throw new Error(
+      `Client-local checkout for source "${sourceId}" at ${localPath} is ${state}; ` +
+      `it does not match the source's configured remote.`,
+    );
+  }
+}
+
+/**
  * Get the local_path of the resolved source (per the resolveSourceId chain).
  *
  * Returns the on-disk brain repo path for the source the user is currently
@@ -266,6 +334,9 @@ export async function getDefaultSourcePath(
   cwd: string = process.cwd(),
 ): Promise<string | null> {
   const sourceId = await resolveSourceId(engine, null, cwd);
+  const clientPath = resolveClientSourcePath(sourceId);
+  if (clientPath) return clientPath;
+
   const rows = await engine.executeRaw<{ local_path: string | null }>(
     `SELECT local_path FROM sources WHERE id = $1`,
     [sourceId],

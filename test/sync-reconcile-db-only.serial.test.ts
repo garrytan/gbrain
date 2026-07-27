@@ -92,7 +92,7 @@ describe('#2426 — full-sync reconcile keeps never-committed (DB-only) pages', 
     if (repoPath) rmSync(repoPath, { recursive: true, force: true });
   });
 
-  test('genuinely-deleted pages reconcile; never-committed pages are kept and re-exported', async () => {
+  test('explicit sync repo keeps reconcile re-export in the scanned checkout', async () => {
     const { performSync } = await import('../src/commands/sync.ts');
 
     // Full sync #1: both file-backed pages land.
@@ -122,21 +122,39 @@ describe('#2426 — full-sync reconcile keeps never-committed (DB-only) pages', 
     execSync('git rm -q topics/gone.md && git commit -m "rm gone"', { cwd: repoPath, stdio: 'pipe' });
     await engine.setConfig('sync.repo_path', repoPath);
 
-    // Full sync #2 runs the delete-reconcile.
-    const second = await performSync(engine, {
-      repoPath, full: true, sourceId: 'default', noPull: true, noEmbed: true,
-    });
-    expect(['first_sync', 'synced']).toContain(second.status);
+    // A matching process-local binding points at a DIFFERENT checkout. The
+    // explicit operation root must win for every part of this sync, including
+    // the DB-only re-export.
+    const otherCheckout = mkdtempSync(join(tmpdir(), 'gbrain-dbonly-other-'));
+    const previousSource = process.env.GBRAIN_SOURCE;
+    const previousSourcePath = process.env.GBRAIN_SOURCE_PATH;
+    process.env.GBRAIN_SOURCE = 'default';
+    process.env.GBRAIN_SOURCE_PATH = otherCheckout;
+    try {
+      // Full sync #2 runs the delete-reconcile.
+      const second = await performSync(engine, {
+        repoPath, full: true, sourceId: 'default', noPull: true, noEmbed: true,
+      });
+      expect(['first_sync', 'synced']).toContain(second.status);
 
-    // The genuinely-deleted page is reconciled away…
-    expect(await engine.getPage('topics/gone')).toBeNull();
-    // …the still-present page survives…
-    expect(await engine.getPage('topics/keep')).not.toBeNull();
-    // …and the DB-only page is PRESERVED (pre-fix: soft-deleted here)…
-    const lost = await engine.getPage('memories/lost');
-    expect(lost).not.toBeNull();
-    expect(lost?.compiled_truth).toContain('must not be reconciled');
-    // …and re-exported to the working tree so it is file-backed again.
-    expect(existsSync(join(repoPath, 'memories/lost.md'))).toBe(true);
+      // The genuinely-deleted page is reconciled away…
+      expect(await engine.getPage('topics/gone')).toBeNull();
+      // …the still-present page survives…
+      expect(await engine.getPage('topics/keep')).not.toBeNull();
+      // …and the DB-only page is PRESERVED (pre-fix: soft-deleted here)…
+      const lost = await engine.getPage('memories/lost');
+      expect(lost).not.toBeNull();
+      expect(lost?.compiled_truth).toContain('must not be reconciled');
+      // …and re-exported into the checkout scanned by THIS operation, never
+      // the lower-precedence process-local binding.
+      expect(existsSync(join(repoPath, 'memories/lost.md'))).toBe(true);
+      expect(existsSync(join(otherCheckout, 'memories/lost.md'))).toBe(false);
+    } finally {
+      if (previousSource === undefined) delete process.env.GBRAIN_SOURCE;
+      else process.env.GBRAIN_SOURCE = previousSource;
+      if (previousSourcePath === undefined) delete process.env.GBRAIN_SOURCE_PATH;
+      else process.env.GBRAIN_SOURCE_PATH = previousSourcePath;
+      rmSync(otherCheckout, { recursive: true, force: true });
+    }
   }, 120_000);
 });

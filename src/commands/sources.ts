@@ -47,6 +47,7 @@ import {
   type SourceRow as OpsSourceRow,
 } from '../core/sources-ops.ts';
 import {
+  resolveClientSourcePath,
   resolveSourceWithTier,
   SOURCE_TIER_NAMES,
 } from '../core/source-resolver.ts';
@@ -753,7 +754,10 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
   const json = args.includes('--json');
   const { loadAllSources } = await import('../core/sources-load.ts');
   const { computeAllSourceMetrics } = await import('../core/source-health.ts');
-  const sources = await loadAllSources(engine, { includeArchived: false });
+  const sources = (await loadAllSources(engine, { includeArchived: false })).map((source) => {
+    const clientPath = resolveClientSourcePath(source.id);
+    return clientPath ? { ...source, local_path: clientPath } : source;
+  });
   if (sources.length === 0) {
     if (json) {
       console.log(JSON.stringify({ schema_version: 1, sources: [] }, null, 2));

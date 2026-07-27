@@ -95,6 +95,27 @@ So inside `~/.gstack/plans/` on a brain that pinned `gstack` to
 the `gstack` source. Outside any registered directory with no env/dotfile
 set, it writes to the default.
 
+## Client-local checkout binding
+
+Clients that share one database and Git remote can keep the same source
+identity while cloning it to different local paths. Set both variables for
+the process running a single-source operation:
+
+```bash
+export GBRAIN_SOURCE=wiki
+export GBRAIN_SOURCE_PATH=/absolute/path/to/this-client/brain-wiki
+```
+
+`GBRAIN_SOURCE_PATH` applies only to the matching `GBRAIN_SOURCE`. It is
+process-local, must be absolute, and never persists or overwrites the shared
+`sources.local_path`. For a single-source operation, an explicit `--repo`
+checkout wins over the matching client binding, which wins over the shared
+source or legacy path. It is not applied to `--all` operations.
+
+`gbrain sync trigger` refuses a matching client-local binding because its
+queued worker cannot inherit process-local state without persisting the path.
+Run `gbrain sync --source <id>` inline in that client instead.
+
 ## Federation flag
 
 Every source row stores `config.federated: boolean` in its JSONB config.

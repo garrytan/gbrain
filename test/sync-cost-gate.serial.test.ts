@@ -26,6 +26,7 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { CHUNKER_VERSION } from '../src/core/chunkers/code.ts';
 import type { ChunkInput } from '../src/core/types.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 /** Offline embed stub so inline-proceed paths (posture tokenmax) don't network. */
 function stubOfflineEmbed(): void {
@@ -243,5 +244,27 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
     // The gate now exists on the single-source path (was ungated before
     // #2139) and proceeds to import rather than blocking.
     expect(stdout.toLowerCase()).toContain('imported');
+  }, 60_000);
+
+  test('single-source gate and sync use client-local path without rewriting shared local_path', async () => {
+    await runSources(engine, ['add', 'vault', '--path', repoPath, '--no-federated']);
+    const sharedPath = `${repoPath}-other-client`;
+    await engine.executeRaw(
+      `UPDATE sources SET local_path = $1 WHERE id = 'vault'`,
+      [sharedPath],
+    );
+    await engine.setConfig('sync.cost_gate_min_usd', '0');
+
+    const { exitCode, stdout } = await withEnv(
+      { GBRAIN_SOURCE: 'vault', GBRAIN_SOURCE_PATH: repoPath },
+      () => runSyncCaptured(['--source', 'vault', '--json', '--no-pull']),
+    );
+
+    expect(exitCode).not.toBe(2);
+    expect(stdout).toContain('"gate":"auto_deferred_embeds"');
+    const rows = await engine.executeRaw<{ local_path: string | null }>(
+      `SELECT local_path FROM sources WHERE id = 'vault'`,
+    );
+    expect(rows[0]?.local_path).toBe(sharedPath);
   }, 60_000);
 });

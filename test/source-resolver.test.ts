@@ -12,9 +12,16 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { execFileSync } from 'child_process';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { resolveSourceId, getDefaultSourcePath, __testing } from '../src/core/source-resolver.ts';
+import {
+  resolveSourceId,
+  assertClientSourceCheckout,
+  resolveClientSourcePath,
+  getDefaultSourcePath,
+  __testing,
+} from '../src/core/source-resolver.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
 // ── Stub engine ────────────────────────────────────────────
@@ -268,6 +275,49 @@ describe('getDefaultSourcePath', () => {
     );
     const path = await getDefaultSourcePath(engine, '/custom/path/sub');
     expect(path).toBe('/custom/path');
+  });
+});
+
+// ── client-local source path binding ──────────────────────
+
+describe('resolveClientSourcePath', () => {
+  test('requires an absolute path paired with the resolved source identity', () => {
+    expect(resolveClientSourcePath('wiki', {
+      GBRAIN_SOURCE: 'wiki',
+      GBRAIN_SOURCE_PATH: '/clients/a/wiki',
+    })).toBe('/clients/a/wiki');
+
+    expect(() => resolveClientSourcePath('wiki', {
+      GBRAIN_SOURCE_PATH: '/clients/a/wiki',
+    })).toThrow(/requires GBRAIN_SOURCE/);
+    expect(resolveClientSourcePath('wiki', {
+      GBRAIN_SOURCE: 'default',
+      GBRAIN_SOURCE_PATH: '/clients/a/wiki',
+    })).toBeNull();
+    expect(() => resolveClientSourcePath('wiki', {
+      GBRAIN_SOURCE: 'wiki',
+      GBRAIN_SOURCE_PATH: 'relative/wiki',
+    })).toThrow(/absolute path/);
+  });
+
+  test('remote-backed client checkout must match the shared remote identity', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'gbrain-client-source-'));
+    try {
+      execFileSync('git', ['init', '-q', repo]);
+      execFileSync('git', [
+        '-C', repo, 'remote', 'add', 'origin',
+        'https://github.com/example/actual.git',
+      ]);
+
+      expect(() => assertClientSourceCheckout('wiki', repo, {
+        remote_url: 'https://github.com/example/actual.git',
+      })).not.toThrow();
+      expect(() => assertClientSourceCheckout('wiki', repo, {
+        remote_url: 'https://github.com/example/other.git',
+      })).toThrow(/url-drift/);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 });
 

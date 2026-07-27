@@ -30,6 +30,10 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { execSync } from 'child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runSources } from '../src/commands/sources.ts';
 import { importFromContent } from '../src/core/import-file.ts';
@@ -636,4 +640,36 @@ describe('v0.31.8 op-handler ctx.sourceId threading', () => {
     const defRd = await engine.getRawData(TAG_SLUG, 'unit-test', { sourceId: 'default' });
     expect(defRd.length).toBe(0);
   });
+
+  test('sync_brain handler imports into ctx.sourceId', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'gbrain-op-sync-source-'));
+    const slug = 'topics/op-sync-source-target';
+    try {
+      execSync('git init', { cwd: repo, stdio: 'pipe' });
+      execSync('git config user.email "t@t.t"', { cwd: repo, stdio: 'pipe' });
+      execSync('git config user.name "T"', { cwd: repo, stdio: 'pipe' });
+      mkdirSync(join(repo, 'topics'));
+      writeFileSync(join(repo, 'topics/op-sync-source-target.md'), [
+        '---',
+        'title: Scoped sync target',
+        '---',
+        '',
+        'Imported through the operation source scope.',
+      ].join('\n'));
+      execSync('git add -A && git commit -m initial', { cwd: repo, stdio: 'pipe' });
+
+      const op = getOp('sync_brain');
+      await op.handler(makeCtx(engine, { sourceId: 'testsrc' }), {
+        repo,
+        full: true,
+        no_pull: true,
+        no_embed: true,
+      });
+
+      expect(await engine.getPage(slug, { sourceId: 'testsrc' })).not.toBeNull();
+      expect(await engine.getPage(slug, { sourceId: 'default' })).toBeNull();
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }, 120_000);
 });

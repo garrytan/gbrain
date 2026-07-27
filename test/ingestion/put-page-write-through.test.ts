@@ -11,11 +11,13 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import { operations } from '../../src/core/operations.ts';
 import type { OperationContext } from '../../src/core/operations.ts';
 import { resetGateway } from '../../src/core/ai/gateway.ts';
+import { withEnv } from '../helpers/with-env.ts';
 
 let engine: PGLiteEngine;
 let tmpRoot: string;
@@ -85,6 +87,60 @@ function makeCtx(overrides: Partial<OperationContext> = {}): OperationContext {
 const putPage = operations.find((o) => o.name === 'put_page')!;
 
 describe('put_page write-through — happy path', () => {
+  test('matching client-local source binding overrides shared path without changing it', async () => {
+    const clientDir = path.join(tmpRoot, 'client-brain');
+    const sharedDir = path.join(tmpRoot, 'shared-db-path');
+    fs.mkdirSync(clientDir, { recursive: true });
+    fs.mkdirSync(sharedDir, { recursive: true });
+    await engine.executeRaw(
+      `UPDATE sources SET local_path = $1 WHERE id = 'default'`,
+      [sharedDir],
+    );
+
+    const result = await withEnv(
+      { GBRAIN_SOURCE: 'default', GBRAIN_SOURCE_PATH: clientDir },
+      async () => (await putPage.handler(makeCtx(), {
+        slug: 'inbox/client-bound',
+        content: '---\ntitle: Client bound\n---\n\nclient-local body',
+      })) as { write_through?: { written: boolean; path?: string } },
+    );
+
+    const clientFile = path.join(clientDir, 'inbox/client-bound.md');
+    expect(result.write_through).toMatchObject({ written: true, path: clientFile });
+    expect(fs.existsSync(clientFile)).toBe(true);
+    expect(fs.existsSync(path.join(sharedDir, 'inbox/client-bound.md'))).toBe(false);
+    const rows = await engine.executeRaw<{ local_path: string | null }>(
+      `SELECT local_path FROM sources WHERE id = 'default'`,
+    );
+    expect(rows[0]?.local_path).toBe(sharedDir);
+  });
+
+  test('client-local binding refuses a checkout whose remote identity drifted', async () => {
+    const clientDir = path.join(tmpRoot, 'wrong-remote');
+    fs.mkdirSync(clientDir, { recursive: true });
+    execFileSync('git', ['init', '-q', clientDir]);
+    execFileSync('git', [
+      '-C', clientDir, 'remote', 'add', 'origin',
+      'https://github.com/example/actual.git',
+    ]);
+    await engine.executeRaw(
+      `UPDATE sources SET config = $1::text::jsonb WHERE id = 'default'`,
+      [JSON.stringify({ remote_url: 'https://github.com/example/expected.git' })],
+    );
+
+    const result = await withEnv(
+      { GBRAIN_SOURCE: 'default', GBRAIN_SOURCE_PATH: clientDir },
+      async () => (await putPage.handler(makeCtx(), {
+        slug: 'inbox/wrong-remote',
+        content: '---\ntitle: Wrong remote\n---\n\nmust not project here',
+      })) as { write_through?: { written: boolean; error?: string } },
+    );
+
+    expect(result.write_through?.written).toBe(false);
+    expect(result.write_through?.error).toContain('url-drift');
+    expect(fs.existsSync(path.join(clientDir, 'inbox/wrong-remote.md'))).toBe(false);
+  });
+
   test('writes the markdown file to disk at brainDir/<slug>.md', async () => {
     const ctx = makeCtx();
     const content = '---\ntitle: Test\n---\n\n# WT body';
