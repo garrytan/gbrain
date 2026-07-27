@@ -39,9 +39,52 @@ import {
   NON_EXTRACTABLE_AUDIT_SOURCE,
   PER_SEGMENT_SOURCE_PREFIX,
   ALLOWED_TYPES,
+  pageTypesForAllowed,
+  ALLOWED_TYPE_ALIASES,
 } from '../src/commands/extract-conversation-facts.ts';
 import { _resetLlmCacheForTests } from '../src/core/conversation-parser/llm-base.ts';
 import { BudgetExhausted } from '../src/core/budget/budget-tracker.ts';
+
+// ---------------------------------------------------------------------------
+// pageTypesForAllowed — logical→concrete page-type expansion.
+// ---------------------------------------------------------------------------
+
+describe('pageTypesForAllowed', () => {
+  test('expands slack to canonical + granular collector types', () => {
+    expect(pageTypesForAllowed(['slack'])).toEqual(['slack', 'slack-dm-day', 'slack-thread']);
+  });
+
+  test('expands email to canonical + granular collector types', () => {
+    expect(pageTypesForAllowed(['email'])).toEqual(['email', 'email-digest']);
+  });
+
+  test('canonical-only types pass through unchanged', () => {
+    expect(pageTypesForAllowed(['meeting'])).toEqual(['meeting']);
+    expect(pageTypesForAllowed(['conversation'])).toEqual(['conversation']);
+  });
+
+  test('canonical name is always first so consolidated brains keep working', () => {
+    expect(pageTypesForAllowed(['slack'])[0]).toBe('slack');
+    expect(pageTypesForAllowed(['email'])[0]).toBe('email');
+  });
+
+  test('multiple logical types flatten and de-duplicate', () => {
+    const got = pageTypesForAllowed(['slack', 'email', 'meeting']);
+    expect(got).toEqual(['slack', 'slack-dm-day', 'slack-thread', 'email', 'email-digest', 'meeting']);
+    // no duplicates
+    expect(new Set(got).size).toBe(got.length);
+  });
+
+  test('every ALLOWED_TYPE_ALIASES entry lists its canonical name first', () => {
+    for (const [canonical, concretes] of Object.entries(ALLOWED_TYPE_ALIASES)) {
+      expect(concretes[0]).toBe(canonical);
+    }
+  });
+
+  test('empty input yields empty output', () => {
+    expect(pageTypesForAllowed([])).toEqual([]);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Fixture helpers.
