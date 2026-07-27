@@ -1,0 +1,12 @@
+{
+  "_note": "Empty stub baseline. Populated on first Linux CI run via `tests/heavy/measure_rss.sh --refresh-baseline`. macOS refuses to write here because the local fallback path measures VmRSS, which is mmap-inflated and not what production users see. Until this file has a real peak_rss_kb, every measurement run is informational-only.",
+  "_format": {
+    "ok": "boolean",
+    "platform": "linux",
+    "measurement_path": "proc",
+    "queries_run": "number",
+    "peak_rss_kb": "number  // populated on baseline refresh",
+    "elapsed_ms": "number",
+    "brain_page_count": "number"
+  }
+}

@@ -1,0 +1,67 @@
+{
+  "_meta": {
+    "fixture_version": "v0.36.1.0",
+    "page": "essay-on-conviction.md",
+    "synthetic": true,
+    "holdout": true,
+    "notes": "Essay-on-self-calibration genre — this is the meta page where the author reflects on their own track record. Mix of meta-claims (about own calibration) and concrete predictions. Self-rated convictions in the final section should be extracted with exact conviction values."
+  },
+  "claims": [
+    {
+      "claim_text": "I am calibrated well on early-stage PMF calls (gut hits ~70% of cohorts)",
+      "kind": "judgment",
+      "domain": "self-calibration",
+      "conviction": 0.75,
+      "since_date": "2026-04-19",
+      "rationale": "Meta-claim about own track record"
+    },
+    {
+      "claim_text": "I am over-confident on geography (wrong ~60% of the time)",
+      "kind": "judgment",
+      "domain": "self-calibration",
+      "conviction": 0.7,
+      "since_date": "2026-04-19",
+      "rationale": "Meta-claim — bias-pattern identification"
+    },
+    {
+      "claim_text": "I am poorly calibrated on macro-timing predictions (0/3 on AI peak)",
+      "kind": "judgment",
+      "domain": "self-calibration",
+      "conviction": 0.85,
+      "since_date": "2026-04-19",
+      "rationale": "Strong meta-claim with explicit count"
+    },
+    {
+      "claim_text": "I am well-calibrated on competitive moat questions",
+      "kind": "judgment",
+      "domain": "self-calibration",
+      "conviction": 0.7,
+      "since_date": "2026-04-19",
+      "rationale": "Meta-claim with data anchor"
+    },
+    {
+      "claim_text": "Vertical-AI valuations compress within 18 months",
+      "kind": "prediction",
+      "domain": "valuations",
+      "conviction": 0.6,
+      "since_date": "2026-04-19",
+      "rationale": "Explicit self-tagged conviction with de-rating note"
+    },
+    {
+      "claim_text": "Next big platform shift comes from agent-orchestration primitives not model providers",
+      "kind": "prediction",
+      "domain": "platform",
+      "conviction": 0.75,
+      "since_date": "2026-04-19",
+      "rationale": "Explicit strong conviction"
+    },
+    {
+      "claim_text": "At least one major SaaS public market exit happens by mid-2027",
+      "kind": "prediction",
+      "domain": "ipo-market",
+      "conviction": 0.55,
+      "since_date": "2026-04-19",
+      "rationale": "Explicit weak conviction ('close to coin-flip')"
+    }
+  ]
+}

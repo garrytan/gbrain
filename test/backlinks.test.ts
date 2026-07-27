@@ -4,6 +4,7 @@ import {
   extractPageTitle,
   hasBacklink,
   buildBacklinkEntry,
+  parseBacklinksArgs,
 } from '../src/commands/backlinks.ts';
 
 describe('extractEntityRefs', () => {
@@ -76,5 +77,54 @@ describe('buildBacklinkEntry', () => {
   test('builds properly formatted entry', () => {
     const entry = buildBacklinkEntry('Q1 Review', '../../meetings/q1-review.md', '2026-04-11');
     expect(entry).toBe('- **2026-04-11** | Referenced in [Q1 Review](../../meetings/q1-review.md)');
+  });
+});
+
+describe('findBacklinkGaps dedupe (v0.36.x #967 regression)', () => {
+  test('a source page mentioning the same target N times yields one gap, not N', async () => {
+    const { mkdtempSync, writeFileSync, mkdirSync, rmSync } = await import('fs');
+    const { tmpdir } = await import('os');
+    const { join } = await import('path');
+    const { findBacklinkGaps } = await import('../src/commands/backlinks.ts');
+
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-backlinks-dedupe-'));
+    try {
+      mkdirSync(join(root, 'people'));
+      mkdirSync(join(root, 'meetings'));
+      writeFileSync(join(root, 'people/alice.md'), '# Alice');
+      // Source page mentions alice three times, no Timeline yet on alice
+      writeFileSync(
+        join(root, 'meetings/standup.md'),
+        '# Standup\n\nWe discussed [Alice](people/alice).\nLater [Alice](people/alice) chimed in.\nFinally [[people/alice]] left.\n',
+      );
+      const gaps = findBacklinkGaps(root);
+      const alicePairs = gaps.filter(g => g.targetPage === 'people/alice.md' && g.sourcePage === 'meetings/standup.md');
+      expect(alicePairs.length).toBe(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('parseBacklinksArgs', () => {
+  test('uses positional dir for check and fix subcommands', () => {
+    expect(parseBacklinksArgs(['check', '/tmp/brain']).brainDir).toBe('/tmp/brain');
+    expect(parseBacklinksArgs(['fix', '/tmp/brain']).brainDir).toBe('/tmp/brain');
+  });
+
+  test('defaults to cwd when no dir given', () => {
+    expect(parseBacklinksArgs(['check']).brainDir).toBe('.');
+  });
+
+  test('--dir overrides positional dir and preserves dry-run', () => {
+    const parsed = parseBacklinksArgs(['fix', '/tmp/ignored', '--dir', '/tmp/brain', '--dry-run']);
+    expect(parsed.subcommand).toBe('fix');
+    expect(parsed.brainDir).toBe('/tmp/brain');
+    expect(parsed.dryRun).toBe(true);
+  });
+
+  test('--dir missing its value falls back to positional dir', () => {
+    expect(parseBacklinksArgs(['check', '/tmp/brain', '--dir']).brainDir).toBe('/tmp/brain');
+    expect(parseBacklinksArgs(['check', '--dir', '--dry-run']).brainDir).toBe('.');
   });
 });

@@ -17,7 +17,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { runPhaseSynthesize, renderPageToMarkdown } from '../../src/core/cycle/synthesize.ts';
+import { runPhaseSynthesize, renderPageToMarkdown, __testing as synthTesting } from '../../src/core/cycle/synthesize.ts';
 
 interface TestRig {
   engine: PGLiteEngine;
@@ -45,18 +45,28 @@ async function setupRig(): Promise<TestRig> {
 }
 
 /**
- * Run `body` with ANTHROPIC_API_KEY temporarily cleared, restoring the
- * prior value (set or unset) on return — even on throw — so this never
- * leaks state to sibling test files in the suite.
+ * Run `body` with ANTHROPIC_API_KEY temporarily cleared AND GBRAIN_HOME
+ * pointed at a fresh tmpdir, restoring both on return — even on throw — so
+ * the developer's real ~/.gbrain/config.json never leaks the anthropic_api_key
+ * into the test's hasAnthropicKey() probe. Required after the v0.41 gateway-
+ * adapter rework: makeJudgeClient now checks BOTH env AND config file (the
+ * same hasAnthropicKey() pattern think/index.ts uses since v0.35.5.0), so
+ * clearing only the env var is insufficient hermeticity.
  */
 async function withoutAnthropicKey<T>(body: () => Promise<T>): Promise<T> {
-  const saved = process.env.ANTHROPIC_API_KEY;
+  const savedKey = process.env.ANTHROPIC_API_KEY;
+  const savedHome = process.env.GBRAIN_HOME;
+  const tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-synth-isol-'));
   delete process.env.ANTHROPIC_API_KEY;
+  process.env.GBRAIN_HOME = tmpHome;
   try {
     return await body();
   } finally {
-    if (saved === undefined) delete process.env.ANTHROPIC_API_KEY;
-    else process.env.ANTHROPIC_API_KEY = saved;
+    if (savedKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = savedKey;
+    if (savedHome === undefined) delete process.env.GBRAIN_HOME;
+    else process.env.GBRAIN_HOME = savedHome;
+    try { rmSync(tmpHome, { recursive: true, force: true }); } catch { /* */ }
   }
 }
 
@@ -110,6 +120,60 @@ describe('E2E synthesize — empty corpus', () => {
   }, 30_000);
 });
 
+describe('E2E synthesize — gateway-adapter mid-run AIConfigError catch (v0.41 T5 rework)', () => {
+  test('AIConfigError thrown by gateway.chat is caught per-transcript; phase continues', async () => {
+    // Exercises the new try/catch in the verdict loop. Stubs the gateway
+    // chat transport to throw AIConfigError on every call (simulates a
+    // revoked key surfacing mid-run). The expected behavior: each
+    // transcript records a "gateway error: ..." reason, worth=false, and
+    // the phase completes with status='ok' (NOT a crash).
+    const { __setChatTransportForTests, resetGateway } = await import('../../src/core/ai/gateway.ts');
+    const { AIConfigError } = await import('../../src/core/ai/errors.ts');
+
+    const rig = await setupRig();
+    try {
+      // Make hasAnthropicKey() return true (a fake key is enough — the
+      // gateway transport stub throws below regardless).
+      const savedKey = process.env.ANTHROPIC_API_KEY;
+      process.env.ANTHROPIC_API_KEY = 'sk-test-mid-run-throw';
+
+      __setChatTransportForTests(async () => {
+        throw new AIConfigError('simulated mid-run provider auth failure');
+      });
+
+      try {
+        await rig.engine.setConfig('dream.synthesize.enabled', 'true');
+        await rig.engine.setConfig('dream.synthesize.session_corpus_dir', rig.corpusDir);
+        writeFileSync(
+          join(rig.corpusDir, '2026-04-25-mid-run.txt'),
+          'a meaningful conversation\n'.repeat(200),
+        );
+
+        const result = await runPhaseSynthesize(rig.engine, {
+          brainDir: rig.brainDir,
+          dryRun: false,
+        });
+
+        // The phase did NOT throw; it converted the AIConfigError into a
+        // per-transcript "worth=false, reasons=['gateway error: ...']"
+        // verdict and moved on.
+        expect(result.status).toBe('ok');
+        const verdicts = (result.details as { verdicts: Array<{ worth: boolean; reasons: string[] }> }).verdicts;
+        expect(verdicts).toHaveLength(1);
+        expect(verdicts[0].worth).toBe(false);
+        expect(verdicts[0].reasons[0]).toMatch(/gateway error:.*simulated mid-run provider auth failure/);
+      } finally {
+        if (savedKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+        else process.env.ANTHROPIC_API_KEY = savedKey;
+        __setChatTransportForTests(null);
+        resetGateway();
+      }
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+});
+
 describe('E2E synthesize — no API key skip path', () => {
   test('without ANTHROPIC_API_KEY, every transcript verdict is "no key" and zero pages written', async () => {
     const rig = await setupRig();
@@ -131,7 +195,11 @@ describe('E2E synthesize — no API key skip path', () => {
         const verdicts = (result.details as { verdicts: Array<{ worth: boolean; reasons: string[] }> }).verdicts;
         expect(verdicts).toHaveLength(1);
         expect(verdicts[0].worth).toBe(false);
-        expect(verdicts[0].reasons[0]).toMatch(/ANTHROPIC_API_KEY/);
+        // v0.41 gateway-adapter rework: reason text now names the verdict
+        // model so the user can see WHICH provider was missing. Pre-rework
+        // string was 'no ANTHROPIC_API_KEY for significance judge'; post-
+        // rework is 'no configured provider for verdict model: <model>'.
+        expect(verdicts[0].reasons[0]).toMatch(/no configured provider for verdict model/);
       });
     } finally {
       await rig.cleanup();
@@ -344,7 +412,11 @@ describe('E2E synthesize — round-trip self-consumption guard (v0.23.2)', () =>
         // the no-key path makes it worth=false.
         const verdicts = (result.details as { verdicts: Array<{ worth: boolean; reasons: string[] }> }).verdicts;
         expect(verdicts).toHaveLength(1);
-        expect(verdicts[0].reasons[0]).toMatch(/ANTHROPIC_API_KEY/);
+        // v0.41 gateway-adapter rework: reason text now names the verdict
+        // model so the user can see WHICH provider was missing. Pre-rework
+        // string was 'no ANTHROPIC_API_KEY for significance judge'; post-
+        // rework is 'no configured provider for verdict model: <model>'.
+        expect(verdicts[0].reasons[0]).toMatch(/no configured provider for verdict model/);
         // Loud warning fired at phase entry so the operator never wonders
         // why the guard quietly let dream output through.
         expect(stderr).toMatch(/\[dream\] WARNING: --unsafe-bypass-dream-guard set/);
@@ -439,6 +511,118 @@ describe('E2E synthesize — verdict cache (Q-2)', () => {
         expect(verdicts).toHaveLength(1);
         expect(verdicts[0].cached).toBe(true);
       });
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+});
+
+describe('E2E synthesize — PGLite inline subagent drain (takeover of #2699)', () => {
+  test('drains private subagent queue inline so the parent can observe completion', async () => {
+    const rig = await setupRig();
+    try {
+      const { MinionQueue } = await import('../../src/core/minions/queue.ts');
+      const queue = new MinionQueue(rig.engine);
+      const queueName = `dream-inline-test-${Date.now()}`;
+      const child = await queue.add(
+        'subagent',
+        { prompt: 'test', model: 'anthropic:claude-sonnet-4-6', max_turns: 1 },
+        { queue: queueName, max_attempts: 1 },
+        { allowProtectedSubmit: true },
+      );
+
+      let ticks = 0;
+      await synthTesting.runPgliteSubagentsInline(
+        rig.engine,
+        queue,
+        queueName,
+        async () => { ticks++; },
+        async (ctx) => {
+          await ctx.log('inline child ran');
+          await ctx.updateProgress({ step: 'done' });
+          return { ok: true };
+        },
+      );
+      expect(ticks).toBe(0); // 60s keepalive never fires for a fast child
+
+      const final = await queue.getJob(child.id);
+      expect(final?.status).toBe('completed');
+      expect(final?.result).toEqual({ ok: true });
+      expect(final?.progress).toEqual({ step: 'done' });
+
+      const waiting = await rig.engine.executeRaw<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM minion_jobs WHERE queue = $1 AND status = 'waiting'`,
+        [queueName],
+      );
+      expect(waiting[0]?.count).toBe('0');
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+
+  test('terminally marks failed inline children so synth parent will not hang', async () => {
+    const rig = await setupRig();
+    try {
+      const { MinionQueue } = await import('../../src/core/minions/queue.ts');
+      const queue = new MinionQueue(rig.engine);
+      const queueName = `dream-inline-test-fail-${Date.now()}`;
+      const child = await queue.add(
+        'subagent',
+        { prompt: 'test', model: 'anthropic:claude-sonnet-4-6', max_turns: 1 },
+        { queue: queueName, max_attempts: 1 },
+        { allowProtectedSubmit: true },
+      );
+
+      await synthTesting.runPgliteSubagentsInline(
+        rig.engine,
+        queue,
+        queueName,
+        undefined,
+        async () => {
+          throw new Error('synthetic child failure');
+        },
+      );
+
+      const final = await queue.getJob(child.id);
+      expect(final?.status).toBe('dead');
+      expect(final?.error_text).toContain('synthetic child failure');
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+
+  test('enforces per-job timeout_ms inline: aborts the child and dead-letters it', async () => {
+    const rig = await setupRig();
+    try {
+      const { MinionQueue } = await import('../../src/core/minions/queue.ts');
+      const queue = new MinionQueue(rig.engine);
+      const queueName = `dream-inline-test-timeout-${Date.now()}`;
+      const child = await queue.add(
+        'subagent',
+        { prompt: 'test', model: 'anthropic:claude-sonnet-4-6', max_turns: 1 },
+        { queue: queueName, max_attempts: 3, timeout_ms: 100 },
+        { allowProtectedSubmit: true },
+      );
+
+      // Handler only ends when ctx.signal fires — like the real subagent
+      // handler mid-LLM-call. Without the inline timeout timer this awaits
+      // forever and the drain (and the whole cycle) wedges.
+      await synthTesting.runPgliteSubagentsInline(
+        rig.engine,
+        queue,
+        queueName,
+        undefined,
+        async (ctx) => {
+          await new Promise((_, reject) => {
+            ctx.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+          });
+        },
+      );
+
+      // Timeout is terminal (dead), never a delayed retry, despite max_attempts: 3.
+      const final = await queue.getJob(child.id);
+      expect(final?.status).toBe('dead');
+      expect(final?.error_text).toBe('timeout exceeded');
     } finally {
       await rig.cleanup();
     }

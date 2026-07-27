@@ -1,0 +1,1 @@
+{"fixture_id":"teams-export-001","pattern":"teams-export","frontmatter":{"date":"2024-03-15"},"body":"Alice Example, 3/15/2024 6:37 PM: hello team\nBob Example, 3/15/2024 6:38 PM: hey\nAlice Example, 3/15/2024 6:39 PM: meeting at 4?\nBob Example, 3/15/2024 6:40 PM: works for me","expected_messages":4,"expected_participants":["Alice Example","Bob Example"]}

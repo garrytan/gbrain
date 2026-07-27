@@ -29,6 +29,20 @@ export type QueryIntent = 'entity' | 'temporal' | 'event' | 'general';
 export type SalienceMode = 'off' | 'on' | 'strong';
 export type RecencyMode = 'off' | 'on' | 'strong';
 
+/**
+ * v0.36 cross-modal wave: modality axis (D6).
+ *
+ * - 'text' (default): existing text-embedding path, no behavior change
+ * - 'image': route through the multimodal model + embedding_image column
+ *   (visually-similar matching + image OCR text)
+ * - 'both': run text + image searches in parallel and merge via
+ *   weighted RRF (recall-leaning when the query is ambiguous)
+ *
+ * Parallel axis to intent/detail/salience/recency. Returned by
+ * classifyQuery from one regex pass over the query.
+ */
+export type ModalityMode = 'text' | 'image' | 'both';
+
 export interface QuerySuggestions {
   intent: QueryIntent;
   /** v0.29.0 detail mapping. entity→low, temporal/event→high, general→undefined. */
@@ -37,6 +51,8 @@ export interface QuerySuggestions {
   suggestedSalience: SalienceMode;
   /** v0.29.1 — per-prefix age-decay boost. */
   suggestedRecency: RecencyMode;
+  /** v0.36 — cross-modal routing axis. Defaults to 'text' when nothing matches. */
+  suggestedModality: ModalityMode;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -164,6 +180,46 @@ const SALIENCE_ON_PATTERNS = [
   /\bwhat'?s\s+important\b/i,
 ];
 
+// v0.36 cross-modal wave — modality-axis patterns (D6).
+//
+// CROSS_MODAL_PATTERNS fires the 'image' modality when the query explicitly
+// names visual artifacts ("show me photos", "find images of", "screenshot of",
+// "what does X look like", "diagram of"). Module-scope const so regexes
+// compile once at module load (D15).
+//
+// Conservative on purpose — false positives cost "one cheaper image search
+// where text might have worked." False negatives cost nothing (the legacy
+// text path still runs). The LLM-intent escalation in Commit 4 catches
+// genuinely ambiguous phrasings.
+const CROSS_MODAL_PATTERNS: RegExp[] = [
+  /\b(show|find|get|pull)\s+(me\s+)?(the\s+)?(photos?|images?|pictures?|pics?|screenshots?)\b/i,
+  /\b(photos?|images?|pictures?|pics?|screenshots?)\s+(of|from|at|with|showing|featuring)\b/i,
+  /\bwhat\s+does\s+[\w\s']{1,40}?\s+look\s+like\b/i,
+  /\b(whiteboard|diagram|slide|screenshot|infographic|chart)s?\s+(of|from|about|showing)\b/i,
+  /\bdiagram\s+(of|for|showing)\b/i,
+  /\bvisual(s|ly)?\s+(of|from|about|showing|representation)\b/i,
+];
+
+// v0.36 cross-modal wave (Commit 4 prep): visual nouns that combined with
+// ambiguous-pronoun phrasings ("any pics from last week's offsite?") trigger
+// the optional LLM intent escalation. Subset of cross-modal patterns plus
+// looser noun-form matches.
+const AMBIGUOUS_MODALITY_NOUNS: RegExp[] = [
+  /\b(photo|image|picture|pic|screenshot|diagram|whiteboard|slide|chart)s?\b/i,
+  /\blook(s|ed)?\s+like\b/i,
+  /\bvisual(s|ly)?\b/i,
+];
+
+// Pronoun + filler markers that signal "the user is referencing something
+// they can't quite name" — combined with AMBIGUOUS_MODALITY_NOUNS, triggers
+// the LLM tie-break in Commit 4.
+const AMBIGUOUS_REFERENCE_MARKERS: RegExp[] = [
+  // Match all the visual nouns (pic/pics, picture/pictures, photo/photos, image/images,
+  // screenshot/screenshots, diagram/diagrams, whiteboard/whiteboards, slide/slides, chart/charts).
+  /\b(any|some|that|those|these|the)\s+(pic|pics|picture|pictures|photo|photos|image|images|screenshot|screenshots|diagram|diagrams|whiteboard|whiteboards|slide|slides|chart|charts)\b/i,
+  /\bfrom\s+(last|this|the)\s+(week|month|year|offsite|meeting|hackathon|deck)\b/i,
+];
+
 // ─────────────────────────────────────────────────────────
 // Classifier
 // ─────────────────────────────────────────────────────────
@@ -221,7 +277,40 @@ export function classifyQuery(query: string): QuerySuggestions {
     suggestedSalience = 'off';
   }
 
-  return { intent, suggestedDetail, suggestedSalience, suggestedRecency };
+  // v0.36 cross-modal — modality axis. Independent of intent/detail/salience/recency.
+  // Conservative default 'text'; only flips to 'image' on explicit cross-modal regex match.
+  // 'both' is reserved for explicit per-call opts (LLM-intent escalation in Commit 4
+  // can also produce 'both' via tie-break).
+  const suggestedModality: ModalityMode = matches(CROSS_MODAL_PATTERNS, query) ? 'image' : 'text';
+
+  return { intent, suggestedDetail, suggestedSalience, suggestedRecency, suggestedModality };
+}
+
+/**
+ * v0.36 — heuristic gate for the optional LLM intent escalation (Commit 4).
+ *
+ * Fires when the query contains a visual noun ("any pics", "the diagram",
+ * "what does it look like") combined with an ambiguous reference marker
+ * ("from last week's offsite"). These are the phrasings the conservative
+ * regex misses but a Haiku tie-break catches.
+ *
+ * Returns false for unambiguous text queries (no LLM call burned). Returns
+ * false for queries the regex ALREADY caught (no need to tie-break a
+ * confident classification). Returns true only for the narrow band where
+ * the LLM call earns its $0.0001 cost.
+ *
+ * Pure function. No LLM call. No DB access. Used by hybridSearch's
+ * escalation branch only when `search.cross_modal.llm_intent: true`.
+ */
+export function isAmbiguousModalityQuery(query: string): boolean {
+  // Already-confident classification → no LLM needed.
+  if (matches(CROSS_MODAL_PATTERNS, query)) return false;
+
+  const hasVisualNoun = matches(AMBIGUOUS_MODALITY_NOUNS, query);
+  if (!hasVisualNoun) return false;
+
+  const hasReferenceMarker = matches(AMBIGUOUS_REFERENCE_MARKERS, query);
+  return hasReferenceMarker;
 }
 
 // ─────────────────────────────────────────────────────────

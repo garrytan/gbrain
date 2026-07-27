@@ -91,6 +91,34 @@ describe('BudgetLedger', () => {
     expect(state?.committedUsd).toBeCloseTo(0.42);
   });
 
+  test('actual overage is recorded truthfully, finalized, and reported after commit', async () => {
+    const ledger = new BudgetLedger(engine);
+    const r = await ledger.reserve({ resolverId: 'x', estimateUsd: 0.1, capUsd: 1.0 });
+    if (r.kind !== 'held') throw new Error('setup');
+
+    let caught: unknown;
+    try {
+      await ledger.commit(r.reservationId, 1.25);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BudgetError);
+    expect((caught as BudgetError).code).toBe('cap_exceeded');
+    const state = await ledger.state('default', 'x');
+    expect(state?.reservedUsd).toBe(0);
+    expect(state?.committedUsd).toBeCloseTo(1.25);
+
+    const rows = await engine.executeRaw<{ status: string }>(
+      'SELECT status FROM budget_reservations WHERE reservation_id = $1',
+      [r.reservationId],
+    );
+    expect(rows[0]?.status).toBe('committed');
+
+    const next = await ledger.reserve({ resolverId: 'x', estimateUsd: 0.01, capUsd: 1.0 });
+    expect(next.kind).toBe('exhausted');
+  });
+
   test('rollback clears reserved', async () => {
     const ledger = new BudgetLedger(engine);
     const r = await ledger.reserve({ resolverId: 'x', estimateUsd: 0.5, capUsd: 1.0 });
@@ -218,6 +246,7 @@ describe('scorePage — person', () => {
       compiled_truth: '', timeline: '',
       frontmatter: {},
       created_at: new Date(), updated_at: new Date(),
+      source_id: 'default',
     };
     const s = scorePage(page);
     expect(s.score).toBeLessThan(0.3);
@@ -236,6 +265,7 @@ See also: [Acme](companies/acme.md), [Bob](people/bob.md), [Charlie](people/char
         last_verified: new Date().toISOString(),
       },
       created_at: new Date(), updated_at: new Date(),
+      source_id: 'default',
     };
     const s = scorePage(page);
     expect(s.score).toBeGreaterThan(0.8);
@@ -248,6 +278,7 @@ See also: [Acme](companies/acme.md), [Bob](people/bob.md), [Charlie](people/char
       timeline: '',
       frontmatter: {},
       created_at: new Date(), updated_at: new Date(),
+      source_id: 'default',
     };
     const s = scorePage(page);
     expect(Object.keys(s.dimensionScores)).toHaveLength(7);
@@ -259,6 +290,7 @@ See also: [Acme](companies/acme.md), [Bob](people/bob.md), [Charlie](people/char
       compiled_truth: '', timeline: '',
       frontmatter: { role: 'Engineer' },
       created_at: new Date(), updated_at: new Date(),
+      source_id: 'default',
     };
     const s = scorePage(page);
     expect(s.dimensionScores.has_role_and_company).toBe(1);
@@ -273,6 +305,7 @@ describe('scorePage — company / concept / source / media defaults', () => {
       timeline: '',
       frontmatter: { founders: ['Alice'], funding: '$5M' },
       created_at: new Date(), updated_at: new Date(),
+      source_id: 'default',
     };
     const s = scorePage(page);
     expect(s.rubric).toBe('company');
@@ -286,6 +319,7 @@ describe('scorePage — company / concept / source / media defaults', () => {
       compiled_truth: 'body content',
       timeline: '', frontmatter: {},
       created_at: new Date(), updated_at: new Date(),
+      source_id: 'default',
     };
     const s = scorePage(page);
     expect(s.rubric).toBe('default');
@@ -296,11 +330,13 @@ describe('scorePage — company / concept / source / media defaults', () => {
       id: 1, slug: 'people/old', type: 'person', title: 'x',
       compiled_truth: '', timeline: '', frontmatter: {},
       created_at: new Date(2020, 0, 1), updated_at: new Date(2020, 0, 1),
+      source_id: 'default',
     };
     const fresh: Page = {
       id: 2, slug: 'people/fresh', type: 'person', title: 'y',
       compiled_truth: '', timeline: '', frontmatter: {},
       created_at: new Date(), updated_at: new Date(),
+      source_id: 'default',
     };
     const oldScore = scorePage(old);
     const freshScore = scorePage(fresh);
@@ -313,6 +349,7 @@ describe('scorePage — company / concept / source / media defaults', () => {
       id: 1, slug: 'people/repetitive', type: 'person', title: 'x',
       compiled_truth: repeated, timeline: '', frontmatter: {},
       created_at: new Date(), updated_at: new Date(),
+      source_id: 'default',
     };
     const s = scorePage(page);
     expect(s.dimensionScores.non_redundancy).toBeLessThan(0.2);

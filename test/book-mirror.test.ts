@@ -32,35 +32,57 @@ async function runCli(args: string[]): Promise<{
   stderr: string;
   exit: number;
 }> {
-  const proc = Bun.spawn(
-    ['bun', 'run', 'src/cli.ts', 'book-mirror', ...args],
-    {
-      cwd: REPO_ROOT,
-      stdout: 'pipe',
-      stderr: 'pipe',
-      env: { ...process.env, DATABASE_URL: '' },
-    },
+  // v0.34.1 (#876): set GBRAIN_HOME to a fresh tempdir so the test isn't
+  // sensitive to the developer's local ~/.gbrain/config.json. Pre-fix this
+  // test would silently inherit the user's database_url and try to connect
+  // to a real Postgres + run migrations, which both extends runtime past
+  // the default test timeout and produces different exit semantics
+  // depending on the local DB state. With GBRAIN_HOME pointing at an
+  // empty dir, the CLI hits "No brain configured" and exits 1 immediately
+  // — which is what this test was originally written to cover.
+  const tmpHome = await import('os').then(os =>
+    import('fs').then(fs => fs.mkdtempSync(`${os.tmpdir()}/gbrain-test-`)),
   );
-  const stdout = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
-  const exit = await proc.exited;
-  return { stdout, stderr, exit };
+  try {
+    const proc = Bun.spawn(
+      ['bun', 'run', 'src/cli.ts', 'book-mirror', ...args],
+      {
+        cwd: REPO_ROOT,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: { ...process.env, DATABASE_URL: '', GBRAIN_HOME: tmpHome },
+      },
+    );
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exit = await proc.exited;
+    return { stdout, stderr, exit };
+  } finally {
+    const fs = await import('fs');
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  }
 }
 
 describe('gbrain book-mirror — CLI registration', () => {
+  // v0.34.1 (#876): migrations v60-v65 added oauth_clients.source_id +
+  // federated_read FK plumbing. The cold-spawned subprocess's initSchema
+  // chain now takes ~1s longer end-to-end; bump these tests' timeout to
+  // 30s so the test-harness budget covers Bun cold-start + PGLite init +
+  // migration apply + Postgres-retry exhaustion. The CLI itself still
+  // exits in 7-10s on a misconfigured DB.
   it('book-mirror is in CLI_ONLY (does not get "Unknown command")', async () => {
     const { stderr } = await runCli([]);
     // Without DB, the command will fail — but on the connect path,
     // not as "Unknown command". This proves dispatch reached
     // handleCliOnly's switch statement.
     expect(stderr).not.toContain('Unknown command');
-  });
+  }, 30000);
 
   it('without DB, never reaches queue submission', async () => {
     const { stderr, exit } = await runCli(['--slug', 'noop']);
     expect(exit).not.toBe(0);
     expect(stderr).not.toContain('submitted:');
-  });
+  }, 30000);
 });
 
 describe('gbrain book-mirror — source file invariants', () => {

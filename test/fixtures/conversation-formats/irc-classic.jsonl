@@ -1,0 +1,1 @@
+{"fixture_id":"irc-classic-001","pattern":"irc-classic","frontmatter":{"date":"2024-03-15"},"body":"<alice> hello world\n<bob> hey there\n<alice> how are you\n<bob> good thanks","expected_messages":4,"expected_participants":["alice","bob"]}

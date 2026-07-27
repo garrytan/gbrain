@@ -28,9 +28,12 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
-import * as path from 'node:path';
 import type { MinionJobContext } from '../types.ts';
 import { UnrecoverableError } from '../types.ts';
+import { deriveEnvKey, resolveInheritValue } from './shell-inherit.ts';
+import { validateShellJobParams } from './shell-validate.ts';
+import { redactSecretsInText } from './shell-redact.ts';
+import { loadConfig } from '../../config.ts';
 
 /** Environment variables passed through to shell children by default. Callers
  *  that need additional keys (e.g. a specific API token for a cron) must name
@@ -54,8 +57,31 @@ export interface ShellJobParams {
   /** Working directory. REQUIRED, must be an absolute path. The operator chooses
    *  this; it's the trust boundary for what files the script can read/write. */
   cwd: string;
-  /** Additional env vars to pass to the child. Merged on top of SHELL_ENV_ALLOWLIST. */
+  /** Additional env vars to pass to the child. Merged on top of SHELL_ENV_ALLOWLIST.
+   *  Cannot contain secret env keys (GBRAIN_DATABASE_URL, DATABASE_URL, etc.) —
+   *  use `inherit:` instead. Enforced pre-enqueue by `validateShellJobParams`. */
   env?: Record<string, string>;
+  /**
+   * Free-form list of config-key names to inherit from the worker's
+   * `loadConfig()` into the child env (v0.36.5.0). Each name must match
+   * `[a-z][a-z0-9_]*`; the env key is derived via `deriveEnvKey` (e.g.
+   * `database_url` → `GBRAIN_DATABASE_URL`, `anthropic_api_key` →
+   * `ANTHROPIC_API_KEY`). Names persist to `minion_jobs.data` + the
+   * shell-audit JSONL; values resolve at child-spawn time and never persist
+   * anywhere from `inherit:` itself. Pre-enqueue validation fail-fasts when
+   * the worker can't resolve a requested name. See:
+   * `src/core/minions/handlers/shell-inherit.ts` and `shell-validate.ts`.
+   */
+  inherit?: string[];
+  /**
+   * Opt-in (v0.36.5.0): scrub resolved `inherit:` values from
+   * `stdout_tail` / `stderr_tail` / `error_text` before persistence.
+   * Replacement token: `<REDACTED:name>`. Only `inherit:`-resolved values
+   * are scrubbed; caller-supplied `env:` values are not (those are the
+   * agent's "fine in the row" channel by design). Heuristic — defeats the
+   * common-case echo, not adversarial encode-then-print.
+   */
+  redact_secrets?: boolean;
 }
 
 export interface ShellJobResult {
@@ -66,71 +92,42 @@ export interface ShellJobResult {
   pid: number;
 }
 
-/** Validate and narrow `job.data` to ShellJobParams. Throws UnrecoverableError
- *  for misshapen input — validation failures are not retry-worthy. */
-function validateParams(data: Record<string, unknown>): ShellJobParams {
-  const hasCmd = typeof data.cmd === 'string' && data.cmd.length > 0;
-  const hasArgv = Array.isArray(data.argv) && data.argv.length > 0;
-
-  if (hasCmd && hasArgv) {
-    throw new UnrecoverableError(
-      'shell: specify exactly one of cmd or argv (see: docs/guides/minions-shell-jobs.md#errors)',
-    );
-  }
-  if (!hasCmd && !hasArgv) {
-    throw new UnrecoverableError(
-      'shell: specify exactly one of cmd or argv (see: docs/guides/minions-shell-jobs.md#errors)',
-    );
-  }
-  if (hasArgv) {
-    const argvOk = (data.argv as unknown[]).every((a) => typeof a === 'string');
-    if (!argvOk) {
-      throw new UnrecoverableError(
-        'shell: argv must be an array of strings (see: docs/guides/minions-shell-jobs.md#errors)',
-      );
-    }
-  }
-  if (typeof data.cwd !== 'string' || data.cwd.length === 0) {
-    throw new UnrecoverableError(
-      'shell: cwd is required and must be an absolute path (see: docs/guides/minions-shell-jobs.md#errors)',
-    );
-  }
-  if (!path.isAbsolute(data.cwd)) {
-    throw new UnrecoverableError(
-      'shell: cwd is required and must be an absolute path (see: docs/guides/minions-shell-jobs.md#errors)',
-    );
-  }
-  if (data.env !== undefined) {
-    if (typeof data.env !== 'object' || data.env === null || Array.isArray(data.env)) {
-      throw new UnrecoverableError(
-        'shell: env must be an object of string values (see: docs/guides/minions-shell-jobs.md#errors)',
-      );
-    }
-    for (const v of Object.values(data.env as Record<string, unknown>)) {
-      if (typeof v !== 'string') {
-        throw new UnrecoverableError(
-          'shell: env values must all be strings (see: docs/guides/minions-shell-jobs.md#errors)',
-        );
-      }
-    }
-  }
-
-  return {
-    cmd: hasCmd ? (data.cmd as string) : undefined,
-    argv: hasArgv ? (data.argv as string[]) : undefined,
-    cwd: data.cwd,
-    env: (data.env as Record<string, string> | undefined),
-  };
-}
-
-/** Build the child process env: SHELL_ENV_ALLOWLIST picked from process.env,
- *  overlaid with caller-supplied `job.data.env`. Prevents accidental leak of
- *  OPENAI_API_KEY / DATABASE_URL / etc. into user-authored scripts. */
-function buildChildEnv(override: Record<string, string> | undefined): Record<string, string> {
+/** Build the child process env. Layering (low to high precedence):
+ *   1. `SHELL_ENV_ALLOWLIST` picked from `process.env` (worker process env).
+ *   2. Resolved `inherit:` values — each config-key name is looked up on the
+ *      worker's `loadConfig()`. The child-env key is derived via
+ *      `deriveEnvKey` (e.g. `database_url` → `GBRAIN_DATABASE_URL`).
+ *      Pre-enqueue validation fail-fasted on missing names, so we reach this
+ *      branch only when every name resolves.
+ *   3. Caller-supplied `job.data.env` overlay (free-form; trust model is
+ *      same-uid agent + worker, so the agent decides what to pass).
+ *
+ *  Trust boundary is the operator's choice of `cwd`. Resolution uses
+ *  `Object.hasOwn` (see `resolveInheritValue`) so prototype-pollution lookups
+ *  like `inherit:["__proto__"]` can't return a value.
+ */
+function buildChildEnv(
+  override: Record<string, string> | undefined,
+  inherit: string[] | undefined,
+): Record<string, string> {
   const env: Record<string, string> = {};
   for (const key of SHELL_ENV_ALLOWLIST) {
     const v = process.env[key];
     if (typeof v === 'string') env[key] = v;
+  }
+  if (inherit && inherit.length > 0) {
+    const cfg = loadConfig();
+    for (const name of inherit) {
+      const value = resolveInheritValue(cfg, name);
+      if (value !== undefined) {
+        env[deriveEnvKey(name)] = value;
+      }
+      // Missing values are not silently dropped in production — the
+      // pre-enqueue validator fail-fasts at submit time. This branch only
+      // hits in legacy rows that bypassed pre-enqueue validation; the
+      // defense-in-depth re-validation in shellHandler catches them before
+      // this code path runs in practice.
+    }
   }
   if (override) {
     for (const [k, v] of Object.entries(override)) env[k] = v;
@@ -217,8 +214,30 @@ export async function shellHandler(ctx: MinionJobContext): Promise<ShellJobResul
     );
   }
 
-  const params = validateParams(ctx.data);
-  const env = buildChildEnv(params.env);
+  // Defense-in-depth: re-run the same validator at handler pickup. The
+  // canonical call site is pre-enqueue (see src/commands/jobs.ts and
+  // src/core/operations.ts:submit_job). This re-validation catches:
+  //   (a) pre-v0.35.8.0 rows that submitted before pre-enqueue validation existed,
+  //   (b) any future submit path that forgets to call validateShellJobParams,
+  //   (c) drift between INHERITABLE and the worker's actual config (the
+  //       fail-fast guard fires here on a worker that lost its DB URL after submit).
+  const params = validateShellJobParams(ctx.data);
+  const env = buildChildEnv(params.env, params.inherit);
+
+  // Build the redaction map: inherit-name → resolved value. The handler
+  // pays one extra loadConfig() to assemble this in one pass, separate from
+  // buildChildEnv's resolution. Cheap (single fs read; same call shape as
+  // buildChildEnv). Only populated when `redact_secrets` is true AND inherit
+  // has at least one entry.
+  const redactionMap = new Map<string, string>();
+  if (params.redact_secrets && params.inherit && params.inherit.length > 0) {
+    const cfg = loadConfig();
+    for (const name of params.inherit) {
+      const value = resolveInheritValue(cfg, name);
+      if (value !== undefined) redactionMap.set(name, value);
+    }
+  }
+
   const startedAt = Date.now();
 
   let proc: ChildProcess;
@@ -298,8 +317,18 @@ export async function shellHandler(ctx: MinionJobContext): Promise<ShellJobResul
   });
 
   const duration_ms = Date.now() - startedAt;
-  const stdout_tail = stdoutTail.done();
-  const stderr_tail = stderrTail.done();
+  // Assemble tails, then optionally scrub resolved inherit values out before
+  // any of these strings reach: (a) the throw's Error.message, which becomes
+  // `error_text` on the job row, OR (b) the result object, which is
+  // persisted to `minion_jobs.result`. Scrubbing happens AFTER tail
+  // assembly so a value split across multiple stdout chunks still gets
+  // caught (the final body is a single contiguous string by this point).
+  let stdout_tail = stdoutTail.done();
+  let stderr_tail = stderrTail.done();
+  if (redactionMap.size > 0) {
+    stdout_tail = redactSecretsInText(stdout_tail, redactionMap);
+    stderr_tail = redactSecretsInText(stderr_tail, redactionMap);
+  }
 
   // If we sent SIGTERM/SIGKILL in response to an abort, surface that as the
   // error rather than the exit code — clearer for debugging. Worker catch

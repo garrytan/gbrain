@@ -1,0 +1,2 @@
+# Per-run output JSONLs land here; only baseline-runs/<date>-<model>.jsonl is canonical.
+run-*.jsonl

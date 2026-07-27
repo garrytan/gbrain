@@ -190,10 +190,55 @@ function embeddingVoyageBackfill(): RegisteredBackfill {
   };
 }
 
+interface ModalityBackfillRow {
+  id: number;
+  chunk_source: string | null;
+  modality: string | null;
+}
+
+/**
+ * v0.36 cross-modal wave: modality column cleanup.
+ *
+ * Historical brains that imported image assets BEFORE v0.27.1's
+ * `modality='image'` default-set may have image chunks where
+ * `embedding_image IS NOT NULL` but `modality != 'image'`. This backfill
+ * flips them. D22-7 hardening: requires `chunk_source='image_asset'` so
+ * we never tag a non-image chunk that happens to have an embedding_image
+ * value (defensive against hypothetical future code paths populating
+ * embedding_image on text chunks).
+ *
+ * Idempotent — second run finds no rows to update.
+ */
+function modalityBackfill(): RegisteredBackfill {
+  return {
+    description: 'Flip modality to "image" on image-asset chunks where it was missed by pre-v0.27.1 ingest',
+    v030_1_status: 'implemented',
+    spec: {
+      name: 'modality',
+      table: 'content_chunks',
+      idColumn: 'id',
+      selectColumns: ['chunk_source', 'modality'],
+      needsBackfill:
+        // D22-7: belt-and-suspenders. Both predicates must hold for the row
+        // to be a real image chunk that lost its modality tag.
+        "embedding_image IS NOT NULL AND chunk_source = 'image_asset' AND (modality IS NULL OR modality != 'image')",
+      compute: async (rows) => {
+        const updates: Array<{ id: number; updates: Record<string, unknown> }> = [];
+        for (const r of rows as unknown as ModalityBackfillRow[]) {
+          updates.push({ id: r.id, updates: { modality: 'image' } });
+        }
+        return updates;
+      },
+      estimateRowsPerSecond: 8000, // pure metadata flip, very fast
+    },
+  };
+}
+
 function registerCoreBackfills(): void {
   registerBackfill(effectiveDateBackfill());
   registerBackfill(emotionalWeightBackfill());
   registerBackfill(embeddingVoyageBackfill());
+  registerBackfill(modalityBackfill());
 }
 
 // Auto-register on first import.

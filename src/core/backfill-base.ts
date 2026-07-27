@@ -18,6 +18,11 @@
 
 import type { BrainEngine } from './engine.ts';
 import { isStatementTimeoutError, isRetryableConnError } from './retry-matcher.ts';
+// v0.41.18.0: swap inline setTimeout for shared abortableSleep so the sleep
+// primitive is unified across the codebase. Backfill's outer-loop + batch-
+// halving control flow stays intact (orthogonal to withRetry's per-call retry
+// shape) — the unification is at the sleep primitive only, per codex H-6.
+import { abortableSleep } from './retry.ts';
 
 export interface BackfillSpec<TRow = Record<string, unknown>> {
   /** Stable identifier — used in checkpoint key + CLI dispatch. */
@@ -214,7 +219,7 @@ export async function runBackfill<TRow = Record<string, unknown>>(
       }
       // Connection drop: brief sleep + retry the same window.
       if (isRetryableConnError(err)) {
-        await new Promise(r => setTimeout(r, 1000));
+        await abortableSleep(1000);
         continue;
       }
       throw err;
@@ -290,7 +295,7 @@ export async function runBackfill<TRow = Record<string, unknown>>(
           continue;
         }
         if (isRetryableConnError(err)) {
-          await new Promise(r => setTimeout(r, 1000));
+          await abortableSleep(1000);
           continue;
         }
         throw err;

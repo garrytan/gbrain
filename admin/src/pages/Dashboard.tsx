@@ -21,7 +21,7 @@ export function DashboardPage() {
     api.stats().then(setStats).catch(() => {});
     api.health().then(setHealth).catch(() => {});
 
-    const es = new EventSource('/admin/events');
+    const es = new EventSource('/admin/events', { withCredentials: true });
     eventSourceRef.current = es;
     es.onopen = () => setSseStatus('connected');
     es.onmessage = (e) => {

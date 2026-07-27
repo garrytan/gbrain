@@ -16,7 +16,7 @@ export async function runExport(engine: BrainEngine, args: string[]) {
   const explicitRepoPath = repoIdx !== -1 ? args[repoIdx + 1] : null;
 
   const typeIdx = args.indexOf('--type');
-  const typeFilter = typeIdx !== -1 ? (args[typeIdx + 1] as PageType) : undefined;
+  const typeFilter = typeIdx !== -1 ? (args[typeIdx + 1] as string) : undefined;
 
   const slugPrefixIdx = args.indexOf('--slug-prefix');
   const slugPrefix = slugPrefixIdx !== -1 ? args[slugPrefixIdx + 1] : undefined;

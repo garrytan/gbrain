@@ -26,6 +26,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { GBrainError } from '../types.ts';
 
 export const FACTS_ABSORB_REASONS = [
   'gateway_error',
@@ -35,6 +36,18 @@ export const FACTS_ABSORB_REASONS = [
   'embed_failure',
   'pipeline_error',
 ] as const;
+
+// v0.39.3.0 WARN-4 + CV13 — module-scoped flag so the first-occurrence
+// diagnostic log fires ONCE per process. Subsequent occurrences of the
+// same 'No database connection' class are suppressed (keeps captures
+// quiet) but the first one prints enough context to triage why the
+// facts subsystem is calling logIngest on a disconnected engine.
+// Exported as a test seam so the assertion can reset between runs.
+let _hasLoggedDisconnectedFactsAbsorb = false;
+/** @internal — test seam */
+export function _resetFactsAbsorbDisconnectedFlagForTests(): void {
+  _hasLoggedDisconnectedFactsAbsorb = false;
+}
 
 export type FactsAbsorbReason = typeof FACTS_ABSORB_REASONS[number];
 
@@ -69,8 +82,33 @@ export async function writeFactsAbsorbLog(
       summary: `${reason}: ${cleanedDetail}`,
     });
   } catch (e) {
-    // Don't let logging failures cascade. The whole point of D5 is
-    // observability — but observability can't break the runtime path.
+    // v0.39.3.0 WARN-4 + CQ1 — typed access via instanceof + .problem field
+    // (NOT string-match on e.message). The 'No database connection' class
+    // fires after every `gbrain capture` invocation because the facts
+    // subsystem opens its own engine handle that isn't connected in the
+    // CLI capture path. Per-capture noise is suppressed; CV13 prints
+    // ONE first-occurrence stack trace so the next user reporting it
+    // gives us the call site to fix in v0.38.4.
+    if (e instanceof GBrainError && e.problem === 'No database connection') {
+      if (!_hasLoggedDisconnectedFactsAbsorb) {
+        _hasLoggedDisconnectedFactsAbsorb = true;
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[facts:absorb] suppressed: 'No database connection' fires on a separate engine handle ` +
+          `(known WARN-4 in v0.38; subsequent occurrences silent this process). ` +
+          `First-occurrence trace for v0.38.4 diagnosis:\n${e.stack ?? '<no stack>'}`,
+        );
+      }
+      // Subsequent occurrences silent — the page write itself succeeded;
+      // the facts:absorb log is a courtesy that the doctor health check
+      // reads. A connection-bound log site already filed the v0.38.4 TODO
+      // (see TODOS.md).
+      return;
+    }
+    // All other failures keep the loud warn. Don't let logging failures
+    // cascade — observability can't break the runtime path — but DO let
+    // the operator see real subsystem errors (PgBouncer crash, schema
+    // drift, etc.) instead of suppressing them globally.
     // eslint-disable-next-line no-console
     console.warn(
       `[facts:absorb] failed to log ${reason} for ${ref}: ${e instanceof Error ? e.message : String(e)}`,

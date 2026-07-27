@@ -122,6 +122,24 @@
       "directory": "media/articles/",
       "examples": ["personalized article reads", "long-form content tailored to reader"],
       "description": "Same sanctioned exception as media/books/. One-of-one synthesis output of an article personalized for the reader. Distinct from raw article ingest, which goes to the article's primary-subject directory."
+    },
+    {
+      "kind": "daily",
+      "directory": "daily/",
+      "examples": ["daily/calendar/YYYY-MM-DD.md", "daily/notes/YYYY-MM-DD.md"],
+      "description": "Date-keyed pages for events, calendar entries, or daily notes. Calendar imports land at daily/calendar/YYYY-MM-DD.md with attendees cross-linked to people/. Use when the primary subject is the date itself, not a person or topic."
+    },
+    {
+      "kind": "media-format",
+      "directory": "media/",
+      "examples": ["media/x/{handle}/", "media/audio/", "media/video/"],
+      "description": "Format-prefixed parent for media-by-source-format ingest. Subdirectories like media/x/{handle}/ hold X/Twitter archives, media/audio/ holds podcast/voice captures. The format-prefix lives only when the content is sui generis to the source format AND lacks a clean primary-subject directory. Prefer subject-by-subject filing; fall through to media/ only when the source format IS the unifying frame."
+    },
+    {
+      "kind": "conversation",
+      "directory": "conversations/",
+      "examples": ["conversations/chatgpt/{thread-slug}.md", "conversations/claude/{thread-slug}.md"],
+      "description": "Imported chat exports (ChatGPT, Claude, etc.) where the conversation itself is the artifact. Cross-link concepts and people from the conversation; the conversation page is the source-of-truth for the dialog. Distinct from voice-notes/ (which holds raw voice capture)."
     }
   ],
   "sources_dir": {

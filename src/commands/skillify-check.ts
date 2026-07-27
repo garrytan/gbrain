@@ -33,6 +33,11 @@ import {
   findReceiptForSkill,
   type ReceiptStatus,
 } from '../core/cross-modal-eval/receipt-name.ts';
+import { parseSkillFrontmatter } from '../core/skill-frontmatter.ts';
+import {
+  analyzeSkillBrainFirst,
+  buildBrainFirstSummaryLine,
+} from '../core/skill-brain-first.ts';
 
 interface CheckItem {
   name: string;
@@ -283,6 +288,17 @@ function runSkillifyCheckTarget(target: string, root: string): CheckResult {
     ),
   );
 
+  // Item 12: brain-first compliance (v0.36.x, REQUIRED — A3 + F9 from
+  // /plan-eng-review). Skills that reference external lookup tools
+  // (web_search, exa, perplexity, etc.) must declare brain-first stance
+  // explicitly: either via the canonical Convention callout, or via
+  // 'brain_first: exempt' in frontmatter, or by absence of external
+  // refs entirely. This is a REQUIRED gate — non-compliant skills fail
+  // `gbrain skillify check` with exit 1 so new skills can't be born
+  // non-compliant.
+  const brainFirst = checkBrainFirstCompliance(skillMd, skillName);
+  items.push(check('Brain-first compliance', brainFirst.passed, brainFirst.detail));
+
   const passed = items.filter(i => i.passed).length;
   const total = items.length;
   const missing = items.filter(i => !i.passed && i.required).map(i => i.name);
@@ -337,6 +353,50 @@ function lookupCrossModalReceipt(
         detail: describeReceiptStatus(skillName, status),
       };
   }
+}
+
+/**
+ * Item 12 helper: brain-first compliance gate.
+ *
+ * Reads the skill's SKILL.md, parses frontmatter, runs the pure
+ * `analyzeSkillBrainFirst()` analyzer. A `warn` status fails this
+ * required item; an `ok` status (any exemption or compliance reason)
+ * passes.
+ *
+ * When SKILL.md doesn't exist, the check passes — item 1 already
+ * reported the missing file; we don't pile-on with a second failure.
+ *
+ * Detail string follows the same shape as the doctor check message
+ * (via `buildBrainFirstSummaryLine`) so the two surfaces stay
+ * consistent for skill authors learning the contract.
+ */
+function checkBrainFirstCompliance(
+  skillMdPath: string,
+  skillName: string,
+): { passed: boolean; detail: string } {
+  if (!existsSync(skillMdPath)) {
+    return { passed: true, detail: 'no SKILL.md — covered by item 1' };
+  }
+  let content: string;
+  try {
+    content = readFileSync(skillMdPath, 'utf-8');
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Read failure is best-effort — don't double-fail; item 1 / 2 would
+    // already report the problem. Pass with a note.
+    return { passed: true, detail: `could not read SKILL.md: ${msg}` };
+  }
+  const fm = parseSkillFrontmatter(content);
+  const analysis = analyzeSkillBrainFirst(content, skillName, fm);
+  if (analysis.status === 'ok') {
+    return { passed: true, detail: `${analysis.reason} (${skillName})` };
+  }
+  return {
+    passed: false,
+    detail:
+      buildBrainFirstSummaryLine(analysis) +
+      ` — Fix: add canonical Convention callout (see conventions/brain-first.md), or set 'brain_first: exempt' in frontmatter.`,
+  };
 }
 
 function recentlyModified(root: string, days: number = 7): string[] {

@@ -23,6 +23,8 @@ import {
   isAvailable,
   getChatModel,
   getChatFallbackChain,
+  chat,
+  __setGenerateTextTransportForTests,
 } from '../../src/core/ai/gateway.ts';
 import { parseModelId, resolveRecipe, assertTouchpoint } from '../../src/core/ai/model-resolver.ts';
 import { AIConfigError } from '../../src/core/ai/errors.ts';
@@ -40,11 +42,15 @@ describe('chat touchpoint — recipe registry', () => {
     }
   });
 
-  test('only Anthropic claims supports_prompt_cache=true', () => {
+  test('only Anthropic and model-family-gated OpenRouter claim supports_prompt_cache', () => {
     for (const r of listRecipes()) {
       if (!r.touchpoints.chat) continue;
       if (r.id === 'anthropic') {
         expect(r.touchpoints.chat.supports_prompt_cache).toBe(true);
+      } else if (r.id === 'openrouter') {
+        // Family-scoped predicate (openai/* + anthropic/claude-*), never a
+        // blanket true — see recipe-openrouter.test.ts for the model matrix.
+        expect(typeof r.touchpoints.chat.supports_prompt_cache).toBe('function');
       } else {
         expect(r.touchpoints.chat.supports_prompt_cache ?? false).toBe(false);
       }
@@ -65,28 +71,39 @@ describe('chat touchpoint — recipe registry', () => {
 
 describe('chat touchpoint — model resolver + aliases (Codex F-OV-5)', () => {
   test('parseModelId handles dated and undated forms identically at parse time', () => {
-    expect(parseModelId('anthropic:claude-sonnet-4-6-20250929')).toEqual({
-      providerId: 'anthropic',
-      modelId: 'claude-sonnet-4-6-20250929',
-    });
     expect(parseModelId('anthropic:claude-sonnet-4-6')).toEqual({
       providerId: 'anthropic',
       modelId: 'claude-sonnet-4-6',
     });
+    expect(parseModelId('anthropic:claude-haiku-4-5-20251001')).toEqual({
+      providerId: 'anthropic',
+      modelId: 'claude-haiku-4-5-20251001',
+    });
   });
 
-  test('resolveRecipe expands undated alias to dated canonical', () => {
-    const { parsed } = resolveRecipe('anthropic:claude-sonnet-4-6');
-    expect(parsed.modelId).toBe('claude-sonnet-4-6-20250929');
-    const { parsed: parsed2 } = resolveRecipe('anthropic:claude-haiku-4-5');
-    expect(parsed2.modelId).toBe('claude-haiku-4-5-20251001');
+  test('resolveRecipe expands pre-4.6 dateless alias to dated canonical', () => {
+    // Pre-4.6 models keep date-based aliases (Haiku 4.5 predates the
+    // dateless convention).
+    const { parsed } = resolveRecipe('anthropic:claude-haiku-4-5');
+    expect(parsed.modelId).toBe('claude-haiku-4-5-20251001');
   });
 
-  test('resolveRecipe leaves canonical-form modelIds unchanged', () => {
+  test('resolveRecipe leaves dateless 4.6+ models unchanged (they ARE canonical)', () => {
     const { parsed } = resolveRecipe('anthropic:claude-opus-4-7');
-    expect(parsed.modelId).toBe('claude-opus-4-7'); // already canonical, no alias
-    const { parsed: parsed2 } = resolveRecipe('anthropic:claude-sonnet-4-6-20250929');
-    expect(parsed2.modelId).toBe('claude-sonnet-4-6-20250929');
+    expect(parsed.modelId).toBe('claude-opus-4-7');
+    const { parsed: parsed2 } = resolveRecipe('anthropic:claude-sonnet-4-6');
+    expect(parsed2.modelId).toBe('claude-sonnet-4-6');
+  });
+
+  test('reverse alias rescues v0.31.6-shipped broken Sonnet 4.6 ID (regression)', () => {
+    // gbrain v0.31.6 shipped 'claude-sonnet-4-6-20250929' as a hardcoded
+    // default, which 404s on the Anthropic API (Sonnet 4.6 is dateless).
+    // The reverse alias rewrites broken → canonical so any user with a
+    // stale `models.dream.synthesize` / `facts.extraction_model` config
+    // keeps working. Regression guard against a future "cleanup" that
+    // drops this alias entry.
+    const { parsed } = resolveRecipe('anthropic:claude-sonnet-4-6-20250929');
+    expect(parsed.modelId).toBe('claude-sonnet-4-6');
   });
 
   test('assertTouchpoint accepts chat for chat-capable native + openai-compat providers', () => {
@@ -122,9 +139,9 @@ describe('chat touchpoint — model resolver + aliases (Codex F-OV-5)', () => {
 describe('chat touchpoint — gateway config plumbing', () => {
   beforeEach(() => resetGateway());
 
-  test('default chat_model is anthropic:claude-sonnet-4-6-20250929', () => {
+  test('default chat_model is anthropic:claude-sonnet-4-6', () => {
     configureGateway({ env: {} });
-    expect(getChatModel()).toBe('anthropic:claude-sonnet-4-6-20250929');
+    expect(getChatModel()).toBe('anthropic:claude-sonnet-4-6');
   });
 
   test('explicit chat_model overrides the default', () => {
@@ -206,5 +223,105 @@ describe('chat touchpoint — chat() smoke + stop-reason mapping (Codex D8)', ()
     // body is just a runtime touch.
     const mod = await import('../../src/core/ai/gateway.ts');
     expect(mod).toBeDefined();
+  });
+});
+
+describe('chat touchpoint — provider_chat_options passthrough', () => {
+  beforeEach(() => {
+    resetGateway();
+    __setGenerateTextTransportForTests(null);
+  });
+
+  async function captureProviderOptions(
+    config: Parameters<typeof configureGateway>[0],
+    opts: Partial<Parameters<typeof chat>[0]> = {},
+  ): Promise<Record<string, any> | undefined> {
+    let captured: Record<string, any> | undefined;
+    __setGenerateTextTransportForTests(async (args: any) => {
+      captured = args.providerOptions;
+      return {
+        content: [{ type: 'text', text: 'ok' }],
+        finishReason: 'stop',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      } as any;
+    });
+    configureGateway(config);
+    await chat({
+      model: config.chat_model ?? 'anthropic:claude-sonnet-4-6',
+      messages: [{ role: 'user', content: 'hello' }],
+      ...opts,
+    });
+    return captured;
+  }
+
+  test('provider-scoped option reaches generateText providerOptions[recipe.id]', async () => {
+    const providerOptions = await captureProviderOptions({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      provider_chat_options: {
+        anthropic: { thinking: { type: 'disabled' } },
+      },
+      env: { ANTHROPIC_API_KEY: 'fake' },
+    });
+
+    expect(providerOptions).toEqual({
+      anthropic: { thinking: { type: 'disabled' } },
+    });
+  });
+
+  test('model-scoped option overrides provider-scoped option', async () => {
+    const providerOptions = await captureProviderOptions({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      provider_chat_options: {
+        anthropic: {
+          thinking: { type: 'enabled', budget_tokens: 1024 },
+          temperature: 0.2,
+        },
+        'anthropic:claude-sonnet-4-6': {
+          thinking: { type: 'disabled' },
+        },
+      },
+      env: { ANTHROPIC_API_KEY: 'fake' },
+    });
+
+    expect(providerOptions).toEqual({
+      anthropic: {
+        thinking: { type: 'disabled', budget_tokens: 1024 },
+        temperature: 0.2,
+      },
+    });
+  });
+
+  test('no provider_chat_options keeps providerOptions undefined when cache is off', async () => {
+    const providerOptions = await captureProviderOptions({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      env: { ANTHROPIC_API_KEY: 'fake' },
+    });
+
+    expect(providerOptions).toBeUndefined();
+  });
+
+  test('anthropic cacheControl survives provider_chat_options merging', async () => {
+    // gbrain#2490: this call-level cacheControl is real (not a no-op) —
+    // @ai-sdk/anthropic serializes it as the Anthropic API's documented
+    // top-level "auto-cache the last cacheable block" shorthand. It's kept
+    // alongside the fix (an explicit breakpoint on the system message's own
+    // providerOptions — see test/ai/gateway-cache-breakpoint.test.ts) because
+    // it's what gives toolLoop()'s growing multi-turn conversation a rolling
+    // cache breakpoint on each turn's tail. See gateway.ts's `useCache` block
+    // for the full explanation of why both markers are needed.
+    const providerOptions = await captureProviderOptions({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      provider_chat_options: {
+        anthropic: { thinking: { type: 'disabled' } },
+      },
+      env: { ANTHROPIC_API_KEY: 'fake' },
+    }, { cacheSystem: true });
+
+    expect(providerOptions).toEqual({
+      anthropic: {
+        cacheControl: { type: 'ephemeral' },
+        thinking: { type: 'disabled' },
+      },
+    });
   });
 });

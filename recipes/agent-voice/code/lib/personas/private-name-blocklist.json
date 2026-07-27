@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Privacy blocklist contract for agent-voice. The shipped file lists ONLY structural categories. Specific names live in the $AGENT_VOICE_PII_BLOCKLIST environment variable (pipe-separated) at scan time. This separation keeps gbrain's shipped surface free of personal/private names while still letting CI enforce a project-specific blocklist via secrets.",
+  "shapeRegex": [
+    "email",
+    "phone",
+    "ssn",
+    "jwt",
+    "bearer_token",
+    "credit_card"
+  ],
+  "shapeRegexSource": "src/core/eval-capture-scrub.ts",
+  "pathPatterns": [
+    "/data/\\.openclaw/",
+    "/private/[a-z0-9_-]+/workspace/"
+  ],
+  "operatorBlocklistEnv": "AGENT_VOICE_PII_BLOCKLIST",
+  "operatorBlocklistHint": "Set AGENT_VOICE_PII_BLOCKLIST as a pipe-separated list (e.g. 'agent_codename|family_name_1|family_name_2') in your shell rc or GitHub Action secret. Never commit a populated value to a public repo.",
+  "scanScope": [
+    "recipes/agent-voice/**",
+    "recipes/agent-voice.md",
+    "scripts/import-from-upstream.sh",
+    "scripts/upstream-scrub-table.txt"
+  ],
+  "exceptionFiles": [
+    "recipes/agent-voice/tests/fixtures/scrub-dirty.txt",
+    "recipes/agent-voice/tests/fixtures/scrub-clean.txt"
+  ],
+  "notes": [
+    "The host-side mars-prompt-shape.test.mjs and venus-prompt-shape.test.mjs read this same file and honor the same env var.",
+    "Exception files are deliberate test fixtures containing a synthetic placeholder token (NOT a real name) used to verify the guard mechanism. The token is defined in test/check-no-pii.test.ts and is intentionally NOT named here to avoid the JSON triggering its own guard.",
+    "If $AGENT_VOICE_PII_BLOCKLIST is unset, the guard runs in shape-only mode and emits a one-line stderr warning so the operator knows full enforcement requires the env var."
+  ]
+}

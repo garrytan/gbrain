@@ -32,6 +32,22 @@ export function findResolverFile(dir: string): string | null {
   return null;
 }
 
+/**
+ * Return ALL existing resolver files in `dir`.
+ * OpenClaw deployments often have both skills/RESOLVER.md (from skillpack)
+ * and ../AGENTS.md (workspace root, the real dispatcher). Returning all
+ * files lets callers merge entries instead of silently ignoring the richer
+ * file.
+ */
+export function findAllResolverFiles(dir: string): string[] {
+  const results: string[] = [];
+  for (const name of RESOLVER_FILENAMES) {
+    const candidate = join(dir, name);
+    if (existsSync(candidate)) results.push(candidate);
+  }
+  return results;
+}
+
 /** True iff `dir` contains at least one recognized resolver file. */
 export function hasResolverFile(dir: string): boolean {
   return findResolverFile(dir) !== null;

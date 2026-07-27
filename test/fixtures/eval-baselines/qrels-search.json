@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "_description": "v0.40.1.0 Track D — hermetic retrieval qrels gate. PLACEHOLDER names only (no real people / companies — per CLAUDE.md privacy rule). Each query maps to a ranked list of relevant slugs; `first_relevant_slug` is the expected top-1. The gate uses basis-vector embeddings (each slug embedded at a deterministic dimension) so retrieval is reproducible and hermetic. Refresh requires a `Why:` line in the commit body (D4). Note: first_relevant_slug is chosen so source-aware ranking (people/companies/concepts/writing/originals get prefix boosts) naturally surfaces it top-1.",
+  "queries": [
+    {
+      "query_id": "q1-fintech-founder",
+      "query": "fintech founder building payments infrastructure",
+      "embedding_dim": 0,
+      "relevant_slugs": ["people/alice-example", "companies/widget-co-example"],
+      "first_relevant_slug": "people/alice-example"
+    },
+    {
+      "query_id": "q2-meeting-recall",
+      "query": "meeting notes from last quarter strategy session",
+      "embedding_dim": 1,
+      "relevant_slugs": ["people/charlie-example", "meetings/2026-q1-strategy-example"],
+      "first_relevant_slug": "people/charlie-example"
+    },
+    {
+      "query_id": "q3-ai-research",
+      "query": "AI safety research alignment work",
+      "embedding_dim": 2,
+      "relevant_slugs": ["people/bob-example", "topics/ai-safety-example"],
+      "first_relevant_slug": "people/bob-example"
+    },
+    {
+      "query_id": "q4-portfolio-deal",
+      "query": "Series A deal in healthcare vertical",
+      "embedding_dim": 3,
+      "relevant_slugs": ["companies/acme-example", "deals/acme-series-a-example"],
+      "first_relevant_slug": "companies/acme-example"
+    },
+    {
+      "query_id": "q5-engineering-architecture",
+      "query": "distributed systems architecture postgres replication",
+      "embedding_dim": 4,
+      "relevant_slugs": ["concepts/distributed-systems-example", "topics/architecture-example"],
+      "first_relevant_slug": "concepts/distributed-systems-example"
+    },
+    {
+      "query_id": "q6-personal-task",
+      "query": "weekly task list goals review",
+      "embedding_dim": 5,
+      "relevant_slugs": ["writing/weekly-tasks-example", "personal/goals-example"],
+      "first_relevant_slug": "writing/weekly-tasks-example"
+    },
+    {
+      "query_id": "q7-fund-investor",
+      "query": "fund investor partner introduction",
+      "embedding_dim": 6,
+      "relevant_slugs": ["people/dana-example", "companies/fund-a-example"],
+      "first_relevant_slug": "people/dana-example"
+    },
+    {
+      "query_id": "q8-product-design",
+      "query": "design system component library",
+      "embedding_dim": 7,
+      "relevant_slugs": ["writing/design-system-essay-example", "projects/component-library-example"],
+      "first_relevant_slug": "writing/design-system-essay-example"
+    },
+    {
+      "query_id": "q9-accelerator-batch",
+      "query": "accelerator batch founder demo day",
+      "embedding_dim": 8,
+      "relevant_slugs": ["people/elliot-example", "events/demo-day-example"],
+      "first_relevant_slug": "people/elliot-example"
+    },
+    {
+      "query_id": "q10-tech-stack",
+      "query": "TypeScript bun runtime build pipeline",
+      "embedding_dim": 9,
+      "relevant_slugs": ["concepts/typescript-example", "tech/bun-runtime-example"],
+      "first_relevant_slug": "concepts/typescript-example"
+    },
+    {
+      "query_id": "q11-research-paper",
+      "query": "retrieval augmented generation paper notes",
+      "embedding_dim": 10,
+      "relevant_slugs": ["concepts/rag-example", "writing/retrieval-overview-example"],
+      "first_relevant_slug": "concepts/rag-example"
+    },
+    {
+      "query_id": "q12-founder-mode",
+      "query": "founder mode product feedback loop",
+      "embedding_dim": 11,
+      "relevant_slugs": ["originals/founder-mode-example", "concepts/founder-mode-example"],
+      "first_relevant_slug": "originals/founder-mode-example"
+    }
+  ]
+}

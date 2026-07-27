@@ -1,0 +1,121 @@
+# gbrain-everything — meta-pack stacking all three lenses
+#
+# v0.41 lens packs wave. Codex outside-voice T4 resolution: gbrain's
+# 7-tier active-pack resolver is single-valued, but the user's actual
+# workflow needs creator + investor + engineer simultaneously (Garry
+# switches between YC investor work, content creation, and gstack
+# engineering across the same day). Two paths to "three lenses on one
+# brain":
+#
+#   A) New active-multi-pack composition concept. New code, new
+#      architecture, new corners. Deferred per plan's NOT-in-scope.
+#
+#   B) Compose via the v0.38-shipped extends chain. Author a meta-pack
+#      that extends one of the three, and bring the other two via
+#      borrow_from. registry walks the chain, unions page_types +
+#      link_types + phases + calibration_domains. ZERO new architecture.
+#
+# This pack is path B. Activate via `gbrain config set schema_pack
+# gbrain-everything` and the brain runs all three lens-pack phases
+# (extract_atoms + synthesize_concepts from creator; gstack-learnings
+# bridge from engineer) AND surfaces all 7 calibration domains
+# (_overall + concept_themes + deal_success + founder_evaluation +
+# market_call + architecture_calls + effort_estimates + risk_assessment).
+#
+# Extension chain (registry resolves via extends.parent.parent.parent):
+#
+#     gbrain-everything ──extends──▶ gbrain-investor ──extends──▶ gbrain-base
+#                       │ borrow                     │
+#                       ├─ gbrain-creator
+#                       └─ gbrain-engineer
+#
+# Single-active-pack constraint preserved: this IS the active pack.
+# Registry walks its dependencies through extends + borrow_from to
+# materialize the merged view. Tested by the everything-manifest test.
+
+api_version: gbrain-schema-pack-v1
+name: gbrain-everything
+version: 1.0.0
+description: "Meta-pack stacking creator + investor + engineer lenses on one brain. Use this when you do investor work AND content creation AND engineering in the same brain (YC president pattern, founder pattern). Single active-pack activation via `gbrain config set schema_pack gbrain-everything` — registry walks extends + borrow_from chain to union all three lenses' page_types, phases, and calibration_domains."
+gbrain_min_version: 0.41.0
+
+# Extends gbrain-investor (which itself extends gbrain-base) and borrows
+# from gbrain-creator + gbrain-engineer. The registry's extends chain
+# walker (cap depth 8) unions every level's contributions.
+extends: gbrain-investor
+
+# Borrow types + link_types from the other two lens packs. This is the
+# composition mechanism that makes "three lenses" real without a
+# multi-active-pack architecture.
+borrow_from:
+  - pack: gbrain-creator
+    types:
+      - atom
+      # concept already in base
+  - pack: gbrain-engineer
+    types:
+      - learning
+      # code + project already in base
+
+# No new page types declared here — everything comes via extends + borrow.
+page_types: []
+
+# Union of creator + engineer phase declarations. Investor pack declares
+# no phases (consumes existing pipeline), so nothing inherited from the
+# extends chain there. Creator's phases must be re-declared explicitly
+# because `borrow_from` borrows types/link_types only, NOT phases (D4-B
+# decision: each pack declares its phase participation explicitly).
+#
+# Engineer pack's phases: [] is the empty case — the gstack-learnings
+# IngestionSource is daemon-side, not a cycle phase.
+phases:
+  - extract_atoms
+  - synthesize_concepts
+
+# Union of creator + investor + engineer calibration domains. Same
+# explicit re-declaration rationale as phases — calibration_domains
+# aren't borrowed; the meta-pack declares the full set.
+#
+# Aggregator algorithms are the closed enum; domain names match the
+# per-pack declarations so the JSONB scorecard keys are stable across
+# active-pack switches (a user moving from gbrain-investor to
+# gbrain-everything keeps their deal_success scorecard intact).
+calibration_domains:
+  # From gbrain-creator:
+  - name: concept_themes
+    aggregator: cluster_summary
+    page_types:
+      - concept
+
+  # From gbrain-investor:
+  - name: deal_success
+    aggregator: scalar_brier
+    page_types:
+      - deal
+  - name: founder_evaluation
+    aggregator: scalar_brier
+    page_types:
+      - person
+  - name: market_call
+    aggregator: weighted_brier
+    page_types:
+      - thesis
+
+  # From gbrain-engineer:
+  - name: architecture_calls
+    aggregator: scalar_brier
+    page_types:
+      - code
+      - learning
+  - name: effort_estimates
+    aggregator: weighted_brier
+    page_types:
+      - project
+  - name: risk_assessment
+    aggregator: scalar_brier
+    page_types:
+      - project
+
+# Filing rules inherit through extends + borrow. No re-declaration needed —
+# registry merges parent + borrowed pack filing_rules.
+filing_rules: []

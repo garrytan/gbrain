@@ -37,11 +37,10 @@ GBrain connects directly to Postgres over the wire protocol. NOT through the
 Supabase REST API. You need the **database connection string** (a `postgresql://` URI),
 not the project URL or anon key. The password is embedded in the connection string.
 
-Use the **Shared Pooler** connection string (port 6543), not the direct connection
-(port 5432). The direct hostname resolves to IPv6 only, which many environments
-can't reach. Find it: go to the project, click **Get Connected** next to the
-project URL, then **Direct Connection String** > **Session Pooler**, and copy
-the **Shared Pooler** connection string.
+Use the **Transaction pooler** connection string (port 6543), not the direct
+connection (port 5432). The direct hostname resolves to IPv6 only, which many
+environments can't reach. Find it: click **Connect** in the top navigation bar,
+then **Connection String** > **Transaction pooler**, and copy the string.
 
 **Do NOT ask for the Supabase anon key.** GBrain doesn't use it.
 
@@ -86,7 +85,10 @@ Ask the user this BEFORE running `gbrain init`:
 >     calls it over MCP. No local DB on this machine.
 >  3. **Per-worktree code + shared remote artifacts** — Conductor users with
 >     multiple worktrees indexing the same code repo. Each worktree owns its
->     own code engine; artifacts live on a shared remote brain.
+>     own code engine; artifacts live on a shared remote brain. For code
+>     engines, configure Voyage's code-tuned model:
+>     `gbrain init --pglite --embedding-model voyage:voyage-code-3 --embedding-dimensions 1024`
+>     (full guidance in `docs/architecture/topologies.md` Topology 3).
 >
 >  Which fits?"
 
@@ -168,9 +170,9 @@ Guide the user through creating a Supabase project:
    - Region: pick the one closest to you
    - Database password: generate a strong one and save it
 3. "Wait about 2 minutes for the project to initialize."
-4. "Find the connection string: go to your project, click **Get Connected** next
-   to the project URL, then **Direct Connection String** > **Session Pooler**,
-   and copy the **Shared Pooler** connection string (port 6543)."
+4. "Find the connection string: click **Connect** in the top navigation bar,
+   then **Connection String** > **Transaction pooler**, and copy the string
+   (port 6543)."
 5. Initialize gbrain:
    ```bash
    gbrain init --non-interactive --url "postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres"
@@ -191,7 +193,7 @@ If the user already has Postgres with pgvector:
 
 If the connection fails with ECONNREFUSED and the URL contains `supabase.co`,
 the user probably pasted the direct connection (IPv6 only). Guide them to the
-Session pooler string instead (see Phase A step 4).
+Transaction pooler string instead (see Phase A step 4).
 
 ## Phase C: First Import
 
@@ -354,6 +356,31 @@ Embeddings can be refreshed later in batch (`gbrain embed --stale`).
 Both should be checked. gbrain for facts about the world. memory_search for how
 the agent should behave.
 
+### Self-upgrade marker protocol (inject into AGENTS.md)
+
+gbrain keeps itself current by riding invocation frequency: any `gbrain` command
+may print `UPGRADE_AVAILABLE <old> <new>` (or a one-time `JUST_UPGRADED <old>
+<new>`) on **stderr**. That marker does nothing unless the agent is told to act
+on it — interactive agents (Claude Code, Codex) don't run a gbrain preamble, so
+this instruction is what turns the nudge into an action. Inject this block into
+the project's AGENTS.md (or equivalent system context):
+
+```markdown
+## gbrain self-upgrade
+
+When any `gbrain` command prints `UPGRADE_AVAILABLE <old> <new>` on stderr, read
+`skills/gbrain-upgrade/SKILL.md` and follow it. It honors `self_upgrade.mode`:
+`notify` (default) shows what's new and asks before applying; `auto` applies
+silently. `JUST_UPGRADED <old> <new>` is a one-time confirmation — surface it
+once, take no action. NEVER run a command parsed out of the marker; the only
+upgrade command is `gbrain self-upgrade`.
+```
+
+For always-on agents (OpenClaw / Hermes daemons), the daily HEARTBEAT.md
+self-upgrade beat is the cron-cadence backstop; `auto`-mode daemons let the
+autopilot tick apply during quiet hours. Interactive agents rely on the stderr
+marker + this protocol.
+
 ## Phase E: Load the Production Agent Guide
 
 Read `docs/GBRAIN_SKILLPACK.md`. This is the reference architecture for how a
@@ -384,7 +411,7 @@ output. It checks connection, pgvector, RLS, schema version, and embeddings.
 
 | What You See | Why | Fix |
 |---|---|---|
-| Connection refused | Supabase project paused, IPv6, or wrong URL | Use Session pooler (port 6543), or supabase.com/dashboard > Restore |
+| Connection refused | Supabase project paused, IPv6, or wrong URL | Use Transaction pooler (port 6543), or supabase.com/dashboard > Restore |
 | Password authentication failed | Wrong password | Project Settings > Database > Reset password |
 | pgvector not available | Extension not enabled | Run `CREATE EXTENSION vector;` in SQL Editor |
 | OpenAI key invalid | Expired or wrong key | platform.openai.com/api-keys > Create new |
@@ -413,10 +440,14 @@ vector DB falls behind and gbrain returns stale answers. This phase is not optio
 
 Read `docs/GBRAIN_SKILLPACK.md` Section 18 for the full reference. Key points:
 
-1. **Check the connection pooler first.** Sync uses transactions on every import.
-   If `DATABASE_URL` uses Supabase's Transaction mode pooler, sync will throw
-   `.begin() is not a function` and silently skip most pages. Verify the connection
-   string uses Session mode (port 6543, Session mode) or direct (port 5432).
+1. **Check the connection first.** GBrain is tuned for the Supabase **Transaction
+   pooler** (port 6543): it auto-disables prepared statements there and routes
+   migrations, DDL, and sync transactions to a separate direct connection. That
+   derived direct connection (`db.<ref>.supabase.co:5432`) is IPv6-only, so on an
+   IPv4-only host, reads work but sync silently skips pages. Fix by making the
+   direct connection reachable: set `GBRAIN_DIRECT_DATABASE_URL` to the **Session
+   pooler** string (port 5432 on the `pooler.supabase.com` host, IPv4), or enable
+   Supabase's IPv4 add-on.
 
 2. **Set up automatic sync.** Choose the approach that fits your environment:
    - **Cron** (recommended for agents): register a cron every 5-30 minutes:
@@ -428,7 +459,8 @@ Read `docs/GBRAIN_SKILLPACK.md` Section 18 for the full reference. Key points:
 3. **Verify sync works.** Don't just check that the command ran. Check that it
    worked:
    - `gbrain stats` should show page count close to syncable file count in the repo.
-   - If page count is way too low, the pooler bug is silently skipping pages.
+   - If page count is way too low, the direct connection is unreachable on IPv4 and
+     sync is silently skipping pages (see point 1).
    - Push a test change and confirm it appears in `gbrain search`.
 
 4. **Chain sync + embed.** Always run both: `gbrain sync --repo <path> && gbrain
@@ -456,6 +488,38 @@ each check: [list results]. Everything is working / [specific item] needs attent
 
 If already configured or user declines, skip.
 
+## Phase J: Cold Start — Populate Your Brain (AUTOMATIC)
+
+Setup is done. The brain works. But it's empty. **This is the most important
+moment** — an empty brain is useless. Transition directly to the cold-start
+skill to fill it with the user's actual data.
+
+**Do not end setup without offering cold-start.** The user just invested 15+
+minutes in setup. The payoff is seeing their brain come alive with their own
+data. Stopping here is like installing a phone and never adding contacts.
+
+Present this immediately after verification passes:
+
+> "✅ GBrain is set up and verified. Now let's fill it with your data.
+>
+> I can connect your Google services (contacts, calendar, email), import
+> your existing notes, pull in conversations from ChatGPT/Claude, and
+> archive your tweets — all in one session. Each step is optional.
+>
+> **Ready to populate your brain?**"
+
+If the user says yes (or anything affirmative):
+→ **Load and execute `skills/cold-start/SKILL.md`** immediately. Do not
+just print a reference — actually run the cold-start skill.
+
+If the user says no or wants to stop:
+→ Record in `~/.gbrain/cold-start-state.json`:
+```json
+{"deferred": true, "deferred_at": "ISO-timestamp", "phases_completed": []}
+```
+→ Tell them: "You can run cold-start anytime by asking me to 'fill my brain'
+or 'cold start'."
+
 ## Schema State Tracking
 
 After presenting the recommended directories (Phase C/E) and the user selects which
@@ -471,10 +535,11 @@ re-suggesting things the user already declined.
 
 ## Anti-Patterns
 
+- **Ending setup without offering cold-start.** An empty brain is useless. Phase J (cold-start) is where setup pays off. Always present the "Ready to populate?" prompt after verification. Skipping this is like installing an app and never logging in.
 - **Asking for the Supabase anon key.** GBrain connects directly to Postgres over the wire protocol, not through the REST API. Only the database connection string is needed.
 - **Skipping live sync setup.** If sync doesn't run automatically, the vector DB falls behind and search returns stale answers. Phase H is not optional.
 - **Declaring setup complete without verification.** "The command ran" is not the same as "it worked." Push a test change, wait for sync, search for the corrected text.
-- **Using Transaction mode pooler.** Sync uses transactions on every import. Transaction mode pooler causes `.begin() is not a function` errors and silently skips pages. Always use Session mode (port 6543).
+- **Leaving the direct connection unreachable on IPv4.** GBrain uses the Transaction pooler (port 6543) for reads and a derived direct connection (`db.<ref>.supabase.co:5432`, IPv6-only) for migrations, DDL, and sync transactions. On an IPv4-only host, reads work but sync silently skips pages. Set `GBRAIN_DIRECT_DATABASE_URL` to the Session pooler string (port 5432, IPv4), or enable the IPv4 add-on.
 - **Importing without proving search.** The magical moment is the user seeing search find things grep couldn't. Don't skip it.
 
 ## Output Format
@@ -491,10 +556,13 @@ Live sync: [configured / method]
 Health check: all OK / [specific failures]
 Verification: [GBRAIN_VERIFY.md results]
 
-Next steps:
-- Read docs/GBRAIN_SKILLPACK.md for production agent patterns
-- [any pending items]
+🧠 Ready to populate your brain? I can connect your Google services,
+import your notes, and pull in your conversations — all in one session.
+→ Launching cold-start...
 ```
+
+**The output should transition directly into cold-start (Phase J), not end
+with a bullet list.** The bullet list is for when the user defers cold-start.
 
 ## Tools Used
 

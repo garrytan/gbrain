@@ -46,6 +46,52 @@ Do NOT switch brain when:
 - You're unsure. Stay in host, surface what you found, let the user point
   you at a specific brain.
 
+## Source resolution chain (7-tier, v0.41.13+)
+
+`gbrain` resolves the active source via `resolveSourceId()` in
+`src/core/source-resolver.ts`. Seven tiers, highest priority first:
+
+| # | Tier | Signal |
+|---|---|---|
+| 1 | `flag` | Explicit `--source <id>` CLI flag (or `--source-id <id>` on `gbrain extract` / `gbrain import`) |
+| 2 | `env` | `GBRAIN_SOURCE` environment variable |
+| 3 | `dotfile` | `.gbrain-source` file in CWD or any ancestor directory |
+| 4 | `local_path` | A registered source whose `local_path` contains CWD (longest prefix wins) |
+| 5 | `brain_default` | Brain-level `sources.default` config key (explicit user intent) |
+| 5.5 | `sole_non_default` | When tiers 1–5 missed AND exactly one registered source has a `local_path` AND isn't `'default'`, auto-route to it. Fires a one-time stderr nudge per CLI invocation. Suppress with `GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE=1`. |
+| 6 | `seed_default` | Literal `'default'` (always exists post-migration v16) |
+
+**v0.41.13 tier 5.5 (`sole_non_default`):** added for single-source brains
+(typical for users with one Obsidian vault, one notes folder, one project).
+Pre-fix, `gbrain sync` from `/tmp` against a brain registering only
+`studiovault` silently routed to `'default'` and every edit failed at
+`createVersion` because the slug didn't exist there. The tier auto-routes
+to the obvious single answer. Multi-source brains (2+ non-default registered)
+still fall through to `seed_default` and require explicit `--source`.
+
+Placement AFTER `brain_default` is deliberate: a user who explicitly set
+`sources.default` via `gbrain sources default <id>` has stated intent that
+wins over the auto-route. Archived sources are excluded from the count.
+
+**v0.37.7.0 tooling:**
+
+- `gbrain sources current [--json]` echoes the resolved source AND
+  which tier won. Run this before any destructive op to verify what
+  you're about to target.
+- `gbrain sources current --source X` shows what an explicit flag
+  WOULD resolve to (validates X exists in the sources table).
+
+CLI commands honoring this chain: `gbrain sync`, `gbrain import`,
+`gbrain search`, `gbrain extract` (via `--source-id <id>` since
+`--source` is the fs|db data-source axis), `gbrain graph-query`
+(via `--include-foreign` for cross-source traversal).
+
+**Trust boundary (v0.34.1.0):** the resolver is CLI-layer only.
+Operations.ts handlers do NOT read `.gbrain-source` or
+`GBRAIN_SOURCE`. MCP/remote callers go through
+`ctx.auth.sourceId` / `ctx.auth.allowedSources` instead. A remote
+caller cannot inherit the server process's CLI source context.
+
 ## When to switch source
 
 Switch source (`--source <id>`) when:

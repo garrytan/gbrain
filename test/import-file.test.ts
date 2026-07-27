@@ -1,14 +1,25 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { writeFileSync, mkdirSync, rmSync, symlinkSync } from 'fs';
+import { writeFileSync, mkdirSync, rmSync, symlinkSync, readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { importFile, importFromContent } from '../src/core/import-file.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { MARKDOWN_CHUNKER_VERSION } from '../src/core/chunkers/recursive.ts';
 
 const TMP = join(import.meta.dir, '.tmp-import-test');
 
 // Minimal mock engine that tracks calls and supports transaction()
+//
+// Post-write read-back guard: the mock now simulates a real DB by storing pages written
+// via putPage so getPage can read them back. The post-write read-back guard
+// in importFromContent calls getPage after the transaction commits — a mock
+// that always returns null (the pre-fix default) triggers the guard's
+// "page not found after write" path. This is the correct loud-failure
+// behavior for a real desync, but for the existing unit tests we need the
+// mock to behave like a working DB where writes are readable.
 function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
   const calls: { method: string; args: any[] }[] = [];
+  // In-memory page store: slug → page row (simulates a real DB index).
+  const pageStore = new Map<string, { slug: string; content_hash: string; title: string; type: string; frontmatter: Record<string, unknown> }>();
   const track = (method: string) => (...args: any[]) => {
     calls.push({ method, args });
     if (overrides[method]) return overrides[method](...args);
@@ -19,7 +30,49 @@ function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
     get(_, prop: string) {
       if (prop === '_calls') return calls;
       if (prop === 'getTags') return overrides.getTags || (() => Promise.resolve([]));
-      if (prop === 'getPage') return overrides.getPage || (() => Promise.resolve(null));
+      if (prop === 'getPage') {
+        return async (slug: string, opts?: { sourceId?: string }) => {
+          // If the test provides a custom getPage, call it first (for the
+          // "existing" check at the top of importFromContent). If it returns
+          // a value, use that. If it returns null, fall back to the in-memory
+          // store (for the read-back guard after the write).
+          //
+          // Read-back guard: when the override returns a non-null value,
+          // we still need the read-back to see the page as written by putPage.
+          // The override simulates the "existing page" state; the store has
+          // the post-write state. If the override and the store disagree on
+          // content_hash, the store wins (the write already committed).
+          if (overrides.getPage) {
+            const overrideResult = await overrides.getPage(slug, opts);
+            if (overrideResult) {
+              // If the page was written (store has it), the store's hash
+              // is the post-write hash. Merge: return the override's shape
+              // but with the store's content_hash (the committed value).
+              const stored = pageStore.get(slug);
+              if (stored) {
+                return { ...overrideResult, content_hash: stored.content_hash };
+              }
+              return overrideResult;
+            }
+          }
+          return pageStore.get(slug) ?? null;
+        };
+      }
+      if (prop === 'putPage') {
+        return async (slug: string, page: { content_hash?: string; title?: string; type?: string; frontmatter?: Record<string, unknown> }, _opts?: { sourceId?: string }) => {
+          calls.push({ method: 'putPage', args: [slug, page, _opts] });
+          if (overrides.putPage) overrides.putPage(slug, page, _opts);
+          // Always store the page so getPage can read it back (simulates DB index).
+          pageStore.set(slug, {
+            slug,
+            content_hash: page.content_hash ?? '',
+            title: page.title ?? '',
+            type: page.type ?? '',
+            frontmatter: page.frontmatter ?? {},
+          });
+          return Promise.resolve(undefined);
+        };
+      }
       // transaction: just call the fn with the same engine (no real DB transaction in tests)
       if (prop === 'transaction') return async (fn: (tx: BrainEngine) => Promise<any>) => fn(engine);
       return track(prop);
@@ -216,7 +269,11 @@ Same content.
     expect(putCall).toBeUndefined();
   });
 
-  test('reconciles tags: removes old, adds new', async () => {
+  test('reconciles tags: ADD-ONLY, never removes (v0.41.37.0 #1621)', async () => {
+    // Add-only reconciliation: re-import adds current frontmatter tags and
+    // NEVER deletes — so DB-side enrichment tags (here simulated as 'old-tag')
+    // survive. The pre-#1621 behavior deleted every existing tag not in the
+    // current frontmatter, wiping enrichment tags on every re-import/reindex.
     const filePath = join(TMP, 'retag.md');
     writeFileSync(filePath, `---
 type: concept
@@ -238,9 +295,11 @@ Content here.
     const removeCalls = calls.filter((c: any) => c.method === 'removeTag');
     const addCalls = calls.filter((c: any) => c.method === 'addTag');
 
-    expect(removeCalls.length).toBe(1);
-    expect(removeCalls[0].args[1]).toBe('old-tag');
+    // No removals — 'old-tag' (enrichment) is preserved.
+    expect(removeCalls.length).toBe(0);
+    // Both current frontmatter tags are added (idempotent via ON CONFLICT).
     expect(addCalls.length).toBe(2);
+    expect(addCalls.map((c: any) => c.args[1]).sort()).toEqual(['kept-tag', 'new-tag']);
   });
 
   test('chunks compiled_truth and timeline separately', async () => {
@@ -406,5 +465,384 @@ ${longText}
         expect(chunks[i].chunk_index).toBe(i);
       }
     }
+  });
+});
+
+describe('importFile — CJK wave (v0.32.7)', () => {
+  test('REGRESSION: pure-CJK filename with NO frontmatter slug imports cleanly as CJK slug', async () => {
+    // After #115, slugifyPath('小米.md') = '小米' (CJK preserved). The
+    // anti-spoof rule is content with no frontmatter slug present.
+    const filePath = join(TMP, '小米.md');
+    writeFileSync(filePath, `---
+type: company
+title: Xiaomi
+---
+
+Body text.
+`);
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, '小米.md', { noEmbed: true });
+    expect(result.status).toBe('imported');
+    expect(result.slug).toBe('小米');
+    const putCall = (engine as any)._calls.find((c: any) => c.method === 'putPage');
+    expect(putCall.args[1].chunker_version).toBe(MARKDOWN_CHUNKER_VERSION);
+    expect(putCall.args[1].source_path).toBe('小米.md');
+  });
+
+  test('empty-path-slug + frontmatter slug → fallback path fires (emoji filename)', async () => {
+    // 🚀.md slugifies empty even after #115 (emoji not in CJK ranges).
+    // Frontmatter slug must take over. logSlugFallback fires.
+    const filePath = join(TMP, '🚀.md');
+    writeFileSync(filePath, `---
+type: project
+title: Launch
+slug: projects/launch
+---
+
+Lifting off.
+`);
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, '🚀.md', { noEmbed: true });
+    expect(result.status).toBe('imported');
+    expect(result.slug).toBe('projects/launch');
+    const putCall = (engine as any)._calls.find((c: any) => c.method === 'putPage');
+    expect(putCall.args[0]).toBe('projects/launch');
+    expect(putCall.args[1].source_path).toBe('🚀.md');
+  });
+
+  test('empty-path-slug + NO frontmatter slug → friendly D6=B error message', async () => {
+    // 🌟🚀 slugifies to '' (both emoji stripped, no remaining chars).
+    // No frontmatter slug to fall back on → friendly error.
+    const filePath = join(TMP, '🌟🚀.md');
+    writeFileSync(filePath, `# Bare body without frontmatter slug
+
+just content.
+`);
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, '🌟🚀.md', { noEmbed: true });
+    expect(result.status).toBe('skipped');
+    expect(result.error).toContain('no usable slug');
+    expect(result.error).toContain('ASCII / Chinese / Japanese / Korean');
+    expect((engine as any)._calls.length).toBe(0);
+  });
+
+  test('REGRESSION: anti-spoof still rejects when path DOES derive a slug', async () => {
+    // notes/random.md derives slug `notes/random`. Frontmatter `slug: people/elon`
+    // is a mismatch and MUST still be rejected (the original PR #598 + C1 test
+    // fixture contradiction concern).
+    const filePath = join(TMP, 'antispoof-cjk-wave.md');
+    writeFileSync(filePath, `---
+type: person
+title: Elon
+slug: people/elon
+---
+
+Hijack.
+`);
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'notes/antispoof-cjk-wave.md', { noEmbed: true });
+    expect(result.status).toBe('skipped');
+    expect(result.error).toContain('does not match');
+    expect((engine as any)._calls.length).toBe(0);
+  });
+
+  test('chunker_version + source_path populated on every import', async () => {
+    const filePath = join(TMP, 'cjk-source-path.md');
+    writeFileSync(filePath, `---
+type: concept
+title: Has source path
+---
+
+Content.
+`);
+    const engine = mockEngine();
+    await importFile(engine, filePath, 'concepts/cjk-source-path.md', { noEmbed: true });
+    const putCall = (engine as any)._calls.find((c: any) => c.method === 'putPage');
+    expect(putCall).toBeTruthy();
+    expect(putCall.args[1].chunker_version).toBe(MARKDOWN_CHUNKER_VERSION);
+    expect(putCall.args[1].source_path).toBe('concepts/cjk-source-path.md');
+  });
+});
+
+// v0.39.3.0 CV8 Phase 3d — DB content_hash excludes timestamp-bearing
+// frontmatter keys (captured_at, ingested_at) so identical body content
+// from capture-cli produces a stable hash across multiple captures.
+// Pre-fix, every capture invocation produced a fresh hash because the
+// captured_at timestamp changed, defeating both the existing.content_hash
+// short-circuit AND the daemon's 24h LRU dedup.
+describe('importFromContent — CV8 DB content_hash stability', () => {
+  test('captured_at differences produce IDENTICAL hash (capture-cli dedup)', async () => {
+    // Capture #1 at one timestamp
+    const t1 = '2026-05-22T10:00:00.000Z';
+    const content1 = `---
+type: note
+title: Same Text
+captured_at: ${t1}
+captured_via: capture-cli
+---
+
+# Same Text
+
+remember to follow up
+`;
+    // Capture #2 at a different timestamp (same body)
+    const t2 = '2026-05-22T11:00:00.000Z';
+    const content2 = `---
+type: note
+title: Same Text
+captured_at: ${t2}
+captured_via: capture-cli
+---
+
+# Same Text
+
+remember to follow up
+`;
+
+    let firstHash: string | undefined;
+    let secondHash: string | undefined;
+    let firstStatus: string | undefined;
+    let secondStatus: string | undefined;
+
+    // First call: no existing page; hash is computed and written
+    const engine1 = mockEngine({
+      getPage: () => Promise.resolve(null),
+      putPage: (_slug: string, page: any) => {
+        firstHash = page.content_hash;
+        return Promise.resolve(null);
+      },
+    });
+    const r1 = await importFromContent(engine1, 'inbox/test', content1, { noEmbed: true });
+    firstStatus = r1.status;
+    expect(firstStatus).toBe('imported');
+    expect(firstHash).toBeTruthy();
+
+    // Second call: existing page has the first hash; the second capture's
+    // hash must match so the short-circuit fires and status === 'skipped'.
+    const engine2 = mockEngine({
+      getPage: () => Promise.resolve({ content_hash: firstHash } as any),
+      putPage: (_slug: string, page: any) => {
+        secondHash = page.content_hash;
+        return Promise.resolve(null);
+      },
+    });
+    const r2 = await importFromContent(engine2, 'inbox/test', content2, { noEmbed: true });
+    secondStatus = r2.status;
+    expect(secondStatus).toBe('skipped'); // hash matched
+    expect(secondHash).toBeUndefined(); // putPage NOT called (short-circuited)
+  });
+
+  test('body change DOES change the hash (real edits not silently swallowed)', async () => {
+    const t = '2026-05-22T10:00:00.000Z';
+    const content1 = `---
+type: note
+captured_at: ${t}
+---
+
+original body
+`;
+    const content2 = `---
+type: note
+captured_at: ${t}
+---
+
+edited body
+`;
+
+    let firstHash: string | undefined;
+    let secondHash: string | undefined;
+
+    const engine1 = mockEngine({
+      getPage: () => Promise.resolve(null),
+      putPage: (_slug: string, page: any) => {
+        firstHash = page.content_hash;
+        return Promise.resolve(null);
+      },
+    });
+    await importFromContent(engine1, 'inbox/test', content1, { noEmbed: true });
+
+    const engine2 = mockEngine({
+      getPage: () => Promise.resolve({ content_hash: firstHash } as any),
+      putPage: (_slug: string, page: any) => {
+        secondHash = page.content_hash;
+        return Promise.resolve(null);
+      },
+    });
+    const r2 = await importFromContent(engine2, 'inbox/test', content2, { noEmbed: true });
+    expect(r2.status).toBe('imported'); // body changed, hash differs, re-imported
+    expect(secondHash).toBeTruthy();
+    expect(secondHash).not.toBe(firstHash);
+  });
+
+  test('tag change DOES change the hash (sync tag-add not silently swallowed)', async () => {
+    // Regression guard: stripping captured_at from the hash input must NOT
+    // also strip tags. A user editing a markdown file to add a tag still
+    // expects tag reconciliation to fire.
+    const content1 = `---
+type: concept
+tags: [alpha]
+---
+
+body
+`;
+    const content2 = `---
+type: concept
+tags: [alpha, beta]
+---
+
+body
+`;
+
+    let firstHash: string | undefined;
+    let secondHash: string | undefined;
+
+    const engine1 = mockEngine({
+      getPage: () => Promise.resolve(null),
+      putPage: (_slug: string, page: any) => {
+        firstHash = page.content_hash;
+        return Promise.resolve(null);
+      },
+    });
+    await importFromContent(engine1, 'concepts/x', content1, { noEmbed: true });
+
+    const engine2 = mockEngine({
+      getPage: () => Promise.resolve({ content_hash: firstHash } as any),
+      putPage: (_slug: string, page: any) => {
+        secondHash = page.content_hash;
+        return Promise.resolve(null);
+      },
+    });
+    const r2 = await importFromContent(engine2, 'concepts/x', content2, { noEmbed: true });
+    expect(r2.status).toBe('imported'); // tags changed, hash differs
+    expect(secondHash).not.toBe(firstHash);
+  });
+
+  test('ingested_at differences produce IDENTICAL hash (server-stamp dedup)', async () => {
+    // Provenance write-through stamps `ingested_at` server-side per CV6;
+    // a put_page that's just refreshing provenance (e.g. capture re-runs
+    // the same file later) must not invalidate the chunk cache.
+    const content1 = `---
+type: note
+ingested_at: '2026-05-22T10:00:00.000Z'
+---
+
+body unchanged
+`;
+    const content2 = `---
+type: note
+ingested_at: '2026-05-22T11:00:00.000Z'
+---
+
+body unchanged
+`;
+
+    let firstHash: string | undefined;
+    let shortCircuited = false;
+
+    const engine1 = mockEngine({
+      getPage: () => Promise.resolve(null),
+      putPage: (_slug: string, page: any) => {
+        firstHash = page.content_hash;
+        return Promise.resolve(null);
+      },
+    });
+    await importFromContent(engine1, 'inbox/y', content1, { noEmbed: true });
+
+    const engine2 = mockEngine({
+      getPage: () => Promise.resolve({ content_hash: firstHash } as any),
+      putPage: () => {
+        shortCircuited = false;
+        return Promise.resolve(null);
+      },
+    });
+    const r2 = await importFromContent(engine2, 'inbox/y', content2, { noEmbed: true });
+    shortCircuited = r2.status === 'skipped';
+    expect(shortCircuited).toBe(true);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────
+// #1035 — type round-trip preservation
+//
+// put_page → importFromContent → parseMarkdown infers type from the file
+// path when frontmatter omits `type:`, and bare slugs infer 'concept'.
+// Pre-fix, a round-trip put (get_page → edit body → put_page WITHOUT a
+// type: line) silently regressed a curated type to 'concept'. Absence of
+// an explicit frontmatter type on an EXISTING page must preserve the
+// stored type; an explicit type stays an override; new pages still infer.
+// ────────────────────────────────────────────────────────────────
+
+describe('importFromContent type round-trip (#1035)', () => {
+  test('re-put without type: preserves the existing page type', async () => {
+    let putType: string | undefined;
+    const engine = mockEngine({
+      getPage: () => Promise.resolve({
+        slug: 'founder-notes-example',
+        type: 'person',
+        content_hash: 'different-hash',
+        updated_at: new Date(),
+        created_at: new Date(),
+      } as any),
+      putPage: (_slug: string, page: any) => {
+        putType = page.type;
+        return Promise.resolve(null);
+      },
+    });
+    const result = await importFromContent(engine, 'founder-notes-example', [
+      '---',
+      'title: Notes',
+      '---',
+      '',
+      'Edited body, no type in frontmatter.',
+    ].join('\n'), { noEmbed: true });
+    expect(result.status).toBe('imported');
+    expect(putType).toBe('person'); // pre-fix: 'concept' (bare-slug inference default)
+  });
+
+  test('explicit frontmatter type: still overrides the existing type', async () => {
+    let putType: string | undefined;
+    const engine = mockEngine({
+      getPage: () => Promise.resolve({
+        slug: 'founder-notes-example',
+        type: 'person',
+        content_hash: 'different-hash',
+        updated_at: new Date(),
+        created_at: new Date(),
+      } as any),
+      putPage: (_slug: string, page: any) => {
+        putType = page.type;
+        return Promise.resolve(null);
+      },
+    });
+    const result = await importFromContent(engine, 'founder-notes-example', [
+      '---',
+      'type: note',
+      'title: Notes',
+      '---',
+      '',
+      'Explicit type wins.',
+    ].join('\n'), { noEmbed: true });
+    expect(result.status).toBe('imported');
+    expect(putType).toBe('note');
+  });
+
+  test('new page without type: still infers from path', async () => {
+    let putType: string | undefined;
+    const engine = mockEngine({
+      getPage: () => Promise.resolve(null),
+      putPage: (_slug: string, page: any) => {
+        putType = page.type;
+        return Promise.resolve(null);
+      },
+    });
+    const result = await importFromContent(engine, 'people/alice-example', [
+      '---',
+      'title: Alice',
+      '---',
+      '',
+      'A new person page.',
+    ].join('\n'), { noEmbed: true });
+    expect(result.status).toBe('imported');
+    expect(putType).toBe('person'); // /people/ path-prefix inference intact
   });
 });

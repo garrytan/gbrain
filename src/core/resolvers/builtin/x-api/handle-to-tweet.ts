@@ -99,7 +99,21 @@ export const xHandleToTweetResolver: Resolver<XHandleToTweetInput, XHandleToTwee
       tweet_id: { type: 'string' },
       text: { type: 'string' },
       created_at: { type: 'string', format: 'date-time' },
-      candidates: { type: 'array' },
+      candidates: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            tweet_id: { type: 'string' },
+            text: { type: 'string' },
+            created_at: { type: 'string', format: 'date-time' },
+            score: { type: 'number' },
+            url: { type: 'string', format: 'uri' },
+          },
+          required: ['tweet_id', 'text', 'created_at', 'score', 'url'],
+          additionalProperties: false,
+        },
+      },
     },
     required: ['candidates'],
   },

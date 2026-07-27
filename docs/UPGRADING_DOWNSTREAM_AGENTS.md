@@ -538,3 +538,75 @@ To check what your fork is missing:
 diff <(grep -A3 "Based on gbrain" ~/<your-fork>/skills/brain-ops/SKILL.md) \
      <(grep "v[0-9]" ~/gbrain/skills/migrations/ | tail -3)
 ```
+
+
+## v0.36.5.0 — Free-form secret inheritance for shell jobs calling `gbrain` CLI
+
+**The change.** Shell-job params get a new `inherit:` field. Pass any
+snake_case config-key name on it; the worker resolves the value from its
+`loadConfig()` at child-spawn time and injects it into the child env. Names
+land in the row; values never persist from `inherit:`. Validation runs
+**pre-enqueue** in both submit paths (CLI + `submit_job` op), so a malformed
+payload never lands in `minion_jobs.data`.
+
+**Why.** Pre-v0.36.5.0, agents that wanted to call `gbrain` from shell jobs
+had to either write `database_url` to `~/.gbrain/config.json` plaintext or
+pass `env: { GBRAIN_DATABASE_URL: "..." }` per-job. Both left plaintext
+secrets somewhere — disk or DB row. `inherit:` keeps names in the row and
+resolves values at spawn time.
+
+**What your agent can do.** `inherit:` is free-form. Pass any config-key:
+
+```jsonc
+{
+  "cmd": "gbrain sync --skip-failed && gbrain embed --stale",
+  "cwd": "/data/gbrain",
+  "inherit": ["database_url", "anthropic_api_key", "voyage_api_key"]
+}
+```
+
+The env-key name in the child is derived by uppercasing the config-key:
+`database_url` → `GBRAIN_DATABASE_URL`, `anthropic_api_key` →
+`ANTHROPIC_API_KEY`, `voyage_api_key` → `VOYAGE_API_KEY`, etc. The validator
+does NOT police which config keys you inherit — the agent is in the same
+uid as the worker, so it's the agent's call.
+
+**You can still use `env:`.** v0.36.5.0 does not forbid `env:{ ANYTHING }`.
+If you have a reason to put a value in the row plaintext (a non-secret
+correlation token, or a secret you know is OK to persist), pass it via
+`env:`. Prefer `inherit:` when you want the value out of the row.
+
+**Worker setup** (one-time, per host):
+
+- `gbrain config set database_url postgresql://...` (or any other key you
+  want available for inherit)
+- OR put the key in `~/.gbrain/config.json` directly
+- OR set `GBRAIN_DATABASE_URL` / `DATABASE_URL` / per-provider env on the
+  worker process
+
+If the worker can't resolve a requested name, the validator fail-fasts at
+submit time with `gbrain config set <X>` hint. No more silent "No database
+URL" failures in child stderr minutes after submission.
+
+**Also new.** A `gbrain doctor` check `home_dir_in_worktree` warns if
+`~/.gbrain/` lives inside a git worktree. A retroactive `~/.gbrain/.gitignore`
+(single line `*`) is now laid down by every `saveConfig()` call AND by
+`gbrain post-upgrade`, so existing users get coverage without re-running
+`gbrain init`. Honest scope: the `.gitignore` covers casual `git add` but does
+NOT cover already-tracked files, screenshots, backups, or `git add -f`.
+
+**Strategy framing.** For agent-to-gbrain calls, the new canonical guide is
+`docs/guides/agent-to-gbrain.md`. Two distinct surfaces: HTTP MCP via OAuth
+for ops with MCP equivalents (`search`, `query`, `put_page`, etc.), and shell
+job + `inherit:` for `localOnly` admin ops (`sync`, `embed`, `dream`,
+`doctor`, etc.). Not a fallback hierarchy — pick by op.
+
+**Errors to handle** (your agent submits shell jobs; surface these clearly):
+
+| Error | What it means | Agent action |
+|---|---|---|
+| `shell: inherit must be an array of config-key names` | `inherit` wasn't an array. | Pass `"inherit": ["database_url", ...]`. |
+| `shell: inherit entries must be non-empty strings` | Element was empty, non-string, or null. | Use snake_case config-key names. |
+| `shell: inherit name "<X>" must match [a-z][a-z0-9_]*` | Name failed snake_case regex (uppercase, leading underscore, etc.). | Use the config-key verbatim — `database_url`, not `DATABASE_URL`. |
+| `shell: inherit requested "<X>" but worker has no <X> configured` | Worker can't resolve the name from its `loadConfig()`. | Run `gbrain config set <X> <value>` on the worker host. |
+

@@ -133,14 +133,15 @@ function indexCompleted(entries: CompletedMigrationEntry[]): CompletedIndex {
  * Returns the resolved status for a migration based on its entries.
  *
  * Semantics (Bug 3 — keep "complete wins" safety):
- *   - If any entry is `complete`, the version is complete. Terminal state.
- *   - Otherwise, if the latest entry is `retry`, the version is pending
- *     (user requested a fresh attempt).
+ *   - If the latest entry is `retry`, the version is pending. This is the
+ *     explicit escape hatch written by `--force-retry`, and it overrides an
+ *     earlier `complete` entry without hand-editing the ledger.
+ *   - Otherwise, if any entry is `complete`, the version is complete.
  *   - Otherwise, if any entry is `partial`, the version is partial.
  *   - Otherwise, pending.
  *
- * `complete` never regresses. A later accidental `partial` append cannot
- * undo a completed migration.
+ * `complete` never regresses accidentally. A later `partial` append cannot
+ * undo a completed migration; only a trailing, explicit `retry` marker can.
  */
 function statusForVersion(
   version: string,
@@ -148,9 +149,9 @@ function statusForVersion(
 ): 'complete' | 'partial' | 'pending' | 'wedged' {
   const entries = idx.byVersion.get(version) ?? [];
   if (entries.length === 0) return 'pending';
-  if (entries.some(e => e.status === 'complete')) return 'complete';
   const latest = entries[entries.length - 1];
   if (latest.status === 'retry') return 'pending';
+  if (entries.some(e => e.status === 'complete')) return 'complete';
   // Bug 3 attempt cap — count consecutive partials from the end (stopping
   // at any 'retry' or 'complete'). If we hit MAX_CONSECUTIVE_PARTIALS,
   // the migration is wedged and needs explicit --force-retry to try again.
@@ -364,17 +365,27 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
     const { createEngine } = await import('../core/engine-factory.ts');
     const cfg = lc();
     if (cfg) {
-      const eng = await createEngine(toEngineConfig(cfg));
-      await eng.connect(toEngineConfig(cfg));
-      const verStr = await eng.getConfig('version');
-      const schemaVer = parseInt(verStr || '1', 10);
-      await eng.disconnect();
-      if (schemaVer < LATEST_VERSION) {
-        console.warn(
-          `\n⚠️  Schema version ${schemaVer} is behind latest ${LATEST_VERSION}.\n` +
-          `   Schema migrations run automatically on next connectEngine() / initSchema().\n` +
-          `   To run them now: gbrain init --migrate-only\n`,
-        );
+      // v0.36.x #1100: skip the pre-flight warning on PGLite. The probe
+      // briefly holds the single-writer lock; if a downstream orchestrator
+      // phase spawns `gbrain init --migrate-only` as a subprocess (the
+      // legacy v0.11.0 phase A path), the child can race the parent's
+      // lock release and hit a 30s timeout. The orchestrators handle
+      // schema lifecycle internally on PGLite (phase A routes in-process),
+      // so the warning here adds no information for PGLite users.
+      const skipPreflight = cfg.engine === 'pglite';
+      if (!skipPreflight) {
+        const eng = await createEngine(toEngineConfig(cfg));
+        await eng.connect(toEngineConfig(cfg));
+        const verStr = await eng.getConfig('version');
+        const schemaVer = parseInt(verStr || '1', 10);
+        await eng.disconnect();
+        if (schemaVer < LATEST_VERSION) {
+          console.warn(
+            `\n⚠️  Schema version ${schemaVer} is behind latest ${LATEST_VERSION}.\n` +
+            `   Schema migrations run automatically on next connectEngine() / initSchema().\n` +
+            `   To run them now: gbrain init --migrate-only\n`,
+          );
+        }
       }
     }
   } catch {
@@ -404,13 +415,13 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
     process.exit(2);
   }
 
-  if (cli.list) { printList(plan, installed); return; }
-  if (cli.dryRun) { printDryRun(plan, installed); return; }
+  if (cli.list) { printList(plan, installed); process.exit(0); }
+  if (cli.dryRun) { printDryRun(plan, installed); process.exit(0); }
 
   const toRun: Migration[] = [...plan.partial, ...plan.pending];
   if (toRun.length === 0) {
     console.log('All migrations up to date.');
-    return;
+    process.exit(0);
   }
 
   // Run each orchestrator in registry order. An orchestrator failure aborts
@@ -428,6 +439,13 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
       const result = await m.orchestrator(orchestratorOptsFrom(cli));
       if (result.status === 'failed') {
         console.error(`Migration v${m.version} reported status=failed.`);
+        // Surface each failed phase's detail — the ledger records it, but
+        // the operator needs it on stderr to act (#921).
+        for (const p of result.phases) {
+          if (p.status === 'failed') {
+            console.error(`  phase ${p.name}: ${p.detail ?? '(no detail)'}`);
+          }
+        }
         // Record the attempt as 'partial' (not 'complete') so the cap counts
         // it. Don't let a failed orchestrator look like it never ran.
         try {

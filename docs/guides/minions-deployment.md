@@ -54,6 +54,33 @@ gbrain jobs supervisor stop
 An agent seeing exit=2 can safely treat it as "one is already running";
 exit=1 should page a human.
 
+### Lowering scheduling priority (`--nice`)
+
+When the worker pool runs at full concurrency on a machine you also use
+interactively, it can drive the load average high enough to starve your
+shell. Cutting `--concurrency` throws away throughput. Reach for `--nice`
+instead — it lowers the job tree's CPU scheduling priority without touching
+width, so the work runs full-speed when the box is idle and yields when it
+isn't:
+
+```bash
+# Full concurrency, low priority. Propagates to the spawned worker and its
+# children (shell jobs, subagents) via OS niceness inheritance.
+gbrain jobs supervisor --concurrency 4 --nice 10
+
+# Equivalent for a bare worker, or set it durably in the environment.
+GBRAIN_NICE=10 gbrain jobs work --concurrency 4
+```
+
+`--nice` takes a POSIX value from `-20` (highest priority) to `19`
+(nicest/lowest); positive values need no privilege, negative values need
+root. `GBRAIN_NICE` is the env equivalent (the flag wins). Confirm the
+effective value with `gbrain jobs stats`, `gbrain jobs supervisor status
+--json`, or the `supervisor_niceness` check in `gbrain doctor` — the doctor
+check warns if what you asked for isn't what's actually running (e.g. a
+negative value denied without privilege, or an OS `RLIMIT_NICE` clamp). This
+is distinct from the concurrency / inflight cap and composes with it.
+
 ### Which supervisor when?
 
 The supervisor solves in-process crash recovery. Platform-level

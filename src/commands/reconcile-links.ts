@@ -125,8 +125,8 @@ export async function runReconcileLinks(
         // if codeSlug isn't a page yet (benign — counted below). Source-
         // qualified per opts.sourceId; same-source assumption mirrors the
         // import-file.ts:303 doc↔impl auto-link.
-        await engine.addLink(mdSlug, codeSlug, ctx, 'documents', 'markdown', mdSlug, 'compiled_truth', linkOpts);
-        await engine.addLink(codeSlug, mdSlug, ref.path, 'documented_by', 'markdown', mdSlug, 'compiled_truth', linkOpts);
+        await engine.addLink(mdSlug, codeSlug, ctx, 'documents', 'markdown', mdSlug, 'compiled_truth', linkOpts); // gbrain-allow-direct-insert: gbrain reconcile-links command — code-graph reconciliation from markdown references
+        await engine.addLink(codeSlug, mdSlug, ref.path, 'documented_by', 'markdown', mdSlug, 'compiled_truth', linkOpts); // gbrain-allow-direct-insert: gbrain reconcile-links command — reverse documented_by edge
       } catch (e: unknown) {
         // Per-link errors don't abort the batch. Track them for the summary.
         const msg = e instanceof Error ? e.message : String(e);

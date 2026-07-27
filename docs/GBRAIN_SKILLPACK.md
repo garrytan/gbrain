@@ -102,6 +102,16 @@ Keeping it running and up to date.
 | [Upgrades & Auto-Update](guides/upgrades-auto-update.md) | check-update, agent notifications, migration files |
 | [Live Sync](guides/live-sync.md) | Keep the index current: cron, --watch, webhook approaches |
 
+## Getting Started
+
+After setup, the brain is empty. The cold-start skill sequences the highest-leverage
+data sources to populate it:
+
+| Guide | What It Covers |
+|-------|---------------|
+| [Cold Start](../skills/cold-start/SKILL.md) | Day-one bootstrapping: contacts, calendar, email, conversations, social, archives. Uses ClawVisor for safe credential handling — agents never hold raw API keys. |
+| [Ask User](../skills/ask-user/SKILL.md) | Choice-gate pattern for human input at decision points. Used by cold-start and other skills. |
+
 ---
 
 ## Appendix: GBrain CLI Quick Reference

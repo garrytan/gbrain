@@ -1,0 +1,8 @@
+// 5 held-out blind fixtures. Authored before the variant resolvers were
+// fully reviewed; target skills present in both real variants.
+// Held-out accuracy is the headline claim in skills/functional-area-resolver/SKILL.md.
+{"intent":"Skillify the JSON parsing helper I wrote last week","expected_skill":"skillify"}
+{"intent":"Create a new skill for cataloging books I've finished","expected_skill":"skill-creator"}
+{"intent":"Build me a daily prep summary for tomorrow","expected_skill":"daily-task-prep"}
+{"intent":"Pull the contact details for Maria from my address book","expected_skill":"google-contacts"}
+{"intent":"Run a healthcheck on my services","expected_skill":"healthcheck"}

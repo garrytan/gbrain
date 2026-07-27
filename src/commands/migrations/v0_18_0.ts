@@ -19,7 +19,6 @@
  * Idempotent: safe to re-run on partial state.
  */
 
-import { execSync } from 'child_process';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
 import { appendCompletedMigration } from '../../core/preferences.ts';
 import { loadConfig, toEngineConfig } from '../../core/config.ts';
@@ -27,10 +26,11 @@ import { createEngine } from '../../core/engine-factory.ts';
 
 // ── Phase A — Schema ────────────────────────────────────────
 
-function phaseASchema(opts: OrchestratorOpts): OrchestratorPhaseResult {
+async function phaseASchema(opts: OrchestratorOpts): Promise<OrchestratorPhaseResult> {
   if (opts.dryRun) return { name: 'schema', status: 'skipped', detail: 'dry-run' };
   try {
-    execSync('gbrain init --migrate-only', { stdio: 'inherit', timeout: 600_000, env: process.env });
+    const { runMigrateOnlyCore } = await import('./in-process.ts');
+    await runMigrateOnlyCore();
     return { name: 'schema', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -174,7 +174,7 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
 
   const phases: OrchestratorPhaseResult[] = [];
 
-  const a = phaseASchema(opts);
+  const a = await phaseASchema(opts);
   phases.push(a);
   if (a.status === 'failed') return finalize(phases, 'failed');
 

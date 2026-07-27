@@ -50,6 +50,34 @@ This skill guarantees:
 
 ## Phases
 
+### Autonomous path (v0.36.4.0) — when you want to reach a target score
+
+If the user asks "get my brain to 90/100" or "fix what's broken", prefer the
+one-command loop over walking each dimension by hand:
+
+```bash
+gbrain doctor --remediation-plan --json              # preview what would run
+gbrain doctor --remediate --yes --target-score 90 --max-usd 5
+```
+
+`--remediation-plan` prints a dependency-ordered list (sync before extract,
+embed after consolidate, etc.) with per-step `est_seconds` and `est_usd_cost`.
+`--remediate` walks the plan, submitting each step as a Minion job, re-checking
+score between every step. `--max-usd N` is a hard cost cap — submission refuses
+when the plan would exceed the cap (prevents synthesize loops from burning
+Anthropic credits unattended).
+
+When the target score is unreachable for the brain (empty brain with no entity
+pages → `graph_coverage` caps at 70; unconfigured embedding key → caps at 60),
+the command bails with a list of what's missing rather than looping.
+
+Use the per-dimension walk below (Phase 2 onward) when:
+- The user explicitly asks for a dimension-by-dimension audit
+- You're investigating why score is stuck below `--remediate`'s ceiling
+- A specific dimension needs manual judgment that the auto path skips
+
+### Manual path
+
 1. **Run health check.** Check gbrain health to get the dashboard.
 2. **Check each dimension:**
 

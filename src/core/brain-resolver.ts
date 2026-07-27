@@ -19,9 +19,10 @@
  * parent's brainId instead of re-running this resolver.
  */
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, lstatSync, type Stats } from 'fs';
 import { join, dirname, resolve } from 'path';
 import { HOST_BRAIN_ID, loadMounts, validateMountId, type MountEntry } from './brain-registry.ts';
+import { isTrustedDotfile, realpathOrResolve } from './path-confine.ts';
 
 const DOTFILE = '.gbrain-mount';
 /** Same regex as brain-registry. Kept in sync. */
@@ -36,7 +37,13 @@ function readDotfileWalk(startDir: string): string | null {
   let dir = resolve(startDir);
   for (let i = 0; i < 50; i++) {
     const candidate = join(dir, DOTFILE);
-    if (existsSync(candidate)) {
+    // lstatSync (NOT statSync) + isTrustedDotfile: refuse a symlink, foreign-
+    // owned, or world-writable `.gbrain-mount` planted by another user in a
+    // shared ancestor dir (same multi-user-host hijack as #418, applied to the
+    // brain axis). Any stat error → skip and keep walking (fail-closed).
+    let st: Stats | null = null;
+    try { st = lstatSync(candidate); } catch { st = null; }
+    if (st && isTrustedDotfile(st)) {
       try {
         const content = readFileSync(candidate, 'utf8').trim().split('\n')[0].trim();
         if (content === HOST_BRAIN_ID) return content;
@@ -54,11 +61,14 @@ function readDotfileWalk(startDir: string): string | null {
 
 /** Longest-prefix match: find the mount whose `path` contains `cwd`. */
 function longestPathPrefixMount(mounts: MountEntry[], cwd: string): MountEntry | null {
-  const cwdResolved = resolve(cwd);
+  // realpath both sides so a symlinked CWD can't forge a prefix match against a
+  // mount path it doesn't really live under (codex #9, brain-axis mirror of the
+  // source-resolver fix). Falls back to lexical resolve() for a stale mount path.
+  const cwdResolved = realpathOrResolve(cwd);
   let best: { mount: MountEntry; pathLen: number } | null = null;
   for (const m of mounts) {
     if (m.enabled === false) continue;
-    const p = resolve(m.path);
+    const p = realpathOrResolve(m.path);
     if (cwdResolved === p || cwdResolved.startsWith(p + '/')) {
       if (!best || p.length > best.pathLen) {
         best = { mount: m, pathLen: p.length };

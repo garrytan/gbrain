@@ -116,8 +116,7 @@ async function listFiles(engine: BrainEngine, slug?: string) {
 
   console.log(`${rows.length} file(s):`);
   for (const row of rows) {
-    const sizeBytes = row.size_bytes as number | null;
-    const size = sizeBytes ? `${Math.round(sizeBytes / 1024)}KB` : '?';
+    const size = row.size_bytes ? `${Math.round(Number(row.size_bytes) / 1024)}KB` : '?';
     console.log(`  ${row.page_slug || '(unlinked)'} / ${row.filename}  [${size}, ${row.mime_type || '?'}]`);
   }
 }

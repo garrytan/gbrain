@@ -2,7 +2,7 @@
  * v0.31 Hot Memory — turn-extractor (Haiku).
  *
  * Pure function: given a conversation turn, return an array of NewFact rows
- * ready for `engine.insertFact()`. Pipeline:
+ * ready for the engine.insertFact path. Pipeline:
  *
  *   1. Sanitize turn_text via INJECTION_PATTERNS (reuses the takes/think
  *      sanitizer — single source of truth for prompt-injection defense).
@@ -24,7 +24,10 @@
 import { chat, embedOne, isAvailable } from '../ai/gateway.ts';
 import type { ChatResult } from '../ai/gateway.ts';
 import { INJECTION_PATTERNS } from '../think/sanitize.ts';
+import { resolveModel } from '../model-config.ts';
+import { normalizeModelId } from '../model-id.ts';
 import type { BrainEngine, NewFact, FactKind } from '../engine.ts';
+import { normalizeMetricLabel } from './extract-from-fence.ts';
 
 /**
  * v0.31 (D15): kill-switch for fact extraction.
@@ -50,9 +53,35 @@ export async function isFactsExtractionEnabled(engine: BrainEngine): Promise<boo
  * Configurable via `gbrain config set facts.extraction_model <model>`.
  */
 export async function getFactsExtractionModel(engine?: BrainEngine): Promise<string> {
-  if (!engine) return 'anthropic:claude-sonnet-4-6-20250929';
-  const configured = await engine.getConfig('facts.extraction_model');
-  return configured || 'anthropic:claude-sonnet-4-6-20250929';
+  // v0.31.12: route through resolveModel so models.default + models.tier.reasoning
+  // overrides reach facts extraction. Per-config-key facts.extraction_model still
+  // wins via configKey, preserving the prior behavior for existing users.
+  const resolved = await resolveModel(engine ?? null, {
+    configKey: 'facts.extraction_model',
+    tier: 'reasoning',
+    fallback: 'anthropic:claude-sonnet-4-6',
+  });
+  // resolveModel returns bare model ids when resolving via tier defaults; ensure
+  // the result keeps a provider prefix so gateway.chat() can route it (and slash
+  // form normalizes to colon — #1698).
+  return normalizeModelId(resolved);
+}
+
+/**
+ * #2113: output-token cap for the extractor call. The pre-fix hardcoded 1500
+ * silently truncated output on mandatory-reasoning models (thinking tokens
+ * count toward the cap), so the JSON never parsed and extraction returned
+ * zero facts with no signal. Configurable via
+ * `gbrain config set facts.extraction_max_tokens <n>`; default 4000.
+ */
+export const DEFAULT_EXTRACTION_MAX_TOKENS = 4000;
+
+export async function getFactsExtractionMaxTokens(engine?: BrainEngine): Promise<number> {
+  if (!engine) return DEFAULT_EXTRACTION_MAX_TOKENS;
+  const raw = await engine.getConfig('facts.extraction_max_tokens').catch(() => null);
+  if (raw == null || raw.trim() === '') return DEFAULT_EXTRACTION_MAX_TOKENS;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_EXTRACTION_MAX_TOKENS;
 }
 
 export const ALL_EXTRACT_KINDS: readonly FactKind[] = [
@@ -83,8 +112,55 @@ export interface ExtractInput {
   maxFactsPerTurn?: number;
 }
 
-/** A pre-INSERT fact ready for engine.insertFact(input, ctx). */
+/** A pre-INSERT fact ready for the engine.insertFact path. */
 export type ExtractedFact = NewFact & { entity_slug: string | null };
+
+/**
+ * Unknown/anonymous-speaker attribution gate.
+ *
+ * Conversation turns are rendered as `${speaker} (${ts}): ${text}` by
+ * extract-conversation-facts.ts. When a diarizer/importer can't identify a
+ * speaker it emits a STABLE ANONYMOUS LABEL — never a guessed name — following
+ * the industry convention (Speaker A, Participant 2, spk_0, SPEAKER_00, …).
+ * Attribution to a real identity is a separate, confidence-scored step.
+ *
+ * The extractor's `confidence` field means confidence-in-the-CLAIM, not
+ * confidence-in-WHO-said-it. So for a first-person self-assertion from an
+ * anonymous speaker ("Speaker A: I'm joining Acme"), the LLM can echo the
+ * speaker label back as the fact's `entity` — a confident attribution to a
+ * person we literally cannot identify. Storing that mints a junk person entity
+ * ("Speaker A") or, worse, misattributes the claim.
+ *
+ * This predicate recognizes those anonymous-speaker tokens so the choke point
+ * in the candidate loop can null ONLY that self-referential attribution. It is
+ * deliberately narrow: a THIRD-PERSON entity from the same turn ("Speaker A:
+ * Acme raised $5M" → entity=acme) is NOT an anonymous-speaker token and is
+ * preserved untouched, as is any named speaker's attribution.
+ *
+ * @internal Exported for tests.
+ */
+export function isUnknownSpeakerLabel(raw: string | null | undefined): boolean {
+  if (!raw) return false;
+  // Strip markdown/quote/colon decoration: "**Participant 2:**" → "Participant 2".
+  const s = raw
+    .replace(/[*`"']/g, '')
+    .replace(/[:\s]+$/g, '')
+    .trim();
+  if (!s) return false;
+  return UNKNOWN_SPEAKER_PATTERNS.some((rx) => rx.test(s));
+}
+
+const UNKNOWN_SPEAKER_PATTERNS: readonly RegExp[] = [
+  // ID-SHAPE ONLY, not any word. A diarizer ID is a letter+optional-digits
+  // ("A", "Z9") or a bare number ("12") — NOT a surname or product name.
+  // `^speaker [a-z0-9]+$` would null legitimate third-person entities like
+  // "Speaker Pelosi" / "Speaker Deck" / "Speaker Series"; this does not.
+  /^speaker ([a-z]\d*|\d+)$/i, // "Speaker A", "Speaker Z9", "Speaker 12"
+  /^speaker_\d+$/i, // "SPEAKER_00"
+  /^participant \d+$/i, // "Participant 2" (already ID-shaped)
+  /^spk_\d+$/i, // "spk_0"
+  /^(other|unknown|guest)$/i, // generic anonymous tokens
+];
 
 const EXTRACTOR_SYSTEM = [
   'You extract personal-knowledge claims from a conversation turn into structured facts.',
@@ -92,7 +168,9 @@ const EXTRACTOR_SYSTEM = [
   'Output strictly one JSON object on a single line:',
   '{"facts":[{"fact":"<terse claim>","kind":"event|preference|commitment|belief|fact",',
   '"entity":"<canonical slug or display name or null>","confidence":<0..1>,',
-  '"notability":"high|medium|low"}]}.',
+  '"notability":"high|medium|low",',
+  '"metric":"<lowercase snake_case or null>","value":<number or null>,',
+  '"unit":"<USD|people|pct|... or null>","period":"<monthly|annual|quarterly|null>"}]}.',
   'No prose, no code fences. Empty facts array is valid when nothing claim-worthy was said.',
   '',
   'Rules:',
@@ -106,6 +184,11 @@ const EXTRACTOR_SYSTEM = [
   '- One fact per atomic claim. Cap at 10 facts per turn.',
   '- entity = a canonical slug (e.g. "people/alice-example", "companies/acme", "travel") when known,',
   '  else a display name the caller can canonicalize, else null when no entity is implied.',
+  '- Unknown speakers: turns are prefixed "<speaker> (<ts>): <text>". If the speaker is an',
+  '  anonymous label (e.g. "Speaker A", "Participant 2", "spk_0", "SPEAKER_00", "Other",',
+  '  "Unknown", "Guest") and the claim is first-person/self-referential ("I ...", "my ..."),',
+  '  set entity to null — do NOT guess a name or echo the label. You do not know who spoke.',
+  '  A THIRD-PERSON claim from the same turn ("Acme raised $5M") still names its real entity.',
   '- confidence: 1.0 for "I am" / direct first-person assertions; lower for inferred or hedged claims.',
   '- notability — salience filter for real-time extraction:',
   '  * "high": Life events (separation, death, birth, hospitalization), major commitments',
@@ -115,57 +198,120 @@ const EXTRACTOR_SYSTEM = [
   '    Can wait for batch processing.',
   '  * "low": Logistical noise, restaurant orders, routine scheduling, "we\'re at X place".',
   '    Skip entirely — not worth storing.',
+  '',
+  '- Typed-claim fields (metric/value/unit/period) — emit ONLY when the claim',
+  '  carries a quantitative metric assertion. Examples:',
+  '  * "MRR: $50K (Jan 2026)" → metric=mrr, value=50000, unit=USD, period=monthly',
+  '  * "ARR: $2M" → metric=arr, value=2000000, unit=USD, period=annual',
+  '  * "Team size: 12" → metric=team_size, value=12, unit=people, period=null',
+  '  * "Closed Series A: $15M" → metric=fundraise, value=15000000, unit=USD, period=null',
+  '  * "User churn: 5%" → metric=churn_rate, value=0.05, unit=pct, period=null',
+  '  Use lowercase snake_case for metric. Common labels: mrr, arr, revenue,',
+  '  runway, burn_rate, cash, gross_margin, team_size, headcount, users, mau,',
+  '  dau, cac, ltv, churn_rate, fundraise. For non-metric claims (preferences,',
+  '  events, beliefs), set all four to null. Numeric values: emit the raw',
+  '  number after currency/scale normalization (50000 not "$50K"; 0.05 not "5%").',
 ].join('\n');
 
 const MAX_TURN_TEXT_CHARS = 8000;
 
-export async function extractFactsFromTurn(input: ExtractInput): Promise<ExtractedFact[]> {
-  if (input.isDreamGenerated) return [];
-  if (!input.turnText) return [];
+export type ExtractFactsOutcome =
+  | { ok: true; facts: ExtractedFact[] }
+  | {
+      ok: false;
+      reason:
+        | 'chat_unavailable'
+        | 'provider_error'
+        | 'refusal'
+        | 'content_filter'
+        | 'non_terminal_stop'
+        | 'malformed_output'
+        | 'truncated_output';
+      error?: unknown;
+    };
+
+/** Strict extraction contract for callers that persist completion authority. */
+export async function extractFactsFromTurnWithOutcome(
+  input: ExtractInput,
+): Promise<ExtractFactsOutcome> {
+  if (input.isDreamGenerated) return { ok: true, facts: [] };
+  if (!input.turnText) return { ok: true, facts: [] };
 
   // Anti-loop + sanitization.
   let cleaned = input.turnText.slice(0, MAX_TURN_TEXT_CHARS);
   for (const p of INJECTION_PATTERNS) cleaned = cleaned.replace(p.rx, p.replacement);
   cleaned = cleaned.trim();
-  if (!cleaned) return [];
+  if (!cleaned) return { ok: true, facts: [] };
 
   if (!isAvailable('chat')) {
     // No chat gateway → no extraction. Caller still inserts facts via direct
     // `gbrain take add` paths.
-    return [];
+    return { ok: false, reason: 'chat_unavailable' };
   }
 
   const cap = Math.max(1, Math.min(input.maxFactsPerTurn ?? 10, 25));
   const defaultModel = await getFactsExtractionModel(input.engine);
+  const maxTokens = await getFactsExtractionMaxTokens(input.engine);
+  const model = input.model ?? defaultModel;
+  const userContent = `<turn>\n${cleaned}\n</turn>\n\nExtract up to ${cap} facts.${
+    input.entityHints && input.entityHints.length
+      ? ` Known entity slugs the user already mentioned: ${input.entityHints.slice(0, 5).join(', ')}.`
+      : ''
+  }`;
   let result: ChatResult;
   try {
     result = await chat({
-      model: input.model ?? defaultModel,
+      model,
       system: EXTRACTOR_SYSTEM,
-      messages: [
-        {
-          role: 'user',
-          content: `<turn>\n${cleaned}\n</turn>\n\nExtract up to ${cap} facts.${
-            input.entityHints && input.entityHints.length
-              ? ` Known entity slugs the user already mentioned: ${input.entityHints.slice(0, 5).join(', ')}.`
-              : ''
-          }`,
-        },
-      ],
-      maxTokens: 1500,
+      messages: [{ role: 'user', content: userContent }],
+      maxTokens,
       abortSignal: input.abortSignal,
     });
+    // #2113: never checked pre-fix — a truncated response (stopReason
+    // 'length', e.g. reasoning tokens eating the cap on mandatory-reasoning
+    // models) produced unparseable JSON and silently extracted zero facts.
+    // Retry ONCE at double the cap, then surface the truncation loudly.
+    if (result.stopReason === 'length') {
+      process.stderr.write(
+        `[facts-extract] WARN: extractor output truncated at maxTokens=${maxTokens} ` +
+        `(model=${model}); retrying once at ${maxTokens * 2}\n`,
+      );
+      result = await chat({
+        model,
+        system: EXTRACTOR_SYSTEM,
+        messages: [{ role: 'user', content: userContent }],
+        maxTokens: maxTokens * 2,
+        abortSignal: input.abortSignal,
+      });
+      if (result.stopReason === 'length') {
+        process.stderr.write(
+          `[facts-extract] WARN: extractor output STILL truncated at maxTokens=${maxTokens * 2} ` +
+          `(model=${model}); facts for this turn are likely lost. ` +
+          `Raise the cap: gbrain config set facts.extraction_max_tokens <n>\n`,
+        );
+        return { ok: false, reason: 'truncated_output' };
+      }
+    }
   } catch (err) {
-    // Re-throw aborts; absorb other errors as "no extraction" — caller's
-    // `put_page` backstop will still record the page itself.
+    // Re-throw aborts. Strict callers receive a failure outcome; the historical
+    // wrapper below converts that outcome to [] for best-effort call sites.
     if (isAbort(err)) throw err;
-    return [];
+    return { ok: false, reason: 'provider_error', error: err };
   }
 
-  if (result.stopReason === 'refusal' || result.stopReason === 'content_filter') return [];
+  if (result.stopReason === 'refusal') return { ok: false, reason: 'refusal' };
+  if (result.stopReason === 'content_filter') {
+    return { ok: false, reason: 'content_filter' };
+  }
+  if (result.stopReason !== 'end') {
+    return { ok: false, reason: 'non_terminal_stop' };
+  }
 
-  const parsedRaw = parseExtractorJson(result.text);
-  if (!parsedRaw) return [];
+  const parsedShape = parseExtractorJsonDetailed(result.text);
+  if (!parsedShape || parsedShape.invalidCandidates > 0) {
+    return { ok: false, reason: 'malformed_output' };
+  }
+  const parsedRaw = parsedShape.facts;
 
   const facts: ExtractedFact[] = [];
   for (const candidate of parsedRaw.slice(0, cap)) {
@@ -198,19 +344,42 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
       embedding = null;
     }
 
+    // v0.35.4 (D-CDX-2) — typed-claim threading. Normalize the metric label
+    // here so all storage paths see canonical lowercase snake_case names.
+    // Value is already a finite number from parseExtractorJson; unit and
+    // period are stored verbatim.
+    const claimMetric = normalizeMetricLabel(candidate.metric ?? undefined) ?? null;
+    const claimValue  = candidate.value ?? null;
+    const claimUnit   = candidate.unit ?? null;
+    const claimPeriod = candidate.period ?? null;
+
     facts.push({
       fact: factText,
       kind,
-      entity_slug: candidate.entity ?? null,
+      // Unknown-speaker gate: if the LLM echoed an anonymous-speaker label back
+      // as the entity (self-attribution of a first-person claim from a speaker
+      // we cannot identify), drop the attribution but KEEP the fact. Third-person
+      // entities (e.g. "acme") never match this predicate and pass through.
+      entity_slug: isUnknownSpeakerLabel(candidate.entity) ? null : (candidate.entity ?? null),
       source: input.source,
       source_session: input.sessionId ?? null,
       confidence,
       notability,
       embedding,
+      claim_metric: claimMetric,
+      claim_value:  claimValue,
+      claim_unit:   claimUnit,
+      claim_period: claimPeriod,
     });
   }
 
-  return facts;
+  return { ok: true, facts };
+}
+
+/** Historical best-effort API retained for interactive callers. */
+export async function extractFactsFromTurn(input: ExtractInput): Promise<ExtractedFact[]> {
+  const outcome = await extractFactsFromTurnWithOutcome(input);
+  return outcome.ok ? outcome.facts : [];
 }
 
 interface RawExtracted {
@@ -219,6 +388,12 @@ interface RawExtracted {
   entity?: string | null;
   confidence?: number;
   notability?: string;
+  // v0.35.4 (D-CDX-2) — typed-claim fields. All optional; emit only for
+  // metric-shaped claims. See EXTRACTOR_SYSTEM rules above.
+  metric?: string | null;
+  value?: number | null;
+  unit?: string | null;
+  period?: string | null;
 }
 
 /**
@@ -227,39 +402,63 @@ interface RawExtracted {
  * the model included it. Production callers should use extractFactsFromTurn.
  */
 export function parseExtractorJson(raw: string): RawExtracted[] | null {
+  return parseExtractorJsonDetailed(raw)?.facts ?? null;
+}
+
+interface ParsedExtractorShape {
+  facts: RawExtracted[];
+  invalidCandidates: number;
+}
+
+function parseExtractorJsonDetailed(raw: string): ParsedExtractorShape | null {
   const cleaned = raw.trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
   // Strict.
-  const direct = tryArrayShape(cleaned);
+  const direct = tryArrayShapeDetailed(cleaned);
   if (direct) return direct;
   // Substring scan for embedded {"facts":[...]} shape.
   const m = cleaned.match(/\{[\s\S]*?"facts"[\s\S]*\}/);
   if (m) {
-    const sub = tryArrayShape(m[0]);
+    const sub = tryArrayShapeDetailed(m[0]);
     if (sub) return sub;
   }
   return null;
 }
 
-function tryArrayShape(s: string): RawExtracted[] | null {
+function tryArrayShapeDetailed(s: string): ParsedExtractorShape | null {
   try {
     const parsed = JSON.parse(s) as unknown;
     if (typeof parsed !== 'object' || parsed === null) return null;
     const arr = (parsed as Record<string, unknown>).facts;
     if (!Array.isArray(arr)) return null;
     const out: RawExtracted[] = [];
+    let invalidCandidates = 0;
     for (const item of arr) {
-      if (typeof item !== 'object' || item === null) continue;
+      if (typeof item !== 'object' || item === null) {
+        invalidCandidates++;
+        continue;
+      }
       const o = item as Record<string, unknown>;
-      if (typeof o.fact !== 'string' || typeof o.kind !== 'string') continue;
+      if (typeof o.fact !== 'string' || typeof o.kind !== 'string') {
+        invalidCandidates++;
+        continue;
+      }
       out.push({
         fact: o.fact,
         kind: o.kind,
         entity: typeof o.entity === 'string' ? o.entity : null,
         confidence: typeof o.confidence === 'number' ? o.confidence : 1.0,
         notability: typeof o.notability === 'string' ? o.notability : undefined,
+        // v0.35.4 (D-CDX-2) — typed-claim fields. Strict shape: metric/unit/period
+        // must be string-or-null; value must be a finite number-or-null. Anything
+        // else falls through to undefined so the downstream pipeline treats it
+        // as "no metric set" rather than corrupted data.
+        metric: typeof o.metric === 'string' ? o.metric : null,
+        value:  (typeof o.value === 'number' && Number.isFinite(o.value)) ? o.value : null,
+        unit:   typeof o.unit === 'string' ? o.unit : null,
+        period: typeof o.period === 'string' ? o.period : null,
       });
     }
-    return out;
+    return { facts: out, invalidCandidates };
   } catch {
     return null;
   }

@@ -1,10 +1,12 @@
-import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, spyOn } from 'bun:test';
 import { writeFileSync, mkdirSync, rmSync, symlinkSync, mkdtempSync } from 'fs';
 import { join, basename } from 'path';
 import { createHash } from 'crypto';
 import { extname } from 'path';
 import { tmpdir } from 'os';
 import { collectFiles } from '../src/commands/files.ts';
+import { operationsByName } from '../src/core/operations.ts';
+import * as db from '../src/core/db.ts';
 
 const TMP = join(import.meta.dir, '.tmp-files-test');
 
@@ -180,6 +182,38 @@ describe('collectFiles (production import)', () => {
       expect(files.map(f => basename(f))).not.toContain('broken.txt');
     } finally {
       rmSync(tmpDir, { recursive: true });
+    }
+  });
+
+  test('file_list normalizes BigInt size_bytes for JSON serialization', async () => {
+    // Postgres BIGINT(size_bytes) returns native BigInt under postgres.js's
+    // {bigint: postgres.BigInt} type map. Both JSON.stringify (MCP) and the
+    // CLI's `size_bytes / 1024` divide trip on it. Regression for the bug
+    // openclaw's agent surfaced in v0.22.4.
+    const fakeRows = [
+      { id: 1, page_slug: 'a', filename: 'f1', storage_path: 'a/f1',
+        mime_type: 'text/plain', size_bytes: 4096n, content_hash: 'h1',
+        created_at: '2026-04-27' },
+      { id: 2, page_slug: 'a', filename: 'f2', storage_path: 'a/f2',
+        mime_type: null, size_bytes: null, content_hash: 'h2',
+        created_at: '2026-04-27' },
+    ];
+    const fakeSql: any = (..._: unknown[]) => Promise.resolve(fakeRows);
+    const spy = spyOn(db, 'getConnection').mockReturnValue(fakeSql);
+
+    try {
+      const op = operationsByName['file_list'];
+      const ctx: any = { engine: null, config: {}, logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: true };
+      const result = await op.handler(ctx, {}) as Array<Record<string, unknown>>;
+
+      expect(result.length).toBe(2);
+      expect(typeof result[0].size_bytes).toBe('number');
+      expect(result[0].size_bytes).toBe(4096);
+      expect(result[1].size_bytes).toBeNull();
+      // The exact failure mode openclaw reported.
+      expect(() => JSON.stringify(result)).not.toThrow();
+    } finally {
+      spy.mockRestore();
     }
   });
 

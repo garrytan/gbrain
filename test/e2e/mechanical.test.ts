@@ -24,6 +24,29 @@ import { importFromContent } from '../../src/core/import-file.ts';
 const skip = !hasDatabase();
 const describeE2E = skip ? describe.skip : describe;
 
+// HOME isolation. Several tests in this file shell out to `gbrain init` and
+// `gbrain import` via Bun.spawnSync. `gbrain init` calls saveConfig() which
+// writes to $HOME/.gbrain/config.json, and `gbrain import` writes a sync
+// bookmark to the same directory. Without isolating $HOME, these tests
+// clobber the user's real production gbrain config every time `bun run
+// test:e2e` is executed. Sibling test/e2e/migration-flow.test.ts solved
+// this with a module-level temp HOME; mirror that pattern here so the
+// E2E suite stops mutating user state.
+let _origHome: string | undefined;
+let _tmpHome: string | undefined;
+if (!skip) {
+  _origHome = process.env.HOME;
+  _tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-e2e-mechanical-home-'));
+  process.env.HOME = _tmpHome;
+}
+
+afterAll(() => {
+  if (skip) return;
+  if (_origHome === undefined) delete process.env.HOME;
+  else process.env.HOME = _origHome;
+  try { if (_tmpHome) rmSync(_tmpHome, { recursive: true, force: true }); } catch { /* best-effort */ }
+});
+
 function makeCtx(opts: { remote?: boolean } = {}): OperationContext {
   return {
     engine: getEngine(),
@@ -32,6 +55,7 @@ function makeCtx(opts: { remote?: boolean } = {}): OperationContext {
     dryRun: false,
     // Default: trusted local invocation (matches `gbrain call` semantics).
     remote: opts.remote ?? false,
+    sourceId: 'default',
   };
 }
 
@@ -174,6 +198,15 @@ describeE2E('E2E: Search', () => {
     for (const [query, score] of Object.entries(scores)) {
       console.log(`    "${query}": ${(score * 100).toFixed(0)}%`);
     }
+
+    // Guard value: every known-item query must surface at least one ground-truth
+    // doc in the top 5. This is a deliberately loose floor (not a tuned P@5
+    // threshold) — it catches a total keyword-retrieval regression without
+    // breaking on every scoring/fixture tweak. Without it this test asserted
+    // nothing and a 0%-precision result passed silently.
+    for (const [query, score] of Object.entries(scores)) {
+      expect(score).toBeGreaterThan(0);
+    }
   });
 });
 
@@ -204,10 +237,22 @@ describeE2E('E2E: Links', () => {
   }, 30_000);
 
   test('traverse_graph finds connected pages', async () => {
-    // Links should already be added from prior test in this describe block
-    const graph = await callOp('traverse_graph', { slug: 'people/sarah-chen', depth: 2 }) as any;
+    // Self-contained: do not depend on a prior test's add_link. add_link is
+    // idempotent (ON CONFLICT DO NOTHING), so re-adding here is safe whether or
+    // not the round-trip test ran first, and the test no longer false-passes or
+    // false-fails based on describe-block ordering.
+    await callOp('add_link', {
+      from: 'people/sarah-chen',
+      to: 'companies/novamind',
+      link_type: 'founded',
+    });
+
+    const graph = await callOp('traverse_graph', { slug: 'people/sarah-chen', depth: 2 }) as any[];
     expect(Array.isArray(graph)).toBe(true);
     expect(graph.length).toBeGreaterThanOrEqual(1);
+    // Content assertion, not just shape: the linked company must be reachable.
+    const reachable = graph.map((n: any) => n.slug ?? n.to_slug ?? n.to_page_slug);
+    expect(reachable).toContain('companies/novamind');
   });
 
   test('remove_link removes the link', async () => {
@@ -468,8 +513,14 @@ describeE2E('E2E: Admin', () => {
   test('get_health returns valid structure', async () => {
     const health = await callOp('get_health') as any;
     expect(health).toBeDefined();
-    expect(typeof health.page_count).toBe('number');
-    expect(typeof health.embed_coverage).toBe('number');
+    // Value bounds, not just types: page_count must match the fixture inventory
+    // and embed_coverage is a 0..1 fraction (src/commands/doctor.ts multiplies
+    // by 100 and compares to 0.9). Type-only checks let embed_coverage: -9999
+    // through; these catch a genuinely broken health payload.
+    expect(health.page_count).toBe(16);
+    expect(Number.isFinite(health.embed_coverage)).toBe(true);
+    expect(health.embed_coverage).toBeGreaterThanOrEqual(0);
+    expect(health.embed_coverage).toBeLessThanOrEqual(1);
   });
 });
 
@@ -487,7 +538,17 @@ describeE2E('E2E: Chunks & Resolution', () => {
   test('get_chunks returns chunks for imported page', async () => {
     const chunks = await callOp('get_chunks', { slug: 'people/sarah-chen' }) as any[];
     expect(chunks.length).toBeGreaterThan(0);
-    expect(chunks[0].chunk_text).toBeTruthy();
+    // Content + ordering, not just truthiness (a whitespace-only chunk is truthy):
+    // every chunk has real text and a numeric index, the indexes are
+    // non-decreasing in return order, and the page's own name appears somewhere.
+    for (const c of chunks) {
+      expect(typeof c.chunk_text).toBe('string');
+      expect(c.chunk_text.trim().length).toBeGreaterThan(0);
+      expect(typeof c.chunk_index).toBe('number');
+    }
+    const indexes = chunks.map((c: any) => c.chunk_index);
+    expect(indexes).toEqual([...indexes].sort((x, y) => x - y));
+    expect(chunks.some((c: any) => c.chunk_text.includes('Sarah'))).toBe(true);
   }, 30_000);
 
   test('resolve_slugs finds partial match', async () => {
@@ -581,6 +642,11 @@ describeE2E('E2E: Files', () => {
       const files = await callOp('file_list', {}) as any[];
       expect(files.length).toBe(1);
 
+      // Regression: Postgres BIGINT(size_bytes) returned native BigInt before
+      // v0.22.5 so the MCP serializer threw and CLI listFiles div-by-1024 threw.
+      expect(typeof files[0].size_bytes).toBe('number');
+      expect(() => JSON.stringify(files)).not.toThrow();
+
       // Verify file_url returns URI format
       const url = await callOp('file_url', { storage_path: result.storage_path }) as any;
       expect(url.url).toContain('gbrain:files/');
@@ -656,9 +722,29 @@ describeE2E('E2E: file_list LIMIT enforcement', () => {
   }, 30_000);
 
   test('file_list without slug also respects LIMIT 100', async () => {
-    // The 150 rows from the previous test are still in the DB
+    // Self-sufficient: seed our own >100 rows rather than relying on the
+    // previous test's 150 rows surviving in the DB. A bun reorder, a focused
+    // `-t` run, or a failure mid-insert in the prior test would otherwise leave
+    // this asserting against an indeterminate row count.
+    const sql = getConn();
+    const seedSlug = 'test-limit-noslug';
+    await sql`
+      INSERT INTO pages (slug, title, type, compiled_truth, frontmatter)
+      VALUES (${seedSlug}, ${'Test Limit NoSlug'}, ${'note'}, ${'body'}, ${'{}'}::jsonb)
+      ON CONFLICT (source_id, slug) DO NOTHING
+    `;
+    for (let i = 0; i < 120; i++) {
+      await sql`
+        INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
+        VALUES (${seedSlug}, ${'nf-' + String(i).padStart(3, '0') + '.txt'}, ${seedSlug + '/nf-' + i + '.txt'}, ${'text/plain'}, ${100}, ${'nhash-' + i}, ${'{}'}::jsonb)
+        ON CONFLICT (storage_path) DO NOTHING
+      `;
+    }
+    const total = await sql`SELECT count(*)::int AS n FROM files`;
+    expect(Number(total[0].n)).toBeGreaterThan(100); // cap is actually exercised
+
     const files = await callOp('file_list', {}) as any[];
-    expect(files.length).toBeLessThanOrEqual(100);
+    expect(files.length).toBe(100);
   });
 });
 
@@ -719,8 +805,15 @@ describeE2E('E2E: Setup Journey', () => {
   const cliEnv = () => ({ ...process.env, DATABASE_URL: process.env.DATABASE_URL! });
 
   test('gbrain init --non-interactive connects and initializes', () => {
+    // v0.37.10.0: pass --embedding-model explicitly. Tier-1 CI runs without
+    // any embedding-provider env var, and the v0.37 fail-loud-no-key gate
+    // (D3) would otherwise exit 1 here. The provider is offline-resolved
+    // (preflight validates dim against recipe; no HTTP call), so this works
+    // without a real API key. After this init writes config, subsequent
+    // inits in the file honor persisted config per D5 (no flag needed).
     const result = Bun.spawnSync({
-      cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
+      cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!,
+            '--embedding-model', 'openai:text-embedding-3-large'],
       cwd: cliCwd,
       env: cliEnv(),
       timeout: 15_000,
@@ -1223,6 +1316,14 @@ describeE2E('E2E: Doctor Command', () => {
     // migration entries from in-flight workspaces — and surfaces them as the
     // 'minions_migration' [FAIL] check, exiting with code 1.
     gbrainHome = mkdtempSync(join(tmpdir(), 'gbrain-doctor-e2e-'));
+    // Cross-file isolation: prior E2E files can leave non-default `sources`
+    // rows (e.g. 'delta' from autopilot/sources tests). Doctor's
+    // sync_freshness + cycle_freshness checks then FAIL on those orphans,
+    // exit 1, breaking 'doctor exits 0 on healthy DB'. setupDB TRUNCATEs
+    // sources but schema.sql re-seeds 'default' via initSchema; clean any
+    // other rows so the doctor sees a clean single-source brain.
+    const conn = getConn();
+    await conn`DELETE FROM sources WHERE id != 'default'`;
   }, 30_000);
   afterAll(async () => {
     await teardownDB();
@@ -1238,9 +1339,15 @@ describeE2E('E2E: Doctor Command', () => {
   });
 
   test('gbrain doctor exits 0 on healthy DB', () => {
-    // Init first so config exists for CLI
+    // Init first so config exists for CLI. Pin --embedding-model explicitly
+    // so the spawned doctor doesn't pick a different default (e.g. ZE-1280d
+    // when ZEROENTROPY_API_KEY is in env) that mismatches the 1536d schema
+    // setupDB initialized, producing a WARN-status embedding_width_consistency
+    // check and exit 1. Mirrors the same pattern in 'Setup Journey'.
     Bun.spawnSync({
-      cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
+      cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive',
+            '--url', process.env.DATABASE_URL!,
+            '--embedding-model', 'openai:text-embedding-3-large'],
       cwd: cliCwd, env: cliEnv(), timeout: 15_000,
     });
     const result = Bun.spawnSync({

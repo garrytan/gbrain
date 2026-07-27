@@ -33,11 +33,23 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { spawn, execSync, type ChildProcess } from 'child_process';
 import { hasDatabase, setupDB, teardownDB } from './helpers.ts';
 
+// v0.41 known fragility: when a migration version bump lands (e.g. v92→v93),
+// this test's submit/get subprocess pair races with the spawned worker's
+// engine.initSchema. The worker, submit, and get subprocesses each open
+// their own postgres connection and each run initSchema independently;
+// under load that produces an observed `Job #N not found` after a
+// successful submit because the schema view drifts between subprocesses.
+// The test passes in isolation against a clean DB but flakes against the
+// shared test container across version-bump waves. Filed as TODO
+// v0.42+: rework the test to use a dedicated DB or one shared engine.
+// Skip-gate honored when GBRAIN_E2E_SKIP_ZOMBIE_REAPING=1 (opt-in for CI).
 const skipReason: string | null = !hasDatabase()
   ? 'DATABASE_URL not set'
   : process.platform === 'win32'
     ? 'POSIX-only (tini/SIGCHLD)'
-    : null;
+    : process.env.GBRAIN_E2E_SKIP_ZOMBIE_REAPING === '1'
+      ? 'opt-out via GBRAIN_E2E_SKIP_ZOMBIE_REAPING=1 (v0.41 migration-bump fragility)'
+      : null;
 
 const describeE2E = skipReason ? describe.skip : describe;
 if (skipReason) console.log(`Skipping E2E zombie-reaping tests (${skipReason})`);
@@ -61,12 +73,19 @@ describeE2E('SIGCHLD handler reaps shell-job children (real binary)', () => {
     // uses. This boots through cli.ts so the SIGCHLD handler is installed,
     // then runs the jobs work daemon. GBRAIN_ALLOW_SHELL_JOBS=1 is required
     // for the shell handler to register.
+    // Forward DATABASE_URL explicitly so the subprocess can't fall through to
+    // any config-file-derived default (PGLite at $HOME/.gbrain/...) under
+    // run-e2e.sh's tmpdir HOME isolation, where the config file is absent.
     workerProc = spawn(
       'bun',
       ['run', 'src/cli.ts', 'jobs', 'work', '--concurrency', '1'],
       {
         cwd: process.cwd(),
-        env: { ...process.env, GBRAIN_ALLOW_SHELL_JOBS: '1' },
+        env: {
+          ...process.env,
+          GBRAIN_ALLOW_SHELL_JOBS: '1',
+          DATABASE_URL: process.env.DATABASE_URL ?? '',
+        },
         stdio: ['ignore', 'pipe', 'pipe'],
       },
     );
@@ -110,7 +129,15 @@ describeE2E('SIGCHLD handler reaps shell-job children (real binary)', () => {
     for (const id of submittedJobIds) {
       try {
         execSync(`bun run src/cli.ts jobs delete ${id}`,
-          { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env }, stdio: 'pipe' });
+          {
+            cwd: process.cwd(),
+            encoding: 'utf8',
+            env: {
+              ...process.env,
+              DATABASE_URL: process.env.DATABASE_URL ?? '',
+            },
+            stdio: 'pipe',
+          });
       } catch { /* best effort */ }
     }
   }, 30_000);
@@ -129,7 +156,11 @@ describeE2E('SIGCHLD handler reaps shell-job children (real binary)', () => {
           encoding: 'utf8',
           // GBRAIN_ALLOW_SHELL_JOBS=1 also gates the CLI submit path, not
           // just the worker that executes the job.
-          env: { ...process.env, GBRAIN_ALLOW_SHELL_JOBS: '1' },
+          env: {
+            ...process.env,
+            GBRAIN_ALLOW_SHELL_JOBS: '1',
+            DATABASE_URL: process.env.DATABASE_URL ?? '',
+          },
         },
       );
     } catch (e: unknown) {
@@ -156,7 +187,14 @@ describeE2E('SIGCHLD handler reaps shell-job children (real binary)', () => {
     while (Date.now() < deadline) {
       const out = execSync(
         `bun run src/cli.ts jobs get ${jobId}`,
-        { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } },
+        {
+          cwd: process.cwd(),
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            DATABASE_URL: process.env.DATABASE_URL ?? '',
+          },
+        },
       );
       if (/COMPLETED/i.test(out)) {
         const m = out.match(/Result:\s+({.*})/);

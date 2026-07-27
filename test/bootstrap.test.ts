@@ -196,4 +196,61 @@ describe('PGLiteEngine#applyForwardReferenceBootstrap', () => {
       await engine.disconnect();
     }
   }, 30000);
+
+  test('pre-v121 timeline shape reaches LATEST through full initSchema', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema();
+      const db = (engine as any).db;
+      await db.exec(`
+        DROP INDEX IF EXISTS idx_timeline_event_dedup;
+        DROP INDEX IF EXISTS idx_timeline_event_page;
+        ALTER TABLE timeline_entries DROP CONSTRAINT IF EXISTS timeline_entries_event_page_id_fkey;
+        ALTER TABLE timeline_entries DROP COLUMN IF EXISTS event_page_id;
+      `);
+      await engine.setConfig('version', '119');
+
+      await engine.initSchema();
+      await engine.initSchema();
+
+      expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
+      const { rows } = await db.query(`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'timeline_entries' AND column_name = 'event_page_id'
+      `);
+      expect(rows).toHaveLength(1);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 30000);
+
+  test('pre-v121 partial bootstrap resumes without skipping migration work', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema();
+      const db = (engine as any).db;
+      await db.exec(`
+        DROP INDEX IF EXISTS idx_timeline_event_dedup;
+        DROP INDEX IF EXISTS idx_timeline_event_page;
+        ALTER TABLE timeline_entries DROP CONSTRAINT IF EXISTS timeline_entries_event_page_id_fkey;
+      `);
+      await engine.setConfig('version', '119');
+
+      // Simulates interruption after bootstrap added the column but before
+      // schema-blob replay and migration v121 completed the FK/index work.
+      await engine.initSchema();
+
+      expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
+      const { rows } = await db.query(`
+        SELECT to_regclass('idx_timeline_event_page') AS lookup_idx,
+               to_regclass('idx_timeline_event_dedup') AS dedup_idx
+      `);
+      expect(rows[0]?.lookup_idx).not.toBeNull();
+      expect(rows[0]?.dedup_idx).not.toBeNull();
+    } finally {
+      await engine.disconnect();
+    }
+  }, 30000);
 });

@@ -43,7 +43,7 @@ describe('parseRunFlags', () => {
     expect(rest).toEqual(['hello', 'world']);
   });
 
-  test('flags before prompt are parsed, unknown token ends flag parsing', () => {
+  test('leading flags parsed; first positional begins the prompt', () => {
     const { flags, rest } = agentTesting.parseRunFlags([
       '--model', 'claude-opus-4-7', '--max-turns', '30', 'summarize', 'everything',
     ]);
@@ -69,8 +69,60 @@ describe('parseRunFlags', () => {
     expect(rest).toEqual(['--not-a-flag']);
   });
 
-  test('unknown flag throws', () => {
-    expect(() => agentTesting.parseRunFlags(['--what', 'x'])).toThrow(/unknown flag/);
+  test('#1738: unknown --flag is prompt text, not an error', () => {
+    const { rest } = agentTesting.parseRunFlags(['--what', 'x']);
+    expect(rest).toEqual(['--what', 'x']);
+  });
+
+  test('#1738: trailing --detach is hoisted out of the prompt', () => {
+    const { flags, rest } = agentTesting.parseRunFlags(['do', 'the', 'thing', '--detach']);
+    expect(flags.detach).toBe(true);
+    expect(flags.follow).toBe(false);
+    expect(rest).toEqual(['do', 'the', 'thing']);
+  });
+
+  test('#1738: leading flags + trailing switch both apply', () => {
+    const { flags, rest } = agentTesting.parseRunFlags(['--model', 'm', 'summarize', '--detach', '--no-follow']);
+    expect(flags.model).toBe('m');
+    expect(flags.detach).toBe(true);
+    expect(flags.follow).toBe(false);
+    expect(rest).toEqual(['summarize']);
+  });
+
+  test('#1738: a --switch mid-prompt (not trailing) stays verbatim', () => {
+    const { flags, rest } = agentTesting.parseRunFlags(['summarize', '--detach', 'the', 'doc']);
+    expect(flags.detach).toBe(false);
+    expect(rest).toEqual(['summarize', '--detach', 'the', 'doc']);
+  });
+
+  test('#1738: a freeform prompt starting with --word is preserved', () => {
+    const { rest } = agentTesting.parseRunFlags(['--note:', 'do', 'the', 'thing']);
+    expect(rest).toEqual(['--note:', 'do', 'the', 'thing']);
+  });
+
+  test('#1738: -- suppresses trailing-switch hoisting', () => {
+    const { flags, rest } = agentTesting.parseRunFlags(['--', 'do', 'x', '--detach']);
+    expect(flags.detach).toBe(false);
+    expect(rest).toEqual(['do', 'x', '--detach']);
+  });
+
+  test('#1738: -- AFTER a positional also suppresses hoisting (no silent detach flip)', () => {
+    // The leading-flag loop breaks at the first positional, so the `escaped`
+    // flag never fires for a `--` placed later. A literal `--` ANYWHERE must
+    // still mean "hoist nothing" — otherwise `agent run note -- body --detach`
+    // silently detaches and drops the `--` as junk.
+    const { flags, rest } = agentTesting.parseRunFlags(['note', '--', 'body', '--detach']);
+    expect(flags.detach).toBe(false);
+    expect(rest).toEqual(['note', '--', 'body', '--detach']);
+  });
+
+  test('#1738: value-flag missing its value throws a usage error', () => {
+    expect(() => agentTesting.parseRunFlags(['--model'])).toThrow(/requires a value/);
+    expect(() => agentTesting.parseRunFlags(['--model', '--detach', 'x'])).toThrow(/requires a value/);
+  });
+
+  test('#1738: numeric value-flag rejects a non-number', () => {
+    expect(() => agentTesting.parseRunFlags(['--max-turns', 'abc', 'x'])).toThrow(/expects a number/);
   });
 
   test('--subagent-def + --timeout-ms parsed', () => {
@@ -163,6 +215,54 @@ describe('queue.add trusted-submit gate for subagent', () => {
       allowProtectedSubmit: true,
     });
     expect(ok.name).toBe('subagent_aggregator');
+  });
+
+  test('v0.38 S1.7: subagent with any tool-supporting provider passes the queue gate', async () => {
+    // v0.38 D6/D7 — the Anthropic pin is removed. The gateway tool loop
+    // routes any provider with native tool calling. Submit-time guard now
+    // refuses ONLY on unusable:no_tools or unknown verdicts.
+    const openaiJob = await queue.add(
+      'subagent',
+      { prompt: 'hi', model: 'openai:gpt-5.2' },
+      {},
+      { allowProtectedSubmit: true },
+    );
+    expect(openaiJob.name).toBe('subagent');
+
+    const googleJob = await queue.add(
+      'subagent',
+      { prompt: 'hi', model: 'google:gemini-1.5-pro' },
+      {},
+      { allowProtectedSubmit: true },
+    );
+    expect(googleJob.name).toBe('subagent');
+  });
+
+  test('v0.38 S1.7: subagent with Anthropic data.model still succeeds', async () => {
+    const job = await queue.add(
+      'subagent',
+      { prompt: 'hi', model: 'anthropic:claude-opus-4-7' },
+      {},
+      { allowProtectedSubmit: true },
+    );
+    expect(job.name).toBe('subagent');
+  });
+
+  test('v0.38 S1.7: subagent with unknown provider is rejected at submit time', async () => {
+    // The remaining hard reject — unknown providers can't be classified, so
+    // we refuse the job rather than risk burning money on something we
+    // can't verify supports tools.
+    await expect(
+      queue.add('subagent', { prompt: 'hi', model: 'madeup-provider:foo' }, {}, { allowProtectedSubmit: true }),
+    ).rejects.toThrow(/unknown provider/i);
+  });
+
+  test('v0.38 S1.7: subagent with embedding-only provider (no chat) is rejected', async () => {
+    // Voyage has no chat touchpoint → classifyCapabilities returns 'unknown' →
+    // refused at submit. Same rejection path as unknown provider.
+    await expect(
+      queue.add('subagent', { prompt: 'hi', model: 'voyage:voyage-3-large' }, {}, { allowProtectedSubmit: true }),
+    ).rejects.toThrow(/unknown provider/i);
   });
 });
 

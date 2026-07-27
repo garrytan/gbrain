@@ -27,6 +27,14 @@ export interface ThinkSystemPromptOpts {
   until?: string;
   /** When true, the synthesis page will be persisted (`--save`); shapes the body's expected length. */
   willSave?: boolean;
+  /**
+   * v0.36.1.0 (E1, D22) — when set, anti-bias rewrite mode is active. The
+   * system prompt gains an instruction to (a) name both the user's prior
+   * AND the counter-prior in the answer, (b) reference the active bias tags
+   * by name when relevant. Calibration profile body goes in the user
+   * message via buildThinkUserMessage.calibration.
+   */
+  withCalibration?: boolean;
 }
 
 export const THINK_SYSTEM_PROMPT_BASE = `You are gbrain's synthesis engine. You answer questions by reasoning across the user's personal knowledge brain. Your inputs are wrapped in structural tags:
@@ -44,19 +52,19 @@ Hard rules:
   rather than asserting it as established. Confidence is part of the data.
 - If two takes contradict (different holders, opposite claims), surface BOTH in a "Conflicts"
   section. Never silently pick one.
-- If you cannot answer because the brain doesn't contain the relevant data, say so in the
-  "Gaps" section. List the specific missing pieces. Do not make up answers.
+- If the brain doesn't contain data needed to answer, do NOT make it up. Record each
+  missing piece in the structured "gaps" array (below), not as a section in the answer prose.
 - Never instruct the user (no "you should" / "I recommend X"). The brain reports; the user decides.
 - Output MUST be valid JSON matching the schema below. No prose outside JSON.
 
 Output schema:
 {
-  "answer": "<markdown body. Inline citations like [slug#row] or [slug]. Sections: Answer, Conflicts (optional), Gaps>",
+  "answer": "<markdown body. Inline citations like [slug#row] or [slug]. Sections: Answer, Conflicts (optional). Do NOT add a Gaps section here — gaps belong in the gaps array.>",
   "citations": [
     {"page_slug": "people/alice-example", "row_num": 3, "citation_index": 1},
     {"page_slug": "companies/acme-example", "row_num": null, "citation_index": 2}
   ],
-  "gaps": ["specific missing data point 1", "specific missing data point 2"]
+  "gaps": ["a specific, self-contained missing-or-stale data point, citing the [slug] where relevant", "another specific gap"]
 }
 
 The "row_num" field is required for take citations and MUST be null for page-only citations.`;
@@ -75,19 +83,123 @@ export function buildThinkSystemPrompt(opts: ThinkSystemPromptOpts = {}): string
     lines.push(`\nThis is a temporal question. Order key claims chronologically when it helps the reader.`);
   }
   if (opts.willSave) {
-    lines.push(`\nThis synthesis will be persisted as a brain page. Aim for completeness — cover Answer, Conflicts, and Gaps thoroughly.`);
+    lines.push(`\nThis synthesis will be persisted as a brain page. Aim for completeness — cover the Answer and any Conflicts thoroughly, and list every missing piece in the structured "gaps" array.`);
+  }
+  if (opts.withCalibration) {
+    lines.push(
+      `\nCalibration-aware mode (v0.36.1.0): the user's calibration profile is included as <calibration> below the retrieval blocks. Apply it to the QUESTION FRAMING, not the evidence:`,
+    );
+    lines.push(`- Name both the user's PRIOR (default reasoning) AND the COUNTER-PRIOR from their hedged-domain self.`);
+    lines.push(`- Reference active bias tags by name when relevant ("this fits the over-confident-geography pattern").`);
+    lines.push(`- Do NOT silently substitute the debiased answer. ALWAYS surface both priors transparently.`);
+    lines.push(`- Track-record sentences belong in a "Calibration" section in the answer body, after the Conflicts section (if present).`);
   }
   return lines.join('\n');
 }
 
-/** User-message body that wraps the question + the gathered evidence. */
+/**
+ * v0.36.1.0 (E1) — calibration context block injected into the user message.
+ * Per D22 placement spec: AFTER retrieval evidence, BEFORE the user's
+ * question. This is the only path that restructures the user message;
+ * non-calibration callers see the existing shape.
+ */
+export interface ThinkCalibrationBlockOpts {
+  holder: string;
+  patternStatements: string[];
+  activeBiasTags: string[];
+  brier?: number | null;
+}
+
+export function buildCalibrationBlock(opts: ThinkCalibrationBlockOpts): string {
+  const lines: string[] = [];
+  lines.push(`<calibration holder="${opts.holder}">`);
+  if (typeof opts.brier === 'number') {
+    lines.push(`  Track record: Brier ${opts.brier.toFixed(3)} (lower is better).`);
+  }
+  if (opts.patternStatements.length > 0) {
+    lines.push(`  Active patterns:`);
+    for (const p of opts.patternStatements) {
+      lines.push(`    - ${p}`);
+    }
+  }
+  if (opts.activeBiasTags.length > 0) {
+    lines.push(`  Active bias tags: ${opts.activeBiasTags.join(', ')}`);
+  }
+  lines.push(`</calibration>`);
+  return lines.join('\n');
+}
+
+/**
+ * User-message body that wraps the question + the gathered evidence.
+ *
+ * Three shapes (v0.40.2.0 — adds trajectory slot to both pre-existing
+ * shapes):
+ *   - Default (no calibration): question first, then retrieval blocks,
+ *     then optional trajectory block (between retrieval and instruction),
+ *     then output instruction. Preserves v0.28-vintage behavior for
+ *     existing callers; trajectory is the new optional injection.
+ *   - With calibration (v0.36.1.0 E1, D22): retrieval blocks first, then
+ *     calibration block, then optional trajectory block (between
+ *     calibration and question), then question, then output instruction.
+ *     The bias filter applies to QUESTION FRAMING; trajectory grounds the
+ *     answer's temporal claims.
+ *
+ * Per Codex Problem 6: trajectory placement honors whichever path is
+ * active. NO third ordering is introduced.
+ *
+ * `trajectoryBlock`, when non-empty, is the pre-rendered XML block from
+ * `formatTrajectoryBlock`. The wrapper here adds a "Known trajectory:"
+ * label so the model sees structural framing. Empty string means
+ * "no trajectory available" — the label is skipped entirely.
+ */
 export function buildThinkUserMessage(opts: {
   question: string;
   pagesBlock: string;
   takesBlock: string;
   graphBlock?: string;
+  /** v0.36.1.0 (E1) — present in calibration mode. */
+  calibration?: ThinkCalibrationBlockOpts;
+  /**
+   * v0.40.2.0 — pre-rendered `<trajectory>` block(s) from
+   * `formatTrajectoryBlock`. Empty string skips the section entirely
+   * (so we don't cue the model that we tried).
+   */
+  trajectoryBlock?: string;
 }): string {
   const parts: string[] = [];
+  const hasTrajectory = typeof opts.trajectoryBlock === 'string' && opts.trajectoryBlock.length > 0;
+
+  if (opts.calibration) {
+    // Calibration path: retrieval → calibration → trajectory → question → instruction.
+    parts.push('<pages>');
+    parts.push(opts.pagesBlock || '(no page hits)');
+    parts.push('</pages>');
+    parts.push('');
+    parts.push('<takes>');
+    parts.push(opts.takesBlock || '(no take hits)');
+    parts.push('</takes>');
+    if (opts.graphBlock) {
+      parts.push('');
+      parts.push('<graph>');
+      parts.push(opts.graphBlock);
+      parts.push('</graph>');
+    }
+    parts.push('');
+    parts.push(buildCalibrationBlock(opts.calibration));
+    if (hasTrajectory) {
+      parts.push('');
+      parts.push('Known trajectory:');
+      parts.push(opts.trajectoryBlock as string);
+    }
+    parts.push('');
+    parts.push(`Question: ${opts.question}`);
+    parts.push('');
+    parts.push('Respond with a single JSON object matching the schema. No prose outside JSON.');
+    return parts.join('\n');
+  }
+
+  // Default path (v0.28-vintage with v0.40.2.0 trajectory slot between
+  // retrieval and the output instruction).
   parts.push(`Question: ${opts.question}`);
   parts.push('');
   parts.push('<pages>');
@@ -102,6 +214,11 @@ export function buildThinkUserMessage(opts: {
     parts.push('<graph>');
     parts.push(opts.graphBlock);
     parts.push('</graph>');
+  }
+  if (hasTrajectory) {
+    parts.push('');
+    parts.push('Known trajectory:');
+    parts.push(opts.trajectoryBlock as string);
   }
   parts.push('');
   parts.push('Respond with a single JSON object matching the schema. No prose outside JSON.');

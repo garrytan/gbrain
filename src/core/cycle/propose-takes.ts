@@ -1,0 +1,683 @@
+/**
+ * v0.36.1.0 (T3) — propose_takes cycle phase.
+ *
+ * Scans markdown pages updated since last run, sends each page's prose to
+ * a tuned LLM extractor, writes the extracted gradeable claims to the
+ * `take_proposals` queue. User accepts/rejects via `gbrain takes propose`.
+ *
+ * Idempotency contract (D17 schema spec):
+ *   The unique index on (source_id, page_slug, content_hash, prompt_version)
+ *   means an unchanged page never re-spends LLM tokens. Bumping
+ *   PROPOSE_TAKES_PROMPT_VERSION cleanly invalidates the cache so a tuned
+ *   prompt re-runs proposals on every page.
+ *
+ * F2 fence dedup:
+ *   The phase reads the page's existing `<!-- gbrain:takes:begin -->` fence
+ *   (when present) and passes the canonical take rows to the extractor as
+ *   "things you have already captured." This prevents duplicate proposals
+ *   when a user adds prose to a page that already has takes.
+ *
+ * Auto-resolve posture:
+ *   propose_takes only WRITES proposals to the queue. Nothing here mutates
+ *   the canonical takes table. Operator opt-in via `gbrain takes propose
+ *   --accept N` is the only path from queue to canonical fence (D17).
+ *
+ * Prompt tuning status (v0.36.1.0 ship state):
+ *   The default extractor prompt was tuned against the synthetic corpus at
+ *   test/fixtures/calibration/ and validated via the cat15 propose_takes
+ *   eval in the gbrain-evals repo. First live run scored 0.952 F1 on
+ *   training (target 0.85) and 0.922 F1 on holdout (target 0.80), with a
+ *   0.03 train-holdout gap (no overfitting). PROPOSE_TAKES_PROMPT_VERSION
+ *   is "v0.36.1.0-tuned-cat15". Re-tuning requires re-running cat15;
+ *   bumping the version string invalidates the take_proposals idempotency
+ *   cache so old proposals stay as audit history but the next cycle
+ *   re-extracts fresh against the new prompt.
+ *
+ * The extractor LLM call is INJECTED via opts.extractor for tests, so the
+ * phase can run hermetically in unit tests without touching the gateway.
+ */
+
+import { randomUUID, createHash } from 'node:crypto';
+import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
+import { chat as gatewayChat, getChatModel, probeChatModel } from '../ai/gateway.ts';
+import { normalizeModelId } from '../model-id.ts';
+import { writeReceipt } from '../extract/receipt-writer.ts';
+import { upsertExtractRollup } from '../extract/rollup-writer.ts';
+import { GBrainError } from '../types.ts';
+import type { OperationContext } from '../operations.ts';
+import type { BrainEngine } from '../engine.ts';
+import type { PhaseStatus, CyclePhase } from '../cycle.ts';
+
+/**
+ * Bump when the extractor prompt or the JSON output shape changes. Old
+ * verdicts in `take_proposals` (composite key includes prompt_version) stay
+ * valid as audit history; new runs re-spend LLM tokens on every page.
+ */
+export const PROPOSE_TAKES_PROMPT_VERSION = 'v0.36.1.0-tuned-cat15';
+
+/**
+ * Sentinel claim_text for the tombstone row written when a page extracts
+ * ZERO gradeable claims. Without a tombstone the idempotency tuple is never
+ * recorded, so every cycle re-spends an LLM call on unchanged zero-claim
+ * prose — the "unchanged page never re-spends tokens" contract only held
+ * for pages that produced >=1 claim. The tombstone is inserted with
+ * status='rejected' so no pending-review query surfaces it as a live
+ * proposal; its only job is to make the next cycle a cache hit.
+ */
+export const EMPTY_EXTRACTION_TOMBSTONE_TEXT = '(no gradeable claims)';
+
+/**
+ * Tuned extractor prompt, validated against the hand-labeled synthetic
+ * corpus at test/fixtures/calibration/. Measured F1 on first live run
+ * via gbrain-evals cat15 (claude-sonnet-4-6 extractor, claude-haiku-4-5
+ * matcher judge):
+ *
+ *   training avg F1: 0.952 (target 0.85, exceeded by 10 points)
+ *   holdout  avg F1: 0.922 (target 0.80, exceeded by 12 points)
+ *   train-holdout gap: 0.03 (no overfitting signal)
+ *
+ * Per-genre F1 floor: 0.80 (people-pages, the hardest genre). The
+ * concept-with-timeline and meeting-notes genres scored at 1.00 on
+ * holdout pages.
+ *
+ * Design choices baked into the prompt:
+ *   - Worked example list seeds the model's notion of "gradeable claim"
+ *     so it doesn't drift into pure-fact extraction.
+ *   - NOT-gradeable list catches the most common over-extraction modes
+ *     (pure facts, direct quotes, restatements).
+ *   - conviction inference rules anchored to specific hedging language
+ *     ("I bet"/"strong conviction"=0.7-0.85, "I think"/"moderate"=0.5-0.7).
+ *   - kind enum kept narrow ('prediction'|'judgment'|'bet') — the v1
+ *     stub's 4-tag enum bled into noise classification.
+ *
+ * Replaces the v0.36.1.0-stub. If you re-tune, run cat15 against the
+ * fixtures before bumping PROPOSE_TAKES_PROMPT_VERSION; the train-holdout
+ * gap should stay < 0.10 (overfitting threshold).
+ */
+export const EXTRACT_TAKES_PROMPT = `Extract gradeable claims from the prose below.
+
+A "gradeable claim" is a prediction, recommendation, or interpretive judgment
+that could turn out wrong over time. Examples:
+- "X company will hit ARR milestone by Q3" (prediction)
+- "Y founder is going to struggle with execution" (judgment)
+- "Z market will compress in 18 months" (prediction)
+- "I bet alice wins the round" (bet)
+
+NOT gradeable (do NOT extract these):
+- Pure facts ("X was founded in 2020")
+- Direct quotes from others without endorsement
+- Restatements of an earlier claim in the same page
+
+For each gradeable claim, output a JSON object with:
+- claim_text   (string, <=200 chars, paraphrase or near-verbatim from prose)
+- kind         ('prediction' | 'judgment' | 'bet')
+- holder       ('world' | 'people/<slug>' | 'companies/<slug>' | 'brain' — default 'brain' when author asserts the claim)
+- weight       (number 0..1 inferred from hedging language: 'I bet'/'strong conviction'=0.7-0.85,
+                'I think'/'moderate conviction'=0.5-0.7, 'maybe'/'I'd guess'=0.3-0.5)
+- domain       (short tag — e.g. 'tactics', 'macro', 'hiring', 'geography', 'pricing')
+
+Output ONLY a JSON array of these objects. No prose. No commentary. If no
+gradeable claims, return [].
+
+EXISTING FENCE ROWS (already captured — do NOT propose duplicates):
+{EXISTING_TAKES_JSON}
+
+PAGE PROSE:
+{PAGE_BODY}
+`;
+
+/** One proposed take, as the extractor produces it. */
+export interface ProposedTake {
+  claim_text: string;
+  kind: 'fact' | 'take' | 'bet' | 'hunch';
+  holder: string;
+  weight: number;
+  domain?: string;
+}
+
+/** Extractor function signature — injected for tests; production calls gateway. */
+export type ProposeTakesExtractor = (input: {
+  pagePath: string;
+  pageBody: string;
+  existingTakes: Array<{ claim: string; kind: string; holder: string; weight: number }>;
+  modelHint?: string;
+}) => Promise<ProposedTake[]>;
+
+export interface ProposeTakesOpts extends BasePhaseOpts {
+  /** Brain repo root for fs-source page walking. Optional — defaults to engine pages. */
+  repoPath?: string;
+  /** Limit pages processed in this cycle (for triage / quick smoke). Default: 100. */
+  pageLimit?: number;
+  /** Inject the LLM call for tests; production uses gateway.chat. */
+  extractor?: ProposeTakesExtractor;
+  /** Override prompt_version (tests). */
+  promptVersion?: string;
+  /** Override model id (tests + config). */
+  model?: string;
+  /** Skip pages that already have a complete takes fence. Default: true. */
+  skipPagesWithFence?: boolean;
+  /** Override the phase wall-clock deadline (tests). Default: 30 min. */
+  deadlineMs?: number;
+}
+
+export interface ProposeTakesResult {
+  pages_scanned: number;
+  cache_hits: number;
+  cache_misses: number;
+  proposals_inserted: number;
+  /** Idempotency rows written for pages that extracted zero claims. */
+  tombstones_written: number;
+  budget_exhausted: boolean;
+  /** True when the phase deadline fired before the page loop completed (partial result). */
+  deadline_hit?: boolean;
+  warnings: string[];
+}
+
+/** Narrow projection of `pages` — the only columns this phase reads. */
+interface ProposeTakesPageRow {
+  slug: string;
+  source_id: string;
+  compiled_truth: string | null;
+}
+
+/**
+ * Load proposal candidates with a narrow projection instead of
+ * `engine.listPages` (`SELECT p.*`). The phase only reads slug, source_id
+ * and compiled_truth — skipping timeline/frontmatter/title keeps large
+ * toasted columns out of the hot path. Scope precedence mirrors
+ * `sourceScopeOpts`: federated array (`sourceIds`) beats scalar
+ * (`sourceId`); ordering matches `PAGE_SORT_SQL.updated_desc` with an id
+ * tiebreak for determinism. (Takeover of PR #1979's projection by
+ * @shawnduggan.)
+ */
+async function listCandidatePages(
+  engine: BrainEngine,
+  scope: ScopedReadOpts,
+  limit: number,
+): Promise<ProposeTakesPageRow[]> {
+  const where = ['deleted_at IS NULL'];
+  const params: unknown[] = [];
+  if (scope.sourceIds && scope.sourceIds.length > 0) {
+    params.push(scope.sourceIds);
+    where.push(`source_id = ANY($${params.length}::text[])`);
+  } else if (scope.sourceId) {
+    params.push(scope.sourceId);
+    where.push(`source_id = $${params.length}`);
+  }
+  params.push(limit);
+  return engine.executeRaw<ProposeTakesPageRow>(
+    `SELECT slug, source_id, compiled_truth
+       FROM pages
+      WHERE ${where.join(' AND ')}
+      ORDER BY updated_at DESC, id DESC
+      LIMIT $${params.length}`,
+    params,
+  );
+}
+
+/**
+ * Compute the content_hash key for the idempotency cache. SHA-256 of the
+ * page body suffices — page slug + prompt_version are separate columns in
+ * the composite unique index.
+ */
+export function contentHash(pageBody: string): string {
+  return createHash('sha256').update(pageBody).digest('hex');
+}
+
+/**
+ * Detect whether a page already has a complete `<!-- gbrain:takes:begin -->`
+ * fence. We DO propose against pages with fences (F2 dedup) but the operator
+ * may opt to skip-with-fence pages via skipPagesWithFence:true for a faster
+ * pass. The fence shape mirrors src/core/takes-fence.ts.
+ */
+export function hasCompleteFence(pageBody: string): boolean {
+  return /<!---?\s*gbrain:takes:begin[\s\S]*?gbrain:takes:end\s*-->/.test(pageBody);
+}
+
+/**
+ * Parse the existing fence into rows so the extractor can dedupe.
+ * Returns [] when no fence is present. Best-effort — malformed fences
+ * surface to the operator via the existing v0.28 fence parser, not here.
+ */
+export function extractExistingTakesForDedup(pageBody: string): Array<{
+  claim: string;
+  kind: string;
+  holder: string;
+  weight: number;
+}> {
+  const fenceMatch = pageBody.match(/<!---?\s*gbrain:takes:begin\s*-->([\s\S]*?)<!---?\s*gbrain:takes:end\s*-->/);
+  if (!fenceMatch) return [];
+  const body = fenceMatch[1] ?? '';
+  const rows: Array<{ claim: string; kind: string; holder: string; weight: number }> = [];
+  for (const line of body.split('\n')) {
+    const cells = line.split('|').map(c => c.trim()).filter((_, i, arr) => i > 0 && i < arr.length - 1);
+    // Skip header + separator rows.
+    if (cells.length < 4) continue;
+    if (cells[0] === '#' || cells[0]?.match(/^-+$/)) continue;
+    const claim = cells[1] ?? '';
+    if (!claim || claim.startsWith('~~')) continue; // strikethrough = inactive, doesn't count for dedup
+    const kind = cells[2] ?? 'take';
+    const holder = cells[3] ?? 'brain';
+    const weight = Number.parseFloat(cells[4] ?? '0.5');
+    rows.push({
+      claim: claim.replace(/^~~|~~$/g, ''),
+      kind,
+      holder,
+      weight: Number.isFinite(weight) ? weight : 0.5,
+    });
+  }
+  return rows;
+}
+
+/** Per-call wall-clock timeout for the extractor LLM call. */
+const EXTRACTOR_CALL_TIMEOUT_MS = 90_000;
+
+/**
+ * Production extractor — calls gateway.chat with the EXTRACT_TAKES_PROMPT
+ * and parses the JSON array output. Returns [] on parse failure (logged as
+ * warning, not thrown — one bad page must not abort the phase).
+ *
+ * Stub-prompt note: the v0.36.1.0 ship-state prompt is a placeholder. Real
+ * extractor lands when T19 corpus build produces the tuned prompt. Until
+ * then, the production extractor returns whatever the stub LLM produces —
+ * empirically often a sparse list or [].
+ */
+export async function defaultExtractor(
+  input: Parameters<ProposeTakesExtractor>[0],
+): Promise<ProposedTake[]> {
+  const prompt = EXTRACT_TAKES_PROMPT
+    .replace('{EXISTING_TAKES_JSON}', JSON.stringify(input.existingTakes, null, 2))
+    .replace('{PAGE_BODY}', input.pageBody);
+
+  // Bound each call so one stalled provider socket can't pin the phase for the
+  // full gateway default (GBRAIN_AI_CHAT_TIMEOUT_MS, 300s) x pageLimit. The
+  // caller already catches per-page errors, logs a warning, and continues.
+  const result = await gatewayChat({
+    messages: [{ role: 'user', content: prompt }],
+    ...(input.modelHint ? { model: input.modelHint } : {}),
+    maxTokens: 2048,
+    abortSignal: AbortSignal.timeout(EXTRACTOR_CALL_TIMEOUT_MS),
+  });
+
+  // ChatResult.text is already the concatenated text content.
+  const takes = parseExtractorOutput(result.text);
+  // A parse-level `[]` is AMBIGUOUS: it means either "the model genuinely
+  // found no gradeable claims" OR "the model returned malformed/prose/
+  // truncated output we couldn't parse." The caller memoizes empty
+  // extractions with a tombstone, so a transient parse failure would
+  // PERMANENTLY suppress a page that actually has claims. Only a cleanly
+  // parsed empty array is a real "no claims" result worth memoizing; treat
+  // anything else as a transient error and throw, so the phase's catch
+  // retries the page next cycle (writing no tombstone).
+  if (takes.length === 0 && !isWellFormedEmptyExtraction(result.text)) {
+    throw new Error('propose_takes extractor: no parseable takes JSON (transient — retry)');
+  }
+  return takes;
+}
+
+/**
+ * True only when `raw` is a cleanly-parseable EMPTY JSON array — the
+ * well-behaved "no gradeable claims" response (the prompt instructs the model
+ * to return `[]`). Distinguishes a genuine empty extraction (safe to memoize
+ * via a tombstone) from malformed / prose / truncated output (transient —
+ * must be retried, never tombstoned). Mirrors parseExtractorOutput's
+ * think-strip + fence-strip + first-array handling so both agree on what
+ * "the model returned []" means.
+ */
+export function isWellFormedEmptyExtraction(raw: string): boolean {
+  if (!raw || raw.trim().length === 0) return false;
+  let text = raw.trim();
+  // Strip <think>...</think> reasoning tags (MiniMax-M3, DeepSeek-R1, etc.),
+  // same as parseExtractorOutput (#2559).
+  text = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+  const fenced = text.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/);
+  if (fenced) text = (fenced[1] ?? '').trim();
+  const arrStart = text.indexOf('[');
+  if (arrStart === -1) return false;
+  try {
+    const parsed = JSON.parse(text.slice(arrStart));
+    return Array.isArray(parsed) && parsed.length === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Parse extractor output into ProposedTake[]. Handles common LLM output
+ * sins (markdown fence wrapping, leading/trailing prose, single-object
+ * instead of array). Returns [] on any unrecoverable parse error rather
+ * than throwing.
+ */
+export function parseExtractorOutput(raw: string): ProposedTake[] {
+  if (!raw || raw.trim().length === 0) return [];
+  let text = raw.trim();
+  // Strip <think>...</think> reasoning tags (MiniMax-M3, DeepSeek-R1, etc.).
+  text = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+  // Strip markdown code fence wrapper.
+  const fenced = text.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/);
+  if (fenced) text = (fenced[1] ?? '').trim();
+  // First-array-or-object substring extraction (defends against leading prose).
+  const firstArr = text.indexOf('[');
+  const firstObj = text.indexOf('{');
+  if (firstArr === -1 && firstObj === -1) return [];
+  const start = firstArr !== -1 && (firstObj === -1 || firstArr < firstObj) ? firstArr : firstObj;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text.slice(start));
+  } catch {
+    // Fallback: truncate at last ] or } to handle trailing noise (e.g. leftover
+    // markdown fences after <think> stripping). Try array-closing first.
+    const sliced = text.slice(start);
+    const lastArr = sliced.lastIndexOf(']');
+    const lastObj = sliced.lastIndexOf('}');
+    const end = Math.max(lastArr, lastObj);
+    if (end > 0) {
+      try {
+        parsed = JSON.parse(sliced.slice(0, end + 1));
+      } catch {
+        return [];
+      }
+    } else {
+      return [];
+    }
+  }
+  const arr = Array.isArray(parsed) ? parsed : [parsed];
+  const out: ProposedTake[] = [];
+  for (const raw of arr) {
+    if (typeof raw !== 'object' || raw === null) continue;
+    const r = raw as Record<string, unknown>;
+    const claim_text = typeof r.claim_text === 'string' ? r.claim_text.trim() : '';
+    if (!claim_text || claim_text.length > 500) continue;
+    const kind = ['fact', 'take', 'bet', 'hunch'].includes(r.kind as string)
+      ? (r.kind as ProposedTake['kind'])
+      : 'take';
+    const holder = typeof r.holder === 'string' && r.holder.length > 0 ? r.holder : 'brain';
+    const weightRaw = typeof r.weight === 'number' ? r.weight : 0.5;
+    const weight = Math.max(0, Math.min(1, weightRaw));
+    const domain = typeof r.domain === 'string' && r.domain.length > 0 ? r.domain : undefined;
+    out.push({ claim_text, kind, holder, weight, domain });
+  }
+  return out;
+}
+
+/**
+ * BaseCyclePhase subclass. Walks pages, checks idempotency cache, calls
+ * extractor, writes proposals.
+ */
+class ProposeTakesPhase extends BaseCyclePhase {
+  readonly name = 'propose_takes' as CyclePhase;
+  protected readonly budgetUsdKey = 'cycle.propose_takes.budget_usd';
+  protected readonly budgetUsdDefault = 5.0;
+  /**
+   * Hard wall-clock deadline for the phase. Even with the per-call timeout in
+   * defaultExtractor, a long tail of slow-but-completing calls can accumulate.
+   * The phase breaks cleanly and returns a partial result with
+   * `deadline_hit: true` instead of being killed mid-write by an outer
+   * `timeout` wrapper (the recurring SIGTERM in nightly dream runs).
+   */
+  private static readonly PHASE_DEADLINE_MS = 30 * 60 * 1000;
+
+  protected override mapErrorCode(err: unknown): string {
+    if (err instanceof GBrainError) return err.problem;
+    if (err instanceof Error) {
+      if (err.message.includes('content_hash')) return 'CALIBRATION_PROPOSAL_DEDUP_FAIL';
+      if (err.message.includes('budget') || err.message.includes('Budget')) return 'CALIBRATION_GRADE_BUDGET_EXHAUSTED';
+    }
+    return 'PROPOSE_TAKES_UNKNOWN';
+  }
+
+  protected async process(
+    engine: BrainEngine,
+    scope: ScopedReadOpts,
+    _ctx: OperationContext,
+    opts: ProposeTakesOpts,
+  ): Promise<{ summary: string; details: Record<string, unknown>; status?: PhaseStatus }> {
+    const extractor = opts.extractor ?? defaultExtractor;
+    const promptVersion = opts.promptVersion ?? PROPOSE_TAKES_PROMPT_VERSION;
+    const pageLimit = opts.pageLimit ?? 100;
+    const skipPagesWithFence = opts.skipPagesWithFence ?? false;
+    const deadlineMs = opts.deadlineMs ?? ProposeTakesPhase.PHASE_DEADLINE_MS;
+    const phaseStartMs = Date.now();
+    const proposalRunId = `propose-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${randomUUID().slice(0, 8)}`;
+
+    const modelId = opts.model ?? getChatModel();
+
+    // With the default (gateway) extractor, skip cheaply when the resolved
+    // model's provider can't run — same probe semantics as patterns.ts /
+    // think/index.ts: unknown provider/model or Anthropic-without-key skips;
+    // other providers' auth surfaces lazily at chat() time. An injected
+    // extractor bypasses the gateway, so it is never gated. (Takeover of
+    // PR #1979's intent by @shawnduggan.)
+    if (!opts.extractor) {
+      const probe = probeChatModel(normalizeModelId(modelId));
+      if (!probe.ok) {
+        return {
+          summary: `propose_takes skipped: ${probe.detail}`,
+          details: {
+            reason: 'no_provider',
+            model: modelId,
+            pages_scanned: 0,
+            cache_hits: 0,
+            cache_misses: 0,
+            proposals_inserted: 0,
+            budget_exhausted: false,
+            warnings: [],
+          },
+          status: 'skipped',
+        };
+      }
+    }
+
+    const result: ProposeTakesResult = {
+      pages_scanned: 0,
+      cache_hits: 0,
+      cache_misses: 0,
+      proposals_inserted: 0,
+      tombstones_written: 0,
+      budget_exhausted: false,
+      warnings: [],
+    };
+
+    // Load pages eligible for proposal. Source-scoped per BaseCyclePhase.
+    const pages = await listCandidatePages(engine, scope, pageLimit);
+
+    if (opts.reporter) {
+      opts.reporter.start('propose_takes.pages' as never, pages.length);
+    }
+
+    for (const page of pages) {
+      // Phase deadline check. Break (not throw) so the phase returns a
+      // partial result with deadline_hit:true; work already banked stays.
+      const elapsedMs = Date.now() - phaseStartMs;
+      if (elapsedMs > deadlineMs) {
+        result.warnings.push(
+          `phase deadline hit at page ${result.pages_scanned}/${pages.length} ` +
+          `after ${(elapsedMs / 1000).toFixed(0)}s (cap ${(deadlineMs / 1000).toFixed(0)}s); partial completion`,
+        );
+        result.deadline_hit = true;
+        break;
+      }
+
+      result.pages_scanned += 1;
+      this.tick(opts);
+
+      // Skip pages that have NO prose body (e.g. metadata-only entity stubs).
+      const body = page.compiled_truth ?? '';
+      if (body.trim().length === 0) continue;
+      if (skipPagesWithFence && hasCompleteFence(body)) continue;
+
+      const ch = contentHash(body);
+      const existingTakes = extractExistingTakesForDedup(body);
+
+      // Idempotency check. If a row exists for (source_id, page_slug, content_hash,
+      // prompt_version), this page was already processed — skip and count as cache hit.
+      const sourceId = page.source_id ?? scope.sourceId ?? 'default';
+      const cached = await engine.executeRaw<{ id: number }>(
+        `SELECT id FROM take_proposals
+         WHERE source_id = $1 AND page_slug = $2 AND content_hash = $3 AND prompt_version = $4
+         LIMIT 1`,
+        [sourceId, page.slug, ch, promptVersion],
+      );
+      if (cached.length > 0) {
+        result.cache_hits += 1;
+        continue;
+      }
+      result.cache_misses += 1;
+
+      // Budget pre-check before the LLM call. Estimate: ~1500 input tokens + 500 output.
+      const budget = this.checkBudget({
+        modelId,
+        estimatedInputTokens: 1500,
+        maxOutputTokens: 500,
+      });
+      if (!budget.allowed) {
+        result.budget_exhausted = true;
+        result.warnings.push(
+          `budget exhausted at page ${result.pages_scanned}/${pages.length} (cumulative $${budget.cumulativeCostUsd.toFixed(4)} / cap $${budget.budgetUsd.toFixed(2)})`,
+        );
+        break;
+      }
+
+      // Call the extractor. Errors on a single page log a warning but do not abort.
+      let proposals: ProposedTake[];
+      try {
+        proposals = await extractor({
+          pagePath: page.slug,
+          pageBody: body,
+          existingTakes,
+          modelHint: opts.model,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        result.warnings.push(`extractor failed on ${page.slug}: ${msg}`);
+        continue;
+      }
+
+      // Write proposals to take_proposals. #2138: the idempotency key is
+      // per-CLAIM — take_proposals_idempotency_idx folds md5(claim_text) into
+      // the per-page tuple (migration v125), so a multi-claim page keeps every
+      // claim. RETURNING id prevents a repeated claim from inflating the count.
+      for (const p of proposals) {
+        const inserted = await engine.executeRaw<{ id: number }>(
+          `INSERT INTO take_proposals
+             (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
+              claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+           ON CONFLICT (source_id, page_slug, content_hash, prompt_version, md5(claim_text)) DO NOTHING
+           RETURNING id`,
+          [
+            sourceId,
+            page.slug,
+            ch,
+            promptVersion,
+            proposalRunId,
+            p.claim_text,
+            p.kind,
+            p.holder,
+            p.weight,
+            p.domain ?? null,
+            JSON.stringify(existingTakes),
+            modelId,
+          ],
+        );
+        result.proposals_inserted += inserted.length;
+      }
+
+      // Memoize the empty case too. A page that extracted zero claims gets
+      // NO row from the loop above, so without this its idempotency tuple is
+      // never recorded and the next cycle re-spends an LLM call on unchanged
+      // prose (the idle-cost bug). Write one tombstone row keyed by the same
+      // per-page tuple (the cache-hit lookup above matches ANY row for the
+      // 4-tuple; the unique index — take_proposals_idempotency_idx, migration
+      // v125 — folds md5(claim_text) in, so the conflict target must too).
+      // status='rejected' keeps it out of any pending-review query; its sole
+      // purpose is to make the next cycle a cache hit. Only reached on a
+      // SUCCESSFUL empty extract — the extractor-throw path `continue`s above,
+      // so failed pages are retried rather than tombstoned.
+      if (proposals.length === 0) {
+        await engine.executeRaw(
+          `INSERT INTO take_proposals
+             (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
+              claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'rejected')
+           ON CONFLICT (source_id, page_slug, content_hash, prompt_version, md5(claim_text)) DO NOTHING`,
+          [
+            sourceId,
+            page.slug,
+            ch,
+            promptVersion,
+            proposalRunId,
+            EMPTY_EXTRACTION_TOMBSTONE_TEXT,
+            'fact',
+            'brain',
+            0,
+            null,
+            JSON.stringify(existingTakes),
+            modelId,
+          ],
+        );
+        result.tombstones_written += 1;
+      }
+    }
+
+    if (opts.reporter) opts.reporter.finish();
+
+    // v0.42 Wave B3: receipt + rollup for propose_takes. Source-scoped
+    // via the read scope. Receipt only when proposals actually written.
+    const sourceIdForReceipt = scope.sourceId ?? 'default';
+    if (result.proposals_inserted > 0) {
+      try {
+        await writeReceipt(engine, {
+          kind: 'takes.proposed',
+          source_id: sourceIdForReceipt,
+          run_id: proposalRunId,
+          round: 'single',
+          extracted_at: new Date().toISOString(),
+          total_rows: result.proposals_inserted,
+          cost_usd: 0, // tracker isn't exposed at this layer; cost tracked centrally
+          summary:
+            `Proposed ${result.proposals_inserted} new takes from ${result.pages_scanned} pages ` +
+            `(${result.cache_hits} cached).`,
+        });
+      } catch (err) {
+        console.error(`[propose_takes] receipt write failed: ${(err as Error).message}`);
+      }
+    }
+    // A deadline-hit run halted mid-list the same way a budget-exhausted one
+    // does — record it as a halt, not a completed round.
+    const halted = result.budget_exhausted || result.deadline_hit === true;
+    await upsertExtractRollup(engine, {
+      kind: 'takes.proposed',
+      source_id: sourceIdForReceipt,
+      round_completed_delta: halted ? 0 : 1,
+      halt_delta: halted ? 1 : 0,
+    });
+
+    return {
+      summary: `propose_takes: scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.proposals_inserted} new proposals, ${result.tombstones_written} empty (run ${proposalRunId})`,
+      details: { ...result, proposal_run_id: proposalRunId, prompt_version: promptVersion },
+      status: result.budget_exhausted || result.deadline_hit ? 'warn' : 'ok',
+    };
+  }
+}
+
+/**
+ * Public entry point — mirrors the v0.23 `runPhaseSynthesize` shape so the
+ * cycle orchestrator in cycle.ts can call it uniformly.
+ */
+export async function runPhaseProposeTakes(
+  ctx: OperationContext,
+  opts: ProposeTakesOpts = {},
+) {
+  return new ProposeTakesPhase().run(ctx, opts);
+}
+
+/** Test-only access to the class for subclassing in tests. */
+export const __testing = {
+  ProposeTakesPhase,
+  parseExtractorOutput,
+  contentHash,
+  hasCompleteFence,
+  extractExistingTakesForDedup,
+  listCandidatePages,
+};

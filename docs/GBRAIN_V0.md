@@ -1,5 +1,12 @@
 # GBrain v0: Postgres-Native Personal Knowledge Brain
 
+> **Historical design doc.** This is the original v0 spec from before PGLite landed. Several
+> forward-looking sections — most notably the SQLite engine plan — were superseded by
+> PGLite (embedded Postgres via WASM), which uses the same SQL dialect as Postgres and
+> eliminates the need for a separate FTS5/sqlite-vss translation layer. Kept here for
+> historical context; see [`ENGINES.md`](ENGINES.md) for the current engine architecture and
+> the [`CHANGELOG.md`](../CHANGELOG.md) for the actual implementation history.
+
 ## What this is
 
 GBrain is a compiled intelligence system. Not a note-taking app. Not "chat with your notes."
@@ -517,7 +524,7 @@ See `docs/ENGINES.md` for the pluggable engine architecture and future backend p
 - **Intelligence compiler.** Treat every fact as a first-class claim with source span, entity links, validity window, confidence, and contradiction status. "What changed, why, and what evidence would flip it again?" From Codex review. Builds on compiled truth model.
 - **Active skills via Trigger.dev.** Application-specific briefings, meeting prep. Belongs in OpenClaw, not generic brain infra.
 - **Multi-user access.** Supabase RLS + per-user API keys. v0 is single-user.
-- **SQLite engine.** Community PRs welcome. See `docs/SQLITE_ENGINE.md`.
+- **SQLite engine.** Superseded by PGLite (embedded Postgres 17 via WASM) before v1. See [`ENGINES.md`](ENGINES.md) for the current engine architecture.
 - **Docker Compose for self-hosted Postgres.** Community PRs welcome.
 - **Web UI.** Optional Vercel-hosted dashboard for browsing brain pages.
 
@@ -531,7 +538,7 @@ This means:
 - A future DuckDB engine could implement analytics-heavy workloads
 - The CLI, MCP server, and library consumers never know which engine runs underneath
 
-See `docs/ENGINES.md` for the full interface spec and `docs/SQLITE_ENGINE.md` for the SQLite implementation plan.
+See [`ENGINES.md`](ENGINES.md) for the full interface spec. (The original SQLite engine plan was superseded by PGLite; the contract-first `BrainEngine` interface made that swap clean.)
 
 ## Review history
 

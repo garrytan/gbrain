@@ -20,6 +20,7 @@
 
 import type { BrainEngine } from '../core/engine.ts';
 import { errorFor, serializeError } from '../core/errors.ts';
+import { resolveCodeReadiness, readinessHint } from '../core/code-graph-readiness.ts';
 
 export interface CodeRefResult {
   slug: string;
@@ -107,11 +108,21 @@ export async function runCodeRefs(engine: BrainEngine, args: string[]): Promise<
   const language = parseFlag(args, '--lang');
   try {
     const results = await findCodeRefs(engine, sym, { limit, language });
+    // code-refs is brain-wide (not source-scoped); readiness is 'symbol' grain.
+    const readiness = await resolveCodeReadiness(engine, { kind: 'symbol', count: results.length });
     if (shouldEmitJson(args)) {
-      console.log(JSON.stringify({ symbol: sym, count: results.length, results }, null, 2));
+      console.log(JSON.stringify({
+        symbol: sym,
+        count: results.length,
+        status: readiness.status,
+        ready: readiness.ready,
+        results,
+      }, null, 2));
     } else {
       if (results.length === 0) {
         console.log(`No references found for "${sym}"`);
+        const hint = readinessHint(readiness);
+        if (hint) console.log(hint);
       } else {
         console.log(`Found ${results.length} reference(s) to "${sym}":`);
         for (const r of results) {

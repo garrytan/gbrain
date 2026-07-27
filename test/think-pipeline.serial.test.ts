@@ -1,9 +1,11 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { operationsByName } from '../src/core/operations.ts';
 import { runThink, persistSynthesis, type ThinkLLMClient } from '../src/core/think/index.ts';
 import { sanitizeTakeForPrompt, renderTakesBlock } from '../src/core/think/sanitize.ts';
 import { resolveCitations, parseInlineCitations, normalizeStructuredCitations } from '../src/core/think/cite-render.ts';
 import { runGather } from '../src/core/think/gather.ts';
+import { withoutAnthropicKey } from './helpers/no-anthropic-key.ts';
 
 let engine: PGLiteEngine;
 let alicePageId: number;
@@ -175,6 +177,70 @@ describe('runThink (with stub client)', () => {
     expect(result.gaps).toEqual(['no info on funding history']);
     expect(result.takesGathered).toBeGreaterThan(0);
     expect(result.warnings).not.toContain('LLM_OUTPUT_NOT_JSON');
+    // think's own cost was previously unsurfaced anywhere (not in this CLI's
+    // output, not in budget_ledger, and invisible to a wrapping caller's own
+    // token accounting since the LLM call is think's own, separate call).
+    // usage flows through from the real client.create() response so the CLI
+    // can compute cost_usd from it via canonicalLookup(modelUsed).
+    expect(result.usage).toEqual({ input_tokens: 10, output_tokens: 10 });
+  });
+
+  test('passes the question into page excerpt selection', async () => {
+    const prefix = [
+      '# Widget Co',
+      'General company background and operating context. '.repeat(18),
+    ].join('\n');
+    const lateFact = 'Enterprise pricing: the plan costs 125 credits per month.';
+    const content = `${prefix}\n${lateFact}\n${'Other context. '.repeat(80)}`;
+    let pageId: number | undefined;
+    let capturedUser = '';
+    const stubClient: ThinkLLMClient = {
+      create: async (params) => {
+        const userMessage = params.messages[0]?.content;
+        capturedUser = typeof userMessage === 'string'
+          ? userMessage
+          : JSON.stringify(userMessage);
+        return {
+          id: 'msg_excerpt_wiring',
+          type: 'message',
+          role: 'assistant',
+          model: 'stub',
+          stop_reason: 'end_turn',
+          stop_sequence: null,
+          usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: null, service_tier: null },
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ answer: 'stubbed answer', citations: [], gaps: [] }),
+          }],
+        };
+      },
+    };
+
+    try {
+      const page = await engine.putPage('companies/widget-co', {
+        title: 'Widget Co', type: 'company', compiled_truth: content,
+      });
+      pageId = page.id;
+      await engine.executeRaw('DELETE FROM content_chunks WHERE page_id = $1', [page.id]);
+      await engine.executeRaw(
+        `INSERT INTO content_chunks (page_id, chunk_index, chunk_text, chunk_source)
+         VALUES ($1, 0, $2, 'compiled_truth')`,
+        [page.id, content],
+      );
+
+      const result = await runThink(engine, {
+        question: 'What is Widget Co enterprise pricing in credits per month?',
+        client: stubClient,
+        withTrajectory: false,
+      });
+
+      expect(result.pagesGathered).toBeGreaterThan(0);
+      expect(capturedUser).toContain(lateFact);
+    } finally {
+      if (pageId !== undefined) {
+        await engine.executeRaw('DELETE FROM pages WHERE id = $1', [pageId]);
+      }
+    }
   });
 
   test('handles malformed LLM output gracefully (regex citation fallback)', async () => {
@@ -206,15 +272,30 @@ describe('runThink (with stub client)', () => {
   });
 
   test('degrades gracefully without ANTHROPIC_API_KEY', async () => {
-    const origKey = process.env.ANTHROPIC_API_KEY;
-    delete process.env.ANTHROPIC_API_KEY;
+    // Hermetic: neutralize BOTH the env var AND ~/.gbrain config key, else a
+    // developer/CI machine with a configured key fires a real LLM call and this
+    // assertion flips to LLM_OUTPUT_NOT_JSON.
+    const result = await withoutAnthropicKey(() => runThink(engine, { question: 'no key test' }));
+    expect(result.warnings).toContain('NO_ANTHROPIC_API_KEY');
+    expect(result.answer).toContain('no LLM available');
+    expect(result.rounds).toBe(0);
+  });
+
+  test('labels an unusable CONFIGURED model honestly (MODEL_NOT_USABLE, not NO_ANTHROPIC_API_KEY)', async () => {
+    // Regression guard: a configured model the recipe rejects (unknown_model)
+    // used to be stamped NO_ANTHROPIC_API_KEY, sending operators to debug
+    // env/keychain when the fix was the model id. Model validity beats the key
+    // check in probeChatModel, so the honest label holds even keyless.
+    await engine.setConfig('models.think', 'anthropic:claude-bogus-9');
     try {
-      const result = await runThink(engine, { question: 'no key test' });
-      expect(result.warnings).toContain('NO_ANTHROPIC_API_KEY');
-      expect(result.answer).toContain('no LLM available');
+      const result = await withoutAnthropicKey(() => runThink(engine, { question: 'bad model test' }));
+      expect(result.warnings).toContain('MODEL_NOT_USABLE:unknown_model');
+      expect(result.warnings).not.toContain('NO_ANTHROPIC_API_KEY');
+      expect(result.answer).toContain('not usable');
       expect(result.rounds).toBe(0);
+      expect(result.synthesisOk).toBe(false);
     } finally {
-      if (origKey) process.env.ANTHROPIC_API_KEY = origKey;
+      await engine.unsetConfig('models.think');
     }
   });
 
@@ -255,5 +336,137 @@ describe('runThink (with stub client)', () => {
       [page!.id],
     );
     expect(Number(ev[0]?.count)).toBe(1);
+  });
+});
+
+// #1698 — fail loud, never persist empty.
+function stubClientFromText(text: string): ThinkLLMClient {
+  return {
+    create: async () => ({
+      id: 'msg_1698', type: 'message', role: 'assistant', model: 'stub',
+      stop_reason: 'end_turn', stop_sequence: null,
+      usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: null, service_tier: null },
+      content: [{ type: 'text', text }],
+    }),
+  };
+}
+
+describe('runThink — #1698 explicit-model hard error', () => {
+  test('explicit unresolvable --model THROWS before gather (unknown_provider)', async () => {
+    await expect(
+      runThink(engine, { question: 'x', model: 'bogusprovider:foo', modelExplicit: true }),
+    ).rejects.toThrow(/not usable.*unknown_provider/);
+  });
+
+  test('explicit typo native --model THROWS (unknown_model)', async () => {
+    await expect(
+      runThink(engine, { question: 'x', model: 'anthropic:claude-bogus-9', modelExplicit: true }),
+    ).rejects.toThrow(/not usable.*unknown_model/);
+  });
+
+  test('NON-explicit bad model does NOT throw — graceful degrade (no modelExplicit)', async () => {
+    // model present but modelExplicit unset → early gate skipped; builder returns null.
+    // Hermetic no-key so the assertion can't be perturbed by a configured key.
+    // Post-honest-labeling: an unknown PROVIDER is a model problem, not a key
+    // problem — the warning names it instead of the old NO_ANTHROPIC_API_KEY
+    // catch-all. The graceful no-throw contract is unchanged.
+    const result = await withoutAnthropicKey(() => runThink(engine, { question: 'nonexplicit bad', model: 'bogusprovider:foo' }));
+    expect(result.warnings).toContain('MODEL_NOT_USABLE:unknown_provider');
+    expect(result.synthesisOk).toBe(false);
+  });
+});
+
+describe('runThink + persistSynthesis — #1698 never persist empty', () => {
+  test('empty-but-valid-JSON answer → synthesisOk false → persist-skip signal', async () => {
+    const result = await runThink(engine, {
+      question: 'empty answer test',
+      client: stubClientFromText(JSON.stringify({ answer: '', citations: [], gaps: [] })),
+    });
+    expect(result.synthesisOk).toBe(false);
+
+    const saved = await persistSynthesis(engine, result);
+    expect(saved.slug).toBe('');
+    expect(saved.warnings).toContain('SYNTHESIS_EMPTY_NOT_PERSISTED');
+  });
+
+  test('malformed (not-JSON) output → synthesisOk false → persist-skip', async () => {
+    const result = await runThink(engine, {
+      question: 'malformed persist test',
+      client: stubClientFromText('not json at all, just prose'),
+    });
+    expect(result.warnings).toContain('LLM_OUTPUT_NOT_JSON');
+    expect(result.synthesisOk).toBe(false);
+    const saved = await persistSynthesis(engine, result);
+    expect(saved.slug).toBe('');
+    expect(saved.warnings).toContain('SYNTHESIS_EMPTY_NOT_PERSISTED');
+  });
+
+  test('valid non-empty synthesis → synthesisOk true → persists', async () => {
+    const result = await runThink(engine, {
+      question: 'nonempty persist test',
+      client: stubClientFromText(JSON.stringify({ answer: 'A real answer.', citations: [], gaps: [] })),
+    });
+    expect(result.synthesisOk).toBe(true);
+    const saved = await persistSynthesis(engine, result);
+    expect(saved.slug).toContain('synthesis/nonempty-persist-test');
+  });
+
+  test('stubResponse with empty answer → synthesisOk false; non-empty → true', async () => {
+    const empty = await runThink(engine, {
+      question: 'stub empty', stubResponse: { answer: '', citations: [], gaps: [] },
+    });
+    expect(empty.synthesisOk).toBe(false);
+
+    const full = await runThink(engine, {
+      question: 'stub full', stubResponse: { answer: 'has content', citations: [], gaps: [] },
+    });
+    expect(full.synthesisOk).toBe(true);
+  });
+
+  test('opts.stubResponse path never made a real LLM call — usage stays undefined', async () => {
+    // Same distinction synthesisOk already makes: opts.stubResponse bypasses
+    // client.create() entirely, so there is no real usage to report. cost_usd
+    // must not be computed (and should render as null in --json) when this
+    // happens, since there is nothing to compute it from.
+    const result = await runThink(engine, {
+      question: 'stub no usage', stubResponse: { answer: 'has content', citations: [], gaps: [] },
+    });
+    expect(result.usage).toBeUndefined();
+  });
+
+  test('pre-existing ThinkResult literal without synthesisOk still persists (back-compat)', async () => {
+    const legacy: any = {
+      question: 'legacy backcompat', answer: 'legacy body', citations: [], gaps: [],
+      pagesGathered: 0, takesGathered: 0, graphHits: 0, modelUsed: 'stub', rounds: 1, warnings: [],
+      diagnostics: { pagesFromHybrid: 0, takesFromKeyword: 0, takesFromVector: 0, graphHits: 0 },
+      // NOTE: no synthesisOk field
+    };
+    const saved = await persistSynthesis(engine, legacy);
+    expect(saved.slug).toContain('synthesis/legacy-backcompat');
+  });
+});
+
+describe('think MCP op — #1698 C3 + #10', () => {
+  const baseCtx = (remote: boolean) => ({
+    engine, config: {} as any, dryRun: false, remote,
+    logger: { info() {}, warn() {}, error() {}, debug() {} } as any,
+  });
+
+  test('C3: remote caller with explicit bad model → op throws (modelExplicit wired)', async () => {
+    const op = operationsByName['think'];
+    expect(op).toBeDefined();
+    await expect(
+      op.handler(baseCtx(true) as any, { question: 'q', model: 'bogusprovider:foo' }),
+    ).rejects.toThrow(/not usable.*unknown_provider/);
+  });
+
+  test('#10: local save with no synthesis → saved_slug is null, not "" + warning surfaced', async () => {
+    const op = operationsByName['think'];
+    // Hermetic no-key: synthesisOk=false → persistSynthesis returns
+    // SYNTHESIS_EMPTY_NOT_PERSISTED deterministically (was previously at the
+    // mercy of whatever a live LLM returned for this prompt).
+    const res: any = await withoutAnthropicKey(() => op.handler(baseCtx(false) as any, { question: 'op empty save test', save: true }));
+    expect(res.saved_slug).toBeNull();
+    expect(res.warnings).toContain('SYNTHESIS_EMPTY_NOT_PERSISTED');
   });
 });

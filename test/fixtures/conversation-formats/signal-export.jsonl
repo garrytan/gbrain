@@ -1,0 +1,1 @@
+{"fixture_id":"signal-export-001","pattern":"signal-export","frontmatter":{"date":"2024-03-15"},"body":"Alice Example (2024-03-15 18:37:00 UTC): hello\nBob Example (2024-03-15 18:37:30 UTC): hey there\nAlice Example (2024-03-15 18:38:00 UTC): how are you\nBob Example (2024-03-15 18:39:00 UTC): good","expected_messages":4,"expected_participants":["Alice Example","Bob Example"]}

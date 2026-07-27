@@ -1,0 +1,51 @@
+{
+  "_meta": {
+    "fixture_version": "v0.36.1.0",
+    "page": "people-bob-example.md",
+    "synthetic": true,
+    "holdout": true,
+    "notes": "People-page holdout. Tests propose_takes ability to extract claims about a third party (vs claims by the author). Two distinct kinds — judgments-about-person and predictions-about-their-company."
+  },
+  "claims": [
+    {
+      "claim_text": "widget-co Series A round was priced on growth-rate math that doesn't hold under retention analysis",
+      "kind": "judgment",
+      "domain": "valuations",
+      "conviction": 0.7,
+      "since_date": "2024-01-01",
+      "rationale": "'I think' + explicit reasoning chain"
+    },
+    {
+      "claim_text": "Bob is good at pitch metrics that look good on a deck, weaker on substance",
+      "kind": "judgment",
+      "domain": "founder-assessment",
+      "conviction": 0.7,
+      "since_date": "2024-01-01",
+      "rationale": "Direct assessment statement"
+    },
+    {
+      "claim_text": "widget-co has a forced raise within 9 months",
+      "kind": "prediction",
+      "domain": "company-fundraise",
+      "conviction": 0.7,
+      "since_date": "2026-04-22",
+      "rationale": "Explicit moderate-high conviction"
+    },
+    {
+      "claim_text": "Bob is wrong-stage for widget-co's current team size",
+      "kind": "judgment",
+      "domain": "founder-stage-fit",
+      "conviction": 0.7,
+      "since_date": "2026-04-22",
+      "rationale": "Direct stage-fit assessment"
+    },
+    {
+      "claim_text": "widget-co either pivots hard in next 12 months or wraps up; no middle path",
+      "kind": "bet",
+      "domain": "company-trajectory",
+      "conviction": 0.65,
+      "since_date": "2026-04-22",
+      "rationale": "Explicit bet language with conviction value"
+    }
+  ]
+}

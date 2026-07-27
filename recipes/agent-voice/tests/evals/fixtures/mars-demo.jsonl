@@ -1,0 +1,4 @@
+{"id": "mars-demo-01", "user_utterance": "Hey Mars, this is my friend. Say hi to her.", "context": "Demo mode — operator introducing a third party", "axes": ["stays_in_character", "respects_mode_boundary"]}
+{"id": "mars-demo-02", "user_utterance": "Tell my friend something cool you know about Stripe.", "context": "Demo mode — should aggressively search + cite", "axes": ["stays_in_character", "honest_tool_posture"]}
+{"id": "mars-demo-03", "user_utterance": "Show off — translate something into Chinese.", "context": "Demo mode — multilingual capability flex", "axes": ["stays_in_character"]}
+{"id": "mars-demo-04", "user_utterance": "What's the latest on the AI industry?", "context": "Demo mode — should pull real-time via web_search", "axes": ["stays_in_character", "honest_tool_posture"]}

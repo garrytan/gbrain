@@ -20,13 +20,14 @@
  * frontmatter snapshot. Roll back by re-applying those snapshots via
  * `gbrain apply-migrations --rollback v0.13.0` (future CLI; not in scope).
  *
- * Scale: on a 30K-page brain, ~15s on Postgres, ~30s on PGLite. Batched in
- * chunks of 100 with a commit per batch so interruption losses are bounded.
+ * Scale (v0.41.37.0 #1581): chunked bulk SQL — one id-snapshot SELECT + N
+ * (SELECT-for-rollback + UPDATE) statements of CHUNK_SIZE rows each. Completes
+ * in ~1-2s even on an 82K-page PGLite brain. The prior per-page
+ * getPage+putPage loop hung CPU-bound for 70+ min on that brain (#1581).
  *
- * Snapshot-slugs rule: reads engine.getAllSlugs() upfront into an in-memory
- * Set before iterating. Prior learning [listpages-pagination-mutation]: any
- * batch write that mutates updated_at during OFFSET pagination is unstable.
- * getAllSlugs returns a full snapshot that isn't invalidated by our writes.
+ * Snapshot rule: the affected id set is read once via SQL up front. It isn't
+ * invalidated by our writes because each UPDATE flips its rows out of the
+ * GRANDFATHER_WHERE predicate (idempotent + resumable).
  *
  * Safety: does NOT call saveConfig. Prior learning [gbrain-init-default-pglite-flip]:
  * bare `gbrain init` defaults to PGLite and overwrites Postgres config.
@@ -46,7 +47,6 @@ import type { BrainEngine } from '../../core/engine.ts';
 // Lazy: GBRAIN_HOME may be set after module load.
 const getRollbackDir = () => gbrainPath('migrations');
 const getRollbackFile = () => join(getRollbackDir(), 'v0_13_1-rollback.jsonl');
-const BATCH_SIZE = 100;
 
 // ---------------------------------------------------------------------------
 // Phase A — connect (no config write)
@@ -76,28 +76,33 @@ async function phaseAConnect(opts: OrchestratorOpts): Promise<{ result: Orchestr
 }
 
 // ---------------------------------------------------------------------------
-// Phase B — snapshot slugs upfront
-// ---------------------------------------------------------------------------
-
-async function phaseBSnapshot(engine: BrainEngine): Promise<{ result: OrchestratorPhaseResult; slugs: string[] }> {
-  try {
-    const slugSet = await engine.getAllSlugs();
-    const slugs = [...slugSet].sort();
-    return {
-      result: { name: 'snapshot', status: 'complete', detail: `${slugs.length} slugs` },
-      slugs,
-    };
-  } catch (e) {
-    return {
-      result: { name: 'snapshot', status: 'failed', detail: e instanceof Error ? e.message : String(e) },
-      slugs: [],
-    };
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Phase C — grandfather: add validate:false where absent
+//
+// v0.41.37.0 #1581: rewritten from a per-page getPage+putPage loop (which hung
+// CPU-bound for 70+ min on an 82K-page PGLite brain) to a CHUNKED bulk SQL
+// pass. Three correctness properties (the per-page loop and a naive single
+// bulk UPDATE both got these wrong):
+//   1. Keyed on pages.id (globally unique PK), NOT slug. `slug` uniqueness is
+//      (source_id, slug) — a slug-batched UPDATE would mutate same-slug pages
+//      across other sources and produce ambiguous rollback rows.
+//   2. Filters `deleted_at IS NULL` — the old getPage path hid soft-deleted
+//      rows; a raw UPDATE must not grandfather tombstones.
+//   3. Chunked in CHUNK_SIZE batches so lock-hold stays bounded (the
+//      DELETE_BATCH_SIZE convention) instead of one giant transaction.
+// The rollback log carries source identity ({id, slug, source_id,
+// pre_frontmatter}) so a rollback is unambiguous across sources.
 // ---------------------------------------------------------------------------
+
+// Filter for pages still needing the grandfather flag. Literal `?` jsonb
+// existence operator (matches src/core/embed-skip.ts convention); 'validate'
+// is a hardcoded literal, no injection surface. COALESCE for null-frontmatter
+// safety. deleted_at IS NULL skips soft-deleted tombstones.
+const GRANDFATHER_WHERE =
+  "NOT (COALESCE(frontmatter, '{}'::jsonb) ? 'validate') AND deleted_at IS NULL";
+
+// Per-chunk row count. Bounded lock-hold + write-amplification per statement
+// (same rationale as engine-constants.ts DELETE_BATCH_SIZE).
+const CHUNK_SIZE = 1000;
 
 interface GrandfatherResult {
   touched: number;
@@ -106,60 +111,69 @@ interface GrandfatherResult {
   failures: string[];
 }
 
-async function phaseCGrandfather(
+// Exported for direct hermetic testing against a PGLite engine (the config /
+// loadConfig flow is exercised separately). Internal helper otherwise.
+export async function phaseCGrandfather(
   engine: BrainEngine,
-  slugs: string[],
   opts: OrchestratorOpts,
 ): Promise<{ result: OrchestratorPhaseResult; detail: GrandfatherResult }> {
-  ensureRollbackDir();
   const gf: GrandfatherResult = { touched: 0, skipped: 0, failed: 0, failures: [] };
 
-  for (let i = 0; i < slugs.length; i += BATCH_SIZE) {
-    const batch = slugs.slice(i, i + BATCH_SIZE);
-    for (const slug of batch) {
+  try {
+    if (opts.dryRun) {
+      const rows = await engine.executeRaw<{ count: string | number }>(
+        `SELECT COUNT(*) AS count FROM pages WHERE ${GRANDFATHER_WHERE}`,
+      );
+      const c = rows[0]?.count ?? 0;
+      gf.touched = typeof c === 'string' ? parseInt(c, 10) : Number(c);
+      return {
+        result: { name: 'grandfather', status: 'complete', detail: `would touch ${gf.touched} (dry-run)` },
+        detail: gf,
+      };
+    }
+
+    ensureRollbackDir();
+
+    // Snapshot the affected id set up front (ids only — cheap, no frontmatter
+    // blobs in memory). The snapshot isn't invalidated by our writes because
+    // each UPDATE flips the rows out of the GRANDFATHER_WHERE predicate.
+    const idRows = await engine.executeRaw<{ id: number }>(
+      `SELECT id FROM pages WHERE ${GRANDFATHER_WHERE} ORDER BY id`,
+    );
+    const ids = idRows.map(r => Number(r.id));
+
+    for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+      const chunk = ids.slice(i, i + CHUNK_SIZE);
       try {
-        const page = await engine.getPage(slug);
-        if (!page) { gf.skipped++; continue; }
+        // Rollback log BEFORE mutation: one SELECT per chunk (bounded memory),
+        // one appendFileSync per chunk. Carries source_id so rollback is
+        // unambiguous across same-slug-different-source pages.
+        const snap = await engine.executeRaw<{
+          id: number; slug: string; source_id: string | null; frontmatter: Record<string, unknown> | null;
+        }>(
+          'SELECT id, slug, source_id, frontmatter FROM pages WHERE id = ANY($1::int[])',
+          [chunk],
+        );
+        appendRollbackBatch(snap);
 
-        // Idempotency: skip if frontmatter already has a `validate` key
-        // (whether true, false, or any other value). We don't flip existing
-        // explicit settings.
-        if (page.frontmatter && Object.prototype.hasOwnProperty.call(page.frontmatter, 'validate')) {
-          gf.skipped++;
-          continue;
-        }
-
-        if (opts.dryRun) {
-          gf.touched++;
-          continue;
-        }
-
-        // Rollback log BEFORE mutation, so a crash mid-write still lets us
-        // revert. Append-only, one line per page, newline-terminated.
-        appendRollbackEntry({
-          slug,
-          pre_frontmatter: page.frontmatter ?? {},
-        });
-
-        const nextFrontmatter = { ...(page.frontmatter ?? {}), validate: false };
-        await engine.putPage(slug, {
-          type: page.type,
-          title: page.title,
-          compiled_truth: page.compiled_truth,
-          timeline: page.timeline,
-          frontmatter: nextFrontmatter,
-        });
-        gf.touched++;
+        await engine.executeRaw(
+          `UPDATE pages SET frontmatter = jsonb_set(COALESCE(frontmatter, '{}'::jsonb), '{validate}', 'false'::jsonb) ` +
+          'WHERE id = ANY($1::int[])',
+          [chunk],
+        );
+        gf.touched += chunk.length;
       } catch (e) {
-        gf.failed++;
+        gf.failed += chunk.length;
         const msg = e instanceof Error ? e.message : String(e);
-        gf.failures.push(`${slug}: ${msg.slice(0, 100)}`);
+        gf.failures.push(`chunk@${i}: ${msg.slice(0, 100)}`);
       }
     }
+  } catch (e) {
+    gf.failed += 1;
+    gf.failures.push(`grandfather: ${e instanceof Error ? e.message : String(e)}`.slice(0, 120));
   }
 
-  const status: OrchestratorPhaseResult['status'] =
-    gf.failed > 0 ? 'failed' : 'complete';
+  const status: OrchestratorPhaseResult['status'] = gf.failed > 0 ? 'failed' : 'complete';
   const detailStr = `touched=${gf.touched} skipped=${gf.skipped} failed=${gf.failed}`;
   return {
     result: { name: 'grandfather', status, detail: detailStr },
@@ -215,13 +229,10 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
   }
 
   try {
-    const { result: snapRes, slugs } = await phaseBSnapshot(engine);
-    phases.push(snapRes);
-    if (snapRes.status !== 'complete') {
-      return { version: '0.13.1', status: 'failed', phases };
-    }
-
-    const { result: gfRes, detail: gfDetail } = await phaseCGrandfather(engine, slugs, opts);
+    // v0.41.37.0 #1581: phaseBSnapshot (getAllSlugs) is gone — the chunked bulk
+    // pass filters via SQL (GRANDFATHER_WHERE), so we no longer materialize a
+    // full slug list in JS.
+    const { result: gfRes, detail: gfDetail } = await phaseCGrandfather(engine, opts);
     phases.push(gfRes);
     filesRewritten = gfDetail.touched;
 
@@ -255,13 +266,23 @@ function ensureRollbackDir(): void {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 }
 
-function appendRollbackEntry(entry: { slug: string; pre_frontmatter: Record<string, unknown> }): void {
-  const line = JSON.stringify({
+// v0.41.37.0 #1581: batch rollback writer. One appendFileSync per chunk, bounded
+// memory. Each line carries id + slug + source_id so a rollback is unambiguous
+// across same-slug-different-source pages (pages.slug is not globally unique).
+function appendRollbackBatch(
+  rows: ReadonlyArray<{ id: number; slug: string; source_id: string | null; frontmatter: Record<string, unknown> | null }>,
+): void {
+  if (rows.length === 0) return;
+  const ts = new Date().toISOString();
+  const lines = rows.map(r => JSON.stringify({
     migration: 'v0.13.0',
-    timestamp: new Date().toISOString(),
-    ...entry,
-  }) + '\n';
-  appendFileSync(getRollbackFile(), line, 'utf-8');
+    timestamp: ts,
+    id: r.id,
+    slug: r.slug,
+    source_id: r.source_id ?? 'default',
+    pre_frontmatter: r.frontmatter ?? {},
+  })).join('\n') + '\n';
+  appendFileSync(getRollbackFile(), lines, 'utf-8');
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,56 @@
+# Substitution table for scripts/import-from-upstream.sh.
+#
+# Format: one substitution per line, tab-separated:
+#   <from-regex>\t<to-literal>\t<comment>
+#
+# Lines starting with '#' are comments. Blank lines are ignored.
+#
+# CONVENTION: the FROM column may reference shell-expanded environment variables
+# (e.g. ${PRIVATE_AGENT_NAME}, ${OPERATOR_FIRST_NAME}). The import script runs
+# `envsubst` on the table before applying sed so the literal private values
+# NEVER appear in this checked-in file. Set those env vars in $AGENT_VOICE_SUBSTITUTIONS
+# (pipe-separated key=value pairs) when invoking the script:
+#
+#   AGENT_VOICE_SUBSTITUTIONS="PRIVATE_AGENT_NAME=...|OPERATOR_FIRST_NAME=..." \
+#     scripts/import-from-upstream.sh --from $UPSTREAM_VOICE_REPO --to recipes/agent-voice/code/
+#
+# COMMENT discipline: comments describe the SHAPE of what's being scrubbed in
+# functional terms ("private agent codename, capitalized form") without naming
+# the actual value. Future grep against this file should reveal mechanics, not
+# private identifiers.
+
+# === Hardcoded private filesystem paths ===
+/data/\.openclaw/workspace/	$BRAIN_ROOT/	# private hardcoded brain path, replace with operator env var
+/data/\.openclaw/	$AGENT_HOME/	# private hardcoded agent root, replace with operator env var
+
+# === Private name substitutions (env-driven) ===
+# These rows depend on $AGENT_VOICE_SUBSTITUTIONS values; the import script
+# expands them via envsubst before applying. Each row references a placeholder
+# variable; the variable's value is the literal name to find. Two casings each:
+# lowercase for slugs/paths, capitalized for prose.
+\b${PRIVATE_AGENT_NAME_LC}\b	the daemon	# private upstream agent codename, lowercase
+\b${PRIVATE_AGENT_NAME_TC}\b	The daemon	# private upstream agent codename, capitalized
+\b${OPERATOR_FIRST_NAME}\b	you	# operator addressee
+\b${OPERATOR_FIRST_NAME_LC}\b	you	# operator addressee, lowercase form
+\b${FAMILY_MEMBER_1}\b	[family-member]	# family member name 1
+\b${FAMILY_MEMBER_2}\b	[family-member]	# family member name 2
+\b${FAMILY_MEMBER_3}\b	[family-member]	# family member name 3
+\b${FAMILY_MEMBER_4}\b	[family-member]	# family member name 4
+\b${FAMILY_MEMBER_5}\b	[family-member]	# family member name 5
+\b${THERAPIST_1}\b	[therapist]	# therapist name 1
+\b${THERAPIST_2}\b	[therapist]	# therapist name 2
+
+# === File renames (handled separately by the import script's rename pass) ===
+# These are NOT sed substitutions; the import script reads this section and
+# performs file-level mv. The format is: __RENAME__\t<from-path>\t<to-path>
+__RENAME__	lib/twilio-venus-bridge.mjs	lib/twilio-bridge.mjs
+__RENAME__	lib/venus-tools.mjs	lib/voice-tools.mjs
+__RENAME__	venus.html	public/call.html
+__RENAME__	web-client.html	public/call.html
+__RENAME__	directory.html	public/directory.html
+__RENAME__	rnnoise-processor.js	public/rnnoise-processor.js
+__RENAME__	rnnoise-sync.js	public/rnnoise-sync.js
+
+# === package.json metadata ===
+"name":[ ]*"[^"]*voice[^"]*"	"name": "agent-voice"	# strip upstream package name
+"private":[ ]*true	"private": false	# allow downstream installs from copy

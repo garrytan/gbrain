@@ -1,0 +1,1 @@
+{"fixture_id":"matrix-element-001","pattern":"matrix-element","frontmatter":{"date":"2024-03-15"},"body":"[18:37] @alice:matrix.org: hello world\n[18:38] @bob:example.org: hey\n[18:39] @alice:matrix.org: how are you\n[18:40] @bob:example.org: good","expected_messages":4,"expected_participants":["alice","bob"]}

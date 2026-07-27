@@ -335,3 +335,127 @@ describe('judgeSignificance', () => {
     expect(r.reasons[0]).toContain('unparseable');
   });
 });
+
+// ─── v0.41.13: UTF-16 safety in judgeSignificance ─────────────────────
+//
+// Reproduces the 2026-05-24 production SYNTH_PHASE_FAIL: `🤖` (U+1F916,
+// encoded as surrogate pair U+D83E U+DD16) at offset 3999 in a long
+// telegram transcript made the 4000-char slice produce a lone high
+// surrogate. Anthropic's JSON parser rejected the payload with "no low
+// surrogate in string". Fix routes both head + tail slices through the
+// canonical safeSplitIndex helper from text-safe.ts.
+//
+// Primary assertion: scan the captured prompt for unpaired surrogates.
+// (NOT JSON.stringify, which doesn't throw on lone surrogates in V8/
+// JSCore — codex C-11.)
+
+describe('judgeSignificance — UTF-16 safety (v0.41.13)', () => {
+  const HIGH = '\uD83E'; // high surrogate of 🤖
+  const LOW = '\uDD16';  // low surrogate of 🤖
+  const ROBOT = HIGH + LOW; // U+1F916, 🤖, two UTF-16 code units
+
+  function isHighSurrogate(c: number): boolean { return c >= 0xD800 && c <= 0xDBFF; }
+  function isLowSurrogate(c: number): boolean { return c >= 0xDC00 && c <= 0xDFFF; }
+
+  /**
+   * Build content of exactly `length` chars with `🤖` placed so that
+   * the high surrogate sits at `emojiHighOffset`. The pair occupies
+   * positions [emojiHighOffset, emojiHighOffset+1]. Filler is plain
+   * ASCII so surrogate-scanning has no other true positives.
+   */
+  function buildContentWithEmojiAt(length: number, emojiHighOffset: number): string {
+    if (emojiHighOffset < 0 || emojiHighOffset > length - 2) {
+      throw new Error(`emojiHighOffset ${emojiHighOffset} out of range for length ${length}`);
+    }
+    const head = 'a'.repeat(emojiHighOffset);
+    const tail = 'b'.repeat(length - emojiHighOffset - 2);
+    return head + ROBOT + tail;
+  }
+
+  /** Stub client that captures the user-message string for inspection. */
+  function makeCapturingClient(): { client: JudgeClient; captured: { userMessage: string | null } } {
+    const captured: { userMessage: string | null } = { userMessage: null };
+    const client: JudgeClient = {
+      create: async (p: any) => {
+        // judgeSignificance posts `Transcript ${basename}:\n\n${trimmed}` as
+        // the user message. Capture for post-call scanning.
+        const userMsg = p.messages[0]?.content;
+        captured.userMessage = typeof userMsg === 'string' ? userMsg : null;
+        return { content: [{ type: 'text', text: '{"worth_processing": false, "reasons": ["stub"]}' }] } as any;
+      },
+    };
+    return { client, captured };
+  }
+
+  /**
+   * Extract the trimmed payload from the captured prompt by stripping
+   * the prompt prefix and the `\n[...truncated...]\n` separator. We
+   * scan the WHOLE captured message for unpaired surrogates anyway
+   * (prompt prefix is pure ASCII), so the extraction is defense-in-
+   * depth, not the primary signal.
+   */
+  function scanForUnpairedSurrogates(s: string): { index: number; kind: 'lone-high' | 'lone-low' } | null {
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      if (isHighSurrogate(c)) {
+        const next = i + 1 < s.length ? s.charCodeAt(i + 1) : -1;
+        if (!isLowSurrogate(next)) return { index: i, kind: 'lone-high' };
+      } else if (isLowSurrogate(c)) {
+        const prev = i > 0 ? s.charCodeAt(i - 1) : -1;
+        if (!isHighSurrogate(prev)) return { index: i, kind: 'lone-low' };
+      }
+    }
+    return null;
+  }
+
+  function makeLongTranscript(content: string): import('../src/core/cycle/transcript-discovery.ts').DiscoveredTranscript {
+    return {
+      filePath: '/tmp/long.txt',
+      contentHash: 'utf16-test',
+      content,
+      basename: 'long',
+      inferredDate: null,
+    };
+  }
+
+  // ─── Head-boundary cases (offset around 4000) ──────────────────────
+
+  test.each([3998, 3999, 4000, 4001])(
+    'emoji at head offset %i: captured prompt has zero unpaired surrogates',
+    async (offset) => {
+      const content = buildContentWithEmojiAt(8001, offset);
+      const { client, captured } = makeCapturingClient();
+      await judgeSignificance(client, makeLongTranscript(content));
+      expect(captured.userMessage).not.toBeNull();
+      const result = scanForUnpairedSurrogates(captured.userMessage!);
+      expect(result).toBeNull();
+    },
+  );
+
+  // ─── Tail-boundary cases (offset around length-4000 = 4001) ────────
+
+  test.each([3999, 4000, 4001, 4002])(
+    'emoji at tail offset %i: captured prompt has zero unpaired surrogates',
+    async (offset) => {
+      // 8001 - 4000 = 4001 is the tail boundary; we test around it.
+      const content = buildContentWithEmojiAt(8001, offset);
+      const { client, captured } = makeCapturingClient();
+      await judgeSignificance(client, makeLongTranscript(content));
+      expect(captured.userMessage).not.toBeNull();
+      const result = scanForUnpairedSurrogates(captured.userMessage!);
+      expect(result).toBeNull();
+    },
+  );
+
+  // ─── Sub-8000 short-content branch: no slicing, no risk ────────────
+
+  test('content <= 8000 chars: no slicing applied, emoji passes through unchanged', async () => {
+    const content = 'a'.repeat(100) + ROBOT + 'b'.repeat(100); // 202 chars total
+    const { client, captured } = makeCapturingClient();
+    await judgeSignificance(client, makeLongTranscript(content));
+    expect(captured.userMessage).not.toBeNull();
+    expect(scanForUnpairedSurrogates(captured.userMessage!)).toBeNull();
+    // Emoji's full pair must appear at least once.
+    expect(captured.userMessage!).toContain(ROBOT);
+  });
+});

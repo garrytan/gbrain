@@ -193,16 +193,19 @@ export async function runSkillpackCheck(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`gbrain skillpack-check — agent-readable health report.
 
-Wraps doctor + apply-migrations --list into one JSON blob. Cron-friendly:
-zero interactive prompts, non-zero exit on any needed action.
+Wraps doctor + apply-migrations --list into one JSON blob.
 
 Usage:
-  gbrain skillpack-check            Pretty JSON to stdout, exit 0/1/2.
+  gbrain skillpack-check            Pretty JSON to stdout, exit 0/1/2 (legacy).
+  gbrain skillpack check            v0.33 subcommand. Default: informational
+                                     (exit 0 even with drift). Pass --strict
+                                     to exit non-zero on action-needed.
   gbrain skillpack-check --quiet    Exit code only, no output.
 
 Exit codes:
-  0  healthy (no action needed)
-  1  action needed (see JSON.actions[])
+  0  healthy (no action needed) — or informational mode with drift detected
+  1  action needed (see JSON.actions[]). Always returned when --strict OR
+     when invoked as top-level \`skillpack-check\` (cron compat).
   2  could not determine (binary or subcommand crash)
 `);
     return;
@@ -211,17 +214,51 @@ Exit codes:
   // --quiet is parsed as a global flag in src/cli.ts (and stripped from argv
   // before reaching here); honor it via the CliOptions singleton.
   const quiet = getCliOptions().quiet;
+  const strict = args.includes('--strict');
   const report = buildReport();
 
   if (!quiet) {
     console.log(JSON.stringify(report, null, 2));
   }
 
-  // Determine exit code.
+  // Crash-detection always trumps strict/informational toggles.
   if ('error' in report.doctor || 'error' in report.migrations) {
     process.exit(2);
   }
+
+  // v0.33: When invoked as the new `gbrain skillpack check` subcommand,
+  // the dispatcher detects this via process.argv and treats the default
+  // as informational (exit 0 even with drift). Pass --strict to opt
+  // back into action-needed exit-1 semantics for CI gates.
+  //
+  // Top-level `gbrain skillpack-check` (cron compat) keeps exit-1 on
+  // action-needed as the default — see argv detection below.
+  const isSubcommandInvocation = isSkillpackCheckSubcommand();
+  const informational = isSubcommandInvocation && !strict;
+
+  if (informational) {
+    process.exit(0);
+  }
   process.exit(report.healthy ? 0 : 1);
+}
+
+/**
+ * Detect whether this invocation came via `gbrain skillpack check`
+ * (subcommand) vs the top-level `gbrain skillpack-check` (cron compat).
+ * Subcommand → informational default. Top-level → strict default.
+ */
+function isSkillpackCheckSubcommand(): boolean {
+  const argv = process.argv;
+  // argv shape for `gbrain skillpack check` after the binary name and
+  // any --quiet / --json globals stripped: ['skillpack', 'check', ...].
+  // Walk to find the first non-flag arg.
+  for (let i = 2; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === 'skillpack') return true;
+    if (a === 'skillpack-check') return false;
+    if (a && !a.startsWith('--')) return false;
+  }
+  return false;
 }
 
 /** Exported for unit tests. */

@@ -14,7 +14,9 @@
 
 import type { GBrainConfig } from './config.ts';
 import { discoverOAuth, mintClientCredentialsToken, smokeTestMcp } from './remote-mcp-probe.ts';
-import { callRemoteTool, RemoteMcpError } from './mcp-client.ts';
+import { callRemoteTool, RemoteMcpError, unpackToolResult } from './mcp-client.ts';
+import { safeCompare, driftLevel, loadPromptState } from './thin-client-upgrade-prompt.ts';
+import { VERSION } from '../version.ts';
 
 export interface RemoteCheck {
   name: string;
@@ -218,7 +220,190 @@ export async function collectRemoteDoctorReport(
     checks.push(buildScopeCheck(grantedScope, scopeResult));
   }
 
+  // 5b. v0.42.0.0 D11: thin-client orphan_ratio check via MCP find_orphans.
+  //
+  // Mirrors the local runDoctor `orphan_ratio` check but routes through
+  // the find_orphans MCP op (same canonical findOrphans() data fn under
+  // the hood) and emits an OPERATOR-POINTING hint instead of the
+  // self-fix hint — thin-client users can't run `gbrain extract links
+  // --by-mention` against a brain they don't host. Hint asks them to
+  // ping the brain operator at the configured public URL.
+  //
+  // Skippable via the same `skipScopeProbe` flag so hermetic fixtures
+  // that don't implement find_orphans on /mcp don't hang. find_orphans
+  // is a `read` scope op so even minimal-scope thin-clients can call it.
+  if (!skipProbe) {
+    checks.push(await runOrphanRatioCheck(config));
+  }
+
+  // 6. v0.31.11: thin-client version-drift check. Calls get_brain_identity
+  // to compare local CLI version against remote brain version. Reports:
+  //   - 'ok' when local >= remote OR drift is 'patch' (D8 policy: only
+  //     minor/major drift is meaningful enough to flag in doctor)
+  //   - 'warn' when minor/major drift detected; fix hint points at
+  //     `gbrain upgrade` (or, if state shows a prior 'failed' attempt,
+  //     points at the manual install path)
+  //   - 'ok' (informational) when network unreachable / fetch throws —
+  //     doctor MUST NOT fail loud on transient network issues; this check
+  //     is informational, the earlier mcp_smoke would have already failed
+  //     hard if the remote is genuinely down.
+  if (!skipProbe) {
+    checks.push(await runUpgradeDriftCheck(config));
+  }
+
   return finalize(remote, checks, tokenRes.token.scope);
+}
+
+/**
+ * v0.42.0.0 D11: thin-client orphan_ratio check.
+ *
+ * Calls `find_orphans` MCP op (read scope) to get the same data the
+ * local `gbrain doctor` `orphan_ratio` check uses. Computes the ratio,
+ * applies the same thresholds (vacuous <100 entity, warn >0.5, fail
+ * >0.8), but emits an OPERATOR-POINTING hint: thin-client users can't
+ * run `gbrain extract links --by-mention` themselves — they need to
+ * ping whoever runs the brain server.
+ *
+ * Errors non-fatal — informational check.
+ */
+export async function runOrphanRatioCheck(config: GBrainConfig): Promise<RemoteCheck> {
+  type OrphanData = {
+    orphans: unknown[];
+    total_orphans: number;
+    total_linkable: number;
+    total_pages: number;
+    excluded: number;
+  };
+  let data: OrphanData;
+  try {
+    const raw = await callRemoteTool(
+      config,
+      'find_orphans',
+      { include_pseudo: false },
+      { timeoutMs: 5000 },
+    );
+    data = unpackToolResult<OrphanData>(raw);
+  } catch (e) {
+    return {
+      name: 'orphan_ratio',
+      status: 'ok',
+      message: 'orphan_ratio: could not query remote (informational; not a doctor failure)',
+      detail: { network_error: e instanceof Error ? e.message : String(e) },
+    };
+  }
+  // Entity-count gate uses total_linkable as a proxy (the underlying op
+  // doesn't expose entity count directly; total_linkable is the same
+  // denominator the local check uses).
+  const entityCount = data.total_linkable;
+  if (entityCount < 100) {
+    return {
+      name: 'orphan_ratio',
+      status: 'ok',
+      message: `Vacuous: ${entityCount} linkable pages (<100). Orphan ratio not meaningful at this scale.`,
+    };
+  }
+  const ratio = entityCount > 0 ? data.total_orphans / entityCount : 0;
+  const pct = (ratio * 100).toFixed(0);
+  // Operator-pointing hint per D11 — thin-client users can't run the fix
+  // locally; point them at the brain server's operator.
+  const url = config.remote_mcp?.mcp_url ?? '<your brain server>';
+  const hint =
+    `Ask the brain operator at ${url} to run: gbrain extract links --by-mention ` +
+    `(auto-links entity mentions in body text).`;
+  if (ratio > 0.8) {
+    return {
+      name: 'orphan_ratio',
+      status: 'fail',
+      message: `Orphan ratio ${pct}% (${data.total_orphans}/${entityCount} linkable pages have no inbound links). ${hint}`,
+    };
+  }
+  if (ratio > 0.5) {
+    return {
+      name: 'orphan_ratio',
+      status: 'warn',
+      message: `Orphan ratio ${pct}% (${data.total_orphans}/${entityCount} linkable pages have no inbound links). ${hint}`,
+    };
+  }
+  return {
+    name: 'orphan_ratio',
+    status: 'ok',
+    message: `Orphan ratio ${pct}% (${data.total_orphans}/${entityCount} linkable pages)`,
+  };
+}
+
+/**
+ * v0.31.11: thin-client version-drift check. Surfaces remote-brain drift in
+ * `gbrain doctor` so quiet/non-TTY users (who don't see the interactive
+ * prompt) still learn about minor/major bumps. Pure data fetch + compare.
+ *
+ * Errors are non-fatal: any failure returns an 'ok' status with a
+ * `network_error` detail. The earlier `mcp_smoke` check covers the
+ * "remote is genuinely unreachable" case with a 'fail' status.
+ */
+export async function runUpgradeDriftCheck(config: GBrainConfig): Promise<RemoteCheck> {
+  let remoteVersion: string;
+  try {
+    const raw = await callRemoteTool(config, 'get_brain_identity', {}, { timeoutMs: 2000 });
+    const identity = unpackToolResult<{ version: string }>(raw);
+    remoteVersion = identity.version;
+  } catch (e) {
+    return {
+      name: 'thin_client_upgrade_drift',
+      status: 'ok',
+      message: 'could not fetch remote version (network or scope error); see other checks',
+      detail: { error: e instanceof Error ? e.message : String(e), inconclusive: true },
+    };
+  }
+
+  const cmp = safeCompare(VERSION, remoteVersion);
+  if (cmp === null) {
+    return {
+      name: 'thin_client_upgrade_drift',
+      status: 'ok',
+      message: `version comparison inconclusive (local=${VERSION}, remote=${remoteVersion})`,
+      detail: { local: VERSION, remote: remoteVersion, inconclusive: true },
+    };
+  }
+  if (cmp >= 0) {
+    return {
+      name: 'thin_client_upgrade_drift',
+      status: 'ok',
+      message: `local v${VERSION} ≥ remote v${remoteVersion}`,
+      detail: { local: VERSION, remote: remoteVersion },
+    };
+  }
+  const level = driftLevel(VERSION, remoteVersion);
+  if (level === 'patch') {
+    return {
+      name: 'thin_client_upgrade_drift',
+      status: 'ok',
+      message: `local v${VERSION}, remote v${remoteVersion} (patch drift; not flagged)`,
+      detail: { local: VERSION, remote: remoteVersion, level },
+    };
+  }
+
+  // Minor or major drift. Check the prompt-state file: if a prior 'failed'
+  // attempt is recorded for this remote+version, point users at the manual
+  // install path instead of the auto-upgrade command.
+  let priorFailed = false;
+  try {
+    const state = loadPromptState();
+    const entry = state.entries[config.remote_mcp?.mcp_url ?? ''];
+    if (entry && entry.last_response === 'failed' && entry.last_prompted_remote_version === remoteVersion) {
+      priorFailed = true;
+    }
+  } catch { /* state read is best-effort */ }
+
+  const fixHint = priorFailed
+    ? `Prior \`gbrain upgrade\` did not advance the binary. See https://github.com/garrytan/gbrain/releases for manual install.`
+    : `Run \`gbrain upgrade\` to install v${remoteVersion}.`;
+
+  return {
+    name: 'thin_client_upgrade_drift',
+    status: 'warn',
+    message: `${level} upgrade available: local v${VERSION} → remote v${remoteVersion}. ${fixHint}`,
+    detail: { local: VERSION, remote: remoteVersion, level, prior_failed: priorFailed },
+  };
 }
 
 /**

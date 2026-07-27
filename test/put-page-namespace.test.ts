@@ -25,6 +25,7 @@ function makeCtx(overrides: Partial<OperationContext> = {}): OperationContext {
     logger: { info: () => {}, warn: () => {}, error: () => {} },
     dryRun: true,
     remote: true,
+    sourceId: 'default',
     ...overrides,
   };
 }

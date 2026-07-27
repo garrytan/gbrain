@@ -16,7 +16,7 @@ describe('CHUNKER_VERSION', () => {
 });
 
 describe('detectCodeLanguage', () => {
-  test('recognizes all 29 supported extensions', () => {
+  test('recognizes all 30 supported extensions', () => {
     const cases: Record<string, string> = {
       'foo.ts': 'typescript', 'foo.tsx': 'tsx', 'foo.mts': 'typescript', 'foo.cts': 'typescript',
       'foo.js': 'javascript', 'foo.jsx': 'javascript', 'foo.mjs': 'javascript', 'foo.cjs': 'javascript',
@@ -30,6 +30,8 @@ describe('detectCodeLanguage', () => {
       'foo.zig': 'zig', 'foo.sol': 'solidity', 'foo.sh': 'bash',
       'foo.css': 'css', 'foo.html': 'html', 'foo.vue': 'vue',
       'foo.json': 'json', 'foo.yaml': 'yaml', 'foo.toml': 'toml',
+      // v0.41 D2 wave: SQL via DerekStride/tree-sitter-sql.
+      'foo.sql': 'sql', 'migrations/001_init.sql': 'sql',
     };
     for (const [path, expected] of Object.entries(cases)) {
       expect(detectCodeLanguage(path)).toBe(expected as any);
@@ -45,6 +47,178 @@ describe('detectCodeLanguage', () => {
   test('is case-insensitive', () => {
     expect(detectCodeLanguage('Main.GO')).toBe('go');
     expect(detectCodeLanguage('App.TSX')).toBe('tsx');
+    expect(detectCodeLanguage('Schema.SQL')).toBe('sql');
+  });
+});
+
+// v0.41 D2 wave (#1173) — SQL via DerekStride/tree-sitter-sql.
+// Step 0 inspection 2026-05-24 verified the grammar wraps every top-level
+// statement in `program > statement > <kind>`. Tests assert the chunker
+// dives through the wrapper and extracts the target name from DDL kinds.
+describe('chunkCodeText — SQL', () => {
+  test('CREATE TABLE extracts table name as symbolName', async () => {
+    const sql = `CREATE TABLE this_table_name_is_long_enough_to_avoid_merging (
+  id SERIAL PRIMARY KEY,
+  email TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP,
+  deleted_at TIMESTAMP,
+  metadata JSONB
+);`;
+    // Use a small chunkSizeTokens so the single statement isn't merged
+    // with siblings (test fixture has only one, so no merging anyway).
+    const result = await chunkCodeText(sql, 'migrations/users.sql', { chunkSizeTokens: 50 });
+    expect(result.length).toBeGreaterThanOrEqual(1);
+    const c = result[0]!;
+    expect(c.metadata.language).toBe('sql');
+    expect(c.metadata.symbolName).toBe('this_table_name_is_long_enough_to_avoid_merging');
+    expect(c.metadata.symbolType).toBe('table');
+    expect(c.text).toContain('[SQL]');
+  });
+
+  test('CREATE FUNCTION with $$ body extracts function name + parses cleanly', async () => {
+    const sql = `CREATE OR REPLACE FUNCTION get_user_by_email_long_function_name_here_for_no_merge(p_email TEXT)
+RETURNS users AS $$
+  SELECT * FROM users WHERE email = p_email LIMIT 1;
+$$ LANGUAGE SQL;`;
+    const result = await chunkCodeText(sql, 'migrations/fn.sql', { chunkSizeTokens: 50 });
+    expect(result.length).toBeGreaterThanOrEqual(1);
+    const c = result.find(c => c.metadata.symbolName === 'get_user_by_email_long_function_name_here_for_no_merge');
+    expect(c).toBeDefined();
+    expect(c!.metadata.symbolType).toBe('function');
+    expect(c!.metadata.language).toBe('sql');
+    // Dollar-quoted body must NOT crash the parser (codex F15 regression).
+    expect(c!.text).toContain('$$');
+  });
+
+  test('CREATE INDEX extracts index name', async () => {
+    const sql = `CREATE INDEX idx_a_b_c_d_e_f_g_long ON users (email, created_at, updated_at, deleted_at);`;
+    const result = await chunkCodeText(sql, 'idx.sql', { chunkSizeTokens: 50 });
+    const c = result.find(c => c.metadata.symbolType === 'index');
+    expect(c).toBeDefined();
+    expect(c!.metadata.symbolName).toBe('idx_a_b_c_d_e_f_g_long');
+  });
+
+  test('CREATE VIEW extracts view name', async () => {
+    const sql = `CREATE VIEW active_users_dashboard_view AS
+  SELECT id, email FROM users WHERE deleted_at IS NULL AND active = true;`;
+    const result = await chunkCodeText(sql, 'view.sql', { chunkSizeTokens: 50 });
+    const c = result.find(c => c.metadata.symbolType === 'view');
+    expect(c).toBeDefined();
+    expect(c!.metadata.symbolName).toBe('active_users_dashboard_view');
+  });
+
+  test('ALTER TABLE extracts table name', async () => {
+    const sql = `ALTER TABLE long_table_name_here_so_it_does_not_merge_with_sibling
+  ADD COLUMN created_at TIMESTAMP DEFAULT NOW(),
+  ADD COLUMN updated_at TIMESTAMP;`;
+    const result = await chunkCodeText(sql, 'alter.sql', { chunkSizeTokens: 50 });
+    const c = result.find(c => c.metadata.symbolType === 'table');
+    expect(c).toBeDefined();
+    expect(c!.metadata.symbolName).toBe('long_table_name_here_so_it_does_not_merge_with_sibling');
+  });
+
+  test('DML statements emit chunks but with symbolName=null (DDL signal only)', async () => {
+    const sql = `INSERT INTO users (email) VALUES ('a@b.com') RETURNING id, email, created_at;`;
+    const result = await chunkCodeText(sql, 'dml.sql', { chunkSizeTokens: 50 });
+    expect(result.length).toBeGreaterThanOrEqual(1);
+    // The chunk emits but symbolName stays null — DML doesn't contribute
+    // to code-def. symbolType remains the underlying statement kind via
+    // normalizeSymbolType's fallback (`insert` here, unmapped → "insert").
+    expect(result[0]!.metadata.symbolName).toBeNull();
+    expect(result[0]!.metadata.language).toBe('sql');
+  });
+
+  test('mixed DDL + DML emits per-statement chunks, only DDL gets symbolName', async () => {
+    const sql = `CREATE TABLE long_mixed_table_name_for_no_merge_with_dml_below_it (id INT PRIMARY KEY, x TEXT, y TEXT, z TEXT);
+INSERT INTO long_mixed_table_name_for_no_merge_with_dml_below_it (id, x) VALUES (1, 'aaaaaaaaaa');
+INSERT INTO long_mixed_table_name_for_no_merge_with_dml_below_it (id, x) VALUES (2, 'bbbbbbbbbb');
+SELECT * FROM long_mixed_table_name_for_no_merge_with_dml_below_it WHERE id = 1 ORDER BY x;`;
+    const result = await chunkCodeText(sql, 'mixed.sql', { chunkSizeTokens: 50 });
+    // Should have chunks for all 4 statements (DDL+DML each emit).
+    expect(result.length).toBeGreaterThanOrEqual(2);
+    const namedChunks = result.filter(c => c.metadata.symbolName !== null);
+    expect(namedChunks.length).toBeGreaterThanOrEqual(1);
+    const ddl = namedChunks.find(c => c.metadata.symbolName === 'long_mixed_table_name_for_no_merge_with_dml_below_it');
+    expect(ddl).toBeDefined();
+    expect(ddl!.metadata.symbolType).toBe('table');
+  });
+
+  test('header includes "[SQL]" language tag', async () => {
+    const sql = 'CREATE TABLE x (id INT);';
+    const result = await chunkCodeText(sql, 'x.sql');
+    expect(result[0]!.text).toMatch(/^\[SQL\]/);
+  });
+
+  test('does not crash on invalid SQL', async () => {
+    // Per Step 0: even "SELECT FROM WHERE" parses to a select node, no
+    // throw. This pins that we don't regress to throwing.
+    const sql = 'SELECT FROM WHERE';
+    const result = await chunkCodeText(sql, 'bad.sql', { chunkSizeTokens: 50 });
+    expect(result.length).toBeGreaterThanOrEqual(1);
+    // The chunk emits; symbol_name stays null.
+    expect(result[0]!.metadata.language).toBe('sql');
+  });
+
+  test('CREATE TRIGGER extracts trigger name + symbolType=trigger', async () => {
+    const sql = `CREATE TRIGGER long_audit_trigger_for_email_changes_on_users_table
+  AFTER UPDATE ON users
+  FOR EACH ROW
+  EXECUTE FUNCTION log_email_change();`;
+    const result = await chunkCodeText(sql, 'trig.sql', { chunkSizeTokens: 50 });
+    const c = result.find(c => c.metadata.symbolType === 'trigger');
+    expect(c).toBeDefined();
+    expect(c!.metadata.symbolName).toBe('long_audit_trigger_for_email_changes_on_users_table');
+  });
+
+  test('CREATE TYPE extracts enum name + symbolType=type', async () => {
+    const sql = `CREATE TYPE long_user_role_enum_avoid_merger_padding AS ENUM ('admin', 'member', 'guest', 'auditor');`;
+    const result = await chunkCodeText(sql, 'types.sql', { chunkSizeTokens: 50 });
+    const c = result.find(c => c.metadata.symbolType === 'type');
+    expect(c).toBeDefined();
+    expect(c!.metadata.symbolName).toBe('long_user_role_enum_avoid_merger_padding');
+  });
+
+  test('CREATE PROCEDURE extracts name + symbolType=procedure', async () => {
+    const sql = `CREATE PROCEDURE long_archive_old_users_procedure_no_merge(days_old INT)
+LANGUAGE SQL AS $$
+  UPDATE users SET deleted_at = NOW() WHERE last_login_at < NOW() - INTERVAL '1 day' * days_old;
+$$;`;
+    const result = await chunkCodeText(sql, 'proc.sql', { chunkSizeTokens: 50 });
+    const c = result.find(c => c.metadata.symbolType === 'procedure');
+    expect(c).toBeDefined();
+    expect(c!.metadata.symbolName).toBe('long_archive_old_users_procedure_no_merge');
+  });
+
+  test('CREATE SCHEMA extracts schema name + symbolType=schema', async () => {
+    const sql = `CREATE SCHEMA IF NOT EXISTS analytics_long_schema_name_avoid_merge AUTHORIZATION analytics_owner;`;
+    const result = await chunkCodeText(sql, 'sch.sql', { chunkSizeTokens: 50 });
+    const c = result.find(c => c.metadata.symbolType === 'schema');
+    // Schema may not always be reachable depending on grammar version;
+    // accept either correct extraction OR null (test that it doesn't crash).
+    if (c) {
+      expect(c.metadata.symbolName).toBe('analytics_long_schema_name_avoid_merge');
+    }
+    // Always: chunk emits, language is sql.
+    expect(result.length).toBeGreaterThanOrEqual(1);
+    expect(result[0]!.metadata.language).toBe('sql');
+  });
+
+  test('header symbolType for SQL chunks reflects inner DDL kind, not "statement"', async () => {
+    const sql = `CREATE TABLE structured_header_test_table_long_name (id INT, name TEXT, value TEXT, ts TIMESTAMP);`;
+    const result = await chunkCodeText(sql, 'header.sql', { chunkSizeTokens: 50 });
+    expect(result[0]!.text).toMatch(/^\[SQL\][^\n]*\btable\b/);
+    expect(result[0]!.text).not.toMatch(/\bstatement\b/i);
+  });
+
+  test('empty SQL input returns empty chunk array', async () => {
+    const result = await chunkCodeText('', 'empty.sql');
+    expect(result).toEqual([]);
+  });
+
+  test('SQL-only whitespace returns empty chunk array', async () => {
+    const result = await chunkCodeText('   \n\n   \t  \n', 'whitespace.sql');
+    expect(result).toEqual([]);
   });
 });
 

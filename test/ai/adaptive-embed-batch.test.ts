@@ -23,22 +23,32 @@
  *      after SHRINK_HEAL_AFTER successes the factor heals back toward the
  *      recipe-declared safety_factor.
  *
- *   7. Startup warning (D9-B) — gateway construction warns once per recipe
- *      with an embedding touchpoint missing max_batch_tokens (excluding the
- *      OpenAI canonical fast-path recipe).
+ *   7. Startup warning (D9-B) — gateway construction warns once for the
+ *      configured embedding recipe when it is missing max_batch_tokens
+ *      (excluding the OpenAI canonical fast-path recipe).
  */
 
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import {
   configureGateway,
   resetGateway,
   embed,
   splitByTokenBudget,
+  capBatchItems,
   isTokenLimitError,
   __setEmbedTransportForTests,
   __getShrinkStateForTests,
 } from '../../src/core/ai/gateway.ts';
 import { AIConfigError, AITransientError } from '../../src/core/ai/errors.ts';
+
+// The last test in this file leaves the gateway configured with a remote
+// provider + fake key and a REAL embed transport. Without a final reset,
+// that config leaks into whichever test file the shard runs next — the
+// first downstream embed then makes a live HTTP call (broke master shard 6
+// when #3022's new test file reshuffled shard composition). The bunfig
+// legacy-embedding preload only re-applies its default when the gateway is
+// UNCONFIGURED, so a configured-but-stale slot survives file boundaries.
+afterAll(() => resetGateway());
 
 // --------- Test helpers ---------
 
@@ -73,6 +83,14 @@ function configureOpenAI(): void {
     embedding_model: 'openai:text-embedding-3-large',
     embedding_dimensions: 1536,
     env: { OPENAI_API_KEY: 'sk-fake' },
+  });
+}
+
+function configureGoogle(): void {
+  configureGateway({
+    embedding_model: 'google:gemini-embedding-001',
+    embedding_dimensions: 768,
+    env: { GOOGLE_GENERATIVE_AI_API_KEY: 'fake' },
   });
 }
 
@@ -134,6 +152,41 @@ describe('splitByTokenBudget (pure helper)', () => {
   });
 });
 
+describe('capBatchItems (hard COUNT cap helper)', () => {
+  test('batch at or under the cap is returned as a single batch (no copy of contents)', () => {
+    const texts = ['a', 'b', 'c'];
+    expect(capBatchItems(texts, 3)).toEqual([texts]);
+    expect(capBatchItems(texts, 10)).toEqual([texts]);
+  });
+
+  test('oversized batch splits into chunks of at most maxItems', () => {
+    const texts = Array.from({ length: 100 }, (_, i) => `t${i}`);
+    const result = capBatchItems(texts, 32);
+    expect(result.map(b => b.length)).toEqual([32, 32, 32, 4]);
+    expect(result.every(b => b.length <= 32)).toBe(true);
+  });
+
+  test('exact multiple splits evenly with no trailing empty batch', () => {
+    const texts = Array.from({ length: 64 }, (_, i) => `t${i}`);
+    expect(capBatchItems(texts, 32).map(b => b.length)).toEqual([32, 32]);
+  });
+
+  test('order is preserved across the split (concatenation round-trips)', () => {
+    const texts = Array.from({ length: 70 }, (_, i) => `t${i}`);
+    expect(capBatchItems(texts, 32).flat()).toEqual(texts);
+  });
+
+  test('maxItems <= 0 is a no-op (single batch) — never produces empty/infinite batches', () => {
+    const texts = ['a', 'b', 'c'];
+    expect(capBatchItems(texts, 0)).toEqual([texts]);
+    expect(capBatchItems(texts, -5)).toEqual([texts]);
+  });
+
+  test('empty input returns a single empty batch', () => {
+    expect(capBatchItems([], 32)).toEqual([[]]);
+  });
+});
+
 describe('isTokenLimitError (pure helper)', () => {
   test('matches Voyage error format', () => {
     expect(isTokenLimitError(VOYAGE_TOKEN_LIMIT_ERROR)).toBe(true);
@@ -145,6 +198,21 @@ describe('isTokenLimitError (pure helper)', () => {
 
   test('matches "batch too many tokens" variant', () => {
     expect(isTokenLimitError(new Error('Batch contains too many tokens'))).toBe(true);
+  });
+
+  test('matches OpenAI embeddings "maximum request size" error (regression: PR ###)', () => {
+    // Real error string returned by OpenAI's /v1/embeddings endpoint when the
+    // sum of all input items exceeds 300k tokens. Without this match, gbrain's
+    // recursive-halving safety net never engages on OpenAI and the queue stalls
+    // forever on token-dense pages.
+    const openaiErr = new Error(
+      "Invalid 'input': maximum request size is 300000 tokens per request.",
+    );
+    expect(isTokenLimitError(openaiErr)).toBe(true);
+  });
+
+  test('matches generic "max tokens per request" phrasing', () => {
+    expect(isTokenLimitError(new Error('Exceeded 300000 max tokens per request'))).toBe(true);
   });
 
   test('does not match unrelated errors', () => {
@@ -360,16 +428,18 @@ describe('shrink-on-miss adaptive cache', () => {
 describe('startup warning for recipes missing max_batch_tokens', () => {
   beforeEach(() => resetGateway());
 
-  test('first configureGateway call warns about each missing-cap recipe; subsequent calls suppressed', () => {
+  test('configured missing-cap recipe warns once; unrelated recipes stay quiet', () => {
     const warnings: string[] = [];
     const original = console.warn;
     console.warn = (msg: string) => warnings.push(String(msg));
     try {
       configureOpenAI();
+      expect(warnings.length).toBe(0);
+      configureGoogle();
       const firstCallCount = warnings.length;
       // Reconfigure: the warning should NOT re-fire for the same recipes
       // within one process (we already told the operator).
-      configureOpenAI();
+      configureGoogle();
       expect(warnings.length).toBe(firstCallCount);
     } finally {
       console.warn = original;
@@ -379,12 +449,13 @@ describe('startup warning for recipes missing max_batch_tokens', () => {
     const contractMatch = warnings.filter(w =>
       w.includes('[ai.gateway]') && w.includes('declares an embedding touchpoint'),
     );
-    expect(contractMatch.length).toBeGreaterThan(0);
+    expect(contractMatch.length).toBe(1);
 
     // Voyage declares max_batch_tokens → suppressed. OpenAI is the
     // canonical fast-path recipe → also suppressed by id. Both must be
     // absent from the warnings.
     expect(warnings.find(w => w.includes('"voyage"'))).toBeUndefined();
     expect(warnings.find(w => w.includes('"openai"'))).toBeUndefined();
+    expect(warnings.find(w => w.includes('"google"'))).toBeDefined();
   });
 });

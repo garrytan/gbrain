@@ -114,8 +114,11 @@ Flip later with `gbrain sources federate <id>` / `unfederate <id>`.
 Full subcommand reference:
 
 ```
-gbrain sources add <id> --path <p> [--name <n>] [--federated|--no-federated]
+gbrain sources add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force]
                                Register a source. id: [a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?
+                               --path must be a git repo (or a subdirectory of one) — see
+                               "The git requirement for --path sources" below. --force
+                               skips that check to register before git-init exists.
 gbrain sources list [--json]   List all sources with page counts + federation state.
 gbrain sources remove <id> [--yes] [--dry-run] [--keep-storage]
                                Cascade-delete a source (pages, chunks, timeline).
@@ -127,6 +130,47 @@ gbrain sources detach          Remove .gbrain-source from CWD.
 gbrain sources federate <id>
 gbrain sources unfederate <id>
 ```
+
+## The git requirement for --path sources
+
+Every `--path` source must be a git repository (or live inside one — a
+subdirectory of a git repo works too) with at least one committed, tracked
+file under that path. `gbrain sources add` validates this at registration
+time and refuses a directory that doesn't qualify — no `.git` at all, a
+`git init` with no commit yet, or a commit made before `git add` — with an
+actionable error instead of silently registering a source that will fail
+(or worse, "succeed" while importing nothing) on its first `gbrain sync`.
+Fix it with:
+
+```bash
+git -C <path> init
+git -C <path> add -A
+git -C <path> commit -m "initial import"
+gbrain sources add <id> --path <path>
+```
+
+Two details that are easy to miss:
+
+- **Files must actually be committed, not just present.** The sync walker
+  reads files through git objects, so `git init` alone — even followed by an
+  empty commit (`git commit --allow-empty`) — isn't enough. Registration
+  checks for real tracked content (`git ls-tree HEAD` scoped to the path),
+  not just a resolvable `HEAD`, so this footgun is caught immediately
+  instead of surfacing later as a sync that imports nothing.
+- **`--force` registers the source anyway**, skipping the check. Use this if
+  you're registering a path before an automated pipeline gets around to
+  `git init`-ing it. GBrain never auto-`git init`s a `--path` source for
+  you — it's your directory, not a gbrain-managed clone (same consent
+  boundary as sync-time self-heal, which also never mutates a `--path`
+  source without an explicit ask).
+
+**If sync ever reports a problem with the sync anchor** (`last_commit`) —
+after a force-push, a history rewrite, or a from-scratch `git init` on a
+directory that was synced before — you do not need to reset anything by
+hand. `gbrain sync` detects an unreachable or non-ancestor anchor
+automatically and recovers: either a full reimport (anchor object missing)
+or a direct tree-to-tree diff against the orphaned bookmark (anchor present
+but rewritten), advancing the anchor to the new HEAD when it completes.
 
 ## Citation format for agents
 
@@ -154,6 +198,58 @@ cd ~/.gstack && gbrain put-page plans/multi-repo ...
 Reads span federated sources by default. Writes require a resolved
 source (explicit, inferred, or default). The resolver never picks a
 source silently when ambiguous — it errors with a clear fix.
+
+## Durability: keep a brain repo in sync (auto-harden)
+
+A long-lived agent that writes to a knowledge-wiki git repo needs three
+things to never lose work: pull before it edits, push every write, and not
+go stale while it sits idle. `gbrain sources harden` installs all of that,
+idempotently. The moment you add a brain repo with a token, it runs
+automatically:
+
+```bash
+# Clone + register a GitHub repo, then auto-harden it for durability.
+# Use a fine-grained PAT scoped to just this repo.
+gbrain sources add wiki --url https://github.com/you/brain-wiki.git --pat-file ~/.secrets/wiki-pat
+#   → clones, then installs: local auto-push hook, scripts/brain-commit-push.sh,
+#     always-on durability rules in AGENTS.md/RESOLVER.md, a 30-min pull cron,
+#     and a repo-scoped credential. Verifies push works before declaring done.
+
+# Run the same audit on an existing source any time (idempotent):
+gbrain sources harden wiki --pat-file ~/.secrets/wiki-pat
+
+# Pull on demand (the cron calls the --path form, which never opens the DB):
+gbrain sources pull wiki
+
+# Remove the durability scaffolding (also runs automatically on `sources remove`):
+gbrain sources unharden wiki
+```
+
+What hardening guarantees:
+
+- **Pull-first, conflict-safe.** Every pull is a divergence-safe rebase. A
+  dirty working tree is skipped (your in-progress edits are never touched); a
+  rebase conflict is aborted cleanly and flagged for attention, never left
+  half-applied.
+- **Push is never deferred.** `scripts/brain-commit-push.sh "<msg>" <path>`
+  commits and pushes atomically and refuses to report success without a
+  confirmed push. The post-commit hook is a best-effort background fallback;
+  the helper is the guarantee.
+- **No silent staleness.** A 30-minute background pull keeps an idle session
+  current. It runs DB-free, so it never contends with a live brain for the
+  PGLite single-writer lock.
+
+Flags: `--no-cron` skips the scheduled pull, `--no-verify` skips the push
+probe, `--dry-run` reports what would change, `--json` emits a machine
+report, `--all` hardens every source with a remote (same-account only).
+`--no-harden` on `sources add` opts out of auto-harden.
+
+Security: the push automation is installed locally per machine (never
+committed into the repo), the token is wired per-repo (an existing
+credential helper is reused when present), and it never appears in the repo,
+the remote URL, logs, or the JSON report. For a self-hosted git server
+reachable only over a filesystem path, set `GBRAIN_GIT_ALLOW_FILE_TRANSPORT=1`
+(default is HTTPS-only).
 
 ## Upgrading an existing brain
 

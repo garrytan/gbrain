@@ -176,6 +176,25 @@ describe('inferFrontmatter', () => {
     expect(result.source).toBe('calendar');
   });
 
+  test('docs/runbooks: infers guide instead of catch-all note', () => {
+    const result = inferFrontmatter(
+      'docs/runbooks/cron-management-runbook.md',
+      '# Cron Management Runbook\n\nUse this when changing schedules.',
+    );
+    expect(result.type).toBe('guide');
+    expect(result.tags).toContain('runbook');
+    expect(result.title).toBe('Cron Management Runbook');
+  });
+
+  test('docs/projects: infers project type', () => {
+    const result = inferFrontmatter(
+      'docs/projects/eva-brain.md',
+      '# Eva Brain\n\nProject notes.',
+    );
+    expect(result.type).toBe('project');
+    expect(result.tags).toContain('project');
+  });
+
   test('companies/ directory: type company', () => {
     const result = inferFrontmatter(
       'companies/stripe.md',
@@ -185,7 +204,7 @@ describe('inferFrontmatter', () => {
     expect(result.title).toBe('Stripe');
   });
 
-  test('unknown directory: defaults to note type with heading title', () => {
+  test('unknown directory: catch-all remains note when explicitly used by callers', () => {
     const result = inferFrontmatter(
       'random/some-file.md',
       '# My Random Notes\n\nStuff here',
@@ -217,7 +236,19 @@ describe('serializeFrontmatter', () => {
     expect(fm).toContain('type: apple-note');
     expect(fm).toContain('date: "2010-04-13"');
     expect(fm).toContain('source: apple-notes');
-    expect(fm).toContain('tags: ["yc"]');
+    // v0.37.9.0 — canonical single-quoted YAML flow. Aligns with
+    // brain-writer's step 3a auto-fix output. Was double-quoted pre-v0.37.9.0.
+    expect(fm).toContain(`tags: ['yc']`);
+  });
+
+  test('tags with apostrophe fall back to double quotes', () => {
+    const fm = serializeFrontmatter({
+      title: 'fashion note',
+      type: 'note',
+      tags: ["Men's Fashion", 'yc'],
+    });
+    // Apostrophe item keeps double quotes (JSON.stringify); clean item uses single.
+    expect(fm).toContain(`tags: ["Men's Fashion", 'yc']`);
   });
 
   test('quotes title with special chars', () => {

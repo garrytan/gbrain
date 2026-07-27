@@ -21,18 +21,20 @@
  */
 
 import { execSync } from 'child_process';
+import { runGbrainSubprocess } from './in-process.ts';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
 import { childGlobalFlags } from '../../core/cli-options.ts';
 // Bug 3 — ledger writes moved to the runner (apply-migrations.ts).
 
 // ── Phase A — Schema ────────────────────────────────────────
 
-function phaseASchema(opts: OrchestratorOpts): OrchestratorPhaseResult {
+async function phaseASchema(opts: OrchestratorOpts): Promise<OrchestratorPhaseResult> {
   if (opts.dryRun) return { name: 'schema', status: 'skipped', detail: 'dry-run' };
   try {
     // Propagate global progress flags so the child shows the same mode the
     // parent orchestrator is running in.
-    execSync('gbrain init --migrate-only' + childGlobalFlags(), { stdio: 'inherit', timeout: 60_000, env: process.env });
+    const { runMigrateOnlyCore } = await import('./in-process.ts');
+    await runMigrateOnlyCore();
     return { name: 'schema', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -46,7 +48,7 @@ function phaseBRepair(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'jsonb_repair', status: 'skipped', detail: 'dry-run' };
   try {
     // stdio: 'inherit' — child's stderr progress streams straight through.
-    execSync('gbrain repair-jsonb' + childGlobalFlags(), { stdio: 'inherit', timeout: 600_000, env: process.env });
+    runGbrainSubprocess('gbrain repair-jsonb' + childGlobalFlags(), { timeoutMs: 600_000 });
     return { name: 'jsonb_repair', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -94,7 +96,7 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
 
   const phases: OrchestratorPhaseResult[] = [];
 
-  const a = phaseASchema(opts);
+  const a = await phaseASchema(opts);
   phases.push(a);
   if (a.status === 'failed') return finalizeResult(phases, 'failed');
 

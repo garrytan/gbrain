@@ -57,7 +57,7 @@ bun run test                      # parallel 8-shard fan-out + serial post-pass
 bun test test/markdown.test.ts    # specific unit test
 
 # Pre-push gate (matches what CI runs on shard 1 + typecheck)
-bun run verify                    # privacy + jsonb + progress + test-isolation + wasm + admin-build + typecheck
+bun run verify                    # privacy + jsonb + progress + test-isolation + wasm + admin-build + resolver + typecheck
 
 # Pre-merge sanity (everything CI runs)
 bun run test:full                 # verify + parallel unit + slow + smart e2e
@@ -81,9 +81,12 @@ patterns (`scripts/check-jsonb-pattern.sh`), `\r` progress bleed to stdout
 (`scripts/check-progress-to-stdout.sh`), test-isolation rule violations
 (`scripts/check-test-isolation.sh` — see "Writing tests that survive the parallel
 loop" below), silent fallback to recursive chunking in the compiled binary
-(`scripts/check-wasm-embedded.sh`), and stale admin-dashboard build artifacts
-(`scripts/check-admin-build.sh`). `bun run check:all` runs the full historical
-sweep including the trailing-newline and exports-count checks.
+(`scripts/check-wasm-embedded.sh`), stale admin-dashboard build artifacts
+(`scripts/check-admin-build.sh`), and resolver drift on bundled skills
+(`bun run check:resolver` — strict-mode `check-resolvable` that exit-1s on any
+warning, added in v0.41.14.0 to catch SKILL.md frontmatter ↔ RESOLVER.md drift
+before merge). `bun run check:all` runs the full historical sweep including the
+trailing-newline and exports-count checks.
 
 ### Writing tests that survive the parallel loop
 
@@ -190,7 +193,7 @@ See `docs/ENGINES.md` for the full guide. In short:
 3. Run the test suite against your engine
 4. Document in `docs/`
 
-The SQLite engine is designed and ready for implementation. See `docs/SQLITE_ENGINE.md`.
+The original SQLite engine plan was superseded by PGLite (embedded Postgres 17 via WASM), which uses the same SQL dialect as Postgres and eliminates the need for a separate FTS5/sqlite-vss translation layer. See [`docs/ENGINES.md`](docs/ENGINES.md) for the engine architecture and the rationale.
 
 ## CONTRIBUTOR_MODE — turn on the dev loop
 

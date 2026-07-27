@@ -28,7 +28,18 @@ export interface LongMemEvalQuestion {
   question_type: string;
   question: string;
   answer: string;
-  haystack_sessions: LongMemEvalSession[];
+  /**
+   * Two on-disk shapes are accepted (normalized by `haystackToPages`):
+   *
+   *   1. Oracle/structured: `LongMemEvalSession[]` with `{session_id, turns}`.
+   *   2. _s split (HuggingFace public download as of May 2026):
+   *      `LongMemEvalTurn[][]` — each inner array is the turns of one
+   *      session directly. Session IDs live in a sibling
+   *      `haystack_session_ids: string[]` parallel array.
+   */
+  haystack_sessions: LongMemEvalSession[] | LongMemEvalTurn[][];
+  /** Parallel to haystack_sessions in the _s split. Absent in oracle shape. */
+  haystack_session_ids?: string[];
   /** ISO date strings, parallel to haystack_sessions. Some LongMemEval splits omit this. */
   haystack_dates?: string[];
   /** Ground truth: which haystack sessions actually contain the answer. */
@@ -61,14 +72,66 @@ function renderSession(session: LongMemEvalSession, date?: string): string {
   return fm.join('\n') + body.join('\n');
 }
 
+/**
+ * Normalize the on-disk haystack_sessions shape (oracle OR _s) into the
+ * structured `{session_id, turns}` form `renderSession` consumes.
+ *
+ * v0.35.1.1: the public _s split on HuggingFace uses `LongMemEvalTurn[][]`
+ * for `haystack_sessions` plus a parallel `haystack_session_ids: string[]`
+ * for the IDs. The pre-v0.35.1.1 adapter assumed only the oracle shape
+ * and crashed with `session.turns` undefined on the _s split. This
+ * normalizer accepts both. Mirrors the proven `normalizeSessions` helper
+ * in gbrain-evals/eval/runner/longmemeval.ts.
+ */
+function normalizeSessions(question: LongMemEvalQuestion): LongMemEvalSession[] {
+  const sessions: LongMemEvalSession[] = [];
+  const ids = question.haystack_session_ids ?? [];
+  const raw = question.haystack_sessions;
+  for (let i = 0; i < raw.length; i++) {
+    const item = raw[i] as unknown;
+    if (Array.isArray(item)) {
+      // _s shape: this entry is a turn array directly.
+      const sid = ids[i] ?? `lme_${question.question_id}_${i}`;
+      sessions.push({ session_id: sid, turns: item as LongMemEvalTurn[] });
+    } else if (item && typeof item === 'object' && Array.isArray((item as LongMemEvalSession).turns)) {
+      // Oracle shape: {session_id, turns} object.
+      const sess = item as LongMemEvalSession;
+      sessions.push({
+        session_id: sess.session_id ?? `lme_${question.question_id}_${i}`,
+        turns: sess.turns,
+      });
+    }
+    // Silently skip malformed entries — keeps the run progressing on
+    // mixed/corrupted datasets; the surrounding per-question try/catch
+    // catches whole-question failures anyway.
+  }
+  return sessions;
+}
+
+/**
+ * Normalize an arbitrary session_id into something `validatePageSlug` accepts.
+ *
+ * Validator rules (per v0.32.7 CJK wave): segments are `[a-z0-9CJK\-]+`,
+ * case-insensitive, forward-slash separated. The HuggingFace _s split uses
+ * `sharegpt_yywfIrx_0`-style ids with underscores AND uppercase letters,
+ * both of which are rejected. Lowercase + underscore -> hyphen produces a
+ * stable, validator-passing alias. Collisions are negligible per question
+ * (each question's slug-space is reset per benchmark question by the
+ * harness's resetTables).
+ */
+function sanitizeSessionIdForSlug(sessionId: string): string {
+  return sessionId.toLowerCase().replace(/[_.]/g, '-').replace(/[^a-z0-9-]/g, '-');
+}
+
 export function haystackToPages(question: LongMemEvalQuestion): PageInputForImport[] {
   const pages: PageInputForImport[] = [];
   const dates = question.haystack_dates ?? [];
-  for (let i = 0; i < question.haystack_sessions.length; i++) {
-    const session = question.haystack_sessions[i];
+  const sessions = normalizeSessions(question);
+  for (let i = 0; i < sessions.length; i++) {
+    const session = sessions[i];
     const date = dates[i];
     pages.push({
-      slug: `chat/${session.session_id}`,
+      slug: `chat/${sanitizeSessionIdForSlug(session.session_id)}`,
       content: renderSession(session, date),
     });
   }

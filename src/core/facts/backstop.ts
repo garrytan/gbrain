@@ -108,6 +108,23 @@ const DEDUP_THRESHOLD = 0.95;
 const DEDUP_CANDIDATE_LIMIT = 5;
 
 /**
+ * Once-per-process stderr warning memo. v0.32.2 uses this to surface
+ * the thin-client / no-local_path fallback without spamming a warning
+ * on every put_page in a long-running brain.
+ */
+const _warnedKeys = new Set<string>();
+function warnOnce(key: string, msg: string): void {
+  if (_warnedKeys.has(key)) return;
+  _warnedKeys.add(key);
+  // eslint-disable-next-line no-console
+  console.warn(msg);
+}
+/** Test-only: reset the once-per-process warning memo. */
+export function __resetBackstopWarningsForTests(): void {
+  _warnedKeys.clear();
+}
+
+/**
  * Run the facts pipeline for one page write. See module docstring for
  * the full lifecycle and mode semantics.
  *
@@ -140,6 +157,52 @@ export async function runFactsBackstop(
 
   // --- Mode dispatch ---
   if (mode === 'queue') {
+    // Local patch 2026-06-11: in a one-shot CLI process the in-process queue
+    // is doomed — cli.ts's exit drain aborts the in-flight chat after ~1-2s,
+    // so every CLI capture logged `pipeline_error: [chat(...)] The operation
+    // was aborted.` and extracted nothing. Submit a durable facts-absorb
+    // minion job for the long-lived jobs worker instead. Falls through to
+    // the in-process queue if durable submission fails (old schema, no
+    // minions infra), preserving prior behavior + absorb-log visibility.
+    const { isShortLivedCliProcess } = await import('./cli-process-mode.ts');
+    if (isShortLivedCliProcess()) {
+      try {
+        const { MinionQueue } = await import('../minions/queue.ts');
+        const { createHash } = await import('node:crypto');
+        const contentHash = createHash('sha256')
+          .update(parsedPage.compiled_truth)
+          .digest('hex')
+          .slice(0, 16);
+        const minions = new MinionQueue(ctx.engine);
+        await minions.add(
+          'facts-absorb',
+          {
+            slug: parsedPage.slug,
+            sourceId: ctx.sourceId,
+            source: ctx.source,
+            sessionId: ctx.sessionId,
+            notabilityFilter: ctx.notabilityFilter ?? 'all',
+            visibility: ctx.visibility ?? 'private',
+            ...(ctx.model ? { model: ctx.model } : {}),
+          },
+          {
+            queue: 'default',
+            // Content-hash key: re-submits after edits, dedups rapid
+            // identical writes (idempotent ON CONFLICT returns existing row).
+            idempotency_key: `facts-absorb:${ctx.sourceId}:${parsedPage.slug}:${contentHash}`,
+            max_attempts: 3,
+            timeout_ms: 180_000,
+          },
+        );
+        return { mode: 'queue', enqueued: true, queueDepth: 0 };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        warnOnce(
+          'facts-absorb-job-submit',
+          `[facts] durable facts-absorb submit failed (${msg}); falling back to in-process queue`,
+        );
+      }
+    }
     const { getFactsQueue } = await import('./queue.ts');
     const queue = getFactsQueue();
     const enqueued = queue.enqueue(async (signal) => {
@@ -237,7 +300,28 @@ async function runPipeline(
 /**
  * Inner pipeline body. Shared between runFactsBackstop (page-shape entry)
  * and runFactsPipeline (raw turn-text entry). Eligibility + kill-switch
- * are upstream of this; we just extract → resolve → dedup → insert.
+ * are upstream of this; we just extract → resolve → dedup → write fence
+ * → stamp DB.
+ *
+ * v0.32.2 (Codex R2-#2): markdown-first rewrite. Both this function's
+ * callers route through here, so making the write path fence-first here
+ * makes BOTH runFactsBackstop AND runFactsPipeline canonical without
+ * changing either entry-point signature.
+ *
+ * Pipeline:
+ *   1. extract (extractFactsFromTurn — sanitize + LLM + parser)
+ *   2. resolve (resolveEntitySlug — canonicalize free-form entity refs)
+ *   3. dedup   (findCandidateDuplicates + cosineSimilarity @ 0.95)
+ *   4. write   (writeFactsToFence → markdown atomic write + engine.insertFacts)
+ *
+ * Step 4 falls through to legacy single-row engine.insertFact when the
+ * brain has no sources.local_path configured (thin-client install). A
+ * once-per-process stderr warning names the missing config so operators
+ * see the degraded mode at boot.
+ *
+ * Facts with no resolved entity_slug structurally can't be fenced (no
+ * entity page to fence them on), so they take the same legacy DB-only
+ * fallback regardless of local_path.
  */
 async function runPipelineWithBody(
   input: { turnText: string; isDreamGenerated: boolean },
@@ -247,6 +331,7 @@ async function runPipelineWithBody(
   const { extractFactsFromTurn } = await import('./extract.ts');
   const { resolveEntitySlug } = await import('../entities/resolve.ts');
   const { cosineSimilarity } = await import('./classify.ts');
+  const { writeFactsToFence, lookupSourceLocalPath } = await import('./fence-write.ts');
 
   if (abortSignal?.aborted) {
     return { inserted: 0, duplicate: 0, superseded: 0, fact_ids: [] };
@@ -271,22 +356,27 @@ async function runPipelineWithBody(
   let superseded = 0;
   const fact_ids: number[] = [];
 
+  // Phase 1: per-fact filter + dedup. Surviving facts (no dedup hit)
+  // get grouped by entity_slug for the fence-write phase below.
+  type SurvivedFact = {
+    f: typeof facts[number];
+    resolvedSlug: string | null;
+  };
+  const survived: SurvivedFact[] = [];
+
   for (const f of facts) {
     if (abortSignal?.aborted) break;
 
-    // D4: notability filter applied post-extraction, pre-insert. Saves
-    // the insert work but not the LLM call (filtering pre-LLM would need
-    // a second LLM call to predict notability — the very thing we're
-    // calling Sonnet to do).
+    // D4: notability filter applied post-extraction, pre-insert.
     if (filter === 'high-only' && f.notability !== 'high') continue;
 
-    // Resolve entity ref to canonical slug (per source).
     const resolvedSlug = f.entity_slug
       ? await resolveEntitySlug(ctx.engine, ctx.sourceId, f.entity_slug)
       : null;
 
-    // Dedup: find candidates within the entity bucket; cosine fast-path
-    // at threshold 0.95 (matches extract_facts op precedent).
+    // Dedup against DB candidates (correct per Codex Q7: fence rows
+    // have no embeddings; FS lock + sync invariant means DB == fence
+    // at write time). Threshold 0.95 unchanged.
     let matchedExistingId: number | null = null;
     if (resolvedSlug && f.embedding) {
       const candidates = await ctx.engine.findCandidateDuplicates(
@@ -313,8 +403,48 @@ async function runPipelineWithBody(
       continue;
     }
 
-    // Insert (no supersede in the backstop path; supersede is the
-    // explicit extract_facts MCP op responsibility).
+    survived.push({ f, resolvedSlug });
+  }
+
+  if (survived.length === 0) {
+    return { inserted, duplicate, superseded, fact_ids };
+  }
+
+  // Phase 2: group survived facts by resolved entity_slug. Facts with
+  // no resolved slug go to a special legacy bucket.
+  const byEntity = new Map<string, SurvivedFact[]>();
+  const unparented: SurvivedFact[] = [];
+  for (const s of survived) {
+    if (s.resolvedSlug === null) {
+      unparented.push(s);
+    } else {
+      const list = byEntity.get(s.resolvedSlug) ?? [];
+      list.push(s);
+      byEntity.set(s.resolvedSlug, list);
+    }
+  }
+
+  // Phase 3: look up source.local_path once for the fence path. Null
+  // means thin-client / no FS — fall through to legacy DB-only for
+  // every fact.
+  const localPath = await lookupSourceLocalPath(ctx.engine, ctx.sourceId);
+
+  // Phase 4: legacy DB-only fallback for unparented + thin-client.
+  // Single-row engine.insertFact preserves the v0.31 semantics for
+  // these structurally-unfenceable cases.
+  const legacyBucket: SurvivedFact[] = [];
+  if (localPath === null) {
+    warnOnce(
+      'facts:thin-client-fallback',
+      '[facts] sources.local_path unset for source_id=' + ctx.sourceId +
+      ' — falling through to DB-only inserts. Configure local_path via `gbrain sources update` to enable system-of-record fence writes.',
+    );
+    for (const s of survived) legacyBucket.push(s);
+  } else {
+    for (const s of unparented) legacyBucket.push(s);
+  }
+
+  for (const { f, resolvedSlug } of legacyBucket) {
     const newFact: NewFact = {
       fact: f.fact,
       kind: f.kind,
@@ -326,11 +456,89 @@ async function runPipelineWithBody(
       confidence: f.confidence,
       embedding: f.embedding ?? null,
     };
-    const result = await ctx.engine.insertFact(newFact, { source_id: ctx.sourceId });
+    const result = await ctx.engine.insertFact(newFact, { source_id: ctx.sourceId }); // gbrain-allow-direct-insert: legacy DB-only fallback for unparented / thin-client facts (no entity page to fence onto)
     fact_ids.push(result.id);
     if (result.status === 'inserted') inserted += 1;
     else if ((result.status as FactInsertStatus) === 'duplicate') duplicate += 1;
     else superseded += 1;
+  }
+
+  if (localPath === null) {
+    // All went through legacy bucket; nothing left to fence.
+    return { inserted, duplicate, superseded, fact_ids };
+  }
+
+  // Phase 5: fence-write per entity. writeFactsToFence handles the
+  // page lock, stub-create, atomic .tmp+parse+rename, and the
+  // engine.insertFacts batch.
+  for (const [slug, group] of byEntity) {
+    if (abortSignal?.aborted) break;
+
+    const inputFacts = group.map(({ f }) => ({
+      fact: f.fact,
+      kind: f.kind,
+      notability: f.notability,
+      source: f.source,
+      context: null,
+      visibility,
+      confidence: f.confidence,
+      validFrom: f.valid_from ?? new Date(),
+      embedding: f.embedding ?? null,
+      sessionId: f.source_session ?? null,
+    }));
+
+    const result = await writeFactsToFence(
+      ctx.engine,
+      { sourceId: ctx.sourceId, localPath, slug },
+      inputFacts,
+    );
+
+    if (result.fenceWriteFailed) {
+      // Fence parse-validate rejected the .tmp; .tmp stays as
+      // quarantine. The JSONL log is the operator surface. Treat
+      // every fact in this entity group as not-inserted (no fact_id
+      // returned). Do NOT fall through to legacy DB-only — that
+      // would write rows to a DB index whose fence is broken.
+      continue;
+    }
+    if (result.stubGuardBlocked) {
+      // v0.34.5: writeFactsToFence refused to spawn a phantom
+      // unprefixed entity page (e.g. `jared.md` at brain root).
+      // Route these facts to the legacy DB-only path so they
+      // aren't dropped — the slug stays attached but no markdown
+      // file is created.
+      for (const { f } of group) {
+        const newFact: NewFact = {
+          fact: f.fact,
+          kind: f.kind,
+          entity_slug: slug,
+          visibility,
+          notability: f.notability,
+          source: f.source,
+          source_session: f.source_session ?? null,
+          confidence: f.confidence,
+          embedding: f.embedding ?? null,
+        };
+        const legacyResult = await ctx.engine.insertFact(newFact, { source_id: ctx.sourceId }); // gbrain-allow-direct-insert: stub-guard fallback for unprefixed entity slugs (no fenceable page)
+        fact_ids.push(legacyResult.id);
+        if (legacyResult.status === 'inserted') inserted += 1;
+        else if ((legacyResult.status as FactInsertStatus) === 'duplicate') duplicate += 1;
+        else superseded += 1;
+      }
+      continue;
+    }
+    if (result.legacyFallback) {
+      // Defensive: writeFactsToFence sees localPath as null. We
+      // checked above so this shouldn't fire — log loud + skip.
+      warnOnce(
+        'facts:fence-write-unexpected-fallback',
+        `[facts] writeFactsToFence returned legacyFallback for slug=${slug} despite localPath being set — investigation needed.`,
+      );
+      continue;
+    }
+
+    inserted += result.inserted;
+    fact_ids.push(...result.ids);
   }
 
   return { inserted, duplicate, superseded, fact_ids };
