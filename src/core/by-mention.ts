@@ -40,6 +40,7 @@ export const LINKABLE_ENTITY_TYPES = ['person', 'company', 'organization', 'enti
  * types in.
  */
 const MIN_NAME_LENGTH = 4;
+const MIN_CJK_NAME_LENGTH = 2;
 
 /**
  * Built-in ignore list — common ambiguous tokens whose body-text mentions
@@ -104,12 +105,12 @@ export interface FindMentionsOpts {
 // ============================================================
 
 /**
- * Token-only tokenizer. Returns `[token, offset]` pairs for every
- * `[a-zA-Z0-9]+` run, lowercased. Non-ASCII (CJK, accented) is
- * deliberately not tokenized in v1 — entity gazetteer is English-dominant
- * in production today. Widening to `\p{L}+` is a future option once a
- * real CJK entity catalog appears (filed under TODO-1 + a TODO for
- * Unicode-aware tokenization).
+ * Token-only tokenizer. Returns `[token, offset]` pairs.
+ *
+ * ASCII: each `[a-zA-Z0-9]+` run is a single token, lowercased.
+ * CJK: each CJK character (Chinese/Japanese/Korean) is an individual
+ *   token, lowercased. This allows the normal maximal-munch scan path
+ *   to reach CJK gazetteer entries without a separate substring pass.
  *
  * Possessive "Acme's" tokenizes as ['acme', 's'] (single-quote breaks the
  * run) — single-word "Acme" lookup succeeds at offset 0; the trailing 's'
@@ -127,18 +128,129 @@ function tokenizeForScan(text: string): ScannedToken[] {
   const out: ScannedToken[] = [];
   TOKEN_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
+
+  // Collect ASCII token spans first.
+  const asciiSpans: Array<{ start: number; end: number }> = [];
   while ((m = TOKEN_RE.exec(text)) !== null) {
-    out.push({ text: m[0].toLowerCase(), offset: m.index, length: m[0].length });
+    asciiSpans.push({ start: m.index, end: m.index + m[0].length });
+  }
+
+  // Walk character-by-character: emit ASCII tokens at their start positions,
+  // then emit individual CJK characters for non-ASCII positions that fall
+  // outside ASCII token spans.
+  let asciiIdx = 0;
+  for (let i = 0; i < text.length;) {
+    const cp = text.codePointAt(i) ?? 0;
+    const isCJK = (cp >= 0x4e00 && cp <= 0x9fff) || (cp >= 0x3400 && cp <= 0x4dbf) ||
+                  (cp >= 0x3040 && cp <= 0x309f) || (cp >= 0x30a0 && cp <= 0x30ff) ||
+                  (cp >= 0xac00 && cp <= 0xd7af);
+
+    // Advance asciiIdx past any spans that end before or at i.
+    while (asciiIdx < asciiSpans.length && asciiSpans[asciiIdx]!.end <= i) {
+      asciiIdx++;
+    }
+
+    // If position i is inside an ASCII token span, emit the full ASCII token
+    // and jump past it.
+    if (asciiIdx < asciiSpans.length && i >= asciiSpans[asciiIdx]!.start && i < asciiSpans[asciiIdx]!.end) {
+      const span = asciiSpans[asciiIdx]!;
+      const token = text.slice(span.start, span.end);
+      out.push({ text: token.toLowerCase(), offset: span.start, length: token.length });
+      i = span.end;
+      asciiIdx++;
+      continue;
+    }
+
+    // CJK: emit as individual character token.
+    if (isCJK) {
+      const charLen = cp > 0xffff ? 2 : 1; // surrogate pair
+      const charStr = text.slice(i, i + charLen);
+      out.push({ text: charStr.toLowerCase(), offset: i, length: charLen });
+      i += charLen;
+    } else {
+      i++;
+    }
   }
   return out;
 }
 
+function hasCJK(s: string): boolean {
+  for (const ch of s) {
+    const cp = ch.codePointAt(0) ?? 0;
+    if ((cp >= 0x4e00 && cp <= 0x9fff) || (cp >= 0x3400 && cp <= 0x4dbf) ||
+        (cp >= 0x3040 && cp <= 0x309f) || (cp >= 0x30a0 && cp <= 0x30ff) ||
+        (cp >= 0xac00 && cp <= 0xd7af)) return true;
+  }
+  return false;
+}
+
+function cjkCharCount(s: string): number {
+  let count = 0;
+  for (const ch of s) {
+    const cp = ch.codePointAt(0) ?? 0;
+    if ((cp >= 0x4e00 && cp <= 0x9fff) || (cp >= 0x3400 && cp <= 0x4dbf) ||
+        (cp >= 0x3040 && cp <= 0x309f) || (cp >= 0x30a0 && cp <= 0x30ff) ||
+        (cp >= 0xac00 && cp <= 0xd7af)) count++;
+  }
+  return count;
+}
+
+/**
+ * Tokenize a page title for gazetteer insertion.
+ *
+ * ASCII titles: standard `[a-zA-Z0-9]+` tokenization, lowercased.
+ * CJK titles (no ASCII content): split into individual characters —
+ *   e.g. "纳瓦尔" → ["纳","瓦","尔"]. This allows normal multi-token
+ *   maximal-munch matching to work with character-level CJK tokens
+ *   produced by `tokenizeForScan`.
+ * Mixed CJK+ASCII titles: ASCII parts tokenized normally, CJK parts
+ *   split into individual characters.
+ */
 function tokenizeTitle(title: string): string[] {
   const tokens: string[] = [];
   TOKEN_RE.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = TOKEN_RE.exec(title)) !== null) tokens.push(m[0].toLowerCase());
-  return tokens;
+  const hasAscii = TOKEN_RE.test(title);
+  if (hasAscii) {
+    // Mixed ASCII+CJK or pure ASCII: tokenize ASCII normally, then
+    // append individual CJK characters in order.
+    TOKEN_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    const asciiSpans: Array<{ start: number; end: number; text: string }> = [];
+    while ((m = TOKEN_RE.exec(title)) !== null) {
+      asciiSpans.push({ start: m.index, end: m.index + m[0].length, text: m[0].toLowerCase() });
+    }
+    let asciiIdx = 0;
+    for (let i = 0; i < title.length;) {
+      while (asciiIdx < asciiSpans.length && asciiSpans[asciiIdx]!.end <= i) asciiIdx++;
+      if (asciiIdx < asciiSpans.length && i >= asciiSpans[asciiIdx]!.start && i < asciiSpans[asciiIdx]!.end) {
+        tokens.push(asciiSpans[asciiIdx]!.text);
+        i = asciiSpans[asciiIdx]!.end;
+        asciiIdx++;
+        continue;
+      }
+      const cp = title.codePointAt(i) ?? 0;
+      if (hasCJK(title[i]!)) {
+        const charLen = cp > 0xffff ? 2 : 1;
+        tokens.push(title.slice(i, i + charLen).toLowerCase());
+        i += charLen;
+      } else {
+        i++;
+      }
+    }
+    return tokens;
+  }
+  // Pure CJK (no ASCII content): split into individual characters.
+  if (hasCJK(title)) {
+    for (let i = 0; i < title.length;) {
+      const cp = title.codePointAt(i) ?? 0;
+      const charLen = cp > 0xffff ? 2 : 1;
+      tokens.push(title.slice(i, i + charLen).toLowerCase());
+      i += charLen;
+    }
+    return tokens;
+  }
+  // Non-ASCII, non-CJK title (emoji, symbols, etc.) — empty set.
+  return [];
 }
 
 /**
@@ -175,7 +287,9 @@ export async function buildGazetteer(
 
   const gazetteer: Gazetteer = new Map();
   for (const row of rows) {
-    if (!row.title || row.title.length < MIN_NAME_LENGTH) continue;
+    if (!row.title) continue;
+      if (!hasCJK(row.title) && row.title.length < MIN_NAME_LENGTH) continue;
+      if (hasCJK(row.title) && cjkCharCount(row.title) < MIN_CJK_NAME_LENGTH) continue;
     if (ignoreSet.has(row.title) && !existingTitles.has(row.title)) continue;
 
     const tokens = tokenizeTitle(row.title);

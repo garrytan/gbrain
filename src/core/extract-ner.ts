@@ -103,17 +103,17 @@ export async function extractNerLinks(
 ): Promise<ExtractNerResult> {
   const dryRun = opts.dryRun ?? false;
 
-  // Pack best-effort: no pack → no inference → nothing to do.
+  // Pack best-effort: with a schema pack, we can infer typed link verbs.
+  // Without one, we still create plain 'mentions' links (useful for graph).
   const pack = await loadActivePackBestEffort({ engine } as never);
-  if (!pack || !pack.manifest?.link_types || pack.manifest.link_types.length === 0) {
-    return { pages: 0, created: 0, pack_unavailable: true };
+  const hasPack = pack?.manifest?.link_types && pack.manifest.link_types.length > 0;
+  let hasRegex = false;
+  if (hasPack) {
+    hasRegex = pack!.manifest!.link_types!.some(
+      (lt: { inference?: unknown }) => lt.inference && typeof lt.inference === 'object' && 'regex' in (lt.inference as Record<string, unknown>),
+    );
   }
-  // Require at least one link_type with an inference.regex; otherwise NER
-  // has no patterns to match and we'd waste a full walk.
-  const hasRegex = pack.manifest.link_types.some(
-    (lt) => lt.inference && typeof lt.inference === 'object' && 'regex' in lt.inference,
-  );
-  if (!hasRegex) return { pages: 0, created: 0, pack_unavailable: true };
+  const packUnavailable = !hasRegex;
 
   const gazetteer = opts.gazetteer ?? await buildGazetteer(engine);
   if (gazetteer.size === 0) {
@@ -172,7 +172,7 @@ export async function extractNerLinks(
     for (const m of mentions) {
       const targetType = targetTypeMap.get(`${m.source_id}::${m.slug}`);
       const context = getContextWindow(body, m.offset, m.name.length);
-      const verb = inferNerLinkType(pack.manifest, targetType, context);
+      const verb = hasPack ? inferNerLinkType(pack!.manifest!, targetType, context) : 'mentions';
       if (!verb) continue;
 
       batch.push({

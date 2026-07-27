@@ -58,12 +58,23 @@ beforeEach(async () => {
 // Tiny gazetteer builder for pure-fn cases that don't need engine.
 function gazetteerFromEntries(entries: Omit<GazetteerEntry, 'tokens'>[]): Gazetteer {
   const TOKEN_RE = /[a-zA-Z0-9]+/g;
+  const isCJK = (s: string): boolean => {
+    const cp = s.codePointAt(0) ?? 0;
+    return (cp >= 0x4e00 && cp <= 0x9fff) || (cp >= 0x3400 && cp <= 0x4dbf) ||
+           (cp >= 0x3040 && cp <= 0x309f) || (cp >= 0x30a0 && cp <= 0x30ff) ||
+           (cp >= 0xac00 && cp <= 0xd7af);
+  };
+  const hasCJKTitle = (s: string): boolean => [...s].some(isCJK);
   const tokenize = (s: string): string[] => {
     TOKEN_RE.lastIndex = 0;
-    const out: string[] = [];
-    let m: RegExpExecArray | null;
-    while ((m = TOKEN_RE.exec(s)) !== null) out.push(m[0].toLowerCase());
-    return out;
+    if (!hasCJKTitle(s)) {
+      const out: string[] = [];
+      let m: RegExpExecArray | null;
+      while ((m = TOKEN_RE.exec(s)) !== null) out.push(m[0].toLowerCase());
+      return out;
+    }
+    // CJK: split into individual characters, lowercased.
+    return [...s].map(c => isCJK(c) ? c.toLowerCase() : '').filter(Boolean);
   };
   const g: Gazetteer = new Map();
   for (const raw of entries) {
@@ -260,6 +271,128 @@ describe('findMentionedEntities — pure cases', () => {
 });
 
 // ============================================================
+// CJK — entity extraction tests
+// ============================================================
+
+describe('findMentionedEntities — CJK cases', () => {
+  test('CJK single-name match — "纳瓦尔" in body → matched', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'people/naval', source_id: 'default', title: '纳瓦尔' },
+    ]);
+    const mentions = findMentionedEntities('我最近读了纳瓦尔的书。', g, {
+      fromSlug: 'writing/post-1', fromSourceId: 'default',
+    });
+    expect(mentions).toHaveLength(1);
+    expect(mentions[0]!.slug).toBe('people/naval');
+    expect(mentions[0]!.name).toBe('纳瓦尔');
+  });
+
+  test('CJK multi-name — two different CJK entities in one body', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'people/naval', source_id: 'default', title: '纳瓦尔' },
+      { slug: 'people/shuang-xuetao', source_id: 'default', title: '双雪涛' },
+    ]);
+    const mentions = findMentionedEntities('纳瓦尔和双雪涛都是作家。', g, {
+      fromSlug: 'writing/post-1', fromSourceId: 'default',
+    });
+    expect(mentions).toHaveLength(2);
+    const slugs = mentions.map(m => m.slug);
+    expect(slugs).toContain('people/naval');
+    expect(slugs).toContain('people/shuang-xuetao');
+  });
+
+  test('CJK first-mention-only — repeated name → single link', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'people/naval', source_id: 'default', title: '纳瓦尔' },
+    ]);
+    const mentions = findMentionedEntities('纳瓦尔说过。然后纳瓦尔又说过。', g, {
+      fromSlug: 'writing/post-1', fromSourceId: 'default',
+    });
+    expect(mentions).toHaveLength(1);
+  });
+
+  test('CJK self-link guard — entity page mentioning itself is skipped', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'people/naval', source_id: 'default', title: '纳瓦尔' },
+    ]);
+    const mentions = findMentionedEntities('纳瓦尔是一位投资人。', g, {
+      fromSlug: 'people/naval', fromSourceId: 'default',
+    });
+    expect(mentions).toEqual([]);
+  });
+
+  test('CJK cross-source guard — entity in different source skipped', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'people/naval', source_id: 'team-b', title: '纳瓦尔' },
+    ]);
+    const mentions = findMentionedEntities('纳瓦尔写了这本书。', g, {
+      fromSlug: 'writing/post-1', fromSourceId: 'team-a',
+    });
+    expect(mentions).toEqual([]);
+  });
+
+  test('CJK code-block stripping — CJK name inside ``` is skipped, outside matched', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'people/naval', source_id: 'default', title: '纳瓦尔' },
+    ]);
+    // "纳瓦尔" only appears inside code block → should be skipped.
+    const body = '```\n纳瓦尔\n```\n只有代码块里面有。';
+    const mentions = findMentionedEntities(body, g, {
+      fromSlug: 'writing/post-1', fromSourceId: 'default',
+    });
+    expect(mentions).toHaveLength(0);
+  });
+
+  test('CJK determinism — same output across 10 calls', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'people/naval', source_id: 'default', title: '纳瓦尔' },
+      { slug: 'people/shuang-xuetao', source_id: 'default', title: '双雪涛' },
+    ]);
+    const body = '纳瓦尔和双雪涛。纳瓦尔再说一次。';
+    const refs = new Set<string>();
+    for (let i = 0; i < 10; i++) {
+      const mentions = findMentionedEntities(body, g, {
+        fromSlug: 'writing/post-1', fromSourceId: 'default',
+      });
+      refs.add(JSON.stringify(mentions));
+    }
+    expect(refs.size).toBe(1);
+  });
+
+  test('CJK mixed body — CJK entity matched in body with ASCII around it', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'people/naval', source_id: 'default', title: '纳瓦尔' },
+      { slug: 'companies/acme', source_id: 'default', title: 'Acme' },
+    ]);
+    const mentions = findMentionedEntities('Acme was founded by 纳瓦尔 in 2020.', g, {
+      fromSlug: 'writing/post-1', fromSourceId: 'default',
+    });
+    expect(mentions).toHaveLength(2);
+    const slugs = mentions.map(m => m.slug);
+    expect(slugs).toContain('people/naval');
+    expect(slugs).toContain('companies/acme');
+  });
+
+  test('CJK empty gazetteer — no false positives', () => {
+    const g: Gazetteer = new Map();
+    const mentions = findMentionedEntities('纳瓦尔和双雪涛。', g, {
+      fromSlug: 'writing/post-1', fromSourceId: 'default',
+    });
+    expect(mentions).toEqual([]);
+  });
+
+  test('CJK empty text → empty result', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'people/naval', source_id: 'default', title: '纳瓦尔' },
+    ]);
+    const mentions = findMentionedEntities('', g, {
+      fromSlug: 'writing/post-1', fromSourceId: 'default',
+    });
+    expect(mentions).toEqual([]);
+  });
+});
+
+// ============================================================
 // buildGazetteer — engine-backed tests
 // ============================================================
 
@@ -365,5 +498,27 @@ describe('buildGazetteer — engine integration', () => {
     // Regression: if anyone changes the hardcoded type list, this test
     // forces a deliberate change (and a corresponding test update).
     expect(LINKABLE_ENTITY_TYPES).toEqual(['person', 'company', 'organization', 'entity']);
+  });
+
+  // CJK — engine-backed tests
+  test('CJK entity with 2-char title enters gazetteer with char-level tokens', async () => {
+    await engine.putPage('people/naval', {
+      type: 'person', title: '纳瓦尔', compiled_truth: 'b', timeline: '', frontmatter: {},
+    });
+    const g = await buildGazetteer(engine);
+    // "纳瓦尔" tokenized as ["纳","瓦","尔"] → key is "纳"
+    expect(g.has('纳')).toBe(true);
+    const bucket = g.get('纳')!;
+    expect(bucket.length).toBe(1);
+    expect(bucket[0]!.tokens).toEqual(['纳', '瓦', '尔']);
+    expect(bucket[0]!.slug).toBe('people/naval');
+  });
+
+  test('CJK single-char title (cjkCharCount < 2) excluded from gazetteer', async () => {
+    await engine.putPage('people/x', {
+      type: 'person', title: '谢', compiled_truth: 'b', timeline: '', frontmatter: {},
+    });
+    const g = await buildGazetteer(engine);
+    expect(g.size).toBe(0);
   });
 });
