@@ -33,7 +33,7 @@ import { chat as gatewayChat, validateModelId, type ChatResult } from '../ai/gat
 import { AIConfigError } from '../ai/errors.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
-import { join, dirname, isAbsolute, resolve } from 'node:path';
+import { basename, join, dirname, isAbsolute, resolve } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
 import { MinionQueue } from '../minions/queue.ts';
@@ -560,6 +560,10 @@ export async function runPhaseSynthesize(
     const skipReports: Array<{ filePath: string; reason: string }> = [];
 
     const maxCharsPerChunk = computeChunkCharBudget(config.model, config.maxPromptTokens);
+    const successfulLegacyKeys = await loadSuccessfulLegacySynthesisKeys(
+      engine,
+      opts.sourceId ?? 'default',
+    );
 
     for (const t of worthProcessing) {
       const hash16 = t.contentHash.slice(0, 16);
@@ -570,7 +574,11 @@ export async function runPhaseSynthesize(
       // synthesized and skip. Prevents duplicate writes when a transcript
       // that was previously single-chunk now multi-chunks (because budget
       // shrank or model changed).
-      if (await hasLegacySingleChunkCompletion(engine, t.filePath, hash16)) {
+      if (hasLegacySingleChunkCompletion(
+        successfulLegacyKeys,
+        t.filePath,
+        hash16,
+      )) {
         skipReports.push({
           filePath: t.filePath,
           reason: 'already_synthesized_legacy_single_chunk',
@@ -617,15 +625,15 @@ export async function runPhaseSynthesize(
           // so put_page writes land there instead of the hardcoded 'default'.
           ...(opts.sourceId ? { source_id: opts.sourceId } : {}),
         };
-        // Idempotency key parity:
-        //   - single-chunk → legacy `dream:synth:<filePath>:<hash16>` (byte-
-        //     equivalent across versions; preserves dedup for unchanged
-        //     transcripts on upgrade).
-        //   - multi-chunk → `<legacy>:c<i>of<n>` per chunk; durable across
-        //     runs because D9 splitTranscriptByBudget is hash-deterministic.
+        // Keep producer identity stable when the corpus root moves. Source and
+        // complete filename remain explicit so equal bytes in different source
+        // or filename namespaces do not collide.
+        const synthesisKey =
+          `dream:synth-v2:${encodeURIComponent(opts.sourceId ?? 'default')}` +
+          `:filename:${encodeURIComponent(basename(t.filePath))}:${hash16}`;
         const idempotency_key = isChunked
-          ? `dream:synth:${t.filePath}:${hash16}:c${i}of${chunks.length}`
-          : `dream:synth:${t.filePath}:${hash16}`;
+          ? `${synthesisKey}:c${i}of${chunks.length}`
+          : synthesisKey;
         const submitOpts: Partial<MinionJobInput> = {
           max_stalled: 3,
           on_child_fail: 'continue',
@@ -1283,24 +1291,38 @@ async function collectChildPutPageSlugs(
  * time to detect transcripts that were synthesized under the pre-chunking
  * code path; those should NOT be re-submitted under chunked keys.
  *
- * Reuses the existing `minion_jobs.idempotency_key` index — no schema
- * additions. One indexed lookup per worth-processing transcript.
+ * Loads source-scoped semantic successes once per phase; no schema additions
+ * and no repeated history scan for each transcript.
  */
-async function hasLegacySingleChunkCompletion(
+async function loadSuccessfulLegacySynthesisKeys(
   engine: BrainEngine,
+  sourceId: string,
+): Promise<string[]> {
+  const rows = await engine.executeRaw<{ idempotency_key: string }>(
+    `SELECT idempotency_key
+       FROM minion_jobs
+      WHERE name = 'subagent'
+        AND status = 'completed'
+        AND result->>'stop_reason' = 'end_turn'
+        AND COALESCE(NULLIF(data->>'source_id', ''), 'default') = $1
+        AND idempotency_key LIKE 'dream:synth:%'`,
+    [sourceId],
+  );
+  return rows.map(row => row.idempotency_key);
+}
+
+function hasLegacySingleChunkCompletion(
+  successfulKeys: string[],
   filePath: string,
   hash16: string,
-): Promise<boolean> {
-  const legacyKey = `dream:synth:${filePath}:${hash16}`;
-  const rows = await engine.executeRaw<{ status: string }>(
-    `SELECT status
-       FROM minion_jobs
-      WHERE idempotency_key = $1
-        AND status = 'completed'
-      LIMIT 1`,
-    [legacyKey],
-  );
-  return rows.length > 0;
+): boolean {
+  const filename = basename(filePath);
+  const suffix = `:${hash16}`;
+  return successfulKeys.some(key => {
+    if (!key.endsWith(suffix)) return false;
+    const historicalPath = key.slice('dream:synth:'.length, -suffix.length);
+    return basename(historicalPath) === filename;
+  });
 }
 
 // ── Dream-provenance DB stamp (#2569) ────────────────────────────────
