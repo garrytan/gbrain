@@ -289,6 +289,35 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
     const purged = await purgeExpiredSources(engine);
     expect(purged).toEqual([]);
   });
+
+  test('purgeExpiredSources skips an expired source referenced by a revoked OAuth client', async () => {
+    const id = 'purge-oauth-ref';
+    await seedSource(engine, id);
+    await engine.executeRaw(
+      `UPDATE sources
+       SET archived = true, archived_at = now() - interval '4 days',
+           archive_expires_at = now() - interval '1 day'
+       WHERE id = $1`,
+      [id],
+    );
+    await engine.executeRaw(
+      `INSERT INTO oauth_clients (client_id, client_name, source_id, deleted_at)
+       VALUES ($1, $2, $3, now())`,
+      ['revoked-client-for-purge', 'Revoked purge client', id],
+    );
+
+    const blocked = await purgeExpiredSources(engine);
+    expect(blocked).not.toContain(id);
+    expect(
+      await engine.executeRaw(`SELECT id FROM sources WHERE id = $1`, [id]),
+    ).toHaveLength(1);
+
+    await engine.executeRaw(
+      `DELETE FROM oauth_clients WHERE client_id = $1`,
+      ['revoked-client-for-purge'],
+    );
+    expect(await purgeExpiredSources(engine)).toContain(id);
+  });
 });
 
 describe('formatters (display helpers)', () => {

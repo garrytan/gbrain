@@ -50,6 +50,35 @@ function makeStub(rowsByPattern: Record<string, unknown[]> = {}): {
   return { engine, calls, configSet };
 }
 
+function sourceGuardRows(opts: {
+  archived?: boolean;
+  oauthDeletedAt?: string | null;
+  includeOAuth?: boolean;
+} = {}): Record<string, unknown[]> {
+  const includeOAuth = opts.includeOAuth ?? false;
+  return {
+    'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at': [{
+      id: 'gstack',
+      name: 'GStack',
+      local_path: '/tmp/gstack',
+      last_commit: null,
+      last_sync_at: null,
+      config: '{}',
+      created_at: new Date(),
+    }],
+    'SELECT archived FROM sources': [{ archived: opts.archived ?? true }],
+    'SELECT id, name FROM sources': [{ id: 'gstack', name: 'GStack' }],
+    'COUNT(*)::int AS n FROM pages': [{ n: 0 }],
+    'COUNT(*)::int AS n FROM content_chunks': [{ n: 0 }],
+    'SELECT EXISTS': [{ exists: false }],
+    'FROM oauth_clients WHERE source_id': includeOAuth ? [{
+      client_id: 'client-gstack',
+      client_name: 'GStack agent',
+      deleted_at: opts.oauthDeletedAt ?? null,
+    }] : [],
+  };
+}
+
 // ── add ─────────────────────────────────────────────────────
 
 // Intercept process.exit so unit tests under bun:test don't actually
@@ -204,6 +233,82 @@ describe('sources remove', () => {
     await runSources(engine, ['remove', 'gstack', '--dry-run']);
     const del = calls.find(c => c.sql.startsWith('DELETE FROM sources'));
     expect(del).toBeUndefined();
+  });
+
+  test('OAuth active reference exits 6 and does not DELETE', async () => {
+    const { engine, calls } = makeStub(sourceGuardRows({ includeOAuth: true }));
+    const code = await withExitCapture(() =>
+      runSources(engine, ['remove', 'gstack', '--confirm-destructive']));
+    expect(code).toBe(6);
+    expect(calls.some(c => c.sql.startsWith('DELETE FROM sources'))).toBe(false);
+  });
+
+  test('OAuth revoked reference still exits 6 and does not DELETE', async () => {
+    const { engine, calls } = makeStub(sourceGuardRows({
+      includeOAuth: true,
+      oauthDeletedAt: '2026-07-28T00:00:00.000Z',
+    }));
+    const code = await withExitCapture(() =>
+      runSources(engine, ['remove', 'gstack', '--confirm-destructive']));
+    expect(code).toBe(6);
+    expect(calls.some(c => c.sql.startsWith('DELETE FROM sources'))).toBe(false);
+  });
+
+  test('removes the source when no OAuth client references it', async () => {
+    const { engine, calls } = makeStub(sourceGuardRows());
+    const code = await withExitCapture(() =>
+      runSources(engine, ['remove', 'gstack', '--confirm-destructive']));
+    expect(code).toBeNull();
+    expect(calls.some(c => c.sql.startsWith('DELETE FROM sources'))).toBe(true);
+  });
+});
+
+// ── purge ───────────────────────────────────────────────────
+
+describe('sources purge', () => {
+  test('missing source exits 4 and does not DELETE', async () => {
+    const { engine, calls } = makeStub({
+      'SELECT archived FROM sources': [],
+    });
+    const code = await withExitCapture(() =>
+      runSources(engine, ['purge', 'missing', '--confirm-destructive']));
+    expect(code).toBe(4);
+    expect(calls.some(c => c.sql.startsWith('DELETE FROM sources'))).toBe(false);
+  });
+
+  test('active source exits 5 and does not DELETE', async () => {
+    const { engine, calls } = makeStub(sourceGuardRows({ archived: false }));
+    const code = await withExitCapture(() =>
+      runSources(engine, ['purge', 'gstack', '--confirm-destructive']));
+    expect(code).toBe(5);
+    expect(calls.some(c => c.sql.startsWith('DELETE FROM sources'))).toBe(false);
+  });
+
+  test('OAuth active reference exits 6 and does not DELETE archived source', async () => {
+    const { engine, calls } = makeStub(sourceGuardRows({ includeOAuth: true }));
+    const code = await withExitCapture(() =>
+      runSources(engine, ['purge', 'gstack', '--confirm-destructive']));
+    expect(code).toBe(6);
+    expect(calls.some(c => c.sql.startsWith('DELETE FROM sources'))).toBe(false);
+  });
+
+  test('OAuth revoked reference exits 6 and does not DELETE archived source', async () => {
+    const { engine, calls } = makeStub(sourceGuardRows({
+      includeOAuth: true,
+      oauthDeletedAt: '2026-07-28T00:00:00.000Z',
+    }));
+    const code = await withExitCapture(() =>
+      runSources(engine, ['purge', 'gstack', '--confirm-destructive']));
+    expect(code).toBe(6);
+    expect(calls.some(c => c.sql.startsWith('DELETE FROM sources'))).toBe(false);
+  });
+
+  test('deletes an archived source when no OAuth client references it', async () => {
+    const { engine, calls } = makeStub(sourceGuardRows());
+    const code = await withExitCapture(() =>
+      runSources(engine, ['purge', 'gstack', '--confirm-destructive']));
+    expect(code).toBeNull();
+    expect(calls.some(c => c.sql.startsWith('DELETE FROM sources'))).toBe(true);
   });
 });
 

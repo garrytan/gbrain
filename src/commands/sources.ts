@@ -78,6 +78,12 @@ interface SourceListEntry {
   last_sync_at: string | null;
 }
 
+interface OAuthSourceReference {
+  client_id: string;
+  client_name: string | null;
+  deleted_at: Date | string | null;
+}
+
 // ── Helpers ─────────────────────────────────────────────────
 
 function parseConfig(config: unknown): Record<string, unknown> {
@@ -108,6 +114,23 @@ async function countPages(engine: BrainEngine, sourceId: string): Promise<number
     [sourceId],
   );
   return rows[0]?.n ?? 0;
+}
+
+async function assertNoOAuthSourceReferences(engine: BrainEngine, sourceId: string): Promise<void> {
+  const refs = await engine.executeRaw<OAuthSourceReference>(
+    `SELECT client_id, client_name, deleted_at
+       FROM oauth_clients WHERE source_id = $1`,
+    [sourceId],
+  );
+  if (refs.length === 0) return;
+
+  console.error(`\n${refs.length} OAuth client(s) reference source "${sourceId}":`);
+  for (const ref of refs) {
+    const status = ref.deleted_at ? 'revoked' : 'active';
+    console.error(`  - ${ref.client_name ?? ref.client_id} (${ref.client_id}, ${status})`);
+  }
+  console.error('\nRemove the client records first: gbrain auth revoke-client <client_id>');
+  process.exit(6);
 }
 
 // ── Subcommand: add ─────────────────────────────────────────
@@ -264,6 +287,8 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
     }
   }
 
+  await assertNoOAuthSourceReferences(engine, id);
+
   await engine.executeRaw(`DELETE FROM sources WHERE id = $1`, [id]);
   const pageCount = impact?.pageCount ?? 0;
   console.log(`Removed source "${id}" (${pageCount} pages + dependent rows cascaded).`);
@@ -346,6 +371,19 @@ async function runPurge(engine: BrainEngine, args: string[]): Promise<void> {
 
   if (id) {
     // Purge a specific source (must be archived)
+    const archived = await engine.executeRaw<{ archived: boolean }>(
+      `SELECT archived FROM sources WHERE id = $1`,
+      [id],
+    );
+    if (archived.length === 0) {
+      console.error(`Source "${id}" not found.`);
+      process.exit(4);
+    }
+    if (!archived[0].archived) {
+      console.error(`Source "${id}" is active. Archive it first: gbrain sources archive ${id}`);
+      process.exit(5);
+    }
+
     const impact = await assessDestructiveImpact(engine, id);
     if (!impact) {
       console.error(`Source "${id}" not found.`);
@@ -358,6 +396,8 @@ async function runPurge(engine: BrainEngine, args: string[]): Promise<void> {
       console.error(`Pass --confirm-destructive to permanently delete source "${id}".`);
       process.exit(5);
     }
+
+    await assertNoOAuthSourceReferences(engine, id);
 
     await engine.executeRaw(`DELETE FROM sources WHERE id = $1`, [id]);
     console.log(`Permanently deleted source "${id}" (${impact.pageCount} pages cascaded).`);

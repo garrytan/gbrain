@@ -290,6 +290,9 @@ export async function purgeExpiredSources(
      WHERE archived = true
        AND archive_expires_at IS NOT NULL
        AND archive_expires_at <= now()
+       AND NOT EXISTS (
+         SELECT 1 FROM oauth_clients oc WHERE oc.source_id = sources.id
+       )
      RETURNING id`,
   );
   return rows.map((r) => r.id);
