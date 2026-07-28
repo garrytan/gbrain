@@ -343,13 +343,36 @@ export function resolveSlugAll(
  * v0.13: aligned type names with link-extraction.ts (was: 'mention' →
  * 'mentions', 'attendee' → 'attended'). Diverged historically; the v0_13_0
  * migration normalizes any legacy rows on existing brains.
+ *
+ * v0.42.70: fix #3466 — the people→companies adjacency no longer
+ * asserts `works_at` without evidence. Previously every link from a
+ * people/ page to a companies/ page defaulted to `works_at`, producing
+ * 19k+ false employment claims on non-startup brains. The function now
+ * only returns `works_at` when the frontmatter carries explicit signals
+ * (role / title / position / company / employer / employee fields),
+ * defaulting to `mentions` otherwise — matching the evidence-based
+ * policy of `inferLinkType` in link-extraction.ts, which never
+ * asserts a typed edge without a regex match.
  */
-function inferTypeByDir(fromDir: string, toDir: string, frontmatter?: Record<string, unknown>): string {
+export function inferTypeByDir(fromDir: string, toDir: string, frontmatter?: Record<string, unknown>): string {
   const from = fromDir.split('/')[0];
   const to = toDir.split('/')[0];
   if (from === 'people' && to === 'companies') {
     if (Array.isArray(frontmatter?.founded)) return 'founded';
-    return 'works_at';
+    // issue #3466: only infer `works_at` when frontmatter carries
+    // explicit employment signals (role, title, position, company,
+    // employer, employee). Otherwise default to `mentions`.
+    if (frontmatter) {
+      const hasEmploymentSignal =
+        frontmatter.role !== undefined
+        || frontmatter.title !== undefined
+        || frontmatter.position !== undefined
+        || frontmatter.company !== undefined
+        || frontmatter.employer !== undefined
+        || frontmatter.employee !== undefined;
+      if (hasEmploymentSignal) return 'works_at';
+    }
+    return 'mentions';
   }
   if (from === 'people' && to === 'deals') return 'involved_in';
   if (from === 'deals' && to === 'companies') return 'deal_for';
