@@ -796,16 +796,30 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
       }
       const key = arg.slice(2).replace(/-/g, '_');
       const paramDef = op.params[key];
+      if (!paramDef) {
+        if (key !== 'source') {
+          throw new Error(`Unknown flag: ${arg}`);
+        }
+        if (i + 1 >= args.length) {
+          throw new Error(`Missing value for flag: ${arg}`);
+        }
+        params[key] = args[++i];
+        continue;
+      }
       if (paramDef?.type === 'boolean') {
         params[key] = true;
       } else if (i + 1 < args.length) {
         params[key] = args[++i];
         if (paramDef?.type === 'number') params[key] = Number(params[key]);
+      } else {
+        throw new Error(`Missing value for flag: ${arg}`);
       }
     } else if (posIdx < positional.length) {
       const key = positional[posIdx++];
       const paramDef = op.params[key];
       params[key] = paramDef?.type === 'number' ? Number(arg) : arg;
+    } else if (arg.startsWith('-') && arg !== '-') {
+      throw new Error(`Unknown flag: ${arg}`);
     }
   }
 
