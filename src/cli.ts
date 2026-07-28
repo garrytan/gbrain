@@ -1674,7 +1674,16 @@ Run gbrain <command> --help for command-specific help.
 `);
 }
 
-main().catch(e => {
-  console.error(e.message || e);
-  process.exit(1);
-});
+// v0.37.x: Guard the top-level main() invocation behind import.meta.main so
+// importing buildGatewayConfig (or any other named export) from cli.ts does
+// not trigger the CLI dispatcher and print help to stdout. Bun sets
+// import.meta.main === true only when this file is the entry point, not when
+// it is loaded as a module by another entry point (test runner, MCP server,
+// daemon, library consumer). The dispatcher's behavior when invoked as the
+// CLI entry is unchanged.
+if (import.meta.main) {
+  main().catch(e => {
+    console.error(e.message || e);
+    process.exit(1);
+  });
+}
