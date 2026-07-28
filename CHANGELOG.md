@@ -2,7 +2,7 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.42.70.0] - 2026-07-28
+## [0.42.71.0] - 2026-07-28
 
 **A dry run now tells you exactly what GBrain would sync without changing your repository or index.**
 
@@ -56,7 +56,7 @@ write strategy markers, extract, or embed. Exact-target runs read file bytes
 from a private materialization of the captured commit, not from a changing live
 checkout. Ordinary unpinned sync remains available for interactive use.
 
-## To take advantage of v0.42.70.0
+## To take advantage of v0.42.71.0
 
 Upgrade normally:
 
