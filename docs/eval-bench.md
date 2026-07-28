@@ -548,6 +548,13 @@ echo "exit=$?"  # 0=all-pass, 1=any-fail, 2=any-error-or-inconclusive
 **Key behaviors:**
 - Default `--cycles 1` in batch mode (single-task default is 3 in TTY) to bound
   cost. Pass `--cycles 3` to match single-task strictness.
+- LongMemEval output rows carry the benchmark's gold `answer`. When every row
+  selected by `--limit` has a non-empty gold answer, batch mode folds that
+  answer into the judge task and automatically uses the shared
+  `CORRECTNESS` / `DIRECTNESS` QA rubric. This keeps terse correct hypotheses
+  from failing generic `DEPTH` or `SOURCING` dimensions.
+- No-gold and mixed gold/no-gold batches keep the five generic dimensions.
+  An explicit `--dimensions "..."` always overrides either automatic default.
 - `--concurrent 3` runs up to 3 questions in parallel x 3 model slots each =
   9 simultaneous API calls. Below tier-1 rate limits for all three providers.
 - `--max-usd FLOAT` refuses to start if the pre-flight cost estimate exceeds

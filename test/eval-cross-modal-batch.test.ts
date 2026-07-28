@@ -14,7 +14,12 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { runEvalCrossModal, runWithLimit, type BatchSummary } from '../src/commands/eval-cross-modal.ts';
-import type { RunEvalResult } from '../src/core/cross-modal-eval/runner.ts';
+import {
+  DEFAULT_DIMENSIONS,
+  LONGMEMEVAL_QA_DIMENSIONS,
+  type RunEvalOpts,
+  type RunEvalResult,
+} from '../src/core/cross-modal-eval/runner.ts';
 import type { AggregateResult } from '../src/core/cross-modal-eval/aggregate.ts';
 
 // ---------------------------------------------------------------------------
@@ -28,9 +33,13 @@ function writeBatchFixture(rows: object[]): string {
   return path;
 }
 
-function makeStubRunEval(verdicts: Array<'pass' | 'fail' | 'inconclusive' | 'throw'>) {
+function makeStubRunEval(
+  verdicts: Array<'pass' | 'fail' | 'inconclusive' | 'throw'>,
+  captured: RunEvalOpts[] = [],
+) {
   let i = 0;
-  return async function stubRunEval(_opts: any): Promise<RunEvalResult> {
+  return async function stubRunEval(opts: RunEvalOpts): Promise<RunEvalResult> {
+    captured.push(opts);
     const idx = i++;
     const v = verdicts[idx % verdicts.length];
     if (v === 'throw') {
@@ -164,6 +173,109 @@ describe('runWithLimit semaphore (v0.41.15.0 — migrated to shared helper)', ()
 // ---------------------------------------------------------------------------
 
 describe('runEvalCrossModal --batch end-to-end (v0.40.1.0 Track D / T3, per D5+D10)', () => {
+  test('all scored rows with gold answers use the shared QA rubric and include gold in the task', async () => {
+    const fixturePath = writeBatchFixture([
+      {
+        question_id: 'nightly-7',
+        question: 'How many visits were recorded?',
+        answer: 'three',
+        hypothesis: '3',
+      },
+      // This row is outside --limit and must not influence rubric selection.
+      { question_id: 'unscored', question: 'unscored?', hypothesis: 'no gold' },
+    ]);
+    const summaryPath = join(mkdtempSync(join(tmpdir(), 'cm-summary-')), 'summary.json');
+    const captured: RunEvalOpts[] = [];
+    try {
+      const exit = await runEvalCrossModal(
+        ['--batch', fixturePath, '--output', summaryPath, '--limit', '1',
+         '--cycles', '1', '--concurrent', '1', '--max-usd', '1000'],
+        { runEval: makeStubRunEval(['pass'], captured) },
+      );
+
+      expect(exit).toBe(0);
+      expect(captured).toHaveLength(1);
+      expect(captured[0]!.task).toBe(
+        'How many visits were recorded?\n\n' +
+        'Expected answer (gold label from the benchmark dataset): three',
+      );
+      expect(captured[0]!.output).toBe('3');
+      expect(captured[0]!.dimensions).toBe(LONGMEMEVAL_QA_DIMENSIONS);
+    } finally {
+      rmSync(fixturePath, { recursive: true, force: true });
+      rmSync(summaryPath, { force: true });
+    }
+  });
+
+  test('batch rows without non-empty gold answers preserve the generic rubric', async () => {
+    const fixturePath = writeBatchFixture([
+      { question_id: 'q1', question: 'what is X?', answer: '   ', hypothesis: 'X is foo.' },
+    ]);
+    const summaryPath = join(mkdtempSync(join(tmpdir(), 'cm-summary-')), 'summary.json');
+    const captured: RunEvalOpts[] = [];
+    try {
+      const exit = await runEvalCrossModal(
+        ['--batch', fixturePath, '--output', summaryPath, '--limit', '1',
+         '--cycles', '1', '--concurrent', '1', '--max-usd', '1000'],
+        { runEval: makeStubRunEval(['pass'], captured) },
+      );
+
+      expect(exit).toBe(0);
+      expect(captured).toHaveLength(1);
+      expect(captured[0]!.task).toBe('what is X?');
+      expect(captured[0]!.dimensions).toBe(DEFAULT_DIMENSIONS);
+    } finally {
+      rmSync(fixturePath, { recursive: true, force: true });
+      rmSync(summaryPath, { force: true });
+    }
+  });
+
+  test('mixed gold/no-gold batches preserve the generic rubric for every row', async () => {
+    const fixturePath = writeBatchFixture([
+      { question_id: 'q1', question: 'a', answer: 'gold-a', hypothesis: 'a-ans' },
+      { question_id: 'q2', question: 'b', hypothesis: 'b-ans' },
+    ]);
+    const summaryPath = join(mkdtempSync(join(tmpdir(), 'cm-summary-')), 'summary.json');
+    const captured: RunEvalOpts[] = [];
+    try {
+      const exit = await runEvalCrossModal(
+        ['--batch', fixturePath, '--output', summaryPath, '--limit', '2',
+         '--cycles', '1', '--concurrent', '1', '--max-usd', '1000'],
+        { runEval: makeStubRunEval(['pass', 'pass'], captured) },
+      );
+
+      expect(exit).toBe(0);
+      expect(captured).toHaveLength(2);
+      expect(captured.every(opts => opts.dimensions === DEFAULT_DIMENSIONS)).toBe(true);
+    } finally {
+      rmSync(fixturePath, { recursive: true, force: true });
+      rmSync(summaryPath, { force: true });
+    }
+  });
+
+  test('explicit --dimensions overrides QA auto-selection for all-gold batches', async () => {
+    const fixturePath = writeBatchFixture([
+      { question_id: 'q1', question: 'a', answer: 'gold-a', hypothesis: 'a-ans' },
+    ]);
+    const summaryPath = join(mkdtempSync(join(tmpdir(), 'cm-summary-')), 'summary.json');
+    const captured: RunEvalOpts[] = [];
+    try {
+      const exit = await runEvalCrossModal(
+        ['--batch', fixturePath, '--output', summaryPath, '--limit', '1',
+         '--cycles', '1', '--concurrent', '1', '--max-usd', '1000',
+         '--dimensions', 'CUSTOM_ONE,CUSTOM_TWO'],
+        { runEval: makeStubRunEval(['pass'], captured) },
+      );
+
+      expect(exit).toBe(0);
+      expect(captured).toHaveLength(1);
+      expect(captured[0]!.dimensions).toEqual(['CUSTOM_ONE', 'CUSTOM_TWO']);
+    } finally {
+      rmSync(fixturePath, { recursive: true, force: true });
+      rmSync(summaryPath, { force: true });
+    }
+  });
+
   test('all-pass batch → exit 0; summary receipt has expected shape', async () => {
     const fixturePath = writeBatchFixture([
       { question_id: 'q1', question: 'what is X?', hypothesis: 'X is foo.' },

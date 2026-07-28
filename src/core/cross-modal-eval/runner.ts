@@ -36,6 +36,21 @@ export const DEFAULT_DIMENSIONS: string[] = [
 ];
 
 /**
+ * QA-shaped dimensions for scoring LongMemEval hypotheses against gold
+ * answers. Terse factual answers should not be penalized for lacking the
+ * depth, sourcing, or examples expected from a rich agent response.
+ *
+ * Keep descriptions comma-free: the CLI's `--dimensions` flag uses commas
+ * as separators.
+ */
+export const LONGMEMEVAL_QA_DIMENSIONS: string[] = [
+  // The judge sees the question, gold answer, and hypothesis — not the
+  // haystack — so a faithfulness/grounding dimension would be unscorable.
+  'CORRECTNESS — Does the hypothesis state the same fact as the expected answer? A terse direct answer is ideal.',
+  'DIRECTNESS — Does it answer THIS question without hedging or padding or answering something else?',
+];
+
+/**
  * Default 3-provider slot configuration. Implementer should refresh the
  * model strings alongside model-family bumps in CLAUDE.md.
  *

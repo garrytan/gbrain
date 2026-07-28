@@ -28,6 +28,7 @@ import { resolveCycleDefault, cycleDefaultSuffix } from '../core/eval/cycle-defa
 import {
   DEFAULT_DIMENSIONS,
   DEFAULT_SLOTS,
+  LONGMEMEVAL_QA_DIMENSIONS,
   estimateCost,
   runEval,
 } from '../core/cross-modal-eval/runner.ts';
@@ -52,8 +53,9 @@ REQUIRED (single-task mode):
 REQUIRED (batch mode, v0.40.1.0 Track D / T3):
   --batch <jsonl>          LongMemEval-shape JSONL (output of \`gbrain eval
                            longmemeval --output\`). Each row: {question, hypothesis,
-                           question_id, ...}. Summary rows (kind:by_type_summary)
-                           are filtered out. Mutually exclusive with --task.
+                           question_id, answer?, ...}. Summary rows
+                           (kind:by_type_summary) are filtered out. Mutually
+                           exclusive with --task.
 
 BATCH FLAGS:
   --limit N                Slice the first N rows (default 10).
@@ -72,8 +74,11 @@ FLAGS:
   --slug <name>            Receipt filename slug. Defaults to inferred slug
                            from --output path (skills/<slug>/SKILL.md → <slug>),
                            or a content sha for ad-hoc inputs.
-  --dimensions "d1,d2,..." Comma-separated dimension list. Default: 5 standard
-                           dimensions (goal, depth, sourcing, specificity, useful).
+  --dimensions "d1,d2,..." Comma-separated dimension list. Single-task mode
+                           defaults to 5 standard dimensions. Batch mode
+                           defaults to correctness/directness when every scored
+                           row has a gold answer; otherwise the same 5 standard
+                           dimensions. Explicit values always win.
   --cycles N               1-3. Default: 3 in TTY, 1 in non-TTY (T11). Each
                            cycle is 3 model calls; verdict aggregates over them.
   --slot-a-model <id>      Override default 'openai:gpt-5.2'.
@@ -589,7 +594,9 @@ function readBatchRows(path: string): BatchReadResult {
       question_id: typeof obj.question_id === 'string' ? obj.question_id : `line-${lineNo}`,
       question: obj.question,
       hypothesis: obj.hypothesis,
-      ...(typeof obj.answer === 'string' && obj.answer.length > 0 ? { answer: obj.answer } : {}),
+      ...(typeof obj.answer === 'string' && obj.answer.trim().length > 0
+        ? { answer: obj.answer }
+        : {}),
     });
   }
   if (summarySkipped > 0) {
@@ -620,7 +627,6 @@ async function runBatchMode(parsed: ParsedArgs, opts: RunCrossModalOpts): Promis
   const limit = parsed.limit ?? 10;
   const concurrent = parsed.concurrent ?? 3;
   const cycles = parsed.cycles ?? 1; // default 1 in batch to bound cost
-  const dimensions = parsed.dimensions ?? DEFAULT_DIMENSIONS;
   const maxTokens = parsed.maxTokens ?? 4000;
   const maxUsd = parsed.maxUsd ?? 5.0;
 
@@ -662,6 +668,18 @@ async function runBatchMode(parsed: ParsedArgs, opts: RunCrossModalOpts): Promis
     return 1;
   }
   if (limit < rows.length) rows = rows.slice(0, limit);
+
+  // LongMemEval's emitted rows include gold answers. When every row that
+  // will actually be scored has one, use a QA rubric that measures factual
+  // correctness and directness instead of penalizing terse hypotheses for
+  // missing depth or citations. Mixed/no-gold batches preserve the generic
+  // rubric, and an explicit --dimensions always wins.
+  const allScoredRowsHaveGold =
+    rows.length > 0 &&
+    rows.every(row => typeof row.answer === 'string' && row.answer.trim().length > 0);
+  const dimensions =
+    parsed.dimensions ??
+    (allScoredRowsHaveGold ? LONGMEMEVAL_QA_DIMENSIONS : DEFAULT_DIMENSIONS);
 
   // Pre-flight cost estimate. Refuse if over --max-usd without --yes.
   const perQuestion = estimateCost(slots, cycles, maxTokens);

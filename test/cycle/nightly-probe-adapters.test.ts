@@ -16,8 +16,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  PROBE_QA_DIMENSIONS,
   runCrossModalBatchForProbe,
 } from '../../src/core/cycle/nightly-probe-adapters.ts';
+import { LONGMEMEVAL_QA_DIMENSIONS } from '../../src/core/cross-modal-eval/runner.ts';
 
 // We can't easily mock the actual CLI functions without `mock.module`
 // (which would force this file to `*.serial.test.ts`). Instead, we test
@@ -89,6 +91,10 @@ describe('nightly-probe-adapters: cross-modal receipt parsing', () => {
 });
 
 describe('nightly-probe-adapters: argv shape regression (codex round-2 #1)', () => {
+  test('uses the shared LongMemEval QA rubric', () => {
+    expect(PROBE_QA_DIMENSIONS).toBe(LONGMEMEVAL_QA_DIMENSIONS);
+  });
+
   test('adapter argv shape includes --output explicitly (regression for codex finding)', () => {
     // This is a static-source-shape assertion that the adapter file
     // includes the `--output` flag in its argv construction. The regression
