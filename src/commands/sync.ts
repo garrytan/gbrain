@@ -2326,15 +2326,28 @@ async function assertRegisteredSourcePath(
     `SELECT local_path FROM sources WHERE id = $1`,
     [opts.sourceId],
   );
-  if (rows.length !== 1 || !rows[0]?.local_path) {
+  if (rows.length !== 1) {
     throw new SyncPreconditionError(
       'source_changed',
       `Source "${opts.sourceId}" no longer has one registered local path.`,
-      rows[0]?.local_path ?? null,
+      null,
       repoPath,
     );
   }
-  const observed = canonicalPathForComparison(rows[0].local_path);
+  const registeredPath = rows[0]!.local_path;
+  if (!registeredPath) {
+    // A named source created without --path is bound by its first ordinary
+    // programmatic sync. Exact-state callers must still prove a pre-existing
+    // source/path association before planning or applying.
+    if (!paired) return;
+    throw new SyncPreconditionError(
+      'source_changed',
+      `Source "${opts.sourceId}" no longer has one registered local path.`,
+      null,
+      repoPath,
+    );
+  }
+  const observed = canonicalPathForComparison(registeredPath);
   const required = canonicalPathForComparison(repoPath);
   if (observed !== required) {
     throw new SyncPreconditionError(

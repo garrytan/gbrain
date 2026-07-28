@@ -115,6 +115,54 @@ describe('performFullSync threads sourceId end-to-end', () => {
     // Post-fix: pages land in 'testsrc-pfs'.
     expect(counts['testsrc-pfs']).toBeGreaterThan(0);
     expect(counts['default'] ?? 0).toBe(0);
+
+    const sources = await engine.executeRaw<{
+      local_path: string | null;
+      last_commit: string | null;
+    }>(
+      `SELECT local_path, last_commit FROM sources WHERE id = 'testsrc-pfs'`,
+    );
+    expect(sources).toEqual([{
+      local_path: repoPath,
+      last_commit: result.toCommit,
+    }]);
+  });
+
+  test('paired sync refuses a named source without a registered path before mutation', async () => {
+    const { performSync, SyncPreconditionError } = await import('../src/commands/sync.ts');
+    const target = execSync('git rev-parse HEAD', {
+      cwd: repoPath,
+      encoding: 'utf8',
+    }).trim();
+
+    await expect(
+      performSync(engine, {
+        repoPath,
+        full: true,
+        sourceId: 'testsrc-pfs',
+        noPull: true,
+        noEmbed: true,
+        noExtract: true,
+        expectedTarget: target,
+        expectedBookmark: null,
+        requireClean: true,
+      }),
+    ).rejects.toMatchObject({
+      name: SyncPreconditionError.name,
+      reasonCode: 'source_changed',
+    });
+
+    expect(await pageCountBySource()).toEqual({});
+    const sources = await engine.executeRaw<{
+      local_path: string | null;
+      last_commit: string | null;
+    }>(
+      `SELECT local_path, last_commit FROM sources WHERE id = 'testsrc-pfs'`,
+    );
+    expect(sources).toEqual([{
+      local_path: null,
+      last_commit: null,
+    }]);
   });
 
   test('performFullSync WITHOUT --source still targets default (back-compat preserved)', async () => {
