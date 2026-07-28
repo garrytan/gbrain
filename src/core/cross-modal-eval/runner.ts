@@ -47,11 +47,14 @@ export const DEFAULT_SLOTS: SlotConfig[] = [
   // Every default MUST be listed in its recipe's chat touchpoint (pinned by
   // test/cross-modal-default-slots.test.ts) — `openai:gpt-4o` sat here after
   // the OpenAI recipe dropped it, so slot A errored "not listed for OpenAI
-  // chat" on every install and the 3-slot panel could never reach its
-  // 2-model quorum without a Google key (verdict: permanently inconclusive).
+  // chat" on every install and the 3-slot panel lost one of its three judges.
   { id: 'A', model: 'openai:gpt-5.2' },
   { id: 'B', model: 'anthropic:claude-opus-4-7' },
-  { id: 'C', model: 'google:gemini-1.5-pro' },
+  // Gemini 1.5 Pro was shut down on 2025-09-29. Keeping it as the default
+  // guaranteed slot C would fail even after the operator supplied a Google
+  // key. DeepSeek v4 Pro preserves the three-distinct-provider contract with
+  // a model already registered in the recipe and canonical pricing tables.
+  { id: 'C', model: 'deepseek:deepseek-v4-pro' },
 ];
 
 export interface SlotConfig {
