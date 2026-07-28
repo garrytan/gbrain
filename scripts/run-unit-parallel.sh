@@ -14,7 +14,8 @@
 # Env overrides:
 #   SHARDS=N                     same as --shards
 #   GBRAIN_TEST_SHARD_TIMEOUT    per-shard wallclock cap, seconds (default 600)
-#   GBRAIN_TEST_MAX_CONCURRENCY  passed through to bun test (default 4)
+#   GBRAIN_TEST_MAX_CONCURRENCY  passed through to bun test (default chosen
+#                               so shards × intra-shard concurrency <= 2)
 #
 # Output files (workspace-local; falls back to /tmp if .context/ unwritable):
 #   .context/test-failures.log   failure blocks (cleared at start)
@@ -24,6 +25,117 @@
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
+
+# Process-safety state. The signal handler walks each shard subprocess tree
+# before terminating the wrapper, so Ctrl-C/HUP/TERM cannot leave timeout or
+# Bun workers consuming resources after the parent session disappears.
+SHARD_PIDS=()
+HB_PID=""
+CLEANUP_RUNNING=0
+RUN_LOCK_DIR=".context/unit-parallel.lock"
+RUN_LOCK_HELD=0
+
+child_pids() {
+  local parent_pid="$1"
+  if command -v ps >/dev/null 2>&1; then
+    ps -eo pid=,ppid= 2>/dev/null |
+      awk -v parent="$parent_pid" '$2 == parent { print $1 }'
+    return
+  fi
+
+  # Minimal Docker images may omit procps entirely. Linux /proc still exposes
+  # field 4 (parent PID) in /proc/<pid>/stat, so signal cleanup must not
+  # silently degrade to killing only the shard shell and orphaning workers.
+  if [ -d /proc ]; then
+    local proc_stat proc_pid proc_row proc_rest proc_ppid
+    for proc_stat in /proc/[0-9]*/stat; do
+      [ -r "$proc_stat" ] || continue
+      proc_pid="${proc_stat#/proc/}"
+      proc_pid="${proc_pid%/stat}"
+      proc_row=$(cat "$proc_stat" 2>/dev/null) || continue
+      proc_rest="${proc_row##*) }"
+      # After stripping "pid (comm) ", fields start at state; PPID is second.
+      set -- $proc_rest
+      proc_ppid="${2:-}"
+      [ "$proc_ppid" = "$parent_pid" ] && echo "$proc_pid"
+    done
+  fi
+}
+
+descendant_pids() {
+  local parent_pid="$1"
+  local child_pid
+  for child_pid in $(child_pids "$parent_pid"); do
+    descendant_pids "$child_pid"
+    echo "$child_pid"
+  done
+}
+
+terminate_pid_tree() {
+  local root_pid="$1"
+  local descendants
+  descendants=$(descendant_pids "$root_pid")
+  if [ -n "$descendants" ]; then
+    # Intentional word splitting: each line is a numeric PID discovered from
+    # the still-live parent tree immediately above.
+    kill -TERM $descendants 2>/dev/null || true
+  fi
+  kill -TERM "$root_pid" 2>/dev/null || true
+
+  # A stuck WASM worker may ignore TERM. Bound cleanup itself so an
+  # interrupted test run cannot keep the controlling session open forever.
+  local attempt
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    kill -0 "$root_pid" 2>/dev/null || break
+    sleep 0.2
+  done
+  if [ -n "$descendants" ]; then
+    kill -KILL $descendants 2>/dev/null || true
+  fi
+  kill -KILL "$root_pid" 2>/dev/null || true
+}
+
+release_run_lock() {
+  if [ "$RUN_LOCK_HELD" = "1" ] && [ -f "$RUN_LOCK_DIR/pid" ] && \
+     [ "$(cat "$RUN_LOCK_DIR/pid" 2>/dev/null)" = "$$" ]; then
+    rm -f "$RUN_LOCK_DIR/pid"
+    rmdir "$RUN_LOCK_DIR" 2>/dev/null || true
+  fi
+  RUN_LOCK_HELD=0
+}
+
+cleanup_children() {
+  [ "$CLEANUP_RUNNING" = "1" ] && return
+  CLEANUP_RUNNING=1
+  if [ -n "$HB_PID" ]; then
+    kill "$HB_PID" 2>/dev/null || true
+    wait "$HB_PID" 2>/dev/null || true
+    HB_PID=""
+  fi
+  local shard_pid
+  for shard_pid in "${SHARD_PIDS[@]}"; do
+    terminate_pid_tree "$shard_pid"
+  done
+  for shard_pid in "${SHARD_PIDS[@]}"; do
+    wait "$shard_pid" 2>/dev/null || true
+  done
+}
+
+on_signal() {
+  trap - HUP INT TERM
+  echo "[unit-parallel] interrupted; stopping all shard process trees..." >&2
+  cleanup_children
+  exit 130
+}
+
+on_exit() {
+  local rc=$?
+  release_run_lock
+  return "$rc"
+}
+
+trap on_signal HUP INT TERM
+trap on_exit EXIT
 
 # ──────────────────────────────────────────────────────────────────────────
 # CPU detection: Apple Silicon perf cores → Mac total physical → nproc → 4.
@@ -54,13 +166,34 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-N="${SHARDS_OVERRIDE:-${SHARDS:-$(detect_cpus)}}"
+if [ -n "$SHARDS_OVERRIDE" ]; then
+  N="$SHARDS_OVERRIDE"
+elif [ -n "${SHARDS:-}" ]; then
+  N="$SHARDS"
+else
+  N="$(detect_cpus)"
+  # Cap the default fan-out to keep PGLite WASM cold starts within practical
+  # memory/CPU limits on constrained CI and VPS hosts. Four simultaneous
+  # processes can still push otherwise-fast hooks beyond their 60s timeout.
+  [ "$N" -gt 2 ] && N=2
+fi
 if ! printf '%s' "$N" | grep -qE '^[0-9]+$' || [ "$N" -lt 1 ]; then
   echo "ERROR: invalid shard count: $N" >&2; exit 2
 fi
 [ "$N" -gt 8 ] && N=8
 
-INTRA_CONC="${MAX_CONCURRENCY_OVERRIDE:-${GBRAIN_TEST_MAX_CONCURRENCY:-4}}"
+if [ -n "$MAX_CONCURRENCY_OVERRIDE" ]; then
+  INTRA_CONC="$MAX_CONCURRENCY_OVERRIDE"
+elif [ -n "${GBRAIN_TEST_MAX_CONCURRENCY:-}" ]; then
+  INTRA_CONC="$GBRAIN_TEST_MAX_CONCURRENCY"
+else
+  # PGLite's WASM cold-start is memory/CPU heavy. Using the historical
+  # default of four tests inside each of eight shards created up to 32
+  # concurrent runtimes and made otherwise-passing tests hit their 60s
+  # timeout on constrained CI/VPS hosts.
+  INTRA_CONC=$((2 / N))
+  [ "$INTRA_CONC" -lt 1 ] && INTRA_CONC=1
+fi
 SHARD_TIMEOUT="${GBRAIN_TEST_SHARD_TIMEOUT:-600}"
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -77,11 +210,6 @@ else
   SUMMARY_FILE="/tmp/gbrain-test-summary.txt"
   mkdir -p "$LOG_DIR" || { echo "ERROR: cannot create log dir" >&2; exit 2; }
 fi
-# Clear from prior run.
-rm -f "$LOG_DIR"/shard-*.log "$LOG_DIR"/shard-*.exit "$LOG_DIR"/shard-*.wedged 2>/dev/null
-: > "$FAILURES_LOG"
-: > "$SUMMARY_FILE"
-
 # ──────────────────────────────────────────────────────────────────────────
 # Resolve `timeout` command. macOS without coreutils has neither; we degrade
 # to bg-pid + sleep cap. For now, prefer gtimeout (brew coreutils) → timeout.
@@ -103,16 +231,45 @@ if [ "$DRY_RUN" = "1" ]; then
   exit 0
 fi
 
+# Refuse overlapping full-suite runs in the same worktree. A stale lock is
+# recovered only when its recorded PID is no longer alive.
+if mkdir "$RUN_LOCK_DIR" 2>/dev/null; then
+  RUN_LOCK_HELD=1
+else
+  lock_pid=""
+  [ -f "$RUN_LOCK_DIR/pid" ] && lock_pid=$(cat "$RUN_LOCK_DIR/pid" 2>/dev/null)
+  if printf '%s' "$lock_pid" | grep -qE '^[0-9]+$' && kill -0 "$lock_pid" 2>/dev/null; then
+    echo "ERROR: unit test suite already running (pid=$lock_pid)" >&2
+    exit 2
+  fi
+  rm -f "$RUN_LOCK_DIR/pid" 2>/dev/null
+  rmdir "$RUN_LOCK_DIR" 2>/dev/null || {
+    echo "ERROR: cannot recover stale test lock: $RUN_LOCK_DIR" >&2
+    exit 2
+  }
+  mkdir "$RUN_LOCK_DIR" || {
+    echo "ERROR: cannot acquire test lock: $RUN_LOCK_DIR" >&2
+    exit 2
+  }
+  RUN_LOCK_HELD=1
+fi
+echo "$$" > "$RUN_LOCK_DIR/pid"
+
+# Clear prior artifacts only after acquiring the single-run lock, so a second
+# invocation can never truncate the active suite's logs before being refused.
+rm -f "$LOG_DIR"/shard-*.log "$LOG_DIR"/shard-*.exit "$LOG_DIR"/shard-*.wedged 2>/dev/null
+: > "$FAILURES_LOG"
+: > "$SUMMARY_FILE"
+
 # ──────────────────────────────────────────────────────────────────────────
 # Spawn shards. Each child captures its own exit code into a sentinel file
 # so $? is recoverable per-shard (we never trust `wait`'s aggregate value).
 # ──────────────────────────────────────────────────────────────────────────
-SHARD_PIDS=()
 for i in $(seq 1 "$N"); do
   (
     SHARD_LOG="$LOG_DIR/shard-$i.log"
     if [ -n "$TIMEOUT_BIN" ]; then
-      "$TIMEOUT_BIN" "${SHARD_TIMEOUT}s" \
+      "$TIMEOUT_BIN" --kill-after=5s "${SHARD_TIMEOUT}s" \
         env SHARD="$i/$N" \
         bash scripts/run-unit-shard.sh --max-concurrency="$INTRA_CONC" \
         > "$SHARD_LOG" 2>&1
@@ -194,14 +351,13 @@ heartbeat() {
 }
 heartbeat &
 HB_PID=$!
-trap 'kill "$HB_PID" 2>/dev/null; wait "$HB_PID" 2>/dev/null' EXIT
 
 # Wait for every shard. Don't care about wait's exit code.
 for pid in "${SHARD_PIDS[@]}"; do wait "$pid" 2>/dev/null || true; done
 
 kill "$HB_PID" 2>/dev/null
 wait "$HB_PID" 2>/dev/null
-trap - EXIT
+HB_PID=""
 
 # ──────────────────────────────────────────────────────────────────────────
 # Aggregate failures (single writer; serial; never concurrent).
