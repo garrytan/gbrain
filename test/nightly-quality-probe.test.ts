@@ -6,13 +6,17 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
 import {
+  resolveNightlyProbeBatchSize,
   runNightlyQualityProbe,
+  selectNightlyFixtureBatch,
   shouldRunNightly,
+  validateNightlyProbeSummary,
+  type NightlyProbeBatchSummary,
   type NightlyProbeDeps,
   type NightlyProbeResult,
 } from '../src/core/cycle/nightly-quality-probe.ts';
@@ -87,9 +91,92 @@ describe('shouldRunNightly (pure function, rate-limit logic)', () => {
   });
 });
 
+describe('nightly fixture budget + audit-cursor rotation (pure)', () => {
+  const fixture = [
+    JSON.stringify({ question_id: 'nightly-a', question: 'a' }),
+    JSON.stringify({ question_id: 'nightly-b', question: 'b' }),
+    JSON.stringify({ question_id: 'nightly-c', question: 'c' }),
+  ].join('\n');
+
+  test('$0.20 affords one default cross-modal question; $5 preserves all 10', () => {
+    expect(resolveNightlyProbeBatchSize(0.2, 10)).toEqual({
+      count: 1,
+      perQuestionUsd: 0.2,
+    });
+    expect(resolveNightlyProbeBatchSize(5, 10)).toEqual({
+      count: 10,
+      perQuestionUsd: 0.2,
+    });
+    expect(resolveNightlyProbeBatchSize(0.19, 10).count).toBe(0);
+  });
+
+  test('summary completion requires both total and outcome counts to match selection', () => {
+    expect(validateNightlyProbeSummary(completeSummary(1), 1)).toEqual({ valid: true });
+    expect(validateNightlyProbeSummary(completeSummary(1, { total: 0 }), 1))
+      .toMatchObject({ valid: false });
+    expect(validateNightlyProbeSummary(completeSummary(1, { pass_count: 0 }), 1))
+      .toMatchObject({ valid: false });
+  });
+
+  test('starts at fixture index 0 when no matching audit cursor exists', () => {
+    const selected = selectNightlyFixtureBatch(fixture, 2, [], 'fixture-a');
+
+    expect(selected.questionIds).toEqual(['nightly-a', 'nightly-b']);
+    expect(selected.startIndex).toBe(0);
+    expect(selected.lastIndex).toBe(1);
+    expect(selected.count).toBe(2);
+    expect(selected.total).toBe(3);
+  });
+
+  test('a delayed run continues after the last audited index instead of skipping by date', () => {
+    const selected = selectNightlyFixtureBatch(fixture, 1, [{
+      ts: '2026-07-01T00:00:00Z',
+      fixture_sha8: 'fixture-a',
+      question_index: 0,
+      question_total: 3,
+    }], 'fixture-a');
+
+    expect(selected.questionIds).toEqual(['nightly-b']);
+    expect(selected.startIndex).toBe(1);
+    expect(selected.lastIndex).toBe(1);
+  });
+
+  test('wraps after the final index and resets when fixture identity changes', () => {
+    const cursor = [{
+      ts: '2026-07-01T00:00:00Z',
+      fixture_sha8: 'fixture-a',
+      question_index: 2,
+      question_total: 3,
+    }];
+
+    expect(selectNightlyFixtureBatch(fixture, 1, cursor, 'fixture-a').questionIds)
+      .toEqual(['nightly-a']);
+    expect(selectNightlyFixtureBatch(fixture, 1, cursor, 'fixture-b').questionIds)
+      .toEqual(['nightly-a']);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // 2. runNightlyQualityProbe via DI stubs
 // ---------------------------------------------------------------------------
+
+function completeSummary(
+  count: number,
+  overrides: Partial<NightlyProbeBatchSummary> = {},
+): NightlyProbeBatchSummary {
+  return {
+    total: count,
+    pass_count: count,
+    fail_count: 0,
+    inconclusive_count: 0,
+    error_count: 0,
+    upstream_error_count: 0,
+    malformed_count: 0,
+    est_cost_usd: count * 0.2,
+    verdict: 'pass',
+    ...overrides,
+  };
+}
 
 function makeDeps(overrides: Partial<NightlyProbeDeps> = {}): NightlyProbeDeps {
   return {
@@ -100,10 +187,7 @@ function makeDeps(overrides: Partial<NightlyProbeDeps> = {}): NightlyProbeDeps {
     runLongMemEval: async () => { /* stub */ },
     runCrossModalBatch: async () => ({
       exitCode: 0,
-      summary: {
-        pass_count: 5, fail_count: 0, inconclusive_count: 0, error_count: 0,
-        est_cost_usd: 0.35, verdict: 'pass',
-      },
+      summary: completeSummary(10),
     }),
     now: () => new Date(),
     ...overrides,
@@ -157,8 +241,213 @@ describe('runNightlyQualityProbe (DI stub harness)', () => {
       const events = await readEvents();
       expect(events.length).toBe(1);
       expect(events[0].outcome).toBe('pass');
-      expect(events[0].pass_count).toBe(5);
-      expect(events[0].est_cost_usd).toBe(0.35);
+      expect(events[0].pass_count).toBe(10);
+      expect(events[0].est_cost_usd).toBe(2);
+    });
+  });
+
+  test('default $5 budget passes all 10 fixture rows and audits the cursor', async () => {
+    await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
+      let selectedRows: string[] = [];
+      let judgeLimit = 0;
+      const r = await runNightlyQualityProbe(makeDeps({
+        runLongMemEval: async ({ fixturePath }) => {
+          selectedRows = readFileSync(fixturePath, 'utf8')
+            .split(/\r?\n/)
+            .filter(Boolean);
+        },
+        runCrossModalBatch: async ({ limit }) => {
+          judgeLimit = limit;
+          return { exitCode: 0, summary: completeSummary(10) };
+        },
+      }));
+
+      expect(r.outcome).toBe('pass');
+      expect(selectedRows).toHaveLength(10);
+      expect(judgeLimit).toBe(10);
+      expect(selectedRows.map(row => JSON.parse(row).question_id))
+        .toEqual(Array.from({ length: 10 }, (_, index) => `nightly-${index + 1}`));
+      const [event] = await readEvents();
+      expect(event.question_id).toBe('nightly-10');
+      expect(event.question_ids).toEqual(
+        Array.from({ length: 10 }, (_, index) => `nightly-${index + 1}`),
+      );
+      expect(event.question_index).toBe(9);
+      expect(event.question_count).toBe(10);
+      expect(event.question_total).toBe(10);
+    });
+  });
+
+  test('fixture larger than 10 passes the full affordable selection as explicit --limit', async () => {
+    await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
+      const repoRoot = join(auditTmp, 'large-fixture-repo');
+      const fixtureDir = join(repoRoot, 'test', 'fixtures');
+      mkdirSync(fixtureDir, { recursive: true });
+      const fixtureRows = Array.from({ length: 30 }, (_, index) => JSON.stringify({
+        question_id: `nightly-large-${index + 1}`,
+        question: `Question ${index + 1}`,
+      }));
+      writeFileSync(join(fixtureDir, 'longmemeval-nightly.jsonl'), `${fixtureRows.join('\n')}\n`);
+
+      const affordable = resolveNightlyProbeBatchSize(5, fixtureRows.length).count;
+      expect(affordable).toBeGreaterThan(10);
+      let selectedCount = 0;
+      let judgeLimit = 0;
+      const r = await runNightlyQualityProbe(makeDeps({
+        resolveRepoRoot: async () => repoRoot,
+        runLongMemEval: async ({ fixturePath }) => {
+          selectedCount = readFileSync(fixturePath, 'utf8').split(/\r?\n/).filter(Boolean).length;
+        },
+        runCrossModalBatch: async ({ limit }) => {
+          judgeLimit = limit;
+          return { exitCode: 0, summary: completeSummary(affordable) };
+        },
+      }));
+
+      expect(r.outcome).toBe('pass');
+      expect(selectedCount).toBe(affordable);
+      expect(judgeLimit).toBe(affordable);
+      const [event] = await readEvents();
+      expect(event.question_id).toBe(`nightly-large-${affordable}`);
+      expect(event.question_index).toBe(affordable - 1);
+      expect(event.question_count).toBe(affordable);
+      expect(event.question_total).toBe(30);
+    });
+  });
+
+  test('$0.20 selects one row and a run delayed by 72h continues at the next audit index', async () => {
+    await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
+      let now = new Date();
+      const batches: string[][] = [];
+      const deps = makeDeps({
+        resolveMaxUsd: async () => 0.2,
+        now: () => now,
+        runLongMemEval: async ({ fixturePath }) => {
+          batches.push(
+            readFileSync(fixturePath, 'utf8')
+              .split(/\r?\n/)
+              .filter(Boolean)
+              .map(row => JSON.parse(row).question_id),
+          );
+        },
+        runCrossModalBatch: async () => ({
+          exitCode: 0,
+          summary: completeSummary(1),
+        }),
+      });
+
+      expect((await runNightlyQualityProbe(deps)).outcome).toBe('pass');
+      now = new Date(now.getTime() + 72 * 60 * 60 * 1000);
+      expect((await runNightlyQualityProbe(deps)).outcome).toBe('pass');
+
+      expect(batches).toEqual([['nightly-1'], ['nightly-2']]);
+      const events = await readEvents();
+      expect(events.map(event => event.question_id)).toEqual(['nightly-1', 'nightly-2']);
+      expect(events.map(event => event.question_index)).toEqual([0, 1]);
+      expect(events.every(event => event.question_total === 10)).toBe(true);
+    });
+  });
+
+  test('incomplete summary is an error, omits the cursor, and retries the same question', async () => {
+    await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
+      let now = new Date();
+      let judgeCalls = 0;
+      const batches: string[][] = [];
+      const deps = makeDeps({
+        resolveMaxUsd: async () => 0.2,
+        now: () => now,
+        runLongMemEval: async ({ fixturePath }) => {
+          batches.push(
+            readFileSync(fixturePath, 'utf8')
+              .split(/\r?\n/)
+              .filter(Boolean)
+              .map(row => JSON.parse(row).question_id),
+          );
+        },
+        runCrossModalBatch: async () => {
+          judgeCalls++;
+          return judgeCalls === 1
+            ? { exitCode: 0, summary: completeSummary(1, { total: 0 }) }
+            : { exitCode: 0, summary: completeSummary(1) };
+        },
+      });
+
+      const first = await runNightlyQualityProbe(deps);
+      expect(first.outcome).toBe('error');
+      expect(first.detail).toContain('does not match selected fixture count');
+      now = new Date(now.getTime() + 25 * 60 * 60 * 1000);
+      expect((await runNightlyQualityProbe(deps)).outcome).toBe('pass');
+
+      expect(batches).toEqual([['nightly-1'], ['nightly-1']]);
+      const events = await readEvents();
+      expect(events[0].question_ids).toEqual(['nightly-1']);
+      expect(events[0].question_id).toBeUndefined();
+      expect(events[0].question_index).toBeUndefined();
+      expect(events[1].question_id).toBe('nightly-1');
+      expect(events[1].question_index).toBe(0);
+    });
+  });
+
+  test('budget below one estimated question short-circuits before LongMemEval', async () => {
+    await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
+      let lmeCalls = 0;
+      let judgeCalls = 0;
+      const r = await runNightlyQualityProbe(makeDeps({
+        resolveMaxUsd: async () => 0.19,
+        runLongMemEval: async () => { lmeCalls++; },
+        runCrossModalBatch: async () => {
+          judgeCalls++;
+          return { exitCode: 1 };
+        },
+      }));
+
+      expect(r.outcome).toBe('budget_exceeded');
+      expect(lmeCalls).toBe(0);
+      expect(judgeCalls).toBe(0);
+      const [event] = await readEvents();
+      expect(event.outcome).toBe('budget_exceeded');
+      expect(event.question_count).toBe(0);
+      expect(event.question_total).toBe(10);
+      expect(event.question_id).toBeUndefined();
+    });
+  });
+
+  test('exit 1 without a summary is an ambiguous runtime error and retries the same question', async () => {
+    await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
+      let now = new Date();
+      let judgeCalls = 0;
+      const batches: string[][] = [];
+      const deps = makeDeps({
+        resolveMaxUsd: async () => 0.2,
+        now: () => now,
+        runLongMemEval: async ({ fixturePath }) => {
+          batches.push(
+            readFileSync(fixturePath, 'utf8')
+              .split(/\r?\n/)
+              .filter(Boolean)
+              .map(row => JSON.parse(row).question_id),
+          );
+        },
+        runCrossModalBatch: async () => {
+          judgeCalls++;
+          return judgeCalls === 1
+            ? { exitCode: 1 }
+            : { exitCode: 0, summary: completeSummary(1) };
+        },
+      });
+
+      expect((await runNightlyQualityProbe(deps)).outcome).toBe('error');
+      now = new Date(now.getTime() + 25 * 60 * 60 * 1000);
+      expect((await runNightlyQualityProbe(deps)).outcome).toBe('pass');
+
+      expect(batches).toEqual([['nightly-1'], ['nightly-1']]);
+      const events = await readEvents();
+      expect(events[0].outcome).toBe('error');
+      expect(events[0].question_ids).toEqual(['nightly-1']);
+      expect(events[0].question_id).toBeUndefined();
+      expect(events[0].question_index).toBeUndefined();
+      expect(events[1].question_id).toBe('nightly-1');
+      expect(events[1].question_index).toBe(0);
     });
   });
 
@@ -167,10 +456,10 @@ describe('runNightlyQualityProbe (DI stub harness)', () => {
       const r = await runNightlyQualityProbe(makeDeps({
         runCrossModalBatch: async () => ({
           exitCode: 1,
-          summary: {
+          summary: completeSummary(10, {
             pass_count: 7, fail_count: 3, inconclusive_count: 0, error_count: 0,
             est_cost_usd: 0.42, verdict: 'fail',
-          },
+          }),
         }),
       }));
       expect(r.outcome).toBe('fail');
@@ -181,16 +470,42 @@ describe('runNightlyQualityProbe (DI stub harness)', () => {
     });
   });
 
-  test('runLongMemEval throws → outcome: error with audit row', async () => {
+  test('LongMemEval throw audits the attempt without a cursor and retries the same question', async () => {
     await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
-      const r = await runNightlyQualityProbe(makeDeps({
-        runLongMemEval: async () => { throw new Error('longmemeval blew up'); },
-      }));
-      expect(r.outcome).toBe('error');
-      expect(r.exit_code).toBe(1);
+      let now = new Date();
+      let lmeCalls = 0;
+      const batches: string[][] = [];
+      const deps = makeDeps({
+        resolveMaxUsd: async () => 0.2,
+        now: () => now,
+        runLongMemEval: async ({ fixturePath }) => {
+          lmeCalls++;
+          batches.push(
+            readFileSync(fixturePath, 'utf8')
+              .split(/\r?\n/)
+              .filter(Boolean)
+              .map(row => JSON.parse(row).question_id),
+          );
+          if (lmeCalls === 1) throw new Error('longmemeval blew up');
+        },
+        runCrossModalBatch: async () => ({
+          exitCode: 0,
+          summary: completeSummary(1),
+        }),
+      });
+
+      expect((await runNightlyQualityProbe(deps)).outcome).toBe('error');
+      now = new Date(now.getTime() + 25 * 60 * 60 * 1000);
+      expect((await runNightlyQualityProbe(deps)).outcome).toBe('pass');
+
+      expect(batches).toEqual([['nightly-1'], ['nightly-1']]);
       const events = await readEvents();
-      expect(events[0].outcome).toBe('error');
       expect(events[0].detail).toContain('longmemeval blew up');
+      expect(events[0].question_ids).toEqual(['nightly-1']);
+      expect(events[0].question_id).toBeUndefined();
+      expect(events[0].question_index).toBeUndefined();
+      expect(events[1].question_id).toBe('nightly-1');
+      expect(events[1].question_index).toBe(0);
     });
   });
 

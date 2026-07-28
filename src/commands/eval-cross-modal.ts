@@ -24,9 +24,14 @@ import { createHash } from 'crypto';
 import { gbrainPath, loadConfig } from '../core/config.ts';
 import { configureGateway, isAvailable } from '../core/ai/gateway.ts';
 import { runWithLimit } from '../core/worker-pool.ts';
-import { resolveCycleDefault, cycleDefaultSuffix } from '../core/eval/cycle-default.ts';
+import {
+  DEFAULT_CYCLES_NONTTY,
+  resolveCycleDefault,
+  cycleDefaultSuffix,
+} from '../core/eval/cycle-default.ts';
 import {
   DEFAULT_DIMENSIONS,
+  DEFAULT_MAX_TOKENS,
   DEFAULT_SLOTS,
   estimateCost,
   runEval,
@@ -351,7 +356,7 @@ export async function runEvalCrossModal(args: string[], opts: RunCrossModalOpts 
   const cycles = cycleDef.cycles;
   const dimensions = parsed.dimensions ?? DEFAULT_DIMENSIONS;
   const receiptDir = parsed.receiptDir ?? gbrainPath('eval-receipts');
-  const maxTokens = parsed.maxTokens ?? 4000;
+  const maxTokens = parsed.maxTokens ?? DEFAULT_MAX_TOKENS;
 
   const slots: SlotConfig[] = [
     { id: 'A', model: parsed.slotAModel ?? DEFAULT_SLOTS[0]!.model },
@@ -619,9 +624,9 @@ async function runBatchMode(parsed: ParsedArgs, opts: RunCrossModalOpts): Promis
   // Defaults specific to batch mode.
   const limit = parsed.limit ?? 10;
   const concurrent = parsed.concurrent ?? 3;
-  const cycles = parsed.cycles ?? 1; // default 1 in batch to bound cost
+  const cycles = parsed.cycles ?? DEFAULT_CYCLES_NONTTY;
   const dimensions = parsed.dimensions ?? DEFAULT_DIMENSIONS;
-  const maxTokens = parsed.maxTokens ?? 4000;
+  const maxTokens = parsed.maxTokens ?? DEFAULT_MAX_TOKENS;
   const maxUsd = parsed.maxUsd ?? 5.0;
 
   const slots: SlotConfig[] = [

@@ -26,6 +26,9 @@ import { canonicalLookup } from '../model-pricing.ts';
 
 export const RECEIPT_SCHEMA_VERSION = 1;
 
+/** Default per-call output-token cap shared by the CLI and nightly probe. */
+export const DEFAULT_MAX_TOKENS = 4000;
+
 /** Default dimensions match the v1.1.0 SKILL.md. */
 export const DEFAULT_DIMENSIONS: string[] = [
   'GOAL_ACHIEVEMENT — Does the output actually accomplish what the task asked for?',
@@ -138,7 +141,7 @@ export async function runEval(opts: RunEvalOpts): Promise<RunEvalResult> {
       output: opts.output,
       dimensions,
       slots,
-      maxTokens: opts.maxTokens ?? 4000,
+      maxTokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
       abortSignal: opts.abortSignal,
       cycle,
       onProgress: opts.onProgress,

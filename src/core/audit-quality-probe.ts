@@ -37,6 +37,19 @@ export interface QualityProbeAuditEvent {
   est_cost_usd: number;
   /** Sha-8 of the fixture file content for change detection. */
   fixture_sha8?: string;
+  /**
+   * Last question in a fully summarized batch. Together with question_index
+   * this is the durable completion cursor; failed attempts omit both fields.
+   */
+  question_id?: string;
+  /** Every question attempted for this run, in execution order. */
+  question_ids?: string[];
+  /** Zero-based completion cursor; present only for a valid complete summary. */
+  question_index?: number;
+  /** Number of fixture questions attempted for this run. */
+  question_count?: number;
+  /** Total usable questions in the fixture when the selection was made. */
+  question_total?: number;
   /** Optional human-readable detail (e.g. error message, "no chat provider configured"). */
   detail?: string;
 }
@@ -70,6 +83,11 @@ export function logQualityProbeEvent(event: Omit<QualityProbeAuditEvent, 'ts'> &
     error_count: event.error_count,
     est_cost_usd: event.est_cost_usd,
     ...(event.fixture_sha8 !== undefined ? { fixture_sha8: event.fixture_sha8 } : {}),
+    ...(event.question_id !== undefined ? { question_id: event.question_id } : {}),
+    ...(event.question_ids !== undefined ? { question_ids: [...event.question_ids] } : {}),
+    ...(event.question_index !== undefined ? { question_index: event.question_index } : {}),
+    ...(event.question_count !== undefined ? { question_count: event.question_count } : {}),
+    ...(event.question_total !== undefined ? { question_total: event.question_total } : {}),
     ...(event.detail !== undefined ? { detail: event.detail } : {}),
   };
   const dir = resolveAuditDir();

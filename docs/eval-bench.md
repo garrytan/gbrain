@@ -538,7 +538,7 @@ the same scoring over an entire LongMemEval JSONL output, with cost guardrails.
 gbrain eval longmemeval ~/datasets/longmemeval_s.jsonl \
   --limit 10 --output /tmp/run.jsonl
 
-# Step 2: batch-score those hypotheses (real cost: ~$0.70 for 10 questions,
+# Step 2: batch-score those hypotheses (current estimate: ~$2.00 for 10 questions,
 # 1 cycle, 3 model slots at default --max-usd 5 budget cap).
 gbrain eval cross-modal --batch /tmp/run.jsonl \
   --limit 10 --cycles 1 --concurrent 3 --max-usd 5 --json
@@ -564,28 +564,63 @@ echo "exit=$?"  # 0=all-pass, 1=any-fail, 2=any-error-or-inconclusive
 
 `src/core/cycle/nightly-quality-probe.ts` ships a phase that runs the longmemeval
 + cross-modal pipeline once per 24h. **Disabled by default** to avoid surprise
-API spend. Enable per-host:
+API spend. The autopilot scheduler invokes it when enabled; the phase's audit
+history is the single source of truth for both the 24h gate and fixture cursor.
+Enable per-host:
 
 ```bash
 gbrain config set autopilot.nightly_quality_probe.enabled true
 gbrain config set autopilot.nightly_quality_probe.max_usd 5.00   # optional override
 ```
 
-Note: `--phase nightly_quality_probe` wiring into the autopilot scheduler is
-deferred to a v0.41+ follow-up (see TODOS.md). For now the phase is callable
-in isolation; the test harness exercises it via DI stubs.
+The budget determines the selected fixture batch size using the same
+`estimateCost(DEFAULT_SLOTS, 1, DEFAULT_MAX_TOKENS)` inputs as non-interactive
+cross-modal batch mode:
+
+- Default `max_usd=5.00` selects the complete committed 10-question fixture
+  (currently estimated at `$2.00` for the judge panel).
+- `max_usd=0.20` selects one question.
+- A cap below the current per-question estimate stops before LongMemEval runs
+  and audits `budget_exceeded`.
+
+The nightly adapter deliberately does **not** pass `--yes`; cross-modal's own
+pre-flight remains the final guard. It passes the selected question count as an
+explicit `--limit`, so a future fixture/budget that selects more than the CLI's
+default 10 rows is still judged in full. The cap covers the cross-modal
+judge-panel estimate only. LongMemEval's extractor and answer-generation calls
+have separate provider-dependent cost and are not included in `max_usd`.
+
+Selection advances from the last audited `question_index + 1` for the same
+fixture SHA and row count. Every attempted batch records `question_ids`,
+`question_count`, and `question_total`. The completion cursor
+(`question_id` + zero-based `question_index`) is written only when cross-modal
+returns a valid summary whose `total` and summed outcome counts both equal the
+selected count. LongMemEval errors, adapter/runtime errors, missing summaries,
+and partial/mismatched summaries omit the cursor, so the next eligible run
+retries the same question(s). Exit 1 without a summary is ambiguous and is
+audited as `error`, not inferred as `budget_exceeded`; only the pre-LongMemEval
+local budget gate emits `budget_exceeded`.
+
+A successful run delayed beyond 24h therefore continues from the next audited
+row rather than skipping questions based on the calendar. Cursor recovery is
+bounded to the current and prior ISO-week audit files; changing the fixture
+SHA/row count or outliving that retained history resets selection to index 0.
+This is resumable rotation, not a guarantee of uninterrupted coverage.
 
 ```bash
-# Manual smoke (exercises the path via DI stubs, no real API spend).
+# Hermetic regression suite (DI stubs; no real API spend).
 bun test test/nightly-quality-probe.test.ts
 ```
 
 Observability:
 - `~/.gbrain/audit/quality-probe-YYYY-Www.jsonl` — one event per run with
   outcome (pass / fail / inconclusive / error / budget_exceeded /
-  rate_limited / no_embedding_key), pass/fail/inconclusive/error counts,
-  est_cost_usd, fixture_sha8. ISO-week rotation (mirrors slug-fallback
-  audit).
+  no_embedding_key), pass/fail/inconclusive/error counts, `est_cost_usd`,
+  `fixture_sha8`, attempted-batch fields, and a completion cursor when valid.
+  ISO-week rotation mirrors slug-fallback audit. The frequent 24h
+  `rate_limited` skips return to
+  autopilot without writing rows, so they cannot flood the audit or turn
+  doctor permanently WARN.
 - `gbrain doctor` surfaces `nightly_quality_probe_health`:
   - SKIPPED (disabled) — with paste-ready enable command.
   - OK (enabled, no events yet) — autopilot hasn't fired its first run.
@@ -593,6 +628,8 @@ Observability:
   - WARN — any FAIL / ERROR / BUDGET_EXCEEDED in the window, with outcome
     counts and the latest run's reason.
 
-Real expected cost: ~$0.35 per nightly run (5 questions x 3 slots x 1 cycle
-x ~$0.02/call) ≈ $10.50/month. Worst-case under the default budget cap:
-$150/month. Opt-in default prevents discovering this in your card statement.
+At the current canonical pricing estimate, the complete 10-question judge
+batch is about `$2.00` per run (about `$60/month` if run nightly); a one-question
+`$0.20` rotation is about `$6/month`. Add LongMemEval extractor/answer cost
+separately. Model prices and generated-token usage can drift, so treat these as
+pre-flight estimates rather than billing guarantees.
