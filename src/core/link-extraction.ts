@@ -12,7 +12,7 @@
  */
 
 import type { BrainEngine } from './engine.ts';
-import type { PageType } from './types.ts';
+import type { PageType, EffectiveDateSource } from './types.ts';
 import { ensureWellFormed } from './text-safe.ts';
 
 /**
@@ -671,6 +671,17 @@ const FOUNDED_RE = /\b(?:founded|co-?founded|started the company|incorporated|fo
 //     "security advisor to|at", "product advisor to|at", "industry advisor".
 const ADVISES_RE = /\b(?:advises|advised|advisor (?:to|at|for|of)|advisory (?:board|role|position|capacity|engagement|partnership|contract|relationship|work)|board advisor|on .{0,20} advisory board|joined .{0,20} advisory board|in an? advisory (?:capacity|role|position)|as an? (?:advisor|security advisor|technical advisor|strategic advisor|industry advisor|product advisor|board advisor|senior advisor)|(?:strategic|technical|security|product|industry|senior|board) advisor (?:to|at|for|of)|consults for|consulting role (?:at|with))\b/i;
 
+// Chinese link type patterns for CJK entity mentions.
+// NOTE: These patterns are Chinese-only (zh). Japanese and Korean link
+// type extraction is not yet implemented. Entity NAME extraction in
+// by-mention.ts covers all three scripts (CJK = Chinese/Japanese/Korean)
+// via Unicode-aware tokenization.
+const ZH_FOUNDED_RE = /(?:创立|创办|成立|创建|建立|开创|发起)(?:了|的)/;
+const ZH_INVESTED_RE = /(?:投资|入股|融资|注资|参股)(?:了|的|了?于)/;
+const ZH_ADVISES_RE = /(?:顾问|咨询|指导)(?:了|的)?/;
+const ZH_WORKS_AT_RE = /(?:任职|就职|担任|供职|在.{0,10}(?:工作|上班|负责))(?:于|在|的)?/;
+const ZH_CITED_RE = /(?:引用|援引|提到|提及|转述|摘录)(?:了|的|自)?/;
+
 // Page-role detection: if the source page describes a partner/investor at
 // page level, that's a strong prior for outbound company refs being
 // invested_in even when per-edge context lacks explicit investment verbs.
@@ -724,6 +735,12 @@ export function inferLinkType(pageType: PageType, context: string, globalContext
   if (INVESTED_RE.test(context)) return 'invested_in';
   if (ADVISES_RE.test(context)) return 'advises';
   if (WORKS_AT_RE.test(context)) return 'works_at';
+  // Chinese link type patterns
+  if (ZH_FOUNDED_RE.test(context)) return 'founded';
+  if (ZH_INVESTED_RE.test(context)) return 'invested_in';
+  if (ZH_ADVISES_RE.test(context)) return 'advises';
+  if (ZH_WORKS_AT_RE.test(context)) return 'works_at';
+  if (ZH_CITED_RE.test(context)) return 'cited';
   // Page-role prior: only fires for person -> company links. Concept pages
   // about VC topics naturally contain "venture capital" in their text, but
   // their company refs are mentions, not investments. Partner pages mentioning
@@ -1174,6 +1191,10 @@ export interface TimelineCandidate {
 // Match: `- **YYYY-MM-DD** | summary` or `- **YYYY-MM-DD** -- summary`
 // or `- **YYYY-MM-DD** - summary` or just `**YYYY-MM-DD** | summary`.
 const TIMELINE_LINE_RE = /^\s*-?\s*\*\*(\d{4}-\d{2}-\d{2})\*\*\s*[|\-–—]+\s*(.+?)\s*$/;
+// Chinese date lines: `- 2020年1月2日 | summary` (bold optional). Requires the
+// 年/月 markers so plain ASCII `- 2020-01-02 - text` does NOT match — non-bold
+// ASCII dates were never timeline entries and must stay that way.
+const TIMELINE_LINE_RE_CN = /^\s*-?\s*(?:\*\*)?(\d{4})年(\d{1,2})月(\d{1,2})日?(?:\*\*)?\s*[|\-–—]+\s*(.+?)\s*$/;
 
 /**
  * Parse timeline entries from content. Looks at:
@@ -1190,18 +1211,21 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
 
   let i = 0;
   while (i < lines.length) {
+    // Try English format first, then Chinese
     const m = TIMELINE_LINE_RE.exec(lines[i]);
-    if (!m) {
-      i++;
-      continue;
+    let date: string;
+    let summary: string;
+    if (m) {
+      date = m[1];
+      summary = m[2].trim();
+    } else {
+      const cm = TIMELINE_LINE_RE_CN.exec(lines[i]);
+      if (!cm) { i++; continue; }
+      // Normalize Chinese date to YYYY-MM-DD
+      date = `${cm[1]}-${cm[2].padStart(2, '0')}-${cm[3].padStart(2, '0')}`;
+      summary = cm[4].trim();
     }
-    const date = m[1];
-    const summary = m[2].trim();
-    if (!isValidDate(date) || summary.length === 0) {
-      i++;
-      continue;
-    }
-
+    if (!isValidDate(date) || summary.length === 0) { i++; continue; }
     // Collect optional detail lines (indented, until next date or heading).
     const detailLines: string[] = [];
     let j = i + 1;
@@ -1264,6 +1288,46 @@ function isValidDate(s: string): boolean {
   // Use Date object as final check (catches 2026-02-30 etc.)
   const dt = new Date(Date.UTC(y, mo - 1, d));
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
+}
+
+/** Input for {@link deriveTimelineAnchor}: a page's identity + its computed content date. */
+export interface TimelineAnchorInput {
+  slug: string;
+  title?: string | null;
+  effectiveDate?: Date | string | null;
+  effectiveDateSource?: EffectiveDateSource | null;
+}
+
+/**
+ * Anchor a single timeline entry from a page's computed content date, for pages
+ * whose body carries no parseable timeline line.
+ *
+ * Comms- and calendar-dominated brains keep the date in frontmatter or the
+ * filename (slug `2026-04-24-...`), not in the prose, so `parseTimelineEntries`
+ * returns nothing and the page-level `timeline` table stays empty even though
+ * the page is firmly dated — leaving `get_timeline` and the brain-score
+ * `timeline_coverage` component blind to it. This recovers that signal from the
+ * already-computed `effective_date` (no re-parsing). (It does NOT feed the
+ * facts-based `find_trajectory`, which reads the `facts` table by entity_slug.)
+ *
+ * Fires ONLY for a trustworthy content date — frontmatter (`event_date` / `date`
+ * / `published`) or the `filename` date — never the `fallback` source, which is
+ * `updated_at` (link-churn noise, not when the thing happened). Returns null
+ * when no trustworthy date is available. Callers MUST apply this only when body
+ * parsing yields zero entries, so it can never shadow a real in-body timeline.
+ */
+export function deriveTimelineAnchor(input: TimelineAnchorInput): TimelineCandidate | null {
+  const { slug, title, effectiveDate, effectiveDateSource } = input;
+  if (!effectiveDate) return null;
+  // 'fallback' === updated_at; the rest ('event_date'|'date'|'published'|'filename')
+  // are real content dates. null/undefined source is not trustworthy either.
+  if (effectiveDateSource == null || effectiveDateSource === 'fallback') return null;
+  const dt = typeof effectiveDate === 'string' ? new Date(effectiveDate) : effectiveDate;
+  if (!(dt instanceof Date) || Number.isNaN(dt.getTime())) return null;
+  const iso = dt.toISOString().slice(0, 10);
+  if (!isValidDate(iso)) return null;
+  const summary = (title ?? '').trim() || slug.split('/').pop() || slug;
+  return { date: iso, summary, detail: '' };
 }
 
 // ─── Auto-link config ───────────────────────────────────────────
