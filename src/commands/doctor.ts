@@ -1,4 +1,5 @@
 import type { BrainEngine } from '../core/engine.ts';
+import { REPAIR_SOURCE_CONFIG_SQL } from '../core/source-config-sql.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import * as db from '../core/db.ts';
 import { LATEST_VERSION, getIdleBlockers } from '../core/migrate.ts';
@@ -28,6 +29,7 @@ import type { DbUrlSource } from '../core/config.ts';
 import { gbrainPath, loadConfig } from '../core/config.ts';
 import { reflexEnabled } from '../core/context/reflex.ts';
 import { resolveSocketPath } from '../core/context/resolve-ipc.ts';
+import { resolveOwnerHolder } from '../core/owner-holder.ts';
 import { homedir } from 'os';
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'path';
 import { fileURLToPath } from 'url';
@@ -38,7 +40,7 @@ import {
   buildBasenameIndex,
   queryBasenameIndex,
 } from '../core/link-extraction.ts';
-import { isSourceUnchangedSinceSync } from '../core/git-head.ts';
+import { probeSourceGitState } from '../core/git-head.ts';
 // v0.41.32.0: remote staleness reads the stored newest_content_at column via
 // this pure comparator (no git subprocess on the HTTP MCP doctor path).
 import { lagFromContentMs } from '../core/source-health.ts';
@@ -51,6 +53,8 @@ import { isUndefinedColumnError } from '../core/utils.ts';
 // drift from what search actually filters.
 import { resolveHardExcludes, DEFAULT_HARD_EXCLUDES } from '../core/search/source-boost.ts';
 import { escapeLikePattern, buildVisibilityClause } from '../core/search/sql-ranking.ts';
+import { unverifiedExtractionFragment } from '../core/extraction-review.ts';
+import { hnswIndexExpected, hnswMaxDimsForType } from '../core/vector-index.ts';
 
 export interface Check {
   name: string;
@@ -528,6 +532,101 @@ export async function childTableOrphansCheck(engine: BrainEngine): Promise<Check
   };
 }
 
+/**
+ * Raw-source persistence guarantee (#1978, warn-only v1).
+ *
+ * Invariant: every synthesized/derived page (dream_generated:true frontmatter
+ * or type:synthesis) must either carry a raw trace or declare an explicit
+ * exemption. Accepted traces:
+ *   - frontmatter key `raw_trace` / `raw_source` / `source_uri`
+ *   - an attached `raw_data` row
+ *   - `synthesis_evidence` rows (think-op citations)
+ *   - explicit `raw_trace_exempt: true` (reason in `raw_trace_exempt_reason`)
+ *
+ * v1 is deliberately warn-only — no write path is blocked. Escalation to
+ * fail-closed enforcement in the synthesis/import write paths is the v2
+ * follow-up once real brains run clean.
+ *
+ * Pure helper (engine.executeRaw only) for parity with
+ * childTableOrphansCheck so tests can target it directly.
+ */
+export async function rawProvenanceCheck(engine: BrainEngine): Promise<Check> {
+  const where = `
+        p.deleted_at IS NULL
+    AND (COALESCE(p.frontmatter->>'dream_generated', '') = 'true' OR p.type = 'synthesis')
+    AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ?| ARRAY['raw_trace', 'raw_source', 'source_uri', 'raw_trace_exempt'])
+    AND NOT EXISTS (SELECT 1 FROM raw_data rd WHERE rd.page_id = p.id)
+    AND NOT EXISTS (SELECT 1 FROM synthesis_evidence se WHERE se.synthesis_page_id = p.id)`;
+  try {
+    const rows = await engine.executeRaw<{ n: string | number }>(
+      `SELECT COUNT(*)::int AS n FROM pages p WHERE ${where}`,
+    );
+    const n = Number(rows[0]?.n ?? 0);
+    if (n === 0) {
+      return {
+        name: 'raw_provenance',
+        status: 'ok',
+        message: 'All synthesized pages carry a raw trace or explicit exemption',
+      };
+    }
+    const sample = await engine.executeRaw<{ slug: string }>(
+      `SELECT p.slug FROM pages p WHERE ${where} ORDER BY p.slug LIMIT 5`,
+    );
+    const slugs = sample.map(r => r.slug).join(', ');
+    return {
+      name: 'raw_provenance',
+      status: 'warn',
+      message:
+        `${n} synthesized page(s) lack a raw trace (no raw_trace/raw_source/source_uri frontmatter, ` +
+        `raw_data row, or synthesis evidence) and carry no raw_trace_exempt marker. e.g. ${slugs}. ` +
+        `Fix: stamp raw_source (path/URI of the source material) or raw_trace_exempt: true + ` +
+        `raw_trace_exempt_reason in frontmatter. Warn-only (#1978).`,
+    };
+  } catch {
+    return { name: 'raw_provenance', status: 'warn', message: 'Could not check raw provenance (older schema?)' };
+  }
+}
+
+/**
+ * #2829: source `config` is a jsonb OBJECT column (`DEFAULT '{}'::jsonb`), but a
+ * re-wrapping bug could store it as a JSON string scalar ("{}", "\"{}\"", ...)
+ * that grows a layer on every read→write cycle. Any row where
+ * `jsonb_typeof(config) <> 'object'` is corrupted — federation and ACL settings
+ * on that source are read off a string instead of the settings object. Surface
+ * the affected sources with the repair path. The `gbrain sources` config writers
+ * now normalize before write, so any config-writing command self-heals the row
+ * (the app unwraps up to 10 nested layers); the SQL below repairs one layer
+ * directly for the common case.
+ */
+export async function checkSourceConfigShape(engine: BrainEngine): Promise<Check> {
+  try {
+    const rows = await engine.executeRaw<{ id: string; typ: string | null }>(
+      `SELECT id, jsonb_typeof(config) AS typ FROM sources WHERE jsonb_typeof(config) <> 'object'`,
+    );
+    if (rows.length === 0) {
+      return {
+        name: 'source_config_shape',
+        status: 'ok',
+        message: 'All source config values are JSON objects',
+      };
+    }
+    const affected = rows.map((r) => `${r.id} (${r.typ ?? 'null'})`).join(', ');
+    return {
+      name: 'source_config_shape',
+      status: 'warn',
+      message:
+        `${rows.length} source(s) have a non-object config — a JSON string/scalar ` +
+        `instead of an object (the #2829 re-wrapping bug): ${affected}. ` +
+        `Federation and ACL settings on these sources won't be read correctly. ` +
+        `Repair by running any 'gbrain sources' config write (self-heals nested ` +
+        `strings and recoverable arrays), or in SQL: ${REPAIR_SOURCE_CONFIG_SQL}`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { name: 'source_config_shape', status: 'warn', message: `Check failed: ${msg}` };
+  }
+}
+
 export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorReport> {
   const checks: Check[] = [];
 
@@ -757,31 +856,7 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
 
   // 5. Queue health (Postgres-only). PGLite has no minion_jobs in the same
   // shape; skip the check there with an informational message.
-  if (engine.kind === 'postgres') {
-    try {
-      // issue #1801: column is `status`, not `state` (schema.sql:780). The
-      // pre-fix query errored every run and the catch silently returned "No
-      // queue activity," so this remote/thin-client check was a no-op.
-      const rows = await engine.executeRaw<{ stalled: string | number }>(
-        `SELECT COUNT(*) AS stalled FROM minion_jobs
-          WHERE status = 'active'
-            AND started_at IS NOT NULL
-            AND started_at < NOW() - INTERVAL '1 hour'`,
-      );
-      const stalled = Number(rows[0]?.stalled ?? 0);
-      checks.push({
-        name: 'queue_health',
-        status: stalled === 0 ? 'ok' : 'warn',
-        message: stalled === 0
-          ? 'No stalled active jobs'
-          : `${stalled} active job(s) stalled > 1h — \`gbrain jobs cancel <id>\` or \`gbrain jobs retry <id>\` on the host`,
-      });
-    } catch {
-      checks.push({ name: 'queue_health', status: 'ok', message: 'No queue activity' });
-    }
-  } else {
-    checks.push({ name: 'queue_health', status: 'ok', message: 'PGLite — no queue to check' });
-  }
+  checks.push(await computeQueueHealthCheck(engine));
 
   // issue #1801 — wedged_queue (cross-surface parity with buildChecks).
   checks.push(await computeWedgedQueueCheck(engine));
@@ -804,8 +879,8 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   checks.push(await checkEmbeddingEnvOverride(engine));
 
   // v0.31.12 subagent runtime enforcement (Layer 3 of 3 — Codex F13).
-  // The subagent loop is Anthropic-only. If models.tier.subagent or
-  // models.default is explicitly set to a non-Anthropic provider, warn here
+  // The subagent loop requires native tool-calling. If models.subagent,
+  // models.tier.subagent, or models.default resolves to a limited provider, warn here
   // so the user sees it at the next `gbrain doctor` run instead of at the
   // next subagent job submission. (Layers 1+2 also enforce — this is the
   // surfacing layer.)
@@ -1287,14 +1362,19 @@ export async function checkAbandonedThreads(engine: BrainEngine): Promise<Check>
 
 /**
  * calibration_freshness: warns when the active calibration profile is
- * older than 7 days (configurable). Default holder 'garry'. Multi-source
+ * older than 7 days (configurable). Default holder resolves via resolveOwnerHolder
+ * (config emotional_weight.user_holder, else 'self'). Multi-source
  * brains see one row per source; this check uses the most recent across
  * all sources.
  */
 export async function checkCalibrationFreshness(engine: BrainEngine): Promise<Check> {
   try {
+    const ownerHolder = resolveOwnerHolder({
+      configValue: await engine.getConfig('emotional_weight.user_holder'),
+    });
     const rows = await engine.executeRaw<{ generated_at: Date | null }>(
-      `SELECT MAX(generated_at) AS generated_at FROM calibration_profiles WHERE holder = 'garry'`,
+      `SELECT MAX(generated_at) AS generated_at FROM calibration_profiles WHERE holder = $1`,
+      [ownerHolder],
     );
     const generated = rows[0]?.generated_at;
     if (!generated) {
@@ -1551,6 +1631,24 @@ export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
       };
     }
 
+    // Historical #2059 rows were logged as `unknown` before missing reranker
+    // auth was classified at the gateway. Surface repeated unknowns instead of
+    // reporting "ok" while every rerank fails open.
+    const unknownFails = failures.filter((f) => f.reason === 'unknown');
+    if (unknownFails.length >= 3) {
+      const setupHint = unknownFails.some((f) => {
+        const summary = String(f.error_summary ?? '');
+        return summary.includes('ZEROENTROPY_API_KEY') || summary.toLowerCase().includes('api key');
+      })
+        ? ' Fix: verify ZEROENTROPY_API_KEY and run `gbrain models doctor`.'
+        : '';
+      return {
+        name: 'reranker_health',
+        status: 'warn',
+        message: `${unknownFails.length} unknown reranker failure(s) in last 7 days.${setupHint}`,
+      };
+    }
+
     return {
       name: 'reranker_health',
       status: 'ok',
@@ -1585,6 +1683,174 @@ export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
  * Also surfaces (codex M-10): runs resolveBulkRetryOpts(process.env) at
  * startup so bad GBRAIN_BULK_* config fails at doctor time, not first-retry.
  */
+/**
+ * queue_health: Postgres Minion queue diagnostics.
+ *
+ * Includes the original stalled/depth/memory/prompt checks plus the #2557
+ * no-worker signal: old `embed-backfill` jobs waiting on a queue with no live
+ * registered worker for that queue. That catches the default deployment shape
+ * where `sync` enqueues deferred embedding work but the operator never started
+ * `gbrain jobs work` or a supervisor.
+ */
+export async function computeQueueHealthCheck(
+  engine: BrainEngine,
+  opts: {
+    waitingDepthThreshold?: number;
+    oldWaitingHours?: number;
+    readWorkers?: () => Array<{ queue: string }>;
+  } = {},
+): Promise<Check> {
+  if (engine.kind === 'pglite') {
+    return {
+      name: 'queue_health',
+      status: 'ok',
+      message: 'Skipped (PGLite — no multi-process worker surface)',
+    };
+  }
+
+  try {
+    // issue #1801: column is `status`, not `state` (schema.sql:780).
+    const stalledRows: Array<{ id: number; name: string; started_at: string }> =
+      await engine.executeRaw(
+        `SELECT id, name, started_at::text AS started_at
+           FROM minion_jobs
+          WHERE status = 'active'
+            AND started_at IS NOT NULL
+            AND started_at < now() - interval '1 hour'
+          ORDER BY started_at ASC
+          LIMIT 5`,
+      );
+
+    const threshold = opts.waitingDepthThreshold
+      ?? _resolveEnvNumber('GBRAIN_QUEUE_WAITING_THRESHOLD', 10);
+    const depthRows: Array<{ name: string; queue: string; depth: number }> =
+      await engine.executeRaw(
+        `SELECT name, queue, count(*)::int AS depth
+           FROM minion_jobs
+          WHERE status = 'waiting'
+          GROUP BY name, queue
+         HAVING count(*) > $1
+          ORDER BY depth DESC
+          LIMIT 5`,
+        [threshold],
+      );
+
+    const rssKillRows: Array<{ cnt: number }> = await engine.executeRaw(
+      `SELECT count(*)::int AS cnt
+         FROM minion_jobs
+        WHERE status IN ('dead', 'failed')
+          AND finished_at > now() - interval '24 hours'
+          AND error_text = 'aborted: watchdog'`,
+    );
+    const rssKillCount = Number(rssKillRows[0]?.cnt ?? 0);
+
+    const promptTooLongRows: Array<{ cnt: number }> = await engine.executeRaw(
+      `SELECT count(*)::int AS cnt
+         FROM minion_jobs
+        WHERE name = 'subagent'
+          AND status = 'dead'
+          AND finished_at > now() - interval '24 hours'
+          AND error_text LIKE 'prompt_too_long:%'`,
+    );
+    const promptTooLongCount = Number(promptTooLongRows[0]?.cnt ?? 0);
+
+    const oldWaitingHours = opts.oldWaitingHours
+      ?? _resolveEnvNumber('GBRAIN_QUEUE_NO_WORKER_WARN_HOURS', 1);
+    const oldWaitingRows: Array<{
+      name: string;
+      queue: string;
+      depth: number;
+      oldest_age_seconds: number;
+    }> = await engine.executeRaw(
+      `SELECT name,
+              queue,
+              count(*)::int AS depth,
+              EXTRACT(EPOCH FROM (now() - min(created_at)))::int AS oldest_age_seconds
+         FROM minion_jobs
+        WHERE status = 'waiting'
+          AND name = 'embed-backfill'
+        GROUP BY name, queue
+       HAVING min(created_at) < now() - ($1::text::interval)
+        ORDER BY oldest_age_seconds DESC
+        LIMIT 5`,
+      [`${oldWaitingHours} hours`],
+    );
+
+    let liveWorkerQueues = new Set<string>();
+    if (oldWaitingRows.length > 0) {
+      const workers = opts.readWorkers
+        ? opts.readWorkers()
+        : (await import('../core/minions/worker-registry.ts')).readWorkers();
+      liveWorkerQueues = new Set(workers.map((w) => w.queue));
+    }
+
+    const problems: string[] = [];
+    if (stalledRows.length > 0) {
+      const sample = stalledRows
+        .map(r => `#${r.id}(${r.name})`)
+        .join(', ');
+      problems.push(
+        `${stalledRows.length} stalled-forever job(s): ${sample}. ` +
+        `Fix: gbrain jobs get <id> to inspect; gbrain jobs cancel <id> to force-kill.`
+      );
+    }
+    if (depthRows.length > 0) {
+      const sample = depthRows
+        .map(r => `${r.name}@${r.queue}=${r.depth}`)
+        .join(', ');
+      problems.push(
+        `waiting-queue depth exceeds ${threshold} for: ${sample}. ` +
+        `Fix: set maxWaiting on the submitter (or raise GBRAIN_QUEUE_WAITING_THRESHOLD).`
+      );
+    }
+    for (const row of oldWaitingRows) {
+      if (liveWorkerQueues.has(row.queue)) continue;
+      const hours = Math.max(1, Math.round(Number(row.oldest_age_seconds ?? 0) / 3600));
+      problems.push(
+        `${row.depth} ${row.name} job(s) have waited on queue '${row.queue}' for up to ${hours}h ` +
+        `and no live worker is registered for that queue. ` +
+        `Start one with \`gbrain jobs work --queue ${row.queue}\` or ` +
+        `\`gbrain jobs supervisor start --queue ${row.queue}\`.`
+      );
+    }
+    if (rssKillCount > 0) {
+      problems.push(
+        `${rssKillCount} job(s) dead-lettered for RSS-watchdog memory-limit kills in last 24h. ` +
+        `Fix: raise the limit (e.g. \`gbrain jobs work --max-rss 4096\`) or opt out (\`--max-rss 0\`). ` +
+        `→ see worker_oom_loop for the cap + fix (the authoritative OOM-loop signal).`
+      );
+    }
+    if (promptTooLongCount > 0) {
+      problems.push(
+        `${promptTooLongCount} subagent job(s) dead-lettered with prompt_too_long in last 24h. ` +
+        `Dream/synthesize transcripts exceeded the model's input context. ` +
+        `Fix: \`gbrain dream --phase synthesize --dry-run --json\` to identify fat transcripts; ` +
+        `set \`dream.synthesize.max_prompt_tokens\` to bound the per-chunk budget, or use a ` +
+        `larger-context model (Opus 4.7 = 1M tokens vs Sonnet 4.6 = 200K).`
+      );
+    }
+
+    if (problems.length === 0) {
+      return {
+        name: 'queue_health',
+        status: 'ok',
+        message: `No stalled-forever jobs; no queue over depth ${threshold}; no old embed-backfill jobs without a worker.`,
+      };
+    }
+    return {
+      name: 'queue_health',
+      status: 'warn',
+      message: problems.join(' '),
+    };
+  } catch (e) {
+    return {
+      name: 'queue_health',
+      status: 'warn',
+      message: `queue_health scan skipped: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
 /**
  * issue #1801 — `wedged_queue` check. Surfaces the alive-but-wedged-worker
  * signature (a queue with claimable work waiting, zero live-lock active jobs,
@@ -2788,6 +3054,7 @@ async function checkEmbeddingEnvOverride(engine: BrainEngine): Promise<Check> {
 export async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
   try {
     const { classifyCapabilities } = await import('../core/ai/capabilities.ts');
+    const modelsSubagent = await engine.getConfig('models.subagent');
     const tierSubagent = await engine.getConfig('models.tier.subagent');
     const modelsDefault = await engine.getConfig('models.default');
 
@@ -2828,11 +3095,22 @@ export async function checkSubagentCapability(engine: BrainEngine): Promise<Chec
       return null;
     };
 
-    if (tierSubagent) {
-      const issue = explain(tierSubagent, 'models.tier.subagent');
+    let resolvedSource: string | null = null;
+    let resolvedModel: string | null = null;
+    if (modelsSubagent) {
+      resolvedSource = 'models.subagent';
+      resolvedModel = modelsSubagent;
+      const issue = explain(modelsSubagent, resolvedSource);
       if (issue) return issue;
     } else if (modelsDefault) {
+      resolvedSource = 'models.default';
+      resolvedModel = modelsDefault;
       const issue = explain(modelsDefault, 'models.default');
+      if (issue) return issue;
+    } else if (tierSubagent) {
+      resolvedSource = 'models.tier.subagent';
+      resolvedModel = tierSubagent;
+      const issue = explain(tierSubagent, resolvedSource);
       if (issue) return issue;
     }
     // v0.37 (T10 / D7) + v0.38 (D7 capability rename): warn when the configured
@@ -2846,9 +3124,9 @@ export async function checkSubagentCapability(engine: BrainEngine): Promise<Chec
       const { loadConfig } = await import('../core/config.ts');
       const cfg = loadConfig();
       const chatModel = cfg?.chat_model;
+      const { isConfigTruthy } = await import('../core/config.ts');
       const gatewayLoopRaw = await engine.getConfig('agent.use_gateway_loop').catch(() => null);
-      const gatewayLoopEnabled = typeof gatewayLoopRaw === 'string'
-        && ['true', '1', 'yes', 'on'].includes(gatewayLoopRaw.trim().toLowerCase());
+      const gatewayLoopEnabled = isConfigTruthy(gatewayLoopRaw);
       const { isAnthropicProvider } = await import('../core/model-config.ts');
       if (chatModel && !isAnthropicProvider(chatModel) && !process.env.ANTHROPIC_API_KEY && !gatewayLoopEnabled) {
         return {
@@ -2866,8 +3144,8 @@ export async function checkSubagentCapability(engine: BrainEngine): Promise<Chec
     return {
       name: 'subagent_capability',
       status: 'ok',
-      message: tierSubagent
-        ? `Subagent tier resolves to "${tierSubagent}" with full tool-loop capability`
+      message: resolvedModel && resolvedSource
+        ? `Subagent model resolves via ${resolvedSource} to "${resolvedModel}" with full tool-loop capability`
         : `Subagent tier resolves to default (claude-sonnet-4-6) — full tool-loop capability`,
     };
   } catch (e) {
@@ -2960,6 +3238,54 @@ function _resolveSyncFreshnessHours(varName: string, fallback: number): number {
  * branch (disabled / enabled-no-events / enabled-all-pass / enabled-with-failures)
  * without spinning up the audit JSONL or a real config file.
  */
+/**
+ * Pure function form of the conversation_parser_probe_health check.
+ * Mirrors computeNightlyQualityProbeHealthCheck: skip-with-hint when the
+ * probe is off and silent, surface the last 7 days of audit events when
+ * it has run, WARN on any non-pass outcome.
+ *
+ * `effectiveEnabled` folds the D10 mode-gate in: explicitly enabled OR
+ * search.mode=tokenmax (where the probe is default-on).
+ */
+export function computeConversationParserProbeHealthCheck(
+  effectiveEnabled: boolean,
+  events: ReadonlyArray<{ outcome: string; ts: string; reason?: string }>,
+): Check {
+  const name = 'conversation_parser_probe_health';
+  if (!effectiveEnabled && events.length === 0) {
+    return {
+      name,
+      status: 'ok',
+      message:
+        'disabled (opt-in; default-on only for search.mode=tokenmax). Enable with: ' +
+        '`gbrain config set autopilot.conversation_parser_probe.enabled true`',
+    };
+  }
+  if (events.length === 0) {
+    return {
+      name,
+      status: 'ok',
+      message: 'enabled but no probe events in the last 7 days (next run by autopilot; fixtures require a source-checkout install).',
+    };
+  }
+  const bad = events.filter(e => e.outcome !== 'pass');
+  const latest = events[events.length - 1]!;
+  if (bad.length > 0) {
+    return {
+      name,
+      status: 'warn',
+      message:
+        `${bad.length}/${events.length} probe run(s) in the last 7 days did not pass; ` +
+        `latest: ${latest.outcome}${latest.reason ? ` (${latest.reason})` : ''}`,
+    };
+  }
+  return {
+    name,
+    status: 'ok',
+    message: `${events.length} probe run(s) in the last 7 days, all pass (latest ${latest.ts}).`,
+  };
+}
+
 export function computeNightlyQualityProbeHealthCheck(
   probeEnabled: boolean,
   events: ReadonlyArray<{ outcome: string; ts: string; detail?: string }>,
@@ -3018,18 +3344,10 @@ export function computeNightlyQualityProbeHealthCheck(
  *   - OK when enabled=true AND backlog==0 OR no eligible pages exist.
  *   - WARN when enabled=true AND backlog>10.
  *
- * Backlog query uses the page-level TERMINAL audit row check (Eng-v2
- * C7), source-scoped via explicit predicate (Eng-v2 C2). Partial-
- * extraction pages stay in backlog because the terminal row isn't
- * written until ALL segments complete.
- *
- * Known approximation (documented in the details field): "complete"
- * means "terminal row exists" which means "all segments completed in
- * a prior run." A page with the terminal row from one run + new
- * messages since shows OK until the next run picks up new messages
- * and writes a fresh terminal row. The backlog is therefore an UPPER
- * BOUND on "pages with NO extraction at all", not "pages whose facts
- * are current."
+ * Backlog uses versioned, source-scoped outcomes. Regular pages bind the marker
+ * to pages.updated_at; raw-transcript sidecars carry a SHA-256 snapshot token
+ * and are revalidated by the extraction command before it skips model work.
+ * Legacy/unversioned rows and partial extraction remain in backlog.
  */
 export async function computeConversationFactsBacklogCheck(
   engine: BrainEngine,
@@ -3071,35 +3389,112 @@ export async function computeConversationFactsBacklogCheck(
       }
     }
 
-    // Source-scoped NOT EXISTS (Eng-v2 C2 + C7):
-    //   - facts.source matches TERMINAL audit source
-    //   - source_session matches terminal:<slug>
-    //   - source_id matches page's source_id (cross-source safety)
-    const rows = await engine.executeRaw<{ count: string | number }>(
-      `SELECT COUNT(*) AS count FROM pages p
-       WHERE p.type = ANY($1::text[])
-         AND p.deleted_at IS NULL
-         AND NOT EXISTS (
-           SELECT 1 FROM facts f
-           WHERE f.source = 'cli:extract-conversation-facts:terminal'
-             AND f.source_session = 'cli:extract-conversation-facts:terminal:' || p.slug
-             AND f.source_id = p.source_id
-         )`,
+    const rows = await engine.executeRaw<{
+      backlog: string | number;
+      completed: string | number;
+      non_extractable: string | number;
+    }>(
+      `WITH outcomes AS (
+         SELECT
+           p.source_id,
+           p.slug,
+           MAX(CASE WHEN f.source = 'cli:extract-conversation-facts:terminal:v2' THEN 1 ELSE 0 END) AS completed,
+           MAX(CASE WHEN f.source = 'cli:extract-conversation-facts:non-extractable:v2' THEN 1 ELSE 0 END) AS non_extractable
+         FROM pages p
+         LEFT JOIN facts f
+           ON f.source_id = p.source_id
+          AND f.source_markdown_slug = p.slug
+          AND f.source IN (
+            'cli:extract-conversation-facts:terminal:v2',
+            'cli:extract-conversation-facts:non-extractable:v2'
+          )
+          AND p.content_hash IS NOT NULL
+          AND f.source_session = f.source || ':' || p.slug || ':page-' ||
+            p.content_hash || '-' ||
+            COALESCE(TO_CHAR(p.effective_date AT TIME ZONE 'UTC', 'YYYY-MM-DD'), 'none')
+         WHERE p.type = ANY($1::text[])
+           AND p.deleted_at IS NULL
+           AND COALESCE(BTRIM(p.frontmatter->>'raw_transcript'), '') = ''
+           AND p.content_hash IS NOT NULL
+         GROUP BY p.source_id, p.slug
+       )
+       SELECT
+         COALESCE(SUM(CASE WHEN completed = 0 AND non_extractable = 0 THEN 1 ELSE 0 END), 0) AS backlog,
+         COALESCE(SUM(completed), 0) AS completed,
+         COALESCE(SUM(CASE WHEN completed = 0 THEN non_extractable ELSE 0 END), 0) AS non_extractable
+       FROM outcomes`,
       [types],
     );
 
-    const backlog = Number(rows[0]?.count ?? 0);
+    let backlog = Number(rows[0]?.backlog ?? 0);
+    let completed = Number(rows[0]?.completed ?? 0);
+    let nonExtractable = Number(rows[0]?.non_extractable ?? 0);
+
+    // SQL cannot read raw_transcript files or reproduce the fallback hash for a
+    // legacy NULL content_hash. Recompute those tokens through the command's
+    // canonical verifier. Pagination keeps memory bounded.
+    const { findFreshExtractionOutcomes } = await import(
+      './extract-conversation-facts.ts'
+    );
+    const verifierSources = await engine.executeRaw<{ source_id: string }>(
+      `SELECT DISTINCT source_id
+         FROM pages
+        WHERE type = ANY($1::text[])
+          AND deleted_at IS NULL
+          AND (
+            COALESCE(BTRIM(frontmatter->>'raw_transcript'), '') <> ''
+            OR content_hash IS NULL
+          )
+        ORDER BY source_id`,
+      [types],
+    );
+    for (const { source_id: sourceId } of verifierSources) {
+      for (const type of types) {
+        let offset = 0;
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const batch = await engine.listPages({
+            type: type as NonNullable<Parameters<BrainEngine['listPages']>[0]>['type'],
+            sourceId,
+            limit: 10,
+            offset,
+          });
+          if (batch.length === 0) break;
+          const verifyInProcess = batch.filter((page) => {
+            const raw = page.frontmatter?.raw_transcript;
+            return (typeof raw === 'string' && raw.trim().length > 0) ||
+              page.content_hash == null;
+          });
+          if (verifyInProcess.length > 0) {
+            const outcomes = await findFreshExtractionOutcomes(
+              engine,
+              sourceId,
+              verifyInProcess,
+            );
+            for (const page of verifyInProcess) {
+              const outcome = outcomes.get(page.slug);
+              if (outcome === 'complete') completed++;
+              else if (outcome === 'non_extractable') nonExtractable++;
+              else backlog++;
+            }
+          }
+          offset += batch.length;
+          if (batch.length < 10) break;
+        }
+      }
+    }
 
     if (backlog === 0) {
       return {
         name,
         status: 'ok',
-        message: 'all eligible pages have extraction terminal audit rows',
+        message: 'all eligible pages have fresh durable extraction outcomes',
         details: {
           backlog,
+          completed,
+          scanned_not_extractable: nonExtractable,
           types,
-          known_approximation:
-            'backlog counts pages with NO extraction terminal row; pages with new messages since prior extraction may show OK until next run',
+          freshness_rule: 'v2 snapshot token (content hash + effective date or sidecar sha256)',
         },
       };
     }
@@ -3113,10 +3508,11 @@ export async function computeConversationFactsBacklogCheck(
         message: `${backlog} eligible pages without extraction. Fix: ${fixHint}`,
         details: {
           backlog,
+          completed,
+          scanned_not_extractable: nonExtractable,
           types,
           fix_hint: fixHint,
-          known_approximation:
-            'backlog counts pages with NO extraction terminal row; pages with new messages since prior extraction may show OK until next run',
+          freshness_rule: 'v2 snapshot token (content hash + effective date or sidecar sha256)',
         },
       };
     }
@@ -3125,7 +3521,13 @@ export async function computeConversationFactsBacklogCheck(
       name,
       status: 'ok',
       message: `${backlog} eligible page(s) below warn threshold (>10)`,
-      details: { backlog, types },
+      details: {
+        backlog,
+        completed,
+        scanned_not_extractable: nonExtractable,
+        types,
+        freshness_rule: 'v2 snapshot token (content hash + effective date or sidecar sha256)',
+      },
     };
   } catch (err) {
     return {
@@ -3216,6 +3618,52 @@ export async function checkLinksExtractionLag(
       return { name, status: 'ok', message: 'links_extracted_at not present (pre-v112 brain)' };
     }
     return { name, status: 'warn', message: `Could not check links_extraction_lag: ${(e as Error).message}` };
+  }
+}
+
+/**
+ * issue #160 — unverified_extractions doctor check.
+ *
+ * The extraction quarantine lane parks auto-extracted entity stubs
+ * (frontmatter `provenance: 'auto-extracted'` + `status: 'unverified'`)
+ * until the owner promotes or rejects them. A queue nobody reviews decays
+ * into invisible clutter, so this check counts stubs older than N days
+ * (default 7) and nudges toward the review surface. Exported for direct
+ * testing (mirrors checkLinksExtractionLag).
+ */
+export async function checkUnverifiedExtractions(
+  engine: BrainEngine,
+  opts?: { sourceId?: string; days?: number },
+): Promise<Check> {
+  const name = 'unverified_extractions';
+  const days = opts?.days ?? 7;
+  const sourceId = opts?.sourceId;
+  try {
+    const params: unknown[] = [String(days)];
+    let srcClause = '';
+    if (sourceId) {
+      params.push(sourceId);
+      srcClause = 'AND p.source_id = $2';
+    }
+    const rows = await engine.executeRaw<{ n: string | number }>(
+      `SELECT COUNT(*)::int AS n FROM pages p
+       WHERE p.deleted_at IS NULL
+         AND ${unverifiedExtractionFragment('p')}
+         AND p.created_at < now() - ($1 || ' days')::interval
+         ${srcClause}`,
+      params,
+    );
+    const n = Number(rows[0]?.n ?? 0);
+    return {
+      name,
+      status: n > 0 ? 'warn' : 'ok',
+      message: n > 0
+        ? `${n} unverified auto-extracted entity stub(s) older than ${days} days awaiting review. List with 'gbrain extraction-pending'; promote/reject with 'gbrain extraction-review <promote|reject> --slugs <slug,...>'.`
+        : 'No stale unverified extraction stubs',
+      details: { count: n, days, source_id: sourceId ?? null },
+    };
+  } catch (e) {
+    return { name, status: 'warn', message: `Could not check unverified_extractions: ${(e as Error).message}` };
   }
 }
 
@@ -3614,29 +4062,51 @@ export async function checkSyncFreshness(
       // All four must hold; otherwise fall through to the time-based check.
       // The chunker version match is computed here (not in the helper)
       // because it depends on engine state, not git state.
+      //
+      // Clone-unavailable fallback: on stateless deploys (Docker on EB /
+      // K8s / Fly — the platforms the cloud recipes produce), a container
+      // restart wipes `local_path` and each clone is only re-materialized
+      // when that source's next sync job runs. Until then the HEAD probe
+      // cannot run at all ('unavailable'), which previously fell through to
+      // raw wall-clock age — and since a no-op sync doesn't advance
+      // `last_sync_at`, every QUIET source read as stale/FAIL after a
+      // restart (score-sinking alert storm; observed live: 16-source brain,
+      // 12 clones gone after a config-update restart, doctor 70→30).
+      // 'unavailable' + chunker match now reuses the v0.41.32.0 REMOTE lag
+      // signal (newest_content_at) below — DB-only, no subprocess, and it
+      // still reports staleness whenever content really is newer than the
+      // last sync. 'changed' (readable clone with real work) keeps
+      // wall-clock exactly as before, and a chunker mismatch is never
+      // masked (D7): it disables the fallback too.
+      let cloneUnavailable = false;
       if (localOnly) {
-        const gitUnchanged = isSourceUnchangedSinceSync(
+        const gitState = probeSourceGitState(
           source.local_path,
           source.last_commit,
           { requireCleanWorkingTree: 'ignore-untracked' },
         );
         const chunkerMatch = source.chunker_version === currentChunkerVersion;
-        if (gitUnchanged && chunkerMatch) {
+        if (gitState === 'unchanged' && chunkerMatch) {
           unchanged_count++;
           continue;
         }
+        cloneUnavailable = gitState === 'unavailable' && chunkerMatch;
       }
 
       // v0.41.32.0: REMOTE path (doctorReportRemote, !localOnly) computes lag
       // from the stored newest_content_at column — NO git subprocess on a
       // DB-supplied local_path (preserves the v0.41.27.0 trust boundary). A
       // quiet repo whose newest commit predates its last sync reports 0; NULL
-      // column → wall-clock fallback. LOCAL fall-through keeps wall-clock: the
-      // short-circuit already failed, so the source genuinely has work and
-      // "hours since last sync" is the right staleness measure. The `ageMs < 0`
-      // skew check above still runs on raw wall-clock for both paths (A1).
+      // column → wall-clock fallback. LOCAL fall-through keeps wall-clock when
+      // the clone is READABLE: the short-circuit failed on real evidence
+      // (HEAD moved / dirty tree), so the source genuinely has work and
+      // "hours since last sync" is the right staleness measure. A local clone
+      // that is UNAVAILABLE (not yet re-materialized, see above) carries no
+      // evidence either way, so it borrows this same DB-only lag. The
+      // `ageMs < 0` skew check above still runs on raw wall-clock for both
+      // paths (A1).
       let thresholdAgeMs = ageMs;
-      if (!localOnly) {
+      if (!localOnly || cloneUnavailable) {
         const contentMs = source.newest_content_at
           ? new Date(source.newest_content_at).getTime()
           : null;
@@ -4254,11 +4724,10 @@ export async function buildChecks(
   const checks: Check[] = [];
   let autoFixReport: AutoFixReport | null = null;
 
-  // Progress reporter. `--json` is doctor's own JSON output (list of checks);
-  // progress events stay on stderr regardless, gated by the global --quiet /
-  // --progress-json flags. On a 52K-page brain the DB checks can take minutes,
-  // and without a heartbeat agents can't tell doctor from a hang.
-  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
+  // Progress reporter. `--json` is doctor's machine-readable output, so plain
+  // progress must not leak to stderr unless the caller explicitly asks for
+  // structured progress with --progress-json.
+  const progress = createProgress(doctorProgressOptions(jsonOutput));
 
   // --- Filesystem checks (always run, no DB needed) ---
 
@@ -4843,10 +5312,17 @@ export async function buildChecks(
   try {
     const { readRecentQualityProbeEvents } = await import('../core/audit-quality-probe.ts');
     const { loadConfig } = await import('../core/config.ts');
+    const { resolveProbeEnabled } = await import('../core/cycle/nightly-quality-probe.ts');
     let probeEnabled = false;
     try {
+      // Dual-plane read, matching the autopilot gate: the DB row (what the
+      // enable hint's `gbrain config set` writes) wins; file plane fallback.
+      let dbVal: string | null = null;
+      try {
+        dbVal = engine ? await engine.getConfig('autopilot.nightly_quality_probe.enabled') : null;
+      } catch { /* DB unavailable → file plane only */ }
       const cfg = loadConfig();
-      probeEnabled = Boolean((cfg as any)?.autopilot?.nightly_quality_probe?.enabled);
+      probeEnabled = resolveProbeEnabled(dbVal, (cfg as any)?.autopilot?.nightly_quality_probe?.enabled);
     } catch { /* config unavailable → treat as disabled */ }
     const events = readRecentQualityProbeEvents(7);
     const check = computeNightlyQualityProbeHealthCheck(probeEnabled, events);
@@ -4963,8 +5439,7 @@ export async function buildChecks(
             message:
               `${unmatched}/${sample.length} conversation pages (${unmatchedPct.toFixed(1)}%) match NO built-in pattern. ` +
               `Breakdown: ${breakdown}. ` +
-              `Investigate: gbrain conversation-parser scan <slug> | ` +
-              `Enable LLM fallback (opt-in): gbrain config set conversation_parser.llm_fallback_enabled true`,
+              `Investigate: gbrain conversation-parser scan <slug>`,
           });
         } else {
           checks.push({
@@ -5030,19 +5505,29 @@ export async function buildChecks(
 
   // 3d.5 v0.41.13.0 — conversation_parser_probe_health. Mode-gated
   // per D10: ON when search.mode=tokenmax, opt-in for other modes.
-  // Surface the last 7 days of nightly-probe events; warn on FAIL /
-  // BUDGET_EXCEEDED / adversarial_false_positive.
-  //
-  // v0.41.13.0 ships the probe as opt-in (autopilot wiring deferred
-  // to T7 in the cathedral plan); this check skips with an enable
-  // hint until the probe has at least one audit event written.
-  checks.push({
-    name: 'conversation_parser_probe_health',
-    status: 'ok',
-    message:
-      'Skipped (nightly probe is opt-in; enable with ' +
-      '`gbrain config set autopilot.conversation_parser_probe.enabled true`)',
-  });
+  // Surfaces the last 7 days of nightly-probe audit events; warn on any
+  // non-pass outcome (fail / budget_exceeded / adversarial_false_positive).
+  // (Until the autopilot wire-up this was a hardcoded "Skipped" stub.)
+  try {
+    const { readRecentParserProbeEvents } = await import('../core/audit-parser-probe.ts');
+    let parserProbeEnabled = false;
+    try {
+      let dbVal: string | null = null;
+      let dbMode: string | null = null;
+      try {
+        dbVal = engine ? await engine.getConfig('autopilot.conversation_parser_probe.enabled') : null;
+        dbMode = engine ? await engine.getConfig('search.mode') : null;
+      } catch { /* DB unavailable → file plane only */ }
+      const { loadConfig } = await import('../core/config.ts');
+      const fileVal = (loadConfig() as any)?.autopilot?.conversation_parser_probe?.enabled;
+      const flagOn = dbVal != null ? dbVal === 'true' : fileVal === true;
+      parserProbeEnabled = flagOn || dbMode === 'tokenmax';
+    } catch { /* config unavailable → treat as disabled */ }
+    const parserEvents = readRecentParserProbeEvents(7);
+    checks.push(computeConversationParserProbeHealthCheck(parserProbeEnabled, parserEvents));
+  } catch {
+    // Best-effort; audit-log read failure shouldn't stop doctor.
+  }
 
   // 3e. home_dir_in_worktree (v0.35.8.0). Walks up from `gbrainPath()`
   // looking for a `.git` directory OR file. If found, warns: `~/.gbrain/`
@@ -5507,7 +5992,7 @@ export async function buildChecks(
     // that doesn't match the gateway's resolved default. Empty-brain vs
     // non-empty-brain branching determines the repair hint:
     //   - empty brain (no embedded chunks) → `gbrain init --force --embedding-model …`
-    //   - non-empty brain → `gbrain retrieval-upgrade --to … --reindex`
+    //   - non-empty brain → `gbrain migrate embeddings --to … --dim …` (#3390)
     // The bug-reporter's `rm -rf ~/.gbrain` recovery is never the right answer.
     let surfacedUnconfiguredDrift = false;
     try {
@@ -5538,7 +6023,7 @@ export async function buildChecks(
           if (totalChunks > 0) {
             const fix = embeddedCount === 0
               ? `No embeddings yet — drop the empty schema and re-init at the right dim:\n        gbrain init --force --pglite --embedding-model ${configuredModel} --embedding-dimensions ${configuredDims}`
-              : `Non-empty brain (${embeddedCount} embedded chunks). Migrate cleanly:\n        gbrain retrieval-upgrade --to ${configuredModel} --reindex`;
+              : `Non-empty brain (${embeddedCount} embedded chunks). Migrate cleanly:\n        gbrain migrate embeddings --to ${configuredModel} --dim ${configuredDims}`;
 
             checks.push({
               name: 'embedding_provider',
@@ -5742,6 +6227,12 @@ export async function buildChecks(
           continue;
         }
         if (engine.kind === 'postgres' && haveIndex.get(colName) === false) {
+          if (!hnswIndexExpected(entry.type, entry.dimensions)) {
+            okColumns.push(
+              `${colName} (exact scan: ${entry.type}(${entry.dimensions}) exceeds HNSW cap ${hnswMaxDimsForType(entry.type)})`,
+            );
+            continue;
+          }
           issues.push(
             `${colName}: no HNSW index. Search works but uses sequential scan. ` +
               `Fix: CREATE INDEX IF NOT EXISTS idx_chunks_${colName} ON content_chunks USING hnsw (${quoteIdentifier(colName)} ${entry.type}_cosine_ops);`,
@@ -5868,12 +6359,12 @@ export async function buildChecks(
         message: `Only code/test fixture entity pages found (${entityCount}); graph_coverage not applicable`,
       });
     } else if (linkCoverage >= 0.5 && timelineCoverage >= 0.5) {
-      checks.push({ name: 'graph_coverage', status: 'ok', message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}%` });
+      checks.push({ name: 'graph_coverage', status: 'ok', message: `Entity link coverage ${linkPct}%, entity timeline coverage ${timelinePct}%` });
     } else {
       checks.push({
         name: 'graph_coverage',
         status: 'warn',
-        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}% (${eligibleEntityCount} entity pages). Run: gbrain extract all`,
+        message: `Entity link coverage ${linkPct}%, entity timeline coverage ${timelinePct}% (${eligibleEntityCount} entity pages). Run: gbrain extract all`,
       });
     }
 
@@ -5885,7 +6376,7 @@ export async function buildChecks(
       const parts = [
         `embed ${health.embed_coverage_score}/35`,
         `links ${health.link_density_score}/25`,
-        `timeline ${health.timeline_coverage_score}/15`,
+        `timeline density (all pages) ${health.timeline_coverage_score}/15`,
         `orphans ${health.no_orphans_score}/15`,
         `dead-links ${health.no_dead_links_score}/10`,
       ];
@@ -6057,6 +6548,18 @@ export async function buildChecks(
   // surfaces them with paste-ready cleanup SQL.
   progress.heartbeat('child_table_orphans');
   checks.push(await childTableOrphansCheck(engine));
+
+  // 10d. Raw-source persistence guarantee (#1978, warn-only v1).
+  // Every synthesized/derived page must carry a raw trace or an explicit
+  // exemption. Warn-only in v1 — surfaces violations, blocks nothing.
+  progress.heartbeat('raw_provenance');
+  checks.push(await rawProvenanceCheck(engine));
+
+  // #2829: detect sources whose jsonb `config` was re-wrapped into a string
+  // scalar (grows a layer per read→write cycle). Non-object configs break
+  // federation + ACL reads; surface them with the repair path.
+  progress.heartbeat('source_config_shape');
+  checks.push(await checkSourceConfigShape(engine));
 
   // v0.33: whoknows_health — fixture presence + row count. The eval
   // gate itself runs via `gbrain eval whoknows`; this check is the
@@ -6456,6 +6959,10 @@ export async function buildChecks(
     const msg = err instanceof Error ? err.message : String(err);
     checks.push({ name: 'flagged_pages', status: 'ok', message: `Skipped (${msg})` });
   }
+
+  // issue #160: extraction quarantine lane review nudge.
+  progress.heartbeat('unverified_extractions');
+  checks.push(await checkUnverifiedExtractions(engine, { sourceId: orphanRatioSourceId }));
 
   // 11a. Frontmatter integrity (v0.22.4, hardened in v0.38.2.0).
   // scanBrainSources walks every registered source's local_path on disk
@@ -6916,159 +7423,12 @@ export async function buildChecks(
     }
   }
 
-  // 11b. Queue health (v0.19.1 queue-resilience wave).
-  // Postgres-only because PGLite has no multi-process worker surface. Two
-  // subchecks, both cheap (single SELECT each, status-index-covered):
-  //
-  //   1. stalled-forever: any active job whose started_at is > 1h old. The
-  //      incident that motivated this release ran 90+ min before surfacing.
-  //      Surface the ID so the operator can `gbrain jobs get <id>` to inspect
-  //      or `gbrain jobs cancel <id>` to force-kill.
-  //
-  //   2. backpressure-missed: per-name waiting depth exceeds the threshold
-  //      (default 10, override via GBRAIN_QUEUE_WAITING_THRESHOLD env). Signal
-  //      that a submitter probably needs maxWaiting set. Bounded by per-name
-  //      aggregation so a single name's pile shows up clearly instead of
-  //      getting lost in the total.
-  //
-  // Not included in v0.19.1 (tracked as B7 follow-up): worker-heartbeat
-  // staleness. It needs a minion_workers table; the lock_until-on-active-jobs
-  // proxy can't distinguish "no worker" from "worker idle," and a check that
-  // cries wolf erodes trust in every other doctor check.
   progress.heartbeat('queue_health');
-  if (engine.kind === 'pglite') {
-    checks.push({
-      name: 'queue_health',
-      status: 'ok',
-      message: 'Skipped (PGLite — no multi-process worker surface)',
-    });
-  } else {
-    const queueHealthHb = startHeartbeat(progress, 'scanning queue health…');
-    try {
-      const sql = db.getConnection();
-      // Subcheck 1: stalled-forever active jobs (>1h wall-clock).
-      const stalledRows: Array<{ id: number; name: string; started_at: string }> = await sql`
-        SELECT id, name, started_at::text AS started_at
-          FROM minion_jobs
-         WHERE status = 'active'
-           AND started_at IS NOT NULL
-           AND started_at < now() - interval '1 hour'
-         ORDER BY started_at ASC
-         LIMIT 5
-      `;
-      // Subcheck 2: per-name waiting depth exceeds threshold.
-      const rawThreshold = process.env.GBRAIN_QUEUE_WAITING_THRESHOLD;
-      const parsedThreshold = rawThreshold ? parseInt(rawThreshold, 10) : 10;
-      const threshold = Number.isFinite(parsedThreshold) && parsedThreshold >= 1
-        ? parsedThreshold
-        : 10;
-      const depthRows: Array<{ name: string; queue: string; depth: number }> = await sql`
-        SELECT name, queue, count(*)::int AS depth
-          FROM minion_jobs
-         WHERE status = 'waiting'
-         GROUP BY name, queue
-        HAVING count(*) > ${threshold}
-         ORDER BY depth DESC
-         LIMIT 5
-      `;
-      // Subcheck 3 (v0.22.14): RSS-watchdog kills in the last 24h. Bare workers
-      // newly default to --max-rss 2048 (was 0); operators who run large embed
-      // or import jobs may see kills that didn't happen pre-v0.22.14. We surface
-      // a hint when this signature appears so the upgrade path is obvious.
-      // Signature: when the watchdog trips, gracefulShutdown('watchdog') aborts
-      // in-flight jobs with `new Error('watchdog')`. The worker's failJob path
-      // (worker.ts:660-664) writes `error_text = 'aborted: watchdog'` for any
-      // job in-flight at the moment of the kill.
-      //
-      // We deliberately DO NOT do a loose `ILIKE '%watchdog%'`:
-      //   1. Parent jobs that inherit `on_child_fail='fail_parent'` get
-      //      `"child job N failed: aborted: watchdog"` — counting that
-      //      double-counts (child + parent) for one watchdog event.
-      //   2. Any user error_text containing the word "watchdog" matches.
-      // Match the exact prefix `'aborted: watchdog'` to scope this purely to
-      // the worker's own kill signature.
-      const rssKillRows: Array<{ cnt: number }> = await sql`
-        SELECT count(*)::int AS cnt
-          FROM minion_jobs
-         WHERE status IN ('dead', 'failed')
-           AND finished_at > now() - interval '24 hours'
-           AND error_text = 'aborted: watchdog'
-      `;
-      const rssKillCount = rssKillRows[0]?.cnt ?? 0;
-
-      // Subcheck 4 (v0.30.2): prompt_too_long terminal failures on subagent
-      // jobs in the last 24h. The dream/synthesize phase classifies Anthropic
-      // 400 "prompt is too long" responses as UnrecoverableError so they
-      // dead-letter on first attempt instead of clogging the queue with
-      // max_stalled retries. Surface count + fix hint when present.
-      const promptTooLongRows: Array<{ cnt: number }> = await sql`
-        SELECT count(*)::int AS cnt
-          FROM minion_jobs
-         WHERE name = 'subagent'
-           AND status = 'dead'
-           AND finished_at > now() - interval '24 hours'
-           AND error_text LIKE 'prompt_too_long:%'
-      `;
-      const promptTooLongCount = promptTooLongRows[0]?.cnt ?? 0;
-
-      const problems: string[] = [];
-      if (stalledRows.length > 0) {
-        const sample = stalledRows
-          .map(r => `#${r.id}(${r.name})`)
-          .join(', ');
-        problems.push(
-          `${stalledRows.length} stalled-forever job(s): ${sample}. ` +
-          `Fix: gbrain jobs get <id> to inspect; gbrain jobs cancel <id> to force-kill.`
-        );
-      }
-      if (depthRows.length > 0) {
-        const sample = depthRows
-          .map(r => `${r.name}@${r.queue}=${r.depth}`)
-          .join(', ');
-        problems.push(
-          `waiting-queue depth exceeds ${threshold} for: ${sample}. ` +
-          `Fix: set maxWaiting on the submitter (or raise GBRAIN_QUEUE_WAITING_THRESHOLD).`
-        );
-      }
-      if (rssKillCount > 0) {
-        problems.push(
-          `${rssKillCount} job(s) dead-lettered for RSS-watchdog memory-limit kills in last 24h. ` +
-          `Fix: raise the limit (e.g. \`gbrain jobs work --max-rss 4096\`) or opt out (\`--max-rss 0\`). ` +
-          `→ see worker_oom_loop for the cap + fix (the authoritative OOM-loop signal).`
-        );
-      }
-      if (promptTooLongCount > 0) {
-        problems.push(
-          `${promptTooLongCount} subagent job(s) dead-lettered with prompt_too_long in last 24h. ` +
-          `Dream/synthesize transcripts exceeded the model's input context. ` +
-          `Fix: \`gbrain dream --phase synthesize --dry-run --json\` to identify fat transcripts; ` +
-          `set \`dream.synthesize.max_prompt_tokens\` to bound the per-chunk budget, or use a ` +
-          `larger-context model (Opus 4.7 = 1M tokens vs Sonnet 4.6 = 200K).`
-        );
-      }
-
-      if (problems.length === 0) {
-        checks.push({
-          name: 'queue_health',
-          status: 'ok',
-          message: `No stalled-forever jobs; no queue over depth ${threshold}.`,
-        });
-      } else {
-        checks.push({
-          name: 'queue_health',
-          status: 'warn',
-          message: problems.join(' '),
-        });
-      }
-    } catch (e) {
-      checks.push({
-        name: 'queue_health',
-        status: 'warn',
-        message: `queue_health scan skipped: ${e instanceof Error ? e.message : String(e)}`,
-      });
-    } finally {
-      queueHealthHb();
-    }
+  const queueHealthHb = startHeartbeat(progress, 'scanning queue health…');
+  try {
+    checks.push(await computeQueueHealthCheck(engine));
+  } finally {
+    queueHealthHb();
   }
 
   // 11.4 subagent_capability (v0.38 — D7; was subagent_provider in v0.31.12). Surfaces a
@@ -7399,6 +7759,14 @@ export async function runDoctor(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+export function doctorProgressOptions(jsonOutput: boolean) {
+  const cliOpts = getCliOptions();
+  if (jsonOutput && !cliOpts.quiet && !cliOpts.progressJson) {
+    return { mode: 'quiet' as const };
+  }
+  return cliOptsToProgressOptions(cliOpts);
+}
 
 /** Print the auto-fix report in human-readable form. JSON output goes through
  *  outputResults alongside the check list; this is the pretty-print path. */
@@ -7778,27 +8146,71 @@ export async function runRemediationPlan(
     return;
   }
 
-  // Human output
-  console.log(`Brain score: ${plan.brain_score_current}/100 → target ${targetScore}`);
+  for (const line of renderRemediationPlanLines(plan, targetScore)) {
+    console.log(line);
+  }
+}
+
+/**
+ * Human-render the remediation plan into a sequence of console lines.
+ * Exported for unit-test access — `runRemediationPlan` consumes it
+ * verbatim and only adds the JSON-mode short-circuit.
+ *
+ * Gating the "at target" line on `brain_score_current >= targetScore`
+ * is load-bearing: when the plan is empty AND the target is unreachable,
+ * the prior shape printed both "Target unreachable: …" and "Brain is at
+ * target" back-to-back, which contradicted itself and hid the real next
+ * step (manual prereq config to lift `max_reachable_score`).
+ */
+export function renderRemediationPlanLines(
+  plan: RemediationPlanShape,
+  targetScore: number,
+): string[] {
+  const lines: string[] = [];
+  lines.push(`Brain score: ${plan.brain_score_current}/100 → target ${targetScore}`);
   if (plan.target_unreachable) {
-    console.log(`Target unreachable: max with autonomous remediation is ${plan.max_reachable_score}/100.`);
+    lines.push(`Target unreachable: max with autonomous remediation is ${plan.max_reachable_score}/100.`);
   }
   if (plan.plan.length === 0) {
-    console.log('No remediations needed. Brain is at target.');
+    if (plan.brain_score_current >= targetScore) {
+      lines.push('No remediations needed. Brain is at target.');
+    }
+    // When brain_score < targetScore and plan is empty, the unreachable
+    // line (if applicable) is the user-facing explanation; the blocked-
+    // checks block below surfaces the manual gap. Don't follow with a
+    // misleading "at target" claim.
   } else {
-    console.log(`Plan: ${plan.plan.length} step(s), est ${plan.est_total_seconds}s, est $${plan.est_total_usd_cost.toFixed(2)}`);
+    lines.push(`Plan: ${plan.plan.length} step(s), est ${plan.est_total_seconds}s, est $${plan.est_total_usd_cost.toFixed(2)}`);
     for (const step of plan.plan) {
       const protectedMark = step.protected ? ' [PROTECTED]' : '';
       const costMark = step.est_usd_cost ? ` ($${step.est_usd_cost.toFixed(2)})` : '';
-      console.log(`  ${step.step}. [${step.severity}] ${step.job}${protectedMark} — ${step.rationale}${costMark}`);
+      lines.push(`  ${step.step}. [${step.severity}] ${step.job}${protectedMark} — ${step.rationale}${costMark}`);
     }
   }
   if (plan.blocked.length > 0) {
-    console.log(`\nBlocked checks (prereq missing):`);
+    lines.push(`\nBlocked checks (prereq missing):`);
     for (const b of plan.blocked) {
-      console.log(`  - ${b.check}: ${b.reason}`);
+      lines.push(`  - ${b.check}: ${b.reason}`);
     }
   }
+  return lines;
+}
+
+interface RemediationPlanShape {
+  brain_score_current: number;
+  target_unreachable: boolean;
+  max_reachable_score: number;
+  plan: Array<{
+    step: number;
+    severity: string;
+    job: string;
+    protected?: boolean;
+    est_usd_cost?: number;
+    rationale: string;
+  }>;
+  est_total_seconds: number;
+  est_total_usd_cost: number;
+  blocked: Array<{ check: string; reason: string }>;
 }
 
 /**

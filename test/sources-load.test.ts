@@ -11,6 +11,7 @@ import {
   loadAllSources,
   fetchSource,
   parseSourceConfig,
+  normalizeSourceConfig,
   isSourceFederated,
 } from '../src/core/sources-load.ts';
 
@@ -120,6 +121,68 @@ describe('parseSourceConfig', () => {
   test('returns empty object on malformed JSON string', () => {
     expect(parseSourceConfig('{')).toEqual({});
   });
+
+  test('#2829: unwraps an accidental multi-layer nested string (self-heal read path)', () => {
+    const wrapped = JSON.stringify(JSON.stringify({ federated: true }));
+    expect(parseSourceConfig(wrapped)).toEqual({ federated: true });
+  });
+
+  test('recovers ordered object fragments from a historical JSONB array', () => {
+    expect(parseSourceConfig([
+      '{"remote_url":"https://example.invalid/repo"}',
+      { federated: true },
+      { tracked_branch: 'main' },
+    ])).toEqual({
+      remote_url: 'https://example.invalid/repo',
+      federated: true,
+      tracked_branch: 'main',
+    });
+  });
+});
+
+describe('normalizeSourceConfig (#2829)', () => {
+  test('passes a plain object through unchanged', () => {
+    expect(normalizeSourceConfig({ federated: true, webhook_secret: 'x' })).toEqual({
+      federated: true,
+      webhook_secret: 'x',
+    });
+  });
+
+  test('unwraps a single JSON-string layer', () => {
+    expect(normalizeSourceConfig('{"federated":true}')).toEqual({ federated: true });
+  });
+
+  test('unwraps a 5-layer nested JSON string back to the object', () => {
+    let v: unknown = { federated: true, tracked_branch: 'main' };
+    for (let i = 0; i < 5; i++) v = JSON.stringify(v); // 5 stringify passes = 5 layers
+    expect(normalizeSourceConfig(v)).toEqual({ federated: true, tracked_branch: 'main' });
+  });
+
+  test('non-object garbage resolves to {}', () => {
+    expect(normalizeSourceConfig('not json')).toEqual({});
+    expect(normalizeSourceConfig('42')).toEqual({}); // parses to a number
+    expect(normalizeSourceConfig('"just a string"')).toEqual({});
+    expect(normalizeSourceConfig(null)).toEqual({});
+    expect(normalizeSourceConfig(undefined)).toEqual({});
+    expect(normalizeSourceConfig(['a', 'b'])).toEqual({}); // array is not a plain object
+    expect(normalizeSourceConfig(JSON.stringify(['a']))).toEqual({});
+  });
+
+  test('normalizes a historical config-fragment array without dropping valid keys', () => {
+    expect(normalizeSourceConfig([
+      JSON.stringify(JSON.stringify({ remote_url: 'https://example.invalid/repo' })),
+      { federated: false },
+    ])).toEqual({
+      remote_url: 'https://example.invalid/repo',
+      federated: false,
+    });
+  });
+
+  test('respects the unwrap bound instead of spinning forever', () => {
+    let v: unknown = { federated: true };
+    for (let i = 0; i < 12; i++) v = JSON.stringify(v); // 12 layers, past the bound of 10
+    expect(normalizeSourceConfig(v)).toEqual({}); // gives up to {} once the bound is hit
+  });
 });
 
 describe('isSourceFederated', () => {
@@ -130,5 +193,6 @@ describe('isSourceFederated', () => {
     expect(isSourceFederated({ federated: 1 })).toBe(false);
     expect(isSourceFederated({})).toBe(false);
     expect(isSourceFederated(null)).toBe(false);
+    expect(isSourceFederated(['{"remote_url":"x"}', { federated: true }])).toBe(true);
   });
 });

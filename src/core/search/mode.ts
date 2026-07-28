@@ -756,7 +756,17 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // slugs written by a process without it, and vice versa. Same one-time
 // global cold-miss pattern as the bumps above; refills within
 // cache.ttl_seconds (3600s default).
-export const KNOBS_HASH_VERSION = 12;
+//
+// bump 12→13 (#3390/#3391): embedding-provider migration wave. The `prov=`
+// component only isolates callers that thread KnobsHashContext.embeddingModel;
+// legacy callers hash `prov=default` before AND after a provider swap, so a
+// cache row computed against the pre-migration embedding space could be
+// served post-migration. `gbrain migrate embeddings` purges query_cache
+// directly at swap time; this version bump is the belt-and-braces for rows
+// written between the #3391 stale-fix (which changes which chunks count as
+// current) and the operator's migration run. Same one-time global cold-miss
+// pattern as the bumps above.
+export const KNOBS_HASH_VERSION = 13;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The

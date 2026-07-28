@@ -55,13 +55,13 @@ describe('v0.41 T4: all 4 bundled lens packs parse cleanly', () => {
 });
 
 describe('v0.41 T4: bundled registry includes lens packs', () => {
-  test('load-active.ts BUNDLED array source includes the 4 lens pack names', () => {
-    const loadActiveSrc = readFileSync(
-      join(here, '..', 'src', 'core', 'schema-pack', 'load-active.ts'),
-      'utf-8',
-    );
+  test('BUNDLED_PACK_NAMES includes the 4 lens pack names', async () => {
+    // The bundled list moved from load-active.ts to bundled.ts (the
+    // single source of truth); assert the array directly instead of
+    // grepping source text.
+    const { BUNDLED_PACK_NAMES } = await import('../src/core/schema-pack/bundled.ts');
     for (const name of PACK_NAMES) {
-      expect(loadActiveSrc).toContain(`'${name}'`);
+      expect(BUNDLED_PACK_NAMES).toContain(name);
     }
   });
 });

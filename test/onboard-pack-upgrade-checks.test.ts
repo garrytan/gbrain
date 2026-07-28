@@ -5,8 +5,12 @@
 // JOIN (F12); manual_only RemediationStep flag round-trips through render.
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { emptyHome, withEnv } from './helpers/with-env.ts';
 import {
   checkPackUpgradeAvailable,
   checkTypeProliferation,
@@ -56,29 +60,57 @@ describe('checkPackUpgradeAvailable', () => {
   it('fires on gbrain-base brain with gbrain-base-v2 available', async () => {
     // Default active pack is gbrain-base; gbrain-base-v2 declares
     // migration_from: {pack: gbrain-base, version: "1.x"}.
-    const result = await checkPackUpgradeAvailable(engine);
-    expect(result.check.name).toBe('pack_upgrade_available');
-    expect(result.check.status).toBe('warn');
-    expect(result.check.message).toContain('gbrain-base-v2');
-    expect(result.remediations.length).toBe(1);
-    expect(result.remediations[0].job).toBe('unify-types');
-    expect(result.remediations[0].protected).toBe(true);
-    expect(result.remediations[0].params.target_pack).toBe('gbrain-base-v2');
+    // Sandbox GBRAIN_HOME: the check reads file-plane config, so a dev
+    // machine whose real ~/.gbrain/config.json sets schema_pack would
+    // flip this assertion.
+    await withEnv({ GBRAIN_HOME: emptyHome(), GBRAIN_SCHEMA_PACK: undefined }, async () => {
+      const result = await checkPackUpgradeAvailable(engine);
+      expect(result.check.name).toBe('pack_upgrade_available');
+      expect(result.check.status).toBe('warn');
+      expect(result.check.message).toContain('gbrain-base-v2');
+      expect(result.remediations.length).toBe(1);
+      expect(result.remediations[0].job).toBe('unify-types');
+      expect(result.remediations[0].protected).toBe(true);
+      expect(result.remediations[0].params.target_pack).toBe('gbrain-base-v2');
+    });
+  });
+
+  it('honors file-plane schema_pack when DB config is unset', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-pack-upgrade-'));
+    const configDir = join(home, '.gbrain');
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      join(configDir, 'config.json'),
+      JSON.stringify({ schema_pack: 'gbrain-base-v2' }, null, 2),
+    );
+
+    await withEnv({ GBRAIN_HOME: home, GBRAIN_SCHEMA_PACK: undefined }, async () => {
+      _resetPackCacheForTests();
+      const result = await checkPackUpgradeAvailable(engine);
+      expect(result.check.name).toBe('pack_upgrade_available');
+      expect(result.check.status).toBe('ok');
+      expect(result.check.message).toContain('gbrain-base-v2');
+      expect(result.remediations).toEqual([]);
+    });
   });
 
   it('manual_only routing via render.ts allowlist (D17)', async () => {
-    const result = await checkPackUpgradeAvailable(engine);
-    const step = result.remediations[0];
-    const rec = toOnboardRecommendation(step);
-    expect(rec.apply_policy).toBe('manual_only');
+    await withEnv({ GBRAIN_HOME: emptyHome(), GBRAIN_SCHEMA_PACK: undefined }, async () => {
+      const result = await checkPackUpgradeAvailable(engine);
+      const step = result.remediations[0];
+      const rec = toOnboardRecommendation(step);
+      expect(rec.apply_policy).toBe('manual_only');
+    });
   });
 });
 
 describe('checkTypeProliferation (D16 pack-aware ratio)', () => {
   it('returns ok when distinct types under declared+5 threshold', async () => {
     await seedPages(['note', 'meeting', 'slack']);
-    const result = await checkTypeProliferation(engine);
-    expect(result.check.status).toBe('ok');
+    await withEnv({ GBRAIN_HOME: emptyHome(), GBRAIN_SCHEMA_PACK: undefined }, async () => {
+      const result = await checkTypeProliferation(engine);
+      expect(result.check.status).toBe('ok');
+    });
   });
 
   it('warns when distinct types exceed declared+5', async () => {
@@ -86,17 +118,19 @@ describe('checkTypeProliferation (D16 pack-aware ratio)', () => {
     // the same way checkTypeProliferation does, then seed declared+6 so the
     // test keeps passing when the base pack grows (e.g. #2390 added
     // event + diary and silently moved the fixed threshold).
-    const { loadActivePack } = await import('../src/core/schema-pack/load-active.ts');
-    const dbConfig = (await engine.getConfig('schema_pack')) ?? undefined;
-    const active = await loadActivePack({ cfg: null, remote: false, dbConfig }).catch(() => null);
-    const declared = active ? active.manifest.page_types.length : 15;
-    const seedCount = declared + 6; // one past the warn threshold (declared+5)
-    const types: string[] = [];
-    for (let i = 0; i < seedCount; i++) types.push(`custom-type-${i}`);
-    await seedPages(types);
-    const result = await checkTypeProliferation(engine);
-    expect(result.check.status).toBe('warn');
-    expect(result.check.message).toMatch(new RegExp(`${seedCount} distinct`));
+    await withEnv({ GBRAIN_HOME: emptyHome(), GBRAIN_SCHEMA_PACK: undefined }, async () => {
+      const { loadActivePack } = await import('../src/core/schema-pack/load-active.ts');
+      const dbConfig = (await engine.getConfig('schema_pack')) ?? undefined;
+      const active = await loadActivePack({ cfg: null, remote: false, dbConfig }).catch(() => null);
+      const declared = active ? active.manifest.page_types.length : 15;
+      const seedCount = declared + 6; // one past the warn threshold (declared+5)
+      const types: string[] = [];
+      for (let i = 0; i < seedCount; i++) types.push(`custom-type-${i}`);
+      await seedPages(types);
+      const result = await checkTypeProliferation(engine);
+      expect(result.check.status).toBe('warn');
+      expect(result.check.message).toMatch(new RegExp(`${seedCount} distinct`));
+    });
   });
 });
 

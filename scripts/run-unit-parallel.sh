@@ -133,6 +133,7 @@ for i in $(seq 1 "$N"); do
         env SHARD="$i/$N" \
         bash scripts/run-unit-shard.sh --max-concurrency="$INTRA_CONC" \
         > "$SHARD_LOG" 2>&1
+      rc=$?
     else
       env SHARD="$i/$N" \
         bash scripts/run-unit-shard.sh --max-concurrency="$INTRA_CONC" \
@@ -142,10 +143,20 @@ for i in $(seq 1 "$N"); do
         sleep 5 && kill -KILL "$pid" 2>/dev/null ) &
       cap_pid=$!
       wait "$pid" 2>/dev/null
+      # Capture the shard's exit code from ITS `wait`, before any watchdog
+      # teardown runs. The teardown commands below overwrite $? — the killed
+      # watchdog reports 143 — which used to get stamped into every shard's
+      # sentinel on machines with no gtimeout/timeout: every run "failed"
+      # with rc=143 summaries even when all tests passed.
+      rc=$?
+      # Reap the watchdog's `sleep` child too (pkill -P), then the watchdog.
+      # Killing only the subshell leaves the sleep orphaned until
+      # $SHARD_TIMEOUT elapses — same quirk the heartbeat cleanup below works
+      # around; CI's orphan-process sweep flags those.
+      pkill -P "$cap_pid" 2>/dev/null
       kill "$cap_pid" 2>/dev/null
       wait "$cap_pid" 2>/dev/null
     fi
-    rc=$?
     echo "$rc" > "$LOG_DIR/shard-$i.exit"
     [ "$rc" = "124" ] && echo "WEDGED" > "$LOG_DIR/shard-$i.wedged"
   ) &

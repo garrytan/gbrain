@@ -190,9 +190,23 @@ describe('deriveTitle (no-frontmatter path)', () => {
     expect(deriveTitle('### Triple hash\nrest')).toBe('Triple hash');
   });
 
-  test('caps at 80 chars', () => {
+  test('caps at 80 chars with explicit ellipsis', () => {
     const long = 'a'.repeat(120);
-    expect(deriveTitle(long)).toBe('a'.repeat(80));
+    expect(deriveTitle(long)).toBe('a'.repeat(79) + '…');
+    expect([...deriveTitle(long)].length).toBe(80);
+  });
+
+  test('exactly 80 chars is not truncated', () => {
+    const exact = 'a'.repeat(80);
+    expect(deriveTitle(exact)).toBe(exact);
+  });
+
+  test('does not split astral Unicode while truncating', () => {
+    const title = deriveTitle('😀'.repeat(120));
+    expect(title.endsWith('…')).toBe(true);
+    expect([...title].length).toBe(80);
+    // No lone surrogate halves left behind by the cut.
+    expect([...title].some((ch) => ch.length === 1 && /[\uD800-\uDFFF]/.test(ch))).toBe(false);
   });
 
   test('falls back to Capture for empty input', () => {

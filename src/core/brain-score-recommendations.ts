@@ -11,21 +11,35 @@ import { parseModelId } from './ai/model-resolver.ts';
  * RecommendationContext (doctor + autopilot) use this to build a sync
  * `resolveKey` closure without re-parsing recipes.
  *
- * Only OPENAI_API_KEY and ZEROENTROPY_API_KEY appear here because those are the
- * only embedding keys `buildGatewayConfig` (src/cli.ts) folds from config into
- * the gateway env. VOYAGE_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY are deliberately
- * absent: their config fields are NOT threaded to the gateway today, so the
- * producer closures fall through to checking `process.env` ONLY for them. That
- * matches what the gateway can actually use (the recipes read those keys from
- * env). Counting a config-plane voyage_api_key/google_api_key here would be a
- * false positive: doctor/autopilot would call the provider "configured" and
- * dispatch an embed.stale job that then fails auth at the gateway. When a future
- * change threads voyage_api_key/google_api_key into buildGatewayConfig (the open
- * voyage-config-mapping work), re-add the matching entry here in the same change.
+ * Only keys that `buildGatewayConfig` (src/core/ai/build-gateway-config.ts)
+ * actually folds from config into the gateway env may appear here.
+ * GOOGLE_GENERATIVE_AI_API_KEY is deliberately absent: its config field is NOT
+ * threaded to the gateway today, so the producer closures fall through to
+ * checking `process.env` ONLY for it. That matches what the gateway can
+ * actually use (the recipe reads that key from env). Counting a config-plane
+ * google_api_key here would be a false positive: doctor/autopilot would call
+ * the provider "configured" and dispatch an embed.stale job that then fails
+ * auth at the gateway. When a future change threads google_api_key into
+ * buildGatewayConfig, re-add the matching entry here in the same change.
+ *
+ * VOYAGE_API_KEY → voyage_api_key was the same kind of gap (#2662) until
+ * buildGatewayConfig started folding it — now safe to list here too.
+ *
+ * Caveat inherited from the existing OPENAI_API_KEY/ZEROENTROPY_API_KEY
+ * entries (unchanged by #2662, noted here for anyone extending this map):
+ * autopilot's resolveKey resolves these fields via `engine.getConfig()`
+ * (DB plane), while `buildGatewayConfig` only folds the FILE-plane
+ * (config.json) value. A `gbrain config set voyage_api_key X` with no
+ * matching config.json entry can therefore still read "configured" here
+ * while the gateway has no key — a pre-existing false-positive class, not
+ * introduced or fixed by this change. Closing it requires threading
+ * `*_api_key` DB values through `loadConfigWithEngine()` before
+ * `buildGatewayConfig`, which is a separate, larger change.
  */
 export const HOSTED_EMBED_KEY_CONFIG: Record<string, string> = {
   OPENAI_API_KEY: 'openai_api_key',
   ZEROENTROPY_API_KEY: 'zeroentropy_api_key',
+  VOYAGE_API_KEY: 'voyage_api_key',
 };
 
 /**

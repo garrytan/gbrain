@@ -14,6 +14,8 @@
  * See `loadHighEmotionTags` for the resolution path.
  */
 
+import { DEFAULT_OWNER_HOLDER } from '../owner-holder.ts';
+
 /**
  * Default high-emotion tag seed list. Pages with any tag in this set get the
  * tag-emotion boost in the formula below. Override via config key
@@ -43,11 +45,12 @@ export const HIGH_EMOTION_TAGS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Holder name treated as "the user" for the Garry-as-holder ratio. Configurable
- * via the `emotional_weight.user_holder` config key (defaults to 'garry' to
- * match the v0.28 schema's takes table convention).
+ * Holder name treated as "the user" for the user-as-holder ratio. Configurable
+ * via the `emotional_weight.user_holder` config key; defaults to the canonical
+ * owner holder ('self', DEFAULT_OWNER_HOLDER) so it matches the consolidate
+ * facts→takes writer instead of a hardcoded name.
  */
-export const DEFAULT_USER_HOLDER = 'garry';
+export const DEFAULT_USER_HOLDER = DEFAULT_OWNER_HOLDER;
 
 export interface EmotionalWeightTake {
   holder: string;

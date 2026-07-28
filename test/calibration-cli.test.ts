@@ -27,6 +27,12 @@ function buildMockEngine(opts: { rows: CalibrationProfileRow[] }): {
   const capturedParams: unknown[][] = [];
   const engine = {
     kind: 'pglite',
+    // #2464: getCalibrationProfileOp resolves the owner holder via
+    // resolveOwnerHolder(config emotional_weight.user_holder, else 'self'), so the
+    // mock must implement getConfig. null = key unset → resolver falls back to 'self'.
+    async getConfig(): Promise<string | null> {
+      return null;
+    },
     async executeRaw<T>(sql: string, params?: unknown[]): Promise<T[]> {
       capturedSql.push(sql);
       capturedParams.push(params ?? []);
@@ -211,17 +217,17 @@ describe('formatProfileText', () => {
 // ─── getCalibrationProfileOp ────────────────────────────────────────
 
 describe('getCalibrationProfileOp (MCP)', () => {
-  test('defaults holder to "garry" when omitted', async () => {
-    const { engine } = buildMockEngine({ rows: [buildProfile({ holder: 'garry' })] });
+  test('defaults holder to "self" when omitted (config emotional_weight.user_holder unset)', async () => {
+    const { engine } = buildMockEngine({ rows: [buildProfile({ holder: 'self' })] });
     const ctx = buildCtx(engine);
     const result = await getCalibrationProfileOp(ctx, {});
-    expect(result?.holder).toBe('garry');
+    expect(result?.holder).toBe('self');
   });
 
   test('routes through sourceScopeOpts: scalar source-bound client gets source-scoped result', async () => {
     const rows = [
-      buildProfile({ holder: 'garry', source_id: 'default' }),
-      buildProfile({ holder: 'garry', source_id: 'tenant-b' }),
+      buildProfile({ holder: 'self', source_id: 'default' }),
+      buildProfile({ holder: 'self', source_id: 'tenant-b' }),
     ];
     const { engine } = buildMockEngine({ rows });
     const ctx = buildCtx(engine, { sourceId: 'tenant-b' });
@@ -231,8 +237,8 @@ describe('getCalibrationProfileOp (MCP)', () => {
 
   test('federated read scope sees the union of allowed sources', async () => {
     const rows = [
-      buildProfile({ holder: 'garry', source_id: 'tenant-a' }),
-      buildProfile({ holder: 'garry', source_id: 'tenant-z' }),
+      buildProfile({ holder: 'self', source_id: 'tenant-a' }),
+      buildProfile({ holder: 'self', source_id: 'tenant-z' }),
     ];
     const { engine } = buildMockEngine({ rows });
     const ctx = buildCtx(engine, { allowedSources: ['tenant-a', 'tenant-b'] });

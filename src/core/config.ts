@@ -48,6 +48,27 @@ export interface GBrainConfig {
    * reads OPENROUTER_API_KEY.
    */
   openrouter_api_key?: string;
+  /**
+   * Voyage AI API key (#2662). File-plane slot so `~/.gbrain/config.json`'s
+   * `voyage_api_key` reaches the voyage recipe the same way
+   * zeroentropy_api_key/openrouter_api_key do: file plane →
+   * buildGatewayConfig env dict → recipe reads VOYAGE_API_KEY. Before this,
+   * launchd/daemon/MCP contexts without a process-env export silently
+   * failed multimodal embeds despite config.json looking complete.
+   *
+   * NOTE (scoped to what this fix covers): `gbrain config set
+   * voyage_api_key X` writes the DB plane, which `loadConfigWithEngine()`
+   * does NOT merge for any `*_api_key` field (zeroentropy_api_key /
+   * openrouter_api_key have the same pre-existing gap) — only the
+   * config.json file-plane route is wired through today.
+   */
+  voyage_api_key?: string;
+  /** Azure OpenAI (keyless/Entra). Non-secret endpoint + deployment + Entra opt-in,
+   * folded into the gateway env so the azure-openai recipe works in any shell.
+   * The bearer token is minted at request time via `az` — no secret stored here. */
+  azure_openai_endpoint?: string;
+  azure_openai_deployment?: string;
+  azure_openai_use_entra?: string;
   /** AI gateway config (v0.14+). v0.36+ default: "zeroentropyai:zembed-1" / 1280 / "anthropic:claude-haiku-4-5-20251001". */
   embedding_model?: string;
   embedding_dimensions?: number;
@@ -106,6 +127,16 @@ export interface GBrainConfig {
       max_usd?: number;
     };
     /**
+     * v0.41.16.0 — nightly conversation-parser probe. Per D10: default ON
+     * for `search.mode=tokenmax` brains, opt-in for conservative/balanced.
+     * ~$0.05/night with the committed fixtures × Haiku polish. Gated
+     * INSIDE the autopilot tick body, like nightly_quality_probe.
+     */
+    conversation_parser_probe?: {
+      /** Enable for non-tokenmax modes. Defaults to false. */
+      enabled?: boolean;
+    };
+    /**
      * v0.42.x (#1685 GAP D) — extract_atoms backlog auto-drain. Default ON so a
      * pack-gated silent backlog never piles up unseen; daily-spend-capped so the
      * Haiku spend stays bounded. Read via the DB plane (`engine.getConfig`) at
@@ -121,6 +152,18 @@ export interface GBrainConfig {
       /** Daily spend cap (USD); bounds drains/day = floor(cap / ~$0.30). Default 2.0. */
       max_usd_per_day?: number;
     };
+    /**
+     * v0.42 — keep frontmatter links fresh on the incremental cycle. The cycle's
+     * extract phase re-extracts only the slugs a sync changed, but `extractForSlugs`
+     * extracts BODY links only — frontmatter (`sources:`/`related:` etc.) link edges
+     * silently drift stale when a page's YAML is edited externally and synced in.
+     * Set true to also extract frontmatter links per changed page each cycle, keeping
+     * externally-edited YAML edges fresh without a full rescan. Default false
+     * (preserves current behavior). Read via the file/env/DB plane in the cycle's
+     * extract dispatch. Disable/enable with
+     * `gbrain config set autopilot.incremental_extract_include_frontmatter <bool>`.
+     */
+    incremental_extract_include_frontmatter?: boolean;
   };
   eval?: {
     /** false disables capture entirely. Defaults to true. */
@@ -620,7 +663,10 @@ export function loadConfig(): GBrainConfig | null {
  * size the schema and must be stable across engine connect.
  */
 export async function loadConfigWithEngine(
-  engine: { getConfig(key: string): Promise<string | null | undefined> },
+  engine: {
+    getConfig(key: string): Promise<string | null | undefined>;
+    listConfigKeys?(prefix: string): Promise<string[]>;
+  },
   base?: GBrainConfig | null,
 ): Promise<GBrainConfig | null> {
   // Codex /ship finding #3: when there's no file config AND no env DB URL,
@@ -657,11 +703,31 @@ export async function loadConfigWithEngine(
       return undefined;
     }
   }
+  async function dbPrefixMap(prefix: string): Promise<Record<string, string> | undefined> {
+    if (typeof engine.listConfigKeys !== 'function') return undefined;
+    let keys: string[];
+    try {
+      keys = await engine.listConfigKeys(prefix);
+    } catch {
+      return undefined;
+    }
+
+    const out: Record<string, string> = {};
+    for (const key of keys.sort()) {
+      if (!key.startsWith(prefix)) continue;
+      const leaf = key.slice(prefix.length);
+      if (!leaf) continue;
+      const value = await dbStr(key);
+      if (value !== undefined) out[leaf] = value;
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
+  }
 
   const dbMultimodal = await dbBool('embedding_multimodal');
   const dbMultimodalModel = await dbStr('embedding_multimodal_model');
   const dbOcr = await dbBool('embedding_image_ocr');
   const dbOcrModel = await dbStr('embedding_image_ocr_model');
+  const dbProviderBaseUrls = await dbPrefixMap('provider_base_urls.');
   // v0.36 (D7) — embedding-column registry merge. Stored as JSON string in
   // the config table. Parse + shape-check here; full registry validation
   // (regex on keys, type/dim/provider field shapes) runs in the resolver at
@@ -684,6 +750,15 @@ export async function loadConfigWithEngine(
   }
   if (merged.embedding_image_ocr_model === undefined && dbOcrModel !== undefined) {
     merged.embedding_image_ocr_model = dbOcrModel;
+  }
+  if (dbProviderBaseUrls !== undefined) {
+    const next = { ...(merged.provider_base_urls ?? {}) };
+    for (const [providerId, baseUrl] of Object.entries(dbProviderBaseUrls)) {
+      if (next[providerId] === undefined) next[providerId] = baseUrl;
+    }
+    if (Object.keys(next).length > 0) {
+      merged.provider_base_urls = next;
+    }
   }
   if (merged.embedding_columns === undefined && dbEmbeddingColumns !== undefined) {
     try {
@@ -843,6 +918,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'anthropic_api_key',
   'zeroentropy_api_key',
   'openrouter_api_key',
+  'voyage_api_key',
+  'azure_openai_endpoint',
+  'azure_openai_deployment',
+  'azure_openai_use_entra',
   'embedding_model',
   'embedding_dimensions',
   'embedding_disabled',
@@ -896,6 +975,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'models.tier.subagent',
   'models.aliases',
   'models.dream.synthesize',
+  'models.dream.extract_atoms',
+  'cycle.extract_atoms.budget_usd',
   'models.dream.patterns',
   'models.dream.synthesize_verdict',
   'models.drift',
@@ -904,10 +985,15 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'models.subagent',
   'models.expansion',
   'models.chat',
+  'models.brainstorm.judge',
   'models.eval.longmemeval',
   'facts.extraction_model',
   // #2113: output-token cap for the per-turn facts extractor (default 4000).
   'facts.extraction_max_tokens',
+  // Conversation parser LLM fallback. Deliberately register the exact key,
+  // not a conversation_parser.* prefix: fallback is the only live opt-in
+  // consumer, while the polish scaffold remains unwired.
+  'conversation_parser.llm_fallback_enabled',
   // Dream cycle config
   'dream.synthesize.session_corpus_dir',
   'dream.synthesize.meeting_transcripts_dir',
@@ -1007,6 +1093,27 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'chronicle.',         // chronicle.tz + future Life Chronicle knobs (#2390)
   'self_upgrade.',      // v0.42 self-upgrade (mode, quiet_hours, state)
 ];
+
+/**
+ * Canonical truthiness for DB-plane boolean config values (#2753).
+ *
+ * Config values arrive as opaque strings from `gbrain config set`, so every
+ * reader has to decide what counts as "on". Left to each call site those sets
+ * drift, and the drift is silent in the worst possible way: the doctor accepted
+ * `yes`/`on` while the subagent worker accepted only `true`/`1`, so
+ * `gbrain config set agent.use_gateway_loop yes` produced a healthy doctor
+ * report AND a runtime refusal of the very job the setting was supposed to
+ * enable. One parser, used by every reader, is what keeps a green health check
+ * honest.
+ *
+ * Accepts `true` / `1` / `yes` / `on` (case-insensitive, surrounding whitespace
+ * trimmed). Everything else — including `null`, non-strings, and the empty
+ * string — is false, so an unset or garbled value fails closed.
+ */
+export function isConfigTruthy(raw: unknown): boolean {
+  return typeof raw === 'string'
+    && ['true', '1', 'yes', 'on'].includes(raw.trim().toLowerCase());
+}
 
 export function saveConfig(config: GBrainConfig): void {
   mkdirSync(getConfigDir(), { recursive: true });

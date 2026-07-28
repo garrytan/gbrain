@@ -29,13 +29,19 @@
  * the bug made you believe was sufficient.
  */
 
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
 import {
   chat,
   configureGateway,
   resetGateway,
   __setGenerateTextTransportForTests,
 } from '../../src/core/ai/gateway.ts';
+import { OPENROUTER_CACHE_HEADER } from '../../src/core/ai/recipes/openrouter.ts';
+
+afterAll(() => {
+  resetGateway();
+  __setGenerateTextTransportForTests(null);
+});
 
 describe('gbrain#2490 — Anthropic cache breakpoint placement', () => {
   beforeEach(() => {
@@ -191,5 +197,57 @@ describe('gbrain#2490 — Anthropic cache breakpoint placement', () => {
     expect(captured.providerOptions?.anthropic?.cacheControl).toEqual(expected);
     expect((captured.system as any)?.providerOptions?.anthropic?.cacheControl).toEqual(expected);
     expect(captured.tools?.search?.providerOptions?.anthropic?.cacheControl).toEqual(expected);
+  });
+});
+
+describe('OpenRouter prompt caching (takeover of PR #1988)', () => {
+  beforeEach(() => {
+    resetGateway();
+    __setGenerateTextTransportForTests(null);
+  });
+
+  async function captureOpenRouterArgs(model: string, cacheSystem: boolean): Promise<any> {
+    let captured: any;
+    __setGenerateTextTransportForTests(async (args: any) => {
+      captured = args;
+      return {
+        content: [{ type: 'text', text: 'ok' }],
+        finishReason: 'stop',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      } as any;
+    });
+    configureGateway({
+      chat_model: model,
+      env: { OPENROUTER_API_KEY: 'fake' },
+    });
+    await chat({
+      model,
+      system: 'stable system prompt',
+      cacheSystem,
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+    return captured;
+  }
+
+  test('cacheSystem:true on an OpenRouter Claude route threads the private marker header to the compat fetch shim', async () => {
+    const args = await captureOpenRouterArgs('openrouter:anthropic/claude-sonnet-4.6', true);
+    expect(args.headers).toEqual({ [OPENROUTER_CACHE_HEADER]: '1' });
+  });
+
+  test('cacheSystem:false on an OpenRouter Claude route sends no marker header', async () => {
+    const args = await captureOpenRouterArgs('openrouter:anthropic/claude-sonnet-4.6', false);
+    expect(args.headers).toBeUndefined();
+  });
+
+  test('cacheSystem:true on an OpenRouter OpenAI route needs no marker (OR caches OpenAI automatically)', async () => {
+    const args = await captureOpenRouterArgs('openrouter:openai/gpt-5.2', true);
+    expect(args.headers).toBeUndefined();
+  });
+
+  test('cacheSystem:true on a non-cacheable OpenRouter route is silently ignored', async () => {
+    const args = await captureOpenRouterArgs('openrouter:deepseek/deepseek-chat', true);
+    expect(args.headers).toBeUndefined();
+    // useCache is false → system stays a bare string.
+    expect(args.system).toBe('stable system prompt');
   });
 });

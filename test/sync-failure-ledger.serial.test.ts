@@ -90,6 +90,17 @@ describe('#4 success clears → consecutive attempts', () => {
     expect(rows.length).toBe(1);
     expect(rows[0].source_id).toBe('s2');
   });
+
+  test('caller-verified HEAD success can clear a prior sentinel', async () => {
+    const { recordFailures, clearFailures, loadSyncFailures } = await L();
+    recordFailures('s', [{ path: '<head>', error: 'git HEAD verification timed out' }], 'c1');
+    expect(loadSyncFailures()[0].state).toBe('open');
+
+    // Sentinels cannot be acknowledged or auto-skipped; the sync caller may
+    // remove one only after it has successfully re-verified pin ancestry.
+    clearFailures('s', ['<head>']);
+    expect(loadSyncFailures()).toEqual([]);
+  });
 });
 
 describe('#3 sentinel never auto-skips', () => {

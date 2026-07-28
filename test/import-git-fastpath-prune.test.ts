@@ -87,4 +87,27 @@ describe('#2607 — git fast path excludes what incremental sync excludes', () =
     }
     expect(files.length).toBeGreaterThan(0);
   });
+
+  test('--include-gitignored falls back to filesystem walk for ignored content', () => {
+    const ignoredRepo = mkdtempSync(join(tmpdir(), 'gbrain-include-ignored-'));
+    try {
+      execSync('git init', { cwd: ignoredRepo, stdio: 'pipe' });
+      writeFileSync(join(ignoredRepo, '.gitignore'), 'Meetings/\n');
+      writeFileSync(join(ignoredRepo, 'notes.md'), '---\ntitle: Notes\n---\nbody\n');
+      mkdirSync(join(ignoredRepo, 'Meetings'), { recursive: true });
+      writeFileSync(join(ignoredRepo, 'Meetings/weekly.md'), '---\ntitle: Weekly\n---\nbody\n');
+
+      const toRel = (files: string[]) => files.map((f) => relative(ignoredRepo, f));
+      const defaultFiles = toRel(collectSyncableFiles(ignoredRepo, { strategy: 'markdown' }));
+      const includeIgnored = toRel(collectSyncableFiles(ignoredRepo, {
+        strategy: 'markdown',
+        includeGitignored: true,
+      }));
+
+      expect(defaultFiles).not.toContain('Meetings/weekly.md');
+      expect(includeIgnored).toContain('Meetings/weekly.md');
+    } finally {
+      rmSync(ignoredRepo, { recursive: true, force: true });
+    }
+  });
 });

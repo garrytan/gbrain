@@ -1,9 +1,10 @@
 import type { Recipe } from '../types.ts';
 
 /**
- * `deepseek-reasoner` returns its answer in a separate `reasoning_content`
- * field and leaves `content` empty/whitespace when the whole response was
- * reasoning. The AI SDK's openai-compatible adapter reads only `content`, so
+ * DeepSeek's thinking mode (default on `deepseek-v4-flash`/`deepseek-v4-pro`;
+ * formerly the `deepseek-reasoner` model, retired 2026-07-24) returns its
+ * answer in a separate `reasoning_content` field and leaves `content`
+ * empty/whitespace when the whole response was reasoning. The AI SDK's openai-compatible adapter reads only `content`, so
  * the model appears to answer with nothing. This transport shim promotes
  * `reasoning_content` into `content` when `content` is empty, before the
  * adapter parses the body. Fail-open: any error returns the original response.
@@ -76,15 +77,29 @@ export const deepseek: Recipe = {
     setup_url: 'https://platform.deepseek.com/api_keys',
   },
   touchpoints: {
+    // Query expansion reuses the same OpenAI-compatible chat endpoint (the
+    // gateway's expansion path is a plain languageModel call). Without this
+    // declaration an explicit `expansion_model: deepseek:...` silently
+    // yields no expansion (#1135).
+    // `deepseek-chat` / `deepseek-reasoner` were retired by DeepSeek on
+    // 2026-07-24 (#1255); both map to `deepseek-v4-flash` (non-thinking /
+    // thinking mode). Do not re-add the old names — the API 404s them.
+    // openai-compat tier means user-configured legacy names still pass
+    // validation locally; the provider rejects them at call time.
+    expansion: {
+      models: ['deepseek-v4-flash'],
+      cost_per_1m_tokens_usd: 0.14,
+      price_last_verified: '2026-07-27',
+    },
     chat: {
-      models: ['deepseek-chat', 'deepseek-reasoner'],
+      models: ['deepseek-v4-flash', 'deepseek-v4-pro'],
       supports_tools: true,
       supports_subagent_loop: true,
       supports_prompt_cache: false,
-      max_context_tokens: 128000,
-      cost_per_1m_input_usd: 0.14, // deepseek-chat off-peak baseline
+      max_context_tokens: 1_000_000,
+      cost_per_1m_input_usd: 0.14, // deepseek-v4-flash cache-miss baseline
       cost_per_1m_output_usd: 0.28,
-      price_last_verified: '2026-04-20',
+      price_last_verified: '2026-07-27',
     },
   },
   setup_hint: 'Get an API key at https://platform.deepseek.com/api_keys, then `export DEEPSEEK_API_KEY=...`',

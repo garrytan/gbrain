@@ -700,6 +700,17 @@ export interface SearchResult {
    */
   content_flag?: { reason: string; detail: string };
   /**
+   * Extraction quarantine lane (issue #160): true when the result's page is
+   * an unverified auto-extracted entity stub (frontmatter
+   * `provenance: 'auto-extracted'` + `status: 'unverified'`). Such pages are
+   * excluded from the compiled-truth authority boost and the namespace
+   * source-boost — they rank as ordinary content — and this marker tells the
+   * agent the page has NOT been reviewed by the owner. Stamped pre-fusion by
+   * `stampUnverifiedExtractions` (hybrid.ts). Absent for reviewed/ordinary
+   * pages.
+   */
+  unverified?: boolean;
+  /**
    * v0.36 (cross-modal wave): the chunk's modality discriminator from
    * content_chunks.modality. 'text' for the existing text-embedding rows,
    * 'image' for rows populated by importImageFile. Surfaced so callers /
@@ -723,6 +734,12 @@ export interface SearchResult {
    */
   effective_date?: string | null;
   effective_date_source?: string | null;
+  /** RFC 5322 Message-ID projected from allowlisted email frontmatter. */
+  message_id?: string;
+  /** Gmail thread id projected from allowlisted email frontmatter. */
+  thread_id?: string;
+  /** Exact email subject, projected only when the page has a Message-ID. */
+  source_subject?: string;
   /**
    * v0.40.4 graph signals — populated by applyGraphSignals when the
    * graph_signals mode-bundle knob is on. Surfaced in JSON envelope
@@ -1422,10 +1439,20 @@ export interface BrainStats {
 
 export interface BrainHealth {
   page_count: number;
+  /**
+   * Pages inside the linkable scope (src/core/orphan-policy.ts) — the
+   * pages expected to participate in the curated link graph. Excludes
+   * archive (raw/), generated, and daily-log pages; the same scope the
+   * orphans audit uses. Denominator for the no-orphans and
+   * timeline-coverage score components.
+   */
+  linkable_page_count: number;
   embed_coverage: number;
   stale_pages: number;
   /**
-   * Islanded pages — zero inbound AND zero outbound links. A hub page
+   * Islanded pages — zero inbound AND zero outbound links, counted over
+   * LINKABLE pages only (the same scope as the `gbrain orphans` audit, so
+   * doctor cannot report two contradictory orphan numbers). A hub page
    * that has references out but no back-references is NOT an orphan under
    * this definition (it's working as intended as an index). The metric
    * aims at "pages I forgot to connect to anything", not the stricter

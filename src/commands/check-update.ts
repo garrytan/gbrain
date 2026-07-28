@@ -2,6 +2,7 @@ import { VERSION } from '../version.ts';
 import { detectInstallMethod } from './upgrade.ts';
 import {
   isMinorOrMajorBump,
+  isNewerVersion,
   isValidVersionString,
   parseSemver,
   semverGt,
@@ -21,7 +22,7 @@ function safeWriteCache(marker: UpdateMarker): void {
 // Back-compat re-exports: these used to live here; moved to ../core/semver.ts
 // so the self-upgrade decision module can depend on them without an import
 // cycle. Existing importers (`test/check-update.test.ts`, etc.) keep working.
-export { parseSemver, isMinorOrMajorBump };
+export { parseSemver, isMinorOrMajorBump, isNewerVersion };
 
 interface CheckUpdateResult {
   current_version: string;
@@ -131,7 +132,7 @@ export async function refreshUpdateCache(): Promise<void> {
     return;
   }
   const latestVersion = release.tag.replace(/^v/, '');
-  if (!isValidVersionString(latestVersion) || !isMinorOrMajorBump(VERSION, latestVersion)) {
+  if (!isValidVersionString(latestVersion) || !isNewerVersion(VERSION, latestVersion)) {
     safeWriteCache({ kind: 'up_to_date', current: VERSION });
     return;
   }
@@ -140,7 +141,7 @@ export async function refreshUpdateCache(): Promise<void> {
 
 export async function runCheckUpdate(args: string[]) {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: gbrain check-update [--json] [--refresh-cache]\n\nCheck for new GBrain versions.\n\nOnly reports minor/major version bumps (v0.X.0), not patches.\nFails silently on network errors.\n\n--refresh-cache  Fetch + update the self-upgrade cache, print nothing (used by\n                 the CLI startup hook\'s detached refresh).');
+    console.log('Usage: gbrain check-update [--json] [--refresh-cache]\n\nCheck for new GBrain versions.\n\nReports any strictly newer release, including patch and micro updates.\nFails silently on network errors.\n\n--refresh-cache  Fetch + update the self-upgrade cache, print nothing (used by\n                 the CLI startup hook\'s detached refresh).');
     return;
   }
 
@@ -187,7 +188,7 @@ export async function runCheckUpdate(args: string[]) {
   }
 
   const latestVersion = release.tag.replace(/^v/, '');
-  const updateAvailable = isValidVersionString(latestVersion) && isMinorOrMajorBump(VERSION, latestVersion);
+  const updateAvailable = isValidVersionString(latestVersion) && isNewerVersion(VERSION, latestVersion);
 
   // Warm the self-upgrade cache so the next `gbrain <cmd>` startup hook can emit
   // the marker without a network call.

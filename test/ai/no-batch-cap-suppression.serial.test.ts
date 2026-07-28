@@ -10,7 +10,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test';
-import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
+import { capBatchItems, configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 import { listRecipes, getRecipe } from '../../src/core/ai/recipes/index.ts';
 
 describe('v0.32 #779: no_batch_cap suppresses the missing-max_batch_tokens warning', () => {
@@ -28,8 +28,8 @@ describe('v0.32 #779: no_batch_cap suppresses the missing-max_batch_tokens warni
     resetGateway();
   });
 
-  test('Ollama, LiteLLM, llama-server all declare no_batch_cap: true', () => {
-    for (const id of ['ollama', 'litellm', 'llama-server']) {
+  test('Ollama, LiteLLM declare no_batch_cap: true', () => {
+    for (const id of ['ollama', 'litellm']) {
       const r = getRecipe(id);
       expect(r, `${id} not registered`).toBeDefined();
       expect(
@@ -37,6 +37,29 @@ describe('v0.32 #779: no_batch_cap suppresses the missing-max_batch_tokens warni
         `${id} should declare no_batch_cap: true`,
       ).toBe(true);
     }
+  });
+
+  test('llama-server declares a hard item-count cap (max_batch_items: 32)', () => {
+    // llama.cpp enforces a request-COUNT cap equal to its launch --batch-size
+    // (default 32); declaring max_batch_items both bounds batches AND suppresses
+    // the missing-max_batch_tokens warning. Replaces the prior no_batch_cap flag.
+    const r = getRecipe('llama-server');
+    expect(r, 'llama-server not registered').toBeDefined();
+    expect(r!.touchpoints.embedding?.max_batch_items).toBe(32);
+    expect(r!.touchpoints.embedding?.no_batch_cap).toBeUndefined();
+  });
+
+  test('dashscope declares the documented 10-item embedding cap (max_batch_items: 10)', () => {
+    // DashScope's OpenAI-compat /embeddings endpoint rejects >10-item batches
+    // (documented Model Studio cap; concept from community PRs #2643/#2405).
+    // max_batch_tokens stays as the aggregate token-size guard.
+    const r = getRecipe('dashscope');
+    expect(r, 'dashscope not registered').toBeDefined();
+    expect(r!.touchpoints.embedding?.max_batch_items).toBe(10);
+    expect(r!.touchpoints.embedding?.max_batch_tokens).toBe(8192);
+    // 25 items pre-split into DashScope-sized groups of at most 10.
+    const texts = Array.from({ length: 25 }, (_, i) => `t${i}`);
+    expect(capBatchItems(texts, 10).map(b => b.length)).toEqual([10, 10, 5]);
   });
 
   test('configureGateway does NOT warn for ollama/litellm/llama-server', () => {

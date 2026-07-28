@@ -91,3 +91,18 @@ First full takes extraction run on a ~100K-page brain:
 4. **Self-reported ≠ verified.** "Reports 7 figures" → holder=person, weight=0.75, NOT world/1.0
 5. **No false precision.** Use 0.05 increments (0.35, 0.55, 0.75), not 0.74 or 0.82
 6. **"So what" test.** Skip Twitter handles, follower counts, obvious metadata
+
+## Owner-holder canonicalization
+
+"The brain owner" is, by convention, the holder string **`self`** — the value the
+dream `consolidate` phase stamps when it promotes the owner's hot facts into cold
+takes. Calibration, `think`, and the `doctor` calibration check resolve the owner
+holder through `resolveOwnerHolder` (`src/core/owner-holder.ts`): explicit override
+> `emotional_weight.user_holder` config > `self`.
+
+Known limitation (tracked in garrytan/gbrain#2465): the owner can also
+appear under `brain` (a take the owner asserts, via `propose_takes`) and
+`people/<owner>` (extraction that names the owner). The resolver selects the
+*default* canonical owner string for reads; it does not merge those other
+strings. Per-take attribution for other people (e.g. `people/george`) is
+unaffected and correct.

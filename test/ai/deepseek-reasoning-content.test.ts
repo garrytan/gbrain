@@ -121,4 +121,9 @@ describe('applyOpenAICompatConfig — compat.fetch wiring (gateway seam)', () =>
   test('recipe wires the shim via compat.fetch', () => {
     expect(deepseek.compat?.fetch).toBe(deepseekReasoningContentCompatFetch);
   });
+
+  test('recipe lists only v4 model names — deepseek-chat/deepseek-reasoner retired 2026-07-24 (#1255)', () => {
+    expect(deepseek.touchpoints.chat?.models).toEqual(['deepseek-v4-flash', 'deepseek-v4-pro']);
+    expect(deepseek.touchpoints.expansion?.models).toEqual(['deepseek-v4-flash']);
+  });
 });

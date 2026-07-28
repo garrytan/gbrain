@@ -203,15 +203,18 @@ describe('#1794 — resumable incremental sync (pinned target)', () => {
     // Run 1: drains C0..C1 only, advances to the PIN (C1), not live HEAD (C2).
     const r1 = await performSync(engine, { repoPath, noPull: true, noEmbed: true });
     expect(r1.status).toBe('synced');
+    expect(r1.toCommit).toBe(c1);
+    expect(r1.toCommit).not.toBe(c2);
     expect(await engine.getPage('notes/x')).not.toBeNull();
     expect(await engine.getPage('notes/y')).toBeNull(); // past the pin, not yet
-    expect(await lastCommitConfig()).toBe(c1);
+    expect(await lastCommitConfig()).toBe(r1.toCommit);
 
     // Run 2: now anchored at C1, diff C1..C2 picks up y.
     const r2 = await performSync(engine, { repoPath, noPull: true, noEmbed: true });
     expect(r2.status).toBe('synced');
+    expect(r2.toCommit).toBe(c2);
     expect(await engine.getPage('notes/y')).not.toBeNull();
-    expect(await lastCommitConfig()).toBe(c2);
+    expect(await lastCommitConfig()).toBe(r2.toCommit);
   }, 60_000);
 
   // ── D. Rewrite of the pin → discard checkpoint, re-pin to HEAD ─────────────

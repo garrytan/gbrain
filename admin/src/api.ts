@@ -39,11 +39,21 @@ export const api = {
   stats: () => apiFetch('/admin/api/stats'),
   health: () => apiFetch('/admin/api/health-indicators'),
   agents: () => apiFetch('/admin/api/agents'),
+  sources: () => apiFetch('/admin/api/sources'),
   requests: (page = 1, qs = '') => apiFetch(`/admin/api/requests?page=${page}${qs}`),
   apiKeys: () => apiFetch('/admin/api/api-keys'),
-  createApiKey: (name: string) => apiFetch('/admin/api/api-keys', { method: 'POST', body: JSON.stringify({ name }) }),
-  revokeApiKey: (name: string) => apiFetch('/admin/api/api-keys/revoke', { method: 'POST', body: JSON.stringify({ name }) }),
+  createApiKey(keyName: string) {
+    return apiFetch('/admin/api/api-keys', { method: 'POST', body: JSON.stringify({ name: keyName }) });
+  },
+  revokeApiKey(keyName: string) {
+    return apiFetch('/admin/api/api-keys/revoke', { method: 'POST', body: JSON.stringify({ name: keyName }) });
+  },
   updateClientTtl: (clientId: string, tokenTtl: number | null) => apiFetch('/admin/api/update-client-ttl', { method: 'POST', body: JSON.stringify({ clientId, tokenTtl }) }),
+  rescopeClient: (clientId: string, sourceId: string, federatedRead: string[]) =>
+    apiFetch('/admin/api/rescope-client', {
+      method: 'POST',
+      body: JSON.stringify({ clientId, sourceId, federatedRead }),
+    }),
   revokeClient: (clientId: string) => apiFetch('/admin/api/revoke-client', { method: 'POST', body: JSON.stringify({ clientId }) }),
   // v0.36.1.0 (T15 / E6) — calibration endpoints.
   calibrationProfile: (holder?: string) =>
