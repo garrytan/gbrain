@@ -140,6 +140,9 @@ Stable phase names shipped in v0.15.2:
 - `import.files`
 - `sync.deletes`, `sync.renames`, `sync.imports`
 - `migrate.copy_pages`, `migrate.copy_links`
+- `migrate.reembed` (the re-embed pass of `gbrain migrate embeddings`; total is the
+  stale-chunk backlog at the start of the pass, so it can grow slightly if a
+  writer adds chunks mid-run)
 - `repair_jsonb.run`, `repair_jsonb.<table>.<column>`
 - `backlinks.scan`
 - `lint.pages`

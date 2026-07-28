@@ -63,6 +63,12 @@ export interface GBrainConfig {
    * config.json file-plane route is wired through today.
    */
   voyage_api_key?: string;
+  /** Azure OpenAI (keyless/Entra). Non-secret endpoint + deployment + Entra opt-in,
+   * folded into the gateway env so the azure-openai recipe works in any shell.
+   * The bearer token is minted at request time via `az` — no secret stored here. */
+  azure_openai_endpoint?: string;
+  azure_openai_deployment?: string;
+  azure_openai_use_entra?: string;
   /** AI gateway config (v0.14+). v0.36+ default: "zeroentropyai:zembed-1" / 1280 / "anthropic:claude-haiku-4-5-20251001". */
   embedding_model?: string;
   embedding_dimensions?: number;
@@ -913,6 +919,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'zeroentropy_api_key',
   'openrouter_api_key',
   'voyage_api_key',
+  'azure_openai_endpoint',
+  'azure_openai_deployment',
+  'azure_openai_use_entra',
   'embedding_model',
   'embedding_dimensions',
   'embedding_disabled',

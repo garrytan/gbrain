@@ -115,6 +115,16 @@ export interface EmbedOpts {
    * Errors/warnings still go to stderr regardless.
    */
   quiet?: boolean;
+  /**
+   * #3391: widen signature-drift invalidation to pages with NO recorded
+   * embedding_signature (pre-v108). By default those are grandfathered
+   * (never invalidated) so a routine upgrade doesn't surprise-re-embed a
+   * whole corpus — but after a provider/model swap the grandfather clause
+   * silently leaves them in the OLD embedding space, mixing two vector
+   * spaces in one index. `gbrain migrate embeddings` and
+   * `gbrain embed --stale --include-null-signature` set this.
+   */
+  includeNullSignature?: boolean;
 }
 
 /**
@@ -356,6 +366,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
         pacer,
         paceMaxConcurrency,
         quiet: opts.quiet,
+        includeNullSignature: opts.includeNullSignature,
       }, opts.signal);
     } finally {
       // E1: surface pacing telemetry (human + structured) when pacing was on.
@@ -469,6 +480,8 @@ export async function runEmbed(engine: BrainEngine, args: string[]): Promise<Emb
   const priorityRaw = priorityIdx >= 0 ? args[priorityIdx + 1] : undefined;
   const priority = priorityRaw === 'recent' ? 'recent' as const : undefined;
   const catchUp = args.includes('--catch-up');
+  // #3391: re-embed pages that predate the embedding_signature stamp too.
+  const includeNullSignature = args.includes('--include-null-signature');
   const pace = parsePaceArgs(args);
 
   let opts: EmbedOpts;
@@ -476,11 +489,11 @@ export async function runEmbed(engine: BrainEngine, args: string[]): Promise<Emb
     opts = { slugs: args.slice(slugsIdx + 1).filter(a => !a.startsWith('--')), dryRun, sourceId, batchSize, priority, catchUp };
   } else if (all || stale) {
     // E-2: CLI-only single-flight for stale runs (the minion path locks itself).
-    opts = { all, stale, dryRun, sourceId, batchSize, priority, catchUp, ...(pace && { pace }), ...(stale && { singleFlight: true }) };
+    opts = { all, stale, dryRun, sourceId, batchSize, priority, catchUp, ...(pace && { pace }), ...(stale && { singleFlight: true }), ...(includeNullSignature && { includeNullSignature: true }) };
   } else {
     const slug = args.find(a => !a.startsWith('--'));
     if (!slug) {
-      serr('Usage: gbrain embed [<slug>|--all|--stale|--slugs s1 s2 ...] [--dry-run] [--batch-size N] [--priority recent] [--catch-up]');
+      serr('Usage: gbrain embed [<slug>|--all|--stale|--slugs s1 s2 ...] [--dry-run] [--batch-size N] [--priority recent] [--catch-up] [--include-null-signature]');
       process.exit(1);
     }
     opts = { slug, dryRun, sourceId, batchSize, priority, catchUp };
@@ -657,6 +670,8 @@ async function embedAll(
     paceMaxConcurrency?: number;
     /** #394: suppress human stdout summaries (structured-output callers). */
     quiet?: boolean;
+    /** #3391: lift the NULL-signature grandfather clause (see EmbedOpts). */
+    includeNullSignature?: boolean;
   },
   signal?: AbortSignal,
 ) {
@@ -845,6 +860,8 @@ async function embedAllStale(
     paceMaxConcurrency?: number;
     /** #394: suppress human stdout summaries (structured-output callers). */
     quiet?: boolean;
+    /** #3391: lift the NULL-signature grandfather clause (see EmbedOpts). */
+    includeNullSignature?: boolean;
   },
   signature?: string,
   externalSignal?: AbortSignal,
@@ -852,6 +869,7 @@ async function embedAllStale(
   // D7: thread sourceId so source-scoped runs only count + visit
   // that source's NULL embeddings.
   const sourceOpt = sourceId ? { sourceId } : undefined;
+  const includeNullSig = !!staleOpts?.includeNullSignature;
 
   // v0.41.31: re-embed pages whose embedding_signature drifted (model/dims
   // swap). dry-run must NOT mutate, so it counts signature-stale via the
@@ -861,16 +879,46 @@ async function embedAllStale(
     const invalidated = await engine.invalidateStaleSignatureEmbeddings({
       signature,
       ...(sourceId && { sourceId }),
+      ...(includeNullSig && { includeNullSignature: true }),
     });
     if (invalidated > 0 && !staleOpts?.quiet) {
       slog(`[embed] invalidated ${invalidated} chunk(s) embedded under a prior model signature`);
+    }
+    // #3391: the grandfather clause keeps NULL-signature pages on their OLD
+    // vectors — two embedding spaces mixed in one index. Loud stderr warning
+    // with the fix, instead of silent retrieval degradation.
+    //
+    // Deliberately NOT gated on `invalidated > 0`: the original bug report's
+    // shape is a brain where EVERY embedded page predates the signature stamp,
+    // so nothing drifts, nothing is invalidated — and pre-fix that brain got
+    // no warning AND no work, the exact silent case #3391 is about. The probe
+    // below computes the left-behind count directly, which is 0 on a healthy
+    // brain, so an unaffected run stays quiet.
+    if (!includeNullSig) {
+      try {
+        const wide = await engine.countStaleChunks({ ...sourceOpt, signature, includeNullSignature: true });
+        const narrow = await engine.countStaleChunks({ ...sourceOpt, signature });
+        const leftBehind = wide - narrow;
+        if (leftBehind > 0) {
+          serr(
+            `  [embed] WARNING: ${leftBehind} embedded chunk(s) sit on pages with no recorded ` +
+            `embedding signature and were NOT invalidated — they remain in the previous model's ` +
+            `embedding space. Re-run with --include-null-signature (or use ` +
+            `\`gbrain migrate embeddings\`) to re-embed them.`,
+          );
+        }
+      } catch {
+        // The warning probe is best-effort; never break the embed run.
+      }
     }
   }
 
   // Pre-flight: 0 stale chunks → nothing to do, no further DB reads.
   // dry-run includes signature-drift in the count without mutating.
   const staleCount = await engine.countStaleChunks(
-    dryRun && signature ? { ...sourceOpt, signature } : sourceOpt,
+    dryRun && signature
+      ? { ...sourceOpt, signature, ...(includeNullSig && { includeNullSignature: true }) }
+      : sourceOpt,
   );
   if (staleCount === 0) {
     if (!staleOpts?.quiet) {
@@ -1138,7 +1186,9 @@ async function embedAllStale(
   // as a clean run — re-running won't help until the underlying failure is fixed.
   if (staleOpts?.catchUp && !effectiveSignal.aborted && embedFailures > 0) {
     const remaining = await engine.countStaleChunks(
-      signature ? { signature, ...(sourceId ? { sourceId } : {}) } : (sourceId ? { sourceId } : undefined),
+      signature
+        ? { signature, ...(sourceId ? { sourceId } : {}), ...(includeNullSig && { includeNullSignature: true }) }
+        : (sourceId ? { sourceId } : undefined),
     );
     if (remaining > 0) {
       serr(`\n  [embed] catch-up finished but ${remaining} chunk(s) remain stale after ${embedFailures} embed failure(s). These are not embeddable as-is; re-running won't clear them until the underlying error is resolved.`);

@@ -163,6 +163,14 @@ host port with `GBRAIN_CI_PG_PORT=5435 bun run ci:local` if 5434 collides.
 Fail-closed selector: an unmapped `src/` change runs all 29 E2E files. Hand-tune
 narrower mappings via `scripts/e2e-test-map.ts`.
 
+### PR-side security checks
+
+Besides the test gate, PRs may trigger three security workflows: Semgrep CE
+SAST (every PR — **advisory/non-blocking** while the baseline is tuned, so a
+Semgrep finding won't fail your PR), OSV-Scanner (only when `package.json` or
+`bun.lock` change), and actionlint (only when `.github/workflows/**` change).
+See `SECURITY.md` → "Automated security scanning" for details.
+
 ## Building
 
 ```bash
