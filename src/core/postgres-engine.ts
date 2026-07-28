@@ -42,6 +42,7 @@ import { logConnectionEvent } from './connection-audit.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, takeRowToTake } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql } from './search/sql-ranking.ts';
+import { hasCJK, escapeLikePattern } from './cjk.ts';
 
 function escapeSqlStringLiteral(value: string): string {
   return value.replace(/'/g, "''");
@@ -756,6 +757,143 @@ export class PostgresEngine implements BrainEngine {
     return fuzzy.map((r) => r.slug as string);
   }
 
+  /**
+   * CJK keyword fallback shared by page-grain and chunk-grain search.
+   * PostgreSQL's English FTS parser cannot tokenize Chinese, Japanese, or
+   * Korean reliably, so CJK queries use an escaped ILIKE scan. Ranking is
+   * case-insensitive to match ILIKE semantics for mixed CJK/ASCII queries.
+   */
+  private async _searchKeywordCJK(
+    query: string,
+    ctx: {
+      limit: number;
+      offset: number;
+      innerLimit: number;
+      sourceFactorCase: string;
+      hardExcludeClause: string;
+      visibilityClause: string;
+      detailFilter: string;
+      opts: SearchOpts | undefined;
+      dedup: boolean;
+    },
+  ): Promise<SearchResult[]> {
+    if (query.length === 0) return [];
+
+    const {
+      limit,
+      offset,
+      innerLimit,
+      sourceFactorCase,
+      hardExcludeClause,
+      visibilityClause,
+      detailFilter,
+      opts,
+      dedup,
+    } = ctx;
+    const params: unknown[] = [escapeLikePattern(query), query];
+    let extraFilter = '';
+
+    if (opts?.type) {
+      params.push(opts.type);
+      extraFilter += ` AND p.type = $${params.length}`;
+    }
+    if (opts?.types && opts.types.length > 0) {
+      params.push(opts.types);
+      extraFilter += ` AND p.type = ANY($${params.length}::text[])`;
+    }
+    if (opts?.exclude_slugs?.length) {
+      params.push(opts.exclude_slugs);
+      extraFilter += ` AND p.slug != ALL($${params.length}::text[])`;
+    }
+    if (opts?.language) {
+      params.push(opts.language);
+      extraFilter += ` AND cc.language = $${params.length}`;
+    }
+    if (opts?.symbolKind) {
+      params.push(opts.symbolKind);
+      extraFilter += ` AND cc.symbol_type = $${params.length}`;
+    }
+    if (opts?.afterDate) {
+      params.push(opts.afterDate);
+      extraFilter += ` AND COALESCE(p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+    }
+    if (opts?.beforeDate) {
+      params.push(opts.beforeDate);
+      extraFilter += ` AND COALESCE(p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+    }
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      params.push(opts.sourceIds);
+      extraFilter += ` AND p.source_id = ANY($${params.length}::text[])`;
+    } else if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      extraFilter += ` AND p.source_id = $${params.length}`;
+    }
+
+    params.push(dedup ? innerLimit : limit);
+    const innerOrLimitParam = `$${params.length}`;
+    let finalLimitParam = innerOrLimitParam;
+    if (dedup) {
+      params.push(limit);
+      finalLimitParam = `$${params.length}`;
+    }
+    params.push(offset);
+    const offsetParam = `$${params.length}`;
+
+    const scoreExpr = `
+      ((LENGTH(LOWER(cc.chunk_text)) - LENGTH(REPLACE(LOWER(cc.chunk_text), LOWER($2), '')))
+          / NULLIF(LENGTH(LOWER($2)), 0)::real
+        + 1.0 / NULLIF(POSITION(LOWER($2) IN LOWER(cc.chunk_text)), 0)::real)
+      * ${sourceFactorCase}
+    `;
+
+    const select = `
+      SELECT
+        p.slug, p.id as page_id, p.title, p.type, p.source_id,
+        cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+        ${scoreExpr} AS score,
+        false AS stale
+      FROM content_chunks cc
+      JOIN pages p ON p.id = cc.page_id
+      JOIN sources s ON s.id = p.source_id
+      WHERE cc.chunk_text ILIKE '%' || $1 || '%' ESCAPE '\\'
+        ${detailFilter}
+        ${extraFilter}
+        ${hardExcludeClause}
+        ${visibilityClause}
+        ${dedup ? `AND cc.modality = 'text'` : ''}
+    `;
+
+    const cjkQuery = dedup
+      ? `
+        WITH ranked_chunks AS (
+          ${select}
+          ORDER BY score DESC
+          LIMIT ${innerOrLimitParam}
+        ),
+        best_per_page AS (
+          SELECT DISTINCT ON (slug) *
+          FROM ranked_chunks
+          ORDER BY slug, score DESC
+        )
+        SELECT * FROM best_per_page
+        ORDER BY score DESC
+        LIMIT ${finalLimitParam}
+        OFFSET ${offsetParam}
+      `
+      : `
+        ${select}
+        ORDER BY score DESC
+        LIMIT ${finalLimitParam}
+        OFFSET ${offsetParam}
+      `;
+
+    const rows = await this.sql.begin(async sql => {
+      await sql`SET LOCAL statement_timeout = '8s'`;
+      return await sql.unsafe(cjkQuery, params as Parameters<typeof sql.unsafe>[1]);
+    });
+    return rows.map(rowToSearchResult);
+  }
+
   // Search
   // v0.20.0 Cathedral II Layer 3 (1b): chunk-grain FTS internally,
   // dedup-to-best-chunk-per-page on the way out. External shape
@@ -860,6 +998,20 @@ export class PostgresEngine implements BrainEngine {
     // column lookup. NOT bypassed by detail=high — soft-delete is a contract,
     // not a temporal preference.
     const visibilityClause = buildVisibilityClause('p', 's');
+
+    if (hasCJK(query)) {
+      return this._searchKeywordCJK(query, {
+        limit,
+        offset,
+        innerLimit,
+        sourceFactorCase,
+        hardExcludeClause,
+        visibilityClause,
+        detailFilter: detailLow ? `AND cc.chunk_source = 'compiled_truth'` : '',
+        opts,
+        dedup: true,
+      });
+    }
 
     const rawQuery = `
       WITH ranked_chunks AS (
@@ -1001,6 +1153,20 @@ export class PostgresEngine implements BrainEngine {
 
     // v0.26.5: visibility filter for searchKeywordChunks (anchor primitive).
     const visibilityClause = buildVisibilityClause('p', 's');
+
+    if (hasCJK(query)) {
+      return this._searchKeywordCJK(query, {
+        limit,
+        offset,
+        innerLimit: limit,
+        sourceFactorCase,
+        hardExcludeClause,
+        visibilityClause,
+        detailFilter: detailLow ? `AND cc.chunk_source = 'compiled_truth'` : '',
+        opts,
+        dedup: false,
+      });
+    }
 
     const rawQuery = `
       SELECT
