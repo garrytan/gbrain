@@ -43,7 +43,7 @@
  * trigger lock acquisition.
  */
 
-import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, statSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, statSync, realpathSync } from 'fs';
 import { join } from 'path';
 import { gbrainPath } from './config.ts';
 import type { BrainEngine } from './engine.ts';
@@ -899,7 +899,55 @@ export async function resolveSourceForDir(
       `SELECT id FROM sources WHERE local_path = $1 LIMIT 1`,
       [brainDir],
     );
-    return rows[0]?.id;
+    if (rows[0]) return rows[0].id;
+
+    // #2540: the exact match above compares two path SPELLINGS. `--dir` is
+    // resolved via `resolve()` and `sources.local_path` stores the spelling
+    // the source was registered with (`--path` as typed, or defaultCloneDir);
+    // neither side is canonicalized. So a source registered through a symlink
+    // and dreamt via the real path (or vice versa) never string-matches — the
+    // `--dir` run derives no source, and the #1869 freshness stamp silently
+    // does not land, leaving doctor's cycle_freshness permanently stale on a
+    // healthy install. Symlinked vault locations are ordinary (a brain inside
+    // a synced cloud-storage folder, a /home -> /mnt relocation).
+    //
+    // Retry canonicalized on BOTH sides, so the match is symmetric regardless
+    // of which side holds the link. Kept strictly as a miss-path fallback: the
+    // exact match stays a single indexed lookup, and the scan only pays for
+    // itself when it would otherwise return nothing. Registered paths are
+    // canonicalized here rather than at registration because storing a
+    // canonical column would be a schema + backfill change; that is the
+    // durable fix and is left as a follow-up.
+    let realDir: string;
+    try {
+      realDir = realpathSync(brainDir);
+    } catch {
+      return undefined;
+    }
+    // Archived sources are excluded deliberately: dream's --source guard
+    // already refuses to stamp them (writing last_full_cycle_at to an
+    // archived source masks staleness when it is later restored), so an
+    // archived alias must not win a path match either.
+    const candidates = await engine.executeRaw<{ id: string; local_path: string }>(
+      `SELECT id, local_path FROM sources
+        WHERE local_path IS NOT NULL AND archived = false
+        ORDER BY (id = 'default') DESC, id`,
+    );
+    const matched: string[] = [];
+    for (const row of candidates) {
+      try {
+        if (realpathSync(row.local_path) === realDir) matched.push(row.id);
+      } catch {
+        // Stale/unreadable registered path — not a match, keep scanning.
+      }
+    }
+    // Fail closed when several registered paths canonicalize to the same
+    // directory: a canonical alias is weaker evidence than an exact spelling
+    // match, and picking one arbitrarily would scope the cycle — and its
+    // freshness stamp — to whichever id happened to sort first. Returning
+    // undefined leaves the caller on the pre-existing opts.sourceId/'default'
+    // precedence, i.e. exactly the behaviour before this fallback existed.
+    return matched.length === 1 ? matched[0] : undefined;
   } catch {
     // sources table might not exist on very old brains — fall through.
     return undefined;

@@ -66,7 +66,9 @@ USAGE
 SUBMITTING
   gbrain agent run <prompt>
     --subagent-def <name>        Named plugin subagent (from GBRAIN_PLUGIN_PATH)
-    --model <id>                 Anthropic model id (defaults to sonnet)
+    --model <id>                 Model id as provider:model (default: subagent tier model,
+                                  anthropic:claude-sonnet-4-6). Non-Anthropic providers need
+                                  agent.use_gateway_loop enabled — see NOTES below.
     --max-turns <n>              Max assistant turns (default 20)
     --tools a,b,c                Subset of registered tool names (comma list)
     --timeout-ms <n>             Per-job wall-clock timeout
@@ -87,9 +89,22 @@ VIEWING
     --since <spec>               ISO-8601 timestamp OR relative ("5m","1h","2d")
 
 NOTES
-  Submitting subagent jobs is trusted-only; MCP submitters receive
-  permission_denied. The worker needs ANTHROPIC_API_KEY set, or the
-  first LLM turn of a claimed job fails.
+  This CLI path is trusted-only. (Remote MCP callers reach subagents through
+  the scoped submit_agent operation, not through this command.)
+
+  By default the worker runs the legacy Anthropic-direct path, which needs an
+  Anthropic key — from ANTHROPIC_API_KEY or from anthropic_api_key in
+  ~/.gbrain/config.json — or the first LLM turn of a claimed job fails.
+
+  To run --model on a non-Anthropic provider, enable the provider-neutral
+  gateway loop first, then supply whatever credential that provider needs
+  (an API key for most; some recipes use OAuth or a local endpoint):
+    gbrain config set agent.use_gateway_loop true
+  Accepted values: true / 1 / yes / on.
+
+  The gateway loop needs a provider whose recipe supports chat WITH tool
+  calling — not every recipe under src/core/ai/recipes/ qualifies. A model
+  that cannot call tools is refused at job start with the reason named.
 `);
 }
 

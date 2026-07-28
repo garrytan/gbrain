@@ -20,6 +20,7 @@
 
 import { join, dirname } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
 import { MinionQueue } from '../minions/queue.ts';
@@ -29,7 +30,14 @@ import { serializeMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
 // #2415: allow-list + output-root resolution shared with the synthesize
 // phase — both phases must agree on the configured namespace.
-import { loadAllowedSlugPrefixes, loadOutputRoot } from './synthesize.ts';
+// runPgliteSubagentsInline is shared too: PGLite has no separate Minions
+// worker process (the embedded data-dir holds an exclusive file lock), so a
+// job submitted via queue.add() sits in 'waiting' forever unless something
+// drives the claim -> run -> complete loop inline. synthesize.ts already
+// does this for its own children; patterns.ts previously submitted and
+// waited without ever draining, so every real (non-dry-run) invocation on a
+// PGLite brain hung until subagentWaitTimeoutMs (default 35 min).
+import { loadAllowedSlugPrefixes, loadOutputRoot, runPgliteSubagentsInline } from './synthesize.ts';
 import { probeChatModel } from '../ai/gateway.ts';
 import { normalizeModelId } from '../model-id.ts';
 
@@ -115,7 +123,7 @@ export async function runPhasePatterns(
     }
 
     // Gather reflections within lookback window.
-    const reflections = await gatherReflections(engine, config.lookbackDays, config.outputRoot);
+    const reflections = await gatherReflections(engine, config.lookbackDays, config.sourceSlugPrefix);
     if (reflections.length < config.minEvidence) {
       return skipped(
         'insufficient_evidence',
@@ -152,6 +160,16 @@ export async function runPhasePatterns(
       return failed(makeError('InternalError', 'NO_ALLOWLIST',
         'skills/_brain-filing-rules.json missing dream_synthesize_paths.globs'));
     }
+    // A configured dream.patterns.output_slug_prefix diverging from the
+    // default `${outputRoot}/personal/patterns` composition (e.g. a flat
+    // schema with no personal/ nesting) is not covered by the filing-rules
+    // globs above, which only remap the `wiki/personal/patterns/*` literal
+    // by outputRoot. Add it explicitly so the subagent's put_page allow-list
+    // actually grants write access to wherever it's configured to write.
+    const outputGlob = `${config.outputSlugPrefix}/*`;
+    if (!allowedSlugPrefixes.includes(outputGlob)) {
+      allowedSlugPrefixes.push(outputGlob);
+    }
 
     // #2781: budget the subagent from the REMAINING parent-job time, not
     // the fixed config default. Checked after the cheap gates (disabled /
@@ -167,8 +185,15 @@ export async function runPhasePatterns(
     }
 
     const queue = new MinionQueue(engine);
+    // PGLite children drain inline (no separate worker can open the embedded
+    // data-dir), so give this job a private per-run queue: the inline drain
+    // must never claim unrelated 'default'-queue jobs a Postgres worker owns.
+    // Mirrors synthesize.ts's childQueueName derivation exactly.
+    const childQueueName = engine.kind === 'pglite'
+      ? `dream-inline-${Date.now()}-${randomUUID().slice(0, 8)}`
+      : 'default';
     const data: SubagentHandlerData = {
-      prompt: buildPatternsPrompt(reflections, config.minEvidence, config.outputRoot),
+      prompt: buildPatternsPrompt(reflections, config.minEvidence, config.sourceSlugPrefix, config.outputSlugPrefix),
       model: config.model,
       max_turns: 30,
       allowed_slug_prefixes: allowedSlugPrefixes,
@@ -176,10 +201,18 @@ export async function runPhasePatterns(
     const submitOpts: Partial<MinionJobInput> = {
       max_stalled: 3,
       timeout_ms: budgets.timeoutMs,
+      queue: childQueueName,
     };
     const job = await queue.add('subagent', data as unknown as Record<string, unknown>, submitOpts, {
       allowProtectedSubmit: true,
     });
+
+    // PGLite cannot run a separate Minions worker because the embedded DB
+    // holds an exclusive file lock. Drain this phase's private child queue
+    // inline so the parent observes the terminal state instead of polling
+    // waitForCompletion until subagentWaitTimeoutMs expires. No-op on
+    // Postgres (a real worker process claims the job there).
+    await runPgliteSubagentsInline(engine, queue, childQueueName, opts.yieldDuringPhase);
 
     let outcome: string;
     try {
@@ -273,6 +306,21 @@ interface PatternsConfig {
   model: string;
   /** #2415: shared output namespace (dream.synthesize.output_root, default 'wiki'). */
   outputRoot: string;
+  /**
+   * Slug prefix `gatherReflections` reads from (SQL `LIKE` scope). Defaults
+   * to `${outputRoot}/personal/reflections`, matching pre-existing behavior.
+   * Config `dream.patterns.source_slug_prefix` overrides it for brains whose
+   * schema has no `personal/reflections/` convention (e.g. a flat
+   * `meetings/` tree) so the phase can read from wherever compiled_truth
+   * excerpts actually live.
+   */
+  sourceSlugPrefix: string;
+  /**
+   * Slug prefix new pattern pages are written under. Defaults to
+   * `${outputRoot}/personal/patterns`, matching pre-existing behavior.
+   * Config `dream.patterns.output_slug_prefix` overrides it.
+   */
+  outputSlugPrefix: string;
   /** #1594-family: subagent job timeout, config `dream.patterns.subagent_timeout_ms`. */
   subagentTimeoutMs: number;
   /** #1594-family: waitForCompletion timeout, config `dream.patterns.subagent_wait_timeout_ms`. */
@@ -289,6 +337,14 @@ async function getNumberConfig(engine: BrainEngine, key: string, fallback: numbe
   return Number.isNaN(value) ? fallback : value;
 }
 
+/** Trims leading/trailing slashes from a config-supplied slug prefix; falls back to `fallback` when unset or empty after trimming. */
+async function getSlugPrefixConfig(engine: BrainEngine, key: string, fallback: string): Promise<string> {
+  const raw = await engine.getConfig(key);
+  if (!raw) return fallback;
+  const trimmed = raw.trim().replace(/^\/+|\/+$/g, '');
+  return trimmed || fallback;
+}
+
 async function loadPatternsConfig(engine: BrainEngine): Promise<PatternsConfig> {
   const enabledStr = await engine.getConfig('dream.patterns.enabled');
   const enabled = enabledStr === null ? true : enabledStr === 'true';
@@ -302,12 +358,19 @@ async function loadPatternsConfig(engine: BrainEngine): Promise<PatternsConfig> 
     tier: 'reasoning',
     fallback: 'sonnet',
   });
+  const outputRoot = await loadOutputRoot(engine);
   return {
     enabled,
     lookbackDays: lookbackStr ? Math.max(1, parseInt(lookbackStr, 10) || 30) : 30,
     minEvidence: minEvidenceStr ? Math.max(1, parseInt(minEvidenceStr, 10) || 3) : 3,
     model,
-    outputRoot: await loadOutputRoot(engine),
+    outputRoot,
+    sourceSlugPrefix: await getSlugPrefixConfig(
+      engine, 'dream.patterns.source_slug_prefix', `${outputRoot}/personal/reflections`,
+    ),
+    outputSlugPrefix: await getSlugPrefixConfig(
+      engine, 'dream.patterns.output_slug_prefix', `${outputRoot}/personal/patterns`,
+    ),
     subagentTimeoutMs: await getNumberConfig(
       engine, 'dream.patterns.subagent_timeout_ms', DEFAULT_PATTERNS_SUBAGENT_TIMEOUT_MS,
     ),
@@ -328,11 +391,11 @@ interface ReflectionRef {
 async function gatherReflections(
   engine: BrainEngine,
   lookbackDays: number,
-  outputRoot = 'wiki',
+  sourceSlugPrefix = 'wiki/personal/reflections',
 ): Promise<ReflectionRef[]> {
   const since = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
-  // #2415: reflections live under the configured output root (bound as a
-  // parameter; outputRoot is slug-grammar-validated by loadOutputRoot).
+  // Reflections live under the configured source slug prefix (bound as a
+  // parameter; see PatternsConfig.sourceSlugPrefix / dream.patterns.source_slug_prefix).
   const rows = await engine.executeRaw<{ slug: string; title: string | null; compiled_truth: string | null }>(
     `SELECT slug, title, compiled_truth
        FROM pages
@@ -340,7 +403,7 @@ async function gatherReflections(
         AND updated_at >= $1::timestamptz
       ORDER BY updated_at DESC
       LIMIT 100`,
-    [since, `${outputRoot}/personal/reflections/%`],
+    [since, `${sourceSlugPrefix}/%`],
   );
   return rows.map(r => ({
     slug: r.slug,
@@ -351,7 +414,12 @@ async function gatherReflections(
 
 // ── Prompt ────────────────────────────────────────────────────────────
 
-function buildPatternsPrompt(reflections: ReflectionRef[], minEvidence: number, outputRoot = 'wiki'): string {
+function buildPatternsPrompt(
+  reflections: ReflectionRef[],
+  minEvidence: number,
+  sourceSlugPrefix = 'wiki/personal/reflections',
+  outputSlugPrefix = 'wiki/personal/patterns',
+): string {
   const today = new Date().toISOString().slice(0, 10);
   const corpus = reflections
     .map((r, i) => `### ${i + 1}. [[${r.slug}]] — ${r.title}\n${r.excerpt}`)
@@ -361,15 +429,15 @@ function buildPatternsPrompt(reflections: ReflectionRef[], minEvidence: number, 
 
 OUTPUT POLICY
 - Only name a pattern if it appears in at least ${minEvidence} DISTINCT reflections.
-- Each pattern page MUST cite the reflections that constitute its evidence (use [[${outputRoot}/personal/reflections/...]] wikilinks).
+- Each pattern page MUST cite the reflections that constitute its evidence (use [[${sourceSlugPrefix}/...]] wikilinks).
 - Use \`search\` to check whether a similar pattern page already exists; if yes, update it (use the same slug). If no, create a new one.
-- Pattern slug format: \`${outputRoot}/personal/patterns/<topic-slug>\` (lowercase alphanumeric + hyphens; no underscores, no extension, no date).
+- Pattern slug format: \`${outputSlugPrefix}/<topic-slug>\` (lowercase alphanumeric + hyphens; no underscores, no extension, no date).
 - A "pattern" is a recurring theme, anxiety, decision pattern, relationship dynamic, or self-knowledge motif. NOT a single insight. NOT a list of unrelated topics.
 
 DO NOT WRITE
 - A "patterns from today" digest (that's the dream-cycle-summaries page; not your job).
 - Patterns with <${minEvidence} reflections cited.
-- Anything outside ${outputRoot}/personal/patterns/.
+- Anything outside ${outputSlugPrefix}/.
 
 CONTEXT
 - Today: ${today}

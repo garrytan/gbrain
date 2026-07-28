@@ -51,13 +51,15 @@ import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { ProgressReporter } from '../progress.ts';
-import { chat as gatewayChat } from '../ai/gateway.ts';
+import { chat as gatewayChat, withBudgetTracker } from '../ai/gateway.ts';
+import { BudgetExhausted, BudgetTracker } from '../budget/budget-tracker.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
 
 const DEFAULT_BUDGET_USD = 0.3;
+const DEFAULT_EXTRACT_ATOMS_MODEL = 'anthropic:claude-haiku-4-5';
 
 // v0.42+ TODO: read atom_type enum from active pack manifest at runtime.
 const ATOM_TYPES = [
@@ -254,6 +256,7 @@ export async function discoverExtractablePages(
       AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
       ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
       AND length(COALESCE(p.compiled_truth, '')) >= $3
+      AND COALESCE(p.frontmatter->>'atoms_scan_hash', '') <> substring(p.content_hash from 1 for 16)
       ${hasFilter ? "AND p.slug = ANY($5::text[])" : ''}
       AND NOT EXISTS (
         SELECT 1
@@ -327,6 +330,7 @@ export async function countExtractAtomsBacklog(
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
            ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
            AND length(COALESCE(p.compiled_truth, '')) >= $3
+           AND COALESCE(p.frontmatter->>'atoms_scan_hash', '') <> substring(p.content_hash from 1 for 16)
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
              WHERE atom.type = 'atom' AND atom.source_id = $1
@@ -341,6 +345,7 @@ export async function countExtractAtomsBacklog(
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
            ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
            AND length(COALESCE(p.compiled_truth, '')) >= $2
+           AND COALESCE(p.frontmatter->>'atoms_scan_hash', '') <> substring(p.content_hash from 1 for 16)
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
              WHERE atom.type = 'atom' AND atom.source_id = p.source_id
@@ -530,7 +535,24 @@ export async function runPhaseExtractAtoms(
   let pagesSkipped = 0;
   const failures: Array<{ source: string; error: string }> = [];
   let estimatedSpendUsd = 0;
-  const budgetCap = DEFAULT_BUDGET_USD;
+  let budgetExhausted = false;
+  let extractModel = DEFAULT_EXTRACT_ATOMS_MODEL;
+  let budgetCap = DEFAULT_BUDGET_USD;
+  try {
+    const configuredModel = await engine.getConfig('models.dream.extract_atoms');
+    if (configuredModel) extractModel = configuredModel;
+    const configuredBudget = await engine.getConfig('cycle.extract_atoms.budget_usd');
+    if (configuredBudget) {
+      const n = Number(configuredBudget);
+      if (Number.isFinite(n) && n > 0) budgetCap = n;
+    }
+  } catch {
+    // Keep safe defaults: Haiku + $0.30.
+  }
+  const budgetTracker = new BudgetTracker({
+    maxCostUsd: budgetCap,
+    label: 'cycle.extract_atoms',
+  });
 
   // v0.41.19.0 (T3): throttled yield helper. Fires `opts.yieldDuringPhase`
   // every 30s. Cycle.ts threads `buildYieldDuringPhase(lock, outer)` so
@@ -555,9 +577,10 @@ export async function runPhaseExtractAtoms(
     }
   }
 
+  await withBudgetTracker(budgetTracker, async () => {
   for (const item of work) {
     await maybeYield();
-    if (estimatedSpendUsd >= budgetCap) {
+    if (budgetExhausted || budgetTracker.totalSpent >= budgetCap) {
       if (item.kind === 'transcript') transcriptsSkipped++;
       else pagesSkipped++;
       continue;
@@ -566,6 +589,7 @@ export async function runPhaseExtractAtoms(
     const originLabel = item.kind === 'transcript' ? item.filePath : item.slug;
     try {
       const result = await chat({
+        model: extractModel,
         system: EXTRACT_PROMPT,
         messages: [
           {
@@ -580,12 +604,29 @@ export async function runPhaseExtractAtoms(
       // actual refresh rate so this is cheap when calls are fast.
       await maybeYield();
 
-      // Rough cost estimate — Haiku at ~$0.80/M input + $4/M output
-      estimatedSpendUsd +=
-        (result.usage.input_tokens * 0.8 + result.usage.output_tokens * 4.0) / 1_000_000;
+      estimatedSpendUsd = budgetTracker.totalSpent;
 
       const atoms = parseAtomsResponse(result.text);
       if (atoms.length === 0) {
+        // #2144: tombstone zero-yield pages so they stop being rediscovered.
+        // Idempotency is keyed on atom rows — a page that yields no atoms
+        // leaves no row, so pre-fix it re-entered the discovery window every
+        // run (wedging --drain with a false no_progress and re-spending
+        // nightly budget on the same pages). Stamp the content hash we
+        // scanned; discovery skips the page only while its content is
+        // unchanged (edits re-eligibilize, mirroring atom-row staleness).
+        // Only stamped after a SUCCESSFUL chat call — LLM failures take the
+        // catch path below and stay retryable.
+        if (!opts.dryRun && item.kind === 'page') {
+          try {
+            await engine.executeRaw(
+              `UPDATE pages
+                  SET frontmatter = frontmatter || jsonb_build_object('atoms_scan_hash', $1::text)
+                WHERE source_id = $2 AND slug = $3 AND deleted_at IS NULL`,
+              [item.contentHash.slice(0, 16), sourceId, item.slug],
+            );
+          } catch { /* fail-soft: page stays rediscoverable */ }
+        }
         if (item.kind === 'transcript') transcriptsProcessed++;
         else pagesProcessed++;
         continue;
@@ -636,12 +677,20 @@ export async function runPhaseExtractAtoms(
       // Reporter rate-limits to ~1 line/sec; safe to tick every iter.
       opts.progress?.tick(1, `${totalAtomsExtracted} atoms / ${duplicatesSkipped} skipped`);
     } catch (err) {
+      if (err instanceof BudgetExhausted) {
+        budgetExhausted = true;
+        if (item.kind === 'transcript') transcriptsSkipped++;
+        else pagesSkipped++;
+        continue;
+      }
       failures.push({
         source: originLabel,
         error: err instanceof Error ? err.message : String(err),
       });
     }
   }
+  });
+  estimatedSpendUsd = budgetTracker.totalSpent;
 
   // v0.42 Wave B2: write extract receipt + rollup row when the phase
   // actually extracted atoms. Both are best-effort per F-OUT-19 —
@@ -699,6 +748,8 @@ export async function runPhaseExtractAtoms(
       failures,
       estimated_spend_usd: estimatedSpendUsd,
       budget_usd: budgetCap,
+      model: extractModel,
+      budget_exhausted: budgetExhausted,
       source_id: sourceId,
       dry_run: opts.dryRun ?? false,
     },

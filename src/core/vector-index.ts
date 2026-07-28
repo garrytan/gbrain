@@ -34,6 +34,11 @@ export function hnswMaxDimsForType(columnType: 'vector' | 'halfvec'): number {
   return columnType === 'halfvec' ? PGVECTOR_HNSW_HALFVEC_MAX_DIMS : PGVECTOR_HNSW_VECTOR_MAX_DIMS;
 }
 
+/** Whether pgvector can build an HNSW index for this exact column shape. */
+export function hnswIndexExpected(columnType: 'vector' | 'halfvec', dims: number): boolean {
+  return dims <= hnswMaxDimsForType(columnType);
+}
+
 export function applyChunkEmbeddingIndexPolicy(sql: string, dims: number): string {
   return sql.replaceAll(CHUNK_EMBEDDING_HNSW_INDEX, chunkEmbeddingIndexSql(dims));
 }

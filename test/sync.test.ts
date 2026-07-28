@@ -464,6 +464,59 @@ describe('performSync dry-run never writes', () => {
     expect(typeof result.embedded).toBe('number');
   });
 
+  test('--include-gitignored imports ignored files even when git HEAD is unchanged', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const first = await performSync(engine, {
+      repoPath,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    expect(first.status).toBe('first_sync');
+
+    writeFileSync(join(repoPath, '.gitignore'), 'Meetings/\n');
+    execSync('git add .gitignore && git commit -m "ignore generated meetings"', { cwd: repoPath, stdio: 'pipe' });
+    const checkpoint = await performSync(engine, {
+      repoPath,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    expect(checkpoint.status).toBe('up_to_date');
+
+    mkdirSync(join(repoPath, 'Meetings'), { recursive: true });
+    writeFileSync(join(repoPath, 'Meetings/weekly.md'), [
+      '---',
+      'type: meeting',
+      'title: Weekly',
+      '---',
+      '',
+      'Generated meeting notes.',
+    ].join('\n'));
+
+    const withoutFlag = await performSync(engine, {
+      repoPath,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    expect(withoutFlag.status).toBe('up_to_date');
+    expect(await engine.getPage('meetings/weekly')).toBeNull();
+
+    const withFlag = await performSync(engine, {
+      repoPath,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      includeGitignored: true,
+    });
+    expect(withFlag.added).toBe(1);
+
+    const page = await engine.getPage('meetings/weekly');
+    expect(page).not.toBeNull();
+    expect(page!.title).toBe('Weekly');
+  });
+
   test('detached HEAD skips git pull and ingests local working-tree files', async () => {
     const { performSync } = await import('../src/commands/sync.ts');
     const seeded = await performSync(engine, {

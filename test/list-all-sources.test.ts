@@ -43,6 +43,13 @@ async function seedSource(
   );
 }
 
+async function setRawConfig(id: string, rawJson: string): Promise<void> {
+  await engine.executeRaw(
+    `UPDATE sources SET config = $2::text::jsonb WHERE id = $1`,
+    [id, rawJson],
+  );
+}
+
 describe('engine.listAllSources', () => {
   test('returns empty array on fresh brain with only seeded default', async () => {
     // 'default' source seeded by migration; we'll just check it appears
@@ -136,50 +143,27 @@ describe('engine.updateSourceConfig', () => {
     expect(all.find(s => s.id === 'delta')!.config.last_full_cycle_at).toBe('2026-05-22T11:00:00.000Z');
   });
 
-  // IS JSON guard: the postgres-engine atomic merge gates its `::jsonb` cast
-  // behind the SQL `IS JSON` predicate so a historical bad row whose config is
-  // a JSONB string of NON-JSON text normalizes to `{}` instead of raising
-  // `invalid input syntax for type json` and aborting the UPDATE.
-  //
-  // We exercise the SQL CASE expression directly via executeRaw against PGLite
-  // (which ships Postgres 17 + IS JSON parity) rather than calling
-  // PostgresEngine.updateSourceConfig (which requires a live Postgres pool).
   test('IS-JSON guard: non-JSON string config normalizes to {} on merge', async () => {
-    const patch = { merged_key: 'v' };
+    await seedSource('bad-string');
+    await setRawConfig('bad-string', JSON.stringify('garbage text'));
+    expect(await engine.updateSourceConfig('bad-string', { merged_key: 'v' })).toBe(true);
+    const all = await engine.listAllSources();
+    expect(all.find(source => source.id === 'bad-string')!.config).toEqual({ merged_key: 'v' });
+  });
 
-    const guarded = (configExpr: string) => `
-      SELECT (
-        CASE
-          WHEN jsonb_typeof(${configExpr}) = 'object' THEN ${configExpr}
-          WHEN jsonb_typeof(${configExpr}) = 'string'
-            THEN CASE
-              WHEN (${configExpr} #>> '{}') IS JSON
-                THEN COALESCE(NULLIF((${configExpr} #>> '{}'), '')::jsonb, '{}'::jsonb)
-              ELSE '{}'::jsonb
-            END
-          WHEN jsonb_typeof(${configExpr}) = 'array'
-            THEN COALESCE(
-              (SELECT jsonb_object_agg(kv.key, kv.value)
-                 FROM jsonb_array_elements(${configExpr}) elem,
-                      jsonb_each(elem) kv),
-              '{}'::jsonb
-            )
-          ELSE '{}'::jsonb
-        END || $1::jsonb
-      ) AS result`;
-
-    // 1. JSONB string holding NON-JSON text → normalizes to {} then merges patch.
-    const bad = await engine.executeRaw<{ result: Record<string, unknown> }>(
-      guarded(`to_jsonb('garbage text'::text)`),
-      [JSON.stringify(patch)],
-    );
-    expect(bad[0].result).toEqual({ merged_key: 'v' });
-
-    // 2. JSONB string holding double-encoded valid JSON object → parsed + merged.
-    const good = await engine.executeRaw<{ result: Record<string, unknown> }>(
-      guarded(`to_jsonb('{"x":1}'::text)`),
-      [JSON.stringify(patch)],
-    );
-    expect(good[0].result).toEqual({ x: 1, merged_key: 'v' });
+  test('historical array config is flattened safely before merge', async () => {
+    await seedSource('array-config');
+    await setRawConfig('array-config', JSON.stringify([
+      JSON.stringify(JSON.stringify({ remote_url: 'https://example.invalid/repo' })),
+      { federated: true },
+      'garbage',
+    ]));
+    expect(await engine.updateSourceConfig('array-config', { tracked_branch: 'main' })).toBe(true);
+    const all = await engine.listAllSources();
+    expect(all.find(source => source.id === 'array-config')!.config).toEqual({
+      remote_url: 'https://example.invalid/repo',
+      federated: true,
+      tracked_branch: 'main',
+    });
   });
 });

@@ -87,6 +87,15 @@ embedding proximity. Four layers, added after the incident in
   deciding "is this page already here, safe to NOT write a duplicate?" keys off
   `create_safety`, not a raw blended score.
 
+**Extraction quarantine lane (issue #160):** pages carrying the unverified
+auto-extracted markers (frontmatter `provenance: auto-extracted` +
+`status: unverified`, see `src/core/extraction-review.ts`) rank as ordinary
+content — they are skipped by the compiled-truth fusion boost and by the
+`people/`/`companies/` namespace source-boost, and every search result from
+such a page carries `unverified: true` so agents can label the provenance.
+Promote or reject them via `gbrain extraction-pending` / `gbrain
+extraction-review`.
+
 The `search` MCP/CLI op is **cheap-hybrid** (vector + keyword + RRF + pool +
 title + alias, expansion off); `query` is the full-control variant. NamedThingBench
 (`gbrain eval retrieval-quality`) gates these families on every PR. Diagnose a

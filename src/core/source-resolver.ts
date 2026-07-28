@@ -16,6 +16,7 @@
 import { readFileSync, lstatSync, type Stats } from 'fs';
 import { join, dirname, resolve } from 'path';
 import type { BrainEngine } from './engine.ts';
+import { isSourceFederated } from './sources-load.ts';
 import { SOURCE_ID_RE, isValidSourceId } from './source-id.ts';
 import { isTrustedDotfile, realpathOrResolve } from './path-confine.ts';
 
@@ -405,17 +406,23 @@ export async function localFederatedSourceIds(
   tier: SourceTier,
 ): Promise<string[] | undefined> {
   if (tier === 'flag' || tier === 'env' || tier === 'dotfile') return undefined;
-  let rows: Array<{ id: string }>;
+  let rows: Array<{ id: string; config: unknown; archived?: boolean }>;
   try {
-    rows = await engine.executeRaw<{ id: string }>(
-      `SELECT id FROM sources WHERE config->>'federated' = 'true' AND archived = false ORDER BY id`,
+    rows = await engine.executeRaw<{ id: string; config: unknown; archived?: boolean }>(
+      `SELECT id, config, archived FROM sources WHERE archived = false ORDER BY id`,
     );
   } catch {
-    rows = await engine.executeRaw<{ id: string }>(
-      `SELECT id FROM sources WHERE config->>'federated' = 'true' ORDER BY id`,
+    rows = await engine.executeRaw<{ id: string; config: unknown }>(
+      `SELECT id, config FROM sources ORDER BY id`,
     );
   }
-  const ids = [sourceId, ...rows.map((r) => r.id).filter((id) => id !== sourceId)];
+  const ids = [
+    sourceId,
+    ...rows
+      .filter((row) => row.archived !== true && isSourceFederated(row.config))
+      .map((row) => row.id)
+      .filter((id) => id !== sourceId),
+  ];
   return ids.length > 1 ? ids : undefined;
 }
 

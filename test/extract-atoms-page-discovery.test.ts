@@ -444,3 +444,50 @@ describe('v0.41.2.1: runPhaseExtractAtoms — dual-source merge + idempotency', 
     expect(discovered.details?.atoms_extracted).toBe(1);
   });
 });
+
+describe('#2144: zero-yield tombstone', () => {
+  test('zero-yield page is stamped and excluded from rediscovery', async () => {
+    await seedPage({ slug: 'article/zero-yield', type: 'article' });
+    // Successful LLM call that yields no atoms.
+    const result = await runPhaseExtractAtoms(engine, { _transcripts: [], _chat: stubChat('[]') });
+    expect(result.details?.pages_processed).toBe(1);
+    expect(result.details?.atoms_extracted).toBe(0);
+
+    // Stamp landed: atoms_scan_hash = first 16 chars of the page's content_hash.
+    const rows = await engine.executeRaw<{ scan: string; ch: string }>(
+      `SELECT frontmatter->>'atoms_scan_hash' AS scan, content_hash AS ch
+         FROM pages WHERE slug = 'article/zero-yield'`,
+    );
+    expect(rows[0].scan).toBe(rows[0].ch.slice(0, 16));
+
+    // No longer rediscovered.
+    const discovered = await discoverExtractablePages(engine, 'default');
+    expect(discovered.find((d) => d.slug === 'article/zero-yield')).toBeUndefined();
+  });
+
+  test('content change re-eligibilizes a tombstoned page', async () => {
+    await seedPage({ slug: 'article/evolves', type: 'article' });
+    await runPhaseExtractAtoms(engine, { _transcripts: [], _chat: stubChat('[]') });
+    expect((await discoverExtractablePages(engine, 'default')).length).toBe(0);
+
+    // Simulate an edit: content_hash moves while the stale stamp stays.
+    await engine.executeRaw(
+      `UPDATE pages SET content_hash = 'fresh-hash-after-edit' WHERE slug = $1 AND source_id = 'default'`,
+      ['article/evolves'],
+    );
+    const rediscovered = await discoverExtractablePages(engine, 'default');
+    expect(rediscovered.map((d) => d.slug)).toContain('article/evolves');
+  });
+
+  test('failed chat does NOT stamp — page stays retryable', async () => {
+    await seedPage({ slug: 'article/transient-failure', type: 'article' });
+    const failingChat = async (_o: ChatOpts): Promise<ChatResult> => { throw new Error('rate limit'); };
+    await runPhaseExtractAtoms(engine, { _transcripts: [], _chat: failingChat as never });
+    const rows = await engine.executeRaw<{ scan: string | null }>(
+      `SELECT frontmatter->>'atoms_scan_hash' AS scan FROM pages WHERE slug = 'article/transient-failure'`,
+    );
+    expect(rows[0].scan).toBeNull();
+    const discovered = await discoverExtractablePages(engine, 'default');
+    expect(discovered.map((d) => d.slug)).toContain('article/transient-failure');
+  });
+});

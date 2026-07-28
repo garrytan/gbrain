@@ -56,6 +56,17 @@ import type { PhaseStatus, CyclePhase } from '../cycle.ts';
 export const PROPOSE_TAKES_PROMPT_VERSION = 'v0.36.1.0-tuned-cat15';
 
 /**
+ * Sentinel claim_text for the tombstone row written when a page extracts
+ * ZERO gradeable claims. Without a tombstone the idempotency tuple is never
+ * recorded, so every cycle re-spends an LLM call on unchanged zero-claim
+ * prose — the "unchanged page never re-spends tokens" contract only held
+ * for pages that produced >=1 claim. The tombstone is inserted with
+ * status='rejected' so no pending-review query surfaces it as a live
+ * proposal; its only job is to make the next cycle a cache hit.
+ */
+export const EMPTY_EXTRACTION_TOMBSTONE_TEXT = '(no gradeable claims)';
+
+/**
  * Tuned extractor prompt, validated against the hand-labeled synthetic
  * corpus at test/fixtures/calibration/. Measured F1 on first live run
  * via gbrain-evals cat15 (claude-sonnet-4-6 extractor, claude-haiku-4-5
@@ -154,6 +165,8 @@ export interface ProposeTakesResult {
   cache_hits: number;
   cache_misses: number;
   proposals_inserted: number;
+  /** Idempotency rows written for pages that extracted zero claims. */
+  tombstones_written: number;
   budget_exhausted: boolean;
   /** True when the phase deadline fired before the page loop completed (partial result). */
   deadline_hit?: boolean;
@@ -287,7 +300,46 @@ export async function defaultExtractor(
   });
 
   // ChatResult.text is already the concatenated text content.
-  return parseExtractorOutput(result.text);
+  const takes = parseExtractorOutput(result.text);
+  // A parse-level `[]` is AMBIGUOUS: it means either "the model genuinely
+  // found no gradeable claims" OR "the model returned malformed/prose/
+  // truncated output we couldn't parse." The caller memoizes empty
+  // extractions with a tombstone, so a transient parse failure would
+  // PERMANENTLY suppress a page that actually has claims. Only a cleanly
+  // parsed empty array is a real "no claims" result worth memoizing; treat
+  // anything else as a transient error and throw, so the phase's catch
+  // retries the page next cycle (writing no tombstone).
+  if (takes.length === 0 && !isWellFormedEmptyExtraction(result.text)) {
+    throw new Error('propose_takes extractor: no parseable takes JSON (transient — retry)');
+  }
+  return takes;
+}
+
+/**
+ * True only when `raw` is a cleanly-parseable EMPTY JSON array — the
+ * well-behaved "no gradeable claims" response (the prompt instructs the model
+ * to return `[]`). Distinguishes a genuine empty extraction (safe to memoize
+ * via a tombstone) from malformed / prose / truncated output (transient —
+ * must be retried, never tombstoned). Mirrors parseExtractorOutput's
+ * think-strip + fence-strip + first-array handling so both agree on what
+ * "the model returned []" means.
+ */
+export function isWellFormedEmptyExtraction(raw: string): boolean {
+  if (!raw || raw.trim().length === 0) return false;
+  let text = raw.trim();
+  // Strip <think>...</think> reasoning tags (MiniMax-M3, DeepSeek-R1, etc.),
+  // same as parseExtractorOutput (#2559).
+  text = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+  const fenced = text.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/);
+  if (fenced) text = (fenced[1] ?? '').trim();
+  const arrStart = text.indexOf('[');
+  if (arrStart === -1) return false;
+  try {
+    const parsed = JSON.parse(text.slice(arrStart));
+    return Array.isArray(parsed) && parsed.length === 0;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -421,6 +473,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
       cache_hits: 0,
       cache_misses: 0,
       proposals_inserted: 0,
+      tombstones_written: 0,
       budget_exhausted: false,
       warnings: [],
     };
@@ -529,6 +582,42 @@ class ProposeTakesPhase extends BaseCyclePhase {
         );
         result.proposals_inserted += inserted.length;
       }
+
+      // Memoize the empty case too. A page that extracted zero claims gets
+      // NO row from the loop above, so without this its idempotency tuple is
+      // never recorded and the next cycle re-spends an LLM call on unchanged
+      // prose (the idle-cost bug). Write one tombstone row keyed by the same
+      // per-page tuple (the cache-hit lookup above matches ANY row for the
+      // 4-tuple; the unique index — take_proposals_idempotency_idx, migration
+      // v125 — folds md5(claim_text) in, so the conflict target must too).
+      // status='rejected' keeps it out of any pending-review query; its sole
+      // purpose is to make the next cycle a cache hit. Only reached on a
+      // SUCCESSFUL empty extract — the extractor-throw path `continue`s above,
+      // so failed pages are retried rather than tombstoned.
+      if (proposals.length === 0) {
+        await engine.executeRaw(
+          `INSERT INTO take_proposals
+             (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
+              claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'rejected')
+           ON CONFLICT (source_id, page_slug, content_hash, prompt_version, md5(claim_text)) DO NOTHING`,
+          [
+            sourceId,
+            page.slug,
+            ch,
+            promptVersion,
+            proposalRunId,
+            EMPTY_EXTRACTION_TOMBSTONE_TEXT,
+            'fact',
+            'brain',
+            0,
+            null,
+            JSON.stringify(existingTakes),
+            modelId,
+          ],
+        );
+        result.tombstones_written += 1;
+      }
     }
 
     if (opts.reporter) opts.reporter.finish();
@@ -565,7 +654,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
     });
 
     return {
-      summary: `propose_takes: scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.proposals_inserted} new proposals (run ${proposalRunId})`,
+      summary: `propose_takes: scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.proposals_inserted} new proposals, ${result.tombstones_written} empty (run ${proposalRunId})`,
       details: { ...result, proposal_run_id: proposalRunId, prompt_version: promptVersion },
       status: result.budget_exhausted || result.deadline_hit ? 'warn' : 'ok',
     };

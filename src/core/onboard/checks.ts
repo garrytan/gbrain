@@ -386,14 +386,15 @@ export async function checkPackUpgradeAvailable(
 ): Promise<OnboardCheckResult> {
   try {
     const { loadActivePack, findPackSuccessors } = await import('../schema-pack/load-active.ts');
+    const { loadConfigFileOnly } = await import('../config.ts');
     // Read the engine's DB-side schema_pack so a post-unify flip is visible
-    // here even before the file-plane config catches up. Falls through to
-    // file-plane/env/default resolution when unset.
+    // here even before the file-plane config catches up. File-only config
+    // preserves tier-6 schema_pack without merging transient env/database state.
     let dbConfig: string | undefined;
     try {
       dbConfig = (await engine.getConfig('schema_pack')) ?? undefined;
     } catch { /* engine.config may not exist on very old brains */ }
-    const active = await loadActivePack({ cfg: null, remote: false, dbConfig })
+    const active = await loadActivePack({ cfg: loadConfigFileOnly(), remote: false, dbConfig })
       .catch(() => null);
     if (!active) {
       return {
@@ -463,11 +464,12 @@ export async function checkTypeProliferation(
   let declared = 15;  // fallback to gbrain-base-v2 default if pack unavailable
   try {
     const { loadActivePack } = await import('../schema-pack/load-active.ts');
+    const { loadConfigFileOnly } = await import('../config.ts');
     let dbConfig: string | undefined;
     try {
       dbConfig = (await engine.getConfig('schema_pack')) ?? undefined;
     } catch { /* tolerate pre-config brains */ }
-    const active = await loadActivePack({ cfg: null, remote: false, dbConfig })
+    const active = await loadActivePack({ cfg: loadConfigFileOnly(), remote: false, dbConfig })
       .catch(() => null);
     if (active) declared = active.manifest.page_types.length;
   } catch {

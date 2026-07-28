@@ -149,6 +149,17 @@ export interface ThinkResult {
     takesFromVector: number;
     graphHits: number;
   };
+  /**
+   * Token usage from the real LLM call, when one happened. Undefined on the
+   * no-client/stub paths (no Anthropic key, model not usable) — same
+   * distinction `synthesisOk` already makes. `think`'s cost was previously
+   * unsurfaced anywhere: not in this CLI's own output, not in
+   * `budget_ledger`, and invisible to a wrapping caller's own token
+   * accounting (the LLM call `think` makes is its own separate API call).
+   */
+  usage?: { input_tokens: number; output_tokens: number };
+  /** USD cost computed from `usage` + `canonicalLookup(modelUsed)`, when both are available. */
+  cost_usd?: number;
 }
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 4000;
@@ -441,6 +452,7 @@ export async function runThink(
   // return ANDs it with a non-empty-answer check (catches valid-but-empty JSON).
   let synthesisOk = true;
   let response: ThinkResponse;
+  let usage: { input_tokens: number; output_tokens: number } | undefined;
   if (opts.stubResponse) {
     response = opts.stubResponse;
   } else {
@@ -504,6 +516,7 @@ export async function runThink(
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
     });
+    usage = { input_tokens: result.usage.input_tokens, output_tokens: result.usage.output_tokens };
     const block = result.content.find(b => b.type === 'text');
     const text = block && 'text' in block ? block.text : '';
     const parsed = tryParseJSON(text);
@@ -554,6 +567,7 @@ export async function runThink(
       takesFromVector: gather.diagnostics.takesFromVector,
       graphHits: gather.diagnostics.graphHits,
     },
+    usage,
   };
 }
 

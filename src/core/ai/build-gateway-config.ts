@@ -44,6 +44,13 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   // multimodal/image embeds despite config.json looking complete. process.env
   // still wins via the later spread.
   if (c.voyage_api_key) envFromConfig.VOYAGE_API_KEY = c.voyage_api_key;
+  // Azure OpenAI (keyless/Entra): fold the non-secret endpoint/deployment + the
+  // Entra opt-in into the gateway env so the azure-openai recipe works in any
+  // shell (incl. non-interactive agent shells). The bearer token is minted at
+  // request time via `az`; no secret is stored in config.json.
+  if (c.azure_openai_endpoint) envFromConfig.AZURE_OPENAI_ENDPOINT = c.azure_openai_endpoint;
+  if (c.azure_openai_deployment) envFromConfig.AZURE_OPENAI_DEPLOYMENT = c.azure_openai_deployment;
+  if (c.azure_openai_use_entra) envFromConfig.AZURE_OPENAI_USE_ENTRA = c.azure_openai_use_entra;
 
   // v0.32 codex finding #4+#5 fix: thread local-server _BASE_URL env vars
   // into base_urls so the gateway hits the user's configured port. Without
