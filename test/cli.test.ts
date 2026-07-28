@@ -46,6 +46,12 @@ describe('CLI structure', () => {
     expect(onlyMatch![1]).toContain(`'reindex'`);
   });
 
+  test('backfill is in CLI_ONLY (does not get "Unknown command")', () => {
+    const onlyMatch = cliSource.match(/const CLI_ONLY = new Set\(\[([\s\S]*?)\]\)/);
+    expect(onlyMatch).not.toBeNull();
+    expect(onlyMatch![1]).toContain(`'backfill'`);
+  });
+
   test('has formatResult function for CLI output', () => {
     expect(cliSource).toContain('function formatResult');
   });
@@ -157,6 +163,26 @@ describe('CLI dispatch integration', () => {
       expect(stdout).not.toContain('Already up to date.');
       expect(stderr).not.toContain('Already up to date.');
       expect(existsSync(join(home, '.gbrain', 'config.json'))).toBe(false);
+      expect(exitCode).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('backfill list reaches its self-contained handler without a configured brain', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-cli-backfill-'));
+    try {
+      const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'backfill', 'list'], {
+        cwd: repoRoot,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: isolatedEnv(home),
+      });
+      const stdout = await new Response(proc.stdout).text();
+      const stderr = await new Response(proc.stderr).text();
+      const exitCode = await proc.exited;
+      expect(stdout).toContain('modality');
+      expect(stderr).not.toContain('No database URL');
       expect(exitCode).toBe(0);
     } finally {
       rmSync(home, { recursive: true, force: true });
