@@ -1,12 +1,30 @@
-import { existsSync, readFileSync, writeFileSync, statSync, realpathSync } from 'fs';
-import { execFileSync } from 'child_process';
-import { isAbsolute, join, relative, sep } from 'path';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'fs';
+import { execFileSync, spawn } from 'child_process';
+import { isAbsolute, join, relative, resolve, sep } from 'path';
+import { tmpdir } from 'os';
+import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import { DELETE_BATCH_SIZE } from '../core/engine-constants.ts';
-import { importFile } from '../core/import-file.ts';
+import {
+  computeCodeImportHash,
+  computeParsedMarkdownContentHash,
+  importFile,
+  isImageFilePath,
+} from '../core/import-file.ts';
 import { collectSyncableFiles } from './import.ts';
 import { createInterface } from 'readline';
 import {
+  isCodeFilePath,
   isSyncable,
   unsyncableReason,
   matchesAnyGlob,
@@ -20,6 +38,9 @@ import {
   resolveAutoSkipThreshold,
   DEFAULT_SOURCE_ID,
 } from '../core/sync.ts';
+import { parseMarkdown } from '../core/markdown.ts';
+import { applyInference } from '../core/frontmatter-inference.ts';
+import type { PageType } from '../core/types.ts';
 import {
   computeSyncDelta,
   buildDetachedWorkingTreeManifest,
@@ -58,6 +79,8 @@ import {
 import {
   withRefreshingLock,
   LockUnavailableError,
+  LockReleaseFailedError,
+  getLockReleaseFailure,
   syncLockId,
 } from '../core/db-lock.ts';
 import {
@@ -87,6 +110,15 @@ import { registerCleanup } from '../core/process-cleanup.ts';
 import { type DbPacer, createDbPacer, createNoopPacer, observed } from '../core/db-pacer.ts';
 import { resolvePaceMode, loadPaceModeConfig, readPaceEnv } from '../core/pace-mode.ts';
 import { AbortError } from '../core/abort-check.ts';
+import { parseSourceConfig } from '../core/sources-load.ts';
+import {
+  createSyncPlan,
+  type SyncAffectedSummary,
+  type SyncPlan,
+  type SyncPlanCorpus,
+  type SyncPlanOperation,
+  type SyncPlanStrategy,
+} from '../core/sync-plan.ts';
 
 /**
  * v0.42.x (#1794) -- resumable incremental sync checkpoint.
@@ -95,24 +127,35 @@ import { AbortError } from '../core/abort-check.ts';
  * the same syncFingerprint(sourceId, lastCommit):
  *   - op 'sync'        -> completed_keys = repo-relative file paths drained
  *   - op 'sync-target' -> completed_keys = [pinnedTargetCommit]
+ *   - op 'sync-target-provenance' -> completed_keys = ['ordinary' | 'exact-target']
  *
  * Splitting the pinned target into its own row keeps the path set free of any
- * sentinel that could collide with a real filename, and both rows clear
+ * sentinel that could collide with a real filename. Provenance prevents a
+ * paired exact-target apply from trusting paths checkpointed by an ordinary
+ * sync that may have imported mutable working-tree bytes. All three rows clear
  * together on full completion. The fingerprint encodes ONLY (sourceId,
  * lastCommit) -- never the target or live HEAD -- so the checkpoint survives
  * every killed-and-resumed run while lastCommit..HEAD grows underneath it.
  */
 const SYNC_CKPT_OP = 'sync';
 const SYNC_TARGET_OP = 'sync-target';
+const SYNC_TARGET_PROVENANCE_OP = 'sync-target-provenance';
+const SYNC_TARGET_PROVENANCE_ORDINARY = 'ordinary';
+const SYNC_TARGET_PROVENANCE_EXACT = 'exact-target';
 
 function syncCheckpointKeys(
   sourceId: string | undefined,
   lastCommit: string,
-): { paths: OpCheckpointKey; target: OpCheckpointKey } {
+): {
+  paths: OpCheckpointKey;
+  target: OpCheckpointKey;
+  provenance: OpCheckpointKey;
+} {
   const fp = syncFingerprint({ sourceId, lastCommit });
   return {
     paths: { op: SYNC_CKPT_OP, fingerprint: fp },
     target: { op: SYNC_TARGET_OP, fingerprint: fp },
+    provenance: { op: SYNC_TARGET_PROVENANCE_OP, fingerprint: fp },
   };
 }
 
@@ -193,6 +236,7 @@ export interface SyncResult {
   modified: number;
   deleted: number;
   renamed: number;
+  preserved?: number;
   chunksCreated: number;
   /** Pages re-embedded during this sync's auto-embed step. 0 if --no-embed or skipped. */
   embedded: number;
@@ -222,6 +266,16 @@ export interface SyncResult {
    * everything," the exact misdiagnosis in the #1794 recurrence report.
    */
   bankedFiles?: number;
+  /** Validated, read-only plan evidence returned by a dry run. */
+  previewKind?: 'validated_index_plan';
+  sourceId?: string;
+  strategy?: SyncPlanStrategy;
+  lastSuccessfulStrategy?: SyncPlanStrategy | null;
+  strategyChanged?: boolean;
+  checkpointReset?: boolean;
+  affected?: SyncAffectedSummary;
+  affectedDigest?: string;
+  planCorpus?: SyncPlanCorpus;
 }
 
 /**
@@ -557,9 +611,20 @@ interface CostGateContext {
   label: string;
 }
 
+interface CostGateReceipt {
+  status: string;
+  mode: SyncEmbedMode;
+  gate: string;
+  [key: string]: unknown;
+}
+
 type CostGateOutcome =
-  | { action: 'proceed'; autoDeferEmbeds: boolean }
-  | { action: 'stop' };
+  | {
+      action: 'proceed';
+      autoDeferEmbeds: boolean;
+      receipt: CostGateReceipt;
+    }
+  | { action: 'stop'; receipt: CostGateReceipt };
 
 /**
  * v0.42.42.0 (#2139): the inline-embed cost gate, shared by BOTH `sync --all`
@@ -620,20 +685,42 @@ async function runInlineCostGate(
       `${embeddingModelName}) across ${sources.length} source(s); ` +
       `${queuedBackfills} backfill job(s) queued.`;
     if (dryRun) {
+      const receipt: CostGateReceipt = {
+        status: 'dry_run',
+        mode,
+        gate: 'dry_run',
+        staleChars,
+        staleCostUsd,
+        capUsd: formatUsdLimit(capUsd),
+        floorUsd: formatUsdLimit(floorUsd),
+        queuedBackfills,
+        model: embeddingModelName,
+      };
       if (jsonOut) {
-        console.log(JSON.stringify({ status: 'dry_run', mode, gate: 'dry_run', staleChars, staleCostUsd, capUsd: formatUsdLimit(capUsd), floorUsd: formatUsdLimit(floorUsd), queuedBackfills, model: embeddingModelName }));
+        console.log(JSON.stringify(receipt));
       } else {
         console.log(deferredMsg);
         console.log('--dry-run: exit without syncing.');
       }
-      return { action: 'stop' };
+      return { action: 'stop', receipt };
     }
+    const receipt: CostGateReceipt = {
+      status: 'deferred',
+      mode,
+      gate: 'deferred_notice',
+      staleChars,
+      staleCostUsd,
+      capUsd: formatUsdLimit(capUsd),
+      floorUsd: formatUsdLimit(floorUsd),
+      queuedBackfills,
+      model: embeddingModelName,
+    };
     if (jsonOut) {
-      console.log(JSON.stringify({ status: 'deferred', mode, gate: 'deferred_notice', staleChars, staleCostUsd, capUsd: formatUsdLimit(capUsd), floorUsd: formatUsdLimit(floorUsd), queuedBackfills, model: embeddingModelName }));
+      console.log(JSON.stringify(receipt));
     } else {
       console.log(deferredMsg);
     }
-    return { action: 'proceed', autoDeferEmbeds: false };
+    return { action: 'proceed', autoDeferEmbeds: false, receipt };
   }
 
   // ── Inline path ───────────────────────────────────────────────
@@ -655,27 +742,64 @@ async function runInlineCostGate(
     `est. $${costUsd.toFixed(2)} on ${embeddingModelName}${fullNote}${staleNote}.`;
 
   if (dryRun) {
+    const receipt: CostGateReceipt = {
+      status: 'dry_run',
+      mode,
+      gate: 'dry_run',
+      newTokens: inline.tokens,
+      estimateKind: inline.estimateKind,
+      staleChars,
+      costUsd,
+      floorUsd: formatUsdLimit(floorUsd),
+      model: embeddingModelName,
+    };
     if (jsonOut) {
-      console.log(JSON.stringify({ status: 'dry_run', mode, gate: 'dry_run', newTokens: inline.tokens, estimateKind: inline.estimateKind, staleChars, costUsd, floorUsd: formatUsdLimit(floorUsd), model: embeddingModelName }));
+      console.log(JSON.stringify(receipt));
     } else {
       console.log(previewMsg);
       console.log('--dry-run: exit without syncing.');
     }
-    return { action: 'stop' };
+    return { action: 'stop', receipt };
   }
 
   // --yes bypasses the gate entirely (embed inline, no preview).
-  if (yesFlag) return { action: 'proceed', autoDeferEmbeds: false };
+  if (yesFlag) {
+    return {
+      action: 'proceed',
+      autoDeferEmbeds: false,
+      receipt: {
+        status: 'proceeding',
+        mode,
+        gate: 'accepted_yes',
+        newTokens: inline.tokens,
+        estimateKind: inline.estimateKind,
+        costUsd,
+        floorUsd: formatUsdLimit(floorUsd),
+        model: embeddingModelName,
+      },
+    };
+  }
 
   // spend.posture=tokenmax → informational, proceed INLINE (operator declared
   // cost isn't the constraint; don't defer).
   if (posture === 'tokenmax') {
+    const receipt: CostGateReceipt = {
+      status: 'proceeding',
+      mode,
+      gate: 'posture_tokenmax',
+      newTokens: inline.tokens,
+      estimateKind: inline.estimateKind,
+      costUsd,
+      floorUsd: formatUsdLimit(floorUsd),
+      model: embeddingModelName,
+      hint: SPEND_HINT,
+    };
     if (jsonOut) {
-      console.log(JSON.stringify({ status: 'proceeding', mode, gate: 'posture_tokenmax', newTokens: inline.tokens, estimateKind: inline.estimateKind, costUsd, floorUsd: formatUsdLimit(floorUsd), model: embeddingModelName, hint: SPEND_HINT }));
+      console.log(JSON.stringify(receipt));
     } else {
       console.log(`${previewMsg} spend.posture=tokenmax: proceeding (informational). ${SPEND_HINT}`);
     }
-    return { action: 'proceed', autoDeferEmbeds: false };
+    return { action: 'proceed', autoDeferEmbeds: false, receipt };
   }
 
   // Link intent: search.mode=tokenmax but spend posture unset → nudge once.
@@ -699,14 +823,50 @@ async function runInlineCostGate(
       const answer = await promptYesNo('Proceed? [y/N] ');
       if (!answer) {
         console.log('Cancelled.');
-        return { action: 'stop' };
+        return {
+          action: 'stop',
+          receipt: {
+            status: 'cancelled',
+            mode,
+            gate: 'confirmation_declined',
+            newTokens: inline.tokens,
+            estimateKind: inline.estimateKind,
+            costUsd,
+            floorUsd: formatUsdLimit(floorUsd),
+            model: embeddingModelName,
+          },
+        };
       }
-      return { action: 'proceed', autoDeferEmbeds: false };
+      return {
+        action: 'proceed',
+        autoDeferEmbeds: false,
+        receipt: {
+          status: 'proceeding',
+          mode,
+          gate: 'confirmation_accepted',
+          newTokens: inline.tokens,
+          estimateKind: inline.estimateKind,
+          costUsd,
+          floorUsd: formatUsdLimit(floorUsd),
+          model: embeddingModelName,
+        },
+      };
     }
     // Non-TTY or --json: AUTO-DEFER embeds to capped backfill jobs. NEVER exit 2
     // (the wedged-cron fix). Format splits on the explicit --json flag only.
+    const receipt: CostGateReceipt = {
+      status: 'auto_deferred',
+      mode,
+      gate: 'auto_deferred_embeds',
+      newTokens: inline.tokens,
+      estimateKind: inline.estimateKind,
+      costUsd,
+      floorUsd: formatUsdLimit(floorUsd),
+      model: embeddingModelName,
+      hint: SPEND_HINT,
+    };
     if (jsonOut) {
-      console.log(JSON.stringify({ status: 'auto_deferred', mode, gate: 'auto_deferred_embeds', newTokens: inline.tokens, estimateKind: inline.estimateKind, costUsd, floorUsd: formatUsdLimit(floorUsd), model: embeddingModelName, hint: SPEND_HINT }));
+      console.log(JSON.stringify(receipt));
     } else {
       console.log(
         `${previewMsg} Exceeds floor $${formatUsdLimit(floorUsd)} in a non-interactive ` +
@@ -714,16 +874,27 @@ async function runInlineCostGate(
         `Drain: run the jobs worker or \`gbrain embed --stale\`. Pass --yes to embed inline.\n${SPEND_HINT}`,
       );
     }
-    return { action: 'proceed', autoDeferEmbeds: true };
+    return { action: 'proceed', autoDeferEmbeds: true, receipt };
   }
 
   // Below floor → proceed without blocking (kills inline-cron noise).
+  const receipt: CostGateReceipt = {
+    status: 'below_floor',
+    mode,
+    gate: 'below_floor',
+    newTokens: inline.tokens,
+    estimateKind: inline.estimateKind,
+    staleChars,
+    costUsd,
+    floorUsd: formatUsdLimit(floorUsd),
+    model: embeddingModelName,
+  };
   if (jsonOut) {
-    console.log(JSON.stringify({ status: 'below_floor', mode, gate: 'below_floor', newTokens: inline.tokens, estimateKind: inline.estimateKind, staleChars, costUsd, floorUsd: formatUsdLimit(floorUsd), model: embeddingModelName }));
+    console.log(JSON.stringify(receipt));
   } else {
     console.log(`${previewMsg} Below cost gate floor ($${formatUsdLimit(floorUsd)}), proceeding.`);
   }
-  return { action: 'proceed', autoDeferEmbeds: false };
+  return { action: 'proceed', autoDeferEmbeds: false, receipt };
 }
 
 export interface SyncOpts {
@@ -737,6 +908,21 @@ export interface SyncOpts {
   skipFailed?: boolean;
   /** Bug 9 — re-attempt unacknowledged failures explicitly (CLI --retry-failed). */
   retryFailed?: boolean;
+  /**
+   * Paired preview/apply preconditions. `undefined` means no assertion;
+   * `null` for expectedBookmark means the caller requires no bookmark.
+   */
+  expectedTarget?: string;
+  expectedBookmark?: string | null;
+  requireClean?: boolean;
+  /**
+   * Internal: this invocation must produce the strict schema-1 receipt.
+   * The CLI sets it for --json so receipt preconditions are checked before
+   * any page, bookmark, checkpoint, extraction, or embedding mutation.
+   */
+  schema1Receipt?: boolean;
+  /** Internal machine-readable evidence from the command-layer spend gate. */
+  costGateReceipt?: CostGateReceipt;
   /**
    * v0.41.37.0 #1569 — skip loading the active schema pack during sync. When set,
    * `loadActivePack` is not called, so no user-supplied pack page-type regex
@@ -756,6 +942,25 @@ export interface SyncOpts {
   sourceId?: string;
   /** Multi-repo: sync strategy override (markdown, code, auto). */
   strategy?: 'markdown' | 'code' | 'auto';
+  /**
+   * Internal: immutable plan captured under this source lock for a paired
+   * preview/apply invocation. Never accepted from CLI input.
+   */
+  validatedPlan?: SyncPlan;
+  /**
+   * Internal: private materialization of the exact paired target commit.
+   * Git history and source identity are still read from repoPath; every
+   * planner/import filesystem read is redirected here so concurrent worktree
+   * writers cannot change the bytes bound to validatedPlan.
+   */
+  targetTreeRoot?: string;
+  /**
+   * Internal, invocation-scoped monotonic record for schema-1 error receipts.
+   * The transient sync lock is reported separately as lock_only; this journal
+   * tracks any repository, checkpoint, page, ledger, bookmark, or enrichment
+   * mutation that may have begun.
+   */
+  mutationJournal?: SyncMutationJournal;
   /**
    * #753/#774 — sync only files under this subdirectory of the git repo.
    * Git operations (pull, diff, rev-parse) still run against the repo root
@@ -861,6 +1066,26 @@ export interface SyncOpts {
    * Precedent: CycleOpts.signal at src/core/cycle.ts (v0.22.1 #403).
    */
   signal?: AbortSignal;
+}
+
+interface SyncMutationJournal {
+  stateChanged: 'none' | 'partial';
+}
+
+function createSyncMutationJournal(): SyncMutationJournal {
+  return { stateChanged: 'none' };
+}
+
+function markSyncMutation(opts: SyncOpts): void {
+  if (opts.dryRun !== true && opts.mutationJournal) {
+    opts.mutationJournal.stateChanged = 'partial';
+  }
+}
+
+function mutationEnvelopeState(
+  journal: SyncMutationJournal,
+): GBrainSyncErrorEnvelope['state_changed'] | undefined {
+  return journal.stateChanged === 'partial' ? 'partial' : undefined;
 }
 
 /**
@@ -1319,27 +1544,80 @@ async function writeSyncAnchor(
   // git-intrinsic committer time of the HEAD we just synced). `undefined` keeps
   // the legacy 2-column write; `null` clears the column (git unavailable).
   newestContentEpochMs?: number | null,
+  successfulStrategy?: SyncPlanStrategy,
 ): Promise<void> {
   if (sourceId) {
     const col = which === 'repo_path' ? 'local_path' : 'last_commit';
+    const updateSource = async (
+      sql: string,
+      params: unknown[],
+    ): Promise<void> => {
+      const rows = await engine.executeRaw<{ id: string }>(
+        `${sql}\nRETURNING id`,
+        params,
+      );
+      if (rows.length !== 1 || rows[0]?.id !== sourceId) {
+        throw new SyncPreconditionError(
+          'source_changed',
+          `Source "${sourceId}" disappeared before its ${which} anchor could be updated.`,
+          rows.length === 0 ? null : rows.map((row) => row.id).join(','),
+          sourceId,
+        );
+      }
+    };
     // last_sync_at bookmarked on every last_commit advance.
     if (which === 'last_commit') {
       if (newestContentEpochMs !== undefined) {
         const iso = newestContentEpochMs === null
           ? null
           : new Date(newestContentEpochMs).toISOString();
-        await engine.executeRaw(
-          `UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $3 WHERE id = $2`,
-          [value, sourceId, iso],
-        );
+        if (successfulStrategy) {
+          await updateSource(
+            `UPDATE sources
+                SET last_commit = $1,
+                    last_sync_at = now(),
+                    newest_content_at = $3,
+                    config = jsonb_set(
+                      CASE WHEN jsonb_typeof(config) = 'object'
+                        THEN config ELSE '{}'::jsonb END,
+                      '{last_successful_strategy}',
+                      to_jsonb($4::text),
+                      true
+                    )
+              WHERE id = $2`,
+            [value, sourceId, iso, successfulStrategy],
+          );
+        } else {
+          await updateSource(
+            `UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $3 WHERE id = $2`,
+            [value, sourceId, iso],
+          );
+        }
       } else {
-        await engine.executeRaw(
-          `UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2`,
-          [value, sourceId],
-        );
+        if (successfulStrategy) {
+          await updateSource(
+            `UPDATE sources
+                SET last_commit = $1,
+                    last_sync_at = now(),
+                    config = jsonb_set(
+                      CASE WHEN jsonb_typeof(config) = 'object'
+                        THEN config ELSE '{}'::jsonb END,
+                      '{last_successful_strategy}',
+                      to_jsonb($3::text),
+                      true
+                    )
+              WHERE id = $2`,
+            [value, sourceId, successfulStrategy],
+          );
+        } else {
+          await updateSource(
+            `UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2`,
+            [value, sourceId],
+          );
+        }
       }
     } else {
-      await engine.executeRaw(
+      await updateSource(
         `UPDATE sources SET ${col} = $1 WHERE id = $2`,
         [value, sourceId],
       );
@@ -1375,6 +1653,22 @@ async function readChunkerVersion(
     [sourceId],
   );
   return rows[0]?.chunker_version ?? null;
+}
+
+async function readLastSuccessfulStrategy(
+  engine: BrainEngine,
+  sourceId: string | undefined,
+): Promise<SyncPlanStrategy | null> {
+  if (!sourceId) return null;
+  const rows = await engine.executeRaw<{ config: unknown }>(
+    `SELECT config FROM sources WHERE id = $1`,
+    [sourceId],
+  );
+  if (rows.length !== 1) return null;
+  const value = parseSourceConfig(rows[0].config).last_successful_strategy;
+  return value === 'markdown' || value === 'code' || value === 'auto'
+    ? value
+    : null;
 }
 
 async function writeChunkerVersion(
@@ -1477,6 +1771,7 @@ See also:
  */
 export class SyncLockBusyError extends Error {
   readonly lockKey: string;
+  readonly reasonCode = 'lock_busy' as const;
   constructor(message: string, lockKey: string) {
     super(message);
     this.name = 'SyncLockBusyError';
@@ -1484,7 +1779,1796 @@ export class SyncLockBusyError extends Error {
   }
 }
 
+export type SyncRefusalReason =
+  | 'source_changed'
+  | 'target_changed'
+  | 'bookmark_changed'
+  | 'working_tree_dirty'
+  | 'managed_clone_missing'
+  | 'plan_failed'
+  | 'dry_run_modifier_conflict'
+  | 'lock_release_failed'
+  | 'lock_busy'
+  | 'embedding_credentials_missing'
+  | 'cost_gate_stopped';
+
+export class SyncPreconditionError extends Error {
+  readonly reasonCode: SyncRefusalReason;
+  readonly observed: string | null;
+  readonly required: string | null;
+
+  constructor(
+    reasonCode: SyncRefusalReason,
+    problem: string,
+    observed: string | null,
+    required: string | null,
+  ) {
+    super(problem);
+    this.name = 'SyncPreconditionError';
+    this.reasonCode = reasonCode;
+    this.observed = observed;
+    this.required = required;
+  }
+}
+
+export interface GBrainSyncEnvelope {
+  schema_version: 1;
+  result_kind: 'gbrain_sync';
+  status: SyncResult['status'];
+  preview_kind?: 'validated_index_plan';
+  source: { id: string };
+  repository: {
+    from_commit: string | null;
+    target_commit: string;
+    bookmark_after: string | null;
+    last_successful_strategy: SyncPlanStrategy | null;
+  };
+  strategy: SyncPlanStrategy;
+  strategy_changed: boolean;
+  checkpoint_reset: boolean;
+  operations: {
+    added: number;
+    modified: number;
+    deleted: number;
+    renamed: number;
+    preserved: number;
+  };
+  affected: SyncAffectedSummary;
+  affected_digest: string;
+  corpus: {
+    markdown_planned_or_applied: number;
+    code_pages_before: number;
+    code_pages_after: number;
+    code_deletions_applied: number;
+    image_operations_applied: number;
+    image_pages_after: number;
+    multimodal_enabled: false;
+    embedding_status: 'deferred' | 'complete';
+    extraction_status: 'deferred' | 'complete';
+    search_ready: boolean;
+  };
+  cost_gate?: CostGateReceipt;
+  reason?: SyncResult['reason'];
+}
+
+export interface GBrainSyncErrorEnvelope {
+  schema_version: 1;
+  result_kind: 'gbrain_sync_error';
+  status: 'refused' | 'error';
+  reason_code: string;
+  state_changed: 'none' | 'lock_only' | 'partial';
+  problem: string;
+  observed: string | null;
+  required: string | null;
+  next_action: string;
+}
+
+function emptyAffectedEvidence(): Pick<
+  SyncPlan,
+  'affected' | 'affectedDigest'
+> {
+  const empty = createSyncPlan({
+    mode: 'incremental',
+    sourceId: DEFAULT_SOURCE_ID,
+    repoPath: '',
+    fromCommit: null,
+    targetCommit: '',
+    strategy: 'markdown',
+    operations: [],
+  });
+  return {
+    affected: empty.affected,
+    affectedDigest: empty.affectedDigest,
+  };
+}
+
+export function buildGBrainSyncEnvelope(
+  result: SyncResult,
+  opts: Pick<
+    SyncOpts,
+    'sourceId' | 'strategy' | 'noEmbed' | 'noExtract' | 'costGateReceipt'
+  >,
+): GBrainSyncEnvelope {
+  const strategy = result.strategy ?? opts.strategy ?? 'markdown';
+  const completed =
+    result.status === 'synced' ||
+    result.status === 'first_sync' ||
+    result.status === 'up_to_date';
+  const empty = emptyAffectedEvidence();
+  const multimodalEnabled =
+    process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true';
+  const corpus = result.planCorpus;
+  const dryRun = result.status === 'dry_run';
+  if (!corpus || (!dryRun && !completed)) {
+    throw new SyncPreconditionError(
+      'plan_failed',
+      'A schema-1 sync receipt requires complete immutable corpus evidence.',
+      result.status,
+      'dry_run, up_to_date, synced, or first_sync with a bound SyncPlan',
+    );
+  }
+  if (multimodalEnabled) {
+    throw new SyncPreconditionError(
+      'plan_failed',
+      'Schema-1 safe-sync receipts require multimodal indexing to be disabled.',
+      'GBRAIN_EMBEDDING_MULTIMODAL=true',
+      'GBRAIN_EMBEDDING_MULTIMODAL=false',
+    );
+  }
+  return {
+    schema_version: 1,
+    result_kind: 'gbrain_sync',
+    status: result.status,
+    ...(result.previewKind ? { preview_kind: result.previewKind } : {}),
+    source: { id: result.sourceId ?? opts.sourceId ?? DEFAULT_SOURCE_ID },
+    repository: {
+      from_commit: result.fromCommit,
+      target_commit: result.toCommit,
+      bookmark_after: completed ? result.toCommit : result.fromCommit,
+      last_successful_strategy:
+        result.lastSuccessfulStrategy ??
+        (completed ? strategy : null),
+    },
+    strategy,
+    strategy_changed: result.strategyChanged === true,
+    checkpoint_reset: result.checkpointReset === true,
+    operations: {
+      added: result.added,
+      modified: result.modified,
+      deleted: result.deleted,
+      renamed: result.renamed,
+      preserved: result.preserved ?? 0,
+    },
+    affected: result.affected ?? empty.affected,
+    affected_digest: result.affectedDigest ?? empty.affectedDigest,
+    corpus: {
+      markdown_planned_or_applied:
+        corpus.markdownOperations,
+      code_pages_before: corpus.codePagesBefore,
+      code_pages_after: corpus.codePagesAfter,
+      code_deletions_applied: dryRun
+        ? 0
+        : corpus.codeDeletions,
+      image_operations_applied: dryRun
+        ? 0
+        : corpus.imageOperations,
+      image_pages_after: corpus.imagePagesAfter,
+      multimodal_enabled: false,
+      embedding_status: 'deferred',
+      extraction_status: 'deferred',
+      search_ready: false,
+    },
+    ...(opts.costGateReceipt
+      ? { cost_gate: opts.costGateReceipt }
+      : {}),
+    ...(result.reason ? { reason: result.reason } : {}),
+  };
+}
+
+export function buildGBrainSyncErrorEnvelope(
+  error: unknown,
+  stateChanged?: GBrainSyncErrorEnvelope['state_changed'],
+): GBrainSyncErrorEnvelope {
+  const releaseFailure =
+    error instanceof LockReleaseFailedError
+      ? error
+      : getLockReleaseFailure(error);
+  const effectiveState =
+    stateChanged ?? (releaseFailure ? 'lock_only' : 'none');
+  if (releaseFailure) {
+    const originalProblem =
+      releaseFailure === error
+        ? ''
+        : ` Original work failure: ${
+            error instanceof Error ? error.message : String(error)
+          }`;
+    return {
+      schema_version: 1,
+      result_kind: 'gbrain_sync_error',
+      status: 'error',
+      reason_code: releaseFailure.reasonCode,
+      state_changed: effectiveState,
+      problem: releaseFailure.message + originalProblem,
+      observed: releaseFailure.lockId,
+      required: 'the transient sync lock to be released',
+      next_action: 'Inspect and safely clear the stale source lock before retrying.',
+    };
+  }
+  if (error instanceof SyncLockBusyError) {
+    return {
+      schema_version: 1,
+      result_kind: 'gbrain_sync_error',
+      status: 'refused',
+      reason_code: error.reasonCode,
+      state_changed: effectiveState,
+      problem: error.message,
+      observed: error.lockKey,
+      required: 'an available per-source sync lock',
+      next_action: 'Wait for the current source operation to finish, then retry.',
+    };
+  }
+  if (error instanceof SyncPreconditionError) {
+    return {
+      schema_version: 1,
+      result_kind: 'gbrain_sync_error',
+      status: 'refused',
+      reason_code: error.reasonCode,
+      state_changed: effectiveState,
+      problem: error.message,
+      observed: error.observed,
+      required: error.required,
+      next_action: 'Refresh source, bookmark, and Git evidence, then retry.',
+    };
+  }
+  return {
+    schema_version: 1,
+    result_kind: 'gbrain_sync_error',
+    status: 'error',
+    reason_code: 'plan_failed',
+    state_changed: effectiveState,
+    problem: error instanceof Error ? error.message : String(error),
+    observed: null,
+    required: 'a complete read-only plan or successful sync',
+    next_action: 'Inspect the source and retry; use repository files and rg meanwhile.',
+  };
+}
+
+async function withConsoleLogOnStderr<T>(work: () => Promise<T>): Promise<T> {
+  const originalLog = console.log;
+  console.log = (...args: unknown[]) => {
+    console.error(...args);
+  };
+  try {
+    return await work();
+  } finally {
+    console.log = originalLog;
+  }
+}
+
+interface ReadOnlySyncPreflight {
+  repoPath: string;
+  gitContextRoot: string;
+  syncScopeRoot: string;
+  syncScopeRelPath: string;
+  anchorPath: string;
+  slugRoot: string | undefined;
+  headCommit: string;
+  bookmark: string | null;
+  detachedHead: boolean;
+}
+
+interface TargetTreeBlob {
+  mode: '100644' | '100755';
+  oid: string;
+  path: string;
+}
+
+interface TargetTreeMaterialization {
+  root: string;
+  deregisterCleanup: () => void;
+}
+
+function listTargetTreeBlobs(
+  preflight: ReadOnlySyncPreflight,
+  targetCommit: string,
+  strategy: SyncPlanStrategy,
+): TargetTreeBlob[] {
+  const raw = execFileSync(
+    'git',
+    ['ls-tree', '-rz', '--full-tree', targetCommit],
+    {
+      cwd: preflight.gitContextRoot,
+      encoding: 'utf8',
+      maxBuffer: 256 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+  const scope = preflight.syncScopeRelPath.replace(/\\/g, '/');
+  const inScope = (path: string): boolean =>
+    scope === '' || path.startsWith(scope + '/');
+  const result: TargetTreeBlob[] = [];
+  for (const record of raw.split('\0')) {
+    if (record === '') continue;
+    const tab = record.indexOf('\t');
+    if (tab < 0) {
+      throw new SyncPreconditionError(
+        'plan_failed',
+        'Git returned a malformed target-tree entry.',
+        record.slice(0, 120),
+        'mode type object<TAB>path',
+      );
+    }
+    const [mode, type, oid] = record.slice(0, tab).split(' ');
+    const path = record.slice(tab + 1);
+    if (
+      path.includes('\\') ||
+      isAbsolute(path) ||
+      path.split('/').includes('..') ||
+      /[\u0000-\u001f\u007f\ufffd]/u.test(path)
+    ) {
+      throw new SyncPreconditionError(
+        'plan_failed',
+        'The exact target tree contains a path that cannot be materialized safely.',
+        path,
+        'a canonical UTF-8 repository-relative path',
+      );
+    }
+    if (!inScope(path) || !isSyncable(path, { strategy })) continue;
+    if (
+      type !== 'blob' ||
+      (mode !== '100644' && mode !== '100755') ||
+      !/^[0-9a-f]{40,64}$/i.test(oid ?? '')
+    ) {
+      throw new SyncPreconditionError(
+        'plan_failed',
+        'A syncable target path is not a regular Git blob.',
+        `${mode ?? '<missing>'} ${type ?? '<missing>'} ${path}`,
+        'a regular 100644 or 100755 blob',
+      );
+    }
+    result.push({
+      mode,
+      oid,
+      path,
+    });
+  }
+  return result;
+}
+
+async function materializeTargetTree(
+  preflight: ReadOnlySyncPreflight,
+  targetCommit: string,
+  strategy: SyncPlanStrategy,
+): Promise<TargetTreeMaterialization> {
+  const root = mkdtempSync(join(tmpdir(), 'gbrain-target-tree-'));
+  chmodSync(root, 0o700);
+  let child: ReturnType<typeof spawn> | undefined;
+  let childCompletion: Promise<void> | undefined;
+  let cleanupRequested = false;
+  const removeTree = (): void => {
+    rmSync(root, { recursive: true, force: true });
+  };
+  const cleanupMaterialization = async (): Promise<void> => {
+    cleanupRequested = true;
+    // The process-level cleanup registry has a bounded deadline. Remove the
+    // private snapshot synchronously before waiting for the git child so a
+    // stuck child cannot leave source bytes behind on signal-driven exit.
+    removeTree();
+    if (
+      child &&
+      child.exitCode === null &&
+      child.signalCode === null
+    ) {
+      child.kill('SIGTERM');
+    }
+    try {
+      if (childCompletion) {
+        await childCompletion.catch(() => {});
+      }
+    } finally {
+      // A streaming callback that was already on the stack when cleanup began
+      // cannot recreate the directory, but repeat the removal defensively.
+      removeTree();
+    }
+  };
+  // Register immediately after mkdtemp, before streaming any blobs. Signal
+  // cleanup can otherwise bypass both this function's catch and the caller's
+  // finally, leaking a potentially large private source snapshot in tmp.
+  const deregisterCleanup = registerCleanup(
+    `sync-target-tree:${preflight.headCommit.slice(0, 12)}`,
+    cleanupMaterialization,
+  );
+  try {
+    const scopeRoot = resolve(root, preflight.syncScopeRelPath);
+    if (!isWithinRoot(scopeRoot, root)) {
+      throw new SyncPreconditionError(
+        'plan_failed',
+        'The sync scope cannot be represented inside the exact target tree.',
+        preflight.syncScopeRelPath,
+        'a canonical repository-relative scope',
+      );
+    }
+    mkdirSync(scopeRoot, { recursive: true, mode: 0o700 });
+    const entries = listTargetTreeBlobs(
+      preflight,
+      targetCommit,
+      strategy,
+    );
+    if (entries.length === 0) return { root, deregisterCleanup };
+
+    const spawnedChild = spawn('git', ['cat-file', '--batch'], {
+      cwd: preflight.gitContextRoot,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    child = spawnedChild;
+    let stderr = '';
+    spawnedChild.stderr.setEncoding('utf8');
+    spawnedChild.stderr.on('data', (chunk: string) => {
+      if (stderr.length < 8192) stderr += chunk;
+    });
+    const spawnedChildCompletion = new Promise<void>((resolveCompletion, rejectCompletion) => {
+      spawnedChild.once('error', rejectCompletion);
+      spawnedChild.once('close', (code, signal) => {
+        if (code === 0) {
+          resolveCompletion();
+        } else {
+          rejectCompletion(
+            new Error(
+              `git cat-file exited with ${code ?? signal ?? 'unknown'}: ` +
+                stderr.trim(),
+            ),
+          );
+        }
+      });
+    });
+    childCompletion = spawnedChildCompletion;
+    spawnedChild.stdin.end(entries.map((entry) => entry.oid).join('\n') + '\n');
+
+    let buffer = Buffer.alloc(0);
+    let entryIndex = 0;
+    let expectedSize: number | null = null;
+    for await (const chunk of spawnedChild.stdout) {
+      if (cleanupRequested) {
+        throw new Error('Exact target materialization was interrupted.');
+      }
+      buffer = Buffer.concat([buffer, Buffer.from(chunk)]);
+      while (true) {
+        if (cleanupRequested) {
+          throw new Error('Exact target materialization was interrupted.');
+        }
+        if (expectedSize === null) {
+          const newline = buffer.indexOf(0x0a);
+          if (newline < 0) break;
+          const header = buffer.subarray(0, newline).toString('ascii');
+          buffer = buffer.subarray(newline + 1);
+          const match = /^([0-9a-f]{40,64}) blob ([0-9]+)$/i.exec(header);
+          const entry = entries[entryIndex];
+          if (!match || !entry || match[1] !== entry.oid) {
+            throw new Error(
+              `Unexpected git cat-file response at target entry ${entryIndex}: ${header}`,
+            );
+          }
+          expectedSize = Number(match[2]);
+          if (!Number.isSafeInteger(expectedSize) || expectedSize < 0) {
+            throw new Error(`Invalid target blob size: ${match[2]}`);
+          }
+        }
+        if (buffer.length < expectedSize + 1) break;
+        if (buffer[expectedSize] !== 0x0a) {
+          throw new Error('Git target blob was not newline-delimited.');
+        }
+        const entry = entries[entryIndex];
+        const destination = resolve(root, entry.path);
+        if (!isWithinRoot(destination, root)) {
+          throw new Error(`Target path escaped materialization root: ${entry.path}`);
+        }
+        mkdirSync(resolve(destination, '..'), {
+          recursive: true,
+          mode: 0o700,
+        });
+        writeFileSync(destination, buffer.subarray(0, expectedSize), {
+          mode: 0o600,
+        });
+        buffer = buffer.subarray(expectedSize + 1);
+        expectedSize = null;
+        entryIndex++;
+      }
+    }
+    await spawnedChildCompletion;
+    if (
+      entryIndex !== entries.length ||
+      expectedSize !== null ||
+      buffer.length !== 0
+    ) {
+      throw new Error(
+        `Incomplete target materialization: ${entryIndex}/${entries.length} blobs`,
+      );
+    }
+    return { root, deregisterCleanup };
+  } catch (error) {
+    deregisterCleanup();
+    await cleanupMaterialization();
+    if (error instanceof SyncPreconditionError) throw error;
+    throw new SyncPreconditionError(
+      'plan_failed',
+      `Could not materialize exact target commit: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      targetCommit,
+      'a readable immutable Git target tree',
+    );
+  }
+}
+
+function canonicalPathForComparison(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
+async function assertRegisteredSourcePath(
+  engine: BrainEngine,
+  opts: SyncOpts,
+  repoPath: string,
+): Promise<void> {
+  if (!opts.sourceId || !opts.repoPath) return;
+  const paired =
+    opts.expectedTarget !== undefined ||
+    opts.expectedBookmark !== undefined ||
+    opts.requireClean === true;
+  // Legacy default-source calls can still use the pre-v0.17 config anchor.
+  // Once a caller asks for paired exact-state evidence, however, even the
+  // default source must prove that --repo is its registered local_path.
+  if (opts.sourceId === DEFAULT_SOURCE_ID && !paired) return;
+  const rows = await engine.executeRaw<{ local_path: string | null }>(
+    `SELECT local_path FROM sources WHERE id = $1`,
+    [opts.sourceId],
+  );
+  if (rows.length !== 1 || !rows[0]?.local_path) {
+    throw new SyncPreconditionError(
+      'source_changed',
+      `Source "${opts.sourceId}" no longer has one registered local path.`,
+      rows[0]?.local_path ?? null,
+      repoPath,
+    );
+  }
+  const observed = canonicalPathForComparison(rows[0].local_path);
+  const required = canonicalPathForComparison(repoPath);
+  if (observed !== required) {
+    throw new SyncPreconditionError(
+      'source_changed',
+      `Source "${opts.sourceId}" changed paths before sync could plan or apply.`,
+      observed,
+      required,
+    );
+  }
+}
+
+async function readOnlySyncPreflight(
+  engine: BrainEngine,
+  opts: SyncOpts,
+  resolvedRepoPath?: string,
+): Promise<ReadOnlySyncPreflight> {
+  const repoPath =
+    resolvedRepoPath ??
+    opts.repoPath ??
+    (await readSyncAnchor(engine, opts.sourceId, 'repo_path'));
+  if (!repoPath) {
+    throw new SyncPreconditionError(
+      'managed_clone_missing',
+      'The source has no readable repository path; planning cannot re-clone or initialize it.',
+      null,
+      opts.repoPath ?? null,
+    );
+  }
+
+  await assertRegisteredSourcePath(engine, opts, repoPath);
+  if (!existsSync(repoPath)) {
+    throw new SyncPreconditionError(
+      'managed_clone_missing',
+      `Repository path does not exist: ${repoPath}.`,
+      null,
+      canonicalPathForComparison(repoPath),
+    );
+  }
+
+  let gitContextRoot: string;
+  try {
+    gitContextRoot = realpathSync(discoverGitRoot(repoPath));
+  } catch (error) {
+    throw new SyncPreconditionError(
+      'plan_failed',
+      error instanceof Error ? error.message : String(error),
+      null,
+      'an existing Git repository',
+    );
+  }
+
+  const rawScopeRoot = opts.srcSubpath ? join(repoPath, opts.srcSubpath) : repoPath;
+  if (!existsSync(rawScopeRoot)) {
+    throw new SyncPreconditionError(
+      'plan_failed',
+      `Sync scope does not exist: ${rawScopeRoot}`,
+      null,
+      'an existing path inside the repository',
+    );
+  }
+  const syncScopeRoot = realpathSync(rawScopeRoot);
+  if (!isWithinRoot(syncScopeRoot, gitContextRoot)) {
+    throw new SyncPreconditionError(
+      'plan_failed',
+      `Sync scope ${syncScopeRoot} resolves outside Git repository ${gitContextRoot}.`,
+      syncScopeRoot,
+      gitContextRoot,
+    );
+  }
+  const syncScopeRelPath =
+    syncScopeRoot === gitContextRoot ? '' : relative(gitContextRoot, syncScopeRoot);
+  const headCommit = git(gitContextRoot, ['rev-parse', 'HEAD']);
+  const bookmark = await readSyncAnchor(engine, opts.sourceId, 'last_commit');
+
+  if (opts.expectedTarget !== undefined && headCommit !== opts.expectedTarget) {
+    throw new SyncPreconditionError(
+      'target_changed',
+      'Git HEAD changed after the caller captured the expected target.',
+      headCommit,
+      opts.expectedTarget,
+    );
+  }
+  if (opts.expectedBookmark !== undefined && bookmark !== opts.expectedBookmark) {
+    throw new SyncPreconditionError(
+      'bookmark_changed',
+      'The source bookmark changed after the caller captured it.',
+      bookmark,
+      opts.expectedBookmark,
+    );
+  }
+  if (opts.requireClean) {
+    const porcelain = git(gitContextRoot, [
+      'status',
+      '--porcelain=v1',
+      '--untracked-files=all',
+    ]);
+    if (porcelain.length > 0) {
+      throw new SyncPreconditionError(
+        'working_tree_dirty',
+        'The paired preview/apply requires a clean working tree.',
+        porcelain.split('\n')[0] ?? 'dirty',
+        'clean',
+      );
+    }
+  }
+
+  return {
+    repoPath,
+    gitContextRoot,
+    syncScopeRoot,
+    syncScopeRelPath,
+    anchorPath: opts.srcSubpath ? rawScopeRoot : repoPath,
+    slugRoot: syncScopeRoot === gitContextRoot ? undefined : gitContextRoot,
+    headCommit,
+    bookmark,
+    detachedHead: isDetachedHead(gitContextRoot),
+  };
+}
+
+function pairedFinalRepositoryFailure(
+  opts: SyncOpts,
+  gitContextRoot: string,
+  targetCommit: string,
+): { path: '<head>'; error: string } | null {
+  if (!opts.targetTreeRoot) return null;
+  try {
+    const currentHead = git(gitContextRoot, ['rev-parse', 'HEAD']);
+    if (currentHead !== targetCommit) {
+      return {
+        path: '<head>',
+        error:
+          `git HEAD changed during exact-target sync: planned ` +
+          `${targetCommit.slice(0, 8)}, observed ${currentHead.slice(0, 8)}`,
+      };
+    }
+    if (opts.requireClean) {
+      const porcelain = git(gitContextRoot, [
+        'status',
+        '--porcelain=v1',
+        '--untracked-files=all',
+      ]);
+      if (porcelain.length > 0) {
+        return {
+          path: '<head>',
+          error:
+            `working tree changed during exact-target sync: ` +
+            `${porcelain.split('\n')[0] ?? 'dirty'}`,
+        };
+      }
+    }
+    return null;
+  } catch (error) {
+    return {
+      path: '<head>',
+      error:
+        `git exact-target verification failed: ` +
+        (error instanceof Error ? error.message : String(error)),
+    };
+  }
+}
+
+async function resolvePlanSlugs(
+  engine: BrainEngine,
+  paths: string[],
+  sourceId: string | undefined,
+): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  if (sourceId) {
+    for (let i = 0; i < paths.length; i += DELETE_BATCH_SIZE) {
+      const batch = paths.slice(i, i + DELETE_BATCH_SIZE);
+      const resolved = await engine.resolveSlugsByPaths(batch, { sourceId });
+      for (const path of batch) {
+        result.set(path, resolved.get(path) ?? resolveSlugForPath(path));
+      }
+    }
+    return result;
+  }
+  for (const path of paths) {
+    const rows = await engine.executeRaw<{ slug: string }>(
+      `SELECT slug FROM pages WHERE source_path = $1 LIMIT 1`,
+      [path],
+    );
+    result.set(path, rows[0]?.slug ?? resolveSlugForPath(path));
+  }
+  return result;
+}
+
+interface PlannedExistingPage {
+  slug: string;
+  source_path: string | null;
+  content_hash: string | null;
+  type: string;
+  frontmatter?: unknown;
+}
+
+function existingPageSourcePath(
+  row: PlannedExistingPage,
+): string | null {
+  if (row.source_path !== null) {
+    return row.source_path.replace(/\\/g, '/');
+  }
+  if (row.type !== 'code') return null;
+  let frontmatter = row.frontmatter;
+  if (typeof frontmatter === 'string') {
+    try {
+      frontmatter = JSON.parse(frontmatter);
+    } catch {
+      return null;
+    }
+  }
+  const file =
+    typeof frontmatter === 'object' &&
+    frontmatter !== null &&
+    typeof (frontmatter as { file?: unknown }).file === 'string'
+      ? (frontmatter as { file: string }).file
+      : null;
+  return file?.replace(/\\/g, '/') ?? null;
+}
+
+function existingPageOwnsSourcePath(
+  row: PlannedExistingPage | undefined,
+  sourcePath: string,
+): row is PlannedExistingPage {
+  if (!row) return false;
+  return (
+    existingPageSourcePath(row) === sourcePath.replace(/\\/g, '/')
+  );
+}
+
+type SyncActivePack = {
+  page_types: ReadonlyArray<{
+    name: string;
+    path_prefixes: ReadonlyArray<string>;
+  }>;
+};
+
+async function loadSyncActivePackReadOnly(
+  opts: SyncOpts,
+): Promise<SyncActivePack | undefined> {
+  if (opts.noSchemaPack) return undefined;
+  try {
+    const { loadActivePack } = await import(
+      '../core/schema-pack/load-active.ts'
+    );
+    const resolved = await loadActivePack({
+      cfg: loadConfig(),
+      remote: false,
+      sourceId: opts.sourceId,
+    });
+    return { page_types: resolved.manifest.page_types };
+  } catch {
+    return undefined;
+  }
+}
+
+function plannedFileIdentity(
+  absolutePath: string,
+  sourcePath: string,
+  existing: PlannedExistingPage | undefined,
+  activePack: SyncActivePack | undefined,
+): { slug: string; contentHash: string | null } {
+  if (isCodeFilePath(sourcePath)) {
+    const content = readFileSync(absolutePath, 'utf8');
+    return {
+      slug: resolveSlugForPath(sourcePath),
+      contentHash: computeCodeImportHash(sourcePath, content),
+    };
+  }
+
+  if (/\.(?:md|mdx)$/i.test(sourcePath)) {
+    let content = readFileSync(absolutePath, 'utf8');
+    const inferred = applyInference(sourcePath, content);
+    if (!inferred.inferred.skipped) content = inferred.content;
+
+    const preliminary = parseMarkdown(content, sourcePath, { activePack });
+    const expectedSlug = resolveSlugForPath(sourcePath);
+    let slug = expectedSlug;
+    if (
+      expectedSlug === '' &&
+      existing !== undefined &&
+      preliminary.slug !== existing.slug
+    ) {
+      throw new SyncPreconditionError(
+        'plan_failed',
+        'A fallback frontmatter slug cannot change in place for a path whose filename has no stable slug.',
+        preliminary.slug || '<missing>',
+        existing.slug,
+      );
+    }
+    if (expectedSlug === '' && preliminary.slug) {
+      slug = preliminary.slug;
+    } else if (preliminary.slug !== expectedSlug) {
+      // importFromFile will reject this path/slug mismatch. Keep it visible
+      // as a planned mutation without claiming an unverifiable content hash.
+      return {
+        slug: existing?.slug ?? expectedSlug,
+        contentHash: null,
+      };
+    }
+
+    const parsed = parseMarkdown(content, slug + '.md', { activePack });
+    if (parsed.typeExplicit !== true && existing?.type) {
+      parsed.type = existing.type as PageType;
+    }
+    return {
+      slug,
+      contentHash: computeParsedMarkdownContentHash(parsed),
+    };
+  }
+
+  return {
+    slug: sourcePath.replace(/[\\/]/g, '/').toLowerCase(),
+    contentHash: createHash('sha256')
+      .update(readFileSync(absolutePath))
+      .digest('hex'),
+  };
+}
+
+async function createEngineBoundSyncPlan(
+  engine: BrainEngine,
+  input: Parameters<typeof createSyncPlan>[0],
+): Promise<SyncPlan> {
+  const rows = await engine.executeRaw<{
+    type: string;
+    source_path: string | null;
+    source_kind: string | null;
+  }>(
+    `SELECT type, source_path, source_kind
+       FROM pages
+      WHERE source_id = $1 AND deleted_at IS NULL`,
+    [input.sourceId],
+  );
+  const mutations = input.operations.filter(
+    (operation) => operation.kind !== 'preserve',
+  );
+  const markdownOperations = mutations.filter((operation) =>
+    /\.(?:md|mdx)$/i.test(operation.path),
+  ).length;
+  const codeOperations = mutations.filter((operation) =>
+    isCodeFilePath(operation.path),
+  );
+  const imageOperations = mutations.filter(
+    (operation) =>
+      isImageFilePath(operation.path) ||
+      (
+        operation.kind === 'rename' &&
+        operation.fromPath !== undefined &&
+        isImageFilePath(operation.fromPath)
+      ),
+  );
+  const codePagesBefore = rows.filter(
+    (row) =>
+      row.type === 'code' ||
+      (row.source_path !== null && isCodeFilePath(row.source_path)),
+  ).length;
+  const imagePagesBefore = rows.filter(
+    (row) =>
+      row.source_kind === 'image' ||
+      (row.source_path !== null && isImageFilePath(row.source_path)),
+  ).length;
+  const codeAdds = codeOperations.filter(
+    (operation) => operation.kind === 'add',
+  ).length + mutations.filter(
+    (operation) =>
+      operation.kind === 'rename' &&
+      operation.fromPath !== undefined &&
+      !isCodeFilePath(operation.fromPath) &&
+      isCodeFilePath(operation.path),
+  ).length;
+  const codeDeletions = mutations.filter(
+    (operation) =>
+      (
+        operation.kind === 'delete' &&
+        isCodeFilePath(operation.path)
+      ) ||
+      (
+        operation.kind === 'rename' &&
+        operation.fromPath !== undefined &&
+        isCodeFilePath(operation.fromPath) &&
+        !isCodeFilePath(operation.path)
+      ),
+  ).length;
+  const imageAdds = mutations.filter(
+    (operation) =>
+      (
+        operation.kind === 'add' &&
+        isImageFilePath(operation.path)
+      ) ||
+      (
+        operation.kind === 'rename' &&
+        operation.fromPath !== undefined &&
+        !isImageFilePath(operation.fromPath) &&
+        isImageFilePath(operation.path)
+      ),
+  ).length;
+  const imageDeletions = mutations.filter(
+    (operation) => operation.kind === 'delete',
+  ).filter(
+    (operation) => isImageFilePath(operation.path),
+  ).length + mutations.filter(
+    (operation) =>
+      operation.kind === 'rename' &&
+      operation.fromPath !== undefined &&
+      isImageFilePath(operation.fromPath) &&
+      !isImageFilePath(operation.path),
+  ).length;
+
+  return createSyncPlan({
+    ...input,
+    corpus: {
+      markdownOperations,
+      codePagesBefore,
+      codePagesAfter: Math.max(
+        0,
+        codePagesBefore + codeAdds - codeDeletions,
+      ),
+      codeDeletions,
+      imagePagesBefore,
+      imagePagesAfter: Math.max(
+        0,
+        imagePagesBefore + imageAdds - imageDeletions,
+      ),
+      imageOperations: imageOperations.length,
+    },
+  });
+}
+
+async function buildFullTreePlanOperations(
+  engine: BrainEngine,
+  opts: SyncOpts,
+  preflight: ReadOnlySyncPreflight,
+  allFiles: string[],
+  selectedFiles: string[],
+  strategy: SyncPlanStrategy,
+): Promise<SyncPlanOperation[]> {
+  const sourceId = opts.sourceId ?? DEFAULT_SOURCE_ID;
+  const activePack = await loadSyncActivePackReadOnly(opts);
+  const rows = await engine.executeRaw<PlannedExistingPage>(
+    `SELECT slug, source_path, content_hash, type, frontmatter
+       FROM pages
+      WHERE source_id = $1 AND deleted_at IS NULL`,
+    [sourceId],
+  );
+  const normalizePath = (path: string): string => path.replace(/\\/g, '/');
+  const ownedRows = rows.map((row) => ({
+    ...row,
+    source_path: existingPageSourcePath(row),
+  }));
+  const toSourcePath = (absolutePath: string): string =>
+    normalizePath(
+      relative(preflight.slugRoot ?? preflight.syncScopeRoot, absolutePath),
+    );
+  const byPath = new Map(
+    ownedRows
+      .filter(
+        (row): row is PlannedExistingPage & { source_path: string } =>
+          row.source_path !== null,
+      )
+      .map((row) => [normalizePath(row.source_path), row]),
+  );
+  const bySlug = new Map(ownedRows.map((row) => [row.slug, row]));
+  const existingOwnedByPath = (
+    path: string,
+  ): PlannedExistingPage | undefined => {
+    const normalized = normalizePath(path);
+    const exact = byPath.get(normalized);
+    if (exact) return exact;
+    const candidate = bySlug.get(resolveSlugForPath(normalized));
+    return existingPageOwnsSourcePath(candidate, normalized)
+      ? candidate
+      : undefined;
+  };
+  const allCurrent = new Set(allFiles.map(toSourcePath));
+  const selectedCurrent = new Set(selectedFiles.map(toSourcePath));
+  const scopePrefix =
+    preflight.syncScopeRelPath === ''
+      ? ''
+      : normalizePath(preflight.syncScopeRelPath) + '/';
+  const inScope = (path: string): boolean =>
+    scopePrefix === '' || normalizePath(path).startsWith(scopePrefix);
+  const scopeRelativePath = (path: string): string => {
+    const normalized = normalizePath(path);
+    return scopePrefix !== '' && normalized.startsWith(scopePrefix)
+      ? normalized.slice(scopePrefix.length)
+      : normalized;
+  };
+  const isCommandExcluded = (path: string): boolean =>
+    opts.exclude !== undefined &&
+    opts.exclude.length > 0 &&
+    matchesAnyGlob(scopeRelativePath(path), opts.exclude);
+  const excludedRenameSources = new Map<string, string>();
+  const renameByDestination = new Map<
+    string,
+    { from: string; to: string }
+  >();
+  if (preflight.bookmark !== null) {
+    const delta = computeSyncDelta(
+      preflight.gitContextRoot,
+      preflight.bookmark,
+      preflight.headCommit,
+    );
+    if (delta.status === 'ok') {
+      for (const rename of delta.manifest.renamed) {
+        const from = normalizePath(rename.from);
+        const to = normalizePath(rename.to);
+        renameByDestination.set(to, { from, to });
+        if (allCurrent.has(to) && !selectedCurrent.has(to)) {
+          excludedRenameSources.set(from, 'renamed-into-command-exclusion');
+        } else if (
+          inScope(to) &&
+          excludedOnlyByStrategy(to, strategy)
+        ) {
+          excludedRenameSources.set(
+            from,
+            'renamed-outside-selected-strategy',
+          );
+        } else if (
+          inScope(to) &&
+          ['metafile', 'pruned-dir'].includes(
+            unsyncableReason(to, { strategy }) ?? '',
+          )
+        ) {
+          excludedRenameSources.set(
+            from,
+            'renamed-into-protected-unsyncable-path',
+          );
+        }
+      }
+    }
+  }
+  const operations: SyncPlanOperation[] = [];
+  const plannedRenameSources = new Set<string>();
+
+  for (const absolutePath of selectedFiles) {
+    const sourcePath = toSourcePath(absolutePath);
+    const derivedSlug = resolveSlugForPath(sourcePath);
+    const rename = renameByDestination.get(sourcePath);
+    const renamedExisting = rename
+      ? existingOwnedByPath(rename.from)
+      : undefined;
+    const existing =
+      byPath.get(sourcePath) ??
+      renamedExisting ??
+      bySlug.get(derivedSlug);
+    const identity = plannedFileIdentity(
+      absolutePath,
+      sourcePath,
+      existing,
+      activePack,
+    );
+    if (rename && renamedExisting) {
+      operations.push({
+        kind: 'rename',
+        path: sourcePath,
+        fromPath: rename.from,
+        slug: identity.slug,
+      });
+      plannedRenameSources.add(rename.from);
+    } else if (!existing) {
+      operations.push({
+        kind: 'add',
+        path: sourcePath,
+        slug: identity.slug,
+      });
+    } else if (
+      identity.contentHash === null ||
+      existing.content_hash !== identity.contentHash
+    ) {
+      operations.push({
+        kind: 'modify',
+        path: sourcePath,
+        slug: existing.slug,
+      });
+    }
+  }
+
+  const scopedFileRows = ownedRows.filter(
+    (row): row is PlannedExistingPage & { source_path: string } =>
+      row.source_path !== null && inScope(row.source_path),
+  );
+  const reconcile = planReconcileDeletes(
+    scopedFileRows,
+    allCurrent,
+    (path) => isSyncable(path, { strategy }),
+  );
+  const stale = new Set(reconcile.staleSlugs);
+  const massDeleteBlocked =
+    reconcile.massDelete && !massReconcileAllowed();
+  const everCommitted = listEverCommittedPaths(
+    preflight.gitContextRoot,
+    opts.targetTreeRoot ? preflight.headCommit : undefined,
+  );
+
+  for (const row of scopedFileRows) {
+    const sourcePath = normalizePath(row.source_path);
+    if (selectedCurrent.has(sourcePath)) continue;
+    if (plannedRenameSources.has(sourcePath)) continue;
+
+    const excludedRenameReason = excludedRenameSources.get(sourcePath);
+    if (excludedRenameReason !== undefined) {
+      operations.push({
+        kind: 'preserve',
+        path: sourcePath,
+        slug: row.slug,
+        reason: excludedRenameReason,
+      });
+      continue;
+    }
+
+    if (allCurrent.has(sourcePath)) {
+      operations.push({
+        kind: 'preserve',
+        path: sourcePath,
+        slug: row.slug,
+        reason: 'excluded-by-command',
+      });
+      continue;
+    }
+
+    if (isCommandExcluded(sourcePath)) {
+      operations.push({
+        kind: 'preserve',
+        path: sourcePath,
+        slug: row.slug,
+        reason: 'excluded-by-command',
+      });
+      continue;
+    }
+
+    if (!isSyncable(sourcePath, { strategy })) {
+      operations.push({
+        kind: 'preserve',
+        path: sourcePath,
+        slug: row.slug,
+        reason: excludedOnlyByStrategy(sourcePath, strategy)
+          ? 'excluded-by-selected-strategy'
+          : (unsyncableReason(sourcePath, { strategy }) ?? 'not-syncable'),
+      });
+      continue;
+    }
+
+    if (!stale.has(row.slug)) continue;
+    const shouldPreserve =
+      opts.sourceId === undefined ||
+      massDeleteBlocked ||
+      (everCommitted !== null && !everCommitted.has(sourcePath));
+    operations.push({
+      kind: shouldPreserve ? 'preserve' : 'delete',
+      path: sourcePath,
+      slug: row.slug,
+      ...(shouldPreserve
+        ? {
+            reason:
+              opts.sourceId === undefined
+                ? 'legacy-unscoped-reconcile-disabled'
+                : massDeleteBlocked
+                  ? 'mass-reconcile-guard'
+                  : 'db-only-never-committed',
+          }
+        : {}),
+    });
+  }
+
+  return operations;
+}
+
+function excludedOnlyByStrategy(
+  path: string,
+  strategy: SyncPlanStrategy,
+): boolean {
+  return (
+    strategy !== 'auto' &&
+    !isSyncable(path, { strategy }) &&
+    isSyncable(path, { strategy: 'auto' })
+  );
+}
+
+async function buildReadOnlySyncPlan(
+  engine: BrainEngine,
+  opts: SyncOpts,
+  resolvedRepoPath: string,
+): Promise<SyncPlan> {
+  const livePreflight = await readOnlySyncPreflight(
+    engine,
+    opts,
+    resolvedRepoPath,
+  );
+  const targetTreeRoot = opts.targetTreeRoot
+    ? realpathSync(opts.targetTreeRoot)
+    : undefined;
+  const targetScopeRoot = targetTreeRoot
+    ? realpathSync(resolve(targetTreeRoot, livePreflight.syncScopeRelPath))
+    : undefined;
+  if (
+    targetTreeRoot &&
+    targetScopeRoot &&
+    !isWithinRoot(targetScopeRoot, targetTreeRoot)
+  ) {
+    throw new SyncPreconditionError(
+      'plan_failed',
+      'The immutable target scope escaped its private materialization root.',
+      targetScopeRoot,
+      targetTreeRoot,
+    );
+  }
+  const preflight: ReadOnlySyncPreflight = targetTreeRoot && targetScopeRoot
+    ? {
+        ...livePreflight,
+        syncScopeRoot: targetScopeRoot,
+        slugRoot:
+          livePreflight.syncScopeRelPath === '' ? undefined : targetTreeRoot,
+      }
+    : livePreflight;
+  const strategy: SyncPlanStrategy = opts.strategy ?? 'markdown';
+  const sourceId = opts.sourceId ?? DEFAULT_SOURCE_ID;
+  const lastSuccessfulStrategy = await readLastSuccessfulStrategy(engine, opts.sourceId);
+  const strategyChanged =
+    opts.sourceId !== undefined && lastSuccessfulStrategy !== strategy;
+  const storedVersion = await readChunkerVersion(engine, opts.sourceId);
+  const versionMismatch =
+    storedVersion !== null && storedVersion !== String(CHUNKER_VERSION);
+  const versionNeverSet = storedVersion === null && opts.sourceId !== undefined;
+  const forceFull =
+    opts.full === true ||
+    preflight.bookmark === null ||
+    opts.includeGitignored === true ||
+    strategyChanged ||
+    versionMismatch ||
+    versionNeverSet;
+
+  if (forceFull) {
+    const allFiles = collectSyncableFiles(preflight.syncScopeRoot, {
+      strategy,
+      includeGitignored: opts.includeGitignored,
+    });
+    let files = allFiles;
+    if (opts.exclude && opts.exclude.length > 0) {
+      files = files.filter((absolutePath) =>
+        !matchesAnyGlob(relative(preflight.syncScopeRoot, absolutePath), opts.exclude),
+      );
+    }
+    const operations = await buildFullTreePlanOperations(
+      engine,
+      opts,
+      preflight,
+      allFiles,
+      files,
+      strategy,
+    );
+    return await createEngineBoundSyncPlan(engine, {
+      mode: preflight.bookmark === null ? 'first' : 'full',
+      sourceId,
+      repoPath: preflight.anchorPath,
+      fromCommit: preflight.bookmark,
+      targetCommit: preflight.headCommit,
+      strategy,
+      lastSuccessfulStrategy,
+      strategyChanged,
+      operations,
+    });
+  }
+
+  const lastCommit = preflight.bookmark!;
+  const checkpoint = syncCheckpointKeys(opts.sourceId, lastCommit);
+  let targetCommit = preflight.headCommit;
+  let completedPaths: string[] = [];
+  let checkpointReset = false;
+  const storedTarget = (await loadOpCheckpoint(engine, checkpoint.target))[0] ?? null;
+  const storedProvenance =
+    (await loadOpCheckpoint(engine, checkpoint.provenance))[0] ?? null;
+  if (storedTarget) {
+    if (
+      opts.expectedTarget !== undefined &&
+      (
+        storedTarget !== preflight.headCommit ||
+        storedProvenance !== SYNC_TARGET_PROVENANCE_EXACT
+      )
+    ) {
+      // A paired exact-target caller can reuse only a checkpoint minted by an
+      // earlier exact-target apply for this same captured HEAD. An ordinary
+      // sync may have imported dirty working-tree bytes even when its target
+      // SHA matches, while an older target can omit later changes entirely.
+      // Preview the full exact delta without mutating the checkpoint; the
+      // matching apply path clears it under the same lock.
+      checkpointReset = true;
+    } else {
+      try {
+        git(preflight.gitContextRoot, [
+          'merge-base',
+          '--is-ancestor',
+          storedTarget,
+          preflight.headCommit,
+        ]);
+        targetCommit = storedTarget;
+        completedPaths = await loadOpCheckpoint(engine, checkpoint.paths);
+      } catch {
+        checkpointReset = true;
+      }
+    }
+  }
+
+  const detachedManifest = preflight.detachedHead && !opts.targetTreeRoot
+    ? buildDetachedWorkingTreeManifest(preflight.gitContextRoot)
+    : null;
+  const delta = computeSyncDelta(
+    preflight.gitContextRoot,
+    lastCommit,
+    targetCommit,
+    { detachedManifest },
+  );
+  if (delta.status === 'unavailable') {
+    const allFiles = collectSyncableFiles(preflight.syncScopeRoot, {
+      strategy,
+      includeGitignored: opts.includeGitignored,
+    });
+    let files = allFiles;
+    if (opts.exclude && opts.exclude.length > 0) {
+      files = files.filter((absolutePath) =>
+        !matchesAnyGlob(relative(preflight.syncScopeRoot, absolutePath), opts.exclude),
+      );
+    }
+    return await createEngineBoundSyncPlan(engine, {
+      mode: 'full',
+      sourceId,
+      repoPath: preflight.anchorPath,
+      fromCommit: lastCommit,
+      targetCommit: preflight.headCommit,
+      strategy,
+      lastSuccessfulStrategy,
+      strategyChanged,
+      checkpointReset,
+      operations: await buildFullTreePlanOperations(
+        engine,
+        opts,
+        preflight,
+        allFiles,
+        files,
+        strategy,
+      ),
+    });
+  }
+
+  const scoped = preflight.syncScopeRelPath !== '';
+  const scopePrefix = preflight.syncScopeRelPath.replace(/\\/g, '/');
+  const inScope = (path: string): boolean =>
+    !scoped || path === scopePrefix || path.startsWith(scopePrefix + '/');
+  const scopeRelative = (path: string): string =>
+    scoped && path.startsWith(scopePrefix + '/')
+      ? path.slice(scopePrefix.length + 1)
+      : path;
+  const isExcluded = (path: string): boolean =>
+    opts.exclude !== undefined &&
+    opts.exclude.length > 0 &&
+    matchesAnyGlob(scopeRelative(path), opts.exclude);
+  const syncOpts = { strategy };
+  const renamedToUnsyncable = delta.manifest.renamed
+    .filter(
+      (rename) =>
+        inScope(rename.from) &&
+        isSyncable(rename.from, syncOpts) &&
+        !(inScope(rename.to) && isSyncable(rename.to, syncOpts)) &&
+        (
+          !inScope(rename.to) ||
+          !excludedOnlyByStrategy(rename.to, strategy) &&
+          !['metafile', 'pruned-dir'].includes(
+            unsyncableReason(rename.to, syncOpts) ?? '',
+          )
+        ),
+    )
+    .map((rename) => rename.from);
+  const filtered: SyncManifest = {
+    added: delta.manifest.added.filter(
+      (path) => inScope(path) && !isExcluded(path) && isSyncable(path, syncOpts),
+    ),
+    modified: delta.manifest.modified.filter(
+      (path) => inScope(path) && !isExcluded(path) && isSyncable(path, syncOpts),
+    ),
+    deleted: unique([
+      ...delta.manifest.deleted.filter(
+        (path) =>
+          inScope(path) &&
+          !isExcluded(path) &&
+          isSyncable(path, syncOpts),
+      ),
+      ...renamedToUnsyncable,
+    ]),
+    renamed: delta.manifest.renamed.filter(
+      (rename) =>
+        inScope(rename.to) &&
+        !isExcluded(rename.to) &&
+        isSyncable(rename.to, syncOpts),
+    ),
+  };
+
+  const completed = new Set(completedPaths);
+  const added = resumeFilter(filtered.added, completedPaths);
+  const modified = resumeFilter(filtered.modified, completedPaths);
+  const deleted = resumeFilter(filtered.deleted, completedPaths);
+  const renamed = filtered.renamed.filter((rename) => !completed.has(rename.to));
+  const preserveCandidates = delta.manifest.modified.filter(
+    (path) =>
+      inScope(path) &&
+      (
+        isExcluded(path) ||
+        !isSyncable(path, syncOpts)
+      ),
+  );
+  const cleanupCandidates: string[] = [];
+  const preserves: Array<{ path: string; reason: string }> = [];
+  for (const path of preserveCandidates) {
+    if (isExcluded(path)) {
+      preserves.push({
+        path,
+        reason: 'excluded-by-command',
+      });
+      continue;
+    }
+    const reason = unsyncableReason(path, syncOpts);
+    if (
+      excludedOnlyByStrategy(path, strategy) ||
+      reason === 'metafile' ||
+      reason === 'pruned-dir'
+    ) {
+      preserves.push({
+        path,
+        reason: reason ?? 'excluded-by-selected-strategy',
+      });
+    } else {
+      cleanupCandidates.push(path);
+    }
+  }
+  for (const rename of delta.manifest.renamed) {
+    if (!inScope(rename.from) || !isSyncable(rename.from, syncOpts)) {
+      continue;
+    }
+    if (inScope(rename.to) && isExcluded(rename.to)) {
+      preserves.push({
+        path: rename.from,
+        reason: 'renamed-into-command-exclusion',
+      });
+      continue;
+    }
+    if (
+      inScope(rename.to) &&
+      excludedOnlyByStrategy(rename.to, strategy)
+    ) {
+      preserves.push({
+        path: rename.from,
+        reason: 'renamed-outside-selected-strategy',
+      });
+      continue;
+    }
+    if (
+      inScope(rename.to) &&
+      ['metafile', 'pruned-dir'].includes(
+        unsyncableReason(rename.to, syncOpts) ?? '',
+      )
+    ) {
+      preserves.push({
+        path: rename.from,
+        reason: 'renamed-into-protected-unsyncable-path',
+      });
+    }
+  }
+  for (const path of delta.manifest.deleted) {
+    if (inScope(path) && isExcluded(path)) {
+      preserves.push({
+        path,
+        reason: 'excluded-by-command',
+      });
+    }
+  }
+
+  const existingRows = await engine.executeRaw<PlannedExistingPage>(
+    `SELECT slug, source_path, content_hash, type, frontmatter
+       FROM pages
+      WHERE source_id = $1 AND deleted_at IS NULL`,
+    [sourceId],
+  );
+  const normalizePath = (path: string): string => path.replace(/\\/g, '/');
+  const ownedExistingRows = existingRows.map((row) => ({
+    ...row,
+    source_path: existingPageSourcePath(row),
+  }));
+  const existingByPath = new Map(
+    ownedExistingRows
+      .filter(
+        (row): row is PlannedExistingPage & { source_path: string } =>
+          row.source_path !== null,
+      )
+      .map((row) => [normalizePath(row.source_path), row]),
+  );
+  const existingBySlug = new Map(
+    ownedExistingRows.map((row) => [row.slug, row]),
+  );
+  const activePack = await loadSyncActivePackReadOnly(opts);
+  const existingForPath = (path: string): PlannedExistingPage | undefined =>
+    existingByPath.get(normalizePath(path)) ??
+    existingBySlug.get(resolveSlugForPath(path));
+  const existingAtExactPath = (
+    path: string,
+  ): PlannedExistingPage | undefined => {
+    const normalized = normalizePath(path);
+    const exact = existingByPath.get(normalized);
+    if (exact) return exact;
+    const candidate = existingBySlug.get(resolveSlugForPath(normalized));
+    return existingPageOwnsSourcePath(candidate, normalized)
+      ? candidate
+      : undefined;
+  };
+  const plannedIdentity = (
+    path: string,
+    existing: PlannedExistingPage | undefined,
+  ): { slug: string; contentHash: string | null } | null => {
+    const absolutePath = join(
+      opts.targetTreeRoot ?? preflight.gitContextRoot,
+      path,
+    );
+    if (!existsSync(absolutePath)) {
+      // Ordinary sync plans from a pinned Git delta but imports from the live
+      // working tree. A later writer may remove an added/modified path before
+      // planning reaches it. Keep that Git operation in the execution plan so
+      // the resumable runner can treat the vanished path as drained and advance
+      // to its pin, matching the established forward-progress contract. Exact
+      // target materializations are immutable; a missing file there is a real
+      // plan inconsistency and remains omitted/fail-closed.
+      return opts.targetTreeRoot
+        ? null
+        : {
+            slug: existing?.slug ?? resolveSlugForPath(path),
+            contentHash: null,
+          };
+    }
+    return plannedFileIdentity(
+      absolutePath,
+      path,
+      existing,
+      activePack,
+    );
+  };
+  const operations: SyncPlanOperation[] = [];
+
+  for (const path of added) {
+    const existing = existingForPath(path);
+    const identity = plannedIdentity(path, existing);
+    if (!identity) continue;
+    if (!existing) {
+      operations.push({ kind: 'add', path, slug: identity.slug });
+    } else if (
+      identity.contentHash === null ||
+      existing.content_hash !== identity.contentHash
+    ) {
+      operations.push({ kind: 'modify', path, slug: existing.slug });
+    }
+  }
+  for (const path of modified) {
+    const existing = existingForPath(path);
+    const identity = plannedIdentity(path, existing);
+    if (!identity) continue;
+    if (!existing) {
+      operations.push({ kind: 'add', path, slug: identity.slug });
+    } else if (
+      identity.contentHash === null ||
+      existing.content_hash !== identity.contentHash
+    ) {
+      operations.push({ kind: 'modify', path, slug: existing.slug });
+    }
+  }
+  for (const path of deleted) {
+    const existing = existingAtExactPath(path);
+    if (!existing) continue;
+    operations.push({
+      kind: 'delete',
+      path,
+      slug: existing.slug,
+    });
+  }
+  for (const rename of renamed) {
+    const sourceExisting = existingAtExactPath(rename.from);
+    const destinationExisting = existingForPath(rename.to);
+    const existing = sourceExisting ?? destinationExisting;
+    const identity = plannedIdentity(rename.to, existing);
+    if (!identity) continue;
+    if (sourceExisting) {
+      operations.push({
+        kind: 'rename',
+        path: rename.to,
+        fromPath: rename.from,
+        slug: identity.slug,
+      });
+    } else if (!destinationExisting) {
+      operations.push({
+        kind: 'add',
+        path: rename.to,
+        slug: identity.slug,
+      });
+    } else if (
+      identity.contentHash === null ||
+      destinationExisting.content_hash !== identity.contentHash
+    ) {
+      operations.push({
+        kind: 'modify',
+        path: rename.to,
+        slug: destinationExisting.slug,
+      });
+    }
+  }
+  for (const { path, reason } of preserves) {
+    const existing = existingAtExactPath(path);
+    if (!existing) continue;
+    operations.push({
+      kind: 'preserve',
+      path,
+      slug: existing.slug,
+      reason,
+    });
+  }
+  for (const path of cleanupCandidates) {
+    const existing = existingAtExactPath(path);
+    if (!existing) continue;
+    operations.push({
+      kind: 'delete',
+      path,
+      slug: existing.slug,
+      reason: unsyncableReason(path, syncOpts) ?? undefined,
+    });
+  }
+
+  return await createEngineBoundSyncPlan(engine, {
+    mode: completedPaths.length > 0 ? 'resumed' : 'incremental',
+    sourceId,
+    repoPath: preflight.anchorPath,
+    fromCommit: lastCommit,
+    targetCommit,
+    strategy,
+    lastSuccessfulStrategy,
+    strategyChanged,
+    checkpointReset,
+    operations,
+  });
+}
+
+function syncResultFromPlan(plan: SyncPlan): SyncResult {
+  return {
+    status: 'dry_run',
+    fromCommit: plan.fromCommit,
+    toCommit: plan.targetCommit,
+    added: plan.added,
+    modified: plan.modified,
+    deleted: plan.deleted,
+    renamed: plan.renamed,
+    preserved: plan.preserved,
+    chunksCreated: 0,
+    embedded: 0,
+    pagesAffected: [],
+    previewKind: 'validated_index_plan',
+    sourceId: plan.sourceId,
+    strategy: plan.strategy,
+    lastSuccessfulStrategy: plan.lastSuccessfulStrategy,
+    strategyChanged: plan.strategyChanged,
+    checkpointReset: plan.checkpointReset,
+    affected: plan.affected,
+    affectedDigest: plan.affectedDigest,
+    planCorpus: plan.corpus,
+  };
+}
+
+function attachPlanEvidence(result: SyncResult, plan: SyncPlan): SyncResult {
+  const completed =
+    result.status === 'synced' ||
+    result.status === 'first_sync' ||
+    result.status === 'up_to_date';
+  return {
+    ...result,
+    fromCommit: plan.fromCommit,
+    toCommit: plan.targetCommit,
+    added: plan.added,
+    modified: plan.modified,
+    deleted: plan.deleted,
+    renamed: plan.renamed,
+    sourceId: plan.sourceId,
+    strategy: plan.strategy,
+    lastSuccessfulStrategy: completed
+      ? plan.strategy
+      : plan.lastSuccessfulStrategy,
+    strategyChanged: plan.strategyChanged,
+    checkpointReset: plan.checkpointReset,
+    affected: plan.affected,
+    affectedDigest: plan.affectedDigest,
+    planCorpus: plan.corpus,
+    preserved: plan.preserved,
+  };
+}
+
 export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {
+  const paired =
+    opts.expectedTarget !== undefined ||
+    opts.expectedBookmark !== undefined ||
+    opts.requireClean === true;
+  if (paired && opts.noPull !== true) {
+    throw new SyncPreconditionError(
+      'plan_failed',
+      'Paired exact-target sync requires --no-pull so Git cannot move after planning.',
+      'pull enabled',
+      '--no-pull',
+    );
+  }
+  if (paired && opts.includeGitignored === true) {
+    throw new SyncPreconditionError(
+      'plan_failed',
+      'Paired exact-target sync cannot include gitignored content because it is not part of the target commit.',
+      '--include-gitignored',
+      'tracked regular files from the exact target commit',
+    );
+  }
+  if (paired && opts.skipFailed === true) {
+    throw new SyncPreconditionError(
+      'plan_failed',
+      'Paired exact-target apply cannot acknowledge failed files because its receipt must describe complete target convergence.',
+      '--skip-failed',
+      'fix every planned file failure and retry the same target',
+    );
+  }
+  if (
+    (paired || opts.schema1Receipt === true) &&
+    process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true'
+  ) {
+    throw new SyncPreconditionError(
+      'plan_failed',
+      'Schema-1 safe-sync receipts require multimodal indexing to be disabled before work begins.',
+      'GBRAIN_EMBEDDING_MULTIMODAL=true',
+      'GBRAIN_EMBEDDING_MULTIMODAL=false',
+    );
+  }
   // v0.22.13 CODEX-2: cross-process writer lock prevents two concurrent
   // syncs from racing on the same last_commit anchor (last writer wins,
   // bookmark regresses, silent corruption).
@@ -1501,8 +3585,73 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   //
   // skipLock is reserved for callers that already serialize via another
   // mechanism (e.g. cycle.ts holds gbrain-cycle for the broader scope).
+  const runLocked = async (): Promise<SyncResult> => {
+    let targetTree: TargetTreeMaterialization | undefined;
+    try {
+      let pairedOpts = opts;
+      let repoPath: string | undefined;
+      if (paired) {
+        repoPath =
+          opts.repoPath ??
+          (await readSyncAnchor(engine, opts.sourceId, 'repo_path')) ??
+          undefined;
+        if (!repoPath) {
+          throw new SyncPreconditionError(
+            'managed_clone_missing',
+            'The source has no repository path to plan.',
+            null,
+            opts.repoPath ?? null,
+          );
+        }
+        const preflight = await readOnlySyncPreflight(engine, opts, repoPath);
+        targetTree = await materializeTargetTree(
+          preflight,
+          preflight.headCommit,
+          opts.strategy ?? 'markdown',
+        );
+        pairedOpts = {
+          ...opts,
+          // Pin the path resolved from sources.local_path under this source
+          // lock. Every later preflight must compare the same canonical path
+          // instead of re-resolving a potentially different scoped source.
+          // Supported source lifecycle writers share syncLockId(sourceId), so
+          // this identity remains stable through plan, apply, and anchor write.
+          repoPath,
+          expectedTarget: opts.expectedTarget ?? preflight.headCommit,
+          targetTreeRoot: targetTree.root,
+          // Schema-1 completion evidence deliberately describes indexing
+          // convergence only. Defer enrichers so they cannot reopen live
+          // worktree bytes after the exact target snapshot was captured.
+          noEmbed: true,
+          noExtract: true,
+        };
+      }
+
+      let applyPlan: SyncPlan | null = null;
+      if (!pairedOpts.dryRun && paired) {
+        applyPlan = await buildReadOnlySyncPlan(
+          engine,
+          pairedOpts,
+          repoPath!,
+        );
+      }
+      const executionOpts: SyncOpts = {
+        ...pairedOpts,
+        ...(applyPlan ? { validatedPlan: applyPlan } : {}),
+      };
+      const result = await performSyncInner(engine, executionOpts);
+      const resultPlan = applyPlan ?? executionOpts.validatedPlan;
+      return resultPlan ? attachPlanEvidence(result, resultPlan) : result;
+    } finally {
+      if (targetTree) {
+        targetTree.deregisterCleanup();
+        rmSync(targetTree.root, { recursive: true, force: true });
+      }
+    }
+  };
+
   if (opts.skipLock) {
-    return await performSyncInner(engine, opts);
+    return await runLocked();
   }
 
   const lockKey = opts.lockId ?? syncLockId(opts.sourceId ?? 'default');
@@ -1515,7 +3664,12 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   // alive (the import loop's event-loop yields ensure the timer fires), and the
   // heartbeat-aware takeover refuses to steal a live, refreshing holder.
   try {
-    return await withRefreshingLock(engine, lockKey, () => performSyncInner(engine, opts));
+    return await withRefreshingLock(engine, lockKey, runLocked, {
+      failOnReleaseError:
+        opts.dryRun === true ||
+        paired ||
+        opts.schema1Receipt === true,
+    });
   } catch (err) {
     if (err instanceof LockUnavailableError) {
       throw new SyncLockBusyError(await formatLockBusyMessage(engine, lockKey), lockKey);
@@ -1829,6 +3983,49 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     throw new Error(hint);
   }
 
+  // A validated preview plans from the current local Git/engine snapshot and
+  // returns before every sync-domain mutator below: pack-driven import,
+  // managed clone recovery, git init/pull, checkpoint cleanup, page cleanup,
+  // bookmark/heartbeat/chunker writes, failure-ledger updates, extract, and
+  // embed. The outer per-source lock remains intentional and is released by
+  // performSync's withRefreshingLock finally.
+  if (opts.dryRun) {
+    const plan = await buildReadOnlySyncPlan(engine, opts, repoPath);
+    serr(
+      `VALIDATED INDEX PLAN: source=${plan.sourceId} ` +
+      `${plan.fromCommit ?? 'none'}..${plan.targetCommit} ` +
+      `strategy=${plan.strategy} affected=${plan.affected.total}`,
+    );
+    return syncResultFromPlan(plan);
+  }
+
+  // Paired real execution repeats target/bookmark/clean/path assertions under
+  // the same source lock immediately before entering the mutating pipeline.
+  if (
+    opts.expectedTarget !== undefined ||
+    opts.expectedBookmark !== undefined ||
+    opts.requireClean === true
+  ) {
+    await readOnlySyncPreflight(engine, opts, repoPath);
+  }
+
+  const requestedStrategy: SyncPlanStrategy = opts.strategy ?? 'markdown';
+  const priorSuccessfulStrategy = await readLastSuccessfulStrategy(
+    engine,
+    opts.sourceId,
+  );
+  const forceStrategyReconcile =
+    opts.sourceId !== undefined &&
+    priorSuccessfulStrategy !== requestedStrategy;
+  if (forceStrategyReconcile) {
+    serr(
+      `[sync] strategy ownership changed ` +
+      `${priorSuccessfulStrategy ?? 'unset'} -> ${requestedStrategy}; ` +
+      `running a full-tree reconcile for the requested strategy while preserving ` +
+      `out-of-strategy pages.`,
+    );
+  }
+
   serr(`[gbrain phase] sync.load_active_pack`);
   // v0.39 T1.5: load active pack ONCE at sync entry; pass to every per-file
   // importFile call below. Codex perf finding #7: per-file loadActivePack adds
@@ -1899,7 +4096,8 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           serr(
             `[gbrain] auto-recovery: re-cloning "${opts.sourceId}" (clone state: ${state}).`,
           );
-          await recloneIfMissing(engine, opts.sourceId);
+          markSyncMutation(opts);
+          await recloneIfMissing(engine, opts.sourceId, { skipLock: true });
           break;
         case 'corrupted':
           throw new Error(
@@ -1950,6 +4148,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       throw err;
     }
     serr(`[gbrain] auto-recovery: git-initializing brain dir ${repoPath} (no git repo found).`);
+    markSyncMutation(opts);
     git(repoPath, ['init', '--quiet']);
     createSyncBaselineCommit(repoPath);
     gitContextRoot = realpathSync(discoverGitRoot(repoPath));
@@ -1975,7 +4174,27 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // the SCOPE path, so a follow-up bare `gbrain sync` auto-discovers the same
   // scope. Unchanged (the caller's repoPath spelling) when no --src-subpath.
   const anchorPath = opts.srcSubpath ? rawScopeRoot : repoPath;
-  const fullSyncRoots = { gitContextRoot, syncScopeRoot, anchorPath };
+  const contentGitRoot = opts.targetTreeRoot ?? gitContextRoot;
+  const contentScopeRoot = opts.targetTreeRoot
+    ? resolve(opts.targetTreeRoot, syncScopeRelPath)
+    : syncScopeRoot;
+  if (
+    opts.targetTreeRoot &&
+    !isWithinRoot(contentScopeRoot, opts.targetTreeRoot)
+  ) {
+    throw new SyncPreconditionError(
+      'plan_failed',
+      'The immutable target scope escaped its private materialization root.',
+      contentScopeRoot,
+      opts.targetTreeRoot,
+    );
+  }
+  const fullSyncRoots = {
+    gitContextRoot,
+    syncScopeRoot: contentScopeRoot,
+    anchorPath,
+    slugRoot: scoped ? contentGitRoot : undefined,
+  };
 
   serr(`[gbrain phase] sync.detect_head`);
   // Detect detached HEAD up front so the working-tree fallback fires for both
@@ -2005,7 +4224,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // order doesn't matter for correctness. Ancestry validation below still
   // happens AFTER pull (so a `git pull` that brings in missing commits
   // can restore a valid ancestor chain).
-  const lastCommit = opts.full ? null : await readSyncAnchor(engine, opts.sourceId, 'last_commit');
+  const lastCommit =
+    opts.full || forceStrategyReconcile
+      ? null
+      : await readSyncAnchor(engine, opts.sourceId, 'last_commit');
 
   // v0.41.13.0 (T2): pre-pull abort check. If --timeout already fired
   // (e.g. cron invoked sync after the previous run took the full budget),
@@ -2044,6 +4266,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // timeout (ETIMEDOUT / SIGTERM on err.cause) from ordinary pull
       // failure. Pull applies to the whole git repo (gitContextRoot), not
       // just the sync scope — git has no per-subdir pull.
+      markSyncMutation(opts);
       pullRepo(gitContextRoot);
       serr(`[gbrain phase] sync.git_pull done ${Date.now() - _t0}ms`);
     } catch (e: unknown) {
@@ -2111,8 +4334,30 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       throw new Error(`No commits in repo ${repoPath}. Make at least one commit before syncing.`);
     }
     serr(`[gbrain] auto-recovery: repo has no commits yet, creating baseline commit ${gitContextRoot}.`);
+    markSyncMutation(opts);
     createSyncBaselineCommit(gitContextRoot);
     headCommit = git(gitContextRoot, ['rev-parse', 'HEAD']);
+  }
+
+  // Capture the immutable operation/corpus evidence after any authorized pull
+  // or managed-clone recovery, but before page/chunk/bookmark mutation. Paired
+  // callers already supplied the exact locked plan; ordinary real syncs build
+  // the same plan here so every terminal JSON receipt has concrete counts.
+  if (!opts.validatedPlan) {
+    opts.validatedPlan = await buildReadOnlySyncPlan(
+      engine,
+      { ...opts, noPull: true },
+      repoPath,
+    );
+  }
+  if (opts.validatedPlan) {
+    // Planning is the authoritative pin for both ordinary and exact applies.
+    // buildReadOnlySyncPlan performs its own preflight after the executor's
+    // initial HEAD read; a concurrent forward commit can otherwise produce an
+    // H2 manifest while execution/bookmark writes remain pinned to H1. Bind
+    // execution to the validated plan and let the final drift gate decide
+    // whether later live HEAD movement is safe.
+    headCommit = opts.validatedPlan.targetCommit;
   }
 
   // #2964: self-heal deliberately does NOT special-case db_only/.gitignore
@@ -2212,28 +4457,54 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   {
     const storedTargetArr = await loadOpCheckpoint(engine, ckpt.target);
     const storedTarget = storedTargetArr[0] ?? null;
+    const storedProvenanceArr = await loadOpCheckpoint(
+      engine,
+      ckpt.provenance,
+    );
+    const storedProvenance = storedProvenanceArr[0] ?? null;
     if (storedTarget) {
-      let pinReachable = false;
-      try {
-        git(gitContextRoot, ['merge-base', '--is-ancestor', storedTarget, headCommit]);
-        pinReachable = true;
-      } catch {
-        pinReachable = false;
-      }
-      if (pinReachable) {
-        pin = storedTarget;
-        completedPaths = await loadOpCheckpoint(engine, ckpt.paths);
+      if (
+        opts.expectedTarget !== undefined &&
+        (
+          storedTarget !== headCommit ||
+          storedProvenance !== SYNC_TARGET_PROVENANCE_EXACT
+        )
+      ) {
         slog(
-          `[sync] resuming checkpoint: ${completedPaths.length} file(s) already done; ` +
-          `draining ${lastCommit.slice(0, 8)}..${pin.slice(0, 8)} (pinned target).`,
+          `[sync] exact-target apply supersedes ${
+            storedTarget === headCommit ? 'non-exact' : 'older'
+          } checkpoint ${storedTarget.slice(0, 8)}; restarting against ` +
+          `captured HEAD ${headCommit.slice(0, 8)}.`,
         );
-      } else {
-        slog(
-          `[sync] checkpoint target ${storedTarget.slice(0, 8)} no longer reachable ` +
-          `(history rewritten); restarting against HEAD.`,
-        );
+        markSyncMutation(opts);
         await clearOpCheckpoint(engine, ckpt.paths);
         await clearOpCheckpoint(engine, ckpt.target);
+        await clearOpCheckpoint(engine, ckpt.provenance);
+      } else {
+        let pinReachable = false;
+        try {
+          git(gitContextRoot, ['merge-base', '--is-ancestor', storedTarget, headCommit]);
+          pinReachable = true;
+        } catch {
+          pinReachable = false;
+        }
+        if (pinReachable) {
+          pin = storedTarget;
+          completedPaths = await loadOpCheckpoint(engine, ckpt.paths);
+          slog(
+            `[sync] resuming checkpoint: ${completedPaths.length} file(s) already done; ` +
+            `draining ${lastCommit.slice(0, 8)}..${pin.slice(0, 8)} (pinned target).`,
+          );
+        } else {
+          slog(
+            `[sync] checkpoint target ${storedTarget.slice(0, 8)} no longer reachable ` +
+            `(history rewritten); restarting against HEAD.`,
+          );
+          markSyncMutation(opts);
+          await clearOpCheckpoint(engine, ckpt.paths);
+          await clearOpCheckpoint(engine, ckpt.target);
+          await clearOpCheckpoint(engine, ckpt.provenance);
+        }
       }
     }
   }
@@ -2249,7 +4520,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   const currentVersion = String(CHUNKER_VERSION);
   const versionMismatch = storedVersion !== null && storedVersion !== currentVersion;
   const versionNeverSet = storedVersion === null && opts.sourceId !== undefined;
-  const detachedWorkingTreeManifest = detachedHead ? buildDetachedWorkingTreeManifest(gitContextRoot) : null;
+  const detachedWorkingTreeManifest =
+    detachedHead && !opts.targetTreeRoot
+      ? buildDetachedWorkingTreeManifest(gitContextRoot)
+      : null;
   const hasDetachedWorkingTreeChanges = detachedWorkingTreeManifest !== null &&
     (detachedWorkingTreeManifest.added.length > 0 ||
       detachedWorkingTreeManifest.modified.length > 0 ||
@@ -2280,6 +4554,21 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         reason: 'pull_failed',
       });
     }
+    const pairedFailure = pairedFinalRepositoryFailure(
+      opts,
+      gitContextRoot,
+      headCommit,
+    );
+    if (pairedFailure) {
+      throw new SyncPreconditionError(
+        pairedFailure.error.startsWith('working tree')
+          ? 'working_tree_dirty'
+          : 'target_changed',
+        pairedFailure.error,
+        null,
+        headCommit,
+      );
+    }
     // v0.42.52.0 (PR #22xx): bump last_sync_at as a heartbeat on every successful
     // 0-changes sync. D4 invariant ("never advance last_commit on partial") is
     // preserved: last_sync_at is a monitoring signal (doctor sync_freshness
@@ -2287,6 +4576,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // a cron-driven `*/15 sync` over a quiet vault leaves last_sync_at pinned
     // to the last real commit, so doctor falsely flags the source as stale.
     if (opts.sourceId) {
+      markSyncMutation(opts);
       await engine.executeRaw(
         `UPDATE sources SET last_sync_at = now() WHERE id = $1`,
         [opts.sourceId],
@@ -2365,7 +4655,14 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // old page's backing file is gone from this source's slice of the repo.
   const renamedToUnsyncable = manifest.renamed
     .filter(r => inScope(r.from) && isSyncable(r.from, syncOpts) &&
-      !(inScope(r.to) && isSyncable(r.to, syncOpts)))
+      !(inScope(r.to) && isSyncable(r.to, syncOpts)) &&
+      (
+        !inScope(r.to) ||
+        !excludedOnlyByStrategy(r.to, requestedStrategy) &&
+        !['metafile', 'pruned-dir'].includes(
+          unsyncableReason(r.to, syncOpts) ?? '',
+        )
+      ))
     .map(r => r.from);
   const filtered: SyncManifest = {
     added: manifest.added.filter(p => inScope(p) && !excluded(p) && isSyncable(p, syncOpts)),
@@ -2418,7 +4715,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // v0.18.0+ multi-source: scope getPage + deletePage to opts.sourceId so
   // unsyncable cleanup in source A doesn't accidentally sweep same-slug
   // pages in sources B/C/D.
-  const pageOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
+  const cleanupCandidates: string[] = [];
   for (const path of unsyncableModified) {
     // v0.41.13 #1433: never delete on metafile classification.
     // #2404 hardening: same for 'pruned-dir' — a page under a pruned
@@ -2427,15 +4724,50 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // the page is stale. Deleting here silently destroyed put-created
     // pages every time their materialized file landed in a commit.
     const reason = unsyncableReason(path, syncOpts);
-    if (reason === 'metafile' || reason === 'pruned-dir') continue;
-    const slug = await resolveSlugByPathOrSourcePath(engine, path, opts.sourceId);
-    try {
-      const existing = await engine.getPage(slug, pageOpts);
-      if (existing) {
-        await engine.deletePage(slug, pageOpts);
-        slog(`  Deleted un-syncable page: ${slug}`);
+    if (
+      excludedOnlyByStrategy(path, requestedStrategy) ||
+      reason === 'metafile' ||
+      reason === 'pruned-dir'
+    ) continue;
+    cleanupCandidates.push(path);
+  }
+  // Treat classifier cleanup as an ordinary owned delete. This routes it
+  // through the same batched delete/failure gate as Git deletions, so a failed
+  // cleanup cannot be swallowed before the bookmark advances and result counts
+  // match the validated plan.
+  filtered.deleted = unique([
+    ...filtered.deleted,
+    ...cleanupCandidates,
+  ]);
+
+  const plannedDeleteSlugs = new Map<string, string>();
+  if (opts.validatedPlan) {
+    for (const operation of opts.validatedPlan.operations) {
+      if (operation.kind === 'delete') {
+        plannedDeleteSlugs.set(operation.path, operation.slug);
       }
-    } catch { /* ignore */ }
+    }
+    filtered.added = opts.validatedPlan.operations
+      .filter((operation) => operation.kind === 'add')
+      .map((operation) => operation.path);
+    filtered.modified = opts.validatedPlan.operations
+      .filter((operation) => operation.kind === 'modify')
+      .map((operation) => operation.path);
+    filtered.deleted = opts.validatedPlan.operations
+      .filter((operation) => operation.kind === 'delete')
+      .map((operation) => operation.path);
+    filtered.renamed = opts.validatedPlan.operations
+      .filter(
+        (
+          operation,
+        ): operation is SyncPlanOperation & { fromPath: string } =>
+          operation.kind === 'rename' &&
+          operation.fromPath !== undefined,
+      )
+      .map((operation) => ({
+        from: operation.fromPath,
+        to: operation.path,
+      }));
   }
 
   const totalChanges = filtered.added.length + filtered.modified.length +
@@ -2485,15 +4817,39 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         reason: 'pull_failed',
       });
     }
+    const pairedFailure = pairedFinalRepositoryFailure(
+      opts,
+      gitContextRoot,
+      pin,
+    );
+    if (pairedFailure) {
+      throw new SyncPreconditionError(
+        pairedFailure.error.startsWith('working tree')
+          ? 'working_tree_dirty'
+          : 'target_changed',
+        pairedFailure.error,
+        null,
+        pin,
+      );
+    }
     // Update sync state even with no syncable changes (git advanced). v0.42.x
     // (#1794): advance to the PINNED target, and clear any checkpoint (a resume
     // whose remaining range turned out to have no syncable changes still
     // completes cleanly here).
-    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(gitContextRoot, pin));
+    markSyncMutation(opts);
+    await writeSyncAnchor(
+      engine,
+      opts.sourceId,
+      'last_commit',
+      pin,
+      commitTimeMs(gitContextRoot, pin),
+      opts.strategy ?? 'markdown',
+    );
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
     await clearOpCheckpoint(engine, ckpt.paths);
     await clearOpCheckpoint(engine, ckpt.target);
+    await clearOpCheckpoint(engine, ckpt.provenance);
     return {
       status: 'up_to_date',
       fromCommit: lastCommit,
@@ -2515,8 +4871,20 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // HEAD). recordCompleted is durable (executeRawDirect + retry); a false return
   // means the pool is genuinely dead. Nothing is imported yet, so we abort
   // cleanly (zero loss) rather than draining work we could never anchor — see
-  // the !pinPersisted gate just after the partial() closure below.
+  // the !checkpointPersisted gate just after the partial() closure below.
+  markSyncMutation(opts);
   const pinPersisted = await recordCompleted(engine, ckpt.target, [pin]);
+  const provenancePersisted = pinPersisted &&
+    await recordCompleted(
+      engine,
+      ckpt.provenance,
+      [
+        opts.targetTreeRoot
+          ? SYNC_TARGET_PROVENANCE_EXACT
+          : SYNC_TARGET_PROVENANCE_ORDINARY,
+      ],
+    );
+  const checkpointPersisted = pinPersisted && provenancePersisted;
 
   // v0.42.x (#1794): durable, race-safe, bankable checkpoint state.
   //  - `completed`: the cross-run skip set (seeded from the resume load).
@@ -2540,7 +4908,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   let bankedFiles = completedPaths.length;
   let flushing = false;
   let checkpointDead = false;
-  // Assigned at registration (after the pinPersisted gate); called on every
+  // Assigned at registration (after the checkpointPersisted gate); called on every
   // normal return so a later operation's SIGTERM doesn't fire this stale flush.
   let deregisterCheckpointCleanup: () => void = () => {};
   const flushCheckpoint = async (): Promise<void> => {
@@ -2648,8 +5016,8 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // v0.42.x (#1794): the pin write IS the mint of this run's checkpoint. If it
   // can't persist, the pool is dead and nothing has drained — abort with zero
   // loss; the next run retries the whole range (content_hash short-circuits).
-  if (!pinPersisted) {
-    serr('[sync] checkpoint target write failed (pool unavailable) — aborting before import; nothing drained, next run retries.');
+  if (!checkpointPersisted) {
+    serr('[sync] checkpoint target/provenance write failed (pool unavailable) — aborting before import; nothing drained, next run retries.');
     checkpointDead = true;
     return await partial('timeout'); // reason → checkpoint_unavailable
   }
@@ -2740,18 +5108,40 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         }
         const batch = deletesToDo.slice(i, i + DELETE_BATCH_SIZE);
 
-        // Phase A: batch slug resolution (1 round-trip per batch).
-        let pathSlugMap: Map<string, string>;
-        try {
-          pathSlugMap = await engine.resolveSlugsByPaths(batch, deleteScopedOpts);
-        } catch {
-          // Resolve failure: fall back to empty map; per-path fallback
-          // below will use resolveSlugForPath. Best-effort, matches the
-          // existing resolveSlugByPathOrSourcePath swallow-and-fallback
-          // semantics.
-          pathSlugMap = new Map();
+        // A validated plan already bound each path to the exact source-owned
+        // slug observed during planning. Re-resolving here can lose a
+        // frontmatter fallback slug on a transient query failure and delete a
+        // different path-derived page. Legacy unplanned callers retain the
+        // best-effort resolver fallback.
+        let slugs: string[];
+        if (opts.validatedPlan) {
+          slugs = batch.map((path) => {
+            const slug = plannedDeleteSlugs.get(path);
+            if (slug === undefined) {
+              throw new SyncPreconditionError(
+                'plan_failed',
+                `Validated delete path "${path}" has no planned slug.`,
+                path,
+                'one immutable delete operation with a bound slug',
+              );
+            }
+            return slug;
+          });
+        } else {
+          let pathSlugMap: Map<string, string>;
+          try {
+            pathSlugMap = await engine.resolveSlugsByPaths(
+              batch,
+              deleteScopedOpts,
+            );
+          } catch {
+            // Legacy/unplanned resolution remains best-effort.
+            pathSlugMap = new Map();
+          }
+          slugs = batch.map(
+            (path) => pathSlugMap.get(path) ?? resolveSlugForPath(path),
+          );
         }
-        const slugs = batch.map(p => pathSlugMap.get(p) ?? resolveSlugForPath(p));
 
         // Phase B: batch delete (1 round-trip per batch).
         try {
@@ -2872,8 +5262,18 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       const oldSlug = opts.sourceId
         ? (fromSlugByPath.get(from) ?? resolveSlugForPath(from))
         : await resolveSlugByPathOrSourcePath(engine, from, undefined);
-      // The new path doesn't yet have a row, so resolve from path only.
-      const newSlug = resolveSlugForPath(to);
+      // The immutable plan parses frontmatter fallback slugs for paths whose
+      // filename slugifies empty. Reuse that exact identity here; deriving
+      // from the destination path alone would turn a valid fallback slug into
+      // "" and leave source_path stale after a content-hash short circuit.
+      const plannedRename = opts.validatedPlan?.operations.find(
+        (operation) =>
+          operation.kind === 'rename' &&
+          operation.fromPath === from &&
+          operation.path === to,
+      );
+      const newSlug =
+        plannedRename?.slug ?? resolveSlugForPath(to);
       try {
         await engine.updateSlug(oldSlug, newSlug, renameOpts);
       } catch {
@@ -2886,24 +5286,57 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // throw here crashes the whole sync mid-run and freezes the checkpoint,
       // defeating --skip-failed. A `skipped` result carrying an error is also
       // captured so the failure is recorded rather than silently dropped.
-      // Paths from git diff are relative to gitContextRoot; join from there.
-      // NAV-1 TOCTOU: refuse a destination that realpath-resolves outside the
-      // repo (committed symlink pointing out).
-      const filePath = join(gitContextRoot, to);
-      if (existsSync(filePath) && isPathSafe(filePath, gitContextRoot)) {
+      // Paths from git diff are repository-relative. Paired execution reads
+      // them from the immutable target tree; ordinary sync keeps using the
+      // live repository.
+      const filePath = join(contentGitRoot, to);
+      const destinationExists = existsSync(filePath);
+      const destinationSafe =
+        destinationExists && isPathSafe(filePath, contentGitRoot);
+      let renameCompleted = true;
+      if (destinationSafe) {
         try {
           const result = await importFile(engine, filePath, to, { noEmbed, sourceId: opts.sourceId, activePack: syncActivePack });
           if (result.status === 'imported') chunksCreated += result.chunks;
           else if (result.status === 'skipped' && (result as { error?: string }).error) {
             failedFiles.push({ path: to, error: String((result as { error?: string }).error) });
+            renameCompleted = false;
           }
         } catch (e: unknown) {
           failedFiles.push({ path: to, error: e instanceof Error ? e.message : String(e) });
+          renameCompleted = false;
+        }
+      } else if (destinationExists) {
+        failedFiles.push({
+          path: to,
+          error: 'rename destination resolves outside the repository',
+        });
+        renameCompleted = false;
+      }
+      if (renameCompleted && destinationSafe) {
+        try {
+          // A same-slug rename can content-hash short-circuit in importFile.
+          // Persist the Git destination explicitly so a later full reconcile
+          // does not mistake the live page's stale source_path for a deletion.
+          await engine.executeRaw(
+            `UPDATE pages
+                SET source_path = $1
+              WHERE source_id = $2 AND slug = $3`,
+            [to, opts.sourceId ?? DEFAULT_SOURCE_ID, newSlug],
+          );
+        } catch (error) {
+          failedFiles.push({
+            path: to,
+            error:
+              `rename source_path update failed: ` +
+              (error instanceof Error ? error.message : String(error)),
+          });
+          renameCompleted = false;
         }
       }
       pagesAffected.push(newSlug);
       deletedSlugs.delete(newSlug); // #1284: rename landed on a previously-deleted slug → embeddable again
-      await markCompleted(to);
+      if (renameCompleted) await markCompleted(to);
       progress.tick(1, newSlug);
     }
     progress.finish();
@@ -2977,7 +5410,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
 
     // Core import logic shared by serial and parallel paths.
     // Paths from git diff are relative to gitContextRoot; join from there.
-    const syncRepoPath = gitContextRoot;
+    const syncRepoPath = contentGitRoot;
     // paced-backfill (T3 / C9 / CX4): ONE shared pacer across all worker
     // engines. This is the multi-pool permit case — each parallel worker owns a
     // separate PostgresEngine, so a single worker count can't bound TOTAL
@@ -3069,7 +5502,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // committed symlink pointing outside the repo (or one swapped in after
       // the scope-entry check) is never read. Recorded as a failure —
       // fail-closed: the bookmark won't advance past a symlink escape.
-      if (!isPathSafe(filePath, gitContextRoot)) {
+      if (!isPathSafe(filePath, contentGitRoot)) {
         failedFiles.push({ path, error: 'path resolves outside git repo (symlink escape)' });
         progressAt.last = Date.now();
         progress.tick(1, `skip:${path}`);
@@ -3281,7 +5714,18 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   let headVerificationSucceeded = false;
   try {
     const currentHead = git(gitContextRoot, ['rev-parse', 'HEAD']);
-    if (currentHead !== pin) {
+    if (opts.targetTreeRoot) {
+      const pairedFailure = pairedFinalRepositoryFailure(
+        opts,
+        gitContextRoot,
+        pin,
+      );
+      if (pairedFailure) {
+        failedFiles.push(pairedFailure);
+      } else {
+        headVerificationSucceeded = true;
+      }
+    } else if (currentHead !== pin) {
       let pinStillReachable = false;
       try {
         git(gitContextRoot, ['merge-base', '--is-ancestor', pin, currentHead]);
@@ -3329,12 +5773,20 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // "fresh". The checkpoint rows clear here — CONVERGENCE CONTRACT: sync
     // convergence == IMPORT convergence; downstream extract/facts/embed is
     // decoupled (its own resumable stale sweeps).
-    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(gitContextRoot, pin));
+    await writeSyncAnchor(
+      engine,
+      opts.sourceId,
+      'last_commit',
+      pin,
+      commitTimeMs(gitContextRoot, pin),
+      opts.strategy ?? 'markdown',
+    );
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeSyncAnchor(engine, opts.sourceId, 'repo_path', anchorPath);
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
     await clearOpCheckpoint(engine, ckpt.paths);
     await clearOpCheckpoint(engine, ckpt.target);
+    await clearOpCheckpoint(engine, ckpt.provenance);
   };
 
   // issue #1939 adversarial finding #1: a file that failed to parse (open ledger
@@ -3357,6 +5809,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     succeededPaths: resolvedPaths,
     commit: pin,
     skipFailed: opts.skipFailed === true,
+    // An exact-target receipt is all-or-nothing. The ordinary chronic-failure
+    // valve intentionally advances past unindexed files; paired apply must
+    // instead remain blocked at every attempt count.
+    threshold: opts.targetTreeRoot ? 0 : undefined,
     advance,
   });
 
@@ -3576,7 +6032,12 @@ async function performFullSync(
   //   syncScopeRoot  — where files are walked/imported (== gitContextRoot
   //                    when no subpath scope is active)
   //   anchorPath     — what gets written back to sync.repo_path/local_path
-  roots: { gitContextRoot: string; syncScopeRoot: string; anchorPath: string },
+  roots: {
+    gitContextRoot: string;
+    syncScopeRoot: string;
+    anchorPath: string;
+    slugRoot?: string;
+  },
   headCommit: string,
   opts: SyncOpts,
 ): Promise<SyncResult> {
@@ -3584,7 +6045,7 @@ async function performFullSync(
   // Scoped sync → slugs/source_path are git-root-relative (matches the
   // incremental path's git-diff paths). Unscoped → undefined (dir-relative,
   // the pre-#774 behavior, byte-for-byte).
-  const slugRoot = syncScopeRoot !== gitContextRoot ? gitContextRoot : undefined;
+  const slugRoot = roots.slugRoot;
   // Dry-run: walk the scope, count syncable files, return without writing.
   // Fixes the silent-write-on-dry-run bug where performFullSync called
   // runImport unconditionally regardless of opts.dryRun.
@@ -3620,6 +6081,11 @@ async function performFullSync(
       pagesAffected: [],
     };
   }
+  // From this point a full reconcile can write page/chunk state, rename/delete
+  // owned pages, update the failure ledger, and advance source anchors. Mark
+  // conservatively before the first compound mutator so a thrown sub-step can
+  // never be mislabeled as state_changed=none.
+  markSyncMutation(opts);
 
   // v0.22.13 (PR #490 A1 + Q5): full sync is always "large" by definition
   // (entire working tree). Auto-concurrency fires unconditionally for Postgres;
@@ -3639,6 +6105,78 @@ async function performFullSync(
   // v0.30.x: thread sourceId so performFullSync routes pages to the named
   // source (incremental path already does this).
   // #753/#774: thread exclude (--exclude CLI) + slugRoot (monorepo subdir).
+  const plannedDeleteFailures: Array<{ path: string; error: string }> = [];
+  const plannedRenameFailures: Array<{ path: string; error: string }> = [];
+  if (opts.validatedPlan) {
+    const plannedRenames = opts.validatedPlan.operations.filter(
+      (
+        operation,
+      ): operation is SyncPlanOperation & { fromPath: string } =>
+        operation.kind === 'rename' &&
+        operation.fromPath !== undefined,
+    );
+    const sourceId = opts.sourceId ?? DEFAULT_SOURCE_ID;
+    const renameRows = plannedRenames.length > 0
+      ? await engine.executeRaw<PlannedExistingPage>(
+          `SELECT slug, source_path, content_hash, type, frontmatter
+             FROM pages
+            WHERE source_id = $1 AND deleted_at IS NULL`,
+          [sourceId],
+        )
+      : [];
+    const renameSourceByPath = new Map(
+      renameRows
+        .map((row) => [existingPageSourcePath(row), row] as const)
+        .filter(
+          (
+            entry,
+          ): entry is readonly [string, PlannedExistingPage] =>
+            entry[0] !== null,
+        ),
+    );
+    for (const operation of plannedRenames) {
+      try {
+        const oldSlug =
+          renameSourceByPath.get(operation.fromPath)?.slug;
+        if (!oldSlug) {
+          plannedRenameFailures.push({
+            path: operation.path,
+            error:
+              `source_changed: planned rename source ` +
+              `"${operation.fromPath}" no longer exists`,
+          });
+          continue;
+        }
+        if (oldSlug !== operation.slug) {
+          await engine.updateSlug(oldSlug, operation.slug, { sourceId });
+        }
+        const updated = await engine.executeRaw<{ slug: string }>(
+          `UPDATE pages
+              SET source_path = $1
+            WHERE source_id = $2
+              AND slug = $3
+              AND deleted_at IS NULL
+          RETURNING slug`,
+          [operation.path, sourceId, operation.slug],
+        );
+        if (updated.length !== 1) {
+          plannedRenameFailures.push({
+            path: operation.path,
+            error:
+              `source_changed: planned rename destination ` +
+              `"${operation.slug}" no longer matches one live page`,
+          });
+        }
+      } catch (error) {
+        plannedRenameFailures.push({
+          path: operation.path,
+          error:
+            `planned rename failed: ` +
+            (error instanceof Error ? error.message : String(error)),
+        });
+      }
+    }
+  }
   const _fullImportT0 = Date.now();
   serr(`[gbrain phase] sync.fullsync.import start strategy=${opts.strategy ?? 'markdown'}`);
   const result = await runImport(engine, importArgs, {
@@ -3657,6 +6195,97 @@ async function performFullSync(
     `imported=${result.imported} skipped=${result.skipped} errors=${result.errors}`,
   );
 
+  let reconciledDeletes = 0;
+  if (opts.validatedPlan) {
+    const plannedDeletes = opts.validatedPlan.operations.filter(
+      (operation) => operation.kind === 'delete',
+    );
+    const deleteOpts = opts.sourceId
+      ? { sourceId: opts.sourceId }
+      : undefined;
+    for (let index = 0; index < plannedDeletes.length; index += DELETE_BATCH_SIZE) {
+      const batch = plannedDeletes.slice(index, index + DELETE_BATCH_SIZE);
+      if (opts.sourceId) {
+        try {
+          const deleted = await engine.deletePages(
+            batch.map((operation) => operation.slug),
+            { sourceId: opts.sourceId },
+          );
+          reconciledDeletes += deleted.length;
+          const deletedSet = new Set(deleted);
+          for (const operation of batch) {
+            if (!deletedSet.has(operation.slug)) {
+              plannedDeleteFailures.push({
+                path: operation.path,
+                error:
+                  `source_changed: planned delete for "${operation.slug}" ` +
+                  `was not applied because the page no longer matched the locked plan`,
+              });
+            }
+          }
+          continue;
+        } catch {
+          // Decompose below so every failed planned deletion is visible to the
+          // shared failure gate before bookmark/strategy advancement.
+        }
+      }
+      for (const operation of batch) {
+        try {
+          const existing = await engine.getPage(operation.slug, deleteOpts);
+          if (existing) {
+            await engine.deletePage(operation.slug, deleteOpts);
+            reconciledDeletes++;
+          }
+        } catch (error) {
+          plannedDeleteFailures.push({
+            path: operation.path,
+            error:
+              `planned delete failed: ` +
+              (error instanceof Error ? error.message : String(error)),
+          });
+        }
+      }
+    }
+  }
+
+  // #2426: every real sync now executes a validated plan, so the legacy
+  // reconcile block below no longer sees ordinary full-sync DB-only pages.
+  // Preserve its durability behavior by re-exporting only the plan entries
+  // that were classified as never committed. Exact-target paired runs use a
+  // private target tree and must not write preserved DB content into the live
+  // checkout (that would dirty it after the initial clean precondition).
+  if (opts.validatedPlan && !opts.targetTreeRoot && opts.sourceId) {
+    const dbOnlyPreserves = opts.validatedPlan.operations.filter(
+      (operation) =>
+        operation.kind === 'preserve' &&
+        operation.reason === 'db-only-never-committed',
+    );
+    if (dbOnlyPreserves.length > 0) {
+      let reExported = 0;
+      try {
+        const { writePageThrough } = await import('../core/write-through.ts');
+        for (const operation of dbOnlyPreserves) {
+          const result = await writePageThrough(engine, operation.slug, {
+            sourceId: opts.sourceId,
+          });
+          if (result.written) reExported++;
+        }
+      } catch {
+        // Best-effort, matching the legacy reconcile path: the database row is
+        // still preserved even when filesystem recovery cannot complete.
+      }
+      serr(
+        `\n  Kept ${dbOnlyPreserves.length} page(s) whose markdown was never committed to git ` +
+          `(DB-only write-through — not deleting).` +
+          (reExported > 0
+            ? ` Re-exported ${reExported} of them to the working tree.`
+            : '') +
+          `\n  Commit + push them (e.g. scripts/brain-commit-push.sh, or 'gbrain sources harden') ` +
+          `so the next sync sees them as file-backed.`,
+      );
+    }
+  }
+
   // issue #1939 — gate the full-sync bookmark through the SAME shared ledger as
   // the incremental path (Codex #6: a wedge here on first/forced sync was
   // previously unreachable by the valve). A full re-import is authoritative for
@@ -3664,14 +6293,37 @@ async function performFullSync(
   // now has been resolved → clear it (resets its auto-skip streak); current
   // failures still climb their attempts.
   const fullSourceId = opts.sourceId ?? DEFAULT_SOURCE_ID;
-  const fullFailureSet = new Set(result.failures.map(f => f.path));
+  const fullFailures = [
+    ...result.failures,
+    ...plannedRenameFailures,
+    ...plannedDeleteFailures,
+  ];
+  const pairedFailure = pairedFinalRepositoryFailure(
+    opts,
+    gitContextRoot,
+    headCommit,
+  );
+  if (pairedFailure) {
+    fullFailures.push(pairedFailure);
+  }
+  const fullFailureSet = new Set(fullFailures.map(f => f.path));
   const fullSucceeded = loadSyncFailures()
     .filter(e => e.source_id === fullSourceId && isSkippablePath(e.path) && !fullFailureSet.has(e.path))
     .map(e => e.path);
   const advanceFull = async (): Promise<void> => {
     // Persist sync state so the next sync is incremental. Routed through
     // writeSyncAnchor so --source pins the right sources row.
-    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit, newestCommitMs(gitContextRoot));
+    await writeSyncAnchor(
+      engine,
+      opts.sourceId,
+      'last_commit',
+      headCommit,
+      // Full/first exact-target syncs can finish while the live branch moves.
+      // Stamp the immutable target's own time, not whichever commit happens to
+      // be live after the final drift check.
+      commitTimeMs(gitContextRoot, headCommit),
+      opts.strategy ?? 'markdown',
+    );
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeSyncAnchor(engine, opts.sourceId, 'repo_path', anchorPath);
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
@@ -3679,19 +6331,20 @@ async function performFullSync(
 
   const fullGate = await applySyncFailureGate({
     sourceId: fullSourceId,
-    failedFiles: result.failures,
+    failedFiles: fullFailures,
     succeededPaths: fullSucceeded,
     commit: headCommit,
     skipFailed: opts.skipFailed === true,
+    threshold: opts.targetTreeRoot ? 0 : undefined,
     advance: advanceFull,
   });
 
   if (!fullGate.advanced) {
-    const codeBreakdown = formatCodeBreakdown(result.failures);
+    const codeBreakdown = formatCodeBreakdown(fullFailures);
     if (fullGate.sentinelBlocked) {
       serr(`\nFull sync blocked: repository history changed during sync.\n${codeBreakdown}`);
     } else {
-      const fileFailCount = result.failures.filter(f => isSkippablePath(f.path)).length;
+      const fileFailCount = fullFailures.filter(f => isSkippablePath(f.path)).length;
       serr(
         `\nFull sync blocked: ${fileFailCount} file(s) failed:\n` +
         `${codeBreakdown}\n\n` +
@@ -3709,7 +6362,7 @@ async function performFullSync(
       chunksCreated: result.chunksCreated,
       embedded: 0,
       pagesAffected: [],
-      failedFiles: result.failures.length,
+      failedFiles: fullFailures.length,
     };
   }
   if (fullGate.acknowledged > 0) {
@@ -3742,8 +6395,7 @@ async function performFullSync(
   //      used, so paths are in the identical relative form as source_path).
   // Skipped on the legacy no-sourceId path (the batch delete primitives require
   // a sourceId; matches every other source-scoped feature).
-  let reconciledDeletes = 0;
-  if (opts.sourceId) {
+  if (!opts.validatedPlan && opts.sourceId) {
     const sid = opts.sourceId;
     const reconcileSyncOpts = opts.strategy ? { strategy: opts.strategy } : undefined;
     // collectSyncableFiles returns ABSOLUTE paths; source_path is stored
@@ -3962,12 +6614,16 @@ export function planReconcileDeletes(
  * work tree or git is unavailable — callers keep the plain-directory behavior.
  * Forward-slash-normalized to match `normalizeReconcilePath` membership tests.
  */
-export function listEverCommittedPaths(repoPath: string): Set<string> | null {
+export function listEverCommittedPaths(
+  repoPath: string,
+  targetCommit?: string,
+): Set<string> | null {
   let stdout: string;
   try {
+    const revision = targetCommit ?? '--all';
     stdout = execFileSync(
       'git',
-      ['-C', repoPath, '-c', 'core.quotepath=off', 'log', '--all', '--no-renames',
+      ['-C', repoPath, '-c', 'core.quotepath=off', 'log', revision, '--no-renames',
         '--diff-filter=A', '--format=', '--name-only'],
       { encoding: 'utf8', maxBuffer: 512 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] },
     );
@@ -4104,6 +6760,120 @@ function manageGitignoreAtGitRoot(path: string, engineKind?: 'pglite' | 'postgre
   manageGitignore(root, engineKind);
 }
 
+const SYNC_BOOLEAN_FLAGS = new Set([
+  '--all',
+  '--break-lock',
+  '--dry-run',
+  '--force-break-lock',
+  '--full',
+  '--help',
+  '--include-gitignored',
+  '--json',
+  '--no-auto-embed',
+  '--no-embed',
+  '--no-extract',
+  '--no-hard-deadline',
+  '--no-pull',
+  '--no-schema-pack',
+  '--require-clean',
+  '--retry-failed',
+  '--serial',
+  '--skip-failed',
+  '--watch',
+  '--yes',
+  '-h',
+]);
+
+const SYNC_VALUE_FLAGS = new Set([
+  '--concurrency',
+  '--expected-bookmark',
+  '--expected-target',
+  '--hard-deadline',
+  '--interval',
+  '--max-age',
+  '--max-sources',
+  '--missing-path',
+  '--parallel',
+  '--repo',
+  '--source',
+  '--src-subpath',
+  '--strategy',
+  '--timeout',
+  '--workers',
+]);
+
+function validateSyncCliArgs(args: string[]): string | null {
+  const counts = new Map<string, number>();
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === '--exclude') {
+      const value = args[index + 1];
+      if (value === undefined || value.startsWith('--')) {
+        return '--exclude requires one glob value.';
+      }
+      index++;
+      continue;
+    }
+    if (SYNC_VALUE_FLAGS.has(arg)) {
+      const value = args[index + 1];
+      if (value === undefined || value.startsWith('--')) {
+        return `${arg} requires exactly one value.`;
+      }
+      counts.set(arg, (counts.get(arg) ?? 0) + 1);
+      index++;
+      continue;
+    }
+    if (SYNC_BOOLEAN_FLAGS.has(arg)) {
+      counts.set(arg, (counts.get(arg) ?? 0) + 1);
+      continue;
+    }
+    return `Unknown sync argument: ${arg}`;
+  }
+
+  for (const [flag, count] of counts) {
+    if (count > 1) return `${flag} may be specified only once.`;
+  }
+  if (
+    (counts.get('--concurrency') ?? 0) +
+      (counts.get('--workers') ?? 0) >
+    1
+  ) {
+    return '--concurrency and --workers are aliases; specify only one.';
+  }
+  const strategyIndex = args.indexOf('--strategy');
+  if (
+    strategyIndex >= 0 &&
+    !['markdown', 'code', 'auto'].includes(args[strategyIndex + 1] ?? '')
+  ) {
+    return '--strategy must be markdown, code, or auto.';
+  }
+  const sourceIndex = args.indexOf('--source');
+  if (
+    sourceIndex >= 0 &&
+    !/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(
+      args[sourceIndex + 1] ?? '',
+    )
+  ) {
+    return '--source must be a canonical 1-32 character source id.';
+  }
+  return null;
+}
+
+function exitSyncCliError(
+  jsonOut: boolean,
+  error: SyncPreconditionError,
+  exitCode = 1,
+): never {
+  if (jsonOut) {
+    process.stdout.write(
+      JSON.stringify(buildGBrainSyncErrorEnvelope(error)) + '\n',
+    );
+  } else {
+    console.error(`ERROR [${error.reasonCode}] ${error.message}`);
+  }
+  process.exit(exitCode);
+}
+
 export async function runSync(engine: BrainEngine, args: string[]) {
   // v0.40 Federated Sync v2: `gbrain sync trigger` subcommand
   // Routes to runSyncTrigger which queues a 'sync' minion job with
@@ -4116,6 +6886,20 @@ export async function runSync(engine: BrainEngine, args: string[]) {
   // v0.37 fix wave (Lane D.4 + CDX2-12): print usage when `--help`/`-h` is
   // passed. Pre-fix this was unreachable because the dispatcher's generic
   // CLI-only short-circuit fired first; sync is now in CLI_ONLY_SELF_HELP.
+  if (
+    args.includes('--json') &&
+    (args.includes('--help') || args.includes('-h'))
+  ) {
+    exitSyncCliError(
+      true,
+      new SyncPreconditionError(
+        'plan_failed',
+        '--json cannot be combined with help output.',
+        '--json --help',
+        'either --help or one executable JSON sync invocation',
+      ),
+    );
+  }
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`Usage: gbrain sync [options]
 
@@ -4146,7 +6930,16 @@ Options:
   --include-gitignored Include otherwise-syncable files matched by .gitignore.
                        Forces a full filesystem walk so periodic syncs see
                        ignored untracked content.
-  --dry-run            Show what would be synced without writing.
+  --dry-run            Build a validated local index plan. No pull, clone,
+                       git init, checkpoint/failure change, content write,
+                       bookmark, heartbeat, chunker, extract, or embed occurs;
+                       the transient per-source DB lock is still used.
+  --expected-target S  Refuse unless Git HEAD is the full 40-character SHA S.
+  --expected-bookmark B
+                       Refuse unless the source bookmark is SHA B, or absent
+                       when B is "none".
+  --require-clean      Refuse unless tracked and untracked working-tree state
+                       is clean. Rechecked under the source lock.
   --skip-failed        Acknowledge previously-recorded sync failures so
                        the bookmark can advance past unparseable files.
   --retry-failed       Re-attempt previously-failed files; clear on success.
@@ -4176,9 +6969,10 @@ Options:
                        from error_count and the rc=1 gate). Use skip on
                        brains whose sources were registered from more
                        than one machine.
-  --json               Emit a structured JSON envelope on stdout
-                       ({schema_version: 1, sources, parallel,
-                       ok_count, error_count, skipped_count}). Sources
+  --json               Emit exactly one schema-1 JSON document on stdout.
+                       Single-source results use result_kind=gbrain_sync;
+                       refusals use result_kind=gbrain_sync_error. --all
+                       retains its aggregate sources/parallel envelope. Sources
                        skipped by --missing-path skip appear with
                        status 'skipped_missing_path' and their
                        local_path. Human banners route to stderr so
@@ -4192,6 +6986,31 @@ See also:
   gbrain doctor           Diagnose dim mismatches and other sync issues.
 `);
     return;
+  }
+
+  const jsonOut = args.includes('--json');
+  const cliProblem = validateSyncCliArgs(args);
+  if (cliProblem !== null) {
+    exitSyncCliError(
+      jsonOut,
+      new SyncPreconditionError(
+        'plan_failed',
+        cliProblem,
+        args.join(' '),
+        'one unambiguous supported sync invocation',
+      ),
+    );
+  }
+  if (jsonOut && args.includes('--watch')) {
+    exitSyncCliError(
+      true,
+      new SyncPreconditionError(
+        'plan_failed',
+        '--json cannot be combined with --watch because a watch has no single terminal receipt.',
+        '--json --watch',
+        'one non-watch sync invocation',
+      ),
+    );
   }
 
   const repoPath = args.find((a, i) => args[i - 1] === '--repo') || undefined;
@@ -4208,12 +7027,21 @@ See also:
   const noSchemaPack = args.includes('--no-schema-pack'); // v0.41.37.0 #1569
   const includeGitignored = args.includes('--include-gitignored');
   const syncAll = args.includes('--all');
+  const mutationJournal = createSyncMutationJournal();
   let missingPathMode: MissingPathMode = 'fail';
   try {
     missingPathMode = parseMissingPathMode(args);
   } catch (e) {
-    console.error(e instanceof Error ? e.message : String(e));
-    process.exit(2);
+    exitSyncCliError(
+      jsonOut,
+      new SyncPreconditionError(
+        'plan_failed',
+        e instanceof Error ? e.message : String(e),
+        args[args.indexOf('--missing-path') + 1] ?? null,
+        'fail or skip',
+      ),
+      2,
+    );
   }
   if (missingPathMode !== 'fail' && !syncAll) {
     // Single-source sync on a missing path should stay loud — an explicit
@@ -4221,7 +7049,6 @@ See also:
     // multi-machine artifact. Warn instead of silently ignoring the flag.
     console.error('[gbrain] WARN: --missing-path only applies to `sync --all`; ignored here.');
   }
-  const jsonOut = args.includes('--json');
   const yesFlag = args.includes('--yes');
   // v0.41.6.0 D3: lock-recovery flags. --break-lock (safe) verifies the
   // holder is local-host + (TTL-expired OR PID-dead+60s-old) before
@@ -4230,6 +7057,127 @@ See also:
   // v0.40 lock keys are gbrain-sync:<sourceId>).
   const breakLock = args.includes('--break-lock');
   const forceBreakLock = args.includes('--force-break-lock');
+  const expectedTargetPositions = args
+    .map((value, index) => value === '--expected-target' ? index : -1)
+    .filter((index) => index >= 0);
+  const expectedBookmarkPositions = args
+    .map((value, index) => value === '--expected-bookmark' ? index : -1)
+    .filter((index) => index >= 0);
+  const expectedTargetCandidate =
+    expectedTargetPositions.length === 1
+      ? args[expectedTargetPositions[0] + 1]
+      : undefined;
+  const expectedBookmarkCandidate =
+    expectedBookmarkPositions.length === 1
+      ? args[expectedBookmarkPositions[0] + 1]
+      : undefined;
+  const expectedTargetRaw =
+    expectedTargetCandidate?.startsWith('--') === false
+      ? expectedTargetCandidate
+      : undefined;
+  const expectedBookmarkRaw =
+    expectedBookmarkCandidate?.startsWith('--') === false
+      ? expectedBookmarkCandidate
+      : undefined;
+  const requireClean = args.includes('--require-clean');
+  const pairedCli =
+    expectedTargetRaw !== undefined ||
+    expectedBookmarkRaw !== undefined ||
+    requireClean;
+
+  const invalidExpectedTarget =
+    expectedTargetPositions.length > 0 &&
+    (
+      expectedTargetPositions.length !== 1 ||
+      expectedTargetRaw === undefined ||
+      !/^[0-9a-f]{40}$/i.test(expectedTargetRaw)
+    );
+  const invalidExpectedBookmark =
+    expectedBookmarkPositions.length > 0 &&
+    (
+      expectedBookmarkPositions.length !== 1 ||
+      expectedBookmarkRaw === undefined ||
+      (
+        expectedBookmarkRaw !== 'none' &&
+        !/^[0-9a-f]{40}$/i.test(expectedBookmarkRaw)
+      )
+    );
+  if (invalidExpectedTarget || invalidExpectedBookmark) {
+    const error = new SyncPreconditionError(
+      'plan_failed',
+      invalidExpectedTarget
+        ? '--expected-target must be a full 40-character Git SHA.'
+        : '--expected-bookmark must be a full 40-character Git SHA or "none".',
+      invalidExpectedTarget
+        ? (
+            expectedTargetPositions.length > 1
+              ? '<duplicate>'
+              : expectedTargetRaw ?? '<missing>'
+          )
+        : (
+            expectedBookmarkPositions.length > 1
+              ? '<duplicate>'
+              : expectedBookmarkRaw ?? '<missing>'
+          ),
+      invalidExpectedTarget ? '<40-char-sha>' : '<40-char-sha|none>',
+    );
+    if (jsonOut) console.log(JSON.stringify(buildGBrainSyncErrorEnvelope(error)));
+    else console.error(`ERROR [${error.reasonCode}] ${error.message}`);
+    process.exit(1);
+  }
+
+  if (pairedCli && skipFailed) {
+    exitSyncCliError(
+      jsonOut,
+      new SyncPreconditionError(
+        'plan_failed',
+        'Paired exact-target apply cannot acknowledge failed files because its receipt must describe complete target convergence.',
+        '--skip-failed',
+        'fix every planned file failure and retry the same target',
+      ),
+    );
+  }
+
+  const dryRunModifierConflicts = dryRun
+    ? [
+        ...(breakLock ? ['--break-lock'] : []),
+        ...(forceBreakLock ? ['--force-break-lock'] : []),
+        ...(skipFailed ? ['--skip-failed'] : []),
+        ...(retryFailed ? ['--retry-failed'] : []),
+      ]
+    : [];
+  if (dryRunModifierConflicts.length > 0) {
+    const error = new SyncPreconditionError(
+      'dry_run_modifier_conflict',
+      `Dry-run cannot be combined with mutating maintenance flags: ` +
+        dryRunModifierConflicts.join(', '),
+      dryRunModifierConflicts.join(','),
+      'run preview and maintenance as separate commands',
+    );
+    if (jsonOut) console.log(JSON.stringify(buildGBrainSyncErrorEnvelope(error)));
+    else console.error(`ERROR [${error.reasonCode}] ${error.message}`);
+    process.exit(1);
+  }
+  if (
+    syncAll &&
+    (
+      expectedTargetRaw !== undefined ||
+      expectedBookmarkRaw !== undefined ||
+      expectedTargetPositions.length > 0 ||
+      expectedBookmarkPositions.length > 0 ||
+      requireClean
+    )
+  ) {
+    const error = new SyncPreconditionError(
+      'plan_failed',
+      'Expected target/bookmark/clean preconditions require one explicit source.',
+      '--all',
+      '--source <id>',
+    );
+    if (jsonOut) console.log(JSON.stringify(buildGBrainSyncErrorEnvelope(error)));
+    else console.error(`ERROR [${error.reasonCode}] ${error.message}`);
+    process.exit(1);
+  }
 
   // v0.41.13.0 (T4 + T16) — --max-age <s>: age-gated lock break via
   // last_refreshed_at semantic (NOT acquired_at — D-V3-4). Only valid with
@@ -4241,16 +7189,37 @@ See also:
   try {
     maxAgeSeconds = parseDurationSeconds(maxAgeStr, '--max-age');
   } catch (e) {
-    console.error(e instanceof Error ? e.message : String(e));
-    process.exit(1);
+    exitSyncCliError(
+      jsonOut,
+      new SyncPreconditionError(
+        'plan_failed',
+        e instanceof Error ? e.message : String(e),
+        maxAgeStr ?? null,
+        'a positive duration',
+      ),
+    );
   }
   if (maxAgeSeconds !== undefined && !breakLock) {
-    console.error(`--max-age is only valid with --break-lock.`);
-    process.exit(1);
+    exitSyncCliError(
+      jsonOut,
+      new SyncPreconditionError(
+        'plan_failed',
+        '--max-age is only valid with --break-lock.',
+        '--max-age',
+        '--break-lock --max-age <duration>',
+      ),
+    );
   }
   if (maxAgeSeconds !== undefined && forceBreakLock) {
-    console.error(`--max-age cannot be combined with --force-break-lock (force skips all guards).`);
-    process.exit(1);
+    exitSyncCliError(
+      jsonOut,
+      new SyncPreconditionError(
+        'plan_failed',
+        '--max-age cannot be combined with --force-break-lock.',
+        '--force-break-lock --max-age',
+        '--break-lock --max-age <duration>',
+      ),
+    );
   }
 
   // v0.41.13.0 (T4 + D1): handle --break-lock / --force-break-lock BEFORE
@@ -4306,7 +7275,15 @@ See also:
     } catch (e) {
       if (e instanceof EmbeddingCredentialError) {
         if (jsonOut) {
-          console.log(JSON.stringify({ status: 'embedding_credentials_missing', diagnosis: e.diagnosis }));
+          const error = new SyncPreconditionError(
+            'embedding_credentials_missing',
+            e.userMessage,
+            null,
+            'configured embedding provider credentials or --no-embed',
+          );
+          process.stdout.write(
+            JSON.stringify(buildGBrainSyncErrorEnvelope(error)) + '\n',
+          );
         } else {
           console.error('');
           console.error(e.userMessage);
@@ -4325,8 +7302,15 @@ See also:
   const maxSourcesStr = args.find((a, i) => args[i - 1] === '--max-sources');
   const maxSources = maxSourcesStr ? parseInt(maxSourcesStr, 10) : undefined;
   if (maxSourcesStr && (!Number.isFinite(maxSources!) || maxSources! < 1)) {
-    console.error(`Invalid --max-sources value: "${maxSourcesStr}". Must be a positive integer.`);
-    process.exit(1);
+    exitSyncCliError(
+      jsonOut,
+      new SyncPreconditionError(
+        'plan_failed',
+        `Invalid --max-sources value: "${maxSourcesStr}". Must be a positive integer.`,
+        maxSourcesStr,
+        'a positive integer',
+      ),
+    );
   }
   const strategyArg = args.find((a, i) => args[i - 1] === '--strategy') as SyncOpts['strategy'] | undefined;
   // #753/#774: monorepo subdir-source flags. --exclude is repeatable.
@@ -4336,12 +7320,16 @@ See also:
     if (args[i] === '--exclude' && i + 1 < args.length) excludePatterns.push(args[i + 1]);
   }
   if (syncAll && (srcSubpath || excludePatterns.length > 0)) {
-    console.error(
-      `--src-subpath/--exclude scope a single sync invocation; they cannot be combined with --all. ` +
-      `For --all runs, register the subdirectory as the source's local_path instead ` +
-      `(gbrain sources add <id> --path <repo>/<subdir>).`,
+    exitSyncCliError(
+      jsonOut,
+      new SyncPreconditionError(
+        'plan_failed',
+        `--src-subpath/--exclude scope a single sync invocation; they cannot be combined with --all. ` +
+          `For --all runs, register the subdirectory as the source's local_path instead.`,
+        '--all with single-source scope flags',
+        'one explicit source',
+      ),
     );
-    process.exit(1);
   }
   const concurrencyStr = args.find((a, i) => args[i - 1] === '--concurrency' || args[i - 1] === '--workers');
   const parallelStr = args.find((a, i) => args[i - 1] === '--parallel');
@@ -4353,14 +7341,28 @@ See also:
   try {
     concurrency = parseWorkers(concurrencyStr);
   } catch (e) {
-    console.error(e instanceof Error ? e.message : String(e));
-    process.exit(1);
+    exitSyncCliError(
+      jsonOut,
+      new SyncPreconditionError(
+        'plan_failed',
+        e instanceof Error ? e.message : String(e),
+        concurrencyStr ?? null,
+        'a positive worker count',
+      ),
+    );
   }
   try {
     parallelOverride = parseWorkers(parallelStr);
   } catch (e) {
-    console.error(e instanceof Error ? e.message : String(e));
-    process.exit(1);
+    exitSyncCliError(
+      jsonOut,
+      new SyncPreconditionError(
+        'plan_failed',
+        e instanceof Error ? e.message : String(e),
+        parallelStr ?? null,
+        'a positive parallel source count',
+      ),
+    );
   }
 
   // v0.41.13.0 (T16 + T6) — --timeout <s>: graceful self-termination signal
@@ -4377,13 +7379,27 @@ See also:
   try {
     timeoutSeconds = parseDurationSeconds(timeoutStr, '--timeout');
   } catch (e) {
-    console.error(e instanceof Error ? e.message : String(e));
-    process.exit(1);
+    exitSyncCliError(
+      jsonOut,
+      new SyncPreconditionError(
+        'plan_failed',
+        e instanceof Error ? e.message : String(e),
+        timeoutStr ?? null,
+        'a positive duration',
+      ),
+    );
   }
   const explicitSourceArg = args.find((a, i) => args[i - 1] === '--source');
   if (timeoutSeconds !== undefined && !syncAll && !explicitSourceArg) {
-    console.error(`--timeout requires either --source <id> or --all to scope the per-source budget.`);
-    process.exit(1);
+    exitSyncCliError(
+      jsonOut,
+      new SyncPreconditionError(
+        'plan_failed',
+        '--timeout requires either --source <id> or --all to scope the per-source budget.',
+        '--timeout without source scope',
+        '--source <id> or --all',
+      ),
+    );
   }
 
 
@@ -4413,7 +7429,19 @@ See also:
   // and can pass --source to override if needed.
   const explicitSource = args.find((a, i) => args[i - 1] === '--source') || null;
   const { resolveSourceWithTier, formatSoleNonDefaultNudge } = await import('../core/source-resolver.ts');
-  const resolved = await resolveSourceWithTier(engine, explicitSource);
+  let resolved;
+  try {
+    resolved = await resolveSourceWithTier(engine, explicitSource);
+  } catch (cause) {
+    const error = new SyncPreconditionError(
+      'source_changed',
+      cause instanceof Error ? cause.message : String(cause),
+      explicitSource,
+      'one currently registered source id',
+    );
+    if (jsonOut) exitSyncCliError(true, error);
+    throw error;
+  }
   const sourceId: string = resolved.source_id;
   if (resolved.tier === 'sole_non_default') {
     const nudge = formatSoleNonDefaultNudge(sourceId);
@@ -4434,7 +7462,12 @@ See also:
   // refusal is lifted below.
   if (skipFailed) {
     const acked = syncAll ? acknowledgeFailures() : acknowledgeFailures(sourceId);
-    if (acked.count > 0) console.log(`Acknowledged ${acked.count} pre-existing failure(s).`);
+    if (acked.count > 0) {
+      mutationJournal.stateChanged = 'partial';
+      const line = `Acknowledged ${acked.count} pre-existing failure(s).`;
+      if (jsonOut) process.stderr.write(line + '\n');
+      else console.log(line);
+    }
   }
 
   // v0.19.0 — `sync --all` iterates all registered sources with a
@@ -4456,7 +7489,18 @@ See also:
       `SELECT id, name, local_path, config, last_commit, chunker_version FROM sources WHERE local_path IS NOT NULL`,
     );
     if (!sources || sources.length === 0) {
-      console.log('No sources with local_path configured. Use `gbrain sources add <id> --path <path>` first.');
+      if (jsonOut) {
+        process.stdout.write(JSON.stringify({
+          schema_version: 1,
+          sources: [],
+          parallel: 0,
+          ok_count: 0,
+          error_count: 0,
+          skipped_count: 0,
+        }) + '\n');
+      } else {
+        console.log('No sources with local_path configured. Use `gbrain sources add <id> --path <path>` first.');
+      }
       return;
     }
 
@@ -4473,13 +7517,18 @@ See also:
     // (exit 0, never exit 2 — the wedged-cron fix); a TTY prompts. Skipped
     // entirely when --no-embed is set.
     let autoDeferEmbeds = false;
-    if (!noEmbed) {
+    let aggregateCostGate: CostGateReceipt | undefined;
+    if (!noEmbed && !dryRun) {
       const mode = willEmbedSynchronously({ v2Enabled, serialFlag, noEmbed });
-      const gate = await runInlineCostGate(engine, {
-        sources, mode, dryRun, jsonOut, yesFlag, full, includeGitignored, label: 'sync --all',
+      const runGate = () => runInlineCostGate(engine, {
+        sources, mode, dryRun: false, jsonOut, yesFlag, full, includeGitignored, label: 'sync --all',
       });
+      const gate = jsonOut
+        ? await withConsoleLogOnStderr(runGate)
+        : await runGate();
       if (gate.action === 'stop') return;
       autoDeferEmbeds = gate.autoDeferEmbeds;
+      aggregateCostGate = gate.receipt;
     }
 
     // v0.40.5.0 Federated Sync v2 (master) + v0.40.6.0 layering (this branch):
@@ -4541,6 +7590,7 @@ See also:
           ok_count: 0,
           error_count: 0,
           skipped_count: skippedMissingPath.length,
+          ...(aggregateCostGate ? { cost_gate: aggregateCostGate } : {}),
         }));
       }
       return;
@@ -4615,16 +7665,20 @@ See also:
         concurrency,
         signal: composeAbortSignals(allInterrupt.signal, controller?.signal),
       };
-      // v0.40.6.0 (D6): wrap performSync in withSourcePrefix so every slog /
+      // v0.40.6.0 (D6): human output uses withSourcePrefix so every slog /
       // serr line emitted from inside the sync code path gets prefixed with
-      // `[<source-id>] `. Under master's pMapAllSettled fan-out, this is
-      // what makes `grep '\[media-corpus\]'` against parallel output work.
+      // `[<source-id>] `. JSON mode instead routes the whole fan-out's
+      // console output to stderr below, keeping stdout to one aggregate
+      // document without nesting concurrent global console swaps.
       //
       // v0.41.13.0 (T6): wrap the performSync call in try/finally so the
       // per-source timer is always cleared, even on throw.
       let result: SyncResult;
       try {
-        result = await withSourcePrefix(src.id, () => performSync(engine, repoOpts));
+        const performOne = () => performSync(engine, repoOpts);
+        result = jsonOut
+          ? await performOne()
+          : await withSourcePrefix(src.id, performOne);
       } finally {
         if (timer !== undefined) clearTimeout(timer);
       }
@@ -4690,82 +7744,89 @@ See also:
       ? Math.min(runnableSources.length, maxSources ?? 8)
       : 1;
 
-    process.on('SIGINT', onAllSigint);
-    try {
-    if (parallelEligible) {
-      const { pMapAllSettled } = await import('../core/parallel.ts');
-      const cap = effectiveParallel;
+    const runFanout = async (): Promise<void> => {
+      process.on('SIGINT', onAllSigint);
+      try {
+        if (parallelEligible) {
+          const { pMapAllSettled } = await import('../core/parallel.ts');
+          const cap = effectiveParallel;
 
-      // v0.40.6.0 (D10): connection-budget stderr warning. Each per-file
-      // worker opens its own PostgresEngine with poolSize=2, so the real
-      // live-connection ceiling is `cap × workers × 2` per wave plus the
-      // parent pool. The original PR understated by 2× — fix the math.
-      const effectiveWorkers = concurrency ?? 4;
-      const budget = cap * effectiveWorkers * 2;
-      if (budget > 16) {
-        process.stderr.write(
-          `[sync --all] Connection budget: parallel=${cap} × workers=${effectiveWorkers} × 2 ` +
-          `(per-file pool) = ${budget} concurrent connections per fan-out wave (+ parent pool). ` +
-          `Check pgbouncer/Postgres max_connections (SELECT count(*) FROM pg_stat_activity); ` +
-          `raise the cap or lower --max-sources/--workers if you see "too many clients" errors.\n`,
-        );
-      }
+          // v0.40.6.0 (D10): connection-budget stderr warning. Each per-file
+          // worker opens its own PostgresEngine with poolSize=2, so the real
+          // live-connection ceiling is `cap × workers × 2` per wave plus the
+          // parent pool. The original PR understated by 2× — fix the math.
+          const effectiveWorkers = concurrency ?? 4;
+          const budget = cap * effectiveWorkers * 2;
+          if (budget > 16) {
+            process.stderr.write(
+              `[sync --all] Connection budget: parallel=${cap} × workers=${effectiveWorkers} × 2 ` +
+              `(per-file pool) = ${budget} concurrent connections per fan-out wave (+ parent pool). ` +
+              `Check pgbouncer/Postgres max_connections (SELECT count(*) FROM pg_stat_activity); ` +
+              `raise the cap or lower --max-sources/--workers if you see "too many clients" errors.\n`,
+            );
+          }
 
-      writeHuman(`\nParallel sync: ${runnableSources.length} sources, ${cap} concurrent workers.\n`);
-      const results = await pMapAllSettled(runnableSources, cap, async (src) => {
-        const r = await runOne(src);
-        return { name: src.name, result: r };
-      });
-      // Print per-source aggregate at the end. humanSink so --json stays clean.
-      writeHuman('\n--- sync --all aggregate ---');
-      for (let i = 0; i < results.length; i++) {
-        const r = results[i];
-        const src = runnableSources[i];
-        if (r.status === 'fulfilled') {
-          writeHuman(`  ✓ ${src.name}: ${r.value.result.status} (added=${r.value.result.added}, modified=${r.value.result.modified}, deleted=${r.value.result.deleted})`);
-          perSourceResults.push({
-            sourceId: src.id,
-            sourceName: src.name,
-            status: 'ok',
-            result: r.value.result,
+          writeHuman(`\nParallel sync: ${runnableSources.length} sources, ${cap} concurrent workers.\n`);
+          const results = await pMapAllSettled(runnableSources, cap, async (src) => {
+            const r = await runOne(src);
+            return { name: src.name, result: r };
           });
+          // Print per-source aggregate at the end. humanSink so --json stays clean.
+          writeHuman('\n--- sync --all aggregate ---');
+          for (let i = 0; i < results.length; i++) {
+            const r = results[i];
+            const src = runnableSources[i];
+            if (r.status === 'fulfilled') {
+              writeHuman(`  ✓ ${src.name}: ${r.value.result.status} (added=${r.value.result.added}, modified=${r.value.result.modified}, deleted=${r.value.result.deleted})`);
+              perSourceResults.push({
+                sourceId: src.id,
+                sourceName: src.name,
+                status: 'ok',
+                result: r.value.result,
+              });
+            } else {
+              const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+              process.stderr.write(`  ✗ ${src.name}: ${msg}\n`);
+              perSourceResults.push({
+                sourceId: src.id,
+                sourceName: src.name,
+                status: 'error',
+                error: msg,
+              });
+            }
+          }
         } else {
-          const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
-          process.stderr.write(`  ✗ ${src.name}: ${msg}\n`);
-          perSourceResults.push({
-            sourceId: src.id,
-            sourceName: src.name,
-            status: 'error',
-            error: msg,
-          });
+          for (const src of runnableSources) {
+            writeHuman(`\n--- Syncing source: ${src.name} ---`);
+            try {
+              const result = await runOne(src);
+              printSyncResult(result, humanSink);
+              perSourceResults.push({
+                sourceId: src.id,
+                sourceName: src.name,
+                status: 'ok',
+                result,
+              });
+            } catch (e: unknown) {
+              const msg = e instanceof Error ? e.message : String(e);
+              process.stderr.write(`Error syncing ${src.name}: ${msg}\n`);
+              perSourceResults.push({
+                sourceId: src.id,
+                sourceName: src.name,
+                status: 'error',
+                error: msg,
+              });
+            }
+          }
         }
+      } finally {
+        process.off('SIGINT', onAllSigint);
       }
+    };
+    if (jsonOut) {
+      await withConsoleLogOnStderr(runFanout);
     } else {
-      for (const src of runnableSources) {
-        writeHuman(`\n--- Syncing source: ${src.name} ---`);
-        try {
-          const result = await runOne(src);
-          printSyncResult(result, humanSink);
-          perSourceResults.push({
-            sourceId: src.id,
-            sourceName: src.name,
-            status: 'ok',
-            result,
-          });
-        } catch (e: unknown) {
-          const msg = e instanceof Error ? e.message : String(e);
-          process.stderr.write(`Error syncing ${src.name}: ${msg}\n`);
-          perSourceResults.push({
-            sourceId: src.id,
-            sourceName: src.name,
-            status: 'error',
-            error: msg,
-          });
-        }
-      }
-    }
-    } finally {
-      process.off('SIGINT', onAllSigint);
+      await runFanout();
     }
 
     const okCount = perSourceResults.filter((r) => r.status === 'ok').length;
@@ -4802,6 +7863,7 @@ See also:
         ok_count: okCount,
         error_count: errCount,
         skipped_count: perSourceResults.filter((r) => r.status === 'skipped_missing_path').length,
+        ...(aggregateCostGate ? { cost_gate: aggregateCostGate } : {}),
       }));
     }
 
@@ -4836,8 +7898,32 @@ See also:
   const singleSourceInterrupt = new AbortController();
   const onSingleSourceSigint = () => { try { singleSourceInterrupt.abort(new Error('SIGINT')); } catch { /* */ } };
   const opts: SyncOpts = {
-    repoPath, dryRun, full, noPull, noEmbed, noExtract, skipFailed, retryFailed, noSchemaPack, includeGitignored, sourceId,
+    repoPath,
+    dryRun,
+    full,
+    noPull,
+    noEmbed: noEmbed || pairedCli,
+    noExtract: noExtract || pairedCli,
+    skipFailed,
+    retryFailed,
+    noSchemaPack,
+    includeGitignored,
+    sourceId,
     strategy: strategyArg, concurrency,
+    schema1Receipt: jsonOut,
+    ...(expectedTargetRaw !== undefined
+      ? { expectedTarget: expectedTargetRaw.toLowerCase() }
+      : {}),
+    ...(expectedBookmarkRaw !== undefined
+      ? {
+          expectedBookmark:
+            expectedBookmarkRaw === 'none'
+              ? null
+              : expectedBookmarkRaw.toLowerCase(),
+        }
+      : {}),
+    requireClean,
+    mutationJournal,
     srcSubpath,
     exclude: excludePatterns.length > 0 ? excludePatterns : undefined,
     signal: composeAbortSignals(singleSourceInterrupt.signal, singleSourceController?.signal),
@@ -4852,7 +7938,7 @@ See also:
   // the gate can never wedge an existing cron; it converts silent ungated
   // inline spend into informed inline-or-deferred spend.
   let singleSourceAutoDefer = false;
-  if (!noEmbed && !dryRun && !watch) {
+  if (!noEmbed && !pairedCli && !dryRun && !watch) {
     const gateRows = await engine.executeRaw<{ local_path: string | null; config: Record<string, unknown>; last_commit: string | null; chunker_version: string | null }>(
       `SELECT local_path, config, last_commit, chunker_version FROM sources WHERE id = $1`,
       [sourceId],
@@ -4864,10 +7950,31 @@ See also:
         last_commit: gateRows[0].last_commit,
         chunker_version: gateRows[0].chunker_version,
       }];
-      const gate = await runInlineCostGate(engine, {
+      const runGate = () => runInlineCostGate(engine, {
         sources: gateSources, mode: 'inline', dryRun: false, jsonOut, yesFlag, full, includeGitignored, label: 'sync',
       });
-      if (gate.action === 'stop') return;
+      const gate = jsonOut
+        ? await withConsoleLogOnStderr(runGate)
+        : await runGate();
+      opts.costGateReceipt = gate.receipt;
+      if (gate.action === 'stop') {
+        if (jsonOut) {
+          const error = new SyncPreconditionError(
+            'cost_gate_stopped',
+            'The inline embedding cost gate stopped before sync began.',
+            null,
+            'an accepted or safely deferred cost-gate outcome',
+          );
+          process.stdout.write(
+            JSON.stringify(buildGBrainSyncErrorEnvelope(error)) + '\n',
+          );
+          const { setCliExitVerdict } = await import(
+            '../core/cli-force-exit.ts'
+          );
+          setCliExitVerdict(1);
+        }
+        return;
+      }
       if (gate.autoDeferEmbeds) {
         opts.noEmbed = true;
         singleSourceAutoDefer = true;
@@ -4885,9 +7992,12 @@ See also:
     // another source's failures.
     const failures = unacknowledgedSyncFailures().filter(f => f.source_id === sourceId);
     if (failures.length === 0) {
-      console.log('No unacknowledged sync failures to retry.');
+      if (jsonOut) process.stderr.write('No unacknowledged sync failures to retry.\n');
+      else console.log('No unacknowledged sync failures to retry.');
     } else {
-      console.log(`Retrying ${failures.length} previously-failed file(s)...`);
+      const line = `Retrying ${failures.length} previously-failed file(s)...`;
+      if (jsonOut) process.stderr.write(line + '\n');
+      else console.log(line);
       // Don't acknowledge them yet — they must succeed to clear.
     }
   }
@@ -4898,12 +8008,49 @@ See also:
     let result: SyncResult;
     process.on('SIGINT', onSingleSourceSigint);
     try {
-      result = await performSync(engine, opts);
+      result = jsonOut
+        ? await withConsoleLogOnStderr(() => performSync(engine, opts))
+        : await performSync(engine, opts);
+    } catch (error) {
+      if (!jsonOut) throw error;
+      process.stdout.write(
+        JSON.stringify(
+          buildGBrainSyncErrorEnvelope(
+            error,
+            mutationEnvelopeState(mutationJournal),
+          ),
+        ) + '\n',
+      );
+      const { setCliExitVerdict } = await import('../core/cli-force-exit.ts');
+      setCliExitVerdict(1);
+      return;
     } finally {
       if (singleSourceTimer !== undefined) clearTimeout(singleSourceTimer);
       process.off('SIGINT', onSingleSourceSigint);
     }
-    printSyncResult(result);
+    if (jsonOut) {
+      try {
+        process.stdout.write(
+          JSON.stringify(buildGBrainSyncEnvelope(result, opts)) + '\n',
+        );
+      } catch (error) {
+        process.stdout.write(
+          JSON.stringify(
+            buildGBrainSyncErrorEnvelope(
+              error,
+              mutationEnvelopeState(mutationJournal),
+            ),
+          ) + '\n',
+        );
+        const { setCliExitVerdict } = await import(
+          '../core/cli-force-exit.ts'
+        );
+        setCliExitVerdict(1);
+        return;
+      }
+    } else {
+      printSyncResult(result);
+    }
     // #3068: a pull_failed partial is NOT a success — unlike timeout-class
     // partials (which converge on retry), a failing pull will not self-heal.
     // Exit non-zero so cron/monitoring sees the wedge instead of a green run.
@@ -4927,6 +8074,7 @@ See also:
     // repo path so the wire-up fires in the common case where the user runs
     // `gbrain sync` without passing --repo every time.
     if (
+      !pairedCli &&
       result.status !== 'dry_run' &&
       result.status !== 'blocked_by_failures' &&
       result.status !== 'partial'

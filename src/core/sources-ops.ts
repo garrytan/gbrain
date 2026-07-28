@@ -54,6 +54,11 @@ import {
 import { gbrainPath } from './config.ts';
 import { isValidSourceId } from './source-id.ts';
 import { resolveSourceWithTier, type SourceTier } from './source-resolver.ts';
+import {
+  LockUnavailableError,
+  syncLockId,
+  withRefreshingLock,
+} from './db-lock.ts';
 
 // ── Errors ──────────────────────────────────────────────────────────────────
 
@@ -70,7 +75,8 @@ export type SourceOpErrorCode =
   | 'clone_dir_outside_gbrain'
   | 'symlink_escape'
   | 'unmanaged_path'
-  | 'not_a_git_repo';
+  | 'not_a_git_repo'
+  | 'lock_busy';
 
 export class SourceOpError extends Error {
   constructor(
@@ -80,6 +86,33 @@ export class SourceOpError extends Error {
   ) {
     super(message);
     this.name = 'SourceOpError';
+  }
+}
+
+export async function withSourceLifecycleLock<T>(
+  engine: BrainEngine,
+  id: string,
+  work: () => Promise<T>,
+): Promise<T> {
+  // Structural test doubles used by command-unit tests expose executeRaw only;
+  // every real Postgres/PGLite engine exposes its lock-capable raw backend.
+  const lockCapable =
+    (engine.kind === 'postgres' &&
+      typeof (engine as unknown as { sql?: unknown }).sql === 'function') ||
+    (engine.kind === 'pglite' &&
+      (engine as unknown as { db?: unknown }).db !== undefined);
+  if (!lockCapable) return work();
+  try {
+    return await withRefreshingLock(engine, syncLockId(id), work);
+  } catch (error) {
+    if (error instanceof LockUnavailableError) {
+      throw new SourceOpError(
+        'lock_busy',
+        `Source "${id}" is busy with another sync or lifecycle operation. Retry after it finishes.`,
+        error,
+      );
+    }
+    throw error;
   }
 }
 
@@ -347,6 +380,17 @@ export function unownedHint(
  * via `force: true` (CLI: `--force`).
  */
 export async function addSource(
+  engine: BrainEngine,
+  opts: AddSourceOpts,
+): Promise<SourceRow> {
+  return withSourceLifecycleLock(
+    engine,
+    opts.id,
+    () => addSourceUnlocked(engine, opts),
+  );
+}
+
+async function addSourceUnlocked(
   engine: BrainEngine,
   opts: AddSourceOpts,
 ): Promise<SourceRow> {
@@ -682,6 +726,18 @@ export async function removeSource(
   engine: BrainEngine,
   opts: RemoveSourceOpts,
 ): Promise<RemoveResult> {
+  if (opts.dryRun) return removeSourceUnlocked(engine, opts);
+  return withSourceLifecycleLock(
+    engine,
+    opts.id,
+    () => removeSourceUnlocked(engine, opts),
+  );
+}
+
+async function removeSourceUnlocked(
+  engine: BrainEngine,
+  opts: RemoveSourceOpts,
+): Promise<RemoveResult> {
   validateSourceId(opts.id);
 
   if (opts.id === 'default') {
@@ -714,6 +770,28 @@ export async function removeSource(
     throw new SourceOpError(
       'protected_id', // closest existing code; caller can frame as "needs confirm"
       `Refusing to remove source "${opts.id}" with ${pageCount} pages without --confirm-destructive or --yes.`,
+    );
+  }
+
+  // v0.42.44 — durability teardown is part of the source lifecycle operation,
+  // so keep it inside the same per-source lock as clone cleanup and row
+  // deletion. Otherwise the public CLI could remove hooks/credentials while a
+  // sync held the lock, then discover contention only at DELETE time.
+  // Best-effort; missing repo/cron/credential are independent no-ops.
+  try {
+    const { unhardenBrainRepo } = await import(
+      './brain-repo-durability.ts'
+    );
+    await unhardenBrainRepo({
+      repoPath: src.local_path ?? '',
+      sourceId: opts.id,
+      logger: (line) => console.error(line),
+    });
+  } catch (error) {
+    console.error(
+      `[gbrain] durability teardown skipped (non-fatal): ${
+        error instanceof Error ? error.message : String(error)
+      }`,
     );
   }
 
@@ -814,6 +892,19 @@ export async function getSourceStatus(
  * Throws SourceOpError on clone failure. Does NOT touch the DB row.
  */
 export async function recloneIfMissing(
+  engine: BrainEngine,
+  id: string,
+  opts: { skipLock?: boolean } = {},
+): Promise<boolean> {
+  if (opts.skipLock) return recloneIfMissingUnlocked(engine, id);
+  return withSourceLifecycleLock(
+    engine,
+    id,
+    () => recloneIfMissingUnlocked(engine, id),
+  );
+}
+
+async function recloneIfMissingUnlocked(
   engine: BrainEngine,
   id: string,
 ): Promise<boolean> {

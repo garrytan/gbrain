@@ -7,7 +7,15 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, mkdirSync, rmSync } from 'fs';
+import {
+  lstatSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { runSources } from '../src/commands/sources.ts';
@@ -161,6 +169,28 @@ describe('sources add', () => {
   });
 });
 
+describe('sources attach', () => {
+  test.serial('replaces a raced marker symlink without following or truncating its target', async () => {
+    const { engine } = makeStub();
+    const scratch = mkdtempSync(join(tmpdir(), 'gbrain-sources-attach-'));
+    const target = join(scratch, 'must-not-change.txt');
+    const marker = join(scratch, '.gbrain-source');
+    const originalCwd = process.cwd();
+    writeFileSync(target, 'sentinel\n', 'utf8');
+    symlinkSync(target, marker);
+    try {
+      process.chdir(scratch);
+      await runSources(engine, ['attach', 'safe-source']);
+      expect(readFileSync(target, 'utf8')).toBe('sentinel\n');
+      expect(lstatSync(marker).isSymbolicLink()).toBe(false);
+      expect(readFileSync(marker, 'utf8')).toBe('safe-source\n');
+    } finally {
+      process.chdir(originalCwd);
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+});
+
 // ── add — #2707 git-repo validation (CLI wiring) ───────────────
 //
 // Uses a REAL on-disk temp dir (unlike the fake-path tests above) so the
@@ -229,6 +259,40 @@ describe('sources list', () => {
 
     const count = calls.find(c => c.sql.includes('COUNT(*)::int AS n FROM pages'));
     expect(count?.sql).toContain('deleted_at IS NULL');
+  });
+
+  test('--json exposes the bookmark and last successful strategy', async () => {
+    const commit = 'a'.repeat(40);
+    const { engine } = makeStub({
+      'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at': [
+        {
+          id: 'default',
+          name: 'default',
+          local_path: '/repo',
+          last_commit: commit,
+          last_sync_at: null,
+          config: '{"federated":true,"last_successful_strategy":"auto"}',
+          created_at: new Date(),
+        },
+      ],
+      'COUNT(*)::int AS n FROM pages': [{ n: 3 }],
+    });
+    const originalLog = console.log;
+    let stdout = '';
+    console.log = (...args: unknown[]) => {
+      stdout += args.map(String).join(' ') + '\n';
+    };
+    try {
+      await runSources(engine, ['list', '--json']);
+    } finally {
+      console.log = originalLog;
+    }
+
+    const parsed = JSON.parse(stdout) as {
+      sources: Array<Record<string, unknown>>;
+    };
+    expect(parsed.sources[0].last_commit).toBe(commit);
+    expect(parsed.sources[0].last_successful_strategy).toBe('auto');
   });
 });
 

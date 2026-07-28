@@ -25,9 +25,15 @@
  *   - MCP tool-def regen for full source-scoping of all ops (part of Step 2+5)
  */
 
-import { writeFileSync, unlinkSync, existsSync } from 'fs';
+import {
+  existsSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from 'fs';
 import { join } from 'path';
-import { createHash } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import {
   assessDestructiveImpact,
@@ -36,12 +42,14 @@ import {
   restoreSource,
   listArchivedSources,
   purgeExpiredSources,
+  purgeSource,
   formatImpact,
   formatSoftDelete,
   SOFT_DELETE_TTL_HOURS,
 } from '../core/destructive-guard.ts';
 import {
   addSource as opsAddSource,
+  removeSource as opsRemoveSource,
   recloneIfMissing,
   SourceOpError,
   type SourceRow as OpsSourceRow,
@@ -90,6 +98,8 @@ interface SourceListEntry {
   federated: boolean;
   page_count: number;
   last_sync_at: string | null;
+  last_commit: string | null;
+  last_successful_strategy: 'markdown' | 'code' | 'auto' | null;
 }
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -330,6 +340,13 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
   const entries: SourceListEntry[] = [];
   for (const r of rows) {
     const pageCount = await countPages(engine, r.id);
+    const config = parseConfig(r.config);
+    const lastSuccessfulStrategy =
+      config.last_successful_strategy === 'markdown' ||
+      config.last_successful_strategy === 'code' ||
+      config.last_successful_strategy === 'auto'
+        ? config.last_successful_strategy
+        : null;
     entries.push({
       id: r.id,
       name: r.name,
@@ -337,6 +354,8 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
       federated: isFederated(r.config),
       page_count: pageCount,
       last_sync_at: r.last_sync_at ? new Date(r.last_sync_at).toISOString() : null,
+      last_commit: r.last_commit,
+      last_successful_strategy: lastSuccessfulStrategy,
     });
   }
 
@@ -369,8 +388,7 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
   const yes = args.includes('--yes');
   const dryRun = args.includes('--dry-run');
   const confirmDestructive = args.includes('--confirm-destructive');
-  const _keepStorage = args.includes('--keep-storage');
-  void _keepStorage;
+  const keepStorage = args.includes('--keep-storage');
 
   if (id === 'default') {
     console.error('Error: cannot remove the "default" source (it backs the pre-v0.17 brain).');
@@ -406,19 +424,15 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
     }
   }
 
-  // v0.42.44 — tear down durability scaffolding BEFORE the row is deleted (we
-  // need the path/label while it still exists). Best-effort; tolerates missing
-  // repo/cron/credential independently.
-  try {
-    const { unhardenBrainRepo } = await import('../core/brain-repo-durability.ts');
-    await unhardenBrainRepo({ repoPath: src.local_path ?? '', sourceId: id, logger: (l) => console.error(l) });
-  } catch (e) {
-    console.error(`[gbrain] durability teardown skipped (non-fatal): ${(e as Error).message}`);
-  }
-
-  await engine.executeRaw(`DELETE FROM sources WHERE id = $1`, [id]);
-  const pageCount = impact?.pageCount ?? 0;
-  console.log(`Removed source "${id}" (${pageCount} pages + dependent rows cascaded).`);
+  const removed = await opsRemoveSource(engine, {
+    id,
+    yes,
+    confirmDestructive,
+    keepStorage,
+  });
+  console.log(
+    `Removed source "${id}" (${removed.pages_deleted} pages + dependent rows cascaded).`,
+  );
 }
 
 // ── Subcommand: archive (soft-delete) ───────────────────────
@@ -582,6 +596,12 @@ async function runPurge(engine: BrainEngine, args: string[]): Promise<void> {
 
   if (id) {
     // Purge a specific source (must be archived)
+    if (id === 'default') {
+      throw new SourceOpError(
+        'protected_id',
+        'Cannot purge the "default" source (it backs the pre-v0.17 brain).',
+      );
+    }
     const impact = await assessDestructiveImpact(engine, id);
     if (!impact) {
       console.error(`Source "${id}" not found.`);
@@ -595,7 +615,13 @@ async function runPurge(engine: BrainEngine, args: string[]): Promise<void> {
       process.exit(5);
     }
 
-    await engine.executeRaw(`DELETE FROM sources WHERE id = $1`, [id]);
+    const purged = await purgeSource(engine, id);
+    if (!purged) {
+      throw new SourceOpError(
+        'not_found',
+        `Source "${id}" is not archived, was restored, or disappeared before it could be purged.`,
+      );
+    }
     console.log(`Permanently deleted source "${id}" (${impact.pageCount} pages cascaded).`);
     return;
   }
@@ -679,8 +705,25 @@ function runAttach(args: string[]): void {
     process.exit(2);
   }
   validateSourceId(id);
-  const dotfile = join(process.cwd(), '.gbrain-source');
-  writeFileSync(dotfile, id + '\n', 'utf8');
+  const cwd = process.cwd();
+  const dotfile = join(cwd, '.gbrain-source');
+  const temporary = join(
+    cwd,
+    `.gbrain-source.${process.pid}.${randomBytes(8).toString('hex')}.tmp`,
+  );
+  try {
+    // Write a fresh inode and atomically replace the directory entry. rename()
+    // replaces a raced symlink itself instead of following it, so an attacker
+    // cannot redirect attach into truncating another writable file.
+    writeFileSync(temporary, id + '\n', {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode: 0o600,
+    });
+    renameSync(temporary, dotfile);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
   console.log(`Attached ${process.cwd()} to source "${id}" via .gbrain-source.`);
   console.log(`Commands run from this directory (or any subdirectory) will default to this source.`);
 }

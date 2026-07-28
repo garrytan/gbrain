@@ -33,6 +33,10 @@ import { readdirSync } from 'fs';
 import { runSources } from '../src/commands/sources.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
+import {
+  syncLockId,
+  tryAcquireDbLock,
+} from '../src/core/db-lock.ts';
 
 // Tier 3: every PGLite spinup path needs the snapshot env unset (test
 // infrastructure detail; matches bootstrap.test.ts pattern).
@@ -132,6 +136,100 @@ async function withEnv2<T>(fn: () => Promise<T>): Promise<T> {
     fn,
   );
 }
+
+describe('source lifecycle lock', () => {
+  test('add, remove, and re-clone contend on the same per-source sync lock', async () => {
+    for (const operation of ['add', 'remove', 'reclone'] as const) {
+      const id = `locked-${operation}`;
+      if (operation !== 'add') {
+        await engine.executeRaw(
+          `INSERT INTO sources (id, name, local_path, config)
+           VALUES ($1, $1, NULL, '{}'::jsonb)`,
+          [id],
+        );
+      }
+      const handle = await tryAcquireDbLock(engine, syncLockId(id));
+      expect(handle).not.toBeNull();
+      try {
+        const promise =
+          operation === 'add'
+            ? addSource(engine, { id, localPath: '/tmp/never-used' })
+            : operation === 'remove'
+              ? removeSource(engine, { id, confirmDestructive: true })
+              : recloneIfMissing(engine, id);
+        try {
+          await promise;
+          throw new Error('expected lifecycle lock contention');
+        } catch (error) {
+          expect(error).toBeInstanceOf(SourceOpError);
+          expect((error as SourceOpError).code).toBe('lock_busy');
+        }
+      } finally {
+        await handle!.release();
+      }
+    }
+  });
+
+  test('public sources remove refuses while the per-source sync lock is held', async () => {
+    const id = 'locked-cli-remove';
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ($1, $1, NULL, '{}'::jsonb)`,
+      [id],
+    );
+    const handle = await tryAcquireDbLock(engine, syncLockId(id));
+    expect(handle).not.toBeNull();
+    try {
+      await expect(
+        runSources(engine, ['remove', id, '--yes']),
+      ).rejects.toMatchObject({
+        code: 'lock_busy',
+      });
+      const rows = await engine.executeRaw<{ id: string }>(
+        `SELECT id FROM sources WHERE id = $1`,
+        [id],
+      );
+      expect(rows).toEqual([{ id }]);
+    } finally {
+      await handle!.release();
+    }
+  });
+
+  test('public sources purge refuses while the per-source sync lock is held', async () => {
+    const id = 'locked-cli-purge';
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, archived, archived_at, archive_expires_at, config)
+       VALUES ($1, $1, NULL, true, now(), now() - INTERVAL '1 hour', '{}'::jsonb)`,
+      [id],
+    );
+    await engine.executeRaw(
+      `INSERT INTO pages (source_id, slug, type, title)
+       VALUES ($1, 'locked-cli-purge/page', 'note', 'Locked purge page')`,
+      [id],
+    );
+    const handle = await tryAcquireDbLock(engine, syncLockId(id));
+    expect(handle).not.toBeNull();
+    try {
+      await expect(
+        runSources(engine, ['purge', id, '--confirm-destructive']),
+      ).rejects.toMatchObject({
+        code: 'lock_busy',
+      });
+      const sourceRows = await engine.executeRaw<{ id: string }>(
+        `SELECT id FROM sources WHERE id = $1`,
+        [id],
+      );
+      expect(sourceRows).toEqual([{ id }]);
+      const pageRows = await engine.executeRaw<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1`,
+        [id],
+      );
+      expect(pageRows[0].n).toBe(1);
+    } finally {
+      await handle!.release();
+    }
+  });
+});
 
 // ---------------------------------------------------------------------------
 // addSource — pre-flight collision (Q4)

@@ -1,9 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  LockReleaseFailedError,
   LockUnavailableError,
   buildTenantLockId,
+  getLockReleaseFailure,
+  withRefreshingLock,
   type WithRefreshingLockOpts,
 } from '../src/core/db-lock.ts';
+import { buildGBrainSyncErrorEnvelope } from '../src/commands/sync.ts';
 
 describe('LockUnavailableError', () => {
   test('carries the lock id', () => {
@@ -65,5 +69,72 @@ describe('WithRefreshingLockOpts shape', () => {
     };
     expect(opts.ttlMinutes).toBe(60);
     expect(opts.heartbeatTimeoutMs).toBe(5000);
+  });
+
+  test('opt-in release failure is typed after successful work', async () => {
+    const fakeEngine = {
+      kind: 'pglite' as const,
+      db: {
+        query: async (sql: string) => {
+          if (sql.includes('INSERT INTO gbrain_cycle_locks')) {
+            return { rows: [{ id: 'gbrain-sync:preview' }] };
+          }
+          if (sql.includes('DELETE FROM gbrain_cycle_locks')) {
+            throw new Error('injected release failure');
+          }
+          return { rows: [] };
+        },
+      },
+      executeRawDirect: async () => [],
+    } as unknown as Parameters<typeof withRefreshingLock>[0];
+
+    await expect(
+      withRefreshingLock(
+        fakeEngine,
+        'gbrain-sync:preview',
+        async () => 'validated',
+        { failOnReleaseError: true },
+      ),
+    ).rejects.toBeInstanceOf(LockReleaseFailedError);
+  });
+
+  test('release failure never replaces the original work error', async () => {
+    const fakeEngine = {
+      kind: 'pglite' as const,
+      db: {
+        query: async (sql: string) => {
+          if (sql.includes('INSERT INTO gbrain_cycle_locks')) {
+            return { rows: [{ id: 'gbrain-sync:preview' }] };
+          }
+          if (sql.includes('DELETE FROM gbrain_cycle_locks')) {
+            throw new Error('injected release failure');
+          }
+          return { rows: [] };
+        },
+      },
+      executeRawDirect: async () => [],
+    } as unknown as Parameters<typeof withRefreshingLock>[0];
+    const workError = new Error('original work failure');
+
+    await expect(
+      withRefreshingLock(
+        fakeEngine,
+        'gbrain-sync:preview',
+        async () => {
+          throw workError;
+        },
+        { failOnReleaseError: true },
+      ),
+    ).rejects.toBe(workError);
+    expect(getLockReleaseFailure(workError)).toBeInstanceOf(
+      LockReleaseFailedError,
+    );
+    expect(buildGBrainSyncErrorEnvelope(workError)).toMatchObject({
+      result_kind: 'gbrain_sync_error',
+      status: 'error',
+      reason_code: 'lock_release_failed',
+      state_changed: 'lock_only',
+      observed: 'gbrain-sync:preview',
+    });
   });
 });

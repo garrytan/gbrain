@@ -197,6 +197,7 @@ describe('sync-parallel: head-drift gate (CODEX-3)', () => {
       '---', 'type: person', 'title: Vanish', '---', '', 'body',
     ].join('\n'));
     execSync('git add -A && git commit -m "add vanish"', { cwd: repoPath, stdio: 'pipe' });
+    const target = git(repoPath, 'rev-parse', 'HEAD');
     rmSync(join(repoPath, 'people/will-vanish.md'));
 
     const result = await performSync(engine, {
@@ -211,8 +212,11 @@ describe('sync-parallel: head-drift gate (CODEX-3)', () => {
     // vanished file is never created; the next sync's pin..HEAD diff shows it
     // deleted.
     expect(result.status).toBe('synced');
+    expect(result.toCommit).toBe(target);
+    expect(result.added).toBe(1);
     expect(result.failedFiles ?? 0).toBe(0);
     expect(await engine.getPage('people/will-vanish')).toBeNull();
+    expect(await engine.getConfig('sync.last_commit')).toBe(target);
   });
 });
 

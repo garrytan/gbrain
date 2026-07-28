@@ -7,6 +7,7 @@ import { execSync } from 'child_process';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 describe('buildSyncManifest', () => {
   test('parses A/M/D entries from single commit', () => {
@@ -355,6 +356,489 @@ describe('performSync dry-run never writes', () => {
     expect(await engine.getConfig('sync.repo_path')).toBeNull();
   });
 
+  test('single-source --json emits exactly one schema-1 document', async () => {
+    const { runSync } = await import('../src/commands/sync.ts');
+    const originalStdoutWrite = process.stdout.write;
+    const originalStderrWrite = process.stderr.write;
+    const originalLog = console.log;
+    const originalError = console.error;
+    let stdout = '';
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      stdout += String(chunk);
+      return true;
+    }) as typeof process.stdout.write;
+    process.stderr.write = (() => true) as typeof process.stderr.write;
+    console.log = (...args: unknown[]) => {
+      stdout += args.map(String).join(' ') + '\n';
+    };
+    console.error = () => {};
+    try {
+      await runSync(engine, [
+        '--source', 'default',
+        '--repo', repoPath,
+        '--strategy', 'markdown',
+        '--dry-run',
+        '--no-pull',
+        '--no-embed',
+        '--no-extract',
+        '--json',
+      ]);
+    } finally {
+      process.stdout.write = originalStdoutWrite;
+      process.stderr.write = originalStderrWrite;
+      console.log = originalLog;
+      console.error = originalError;
+    }
+
+    const documents = stdout.trim().split('\n');
+    expect(documents).toHaveLength(1);
+    const parsed = JSON.parse(documents[0]) as Record<string, unknown>;
+    expect(parsed.schema_version).toBe(1);
+    expect(parsed.result_kind).toBe('gbrain_sync');
+    expect(parsed.status).toBe('dry_run');
+    const corpus = parsed.corpus as Record<string, unknown>;
+    expect(corpus.image_operations_applied).toBe(0);
+    expect(corpus.image_pages_after).toBe(0);
+    expect(Object.values(corpus)).not.toContain(null);
+  });
+
+  test('JSON parse refusals are one gbrain_sync_error document', async () => {
+    const { runSync } = await import('../src/commands/sync.ts');
+    for (const testCase of [
+      {
+        args: ['--json', '--dry-run', '--expected-target'],
+        reason: 'plan_failed',
+      },
+      {
+        args: [
+          '--json',
+          '--dry-run',
+          '--expected-bookmark', 'none',
+          '--expected-bookmark', 'none',
+        ],
+        reason: 'plan_failed',
+      },
+      {
+        args: ['--json', '--dry-run', '--skip-failed'],
+        reason: 'dry_run_modifier_conflict',
+      },
+      {
+        args: ['--json', '--dry-run', '--strategy', 'typo'],
+        reason: 'plan_failed',
+      },
+      {
+        args: ['--json', '--dry-run', '--unknown-sync-flag'],
+        reason: 'plan_failed',
+      },
+      {
+        args: ['--json', '--dry-run', '--source', 'default', '--source', 'default'],
+        reason: 'plan_failed',
+      },
+      {
+        args: ['--json', '--dry-run', '--repo'],
+        reason: 'plan_failed',
+      },
+      {
+        args: ['--json', '--watch'],
+        reason: 'plan_failed',
+      },
+      {
+        args: ['--json', '--help'],
+        reason: 'plan_failed',
+      },
+      {
+        args: ['--json', '--dry-run', '--missing-path', 'invalid'],
+        reason: 'plan_failed',
+      },
+      {
+        args: ['--json', '--dry-run', '--max-age', 'invalid'],
+        reason: 'plan_failed',
+      },
+      {
+        args: ['--json', '--dry-run', '--max-sources', '0'],
+        reason: 'plan_failed',
+      },
+      {
+        args: ['--json', '--dry-run', '--workers', '0'],
+        reason: 'plan_failed',
+      },
+      {
+        args: ['--json', '--dry-run', '--parallel', '0'],
+        reason: 'plan_failed',
+      },
+      {
+        args: ['--json', '--dry-run', '--timeout', 'invalid'],
+        reason: 'plan_failed',
+      },
+    ]) {
+      const originalExit = process.exit;
+      const originalStdoutWrite = process.stdout.write;
+      const originalLog = console.log;
+      const originalError = console.error;
+      let stdout = '';
+      const exit = new Error('__expected_exit__');
+      process.exit = (() => {
+        throw exit;
+      }) as never;
+      process.stdout.write = ((chunk: string | Uint8Array) => {
+        stdout += String(chunk);
+        return true;
+      }) as typeof process.stdout.write;
+      console.log = (...args: unknown[]) => {
+        stdout += args.map(String).join(' ') + '\n';
+      };
+      console.error = () => {};
+      try {
+        await runSync(engine, testCase.args);
+      } catch (error) {
+        if (error !== exit) throw error;
+      } finally {
+        process.exit = originalExit;
+        process.stdout.write = originalStdoutWrite;
+        console.log = originalLog;
+        console.error = originalError;
+      }
+
+      const documents = stdout.trim().split('\n');
+      expect(documents).toHaveLength(1);
+      const parsed = JSON.parse(documents[0]) as Record<string, unknown>;
+      expect(parsed.schema_version).toBe(1);
+      expect(parsed.result_kind).toBe('gbrain_sync_error');
+      expect(parsed.reason_code).toBe(testCase.reason);
+      expect(parsed.state_changed).toBe('none');
+    }
+  });
+
+  test('source-resolution failures remain one JSON refusal document', async () => {
+    const { runSync } = await import('../src/commands/sync.ts');
+    const originalExit = process.exit;
+    const originalStdoutWrite = process.stdout.write;
+    const originalLog = console.log;
+    const originalError = console.error;
+    let stdout = '';
+    const exit = new Error('__expected_exit__');
+    process.exit = (() => {
+      throw exit;
+    }) as never;
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      stdout += String(chunk);
+      return true;
+    }) as typeof process.stdout.write;
+    console.log = (...args: unknown[]) => {
+      stdout += args.map(String).join(' ') + '\n';
+    };
+    console.error = () => {};
+    try {
+      await runSync(engine, [
+        '--json',
+        '--source', 'missing-source',
+        '--repo', repoPath,
+        '--strategy', 'auto',
+        '--dry-run',
+        '--no-pull',
+        '--no-embed',
+        '--no-extract',
+      ]);
+    } catch (error) {
+      if (error !== exit) throw error;
+    } finally {
+      process.exit = originalExit;
+      process.stdout.write = originalStdoutWrite;
+      console.log = originalLog;
+      console.error = originalError;
+    }
+
+    const documents = stdout.trim().split('\n');
+    expect(documents).toHaveLength(1);
+    const parsed = JSON.parse(documents[0]) as Record<string, unknown>;
+    expect(parsed.result_kind).toBe('gbrain_sync_error');
+    expect(parsed.reason_code).toBe('source_changed');
+    expect(parsed.state_changed).toBe('none');
+  });
+
+  test('schema-1 errors report partial after durable sync work begins', async () => {
+    const { performSync, runSync } = await import('../src/commands/sync.ts');
+    await engine.executeRaw(
+      `UPDATE sources SET local_path = $1 WHERE id = 'default'`,
+      [repoPath],
+    );
+    await performSync(engine, {
+      repoPath,
+      sourceId: 'default',
+      strategy: 'markdown',
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    const bookmark = execSync('git rev-parse HEAD', {
+      cwd: repoPath,
+      encoding: 'utf8',
+    }).trim();
+    writeFileSync(
+      join(repoPath, 'people/alice.md'),
+      [
+        '---',
+        'type: person',
+        'title: Alice',
+        '---',
+        '',
+        'Alice changed after the baseline.',
+      ].join('\n'),
+    );
+    execSync('git add -A && git commit -m "change alice"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    const target = execSync('git rev-parse HEAD', {
+      cwd: repoPath,
+      encoding: 'utf8',
+    }).trim();
+
+    const originalLogIngest = engine.logIngest.bind(engine);
+    const originalStdoutWrite = process.stdout.write;
+    const originalStderrWrite = process.stderr.write;
+    const originalLog = console.log;
+    const originalError = console.error;
+    let stdout = '';
+    engine.logIngest = async () => {
+      throw new Error('injected post-bookmark failure');
+    };
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      stdout += String(chunk);
+      return true;
+    }) as typeof process.stdout.write;
+    process.stderr.write = (() => true) as typeof process.stderr.write;
+    console.log = (...args: unknown[]) => {
+      stdout += args.map(String).join(' ') + '\n';
+    };
+    console.error = () => {};
+    try {
+      await runSync(engine, [
+        '--json',
+        '--source', 'default',
+        '--repo', repoPath,
+        '--strategy', 'markdown',
+        '--no-pull',
+        '--no-embed',
+        '--no-extract',
+        '--expected-target', target,
+        '--expected-bookmark', bookmark,
+        '--require-clean',
+      ]);
+    } finally {
+      engine.logIngest = originalLogIngest;
+      process.stdout.write = originalStdoutWrite;
+      process.stderr.write = originalStderrWrite;
+      console.log = originalLog;
+      console.error = originalError;
+    }
+
+    const documents = stdout.trim().split('\n');
+    expect(documents).toHaveLength(1);
+    const parsed = JSON.parse(documents[0]) as Record<string, unknown>;
+    expect(parsed.result_kind).toBe('gbrain_sync_error');
+    expect(parsed.state_changed).toBe('partial');
+    const sourceRows = await engine.executeRaw<{ last_commit: string | null }>(
+      `SELECT last_commit FROM sources WHERE id = 'default'`,
+    );
+    expect(sourceRows[0]?.last_commit).toBe(target);
+  });
+
+  test('schema-1 paired precondition failures report no state change', async () => {
+    const { runSync } = await import('../src/commands/sync.ts');
+    await engine.executeRaw(
+      `UPDATE sources SET local_path = $1 WHERE id = 'default'`,
+      [repoPath],
+    );
+    const originalStdoutWrite = process.stdout.write;
+    const originalStderrWrite = process.stderr.write;
+    const originalLog = console.log;
+    const originalError = console.error;
+    let stdout = '';
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      stdout += String(chunk);
+      return true;
+    }) as typeof process.stdout.write;
+    process.stderr.write = (() => true) as typeof process.stderr.write;
+    console.log = (...args: unknown[]) => {
+      stdout += args.map(String).join(' ') + '\n';
+    };
+    console.error = () => {};
+    try {
+      await runSync(engine, [
+        '--json',
+        '--source', 'default',
+        '--repo', repoPath,
+        '--strategy', 'markdown',
+        '--dry-run',
+        '--no-pull',
+        '--expected-target', '0000000000000000000000000000000000000000',
+        '--expected-bookmark', 'none',
+        '--require-clean',
+      ]);
+    } finally {
+      process.stdout.write = originalStdoutWrite;
+      process.stderr.write = originalStderrWrite;
+      console.log = originalLog;
+      console.error = originalError;
+    }
+
+    const documents = stdout.trim().split('\n');
+    expect(documents).toHaveLength(1);
+    const parsed = JSON.parse(documents[0]) as Record<string, unknown>;
+    expect(parsed.result_kind).toBe('gbrain_sync_error');
+    expect(parsed.reason_code).toBe('target_changed');
+    expect(parsed.state_changed).toBe('none');
+  });
+
+  test('paired CLI refuses --skip-failed before source resolution or mutation', async () => {
+    const { runSync } = await import('../src/commands/sync.ts');
+    const originalExit = process.exit;
+    const originalStdoutWrite = process.stdout.write;
+    const originalError = console.error;
+    const exit = new Error('__expected_exit__');
+    let exitCode: number | undefined;
+    let stdout = '';
+    let engineTouched = false;
+    const refusingEngine = new Proxy({} as PGLiteEngine, {
+      get() {
+        engineTouched = true;
+        throw new Error('engine must not be touched');
+      },
+    });
+    process.exit = ((code?: number) => {
+      exitCode = code;
+      throw exit;
+    }) as never;
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      stdout += String(chunk);
+      return true;
+    }) as typeof process.stdout.write;
+    console.error = () => {};
+    try {
+      await runSync(refusingEngine, [
+        '--json',
+        '--source', 'default',
+        '--repo', repoPath,
+        '--strategy', 'markdown',
+        '--no-pull',
+        '--skip-failed',
+        '--expected-target', '0000000000000000000000000000000000000000',
+        '--expected-bookmark', 'none',
+        '--require-clean',
+      ]);
+    } catch (error) {
+      if (error !== exit) throw error;
+    } finally {
+      process.exit = originalExit;
+      process.stdout.write = originalStdoutWrite;
+      console.error = originalError;
+    }
+
+    expect(exitCode).toBe(1);
+    expect(engineTouched).toBe(false);
+    const documents = stdout.trim().split('\n');
+    expect(documents).toHaveLength(1);
+    const parsed = JSON.parse(documents[0]) as Record<string, unknown>;
+    expect(parsed.result_kind).toBe('gbrain_sync_error');
+    expect(parsed.reason_code).toBe('plan_failed');
+    expect(parsed.state_changed).toBe('none');
+  });
+
+  test('paired exact-target sync requires no-pull before taking the writer path', async () => {
+    const { performSync, SyncPreconditionError } = await import('../src/commands/sync.ts');
+    const target = execSync('git rev-parse HEAD', {
+      cwd: repoPath,
+      encoding: 'utf8',
+    }).trim();
+
+    await expect(
+      performSync(engine, {
+        repoPath,
+        dryRun: true,
+        noEmbed: true,
+        noExtract: true,
+        expectedTarget: target,
+        expectedBookmark: null,
+        requireClean: true,
+      }),
+    ).rejects.toBeInstanceOf(SyncPreconditionError);
+    expect(await engine.getConfig('sync.last_commit')).toBeNull();
+  });
+
+  test('paired default source refuses a repository outside its registered root', async () => {
+    const { performSync, SyncPreconditionError } = await import('../src/commands/sync.ts');
+    await engine.executeRaw(
+      `UPDATE sources SET local_path = $1 WHERE id = 'default'`,
+      [repoPath],
+    );
+    const otherRepo = mkdtempSync(join(tmpdir(), 'gbrain-sync-other-root-'));
+    execSync('git init', { cwd: otherRepo, stdio: 'pipe' });
+    execSync('git config user.email "test@test.com"', { cwd: otherRepo, stdio: 'pipe' });
+    execSync('git config user.name "Test"', { cwd: otherRepo, stdio: 'pipe' });
+    writeFileSync(join(otherRepo, 'other.md'), '# Other\n');
+    execSync('git add -A && git commit -m "other"', { cwd: otherRepo, stdio: 'pipe' });
+    const target = execSync('git rev-parse HEAD', {
+      cwd: otherRepo,
+      encoding: 'utf8',
+    }).trim();
+
+    try {
+      await expect(
+        performSync(engine, {
+          sourceId: 'default',
+          repoPath: otherRepo,
+          dryRun: true,
+          noPull: true,
+          noEmbed: true,
+          noExtract: true,
+          expectedTarget: target,
+          expectedBookmark: null,
+          requireClean: true,
+        }),
+      ).rejects.toBeInstanceOf(SyncPreconditionError);
+    } finally {
+      rmSync(otherRepo, { recursive: true, force: true });
+    }
+    expect(await engine.getPage('other')).toBeNull();
+  });
+
+  test('paired schema-1 apply refuses multimodal indexing before mutation', async () => {
+    const { performSync, SyncPreconditionError } = await import('../src/commands/sync.ts');
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ($1, $1, $2, '{}'::jsonb)`,
+      ['paired-multimodal', repoPath],
+    );
+    const target = execSync('git rev-parse HEAD', {
+      cwd: repoPath,
+      encoding: 'utf8',
+    }).trim();
+    await withEnv({ GBRAIN_EMBEDDING_MULTIMODAL: 'true' }, async () => {
+      await expect(
+        performSync(engine, {
+          sourceId: 'paired-multimodal',
+          repoPath,
+          strategy: 'auto',
+          noPull: true,
+          noEmbed: true,
+          noExtract: true,
+          expectedTarget: target,
+          expectedBookmark: null,
+          requireClean: true,
+        }),
+      ).rejects.toBeInstanceOf(SyncPreconditionError);
+    });
+    expect(await engine.getPage('people/alice', {
+      sourceId: 'paired-multimodal',
+    })).toBeNull();
+    const rows = await engine.executeRaw<{ last_commit: string | null }>(
+      `SELECT last_commit FROM sources WHERE id = $1`,
+      ['paired-multimodal'],
+    );
+    expect(rows[0].last_commit).toBeNull();
+  });
+
   test('first sync without origin skips git pull noise and uses local working tree', async () => {
     const { performSync } = await import('../src/commands/sync.ts');
     const messages: string[] = [];
@@ -420,6 +904,1043 @@ describe('performSync dry-run never writes', () => {
     // Bookmark unchanged — still at the pre-carol commit.
     const bookmarkAfterDry = await engine.getConfig('sync.last_commit');
     expect(bookmarkAfterDry).toBe(bookmarkAfterReal);
+  });
+
+  test('strategy-changing dry-run preserves previously indexed out-of-strategy pages', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    await performSync(engine, {
+      repoPath,
+      noPull: true,
+      noEmbed: true,
+    });
+    expect(await engine.getPage('people/alice')).not.toBeNull();
+
+    writeFileSync(join(repoPath, 'people/alice.md'), [
+      '---',
+      'type: person',
+      'title: Alice',
+      '---',
+      '',
+      'Alice changed after the initial sync.',
+    ].join('\n'));
+    execSync('git add -A && git commit -m "update alice"', { cwd: repoPath, stdio: 'pipe' });
+
+    const result = await performSync(engine, {
+      repoPath,
+      strategy: 'code',
+      dryRun: true,
+      noPull: true,
+      noEmbed: true,
+    });
+
+    expect(result.status).toBe('dry_run');
+    expect(await engine.getPage('people/alice')).not.toBeNull();
+  });
+
+  test('paired strategy apply reports the locked bookmark and exact plan evidence', async () => {
+    const {
+      buildGBrainSyncEnvelope,
+      performSync,
+    } = await import('../src/commands/sync.ts');
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ($1, $1, $2, '{}'::jsonb)`,
+      ['paired-source', repoPath],
+    );
+    await performSync(engine, {
+      sourceId: 'paired-source',
+      repoPath,
+      strategy: 'markdown',
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    const sourceBefore = await engine.executeRaw<{
+      last_commit: string;
+    }>(
+      `SELECT last_commit FROM sources WHERE id = $1`,
+      ['paired-source'],
+    );
+    const bookmark = sourceBefore[0].last_commit;
+
+    mkdirSync(join(repoPath, 'src'), { recursive: true });
+    writeFileSync(
+      join(repoPath, 'src/app.ts'),
+      'export const answer = 42;\n',
+    );
+    execSync('git add -A && git commit -m "add code"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    const target = execSync('git rev-parse HEAD', {
+      cwd: repoPath,
+      encoding: 'utf8',
+    }).trim();
+
+    const opts = {
+      sourceId: 'paired-source',
+      repoPath,
+      strategy: 'code' as const,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      expectedTarget: target,
+      expectedBookmark: bookmark,
+      requireClean: true,
+    };
+    const result = await performSync(engine, opts);
+    const envelope = buildGBrainSyncEnvelope(result, opts);
+
+    expect(result.status).toBe('first_sync');
+    expect(envelope.repository.from_commit).toBe(bookmark);
+    expect(envelope.repository.target_commit).toBe(target);
+    expect(envelope.repository.bookmark_after).toBe(target);
+    expect(envelope.repository.last_successful_strategy).toBe('code');
+    expect(envelope.strategy_changed).toBe(true);
+    expect(envelope.operations.added).toBe(1);
+    expect(envelope.operations.preserved).toBe(2);
+    expect(envelope.corpus.markdown_planned_or_applied).toBe(0);
+    expect(envelope.corpus.code_pages_before).toBe(0);
+    expect(envelope.corpus.code_pages_after).toBe(1);
+    expect(envelope.corpus.code_deletions_applied).toBe(0);
+    expect(envelope.corpus.image_operations_applied).toBe(0);
+    expect(envelope.corpus.image_pages_after).toBe(0);
+    expect(envelope.corpus.multimodal_enabled).toBe(false);
+    expect(envelope.corpus.embedding_status).toBe('deferred');
+    expect(envelope.corpus.extraction_status).toBe('deferred');
+    expect(envelope.corpus.search_ready).toBe(false);
+    expect(Object.keys(envelope.corpus).sort()).toEqual([
+      'code_deletions_applied',
+      'code_pages_after',
+      'code_pages_before',
+      'embedding_status',
+      'extraction_status',
+      'image_operations_applied',
+      'image_pages_after',
+      'markdown_planned_or_applied',
+      'multimodal_enabled',
+      'search_ready',
+    ]);
+    for (const key of [
+      'markdown_planned_or_applied',
+      'code_pages_before',
+      'code_pages_after',
+      'code_deletions_applied',
+      'image_operations_applied',
+      'image_pages_after',
+    ] as const) {
+      expect(Number.isInteger(envelope.corpus[key])).toBe(true);
+      expect(envelope.corpus[key]).toBeGreaterThanOrEqual(0);
+    }
+    expect(await engine.getPage('people/alice', {
+      sourceId: 'paired-source',
+    })).not.toBeNull();
+  });
+
+  test('paired full apply blocks when a planned delete is not accounted', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ($1, $1, $2, '{}'::jsonb)`,
+      ['paired-delete', repoPath],
+    );
+    await performSync(engine, {
+      sourceId: 'paired-delete',
+      repoPath,
+      strategy: 'markdown',
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    const rows = await engine.executeRaw<{ last_commit: string }>(
+      `SELECT last_commit FROM sources WHERE id = $1`,
+      ['paired-delete'],
+    );
+    const bookmark = rows[0].last_commit;
+    rmSync(join(repoPath, 'people/alice.md'));
+    execSync('git add -A && git commit -m "remove alice"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    const target = execSync('git rev-parse HEAD', {
+      cwd: repoPath,
+      encoding: 'utf8',
+    }).trim();
+    const originalDeletePages = engine.deletePages.bind(engine);
+    engine.deletePages = async () => [];
+    let result;
+    try {
+      result = await performSync(engine, {
+        sourceId: 'paired-delete',
+        repoPath,
+        strategy: 'markdown',
+        full: true,
+        noPull: true,
+        noEmbed: true,
+        noExtract: true,
+        expectedTarget: target,
+        expectedBookmark: bookmark,
+        requireClean: true,
+      });
+    } finally {
+      engine.deletePages = originalDeletePages;
+    }
+
+    expect(result.status).toBe('blocked_by_failures');
+    expect(result.deleted).toBe(1);
+    const after = await engine.executeRaw<{ last_commit: string }>(
+      `SELECT last_commit FROM sources WHERE id = $1`,
+      ['paired-delete'],
+    );
+    expect(after[0].last_commit).toBe(bookmark);
+    expect(await engine.getPage('people/alice', {
+      sourceId: 'paired-delete',
+    })).not.toBeNull();
+  });
+
+  test('full and incremental plans both preserve a rename into an excluded path', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ($1, $1, $2, '{}'::jsonb)`,
+      ['paired-excluded-rename', repoPath],
+    );
+    await performSync(engine, {
+      sourceId: 'paired-excluded-rename',
+      repoPath,
+      strategy: 'markdown',
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    const rows = await engine.executeRaw<{ last_commit: string }>(
+      `SELECT last_commit FROM sources WHERE id = $1`,
+      ['paired-excluded-rename'],
+    );
+    const bookmark = rows[0].last_commit;
+    mkdirSync(join(repoPath, 'archive'), { recursive: true });
+    execSync('git mv people/alice.md archive/alice.md', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    execSync('git commit -m "move alice into excluded archive"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    const target = execSync('git rev-parse HEAD', {
+      cwd: repoPath,
+      encoding: 'utf8',
+    }).trim();
+    const paired = {
+      sourceId: 'paired-excluded-rename',
+      repoPath,
+      strategy: 'markdown' as const,
+      dryRun: true,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      expectedTarget: target,
+      expectedBookmark: bookmark,
+      requireClean: true,
+      exclude: ['archive/**'],
+    };
+
+    const incremental = await performSync(engine, paired);
+    const full = await performSync(engine, { ...paired, full: true });
+
+    expect(incremental.deleted).toBe(0);
+    expect(incremental.preserved).toBe(1);
+    expect(incremental.affected?.total).toBe(0);
+    expect(full.deleted).toBe(0);
+    expect(full.preserved).toBe(1);
+    expect(full.affected?.total).toBe(0);
+    expect(full.affectedDigest).toBe(incremental.affectedDigest);
+    expect(await engine.getPage('people/alice', {
+      sourceId: 'paired-excluded-rename',
+    })).not.toBeNull();
+  });
+
+  test('full and incremental plans both preserve a rename outside the selected strategy', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ($1, $1, $2, '{}'::jsonb)`,
+      ['paired-strategy-rename', repoPath],
+    );
+    await performSync(engine, {
+      sourceId: 'paired-strategy-rename',
+      repoPath,
+      strategy: 'markdown',
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    const rows = await engine.executeRaw<{ last_commit: string }>(
+      `SELECT last_commit FROM sources WHERE id = $1`,
+      ['paired-strategy-rename'],
+    );
+    const bookmark = rows[0].last_commit;
+    mkdirSync(join(repoPath, 'src'), { recursive: true });
+    execSync('git mv people/alice.md src/alice.ts', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    execSync('git commit -m "move alice outside markdown strategy"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    const target = execSync('git rev-parse HEAD', {
+      cwd: repoPath,
+      encoding: 'utf8',
+    }).trim();
+    const paired = {
+      sourceId: 'paired-strategy-rename',
+      repoPath,
+      strategy: 'markdown' as const,
+      dryRun: true,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      expectedTarget: target,
+      expectedBookmark: bookmark,
+      requireClean: true,
+    };
+
+    const incremental = await performSync(engine, paired);
+    const full = await performSync(engine, { ...paired, full: true });
+
+    expect(incremental.deleted).toBe(0);
+    expect(incremental.preserved).toBe(1);
+    expect(incremental.affected?.total).toBe(0);
+    expect(full.deleted).toBe(0);
+    expect(full.preserved).toBe(1);
+    expect(full.affected?.total).toBe(0);
+    expect(full.affectedDigest).toBe(incremental.affectedDigest);
+    expect(await engine.getPage('people/alice', {
+      sourceId: 'paired-strategy-rename',
+    })).not.toBeNull();
+  });
+
+  test('full and incremental plans both preserve a modified command-excluded path', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ($1, $1, $2, '{}'::jsonb)`,
+      ['paired-excluded-modify', repoPath],
+    );
+    await performSync(engine, {
+      sourceId: 'paired-excluded-modify',
+      repoPath,
+      strategy: 'markdown',
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    const rows = await engine.executeRaw<{ last_commit: string }>(
+      `SELECT last_commit FROM sources WHERE id = $1`,
+      ['paired-excluded-modify'],
+    );
+    const bookmark = rows[0].last_commit;
+    writeFileSync(join(repoPath, 'people/alice.md'), [
+      '---',
+      'type: person',
+      'title: Alice',
+      '---',
+      '',
+      'This excluded edit must remain unplanned.',
+    ].join('\n'));
+    execSync('git add -A && git commit -m "modify excluded alice"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    const target = execSync('git rev-parse HEAD', {
+      cwd: repoPath,
+      encoding: 'utf8',
+    }).trim();
+    const paired = {
+      sourceId: 'paired-excluded-modify',
+      repoPath,
+      strategy: 'markdown' as const,
+      dryRun: true,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      expectedTarget: target,
+      expectedBookmark: bookmark,
+      requireClean: true,
+      exclude: ['people/alice.md'],
+    };
+
+    const incremental = await performSync(engine, paired);
+    const full = await performSync(engine, { ...paired, full: true });
+
+    expect(incremental.modified).toBe(0);
+    expect(incremental.preserved).toBe(1);
+    expect(incremental.affected?.total).toBe(0);
+    expect(full.modified).toBe(0);
+    expect(full.preserved).toBe(1);
+    expect(full.affected?.total).toBe(0);
+    expect(full.affectedDigest).toBe(incremental.affectedDigest);
+  });
+
+  test('paired delete never removes a same-slug manual page that the source never indexed', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    writeFileSync(
+      join(repoPath, 'note.md'),
+      ['---', 'type: note', 'title: Repository note', '---', '', 'Excluded.'].join('\n'),
+    );
+    execSync('git add -A && git commit -m "add excluded repository note"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ($1, $1, $2, '{}'::jsonb)`,
+      ['paired-manual-delete', repoPath],
+    );
+    await performSync(engine, {
+      sourceId: 'paired-manual-delete',
+      repoPath,
+      strategy: 'markdown',
+      exclude: ['note.md'],
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    await engine.putPage('note', {
+      type: 'note',
+      title: 'Manual note',
+      compiled_truth: 'Must survive repository deletion.',
+      frontmatter: {},
+    }, { sourceId: 'paired-manual-delete' });
+    const before = await engine.executeRaw<{ last_commit: string }>(
+      `SELECT last_commit FROM sources WHERE id = $1`,
+      ['paired-manual-delete'],
+    );
+    const bookmark = before[0].last_commit;
+    rmSync(join(repoPath, 'note.md'));
+    execSync('git add -A && git commit -m "delete excluded repository note"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    const target = execSync('git rev-parse HEAD', {
+      cwd: repoPath,
+      encoding: 'utf8',
+    }).trim();
+    const paired = {
+      sourceId: 'paired-manual-delete',
+      repoPath,
+      strategy: 'markdown' as const,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      expectedTarget: target,
+      expectedBookmark: bookmark,
+      requireClean: true,
+    };
+
+    const incremental = await performSync(engine, {
+      ...paired,
+      dryRun: true,
+    });
+    const full = await performSync(engine, {
+      ...paired,
+      dryRun: true,
+      full: true,
+    });
+    expect(incremental.deleted).toBe(0);
+    expect(incremental.affected?.total).toBe(0);
+    expect(full.deleted).toBe(0);
+    expect(full.affected?.total).toBe(0);
+
+    const applied = await performSync(engine, paired);
+    expect(applied.status).toBe('up_to_date');
+    expect(await engine.getPage('note', {
+      sourceId: 'paired-manual-delete',
+    })).not.toBeNull();
+  });
+
+  test('deletion under a command exclusion preserves the indexed page in full and incremental modes', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    mkdirSync(join(repoPath, 'notes'), { recursive: true });
+    writeFileSync(
+      join(repoPath, 'notes/a.md'),
+      ['---', 'type: note', 'title: A', '---', '', 'Keep this indexed.'].join('\n'),
+    );
+    execSync('git add -A && git commit -m "add excluded deletion fixture"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ($1, $1, $2, '{}'::jsonb)`,
+      ['paired-excluded-delete', repoPath],
+    );
+    await performSync(engine, {
+      sourceId: 'paired-excluded-delete',
+      repoPath,
+      strategy: 'markdown',
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    const before = await engine.executeRaw<{ last_commit: string }>(
+      `SELECT last_commit FROM sources WHERE id = $1`,
+      ['paired-excluded-delete'],
+    );
+    const bookmark = before[0].last_commit;
+    rmSync(join(repoPath, 'notes/a.md'));
+    execSync('git add -A && git commit -m "delete command-excluded page"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    const target = execSync('git rev-parse HEAD', {
+      cwd: repoPath,
+      encoding: 'utf8',
+    }).trim();
+    const paired = {
+      sourceId: 'paired-excluded-delete',
+      repoPath,
+      strategy: 'markdown' as const,
+      exclude: ['notes/**'],
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      expectedTarget: target,
+      expectedBookmark: bookmark,
+      requireClean: true,
+    };
+
+    const incremental = await performSync(engine, {
+      ...paired,
+      dryRun: true,
+    });
+    const full = await performSync(engine, {
+      ...paired,
+      dryRun: true,
+      full: true,
+    });
+    expect(incremental.deleted).toBe(0);
+    expect(incremental.preserved).toBe(1);
+    expect(full.deleted).toBe(0);
+    expect(full.preserved).toBe(1);
+    expect(full.affectedDigest).toBe(incremental.affectedDigest);
+
+    const applied = await performSync(engine, paired);
+    expect(applied.deleted).toBe(0);
+    expect(await engine.getPage('notes/a', {
+      sourceId: 'paired-excluded-delete',
+    })).not.toBeNull();
+  });
+
+  test('incremental fallback-slug evidence matches preview and apply', async () => {
+    const {
+      buildGBrainSyncEnvelope,
+      performSync,
+    } = await import('../src/commands/sync.ts');
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ($1, $1, $2, '{}'::jsonb)`,
+      ['paired-fallback-slug', repoPath],
+    );
+    await performSync(engine, {
+      sourceId: 'paired-fallback-slug',
+      repoPath,
+      strategy: 'auto',
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    const rows = await engine.executeRaw<{ last_commit: string }>(
+      `SELECT last_commit FROM sources WHERE id = $1`,
+      ['paired-fallback-slug'],
+    );
+    const bookmark = rows[0].last_commit;
+    writeFileSync(
+      join(repoPath, '💾.md'),
+      ['---', 'type: concept', 'title: Disk', 'slug: disk', '---', '', 'Saved.'].join('\n'),
+    );
+    execSync('git add -A && git commit -m "add fallback slug page"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    const target = execSync('git rev-parse HEAD', {
+      cwd: repoPath,
+      encoding: 'utf8',
+    }).trim();
+    const paired = {
+      sourceId: 'paired-fallback-slug',
+      repoPath,
+      strategy: 'auto' as const,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      expectedTarget: target,
+      expectedBookmark: bookmark,
+      requireClean: true,
+    };
+
+    const previewResult = await performSync(engine, {
+      ...paired,
+      dryRun: true,
+    });
+    const preview = buildGBrainSyncEnvelope(previewResult, paired);
+    expect(preview.affected.sample).toEqual([
+      {
+        operation: 'add',
+        path: '💾.md',
+        slug: 'disk',
+      },
+    ]);
+
+    const appliedResult = await performSync(engine, paired);
+    const applied = buildGBrainSyncEnvelope(appliedResult, paired);
+    expect(applied.affected).toEqual(preview.affected);
+    expect(applied.affected_digest).toBe(preview.affected_digest);
+    expect(await engine.getPage('disk', {
+      sourceId: 'paired-fallback-slug',
+    })).not.toBeNull();
+  });
+
+  test('paired delete applies the immutable planned fallback slug without re-resolving it', async () => {
+    const {
+      buildGBrainSyncEnvelope,
+      performSync,
+    } = await import('../src/commands/sync.ts');
+    writeFileSync(
+      join(repoPath, '💾.md'),
+      [
+        '---',
+        'type: concept',
+        'title: Canonical disk',
+        'slug: canonical-disk',
+        '---',
+        '',
+        'Stored under a frontmatter fallback slug.',
+      ].join('\n'),
+    );
+    execSync('git add -A && git commit -m "add planned fallback delete"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ($1, $1, $2, '{}'::jsonb)`,
+      ['paired-planned-delete-slug', repoPath],
+    );
+    await performSync(engine, {
+      sourceId: 'paired-planned-delete-slug',
+      repoPath,
+      strategy: 'markdown',
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    const rows = await engine.executeRaw<{ last_commit: string }>(
+      `SELECT last_commit FROM sources WHERE id = $1`,
+      ['paired-planned-delete-slug'],
+    );
+    const bookmark = rows[0].last_commit;
+    expect(await engine.getPage('canonical-disk', {
+      sourceId: 'paired-planned-delete-slug',
+    })).not.toBeNull();
+
+    rmSync(join(repoPath, '💾.md'));
+    execSync('git add -A && git commit -m "delete fallback slug page"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    const target = execSync('git rev-parse HEAD', {
+      cwd: repoPath,
+      encoding: 'utf8',
+    }).trim();
+    const paired = {
+      sourceId: 'paired-planned-delete-slug',
+      repoPath,
+      strategy: 'markdown' as const,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      expectedTarget: target,
+      expectedBookmark: bookmark,
+      requireClean: true,
+    };
+    const previewResult = await performSync(engine, {
+      ...paired,
+      dryRun: true,
+    });
+    const preview = buildGBrainSyncEnvelope(previewResult, paired);
+    expect(preview.affected.sample).toEqual([
+      {
+        operation: 'delete',
+        path: '💾.md',
+        slug: 'canonical-disk',
+      },
+    ]);
+
+    const originalResolveSlugsByPaths =
+      engine.resolveSlugsByPaths.bind(engine);
+    let resolverCalls = 0;
+    engine.resolveSlugsByPaths = async () => {
+      resolverCalls++;
+      throw new Error('planned delete must not re-resolve');
+    };
+    let applied;
+    try {
+      applied = await performSync(engine, paired);
+    } finally {
+      engine.resolveSlugsByPaths = originalResolveSlugsByPaths;
+    }
+
+    expect(applied.status).toBe('synced');
+    expect(resolverCalls).toBe(0);
+    expect(await engine.getPage('canonical-disk', {
+      sourceId: 'paired-planned-delete-slug',
+    })).toBeNull();
+    const after = await engine.executeRaw<{ last_commit: string }>(
+      `SELECT last_commit FROM sources WHERE id = $1`,
+      ['paired-planned-delete-slug'],
+    );
+    expect(after[0].last_commit).toBe(target);
+  });
+
+  test('fallback frontmatter slug changes refuse preview and apply without advancing', async () => {
+    const {
+      performSync,
+      SyncPreconditionError,
+    } = await import('../src/commands/sync.ts');
+    writeFileSync(
+      join(repoPath, '💾.md'),
+      ['---', 'type: concept', 'title: Disk', 'slug: disk', '---', '', 'Saved.'].join('\n'),
+    );
+    execSync('git add -A && git commit -m "add stable fallback slug"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ($1, $1, $2, '{}'::jsonb)`,
+      ['paired-fallback-change', repoPath],
+    );
+    await performSync(engine, {
+      sourceId: 'paired-fallback-change',
+      repoPath,
+      strategy: 'markdown',
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    const before = await engine.executeRaw<{ last_commit: string }>(
+      `SELECT last_commit FROM sources WHERE id = $1`,
+      ['paired-fallback-change'],
+    );
+    const bookmark = before[0].last_commit;
+    writeFileSync(
+      join(repoPath, '💾.md'),
+      ['---', 'type: concept', 'title: Drive', 'slug: drive', '---', '', 'Changed.'].join('\n'),
+    );
+    execSync('git add -A && git commit -m "change fallback slug"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    const target = execSync('git rev-parse HEAD', {
+      cwd: repoPath,
+      encoding: 'utf8',
+    }).trim();
+    const paired = {
+      sourceId: 'paired-fallback-change',
+      repoPath,
+      strategy: 'markdown' as const,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      expectedTarget: target,
+      expectedBookmark: bookmark,
+      requireClean: true,
+    };
+
+    for (const dryRun of [true, false]) {
+      try {
+        await performSync(engine, { ...paired, dryRun });
+        throw new Error('expected fallback slug change refusal');
+      } catch (error) {
+        expect(error).toBeInstanceOf(SyncPreconditionError);
+        expect(error).toMatchObject({ reasonCode: 'plan_failed' });
+      }
+    }
+
+    const after = await engine.executeRaw<{ last_commit: string }>(
+      `SELECT last_commit FROM sources WHERE id = $1`,
+      ['paired-fallback-change'],
+    );
+    expect(after[0].last_commit).toBe(bookmark);
+    expect(await engine.getPage('disk', {
+      sourceId: 'paired-fallback-change',
+    })).not.toBeNull();
+    expect(await engine.getPage('drive', {
+      sourceId: 'paired-fallback-change',
+    })).toBeNull();
+  });
+
+  test('ephemeral-only markdown edits are omitted from immutable mutation evidence', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ($1, $1, $2, '{}'::jsonb)`,
+      ['paired-ephemeral', repoPath],
+    );
+    await performSync(engine, {
+      sourceId: 'paired-ephemeral',
+      repoPath,
+      strategy: 'markdown',
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    const rows = await engine.executeRaw<{ last_commit: string }>(
+      `SELECT last_commit FROM sources WHERE id = $1`,
+      ['paired-ephemeral'],
+    );
+    const bookmark = rows[0].last_commit;
+    writeFileSync(join(repoPath, 'people/alice.md'), [
+      '---',
+      'type: person',
+      'title: Alice',
+      'captured_at: 2026-07-28T12:00:00Z',
+      '---',
+      '',
+      'Alice is a person.',
+    ].join('\n'));
+    execSync('git add -A && git commit -m "refresh ephemeral capture time"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    const target = execSync('git rev-parse HEAD', {
+      cwd: repoPath,
+      encoding: 'utf8',
+    }).trim();
+
+    const preview = await performSync(engine, {
+      sourceId: 'paired-ephemeral',
+      repoPath,
+      strategy: 'markdown',
+      dryRun: true,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      expectedTarget: target,
+      expectedBookmark: bookmark,
+      requireClean: true,
+    });
+
+    expect(preview.modified).toBe(0);
+    expect(preview.affected?.total).toBe(0);
+  });
+
+  test('slug-equivalent rename persists the destination source_path', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    writeFileSync(
+      join(repoPath, 'note!.md'),
+      ['---', 'type: concept', 'title: Note', '---', '', 'Same content.'].join('\n'),
+    );
+    execSync('git add -A && git commit -m "add punctuation note"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ($1, $1, $2, '{}'::jsonb)`,
+      ['paired-same-slug-rename', repoPath],
+    );
+    await performSync(engine, {
+      sourceId: 'paired-same-slug-rename',
+      repoPath,
+      strategy: 'markdown',
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    const before = await engine.executeRaw<{
+      last_commit: string;
+    }>(
+      `SELECT last_commit FROM sources WHERE id = $1`,
+      ['paired-same-slug-rename'],
+    );
+    const bookmark = before[0].last_commit;
+    execSync('git mv "note!.md" note.md && git commit -m "normalize note path"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    const target = execSync('git rev-parse HEAD', {
+      cwd: repoPath,
+      encoding: 'utf8',
+    }).trim();
+    const paired = {
+      sourceId: 'paired-same-slug-rename',
+      repoPath,
+      strategy: 'markdown' as const,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      expectedTarget: target,
+      expectedBookmark: bookmark,
+      requireClean: true,
+    };
+
+    const result = await performSync(engine, paired);
+    expect(result.renamed).toBe(1);
+    const pages = await engine.executeRaw<{ source_path: string | null }>(
+      `SELECT source_path FROM pages WHERE source_id = $1 AND slug = 'note'`,
+      ['paired-same-slug-rename'],
+    );
+    expect(pages).toEqual([{ source_path: 'note.md' }]);
+  });
+
+  test('fallback-slug rename persists the planned destination source_path', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    writeFileSync(
+      join(repoPath, '💽.md'),
+      ['---', 'type: concept', 'title: Disk', 'slug: disk', '---', '', 'Same content.'].join('\n'),
+    );
+    execSync('git add -A && git commit -m "add fallback rename source"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ($1, $1, $2, '{}'::jsonb)`,
+      ['paired-fallback-rename', repoPath],
+    );
+    await performSync(engine, {
+      sourceId: 'paired-fallback-rename',
+      repoPath,
+      strategy: 'markdown',
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    const before = await engine.executeRaw<{ last_commit: string }>(
+      `SELECT last_commit FROM sources WHERE id = $1`,
+      ['paired-fallback-rename'],
+    );
+    const bookmark = before[0].last_commit;
+    execSync('git mv "💽.md" "💾.md" && git commit -m "rename fallback path"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    const target = execSync('git rev-parse HEAD', {
+      cwd: repoPath,
+      encoding: 'utf8',
+    }).trim();
+
+    const paired = {
+      sourceId: 'paired-fallback-rename',
+      repoPath,
+      strategy: 'markdown' as const,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      expectedTarget: target,
+      expectedBookmark: bookmark,
+      requireClean: true,
+    };
+    const incremental = await performSync(engine, {
+      ...paired,
+      dryRun: true,
+    });
+    const full = await performSync(engine, {
+      ...paired,
+      dryRun: true,
+      full: true,
+    });
+    expect(full.affected).toEqual(incremental.affected);
+    expect(full.affectedDigest).toBe(incremental.affectedDigest);
+
+    const result = await performSync(engine, {
+      ...paired,
+      full: true,
+    });
+
+    expect(result.affected?.sample).toEqual([
+      {
+        operation: 'rename',
+        path: '💾.md',
+        slug: 'disk',
+        from_path: '💽.md',
+      },
+    ]);
+    const pages = await engine.executeRaw<{ slug: string; source_path: string | null }>(
+      `SELECT slug, source_path FROM pages WHERE source_id = $1`,
+      ['paired-fallback-rename'],
+    );
+    expect(pages).toContainEqual({ slug: 'disk', source_path: '💾.md' });
+  });
+
+  test('cross-kind renames update code corpus before/after counts', async () => {
+    const {
+      buildGBrainSyncEnvelope,
+      performSync,
+    } = await import('../src/commands/sync.ts');
+    mkdirSync(join(repoPath, 'src'), { recursive: true });
+    writeFileSync(join(repoPath, 'src/original.ts'), 'export const original = true;\n');
+    execSync('git add -A && git commit -m "add initial code page"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ($1, $1, $2, '{}'::jsonb)`,
+      ['paired-cross-kind', repoPath],
+    );
+    await performSync(engine, {
+      sourceId: 'paired-cross-kind',
+      repoPath,
+      strategy: 'auto',
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    const rows = await engine.executeRaw<{ last_commit: string }>(
+      `SELECT last_commit FROM sources WHERE id = $1`,
+      ['paired-cross-kind'],
+    );
+    const bookmark = rows[0].last_commit;
+    execSync('git mv people/alice.md src/alice.ts', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    execSync('git mv src/original.ts people/original.md', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    execSync('git commit -m "swap markdown and code kinds"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    const target = execSync('git rev-parse HEAD', {
+      cwd: repoPath,
+      encoding: 'utf8',
+    }).trim();
+    const paired = {
+      sourceId: 'paired-cross-kind',
+      repoPath,
+      strategy: 'auto' as const,
+      dryRun: true,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      expectedTarget: target,
+      expectedBookmark: bookmark,
+      requireClean: true,
+    };
+
+    const result = await performSync(engine, paired);
+    const envelope = buildGBrainSyncEnvelope(result, paired);
+    expect(envelope.corpus.code_pages_before).toBe(1);
+    expect(envelope.corpus.code_pages_after).toBe(1);
+    expect(envelope.corpus.code_deletions_applied).toBe(0);
+    expect(envelope.operations.renamed).toBe(2);
+    expect(result.planCorpus?.codeDeletions).toBe(1);
   });
 
   test('full-sync (--full) dry-run does NOT write to DB or advance the bookmark', async () => {

@@ -75,6 +75,13 @@ async function ckptTarget(lastCommit: string): Promise<string[]> {
   const fp = syncFingerprint({ lastCommit });
   return loadOpCheckpoint(engine, { op: 'sync-target', fingerprint: fp });
 }
+async function ckptProvenance(lastCommit: string): Promise<string[]> {
+  const fp = syncFingerprint({ lastCommit });
+  return loadOpCheckpoint(engine, {
+    op: 'sync-target-provenance',
+    fingerprint: fp,
+  });
+}
 async function seedCheckpoint(lastCommit: string, target: string, paths: string[]): Promise<void> {
   const fp = syncFingerprint({ lastCommit });
   await recordCompleted(engine, { op: 'sync-target', fingerprint: fp }, [target]);
@@ -217,6 +224,168 @@ describe('#1794 — resumable incremental sync (pinned target)', () => {
     expect(await lastCommitConfig()).toBe(r2.toCommit);
   }, 60_000);
 
+  test('[CRITICAL] paired exact-target sync resets an older reachable checkpoint', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+
+    await performSync(engine, {
+      repoPath,
+      full: true,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    const c0 = (await lastCommitConfig())!;
+    const c1 = commitPages(repoPath, { 'x.md': pageMd('X') }, 'add x');
+    await seedCheckpoint(c0, c1, []);
+    const c2 = commitPages(repoPath, { 'y.md': pageMd('Y') }, 'add y');
+
+    const paired = {
+      repoPath,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      expectedTarget: c2,
+      expectedBookmark: c0,
+      requireClean: true,
+    };
+    const preview = await performSync(engine, {
+      ...paired,
+      dryRun: true,
+    });
+
+    expect(preview.status).toBe('dry_run');
+    expect(preview.toCommit).toBe(c2);
+    expect(preview.added).toBe(2);
+    expect(await lastCommitConfig()).toBe(c0);
+    expect(await ckptTarget(c0)).toEqual([c1]);
+
+    const applied = await performSync(engine, paired);
+    expect(applied.status).toBe('synced');
+    expect(applied.toCommit).toBe(c2);
+    expect(await lastCommitConfig()).toBe(c2);
+    expect(await engine.getPage('notes/x')).not.toBeNull();
+    expect(await engine.getPage('notes/y')).not.toBeNull();
+    expect(await ckptPaths(c0)).toEqual([]);
+    expect(await ckptTarget(c0)).toEqual([]);
+  }, 60_000);
+
+  test('[CRITICAL] paired exact-target sync rejects same-target ordinary checkpoint provenance', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    process.env.GBRAIN_SYNC_CHECKPOINT_EVERY = '1';
+
+    await performSync(engine, {
+      repoPath,
+      full: true,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    const c0 = (await lastCommitConfig())!;
+    const c1 = commitPages(repoPath, {
+      'a.md': pageMd('Target A'),
+      'b.md': pageMd('Target B'),
+    }, 'exact target');
+    const checkpointFingerprint = syncFingerprint({ lastCommit: c0 });
+    await recordCompleted(
+      engine,
+      { op: 'sync-target', fingerprint: checkpointFingerprint },
+      [c1],
+    );
+    await recordCompleted(
+      engine,
+      {
+        op: 'sync-target-provenance',
+        fingerprint: checkpointFingerprint,
+      },
+      ['exact-target'],
+    );
+
+    const dirtyMarker = 'DIRTY ORDINARY WORKTREE BYTES';
+    for (const name of ['a.md', 'b.md']) {
+      writeFileSync(
+        join(repoPath, 'notes', name),
+        pageMd(`${dirtyMarker} ${name}`),
+      );
+    }
+
+    const controller = new AbortController();
+    const originalExecuteRawDirect = engine.executeRawDirect.bind(engine);
+    let bankedPath = '';
+    engine.executeRawDirect = (async <T = Record<string, unknown>>(
+      sql: string,
+      params?: unknown[],
+      opts?: { signal?: AbortSignal },
+    ): Promise<T[]> => {
+      const rows = await originalExecuteRawDirect<T>(sql, params, opts);
+      if (
+        bankedPath === '' &&
+        params?.[0] === 'sync' &&
+        Array.isArray(params[2]) &&
+        typeof params[2][0] === 'string'
+      ) {
+        bankedPath = params[2][0];
+        controller.abort();
+      }
+      return rows;
+    }) as typeof engine.executeRawDirect;
+
+    let partial;
+    try {
+      partial = await performSync(engine, {
+        repoPath,
+        noPull: true,
+        noEmbed: true,
+        noExtract: true,
+        signal: controller.signal,
+      });
+    } finally {
+      engine.executeRawDirect = originalExecuteRawDirect;
+    }
+
+    expect(partial.status).toBe('partial');
+    expect(bankedPath).not.toBe('');
+    expect(['notes/a.md', 'notes/b.md']).toContain(bankedPath);
+    expect(await lastCommitConfig()).toBe(c0);
+    expect(await ckptTarget(c0)).toEqual([c1]);
+    expect(await ckptProvenance(c0)).toEqual(['ordinary']);
+    const bankedSlug = bankedPath.replace(/\.md$/, '');
+    expect(
+      (await engine.getPage(bankedSlug))?.compiled_truth,
+    ).toContain(dirtyMarker);
+
+    execSync('git checkout -- notes/a.md notes/b.md', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    const paired = {
+      repoPath,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      expectedTarget: c1,
+      expectedBookmark: c0,
+      requireClean: true,
+    };
+    const preview = await performSync(engine, {
+      ...paired,
+      dryRun: true,
+    });
+    expect(preview.checkpointReset).toBe(true);
+    expect(preview.affected?.sample.some(
+      (operation) => operation.path === bankedPath,
+    )).toBe(true);
+
+    const applied = await performSync(engine, paired);
+    expect(applied.status).toBe('synced');
+    expect(await lastCommitConfig()).toBe(c1);
+    expect(
+      (await engine.getPage(bankedSlug))?.compiled_truth,
+    ).not.toContain(dirtyMarker);
+    expect(await ckptPaths(c0)).toEqual([]);
+    expect(await ckptTarget(c0)).toEqual([]);
+    expect(await ckptProvenance(c0)).toEqual([]);
+  }, 60_000);
+
   // ── D. Rewrite of the pin → discard checkpoint, re-pin to HEAD ─────────────
   test('history rewrite (pin not ancestor of HEAD) discards checkpoint + re-pins', async () => {
     const { performSync } = await import('../src/commands/sync.ts');
@@ -293,6 +462,56 @@ describe('#1794 — resumable incremental sync (pinned target)', () => {
     })();
     expect(banked).toContain('notes/good.md');
     expect(banked).not.toContain('notes/bad.md');
+  }, 60_000);
+
+  test('[CRITICAL] failed renamed-file import is not checkpointed as complete', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+
+    await performSync(engine, {
+      repoPath,
+      full: true,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    const c0 = (await lastCommitConfig())!;
+    execSync('git mv notes/base.md notes/renamed.md', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    writeFileSync(
+      join(repoPath, 'notes/renamed.md'),
+      [
+        '---',
+        'type: concept',
+        'title: Base',
+        'slug: deliberately-wrong',
+        '---',
+        '',
+        'Body for Base.',
+        '',
+      ].join('\n'),
+    );
+    execSync('git add -A && git commit -m "rename to malformed page"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    const nameStatus = execSync(`git diff --name-status -M ${c0}..HEAD`, {
+      cwd: repoPath,
+      encoding: 'utf8',
+    });
+    expect(nameStatus).toMatch(/^R\d+\tnotes\/base\.md\tnotes\/renamed\.md/m);
+
+    const result = await performSync(engine, {
+      repoPath,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+
+    expect(result.status).toBe('blocked_by_failures');
+    expect(await lastCommitConfig()).toBe(c0);
+    expect(await ckptPaths(c0)).not.toContain('notes/renamed.md');
   }, 60_000);
 
   // ── F. Codex #3: file added in range but deleted from disk → skip, not block

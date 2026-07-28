@@ -15,6 +15,10 @@
 
 import type { BrainEngine } from './engine.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from './source-config-sql.ts';
+import {
+  SourceOpError,
+  withSourceLifecycleLock,
+} from './sources-ops.ts';
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -279,21 +283,78 @@ export async function listArchivedSources(
  * Permanently purge sources whose 72h TTL has expired. Cascades to pages
  * (and content_chunks via existing FKs). Returns the ids of purged sources.
  *
- * v0.26.5: moved from JSONB-driven iteration to a single set-based DELETE
- * with `archived = true AND archive_expires_at <= now()`. Server-side
- * filter; one round-trip; cascade-friendly.
+ * Candidates are selected server-side, then rechecked and deleted one at a
+ * time under their canonical lifecycle locks. A busy source is deferred while
+ * other eligible archives can still be purged.
  */
 export async function purgeExpiredSources(
   engine: BrainEngine,
 ): Promise<string[]> {
-  const rows = await engine.executeRaw<{ id: string }>(
-    `DELETE FROM sources
-     WHERE archived = true
-       AND archive_expires_at IS NOT NULL
-       AND archive_expires_at <= now()
-     RETURNING id`,
+  const candidates = await engine.executeRaw<{ id: string }>(
+    `SELECT id
+      FROM sources
+      WHERE archived = true
+        AND id <> 'default'
+        AND archive_expires_at IS NOT NULL
+        AND archive_expires_at <= now()
+      ORDER BY id`,
   );
-  return rows.map((r) => r.id);
+  const purged: string[] = [];
+  for (const candidate of candidates) {
+    try {
+      const rows = await withSourceLifecycleLock(
+        engine,
+        candidate.id,
+        () => engine.executeRaw<{ id: string }>(
+          `DELETE FROM sources
+            WHERE id = $1
+              AND archived = true
+              AND id <> 'default'
+              AND archive_expires_at IS NOT NULL
+              AND archive_expires_at <= now()
+          RETURNING id`,
+          [candidate.id],
+        ),
+      );
+      if (rows.length === 1) purged.push(candidate.id);
+    } catch (error) {
+      if (error instanceof SourceOpError && error.code === 'lock_busy') {
+        continue;
+      }
+      throw error;
+    }
+  }
+  return purged;
+}
+
+/**
+ * Permanently delete one explicitly confirmed archived source while holding
+ * the same per-source lifecycle lock as sync, add, remove, and re-clone.
+ *
+ * The archived predicate is intentionally rechecked under the lock: a source
+ * restored after the CLI impact preview must not be purged by a stale
+ * confirmation. The legacy default source is never purgeable.
+ */
+export async function purgeSource(
+  engine: BrainEngine,
+  sourceId: string,
+): Promise<boolean> {
+  if (sourceId === 'default') {
+    throw new SourceOpError(
+      'protected_id',
+      'Cannot purge the "default" source (it backs the pre-v0.17 brain).',
+    );
+  }
+  return withSourceLifecycleLock(engine, sourceId, async () => {
+    const rows = await engine.executeRaw<{ id: string }>(
+      `DELETE FROM sources
+        WHERE id = $1
+          AND archived = true
+      RETURNING id`,
+      [sourceId],
+    );
+    return rows.length === 1;
+  });
 }
 
 // ── Display Helpers ─────────────────────────────────────────

@@ -796,6 +796,44 @@ export interface WithRefreshingLockOpts {
   ttlMinutes?: number;
   /** Heartbeat-fail threshold in ms — abort if SELECT 1 takes longer. Default 30000. */
   heartbeatTimeoutMs?: number;
+  /**
+   * Surface a failed final DELETE when the protected work itself succeeded.
+   * Defaults to false for backwards compatibility with best-effort callers.
+   */
+  failOnReleaseError?: boolean;
+}
+
+export class LockReleaseFailedError extends Error {
+  readonly reasonCode = 'lock_release_failed' as const;
+
+  constructor(
+    public readonly lockId: string,
+    public readonly releaseError: unknown,
+  ) {
+    super(
+      `Lock '${lockId}' could not be released: ` +
+        (releaseError instanceof Error ? releaseError.message : String(releaseError)),
+    );
+    this.name = 'LockReleaseFailedError';
+  }
+}
+
+const lockReleaseFailures = new WeakMap<object, LockReleaseFailedError>();
+
+/**
+ * A work failure keeps its original identity, but a simultaneous release
+ * failure still has to reach receipt builders so they can report lock_only.
+ */
+export function getLockReleaseFailure(
+  error: unknown,
+): LockReleaseFailedError | null {
+  if (
+    (typeof error !== 'object' && typeof error !== 'function') ||
+    error === null
+  ) {
+    return null;
+  }
+  return lockReleaseFailures.get(error) ?? null;
 }
 
 /**
@@ -850,11 +888,39 @@ export async function withRefreshingLock<T>(
   // so a missed clear can't pin the event loop open past real work completion.
   (interval as unknown as { unref?: () => void }).unref?.();
 
+  let workFailed = false;
+  let workError: unknown;
   try {
     return await work();
+  } catch (error) {
+    workFailed = true;
+    workError = error;
+    throw error;
   } finally {
     clearInterval(interval);
-    try { await handle.release(); } catch { /* idempotent */ }
+    try {
+      await handle.release();
+    } catch (releaseError) {
+      if (opts.failOnReleaseError && !workFailed) {
+        throw new LockReleaseFailedError(lockId, releaseError);
+      }
+      if (opts.failOnReleaseError) {
+        if (
+          (typeof workError === 'object' || typeof workError === 'function') &&
+          workError !== null
+        ) {
+          lockReleaseFailures.set(
+            workError,
+            new LockReleaseFailedError(lockId, releaseError),
+          );
+        }
+        process.stderr.write(
+          `[lock-release] ${lockId}: ${
+            releaseError instanceof Error ? releaseError.message : String(releaseError)
+          }; preserving original work error\n`,
+        );
+      }
+    }
     if (!healthOk) {
       // Surface that the heartbeat detected backend trouble — caller can
       // log to the connection-events audit if desired.

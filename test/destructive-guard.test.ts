@@ -22,11 +22,17 @@ import {
   restoreSource,
   listArchivedSources,
   purgeExpiredSources,
+  purgeSource,
   formatImpact,
   formatSoftDelete,
   SOFT_DELETE_TTL_HOURS,
   type DestructiveImpact,
 } from '../src/core/destructive-guard.ts';
+import {
+  syncLockId,
+  tryAcquireDbLock,
+} from '../src/core/db-lock.ts';
+import { SourceOpError } from '../src/core/sources-ops.ts';
 
 // Tier 3 opt-out — these tests need the cold-init schema path so the v33
 // migration columns exist on the brain under test.
@@ -347,6 +353,108 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
       [expiredId],
     );
     expect(remainingPages[0].n).toBe(0);
+  });
+
+  test('purgeExpiredSources defers an expired source while its lifecycle lock is held', async () => {
+    const lockedId = 'pe-locked';
+    await seedSource(engine, lockedId, { withPages: 1 });
+    await softDeleteSource(engine, lockedId);
+    await engine.executeRaw(
+      `UPDATE sources SET archive_expires_at = now() - INTERVAL '1 hour' WHERE id = $1`,
+      [lockedId],
+    );
+    const handle = await tryAcquireDbLock(engine, syncLockId(lockedId));
+    expect(handle).not.toBeNull();
+    try {
+      expect(await purgeExpiredSources(engine)).not.toContain(lockedId);
+      const sourceRows = await engine.executeRaw<{ id: string }>(
+        `SELECT id FROM sources WHERE id = $1`,
+        [lockedId],
+      );
+      expect(sourceRows).toEqual([{ id: lockedId }]);
+      const pageRows = await engine.executeRaw<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1`,
+        [lockedId],
+      );
+      expect(pageRows[0].n).toBe(1);
+    } finally {
+      await handle!.release();
+    }
+  });
+
+  test('purgeExpiredSources never deletes the protected default source', async () => {
+    await seedSource(engine, 'default');
+    await engine.executeRaw(
+      `UPDATE sources
+          SET archived = true,
+              archived_at = now() - INTERVAL '73 hours',
+              archive_expires_at = now() - INTERVAL '1 hour'
+        WHERE id = 'default'`,
+    );
+
+    expect(await purgeExpiredSources(engine)).not.toContain('default');
+    const rows = await engine.executeRaw<{ id: string }>(
+      `SELECT id FROM sources WHERE id = 'default'`,
+    );
+    expect(rows).toEqual([{ id: 'default' }]);
+  });
+
+  test('purgeSource permanently deletes an explicitly archived source', async () => {
+    const id = 'pe-explicit-archived';
+    await seedSource(engine, id, { withPages: 2 });
+    await softDeleteSource(engine, id);
+
+    expect(await purgeSource(engine, id)).toBe(true);
+    const sourceRows = await engine.executeRaw<{ id: string }>(
+      `SELECT id FROM sources WHERE id = $1`,
+      [id],
+    );
+    const pageRows = await engine.executeRaw<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1`,
+      [id],
+    );
+    expect(sourceRows).toEqual([]);
+    expect(pageRows[0].n).toBe(0);
+  });
+
+  test('purgeSource refuses an active source', async () => {
+    const id = 'pe-explicit-active';
+    await seedSource(engine, id, { withPages: 1 });
+
+    expect(await purgeSource(engine, id)).toBe(false);
+    const rows = await engine.executeRaw<{ archived: boolean }>(
+      `SELECT archived FROM sources WHERE id = $1`,
+      [id],
+    );
+    expect(rows).toEqual([{ archived: false }]);
+  });
+
+  test('purgeSource rechecks archived state after preview and preserves a restored source', async () => {
+    const id = 'pe-explicit-restored';
+    await seedSource(engine, id, { withPages: 1 });
+    await softDeleteSource(engine, id);
+    expect(await assessDestructiveImpact(engine, id)).not.toBeNull();
+    expect(await restoreSource(engine, id)).toBe(true);
+
+    expect(await purgeSource(engine, id)).toBe(false);
+    const rows = await engine.executeRaw<{ archived: boolean }>(
+      `SELECT archived FROM sources WHERE id = $1`,
+      [id],
+    );
+    expect(rows).toEqual([{ archived: false }]);
+  });
+
+  test('purgeSource never deletes the protected default source', async () => {
+    await seedSource(engine, 'default', { withPages: 1 });
+
+    await expect(purgeSource(engine, 'default')).rejects.toMatchObject({
+      name: 'SourceOpError',
+      code: 'protected_id',
+    } satisfies Partial<SourceOpError>);
+    const rows = await engine.executeRaw<{ id: string }>(
+      `SELECT id FROM sources WHERE id = 'default'`,
+    );
+    expect(rows).toEqual([{ id: 'default' }]);
   });
 
   test('purgeExpiredSources is no-op when nothing is past TTL', async () => {

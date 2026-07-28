@@ -51,6 +51,76 @@ gbrain sync --repo /path/to/brain && gbrain embed --stale
   after 5 consecutive failures, so run under a process manager or pair with a
   cron fallback.
 
+### Safe paired preview and apply
+
+For automation that must prove exactly what it will index before changing the
+database, capture the source ID and bookmark from
+`gbrain sources list --json`, and capture the repository's full 40-character
+HEAD with `git rev-parse HEAD`. Then run this pair with the same values:
+
+```bash
+gbrain sync \
+  --strategy auto \
+  --source "$SOURCE_ID" \
+  --repo "$REPO_ROOT" \
+  --no-pull \
+  --expected-target "$TARGET_SHA" \
+  --expected-bookmark "$BOOKMARK_SHA_OR_NONE" \
+  --require-clean \
+  --no-embed \
+  --no-extract \
+  --dry-run \
+  --json
+
+gbrain sync \
+  --strategy auto \
+  --source "$SOURCE_ID" \
+  --repo "$REPO_ROOT" \
+  --no-pull \
+  --expected-target "$TARGET_SHA" \
+  --expected-bookmark "$BOOKMARK_SHA_OR_NONE" \
+  --require-clean \
+  --no-embed \
+  --no-extract \
+  --json
+```
+
+Use the literal value `none` when the source has no bookmark. The preview
+holds only the transient per-source lock: it does not pull, clone, initialize
+Git, import pages, clear checkpoints, advance bookmarks, write strategy
+markers, extract, or embed. It emits exactly one schema-1 JSON document on
+stdout; diagnostics go to stderr. The real command rebuilds and validates the
+same immutable plan while holding the same source lock and refuses the apply
+if HEAD, bookmark, or working-tree cleanliness changed.
+
+Source deletion uses that lock too. Explicit `sources purge <id>` accepts only
+an archived, non-default source and rechecks that state after it acquires the
+lock; it refuses a busy or restored source. The expiry sweep defers only the
+locked source instead of racing a sync into cascade deletion. `sources attach`
+writes a fresh marker inode and atomically renames it into place, so a
+`.gbrain-source` symlink created during a long wrapper run is replaced rather
+than followed.
+
+Paired runs read file bytes from a private materialization of the captured
+target commit, not from the live checkout. Full-sync deletion history and
+content timestamps are also resolved from that target, so an unrelated branch,
+detached working-tree change, or later descendant cannot contaminate the
+receipt. The private tree is removed after the run and by bounded process
+cleanup on interruption.
+
+If a full plan finds a DB-only page whose backing Markdown was never committed,
+an ordinary sync preserves and re-exports it to the working tree, retaining the
+existing recovery behavior. A paired exact-target run preserves the database
+row but does not write it into the live checkout, because doing so would violate
+the clean-tree assertion after planning.
+
+The receipt includes deterministic operation counts, a capped affected sample,
+and a SHA-256 digest over the complete mutation set. Preservation decisions are
+reported separately and never contaminate the mutation digest. Corpus counts
+are always concrete integers. `search_ready` may be true only when both
+`embedding_status` and `extraction_status` are `complete`; the paired command
+above deliberately reports both as `deferred` and `search_ready: false`.
+
 ### Approach 1: Cron Job (recommended)
 
 Run every 5-30 minutes. Works with any cron scheduler.

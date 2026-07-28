@@ -84,11 +84,19 @@ async function runSyncCaptured(args: string[]): Promise<{ exitCode: number | und
   const { runSync } = await import('../src/commands/sync.ts');
   const origExit = process.exit;
   const origLog = console.log.bind(console);
+  const origStdoutWrite = process.stdout.write;
   const out: string[] = [];
   let exitCode: number | undefined;
   console.log = (...a: unknown[]) => {
-    out.push(a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' '));
+    out.push(
+      a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ') +
+        '\n',
+    );
   };
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    out.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
   process.exit = ((code?: number) => {
     exitCode = code;
     throw new Error('__exit__');
@@ -100,11 +108,36 @@ async function runSyncCaptured(args: string[]): Promise<{ exitCode: number | und
   } finally {
     process.exit = origExit;
     console.log = origLog;
+    process.stdout.write = origStdoutWrite;
   }
-  return { exitCode, stdout: out.join('\n') };
+  return { exitCode, stdout: out.join('') };
+}
+
+function parseOnlyJson(stdout: string): Record<string, any> {
+  expect(stdout.trim()).not.toBe('');
+  return JSON.parse(stdout.trim()) as Record<string, any>;
 }
 
 describe('v0.41.31 — sync --all cost gate wiring', () => {
+  test('--all --json with no runnable sources emits one empty aggregate document', async () => {
+    const { exitCode, stdout } = await runSyncCaptured([
+      '--all',
+      '--json',
+      '--no-embed',
+      '--no-pull',
+    ]);
+
+    expect(exitCode).toBeUndefined();
+    expect(parseOnlyJson(stdout)).toEqual({
+      schema_version: 1,
+      sources: [],
+      parallel: 0,
+      ok_count: 0,
+      error_count: 0,
+      skipped_count: 0,
+    });
+  }, 60_000);
+
   test('R-1: deferred sync --all (non-TTY) emits deferred_notice and never exit 2', async () => {
     await runSources(engine, ['add', 'vault', '--path', repoPath, '--no-federated']);
     // Make the fan-out a clean no-op: last_commit == HEAD so performSync
@@ -123,7 +156,10 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
 
     // The headline assertion: NOT blocked.
     expect(exitCode).not.toBe(2);
-    expect(stdout).toContain('"gate":"deferred_notice"');
+    const receipt = parseOnlyJson(stdout);
+    expect(receipt.cost_gate.gate).toBe('deferred_notice');
+    expect(receipt.schema_version).toBe(1);
+    expect(receipt.sources).toHaveLength(1);
   }, 60_000);
 
   test('R-2 (#2139): inline sync --all (--serial) above floor AUTO-DEFERS (exit 0, never exit 2) + enqueues backfill', async () => {
@@ -136,13 +172,14 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
     const { exitCode, stdout } = await runSyncCaptured(['--all', '--serial', '--json', '--no-pull']);
 
     expect(exitCode).not.toBe(2);
-    expect(stdout).toContain('"gate":"auto_deferred_embeds"');
+    const receipt = parseOnlyJson(stdout);
+    expect(receipt.cost_gate.gate).toBe('auto_deferred_embeds');
     expect(stdout).not.toContain('"gate":"confirmation_required"');
     // The run PROCEEDED to import (the wedge is gone) — embeds were deferred,
     // not blocked. (The embed-backfill enqueue wiring + its graceful
     // missing-table tolerance is pinned in embed-backfill-submit.test.ts; the
     // minion_jobs table isn't provisioned in this gate-wiring harness.)
-    expect(stdout).toContain('"sync_status":"first_sync"');
+    expect(receipt.sources[0].sync_status).toBe('first_sync');
   }, 60_000);
 
   test('R-3 (#2139): chunker drift → full-tree CEILING estimate, auto-defers (not exit 2)', async () => {
@@ -156,8 +193,9 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
     const { exitCode, stdout } = await runSyncCaptured(['--all', '--serial', '--json', '--no-pull']);
 
     expect(exitCode).not.toBe(2);
-    expect(stdout).toContain('"gate":"auto_deferred_embeds"');
-    expect(stdout).toContain('"estimateKind":"ceiling"');
+    const receipt = parseOnlyJson(stdout);
+    expect(receipt.cost_gate.gate).toBe('auto_deferred_embeds');
+    expect(receipt.cost_gate.estimateKind).toBe('ceiling');
   }, 60_000);
 
   test('R-3 control: git-unchanged + CURRENT chunker → $0 estimate, below floor (no auto-defer)', async () => {
@@ -170,8 +208,9 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
     const { exitCode, stdout } = await runSyncCaptured(['--all', '--serial', '--json', '--no-pull']);
 
     expect(exitCode).not.toBe(2);
-    expect(stdout).not.toContain('"gate":"auto_deferred_embeds"');
-    expect(stdout).toContain('"estimateKind":"unchanged"');
+    const receipt = parseOnlyJson(stdout);
+    expect(receipt.cost_gate.gate).not.toBe('auto_deferred_embeds');
+    expect(receipt.cost_gate.estimateKind).toBe('unchanged');
   }, 60_000);
 
   test('headline regression: HEAD==last_commit + DIRTY untracked file → $0, no gate (the false-fire)', async () => {
@@ -189,8 +228,9 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
     const { exitCode, stdout } = await runSyncCaptured(['--all', '--serial', '--json', '--no-pull']);
 
     expect(exitCode).not.toBe(2);
-    expect(stdout).not.toContain('"gate":"auto_deferred_embeds"');
-    expect(stdout).toContain('"estimateKind":"unchanged"');
+    const receipt = parseOnlyJson(stdout);
+    expect(receipt.cost_gate.gate).not.toBe('auto_deferred_embeds');
+    expect(receipt.cost_gate.estimateKind).toBe('unchanged');
   }, 60_000);
 
   test('spend.posture=tokenmax → proceeds inline, gate:posture_tokenmax (informational)', async () => {
@@ -202,8 +242,9 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
     const { exitCode, stdout } = await runSyncCaptured(['--all', '--serial', '--json', '--no-pull']);
 
     expect(exitCode).not.toBe(2);
-    expect(stdout).toContain('"gate":"posture_tokenmax"');
-    expect(stdout).not.toContain('"gate":"auto_deferred_embeds"');
+    const receipt = parseOnlyJson(stdout);
+    expect(receipt.cost_gate.gate).toBe('posture_tokenmax');
+    expect(receipt.cost_gate.gate).not.toBe('auto_deferred_embeds');
   }, 60_000);
 
   test('sync.cost_gate_min_usd=off → floor renders "unlimited", never blocks', async () => {
@@ -214,8 +255,9 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
     const { exitCode, stdout } = await runSyncCaptured(['--all', '--serial', '--json', '--no-pull']);
 
     expect(exitCode).not.toBe(2);
-    expect(stdout).toContain('"floorUsd":"unlimited"');
-    expect(stdout).not.toContain('"gate":"auto_deferred_embeds"');
+    const receipt = parseOnlyJson(stdout);
+    expect(receipt.cost_gate.floorUsd).toBe('unlimited');
+    expect(receipt.cost_gate.gate).not.toBe('auto_deferred_embeds');
   }, 60_000);
 
   test('format split (#1784/D3A): non-TTY WITHOUT --json emits human text, no JSON envelope', async () => {
@@ -239,9 +281,10 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
     const { exitCode, stdout } = await runSyncCaptured(['--source', 'vault', '--json', '--no-pull']);
 
     expect(exitCode).not.toBe(2);
-    expect(stdout).toContain('"gate":"auto_deferred_embeds"');
+    const receipt = parseOnlyJson(stdout);
+    expect(receipt.cost_gate.gate).toBe('auto_deferred_embeds');
     // The gate now exists on the single-source path (was ungated before
     // #2139) and proceeds to import rather than blocking.
-    expect(stdout.toLowerCase()).toContain('imported');
+    expect(receipt.status).toBe('first_sync');
   }, 60_000);
 });

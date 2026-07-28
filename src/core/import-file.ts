@@ -3,7 +3,7 @@ import { basename, extname } from 'path';
 import { createHash } from 'crypto';
 import { marked } from 'marked';
 import type { BrainEngine, FileSpec } from './engine.ts';
-import { parseMarkdown } from './markdown.ts';
+import { parseMarkdown, type ParsedMarkdown } from './markdown.ts';
 import { chunkText } from './chunkers/recursive.ts';
 import { chunkCodeText, chunkCodeTextFull, detectCodeLanguage, CHUNKER_VERSION } from './chunkers/code.ts';
 import { findChunkForOffset } from './chunkers/edge-extractor.ts';
@@ -215,6 +215,64 @@ export interface ImportResult {
 }
 
 const MAX_FILE_SIZE = 5_000_000; // 5MB
+
+const HASH_EPHEMERAL_FRONTMATTER_KEYS = [
+  'captured_at',
+  'ingested_at',
+  QUARANTINE_KEY,
+  CONTENT_FLAG_KEY,
+  EMBED_SKIP_KEY,
+] as const;
+
+/**
+ * Canonical markdown page hash shared by import and read-only sync planning.
+ * The caller is responsible for applying existing-type preservation first.
+ */
+export function computeParsedMarkdownContentHash(
+  parsed: Pick<
+    ParsedMarkdown,
+    'title' | 'type' | 'compiled_truth' | 'timeline' | 'frontmatter' | 'tags'
+  >,
+): string {
+  const stableFrontmatter: Record<string, unknown> = {
+    ...parsed.frontmatter,
+  };
+  for (const key of HASH_EPHEMERAL_FRONTMATTER_KEYS) {
+    delete stableFrontmatter[key];
+  }
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        title: parsed.title,
+        type: parsed.type,
+        compiled_truth: parsed.compiled_truth,
+        timeline: parsed.timeline,
+        frontmatter: stableFrontmatter,
+        tags: [...parsed.tags].sort(),
+      }),
+    )
+    .digest('hex');
+}
+
+/** Canonical code-page hash shared by import and read-only sync planning. */
+export function computeCodeImportHash(
+  relativePath: string,
+  content: string,
+): string {
+  const lang = detectCodeLanguage(relativePath) || 'unknown';
+  const title = `${relativePath} (${lang})`;
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        title,
+        type: 'code',
+        content,
+        lang,
+        chunker_version: CHUNKER_VERSION,
+      }),
+    )
+    .digest('hex');
+}
 
 /**
  * Import content from a string. Core pipeline:
@@ -557,28 +615,8 @@ export async function importFromContent(
     parsed.type = existing.type;
   }
 
-  const HASH_EPHEMERAL_FRONTMATTER_KEYS = [
-    'captured_at',
-    'ingested_at',
-    QUARANTINE_KEY,
-    CONTENT_FLAG_KEY,
-    EMBED_SKIP_KEY,
-  ];
-  const stableFrontmatter: Record<string, unknown> = { ...parsed.frontmatter };
-  for (const k of HASH_EPHEMERAL_FRONTMATTER_KEYS) {
-    delete stableFrontmatter[k];
-  }
   // Hash includes all meaningful fields for idempotency.
-  const hash = createHash('sha256')
-    .update(JSON.stringify({
-      title: parsed.title,
-      type: parsed.type,
-      compiled_truth: parsed.compiled_truth,
-      timeline: parsed.timeline,
-      frontmatter: stableFrontmatter,
-      tags: parsed.tags.sort(),
-    }))
-    .digest('hex');
+  const hash = computeParsedMarkdownContentHash(parsed);
 
   const parsedPage: ParsedPage = {
     type: parsed.type,
@@ -1185,9 +1223,7 @@ export async function importCodeFile(
 
   // Hash for idempotency. CHUNKER_VERSION is folded in so chunker shape
   // changes across releases force clean re-chunks without sync --force.
-  const hash = createHash('sha256')
-    .update(JSON.stringify({ title, type: 'code', content, lang, chunker_version: CHUNKER_VERSION }))
-    .digest('hex');
+  const hash = computeCodeImportHash(relativePath, content);
 
   const existing = await engine.getPage(slug, sourceId ? { sourceId } : undefined);
   if (!opts.force && existing?.content_hash === hash) {
@@ -1274,6 +1310,7 @@ export async function importCodeFile(
       timeline: '',
       frontmatter: { language: lang, file: relativePath },
       content_hash: hash,
+      source_path: relativePath,
     }, txOpts);
 
     await tx.addTag(slug, 'code', txOpts);
