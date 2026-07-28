@@ -56,8 +56,6 @@ async function loadConfig(engine: BrainEngine): Promise<AutoThinkConfig> {
   const enabledStr = await engine.getConfig('dream.auto_think.enabled');
   const questionsStr = await engine.getConfig('dream.auto_think.questions');
   const maxPerStr = await engine.getConfig('dream.auto_think.max_per_cycle');
-  const budgetStr = await engine.getConfig('dream.auto_think.budget');
-  const cooldownStr = await engine.getConfig('dream.auto_think.cooldown_days');
   const autoCommitStr = await engine.getConfig('dream.auto_think.auto_commit');
 
   let questions: string[] = [];
@@ -68,14 +66,28 @@ async function loadConfig(engine: BrainEngine): Promise<AutoThinkConfig> {
     } catch { /* ignore */ }
   }
 
+  // getNumberConfig (not `parse* || N`) so a configured 0 is honored — a bare
+  // `|| N` coerces an explicit 0 back to the default (budget 0 = "spend nothing",
+  // cooldown 0 = "no cooldown"). max_per_cycle stays inline: its Math.max(1, ...)
+  // floor already makes 0 invalid there, so no configured value is lost.
+  const budgetUsd = Math.max(0, await getNumberConfig(engine, 'dream.auto_think.budget', 2.0));
+  const cooldownDays = Math.max(0, await getNumberConfig(engine, 'dream.auto_think.cooldown_days', 30));
+
   return {
     enabled: enabledStr === 'true',
     questions,
     maxPerCycle: maxPerStr ? Math.max(1, parseInt(maxPerStr, 10) || 5) : 5,
-    budgetUsd: budgetStr ? Math.max(0, parseFloat(budgetStr) || 2.0) : 2.0,
-    cooldownDays: cooldownStr ? Math.max(0, parseInt(cooldownStr, 10) || 30) : 30,
+    budgetUsd,
+    cooldownDays,
     autoCommit: autoCommitStr === 'true',
   };
+}
+
+async function getNumberConfig(engine: BrainEngine, key: string, fallback: number): Promise<number> {
+  const raw = await engine.getConfig(key);
+  if (raw === undefined || raw === null) return fallback;
+  const value = Number(raw);
+  return Number.isNaN(value) ? fallback : value;
 }
 
 async function isCoolingDown(engine: BrainEngine, days: number): Promise<boolean> {
@@ -201,3 +213,6 @@ export async function runPhaseAutoThink(
     duration_ms: Date.now() - start,
   };
 }
+
+// Test-only export: pin config-resolution behavior at function granularity.
+export const __testing = { loadConfig };
