@@ -114,6 +114,24 @@ export interface RunThinkOpts {
   remote?: boolean;
 }
 
+type ThinkSourceScope = Pick<RunThinkOpts, 'sourceId' | 'allowedSources'>;
+
+function sourceIdsForThink(scope: ThinkSourceScope): string[] {
+  const allowed = scope.allowedSources?.filter(Boolean);
+  if (allowed && allowed.length > 0) return allowed;
+  return [scope.sourceId ?? 'default'];
+}
+
+function engineSourceScope(scope: ThinkSourceScope): {
+  sourceId?: string;
+  sourceIds?: string[];
+} {
+  const sourceIds = sourceIdsForThink(scope);
+  return scope.allowedSources?.length
+    ? { sourceIds }
+    : { sourceId: sourceIds[0] };
+}
+
 /** Structured response from the LLM (matches the schema declared in prompt.ts). */
 export interface ThinkResponse {
   answer: string;
@@ -211,18 +229,25 @@ async function persistCitations(
   engine: BrainEngine,
   synthesisPageId: number,
   citations: ParsedCitation[],
+  scope: ThinkSourceScope,
 ): Promise<{ inserted: number; warnings: string[] }> {
   const warnings: string[] = [];
+  const sourceIds = sourceIdsForThink(scope);
   // Resolve unique slugs to page_ids
   const slugToPageId = new Map<string, number>();
   for (const c of citations) {
     if (c.row_num === null) continue;  // page-level, skip
     if (slugToPageId.has(c.page_slug)) continue;
-    const rows = await engine.executeRaw<{ id: number }>(
-      `SELECT id FROM pages WHERE slug = $1 LIMIT 1`,
-      [c.page_slug],
-    );
-    if (rows[0]) slugToPageId.set(c.page_slug, rows[0].id);
+    for (const sourceId of sourceIds) {
+      const rows = await engine.executeRaw<{ id: number }>(
+        `SELECT id FROM pages WHERE slug = $1 AND source_id = $2 LIMIT 1`,
+        [c.page_slug, sourceId],
+      );
+      if (rows[0]) {
+        slugToPageId.set(c.page_slug, rows[0].id);
+        break;
+      }
+    }
   }
   const evidenceInputs: SynthesisEvidenceInput[] = [];
   for (const c of citations) {
@@ -295,8 +320,7 @@ export async function runThink(
     anchor: opts.anchor,
     questionEmbedding,
     takesHoldersAllowList: opts.takesHoldersAllowList,
-    ...(opts.sourceId !== undefined ? { sourceId: opts.sourceId } : {}),
-    ...(opts.allowedSources !== undefined ? { sourceIds: opts.allowedSources } : {}),
+    ...engineSourceScope(opts),
   });
 
   // Render evidence blocks for the prompt
@@ -361,7 +385,7 @@ export async function runThink(
         if (candidates.length > 0) {
           const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
           const { formatTrajectoryBlock } = await import('../trajectory-format.ts');
-          const sourceIdScalar = opts.sourceId ?? 'default';
+          const sourceIds = sourceIdsForThink(opts);
           // Per-candidate trajectory fetch. Concurrency cap = 3; each call
           // has its own 5s timeout via Promise.race. allSettled prevents
           // one error from killing the others (Codex Problem 13: timeout
@@ -374,9 +398,15 @@ export async function runThink(
             const batch = candidateQueue.splice(0, 3);
             const settled = await Promise.allSettled(
               batch.map(async (cand) => {
-                const resolved = await resolveEntitySlugWithSource(engine, sourceIdScalar, cand.raw);
+                let resolved = null;
+                for (const sourceId of sourceIds) {
+                  const candidate = await resolveEntitySlugWithSource(engine, sourceId, cand.raw);
+                  if (candidate && candidate.source !== 'fallback_slugify') {
+                    resolved = candidate;
+                    break;
+                  }
+                }
                 if (!resolved) return null;
-                if (resolved.source === 'fallback_slugify') return null;
                 if (seenSlugs.has(resolved.slug)) return null;
                 seenSlugs.add(resolved.slug);
                 // 5s per-candidate timeout. Promise.race resolves with the
@@ -384,8 +414,7 @@ export async function runThink(
                 const points = await Promise.race([
                   engine.findTrajectory({
                     entitySlug: resolved.slug,
-                    ...(opts.sourceId !== undefined ? { sourceId: opts.sourceId } : {}),
-                    ...(opts.allowedSources !== undefined ? { sourceIds: opts.allowedSources } : {}),
+                    ...engineSourceScope(opts),
                     ...(opts.remote !== undefined ? { remote: opts.remote } : {}),
                     kind: 'all',
                     limit: 100,
@@ -612,6 +641,7 @@ export function stripGapsSection(answer: string): string {
 export async function persistSynthesis(
   engine: BrainEngine,
   result: ThinkResult,
+  scope: ThinkSourceScope = {},
 ): Promise<{ slug: string; evidenceInserted: number; warnings: string[] }> {
   // #1698: never persist an empty synthesis. Returned signal (NOT a throw, F3) so
   // the MCP `think` op can return the gather result + warning instead of a bare error
@@ -653,7 +683,7 @@ export async function persistSynthesis(
     },
   });
 
-  const persisted = await persistCitations(engine, page.id, result.citations);
+  const persisted = await persistCitations(engine, page.id, result.citations, scope);
   return { slug, evidenceInserted: persisted.inserted, warnings: persisted.warnings };
 }
 

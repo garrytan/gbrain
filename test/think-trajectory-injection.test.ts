@@ -106,6 +106,39 @@ describe('runThink — trajectory injection happy path', () => {
     expect(captured[0].user).not.toContain('Known trajectory:');
     expect(captured[0].user).not.toContain('<trajectory');
   });
+
+  test('federated source array resolves trajectory entities outside default', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config)
+       VALUES ('work', 'work', '{}'::jsonb)
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    await engine.putPage('people/wren-scope', {
+      title: 'Wren Scope',
+      type: 'person',
+      compiled_truth: 'Wren changed roles.',
+    }, { sourceId: 'work' });
+    await engine.executeRaw(
+      `INSERT INTO facts (
+         source_id, entity_slug, fact, kind, visibility,
+         valid_from, source, source_session, event_type
+       ) VALUES (
+         'work', 'people/wren-scope', 'joined the work source', 'event', 'private',
+         '2026-06-01T00:00:00Z', 'test', 'scope-session', 'role_change'
+       )`,
+    );
+
+    const { client, captured } = captureClient();
+    await runThink(engine, {
+      question: 'When did Wren Scope change roles?',
+      client,
+      allowedSources: ['work'],
+    });
+
+    expect(captured[0].user).toContain('Known trajectory:');
+    expect(captured[0].user).toContain('<trajectory entity="people/wren-scope"');
+    expect(captured[0].user).toContain('joined the work source');
+  });
 });
 
 describe('runThink — kill switches', () => {

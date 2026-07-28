@@ -337,6 +337,60 @@ describe('runThink (with stub client)', () => {
     );
     expect(Number(ev[0]?.count)).toBe(1);
   });
+
+  test('persistSynthesis resolves duplicate citation slugs within the federated source scope', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config)
+       VALUES ('citation-work', 'citation-work', '{}'::jsonb)
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    const defaultPage = await engine.putPage('people/citation-scope', {
+      title: 'Default Citation',
+      type: 'person',
+      compiled_truth: 'Default source.',
+    });
+    const workPage = await engine.putPage('people/citation-scope', {
+      title: 'Work Citation',
+      type: 'person',
+      compiled_truth: 'Work source.',
+    }, { sourceId: 'citation-work' });
+    await engine.addTakesBatch([
+      { page_id: defaultPage.id, row_num: 1, claim: 'Default evidence', kind: 'fact', holder: 'world', weight: 1 },
+      { page_id: workPage.id, row_num: 1, claim: 'Work evidence', kind: 'fact', holder: 'world', weight: 1 },
+    ]);
+
+    const result = {
+      question: 'federated citation scope',
+      answer: 'Scoped evidence [people/citation-scope#1].',
+      citations: [{ page_slug: 'people/citation-scope', row_num: 1, citation_index: 1 }],
+      gaps: [],
+      pagesGathered: 1,
+      takesGathered: 0,
+      graphHits: 0,
+      modelUsed: 'stub',
+      rounds: 1,
+      warnings: [],
+      synthesisOk: true,
+      diagnostics: { pagesFromHybrid: 1, takesFromKeyword: 0, takesFromVector: 0, graphHits: 0 },
+    };
+
+    const saved = await persistSynthesis(
+      engine,
+      result,
+      { allowedSources: ['citation-work'] },
+    );
+    const evidence = await engine.executeRaw<{ take_page_id: number }>(
+      `SELECT take_page_id
+         FROM synthesis_evidence
+        WHERE synthesis_page_id = (
+          SELECT id FROM pages WHERE slug = $1 AND source_id = 'default'
+        )`,
+      [saved.slug],
+    );
+
+    expect(defaultPage.id).not.toBe(workPage.id);
+    expect(evidence).toEqual([{ take_page_id: workPage.id }]);
+  });
 });
 
 // #1698 — fail loud, never persist empty.

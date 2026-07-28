@@ -2055,7 +2055,7 @@ const think: Operation = {
     let savedSlug: string | undefined;
     let evidenceInserted = 0;
     if (safeSave) {
-      const persisted = await persistSynthesis(ctx.engine, result);
+      const persisted = await persistSynthesis(ctx.engine, result, thinkScope);
       savedSlug = persisted.slug;
       evidenceInserted = persisted.evidenceInserted;
       for (const w of persisted.warnings) result.warnings.push(w);
