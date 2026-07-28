@@ -1479,24 +1479,37 @@ async function embedMultimodalOpenAICompat(
     ? recipeDims
     : (cfg.embedding_dimensions ?? 0);
 
-  // Send each input as one /embeddings request. Most providers cap the
-  // number of inputs per call at the text-embedding batch limit, but the
-  // multimodal content array varies per provider. Single-input requests
-  // are the safe lowest common denominator; LiteLLM's proxy backend
-  // batches internally if it can.
+  const OPENAI_COMPAT_MULTIMODAL_BATCH = 8;
+  // Keep a multi-image request near the largest request the legacy
+  // single-input path could produce. Inputs are already base64 strings;
+  // a single oversized item is still sent alone for backward compatibility.
+  const OPENAI_COMPAT_MULTIMODAL_BATCH_BASE64_CHARS = 28 * 1024 * 1024;
   const allEmbeddings: Float32Array[] = [];
-  for (const input of inputs) {
+  let batchNumber = 0;
+  for (let i = 0; i < inputs.length;) {
+    const batch: MultimodalInput[] = [];
+    let encodedChars = 0;
+    while (i < inputs.length && batch.length < OPENAI_COMPAT_MULTIMODAL_BATCH) {
+      const next = inputs[i];
+      if (
+        batch.length > 0 &&
+        encodedChars + next.data.length > OPENAI_COMPAT_MULTIMODAL_BATCH_BASE64_CHARS
+      ) {
+        break;
+      }
+      batch.push(next);
+      encodedChars += next.data.length;
+      i++;
+    }
+    batchNumber++;
     const body = {
       model: modelId,
-      input: [
+      input: batch.map(input => ([
         {
-          // OpenAI's documented multimodal content shape. The data-URL
-          // form embeds the image bytes inline so the proxy doesn't need
-          // network access to fetch the image.
           type: 'image_url',
           image_url: { url: `data:${input.mime};base64,${input.data}` },
         },
-      ],
+      ])),
     };
 
     let res: Response;
@@ -1510,7 +1523,7 @@ async function embedMultimodalOpenAICompat(
         body: JSON.stringify(body),
       });
     } catch (err) {
-      throw normalizeAIError(err, `embedMultimodal(${recipe.id}:${modelId})`);
+      throw normalizeAIError(err, `embedMultimodal(${recipe.id}:${modelId}) batch ${batchNumber} (${allEmbeddings.length}/${inputs.length} done)`);
     }
 
     if (!res.ok) {
@@ -1524,11 +1537,8 @@ async function embedMultimodalOpenAICompat(
             : recipe.setup_hint,
         );
       }
-      // Surface the upstream error verbatim — 400s here usually mean the
-      // proxied model doesn't support multimodal input. The error text is
-      // the user's best signal for picking a different model id.
       throw new AITransientError(
-        `${recipe.name} multimodal returned ${res.status}: ${text || 'transient error'}.`,
+        `${recipe.name} multimodal returned ${res.status} on batch ${batchNumber} (${allEmbeddings.length}/${inputs.length} embeddings completed): ${text || 'transient error'}.`,
       );
     }
 
@@ -1540,32 +1550,28 @@ async function embedMultimodalOpenAICompat(
         `${recipe.name} multimodal returned malformed JSON: ${err instanceof Error ? err.message : String(err)}.`,
       );
     }
-    if (!parsedBody.data || !Array.isArray(parsedBody.data) || parsedBody.data.length < 1) {
+    if (!parsedBody.data || !Array.isArray(parsedBody.data) || parsedBody.data.length !== batch.length) {
       throw new AITransientError(
-        `${recipe.name} multimodal returned no embeddings (expected 1).`,
+        `${recipe.name} multimodal returned ${parsedBody.data?.length ?? 0} embeddings; expected ${batch.length}.`,
       );
     }
 
-    const row = parsedBody.data[0];
-    if (!Array.isArray(row.embedding)) {
-      throw new AITransientError(
-        `${recipe.name} multimodal returned non-array embedding payload.`,
-      );
+    for (const row of parsedBody.data) {
+      if (!Array.isArray(row.embedding)) {
+        throw new AITransientError(
+          `${recipe.name} multimodal returned non-array embedding payload.`,
+        );
+      }
+      if (expectedDims > 0 && row.embedding.length !== expectedDims) {
+        throw new AIConfigError(
+          `${recipe.id}:${modelId} returned ${row.embedding.length}-dim vector; expected ${expectedDims}.`,
+          `The brain's embedding column is fixed at ${expectedDims} dims; this model is incompatible. ` +
+          `Either pick a model that returns ${expectedDims} dims, OR set --embedding-dimensions ${row.embedding.length} ` +
+          `and reinitialize the embedding column at the new width.`,
+        );
+      }
+      allEmbeddings.push(new Float32Array(row.embedding));
     }
-    // D12 — dim validation. Throw EmbedDimensionMismatchError-shape error
-    // (AIConfigError with model id + observed + expected so the operator
-    // can diagnose and pick a compatible model OR adjust the brain's
-    // embedding_dimensions config). Skip the check when expectedDims=0
-    // (no recipe declaration AND no config override).
-    if (expectedDims > 0 && row.embedding.length !== expectedDims) {
-      throw new AIConfigError(
-        `${recipe.id}:${modelId} returned ${row.embedding.length}-dim vector; expected ${expectedDims}.`,
-        `The brain's embedding column is fixed at ${expectedDims} dims; this model is incompatible. ` +
-        `Either pick a model that returns ${expectedDims} dims, OR set --embedding-dimensions ${row.embedding.length} ` +
-        `and reinitialize the embedding column at the new width.`,
-      );
-    }
-    allEmbeddings.push(new Float32Array(row.embedding));
   }
 
   return allEmbeddings;

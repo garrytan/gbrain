@@ -69,16 +69,18 @@ describe('embedMultimodal — openai-compat routing (#875)', () => {
     expect(capturedUrl).toBe('http://localhost:4000/embeddings');
     expect(capturedAuth).toBe('Bearer test-litellm-key');
     expect(capturedBody.model).toBe('gpt-4o-multimodal');
-    expect(capturedBody.input[0].type).toBe('image_url');
-    expect(capturedBody.input[0].image_url.url).toBe('data:image/png;base64,fake-base64-bytes');
+    expect(capturedBody.input[0][0].type).toBe('image_url');
+    expect(capturedBody.input[0][0].image_url.url).toBe('data:image/png;base64,fake-base64-bytes');
   });
 
-  test('multiple inputs trigger sequential /embeddings calls', async () => {
+  test('multiple inputs within batch size produce a single /embeddings call', async () => {
     configureLitellm();
     let calls = 0;
-    fetchHandler = async () => {
+    let capturedBody: any = null;
+    fetchHandler = async (_url, init) => {
       calls += 1;
-      return okResponse(1024, 1);
+      capturedBody = JSON.parse(init.body as string);
+      return okResponse(1024, capturedBody.input.length);
     };
 
     const result = await embedMultimodal([
@@ -87,8 +89,50 @@ describe('embedMultimodal — openai-compat routing (#875)', () => {
       { kind: 'image_base64', data: 'img3', mime: 'image/webp' },
     ]);
 
-    expect(calls).toBe(3);
+    expect(calls).toBe(1);
+    expect(capturedBody.input.length).toBe(3);
+    expect(capturedBody.input[0][0].image_url.url).toBe('data:image/jpeg;base64,img1');
+    expect(capturedBody.input[2][0].image_url.url).toBe('data:image/webp;base64,img3');
     expect(result.length).toBe(3);
+  });
+
+  test('inputs exceeding batch size are split across multiple calls', async () => {
+    configureLitellm();
+    const batchSizes: number[] = [];
+    fetchHandler = async (_url, init) => {
+      const body = JSON.parse(init.body as string);
+      batchSizes.push(body.input.length);
+      return okResponse(1024, body.input.length);
+    };
+
+    const inputs = Array.from({ length: 10 }, (_, i) => ({
+      kind: 'image_base64' as const,
+      data: `img${i}`,
+      mime: 'image/png',
+    }));
+    const result = await embedMultimodal(inputs);
+
+    expect(batchSizes).toEqual([8, 2]);
+    expect(result.length).toBe(10);
+  });
+
+  test('large inputs are split by encoded payload size', async () => {
+    configureLitellm();
+    const batchSizes: number[] = [];
+    fetchHandler = async (_url, init) => {
+      const body = JSON.parse(init.body as string);
+      batchSizes.push(body.input.length);
+      return okResponse(1024, body.input.length);
+    };
+
+    const large = 'x'.repeat(15 * 1024 * 1024);
+    const result = await embedMultimodal([
+      { kind: 'image_base64', data: large, mime: 'image/png' },
+      { kind: 'image_base64', data: large, mime: 'image/png' },
+    ]);
+
+    expect(batchSizes).toEqual([1, 1]);
+    expect(result.length).toBe(2);
   });
 
   test('LiteLLM without LITELLM_API_KEY still works (proxy may run unauthenticated)', async () => {
