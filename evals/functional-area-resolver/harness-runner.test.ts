@@ -8,6 +8,8 @@
  * --limit 1 mode is a sufficient real smoke check at ~$0.01 per run).
  */
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test, expect } from 'bun:test';
 import {
   parseFixtures,
@@ -44,6 +46,16 @@ test('parseFixtures: skips // comments and blank lines', () => {
 
 test('parseFixtures: throws on missing required fields', () => {
   expect(() => parseFixtures(`{"intent":"foo"}\n`)).toThrow(/missing required fields/);
+});
+
+test('parseFixtures: accepts an explicit null expected skill for abstention cases', () => {
+  expect(parseFixtures(`{"intent":"too vague","expected_skill":null}\n`)).toEqual([
+    { intent: 'too vague', expected_skill: null },
+  ]);
+});
+
+test('parseFixtures: rejects invalid expected skill types', () => {
+  expect(() => parseFixtures(`{"intent":"foo","expected_skill":42}\n`)).toThrow(/missing required fields/);
 });
 
 test('parseFixtures: throws on invalid JSON', () => {
@@ -96,6 +108,11 @@ test('scoreFixture: mismatch returns 0', () => {
 
 test('scoreFixture: case-sensitive at this layer (caller lowercases via parseModelResponse)', () => {
   expect(scoreFixture('Enrich', 'enrich')).toBe(0);
+});
+
+test('scoreFixture: null expects explicit none abstention', () => {
+  expect(scoreFixture('none', null)).toBe(1);
+  expect(scoreFixture('brain-ops', null)).toBe(0);
 });
 
 test('meanAndCI95: empty array returns zeros', () => {
@@ -164,6 +181,7 @@ test('parseArgs: defaults are sensible', () => {
     model: MODEL_ID,
     variantsDir: 'variants',
     variantFiles: null,
+    heldOutFixtures: 'fixtures-held-out.jsonl',
   });
 });
 
@@ -178,6 +196,11 @@ test('parseArgs: --variants comma-list', () => {
 
 test('parseArgs: --variants-dir', () => {
   expect(parseArgs(['--variants-dir', 'variants-sweep']).variantsDir).toBe('variants-sweep');
+});
+
+test('parseArgs: --held-out-fixtures', () => {
+  expect(parseArgs(['--held-out-fixtures', 'fixtures-compression-validation.jsonl']).heldOutFixtures)
+    .toBe('fixtures-compression-validation.jsonl');
 });
 
 test('resolveModel: aliases', () => {
@@ -263,6 +286,32 @@ test('scoreFixtureLenient: cross-area = 0', () => {
 
 test('scoreFixtureLenient: no dispatcher map = falls back to strict', () => {
   expect(scoreFixtureLenient('foo', 'bar', new Map())).toBe(0);
+});
+
+test('scoreFixtureLenient: null only accepts explicit none abstention', () => {
+  const lists = new Map([['brain-ops', new Set(['brain-ops', 'enrich'])]]);
+  expect(scoreFixtureLenient('none', null, lists)).toBe(1);
+  expect(scoreFixtureLenient('enrich', null, lists)).toBe(0);
+});
+
+test('compression validation corpus is parseable and positive targets are structurally reachable', () => {
+  const evalDir = import.meta.dir;
+  const fixtures = parseFixtures(
+    readFileSync(join(evalDir, 'fixtures-compression-validation.jsonl'), 'utf8'),
+  );
+  expect(fixtures).toHaveLength(20);
+  expect(fixtures.filter(f => f.expected_skill === null)).toHaveLength(5);
+
+  for (const name of ['yaml-compressed', 'hierarchical']) {
+    const dispatchers = parseDispatcherLists(
+      readFileSync(join(evalDir, 'variants', `${name}.md`), 'utf8'),
+    );
+    const reachable = new Set([...dispatchers.values()].flatMap(set => [...set]));
+    const missing = fixtures
+      .map(f => f.expected_skill)
+      .filter((skill): skill is string => skill !== null && !reachable.has(skill));
+    expect(missing).toEqual([]);
+  }
 });
 
 test('parseArgs: --limit', () => {

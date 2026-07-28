@@ -20,7 +20,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { execSync } from 'node:child_process';
@@ -49,23 +49,22 @@ export function resolveModel(spec: string): { full: string; bare: string } {
 }
 
 const VARIANT_NAMES = ['baseline', 'functional-areas', 'resolver-of-resolvers'] as const;
-type VariantName = (typeof VARIANT_NAMES)[number];
 
 const SEEDS = [1, 2, 3] as const;
 
 export interface Fixture {
   intent: string;
-  expected_skill: string;
+  expected_skill: string | null;
 }
 
 export interface RunRow {
   kind: 'run';
   fixture_id: number;
   corpus: 'training' | 'held_out';
-  variant: VariantName;
+  variant: string;
   seed: number;
   predicted: string;
-  expected: string;
+  expected: string | null;
   /** Strict score: predicted exactly equals expected. */
   correct: 0 | 1;
   /** Lenient score: predicted is in the same dispatcher area as expected (T1a). */
@@ -83,6 +82,7 @@ export interface ReceiptRow {
   prompt_template_hash: string;
   fixtures_hash: string;
   fixtures_held_out_hash: string;
+  fixtures_held_out_path: string;
   /** Git sha of the harness at run time (T4). Detect stale numbers when harness changes. */
   harness_sha: string | null;
   ts: string;
@@ -101,6 +101,7 @@ Rules:
     "**Area name**: triggers... → \`dispatcher-skill\` (dispatcher for: subskill-a, subskill-b, subskill-c, ...)"
   When the user's intent matches an area, RETURN THE MOST-SPECIFIC SUB-SKILL from that area's "dispatcher for" list, not the dispatcher itself. The dispatcher slug is only correct when no listed sub-skill is more specific to the intent.
 - If a row has no dispatcher list, return its slug directly.
+- If the intent is too vague to identify a specific actionable skill, return none.
 
 RESOLVER:
 <<<RESOLVER_CONTENT>>>
@@ -122,7 +123,11 @@ export function parseFixtures(rawJsonl: string): Fixture[] {
     } catch (err) {
       throw new Error(`Bad fixture JSON: ${trimmed.slice(0, 80)} — ${(err as Error).message}`);
     }
-    if (typeof obj.intent !== 'string' || typeof obj.expected_skill !== 'string') {
+    if (
+      typeof obj.intent !== 'string'
+      || !Object.prototype.hasOwnProperty.call(obj, 'expected_skill')
+      || (obj.expected_skill !== null && typeof obj.expected_skill !== 'string')
+    ) {
       throw new Error(`Fixture missing required fields: ${trimmed.slice(0, 80)}`);
     }
     out.push({ intent: obj.intent, expected_skill: obj.expected_skill });
@@ -163,8 +168,8 @@ export function parseModelResponse(raw: string): string {
   return (slugMatch ? slugMatch[0] : firstLine).toLowerCase();
 }
 
-export function scoreFixture(predicted: string, expected: string): 0 | 1 {
-  return predicted === expected ? 1 : 0;
+export function scoreFixture(predicted: string, expected: string | null): 0 | 1 {
+  return predicted === (expected ?? 'none') ? 1 : 0;
 }
 
 /**
@@ -211,9 +216,10 @@ export function parseDispatcherLists(variantContent: string): Map<string, Set<st
  */
 export function scoreFixtureLenient(
   predicted: string,
-  expected: string,
+  expected: string | null,
   dispatcherLists: Map<string, Set<string>>,
 ): 0 | 1 {
+  if (expected === null) return predicted === 'none' ? 1 : 0;
   if (predicted === expected) return 1;
   for (const set of dispatcherLists.values()) {
     if (set.has(predicted) && set.has(expected)) return 1;
@@ -282,12 +288,15 @@ export interface ParsedArgs {
   variantsDir: string;
   /** Custom variant glob (overrides default 3 variants); used by description-length sweep. */
   variantFiles: string[] | null;
+  /** Alternate held-out/development fixture file, relative to this eval directory unless absolute. */
+  heldOutFixtures: string;
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
   const out: ParsedArgs = {
     limit: null, parallel: 1, output: null, help: false, yes: false,
     model: MODEL_ID, variantsDir: 'variants', variantFiles: null,
+    heldOutFixtures: 'fixtures-held-out.jsonl',
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -316,6 +325,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
       const v = argv[++i];
       if (!v) throw new Error(`--variants requires a comma-separated list`);
       out.variantFiles = v.split(',').map(s => s.trim()).filter(Boolean);
+    } else if (a === '--held-out-fixtures') {
+      const v = argv[++i];
+      if (!v) throw new Error(`--held-out-fixtures requires a path`);
+      out.heldOutFixtures = v;
     } else if (a.startsWith('--')) {
       throw new Error(`Unknown flag: ${a}`);
     }
@@ -361,6 +374,8 @@ Flags:
   --variants-dir PATH  Override variants directory (default: ./variants)
   --variants A,B,C     Comma-separated variant basenames (default: all 3 in variants-dir)
                        Useful for description-length sweep where you have 4+ variants.
+  --held-out-fixtures PATH
+                       Alternate second corpus (relative to this eval directory unless absolute)
   --yes                Skip the cost-estimate confirmation prompt
   --help               Print this help
 
@@ -444,8 +459,11 @@ export async function main(argv: string[]): Promise<number> {
 
   // Load fixtures + variants.
   const evalsDir = __dirname;
+  const heldOutFixturesPath = isAbsolute(args.heldOutFixtures)
+    ? args.heldOutFixtures
+    : resolve(evalsDir, args.heldOutFixtures);
   const fixturesTraining = parseFixtures(readFileSync(join(evalsDir, 'fixtures.jsonl'), 'utf8'));
-  const fixturesHeldOut = parseFixtures(readFileSync(join(evalsDir, 'fixtures-held-out.jsonl'), 'utf8'));
+  const fixturesHeldOut = parseFixtures(readFileSync(heldOutFixturesPath, 'utf8'));
 
   // Dynamic variants: --variants overrides the default 3, --variants-dir overrides location.
   const variantsAbsDir = resolve(evalsDir, args.variantsDir);
@@ -484,7 +502,7 @@ export async function main(argv: string[]): Promise<number> {
 
   // Compute receipt header.
   const fixturesHash = hashContent(readFileSync(join(evalsDir, 'fixtures.jsonl'), 'utf8'));
-  const fixturesHeldOutHash = hashContent(readFileSync(join(evalsDir, 'fixtures-held-out.jsonl'), 'utf8'));
+  const fixturesHeldOutHash = hashContent(readFileSync(heldOutFixturesPath, 'utf8'));
   const promptTemplateHash = hashContent(PROMPT_TEMPLATE);
   const harnessSha = getHarnessSha();
   const tsStart = new Date().toISOString();
@@ -494,6 +512,7 @@ export async function main(argv: string[]): Promise<number> {
     prompt_template_hash: promptTemplateHash,
     fixtures_hash: fixturesHash,
     fixtures_held_out_hash: fixturesHeldOutHash,
+    fixtures_held_out_path: heldOutFixturesPath,
     harness_sha: harnessSha,
     ts: tsStart,
     cmd_args: argv,
@@ -521,7 +540,7 @@ export async function main(argv: string[]): Promise<number> {
       kind: 'run',
       fixture_id: t.fixture_id,
       corpus: t.corpus,
-      variant: t.variant as VariantName,
+      variant: t.variant,
       seed: t.seed,
       predicted,
       expected: t.fixture.expected_skill,

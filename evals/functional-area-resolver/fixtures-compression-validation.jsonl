@@ -1,0 +1,24 @@
+// 20 development/validation fixtures for the compression candidates.
+// NOT blind held-out evidence: the candidate variants were reviewed and
+// adjusted against this corpus. Use it to catch regressions and abstention
+// failures, not to claim generalization accuracy.
+{"intent":"Skillify the JSON parsing helper I wrote last week","expected_skill":"skillify"}
+{"intent":"Create a new skill for cataloging books I've finished","expected_skill":"skill-creator"}
+{"intent":"Build me a daily prep summary for tomorrow","expected_skill":"daily-task-prep"}
+{"intent":"Pull the contact details for Maria from my address book","expected_skill":"google-contacts"}
+{"intent":"Run a healthcheck on my services","expected_skill":"healthcheck"}
+{"intent":"I have a PDF of a research paper, extract the key findings into my brain","expected_skill":"brain-pdf"}
+{"intent":"Set up a recurring job that checks my deployment every morning","expected_skill":"cron-scheduler"}
+{"intent":"Find and fix the broken citations in my latest essay","expected_skill":"citation-fixer"}
+{"intent":"What concepts in my brain relate to distributed systems","expected_skill":"concept-synthesis"}
+{"intent":"Ingest this meeting transcript and create a page for it","expected_skill":"meeting-ingestion"}
+{"intent":"Generate a weekly report summarizing what I worked on","expected_skill":"reports"}
+{"intent":"Help me architect the module structure for this new repo","expected_skill":"repo-architecture"}
+{"intent":"I want to do a deep reading session on this long article","expected_skill":"strategic-reading"}
+{"intent":"Enrich the page about Acme Corp with recent news","expected_skill":"enrich"}
+{"intent":"Migrate my brain from PGLite to a hosted Postgres instance","expected_skill":"migrate"}
+{"intent":"I want to do something brain-related but I'm not sure what","expected_skill":null}
+{"intent":"Tell me about my knowledge base","expected_skill":null}
+{"intent":"Do the thing we usually do on Mondays","expected_skill":null}
+{"intent":"Make my setup better","expected_skill":null}
+{"intent":"I need help with something work-related","expected_skill":null}

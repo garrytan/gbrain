@@ -29,6 +29,14 @@ clause** on Sonnet (100% vs 41.7% training, lenient).
 - `variants/resolver-of-resolvers.md` — derived mechanically from
   functional-areas by stripping `(dispatcher for: ...)` clauses. The ablation
   case: same structure, no sub-skill visibility. ~10KB.
+- `variants/yaml-compressed.md` — candidate with non-routing overhead
+  stripped. Retains 14 area entries with full dispatcher clauses and adds
+  `reports`, `cron-scheduler`, and `migrate`. 5,398 bytes. Structural checks
+  pass; model routing is not yet measured.
+- `variants/hierarchical.md` — 2-level area-of-areas: 3 top-level groups
+  (Knowledge, Operations, Communications) → 14 area entries with dispatcher
+  clauses. Tests whether extra hierarchy preserves routing accuracy. 5,485
+  bytes. Structural checks pass; model routing is not yet measured.
 
 ### Corpora
 
@@ -38,6 +46,9 @@ clause** on Sonnet (100% vs 41.7% training, lenient).
 - `fixtures-held-out.jsonl` — 5 fixtures authored BEFORE the variants and
   not adjusted afterward. Held-out is the canonical claim, but small n means
   it saturates near 100% for most cells.
+- `fixtures-compression-validation.jsonl` — 20 development cases (15 positive,
+  5 abstention). The candidate variants were reviewed against this corpus, so
+  it is regression input, not blind held-out evidence.
 
 ### Scoring
 
@@ -67,8 +78,9 @@ Both matter:
 
 Each run writes one JSONL with:
 - Header row: `{kind:'receipt', model, prompt_template_hash, fixtures_hash,
-  fixtures_held_out_hash, harness_sha, ts, cmd_args}` — binds the run to a
-  specific harness version and inputs so re-runs are auditable.
+  fixtures_held_out_hash, fixtures_held_out_path, harness_sha, ts, cmd_args}`
+  — binds the run to a specific harness version and inputs so re-runs are
+  auditable.
 - One row per (fixture × variant × seed): full row schema in `harness-runner.ts`.
 
 Baseline receipts committed in `baseline-runs/` after the v0.32.3.0
@@ -111,6 +123,12 @@ node harness.mjs --model opus --parallel 3 --yes
 node harness.mjs --model sonnet --parallel 3 --yes      # ~$1.00
 node harness.mjs --model haiku --parallel 3 --yes       # ~$0.30
 
+# Compression candidates against the development corpus (240 paid calls)
+node harness.mjs --model haiku \
+  --variants yaml-compressed,hierarchical \
+  --held-out-fixtures fixtures-compression-validation.jsonl \
+  --parallel 3 --yes
+
 # Re-score an existing run without spending more API budget
 node rescore.mjs baseline-runs/2026-05-11-opus-4-7.jsonl
 
@@ -142,17 +160,20 @@ If you adopt the pattern in your own agent, the SKILL.md guidance applies
 to your harness prompt. Lift the PROMPT_TEMPLATE from this harness or write
 your own instruction explaining the dispatcher list.
 
-## Limitations and v0.33.x follow-ups
+## Limitations and follow-ups
 
-1. Held-out corpus is small (n=5). Saturated at 100% across most cells. Grow
-   to >=20 in v0.33.x.
-2. Single vendor (Anthropic). Cross-vendor (Gemini, GPT) is v0.33.x.
+1. Held-out corpus is small (n=5). The separate 20-case compression corpus is
+   non-blind development data and does not close this limitation.
+2. Single vendor (Anthropic). Cross-vendor (Gemini, GPT) is pending (~$3).
 3. No description-length sweep yet. Anthropic Agent Skills median is ~80
    tokens of frontmatter; we haven't measured the per-row description length
-   sweet spot. v0.33.x.
+   sweet spot.
 4. Same-author training corpus + variants. Held-out mitigates partially.
-5. No adversarial fixtures (e.g., "I want to do something brain-related"
-   without specifying what). v0.33.x.
+5. Five vague-intent abstention cases exist in the compression development
+   corpus, but independent blind adversarial fixtures are still pending.
+6. **Compression follow-up:** `yaml-compressed` and `hierarchical` are
+   structurally reachable candidates only. The unsupported prior `20/20`
+   statement was withdrawn; see `compression-followup-2026-07-24.md`.
 
 See `TODOS.md` for the full list.
 
@@ -172,15 +193,19 @@ hierarchy into a single-LLM-pass dispatcher list.
 ```
 evals/functional-area-resolver/
 ├── README.md                                       # this file
+├── compression-followup-2026-07-24.md              # candidates, evidence limits, validation command
 ├── fixtures.jsonl                                  # 20 training fixtures
-├── fixtures-held-out.jsonl                         # 5 held-out blind fixtures
+├── fixtures-held-out.jsonl                         # 5 historical held-out fixtures
+├── fixtures-compression-validation.jsonl           # 20 non-blind development fixtures
 ├── variants/
 │   ├── baseline.md                                 # 25KB, PII-scrubbed from production
 │   ├── functional-areas.md                         # 13KB, PII-scrubbed from production
-│   └── resolver-of-resolvers.md                    # 10KB, derived ablation
+│   ├── resolver-of-resolvers.md                    # 10KB, derived ablation
+│   ├── yaml-compressed.md                          # 5,398-byte unmeasured candidate
+│   └── hierarchical.md                             # 5,485-byte unmeasured candidate
 ├── harness.mjs                                     # thin Node CLI shim
 ├── harness-runner.ts                               # TS runner via gbrain gateway
-├── harness-runner.test.ts                          # 45 unit tests (no API key)
+├── harness-runner.test.ts                          # unit tests (no API key)
 ├── rescore.mjs                                     # zero-cost lenient re-score
 └── baseline-runs/
     ├── 2026-05-11-opus-4-7.jsonl                   # 225-row Opus baseline
