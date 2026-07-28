@@ -561,3 +561,44 @@ describe('watchdog platform defaults', () => {
     expect(n).toBeGreaterThanOrEqual(0);
   });
 });
+
+describe('boot-readiness deadline (#3273)', () => {
+  test('a boot that never completes releases the engine and exits non-zero', async () => {
+    const h = makeHarness();
+    // Never-resolving boot = serve wedged mid-boot while holding the
+    // PGLite write lock (the reported symptom: every CLI consumer times
+    // out on the lock until the serve PID is manually killed).
+    h.opts.startMcpServer = () => new Promise<void>(() => {});
+    h.opts.bootTimeoutMs = 20;
+    void runServe(h.engine as unknown as BrainEngine, [], h.opts);
+
+    const code = await h.exited;
+    expect(code).toBe(1);
+    expect(h.engine.disconnectCalls).toBe(1);
+    expect(h.logs.some(l => l.includes('boot did not complete'))).toBe(true);
+  });
+
+  test('a completed boot clears the deadline (no spurious exit)', async () => {
+    const h = makeHarness();
+    h.opts.bootTimeoutMs = 20;
+    await runServe(h.engine as unknown as BrainEngine, [], h.opts);
+
+    // Give the (cleared) deadline window time to fire if the clear failed.
+    await new Promise(r => setTimeout(r, 50));
+    expect(h.engine.disconnectCalls).toBe(0);
+    expect(h.logs.some(l => l.includes('boot did not complete'))).toBe(false);
+  });
+
+  test('bootTimeoutMs = 0 disables the deadline', async () => {
+    const h = makeHarness();
+    let resolveBoot!: () => void;
+    h.opts.startMcpServer = () => new Promise<void>(r => { resolveBoot = r; });
+    h.opts.bootTimeoutMs = 0;
+    const running = runServe(h.engine as unknown as BrainEngine, [], h.opts);
+
+    await new Promise(r => setTimeout(r, 30));
+    expect(h.engine.disconnectCalls).toBe(0);
+    resolveBoot();
+    await running;
+  });
+});

@@ -18,6 +18,7 @@
  */
 
 import { quarantineFilterFragment } from '../quarantine.ts';
+import { unverifiedExtractionFragment } from '../extraction-review.ts';
 
 /**
  * Escape `%`, `_`, and `\` so a string can be used as a LIKE prefix literal.
@@ -63,6 +64,7 @@ export function buildSourceFactorCase(
   slugColumn: string,
   boostMap: Record<string, number>,
   detail: 'low' | 'medium' | 'high' | undefined,
+  unverifiedGuardColumn?: string,
 ): string {
   // Loose-string guard: agents passing `"HIGH"` or `"high "` over MCP/JSON
   // should still hit the temporal-bypass path. TypeScript narrows `detail`
@@ -80,7 +82,26 @@ export function buildSourceFactorCase(
     `WHEN ${slugColumn} LIKE ${buildLikePrefixLiteral(prefix)} THEN ${factor}`
   ).join(' ');
 
-  return `(CASE ${whens} ELSE 1.0 END)`;
+  // Extraction quarantine lane (issue #160): unverified auto-extracted stubs
+  // never receive the namespace-authority factor (people/ / companies/ 1.2x)
+  // — they rank as ordinary content until promoted. Two forms:
+  //   - table-qualified slug column ('p.slug'): reference the sibling
+  //     `frontmatter` column inline via unverifiedExtractionFragment.
+  //   - bare column + `unverifiedGuardColumn`: the vector arm's re-rank CTE
+  //     has no frontmatter column, so its inner hnsw_candidates CTE projects
+  //     the predicate as a boolean (`... AS unverified_stub`) and passes the
+  //     column name here. Without this the 1.2x would apply INSIDE the
+  //     scored/best_per_page pipeline pre-LIMIT — an unverified stub could
+  //     outrank AND evict a legitimate page from the candidate pool, which
+  //     nothing downstream can restore.
+  const alias = slugColumn.includes('.') ? slugColumn.split('.')[0] : null;
+  const unverifiedGuard = unverifiedGuardColumn
+    ? `WHEN ${unverifiedGuardColumn} THEN 1.0 `
+    : alias
+      ? `WHEN ${unverifiedExtractionFragment(alias)} THEN 1.0 `
+      : '';
+
+  return `(CASE ${unverifiedGuard}${whens} ELSE 1.0 END)`;
 }
 
 /**

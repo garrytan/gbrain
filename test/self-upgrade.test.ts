@@ -62,9 +62,9 @@ describe('decideSelfUpgrade — pure branches', () => {
     expect(d.action).toBe('downgrade_or_yanked');
   });
 
-  test('patch/micro bump only → not_behind (ignored)', () => {
-    expect(decideSelfUpgrade(baseInputs({ currentVersion: '0.42.0', latestVersion: '0.42.1' })).action).toBe('not_behind');
-    expect(decideSelfUpgrade(baseInputs({ currentVersion: '0.42.3.0', latestVersion: '0.42.3.1' })).action).toBe('not_behind');
+  test('patch and micro releases → behind', () => {
+    expect(decideSelfUpgrade(baseInputs({ currentVersion: '0.42.0', latestVersion: '0.42.1' })).action).toBe('notify');
+    expect(decideSelfUpgrade(baseInputs({ currentVersion: '0.42.3.0', latestVersion: '0.42.3.1' })).action).toBe('notify');
   });
 
   test('minor bump → behind', () => {

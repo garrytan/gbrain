@@ -14,6 +14,7 @@
  */
 
 import type { BrainEngine } from './engine.ts';
+import { SOURCE_CONFIG_OBJECT_SQL } from './source-config-sql.ts';
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -190,7 +191,7 @@ export async function softDeleteSource(
      SET archived = true,
          archived_at = now(),
          archive_expires_at = ${expiresClause},
-         config = COALESCE(config, '{}'::jsonb) || '{"federated": false}'::jsonb
+         config = ${SOURCE_CONFIG_OBJECT_SQL} || '{"federated": false}'::jsonb
      WHERE id = $1 AND archived = false
      RETURNING id, name, archived_at, archive_expires_at`,
     [sourceId],
@@ -232,7 +233,7 @@ export async function restoreSource(
      SET archived = false,
          archived_at = NULL,
          archive_expires_at = NULL,
-         config = COALESCE(config, '{}'::jsonb) || $1::jsonb
+         config = ${SOURCE_CONFIG_OBJECT_SQL} || $1::text::jsonb
      WHERE id = $2 AND archived = true
      RETURNING id`,
     [federatedPatch, sourceId],

@@ -8,6 +8,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from
 import { join } from 'path';
 import { withEnv } from './helpers/with-env.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { LATEST_VERSION } from '../src/core/migrate.ts';
 import {
   runMigrateOnlyCore,
   runGbrainSubprocess,
@@ -45,6 +46,76 @@ describe('#1605 runMigrateOnlyCore (in-process schema)', () => {
         "SELECT to_regclass('public.pages')::text AS t",
       );
       expect(rows[0]?.t).toBe('pages');
+    } finally {
+      await verify.disconnect();
+    }
+  });
+
+  // Regression coverage for #2775: `gbrain init --migrate-only` (this
+  // function, in-process) failed with `column "event_page_id" does not
+  // exist` on any PGLite brain whose schema predates migration v121, because
+  // `PGLiteEngine#initSchema` replayed the embedded schema blob — which
+  // indexes `timeline_entries.event_page_id` — BEFORE `runMigrations()` had
+  // a chance to add that column. The fix (forward-reference bootstrap probe
+  // for `timeline_entries.event_page_id`) already shipped in #2735 (closing
+  // #2724, the Postgres-side report of the same ordering bug) ahead of this
+  // test. `test/bootstrap.test.ts` and `test/schema-bootstrap-coverage.test.ts`
+  // already cover the bootstrap contract at the engine-method level; this
+  // test closes the remaining gap by exercising the exact CLI-facing entry
+  // point (`runMigrateOnlyCore`, i.e. `gbrain init --migrate-only`) so a
+  // future regression in the wiring between the CLI and `initSchema()` would
+  // still be caught even if the lower-level bootstrap contract stayed intact.
+  test('brings a pre-v121 PGLite brain (missing timeline_entries.event_page_id) to head without spawning (#2775)', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'mip-pre121-'));
+    const dataDir = join(home, 'data');
+    mkdirSync(join(home, '.gbrain'), { recursive: true });
+    writeFileSync(
+      join(home, '.gbrain', 'config.json'),
+      JSON.stringify({ engine: 'pglite', database_path: dataDir }),
+    );
+
+    await withEnv(
+      { GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined },
+      async () => {
+        // Bring the brain to LATEST first (fresh install), then simulate a
+        // pre-v121 brain by stripping the forward-referenced column/indexes
+        // migration v121 added and rolling `config.version` back to a
+        // pre-v121 value — the same down-mutation pattern used by
+        // test/bootstrap.test.ts's "pre-v121 timeline shape" case.
+        await runMigrateOnlyCore();
+
+        const rollback = new PGLiteEngine();
+        await rollback.connect({ database_path: dataDir });
+        try {
+          await (rollback as any).db.exec(`
+            DROP INDEX IF EXISTS idx_timeline_event_page;
+            DROP INDEX IF EXISTS idx_timeline_event_dedup;
+            ALTER TABLE timeline_entries DROP CONSTRAINT IF EXISTS timeline_entries_event_page_id_fkey;
+            ALTER TABLE timeline_entries DROP COLUMN IF EXISTS event_page_id;
+          `);
+          await rollback.setConfig('version', '97');
+        } finally {
+          await rollback.disconnect();
+        }
+
+        // The literal repro from #2775: re-running the `gbrain init
+        // --migrate-only` code path against the downgraded brain must NOT
+        // throw `column "event_page_id" does not exist` — it must bring the
+        // schema back to LATEST_VERSION.
+        const result = await runMigrateOnlyCore();
+        expect(result.engine).toBe('pglite');
+      },
+    );
+
+    const verify = new PGLiteEngine();
+    await verify.connect({ database_path: dataDir });
+    try {
+      const versionStr = await verify.getConfig('version');
+      expect(parseInt(versionStr || '0', 10)).toBe(LATEST_VERSION);
+      const rows = await verify.executeRaw<{ t: string | null }>(
+        "SELECT to_regclass('public.idx_timeline_event_page')::text AS t",
+      );
+      expect(rows[0]?.t).toBe('idx_timeline_event_page');
     } finally {
       await verify.disconnect();
     }

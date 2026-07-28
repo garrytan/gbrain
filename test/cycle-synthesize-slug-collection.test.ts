@@ -127,6 +127,31 @@ describe('C6: collectChildPutPageSlugs survives double-encoded jsonb (#745)', ()
     expect(ref?.raw_source).toBe('/transcripts/2026-07-01-standup.md');
   });
 
+  test('normalizes bigint job ids before number-keyed metadata lookups', async () => {
+    const bigintEngine = {
+      executeRaw: async () => [{
+        job_id: 1001n,
+        slug: 'wiki/agents/test/bigint-job-abc123',
+      }],
+    };
+    const chunkInfo = new Map([[1001, { idx: 2, hash6: 'abc123' }]]);
+    const jobRawSource = new Map([[1001, '/transcripts/bigint-source.md']]);
+
+    const refs = await collectChildPutPageSlugs(
+      bigintEngine as any,
+      [1001],
+      chunkInfo,
+      'default',
+      jobRawSource,
+    );
+
+    expect(refs).toEqual([{
+      slug: 'wiki/agents/test/bigint-job-abc123-c2',
+      source_id: 'default',
+      raw_source: '/transcripts/bigint-source.md',
+    }]);
+  });
+
   test('omits raw_source when no map entry exists for the job (#1978)', async () => {
     const refs = await collectChildPutPageSlugs(engine as any, [1001], new Map(), 'default', new Map());
     const ref = refs.find((r: { slug: string }) => r.slug === 'wiki/agents/test/normal-shape');

@@ -144,3 +144,35 @@ export function assertTouchpoint(
 export function knownProviderIds(): string[] {
   return [...RECIPES.keys()];
 }
+
+/**
+ * Native embedding width for `modelId` under `recipe`.
+ *
+ * Resolution: the recipe's `model_dims` entry for this model, else the
+ * recipe-wide `default_dims`. Returns 0 when neither is known (the
+ * user-provided-model recipes declare `default_dims: 0` to force an explicit
+ * `--embedding-dimensions`), so callers keep their existing falsy checks.
+ *
+ * Accepts a bare model id (`bge-m3`) or a qualified one (`ollama:bge-m3`);
+ * the provider prefix is stripped before lookup so call sites can pass
+ * whichever they hold.
+ *
+ * Fixes #2051: a recipe-wide default silently picked 768 for every Ollama
+ * model, so `init --embedding-model ollama:bge-m3` built a 768-wide column
+ * for a model that emits 1024 and only failed at first insert.
+ */
+export function embeddingDimsForModel(
+  recipe: Recipe,
+  modelId: string | undefined,
+): number {
+  const tp = recipe.touchpoints.embedding;
+  if (!tp) return 0;
+  if (!modelId) return tp.default_dims ?? 0;
+  // Strip a leading `provider:` so both forms resolve. Slash-form ids
+  // (openrouter nested) are left intact — they're the model id.
+  const colon = modelId.indexOf(':');
+  const bare = colon === -1 ? modelId : modelId.slice(colon + 1);
+  const declared = tp.model_dims?.[bare];
+  if (typeof declared === 'number' && declared > 0) return declared;
+  return tp.default_dims ?? 0;
+}

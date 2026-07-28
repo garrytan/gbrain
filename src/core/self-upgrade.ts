@@ -30,7 +30,7 @@ import { closeSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unl
 import { dirname, join } from 'node:path';
 import { gbrainPath } from './config.ts';
 import { acquirePackLock, type PackLockOpts } from './schema-pack/pack-lock.ts';
-import { isMinorOrMajorBump, isValidVersionString, parseSemver, semverGt, semverLte } from './semver.ts';
+import { isValidVersionString, parseSemver, semverGt, semverLte } from './semver.ts';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -120,7 +120,7 @@ export interface SnoozeRecord {
 /**
  * Decide what to do about a possible upgrade. Pure: all I/O-derived inputs are
  * resolved by the caller. The version comparison is monotonic — we only ever
- * act when `latest` is a real minor/major bump strictly greater than `current`,
+ * act when `latest` is a real release strictly greater than `current`,
  * so a downgrade / yanked / prerelease-local-build can never trigger an upgrade.
  */
 export function decideSelfUpgrade(inp: DecideSelfUpgradeInputs): SelfUpgradeDecision {
@@ -148,15 +148,11 @@ export function decideSelfUpgrade(inp: DecideSelfUpgradeInputs): SelfUpgradeDeci
     return { action: 'not_behind', reason: 'already current', ...base };
   }
 
-  if (!isMinorOrMajorBump(inp.currentVersion, inp.latestVersion)) {
-    return { action: 'not_behind', reason: 'patch/micro bump only (ignored)', ...base };
-  }
-
   if (inp.failedVersions.includes(inp.latestVersion)) {
     return { action: 'known_bad', reason: `${inp.latestVersion} previously failed; not retrying`, ...base };
   }
 
-  // Genuinely behind by a minor/major bump and not known-bad.
+  // Genuinely behind by a newer release and not known-bad.
   if (inp.channel === 'invocation') {
     if (inp.snoozed) {
       return { action: 'throttled', reason: 'snoozed for this version', ...base };

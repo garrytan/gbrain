@@ -6,6 +6,7 @@ import {
   escapeLikePattern as topLevelEscapeLikePattern,
   __test__,
 } from '../src/core/search/sql-ranking.ts';
+import { unverifiedExtractionFragment } from '../src/core/extraction-review.ts';
 import {
   DEFAULT_SOURCE_BOOSTS,
   DEFAULT_HARD_EXCLUDES,
@@ -87,9 +88,11 @@ describe('buildSourceFactorCase', () => {
     expect(buildSourceFactorCase('p.slug', {}, 'medium')).toBe('1.0');
   });
 
-  test('emits a CASE expression for non-high detail', () => {
+  test('emits a CASE expression for non-high detail (unverified guard first — issue #160)', () => {
     const result = buildSourceFactorCase('p.slug', { 'originals/': 1.5 }, 'medium');
-    expect(result).toBe("(CASE WHEN p.slug LIKE 'originals/%' THEN 1.5 ELSE 1.0 END)");
+    expect(result).toBe(
+      `(CASE WHEN ${unverifiedExtractionFragment('p')} THEN 1.0 WHEN p.slug LIKE 'originals/%' THEN 1.5 ELSE 1.0 END)`,
+    );
   });
 
   test('sorts prefixes by length descending so longest-match wins', () => {
@@ -119,7 +122,9 @@ describe('buildSourceFactorCase', () => {
       { 'good/': 1.5, 'nan/': NaN, 'neg/': -1, 'inf/': Infinity },
       'medium',
     );
-    expect(result).toBe("(CASE WHEN p.slug LIKE 'good/%' THEN 1.5 ELSE 1.0 END)");
+    expect(result).toBe(
+      `(CASE WHEN ${unverifiedExtractionFragment('p')} THEN 1.0 WHEN p.slug LIKE 'good/%' THEN 1.5 ELSE 1.0 END)`,
+    );
   });
 
   test('uses the supplied slug column reference', () => {

@@ -29,6 +29,7 @@ import {
   BUILTIN_PATTERNS,
   cleanSpeaker,
 } from './builtins.ts';
+import { normalizeBlockConversation } from './normalize-block.ts';
 import type {
   DateContext,
   MatchedMessage,
@@ -391,7 +392,7 @@ function getNonBlankLines(body: string, headCap?: number): string[] {
  * window) and `scorePatternFull` (whole body) delegate here so the
  * quick_reject + regex loop lives in one place. Reused by
  * `parseConversation`'s fallback path which pre-splits ONCE and
- * passes the array to all 15 candidates (saves 14 redundant body
+ * passes the array to all 17 candidates (saves 16 redundant body
  * splits per fallback pass).
  */
 function scoreFromLines(
@@ -400,9 +401,28 @@ function scoreFromLines(
 ): number {
   if (lines.length === 0) return 0;
   let anchored = 0;
-  for (const line of lines) {
-    if (entry.quick_reject && !entry.quick_reject.test(line)) continue;
-    if (entry.regex.test(line)) anchored++;
+  let anchorCandidates = 0;
+  let firstLineAnchored = false;
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    if (entry.quick_reject && !entry.quick_reject.test(line)) {
+      continue;
+    }
+    anchorCandidates++;
+    if (entry.regex.test(line)) {
+      anchored++;
+      if (index === 0) firstLineAnchored = true;
+    }
+  }
+
+  if (
+    entry.score_continuations_as_body &&
+    entry.multi_line &&
+    entry.quick_reject &&
+    anchorCandidates > 0 &&
+    (anchored >= 2 || firstLineAnchored)
+  ) {
+    return anchored / anchorCandidates;
   }
   return anchored / lines.length;
 }
@@ -411,8 +431,10 @@ function scoreFromLines(
  * Score how well a pattern matches the first N lines of a body (D18).
  * Returns 0..1 ratio of matched lines. Higher = more confident.
  *
- * Quick_reject is honored (lines that don't pass quick_reject still
- * count as "could be continuation"; not penalized).
+ * Quick_reject is honored. Patterns that opt into
+ * `score_continuations_as_body` may exclude continuation lines from the
+ * denominator only after the scorer sees two anchors, or an anchor on the
+ * first non-blank line. Otherwise the ordinary full-body density applies.
  *
  * Exported for tests.
  */
@@ -451,6 +473,12 @@ export function parseConversation(
   if (!body) {
     return { messages: [], phase: 'no_match' };
   }
+
+  // Pre-pass: collapse block-format chat exports (header + indented body, e.g.
+  // the Slack collector's `- **Name** (Mon 11:18)\n  body…`) into the canonical
+  // single-line shape the built-in patterns recognize. Strict no-op when no
+  // block header is present, so already-canonical content is untouched.
+  body = normalizeBlockConversation(body);
 
   const dateCtx = deriveDateContext(opts);
 

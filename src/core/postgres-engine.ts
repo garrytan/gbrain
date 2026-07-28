@@ -65,8 +65,10 @@ import { logConnectionEvent } from './connection-audit.ts';
 import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, takeRowToTake, takeHitRowToHit, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery } from './search/sql-ranking.ts';
+import { unverifiedExtractionFragment } from './extraction-review.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
+import { SOURCE_CONFIG_OBJECT_SQL } from './source-config-sql.ts';
 import { shouldExcludeFromOrphanReporting, loadOrphanPolicyOverrides } from './orphan-policy.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from './link-extraction.ts';
 
@@ -1028,6 +1030,7 @@ export class PostgresEngine implements BrainEngine {
       const deletedCondition = includeDeleted ? tx`` : tx`AND deleted_at IS NULL`;
       const rows = await tx`
         SELECT id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, deleted_at,
+               effective_date, effective_date_source,
                source_kind, source_uri, ingested_via, ingested_at
         FROM pages
         WHERE slug = ${slug} ${sourceCondition} ${deletedCondition}
@@ -1406,9 +1409,10 @@ export class PostgresEngine implements BrainEngine {
     // paths, so the merge must happen inside the UPDATE (parity with
     // pglite-engine.updateSourceConfig, which already uses JSONB `||`).
     //
-    // The CASE normalizes historical bad shapes inline (so `config` is re-read
-    // against the row-locked latest version — a CTE/subquery snapshot would
-    // reintroduce the lost-update race under READ COMMITTED): older code paths
+    // The shared SQL coercion normalizes historical bad shapes inline (so
+    // `config` is re-read against the row-locked latest version — a detached
+    // read/normalize/write cycle would reintroduce the lost-update race under
+    // READ COMMITTED): older code paths
     // could store config as a JSONB string (double-encoded) or as a JSONB array
     // of patch objects. We coerce those to a flat object before the `||` merge
     // so doctor and source routing keep getting flat keys.
@@ -1434,24 +1438,7 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     const result = await sql`
       UPDATE sources
-         SET config =
-           CASE
-             WHEN jsonb_typeof(config) = 'object' THEN config
-             WHEN jsonb_typeof(config) = 'string'
-               THEN CASE
-                 WHEN (config #>> '{}') IS JSON
-                   THEN COALESCE(NULLIF((config #>> '{}'), '')::jsonb, '{}'::jsonb)
-                 ELSE '{}'::jsonb
-               END
-             WHEN jsonb_typeof(config) = 'array'
-               THEN COALESCE(
-                 (SELECT jsonb_object_agg(kv.key, kv.value)
-                    FROM jsonb_array_elements(config) elem,
-                         jsonb_each(elem) kv),
-                 '{}'::jsonb
-               )
-             ELSE '{}'::jsonb
-           END
+         SET config = ${sql.unsafe(SOURCE_CONFIG_OBJECT_SQL)}
            || ${sql.json(patch as Parameters<typeof sql.json>[0])}
        WHERE id = ${sourceId}
     `;
@@ -2134,7 +2121,10 @@ export class PostgresEngine implements BrainEngine {
     // innerLimit scales with offset to preserve the pagination contract:
     // a fixed cap of 100 would silently empty offset > 100.
     const boostMap = resolveBoostMap();
-    const sourceFactorCaseOnSlug = buildSourceFactorCase('slug', boostMap, opts?.detail);
+    // issue #160: the guard predicate is projected as `unverified_stub` in
+    // hnsw_candidates (frontmatter isn't otherwise available at re-rank), so
+    // unverified auto-extracted stubs get factor 1.0, not the people/ 1.2x.
+    const sourceFactorCaseOnSlug = buildSourceFactorCase('slug', boostMap, opts?.detail, 'unverified_stub');
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
     const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
     const innerLimit = offset + Math.max(limit * 5, 100);
@@ -2234,6 +2224,7 @@ export class PostgresEngine implements BrainEngine {
           CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
             THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
           cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+          (${unverifiedExtractionFragment('p')}) AS unverified_stub,
           1 - (cc.${col} <=> ${castSql}) AS raw_score
         FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
@@ -2571,15 +2562,21 @@ export class PostgresEngine implements BrainEngine {
   /**
    * Build the stale-chunk WHERE clause + positional params for sql.unsafe.
    * embed_skip always excluded. `signature` widens "stale" to include
-   * embedding_signature drift (NULL grandfathered). Shared by
-   * countStaleChunks + sumStaleChunkChars (parity with the PGLite sibling).
+   * embedding_signature drift (NULL grandfathered). `includeNullSignature`
+   * (#3391) lifts the grandfather clause so pre-stamp pages count as stale
+   * too (provider-migration paths). Shared by countStaleChunks +
+   * sumStaleChunkChars (parity with the PGLite sibling).
    */
-  private buildStaleChunkWhere(opts?: { sourceId?: string; signature?: string }): { where: string; params: unknown[] } {
+  private buildStaleChunkWhere(opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean }): { where: string; params: unknown[] } {
     const params: unknown[] = [];
     const conds: string[] = [];
     if (opts?.signature !== undefined) {
       params.push(opts.signature);
-      conds.push(`(cc.embedding IS NULL OR (p.embedding_signature IS NOT NULL AND p.embedding_signature <> $${params.length}))`);
+      conds.push(
+        opts.includeNullSignature
+          ? `(cc.embedding IS NULL OR p.embedding_signature IS NULL OR p.embedding_signature <> $${params.length})`
+          : `(cc.embedding IS NULL OR (p.embedding_signature IS NOT NULL AND p.embedding_signature <> $${params.length}))`,
+      );
     } else {
       conds.push(`cc.embedding IS NULL`);
     }
@@ -2591,10 +2588,11 @@ export class PostgresEngine implements BrainEngine {
     return { where: conds.join(' AND '), params };
   }
 
-  async countStaleChunks(opts?: { sourceId?: string; signature?: string }): Promise<number> {
+  async countStaleChunks(opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean }): Promise<number> {
     // Always JOIN pages so the embed_skip + signature predicates apply.
     // D7: source_id scoping. v0.41.31: optional signature widens staleness
-    // to embedding_signature drift (NULL grandfathered).
+    // to embedding_signature drift (NULL grandfathered unless
+    // includeNullSignature, #3391).
     const { where, params } = this.buildStaleChunkWhere(opts);
     // RLS scope binding (opt-in via GBRAIN_RLS_SCOPE_BINDING).
     return await this.withScopedReadTransaction(undefined, opts?.sourceId, async (tx) => {
@@ -2609,7 +2607,7 @@ export class PostgresEngine implements BrainEngine {
     });
   }
 
-  async sumStaleChunkChars(opts?: { sourceId?: string; signature?: string }): Promise<number> {
+  async sumStaleChunkChars(opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean }): Promise<number> {
     // Sibling of countStaleChunks: same stale predicate, summing chunk_text
     // length for the sync cost preview. ::bigint guards int4 overflow.
     const { where, params } = this.buildStaleChunkWhere(opts);
@@ -2631,24 +2629,29 @@ export class PostgresEngine implements BrainEngine {
     `;
   }
 
-  async invalidateStaleSignatureEmbeddings(opts: { signature: string; sourceId?: string }): Promise<number> {
+  async invalidateStaleSignatureEmbeddings(opts: { signature: string; sourceId?: string; includeNullSignature?: boolean }): Promise<number> {
     // NULL embeddings whose page signature is set AND differs from current.
-    // GRANDFATHER: NULL signature untouched. Feeds the NULL-embedding cursor
-    // so listStaleChunks stays unchanged. RETURNING → row count.
+    // GRANDFATHER: NULL signature untouched — UNLESS includeNullSignature
+    // (#3391): provider migrations must not leave pre-stamp pages in the old
+    // embedding space. Feeds the NULL-embedding cursor so listStaleChunks
+    // stays unchanged. RETURNING → row count.
     const params: unknown[] = [opts.signature];
     let srcClause = '';
     if (opts.sourceId !== undefined) {
       params.push(opts.sourceId);
       srcClause = ` AND p.source_id = $${params.length}`;
     }
+    const sigClause = opts.includeNullSignature
+      ? `(p.embedding_signature IS NULL OR p.embedding_signature <> $1)`
+      : `p.embedding_signature IS NOT NULL
+          AND p.embedding_signature <> $1`;
     const rows = await this.sql.unsafe(
       `UPDATE content_chunks cc
           SET embedding = NULL, embedded_at = NULL
          FROM pages p
         WHERE cc.page_id = p.id
           AND cc.embedding IS NOT NULL
-          AND p.embedding_signature IS NOT NULL
-          AND p.embedding_signature <> $1${srcClause}
+          AND ${sigClause}${srcClause}
         RETURNING cc.page_id`,
       params as Parameters<typeof this.sql.unsafe>[1],
     );
@@ -3571,6 +3574,20 @@ export class PostgresEngine implements BrainEngine {
       result.set(Number(r.id), { reason: r.reason, detail: r.detail ?? '' });
     }
     return result;
+  }
+
+  async getUnverifiedExtractionPageIds(pageIds: number[]): Promise<Set<number>> {
+    if (pageIds.length === 0) return new Set();
+    const sql = this.sql;
+    // Predicate is the shared unverifiedExtractionFragment (issue #160) so
+    // this query and the SQL-side source-boost guard can never drift.
+    const rows = await sql.unsafe(
+      `SELECT id FROM pages
+       WHERE id = ANY($1::int[])
+         AND ${unverifiedExtractionFragment('pages')}`,
+      [pageIds] as never,
+    );
+    return new Set((rows as unknown as { id: number }[]).map((r) => Number(r.id)));
   }
 
   async getPageTimestamps(slugs: string[]): Promise<Map<string, Date>> {
