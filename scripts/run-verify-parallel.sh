@@ -42,6 +42,7 @@ CHECKS=(
   "check:source-id-projection"
   "check:source-config-leak"
   "check:progress"
+  "check:no-tracked-symlinks"
   "check:test-isolation"
   "check:wasm"
   "check:admin-build"
