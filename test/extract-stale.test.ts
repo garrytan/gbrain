@@ -148,6 +148,54 @@ describe('gbrain extract --stale', () => {
     expect(await engine.countStalePagesForExtraction()).toBe(2);
   });
 
+  test('non-federated source does not create a cross-source fallback link', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config)
+       VALUES ('isolated-kb', 'isolated-kb', '{"federated":false}'::jsonb)
+       ON CONFLICT (id) DO UPDATE SET config = EXCLUDED.config`,
+    );
+    try {
+      await engine.putPage('people/alice', personPage('Alice'));
+      await engine.putPage(
+        'companies/private',
+        companyPage('Private', '[Alice](people/alice) advises Private.'),
+        { sourceId: 'isolated-kb' },
+      );
+
+      await runExtract(engine, ['--stale', '--source-id', 'isolated-kb']);
+
+      const links = await engine.getLinks('companies/private', { sourceId: 'isolated-kb' });
+      expect(links.some(l => l.to_slug === 'people/alice')).toBe(false);
+    } finally {
+      await engine.executeRaw(`DELETE FROM sources WHERE id = 'isolated-kb'`);
+    }
+  });
+
+  test('federated source preserves cross-source fallback links', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config)
+       VALUES ('shared-kb', 'shared-kb', '{"federated":true}'::jsonb)
+       ON CONFLICT (id) DO UPDATE SET config = EXCLUDED.config`,
+    );
+    try {
+      await engine.putPage('people/alice', personPage('Alice'));
+      await engine.putPage(
+        'companies/shared',
+        companyPage('Shared', '[Alice](people/alice) advises Shared.'),
+        { sourceId: 'shared-kb' },
+      );
+
+      await runExtract(engine, ['--stale', '--source-id', 'shared-kb']);
+
+      const links = await engine.getLinks('companies/shared', { sourceId: 'shared-kb' });
+      // The target exists only in default, so a created edge proves the
+      // federated fallback stayed enabled.
+      expect(links.some(l => l.to_slug === 'people/alice')).toBe(true);
+    } finally {
+      await engine.executeRaw(`DELETE FROM sources WHERE id = 'shared-kb'`);
+    }
+  });
+
   test('CRITICAL (CDX-1): page edited after stamp is re-extracted', async () => {
     await engine.putPage('people/alice', personPage('Alice'));
     await engine.putPage('companies/acme', companyPage('Acme', 'No links yet.'));

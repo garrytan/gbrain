@@ -5652,19 +5652,35 @@ const chronicle_backfill: Operation = {
       const { MinionQueue } = await import('./minions/queue.ts');
       queue = new MinionQueue(ctx.engine) as unknown as QueueLike;
     }
-    let scanned = 0, eligible = 0, enqueued = 0;
+    // Match the advisor's definition of "already in the timeline." Without
+    // this guard, any broad updated_at rewrite (reindex, CR migration) makes
+    // the backfill re-enqueue every historical meeting even though the worker
+    // already projected it into an event page.
+    const coveredRows = await ctx.engine.executeRaw<{ slug: string; source_id: string }>(
+      `SELECT DISTINCT p.slug, p.source_id
+         FROM pages p
+         JOIN timeline_entries te ON te.page_id = p.id
+        WHERE p.deleted_at IS NULL
+          AND te.event_page_id IS NOT NULL`,
+    );
+    const covered = new Set(coveredRows.map(row => `${row.source_id}\0${row.slug}`));
+    let scanned = 0, eligible = 0, enqueued = 0, alreadyCovered = 0;
     const errors: { slug: string; error: string }[] = [];
     for (const type of TYPES) {
       const pages = await ctx.engine.listPages({ type, updated_after, limit, ...scope });
       for (const page of pages) {
         scanned++;
+        if (covered.has(`${page.source_id}\0${page.slug}`)) {
+          alreadyCovered++;
+          continue;
+        }
         const dreamGenerated = (page.frontmatter as Record<string, unknown> | undefined)?.dream_generated === true;
         const elig = isChronicleEligible({ type: page.type, slug: page.slug, body: page.compiled_truth, dreamGenerated });
         if (!elig.ok) continue;
         eligible++;
         if (dryRun || !queue) continue;
         try {
-          await queue.add('chronicle_extract', { slug: page.slug, sourceId: ctx.sourceId ?? 'default' });
+          await queue.add('chronicle_extract', { slug: page.slug, sourceId: page.source_id });
           enqueued++;
         } catch (e) {
           // Never swallow — surface per-page failures (the #2057 no-swallow pattern).
@@ -5672,7 +5688,7 @@ const chronicle_backfill: Operation = {
         }
       }
     }
-    return { scanned, eligible, enqueued, dry_run: dryRun, errors };
+    return { scanned, eligible, already_covered: alreadyCovered, enqueued, dry_run: dryRun, errors };
   },
   cliHints: { name: 'chronicle-backfill' },
 };
