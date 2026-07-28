@@ -190,6 +190,27 @@ Prefer the page's known date for "when" when the text gives no explicit time. Us
  */
 const DEFAULT_JUDGE_MAX_TOKENS = 4000;
 
+/**
+ * Split a bounded judge window near its midpoint, preferring a line boundary
+ * so transcript/message records are not cut in half. The two segments are
+ * disjoint: combining their proposals cannot double-count boundary text.
+ */
+function splitJudgeBody(body: string): [string, string] | null {
+  if (body.length < 2) return null;
+  const midpoint = Math.floor(body.length / 2);
+  const before = body.lastIndexOf('\n', midpoint);
+  const after = body.indexOf('\n', midpoint);
+  const candidates = [before, after].filter((i) => i > 0 && i < body.length - 1);
+  const splitAt = candidates.length > 0
+    ? candidates.reduce((best, i) =>
+      Math.abs(i - midpoint) < Math.abs(best - midpoint) ? i : best)
+    : midpoint;
+  const skip = body[splitAt] === '\n' ? 1 : 0;
+  const left = body.slice(0, splitAt).trim();
+  const right = body.slice(splitAt + skip).trim();
+  return left && right ? [left, right] : null;
+}
+
 function defaultJudge(engine: BrainEngine): ChronicleJudge {
   return async (input) => {
     const { isAvailable, chat } = await import('../ai/gateway.ts');
@@ -202,33 +223,56 @@ function defaultJudge(engine: BrainEngine): ChronicleJudge {
       const n = parseInt(capRaw, 10);
       if (Number.isFinite(n) && n > 0) maxTokens = n;
     }
-    let text: string;
-    try {
+
+    const judgeBody = async (
+      segment: string,
+      requireUsableOutput = false,
+    ): Promise<ChronicleJudgeResult> => {
       const res = await chat({
         system: JUDGE_SYSTEM,
         messages: [{
           role: 'user',
           content:
             `<page slug="${input.slug}" type="${input.type}" date="${input.effectiveDate ?? ''}">\n` +
-            `${input.title}\n\n${body}\n</page>\n\n` +
+            `${input.title}\n\n${segment}\n</page>\n\n` +
             `Known attendees: ${input.attendees.slice(0, 10).join(', ') || '(none)'}.\nExtract the events.`,
         }],
         maxTokens,
       });
-      if (res.stopReason === 'refusal' || res.stopReason === 'content_filter') return { events: [] };
-      // #2606: output hit the token cap — the JSON array is cut mid-stream.
-      // Do NOT feed it to the parser as if complete; surface the truncation.
+      if (res.stopReason === 'refusal' || res.stopReason === 'content_filter') {
+        // A refusal on the one-shot path remains a legitimate empty result.
+        // During split recovery it means one half was not judged, so treating
+        // it as [] would commit a partial Chronicle and suppress future retry.
+        return requireUsableOutput
+          ? { events: [], failure: 'parse_failed' }
+          : { events: [] };
+      }
       if (res.stopReason === 'length') return { events: [], failure: 'truncated' };
-      text = res.text;
+      const parsed = parseJudgeJson(res.text);
+      return parsed === null
+        ? { events: [], failure: 'parse_failed' }
+        : { events: parsed };
+    };
+
+    try {
+      const first = await judgeBody(body);
+      if (first.failure !== 'truncated') return first;
+
+      // A dense 12k transcript can exceed even providers' hard output caps.
+      // Keep the common path at one call; only a proven truncation retries as
+      // two disjoint half-windows. Both halves must succeed before returning
+      // any proposals, preserving the caller's all-or-nothing parse barrier.
+      const halves = splitJudgeBody(body);
+      if (!halves) return first;
+      const left = await judgeBody(halves[0], true);
+      if (left.failure) return left;
+      const right = await judgeBody(halves[1], true);
+      if (right.failure) return right;
+      return { events: [...left.events, ...right.events] };
     } catch (err) {
       if ((err as Error)?.name === 'AbortError') throw err;
       return { events: [] };
     }
-    const parsed = parseJudgeJson(text);
-    // #2606: non-empty model text with no parseable JSON array is a parse
-    // failure, distinct from the model legitimately answering `[]`.
-    if (parsed === null) return { events: [], failure: 'parse_failed' };
-    return { events: parsed };
   };
 }
 

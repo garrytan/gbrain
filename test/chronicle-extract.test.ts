@@ -10,6 +10,12 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { isChronicleEligible } from '../src/core/chronicle/eligibility.ts';
 import { runChronicleExtract, parseJudgeJson, type ChronicleJudge } from '../src/core/chronicle/extract-events.ts';
 import { runChronicleBackstop } from '../src/core/chronicle/backstop.ts';
+import {
+  configureGateway,
+  resetGateway,
+  __setChatTransportForTests,
+} from '../src/core/ai/gateway.ts';
+import type { ChatOpts, ChatResult } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
 const LONG_BODY = 'A'.repeat(120);
@@ -17,6 +23,39 @@ const LONG_BODY = 'A'.repeat(120);
 async function countEvents(): Promise<number> {
   const r = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages WHERE type = 'event'`);
   return Number(r[0].n);
+}
+
+function chatResult(text: string, stopReason: ChatResult['stopReason']): ChatResult {
+  return {
+    text,
+    blocks: [{ type: 'text', text }],
+    stopReason,
+    usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+    model: 'deepseek:deepseek-v4-flash',
+    providerId: 'deepseek',
+  } as ChatResult;
+}
+
+function eventJson(what: string): string {
+  return JSON.stringify([{
+    when: '2026-06-18',
+    who: ['people/sarah-chen'],
+    what,
+    kind: 'meeting',
+  }]);
+}
+
+function configureChronicleTestGateway(): void {
+  resetGateway();
+  __setChatTransportForTests(null);
+  configureGateway({
+    chat_model: 'deepseek:deepseek-v4-flash',
+    env: { DEEPSEEK_API_KEY: 'sk-test' },
+  });
+}
+
+function restoreGateway(): void {
+  resetGateway();
 }
 
 beforeAll(async () => {
@@ -127,6 +166,102 @@ describe('runChronicleExtract', () => {
     const r = await runChronicleExtract(engine, { slug: 'meetings/2026-06-18-sync', judge: parseFailed });
     expect(r.status).toBe('skipped');
     expect(r.reason).toBe('judge_parse_failed');
+  });
+
+  test('default judge splits a truncated 12k window and recovers both halves', async () => {
+    const body = `LEFT_MARKER\n${'L'.repeat(5_900)}\nRIGHT_MARKER\n${'R'.repeat(5_900)}`;
+    await engine.putPage('meetings/2026-06-18-sync', {
+      type: 'meeting', title: 'Dense sync',
+      compiled_truth: body,
+      frontmatter: { attendees: ['people/sarah-chen'] },
+      effective_date: new Date('2026-06-18T15:00:00Z'),
+    });
+    await engine.setConfig('chronicle.judge_max_tokens', '8000');
+    configureChronicleTestGateway();
+    const seen: ChatOpts[] = [];
+    __setChatTransportForTests(async (opts) => {
+      seen.push(opts);
+      if (seen.length === 1) return chatResult('[{"when":"2026-06-18"', 'length');
+      const prompt = String(opts.messages[0]?.content ?? '');
+      if (prompt.includes('LEFT_MARKER')) return chatResult(eventJson('left event'), 'end');
+      if (prompt.includes('RIGHT_MARKER')) return chatResult(eventJson('right event'), 'end');
+      throw new Error('split prompt did not preserve a segment marker');
+    });
+
+    try {
+      const r = await runChronicleExtract(engine, { slug: 'meetings/2026-06-18-sync' });
+      expect(seen).toHaveLength(3);
+      expect(seen.every((opts) => opts.maxTokens === 8000)).toBe(true);
+      const leftPrompt = String(seen[1]!.messages[0]?.content ?? '');
+      const rightPrompt = String(seen[2]!.messages[0]?.content ?? '');
+      expect(leftPrompt.includes('LEFT_MARKER')).toBe(true);
+      expect(leftPrompt.includes('RIGHT_MARKER')).toBe(false);
+      expect(rightPrompt.includes('LEFT_MARKER')).toBe(false);
+      expect(rightPrompt.includes('RIGHT_MARKER')).toBe(true);
+      expect(r.status).toBe('extracted');
+      expect(r.events_written).toBe(2);
+    } finally {
+      await engine.unsetConfig('chronicle.judge_max_tokens');
+      restoreGateway();
+    }
+  });
+
+  test('split retry remains all-or-nothing when one half is still truncated', async () => {
+    const body = `LEFT_MARKER\n${'L'.repeat(5_900)}\nRIGHT_MARKER\n${'R'.repeat(5_900)}`;
+    await engine.putPage('meetings/2026-06-18-sync', {
+      type: 'meeting', title: 'Dense sync',
+      compiled_truth: body,
+      frontmatter: { attendees: ['people/sarah-chen'] },
+      effective_date: new Date('2026-06-18T15:00:00Z'),
+    });
+    await engine.setConfig('chronicle.judge_max_tokens', '8000');
+    configureChronicleTestGateway();
+    let calls = 0;
+    __setChatTransportForTests(async () => {
+      calls++;
+      if (calls === 1) return chatResult('[{"when":"2026-06-18"', 'length');
+      if (calls === 2) return chatResult(eventJson('left event'), 'end');
+      return chatResult('[{"when":"2026-06-18"', 'length');
+    });
+
+    try {
+      const r = await runChronicleExtract(engine, { slug: 'meetings/2026-06-18-sync' });
+      expect(calls).toBe(3);
+      expect(r.status).toBe('skipped');
+      expect(r.reason).toBe('judge_truncated');
+      expect(await countEvents()).toBe(0);
+    } finally {
+      await engine.unsetConfig('chronicle.judge_max_tokens');
+      restoreGateway();
+    }
+  });
+
+  test('split retry writes nothing when one half is filtered', async () => {
+    const body = `LEFT_MARKER\n${'L'.repeat(5_900)}\nRIGHT_MARKER\n${'R'.repeat(5_900)}`;
+    await engine.putPage('meetings/2026-06-18-sync', {
+      type: 'meeting', title: 'Dense sync',
+      compiled_truth: body,
+      frontmatter: { attendees: ['people/sarah-chen'] },
+      effective_date: new Date('2026-06-18T15:00:00Z'),
+    });
+    configureChronicleTestGateway();
+    let calls = 0;
+    __setChatTransportForTests(async () => {
+      calls++;
+      if (calls === 1) return chatResult('[{"when":"2026-06-18"', 'length');
+      if (calls === 2) return chatResult(eventJson('left event'), 'end');
+      return chatResult('', 'content_filter');
+    });
+
+    try {
+      const r = await runChronicleExtract(engine, { slug: 'meetings/2026-06-18-sync' });
+      expect(calls).toBe(3);
+      expect(r.status).toBe('skipped');
+      expect(r.reason).toBe('judge_parse_failed');
+      expect(await countEvents()).toBe(0);
+    } finally {
+      restoreGateway();
+    }
   });
 });
 
