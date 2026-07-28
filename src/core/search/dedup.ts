@@ -98,24 +98,40 @@ function dedupBySource(results: SearchResult[]): SearchResult[] {
  */
 const JACCARD_SKIP_THRESHOLD = 80;
 const JACCARD_PREFIX_LEN = 200;
+const JACCARD_KEPT_CAP = 50;
 
 function dedupByTextSimilarity(results: SearchResult[], threshold: number): SearchResult[] {
   const kept: SearchResult[] = [];
   const keptWords: Set<string>[] = [];
+  const keptPrefixes: string[] = [];
+  const keptTexts = new Set<string>();
   const usePrefix = results.length > JACCARD_SKIP_THRESHOLD;
 
-  for (const r of results) {
+  const prefixes = usePrefix
+    ? results.map(r => r.chunk_text.toLowerCase().slice(0, JACCARD_PREFIX_LEN))
+    : null;
+
+  for (let ri = 0; ri < results.length; ri++) {
+    const r = results[ri];
     const rText = r.chunk_text.toLowerCase();
+    // Exact duplicates remain cheap to reject even after the approximate
+    // Jaccard comparison cap has been reached.
+    if (keptTexts.has(rText)) continue;
+    if (kept.length >= JACCARD_KEPT_CAP) {
+      kept.push(r);
+      keptTexts.add(rText);
+      continue;
+    }
+
     const rWords = new Set(rText.split(/\s+/));
+    const rPre = prefixes?.[ri];
     let tooSimilar = false;
 
     for (let i = 0; i < kept.length; i++) {
-      if (usePrefix) {
-        const rPre = rText.slice(0, JACCARD_PREFIX_LEN);
-        const kPre = kept[i].chunk_text.toLowerCase().slice(0, JACCARD_PREFIX_LEN);
-        if (rPre !== kPre) {
+      if (rPre !== undefined) {
+        if (rPre !== keptPrefixes[i]) {
           const rPWords = new Set(rPre.split(/\s+/));
-          const kPWords = new Set(kPre.split(/\s+/));
+          const kPWords = new Set(keptPrefixes[i].split(/\s+/));
           const pInter = [...rPWords].filter(w => kPWords.has(w)).length;
           const pUnion = rPWords.size + kPWords.size - pInter;
           if (pUnion > 0 && pInter / pUnion <= threshold) continue;
@@ -139,6 +155,8 @@ function dedupByTextSimilarity(results: SearchResult[], threshold: number): Sear
     if (!tooSimilar) {
       kept.push(r);
       keptWords.push(rWords);
+      keptPrefixes.push(rPre ?? '');
+      keptTexts.add(rText);
     }
   }
 

@@ -153,6 +153,26 @@ describe('edge cases', () => {
     const deduped = dedupResults(results, { maxPerPage: 3 });
     expect(deduped.filter(r => r.slug === 'a').length).toBeLessThanOrEqual(3);
   });
+
+  test('exact duplicates are removed after the Jaccard comparison cap', () => {
+    const results = Array.from({ length: 81 }, (_, i) =>
+      makeResult({
+        slug: `page-${i}`,
+        page_id: i,
+        chunk_id: i,
+        chunk_text: `unique token ${i} alpha beta gamma`,
+      })
+    );
+    results.push(makeResult({
+      slug: 'late-duplicate',
+      page_id: 999,
+      chunk_id: 999,
+      chunk_text: results[0].chunk_text,
+    }));
+
+    const deduped = dedupResults(results, { maxTypeRatio: 1 });
+    expect(deduped.filter(r => r.chunk_text === results[0].chunk_text)).toHaveLength(1);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────
