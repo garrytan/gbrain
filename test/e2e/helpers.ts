@@ -53,6 +53,9 @@ const ALL_TABLES = [
   // join), but stale rows poison stats/count assertions across runs.
   'context_volunteer_events',
   'pages',       // last because of foreign keys
+  // Source rows are mutable E2E data too. Leaving a non-default source behind
+  // makes later sync tests auto-route imports away from `default`.
+  'sources',
   'config',
   'minion_attachments',
   'minion_inbox',
@@ -132,8 +135,12 @@ export async function setupDB(): Promise<PostgresEngine> {
 
   // Re-seed config (initSchema inserts default config rows)
   await conn.unsafe(`
+    INSERT INTO sources (id, name, config)
+    VALUES ('default', 'default', '{"federated": true}'::jsonb)
+    ON CONFLICT (id) DO NOTHING;
+
     INSERT INTO config (key, value) VALUES ('schema_version', '1')
-    ON CONFLICT (key) DO NOTHING
+    ON CONFLICT (key) DO NOTHING;
   `);
 
   engine = new PostgresEngine();

@@ -247,15 +247,14 @@ describeMaybe('phantom-redirect E2E (Postgres)', () => {
       // intentionally re-derives from fence and embedding is regenerated
       // by the embed phase.
       //
-      // The pinning assertion: at NO point is the embedding column
-      // populated with a STRING (postgres-js's text shape leak — that
-      // bug class would produce a non-null text-shaped value here, not
-      // a clean NULL).
+      // The pinning assertion: at NO point is the embedding column populated
+      // with a non-vector type. Modern pgvector uses halfvec for this column;
+      // older installations retain vector.
       const stringShaped = await engine.executeRaw<{ ct: string }>(
         `SELECT COUNT(*)::text AS ct FROM facts
          WHERE source_id='default'
            AND embedding IS NOT NULL
-           AND pg_typeof(embedding)::text != 'vector'`,
+           AND pg_typeof(embedding)::text NOT IN ('vector', 'halfvec')`,
       );
       expect(parseInt(stringShaped[0].ct, 10)).toBe(0);
       expect(rows.length).toBeGreaterThan(0);

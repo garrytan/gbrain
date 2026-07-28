@@ -575,7 +575,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     try {
       await sql`
         INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at)
-        VALUES (${tokenHash}, ${'access'}, ${publicClientId!}, ${sql.array(['read'])}, ${Math.floor(Date.now() / 1000) + 3600})
+        VALUES (${tokenHash}, ${'access'}, ${publicClientId!}, ${'{read}'}, ${Math.floor(Date.now() / 1000) + 3600})
       `;
     } finally {
       await sql.end();

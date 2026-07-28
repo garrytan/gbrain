@@ -107,8 +107,11 @@ export function aggregate(input: AggregateInput): AggregateResult {
     const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
     const min = Math.min(...scores);
     const roll: DimensionRoll = { mean: round1(mean), min, scores };
-    if (roll.mean < PASS_MEAN_THRESHOLD) roll.failReason = 'mean_below_7';
-    else if (roll.min < PASS_FLOOR_THRESHOLD) roll.failReason = 'min_below_5';
+    // The floor is the stronger failure: when a score breaches both rules,
+    // report the individual-model collapse rather than hiding it behind the
+    // aggregate mean.
+    if (roll.min < PASS_FLOOR_THRESHOLD) roll.failReason = 'min_below_5';
+    else if (roll.mean < PASS_MEAN_THRESHOLD) roll.failReason = 'mean_below_7';
     dimensions[dim] = roll;
   }
 
