@@ -1,7 +1,7 @@
 ---
 id: x-to-brain
 name: X-to-Brain
-version: 0.8.1
+version: 0.8.2
 description: Twitter timeline, mentions, and keyword monitoring flow into brain pages. Tracks deletions, engagement velocity, OCR on images, and real-time alerts.
 category: sense
 requires: []
@@ -9,9 +9,12 @@ secrets:
   - name: X_BEARER_TOKEN
     description: X API v2 Bearer token (Basic tier minimum, $200/mo for full archive search)
     where: https://developer.x.com/en/portal/dashboard — create a project + app, copy the Bearer Token from "Keys and tokens"
+  - name: X_HANDLE
+    description: Your X username without the @ (used for the app-only health check — /users/me requires user-context OAuth, which app-only bearer tokens don't have)
+    where: Your X profile — the handle in your profile URL, e.g. x.com/yourhandle → yourhandle
 health_checks:
   - type: http
-    url: "https://api.x.com/2/users/me"
+    url: "https://api.x.com/2/users/by/username/$X_HANDLE"
     auth: bearer
     auth_token: "$X_BEARER_TOKEN"
     label: "X API"
@@ -110,15 +113,17 @@ Tell the user:
 4. Inside the project, create a new App
 5. Go to the app's 'Keys and tokens' tab
 6. Under 'Bearer Token', click 'Generate' (or 'Regenerate')
-7. Copy the Bearer Token and paste it to me
+7. Copy the Bearer Token and paste it to me, along with your X handle (without the @)
 
 Note: Free tier gives read-only access with low limits. Basic tier ($200/mo)
 gives search/recent endpoint and higher limits. Pro tier gets full archive search."
 
-Validate immediately:
+Set both `X_BEARER_TOKEN` and `X_HANDLE` in the environment. Validate immediately
+(app-only bearer tokens cannot call `/users/me` — that endpoint requires
+user-context OAuth — so validation uses the by-username lookup):
 ```bash
 curl -sf -H "Authorization: Bearer $X_BEARER_TOKEN" \
-  "https://api.x.com/2/users/me" \
+  "https://api.x.com/2/users/by/username/$X_HANDLE" \
   && echo "PASS: X API connected" \
   || echo "FAIL: X API token invalid"
 ```
@@ -134,10 +139,10 @@ starting with 'AAA...', (3) if you just created the app, the token is valid imme
 ```bash
 # Look up the user's X user ID from their handle
 curl -sf -H "Authorization: Bearer $X_BEARER_TOKEN" \
-  "https://api.x.com/2/users/by/username/USERNAME" | grep -o '"id":"[^"]*"'
+  "https://api.x.com/2/users/by/username/$X_HANDLE" | grep -o '"id":"[^"]*"'
 ```
 
-Ask the user for their X handle (e.g., @yourhandle). Look up their user ID.
+Look up the user ID from the handle collected in Step 1.
 Save it — the collector needs the numeric ID, not the handle.
 
 ### Step 3: Configure the Collector
@@ -205,7 +210,7 @@ The agent should review collected data 2-3x daily and run enrichment.
 
 ```bash
 mkdir -p ~/.gbrain/integrations/x-to-brain
-echo '{"ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","event":"setup_complete","source_version":"0.8.1","status":"ok","details":{"user_id":"X_USER_ID"}}' >> ~/.gbrain/integrations/x-to-brain/heartbeat.jsonl
+echo '{"ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","event":"setup_complete","source_version":"0.8.2","status":"ok","details":{"user_id":"X_USER_ID"}}' >> ~/.gbrain/integrations/x-to-brain/heartbeat.jsonl
 ```
 
 ## Production Patterns (v0.8.1)

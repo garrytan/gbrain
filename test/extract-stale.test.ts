@@ -186,9 +186,12 @@ describe('gbrain extract --stale', () => {
     // the precision gap is deterministic regardless of the engine's now() granularity.
     await engine.putPage('people/alice', personPage('Alice'));
     await engine.putPage('companies/acme', companyPage('Acme', '[Alice](people/alice) advises [Acme](companies/acme).'));
-    // Microsecond-precision updated_at, recent (after LINK_EXTRACTOR_VERSION_TS) so the
-    // version arm doesn't fire — the edited arm is what must clear.
-    await engine.executeRaw(`UPDATE pages SET updated_at = '2026-06-02 08:18:58.999166+00'`);
+    // Microsecond-precision updated_at, derived from LINK_EXTRACTOR_VERSION_TS
+    // (+2 days) so the version arm never fires regardless of future bumps —
+    // the edited arm is what must clear.
+    const afterVersionIso = new Date(Date.parse(LINK_EXTRACTOR_VERSION_TS) + 48 * 3600 * 1000).toISOString();
+    const usUpdatedAt = `${afterVersionIso.slice(0, 10)} ${afterVersionIso.slice(11, 19)}.999166+00`;
+    await engine.executeRaw(`UPDATE pages SET updated_at = '${usUpdatedAt}'`);
     expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(2);
 
     await runExtract(engine, ['--stale']);
@@ -315,4 +318,48 @@ describe('gbrain extract --stale', () => {
     expect(exited).toBe(true);
     expect(msg).toContain('DB-source only');
   });
+
+  // ─── #2576 bug 1: --stale must run the same resolver passes as
+  // `extract links --source db` ─────────────────────────────────────────────
+
+  test('#2576: bare wikilink resolves via global_basename on the --stale path', async () => {
+    await engine.putPage('projects/struktura',
+      { type: 'project' as any, title: 'Struktura', compiled_truth: 'A project page.', timeline: '' });
+    await engine.putPage('concepts/knowledge-graph',
+      { type: 'concept' as any, title: 'Knowledge Graph',
+        compiled_truth: 'This concept relates to [[struktura]].', timeline: '' });
+    await engine.setConfig('link_resolution.global_basename', 'true');
+    try {
+      await runExtract(engine, ['--stale']);
+    } finally {
+      await engine.setConfig('link_resolution.global_basename', 'false');
+    }
+
+    // Pre-fix: the nullResolver (no resolveBasenameMatches) made
+    // extractPageLinks skip the basename pass, so the sweep stamped the page
+    // with the wikilink silently dropped — 0 links, watermark green.
+    const links = await engine.getLinks('concepts/knowledge-graph');
+    const strk = links.find(l => l.to_slug === 'projects/struktura');
+    expect(strk).toBeDefined();
+    expect(strk!.link_type).toBe('wikilink_basename');
+    // Still stamped like every processed page.
+    expect(await stampOf('concepts/knowledge-graph')).not.toBeNull();
+  });
+
+  test('#2576: bare wikilink still drops on --stale when global_basename is OFF (back-compat)', async () => {
+    await engine.putPage('projects/struktura',
+      { type: 'project' as any, title: 'Struktura', compiled_truth: 'A project page.', timeline: '' });
+    await engine.putPage('concepts/knowledge-graph',
+      { type: 'concept' as any, title: 'Knowledge Graph',
+        compiled_truth: 'This concept relates to [[struktura]].', timeline: '' });
+    await engine.setConfig('link_resolution.global_basename', 'false');
+
+    await runExtract(engine, ['--stale']);
+
+    expect((await engine.getLinks('concepts/knowledge-graph'))).toHaveLength(0);
+    // The gate lives in extractPageLinks opts now, not in a resolver swap —
+    // the page is still stamped either way.
+    expect(await stampOf('concepts/knowledge-graph')).not.toBeNull();
+  });
+
 });

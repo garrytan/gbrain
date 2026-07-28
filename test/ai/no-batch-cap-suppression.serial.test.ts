@@ -10,7 +10,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test';
-import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
+import { capBatchItems, configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 import { listRecipes, getRecipe } from '../../src/core/ai/recipes/index.ts';
 
 describe('v0.32 #779: no_batch_cap suppresses the missing-max_batch_tokens warning', () => {
@@ -47,6 +47,19 @@ describe('v0.32 #779: no_batch_cap suppresses the missing-max_batch_tokens warni
     expect(r, 'llama-server not registered').toBeDefined();
     expect(r!.touchpoints.embedding?.max_batch_items).toBe(32);
     expect(r!.touchpoints.embedding?.no_batch_cap).toBeUndefined();
+  });
+
+  test('dashscope declares the documented 10-item embedding cap (max_batch_items: 10)', () => {
+    // DashScope's OpenAI-compat /embeddings endpoint rejects >10-item batches
+    // (documented Model Studio cap; concept from community PRs #2643/#2405).
+    // max_batch_tokens stays as the aggregate token-size guard.
+    const r = getRecipe('dashscope');
+    expect(r, 'dashscope not registered').toBeDefined();
+    expect(r!.touchpoints.embedding?.max_batch_items).toBe(10);
+    expect(r!.touchpoints.embedding?.max_batch_tokens).toBe(8192);
+    // 25 items pre-split into DashScope-sized groups of at most 10.
+    const texts = Array.from({ length: 25 }, (_, i) => `t${i}`);
+    expect(capBatchItems(texts, 10).map(b => b.length)).toEqual([10, 10, 5]);
   });
 
   test('configureGateway does NOT warn for ollama/litellm/llama-server', () => {

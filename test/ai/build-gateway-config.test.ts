@@ -117,6 +117,28 @@ describe('buildGatewayConfig config-plane API-key folding', () => {
       expect(cfg.env.OPENROUTER_API_KEY).toBe('sk-or-env-plane');
     });
   });
+
+  // #2662: voyage_api_key was accepted at the file plane (config.json) but
+  // never folded into the gateway env, so daemons/launchd/MCP callers with
+  // no process-env export silently failed multimodal embeds. Same fold
+  // pattern as zeroentropy/openrouter above.
+  test('voyage_api_key folds into gateway env as VOYAGE_API_KEY', async () => {
+    await withEnv({ VOYAGE_API_KEY: undefined }, async () => {
+      const cfg = buildGatewayConfig({
+        voyage_api_key: 'pa-config-plane',
+      } as unknown as GBrainConfig);
+      expect(cfg.env.VOYAGE_API_KEY).toBe('pa-config-plane');
+    });
+  });
+
+  test('a real VOYAGE_API_KEY process.env value wins over the config-plane fallback', async () => {
+    await withEnv({ VOYAGE_API_KEY: 'pa-env-plane' }, async () => {
+      const cfg = buildGatewayConfig({
+        voyage_api_key: 'pa-config-plane',
+      } as unknown as GBrainConfig);
+      expect(cfg.env.VOYAGE_API_KEY).toBe('pa-env-plane');
+    });
+  });
 });
 
 describe('buildGatewayConfig env empty-string clobber guard (#1249)', () => {

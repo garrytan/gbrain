@@ -10,12 +10,13 @@
 import { createEngine } from '../core/engine-factory.ts';
 import { loadConfig, saveConfig, toEngineConfig, gbrainPath, effectiveEnvDatabaseUrl, type GBrainConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
-import type { EngineConfig } from '../core/types.ts';
+import type { EngineConfig, Page } from '../core/types.ts';
 import { writeFileSync, readFileSync, existsSync, unlinkSync } from 'fs';
 import { createHash } from 'crypto';
 import { resolve } from 'path';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 
 interface MigrateOpts {
   targetEngine: 'postgres' | 'pglite';
@@ -143,6 +144,99 @@ export async function copyMigrationSources(source: BrainEngine, target: BrainEng
   }
 }
 
+/**
+ * postgres.js's UNDEFINED_VALUE guard rejects any bound parameter that is JS
+ * `undefined` — unlike PGLite, it will not silently treat it as SQL NULL.
+ * A page read back from a PGLite source can carry `undefined` for a column
+ * that is legitimately empty/NULL (a read-side driver-shape difference, not
+ * a data problem), and passing that value straight into a Postgres
+ * `putPage` throws mid-insert (#3194). Normalizing at this migrate-only
+ * boundary — rather than inside `putPage` itself, which many non-migrate
+ * callers also use — turns that driver-shape difference into an explicit
+ * SQL NULL, so only a genuine NOT-NULL constraint violation (an actual data
+ * problem) still surfaces as a page-copy failure.
+ */
+function nullifyUndefinedColumns<T extends Record<string, unknown>>(row: T): T {
+  const normalized = { ...row };
+  for (const key of Object.keys(normalized) as (keyof T)[]) {
+    if (normalized[key] === undefined) normalized[key] = null as T[typeof key];
+  }
+  return normalized;
+}
+
+/**
+ * Copy one page's full row (page body, chunks, tags, timeline, raw data)
+ * from source to target. Throws on any failure — the caller (the per-page
+ * loop in runMigrateEngine) decides how to account for that: track it as a
+ * failed page and keep going, rather than letting one bad row silently
+ * disappear from the progress count (#3194). Exported so unit tests can
+ * inject fake engines and exercise the failure path without a live
+ * DATABASE_URL.
+ */
+export async function copyPageToTarget(
+  source: BrainEngine,
+  target: BrainEngine,
+  page: Page,
+): Promise<void> {
+  const sourceOpts = { sourceId: page.source_id };
+
+  // Copy page (preserve source_id). v0.32.8 F8: thread source_id end-to-end
+  // so multi-source pages migrate intact.
+  await target.putPage(page.slug, nullifyUndefinedColumns({
+    type: page.type,
+    title: page.title,
+    compiled_truth: page.compiled_truth,
+    timeline: page.timeline,
+    frontmatter: page.frontmatter,
+    content_hash: page.content_hash,
+  }), sourceOpts);
+
+  // Copy chunks with embeddings.
+  const chunks = await source.getChunksWithEmbeddings(page.slug, sourceOpts);
+  if (chunks.length > 0) {
+    await target.upsertChunks(page.slug, chunks.map(c => ({
+      chunk_index: c.chunk_index,
+      chunk_text: c.chunk_text,
+      chunk_source: c.chunk_source,
+      embedding: c.embedding || undefined,
+      model: c.model,
+      token_count: c.token_count || undefined,
+    })), sourceOpts);
+  }
+
+  // Copy tags
+  const tags = await source.getTags(page.slug, sourceOpts);
+  for (const tag of tags) {
+    await target.addTag(page.slug, tag, sourceOpts);
+  }
+
+  // Copy timeline
+  const timeline = await source.getTimeline(page.slug, sourceOpts);
+  for (const entry of timeline) {
+    await target.addTimelineEntry(page.slug, {
+      date: entry.date,
+      source: entry.source,
+      summary: entry.summary,
+      detail: entry.detail,
+    }, sourceOpts);
+  }
+
+  // Copy raw data
+  const rawData = await source.getRawData(page.slug, undefined, sourceOpts);
+  for (const rd of rawData) {
+    await target.putRawData(page.slug, rd.source, rd.data, sourceOpts);
+  }
+}
+
+/** A page that failed to copy during migrate — tracked so the run's final
+ * summary reports it honestly instead of letting the "N copied" counter
+ * imply every page landed (#3194). */
+export interface MigratePageFailure {
+  source_id: string;
+  slug: string;
+  reason: string;
+}
+
 export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]): Promise<void> {
   const opts = parseArgs(args);
   const config = loadConfig();
@@ -177,32 +271,47 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   await targetEngine.connect(targetConfig);
   await targetEngine.initSchema();
 
-  // Check if target has data
-  const targetStats = await targetEngine.getStats();
-  if (targetStats.page_count > 0 && !opts.force) {
-    console.error(`Target brain is not empty (${targetStats.page_count} pages).`);
-    console.error('Run with --force to overwrite, or migrate to an empty brain.');
-    await targetEngine.disconnect();
-    process.exit(1);
-  }
-
-  if (targetStats.page_count > 0 && opts.force) {
-    console.log('--force: wiping target brain...');
-    // v0.18.0+ multi-source: deletePage(slug) is now source-scoped (defaults
-    // to 'default'), so per-page iteration would skip non-default-source
-    // rows. migrate-engine --force is a destructive wipe across the entire
-    // brain — all sources, all pages — so we issue a raw DELETE that matches
-    // the original semantic. Cascades through content_chunks / page_links /
-    // tags / timeline_entries / page_versions via existing FKs.
-    await targetEngine.executeRaw('DELETE FROM pages');
-  }
-
-  // Load or create manifest for resume
+  // Load or create manifest for resume. Checked BEFORE the non-empty-target
+  // guard below: a manifest matching this exact target means the target's
+  // existing rows came from OUR OWN in-progress migration (#3194's per-page
+  // failures now leave the target non-empty by design instead of crashing),
+  // so a resume must not be treated as "attempting to migrate into a
+  // foreign non-empty brain".
   let manifest = loadManifest();
   if (manifest && !manifestMatchesTarget(manifest, targetId)) {
     console.log('Previous migration was to a different target. Starting fresh.');
     manifest = null;
   }
+  const resumingMatchingManifest = manifest !== null;
+
+  // Check if target has data
+  const targetStats = await targetEngine.getStats();
+  if (opts.force) {
+    if (targetStats.page_count > 0) {
+      console.log('--force: wiping target brain...');
+      // v0.18.0+ multi-source: deletePage(slug) is now source-scoped (defaults
+      // to 'default'), so per-page iteration would skip non-default-source
+      // rows. migrate-engine --force is a destructive wipe across the entire
+      // brain — all sources, all pages — so we issue a raw DELETE that matches
+      // the original semantic. Cascades through content_chunks / page_links /
+      // tags / timeline_entries / page_versions via existing FKs.
+      await targetEngine.executeRaw('DELETE FROM pages');
+    }
+    // --force always starts this exact migration fresh against this target:
+    // a manifest tracking a previous attempt must not be trusted to skip
+    // pages, regardless of whether the target LOOKED non-empty just now
+    // (e.g. the target DB file was recreated out-of-band but
+    // ~/.gbrain/migrate-manifest.json survived) — round 2 of #3194.
+    manifest = null;
+  } else if (targetStats.page_count > 0 && !resumingMatchingManifest) {
+    console.error(`Target brain is not empty (${targetStats.page_count} pages).`);
+    console.error('Run with --force to overwrite, or migrate to an empty brain.');
+    await targetEngine.disconnect();
+    process.exit(1);
+  } else if (targetStats.page_count > 0 && resumingMatchingManifest) {
+    console.log(`Resuming previous migration: ${manifest!.completed_slugs.length} page(s) already copied.`);
+  }
+
   // v0.32.8 F8: manifest keys are now `${source_id}::${slug}` so multi-source
   // migrations don't collide on same-slug-different-source pages. Pre-v0.32.8
   // entries were bare slugs; we keep treating those as default-source for
@@ -219,6 +328,13 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
       started_at: new Date().toISOString(),
     };
   }
+  // Persist immediately, before any page copy runs. Otherwise a run where
+  // EVERY page fails after its putPage lands (but before completed_slugs
+  // ever gets a successful entry) leaves the target non-empty with no
+  // manifest file on disk at all — the next invocation can't tell this
+  // was a resumable in-progress migration and hits the non-empty guard
+  // above requiring --force (round 2 of #3194).
+  saveManifest(manifest);
 
   // Pages.source_id is a foreign key. Copy the complete source catalog first,
   // including archived rows and sync/routing metadata, so every page write has
@@ -235,82 +351,68 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   progress.start('migrate.copy_pages', pagesToMigrate.length);
 
+  // v0.32.8 F8: thread source_id end-to-end so multi-source pages migrate
+  // intact. Pre-fix: putPage / getTags / getTimeline / getRawData / getLinks
+  // all silently defaulted to source_id='default', so non-default-source
+  // tags / timeline / raw / links were either dropped or attached to the
+  // wrong row.
   let migrated = 0;
+  const failures: MigratePageFailure[] = [];
   for (const page of pagesToMigrate) {
-    // v0.32.8 F8: thread source_id end-to-end so multi-source pages migrate
-    // intact. Pre-fix: putPage / getTags / getTimeline / getRawData / getLinks
-    // all silently defaulted to source_id='default', so non-default-source
-    // tags / timeline / raw / links were either dropped or attached to the
-    // wrong row.
-    const sourceOpts = { sourceId: page.source_id };
-
-    // Copy page (preserve source_id)
-    await targetEngine.putPage(page.slug, {
-      type: page.type,
-      title: page.title,
-      compiled_truth: page.compiled_truth,
-      timeline: page.timeline,
-      frontmatter: page.frontmatter,
-      content_hash: page.content_hash,
-    }, sourceOpts);
-
-    // Copy chunks with embeddings.
-    const chunks = await sourceEngine.getChunksWithEmbeddings(page.slug, sourceOpts);
-    if (chunks.length > 0) {
-      await targetEngine.upsertChunks(page.slug, chunks.map(c => ({
-        chunk_index: c.chunk_index,
-        chunk_text: c.chunk_text,
-        chunk_source: c.chunk_source,
-        embedding: c.embedding || undefined,
-        model: c.model,
-        token_count: c.token_count || undefined,
-      })), sourceOpts);
+    try {
+      await copyPageToTarget(sourceEngine, targetEngine, page);
+      // Track progress with composite key so multi-source resume is correct.
+      manifest!.completed_slugs.push(makeManifestKey(page.source_id, page.slug));
+      saveManifest(manifest!);
+      migrated++;
+    } catch (e) {
+      // #3194: a per-page write failure must never be swallowed into the
+      // success count. Leave it OUT of completed_slugs (a resume retries
+      // it — putPage/upsertChunks/etc. are all upserts, so re-running the
+      // whole page copy is safe) and surface it in the final summary below
+      // instead of letting "N pages copied" imply everything landed.
+      failures.push({
+        source_id: page.source_id,
+        slug: page.slug,
+        reason: e instanceof Error ? e.message : String(e),
+      });
     }
-
-    // Copy tags
-    const tags = await sourceEngine.getTags(page.slug, sourceOpts);
-    for (const tag of tags) {
-      await targetEngine.addTag(page.slug, tag, sourceOpts);
-    }
-
-    // Copy timeline
-    const timeline = await sourceEngine.getTimeline(page.slug, sourceOpts);
-    for (const entry of timeline) {
-      await targetEngine.addTimelineEntry(page.slug, {
-        date: entry.date,
-        source: entry.source,
-        summary: entry.summary,
-        detail: entry.detail,
-      }, sourceOpts);
-    }
-
-    // Copy raw data
-    const rawData = await sourceEngine.getRawData(page.slug, undefined, sourceOpts);
-    for (const rd of rawData) {
-      await targetEngine.putRawData(page.slug, rd.source, rd.data, sourceOpts);
-    }
-
-    // Copy versions
-    const versions = await sourceEngine.getVersions(page.slug, sourceOpts);
-    // Versions are snapshots, we recreate them on the target
-    // (createVersion takes a snapshot of current state, which we just set)
-
-    // Track progress with composite key so multi-source resume is correct.
-    manifest!.completed_slugs.push(makeManifestKey(page.source_id, page.slug));
-    saveManifest(manifest!);
-    migrated++;
     progress.tick(1, page.slug);
   }
   progress.finish();
 
+  if (failures.length > 0) {
+    console.error(`\n${failures.length} of ${pagesToMigrate.length} page(s) FAILED to copy and were NOT migrated:`);
+    for (const f of failures) {
+      const key = f.source_id === 'default' ? f.slug : `${f.source_id}::${f.slug}`;
+      console.error(`  - ${key}: ${f.reason}`);
+    }
+    console.error('Re-run `gbrain migrate` to retry the failed pages (already-copied pages resume via the manifest).');
+    // Non-fatal so the run still copies links + config for everything that
+    // DID land, but the process must exit non-zero — a partial migration
+    // must never look identical to a clean one.
+    setCliExitVerdict(1);
+  }
+
   // Copy links (after all pages exist in target).
   // v0.32.8 F8: thread source_id so cross-source links migrate correctly.
+  // #3194: a page that failed to copy above does NOT exist on the target,
+  // so any link touching it would violate the target's FK and abort this
+  // whole phase (the exact "addLink failed: page ... not found" crash from
+  // the original report). Skip links on either end of a known-failed page —
+  // a retry that successfully copies the page also re-copies its links.
+  const failedKeys = new Set(failures.map(f => makeManifestKey(f.source_id, f.slug)));
   console.log('Copying links...');
   progress.start('migrate.copy_links', allPages.length);
   for (const page of allPages) {
+    if (failedKeys.has(makeManifestKey(page.source_id, page.slug))) {
+      progress.tick(1);
+      continue;
+    }
     const sourceOpts = { sourceId: page.source_id };
     const links = await sourceEngine.getLinks(page.slug, sourceOpts);
     for (const link of links) {
+      if (failedKeys.has(makeManifestKey(page.source_id, link.to_slug))) continue;
       await targetEngine.addLink(
         link.from_slug, link.to_slug,
         link.context, link.link_type,
@@ -342,22 +444,38 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   // Update local config. v0.37 fix wave: preserve existing file-plane
   // embedding/expansion/chat config across the engine migration; only
   // the engine + connection target should change.
-  const existingFile = (await import('../core/config.ts')).loadConfigFileOnly() ?? ({} as GBrainConfig);
-  const newConfig: GBrainConfig = {
-    ...existingFile,
-    engine: opts.targetEngine,
-    ...(opts.targetEngine === 'postgres'
-      ? { database_url: targetConfig.database_url, database_path: undefined }
-      : { database_path: targetConfig.database_path, database_url: undefined }),
-  };
-  saveConfig(newConfig);
+  //
+  // #3194: only flip the ACTIVE config when the migration is fully clean.
+  // A partial migration leaves the target's data incomplete; auto-switching
+  // every subsequent `gbrain` invocation onto that incomplete target would
+  // (a) make the failure invisible behind otherwise-normal usage and (b)
+  // break the natural retry — `gbrain migrate --to X` again would hit the
+  // "Already using X engine" guard even though the migration never actually
+  // finished. Leaving the file-plane config untouched keeps the source the
+  // active engine, so a retry (which resumes via the still-intact manifest)
+  // is a same-shaped command, not a special case.
+  if (failures.length === 0) {
+    const existingFile = (await import('../core/config.ts')).loadConfigFileOnly() ?? ({} as GBrainConfig);
+    const newConfig: GBrainConfig = {
+      ...existingFile,
+      engine: opts.targetEngine,
+      ...(opts.targetEngine === 'postgres'
+        ? { database_url: targetConfig.database_url, database_path: undefined }
+        : { database_path: targetConfig.database_path, database_url: undefined }),
+    };
+    saveConfig(newConfig);
+    // Clean up the resume manifest — only safe once nothing is left pending.
+    clearManifest();
+  }
 
-  // Clean up
-  clearManifest();
-
-  console.log(`\nMigration complete. ${migrated} pages transferred.`);
-  console.log(`Config updated to engine: ${opts.targetEngine}`);
-  if (config.engine === 'pglite' && config.database_path) {
+  if (failures.length > 0) {
+    console.log(`\nMigration completed with errors. ${migrated} of ${pagesToMigrate.length} pages copied, ${failures.length} failed (${completedSet.size} already done from a prior run). See failure list above.`);
+    console.log(`Config NOT switched — still using engine: ${config.engine}. Re-run \`gbrain migrate --to ${opts.targetEngine}\` to retry; already-copied pages resume via the manifest.`);
+  } else {
+    console.log(`\nMigration complete. ${migrated} pages transferred.`);
+    console.log(`Config updated to engine: ${opts.targetEngine}`);
+  }
+  if (failures.length === 0 && config.engine === 'pglite' && config.database_path) {
     console.log(`Original PGLite brain preserved at ${config.database_path} (backup).`);
   }
 

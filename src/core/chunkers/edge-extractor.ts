@@ -78,10 +78,10 @@ export const WALK_DEPTH_CAP = 32;
 
 /**
  * Which languages get receiver-type resolution at extraction time. Per D18
- * from eng review — JS/TS/TSX + Python at full depth; Ruby/Go/Rust/Java
- * keep TODAY's bare-token call edges. Honest scope: tree-sitter shapes are
- * very different across these languages and writing+testing per-language
- * scope walkers for all of them is a v0.35 expansion.
+ * from eng review — JS/TS/TSX + Python at full depth; Ruby/Go/Rust/Java/
+ * Kotlin keep TODAY's bare-token call edges. Honest scope: tree-sitter
+ * shapes are very different across these languages and writing+testing
+ * per-language scope walkers for all of them is a v0.35 expansion.
  */
 const RECEIVER_RESOLUTION_LANGS: ReadonlySet<SupportedCodeLanguage> = new Set([
   'typescript',
@@ -93,12 +93,16 @@ const RECEIVER_RESOLUTION_LANGS: ReadonlySet<SupportedCodeLanguage> = new Set([
 /**
  * Per-language call-expression configuration. `callNodeTypes` lists the
  * AST node types that are call sites in that language. `calleeFieldName`
- * optionally names the child field that holds the callee expression;
- * when absent, the call-site text itself is scanned for the identifier.
+ * names the child field that holds the callee expression. Grammars that
+ * define no fields on their call node (Kotlin: `call_expression =
+ * expression call_suffix`) set `calleeFirstNamedChild` instead — the
+ * callee is positional, so namedChild(0) IS the callee.
  */
 interface CallConfig {
   callNodeTypes: Set<string>;
   calleeFieldName?: string;
+  /** Callee is namedChild(0) — for grammars whose call node has no fields. */
+  calleeFirstNamedChild?: boolean;
 }
 
 const CALL_CONFIG: Partial<Record<SupportedCodeLanguage, CallConfig>> = {
@@ -110,6 +114,11 @@ const CALL_CONFIG: Partial<Record<SupportedCodeLanguage, CallConfig>> = {
   go:         { callNodeTypes: new Set(['call_expression']), calleeFieldName: 'function' },
   rust:       { callNodeTypes: new Set(['call_expression', 'method_call_expression']), calleeFieldName: 'function' },
   java:       { callNodeTypes: new Set(['method_invocation']), calleeFieldName: 'name' },
+  // tree-sitter-kotlin defines no fields on call_expression; the callee is
+  // the first named child (simple_identifier for bare calls,
+  // navigation_expression for `receiver.method(...)` — resolved to the
+  // method name by the navigation_expression case in extractCalleeName).
+  kotlin:     { callNodeTypes: new Set(['call_expression']), calleeFirstNamedChild: true },
 };
 
 /**
@@ -120,7 +129,11 @@ const CALL_CONFIG: Partial<Record<SupportedCodeLanguage, CallConfig>> = {
  * null to skip the edge.
  */
 function extractCalleeName(node: any, cfg: CallConfig): string | null {
-  const callee = cfg.calleeFieldName ? node.childForFieldName(cfg.calleeFieldName) : null;
+  const callee = cfg.calleeFieldName
+    ? node.childForFieldName(cfg.calleeFieldName)
+    : cfg.calleeFirstNamedChild
+      ? (node.namedChild?.(0) ?? null)
+      : null;
   if (!callee) return null;
 
   // Unwrap common wrappers until we hit an identifier-shaped node.
@@ -153,6 +166,15 @@ function extractCalleeName(node: any, cfg: CallConfig): string | null {
     if (cur.type === 'scoped_call_expression' || cur.type === 'scoped_identifier') {
       const name = cur.childForFieldName('name');
       if (name) { cur = name; continue; }
+      return null;
+    }
+    // navigation_expression (Kotlin): `receiver.method` — the callee is the
+    // simple_identifier inside the trailing navigation_suffix. No fields on
+    // this node either, so walk to the last named child's identifier.
+    if (cur.type === 'navigation_expression') {
+      const suffix = cur.namedChild?.(cur.namedChildCount - 1);
+      const ident = suffix?.namedChild?.(0);
+      if (ident) { cur = ident; continue; }
       return null;
     }
     // Fallback: read the node text and take the last identifier-looking token.

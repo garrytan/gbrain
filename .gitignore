@@ -1,4 +1,7 @@
-node_modules/
+# No trailing slash: a bare `node_modules/` pattern matches directories only,
+# so a *symlink* named node_modules slips past it and can be committed
+# (that's how the /tmp-pointing symlink in faf5cdba got in). Match any type.
+node_modules
 bin/
 .DS_Store
 *.log
@@ -15,7 +18,7 @@ supabase/.temp/
 # self-contained binaries (the bun --compile path embeds it via
 # `import path from 'admin/dist/index.html' with { type: 'file' }`).
 # Build via: cd admin && bun install && bun run build.
-admin/node_modules/
+admin/node_modules
 .idea
 eval/reports/
 eval/data/world-v1/world.html
@@ -34,6 +37,11 @@ export/
 # writes .context/test-failures.log + .context/test-summary.txt +
 # .context/test-shards/. Workspace-local by design — never committed.
 .context/
+
+# Local agent instruction overrides (CLAUDE.local.md / AGENTS.local.md) — personal,
+# per-clone, loaded after the committed CLAUDE.md/AGENTS.md. Never committed.
+CLAUDE.local.md
+AGENTS.local.md
 
 # Tier 3 PGLite snapshot fixture (built on demand by build:pglite-snapshot)
 test/fixtures/pglite-snapshot.tar

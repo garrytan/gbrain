@@ -9,7 +9,7 @@
  * import it from `../../src/cli.ts`.
  *
  * The single ownership site for: (a) folding file-plane API keys
- * (openai/anthropic/zeroentropy) into the gateway env, and (b) threading
+ * (openai/anthropic/zeroentropy/openrouter/voyage) into the gateway env, and (b) threading
  * local-server `*_BASE_URL` env vars into base_urls. Both matter for the
  * init-time embedding-key probe — without (a) it would false-warn on
  * config.json-keyed users, and without (b) a live probe could hit the wrong
@@ -38,6 +38,19 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   // config.json) must reach the openrouter recipe's OPENROUTER_API_KEY.
   // process.env still wins via the later spread.
   if (c.openrouter_api_key) envFromConfig.OPENROUTER_API_KEY = c.openrouter_api_key;
+  // #2662: same seam for Voyage. Before this, config.json's voyage_api_key
+  // was accepted at the file plane but never threaded into the gateway env,
+  // so launchd/daemon/MCP contexts (no process-env export) silently failed
+  // multimodal/image embeds despite config.json looking complete. process.env
+  // still wins via the later spread.
+  if (c.voyage_api_key) envFromConfig.VOYAGE_API_KEY = c.voyage_api_key;
+  // Azure OpenAI (keyless/Entra): fold the non-secret endpoint/deployment + the
+  // Entra opt-in into the gateway env so the azure-openai recipe works in any
+  // shell (incl. non-interactive agent shells). The bearer token is minted at
+  // request time via `az`; no secret is stored in config.json.
+  if (c.azure_openai_endpoint) envFromConfig.AZURE_OPENAI_ENDPOINT = c.azure_openai_endpoint;
+  if (c.azure_openai_deployment) envFromConfig.AZURE_OPENAI_DEPLOYMENT = c.azure_openai_deployment;
+  if (c.azure_openai_use_entra) envFromConfig.AZURE_OPENAI_USE_ENTRA = c.azure_openai_use_entra;
 
   // v0.32 codex finding #4+#5 fix: thread local-server _BASE_URL env vars
   // into base_urls so the gateway hits the user's configured port. Without

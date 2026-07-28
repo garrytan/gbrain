@@ -351,6 +351,106 @@ describe('runExtractFacts — empty-fence guard (Codex R2-#7)', () => {
     expect(r.guardTriggered).toBe(false);
     expect(r.factsInserted).toBe(1);
   });
+
+  // ── #2484: structurally-unfenceable hot-memory rows ───────────
+  // The inline facts writer (backstop.ts) keeps producing
+  // `row_num IS NULL, entity_slug IS NOT NULL` rows AFTER the v0_32_2
+  // migration completes: when a resolved slug has no fenceable page
+  // (slugify-floor / stub-guard-blocked unprefixed slugs like
+  // `wingman` or `people-jane-doe`), it falls through to a DB-only
+  // insert with row_num NULL. The OLD guard predicate
+  // (`row_num IS NULL AND entity_slug IS NOT NULL`) matched these and
+  // jammed the phase forever (~16/day) — they can never be fenced (no
+  // page to fence onto; the ledger-complete migration won't re-run).
+  // The fix requires a LIVE backing page, so these rows no longer gate.
+  test('#2484: unfenceable inline-writer rows (entity_slug set, NO backing page) do NOT trigger the guard', async () => {
+    // Two unfenceable rows whose entity_slug has no page row at all.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
+                          valid_from, source, confidence)
+       VALUES
+         ('default', 'wingman',          'handoff note A', 'fact', 'private', 'medium', now(), 'mcp:extract_facts', 1.0),
+         ('default', 'people-jane-doe',  'handoff note B', 'fact', 'private', 'medium', now(), 'mcp:extract_facts', 1.0)`,
+    );
+
+    // A real page with a fence that SHOULD reconcile (proves the phase
+    // converges past the guard rather than early-returning).
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | real fenced fact | fact | 1.0 | world | high | 2026-01-01 |  | s |  |`,
+    ));
+
+    const r = await runExtractFacts(engine, { slugs: ['people/alice'] });
+
+    // Guard must NOT trip — the unfenceable rows are permanent by
+    // construction, not a migration blocker.
+    expect(r.guardTriggered).toBe(false);
+    expect(r.legacyRowsPending).toBe(0);
+    // The phase ran its reconcile pass (did not early-return).
+    expect(r.factsInserted).toBe(1);
+
+    // The unfenceable rows survive untouched (still row_num NULL).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const survivors = await (engine as any).db.query(
+      `SELECT entity_slug FROM facts WHERE row_num IS NULL ORDER BY entity_slug`,
+    );
+    expect(survivors.rows.map((x: { entity_slug: string }) => x.entity_slug))
+      .toEqual(['people-jane-doe', 'wingman']);
+  });
+
+  test('#2484: a genuine legacy row WITH a backing page still triggers the guard (discriminator stays sharp)', async () => {
+    // Same shape as the unfenceable row above (row_num NULL, entity_slug
+    // set) — the ONLY difference is a live backing page exists, so the
+    // migration's Phase B could fence it. This MUST still gate.
+    await putPage('people/bob', FACT_FENCE(
+      `| 1 | fence fact | fact | 1.0 | world | high | 2026-01-01 |  | s |  |`,
+    ));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
+                          valid_from, source, confidence)
+       VALUES ('default', 'people/bob', 'genuine legacy claim', 'fact', 'private', 'medium',
+               now(), 'mcp:put_page', 1.0)`,
+    );
+
+    const r = await runExtractFacts(engine, { slugs: ['people/bob'] });
+
+    expect(r.guardTriggered).toBe(true);
+    expect(r.legacyRowsPending).toBe(1);
+    expect(r.factsInserted).toBe(0);
+    expect(r.factsDeleted).toBe(0);
+    expect(r.warnings.some(w => w.includes('apply-migrations'))).toBe(true);
+  });
+
+  test('#2484: a soft-deleted backing page makes its legacy row unfenceable (does NOT gate)', async () => {
+    // Page exists then gets soft-deleted (deleted_at set). The migration
+    // can't fence onto a deleted page, so the row must not gate.
+    await putPage('people/carol', FACT_FENCE(
+      `| 1 | live fact | fact | 1.0 | world | high | 2026-01-01 |  | s |  |`,
+    ));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
+                          valid_from, source, confidence)
+       VALUES ('default', 'people/carol', 'orphaned legacy claim', 'fact', 'private', 'medium',
+               now(), 'mcp:put_page', 1.0)`,
+    );
+    // Soft-delete the page.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `UPDATE pages SET deleted_at = now() WHERE slug = 'people/carol' AND source_id = 'default'`,
+    );
+
+    // Reconcile a DIFFERENT live page so the phase has work to do.
+    await putPage('people/dave', FACT_FENCE(
+      `| 1 | dave fact | fact | 1.0 | world | high | 2026-01-01 |  | s |  |`,
+    ));
+
+    const r = await runExtractFacts(engine, { slugs: ['people/dave'] });
+    expect(r.guardTriggered).toBe(false);
+    expect(r.legacyRowsPending).toBe(0);
+    expect(r.factsInserted).toBe(1);
+  });
 });
 
 describe('runExtractFacts — multi-source isolation', () => {

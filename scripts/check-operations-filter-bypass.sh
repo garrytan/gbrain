@@ -70,7 +70,7 @@ PATTERN='import[[:space:]]+(\*[[:space:]]+as[[:space:]]+[a-zA-Z_$][a-zA-Z0-9_$]*
 FOUND_FILES=""
 while IFS= read -r f; do
   [ -n "$f" ] && FOUND_FILES="$FOUND_FILES$f"$'\n'
-done < <(grep -rlE --include='*.ts' "$PATTERN" src/ 2>/dev/null | sort -u || true)
+done < <(grep -rlE --include='*.ts' "$PATTERN" src 2>/dev/null | sort -u || true)
 
 FAIL=0
 

@@ -178,6 +178,18 @@ describe('v0.41.2.1: discoverExtractablePages SQL contract', () => {
     expect(discovered.map((d) => d.slug)).toEqual(['original/normal']);
   });
 
+  test('raw source-holder pages excluded (#5 — no permanent no-progress backlog)', async () => {
+    await seedPage({ slug: 'source/normal', type: 'source' });
+    await seedPage({
+      slug: 'wiki/raw-email-source',
+      type: 'source',
+      frontmatter: { raw: 'raw/email/example.md' },
+    });
+
+    const discovered = await discoverExtractablePages(engine, 'default');
+    expect(discovered.map((d) => d.slug)).toEqual(['source/normal']);
+  });
+
   test('pages with NULL content_hash excluded (D9 #3 — no .slice crash)', async () => {
     await seedPage({ slug: 'meeting/with-hash', type: 'meeting' });
     await seedPage({ slug: 'meeting/no-hash', type: 'meeting', content_hash: null });

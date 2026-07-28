@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   isSourceUnchangedSinceSync,
+  probeSourceGitState,
   _setGitHeadProbeForTests,
   _setGitCleanProbeForTests,
   type GitHeadProbe,
@@ -174,5 +175,62 @@ describe('isSourceUnchangedSinceSync — requireCleanWorkingTree (D7)', () => {
     _setGitCleanProbeForTests(() => { cleanCalls++; return false; });
     expect(isSourceUnchangedSinceSync('/tmp/repo', 'abc123')).toBe(true);
     expect(cleanCalls).toBe(0);
+  });
+});
+
+describe('probeSourceGitState — three-state verdict', () => {
+  test('state 1: HEAD matches + clean → unchanged', () => {
+    _setGitHeadProbeForTests(() => 'abc123');
+    _setGitCleanProbeForTests(() => true);
+    expect(probeSourceGitState('/tmp/repo', 'abc123', { requireCleanWorkingTree: 'ignore-untracked' }))
+      .toBe('unchanged');
+  });
+
+  test('state 2: HEAD probe null (clone missing / not a repo / git error) → unavailable', () => {
+    _setGitHeadProbeForTests(() => null);
+    expect(probeSourceGitState('/tmp/gone', 'abc123')).toBe('unavailable');
+  });
+
+  test('state 3: HEAD mismatch → changed', () => {
+    _setGitHeadProbeForTests(() => 'def456');
+    expect(probeSourceGitState('/tmp/repo', 'abc123')).toBe('changed');
+  });
+
+  test('state 4: dirty tree with readable HEAD → changed (NOT unavailable)', () => {
+    _setGitHeadProbeForTests(() => 'abc123');
+    _setGitCleanProbeForTests(() => false);
+    expect(probeSourceGitState('/tmp/repo', 'abc123', { requireCleanWorkingTree: true }))
+      .toBe('changed');
+  });
+
+  test('state 5: clean-probe ERROR with readable HEAD → changed (fail toward work)', () => {
+    _setGitHeadProbeForTests(() => 'abc123');
+    _setGitCleanProbeForTests(() => null);
+    expect(probeSourceGitState('/tmp/repo', 'abc123', { requireCleanWorkingTree: true }))
+      .toBe('changed');
+  });
+
+  test('state 6: NULL inputs → changed, head probe never called (case-4 contract)', () => {
+    let probeCalls = 0;
+    _setGitHeadProbeForTests(() => { probeCalls++; return 'abc'; });
+    expect(probeSourceGitState(null, 'abc')).toBe('changed');
+    expect(probeSourceGitState('/tmp/repo', null)).toBe('changed');
+    expect(probeSourceGitState('', '')).toBe('changed');
+    expect(probeCalls).toBe(0);
+  });
+
+  test('state 7: boolean façade parity — isSourceUnchangedSinceSync === (state is unchanged)', () => {
+    _setGitHeadProbeForTests(() => 'abc123');
+    _setGitCleanProbeForTests(() => true);
+    for (const [path, commit] of [
+      ['/tmp/repo', 'abc123'],   // unchanged → true
+      ['/tmp/repo', 'other'],    // changed → false
+    ] as const) {
+      expect(isSourceUnchangedSinceSync(path, commit))
+        .toBe(probeSourceGitState(path, commit) === 'unchanged');
+    }
+    _setGitHeadProbeForTests(() => null);  // unavailable → false
+    expect(isSourceUnchangedSinceSync('/tmp/gone', 'abc123'))
+      .toBe(probeSourceGitState('/tmp/gone', 'abc123') === 'unchanged');
   });
 });

@@ -45,7 +45,6 @@ import { embedBatch } from './embedding.ts';
 import { resolveContextualRetrievalMode } from './contextual-retrieval-resolver.ts';
 import {
   buildContextualPrefix,
-  extractFirstTwoSentences,
   modeRequiresHaiku,
   modeRequiresWrapper,
   sanitizeTitle,
@@ -57,10 +56,8 @@ import {
   SYNOPSIS_DOC_MAX_CHARS,
   type GeneratePerChunkSynopsisResult,
 } from './page-summary.ts';
-import {
-  logSynopsisFailure,
-  type SynopsisFailureKind,
-} from './audit-synopsis.ts';
+import type { SynopsisFailureKind } from './audit-synopsis.ts';
+import { runSlidingPool } from './worker-pool.ts';
 import type { BrainEngine } from './engine.ts';
 import type { ChunkInput, CRMode, Page } from './types.ts';
 import type { SourceRow } from './sources-ops.ts';
@@ -73,6 +70,24 @@ import type { SourceRow } from './sources-ops.ts';
  * corpus_generation hash.
  */
 export const TITLE_WRAPPER_VERSION = 1;
+const DEFAULT_HAIKU_MODEL = 'anthropic:claude-haiku-4-5-20251001';
+export const DEFAULT_CONTEXTUAL_CHUNK_CONCURRENCY = 4;
+export const MAX_CONTEXTUAL_CHUNK_CONCURRENCY = 16;
+
+export function resolveContextualChunkConcurrency(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const raw = env.GBRAIN_CONTEXTUAL_CHUNK_CONCURRENCY;
+  if (raw === undefined || raw.trim() === '') return DEFAULT_CONTEXTUAL_CHUNK_CONCURRENCY;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return DEFAULT_CONTEXTUAL_CHUNK_CONCURRENCY;
+  return clampContextualChunkConcurrency(n);
+}
+
+function clampContextualChunkConcurrency(n: number): number {
+  if (!Number.isFinite(n)) return DEFAULT_CONTEXTUAL_CHUNK_CONCURRENCY;
+  return Math.max(1, Math.min(MAX_CONTEXTUAL_CHUNK_CONCURRENCY, Math.trunc(n)));
+}
 
 /**
  * Embedding model placeholder. The actual model name lands here from
@@ -208,11 +223,15 @@ export interface ReembedPageArgs {
    * src/core/minions/rate-leases.ts here; inline callers (import-file,
    * reindex command) pass undefined and rely on gateway-level retry.
    */
-  acquireSynopsisLease?: () => Promise<void>;
-  releaseSynopsisLease?: () => Promise<void>;
+  acquireSynopsisLease?: () => Promise<unknown>;
+  releaseSynopsisLease?: (lease?: unknown) => Promise<void>;
+  /**
+   * Intra-page per-chunk synopsis concurrency. 1 preserves the legacy
+   * sequential loop exactly; higher values only parallelize Haiku synopsis
+   * calls. Embedding remains one batch after all synopses succeed.
+   */
+  chunkConcurrency?: number;
 }
-
-const DEFAULT_HAIKU_MODEL = 'anthropic:claude-haiku-4-5-20251001';
 
 /**
  * Re-embed one page through the active CR mode. Implements the D26 P0-2
@@ -432,82 +451,41 @@ async function tryBuildPhase1(opts: {
   }
 
   // per_chunk_synopsis path. Read source text via fallback chain,
-  // generate synopsis per chunk sequentially within this page (D10),
+  // generate synopsis per chunk through a bounded sliding pool, then
   // batch embed at the end (D27 P2-2).
   const sourceText = readSourceTextWithFallback(page, chunks);
-  const wrappedTexts: string[] = [];
+  const wrappedTexts: string[] = new Array(chunks.length);
+  const chunkConcurrency = clampContextualChunkConcurrency(
+    args.chunkConcurrency ?? resolveContextualChunkConcurrency(),
+  );
 
-  for (let i = 0; i < chunks.length; i++) {
-    const c = chunks[i];
-
-    // Code chunks always bypass the wrapper (D20-T4) — pass through.
-    if (c.chunk_source === 'fenced_code') {
-      wrappedTexts.push(c.chunk_text);
-      continue;
-    }
-
-    // Acquire rate-lease per chunk (D26 P0-3). Inline callers pass no
-    // hooks; only the Minion handler wires through rate-leases.ts.
-    if (args.acquireSynopsisLease) {
-      await args.acquireSynopsisLease();
-    }
-
-    let synopsisResult: GeneratePerChunkSynopsisResult;
-    try {
-      synopsisResult = await generatePerChunkSynopsis({
-        documentText: sourceText,
-        chunkText: c.chunk_text,
-        pageTitle: page.title,
-        pageSlug: args.pageSlug,
-        sourceId: args.sourceId,
-        chunkIndex: c.chunk_index,
-        model: haikuModel,
-        abortSignal: args.abortSignal,
+  const poolResult = await runSlidingPool({
+    items: chunks,
+    workers: chunkConcurrency,
+    signal: args.abortSignal,
+    onError: 'abort',
+    failureLabel: (c) => String(c.chunk_index),
+    onItem: async (c, i) => {
+      wrappedTexts[i] = await buildWrappedChunkText({
+        chunk: c,
+        sourceText,
+        safeTitle,
+        page,
+        args,
+        haikuModel,
       });
-    } finally {
-      if (args.releaseSynopsisLease) {
-        try {
-          await args.releaseSynopsisLease();
-        } catch {
-          // Lease release failure shouldn't abort the page; surfacing it
-          // would race with the synopsis result. Audit-only.
-        }
-      }
-    }
+    },
+  });
 
-    if (synopsisResult.kind === 'success') {
-      const prefix = buildContextualPrefix(safeTitle, synopsisResult.synopsis);
-      wrappedTexts.push(
-        wrapChunkForEmbedding(c.chunk_text, prefix, c.chunk_source),
-      );
-      continue;
+  if (poolResult.failures.length > 0) {
+    const failure = [...poolResult.failures].sort((a, b) => a.idx - b.idx)[0].error;
+    if (failure instanceof ChunkSynopsisPhase1Error) {
+      return failure.result;
     }
-
-    // Failure classification per D27 P1-2:
-    //   refusal | empty | malformed → page-level fall-back to title-only
-    //   auth_failure → permanent (won't fix with retry)
-    //   rate_limit | timeout | network | provider_5xx → transient
-    //   source_missing → walked into fallback already; would be 'malformed'
-    //     from generatePerChunkSynopsis if we ever propagated it here
-    if (
-      synopsisResult.kind === 'refusal' ||
-      synopsisResult.kind === 'empty' ||
-      synopsisResult.kind === 'malformed'
-    ) {
-      return { kind: 'page_level_fallback_requested', cause: synopsisResult.kind };
-    }
-    if (synopsisResult.kind === 'auth_failure') {
-      return {
-        kind: 'permanent',
-        cause: synopsisResult.kind,
-        detail: synopsisResult.detail ?? 'auth failure',
-      };
-    }
-    return {
-      kind: 'transient',
-      cause: synopsisResult.kind,
-      detail: synopsisResult.detail ?? 'transient',
-    };
+    throw failure;
+  }
+  if (poolResult.aborted || args.abortSignal?.aborted) {
+    return { kind: 'transient', cause: 'timeout', detail: 'aborted' };
   }
 
   // All chunks synthesized successfully. Single batch embed (D27 P2-2).
@@ -526,6 +504,113 @@ async function tryBuildPhase1(opts: {
     const detail = err instanceof Error ? err.message : String(err);
     return classifyEmbedError(err, detail);
   }
+}
+
+class ChunkSynopsisPhase1Error extends Error {
+  constructor(readonly result: Exclude<Phase1Result, Phase1Success>) {
+    super(`chunk synopsis failed: ${result.kind}`);
+    this.name = 'ChunkSynopsisPhase1Error';
+  }
+}
+
+async function buildWrappedChunkText(opts: {
+  chunk: ChunkInput;
+  sourceText: string;
+  safeTitle: string;
+  page: Page;
+  args: ReembedPageArgs;
+  haikuModel: string;
+}): Promise<string> {
+  const { chunk: c, sourceText, safeTitle, page, args, haikuModel } = opts;
+
+  // Code chunks always bypass the wrapper (D20-T4) — pass through.
+  if (c.chunk_source === 'fenced_code') {
+    return c.chunk_text;
+  }
+
+  // Acquire rate-lease per chunk (D26 P0-3). Inline callers pass no
+  // hooks; only the Minion handler wires through rate-leases.ts.
+  let lease: unknown;
+  let leaseAcquired = false;
+  let synopsisResult: GeneratePerChunkSynopsisResult;
+  try {
+    if (args.acquireSynopsisLease) {
+      try {
+        lease = await args.acquireSynopsisLease();
+      } catch (err) {
+        if (args.abortSignal?.aborted || isAbortError(err)) {
+          throw new ChunkSynopsisPhase1Error({
+            kind: 'transient',
+            cause: 'timeout',
+            detail: 'aborted',
+          });
+        }
+        throw err;
+      }
+      leaseAcquired = true;
+    }
+    synopsisResult = await generatePerChunkSynopsis({
+      documentText: sourceText,
+      chunkText: c.chunk_text,
+      pageTitle: page.title,
+      pageSlug: args.pageSlug,
+      sourceId: args.sourceId,
+      chunkIndex: c.chunk_index,
+      model: haikuModel,
+      abortSignal: args.abortSignal,
+    });
+  } finally {
+    if (leaseAcquired && args.releaseSynopsisLease) {
+      try {
+        await args.releaseSynopsisLease(lease);
+      } catch {
+        // Lease release failure shouldn't abort the page; surfacing it
+        // would race with the synopsis result. Audit-only.
+      }
+    }
+  }
+
+  if (synopsisResult.kind === 'success') {
+    const prefix = buildContextualPrefix(safeTitle, synopsisResult.synopsis);
+    return wrapChunkForEmbedding(c.chunk_text, prefix, c.chunk_source);
+  }
+
+  // Failure classification per D27 P1-2:
+  //   refusal | empty | malformed → page-level fall-back to title-only
+  //   auth_failure → permanent (won't fix with retry)
+  //   rate_limit | timeout | network | provider_5xx → transient
+  //   source_missing → walked into fallback already; would be 'malformed'
+  //     from generatePerChunkSynopsis if we ever propagated it here
+  if (
+    synopsisResult.kind === 'refusal' ||
+    synopsisResult.kind === 'empty' ||
+    synopsisResult.kind === 'malformed'
+  ) {
+    throw new ChunkSynopsisPhase1Error({
+      kind: 'page_level_fallback_requested',
+      cause: synopsisResult.kind,
+    });
+  }
+  if (synopsisResult.kind === 'auth_failure') {
+    throw new ChunkSynopsisPhase1Error({
+      kind: 'permanent',
+      cause: synopsisResult.kind,
+      detail: synopsisResult.detail ?? 'auth failure',
+    });
+  }
+  throw new ChunkSynopsisPhase1Error({
+    kind: 'transient',
+    cause: synopsisResult.kind,
+    detail: synopsisResult.detail ?? 'transient',
+  });
+}
+
+function isAbortError(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { name?: unknown }).name === 'AbortError'
+  );
 }
 
 /**

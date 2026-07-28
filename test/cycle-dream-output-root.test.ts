@@ -86,6 +86,12 @@ describe('#2415: loadOutputRoot validation + patterns gather scope', () => {
     expect(await loadOutputRoot(engine)).toBe('wiki');
   });
 
+  test('CJK root passes the slug grammar (#738)', async () => {
+    await engine.setConfig('dream.synthesize.output_root', '知识/笔记');
+    expect(await loadOutputRoot(engine)).toBe('知识/笔记');
+    await engine.setConfig('dream.synthesize.output_root', '');
+  });
+
   test('patterns phase gathers reflections under the configured root', async () => {
     await engine.setConfig('dream.synthesize.output_root', 'notes');
     for (let i = 0; i < 3; i++) {

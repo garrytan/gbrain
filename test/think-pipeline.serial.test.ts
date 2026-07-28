@@ -177,6 +177,70 @@ describe('runThink (with stub client)', () => {
     expect(result.gaps).toEqual(['no info on funding history']);
     expect(result.takesGathered).toBeGreaterThan(0);
     expect(result.warnings).not.toContain('LLM_OUTPUT_NOT_JSON');
+    // think's own cost was previously unsurfaced anywhere (not in this CLI's
+    // output, not in budget_ledger, and invisible to a wrapping caller's own
+    // token accounting since the LLM call is think's own, separate call).
+    // usage flows through from the real client.create() response so the CLI
+    // can compute cost_usd from it via canonicalLookup(modelUsed).
+    expect(result.usage).toEqual({ input_tokens: 10, output_tokens: 10 });
+  });
+
+  test('passes the question into page excerpt selection', async () => {
+    const prefix = [
+      '# Widget Co',
+      'General company background and operating context. '.repeat(18),
+    ].join('\n');
+    const lateFact = 'Enterprise pricing: the plan costs 125 credits per month.';
+    const content = `${prefix}\n${lateFact}\n${'Other context. '.repeat(80)}`;
+    let pageId: number | undefined;
+    let capturedUser = '';
+    const stubClient: ThinkLLMClient = {
+      create: async (params) => {
+        const userMessage = params.messages[0]?.content;
+        capturedUser = typeof userMessage === 'string'
+          ? userMessage
+          : JSON.stringify(userMessage);
+        return {
+          id: 'msg_excerpt_wiring',
+          type: 'message',
+          role: 'assistant',
+          model: 'stub',
+          stop_reason: 'end_turn',
+          stop_sequence: null,
+          usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: null, service_tier: null },
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ answer: 'stubbed answer', citations: [], gaps: [] }),
+          }],
+        };
+      },
+    };
+
+    try {
+      const page = await engine.putPage('companies/widget-co', {
+        title: 'Widget Co', type: 'company', compiled_truth: content,
+      });
+      pageId = page.id;
+      await engine.executeRaw('DELETE FROM content_chunks WHERE page_id = $1', [page.id]);
+      await engine.executeRaw(
+        `INSERT INTO content_chunks (page_id, chunk_index, chunk_text, chunk_source)
+         VALUES ($1, 0, $2, 'compiled_truth')`,
+        [page.id, content],
+      );
+
+      const result = await runThink(engine, {
+        question: 'What is Widget Co enterprise pricing in credits per month?',
+        client: stubClient,
+        withTrajectory: false,
+      });
+
+      expect(result.pagesGathered).toBeGreaterThan(0);
+      expect(capturedUser).toContain(lateFact);
+    } finally {
+      if (pageId !== undefined) {
+        await engine.executeRaw('DELETE FROM pages WHERE id = $1', [pageId]);
+      }
+    }
   });
 
   test('handles malformed LLM output gracefully (regex citation fallback)', async () => {
@@ -357,6 +421,17 @@ describe('runThink + persistSynthesis — #1698 never persist empty', () => {
       question: 'stub full', stubResponse: { answer: 'has content', citations: [], gaps: [] },
     });
     expect(full.synthesisOk).toBe(true);
+  });
+
+  test('opts.stubResponse path never made a real LLM call — usage stays undefined', async () => {
+    // Same distinction synthesisOk already makes: opts.stubResponse bypasses
+    // client.create() entirely, so there is no real usage to report. cost_usd
+    // must not be computed (and should render as null in --json) when this
+    // happens, since there is nothing to compute it from.
+    const result = await runThink(engine, {
+      question: 'stub no usage', stubResponse: { answer: 'has content', citations: [], gaps: [] },
+    });
+    expect(result.usage).toBeUndefined();
   });
 
   test('pre-existing ThinkResult literal without synthesisOk still persists (back-compat)', async () => {

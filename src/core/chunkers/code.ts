@@ -1235,7 +1235,25 @@ export function estimateTokens(text: string): number {
     tiktokenInitialized = true;
   }
   if (tiktokenEncoder) {
-    return tiktokenEncoder.encode(text).length;
+    try {
+      return tiktokenEncoder.encode(text).length;
+    } catch {
+      // Code legitimately contains tiktoken special-token strings (e.g. CLIP/GPT
+      // tokenizers embed the literal "<|endoftext|>"). The default encode() uses
+      // disallowed_special='all' and THROWS on those, crashing reindex-code on
+      // valid source files. For a token COUNT we don't need special-token
+      // semantics: re-encode treating them as ordinary text (never throws),
+      // heuristic only if even that fails.
+      try {
+        return (
+          tiktokenEncoder as unknown as {
+            encode: (s: string, allowed: string[], disallowed: string[]) => Uint32Array;
+          }
+        ).encode(text, [], []).length;
+      } catch {
+        return Math.max(1, Math.ceil(text.length / 4));
+      }
+    }
   }
   return Math.max(1, Math.ceil(text.length / 4));
 }

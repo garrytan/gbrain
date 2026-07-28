@@ -58,7 +58,11 @@ export interface BudgetStateRow {
 // Errors
 // ---------------------------------------------------------------------------
 
-export type BudgetErrorCode = 'reservation_not_found' | 'already_finalized' | 'invalid_input';
+export type BudgetErrorCode =
+  | 'reservation_not_found'
+  | 'already_finalized'
+  | 'invalid_input'
+  | 'cap_exceeded';
 
 export class BudgetError extends Error {
   constructor(public code: BudgetErrorCode, message: string, public reservationId?: string) {
@@ -169,12 +173,11 @@ export class BudgetLedger {
    * committed_usd up by the actual.
    *
    * Re-checks the cap against the post-commit total: reserving $0.01 then
-   * committing $100 against a $1 cap must not silently blow through. When
-   * actualUsd would exceed the effective cap, the commit clamps to (cap -
-   * other_committed - other_reserved) and throws. The reservation is still
-   * marked committed (the API call already happened and we don't want
-   * retry loops), but the excess is attributed as a cap-exhaustion error
-   * the caller can log.
+   * committing $100 against a $1 cap must not silently blow through. The API
+   * call has already happened, so actualUsd is recorded in full (truthful
+   * accounting), the reservation is finalized, and a cap_exceeded error is
+   * thrown only AFTER the transaction commits. Throwing inside the transaction
+   * would roll back both writes and leave a paid call looking pending.
    *
    * Negative actuals are rejected — refunds should be a separate operation,
    * not a side-channel on commit().
@@ -187,7 +190,7 @@ export class BudgetLedger {
       throw new BudgetError('invalid_input', `commit: actualUsd must be non-negative (got ${actualUsd}). Use a dedicated refund API instead.`);
     }
 
-    return await this.engine.transaction(async (tx) => {
+    const capError = await this.engine.transaction(async (tx) => {
       const rows = await tx.executeRaw<{ scope: string; resolver_id: string; local_date: string; estimate_usd: string | number; status: string }>(
         `SELECT scope, resolver_id, local_date, estimate_usd, status
          FROM budget_reservations
@@ -215,16 +218,14 @@ export class BudgetLedger {
       const committedSoFar = ledger ? toNum(ledger.committed_usd) : 0;
       const reservedSoFar = ledger ? toNum(ledger.reserved_usd) : 0;
 
-      let chargedAmount = actualUsd;
-      let overage: number | null = null;
+      let capExceededBy: number | null = null;
       if (cap != null) {
-        // Available headroom = cap - already-committed (exclude this reservation
-        // from reserved pool since we're about to finalize it).
+        // Project against committed spend plus every OTHER held reservation.
+        // This reservation leaves the held pool as part of this transaction.
         const otherReserved = Math.max(0, reservedSoFar - estimate);
-        const available = Math.max(0, cap - committedSoFar - otherReserved);
-        if (actualUsd > available + 1e-9) {
-          chargedAmount = Math.max(0, available);
-          overage = actualUsd - chargedAmount;
+        const projected = committedSoFar + otherReserved + actualUsd;
+        if (projected > cap + 1e-9) {
+          capExceededBy = projected - cap;
         }
       }
 
@@ -239,17 +240,21 @@ export class BudgetLedger {
              committed_usd = committed_usd + $2,
              updated_at    = now()
          WHERE scope = $3 AND resolver_id = $4 AND local_date = $5`,
-        [estimate, chargedAmount, r.scope, r.resolver_id, r.local_date],
+        [estimate, actualUsd, r.scope, r.resolver_id, r.local_date],
       );
 
-      if (overage !== null && overage > 0) {
-        throw new BudgetError(
-          'invalid_input',
-          `commit: actualUsd ${actualUsd.toFixed(4)} exceeds cap. Charged ${chargedAmount.toFixed(4)}, overage ${overage.toFixed(4)} was NOT recorded. Cap enforcement prevented double-charge but the API call already happened.`,
+      if (capExceededBy !== null && capExceededBy > 0) {
+        return new BudgetError(
+          'cap_exceeded',
+          `commit: actualUsd ${actualUsd.toFixed(4)} exceeded the available cap by ${capExceededBy.toFixed(4)}. ` +
+          'The provider call already happened, so actual spend was recorded and future reservations remain blocked.',
           reservationId,
         );
       }
+      return null;
     });
+
+    if (capError) throw capError;
   }
 
   /** Cancel a held reservation; reserved_usd drops back. Idempotent-ish. */

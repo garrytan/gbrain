@@ -91,6 +91,34 @@ describe('BudgetLedger', () => {
     expect(state?.committedUsd).toBeCloseTo(0.42);
   });
 
+  test('actual overage is recorded truthfully, finalized, and reported after commit', async () => {
+    const ledger = new BudgetLedger(engine);
+    const r = await ledger.reserve({ resolverId: 'x', estimateUsd: 0.1, capUsd: 1.0 });
+    if (r.kind !== 'held') throw new Error('setup');
+
+    let caught: unknown;
+    try {
+      await ledger.commit(r.reservationId, 1.25);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BudgetError);
+    expect((caught as BudgetError).code).toBe('cap_exceeded');
+    const state = await ledger.state('default', 'x');
+    expect(state?.reservedUsd).toBe(0);
+    expect(state?.committedUsd).toBeCloseTo(1.25);
+
+    const rows = await engine.executeRaw<{ status: string }>(
+      'SELECT status FROM budget_reservations WHERE reservation_id = $1',
+      [r.reservationId],
+    );
+    expect(rows[0]?.status).toBe('committed');
+
+    const next = await ledger.reserve({ resolverId: 'x', estimateUsd: 0.01, capUsd: 1.0 });
+    expect(next.kind).toBe('exhausted');
+  });
+
   test('rollback clears reserved', async () => {
     const ledger = new BudgetLedger(engine);
     const r = await ledger.reserve({ resolverId: 'x', estimateUsd: 0.5, capUsd: 1.0 });

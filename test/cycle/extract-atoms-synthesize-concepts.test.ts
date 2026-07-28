@@ -177,6 +177,31 @@ describe('v0.41 T5: runPhaseExtractAtoms via stubbed chat', () => {
     expect((result.details?.failures as unknown[]).length).toBe(1);
   });
 
+  // issue #3218 — when EVERY item's chat() call throws (all-provider-failed),
+  // `transcripts_processed`/`pages_processed` must stay 0 while `failures`
+  // records one entry per item. This is the exact shape the
+  // extract-atoms-drain wiring (`runExtractAtomsDrainForSource`) uses to
+  // derive `providerFailure` (failures.length > 0 && itemsSucceeded === 0),
+  // distinguishing a total outage from the partial-success case above.
+  test('all items fail: transcripts_processed/pages_processed stay 0, every item recorded in failures', async () => {
+    const chat = async (_o: ChatOpts): Promise<never> => {
+      throw new Error('provider unavailable');
+    };
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [
+        { filePath: '/a.txt', content: 'a', contentHash: 'ha' },
+        { filePath: '/b.txt', content: 'b', contentHash: 'hb' },
+      ],
+      _pages: [],
+      _chat: chat as typeof import('../../src/core/ai/gateway.ts').chat,
+    });
+    expect(result.status).toBe('warn');
+    expect(result.details?.atoms_extracted).toBe(0);
+    expect(result.details?.transcripts_processed).toBe(0);
+    expect(result.details?.pages_processed).toBe(0);
+    expect((result.details?.failures as unknown[]).length).toBe(2);
+  });
+
   // v0.41.2.1 regression case (D9 #14 wording): with _pages:[] and same
   // _transcripts, all PRE-EXISTING PhaseResult.details fields match
   // pre-fix values byte-for-byte. The new fields (pages_processed,

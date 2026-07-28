@@ -139,3 +139,48 @@ describe('fixContent', () => {
     expect(fixed).toContain('# Title');
   });
 });
+
+describe('runLintCore exclude (takeover of #2649)', () => {
+  const { mkdtempSync, rmSync, mkdirSync, writeFileSync } = require('node:fs') as typeof import('node:fs');
+  const { tmpdir } = require('node:os') as typeof import('node:os');
+  const { join } = require('node:path') as typeof import('node:path');
+  const { runLintCore } = require('../src/commands/lint.ts') as typeof import('../src/commands/lint.ts');
+
+  const PAGE = '---\ntitle: T\ntype: note\ncreated: 2026-04-11\n---\n\n# T\n\nBody.\n';
+
+  function makeRepo(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-lint-excl-'));
+    writeFileSync(join(dir, 'page.md'), PAGE);
+    writeFileSync(join(dir, 'README.md'), PAGE);
+    mkdirSync(join(dir, 'node_modules', 'dep'), { recursive: true });
+    writeFileSync(join(dir, 'node_modules', 'dep', 'vendor.md'), PAGE);
+    mkdirSync(join(dir, 'software'));
+    writeFileSync(join(dir, 'software', 'notes.md'), PAGE);
+    return dir;
+  }
+
+  test('node_modules is excluded by default; nothing else is', async () => {
+    const dir = makeRepo();
+    try {
+      const result = await runLintCore({ target: dir, contentSanity: { disabled: true } });
+      // page.md + README.md + software/notes.md — vendor.md skipped.
+      expect(result.pages_scanned).toBe(3);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('--exclude basenames skip dirs and files', async () => {
+    const dir = makeRepo();
+    try {
+      const result = await runLintCore({
+        target: dir,
+        contentSanity: { disabled: true },
+        exclude: ['software', 'README.md'],
+      });
+      expect(result.pages_scanned).toBe(1); // only page.md
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

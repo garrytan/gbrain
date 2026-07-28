@@ -112,3 +112,7 @@ describe('computeEmotionalWeight', () => {
     expect(HIGH_EMOTION_TAGS.has('mental-health')).toBe(true);
   });
 });
+
+test('DEFAULT_USER_HOLDER is the canonical owner holder self', () => {
+  expect(DEFAULT_USER_HOLDER).toBe('self');
+});

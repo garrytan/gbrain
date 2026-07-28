@@ -139,8 +139,21 @@ export function autoFixFrontmatter(
     fixes.push({ code: 'NULL_BYTES', description: 'Stripped null bytes' });
   }
 
-  // 2. MISSING_CLOSE — if there's an opener but no closer before a heading,
-  //    insert `---` immediately before the heading. Walk lines once.
+  // 2. MISSING_CLOSE — if there's an opener but no closer at all, insert
+  //    `---` immediately before the first heading-shaped line (best-effort
+  //    guess at where the frontmatter was meant to end).
+  //
+  //    Find the closer FIRST, scanning the full zone — do not stop at the
+  //    first `#`-prefixed line. A `#` line between the opening and closing
+  //    `---` is a YAML comment (comments are valid anywhere in a YAML
+  //    document), not a markdown heading; only the genuine absence of a
+  //    closing `---` counts as MISSING_CLOSE. Mirrors the fix applied to
+  //    the parseMarkdown validator in #2153 — this is the sibling
+  //    reimplementation in the auto-fixer and had the same bug (it broke
+  //    out of the scan on the first heading-shaped line, so a `#` comment
+  //    appearing before a real closing fence was misdetected as
+  //    MISSING_CLOSE and the fix inserted a spurious `---` that split
+  //    valid frontmatter in two, pushing the real keys into the body).
   {
     const lines = working.split('\n');
     let firstNonEmpty = -1;
@@ -149,24 +162,27 @@ export function autoFixFrontmatter(
     }
     if (firstNonEmpty >= 0 && lines[firstNonEmpty].trim() === '---') {
       let closeIdx = -1;
-      let headingIdx = -1;
       for (let i = firstNonEmpty + 1; i < lines.length; i++) {
-        const t = lines[i].trim();
-        if (t === '---') { closeIdx = i; break; }
-        if (/^#{1,6}\s/.test(t)) { headingIdx = i; break; }
+        if (lines[i].trim() === '---') { closeIdx = i; break; }
       }
-      if (closeIdx === -1 && headingIdx >= 0) {
-        const fixed = [
-          ...lines.slice(0, headingIdx),
-          '---',
-          '',
-          ...lines.slice(headingIdx),
-        ];
-        working = fixed.join('\n');
-        fixes.push({
-          code: 'MISSING_CLOSE',
-          description: `Inserted closing --- before heading at line ${headingIdx + 1}`,
-        });
+      if (closeIdx === -1) {
+        let headingIdx = -1;
+        for (let i = firstNonEmpty + 1; i < lines.length; i++) {
+          if (/^#{1,6}\s/.test(lines[i].trim())) { headingIdx = i; break; }
+        }
+        if (headingIdx >= 0) {
+          const fixed = [
+            ...lines.slice(0, headingIdx),
+            '---',
+            '',
+            ...lines.slice(headingIdx),
+          ];
+          working = fixed.join('\n');
+          fixes.push({
+            code: 'MISSING_CLOSE',
+            description: `Inserted closing --- before heading at line ${headingIdx + 1}`,
+          });
+        }
       }
     }
   }

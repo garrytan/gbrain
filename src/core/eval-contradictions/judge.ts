@@ -24,9 +24,67 @@ import { parseSeverity, defaultSeverityForVerdict } from './severity-classify.ts
 import type { JudgeVerdict, ResolutionKind, Verdict } from './types.ts';
 
 const FENCE_RE = /```(?:json)?\s*\n?([\s\S]*?)```/i;
+const FENCE_RE_GLOBAL = /```(?:json)?\s*\n?([\s\S]*?)```/gi;
+
+function repairJsonish(text: string): string {
+  return text
+    .replace(FENCE_RE_GLOBAL, (_, inner) => inner)
+    .replace(/,(\s*[}\]])/g, '$1')
+    .replace(/(['"])?([\w-]+)\1?\s*:/g, '"$2":')
+    .trim();
+}
+
+function* jsonValueCandidates(text: string): Generator<string> {
+  for (let start = 0; start < text.length; start++) {
+    const opener = text[start];
+    if (opener !== '{' && opener !== '[') continue;
+    const closer = opener === '{' ? '}' : ']';
+    const stack: string[] = [closer];
+    let inString = false;
+    let escaped = false;
+    for (let i = start + 1; i < text.length; i++) {
+      const ch = text[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+      if (ch === '{') {
+        stack.push('}');
+      } else if (ch === '[') {
+        stack.push(']');
+      } else if (ch === stack[stack.length - 1]) {
+        stack.pop();
+        if (stack.length === 0) {
+          yield text.slice(start, i + 1);
+          break;
+        }
+      } else if (ch === '}' || ch === ']') {
+        break;
+      }
+    }
+  }
+}
+
+function tryParseJSON(text: string): unknown | null {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
 
 /**
- * Generic 3-strategy LLM JSON parser. Throws when no strategy works rather
+ * Generic 4-strategy LLM JSON parser. Throws when no strategy works rather
  * than fabricating an empty object — caller maps to judge_errors.parse_fail.
  *
  * (We don't reuse parseModelJSON from cross-modal-eval because that one is
@@ -36,34 +94,25 @@ const FENCE_RE = /```(?:json)?\s*\n?([\s\S]*?)```/i;
 export function parseJudgeJSON(text: string): unknown {
   if (!text) throw new Error('parseJudgeJSON: empty response');
   // Strategy 1: direct parse (strict JSON).
-  try {
-    return JSON.parse(text);
-  } catch {
-    // fall through
-  }
+  const direct = tryParseJSON(text);
+  if (direct !== null) return direct;
+
   // Strategy 2: strip ```json fences.
   const fenceMatch = text.match(FENCE_RE);
   if (fenceMatch && fenceMatch[1]) {
-    try {
-      return JSON.parse(fenceMatch[1].trim());
-    } catch {
-      // fall through
-    }
+    const fenced = tryParseJSON(fenceMatch[1].trim());
+    if (fenced !== null) return fenced;
   }
+
   // Strategy 3: common-repairs pass — trailing commas, single→double quotes.
-  const cleaned = text
-    .replace(FENCE_RE, (_, inner) => inner)
-    .replace(/,(\s*[}\]])/g, '$1')
-    .replace(/(['"])?([\w-]+)\1?\s*:/g, '"$2":')
-    .trim();
-  // Extract the first {...} block if there's surrounding prose.
-  const braceMatch = cleaned.match(/\{[\s\S]*\}/);
-  if (braceMatch) {
-    try {
-      return JSON.parse(braceMatch[0]);
-    } catch {
-      // fall through
-    }
+  const cleaned = repairJsonish(text);
+  const repaired = tryParseJSON(cleaned);
+  if (repaired !== null) return repaired;
+
+  // Strategy 4: find the first balanced JSON object/array inside prose.
+  for (const candidate of jsonValueCandidates(cleaned)) {
+    const parsed = tryParseJSON(candidate);
+    if (parsed !== null) return parsed;
   }
   throw new Error('parseJudgeJSON: all strategies failed');
 }
@@ -171,16 +220,34 @@ export function parseVerdict(value: unknown): Verdict {
  * confidence floor — they're informational classifications, not error flags.
  */
 export function normalizeVerdict(raw: unknown): JudgeVerdict {
+  if (Array.isArray(raw)) {
+    if (raw.length !== 1) {
+      throw new Error('judge JSON array must contain exactly one verdict object');
+    }
+    raw = raw[0];
+  }
   if (!raw || typeof raw !== 'object') {
     throw new Error('judge JSON missing or not an object');
   }
   const v = raw as Record<string, unknown>;
   // Parse verdict first so we can throw a useful error before checking other
-  // fields. Old v1-shaped responses (`contradicts: true/false` without
-  // `verdict`) will throw here and the caller maps it to parse_fail — correct
-  // semantics because the prompt now asks for verdict explicitly.
-  let verdict = parseVerdict(v.verdict);
-  const rawConfidence = v.confidence;
+  // fields. v1-shaped `contradicts: true/false` responses are accepted as a
+  // repair for small/local models that understand the task but drift from the
+  // current JSON field name.
+  let verdict: Verdict;
+  if (v.verdict !== undefined) {
+    verdict = parseVerdict(v.verdict);
+  } else if (typeof v.contradicts === 'boolean') {
+    verdict = v.contradicts ? 'contradiction' : 'no_contradiction';
+  } else if (typeof v.contradiction === 'boolean') {
+    verdict = v.contradiction ? 'contradiction' : 'no_contradiction';
+  } else {
+    verdict = parseVerdict(v.verdict);
+  }
+  const rawConfidence =
+    typeof v.confidence === 'string' && v.confidence.trim() !== ''
+      ? Number(v.confidence)
+      : v.confidence;
   if (typeof rawConfidence !== 'number' || !Number.isFinite(rawConfidence)) {
     throw new Error('judge JSON missing or invalid confidence');
   }
@@ -348,7 +415,7 @@ export async function judgeContradiction(input: JudgeInput): Promise<JudgeOutput
   const result = await callFn({
     model: input.model,
     messages: [{ role: 'user', content: prompt }],
-    maxTokens: 200,
+    maxTokens: 1024,
     abortSignal: input.abortSignal,
   });
   if (isRefusalResponse(result)) {

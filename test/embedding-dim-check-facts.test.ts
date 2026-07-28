@@ -122,9 +122,9 @@ describe('buildFactsAlterRecipe', () => {
   });
 
   test('vector recipe uses vector_cosine_ops + vector(N) USING cast', () => {
-    const recipe = buildFactsAlterRecipe(1024, 2048, 'vector');
-    expect(recipe).toContain('vector(2048)');
-    expect(recipe).toContain('USING embedding::vector(2048)');
+    const recipe = buildFactsAlterRecipe(1024, 1536, 'vector');
+    expect(recipe).toContain('vector(1536)');
+    expect(recipe).toContain('USING embedding::vector(1536)');
     expect(recipe).toContain('vector_cosine_ops');
     expect(recipe).not.toContain('halfvec_cosine_ops');
   });
@@ -162,6 +162,14 @@ describe('buildFactsAlterRecipe', () => {
     const recipe = buildFactsAlterRecipe(1536, 1536, 'vector');
     expect(recipe).not.toContain('UPDATE facts SET embedding = NULL');
     expect(recipe).toContain('USING embedding::vector(1536)');
+  });
+
+  test('halfvec recipe skips HNSW rebuild above pgvector cap', () => {
+    const recipe = buildFactsAlterRecipe(1536, 4096, 'halfvec');
+    expect(recipe).toContain('halfvec(4096)');
+    expect(recipe).toContain('Skip reindex');
+    expect(recipe).toContain("exceeds pgvector's HNSW cap of 4000");
+    expect(recipe).not.toMatch(/CREATE INDEX idx_facts_embedding_hnsw[\s\S]*USING hnsw/);
   });
 });
 
