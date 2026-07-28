@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, statSync, realpathSync } from 'fs';
 import { execFileSync } from 'child_process';
-import { join, relative } from 'path';
+import { isAbsolute, join, relative, sep } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import { DELETE_BATCH_SIZE } from '../core/engine-constants.ts';
 import { importFile } from '../core/import-file.ts';
@@ -239,11 +239,12 @@ export interface SyncResult {
 export function estimateSourceTreeTokens(
   localPath: string,
   strategy: 'markdown' | 'code' | 'auto',
+  opts: { includeGitignored?: boolean } = {},
 ): { tokens: number; files: number } {
   let tokens = 0;
   let files = 0;
   try {
-    const fileList = collectSyncableFiles(localPath, { strategy });
+    const fileList = collectSyncableFiles(localPath, { strategy, includeGitignored: opts.includeGitignored });
     for (const fullPath of fileList) {
       try {
         const stat = statSync(fullPath);
@@ -376,6 +377,7 @@ export function estimateInlineNewTokens(
     chunker_version: string | null;
   }>,
   currentChunkerVersion: string,
+  opts: { forceFullTree?: boolean } = {},
 ): InlineEstimate {
   let tokens = 0;
   let changedSources = 0;
@@ -397,6 +399,14 @@ export function estimateInlineNewTokens(
     if (cfg.syncEnabled === false) continue;
     const strategy = cfg.strategy ?? 'markdown';
     const localPath = src.local_path;
+
+    if (opts.forceFullTree) {
+      tokens += estimateSourceTreeTokens(localPath, strategy, { includeGitignored: true }).tokens;
+      changedSources++;
+      hadCeiling = true;
+      ceilingReasons.push('include_gitignored');
+      continue;
+    }
 
     // Rung 2: chunker drift forces a full re-chunk → full re-embed. CEILING.
     if (src.chunker_version !== currentChunkerVersion) {
@@ -542,6 +552,7 @@ interface CostGateContext {
   jsonOut: boolean;
   yesFlag: boolean;
   full: boolean;
+  includeGitignored?: boolean;
   /** Message prefix ('sync --all' | 'sync'). */
   label: string;
 }
@@ -626,7 +637,9 @@ async function runInlineCostGate(
   }
 
   // ── Inline path ───────────────────────────────────────────────
-  const inline = estimateInlineNewTokens(sources, String(CHUNKER_VERSION));
+  const inline = estimateInlineNewTokens(sources, String(CHUNKER_VERSION), {
+    forceFullTree: ctx.includeGitignored === true,
+  });
   // D7A: `--full` runs `performFullSync` → `runEmbedCore({stale:true})`, which
   // sweeps the pre-existing stale backlog INLINE on top of the delta. Price it.
   const costUsd = estimateEmbeddingCostUsd(inline.tokens) + (full ? staleCostUsd : 0);
@@ -764,6 +777,11 @@ export interface SyncOpts {
    * matching the #1433 metafile posture).
    */
   exclude?: string[];
+  /**
+   * Include files matched by .gitignore. Git cannot report untracked ignored
+   * changes in diffs, so sync uses the full filesystem walker when this is set.
+   */
+  includeGitignored?: boolean;
   /**
    * Number of parallel workers for the import phase. When > 1, each worker
    * gets its own small Postgres connection pool and files are dispatched via
@@ -1153,15 +1171,27 @@ function createSyncBaselineCommit(repoPath: string): void {
 }
 
 /**
+ * True when `childReal` is `rootReal` itself or lives inside it. Both arguments
+ * must already be realpath-resolved. Containment is decided by `relative()`
+ * rather than a string prefix, so it holds on Windows too: `realpathSync`
+ * returns backslash paths there, and a literal `rootReal + '/'` prefix can
+ * never match one. A sibling (`root-evil`) is rejected because `relative`
+ * yields `../root-evil`, and a cross-drive path because it yields an absolute.
+ */
+export function isWithinRoot(childReal: string, rootReal: string): boolean {
+  if (childReal === rootReal) return true;
+  const rel = relative(rootReal, childReal);
+  return rel !== '' && rel !== '..' && !rel.startsWith('..' + sep) && !isAbsolute(rel);
+}
+
+/**
  * #774 NAV-1 TOCTOU: true only if filePath realpath-resolves inside gitRoot.
  * Guards symlink escape at the per-file level (a committed symlink whose
  * target lives outside the repo), not just at scope entry.
  */
 function isPathSafe(filePath: string, gitRoot: string): boolean {
   try {
-    const real = realpathSync(filePath);
-    const rootReal = realpathSync(gitRoot);
-    return real === rootReal || real.startsWith(rootReal + '/');
+    return isWithinRoot(realpathSync(filePath), realpathSync(gitRoot));
   } catch {
     return false;
   }
@@ -1932,7 +1962,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // NAV-1/NAV-2 scope-entry guard: the realpath-resolved scope must live
   // inside the realpath-resolved git root. Catches `--src-subpath ../escape`
   // AND a symlinked subdir pointing outside the repo, before any git op runs.
-  if (syncScopeRoot !== gitContextRoot && !syncScopeRoot.startsWith(gitContextRoot + '/')) {
+  if (!isWithinRoot(syncScopeRoot, gitContextRoot)) {
     throw new Error(
       `Sync scope ${syncScopeRoot} resolves outside git repo ${gitContextRoot}. ` +
       `Refusing to sync: possible path traversal via --src-subpath.`,
@@ -2155,6 +2185,14 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
 
   // First sync
   if (!lastCommit) {
+    return performFullSync(engine, fullSyncRoots, headCommit, opts);
+  }
+
+  if (opts.includeGitignored) {
+    slog(
+      `[sync] --include-gitignored: running full filesystem reconcile because ` +
+      `git diff cannot report untracked ignored files.`,
+    );
     return performFullSync(engine, fullSyncRoots, headCommit, opts);
   }
 
@@ -3557,7 +3595,10 @@ async function performFullSync(
   // code --dry-run` always reported zero files even when ~1500 code
   // files were waiting.
   if (opts.dryRun) {
-    let allFiles = collectSyncableFiles(syncScopeRoot, { strategy: opts.strategy ?? 'markdown' });
+    let allFiles = collectSyncableFiles(syncScopeRoot, {
+      strategy: opts.strategy ?? 'markdown',
+      includeGitignored: opts.includeGitignored,
+    });
     if (opts.exclude && opts.exclude.length > 0) {
       allFiles = allFiles.filter(abs => !matchesAnyGlob(relative(syncScopeRoot, abs), opts.exclude));
     }
@@ -3591,6 +3632,7 @@ async function performFullSync(
   const { runImport } = await import('./import.ts');
   const importArgs = [syncScopeRoot];
   if (opts.noEmbed) importArgs.push('--no-embed');
+  if (opts.includeGitignored) importArgs.push('--include-gitignored');
   if (fullConcurrency > 1) importArgs.push('--workers', String(fullConcurrency));
   // v0.31.2: thread strategy through so code-strategy first sync
   // actually enumerates code files (closes bug 1).
@@ -3604,6 +3646,7 @@ async function performFullSync(
     strategy: opts.strategy,
     sourceId: opts.sourceId,
     exclude: opts.exclude,
+    includeGitignored: opts.includeGitignored,
     slugRoot,
     // issue #1939: performFullSync owns the failure ledger + bookmark via the
     // shared gate below; don't let runImport double-record or write its own.
@@ -3716,7 +3759,10 @@ async function performFullSync(
     // #774: scoped syncs store git-root-relative source_paths (slugRoot), so
     // relativize the walk to the same base — otherwise every page mismatches
     // and the mass-delete valve trips on a perfectly healthy scoped source.
-    const currentFiles = collectSyncableFiles(syncScopeRoot, { strategy: opts.strategy ?? 'markdown' })
+    const currentFiles = collectSyncableFiles(syncScopeRoot, {
+      strategy: opts.strategy ?? 'markdown',
+      includeGitignored: opts.includeGitignored,
+    })
       .map(abs => relative(slugRoot ?? syncScopeRoot, abs));
     const rows = await engine.executeRaw<{ slug: string; source_path: string | null }>(
       `SELECT slug, source_path FROM pages WHERE source_id = $1 AND source_path IS NOT NULL AND deleted_at IS NULL`,
@@ -4097,6 +4143,9 @@ Options:
                        subdirectory directly as --repo also works.
   --exclude <glob>     Exclude files matching the glob from sync (repeatable;
                        matched against the scope-relative path).
+  --include-gitignored Include otherwise-syncable files matched by .gitignore.
+                       Forces a full filesystem walk so periodic syncs see
+                       ignored untracked content.
   --dry-run            Show what would be synced without writing.
   --skip-failed        Acknowledge previously-recorded sync failures so
                        the bookmark can advance past unparseable files.
@@ -4120,12 +4169,22 @@ Options:
                        connections per wave ≈ parallel × workers × 2
                        (per-file pool) + parent pool. Pass --parallel 1
                        to force serial.
+  --missing-path M     (with --all) What to do when a source's local_path
+                       does not exist on this machine: 'fail' (default —
+                       loud, current behavior) or 'skip' (classify as
+                       skipped_missing_path: ⊘ in the aggregate, excluded
+                       from error_count and the rc=1 gate). Use skip on
+                       brains whose sources were registered from more
+                       than one machine.
   --json               Emit a structured JSON envelope on stdout
                        ({schema_version: 1, sources, parallel,
-                       ok_count, error_count}). Human banners route to
-                       stderr so '--json | jq' parses cleanly.
-                       Exit codes: 0 = all sources ok, 1 = any error,
-                       2 = cost-prompt-not-confirmed.
+                       ok_count, error_count, skipped_count}). Sources
+                       skipped by --missing-path skip appear with
+                       status 'skipped_missing_path' and their
+                       local_path. Human banners route to stderr so
+                       '--json | jq' parses cleanly.
+                       Exit codes: 0 = all sources ok or skipped,
+                       1 = any error, 2 = cost-prompt-not-confirmed.
   --yes                Accept any interactive prompts (CI / non-TTY).
 
 See also:
@@ -4147,7 +4206,21 @@ See also:
   const skipFailed = args.includes('--skip-failed');
   const retryFailed = args.includes('--retry-failed');
   const noSchemaPack = args.includes('--no-schema-pack'); // v0.41.37.0 #1569
+  const includeGitignored = args.includes('--include-gitignored');
   const syncAll = args.includes('--all');
+  let missingPathMode: MissingPathMode = 'fail';
+  try {
+    missingPathMode = parseMissingPathMode(args);
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(2);
+  }
+  if (missingPathMode !== 'fail' && !syncAll) {
+    // Single-source sync on a missing path should stay loud — an explicit
+    // `--source X` naming an absent checkout is an operator error, not a
+    // multi-machine artifact. Warn instead of silently ignoring the flag.
+    console.error('[gbrain] WARN: --missing-path only applies to `sync --all`; ignored here.');
+  }
   const jsonOut = args.includes('--json');
   const yesFlag = args.includes('--yes');
   // v0.41.6.0 D3: lock-recovery flags. --break-lock (safe) verifies the
@@ -4403,7 +4476,7 @@ See also:
     if (!noEmbed) {
       const mode = willEmbedSynchronously({ v2Enabled, serialFlag, noEmbed });
       const gate = await runInlineCostGate(engine, {
-        sources, mode, dryRun, jsonOut, yesFlag, full, label: 'sync --all',
+        sources, mode, dryRun, jsonOut, yesFlag, full, includeGitignored, label: 'sync --all',
       });
       if (gate.action === 'stop') return;
       autoDeferEmbeds = gate.autoDeferEmbeds;
@@ -4434,14 +4507,40 @@ See also:
       writeHuman(`Skipping ${disabledCount} disabled source(s).`);
     }
 
-    if (activeSources.length === 0) {
+    // --missing-path skip: classify sources whose checkout is not on this
+    // machine instead of failing them (see parseMissingPathMode's rationale).
+    // Under the default 'fail' this is a no-op and behavior is unchanged.
+    let skippedMissingPath: typeof activeSources = [];
+    let runnableSources = activeSources;
+    if (missingPathMode === 'skip') {
+      const parts = partitionMissingPathSources(activeSources, existsSync);
+      runnableSources = parts.runnable;
+      skippedMissingPath = parts.missing;
+      for (const src of skippedMissingPath) {
+        writeHuman(`  ⊘ ${src.name}: skipped — local_path not present on this host (${src.local_path})`);
+      }
+      if (skippedMissingPath.length > 0) {
+        writeHuman(`Skipped ${skippedMissingPath.length} source(s) whose local_path is not present on this host (--missing-path skip).`);
+      }
+    }
+
+    if (runnableSources.length === 0) {
       if (jsonOut) {
         console.log(JSON.stringify({
           schema_version: 1,
-          sources: [],
+          sources: skippedMissingPath
+            .slice()
+            .sort((a, b) => a.id.localeCompare(b.id))
+            .map((s) => ({
+              source_id: s.id,
+              name: s.name,
+              status: 'skipped_missing_path',
+              local_path: s.local_path,
+            })),
           parallel: 0,
           ok_count: 0,
           error_count: 0,
+          skipped_count: skippedMissingPath.length,
         }));
       }
       return;
@@ -4451,11 +4550,20 @@ See also:
     type PerSourceResult = {
       sourceId: string;
       sourceName: string;
-      status: 'ok' | 'error';
+      status: 'ok' | 'error' | 'skipped_missing_path';
       result?: SyncResult;
       error?: string;
+      localPath?: string;
     };
     const perSourceResults: PerSourceResult[] = [];
+    for (const src of skippedMissingPath) {
+      perSourceResults.push({
+        sourceId: src.id,
+        sourceName: src.name,
+        status: 'skipped_missing_path',
+        localPath: src.local_path ?? undefined,
+      });
+    }
 
     // #1633 (Part B): one shared SIGINT controller for the whole --all fan-out.
     // process-cleanup.ts doesn't own SIGINT, so without this Ctrl-C hard-cuts the
@@ -4501,6 +4609,7 @@ See also:
         noEmbed: effectiveNoEmbed,
         noExtract,
         skipFailed, retryFailed, noSchemaPack,
+        includeGitignored,
         sourceId: src.id,
         strategy: cfg.strategy,
         concurrency,
@@ -4564,7 +4673,7 @@ See also:
     };
 
     const parallelEligible =
-      v2Enabled && !serialFlag && engine.kind !== 'pglite' && activeSources.length > 1;
+      v2Enabled && !serialFlag && engine.kind !== 'pglite' && runnableSources.length > 1;
 
     // v0.42.42.0 (#2139, D13C): the v0.40.6.0 (D15) refusal of --skip-failed /
     // --retry-failed under parallel sync is LIFTED. It existed because the
@@ -4578,7 +4687,7 @@ See also:
     // know how the run was actually dispatched. 1 in the serial fallback,
     // capped at min(sourceCount, --max-sources, 8) in the parallel path.
     const effectiveParallel = parallelEligible
-      ? Math.min(activeSources.length, maxSources ?? 8)
+      ? Math.min(runnableSources.length, maxSources ?? 8)
       : 1;
 
     process.on('SIGINT', onAllSigint);
@@ -4602,8 +4711,8 @@ See also:
         );
       }
 
-      writeHuman(`\nParallel sync: ${activeSources.length} sources, ${cap} concurrent workers.\n`);
-      const results = await pMapAllSettled(activeSources, cap, async (src) => {
+      writeHuman(`\nParallel sync: ${runnableSources.length} sources, ${cap} concurrent workers.\n`);
+      const results = await pMapAllSettled(runnableSources, cap, async (src) => {
         const r = await runOne(src);
         return { name: src.name, result: r };
       });
@@ -4611,7 +4720,7 @@ See also:
       writeHuman('\n--- sync --all aggregate ---');
       for (let i = 0; i < results.length; i++) {
         const r = results[i];
-        const src = activeSources[i];
+        const src = runnableSources[i];
         if (r.status === 'fulfilled') {
           writeHuman(`  ✓ ${src.name}: ${r.value.result.status} (added=${r.value.result.added}, modified=${r.value.result.modified}, deleted=${r.value.result.deleted})`);
           perSourceResults.push({
@@ -4632,7 +4741,7 @@ See also:
         }
       }
     } else {
-      for (const src of activeSources) {
+      for (const src of runnableSources) {
         writeHuman(`\n--- Syncing source: ${src.name} ---`);
         try {
           const result = await runOne(src);
@@ -4672,6 +4781,7 @@ See also:
           source_id: r.sourceId,
           name: r.sourceName,
           status: r.status,
+          ...(r.localPath ? { local_path: r.localPath } : {}),
           ...(r.result ? {
             sync_status: r.result.status,
             // #3068: surface the partial reason (e.g. pull_failed) so JSON
@@ -4691,6 +4801,7 @@ See also:
         parallel: effectiveParallel,
         ok_count: okCount,
         error_count: errCount,
+        skipped_count: perSourceResults.filter((r) => r.status === 'skipped_missing_path').length,
       }));
     }
 
@@ -4725,7 +4836,7 @@ See also:
   const singleSourceInterrupt = new AbortController();
   const onSingleSourceSigint = () => { try { singleSourceInterrupt.abort(new Error('SIGINT')); } catch { /* */ } };
   const opts: SyncOpts = {
-    repoPath, dryRun, full, noPull, noEmbed, noExtract, skipFailed, retryFailed, noSchemaPack, sourceId,
+    repoPath, dryRun, full, noPull, noEmbed, noExtract, skipFailed, retryFailed, noSchemaPack, includeGitignored, sourceId,
     strategy: strategyArg, concurrency,
     srcSubpath,
     exclude: excludePatterns.length > 0 ? excludePatterns : undefined,
@@ -4754,7 +4865,7 @@ See also:
         chunker_version: gateRows[0].chunker_version,
       }];
       const gate = await runInlineCostGate(engine, {
-        sources: gateSources, mode: 'inline', dryRun: false, jsonOut, yesFlag, full, label: 'sync',
+        sources: gateSources, mode: 'inline', dryRun: false, jsonOut, yesFlag, full, includeGitignored, label: 'sync',
       });
       if (gate.action === 'stop') return;
       if (gate.autoDeferEmbeds) {
@@ -4887,6 +4998,63 @@ See also:
   }
 }
 
+/** Mode for `sync --all --missing-path`: what to do when a source's
+ * local_path does not exist on this machine. */
+export type MissingPathMode = 'fail' | 'skip';
+
+/**
+ * Parse `--missing-path <fail|skip>` (default: fail).
+ *
+ * Why the flag exists: `sources.local_path` is machine-specific state in a
+ * brain-wide table. Any brain whose sources were registered from more than
+ * one machine — or a sanctioned setup mid-migration (topologies.md Topology 2,
+ * or the system-of-record git flow before every repo is cloned here) — has
+ * sources whose checkout simply is not present on the machine running
+ * `sync --all`. Each used to surface as a hard failure ("Not a git
+ * repository: <path>") and force rc=1 on every run; on one observed fleet
+ * that was 12 phantom failures per hour, which trains operators to ignore
+ * the exit code.
+ *
+ * The DEFAULT stays `fail`: on a single-machine brain a missing local_path
+ * usually means an unmounted volume or a deleted checkout, and silently
+ * skipping it would hide real data loss. Skip is an explicit opt-in.
+ *
+ * Throws on a bad/absent value with a paste-ready hint (caller converts to
+ * stderr + exit 2, same as other flag-misuse exits).
+ */
+export function parseMissingPathMode(args: string[]): MissingPathMode {
+  const idx = args.indexOf('--missing-path');
+  if (idx === -1) return 'fail';
+  const val = args[idx + 1];
+  if (val === 'fail' || val === 'skip') return val;
+  throw new Error(
+    `--missing-path expects 'fail' or 'skip', got: ${val ?? '(nothing)'}. ` +
+    `Use \`--missing-path skip\` to classify sources whose local_path is not ` +
+    `present on this machine as skipped instead of failed, or \`--missing-path ` +
+    `fail\` (the default) to keep them loud.`,
+  );
+}
+
+/**
+ * Partition `--all` sources by whether their local_path exists on THIS
+ * machine. Classification is driven only by the injected predicate so tests
+ * never touch the filesystem. A null local_path passes through as runnable —
+ * pure-DB sources are already excluded from `--all` by the
+ * `local_path IS NOT NULL` SELECT; this is defensive, not load-bearing.
+ */
+export function partitionMissingPathSources<T extends { local_path: string | null }>(
+  sources: T[],
+  pathExists: (p: string) => boolean,
+): { runnable: T[]; missing: T[] } {
+  const runnable: T[] = [];
+  const missing: T[] = [];
+  for (const s of sources) {
+    if (s.local_path != null && !pathExists(s.local_path)) missing.push(s);
+    else runnable.push(s);
+  }
+  return { runnable, missing };
+}
+
 /**
  * v0.40.3.0 — resolve effective per-source concurrency for `sync --all`.
  *
@@ -4964,6 +5132,7 @@ export async function syncOneSource(
     noSchemaPack?: boolean;
     /** v0.42.7 #1696: propagate --no-extract into every per-source sync. */
     noExtract?: boolean;
+    includeGitignored?: boolean;
   },
 ): Promise<{ result: SyncResult; log: string }> {
   const cfg = (src.config || {}) as { strategy?: 'markdown' | 'code' | 'auto' };
@@ -4978,6 +5147,7 @@ export async function syncOneSource(
     skipFailed: shared.skipFailed,
     retryFailed: shared.retryFailed,
     noSchemaPack: shared.noSchemaPack,
+    includeGitignored: shared.includeGitignored,
     sourceId: src.id,
     strategy: cfg.strategy,
     concurrency: shared.concurrency,

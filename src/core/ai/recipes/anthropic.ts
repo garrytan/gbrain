@@ -24,6 +24,7 @@ export const anthropic: Recipe = {
     chat: {
       models: [
         'claude-fable-5',
+        'claude-opus-5',
         'claude-opus-4-8',
         'claude-opus-4-7',
         'claude-sonnet-5',

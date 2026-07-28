@@ -7,6 +7,7 @@ import {
   inferLinkType,
   makeResolver,
   parseTimelineEntries,
+  deriveTimelineAnchor,
   isAutoLinkEnabled,
   FRONTMATTER_LINK_MAP,
   unwrapWikilink,
@@ -141,6 +142,17 @@ describe('extractEntityRefs', () => {
     expect(wikiRefs[0].needsResolution).toBe(true);
   });
 
+  test('recognizes reference-page wikilinks as concrete targets', () => {
+    const refs = extractEntityRefs('See [[reference/mcminnville-market-data]] for source context.');
+    expect(refs.length).toBe(1);
+    expect(refs[0]).toMatchObject({
+      name: 'reference/mcminnville-market-data',
+      slug: 'reference/mcminnville-market-data',
+      dir: 'reference',
+    });
+    expect(refs[0].needsResolution).toBeUndefined();
+  });
+
   test('skips qualified-syntax tokens (those belong to 2a)', () => {
     // [[wiki:topics/ai]] looks like 2a's qualified shape — even though
     // it wouldn't satisfy DIR_PATTERN, 2c must not claim it either
@@ -269,6 +281,53 @@ describe('extractPageLinks', () => {
     const sourceLink = candidates.find(c => c.linkType === 'source');
     expect(sourceLink).toBeDefined();
     expect(sourceLink!.targetSlug).toBe('meetings/2026-01-15');
+  });
+
+  // ─── global_basename for frontmatter link fields (issue #972 follow-up) ───
+
+  test('frontmatter [[wikilink]] resolves via global_basename when resolve() misses', async () => {
+    // `sources: [[2025-12-25_mentor-extraction]]` — bare title, no '/', so the
+    // standard resolver misses; the basename index finds the single match.
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async (name) =>
+        name === '2025-12-25_mentor-extraction'
+          ? ['trading/raw/2025-12-25_mentor-extraction']
+          : [],
+    };
+    const { candidates } = await extractPageLinks(
+      'trading/wiki/backtesting', 'Body.',
+      { sources: ['[[2025-12-25_mentor-extraction]]'] },
+      'concept', resolver, { globalBasename: true },
+    );
+    // `sources` is direction:'incoming' → edge is resolved → page.
+    const edge = candidates.find(c => c.linkType === 'discussed_in');
+    expect(edge).toBeDefined();
+    expect(edge!.fromSlug).toBe('trading/raw/2025-12-25_mentor-extraction');
+    expect(edge!.targetSlug).toBe('trading/wiki/backtesting');
+  });
+
+  test('frontmatter basename fallback stays unresolved when ambiguous (>1 match)', async () => {
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async () => ['a/dup', 'b/dup'],
+    };
+    const { candidates, unresolved } = await extractPageLinks(
+      'wiki/x', 'Body.', { sources: ['[[dup]]'] }, 'concept', resolver, { globalBasename: true },
+    );
+    expect(candidates.find(c => c.linkType === 'discussed_in')).toBeUndefined();
+    expect(unresolved.some(u => u.field === 'sources')).toBe(true);
+  });
+
+  test('frontmatter basename fallback is gated OFF when globalBasename is false', async () => {
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async () => ['raw/note'],
+    };
+    const { candidates } = await extractPageLinks(
+      'wiki/x', 'Body.', { sources: ['[[note]]'] }, 'concept', resolver, // globalBasename omitted = false
+    );
+    expect(candidates.find(c => c.linkType === 'discussed_in')).toBeUndefined();
   });
 
   test('extracts bare slug references in text', async () => {
@@ -791,6 +850,55 @@ More prose here.
 - **2026-02-20** | Another event`;
     const entries = parseTimelineEntries(content);
     expect(entries.length).toBe(2);
+  });
+});
+
+// ─── deriveTimelineAnchor ──────────────────────────────────────
+
+describe('deriveTimelineAnchor', () => {
+  test('anchors at a frontmatter effective_date with the page title as summary', () => {
+    const a = deriveTimelineAnchor({
+      slug: 'meetings/2026-04-24-handover',
+      title: 'Ops handover',
+      effectiveDate: new Date('2026-04-24T09:00:00Z'),
+      effectiveDateSource: 'event_date',
+    });
+    expect(a).toEqual({ date: '2026-04-24', summary: 'Ops handover', detail: '' });
+  });
+
+  test('accepts a filename-sourced date and an ISO-string effectiveDate', () => {
+    const a = deriveTimelineAnchor({
+      slug: 'daily/2022-04-20-standup',
+      title: '',
+      effectiveDate: '2022-04-20',
+      effectiveDateSource: 'filename',
+    });
+    expect(a).toEqual({ date: '2022-04-20', summary: '2022-04-20-standup', detail: '' });
+  });
+
+  test('returns null for the fallback (updated_at) source — not a real content date', () => {
+    expect(deriveTimelineAnchor({
+      slug: 'notes/x', title: 'X',
+      effectiveDate: new Date('2026-01-01T00:00:00Z'),
+      effectiveDateSource: 'fallback',
+    })).toBeNull();
+  });
+
+  test('returns null when no date or no source', () => {
+    expect(deriveTimelineAnchor({ slug: 'a', effectiveDate: null, effectiveDateSource: 'date' })).toBeNull();
+    expect(deriveTimelineAnchor({ slug: 'a', effectiveDate: new Date('2026-01-01Z'), effectiveDateSource: null })).toBeNull();
+  });
+
+  test('returns null on an unparseable date string', () => {
+    expect(deriveTimelineAnchor({ slug: 'a', title: 'A', effectiveDate: 'not-a-date', effectiveDateSource: 'date' })).toBeNull();
+  });
+
+  test('falls back to the slug basename when title is empty', () => {
+    const a = deriveTimelineAnchor({
+      slug: 'people/jane-example-com', title: '   ',
+      effectiveDate: '2025-12-31', effectiveDateSource: 'published',
+    });
+    expect(a?.summary).toBe('jane-example-com');
   });
 });
 

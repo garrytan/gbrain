@@ -128,6 +128,24 @@ describe('runLlmCall — fail-open paths', () => {
       expect(result).toBeNull();
     });
   });
+  test('caller-selected control-flow error propagates', async () => {
+    await withEnv({ ANTHROPIC_API_KEY: 'sk-test' }, async () => {
+      const stop = new Error('hard budget stop');
+      await expect(
+        runLlmCall<unknown>({
+          shape: 'fallback',
+          modelStr: 'claude-haiku-4-5',
+          content: 'hello',
+          system: 'test',
+          parse: () => ({}),
+          chatTransport: async () => {
+            throw stop;
+          },
+          propagateError: (error) => error === stop,
+        }),
+      ).rejects.toBe(stop);
+    });
+  });
   test('parse failure → fail-open null, not cached', async () => {
     await withEnv({ ANTHROPIC_API_KEY: 'sk-test' }, async () => {
       let calls = 0;
@@ -151,6 +169,34 @@ describe('runLlmCall — fail-open paths', () => {
     });
   });
 });
+
+test.each(['length', 'refusal', 'content_filter'] as const)(
+  'non-terminal %s output is neither parsed nor cached',
+  async (stopReason) => {
+    await withEnv({ ANTHROPIC_API_KEY: 'sk-test' }, async () => {
+      let calls = 0;
+      let parses = 0;
+      const opts = {
+        shape: 'fallback' as const,
+        modelStr: 'claude-haiku-4-5',
+        content: `partial-${stopReason}`,
+        system: 'test',
+        parse: (text: string) => {
+          parses++;
+          return parseLlmJson<{ ok: boolean }>(text);
+        },
+        chatTransport: async () => {
+          calls++;
+          return { ...makeChatResult('{"ok": true}'), stopReason };
+        },
+      };
+      expect(await runLlmCall(opts)).toBeNull();
+      expect(await runLlmCall(opts)).toBeNull();
+      expect(calls).toBe(2);
+      expect(parses).toBe(0);
+    });
+  },
+);
 
 describe('parseLlmJson — 4-strategy fallback', () => {
   test('direct parse object', () => {

@@ -36,7 +36,7 @@ import type {
 } from '../types.ts';
 import type { BrainEngine } from '../../engine.ts';
 import type { GBrainConfig } from '../../config.ts';
-import { loadConfig } from '../../config.ts';
+import { loadConfig, isConfigTruthy } from '../../config.ts';
 import { buildBrainTools, filterAllowedTools } from '../tools/brain-allowlist.ts';
 import {
   acquireLease,
@@ -253,8 +253,10 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     // provider in src/core/ai/recipes/). When OFF, route through the legacy
     // Anthropic-direct path AND refuse non-Anthropic models loudly.
     const useGatewayLoopRaw = await engine.getConfig('agent.use_gateway_loop').catch(() => null);
-    const useGatewayLoop = typeof useGatewayLoopRaw === 'string' &&
-      (useGatewayLoopRaw === 'true' || useGatewayLoopRaw === '1');
+    // #2753: share the doctor's truthiness set. Before this, the doctor accepted
+    // yes/on but the worker did not, so `config set ... yes` reported healthy
+    // here and still refused the job below.
+    const useGatewayLoop = isConfigTruthy(useGatewayLoopRaw);
     if (!useGatewayLoop && !isAnthropicProvider(model)) {
       throw new Error(
         `subagent job: resolved model "${model}" is non-Anthropic but agent.use_gateway_loop is not enabled. ` +
