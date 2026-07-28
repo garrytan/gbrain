@@ -53,8 +53,9 @@ intent and was instructed to return only a slug or `none`.
 Scope: 2 variants × 20 development fixtures × 3 repeats = 120 calls,
 parallelism 9.
 
-| Candidate | Strict calls | Positive | Abstention | Per-repeat |
+| Variant | Strict calls | Positive | Abstention | Per-repeat |
 |---|---:|---:|---:|---|
+| `functional-areas` reference | 42/60 (70.0%) | 28/45 | 14/15 | 14, 13, 15 / 20 |
 | `yaml-compressed` | **57/60 (95.0%)** | 42/45 | **15/15** | 18, 19, 20 / 20 |
 | `hierarchical` | **53/60 (88.3%)** | 40/45 | 13/15 | 19, 17, 17 / 20 |
 
@@ -70,6 +71,20 @@ receipt sha256:
 
 Receipt:
 `/root/audit-artifacts/gbrain-consolidation-20260728/resolver-cli-eval-2026-07-28T16-33-00-226Z.jsonl`.
+
+The reference was evaluated afterward with the same CLI, prompt, fixtures and
+three-repeat protocol (60 calls, 60 unique keys, zero CLI errors):
+
+```text
+/root/audit-artifacts/gbrain-consolidation-20260728/resolver-cli-eval-2026-07-28T17-50-26-637Z.jsonl
+sha256 88752b150d3f6fcf9d4350d67b55f4c094015eda1555053af59029c47194c023
+```
+
+Strict deltas against the reference are +25.0pp for YAML and +18.3pp for the
+hierarchical candidate. These are development-corpus deltas, not unbiased
+compression gains. Nine of the reference's 18 failures are the three targets
+`cron-scheduler`, `reports`, and `migrate`, which were added to the candidates
+after the development corpus was reviewed.
 
 The ten strict failures were:
 

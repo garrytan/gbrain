@@ -118,8 +118,9 @@ configured Hermes CLI:
 - rules and persistent memory injection disabled with `--ignore-rules`;
 - exact-slug scoring, with `none` required for abstention.
 
-| Candidate | Strict calls | Positive cases | Abstentions | Per-repeat |
+| Variant | Strict calls | Positive cases | Abstentions | Per-repeat |
 |---|---:|---:|---:|---|
+| `functional-areas` reference | 42/60 (70.0%) | 28/45 | 14/15 | 14/20, 13/20, 15/20 |
 | `yaml-compressed` | **57/60 (95.0%)** | 42/45 | **15/15** | 18/20, 19/20, 20/20 |
 | `hierarchical` | **53/60 (88.3%)** | 40/45 | 13/15 | 19/20, 17/20, 17/20 |
 
@@ -142,6 +143,19 @@ This run is useful candidate evidence, not a replacement for the canonical
 Anthropic baseline: it uses a different model/CLI, a development corpus
 reviewed while authoring the candidates, and repeated calls rather than a
 provider-controlled seed.
+
+The same configured-CLI protocol was then run against the
+`functional-areas` reference (60 additional calls, zero CLI errors):
+
+```text
+/root/audit-artifacts/gbrain-consolidation-20260728/resolver-cli-eval-2026-07-28T17-50-26-637Z.jsonl
+sha256 88752b150d3f6fcf9d4350d67b55f4c094015eda1555053af59029c47194c023
+```
+
+YAML is +25.0pp and hierarchical +18.3pp over that reference on strict calls.
+This delta is not an unbiased compression estimate: 9/18 reference failures
+are on `cron-scheduler`, `reports`, and `migrate`, three targets added to the
+candidate dispatcher lists after this development corpus was reviewed.
 
 ## How to reproduce
 
@@ -208,10 +222,12 @@ your own instruction explaining the dispatcher list.
 4. Same-author training corpus + variants. Held-out mitigates partially.
 5. Five vague-intent abstention cases exist in the compression development
    corpus, but independent blind adversarial fixtures are still pending.
-6. **Compression follow-up:** configured-CLI development evidence now exists
-   (95.0% and 88.3% strict-call accuracy). The unsupported prior `20/20`
-   statement remains withdrawn; blind and canonical-harness confirmation is
-   still pending. See `compression-followup-2026-07-24.md`.
+6. **Compression follow-up:** configured-CLI development evidence now compares
+   the reference (70.0%), YAML (95.0%), and hierarchical (88.3%). The
+   unsupported prior `20/20` statement remains withdrawn; the observed gains
+   are partly contaminated by corpus-driven dispatcher additions. Blind and
+   canonical-harness confirmation is still pending. See
+   `compression-followup-2026-07-24.md`.
 
 See `TODOS.md` for the full list.
 
