@@ -92,6 +92,20 @@ export interface Check {
 }
 
 /**
+ * Resolve a files.storage_path against the root of the source that owns it.
+ * The global sync.repo_path is only a legacy fallback: on a multi-source brain
+ * it may point at a completely different checkout.
+ */
+export function resolveImageAssetPath(
+  storagePath: string,
+  sourceLocalPath: string | null,
+  fallbackRepoRoot: string,
+): string {
+  if (isAbsolute(storagePath)) return storagePath;
+  return join(sourceLocalPath ?? fallbackRepoRoot, storagePath);
+}
+
+/**
  * Structured doctor report. Stable shape consumed by:
  *   - gbrain doctor --json (CLI)
  *   - run_doctor MCP op (remote callers)
@@ -7510,21 +7524,26 @@ export async function buildChecks(
   if (engine) {
     progress.heartbeat('image_assets');
     try {
-      const rows = await engine.executeRaw<{ storage_path: string }>(
-        `SELECT storage_path FROM files WHERE mime_type LIKE 'image/%' LIMIT 1000`
+      const rows = await engine.executeRaw<{
+        storage_path: string;
+        source_id: string | null;
+        source_local_path: string | null;
+      }>(
+        `SELECT f.storage_path, f.source_id, s.local_path AS source_local_path
+           FROM files f
+           LEFT JOIN sources s ON s.id = COALESCE(f.source_id, 'default')
+          WHERE f.mime_type LIKE 'image/%'
+          LIMIT 1000`
       );
       let vanished = 0;
       const vanishedPaths: string[] = [];
       const fs = await import('node:fs');
-      const nodePath = await import('node:path');
       // storage_path is repo-relative for sync-ingested assets. Resolving
       // against cwd made this check a false-positive WARN whenever doctor
       // ran outside the brain repo.
       const repoRoot = (await engine.getConfig('sync.repo_path')) ?? process.cwd();
       for (const r of rows) {
-        const abs = nodePath.isAbsolute(r.storage_path)
-          ? r.storage_path
-          : nodePath.join(repoRoot, r.storage_path);
+        const abs = resolveImageAssetPath(r.storage_path, r.source_local_path, repoRoot);
         try {
           fs.statSync(abs);
         } catch {
