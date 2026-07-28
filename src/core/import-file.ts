@@ -113,6 +113,7 @@ const MAX_FENCES_PER_PAGE = Number.parseInt(process.env.GBRAIN_MAX_FENCES_PER_PA
 async function extractFencedChunks(
   markdown: string,
   startChunkIndex: number,
+  maxEmbedTokens?: number,
 ): Promise<ChunkInput[]> {
   const out: ChunkInput[] = [];
   // Fast path: most pages (prose, tables, converted docs) contain no code
@@ -155,7 +156,7 @@ async function extractFencedChunks(
     const lang = detectCodeLanguage(pseudoPath);
     if (!lang) continue;
     try {
-      const chunks = await chunkCodeText(text, pseudoPath);
+      const chunks = await chunkCodeText(text, pseudoPath, { maxEmbedTokens });
       for (const c of chunks) {
         out.push({
           chunk_index: startChunkIndex + indexOffset++,
@@ -388,6 +389,10 @@ export async function importFromContent(
   let pageQuarantined = false;
   let pageFlagged = false;
   let pageFlagReason: 'markup_heavy' | 'oversized' | undefined;
+  // Opt-in estimated-token chunk cap (embedding_max_chunk_tokens config
+  // key) — resolved from the same effective config as the sanity gate and
+  // threaded into the chunkers below. undefined (the default) = no cap.
+  let maxEmbedTokens: number | undefined;
   {
     const baseCfg = loadConfig();
     let effectiveCfg = baseCfg;
@@ -401,6 +406,11 @@ export async function importFromContent(
       const msg = err instanceof Error ? err.message : String(err);
       process.stderr.write(`[gbrain] content-sanity: DB config lift failed (${msg}); falling back to file/env\n`);
     }
+    const rawMaxEmbedTokens = effectiveCfg?.embedding_max_chunk_tokens;
+    maxEmbedTokens =
+      typeof rawMaxEmbedTokens === 'number' && Number.isFinite(rawMaxEmbedTokens) && rawMaxEmbedTokens > 0
+        ? Math.floor(rawMaxEmbedTokens)
+        : undefined;
     const cs = effectiveCfg?.content_sanity ?? {};
     // GBRAIN_NO_SANITY=1 fast-path: loadConfig() returns null when
     // there's no `~/.gbrain/config.json` AND no DATABASE_URL env var
@@ -670,12 +680,12 @@ export async function importFromContent(
   const embedSkipped = isEmbedSkipped(parsed.frontmatter) || isQuarantined(parsed.frontmatter);
   if (!embedSkipped) {
     if (parsed.compiled_truth.trim()) {
-      for (const c of chunkText(parsed.compiled_truth)) {
+      for (const c of chunkText(parsed.compiled_truth, { maxEmbedTokens })) {
         chunks.push({ chunk_index: chunks.length, chunk_text: c.text, chunk_source: 'compiled_truth' });
       }
     }
     if (parsed.timeline?.trim()) {
-      for (const c of chunkText(parsed.timeline)) {
+      for (const c of chunkText(parsed.timeline, { maxEmbedTokens })) {
         chunks.push({ chunk_index: chunks.length, chunk_text: c.text, chunk_source: 'timeline' });
       }
     }
@@ -683,7 +693,7 @@ export async function importFromContent(
     // v0.20.0 Cathedral II Layer 8 D2 — extract fenced code blocks from
     // compiled_truth as first-class code chunks.
     if (parsed.compiled_truth.trim()) {
-      const fenceChunks = await extractFencedChunks(parsed.compiled_truth, chunks.length);
+      const fenceChunks = await extractFencedChunks(parsed.compiled_truth, chunks.length, maxEmbedTokens);
       chunks.push(...fenceChunks);
     }
   }

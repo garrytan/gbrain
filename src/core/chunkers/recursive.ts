@@ -17,7 +17,13 @@
  * Lossless invariant: non-overlapping portions reassemble to original.
  */
 
-import { countCJKAwareWords, CJK_SENTENCE_DELIMITERS, CJK_CLAUSE_DELIMITERS } from '../cjk.ts';
+import {
+  countCJKAwareWords,
+  CJK_SENTENCE_DELIMITERS,
+  CJK_CLAUSE_DELIMITERS,
+  charEmbedTokenWeight,
+  estimateEmbeddingTokens,
+} from '../cjk.ts';
 
 /**
  * Markdown chunker version. Folded into the per-page chunker_version column
@@ -48,6 +54,21 @@ export interface ChunkOptions {
   chunkSize?: number;    // target words per chunk (default 300)
   chunkOverlap?: number; // overlap words (default 50)
   maxChars?: number;     // hard cap on any chunk's char length (default 6000)
+  /**
+   * Opt-in hard cap on any chunk's ESTIMATED embedding tokens, for
+   * embedding backends with strict per-request token limits (e.g. a local
+   * llama-server with `-ub 2048` hard-fails past ~2,050 tokens/chunk;
+   * Ollama's runner EOFs similarly). Estimate = conservative per-char-class
+   * weights (see cjk.ts estimateEmbeddingTokens) — deliberately high, so
+   * the real tokenizer count stays below this value. Pick a value that
+   * leaves headroom for the contextual-retrieval prefix (≤ ~630 chars),
+   * e.g. 1500 under a ~2,050-token server limit.
+   *
+   * UNSET (default): no token cap — chunking behavior is byte-identical
+   * to previous releases. Wired to the `embedding_max_chunk_tokens`
+   * config key by the import path.
+   */
+  maxEmbedTokens?: number;
 }
 
 export interface TextChunk {
@@ -73,6 +94,7 @@ export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
   const chunkSize = opts?.chunkSize || 300;
   const chunkOverlap = opts?.chunkOverlap || 50;
   const maxChars = opts?.maxChars || 6000;
+  const maxEmbedTokens = opts?.maxEmbedTokens;
 
   if (!text || text.trim().length === 0) return [];
 
@@ -89,8 +111,11 @@ export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
 
   const wordCount = countWords(stripped);
   if (wordCount <= chunkSize) {
-    // Single-chunk path: still apply the maxChars cap.
-    const capped = capByChars(stripped.trim(), maxChars);
+    // Single-chunk path: still apply the maxChars cap (+ opt-in token cap).
+    let capped = capByChars(stripped.trim(), maxChars);
+    if (maxEmbedTokens) {
+      capped = capped.flatMap((t) => capByEstimatedTokens(t, maxEmbedTokens));
+    }
     return capped.map((t, i) => ({ text: t, index: i }));
   }
 
@@ -101,9 +126,15 @@ export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
   // v0.32.7: hard char cap. Catches pathological CJK + whitespace-less text
   // that the word-level pipeline can't bound (a single Chinese paragraph can
   // exceed 8192 OpenAI embedding tokens at any word count).
+  // Opt-in estimated-token cap on top (maxEmbedTokens) — the char cap alone
+  // passes token-dense content (URL soup at ~1.6 chars/token) that overflows
+  // strict embedding-server limits.
   const capped: string[] = [];
   for (const chunk of withOverlap) {
-    capped.push(...capByChars(chunk.trim(), maxChars));
+    for (const piece of capByChars(chunk.trim(), maxChars)) {
+      if (maxEmbedTokens) capped.push(...capByEstimatedTokens(piece, maxEmbedTokens));
+      else capped.push(piece);
+    }
   }
   return capped.map((t, i) => ({ text: t, index: i }));
 }
@@ -128,6 +159,69 @@ function capByChars(text: string, maxChars: number): string[] {
     const slice = text.slice(i, i + maxChars).trim();
     if (slice.length > 0) out.push(slice);
     if (i + maxChars >= text.length) break;
+  }
+  return out;
+}
+
+/**
+ * How far back (in chars) the token cap looks for a friendly cut point
+ * before falling back to a hard cut. 300 covers typical rollup/list line
+ * lengths so forced splits land at line starts, not mid-URL.
+ */
+const TOKEN_CAP_CUT_LOOKBACK = 300;
+
+/**
+ * Hard-cap a chunk's ESTIMATED embedding tokens (opt-in via
+ * ChunkOptions.maxEmbedTokens). Final safety pass — runs after capByChars
+ * on every chunk, so no upstream miscounting (whitespace-word fallback,
+ * overlap inflation, char-cap survivors) can emit a chunk past the cap.
+ *
+ * Cut placement prefers, within the last TOKEN_CAP_CUT_LOOKBACK chars of
+ * the window: a newline, then any whitespace, then a hard cut. This keeps
+ * forced splits off mid-line/mid-URL positions for list-shaped content
+ * and inside code fences. No overlap is added; pieces reassemble
+ * byte-for-byte (`pieces.join('') === text`) — boundary whitespace is
+ * kept with the leading piece, never dropped.
+ *
+ * @internal exported for the code chunker (code.ts) and tests.
+ */
+export function capByEstimatedTokens(text: string, maxTokens: number): string[] {
+  if (text.length === 0) return [];
+  if (estimateEmbeddingTokens(text) <= maxTokens) return [text];
+
+  const out: string[] = [];
+  let start = 0;
+  while (start < text.length) {
+    // Greedily extend the window until the next char would break the cap.
+    // Always take at least one char so the loop makes forward progress.
+    let est = 0;
+    let end = start;
+    while (end < text.length) {
+      const w = charEmbedTokenWeight(text.charCodeAt(end));
+      if (est + w > maxTokens && end > start) break;
+      est += w;
+      end++;
+    }
+
+    if (end < text.length) {
+      const windowStart = Math.max(start + 1, end - TOKEN_CAP_CUT_LOOKBACK);
+      let cut = text.lastIndexOf('\n', end - 1);
+      if (cut < windowStart) {
+        cut = -1;
+        for (let i = end - 1; i >= windowStart; i--) {
+          const code = text.charCodeAt(i);
+          if (code === 0x20 || (code >= 0x09 && code <= 0x0d)) {
+            cut = i;
+            break;
+          }
+        }
+      }
+      if (cut >= windowStart) end = cut + 1;
+    }
+
+    const slice = text.slice(start, end);
+    if (slice.length > 0) out.push(slice);
+    start = end;
   }
   return out;
 }

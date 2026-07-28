@@ -331,4 +331,33 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
       expect(merged?.engine).toBe('pglite');
     });
   });
+  describe('embedding_max_chunk_tokens merge', () => {
+    test('DB value fills in when file/env did not set it', async () => {
+      const base: GBrainConfig = { engine: 'postgres' };
+      const engine = makeEngine({ embedding_max_chunk_tokens: '1500' });
+      const merged = await loadConfigWithEngine(engine, base);
+      expect(merged?.embedding_max_chunk_tokens).toBe(1500);
+    });
+
+    test('file/env value wins over DB value', async () => {
+      const base: GBrainConfig = { engine: 'postgres', embedding_max_chunk_tokens: 1200 };
+      const engine = makeEngine({ embedding_max_chunk_tokens: '1500' });
+      const merged = await loadConfigWithEngine(engine, base);
+      expect(merged?.embedding_max_chunk_tokens).toBe(1200);
+    });
+
+    test('unset everywhere stays undefined (cap is opt-in)', async () => {
+      const base: GBrainConfig = { engine: 'postgres' };
+      const merged = await loadConfigWithEngine(makeEngine({}), base);
+      expect(merged?.embedding_max_chunk_tokens).toBeUndefined();
+    });
+
+    test('non-numeric and non-positive DB values are ignored', async () => {
+      const base: GBrainConfig = { engine: 'postgres' };
+      for (const bad of ['abc', '0', '-100', '']) {
+        const merged = await loadConfigWithEngine(makeEngine({ embedding_max_chunk_tokens: bad }), base);
+        expect(merged?.embedding_max_chunk_tokens).toBeUndefined();
+      }
+    });
+  });
 });

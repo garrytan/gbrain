@@ -73,6 +73,25 @@ export interface GBrainConfig {
   embedding_model?: string;
   embedding_dimensions?: number;
   /**
+   * Opt-in hard cap on any chunk's ESTIMATED embedding tokens, for
+   * embedding backends with strict per-request token limits (e.g. a local
+   * llama-server started with `-ub 2048` hard-fails past ~2,050 tokens per
+   * chunk; Ollama's runner EOFs similarly past its physical batch size).
+   * The estimate is the conservative CJK-aware per-char-class heuristic in
+   * cjk.ts (deliberately an overestimate, so the real tokenizer count stays
+   * below the cap — for Latin prose the ASCII weight overstates real
+   * tokenization ~3×, so tight caps split long English chunks that a real
+   * tokenizer would accept; that conservatism is the guarantee's price).
+   * Pick a value that leaves headroom for the contextual-retrieval prefix,
+   * e.g. 1500 under a ~2,050-token limit.
+   *
+   * UNSET (default): no cap — chunking is byte-identical to previous
+   * releases. Applies to newly (re)ingested content only; run
+   * `gbrain reindex --markdown` after setting it to re-chunk existing
+   * pages (no chunker-version bump is involved).
+   */
+  embedding_max_chunk_tokens?: number;
+  /**
    * v0.37 (D9): user opted into deferred-setup mode at init time via
    * `gbrain init --no-embedding`. When true, embed callsites and `gbrain
    * import` refuse with a `gbrain config set embedding_model <id>` hint
@@ -583,6 +602,7 @@ export function loadConfig(): GBrainConfig | null {
     ...(process.env.OPENROUTER_API_KEY ? { openrouter_api_key: process.env.OPENROUTER_API_KEY } : {}),
     ...(process.env.GBRAIN_EMBEDDING_MODEL ? { embedding_model: process.env.GBRAIN_EMBEDDING_MODEL } : {}),
     ...(process.env.GBRAIN_EMBEDDING_DIMENSIONS ? { embedding_dimensions: parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS, 10) } : {}),
+    ...(process.env.GBRAIN_EMBEDDING_MAX_CHUNK_TOKENS ? { embedding_max_chunk_tokens: parseInt(process.env.GBRAIN_EMBEDDING_MAX_CHUNK_TOKENS, 10) } : {}),
     ...(process.env.GBRAIN_EXPANSION_MODEL ? { expansion_model: process.env.GBRAIN_EXPANSION_MODEL } : {}),
     ...(process.env.GBRAIN_CHAT_MODEL ? { chat_model: process.env.GBRAIN_CHAT_MODEL } : {}),
     ...(process.env.GBRAIN_CHAT_FALLBACK_CHAIN
@@ -793,6 +813,11 @@ export async function loadConfigWithEngine(
     const n = Number(v);
     return Number.isNaN(n) ? undefined : n;
   }
+  const dbMaxChunkTokens = await dbInt('embedding_max_chunk_tokens');
+  if (merged.embedding_max_chunk_tokens === undefined && dbMaxChunkTokens !== undefined) {
+    merged.embedding_max_chunk_tokens = dbMaxChunkTokens;
+  }
+
   const dbWarnBytes = await dbInt('content_sanity.bytes_warn');
   const dbBlockBytes = await dbInt('content_sanity.bytes_block');
   const dbJunkEnabled = await dbBool('content_sanity.junk_patterns_enabled');
@@ -924,6 +949,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'azure_openai_use_entra',
   'embedding_model',
   'embedding_dimensions',
+  'embedding_max_chunk_tokens',
   'embedding_disabled',
   'expansion_model',
   'chat_model',
