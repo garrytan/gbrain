@@ -1,8 +1,9 @@
-import { describe, test, expect, beforeEach } from 'bun:test';
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { mkdtempSync, rmSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BudgetMeter, _resetBudgetMeterWarningsForTest, ANTHROPIC_PRICING } from '../src/core/cycle/budget-meter.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 let tmpDir: string;
 let auditPath: string;
@@ -11,6 +12,10 @@ beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'budget-meter-'));
   auditPath = join(tmpDir, 'budget.jsonl');
   _resetBudgetMeterWarningsForTest();
+});
+
+afterEach(() => {
+  rmSync(tmpDir, { recursive: true, force: true });
 });
 
 function readLedger(): Array<Record<string, unknown>> {
@@ -72,10 +77,15 @@ describe('BudgetMeter', () => {
     expect(lines[2].event).toBe('submit_unpriced');
   });
 
-  test('ledger uses ISO-week filename when auditPath not overridden', () => {
-    // Implicit path branch — just verify it doesn't throw and writes somewhere reasonable.
-    const meter = new BudgetMeter({ budgetUsd: 1.0, phase: 'drift' });
-    const r = meter.check({ modelId: 'claude-haiku-4-5-20251001', estimatedInputTokens: 100, maxOutputTokens: 100, label: 'wk' });
-    expect(r.allowed).toBe(true);
+  test('ledger uses ISO-week filename when auditPath not overridden', async () => {
+    await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_AUDIT_DIR: undefined }, async () => {
+      const meter = new BudgetMeter({ budgetUsd: 1.0, phase: 'drift' });
+      const r = meter.check({ modelId: 'claude-haiku-4-5-20251001', estimatedInputTokens: 100, maxOutputTokens: 100, label: 'wk' });
+      expect(r.allowed).toBe(true);
+      const auditDir = join(tmpDir, '.gbrain', 'audit');
+      expect(readdirSync(auditDir)).toEqual([
+        expect.stringMatching(/^dream-budget-\d{4}-W\d{2}\.jsonl$/),
+      ]);
+    });
   });
 });

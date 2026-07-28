@@ -4,6 +4,7 @@ import { join } from 'path';
 import { importFile, importFromContent } from '../src/core/import-file.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { MARKDOWN_CHUNKER_VERSION } from '../src/core/chunkers/recursive.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const TMP = join(import.meta.dir, '.tmp-import-test');
 
@@ -444,7 +445,10 @@ slug: projects/launch
 Lifting off.
 `);
     const engine = mockEngine();
-    const result = await importFile(engine, filePath, '🚀.md', { noEmbed: true });
+    const result = await withEnv(
+      { GBRAIN_AUDIT_DIR: join(TMP, 'audit') },
+      () => importFile(engine, filePath, '🚀.md', { noEmbed: true }),
+    );
     expect(result.status).toBe('imported');
     expect(result.slug).toBe('projects/launch');
     const putCall = (engine as any)._calls.find((c: any) => c.method === 'putPage');
