@@ -1590,6 +1590,15 @@ gbrain init --pglite                     # 2-second local brain (no Docker)
 claude mcp add gbrain -- gbrain serve    # or: codex mcp add gbrain -- gbrain serve
 ```
 
+**No API keys at all?** Claude Code subscribers can run fully keyless (#94) — no `OPENAI_API_KEY`, no `ANTHROPIC_API_KEY`, nothing:
+
+```bash
+gbrain init --mode claude-code           # keyless — full functionality via your subscription
+claude mcp add gbrain -- gbrain serve
+```
+
+Everything LLM-shaped — chat (`gbrain think`), query expansion, subagents (`gbrain dream`, `gbrain agent run`, autopilot) — routes through your existing `claude` CLI login via the `claude-cli` recipe: billed to your subscription, not per token. For semantic vector search, init probes for a local [Ollama](https://ollama.com) daemon (also keyless): if one is running with an embedding model pulled (`ollama pull nomic-embed-text`), you get full hybrid vector + keyword + graph search; without it, search runs on Postgres FTS + the knowledge graph + title matching. Upgrade to hosted embeddings any time: `gbrain init --force --pglite --embedding-model <provider>:<model>`, then `gbrain embed --stale`.
+
 **Already have a brain on a remote host** (OpenClaw, Hermes, or any `gbrain serve --http`)? Point your laptop agents at it with one command each — `--install` wires it up and smoke-tests the token before handoff:
 
 ```bash
