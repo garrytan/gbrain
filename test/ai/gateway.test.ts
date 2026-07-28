@@ -114,11 +114,12 @@ describe('gateway.isAvailable (silent-drop regression surface)', () => {
   // #1135 — an explicit expansion_model pointed at a chat-capable
   // OpenAI-compatible provider used to silently yield no expansion because
   // the recipe declared no expansion touchpoint.
-  test('expansion available for chat-capable openai-compat providers (deepseek/groq/together)', () => {
+  test('expansion available for chat-capable openai-compat providers (deepseek/groq/together/openrouter)', () => {
     const cases: Array<[string, Record<string, string>]> = [
       ['deepseek:deepseek-chat', { DEEPSEEK_API_KEY: 'fake' }],
       ['groq:llama-3.1-8b-instant', { GROQ_API_KEY: 'fake' }],
       ['together:meta-llama/Llama-3.3-70B-Instruct-Turbo', { TOGETHER_API_KEY: 'fake' }],
+      ['openrouter:google/gemini-3-flash-preview', { OPENROUTER_API_KEY: 'fake' }],
     ];
     for (const [model, env] of cases) {
       resetGateway();

@@ -62,17 +62,20 @@ Deferred from the provider-agnostic plumbing wave (#1249/#1250/#1292/#2271/#2209
 Plan + review trail at `~/.claude/plans/system-instruction-you-are-working-keen-newell.md`.
 The eng-review + Codex outside-voice narrowed the wave to these deferrals:
 
-- [ ] **P2 — Capability-aware query expansion on OpenAI-compat providers (#2372).**
+- [x] **P2 — Capability-aware query expansion on OpenAI-compat providers (#2372).**
   Expansion only runs for recipes that declare an `expansion` touchpoint, and only the
   native providers (anthropic/openai/google) do. To make expansion work on
   litellm/openrouter/groq/together/deepseek you must ADD expansion touchpoints to those
   chat-capable recipes AND add a `generateObject`→`generateText` capability fallback for
   backends without strict structured outputs. Feature-shaped; overlaps the general
   OpenAI-compat proxy story (`docs/designs/COMMUNITY_IDEAS.md`). Community PR #2373 is a
-  starting point. Where: `src/core/ai/gateway.ts:expand`, recipe files, `types.ts` (ExpansionTouchpoint).
-- [ ] **P2 — LiteLLM as a chat/expansion backend.** `litellm-proxy` declares ONLY an
+  starting point. Implemented by #2373 plus the DeepSeek/Groq/Together recipe wave,
+  LiteLLM chat/expansion support, and the OpenRouter expansion touchpoint. Where:
+  `src/core/ai/gateway.ts:expand`, recipe files, `types.ts` (ExpansionTouchpoint).
+- [x] **P2 — LiteLLM as a chat/expansion backend.** `litellm-proxy` declares ONLY an
   embedding touchpoint, so `think`/chat on LiteLLM is dead. Add chat (and expansion) so a
-  LiteLLM proxy is a full LLM backend, not embedding-only. The general OpenAI-compat proxy story.
+  LiteLLM proxy is a full LLM backend, not embedding-only. Implemented by #2208.
+  The general OpenAI-compat proxy story.
 - [ ] **P3 — Per-model embedding dims metadata on `EmbeddingTouchpoint`.** `default_dims`
   is recipe-wide, so a recipe (ollama) can't carry different native dims per model. This
   wave added the modern ollama model NAMES + a `trust_custom_dims` passthrough (user supplies
