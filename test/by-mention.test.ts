@@ -57,7 +57,9 @@ beforeEach(async () => {
 
 // Tiny gazetteer builder for pure-fn cases that don't need engine.
 function gazetteerFromEntries(entries: Omit<GazetteerEntry, 'tokens'>[]): Gazetteer {
-  const TOKEN_RE = /[a-zA-Z0-9]+/g;
+  // Mirror the production tokenizer: Unicode letters/marks/numbers excluding
+  // CJK (which is split char-level below). Keeps Vietnamese names whole.
+  const TOKEN_RE = /[[\p{L}\p{M}\p{N}]--[㐀-䶿一-鿿぀-ゟ゠-ヿ가-힯]]+/gv;
   const isCJK = (s: string): boolean => {
     const cp = s.codePointAt(0) ?? 0;
     return (cp >= 0x4e00 && cp <= 0x9fff) || (cp >= 0x3400 && cp <= 0x4dbf) ||
@@ -393,6 +395,102 @@ describe('findMentionedEntities — CJK cases', () => {
 });
 
 // ============================================================
+// Vietnamese (diacritic Latin) — entity extraction tests
+// ============================================================
+
+// Fictional Vietnamese names only (privacy rule: no real people in fixtures).
+// "Đà Nẵng" is a public city, not a person, and is the canonical đ-diacritic case.
+describe('findMentionedEntities — Vietnamese cases', () => {
+  test('VN multi-syllable name matches as a WHOLE (regression: no diacritic fragmentation)', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'people/nguyen-van-duc', source_id: 'default', title: 'Nguyễn Văn Đức' },
+    ]);
+    const mentions = findMentionedEntities('Hôm nay mình học bài của thầy Nguyễn Văn Đức.', g, {
+      fromSlug: 'writing/post-1', fromSourceId: 'default',
+    });
+    expect(mentions).toHaveLength(1);
+    expect(mentions[0]!.slug).toBe('people/nguyen-van-duc');
+    // The whole diacritic name is captured, not a fragment like "nguy".
+    expect(mentions[0]!.name).toBe('Nguyễn Văn Đức');
+  });
+
+  test('VN place name with đ/diacritics — "Đà Nẵng" matched', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'places/da-nang', source_id: 'default', title: 'Đà Nẵng' },
+    ]);
+    const mentions = findMentionedEntities('Gia đình mình chuyển tới Đà Nẵng năm ngoái.', g, {
+      fromSlug: 'writing/post-1', fromSourceId: 'default',
+    });
+    expect(mentions).toHaveLength(1);
+    expect(mentions[0]!.slug).toBe('places/da-nang');
+    expect(mentions[0]!.name).toBe('Đà Nẵng');
+  });
+
+  test('VN diacritics are significant — "Hồng" title does NOT match diacritic-free "Hong"', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'people/le-thi-hong', source_id: 'default', title: 'Lê Thị Hồng' },
+    ]);
+    // Body uses the ASCII-typed variant "Le Thi Hong" — tokens differ, no false match.
+    const mentions = findMentionedEntities('Gặp Le Thi Hong hôm qua.', g, {
+      fromSlug: 'writing/post-1', fromSourceId: 'default',
+    });
+    expect(mentions).toEqual([]);
+  });
+
+  test('VN mixed with ASCII — Vietnamese name + ASCII company in one body', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'people/pham-quoc-bao', source_id: 'default', title: 'Phạm Quốc Bảo' },
+      { slug: 'companies/acme', source_id: 'default', title: 'Acme' },
+    ]);
+    const mentions = findMentionedEntities('Phạm Quốc Bảo hợp tác với Acme.', g, {
+      fromSlug: 'writing/post-1', fromSourceId: 'default',
+    });
+    expect(mentions).toHaveLength(2);
+    const slugs = mentions.map(m => m.slug);
+    expect(slugs).toContain('people/pham-quoc-bao');
+    expect(slugs).toContain('companies/acme');
+  });
+
+  test('VN longest-match wins — "Nguyễn Văn Đức" beats a shorter "Nguyễn Văn" entry', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'people/nguyen-van-duc', source_id: 'default', title: 'Nguyễn Văn Đức' },
+      { slug: 'people/nguyen-van', source_id: 'default', title: 'Nguyễn Văn' },
+    ]);
+    const mentions = findMentionedEntities('Bài giảng của Nguyễn Văn Đức rất hay.', g, {
+      fromSlug: 'writing/post-1', fromSourceId: 'default',
+    });
+    expect(mentions).toHaveLength(1);
+    expect(mentions[0]!.slug).toBe('people/nguyen-van-duc');
+  });
+
+  test('VN first-mention-only cap — repeated name → single link', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'people/nguyen-van-duc', source_id: 'default', title: 'Nguyễn Văn Đức' },
+    ]);
+    const body = 'Nguyễn Văn Đức nói. Sau đó Nguyễn Văn Đức nói tiếp.';
+    const mentions = findMentionedEntities(body, g, {
+      fromSlug: 'writing/post-1', fromSourceId: 'default',
+    });
+    expect(mentions).toHaveLength(1);
+  });
+
+  test('VN determinism — identical output across 10 calls', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'people/nguyen-van-duc', source_id: 'default', title: 'Nguyễn Văn Đức' },
+      { slug: 'places/da-nang', source_id: 'default', title: 'Đà Nẵng' },
+    ]);
+    const body = 'Thầy Nguyễn Văn Đức ở Đà Nẵng. Nguyễn Văn Đức lần nữa.';
+    const refs = new Set<string>();
+    for (let i = 0; i < 10; i++) {
+      refs.add(JSON.stringify(findMentionedEntities(body, g, {
+        fromSlug: 'writing/post-1', fromSourceId: 'default',
+      })));
+    }
+    expect(refs.size).toBe(1);
+  });
+});
+
+// ============================================================
 // buildGazetteer — engine-backed tests
 // ============================================================
 
@@ -520,5 +618,19 @@ describe('buildGazetteer — engine integration', () => {
     });
     const g = await buildGazetteer(engine);
     expect(g.size).toBe(0);
+  });
+
+  test('VN person title enters gazetteer keyed on first diacritic-preserving token', async () => {
+    await engine.putPage('people/nguyen-van-duc', {
+      type: 'person', title: 'Nguyễn Văn Đức', compiled_truth: 'b', timeline: '', frontmatter: {},
+    });
+    const g = await buildGazetteer(engine);
+    // "Nguyễn Văn Đức" → ["nguyễn","văn","đức"], keyed on "nguyễn" (NOT fragmented to "nguy").
+    expect(g.has('nguyễn')).toBe(true);
+    const bucket = g.get('nguyễn')!;
+    expect(bucket[0]!.tokens).toEqual(['nguyễn', 'văn', 'đức']);
+    expect(bucket[0]!.slug).toBe('people/nguyen-van-duc');
+    // Regression guard: the old ASCII tokenizer would have keyed on "nguy".
+    expect(g.has('nguy')).toBe(false);
   });
 });

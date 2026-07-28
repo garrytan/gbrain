@@ -107,7 +107,9 @@ export interface FindMentionsOpts {
 /**
  * Token-only tokenizer. Returns `[token, offset]` pairs.
  *
- * ASCII: each `[a-zA-Z0-9]+` run is a single token, lowercased.
+ * Word runs: each contiguous run of Unicode letters/marks/numbers (excluding
+ *   CJK) is a single token, lowercased. Covers ASCII and diacritic Latin
+ *   scripts like Vietnamese ("Nguyễn" → one token, not ["nguy","n"]).
  * CJK: each CJK character (Chinese/Japanese/Korean) is an individual
  *   token, lowercased. This allows the normal maximal-munch scan path
  *   to reach CJK gazetteer entries without a separate substring pass.
@@ -116,7 +118,14 @@ export interface FindMentionsOpts {
  * run) — single-word "Acme" lookup succeeds at offset 0; the trailing 's'
  * is harmless noise.
  */
-const TOKEN_RE = /[a-zA-Z0-9]+/g;
+// Word-run tokenizer. Matches contiguous Unicode letters/marks/numbers but
+// EXCLUDES CJK (Han, Hiragana, Katakana, Hangul), which keep going through the
+// per-character path in the walkers below (the excluded ranges mirror isCJK()
+// / cjkCharCount()). The `v` flag enables set subtraction. Latin-script
+// languages with diacritics (Vietnamese, etc.) now tokenize as whole words
+// instead of fragmenting on every accented character — e.g. "Nguyễn" is one
+// token, not ["nguy", "n"], and "Đà Nẵng" is ["đà", "nẵng"], not ["n", "ng"].
+const TOKEN_RE = /[[\p{L}\p{M}\p{N}]--[㐀-䶿一-鿿぀-ゟ゠-ヿ가-힯]]+/gv;
 
 interface ScannedToken {
   text: string;       // lowercase
@@ -198,8 +207,9 @@ function cjkCharCount(s: string): number {
 /**
  * Tokenize a page title for gazetteer insertion.
  *
- * ASCII titles: standard `[a-zA-Z0-9]+` tokenization, lowercased.
- * CJK titles (no ASCII content): split into individual characters —
+ * Word-run titles: Unicode letters/marks/numbers (excluding CJK) tokenization,
+ *   lowercased — ASCII plus diacritic Latin scripts (Vietnamese, etc.).
+ * CJK titles (no word-run content): split into individual characters —
  *   e.g. "纳瓦尔" → ["纳","瓦","尔"]. This allows normal multi-token
  *   maximal-munch matching to work with character-level CJK tokens
  *   produced by `tokenizeForScan`.
