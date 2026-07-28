@@ -9,6 +9,7 @@ const __dirname = dirname(__filename);
 import { saveConfig, loadConfig, toEngineConfig, gbrainPath, configPath, isThinClient, type GBrainConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import { discoverOAuth, mintClientCredentialsToken, smokeTestMcp } from '../core/remote-mcp-probe.ts';
+import type { Recipe } from '../core/ai/types.ts';
 
 export async function runInit(args: string[]) {
   const isSupabase = args.includes('--supabase');
@@ -48,6 +49,13 @@ export async function runInit(args: string[]) {
     process.exit(1);
   }
 
+  // Schema-only migrations must never enter an interactive provider wizard.
+  // Several migration orchestrators invoke this child with inherited stdio
+  // and a 60s timeout, which is the same duration as the chooser timeout.
+  if (isMigrateOnly) {
+    return initMigrateOnly({ jsonOutput });
+  }
+
   // v0.14: AI provider selection.
   // --embedding-model PROVIDER:MODEL (verbose) or --model PROVIDER (shorthand, picks recipe default)
   const embModelIdx = args.indexOf('--embedding-model');
@@ -65,16 +73,8 @@ export async function runInit(args: string[]) {
     embDimsIdx !== -1 ? parseInt(args[embDimsIdx + 1], 10) : envEmbeddingDims,
     expModelIdx !== -1 ? args[expModelIdx + 1] : null,
     chatModelIdx !== -1 ? args[chatModelIdx + 1] : null,
+    isNonInteractive || jsonOutput,
   );
-
-  // Schema-only path: apply initSchema against the already-configured engine
-  // without ever calling saveConfig. Used by apply-migrations, the stopgap
-  // script, and the postinstall hook. Bare `gbrain init` defaults to PGLite
-  // and overwrites any existing Postgres config — we must never take that
-  // branch from a migration orchestrator.
-  if (isMigrateOnly) {
-    return initMigrateOnly({ jsonOutput });
-  }
 
   // Explicit PGLite mode
   if (isPGLite || (!isSupabase && !manualUrl && !isNonInteractive)) {
@@ -114,6 +114,83 @@ export async function runInit(args: string[]) {
   return initPostgres({ databaseUrl, jsonOutput, apiKey, aiOpts });
 }
 
+export interface ProviderChoice { model: string; dims: number }
+
+export interface ProviderChooserDeps {
+  isTTY?: boolean;
+  env?: NodeJS.ProcessEnv;
+  recipes?: Recipe[];
+  readLine?: (prompt: string, defaultValue: string, timeoutMs: number) => Promise<string>;
+  log?: (message?: string) => void;
+  timeoutMs?: number;
+}
+
+export async function runProviderChooser(deps: ProviderChooserDeps = {}): Promise<ProviderChoice | null> {
+  const isTTY = deps.isTTY ?? !!process.stdin.isTTY;
+  if (!isTTY) return null;
+
+  const availableRecipes = deps.recipes ?? (await import('../core/ai/recipes/index.ts')).listRecipes();
+  const recipes = availableRecipes.filter(r =>
+    r.touchpoints.embedding &&
+    r.touchpoints.embedding.models.length > 0 &&
+    r.touchpoints.embedding.user_provided_models !== true
+  );
+  if (recipes.length === 0) return null;
+
+  const env = deps.env ?? process.env;
+  const log = deps.log ?? console.log;
+  const readLine = deps.readLine ?? readLineSafe;
+  const timeoutMs = deps.timeoutMs ?? 60_000;
+  const envReady = (r: typeof recipes[0]): boolean => {
+    const required = r.auth_env?.required ?? [];
+    if (required.length === 0) return true;
+    return required.every(k => !!(env[k] && env[k].length > 0));
+  };
+
+  let recIdx = 0;
+  if (env.OPENAI_API_KEY) recIdx = Math.max(0, recipes.findIndex(r => r.id === 'openai'));
+  else if (env.OLLAMA_HOST || env.OLLAMA_BASE_URL) recIdx = Math.max(0, recipes.findIndex(r => r.id === 'ollama'));
+  else if (env.GOOGLE_GENERATIVE_AI_API_KEY) recIdx = Math.max(0, recipes.findIndex(r => r.id === 'google'));
+  else if (env.VOYAGE_API_KEY) recIdx = Math.max(0, recipes.findIndex(r => r.id === 'voyage'));
+  else {
+    const configuredIdx = recipes.findIndex(r =>
+      (r.auth_env?.required?.length ?? 0) > 0 && envReady(r)
+    );
+    if (configuredIdx >= 0) recIdx = configuredIdx;
+  }
+
+  log('');
+  log('Embedding provider:');
+  log('');
+  recipes.forEach((r, i) => {
+    const emb = r.touchpoints.embedding!;
+    const ready = envReady(r) ? ' [key found]' : '';
+    const rec = i === recIdx ? ' (recommended)' : '';
+    log(`  ${i + 1}. ${r.name} — ${emb.models[0]} (${emb.default_dims}d)${ready}${rec}`);
+  });
+  log('');
+  log('  Press Enter to accept the recommendation, or type a number.');
+  log('  To skip and use the default (openai:text-embedding-3-large): type "skip"');
+  log('');
+
+  const raw = await readLine(`Provider [${recIdx + 1}]: `, String(recIdx + 1), timeoutMs);
+  const trimmed = raw.trim().toLowerCase();
+
+  if (trimmed === 'skip' || trimmed === 's') return null;
+
+  const idx = parseInt(trimmed, 10) - 1;
+  if (Number.isNaN(idx) || idx < 0 || idx >= recipes.length) {
+    return null;
+  }
+
+  const chosen = recipes[idx];
+  const emb = chosen.touchpoints.embedding!;
+  const model = `${chosen.id}:${emb.models[0]}`;
+  log(`Embedding: ${model} (${emb.default_dims} dims)`);
+  log('');
+  return { model, dims: emb.default_dims };
+}
+
 /**
  * Resolve AI provider options from CLI flags. Verbose form (--embedding-model
  * openai:text-embedding-3-large) overrides shorthand (--model openai which
@@ -125,6 +202,7 @@ async function resolveAIOptions(
   dimsArg: number | null,
   expansion: string | null,
   chat: string | null,
+  isNonInteractive: boolean = false,
 ): Promise<{ embedding_model?: string; embedding_dimensions?: number; expansion_model?: string; chat_model?: string }> {
   const out: { embedding_model?: string; embedding_dimensions?: number; expansion_model?: string; chat_model?: string } = {};
 
@@ -156,6 +234,12 @@ async function resolveAIOptions(
     }
     out.embedding_model = `${shorthand}:${firstModel}`;
     out.embedding_dimensions = recipe.touchpoints.embedding!.default_dims;
+  } else if (!isNonInteractive) {
+    const picked = await runProviderChooser();
+    if (picked) {
+      out.embedding_model = picked.model;
+      out.embedding_dimensions = picked.dims;
+    }
   }
 
   if (dimsArg !== null && !Number.isNaN(dimsArg) && dimsArg > 0) {
@@ -696,29 +780,57 @@ function readLine(prompt: string): Promise<string> {
  * Non-TTY stdin (pipe, scripted init) returns defaultValue immediately
  * without printing the prompt, so e2e tests don't hang.
  */
+export interface ReadLineSafeIO {
+  isTTY: boolean;
+  write(value: string): void;
+  setEncoding(): void;
+  onData(listener: (chunk: Buffer | string) => void): void;
+  onEnd(listener: () => void): void;
+  offData(listener: (chunk: Buffer | string) => void): void;
+  offEnd(listener: () => void): void;
+  resume(): void;
+  pause(): void;
+}
+
+function processReadLineIO(): ReadLineSafeIO {
+  return {
+    isTTY: !!process.stdin.isTTY,
+    write: value => { process.stdout.write(value); },
+    setEncoding: () => { process.stdin.setEncoding('utf-8'); },
+    onData: listener => { process.stdin.once('data', listener); },
+    onEnd: listener => { process.stdin.once('end', listener); },
+    offData: listener => { process.stdin.removeListener('data', listener); },
+    offEnd: listener => { process.stdin.removeListener('end', listener); },
+    resume: () => { process.stdin.resume(); },
+    pause: () => { process.stdin.pause(); },
+  };
+}
+
 export function readLineSafe(
   prompt: string,
   defaultValue: string,
   timeoutMs: number = 60_000,
+  injectedIO?: ReadLineSafeIO,
 ): Promise<string> {
   return new Promise((resolve) => {
+    const io = injectedIO ?? processReadLineIO();
     // Non-TTY (pipe, redirect, scripted init) → no prompt, no wait.
-    if (!process.stdin.isTTY) {
+    if (!io.isTTY) {
       resolve(defaultValue);
       return;
     }
 
-    process.stdout.write(prompt);
-    process.stdin.setEncoding('utf-8');
+    io.write(prompt);
+    io.setEncoding();
 
     let settled = false;
     const finish = (value: string) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      process.stdin.removeListener('data', onData);
-      process.stdin.removeListener('end', onEnd);
-      try { process.stdin.pause(); } catch { /* swallow */ }
+      io.offData(onData);
+      io.offEnd(onEnd);
+      try { io.pause(); } catch { /* swallow */ }
       resolve(value);
     };
 
@@ -729,13 +841,13 @@ export function readLineSafe(
     const onEnd = () => finish(defaultValue);
 
     const timer = setTimeout(() => {
-      process.stdout.write(`\n[timeout after ${Math.round(timeoutMs / 1000)}s, using default: ${defaultValue}]\n`);
+      io.write(`\n[timeout after ${Math.round(timeoutMs / 1000)}s, using default: ${defaultValue}]\n`);
       finish(defaultValue);
     }, timeoutMs);
 
-    process.stdin.once('data', onData);
-    process.stdin.once('end', onEnd);
-    process.stdin.resume();
+    io.onData(onData);
+    io.onEnd(onEnd);
+    io.resume();
   });
 }
 
