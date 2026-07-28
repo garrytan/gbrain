@@ -79,6 +79,21 @@ describe('cross-modal-eval/aggregate', () => {
     expect(out.errors).toEqual([{ modelId: 'google:gemini-1.5-pro', error: 'rate limited' }]);
   });
 
+  test('dimension names are aggregated case-insensitively across models', () => {
+    const out = aggregate({
+      slots: [
+        ok('openai:gpt-4o', { CORRECTNESS: 9 }),
+        ok('anthropic:claude-opus-4-7', { correctness: 5 }),
+        err('google:gemini-1.5-pro', 'rate limited'),
+      ],
+    });
+
+    expect(Object.keys(out.dimensions)).toEqual(['correctness']);
+    expect(out.dimensions.correctness!.scores).toEqual([9, 5]);
+    expect(out.dimensions.correctness!.mean).toBe(7);
+    expect(out.verdict).toBe('pass');
+  });
+
   test('1 of 3 succeeded -> INCONCLUSIVE (Q3=A)', () => {
     const out = aggregate({
       slots: [
