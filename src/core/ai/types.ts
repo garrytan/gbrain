@@ -255,6 +255,17 @@ export interface ChatTouchpoint {
    * model family).
    */
   supports_prompt_cache?: boolean | ((modelId: string) => boolean);
+  /**
+   * Backend honors OpenAI structured outputs (a strict `json_schema`
+   * response_format). Threaded into `createOpenAICompatible`'s
+   * `supportsStructuredOutputs` so query expansion's `generateObject` sends a
+   * real schema (strict validation) instead of degrading to schemaless JSON.
+   * Default false: an openai-compatible recipe may front arbitrary backends,
+   * most of which lack strict json_schema support, so `expand()` routes them
+   * through the schemaless text path. Opt in per recipe when the backend is
+   * known to honor it.
+   */
+  supports_structured_outputs?: boolean;
   max_context_tokens?: number;
   cost_per_1m_input_usd?: number;
   cost_per_1m_output_usd?: number;

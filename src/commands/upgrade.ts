@@ -462,6 +462,53 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
           // Banner is cosmetic; never block the upgrade.
         }
 
+        // #3390: ZeroEntropy sunset notice. ZE announced (2026-07-24) that
+        // its hosted endpoints — including /models/embed and /models/rerank —
+        // shut down on 2026-09-04. Any brain resolving to a zeroentropyai:*
+        // embedding model (including default-config brains that never set
+        // one) loses SEMANTIC RETRIEVAL ENTIRELY on that date: the query
+        // embedding uses the same endpoint, so existing vectors become
+        // unqueryable. One-shot per install, gated by
+        // `ze_sunset_notice_shown` (same pattern as the search-mode banner).
+        try {
+          const shown = await engine.getConfig('ze_sunset_notice_shown');
+          const { DEFAULT_EMBEDDING_MODEL } = await import('../core/ai/defaults.ts');
+          const effectiveModel = cfgSchema.embedding_model ?? DEFAULT_EMBEDDING_MODEL;
+          const rerankerModel = await engine.getConfig('search.reranker.model');
+          const onZeEmbedding = effectiveModel.startsWith('zeroentropyai:');
+          const onZeReranker = !!rerankerModel?.startsWith('zeroentropyai:');
+          if (shown !== 'true' && (onZeEmbedding || onZeReranker)) {
+            console.log('');
+            console.log('═══════════════════════════════════════════════════════════════');
+            console.log('[gbrain] ACTION REQUIRED: ZeroEntropy hosted API sunsets 2026-09-04.');
+            if (onZeEmbedding) {
+              console.log(`[gbrain] This brain embeds with ${effectiveModel}. After the sunset,`);
+              console.log('[gbrain] semantic retrieval STOPS WORKING (queries can no longer be');
+              console.log('[gbrain] embedded against your existing vectors).');
+            }
+            if (onZeReranker) {
+              console.log(`[gbrain] The reranker (${rerankerModel}) also sunsets; search falls`);
+              console.log('[gbrain] back to unreranked ordering.');
+            }
+            console.log('═══════════════════════════════════════════════════════════════');
+            console.log('');
+            console.log('Migrate before the sunset (resumable; preview cost first):');
+            console.log('  gbrain migrate embeddings --to <provider:model> --dry-run');
+            console.log('  gbrain migrate embeddings --to <provider:model>');
+            console.log('');
+            console.log('Self-hosting zembed-1 (weights are Apache-2.0) via llama-server /');
+            console.log('ollama also works and preserves your existing vectors — point');
+            console.log('embedding at the local endpoint instead of migrating.');
+            if (onZeReranker) {
+              console.log('Reranker: gbrain config set search.reranker.enabled false (or pick another).');
+            }
+            console.log('');
+            await engine.setConfig('ze_sunset_notice_shown', 'true');
+          }
+        } catch {
+          // Banner is cosmetic; never block the upgrade.
+        }
+
         // PR1: skill-catalog publish consent. New installs default ON at
         // `gbrain init`; EXISTING installs stay OFF (default-OFF runtime = no
         // silent capability grant on upgrade) until the owner opts in HERE.

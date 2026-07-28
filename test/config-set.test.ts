@@ -24,6 +24,7 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('embedding_disabled');  // v0.37 D9
     expect(KNOWN_CONFIG_KEYS).toContain('expansion_model');
     expect(KNOWN_CONFIG_KEYS).toContain('chat_model');
+    expect(KNOWN_CONFIG_KEYS).toContain('openrouter_api_key');
     expect(KNOWN_CONFIG_KEYS).toContain('provider_chat_options');
   });
 
