@@ -31,12 +31,12 @@ clause** on Sonnet (100% vs 41.7% training, lenient).
   case: same structure, no sub-skill visibility. ~10KB.
 - `variants/yaml-compressed.md` — candidate with non-routing overhead
   stripped. Retains 14 area entries with full dispatcher clauses and adds
-  `reports`, `cron-scheduler`, and `migrate`. 5,398 bytes. Structural checks
-  pass; model routing is not yet measured.
+  `reports`, `cron-scheduler`, and `migrate`. 5,398 bytes. Configured-CLI
+  development score: 57/60 strict calls (95.0%).
 - `variants/hierarchical.md` — 2-level area-of-areas: 3 top-level groups
   (Knowledge, Operations, Communications) → 14 area entries with dispatcher
   clauses. Tests whether extra hierarchy preserves routing accuracy. 5,485
-  bytes. Structural checks pass; model routing is not yet measured.
+  bytes. Configured-CLI development score: 53/60 strict calls (88.3%).
 
 ### Corpora
 
@@ -106,6 +106,43 @@ Held-out corpus (n=5, 3 seeds, LENIENT scoring):
 
 Strict numbers and the per-fixture failure traces are in the receipts.
 
+## Configured-CLI candidate run (2026-07-28)
+
+The two compression candidates were also evaluated through the operator's
+configured Hermes CLI:
+
+- model: `gpt-5.6-sol`;
+- provider: `openai-codex`;
+- 20 non-blind compression-development fixtures;
+- 3 independent repeats per fixture and variant (120 calls);
+- rules and persistent memory injection disabled with `--ignore-rules`;
+- exact-slug scoring, with `none` required for abstention.
+
+| Candidate | Strict calls | Positive cases | Abstentions | Per-repeat |
+|---|---:|---:|---:|---|
+| `yaml-compressed` | **57/60 (95.0%)** | 42/45 | **15/15** | 18/20, 19/20, 20/20 |
+| `hierarchical` | **53/60 (88.3%)** | 40/45 | 13/15 | 19/20, 17/20, 17/20 |
+
+The receipt contains 120 unique run keys and zero CLI errors. Its input hashes
+match the committed fixture and variant files. It lives outside the repository
+at:
+
+```text
+/root/audit-artifacts/gbrain-consolidation-20260728/resolver-cli-eval-2026-07-28T16-33-00-226Z.jsonl
+sha256 4596afe48eefbda8d6d225ef0dd15c6fbbe10679c66048753d581c095a6b1334
+```
+
+Ten strict-call failures cluster around overlapping same-area choices:
+`cron-scheduler` vs `recurring-jobs`, `concept-synthesis` vs `query`,
+`brain-pdf` vs `pdf-ingest`, plus two hierarchical failures to abstain on a
+generic knowledge-base question. These are real exact-target failures, while
+also showing that some fixture expectations need sharper intent wording.
+
+This run is useful candidate evidence, not a replacement for the canonical
+Anthropic baseline: it uses a different model/CLI, a development corpus
+reviewed while authoring the candidates, and repeated calls rather than a
+provider-controlled seed.
+
 ## How to reproduce
 
 From the gbrain repo root with `ANTHROPIC_API_KEY` set:
@@ -171,9 +208,10 @@ your own instruction explaining the dispatcher list.
 4. Same-author training corpus + variants. Held-out mitigates partially.
 5. Five vague-intent abstention cases exist in the compression development
    corpus, but independent blind adversarial fixtures are still pending.
-6. **Compression follow-up:** `yaml-compressed` and `hierarchical` are
-   structurally reachable candidates only. The unsupported prior `20/20`
-   statement was withdrawn; see `compression-followup-2026-07-24.md`.
+6. **Compression follow-up:** configured-CLI development evidence now exists
+   (95.0% and 88.3% strict-call accuracy). The unsupported prior `20/20`
+   statement remains withdrawn; blind and canonical-harness confirmation is
+   still pending. See `compression-followup-2026-07-24.md`.
 
 See `TODOS.md` for the full list.
 

@@ -5,7 +5,8 @@ Created 2026-07-24; evidence classification corrected 2026-07-28.
 ## Status
 
 `yaml-compressed.md` and `hierarchical.md` are candidate resolver variants,
-not validated replacements for `functional-areas.md`.
+not validated replacements for `functional-areas.md`. They now have
+configured-CLI development evidence, but no blind canonical-harness result.
 
 The earlier draft reported `20/20` from a deterministic “local
 LLM-as-judge”. No JSONL receipt, model identifier, prompt hash, token usage,
@@ -42,7 +43,50 @@ candidate dispatcher lists were reviewed and adjusted against it.
 The original five-fixture `fixtures-held-out.jsonl` remains unchanged and is
 the only historical held-out corpus.
 
-## Reproducible model evaluation (not run)
+## Configured Hermes CLI evaluation (run 2026-07-28)
+
+The operator requested use of the already-configured CLI. The run therefore
+used Hermes with `gpt-5.6-sol` via `openai-codex`, not Anthropic or OpenRouter.
+Rules/memory injection was disabled; every call received one resolver and one
+intent and was instructed to return only a slug or `none`.
+
+Scope: 2 variants × 20 development fixtures × 3 repeats = 120 calls,
+parallelism 9.
+
+| Candidate | Strict calls | Positive | Abstention | Per-repeat |
+|---|---:|---:|---:|---|
+| `yaml-compressed` | **57/60 (95.0%)** | 42/45 | **15/15** | 18, 19, 20 / 20 |
+| `hierarchical` | **53/60 (88.3%)** | 40/45 | 13/15 | 19, 17, 17 / 20 |
+
+Receipt integrity:
+
+```text
+120 run rows
+120 unique (variant, fixture_id, repeat) keys
+0 non-zero CLI exits
+receipt sha256:
+4596afe48eefbda8d6d225ef0dd15c6fbbe10679c66048753d581c095a6b1334
+```
+
+Receipt:
+`/root/audit-artifacts/gbrain-consolidation-20260728/resolver-cli-eval-2026-07-28T16-33-00-226Z.jsonl`.
+
+The ten strict failures were:
+
+- `yaml-compressed`: one `cron-scheduler → recurring-jobs`; two
+  `concept-synthesis → query`;
+- `hierarchical`: three `cron-scheduler → recurring-jobs`; one
+  `concept-synthesis → query`; one `brain-pdf → pdf-ingest`; two failures to
+  abstain on “Tell me about my knowledge base” (`gbrain`, `brain-ops`).
+
+Several alternatives are valid members of the same dispatcher area, but they
+remain strict failures. The concentration also exposes underspecified fixture
+wording where two listed slugs are plausible.
+
+The three passes are independent calls, not provider-controlled seeds: the
+Hermes CLI does not expose a seed in this invocation.
+
+## Canonical harness evaluation (not run)
 
 After an operator approves the external API cost and provides
 `ANTHROPIC_API_KEY`, run from this directory:
@@ -62,9 +106,9 @@ prints a provider-aware estimate before calls begin and writes a JSONL receipt
 binding the model, prompt, fixture hashes, selected corpus path, harness SHA,
 arguments, and per-call results.
 
-No routing-accuracy claim should be promoted until that receipt is reviewed.
-Independent blind fixtures and at least one additional provider remain
-follow-ups.
+This Anthropic run has not been executed. Independent blind fixtures and a
+canonical-harness or additional-provider result remain follow-ups before
+promoting either candidate to a replacement.
 
 ## Invalid comparison removed
 
