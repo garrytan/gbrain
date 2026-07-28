@@ -127,7 +127,7 @@ services:
       # preserves portable ephemeral-port behavior in ordinary CI.
       GBRAIN_HTTP_TEST_PORT_BASE: "${GBRAIN_HTTP_TEST_PORT_BASE:-}"
       GBRAIN_HTTP_E2E_TEST_PORT: "${GBRAIN_HTTP_E2E_TEST_PORT:-}"
-      GBRAIN_UNIT_BATCH_SIZE: "${GBRAIN_UNIT_BATCH_SIZE:-40}"
+      GBRAIN_UNIT_BATCH_SIZE: "${GBRAIN_UNIT_BATCH_SIZE:-1}"
     depends_on:
       postgres-1:
         condition: service_healthy

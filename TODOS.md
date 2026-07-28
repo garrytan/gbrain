@@ -2,9 +2,10 @@
 
 ## CI verification and shared-brain maintenance (2026-07-28)
 
-- [x] Bound local-CI memory with configurable shard concurrency and fresh Bun
-  processes every 40 unit files. The previous four-process runner hit exit 137;
-  the new controls are `GBRAIN_CI_JOBS` and `GBRAIN_UNIT_BATCH_SIZE`.
+- [x] Bound local-CI memory with configurable shard concurrency and a fresh Bun
+  process per unit file. The previous four-process runner hit exit 137 and
+  40-file batches leaked state; the safe defaults are now
+  `GBRAIN_CI_JOBS=1` and `GBRAIN_UNIT_BATCH_SIZE=1`.
 - [x] Add explicit, validated HTTP unit/E2E test ports for restricted and
   fleet-managed runners while preserving portable ephemeral ports elsewhere.
 - [x] Refresh database-backed link and timeline extraction across all 7,482
@@ -14,10 +15,20 @@
   `apple-digitalmeapp-tests-appmodeltests-swift` (992,560),
   `changelog` (912,533; the sole flagged page), and
   `crates-digital_me_core-src-ffi-rs` (656,426).
-- [ ] Re-run the complete Docker gate with the default single worker after the
-  runner change lands. Two-worker verification proved batching and eliminated
-  exit 137, but exposed cross-shard test interference; isolated 40-file
-  reproduction passed 492/492 on Bun 1.3.14.
+- [x] Run the complete Docker gate with the default single worker and capture
+  memory evidence. Per-file isolation held ordinary runner memory near
+  82–272 MiB (one transient heavy test reached ~2.0 GiB), eliminated exit 137,
+  and made shard 1 fully green (338 E2E assertions).
+- [x] Repair locally exposed hermeticity regressions: remove the global PGLite
+  snapshot override; make the fake-git harness jq-independent; fix the
+  filesystem-confinement fuzz call order; remove the volunteer-event cold
+  import/drain race; pin the legacy pack fixture; make lock recovery
+  credential-independent; update the PGLite CLI init invocation.
+- [ ] Finish the remaining full-E2E maintenance set exposed outside normal PR
+  CI: `cross-modal-eval`, `dream-cycle-phase-order-pglite`,
+  `extract-atoms-discovery-sql`, `schema-drift`, `serve-http-oauth`,
+  `phantom-redirect`, and `sync`. Unit corpora are now isolated and green;
+  these seven E2E files remain the authoritative local-gate failures.
 
 ## community fix-wave follow-ups (filed v0.42.60.0)
 

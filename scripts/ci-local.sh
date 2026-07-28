@@ -16,8 +16,8 @@
 # WASM heaps until exit, so four concurrent shards can exhaust Docker Desktop
 # memory and be killed with exit 137. Hosts with measured headroom can opt in
 # to 2-4 jobs without changing shard coverage.
-# GBRAIN_UNIT_BATCH_SIZE (default 40) starts a fresh Bun process after that
-# many unit-test files, releasing accumulated PGLite/WASM heaps.
+# GBRAIN_UNIT_BATCH_SIZE (default 1) gives every unit-test file a fresh Bun
+# process, releasing PGLite/WASM heaps and preventing cross-file state leakage.
 #
 # 4-way E2E sharding: 4 pgvector services on host ports 5434-5437. The 36 E2E
 # files split N/4 per shard; shards run in parallel. Within a shard, files run
@@ -37,7 +37,7 @@ NO_PULL=0
 CLEAN=0
 NO_SHARD=0
 CI_JOBS="${GBRAIN_CI_JOBS:-1}"
-UNIT_BATCH_SIZE="${GBRAIN_UNIT_BATCH_SIZE:-40}"
+UNIT_BATCH_SIZE="${GBRAIN_UNIT_BATCH_SIZE:-1}"
 
 case "$CI_JOBS" in
   1|2|3|4) ;;
@@ -261,13 +261,8 @@ bash scripts/check-progress-to-stdout.sh
 bash scripts/check-trailing-newline.sh
 bash scripts/check-wasm-embedded.sh
 bun run typecheck
-echo \"[runner] Tier 3: building PGLite snapshot fixture (cached across reruns)\"
-if [ ! -f test/fixtures/pglite-snapshot.tar ] || [ ! -f test/fixtures/pglite-snapshot.version ]; then
-  bun run build:pglite-snapshot
-else
-  echo \"[runner] snapshot fixture exists; engine will validate hash at load time\"
-fi
-export GBRAIN_PGLITE_SNAPSHOT=test/fixtures/pglite-snapshot.tar
+echo \"[runner] PGLite snapshot override disabled for hermetic unit semantics\"
+unset GBRAIN_PGLITE_SNAPSHOT
 echo \"[runner] resolving E2E file selection (--diff aware)\"
 ${DIFF_E2E_PREP}
 mkdir -p /tmp/shard-logs

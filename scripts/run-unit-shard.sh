@@ -12,7 +12,8 @@
 # Sequential bun processes within a shard (one bun test invocation with the
 # shard's file list); parallel across shards (4 of these run concurrently).
 # GBRAIN_UNIT_BATCH_SIZE=N splits each shard into fresh Bun processes of N
-# files. This bounds retained PGLite/WASM memory in constrained runners.
+# files. A value of 1 gives every file a clean process, bounding retained
+# PGLite/WASM memory and preventing cross-file state leakage.
 
 set -euo pipefail
 

@@ -19,10 +19,16 @@ Seven test command tiers, each with a clear scope:
 | `bun run test:e2e` | Real Postgres E2E. Requires Docker + `DATABASE_URL`. Sequential. | ~5-10min | Pre-ship; nightly. |
 | `bun run check:all` | The historical pre-check scripts (22, chained sequentially in package.json). Overlaps `verify` heavily but is NOT a superset — `verify`'s `CHECKS` array in `scripts/run-verify-parallel.sh` (~30 entries incl. typecheck) is the authoritative gate; `check:all` keeps a few local-only extras (trailing-newline, exports-count, no-legacy-getconnection). | ~10s | Local-only sweep for the extras. |
 
-`bun run ci:local` is memory-bounded by default. It runs one unit+E2E shard at
-a time (`GBRAIN_CI_JOBS=1`) and starts a fresh Bun process after 40 unit files
-(`GBRAIN_UNIT_BATCH_SIZE=40`) so PGLite/WASM heaps are released between
-batches. Measured hosts with spare memory may raise `GBRAIN_CI_JOBS` to 2-4.
+`bun run ci:local` is memory-bounded and file-isolated by default. It runs one
+unit+E2E shard at a time (`GBRAIN_CI_JOBS=1`) and starts a fresh Bun process
+for every unit file (`GBRAIN_UNIT_BATCH_SIZE=1`) so PGLite/WASM heaps and
+module/database state are released between files. Measured hosts with spare
+memory may raise `GBRAIN_CI_JOBS` to 2-4; larger batches should only be used
+after verifying the selected file grouping has no order-dependent leakage.
+The gate also unsets `GBRAIN_PGLITE_SNAPSHOT`: globally preloading a migrated
+snapshot changes tests that intentionally exercise fresh-brain or alternate
+embedding-dimension behavior. Snapshot loading remains covered by its
+dedicated tests instead of changing the semantics of the whole unit corpus.
 Restricted or fleet-managed runners can set `GBRAIN_HTTP_TEST_PORT_BASE` (an
 18-port contiguous range) and `GBRAIN_HTTP_E2E_TEST_PORT` instead of using
 unmanaged ephemeral HTTP ports.

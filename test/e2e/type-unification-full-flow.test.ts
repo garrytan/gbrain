@@ -108,6 +108,12 @@ describe('v0.42 type-unification E2E (IRON RULE)', () => {
     const seedCount = await seedAll9Clusters();
     expect(seedCount).toBeGreaterThan(25);
 
+    // This fixture models a legacy v1-pack brain awaiting unification. Pin the
+    // DB-side identity explicitly so a developer/container default that is
+    // already on gbrain-base-v2 cannot turn the pre-upgrade check into "ok".
+    await engine.setConfig('schema_pack', 'gbrain-base');
+    _resetPackCacheForTests();
+
     // Pre-state: many distinct types
     const preTypes = await engine.executeRaw<{ cnt: string }>(
       `SELECT COUNT(DISTINCT type)::text AS cnt FROM pages WHERE deleted_at IS NULL`,

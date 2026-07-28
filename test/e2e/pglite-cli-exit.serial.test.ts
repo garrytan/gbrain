@@ -98,7 +98,7 @@ beforeAll(() => {
 
   const initResult = spawnSync(
     SHIM_PATH,
-    ['init', '--pglite', '--repo', repoSourceDir, '--no-embedding', '--yes'],
+    ['init', '--pglite', '--no-embedding'],
     {
       cwd: REPO_ROOT,
       env: runEnv,

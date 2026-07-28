@@ -47,7 +47,7 @@ describe('validateUploadPath fuzz (fs-backed)', () => {
     fc.assert(
       fc.property(fc.string({ minLength: 0, maxLength: 200 }), (relPath) => {
         try {
-          validateUploadPath(confinementDir, relPath);
+          validateUploadPath(join(confinementDir, relPath), confinementDir);
         } catch {
           /* throwing is the expected behavior for traversal / invalid input */
         }
@@ -75,7 +75,7 @@ describe('validateUploadPath fuzz (fs-backed)', () => {
       fc.property(traversalProbe, (probe) => {
         let threw = false;
         try {
-          validateUploadPath(confinementDir, probe);
+          validateUploadPath(join(confinementDir, probe), confinementDir);
         } catch {
           threw = true;
         }
@@ -114,7 +114,7 @@ describe('validateUploadPath fuzz (fs-backed)', () => {
       symlinkSync(tmpdir(), linkPath);
       let threw = false;
       try {
-        validateUploadPath(confinementDir, 'evil-link');
+        validateUploadPath(linkPath, confinementDir);
       } catch {
         threw = true;
       }
