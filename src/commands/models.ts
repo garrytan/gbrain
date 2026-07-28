@@ -34,6 +34,7 @@ import {
   resolveModel,
   type ModelTier,
 } from '../core/model-config.ts';
+import { resolveRecipe } from '../core/ai/model-resolver.ts';
 
 const TIERS: ModelTier[] = ['utility', 'reasoning', 'deep', 'subagent'];
 
@@ -184,6 +185,44 @@ function classifyError(err: unknown): { status: ProbeStatus; message: string } {
     return { status: 'network', message: msg };
   }
   return { status: 'unknown', message: msg };
+}
+
+const OPENAI_COMPAT_V1_HINT =
+  'If the API key is correct, the base URL may be missing the /v1 suffix. ' +
+  'OpenAI-shaped proxies (codex-proxy, Azure-OpenAI mirrors, LiteLLM fronting an OpenAI route) ' +
+  'serve /v1/chat/completions and 401 on the bare path. ' +
+  'Confirm with: `curl <base>/models` returns 200 with the same bearer, then append /v1 to the base URL.';
+
+/**
+ * Fix-hint for the openai-compatible-proxy `/v1`-suffix trap.
+ *
+ * An OpenAI-shaped proxy whose base URL omits `/v1` (codex-proxy, some
+ * Azure-OpenAI mirrors, a LiteLLM proxy fronting an OpenAI-route backend)
+ * serves `/v1/chat/completions` and returns 401 on the bare `/chat/completions`
+ * the AI SDK appends to the base. `classifyError` reads that 401 as `auth` and
+ * points the operator at the bearer token, when the real fix is the URL shape.
+ *
+ * Returns the corrective hint only when the model routes through an
+ * openai-compatible recipe (proxy tier, not native anthropic/openai/google),
+ * `baseURL` is set, and `baseURL` does not already end in `/v1` (optionally with
+ * a trailing slash). Pure: recipe resolution is synchronous and does no
+ * network/engine work; any resolution failure returns undefined.
+ *
+ * @internal exported for tests.
+ */
+export function openAiCompatV1Hint(
+  modelStr: string,
+  baseURL: string | undefined | null,
+): string | undefined {
+  if (!baseURL || !baseURL.trim()) return undefined;
+  if (/\/v1\/?$/.test(baseURL.trim())) return undefined;
+  try {
+    const { recipe } = resolveRecipe(modelStr);
+    if (recipe.tier !== 'openai-compat') return undefined;
+    return OPENAI_COMPAT_V1_HINT;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -523,7 +562,29 @@ async function probeModel(modelStr: string, touchpoint: 'chat' | 'expansion'): P
     }
   } catch (err) {
     const { status, message } = classifyError(err);
-    return { model: modelStr, touchpoint, status, message, elapsed_ms: Date.now() - start };
+    const result: ProbeResult = { model: modelStr, touchpoint, status, message, elapsed_ms: Date.now() - start };
+    // An openai-compatible proxy whose base URL omits `/v1` returns 401 (not
+    // 404) on the bare `/chat/completions` path, which classifyError reads as
+    // `auth`. Attach the URL-shape hint so the operator doesn't chase the
+    // bearer token. Fail open: any error resolving the base URL yields no hint
+    // and never breaks the probe.
+    if (status === 'auth') {
+      try {
+        const { loadConfig } = await import('../core/config.ts');
+        const { buildGatewayConfig } = await import('../core/ai/build-gateway-config.ts');
+        const fileCfg = loadConfig();
+        if (fileCfg) {
+          const cfg = buildGatewayConfig(fileCfg);
+          const { recipe } = resolveRecipe(modelStr);
+          const baseURL = cfg.base_urls?.[recipe.id] ?? recipe.base_url_default;
+          const hint = openAiCompatV1Hint(modelStr, baseURL);
+          if (hint) result.fix = hint;
+        }
+      } catch {
+        // fail open — no hint
+      }
+    }
+    return result;
   }
 }
 
