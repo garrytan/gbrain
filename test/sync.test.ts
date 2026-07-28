@@ -396,10 +396,39 @@ describe('performSync dry-run never writes', () => {
     expect(parsed.schema_version).toBe(1);
     expect(parsed.result_kind).toBe('gbrain_sync');
     expect(parsed.status).toBe('dry_run');
+    expect(parsed.plan_digest).toMatch(/^[0-9a-f]{64}$/);
     const corpus = parsed.corpus as Record<string, unknown>;
     expect(corpus.image_operations_applied).toBe(0);
     expect(corpus.image_pages_after).toBe(0);
     expect(Object.values(corpus)).not.toContain(null);
+  });
+
+  test('schema-1 envelope refuses missing or malformed plan commitments', async () => {
+    const {
+      buildGBrainSyncEnvelope,
+      performSync,
+    } = await import('../src/commands/sync.ts');
+    const planned = await performSync(engine, {
+      sourceId: 'default',
+      repoPath,
+      strategy: 'markdown',
+      dryRun: true,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+
+    for (const planDigest of [undefined, 'A'.repeat(64), '0'.repeat(63)]) {
+      expect(() => buildGBrainSyncEnvelope(
+        { ...planned, planDigest },
+        {
+          sourceId: 'default',
+          strategy: 'markdown',
+          noEmbed: true,
+          noExtract: true,
+        },
+      )).toThrow(/complete immutable plan and corpus evidence/);
+    }
   });
 
   test('JSON parse refusals are one gbrain_sync_error document', async () => {
@@ -407,6 +436,27 @@ describe('performSync dry-run never writes', () => {
     for (const testCase of [
       {
         args: ['--json', '--dry-run', '--expected-target'],
+        reason: 'plan_failed',
+      },
+      {
+        args: [
+          '--json',
+          '--dry-run',
+          '--expected-plan-digest',
+          'A'.repeat(64),
+        ],
+        reason: 'plan_failed',
+      },
+      {
+        args: [
+          '--json',
+          '--no-pull',
+          '--expected-target',
+          '0'.repeat(40),
+          '--expected-bookmark',
+          'none',
+          '--require-clean',
+        ],
         reason: 'plan_failed',
       },
       {
@@ -593,6 +643,18 @@ describe('performSync dry-run never writes', () => {
       cwd: repoPath,
       encoding: 'utf8',
     }).trim();
+    const preview = await performSync(engine, {
+      sourceId: 'default',
+      repoPath,
+      strategy: 'markdown',
+      dryRun: true,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      expectedTarget: target,
+      expectedBookmark: bookmark,
+      requireClean: true,
+    });
 
     const originalLogIngest = engine.logIngest.bind(engine);
     const originalStdoutWrite = process.stdout.write;
@@ -623,6 +685,7 @@ describe('performSync dry-run never writes', () => {
         '--no-extract',
         '--expected-target', target,
         '--expected-bookmark', bookmark,
+        '--expected-plan-digest', preview.planDigest!,
         '--require-clean',
       ]);
     } finally {
@@ -674,6 +737,7 @@ describe('performSync dry-run never writes', () => {
         '--no-pull',
         '--expected-target', '0000000000000000000000000000000000000000',
         '--expected-bookmark', 'none',
+        '--expected-plan-digest', '0'.repeat(64),
         '--require-clean',
       ]);
     } finally {
@@ -766,6 +830,80 @@ describe('performSync dry-run never writes', () => {
     expect(await engine.getConfig('sync.last_commit')).toBeNull();
   });
 
+  test('programmatic paired apply requires a reviewed plan digest before touching the engine', async () => {
+    const { performSync, SyncPreconditionError } = await import('../src/commands/sync.ts');
+    let engineTouched = false;
+    const refusingEngine = new Proxy({} as PGLiteEngine, {
+      get() {
+        engineTouched = true;
+        throw new Error('engine must not be touched');
+      },
+    });
+
+    await expect(
+      performSync(refusingEngine, {
+        repoPath,
+        noPull: true,
+        noEmbed: true,
+        noExtract: true,
+        expectedTarget: '0'.repeat(40),
+        expectedBookmark: null,
+        requireClean: true,
+      }),
+    ).rejects.toMatchObject({
+      name: SyncPreconditionError.name,
+      reasonCode: 'plan_failed',
+      observed: null,
+    });
+    await expect(
+      performSync(refusingEngine, {
+        repoPath,
+        noPull: true,
+        noEmbed: true,
+        noExtract: true,
+        expectedTarget: '0'.repeat(40),
+        expectedBookmark: null,
+        expectedPlanDigest: 'A'.repeat(64),
+        requireClean: true,
+      }),
+    ).rejects.toMatchObject({
+      name: SyncPreconditionError.name,
+      reasonCode: 'plan_failed',
+      observed: 'A'.repeat(64),
+    });
+    expect(engineTouched).toBe(false);
+  });
+
+  test('programmatic paired sync cannot bypass the source lock', async () => {
+    const { performSync, SyncPreconditionError } = await import('../src/commands/sync.ts');
+    let engineTouched = false;
+    const refusingEngine = new Proxy({} as PGLiteEngine, {
+      get() {
+        engineTouched = true;
+        throw new Error('engine must not be touched');
+      },
+    });
+
+    await expect(
+      performSync(refusingEngine, {
+        repoPath,
+        dryRun: true,
+        noPull: true,
+        noEmbed: true,
+        noExtract: true,
+        skipLock: true,
+        expectedTarget: '0'.repeat(40),
+        expectedBookmark: null,
+        requireClean: true,
+      }),
+    ).rejects.toMatchObject({
+      name: SyncPreconditionError.name,
+      reasonCode: 'plan_failed',
+      observed: '--skip-lock',
+    });
+    expect(engineTouched).toBe(false);
+  });
+
   test('paired default source refuses a repository outside its registered root', async () => {
     const { performSync, SyncPreconditionError } = await import('../src/commands/sync.ts');
     await engine.executeRaw(
@@ -794,6 +932,7 @@ describe('performSync dry-run never writes', () => {
           noExtract: true,
           expectedTarget: target,
           expectedBookmark: null,
+          expectedPlanDigest: '0'.repeat(64),
           requireClean: true,
         }),
       ).rejects.toBeInstanceOf(SyncPreconditionError);
@@ -988,7 +1127,14 @@ describe('performSync dry-run never writes', () => {
       expectedBookmark: bookmark,
       requireClean: true,
     };
-    const result = await performSync(engine, opts);
+    const preview = await performSync(engine, {
+      ...opts,
+      dryRun: true,
+    });
+    const result = await performSync(engine, {
+      ...opts,
+      expectedPlanDigest: preview.planDigest!,
+    });
     const envelope = buildGBrainSyncEnvelope(result, opts);
 
     expect(result.status).toBe('first_sync');
@@ -1066,21 +1212,29 @@ describe('performSync dry-run never writes', () => {
       cwd: repoPath,
       encoding: 'utf8',
     }).trim();
+    const paired = {
+      sourceId: 'paired-delete',
+      repoPath,
+      strategy: 'markdown' as const,
+      full: true,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      expectedTarget: target,
+      expectedBookmark: bookmark,
+      requireClean: true,
+    };
+    const preview = await performSync(engine, {
+      ...paired,
+      dryRun: true,
+    });
     const originalDeletePages = engine.deletePages.bind(engine);
     engine.deletePages = async () => [];
     let result;
     try {
       result = await performSync(engine, {
-        sourceId: 'paired-delete',
-        repoPath,
-        strategy: 'markdown',
-        full: true,
-        noPull: true,
-        noEmbed: true,
-        noExtract: true,
-        expectedTarget: target,
-        expectedBookmark: bookmark,
-        requireClean: true,
+        ...paired,
+        expectedPlanDigest: preview.planDigest!,
       });
     } finally {
       engine.deletePages = originalDeletePages;
@@ -1096,6 +1250,210 @@ describe('performSync dry-run never writes', () => {
     expect(await engine.getPage('people/alice', {
       sourceId: 'paired-delete',
     })).not.toBeNull();
+  });
+
+  test('paired full apply reuses active-pack and explicit no-pack snapshots', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const {
+      __setPackLocatorForTests,
+      _resetPackCacheForTests,
+      _resetPackLocatorForTests,
+    } = await import('../src/core/schema-pack/index.ts');
+    const sourceId = 'paired-full-pack-snapshot';
+    const packDir = mkdtempSync(join(tmpdir(), 'gbrain-sync-pack-'));
+    const reviewedPackPath = join(packDir, 'reviewed.yaml');
+    const changedPackPath = join(packDir, 'changed.yaml');
+    const packYaml = (name: string, pageType: string) =>
+      `api_version: gbrain-schema-pack-v1
+name: ${name}
+version: 1.0.0
+description: paired full-sync snapshot regression
+gbrain_min_version: 0.38.0
+extends: null
+borrow_from: []
+page_types:
+  - name: ${pageType}
+    primitive: entity
+    path_prefixes:
+      - custom/
+    aliases: []
+    extractable: false
+    expert_routing: false
+link_types: []
+`;
+    writeFileSync(
+      reviewedPackPath,
+      packYaml('reviewed-pack', 'reviewed_type'),
+    );
+    writeFileSync(
+      changedPackPath,
+      packYaml('changed-pack', 'changed_type'),
+    );
+    mkdirSync(join(repoPath, 'custom'), { recursive: true });
+    writeFileSync(
+      join(repoPath, 'custom/old.md'),
+      [
+        '---',
+        'title: Reviewed pack page',
+        '---',
+        '',
+        ...Array.from(
+          { length: 20 },
+          (_, index) => `Stable reviewed content line ${index}.`,
+        ),
+      ].join('\n'),
+    );
+    execSync('git add -A && git commit -m "add pack snapshot page"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ($1, $1, $2, '{}'::jsonb)`,
+      [sourceId, repoPath],
+    );
+
+    const previousPack = process.env.GBRAIN_SCHEMA_PACK;
+    const originalUpdateSlug = engine.updateSlug.bind(engine);
+    let renameObserved = false;
+    let missingPackLoads = 0;
+    __setPackLocatorForTests((name) => {
+      if (name === 'reviewed-pack') return reviewedPackPath;
+      if (name === 'changed-pack') return changedPackPath;
+      if (name === 'missing-pack') {
+        missingPackLoads++;
+        process.env.GBRAIN_SCHEMA_PACK = 'changed-pack';
+      }
+      return null;
+    });
+    _resetPackCacheForTests();
+    process.env.GBRAIN_SCHEMA_PACK = 'reviewed-pack';
+    try {
+      await performSync(engine, {
+        sourceId,
+        repoPath,
+        strategy: 'markdown',
+        noPull: true,
+        noEmbed: true,
+        noExtract: true,
+      });
+      const before = await engine.executeRaw<{ last_commit: string }>(
+        `SELECT last_commit FROM sources WHERE id = $1`,
+        [sourceId],
+      );
+      const bookmark = before[0].last_commit;
+      execSync('git mv custom/old.md custom/new.md', {
+        cwd: repoPath,
+        stdio: 'pipe',
+      });
+      writeFileSync(
+        join(repoPath, 'custom/new.md'),
+        [
+          '---',
+          'title: Reviewed pack page',
+          '---',
+          '',
+          'Changed after rename so the importer must parse this file again.',
+          ...Array.from(
+            { length: 19 },
+            (_, index) => `Stable reviewed content line ${index}.`,
+          ),
+        ].join('\n'),
+      );
+      execSync('git add -A && git commit -m "rename pack snapshot page"', {
+        cwd: repoPath,
+        stdio: 'pipe',
+      });
+      const target = execSync('git rev-parse HEAD', {
+        cwd: repoPath,
+        encoding: 'utf8',
+      }).trim();
+      const paired = {
+        sourceId,
+        repoPath,
+        strategy: 'markdown' as const,
+        full: true,
+        noPull: true,
+        noEmbed: true,
+        noExtract: true,
+        expectedTarget: target,
+        expectedBookmark: bookmark,
+        requireClean: true,
+      };
+      const preview = await performSync(engine, {
+        ...paired,
+        dryRun: true,
+      });
+      expect(preview.renamed).toBe(1);
+
+      engine.updateSlug = async (oldSlug, newSlug, opts) => {
+        const updated = await originalUpdateSlug(oldSlug, newSlug, opts);
+        renameObserved = true;
+        process.env.GBRAIN_SCHEMA_PACK = 'changed-pack';
+        _resetPackCacheForTests();
+        return updated;
+      };
+      const applied = await performSync(engine, {
+        ...paired,
+        expectedPlanDigest: preview.planDigest!,
+      });
+
+      expect(['first_sync', 'synced']).toContain(applied.status);
+      expect(renameObserved).toBe(true);
+      expect(process.env.GBRAIN_SCHEMA_PACK).toBe('changed-pack');
+      expect((await engine.getPage('custom/new', { sourceId }))?.type)
+        .toBe('reviewed_type');
+
+      // A failed pack lookup is also a reviewed snapshot: the planner must
+      // not use `??` to reopen config after the first load returned no pack.
+      engine.updateSlug = originalUpdateSlug;
+      const noPackSourceId = 'paired-full-no-pack-snapshot';
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, local_path, config)
+         VALUES ($1, $1, $2, '{}'::jsonb)`,
+        [noPackSourceId, repoPath],
+      );
+      const noPackPaired = {
+        sourceId: noPackSourceId,
+        repoPath,
+        strategy: 'markdown' as const,
+        full: true,
+        noPull: true,
+        noEmbed: true,
+        noExtract: true,
+        expectedTarget: target,
+        expectedBookmark: null,
+        requireClean: true,
+      };
+      process.env.GBRAIN_SCHEMA_PACK = 'missing-pack';
+      _resetPackCacheForTests();
+      const noPackPreview = await performSync(engine, {
+        ...noPackPaired,
+        dryRun: true,
+      });
+      expect(missingPackLoads).toBe(1);
+      expect(process.env.GBRAIN_SCHEMA_PACK).toBe('changed-pack');
+
+      process.env.GBRAIN_SCHEMA_PACK = 'missing-pack';
+      _resetPackCacheForTests();
+      const noPackApplied = await performSync(engine, {
+        ...noPackPaired,
+        expectedPlanDigest: noPackPreview.planDigest!,
+      });
+      expect(['first_sync', 'synced']).toContain(noPackApplied.status);
+      expect(noPackApplied.planDigest).toBe(noPackPreview.planDigest);
+      expect(missingPackLoads).toBe(2);
+    } finally {
+      engine.updateSlug = originalUpdateSlug;
+      if (previousPack === undefined) {
+        delete process.env.GBRAIN_SCHEMA_PACK;
+      } else {
+        process.env.GBRAIN_SCHEMA_PACK = previousPack;
+      }
+      _resetPackLocatorForTests();
+      _resetPackCacheForTests();
+      rmSync(packDir, { recursive: true, force: true });
+    }
   });
 
   test('full and incremental plans both preserve a rename into an excluded path', async () => {
@@ -1353,7 +1711,10 @@ describe('performSync dry-run never writes', () => {
     expect(full.deleted).toBe(0);
     expect(full.affected?.total).toBe(0);
 
-    const applied = await performSync(engine, paired);
+    const applied = await performSync(engine, {
+      ...paired,
+      expectedPlanDigest: incremental.planDigest!,
+    });
     expect(applied.status).toBe('up_to_date');
     expect(await engine.getPage('note', {
       sourceId: 'paired-manual-delete',
@@ -1426,7 +1787,10 @@ describe('performSync dry-run never writes', () => {
     expect(full.preserved).toBe(1);
     expect(full.affectedDigest).toBe(incremental.affectedDigest);
 
-    const applied = await performSync(engine, paired);
+    const applied = await performSync(engine, {
+      ...paired,
+      expectedPlanDigest: incremental.planDigest!,
+    });
     expect(applied.deleted).toBe(0);
     expect(await engine.getPage('notes/a', {
       sourceId: 'paired-excluded-delete',
@@ -1493,13 +1857,113 @@ describe('performSync dry-run never writes', () => {
       },
     ]);
 
-    const appliedResult = await performSync(engine, paired);
+    const appliedResult = await performSync(engine, {
+      ...paired,
+      expectedPlanDigest: preview.plan_digest,
+    });
     const applied = buildGBrainSyncEnvelope(appliedResult, paired);
     expect(applied.affected).toEqual(preview.affected);
     expect(applied.affected_digest).toBe(preview.affected_digest);
+    expect(applied.plan_digest).toBe(preview.plan_digest);
     expect(await engine.getPage('disk', {
       sourceId: 'paired-fallback-slug',
     })).not.toBeNull();
+  });
+
+  test('paired apply refuses DB drift that changes the reviewed plan under unchanged Git preconditions', async () => {
+    const {
+      buildGBrainSyncErrorEnvelope,
+      performSync,
+    } = await import('../src/commands/sync.ts');
+    const sourceId = 'paired-plan-drift';
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ($1, $1, $2, '{}'::jsonb)`,
+      [sourceId, repoPath],
+    );
+    await performSync(engine, {
+      sourceId,
+      repoPath,
+      strategy: 'markdown',
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    const before = await engine.executeRaw<{ last_commit: string }>(
+      `SELECT last_commit FROM sources WHERE id = $1`,
+      [sourceId],
+    );
+    const bookmark = before[0].last_commit;
+    writeFileSync(
+      join(repoPath, 'plan-drift.md'),
+      ['---', 'type: note', 'title: Planned', '---', '', 'Reviewed target.'].join('\n'),
+    );
+    execSync('git add -A && git commit -m "add plan drift target"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    const target = execSync('git rev-parse HEAD', {
+      cwd: repoPath,
+      encoding: 'utf8',
+    }).trim();
+    const paired = {
+      sourceId,
+      repoPath,
+      strategy: 'markdown' as const,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      expectedTarget: target,
+      expectedBookmark: bookmark,
+      requireClean: true,
+    };
+    const preview = await performSync(engine, {
+      ...paired,
+      dryRun: true,
+    });
+    expect(preview.added).toBe(1);
+    expect(preview.planDigest).toMatch(/^[0-9a-f]{64}$/);
+
+    // Simulate an independent DB writer after preview without changing HEAD,
+    // bookmark, or working-tree cleanliness. The fresh plan becomes MODIFY
+    // instead of the reviewed ADD and must be refused before sync mutation.
+    await engine.putPage('plan-drift', {
+      type: 'note',
+      title: 'Concurrent row',
+      compiled_truth: 'Must remain untouched by the refused apply.',
+      frontmatter: {},
+      content_hash: '0'.repeat(64),
+      source_path: 'plan-drift.md',
+    }, { sourceId });
+
+    let refusal: unknown;
+    try {
+      await performSync(engine, {
+        ...paired,
+        expectedPlanDigest: preview.planDigest!,
+      });
+    } catch (error) {
+      refusal = error;
+    }
+    expect(refusal).toMatchObject({
+      reasonCode: 'plan_changed',
+      required: preview.planDigest,
+    });
+    const envelope = buildGBrainSyncErrorEnvelope(refusal);
+    expect(envelope).toMatchObject({
+      reason_code: 'plan_changed',
+      state_changed: 'none',
+      required: preview.planDigest,
+    });
+    expect(envelope.observed).toMatch(/^[0-9a-f]{64}$/);
+    expect(envelope.observed).not.toBe(preview.planDigest);
+    expect((await engine.getPage('plan-drift', { sourceId }))?.compiled_truth)
+      .toBe('Must remain untouched by the refused apply.');
+    const after = await engine.executeRaw<{ last_commit: string }>(
+      `SELECT last_commit FROM sources WHERE id = $1`,
+      [sourceId],
+    );
+    expect(after[0].last_commit).toBe(bookmark);
   });
 
   test('paired delete applies the immutable planned fallback slug without re-resolving it', async () => {
@@ -1587,7 +2051,10 @@ describe('performSync dry-run never writes', () => {
     };
     let applied;
     try {
-      applied = await performSync(engine, paired);
+      applied = await performSync(engine, {
+        ...paired,
+        expectedPlanDigest: preview.plan_digest,
+      });
     } finally {
       engine.resolveSlugsByPaths = originalResolveSlugsByPaths;
     }
@@ -1661,7 +2128,11 @@ describe('performSync dry-run never writes', () => {
 
     for (const dryRun of [true, false]) {
       try {
-        await performSync(engine, { ...paired, dryRun });
+        await performSync(engine, {
+          ...paired,
+          dryRun,
+          ...(!dryRun ? { expectedPlanDigest: '0'.repeat(64) } : {}),
+        });
         throw new Error('expected fallback slug change refusal');
       } catch (error) {
         expect(error).toBeInstanceOf(SyncPreconditionError);
@@ -1787,13 +2258,186 @@ describe('performSync dry-run never writes', () => {
       requireClean: true,
     };
 
-    const result = await performSync(engine, paired);
+    const preview = await performSync(engine, {
+      ...paired,
+      dryRun: true,
+    });
+    const result = await performSync(engine, {
+      ...paired,
+      expectedPlanDigest: preview.planDigest!,
+    });
     expect(result.renamed).toBe(1);
     const pages = await engine.executeRaw<{ source_path: string | null }>(
       `SELECT source_path FROM pages WHERE source_id = $1 AND slug = 'note'`,
       ['paired-same-slug-rename'],
     );
     expect(pages).toEqual([{ source_path: 'note.md' }]);
+  });
+
+  test('paired incremental rename collision preserves both rows and the bookmark', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const sourceId = 'paired-rename-collision';
+    writeFileSync(
+      join(repoPath, 'old.md'),
+      ['---', 'type: concept', 'title: Old', '---', '', 'Reviewed rename body.'].join('\n'),
+    );
+    execSync('git add -A && git commit -m "add rename collision source"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ($1, $1, $2, '{}'::jsonb)`,
+      [sourceId, repoPath],
+    );
+    await performSync(engine, {
+      sourceId,
+      repoPath,
+      strategy: 'markdown',
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    const before = await engine.executeRaw<{ last_commit: string }>(
+      `SELECT last_commit FROM sources WHERE id = $1`,
+      [sourceId],
+    );
+    const bookmark = before[0].last_commit;
+    execSync('git mv old.md new.md && git commit -m "rename reviewed page"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    const target = execSync('git rev-parse HEAD', {
+      cwd: repoPath,
+      encoding: 'utf8',
+    }).trim();
+    const paired = {
+      sourceId,
+      repoPath,
+      strategy: 'markdown' as const,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      expectedTarget: target,
+      expectedBookmark: bookmark,
+      requireClean: true,
+    };
+    const preview = await performSync(engine, {
+      ...paired,
+      dryRun: true,
+    });
+    expect(preview.renamed).toBe(1);
+
+    // A same-source writer claims the destination slug after preview. The
+    // rebuilt plan remains the same rename, but updateSlug must now fail
+    // closed instead of falling through to import-as-add/upsert.
+    await engine.putPage('new', {
+      type: 'concept',
+      title: 'Destination collision',
+      compiled_truth: 'This destination row must remain untouched.',
+      frontmatter: {},
+      content_hash: '0'.repeat(64),
+      source_path: 'manual/destination-collision.md',
+    }, { sourceId });
+
+    const applied = await performSync(engine, {
+      ...paired,
+      expectedPlanDigest: preview.planDigest!,
+    });
+
+    expect(applied.status).toBe('blocked_by_failures');
+    expect((await engine.getPage('old', { sourceId }))?.compiled_truth)
+      .toContain('Reviewed rename body.');
+    expect((await engine.getPage('new', { sourceId }))?.compiled_truth)
+      .toBe('This destination row must remain untouched.');
+    const after = await engine.executeRaw<{ last_commit: string }>(
+      `SELECT last_commit FROM sources WHERE id = $1`,
+      [sourceId],
+    );
+    expect(after[0].last_commit).toBe(bookmark);
+  });
+
+  test('paired incremental rename refuses a vanished source without add fallback', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const sourceId = 'paired-rename-vanished';
+    writeFileSync(
+      join(repoPath, 'vanishing-old.md'),
+      ['---', 'type: concept', 'title: Old', '---', '', 'Reviewed source.'].join('\n'),
+    );
+    execSync('git add -A && git commit -m "add vanishing rename source"', {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ($1, $1, $2, '{}'::jsonb)`,
+      [sourceId, repoPath],
+    );
+    await performSync(engine, {
+      sourceId,
+      repoPath,
+      strategy: 'markdown',
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    const before = await engine.executeRaw<{ last_commit: string }>(
+      `SELECT last_commit FROM sources WHERE id = $1`,
+      [sourceId],
+    );
+    const bookmark = before[0].last_commit;
+    execSync(
+      'git mv vanishing-old.md vanishing-new.md && git commit -m "rename vanishing source"',
+      { cwd: repoPath, stdio: 'pipe' },
+    );
+    const target = execSync('git rev-parse HEAD', {
+      cwd: repoPath,
+      encoding: 'utf8',
+    }).trim();
+    const paired = {
+      sourceId,
+      repoPath,
+      strategy: 'markdown' as const,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      expectedTarget: target,
+      expectedBookmark: bookmark,
+      requireClean: true,
+    };
+    const preview = await performSync(engine, {
+      ...paired,
+      dryRun: true,
+    });
+    expect(preview.renamed).toBe(1);
+
+    const originalUpdateSlug = engine.updateSlug.bind(engine);
+    engine.updateSlug = async (oldSlug, newSlug, opts) => {
+      await engine.executeRaw(
+        `DELETE FROM pages
+          WHERE source_id = $1
+            AND slug = $2`,
+        [opts?.sourceId ?? 'default', oldSlug],
+      );
+      return await originalUpdateSlug(oldSlug, newSlug, opts);
+    };
+    let applied;
+    try {
+      applied = await performSync(engine, {
+        ...paired,
+        expectedPlanDigest: preview.planDigest!,
+      });
+    } finally {
+      engine.updateSlug = originalUpdateSlug;
+    }
+
+    expect(applied.status).toBe('blocked_by_failures');
+    expect(await engine.getPage('vanishing-new', { sourceId })).toBeNull();
+    const after = await engine.executeRaw<{ last_commit: string }>(
+      `SELECT last_commit FROM sources WHERE id = $1`,
+      [sourceId],
+    );
+    expect(after[0].last_commit).toBe(bookmark);
   });
 
   test('fallback-slug rename persists the planned destination source_path', async () => {
@@ -1859,6 +2503,7 @@ describe('performSync dry-run never writes', () => {
     const result = await performSync(engine, {
       ...paired,
       full: true,
+      expectedPlanDigest: full.planDigest!,
     });
 
     expect(result.affected?.sample).toEqual([

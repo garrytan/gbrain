@@ -145,6 +145,7 @@ describe('performFullSync threads sourceId end-to-end', () => {
         noExtract: true,
         expectedTarget: target,
         expectedBookmark: null,
+        expectedPlanDigest: '0'.repeat(64),
         requireClean: true,
       }),
     ).rejects.toMatchObject({

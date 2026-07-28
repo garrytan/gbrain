@@ -42,7 +42,7 @@ describe('immutable sync plan evidence', () => {
     });
   }
 
-  test('digest is UTF-8 bytewise over exact kind/path/slug lines', () => {
+  test('digest is UTF-8 bytewise over exact kind/path/slug/from_path lines', () => {
     const operations: SyncPlanOperation[] = [
       { kind: 'modify', path: 'é.md', slug: 'accent' },
       { kind: 'add', path: '你好.md', slug: '你好' },
@@ -51,7 +51,12 @@ describe('immutable sync plan evidence', () => {
     ];
     const lines = operations
       .map((operation) =>
-        `${operation.kind}\t${operation.path}\t${operation.slug}\n`)
+        [
+          operation.kind,
+          operation.path,
+          operation.slug,
+          operation.fromPath ?? '',
+        ].join('\t') + '\n')
       .sort((left, right) =>
         Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8')),
       )
@@ -59,6 +64,83 @@ describe('immutable sync plan evidence', () => {
     const expected = createHash('sha256').update(lines, 'utf8').digest('hex');
 
     expect(planFor(operations).affectedDigest).toBe(expected);
+  });
+
+  test('digest distinguishes renames with different source paths', () => {
+    const first = planFor([
+      {
+        kind: 'rename',
+        path: 'notes/new.md',
+        fromPath: 'notes/first.md',
+        slug: 'notes/new',
+      },
+    ]);
+    const second = planFor([
+      {
+        kind: 'rename',
+        path: 'notes/new.md',
+        fromPath: 'notes/second.md',
+        slug: 'notes/new',
+      },
+    ]);
+
+    expect(first.affected.sample[0]?.from_path).toBe('notes/first.md');
+    expect(second.affected.sample[0]?.from_path).toBe('notes/second.md');
+    expect(first.affectedDigest).not.toBe(second.affectedDigest);
+  });
+
+  test('full plan commitment binds target content and schema-pack identity', () => {
+    const first = createSyncPlan({
+      mode: 'incremental',
+      sourceId: 'default',
+      repoPath: '/brain',
+      fromCommit: 'a'.repeat(40),
+      targetCommit: 'b'.repeat(40),
+      strategy: 'markdown',
+      schemaPackIdentity: 'base@1+aaaaaaaa',
+      operations: [{
+        kind: 'modify',
+        path: 'notes/topic.md',
+        slug: 'notes/topic',
+        contentHash: '1'.repeat(64),
+      }],
+    });
+    const contentChanged = createSyncPlan({
+      mode: 'incremental',
+      sourceId: 'default',
+      repoPath: '/brain',
+      fromCommit: 'a'.repeat(40),
+      targetCommit: 'b'.repeat(40),
+      strategy: 'markdown',
+      schemaPackIdentity: 'base@1+aaaaaaaa',
+      operations: [{
+        kind: 'modify',
+        path: 'notes/topic.md',
+        slug: 'notes/topic',
+        contentHash: '2'.repeat(64),
+      }],
+    });
+    const packChanged = createSyncPlan({
+      mode: 'incremental',
+      sourceId: 'default',
+      repoPath: '/brain',
+      fromCommit: 'a'.repeat(40),
+      targetCommit: 'b'.repeat(40),
+      strategy: 'markdown',
+      schemaPackIdentity: 'base@2+bbbbbbbb',
+      operations: [{
+        kind: 'modify',
+        path: 'notes/topic.md',
+        slug: 'notes/topic',
+        contentHash: '1'.repeat(64),
+      }],
+    });
+
+    expect(contentChanged.affectedDigest).toBe(first.affectedDigest);
+    expect(packChanged.affectedDigest).toBe(first.affectedDigest);
+    expect(contentChanged.planDigest).not.toBe(first.planDigest);
+    expect(packChanged.planDigest).not.toBe(first.planDigest);
+    expect(first.planDigest).toMatch(/^[0-9a-f]{64}$/);
   });
 
   for (const [label, value] of [

@@ -12,9 +12,9 @@ delete an indexed page that the selected strategy no longer accepted. A command
 presented as a preview could therefore leave the brain different afterward.
 
 This release builds one immutable sync plan first, then either prints it or
-applies that exact plan. Automation can also pin the repository commit, source
-bookmark, and clean-worktree requirement. If any of them changed, GBrain
-refuses the apply instead of guessing.
+applies that exact plan. Automation pins the repository commit, source bookmark,
+clean-worktree requirement, and the preview's full `plan_digest`. If any
+planning input changed, GBrain refuses the apply instead of guessing.
 
 ### How to use it
 
@@ -36,15 +36,17 @@ gbrain sync \
   --json
 ```
 
-Use the literal `none` when the source has no bookmark. Inspect the receipt,
-then remove `--dry-run` and repeat the same command to apply.
+Use the literal `none` when the source has no bookmark. Inspect and validate the
+receipt, capture its lowercase 64-character `plan_digest`, then remove
+`--dry-run`, add `--expected-plan-digest "$PLAN_DIGEST"`, and repeat the same
+command to apply.
 
 ### What changes in practice
 
 | Situation | Before | Now |
 |---|---|---|
 | A tracked page falls outside the selected strategy | Preview could delete its indexed row | Receipt reports the operation; preview changes nothing |
-| HEAD, bookmark, or worktree changes between checks | Sync could use different evidence | Apply refuses with a typed reason |
+| Git, database, or schema-pack planning state changes between checks | Sync could use different evidence | Apply refuses with a typed reason before mutation |
 | An automation caller reads JSON | Some paths printed multiple documents | One schema-1 document is written to stdout |
 | A source is restored while purge is waiting | Deletion could race the restore | Lifecycle lock and archived-state recheck preserve it |
 
@@ -73,8 +75,8 @@ preview with the command above, and apply only after validating the receipt.
 #### Added
 
 - Immutable `SyncPlan` evidence with deterministic operation counts, a capped
-  affected sample, preservation evidence, and a SHA-256 digest over the full
-  mutation set.
+  affected sample, preservation evidence, an `affected_digest` over the full
+  mutation set, and a `plan_digest` over the complete executable decision.
 - Exact-target preconditions for commit, bookmark, and worktree cleanliness,
   plus one schema-1 JSON success or error envelope.
 - Source-list JSON fields for the current bookmark and last successful sync
@@ -88,9 +90,17 @@ preview with the command above, and apply only after validating the receipt.
   delete slugs, and checkpoint provenance.
 - Paired runs refuse incomplete failure-skipping paths and fail closed when a
   source anchor changes before the final write.
-- Source remove, purge, restore, re-clone, and sync share a canonical lifecycle
-  lock. Explicit and expiry purge recheck archived state and never delete the
-  protected `default` source.
+- Every real paired API or CLI apply requires the reviewed `plan_digest`, cannot
+  bypass its source lock, and refuses database or active-pack drift as
+  `plan_changed` before sync-domain mutation.
+- Incremental paired renames fail closed on a lost source or destination-slug
+  collision instead of falling through to import-as-add; ordinary unpaired sync
+  retains its compatibility fallback.
+- Source archive, restore, remove, purge, re-clone, and sync share a canonical
+  lifecycle lock. Explicit and expiry purge recheck archived state and never
+  delete the protected `default` source.
+- Lock refresh and release prove the full source-lock owner tuple
+  `(id, pid, host)` and fail closed when the owned row is gone or replaced.
 - `sources attach` atomically replaces the marker entry instead of following a
   raced symlink.
 

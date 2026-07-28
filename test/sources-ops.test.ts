@@ -28,12 +28,14 @@ import {
   unownedHint,
   defaultCloneDir,
   SourceOpError,
+  withSourceLifecycleLock,
 } from '../src/core/sources-ops.ts';
 import { readdirSync } from 'fs';
 import { runSources } from '../src/commands/sources.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
 import {
+  LockReleaseFailedError,
   syncLockId,
   tryAcquireDbLock,
 } from '../src/core/db-lock.ts';
@@ -138,6 +140,32 @@ async function withEnv2<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 describe('source lifecycle lock', () => {
+  test('surfaces a failed final lock release after successful lifecycle work', async () => {
+    const fakeEngine = {
+      kind: 'pglite' as const,
+      db: {
+        query: async (sql: string) => {
+          if (sql.includes('INSERT INTO gbrain_cycle_locks')) {
+            return { rows: [{ id: 'gbrain-sync:release-failure' }] };
+          }
+          if (sql.includes('DELETE FROM gbrain_cycle_locks')) {
+            return { rows: [] };
+          }
+          return { rows: [] };
+        },
+      },
+      executeRawDirect: async () => [],
+    } as unknown as Parameters<typeof withSourceLifecycleLock>[0];
+
+    await expect(
+      withSourceLifecycleLock(
+        fakeEngine,
+        'release-failure',
+        async () => 'completed',
+      ),
+    ).rejects.toBeInstanceOf(LockReleaseFailedError);
+  });
+
   test('add, remove, and re-clone contend on the same per-source sync lock', async () => {
     for (const operation of ['add', 'remove', 'reclone'] as const) {
       const id = `locked-${operation}`;
@@ -227,6 +255,39 @@ describe('source lifecycle lock', () => {
       expect(pageRows[0].n).toBe(1);
     } finally {
       await handle!.release();
+    }
+  });
+
+  test('public archive and restore preserve source state while the lifecycle lock is held', async () => {
+    for (const operation of ['archive', 'restore'] as const) {
+      const id = `locked-cli-${operation}`;
+      const initiallyArchived = operation === 'restore';
+      await engine.executeRaw(
+        `INSERT INTO sources
+           (id, name, local_path, archived, archived_at, archive_expires_at, config)
+         VALUES
+           ($1, $1, NULL, $2,
+            CASE WHEN $2 THEN now() ELSE NULL END,
+            CASE WHEN $2 THEN now() + INTERVAL '72 hours' ELSE NULL END,
+            '{}'::jsonb)`,
+        [id, initiallyArchived],
+      );
+      const handle = await tryAcquireDbLock(engine, syncLockId(id));
+      expect(handle).not.toBeNull();
+      try {
+        await expect(
+          runSources(engine, [operation, id]),
+        ).rejects.toMatchObject({
+          code: 'lock_busy',
+        });
+        const rows = await engine.executeRaw<{ archived: boolean }>(
+          `SELECT archived FROM sources WHERE id = $1`,
+          [id],
+        );
+        expect(rows).toEqual([{ archived: initiallyArchived }]);
+      } finally {
+        await handle!.release();
+      }
     }
   });
 });

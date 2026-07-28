@@ -59,18 +59,26 @@ database, capture the source ID and bookmark from
 HEAD with `git rev-parse HEAD`. Then run this pair with the same values:
 
 ```bash
-gbrain sync \
-  --strategy auto \
-  --source "$SOURCE_ID" \
-  --repo "$REPO_ROOT" \
-  --no-pull \
-  --expected-target "$TARGET_SHA" \
-  --expected-bookmark "$BOOKMARK_SHA_OR_NONE" \
-  --require-clean \
-  --no-embed \
-  --no-extract \
-  --dry-run \
-  --json
+PREVIEW_JSON="$(
+  gbrain sync \
+    --strategy auto \
+    --source "$SOURCE_ID" \
+    --repo "$REPO_ROOT" \
+    --no-pull \
+    --expected-target "$TARGET_SHA" \
+    --expected-bookmark "$BOOKMARK_SHA_OR_NONE" \
+    --require-clean \
+    --no-embed \
+    --no-extract \
+    --dry-run \
+    --json
+)"
+printf '%s\n' "$PREVIEW_JSON"
+
+PLAN_DIGEST="$(
+  printf '%s\n' "$PREVIEW_JSON" |
+    jq -er '.plan_digest | strings | select(test("^[0-9a-f]{64}$"))'
+)"
 
 gbrain sync \
   --strategy auto \
@@ -79,6 +87,7 @@ gbrain sync \
   --no-pull \
   --expected-target "$TARGET_SHA" \
   --expected-bookmark "$BOOKMARK_SHA_OR_NONE" \
+  --expected-plan-digest "$PLAN_DIGEST" \
   --require-clean \
   --no-embed \
   --no-extract \
@@ -91,15 +100,21 @@ Git, import pages, clear checkpoints, advance bookmarks, write strategy
 markers, extract, or embed. It emits exactly one schema-1 JSON document on
 stdout; diagnostics go to stderr. The real command rebuilds and validates the
 same immutable plan while holding the same source lock and refuses the apply
-if HEAD, bookmark, or working-tree cleanliness changed.
+if HEAD, bookmark, working-tree cleanliness, database planning state, or the
+active schema pack changed. A real paired apply without the preview's lowercase
+64-character `plan_digest` is rejected before the engine is touched. A digest
+mismatch returns `reason_code: "plan_changed"` with `state_changed: "none"`;
+`observed` is the freshly rebuilt digest and `required` is the reviewed preview
+digest.
 
-Source deletion uses that lock too. Explicit `sources purge <id>` accepts only
-an archived, non-default source and rechecks that state after it acquires the
-lock; it refuses a busy or restored source. The expiry sweep defers only the
-locked source instead of racing a sync into cascade deletion. `sources attach`
-writes a fresh marker inode and atomically renames it into place, so a
-`.gbrain-source` symlink created during a long wrapper run is replaced rather
-than followed.
+Source archive, restore, deletion, and managed re-clone use that lock too, and
+a failed final lock release is surfaced instead of reporting lifecycle success
+with a stale lock. Explicit `sources purge <id>` accepts only an archived,
+non-default source and rechecks that state after it acquires the lock; it
+refuses a busy or restored source. The expiry sweep defers only the locked
+source instead of racing a sync into cascade deletion. `sources attach` writes
+a fresh marker inode and atomically renames it into place, so a `.gbrain-source`
+symlink created during a long wrapper run is replaced rather than followed.
 
 Paired runs read file bytes from a private materialization of the captured
 target commit, not from the live checkout. Full-sync deletion history and
@@ -115,11 +130,15 @@ row but does not write it into the live checkout, because doing so would violate
 the clean-tree assertion after planning.
 
 The receipt includes deterministic operation counts, a capped affected sample,
-and a SHA-256 digest over the complete mutation set. Preservation decisions are
-reported separately and never contaminate the mutation digest. Corpus counts
-are always concrete integers. `search_ready` may be true only when both
-`embedding_status` and `extraction_status` are `complete`; the paired command
-above deliberately reports both as `deferred` and `search_ready: false`.
+and two SHA-256 commitments. `affected_digest` covers the complete mutation set
+for review while keeping preservation decisions separate. `plan_digest` binds
+the full executable decision: commits, strategy and prior strategy, normalized
+operations (including rename source paths, preservation reasons, and target
+content hashes), corpus projections, checkpoint-reset state, and active
+schema-pack identity. Corpus counts are always concrete integers.
+`search_ready` may be true only when both `embedding_status` and
+`extraction_status` are `complete`; the paired command above deliberately
+reports both as `deferred` and `search_ready: false`.
 
 ### Approach 1: Cron Job (recommended)
 

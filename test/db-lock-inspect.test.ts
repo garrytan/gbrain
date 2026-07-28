@@ -137,8 +137,11 @@ describe('deleteLockRow', () => {
     // Row should be gone.
     const snap = await inspectLock(engine, 'gbrain-sync:to-delete');
     expect(snap).toBeNull();
-    // handle.release() would also have run a DELETE — verify it's idempotent.
-    await handle!.release();
+    // The acquired handle no longer owns a row, so its final release must
+    // surface lost ownership instead of silently reporting success.
+    await expect(handle!.release()).rejects.toThrow(
+      /ownership was lost before release/,
+    );
   });
 
   test('returns deleted=false when row was already cleared (race)', async () => {
@@ -182,7 +185,9 @@ describe('deleteLockRow', () => {
     // Calling again is a no-op (idempotent).
     const r2 = await deleteLockRow(engine, 'gbrain-sync:atomic-test', process.pid);
     expect(r2.deleted).toBe(false);
-    await handle!.release();
+    await expect(handle!.release()).rejects.toThrow(
+      /ownership was lost before release/,
+    );
   });
 });
 

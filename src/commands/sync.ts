@@ -275,6 +275,7 @@ export interface SyncResult {
   checkpointReset?: boolean;
   affected?: SyncAffectedSummary;
   affectedDigest?: string;
+  planDigest?: string;
   planCorpus?: SyncPlanCorpus;
 }
 
@@ -914,6 +915,8 @@ export interface SyncOpts {
    */
   expectedTarget?: string;
   expectedBookmark?: string | null;
+  /** Full schema-1 preview commitment required by every paired real apply. */
+  expectedPlanDigest?: string;
   requireClean?: boolean;
   /**
    * Internal: this invocation must produce the strict schema-1 receipt.
@@ -947,6 +950,12 @@ export interface SyncOpts {
    * preview/apply invocation. Never accepted from CLI input.
    */
   validatedPlan?: SyncPlan;
+  /**
+   * Internal active pack snapshot used to build validatedPlan. Paired apply
+   * imports with this same object so a config flip cannot reopen plan inputs
+   * between digest verification and mutation.
+   */
+  validatedActivePack?: SyncActivePack | null;
   /**
    * Internal: private materialization of the exact paired target commit.
    * Git history and source identity are still read from repoPath; every
@@ -1783,6 +1792,7 @@ export type SyncRefusalReason =
   | 'source_changed'
   | 'target_changed'
   | 'bookmark_changed'
+  | 'plan_changed'
   | 'working_tree_dirty'
   | 'managed_clone_missing'
   | 'plan_failed'
@@ -1835,6 +1845,7 @@ export interface GBrainSyncEnvelope {
   };
   affected: SyncAffectedSummary;
   affected_digest: string;
+  plan_digest: string;
   corpus: {
     markdown_planned_or_applied: number;
     code_pages_before: number;
@@ -1898,13 +1909,19 @@ export function buildGBrainSyncEnvelope(
   const multimodalEnabled =
     process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true';
   const corpus = result.planCorpus;
+  const planDigest = result.planDigest;
   const dryRun = result.status === 'dry_run';
-  if (!corpus || (!dryRun && !completed)) {
+  if (
+    !corpus ||
+    typeof planDigest !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(planDigest) ||
+    (!dryRun && !completed)
+  ) {
     throw new SyncPreconditionError(
       'plan_failed',
-      'A schema-1 sync receipt requires complete immutable corpus evidence.',
-      result.status,
-      'dry_run, up_to_date, synced, or first_sync with a bound SyncPlan',
+      'A schema-1 sync receipt requires complete immutable plan and corpus evidence.',
+      planDigest ?? result.status,
+      'dry_run, up_to_date, synced, or first_sync with a bound lowercase SHA-256 plan digest',
     );
   }
   if (multimodalEnabled) {
@@ -1941,6 +1958,7 @@ export function buildGBrainSyncEnvelope(
     },
     affected: result.affected ?? empty.affected,
     affected_digest: result.affectedDigest ?? empty.affectedDigest,
+    plan_digest: planDigest,
     corpus: {
       markdown_planned_or_applied:
         corpus.markdownOperations,
@@ -2317,6 +2335,7 @@ async function assertRegisteredSourcePath(
   const paired =
     opts.expectedTarget !== undefined ||
     opts.expectedBookmark !== undefined ||
+    opts.expectedPlanDigest !== undefined ||
     opts.requireClean === true;
   // Legacy default-source calls can still use the pre-v0.17 config anchor.
   // Once a caller asks for paired exact-state evidence, however, even the
@@ -2578,6 +2597,7 @@ function existingPageOwnsSourcePath(
 }
 
 type SyncActivePack = {
+  identity: string;
   page_types: ReadonlyArray<{
     name: string;
     path_prefixes: ReadonlyArray<string>;
@@ -2597,7 +2617,10 @@ async function loadSyncActivePackReadOnly(
       remote: false,
       sourceId: opts.sourceId,
     });
-    return { page_types: resolved.manifest.page_types };
+    return {
+      identity: resolved.identity,
+      page_types: resolved.manifest.page_types,
+    };
   } catch {
     return undefined;
   }
@@ -2782,9 +2805,9 @@ async function buildFullTreePlanOperations(
   allFiles: string[],
   selectedFiles: string[],
   strategy: SyncPlanStrategy,
+  activePack: SyncActivePack | undefined,
 ): Promise<SyncPlanOperation[]> {
   const sourceId = opts.sourceId ?? DEFAULT_SOURCE_ID;
-  const activePack = await loadSyncActivePackReadOnly(opts);
   const rows = await engine.executeRaw<PlannedExistingPage>(
     `SELECT slug, source_path, content_hash, type, frontmatter
        FROM pages
@@ -2904,6 +2927,7 @@ async function buildFullTreePlanOperations(
         path: sourcePath,
         fromPath: rename.from,
         slug: identity.slug,
+        contentHash: identity.contentHash,
       });
       plannedRenameSources.add(rename.from);
     } else if (!existing) {
@@ -2911,6 +2935,7 @@ async function buildFullTreePlanOperations(
         kind: 'add',
         path: sourcePath,
         slug: identity.slug,
+        contentHash: identity.contentHash,
       });
     } else if (
       identity.contentHash === null ||
@@ -2920,6 +2945,7 @@ async function buildFullTreePlanOperations(
         kind: 'modify',
         path: sourcePath,
         slug: existing.slug,
+        contentHash: identity.contentHash,
       });
     }
   }
@@ -3029,6 +3055,7 @@ async function buildReadOnlySyncPlan(
   engine: BrainEngine,
   opts: SyncOpts,
   resolvedRepoPath: string,
+  planning?: { activePack: SyncActivePack | undefined },
 ): Promise<SyncPlan> {
   const livePreflight = await readOnlySyncPreflight(
     engine,
@@ -3063,6 +3090,10 @@ async function buildReadOnlySyncPlan(
     : livePreflight;
   const strategy: SyncPlanStrategy = opts.strategy ?? 'markdown';
   const sourceId = opts.sourceId ?? DEFAULT_SOURCE_ID;
+  const activePack =
+    planning !== undefined
+      ? planning.activePack
+      : await loadSyncActivePackReadOnly(opts);
   const lastSuccessfulStrategy = await readLastSuccessfulStrategy(engine, opts.sourceId);
   const strategyChanged =
     opts.sourceId !== undefined && lastSuccessfulStrategy !== strategy;
@@ -3096,6 +3127,7 @@ async function buildReadOnlySyncPlan(
       allFiles,
       files,
       strategy,
+      activePack,
     );
     return await createEngineBoundSyncPlan(engine, {
       mode: preflight.bookmark === null ? 'first' : 'full',
@@ -3106,6 +3138,7 @@ async function buildReadOnlySyncPlan(
       strategy,
       lastSuccessfulStrategy,
       strategyChanged,
+      schemaPackIdentity: activePack?.identity ?? null,
       operations,
     });
   }
@@ -3186,7 +3219,9 @@ async function buildReadOnlySyncPlan(
         allFiles,
         files,
         strategy,
+        activePack,
       ),
+      schemaPackIdentity: activePack?.identity ?? null,
     });
   }
 
@@ -3343,7 +3378,6 @@ async function buildReadOnlySyncPlan(
   const existingBySlug = new Map(
     ownedExistingRows.map((row) => [row.slug, row]),
   );
-  const activePack = await loadSyncActivePackReadOnly(opts);
   const existingForPath = (path: string): PlannedExistingPage | undefined =>
     existingByPath.get(normalizePath(path)) ??
     existingBySlug.get(resolveSlugForPath(path));
@@ -3395,12 +3429,22 @@ async function buildReadOnlySyncPlan(
     const identity = plannedIdentity(path, existing);
     if (!identity) continue;
     if (!existing) {
-      operations.push({ kind: 'add', path, slug: identity.slug });
+      operations.push({
+        kind: 'add',
+        path,
+        slug: identity.slug,
+        contentHash: identity.contentHash,
+      });
     } else if (
       identity.contentHash === null ||
       existing.content_hash !== identity.contentHash
     ) {
-      operations.push({ kind: 'modify', path, slug: existing.slug });
+      operations.push({
+        kind: 'modify',
+        path,
+        slug: existing.slug,
+        contentHash: identity.contentHash,
+      });
     }
   }
   for (const path of modified) {
@@ -3408,12 +3452,22 @@ async function buildReadOnlySyncPlan(
     const identity = plannedIdentity(path, existing);
     if (!identity) continue;
     if (!existing) {
-      operations.push({ kind: 'add', path, slug: identity.slug });
+      operations.push({
+        kind: 'add',
+        path,
+        slug: identity.slug,
+        contentHash: identity.contentHash,
+      });
     } else if (
       identity.contentHash === null ||
       existing.content_hash !== identity.contentHash
     ) {
-      operations.push({ kind: 'modify', path, slug: existing.slug });
+      operations.push({
+        kind: 'modify',
+        path,
+        slug: existing.slug,
+        contentHash: identity.contentHash,
+      });
     }
   }
   for (const path of deleted) {
@@ -3437,12 +3491,14 @@ async function buildReadOnlySyncPlan(
         path: rename.to,
         fromPath: rename.from,
         slug: identity.slug,
+        contentHash: identity.contentHash,
       });
     } else if (!destinationExisting) {
       operations.push({
         kind: 'add',
         path: rename.to,
         slug: identity.slug,
+        contentHash: identity.contentHash,
       });
     } else if (
       identity.contentHash === null ||
@@ -3452,6 +3508,7 @@ async function buildReadOnlySyncPlan(
         kind: 'modify',
         path: rename.to,
         slug: destinationExisting.slug,
+        contentHash: identity.contentHash,
       });
     }
   }
@@ -3486,6 +3543,7 @@ async function buildReadOnlySyncPlan(
     lastSuccessfulStrategy,
     strategyChanged,
     checkpointReset,
+    schemaPackIdentity: activePack?.identity ?? null,
     operations,
   });
 }
@@ -3511,6 +3569,7 @@ function syncResultFromPlan(plan: SyncPlan): SyncResult {
     checkpointReset: plan.checkpointReset,
     affected: plan.affected,
     affectedDigest: plan.affectedDigest,
+    planDigest: plan.planDigest,
     planCorpus: plan.corpus,
   };
 }
@@ -3537,16 +3596,45 @@ function attachPlanEvidence(result: SyncResult, plan: SyncPlan): SyncResult {
     checkpointReset: plan.checkpointReset,
     affected: plan.affected,
     affectedDigest: plan.affectedDigest,
+    planDigest: plan.planDigest,
     planCorpus: plan.corpus,
     preserved: plan.preserved,
   };
 }
 
 export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {
+  if (
+    opts.expectedPlanDigest !== undefined &&
+    !/^[0-9a-f]{64}$/.test(opts.expectedPlanDigest)
+  ) {
+    throw new SyncPreconditionError(
+      'plan_failed',
+      'Expected plan digest must be a lowercase 64-character SHA-256 digest.',
+      opts.expectedPlanDigest,
+      '<64-char-lowercase-sha256>',
+    );
+  }
   const paired =
     opts.expectedTarget !== undefined ||
     opts.expectedBookmark !== undefined ||
+    opts.expectedPlanDigest !== undefined ||
     opts.requireClean === true;
+  if (paired && !opts.dryRun && opts.expectedPlanDigest === undefined) {
+    throw new SyncPreconditionError(
+      'plan_failed',
+      'Paired exact-target apply requires the reviewed preview plan digest.',
+      null,
+      '--expected-plan-digest <64-char-lowercase-sha256>',
+    );
+  }
+  if (paired && opts.skipLock === true) {
+    throw new SyncPreconditionError(
+      'plan_failed',
+      'Paired exact-target sync requires its source lock for plan validation and apply.',
+      '--skip-lock',
+      'source-scoped refreshing lock',
+    );
+  }
   if (paired && opts.noPull !== true) {
     throw new SyncPreconditionError(
       'plan_failed',
@@ -3641,16 +3729,33 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
       }
 
       let applyPlan: SyncPlan | null = null;
+      let applyActivePack: SyncActivePack | undefined;
       if (!pairedOpts.dryRun && paired) {
+        applyActivePack = await loadSyncActivePackReadOnly(pairedOpts);
         applyPlan = await buildReadOnlySyncPlan(
           engine,
           pairedOpts,
           repoPath!,
+          { activePack: applyActivePack },
         );
+        if (
+          opts.expectedPlanDigest !== undefined &&
+          applyPlan.planDigest !== opts.expectedPlanDigest
+        ) {
+          throw new SyncPreconditionError(
+            'plan_changed',
+            'The current immutable sync plan no longer matches the reviewed preview.',
+            applyPlan.planDigest,
+            opts.expectedPlanDigest,
+          );
+        }
       }
       const executionOpts: SyncOpts = {
         ...pairedOpts,
         ...(applyPlan ? { validatedPlan: applyPlan } : {}),
+        ...(applyPlan
+          ? { validatedActivePack: applyActivePack ?? null }
+          : {}),
       };
       const result = await performSyncInner(engine, executionOpts);
       const resultPlan = applyPlan ?? executionOpts.validatedPlan;
@@ -4044,25 +4149,36 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // importFile call below. Codex perf finding #7: per-file loadActivePack adds
   // disk/YAML/hash overhead × thousands of files. Best-effort: pack load
   // failure falls through to legacy inferType (parity preserved).
-  let syncActivePack: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> } | undefined;
-  try {
-    // v0.41.37.0 #1569: --no-schema-pack escape hatch. Skip pack load entirely so
-    // no user-supplied pack regex (markdown.ts subtype path_pattern) runs during
-    // sync; pages fall back to legacy prefix typing.
-    if (opts.noSchemaPack) {
-      serr('[sync] --no-schema-pack: skipping schema pack; pages use legacy prefix typing');
-      throw new Error('schema-pack-skipped');
+  let syncActivePack:
+    | { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> }
+    | undefined;
+  if (
+    opts.validatedPlan &&
+    opts.validatedActivePack !== undefined
+  ) {
+    // Paired apply uses the exact pack object that produced plan_digest.
+    // Do not reopen config after the commitment was checked.
+    syncActivePack = opts.validatedActivePack ?? undefined;
+  } else {
+    try {
+      // v0.41.37.0 #1569: --no-schema-pack escape hatch. Skip pack load entirely so
+      // no user-supplied pack regex (markdown.ts subtype path_pattern) runs during
+      // sync; pages fall back to legacy prefix typing.
+      if (opts.noSchemaPack) {
+        serr('[sync] --no-schema-pack: skipping schema pack; pages use legacy prefix typing');
+        throw new Error('schema-pack-skipped');
+      }
+      const { loadActivePack } = await import('../core/schema-pack/load-active.ts');
+      const { loadConfig } = await import('../core/config.ts');
+      const resolved = await loadActivePack({
+        cfg: loadConfig(),
+        remote: false, // sync is always a trusted CLI / autopilot caller
+        sourceId: opts.sourceId,
+      });
+      syncActivePack = { page_types: resolved.manifest.page_types };
+    } catch {
+      syncActivePack = undefined;
     }
-    const { loadActivePack } = await import('../core/schema-pack/load-active.ts');
-    const { loadConfig } = await import('../core/config.ts');
-    const resolved = await loadActivePack({
-      cfg: loadConfig(),
-      remote: false, // sync is always a trusted CLI / autopilot caller
-      sourceId: opts.sourceId,
-    });
-    syncActivePack = { page_types: resolved.manifest.page_types };
-  } catch {
-    syncActivePack = undefined;
   }
 
   // v0.28: source-aware re-clone branch. When the source has a remote_url
@@ -5288,9 +5404,36 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       const newSlug =
         plannedRename?.slug ?? resolveSlugForPath(to);
       try {
-        await engine.updateSlug(oldSlug, newSlug, renameOpts);
-      } catch {
-        // Slug doesn't exist or collision, treat as add
+        const renamedRows = await engine.updateSlug(
+          oldSlug,
+          newSlug,
+          renameOpts,
+        );
+        if (
+          opts.expectedPlanDigest !== undefined &&
+          renamedRows !== 1
+        ) {
+          throw new Error(
+            `source_changed: planned rename source "${from}" ` +
+            `updated ${renamedRows} live rows instead of exactly one`,
+          );
+        }
+      } catch (error) {
+        if (opts.expectedPlanDigest !== undefined) {
+          // Exact paired apply may not reinterpret a reviewed rename as an
+          // add/upsert. A destination collision or lost source means the DB
+          // pre-state changed; keep both rows and the bookmark untouched.
+          failedFiles.push({
+            path: to,
+            error:
+              `planned rename failed: ` +
+              (error instanceof Error ? error.message : String(error)),
+          });
+          progress.tick(1, newSlug);
+          continue;
+        }
+        // Ordinary unpaired compatibility: a missing source slug historically
+        // falls through to import-as-add.
       }
       // Reimport at new path (picks up content changes). Wrapped to match the
       // deletes/adds loops: a malformed renamed file is recorded to failedFiles
@@ -6161,7 +6304,18 @@ async function performFullSync(
           continue;
         }
         if (oldSlug !== operation.slug) {
-          await engine.updateSlug(oldSlug, operation.slug, { sourceId });
+          const renamedRows = await engine.updateSlug(
+            oldSlug,
+            operation.slug,
+            { sourceId },
+          );
+          if (renamedRows !== 1) {
+            throw new Error(
+              `source_changed: planned rename source ` +
+              `"${operation.fromPath}" updated ${renamedRows} live rows ` +
+              `instead of exactly one`,
+            );
+          }
         }
         const updated = await engine.executeRaw<{ slug: string }>(
           `UPDATE pages
@@ -6199,6 +6353,9 @@ async function performFullSync(
     exclude: opts.exclude,
     includeGitignored: opts.includeGitignored,
     slugRoot,
+    ...(opts.validatedActivePack !== undefined
+      ? { activePack: opts.validatedActivePack }
+      : {}),
     // issue #1939: performFullSync owns the failure ledger + bookmark via the
     // shared gate below; don't let runImport double-record or write its own.
     managedBookmark: true,
@@ -6800,6 +6957,7 @@ const SYNC_BOOLEAN_FLAGS = new Set([
 const SYNC_VALUE_FLAGS = new Set([
   '--concurrency',
   '--expected-bookmark',
+  '--expected-plan-digest',
   '--expected-target',
   '--hard-deadline',
   '--interval',
@@ -6951,6 +7109,9 @@ Options:
   --expected-bookmark B
                        Refuse unless the source bookmark is SHA B, or absent
                        when B is "none".
+  --expected-plan-digest D
+                       Apply only the exact immutable plan committed by a
+                       preview's 64-character lowercase plan_digest.
   --require-clean      Refuse unless tracked and untracked working-tree state
                        is clean. Rechecked under the source lock.
   --skip-failed        Acknowledge previously-recorded sync failures so
@@ -7076,6 +7237,9 @@ See also:
   const expectedBookmarkPositions = args
     .map((value, index) => value === '--expected-bookmark' ? index : -1)
     .filter((index) => index >= 0);
+  const expectedPlanDigestPositions = args
+    .map((value, index) => value === '--expected-plan-digest' ? index : -1)
+    .filter((index) => index >= 0);
   const expectedTargetCandidate =
     expectedTargetPositions.length === 1
       ? args[expectedTargetPositions[0] + 1]
@@ -7083,6 +7247,10 @@ See also:
   const expectedBookmarkCandidate =
     expectedBookmarkPositions.length === 1
       ? args[expectedBookmarkPositions[0] + 1]
+      : undefined;
+  const expectedPlanDigestCandidate =
+    expectedPlanDigestPositions.length === 1
+      ? args[expectedPlanDigestPositions[0] + 1]
       : undefined;
   const expectedTargetRaw =
     expectedTargetCandidate?.startsWith('--') === false
@@ -7092,10 +7260,15 @@ See also:
     expectedBookmarkCandidate?.startsWith('--') === false
       ? expectedBookmarkCandidate
       : undefined;
+  const expectedPlanDigestRaw =
+    expectedPlanDigestCandidate?.startsWith('--') === false
+      ? expectedPlanDigestCandidate
+      : undefined;
   const requireClean = args.includes('--require-clean');
   const pairedCli =
     expectedTargetRaw !== undefined ||
     expectedBookmarkRaw !== undefined ||
+    expectedPlanDigestRaw !== undefined ||
     requireClean;
 
   const invalidExpectedTarget =
@@ -7115,28 +7288,63 @@ See also:
         !/^[0-9a-f]{40}$/i.test(expectedBookmarkRaw)
       )
     );
-  if (invalidExpectedTarget || invalidExpectedBookmark) {
+  const invalidExpectedPlanDigest =
+    expectedPlanDigestPositions.length > 0 &&
+    (
+      expectedPlanDigestPositions.length !== 1 ||
+      expectedPlanDigestRaw === undefined ||
+      !/^[0-9a-f]{64}$/.test(expectedPlanDigestRaw)
+    );
+  if (
+    invalidExpectedTarget ||
+    invalidExpectedBookmark ||
+    invalidExpectedPlanDigest
+  ) {
     const error = new SyncPreconditionError(
       'plan_failed',
       invalidExpectedTarget
         ? '--expected-target must be a full 40-character Git SHA.'
-        : '--expected-bookmark must be a full 40-character Git SHA or "none".',
+        : invalidExpectedBookmark
+          ? '--expected-bookmark must be a full 40-character Git SHA or "none".'
+          : '--expected-plan-digest must be a lowercase 64-character SHA-256 digest.',
       invalidExpectedTarget
         ? (
             expectedTargetPositions.length > 1
               ? '<duplicate>'
               : expectedTargetRaw ?? '<missing>'
           )
-        : (
-            expectedBookmarkPositions.length > 1
-              ? '<duplicate>'
-              : expectedBookmarkRaw ?? '<missing>'
-          ),
-      invalidExpectedTarget ? '<40-char-sha>' : '<40-char-sha|none>',
+        : invalidExpectedBookmark
+          ? (
+              expectedBookmarkPositions.length > 1
+                ? '<duplicate>'
+                : expectedBookmarkRaw ?? '<missing>'
+            )
+          : (
+              expectedPlanDigestPositions.length > 1
+                ? '<duplicate>'
+                : expectedPlanDigestRaw ?? '<missing>'
+            ),
+      invalidExpectedTarget
+        ? '<40-char-sha>'
+        : invalidExpectedBookmark
+          ? '<40-char-sha|none>'
+          : '<64-char-lowercase-sha256>',
     );
     if (jsonOut) console.log(JSON.stringify(buildGBrainSyncErrorEnvelope(error)));
     else console.error(`ERROR [${error.reasonCode}] ${error.message}`);
     process.exit(1);
+  }
+
+  if (pairedCli && !dryRun && expectedPlanDigestRaw === undefined) {
+    exitSyncCliError(
+      jsonOut,
+      new SyncPreconditionError(
+        'plan_failed',
+        'Paired exact-target apply requires --expected-plan-digest from the reviewed dry-run receipt.',
+        '<missing>',
+        '--expected-plan-digest <preview.plan_digest>',
+      ),
+    );
   }
 
   if (pairedCli && skipFailed) {
@@ -7178,12 +7386,13 @@ See also:
       expectedBookmarkRaw !== undefined ||
       expectedTargetPositions.length > 0 ||
       expectedBookmarkPositions.length > 0 ||
+      expectedPlanDigestPositions.length > 0 ||
       requireClean
     )
   ) {
     const error = new SyncPreconditionError(
       'plan_failed',
-      'Expected target/bookmark/clean preconditions require one explicit source.',
+      'Expected target/bookmark/plan/clean preconditions require one explicit source.',
       '--all',
       '--source <id>',
     );
@@ -7934,6 +8143,9 @@ See also:
               ? null
               : expectedBookmarkRaw.toLowerCase(),
         }
+      : {}),
+    ...(expectedPlanDigestRaw !== undefined
+      ? { expectedPlanDigest: expectedPlanDigestRaw }
       : {}),
     requireClean,
     mutationJournal,

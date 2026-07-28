@@ -71,6 +71,17 @@ export async function runImport(
      * `wiki/page1` consistently across full and incremental sync.
      */
     slugRoot?: string;
+    /**
+     * Internal reviewed-plan snapshot. `undefined` preserves the standalone
+     * import behavior (load current config); `null` explicitly means the
+     * reviewed plan had no active pack.
+     */
+    activePack?: {
+      page_types: ReadonlyArray<{
+        name: string;
+        path_prefixes: ReadonlyArray<string>;
+      }>;
+    } | null;
   } = {},
 ): Promise<RunImportResult> {
   const noEmbed = args.includes('--no-embed');
@@ -115,18 +126,31 @@ export async function runImport(
   }
   // v0.39 T1.5: load active pack ONCE at runImport entry; thread to every
   // per-file importFile call below. Codex perf finding #7 — never per-file.
-  let importActivePack: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> } | undefined;
-  try {
-    const { loadActivePack } = await import('../core/schema-pack/load-active.ts');
-    const { loadConfig } = await import('../core/config.ts');
-    const resolved = await loadActivePack({
-      cfg: loadConfig(),
-      remote: false, // CLI import is trusted
-      sourceId: opts.sourceId,
-    });
-    importActivePack = { page_types: resolved.manifest.page_types };
-  } catch {
-    importActivePack = undefined;
+  let importActivePack:
+    | {
+      page_types: ReadonlyArray<{
+        name: string;
+        path_prefixes: ReadonlyArray<string>;
+      }>;
+    }
+    | undefined;
+  if (opts.activePack !== undefined) {
+    // A paired sync already bound this exact snapshot into plan_digest.
+    // Do not reopen config between validation and the first full-sync import.
+    importActivePack = opts.activePack ?? undefined;
+  } else {
+    try {
+      const { loadActivePack } = await import('../core/schema-pack/load-active.ts');
+      const { loadConfig } = await import('../core/config.ts');
+      const resolved = await loadActivePack({
+        cfg: loadConfig(),
+        remote: false, // CLI import is trusted
+        sourceId: opts.sourceId,
+      });
+      importActivePack = { page_types: resolved.manifest.page_types };
+    } catch {
+      importActivePack = undefined;
+    }
   }
 
   // v0.30.x follow-up to PR #707: programmatic sourceId support so internal

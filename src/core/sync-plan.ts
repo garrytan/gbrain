@@ -17,6 +17,13 @@ export interface SyncPlanOperation {
   slug: string;
   fromPath?: string;
   reason?: string;
+  /**
+   * Hash of the exact target bytes after deterministic parsing/inference.
+   * Present on add/modify/rename operations when planning can prove it.
+   * This is excluded from the human affected sample but included in the
+   * full plan commitment so schema-pack or parser-decision drift is visible.
+   */
+  contentHash?: string | null;
 }
 
 export interface SyncAffectedItem {
@@ -61,6 +68,9 @@ export interface SyncPlan {
   preserved: number;
   affected: SyncAffectedSummary;
   affectedDigest: string;
+  /** Full immutable decision commitment consumed by paired apply. */
+  planDigest: string;
+  schemaPackIdentity: string | null;
   corpus: SyncPlanCorpus;
 }
 
@@ -74,6 +84,7 @@ export interface CreateSyncPlanInput {
   lastSuccessfulStrategy?: SyncPlanStrategy | null;
   strategyChanged?: boolean;
   checkpointReset?: boolean;
+  schemaPackIdentity?: string | null;
   operations: readonly SyncPlanOperation[];
   sampleLimit?: number;
   corpus?: SyncPlanCorpus;
@@ -118,6 +129,15 @@ function normalizeOperation(operation: SyncPlanOperation): SyncPlanOperation {
   if (normalized.fromPath) {
     assertDigestFieldSafe('from_path', normalized.fromPath);
   }
+  if (
+    normalized.contentHash !== undefined &&
+    normalized.contentHash !== null &&
+    !/^[0-9a-f]{64}$/.test(normalized.contentHash)
+  ) {
+    throw new Error(
+      'Sync plan content_hash must be a lowercase 64-character SHA-256 digest.',
+    );
+  }
   return normalized;
 }
 
@@ -135,7 +155,12 @@ function compareUtf8(a: string, b: string): number {
 }
 
 function canonicalDigestLine(operation: SyncPlanOperation): string {
-  return `${operation.kind}\t${operation.path}\t${operation.slug}\n`;
+  return [
+    operation.kind,
+    operation.path,
+    operation.slug,
+    operation.fromPath ?? '',
+  ].join('\t') + '\n';
 }
 
 export function createSyncPlan(input: CreateSyncPlanInput): SyncPlan {
@@ -163,6 +188,46 @@ export function createSyncPlan(input: CreateSyncPlanInput): SyncPlan {
     .map(canonicalDigestLine)
     .sort(compareUtf8)
     .join('');
+  const corpus = input.corpus ?? {
+    markdownOperations: 0,
+    codePagesBefore: 0,
+    codePagesAfter: 0,
+    codeDeletions: 0,
+    imagePagesBefore: 0,
+    imagePagesAfter: 0,
+    imageOperations: 0,
+  };
+  const schemaPackIdentity = input.schemaPackIdentity ?? null;
+  const planDigestPayload = {
+    schema_version: 1,
+    mode: input.mode,
+    source_id: input.sourceId,
+    repo_path: input.repoPath,
+    from_commit: input.fromCommit,
+    target_commit: input.targetCommit,
+    strategy: input.strategy,
+    last_successful_strategy: input.lastSuccessfulStrategy ?? null,
+    strategy_changed: input.strategyChanged === true,
+    checkpoint_reset: input.checkpointReset === true,
+    schema_pack_identity: schemaPackIdentity,
+    operations: operations.map((operation) => ({
+      kind: operation.kind,
+      path: operation.path,
+      slug: operation.slug,
+      from_path: operation.fromPath ?? null,
+      reason: operation.reason ?? null,
+      content_hash: operation.contentHash ?? null,
+    })),
+    corpus: {
+      markdown_operations: corpus.markdownOperations,
+      code_pages_before: corpus.codePagesBefore,
+      code_pages_after: corpus.codePagesAfter,
+      code_deletions: corpus.codeDeletions,
+      image_pages_before: corpus.imagePagesBefore,
+      image_pages_after: corpus.imagePagesAfter,
+      image_operations: corpus.imageOperations,
+    },
+  };
 
   return {
     mode: input.mode,
@@ -187,14 +252,10 @@ export function createSyncPlan(input: CreateSyncPlanInput): SyncPlan {
       truncated: affectedItems.length > sampleLimit,
     },
     affectedDigest: createHash('sha256').update(digestBytes, 'utf8').digest('hex'),
-    corpus: input.corpus ?? {
-      markdownOperations: 0,
-      codePagesBefore: 0,
-      codePagesAfter: 0,
-      codeDeletions: 0,
-      imagePagesBefore: 0,
-      imagePagesAfter: 0,
-      imageOperations: 0,
-    },
+    planDigest: createHash('sha256')
+      .update(JSON.stringify(planDigestPayload), 'utf8')
+      .digest('hex'),
+    schemaPackIdentity,
+    corpus,
   };
 }

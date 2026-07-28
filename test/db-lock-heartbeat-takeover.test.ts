@@ -133,6 +133,41 @@ describe('heartbeat-aware takeover (ON CONFLICT grace predicate)', () => {
     expect(after!.getTime()).toBeGreaterThan(before!.getTime());
     await handle!.release();
   });
+
+  test('a stale handle cannot refresh or release a same-PID replacement on another host', async () => {
+    const id = 'test-hb-cross-host-replacement';
+    const handle = await tryAcquireDbLock(engine, id, 30);
+    expect(handle).not.toBeNull();
+    await engine.executeRaw(
+      `UPDATE gbrain_cycle_locks
+          SET holder_host = 'replacement-host',
+              last_refreshed_at = NOW() - INTERVAL '1 minute'
+        WHERE id = $1`,
+      [id],
+    );
+
+    await expect(handle!.refresh()).rejects.toThrow(
+      /ownership was lost before refresh/,
+    );
+    await expect(handle!.release()).rejects.toThrow(
+      /ownership was lost before release/,
+    );
+    const rows = await engine.executeRaw<{
+      holder_pid: number;
+      holder_host: string;
+    }>(
+      `SELECT holder_pid, holder_host
+         FROM gbrain_cycle_locks
+        WHERE id = $1`,
+      [id],
+    );
+    expect(rows).toEqual([
+      {
+        holder_pid: process.pid,
+        holder_host: 'replacement-host',
+      },
+    ]);
+  });
 });
 
 describe('event-loop yield keeps timers alive (commit 8 mechanism)', () => {

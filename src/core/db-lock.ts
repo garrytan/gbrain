@@ -191,6 +191,8 @@ export async function tryAcquireDbLock(
   // SIGHUP/SIGPIPE/uncaughtException/EPIPE-on-stdout) releases the lock.
   // The returned handle's release() deregisters before deleting — atomic
   // in single-threaded JS so no double-DELETE on normal exit path.
+  // Refresh, release, and cleanup all bind (id, pid, host): a PID is only
+  // unique on one host, so id+pid alone could mutate a cross-host replacement.
   // withRefreshingLock just calls tryAcquireDbLock and gets the same
   // registration for free (single ownership site per outside-voice F11).
   const { registerCleanup } = await import('./process-cleanup.ts');
@@ -223,7 +225,9 @@ export async function tryAcquireDbLock(
     const deregister = registerCleanup(`db-lock:${lockId}`, async () => {
       await sql`
         DELETE FROM gbrain_cycle_locks
-        WHERE id = ${lockId} AND holder_pid = ${pid}
+        WHERE id = ${lockId}
+          AND holder_pid = ${pid}
+          AND holder_host = ${host}
       `;
     });
     return {
@@ -233,20 +237,36 @@ export async function tryAcquireDbLock(
         // v0.42.x (#1794): route through the DIRECT session pool, not the
         // transaction pool, so a Supavisor pooler exhaustion (EMAXCONNSESSION)
         // can't kill the heartbeat and let the live lock get stolen.
-        await engine.executeRawDirect(
+        const refreshed = await engine.executeRawDirect<{ id: string }>(
           `UPDATE gbrain_cycle_locks
               SET ttl_expires_at = NOW() + ($1)::interval,
                   last_refreshed_at = NOW()
-            WHERE id = $2 AND holder_pid = $3`,
-          [ttl, lockId, pid],
+            WHERE id = $2
+              AND holder_pid = $3
+              AND holder_host = $4
+          RETURNING id`,
+          [ttl, lockId, pid, host],
         );
+        if (refreshed.length !== 1) {
+          throw new Error(
+            `lock ownership was lost before refresh (${lockId})`,
+          );
+        }
       },
       release: async () => {
         deregister();
-        await sql`
+        const released: Array<{ id: string }> = await sql`
           DELETE FROM gbrain_cycle_locks
-          WHERE id = ${lockId} AND holder_pid = ${pid}
+          WHERE id = ${lockId}
+            AND holder_pid = ${pid}
+            AND holder_host = ${host}
+          RETURNING id
         `;
+        if (released.length !== 1) {
+          throw new Error(
+            `lock ownership was lost before release (${lockId})`,
+          );
+        }
       },
     };
   }
@@ -272,27 +292,47 @@ export async function tryAcquireDbLock(
     if (rows.length === 0) return null;
     const deregister = registerCleanup(`db-lock:${lockId}`, async () => {
       await db.query(
-        `DELETE FROM gbrain_cycle_locks WHERE id = $1 AND holder_pid = $2`,
-        [lockId, pid],
+        `DELETE FROM gbrain_cycle_locks
+          WHERE id = $1
+            AND holder_pid = $2
+            AND holder_host = $3`,
+        [lockId, pid, host],
       );
     });
     return {
       id: lockId,
       refresh: async () => {
-        await db.query(
+        const { rows: refreshed } = await db.query(
           `UPDATE gbrain_cycle_locks
               SET ttl_expires_at = NOW() + $1::interval,
                   last_refreshed_at = NOW()
-            WHERE id = $2 AND holder_pid = $3`,
-          [ttl, lockId, pid],
+            WHERE id = $2
+              AND holder_pid = $3
+              AND holder_host = $4
+          RETURNING id`,
+          [ttl, lockId, pid, host],
         );
+        if (refreshed.length !== 1) {
+          throw new Error(
+            `lock ownership was lost before refresh (${lockId})`,
+          );
+        }
       },
       release: async () => {
         deregister();
-        await db.query(
-          `DELETE FROM gbrain_cycle_locks WHERE id = $1 AND holder_pid = $2`,
-          [lockId, pid],
+        const { rows: released } = await db.query(
+          `DELETE FROM gbrain_cycle_locks
+            WHERE id = $1
+              AND holder_pid = $2
+              AND holder_host = $3
+          RETURNING id`,
+          [lockId, pid, host],
         );
+        if (released.length !== 1) {
+          throw new Error(
+            `lock ownership was lost before release (${lockId})`,
+          );
+        }
       },
     };
   }

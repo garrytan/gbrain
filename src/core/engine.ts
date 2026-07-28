@@ -1952,7 +1952,12 @@ export interface BrainEngine {
    * it, the bare `WHERE slug = old` matches every row across every source and
    * would either rename them all OR violate the (source_id, slug) UNIQUE.
    */
-  updateSlug(oldSlug: string, newSlug: string, opts?: { sourceId?: string }): Promise<void>;
+  /**
+   * Returns the number of live source rows renamed. Callers that execute a
+   * reviewed sync plan require exactly one row so a disappeared source cannot
+   * be reinterpreted as an add/upsert.
+   */
+  updateSlug(oldSlug: string, newSlug: string, opts?: { sourceId?: string }): Promise<number>;
   rewriteLinks(oldSlug: string, newSlug: string): Promise<void>;
 
   /**

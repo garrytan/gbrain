@@ -186,6 +186,15 @@ export async function softDeleteSource(
   engine: BrainEngine,
   sourceId: string,
 ): Promise<SoftDeletedSource | null> {
+  return withSourceLifecycleLock(engine, sourceId, () =>
+    softDeleteSourceUnlocked(engine, sourceId),
+  );
+}
+
+async function softDeleteSourceUnlocked(
+  engine: BrainEngine,
+  sourceId: string,
+): Promise<SoftDeletedSource | null> {
   // Atomic: only flip rows that are currently active. Returns the metadata
   // we need without a follow-up SELECT. RETURNING projects the columns the
   // caller cares about; pageCount is a separate count.
@@ -230,6 +239,16 @@ export async function restoreSource(
   engine: BrainEngine,
   sourceId: string,
   refederate: boolean = true,
+): Promise<boolean> {
+  return withSourceLifecycleLock(engine, sourceId, () =>
+    restoreSourceUnlocked(engine, sourceId, refederate),
+  );
+}
+
+async function restoreSourceUnlocked(
+  engine: BrainEngine,
+  sourceId: string,
+  refederate: boolean,
 ): Promise<boolean> {
   const federatedPatch = refederate ? '{"federated": true}' : '{"federated": false}';
   const rows = await engine.executeRaw<{ id: string }>(

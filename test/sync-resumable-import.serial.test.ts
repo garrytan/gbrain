@@ -259,7 +259,10 @@ describe('#1794 — resumable incremental sync (pinned target)', () => {
     expect(await lastCommitConfig()).toBe(c0);
     expect(await ckptTarget(c0)).toEqual([c1]);
 
-    const applied = await performSync(engine, paired);
+    const applied = await performSync(engine, {
+      ...paired,
+      expectedPlanDigest: preview.planDigest!,
+    });
     expect(applied.status).toBe('synced');
     expect(applied.toCommit).toBe(c2);
     expect(await lastCommitConfig()).toBe(c2);
@@ -375,7 +378,10 @@ describe('#1794 — resumable incremental sync (pinned target)', () => {
       (operation) => operation.path === bankedPath,
     )).toBe(true);
 
-    const applied = await performSync(engine, paired);
+    const applied = await performSync(engine, {
+      ...paired,
+      expectedPlanDigest: preview.planDigest!,
+    });
     expect(applied.status).toBe('synced');
     expect(await lastCommitConfig()).toBe(c1);
     expect(

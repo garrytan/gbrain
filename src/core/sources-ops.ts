@@ -103,7 +103,11 @@ export async function withSourceLifecycleLock<T>(
       (engine as unknown as { db?: unknown }).db !== undefined);
   if (!lockCapable) return work();
   try {
-    return await withRefreshingLock(engine, syncLockId(id), work);
+    return await withRefreshingLock(engine, syncLockId(id), work, {
+      // Lifecycle mutations must not report success while leaving a stale
+      // lock behind. A failed final DELETE is a typed, operator-visible error.
+      failOnReleaseError: true,
+    });
   } catch (error) {
     if (error instanceof LockUnavailableError) {
       throw new SourceOpError(

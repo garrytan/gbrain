@@ -281,6 +281,21 @@ describe("paired exact-target immutable tree", () => {
     const targetContent = page("Topic", targetMarker);
     write(repoPath, relativePath, targetContent);
     const target = commit(repoPath, "target update");
+    const paired = {
+      sourceId,
+      repoPath,
+      strategy: "markdown" as const,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      expectedTarget: target,
+      expectedBookmark: bookmark,
+      requireClean: true,
+    };
+    const preview = await performSync(engine, {
+      ...paired,
+      dryRun: true,
+    });
 
     const liveMarker = `uncommitted worktree body ${randomUUID()}`;
     let snapshotRoot: string | null = null;
@@ -291,15 +306,8 @@ describe("paired exact-target immutable tree", () => {
       },
       () =>
         performSync(engine, {
-          sourceId,
-          repoPath,
-          strategy: "markdown",
-          noPull: true,
-          noEmbed: true,
-          noExtract: true,
-          expectedTarget: target,
-          expectedBookmark: bookmark,
-          requireClean: true,
+          ...paired,
+          expectedPlanDigest: preview.planDigest!,
         }),
     );
 
@@ -324,6 +332,21 @@ describe("paired exact-target immutable tree", () => {
     write(repoPath, relativePath, targetContent);
     const target = commitAt(repoPath, "initial target", targetTimestamp);
     await registerSource(sourceId, repoPath);
+    const paired = {
+      sourceId,
+      repoPath,
+      strategy: "markdown" as const,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      expectedTarget: target,
+      expectedBookmark: null,
+      requireClean: true,
+    };
+    const preview = await performSync(engine, {
+      ...paired,
+      dryRun: true,
+    });
 
     const liveMarker = `first descendant mutation ${randomUUID()}`;
     let snapshotRoot: string | null = null;
@@ -359,15 +382,8 @@ describe("paired exact-target immutable tree", () => {
     const result = await (async () => {
       try {
         return await performSync(engine, {
-          sourceId,
-          repoPath,
-          strategy: "markdown",
-          noPull: true,
-          noEmbed: true,
-          noExtract: true,
-          expectedTarget: target,
-          expectedBookmark: null,
-          requireClean: true,
+          ...paired,
+          expectedPlanDigest: preview.planDigest!,
         });
       } finally {
         console.error = originalError;
@@ -425,6 +441,7 @@ describe("paired exact-target immutable tree", () => {
         noExtract: true,
         expectedTarget: target,
         expectedBookmark: null,
+        expectedPlanDigest: "0".repeat(64),
         requireClean: true,
       });
     } catch (error) {
@@ -463,6 +480,21 @@ describe("paired exact-target immutable tree", () => {
     const targetMarker = `exact target x ${randomUUID()}`;
     write(repoPath, "notes/x.md", page("X", targetMarker));
     const target = commit(repoPath, "exact target");
+    const paired = {
+      sourceId,
+      repoPath,
+      strategy: "markdown" as const,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      expectedTarget: target,
+      expectedBookmark: bookmark,
+      requireClean: true,
+    };
+    const preview = await performSync(engine, {
+      ...paired,
+      dryRun: true,
+    });
     const laterMarker = `descendant y ${randomUUID()}`;
     let descendant = "";
     const { result, phaseObserved } = await atLoadPhase(
@@ -472,15 +504,8 @@ describe("paired exact-target immutable tree", () => {
       },
       () =>
         performSync(engine, {
-          sourceId,
-          repoPath,
-          strategy: "markdown",
-          noPull: true,
-          noEmbed: true,
-          noExtract: true,
-          expectedTarget: target,
-          expectedBookmark: bookmark,
-          requireClean: true,
+          ...paired,
+          expectedPlanDigest: preview.planDigest!,
         }),
     );
 
@@ -606,6 +631,7 @@ describe("paired exact-target immutable tree", () => {
         skipFailed: true,
         expectedTarget: target,
         expectedBookmark: null,
+        expectedPlanDigest: "0".repeat(64),
         requireClean: true,
       }),
     ).rejects.toMatchObject({
@@ -635,21 +661,29 @@ describe("paired exact-target immutable tree", () => {
     );
     const target = commit(repoPath, "invalid planned page");
     await registerSource(sourceId, repoPath);
+    const paired = {
+      sourceId,
+      repoPath,
+      strategy: "markdown" as const,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      expectedTarget: target,
+      expectedBookmark: null,
+      requireClean: true,
+    };
+    const preview = await performSync(engine, {
+      ...paired,
+      dryRun: true,
+    });
 
     const previousThreshold = process.env.GBRAIN_SYNC_AUTOSKIP_AFTER;
     process.env.GBRAIN_SYNC_AUTOSKIP_AFTER = "1";
     let result;
     try {
       result = await performSync(engine, {
-        sourceId,
-        repoPath,
-        strategy: "markdown",
-        noPull: true,
-        noEmbed: true,
-        noExtract: true,
-        expectedTarget: target,
-        expectedBookmark: null,
-        requireClean: true,
+        ...paired,
+        expectedPlanDigest: preview.planDigest!,
       });
     } finally {
       if (previousThreshold === undefined) {
@@ -675,6 +709,21 @@ describe("paired exact-target immutable tree", () => {
     const bookmark = await seedNamedSource(sourceId, repoPath);
     write(repoPath, "notes/new.md", page("New", "new body"));
     const target = commit(repoPath, "target");
+    const paired = {
+      sourceId,
+      repoPath,
+      strategy: "markdown" as const,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      expectedTarget: target,
+      expectedBookmark: bookmark,
+      requireClean: true,
+    };
+    const preview = await performSync(engine, {
+      ...paired,
+      dryRun: true,
+    });
 
     const originalExecuteRaw = engine.executeRaw.bind(engine);
     let purgedBeforeAnchor = false;
@@ -701,15 +750,8 @@ describe("paired exact-target immutable tree", () => {
     try {
       await expect(
         performSync(engine, {
-          sourceId,
-          repoPath,
-          strategy: "markdown",
-          noPull: true,
-          noEmbed: true,
-          noExtract: true,
-          expectedTarget: target,
-          expectedBookmark: bookmark,
-          requireClean: true,
+          ...paired,
+          expectedPlanDigest: preview.planDigest!,
         }),
       ).rejects.toMatchObject({
         name: SyncPreconditionError.name,
@@ -756,10 +798,10 @@ describe("paired exact-target immutable tree", () => {
     expect(existsSync(join(repoPath, "notes/branch-only.md"))).toBe(false);
     expect(git(repoPath, ["status", "--porcelain=v1"])).toBe("");
 
-    const result = await performSync(engine, {
+    const paired = {
       sourceId,
       repoPath,
-      strategy: "markdown",
+      strategy: "markdown" as const,
       full: true,
       noPull: true,
       noEmbed: true,
@@ -767,6 +809,14 @@ describe("paired exact-target immutable tree", () => {
       expectedTarget: target,
       expectedBookmark: unrelatedBookmark,
       requireClean: true,
+    };
+    const preview = await performSync(engine, {
+      ...paired,
+      dryRun: true,
+    });
+    const result = await performSync(engine, {
+      ...paired,
+      expectedPlanDigest: preview.planDigest!,
     });
 
     expect(["first_sync", "synced"]).toContain(result.status);

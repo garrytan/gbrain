@@ -98,6 +98,39 @@ describe('WithRefreshingLockOpts shape', () => {
     ).rejects.toBeInstanceOf(LockReleaseFailedError);
   });
 
+  test('lost ownership is a typed release failure after successful work', async () => {
+    const fakeEngine = {
+      kind: 'pglite' as const,
+      db: {
+        query: async (sql: string) => {
+          if (sql.includes('INSERT INTO gbrain_cycle_locks')) {
+            return { rows: [{ id: 'gbrain-sync:preview' }] };
+          }
+          if (sql.includes('DELETE FROM gbrain_cycle_locks')) {
+            return { rows: [] };
+          }
+          return { rows: [] };
+        },
+      },
+      executeRawDirect: async () => [],
+    } as unknown as Parameters<typeof withRefreshingLock>[0];
+
+    await expect(
+      withRefreshingLock(
+        fakeEngine,
+        'gbrain-sync:preview',
+        async () => 'validated',
+        { failOnReleaseError: true },
+      ),
+    ).rejects.toMatchObject({
+      name: 'LockReleaseFailedError',
+      lockId: 'gbrain-sync:preview',
+      releaseError: expect.objectContaining({
+        message: expect.stringContaining('ownership was lost'),
+      }),
+    });
+  });
+
   test('release failure never replaces the original work error', async () => {
     const fakeEngine = {
       kind: 'pglite' as const,
