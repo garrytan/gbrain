@@ -704,7 +704,28 @@ export async function applyAliasHop(
   for (const ref of ordered) {
     const idx = out.findIndex(r => r.slug === ref.slug && (r.source_id ?? 'default') === ref.source_id);
     if (idx >= 0) {
-      if (Number.isFinite(out[idx].score)) out[idx].score *= ALIAS_HOP_PRESENT_BOOST;
+      // PINGU LOCAL PATCH (S390) — an exact alias match PROMOTES, it doesn't nudge.
+      //
+      // Upstream multiplied by ALIAS_HOP_PRESENT_BOOST (1.10). That cannot rescue a
+      // page RRF has already buried: measured S390, the query "how is my brain set up"
+      // put its target at VECTOR rank 1 (0.8007) AND matched a registered alias, yet
+      // landed at hybrid rank 13 — because BM25 scored it 0.0000 (the conversational
+      // phrasing appears nowhere in the body) and RRF averaged a rank-1 vote with a
+      // rank-50 vote. A 10% bump on 0.6354 doesn't move that.
+      //
+      // It also removes a real inconsistency: the ABSENT branch below injects the
+      // canonical at top-of-organic, so a page could rank WORSE for having been found
+      // organically than for being missing entirely. Both branches now agree.
+      //
+      // Rationale: an alias is an EXACT, HUMAN-AUTHORED mapping from a phrase to a
+      // page — someone wrote it down precisely so that phrasing would land there. On
+      // this brain that is a stronger signal than either lexical or semantic
+      // similarity. Bounded by MAX_ALIAS_INJECT (3) and by requiring a FULL normalized
+      // query match, so it cannot fire on partial or incidental overlap.
+      if (Number.isFinite(out[idx].score)) {
+        injectScore += 1e-6;
+        out[idx].score = Math.max(out[idx].score * ALIAS_HOP_PRESENT_BOOST, injectScore);
+      }
       out[idx].alias_hit = true;
       continue;
     }
