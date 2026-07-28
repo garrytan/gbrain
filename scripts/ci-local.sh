@@ -11,6 +11,14 @@
 #   bash scripts/ci-local.sh --clean      # nuke named volumes for cold debug
 #   bash scripts/ci-local.sh --no-shard   # debug: run E2E sequentially against postgres-1 only
 #
+# GBRAIN_CI_JOBS controls how many unit+E2E shard processes run at once.
+# The default is deliberately 1: each Bun process may retain several PGLite
+# WASM heaps until exit, so four concurrent shards can exhaust Docker Desktop
+# memory and be killed with exit 137. Hosts with measured headroom can opt in
+# to 2-4 jobs without changing shard coverage.
+# GBRAIN_UNIT_BATCH_SIZE (default 40) starts a fresh Bun process after that
+# many unit-test files, releasing accumulated PGLite/WASM heaps.
+#
 # 4-way E2E sharding: 4 pgvector services on host ports 5434-5437. The 36 E2E
 # files split N/4 per shard; shards run in parallel. Within a shard, files run
 # sequentially (TRUNCATE CASCADE no-race property documented in run-e2e.sh).
@@ -28,6 +36,23 @@ DIFF=0
 NO_PULL=0
 CLEAN=0
 NO_SHARD=0
+CI_JOBS="${GBRAIN_CI_JOBS:-1}"
+UNIT_BATCH_SIZE="${GBRAIN_UNIT_BATCH_SIZE:-40}"
+
+case "$CI_JOBS" in
+  1|2|3|4) ;;
+  *)
+    echo "[ci-local] ERROR: GBRAIN_CI_JOBS must be an integer from 1 to 4 (got '$CI_JOBS')." >&2
+    exit 2
+    ;;
+esac
+case "$UNIT_BATCH_SIZE" in
+  ''|*[!0-9]*|0)
+    echo "[ci-local] ERROR: GBRAIN_UNIT_BATCH_SIZE must be a positive integer (got '$UNIT_BATCH_SIZE')." >&2
+    exit 2
+    ;;
+esac
+export GBRAIN_UNIT_BATCH_SIZE="$UNIT_BATCH_SIZE"
 
 for arg in "$@"; do
   case "$arg" in
@@ -218,7 +243,7 @@ bash scripts/run-e2e.sh'
   fi
 else
   # Tier 1 sharded path. Each shard runs unit+E2E sequentially against its
-  # own postgres-N. Shards run in parallel via xargs -P4.
+  # own postgres-N. Concurrency is memory-bounded by GBRAIN_CI_JOBS.
   if [ "$DIFF" = "1" ]; then
     DIFF_E2E_PREP='SELECTED=$(bun run scripts/select-e2e.ts)
 if [ -z "$SELECTED" ]; then
@@ -246,9 +271,9 @@ export GBRAIN_PGLITE_SNAPSHOT=test/fixtures/pglite-snapshot.tar
 echo \"[runner] resolving E2E file selection (--diff aware)\"
 ${DIFF_E2E_PREP}
 mkdir -p /tmp/shard-logs
-echo \"[runner] Tier 1: 4-shard parallel unit + E2E (xargs -P4)\"
+echo \"[runner] Tier 1: 4 unit+E2E shards (jobs=${CI_JOBS}, unit batch=${UNIT_BATCH_SIZE} files)\"
 set +e
-printf '%s\\n' 1 2 3 4 | xargs -P4 -I{} sh -c '
+printf '%s\\n' 1 2 3 4 | xargs -P${CI_JOBS} -I{} sh -c '
   shard=\$1
   log=/tmp/shard-logs/shard-\${shard}.log
   echo \"[shard \${shard}] start\" > \$log
@@ -325,7 +350,11 @@ fi
 __RUN_PHASES__
 EOF
 )
-INNER_CMD="${INNER_CMD/__RUN_PHASES__/$RUN_PHASES_CMD}"
+# Bash 5.2's patsub_replacement option treats '&' in replacement text as the
+# matched placeholder. Escape it first or every `2>&1` inside RUN_PHASES_CMD
+# silently becomes `2>__RUN_PHASES__1`, hiding the actual test failure.
+RUN_PHASES_ESCAPED="${RUN_PHASES_CMD//&/\\&}"
+INNER_CMD="${INNER_CMD/__RUN_PHASES__/$RUN_PHASES_ESCAPED}"
 
 # Conductor / git-worktree support: when `.git` is a file (not a directory),
 # it points at a host gitdir outside the bind-mount. Without remounting that

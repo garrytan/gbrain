@@ -11,6 +11,8 @@
 #
 # Sequential bun processes within a shard (one bun test invocation with the
 # shard's file list); parallel across shards (4 of these run concurrently).
+# GBRAIN_UNIT_BATCH_SIZE=N splits each shard into fresh Bun processes of N
+# files. This bounds retained PGLite/WASM memory in constrained runners.
 
 set -euo pipefail
 
@@ -72,6 +74,31 @@ if [ "$DRY_RUN" = "1" ]; then
 fi
 
 echo "[unit-shard ${SHARD:-(unsharded)}] running ${#files[@]} files"
+batch_size="${GBRAIN_UNIT_BATCH_SIZE:-0}"
+case "$batch_size" in
+  ''|*[!0-9]*)
+    echo "ERROR: GBRAIN_UNIT_BATCH_SIZE must be a non-negative integer" >&2
+    exit 2
+    ;;
+esac
+
+if [ "$batch_size" -gt 0 ] && [ "${#files[@]}" -gt "$batch_size" ]; then
+  offset=0
+  batch=1
+  while [ "$offset" -lt "${#files[@]}" ]; do
+    batch_files=("${files[@]:offset:batch_size}")
+    echo "[unit-shard ${SHARD:-(unsharded)}] batch $batch (${#batch_files[@]} files)"
+    if [ -n "$MAX_CONC" ]; then
+      bun test --max-concurrency="$MAX_CONC" --timeout=60000 "${batch_files[@]}"
+    else
+      bun test --timeout=60000 "${batch_files[@]}"
+    fi
+    offset=$((offset + batch_size))
+    batch=$((batch + 1))
+  done
+  exit 0
+fi
+
 if [ -n "$MAX_CONC" ]; then
   exec bun test --max-concurrency="$MAX_CONC" --timeout=60000 "${files[@]}"
 fi

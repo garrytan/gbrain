@@ -1,5 +1,24 @@
 # TODOS
 
+## CI verification and shared-brain maintenance (2026-07-28)
+
+- [x] Bound local-CI memory with configurable shard concurrency and fresh Bun
+  processes every 40 unit files. The previous four-process runner hit exit 137;
+  the new controls are `GBRAIN_CI_JOBS` and `GBRAIN_UNIT_BATCH_SIZE`.
+- [x] Add explicit, validated HTTP unit/E2E test ports for restricted and
+  fleet-managed runners while preserving portable ephemeral ports elsewhere.
+- [x] Refresh database-backed link and timeline extraction across all 7,482
+  pages (0 new links, 0 new timeline entries; extraction was already current).
+- [x] Triage all four oversized pages without deleting or rewriting content:
+  `apple-digitalmeapp-sources-appmodel-swift` (1,026,981 bytes),
+  `apple-digitalmeapp-tests-appmodeltests-swift` (992,560),
+  `changelog` (912,533; the sole flagged page), and
+  `crates-digital_me_core-src-ffi-rs` (656,426).
+- [ ] Re-run the complete Docker gate with the default single worker after the
+  runner change lands. Two-worker verification proved batching and eliminated
+  exit 137, but exposed cross-shard test interference; isolated 40-file
+  reproduction passed 492/492 on Bun 1.3.14.
+
 ## community fix-wave follow-ups (filed v0.42.60.0)
 
 - [x] **P2 — cherry-pick #2112's uncovered doctor.ts hunk.** Fix-wave A (#2820) superseded

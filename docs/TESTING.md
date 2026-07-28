@@ -19,6 +19,14 @@ Seven test command tiers, each with a clear scope:
 | `bun run test:e2e` | Real Postgres E2E. Requires Docker + `DATABASE_URL`. Sequential. | ~5-10min | Pre-ship; nightly. |
 | `bun run check:all` | The historical pre-check scripts (22, chained sequentially in package.json). Overlaps `verify` heavily but is NOT a superset — `verify`'s `CHECKS` array in `scripts/run-verify-parallel.sh` (~30 entries incl. typecheck) is the authoritative gate; `check:all` keeps a few local-only extras (trailing-newline, exports-count, no-legacy-getconnection). | ~10s | Local-only sweep for the extras. |
 
+`bun run ci:local` is memory-bounded by default. It runs one unit+E2E shard at
+a time (`GBRAIN_CI_JOBS=1`) and starts a fresh Bun process after 40 unit files
+(`GBRAIN_UNIT_BATCH_SIZE=40`) so PGLite/WASM heaps are released between
+batches. Measured hosts with spare memory may raise `GBRAIN_CI_JOBS` to 2-4.
+Restricted or fleet-managed runners can set `GBRAIN_HTTP_TEST_PORT_BASE` (an
+18-port contiguous range) and `GBRAIN_HTTP_E2E_TEST_PORT` instead of using
+unmanaged ephemeral HTTP ports.
+
 ### CI vs local: intentionally divergent file sets
 
 - **CI matrix** (`.github/workflows/test.yml`) runs `scripts/test-shard.sh` across 10 matrix shards partitioned by weight-aware LPT bin-packing (`scripts/sharding.ts`) and INCLUDES `*.slow.test.ts` (the two outlier slow files run as dedicated jobs alongside the matrix). CI EXCLUDES `*.serial.test.ts` from the shards and runs them in a dedicated job via `bun run test:serial`, one bun process per file — keeping serial files out of the shard processes is what preserves the `mock.module` quarantine (a top-level mock in one file leaks into every other file sharing its process). `bun run verify` gets its own job too. CI is the ground truth for "did everything pass."

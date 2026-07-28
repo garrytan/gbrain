@@ -122,6 +122,12 @@ services:
   runner:
     image: oven/bun:1
     working_dir: /app
+    environment:
+      # Optional fixed ports for restricted/fleet-managed test hosts. Empty
+      # preserves portable ephemeral-port behavior in ordinary CI.
+      GBRAIN_HTTP_TEST_PORT_BASE: "${GBRAIN_HTTP_TEST_PORT_BASE:-}"
+      GBRAIN_HTTP_E2E_TEST_PORT: "${GBRAIN_HTTP_E2E_TEST_PORT:-}"
+      GBRAIN_UNIT_BATCH_SIZE: "${GBRAIN_UNIT_BATCH_SIZE:-40}"
     depends_on:
       postgres-1:
         condition: service_healthy

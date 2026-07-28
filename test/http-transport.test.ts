@@ -149,6 +149,21 @@ let mockNow = 0;
 function freezeClock(at: number) { mockNow = at; }
 function advanceClock(deltaMs: number) { mockNow += deltaMs; }
 
+// Restricted/fleet-managed runners can reserve a contiguous range and pass
+// its base here instead of asking the OS for unmanaged ephemeral ports.
+// There are 18 startTest() calls in this file; reject a range that would
+// overflow TCP's maximum port. Normal CI remains portable with port 0.
+const configuredPortBase = (() => {
+  const raw = process.env.GBRAIN_HTTP_TEST_PORT_BASE;
+  if (raw === undefined || raw === '') return 0;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1024 || value > 65518) {
+    throw new Error('GBRAIN_HTTP_TEST_PORT_BASE must be an integer from 1024 to 65518');
+  }
+  return value;
+})();
+let nextTestPort = configuredPortBase;
+
 async function startTest(cfg: FakeEngineConfig & { lruCap?: number; ipLimit?: number; tokenLimit?: number; corsOrigin?: string; bodyCap?: number; trustProxy?: boolean } = {}): Promise<TestServer> {
   if (cfg.corsOrigin) process.env.GBRAIN_HTTP_CORS_ORIGIN = cfg.corsOrigin;
   else delete process.env.GBRAIN_HTTP_CORS_ORIGIN;
@@ -168,7 +183,7 @@ async function startTest(cfg: FakeEngineConfig & { lruCap?: number; ipLimit?: nu
     clock,
   );
   const server = await startHttpTransport({
-    port: 0,
+    port: configuredPortBase === 0 ? 0 : nextTestPort++,
     engine: engine as any,
     limiters: { ip: ipLimiter, token: tokenLimiter },
   });

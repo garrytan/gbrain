@@ -34,9 +34,19 @@ function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
+function testPort(): number {
+  const raw = process.env.GBRAIN_HTTP_E2E_TEST_PORT;
+  if (raw === undefined || raw === '') return 0;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1024 || value > 65535) {
+    throw new Error('GBRAIN_HTTP_E2E_TEST_PORT must be an integer from 1024 to 65535');
+  }
+  return value;
+}
+
 async function startServer(): Promise<ServerHandle> {
   const engine = getEngine();
-  const server = await startHttpTransport({ port: 0, engine: engine as any });
+  const server = await startHttpTransport({ port: testPort(), engine: engine as any });
   return {
     port: (server as any).port,
     stop: async () => { (server as any).stop(true); },
