@@ -27,17 +27,30 @@
  * or has no second pipe). On a match, returns the cells with surrounding
  * whitespace trimmed, with the outer pipes already stripped.
  *
- * NOTE: does NOT unescape `\|` back to `|`. Round-trip-on-pipes is a
- * separate concern callers handle if their domain text legitimately
- * contains pipes (currently neither takes nor facts do at the LLM-extract
- * layer; if a hand-edit introduces one, escape-on-write at render time
- * protects the table shape).
+ * Escaped pipes (`\|`) stay inside their cell and are decoded back to `|`.
+ * Other backslashes are preserved verbatim so existing fence text such as
+ * Windows paths remains byte-stable across a render/parse cycle.
  */
 export function parseRowCells(line: string): string[] | null {
   const trimmed = line.trim();
   if (!trimmed.startsWith('|') || !trimmed.includes('|', 1)) return null;
   const inner = trimmed.replace(/^\|/, '').replace(/\|$/, '');
-  return inner.split('|').map(c => c.trim());
+  const cells: string[] = [];
+  let cell = '';
+  for (let i = 0; i < inner.length; i++) {
+    const char = inner[i];
+    if (char === '\\' && inner[i + 1] === '|') {
+      cell += '|';
+      i += 1;
+    } else if (char === '|') {
+      cells.push(cell.trim());
+      cell = '';
+    } else {
+      cell += char;
+    }
+  }
+  cells.push(cell.trim());
+  return cells;
 }
 
 /**
@@ -77,10 +90,8 @@ export function parseStringCell(raw: string): string | undefined {
 
 /**
  * Escape a value for safe placement inside a pipe-separated cell. Replaces
- * any literal `|` with `\|` so the table layout stays intact. Inverse is
- * not needed at parse time today (see parseRowCells note); a future
- * `unescapeFenceCell` helper can land alongside any domain that needs to
- * read pipes back out of cell text.
+ * any literal `|` with `\|` so the table layout stays intact. `parseRowCells`
+ * is the inverse and decodes the escape after identifying cell boundaries.
  */
 export function escapeFenceCell(s: string): string {
   return s.replace(/\|/g, '\\|');

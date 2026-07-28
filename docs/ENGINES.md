@@ -94,7 +94,7 @@ export interface BrainEngine {
 
 **Slug-based API, not ID-based.** Every method takes slugs, not numeric IDs. The engine resolves slugs to IDs internally. This keeps the interface portable... slugs are strings, IDs are database-specific.
 
-**Embedding is NOT in the engine.** The engine stores embeddings and searches by vector, but it doesn't generate embeddings. `src/core/embedding.ts` handles that. This is intentional: embedding is an external API call (OpenAI), not a storage concern. All engines share the same embedding service.
+**Embedding is NOT in the engine.** The engine stores embeddings and searches by vector, but it doesn't generate embeddings. `src/core/embedding.ts` handles that (a thin delegation to the provider-agnostic AI gateway in `src/core/ai/gateway.ts`). This is intentional: embedding is an external API call (OpenAI, Voyage, a local Ollama — whichever provider you configured), not a storage concern. All engines share the same embedding service.
 
 **Chunking is NOT in the engine.** Same logic. `src/core/chunkers/` handles chunking. The engine stores and retrieves chunks. All engines share the same chunkers.
 
@@ -147,6 +147,51 @@ RRF fusion, multi-query expansion, and 4-layer dedup are engine-agnostic. They o
 **Hosting:** Supabase Pro ($25/mo). Zero-ops. Managed Postgres with pgvector built in.
 
 **Why not self-hosted for v0:** The brain should be infrastructure agents use, not something you maintain. Self-hosted Postgres with Docker is a welcome community PR, but v0 optimizes for zero ops.
+
+### Opt-in RLS source-scope binding (`GBRAIN_RLS_SCOPE_BINDING`)
+
+Defense-in-depth layer for Postgres deployments that want the database itself
+to enforce source isolation, in addition to the mandatory app-layer filters
+(`sourceScopeOpts` — layer 1, always on).
+
+**Mechanism.** With `GBRAIN_RLS_SCOPE_BINDING=1` (or `true`), the engine's
+source-scoped read methods wrap their queries in a transaction that first runs
+`SELECT set_config('app.scopes', $1, true)` — the value is a bound parameter
+(federated `sourceIds` CSV > scalar `sourceId` > `'*'` for unscoped internal
+reads), transaction-local (equivalent to `SET LOCAL`, which itself can't take
+bound params). An RLS policy can then filter rows by
+`current_setting('app.scopes', true)`.
+
+**Default off.** With the env var unset, reads call through on the shared pool
+exactly as before — no per-read transaction, no pool-slot hold (the search
+methods keep the transaction they always had for their `SET LOCAL
+statement_timeout`). Existing operators see zero behavior change.
+
+**Enabling it** (operator-managed SQL; gbrain ships no DDL for this):
+
+```sql
+ALTER TABLE pages ENABLE ROW LEVEL SECURITY;
+CREATE POLICY pages_scope_filter ON pages
+  USING (current_setting('app.scopes', true) = '*'
+         OR source_id = ANY(string_to_array(current_setting('app.scopes', true), ',')));
+
+-- Required: connections that don't run through the scoped read helper
+-- (admin, autopilot, cycle, writes) must default to unscoped, or they
+-- see zero rows once the policy exists:
+ALTER ROLE <runtime-role> SET app.scopes = '*';
+
+-- If the runtime role OWNS the table, RLS is skipped for it unless forced:
+ALTER TABLE pages FORCE ROW LEVEL SECURITY;
+```
+
+Safe to enable in either order: the env var without a policy is a no-op
+setting; a policy without the env var is enforced only via the role default.
+
+**Honest caveat:** only read paths routed through the scoped helper carry a
+per-request scope binding — unwrapped paths (writes, admin/maintenance reads)
+run under the role default and are not backstopped per caller. This is layer 2;
+the app-layer source filters remain layer 1 and stay mandatory. Behavioral pins
+live in `test/postgres-engine-rls-scope.test.ts`.
 
 ## PGLiteEngine (v0.7, ships)
 

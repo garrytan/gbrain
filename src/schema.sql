@@ -826,6 +826,12 @@ ALTER TABLE pages ADD COLUMN IF NOT EXISTS search_vector tsvector;
 CREATE INDEX IF NOT EXISTS idx_pages_search ON pages USING GIN(search_vector);
 
 -- Function to rebuild search_vector for a page
+-- #2704: compiled_truth (unbounded whole-page body) deliberately NOT
+-- indexed — overflows Postgres's 1MB tsvector cap on large pages.
+-- content_chunks.search_vector (chunk-grain, populated separately) is
+-- what searchKeyword() actually queries. See migrate.ts's v124 migration
+-- for the full rationale; keep in sync with that + reindex-search-vector.ts
+-- + pglite-schema.ts.
 CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger SET search_path = pg_catalog, public AS $$
 DECLARE
   timeline_text TEXT;
@@ -839,7 +845,6 @@ BEGIN
   -- Build weighted tsvector
   NEW.search_vector :=
     setweight(to_tsvector('english', coalesce(NEW.title, '')), 'A') ||
-    setweight(to_tsvector('english', coalesce(NEW.compiled_truth, '')), 'B') ||
     setweight(to_tsvector('english', coalesce(NEW.timeline, '')), 'C') ||
     setweight(to_tsvector('english', coalesce(timeline_text, '')), 'C');
 
@@ -1264,9 +1269,8 @@ CREATE INDEX IF NOT EXISTS calibration_profiles_published_idx
   ON calibration_profiles (source_id, published, holder)
   WHERE published = true;
 
--- take_proposals: propose_takes phase queue. Idempotency cache via the
--- composite unique index (source_id, page_slug, content_hash, prompt_version)
--- mirrors v0.23 dream_verdicts. proposal_run_id supports --rollback by run.
+-- take_proposals: per-claim idempotency via source/page/content/prompt plus
+-- md5(claim_text). The old per-page key silently dropped claim #2+ (#2138).
 CREATE TABLE IF NOT EXISTS take_proposals (
   id                          BIGSERIAL PRIMARY KEY,
   source_id                   TEXT         NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
@@ -1292,7 +1296,7 @@ CREATE TABLE IF NOT EXISTS take_proposals (
   predicted_brier_bucket_n    INTEGER
 );
 CREATE UNIQUE INDEX IF NOT EXISTS take_proposals_idempotency_idx
-  ON take_proposals (source_id, page_slug, content_hash, prompt_version);
+  ON take_proposals (source_id, page_slug, content_hash, prompt_version, md5(claim_text));
 CREATE INDEX IF NOT EXISTS take_proposals_pending_idx
   ON take_proposals (source_id, status, proposed_at DESC)
   WHERE status = 'pending';

@@ -20,10 +20,11 @@ const realFetch = globalThis.fetch;
 let homeDir: string;
 let priorHome: string | undefined;
 
-function bump(kind: 'minor' | 'patch'): string {
+function bump(kind: 'minor' | 'patch' | 'micro'): string {
   const v = parseSemver(VERSION)!;
-  if (kind === 'minor') return `${v[0]}.${v[1] + 1}.0`;
-  return `${v[0]}.${v[1]}.${v[2] + 1}`;
+  if (kind === 'minor') return `${v[0]}.${v[1] + 1}.0.0`;
+  if (kind === 'patch') return `${v[0]}.${v[1]}.${v[2] + 1}.0`;
+  return `${v[0]}.${v[1]}.${v[2]}.${v[3] + 1}`;
 }
 
 function stubReleaseFetch(tag: string | null, ok = true): void {
@@ -62,10 +63,18 @@ describe('refreshUpdateCache — full refresh orchestration (network stubbed)', 
     expect(entry?.marker).toEqual({ kind: 'upgrade_available', current: VERSION, latest });
   });
 
-  test('patch-only release → writes up_to_date marker (patch ignored)', async () => {
-    stubReleaseFetch(`v${bump('patch')}`);
+  test('patch release → writes upgrade_available marker', async () => {
+    const latest = bump('patch');
+    stubReleaseFetch(`v${latest}`);
     await refreshUpdateCache();
-    expect(readUpdateCache()?.marker).toEqual({ kind: 'up_to_date', current: VERSION });
+    expect(readUpdateCache()?.marker).toEqual({ kind: 'upgrade_available', current: VERSION, latest });
+  });
+
+  test('micro release → writes upgrade_available marker', async () => {
+    const latest = bump('micro');
+    stubReleaseFetch(`v${latest}`);
+    await refreshUpdateCache();
+    expect(readUpdateCache()?.marker).toEqual({ kind: 'upgrade_available', current: VERSION, latest });
   });
 
   test('network failure → writes up_to_date marker (fail-open, TTL prevents hammering)', async () => {

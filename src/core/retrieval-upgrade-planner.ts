@@ -63,6 +63,7 @@ import type { BrainEngine } from './engine.ts';
 import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
 import { lookupEmbeddingPrice, estimateCostFromChars } from './embedding-pricing.ts';
 import { computeReembedEstimate } from './post-upgrade-reembed.ts';
+import { hnswIndexExpected } from './vector-index.ts';
 
 // ============================================================================
 // Constants
@@ -551,8 +552,12 @@ export async function undoRetrievalUpgrade(engine: BrainEngine): Promise<
  *
  * IF NOT EXISTS on CREATE INDEX makes the operation safe to re-run during
  * `--resume`.
+ *
+ * Exported (#3390) so the provider-agnostic embedding migration
+ * (src/core/embedding-migration.ts) reuses the SAME dimension-transition
+ * path instead of duplicating the DDL sequence.
  */
-async function runSchemaTransition(engine: BrainEngine, targetDim: number): Promise<void> {
+export async function runSchemaTransition(engine: BrainEngine, targetDim: number): Promise<void> {
   // v0.41 fix: only transition the primary text embedding column.
   // The embedding_image (v0.27.1) and embedding_multimodal (v0.36 / migration
   // v78) columns use SEPARATE multimodal models (e.g. voyage-multimodal-3 at
@@ -595,7 +600,93 @@ async function runSchemaTransition(engine: BrainEngine, targetDim: number): Prom
            WHERE embedding_image IS NOT NULL`,
       );
     }
+
+    // #3390: the OTHER two dim-pinned columns that carry TEXT-embedding-space
+    // vectors. Both are created at brain-birth width (migrate.ts v55 for
+    // query_cache, v42 for facts) and NO migration ever ALTERs them, so before
+    // this fix a dimension change left them at the old width:
+    //   - query_cache.embedding stayed narrow → every store() AND lookup()
+    //     silently swallowed the width error (by design, so the cache can
+    //     never break search), i.e. a PERMANENT 0% hit rate.
+    //   - facts.embedding stayed narrow → every per-fact embed write failed
+    //     ($N::vector into the old width), and the doctor check that would
+    //     warn is skipped on PGLite (the DEFAULT engine).
+    // Both are text-embedding-space columns, so they MUST move with
+    // content_chunks.embedding. The image/multimodal columns above are the
+    // deliberate exception (separate models, independent dims).
+    for (const t of TEXT_EMBEDDING_DIM_PINNED_TABLES) {
+      await transitionDimPinnedColumn(tx, t.table, t.index, t.indexSql, targetDim);
+    }
   });
+}
+
+/**
+ * The dim-pinned TEXT-embedding-space columns outside content_chunks.
+ * `indexSql` is a factory because each table's index carries its own partial
+ * WHERE clause + opclass, and the opclass must match the column TYPE
+ * (vector_cosine_ops vs halfvec_cosine_ops).
+ */
+const TEXT_EMBEDDING_DIM_PINNED_TABLES: ReadonlyArray<{
+  table: string;
+  index: string;
+  indexSql: (opclass: string) => string;
+}> = [
+  {
+    table: 'query_cache',
+    index: 'idx_query_cache_embedding_hnsw',
+    indexSql: (opclass) =>
+      `CREATE INDEX IF NOT EXISTS idx_query_cache_embedding_hnsw
+         ON query_cache USING hnsw (embedding ${opclass})
+         WHERE embedding IS NOT NULL`,
+  },
+  {
+    table: 'facts',
+    index: 'idx_facts_embedding_hnsw',
+    indexSql: (opclass) =>
+      `CREATE INDEX IF NOT EXISTS idx_facts_embedding_hnsw
+         ON facts USING hnsw (embedding ${opclass})
+         WHERE embedding IS NOT NULL AND expired_at IS NULL`,
+  },
+];
+
+/**
+ * Rebuild one dim-pinned embedding column at `targetDim`, PRESERVING its
+ * existing column type (`vector` vs `halfvec` — migrate.ts picks halfvec when
+ * the server supports it, and the HNSW opclass must match). No-op when the
+ * table or column doesn't exist (fresh/older brains).
+ *
+ * Dropping the column discards the stored vectors, which is correct: they are
+ * in the OLD embedding space and unusable after the swap. query_cache is a
+ * cache (refills on the next query); facts re-embed on their next write /
+ * `gbrain extract` pass.
+ */
+async function transitionDimPinnedColumn(
+  tx: { executeRaw: <T = unknown>(sql: string, params?: unknown[]) => Promise<T[]> },
+  table: string,
+  indexName: string,
+  indexSql: (opclass: string) => string,
+  targetDim: number,
+): Promise<void> {
+  const probe = await tx.executeRaw<{ udt_name: string | null }>(
+    `SELECT udt_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = $1 AND column_name = 'embedding'`,
+    [table],
+  );
+  const udt = probe[0]?.udt_name;
+  if (!udt) return; // table or column absent — nothing to transition
+  // Preserve the column type; anything unexpected falls back to `vector`.
+  const columnType: 'vector' | 'halfvec' = udt.toLowerCase() === 'halfvec' ? 'halfvec' : 'vector';
+  const opclass = columnType === 'halfvec' ? 'halfvec_cosine_ops' : 'vector_cosine_ops';
+
+  await tx.executeRaw(`DROP INDEX IF EXISTS ${indexName}`);
+  await tx.executeRaw(`ALTER TABLE ${table} DROP COLUMN IF EXISTS embedding`);
+  await tx.executeRaw(`ALTER TABLE ${table} ADD COLUMN embedding ${columnType}(${targetDim})`);
+  // HNSW has a per-type dimension ceiling; above it pgvector refuses the
+  // index and exact scans remain the (correct, slower) path. Mirrors the
+  // same guard in migrate.ts's original DDL.
+  if (hnswIndexExpected(columnType, targetDim)) {
+    await tx.executeRaw(indexSql(opclass));
+  }
 }
 
 // ============================================================================

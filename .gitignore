@@ -35,6 +35,11 @@ export/
 # .context/test-shards/. Workspace-local by design — never committed.
 .context/
 
+# Local agent instruction overrides (CLAUDE.local.md / AGENTS.local.md) — personal,
+# per-clone, loaded after the committed CLAUDE.md/AGENTS.md. Never committed.
+CLAUDE.local.md
+AGENTS.local.md
+
 # Tier 3 PGLite snapshot fixture (built on demand by build:pglite-snapshot)
 test/fixtures/pglite-snapshot.tar
 test/fixtures/pglite-snapshot.version

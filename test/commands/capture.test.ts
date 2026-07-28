@@ -136,12 +136,13 @@ describe('capture — buildContent', () => {
     expect(parsed.data.title).toBe('Real first line');
   });
 
-  test('caps title at 80 chars', () => {
+  test('caps title at 80 chars with explicit ellipsis', () => {
     const longLine = 'x'.repeat(200);
     const result = __testing.buildContent(longLine, {});
     const parsed = matter(result);
     expect(typeof parsed.data.title).toBe('string');
     expect((parsed.data.title as string).length).toBeLessThanOrEqual(80);
+    expect((parsed.data.title as string).endsWith('…')).toBe(true);
   });
 
   test('honors --source via captured_via', () => {

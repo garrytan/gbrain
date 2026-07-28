@@ -67,6 +67,7 @@ describe('isSensitiveConfigKey (v0.36.x #892 regression)', () => {
   test('matches common sensitive key shapes', () => {
     expect(isSensitiveConfigKey('openai_api_key')).toBe(true);
     expect(isSensitiveConfigKey('anthropic_api_key')).toBe(true);
+    expect(isSensitiveConfigKey('openrouter_api_key')).toBe(true);
     expect(isSensitiveConfigKey('voyage_api_key')).toBe(true);
     expect(isSensitiveConfigKey('admin_token')).toBe(true);
     expect(isSensitiveConfigKey('database.password')).toBe(true);
@@ -93,6 +94,7 @@ describe('isSensitiveConfigKey (v0.36.x #892 regression)', () => {
 describe('redactConfigValue (v0.36.x #892 — set output regression)', () => {
   test('redacts sensitive keys to ***', () => {
     expect(redactConfigValue('openai_api_key', 'sk-test-123')).toBe('***');
+    expect(redactConfigValue('openrouter_api_key', 'sk-or-test-123')).toBe('***');
     expect(redactConfigValue('admin_token', 'eyJhbGciOiJIUzI1NiJ9')).toBe('***');
   });
 
@@ -251,5 +253,17 @@ describe('loadConfig — GBRAIN_MAX_MARKUP_RATIO env (v0.42 #1699)', () => {
     await withHomeAndEnv({ GBRAIN_MAX_MARKUP_RATIO: '1.5' }, (cfg) => {
       expect((cfg as { content_sanity?: { max_markup_ratio?: number } }).content_sanity?.max_markup_ratio).toBeUndefined();
     });
+  });
+});
+
+describe('KNOWN_CONFIG_KEYS — documented enable commands must be registered', () => {
+  test('Life Chronicle keys are registered (v0.42.56.0 release notes say `config set auto_chronicle true`)', async () => {
+    const { KNOWN_CONFIG_KEYS, KNOWN_CONFIG_KEY_PREFIXES } = await import('../src/core/config.ts');
+    // The flag the chronicle backstop reads (isAutoChronicleEnabled).
+    expect(KNOWN_CONFIG_KEYS).toContain('auto_chronicle');
+    // The takes bootstrap two-gate consent flag (v0.41.18.0 A12).
+    expect(KNOWN_CONFIG_KEYS).toContain('takes.bootstrap_enabled');
+    // chronicle.tz (chronicleTz) + future chronicle.* knobs.
+    expect(KNOWN_CONFIG_KEY_PREFIXES.some(p => 'chronicle.tz'.startsWith(p))).toBe(true);
   });
 });

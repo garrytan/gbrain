@@ -21,7 +21,7 @@
  * regression trip-wire if anyone later re-hardcodes a view back into a duplicate)
  * and that the cross-modal panel models are all present in canonical.
  *
- * Prices verified 2026-06-03 against published provider pricing:
+ * Prices verified 2026-07-26 against published provider pricing:
  *   - Anthropic: https://platform.claude.com/docs/en/about-claude/models/overview
  *   - OpenAI:    https://openai.com/api/pricing
  *   - Google:    https://ai.google.dev/gemini-api/docs/pricing
@@ -52,11 +52,19 @@ export interface ModelPricing {
  */
 export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // ── Anthropic ──────────────────────────────────────────────────────────
-  // Opus 4.x: $5 in / $25 out. 4.8 (released 2026-05-28) shares 4.7's
-  // per-token rate — closes gbrain#1819.
+  // Fable 5: Anthropic's top tier, above Opus. $10 in / $50 out.
+  'anthropic:claude-fable-5':             { input: 10.00, output: 50.00 },
+  // Opus 4.x/5: $5 in / $25 out. Opus 5 (new generation) shares the same
+  // per-token rate as 4.8 (released 2026-05-28) — closes gbrain#1819.
+  'anthropic:claude-opus-5':              { input:  5.00, output: 25.00 },
   'anthropic:claude-opus-4-8':            { input:  5.00, output: 25.00 },
   'anthropic:claude-opus-4-7':            { input:  5.00, output: 25.00 },
   'anthropic:claude-opus-4-6':            { input:  5.00, output: 25.00 },
+  // Sonnet 5 (released 2026-06-29): same $3/$15 sticker as 4.6. The launch
+  // intro discount ($2/$10 through 2026-08-31) is deliberately NOT modeled —
+  // the table carries standard rates so estimates stay conservative and
+  // don't need a time-bombed edit when the promo lapses.
+  'anthropic:claude-sonnet-5':            { input:  3.00, output: 15.00 },
   'anthropic:claude-sonnet-4-6':          { input:  3.00, output: 15.00 },
   // Haiku 4.5 — both the dateless canonical id and the dated snapshot.
   'anthropic:claude-haiku-4-5':           { input:  1.00, output:  5.00 },
@@ -68,6 +76,11 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   'openai:gpt-4o':                        { input:  2.50, output: 10.00 },
   'openai:gpt-4o-mini':                   { input:  0.15, output:  0.60 },
   'openai:gpt-5':                         { input:  5.00, output: 20.00 },
+  // gpt-5.2: rates from the OpenAI recipe chat touchpoint (verified
+  // 2026-04-20). Needed here because it's the cross-modal DEFAULT_SLOTS
+  // slot-A model — without a canonical entry estimateCost silently drops
+  // slot A from the --max-usd pre-flight and est_cost_usd audit rows.
+  'openai:gpt-5.2':                       { input:  1.25, output: 10.00 },
   'openai:gpt-5.5':                       { input:  4.00, output: 16.00 },
 
   // ── Google ─────────────────────────────────────────────────────────────
@@ -80,7 +93,12 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
 
   // ── Together / DeepSeek (cross-modal-eval panel) ───────────────────────
   'together:meta-llama/Llama-3.3-70B-Instruct-Turbo': { input: 0.88, output: 0.88 },
+  // `deepseek-chat` was retired by DeepSeek 2026-07-24 (#1255); kept so
+  // historical usage/audit rows still price. New calls use the v4 names.
   'deepseek:deepseek-chat':               { input:  0.14, output:  0.28 },
+  // DeepSeek v4 (verified 2026-07-27 at api-docs.deepseek.com): cache-miss rates.
+  'deepseek:deepseek-v4-flash':           { input:  0.14, output:  0.28 },
+  'deepseek:deepseek-v4-pro':             { input:  0.435, output: 0.87 },
 };
 
 /**

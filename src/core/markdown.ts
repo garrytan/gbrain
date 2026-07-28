@@ -44,6 +44,13 @@ export interface ParsedMarkdown {
   timeline: string;
   slug: string;
   type: PageType;
+  /**
+   * #1035: true when `type` came from an explicit frontmatter `type:` field,
+   * false when it was inferred from the file path (or defaulted to 'concept').
+   * Importers use this to preserve an existing page's type on round-trip:
+   * explicit frontmatter type is an override; absence means "don't change it".
+   */
+  typeExplicit?: boolean;
   title: string;
   tags: string[];
   /** Present iff opts.validate. Empty array means no errors. */
@@ -132,10 +139,20 @@ export function parseMarkdown(
   // coerceFrontmatterString turns a scalar/date into a usable string (a date slug
   // `2024-06-01` is legitimate); the NON_STRING_FIELD lint finding below still
   // surfaces the un-quoted field so it can be cleaned up.
-  const type = coerceFrontmatterString(frontmatter.type) || (
+  const explicitType = coerceFrontmatterString(frontmatter.type);
+  const type = explicitType || (
     opts?.activePack ? inferTypeFromPack(filePath, opts.activePack) : inferType(filePath)
   );
-  const title = coerceFrontmatterString(frontmatter.title).trim() || inferTitle(filePath);
+  // #2446: title precedence is frontmatter `title:` > the body's first H1 >
+  // the slug/filename-humanized fallback. Slug-based imports (contacts,
+  // calendar) write a correct `# Heading` but no frontmatter title; without
+  // the H1 fallback they get junk titles humanized from the slug
+  // (`Contact 20170928 5 John Defalco`), which also breaks anything keyed on
+  // the title (e.g. the by-mention gazetteer's first-token bucketing).
+  const title =
+    coerceFrontmatterString(frontmatter.title).trim() ||
+    inferTitleFromBody(body) ||
+    inferTitle(filePath);
   const tags = extractTags(frontmatter);
   const slug = coerceFrontmatterString(frontmatter.slug) || inferSlug(filePath);
 
@@ -151,6 +168,7 @@ export function parseMarkdown(
     timeline: timeline.trim(),
     slug,
     type,
+    typeExplicit: explicitType !== '',
     title,
     tags,
   };
@@ -213,39 +231,39 @@ function collectValidationErrors(
     return;
   }
 
-  // 3. MISSING_CLOSE — find the next `---` after the opener. If a markdown
-  //    heading appears before it, that's a strong signal the closing
-  //    delimiter is missing (the heading was meant to be in the body).
+  // 3. MISSING_CLOSE — find the next `---` after the opener.
   let closeLine = -1;
-  let headingBeforeClose = -1;
   for (let i = firstNonEmpty + 1; i < lines.length; i++) {
-    const t = lines[i].trim();
-    if (t === '---') {
+    if (lines[i].trim() === '---') {
       closeLine = i;
       break;
     }
-    if (/^#{1,6}\s/.test(t) && headingBeforeClose === -1) {
-      headingBeforeClose = i;
-    }
   }
   if (closeLine === -1) {
+    // No closing fence found. Surface the first heading-shaped line as a
+    // hint for where the parser thinks the frontmatter went off the rails —
+    // only useful when the close is genuinely missing, since YAML allows
+    // `#` comment lines inside a closed fence (see comment below).
+    let headingHint = -1;
+    for (let i = firstNonEmpty + 1; i < lines.length; i++) {
+      if (/^#{1,6}\s/.test(lines[i].trim())) {
+        headingHint = i;
+        break;
+      }
+    }
     errors.push({
       code: 'MISSING_CLOSE',
       message:
-        headingBeforeClose >= 0
-          ? `No closing --- before heading at line ${headingBeforeClose + 1}`
+        headingHint >= 0
+          ? `No closing --- before heading at line ${headingHint + 1}`
           : 'No closing --- delimiter found',
-      line: headingBeforeClose >= 0 ? headingBeforeClose + 1 : firstNonEmpty + 1,
+      line: headingHint >= 0 ? headingHint + 1 : firstNonEmpty + 1,
     });
     return;
   }
-  if (headingBeforeClose >= 0 && headingBeforeClose < closeLine) {
-    errors.push({
-      code: 'MISSING_CLOSE',
-      message: `Heading at line ${headingBeforeClose + 1} found inside frontmatter zone (closing --- comes after)`,
-      line: headingBeforeClose + 1,
-    });
-  }
+  // Closing fence found. Content between opening and closing is YAML, which
+  // permits `#` comment lines anywhere — those are not markdown headings
+  // and must not raise MISSING_CLOSE.
 
   // 4. EMPTY_FRONTMATTER — open and close present but nothing meaningful between.
   const fmBody = lines.slice(firstNonEmpty + 1, closeLine).join('\n').trim();
@@ -600,6 +618,31 @@ function inferTypeWithPrefixes(
     }
   }
   return 'concept';
+}
+
+/**
+ * #2446: derive a title from the body's first ATX H1 (`# Heading`).
+ *
+ * Returns the trimmed heading text with the leading `# ` and any decorative
+ * trailing `#` run stripped, or '' if the body has no H1. Only a SINGLE leading
+ * `#` matches — `##`+ (h2 and deeper) are skipped — and lines inside a fenced
+ * code block (```/~~~) are ignored so a `# comment` in a shell snippet can't be
+ * mistaken for the page title.
+ */
+function inferTitleFromBody(body: string): string {
+  let inFence = false;
+  for (const raw of body.split('\n')) {
+    const fence = /^\s*(`{3,}|~{3,})/.exec(raw);
+    if (fence) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    // Exactly one leading `#`, then whitespace, then the heading text.
+    const m = /^#(?!#)\s+(.+?)\s*$/.exec(raw);
+    if (m) return m[1].replace(/\s+#+\s*$/, '').trim();
+  }
+  return '';
 }
 
 function inferTitle(filePath?: string): string {

@@ -22,6 +22,7 @@ import { join, relative, resolve, dirname, basename, isAbsolute } from 'path';
 import type { BrainEngine } from './engine.ts';
 import type { ProgressReporter } from './progress.ts';
 import { gbrainPath } from './config.ts';
+import { collectGitVisibleFiles } from './git-visible-files.ts';
 import {
   parseMarkdown,
   type ParseValidationCode,
@@ -138,8 +139,21 @@ export function autoFixFrontmatter(
     fixes.push({ code: 'NULL_BYTES', description: 'Stripped null bytes' });
   }
 
-  // 2. MISSING_CLOSE — if there's an opener but no closer before a heading,
-  //    insert `---` immediately before the heading. Walk lines once.
+  // 2. MISSING_CLOSE — if there's an opener but no closer at all, insert
+  //    `---` immediately before the first heading-shaped line (best-effort
+  //    guess at where the frontmatter was meant to end).
+  //
+  //    Find the closer FIRST, scanning the full zone — do not stop at the
+  //    first `#`-prefixed line. A `#` line between the opening and closing
+  //    `---` is a YAML comment (comments are valid anywhere in a YAML
+  //    document), not a markdown heading; only the genuine absence of a
+  //    closing `---` counts as MISSING_CLOSE. Mirrors the fix applied to
+  //    the parseMarkdown validator in #2153 — this is the sibling
+  //    reimplementation in the auto-fixer and had the same bug (it broke
+  //    out of the scan on the first heading-shaped line, so a `#` comment
+  //    appearing before a real closing fence was misdetected as
+  //    MISSING_CLOSE and the fix inserted a spurious `---` that split
+  //    valid frontmatter in two, pushing the real keys into the body).
   {
     const lines = working.split('\n');
     let firstNonEmpty = -1;
@@ -148,24 +162,27 @@ export function autoFixFrontmatter(
     }
     if (firstNonEmpty >= 0 && lines[firstNonEmpty].trim() === '---') {
       let closeIdx = -1;
-      let headingIdx = -1;
       for (let i = firstNonEmpty + 1; i < lines.length; i++) {
-        const t = lines[i].trim();
-        if (t === '---') { closeIdx = i; break; }
-        if (/^#{1,6}\s/.test(t)) { headingIdx = i; break; }
+        if (lines[i].trim() === '---') { closeIdx = i; break; }
       }
-      if (closeIdx === -1 && headingIdx >= 0) {
-        const fixed = [
-          ...lines.slice(0, headingIdx),
-          '---',
-          '',
-          ...lines.slice(headingIdx),
-        ];
-        working = fixed.join('\n');
-        fixes.push({
-          code: 'MISSING_CLOSE',
-          description: `Inserted closing --- before heading at line ${headingIdx + 1}`,
-        });
+      if (closeIdx === -1) {
+        let headingIdx = -1;
+        for (let i = firstNonEmpty + 1; i < lines.length; i++) {
+          if (/^#{1,6}\s/.test(lines[i].trim())) { headingIdx = i; break; }
+        }
+        if (headingIdx >= 0) {
+          const fixed = [
+            ...lines.slice(0, headingIdx),
+            '---',
+            '',
+            ...lines.slice(headingIdx),
+          ];
+          working = fixed.join('\n');
+          fixes.push({
+            code: 'MISSING_CLOSE',
+            description: `Inserted closing --- before heading at line ${headingIdx + 1}`,
+          });
+        }
       }
     }
   }
@@ -408,6 +425,11 @@ export interface ScanOpts {
   visitDir?: (dirPath: string) => void;
 }
 
+/** Timeout-arm winner for the COUNT-vs-deadline race in scanBrainSources.
+ *  A unique object so it can never collide with a legitimate COUNT result
+ *  (number | null). Module-private. */
+const DEADLINE_SENTINEL: unique symbol = Symbol('gbrain.scan.deadline');
+
 export async function scanBrainSources(
   engine: BrainEngine,
   opts: ScanOpts = {},
@@ -479,41 +501,43 @@ export async function scanBrainSources(
     // pool can make this await hang past the budget. Without the race, we'd
     // wait indefinitely AND defeat the wall-clock guarantee.
     let dbPageCount: number | null = null;
+    // Set when the deadline race's timeout arm wins: the verdict that the
+    // budget is spent, independent of any later Date.now() reading. Timer
+    // callbacks on loaded runners can fire measurably EARLY relative to the
+    // wall clock (a +1ms pad was drifted past in practice — see the flake
+    // lineage in test/brain-writer-partial-scan.test.ts and issue #2946), so
+    // the hung-COUNT path must not re-derive "did the deadline fire?" from
+    // the clock the timer just raced against.
+    let deadlineHit = false;
     if (opts.dbPageCountForSource) {
       try {
         if (opts.deadline) {
           const remainingMs = opts.deadline - Date.now();
           if (remainingMs <= 0) {
             dbPageCount = null;
+            deadlineHit = true;
           } else {
-            // Race COUNT against the deadline so a hung query can't eat the budget.
-            //
-            // Boundary overshoot (+1ms): the post-await deadline check at line
-            // ~512 uses `Date.now() >= deadline`. setTimeout fires AT OR AFTER
-            // the requested delay, so in theory the check always passes. In
-            // practice on heavily-loaded CI runners (8 parallel shards × 4
-            // concurrent test files = ~32 concurrent bun processes) we saw
-            // intermittent failures where the timer callback resolved
-            // microseconds BEFORE the wall-clock boundary, leaving Date.now()
-            // a tick below deadline and the skip-check evaluating false. The
-            // src-a scan then ran on a populated dir before src-b's
-            // between-source check caught up — causing
-            // `firstSource.status === 'skipped'` to receive 'scanned'.
-            //
-            // Adding 1ms guarantees the timer fires past the deadline by at
-            // least one millisecond regardless of runner timer drift. Cost is
-            // 1ms additional wall-clock latency on hung COUNT queries, which
-            // is operationally negligible. Flake repro:
-            // https://github.com/garrytan/gbrain/actions/runs/77611667786
-            dbPageCount = await Promise.race([
+            // Race COUNT against the deadline so a hung query can't eat the
+            // budget. The timeout arm resolves a private sentinel — NOT null —
+            // so a deadline win is distinguishable from a COUNT that resolved
+            // null (failed/absent count keeps its existing semantics).
+            const raced = await Promise.race([
               opts.dbPageCountForSource(src.id),
-              new Promise<null>(resolve => setTimeout(() => resolve(null), remainingMs + 1)),
+              new Promise<typeof DEADLINE_SENTINEL>(resolve =>
+                setTimeout(() => resolve(DEADLINE_SENTINEL), remainingMs)),
             ]);
+            if (raced === DEADLINE_SENTINEL) {
+              dbPageCount = null;
+              deadlineHit = true;
+            } else {
+              dbPageCount = raced;
+            }
           }
         } else {
           dbPageCount = await opts.dbPageCountForSource(src.id);
         }
       } catch {
+        // A throwing COUNT is a failed count, not a deadline verdict.
         dbPageCount = null;
       }
     }
@@ -523,11 +547,11 @@ export async function scanBrainSources(
     // status='partial' with files_scanned=0, which is misleading ("partial
     // scan" when actually nothing was scanned). Mark this source + remainder
     // as 'skipped' so the doctor message is honest.
-    // `>=` matches the between-source check above (line 445). The Promise.race
-    // setTimeout resolves null at exactly `remainingMs` from now, so post-await
-    // Date.now() often equals deadline within integer-ms precision — strict `>`
-    // missed those landings on CI and let the next scanOneSource run anyway.
-    if (opts.signal?.aborted || (opts.deadline && Date.now() >= opts.deadline)) {
+    // `deadlineHit` is the authoritative verdict for the hung-COUNT path (the
+    // sentinel above); the wall-clock re-check (`>=`, matching the
+    // between-source check at line ~445) still covers a COUNT that RESOLVED
+    // slowly enough to eat the budget without the timer winning.
+    if (opts.signal?.aborted || deadlineHit || (opts.deadline && Date.now() >= opts.deadline)) {
       if (abortedAtSource === null) {
         abortedAtSource = src.id;
       }
@@ -579,7 +603,7 @@ function scanOneSource(
   let ignoredMissingOpen = 0;
   let interrupted = false;
 
-  walkDir(rootResolved, (absPath) => {
+  const visitFile = (absPath: string): boolean | void => {
     // Per-file deadline + abort gate. Deadline is the load-bearing
     // wall-clock bound (sync I/O blocks the event loop so timer-based
     // AbortSignal.timeout can't fire mid-walk — codex C1).
@@ -625,7 +649,17 @@ function scanOneSource(
       opts.onProgress.tick(50);
     }
     return true;
-  }, opts.visitDir);
+  };
+
+  const gitFiles = collectGitVisibleFiles(rootResolved, (rel) => isSyncable(rel, { strategy: 'markdown' }));
+  if (gitFiles) {
+    if (opts.visitDir) opts.visitDir(rootResolved);
+    for (const absPath of gitFiles) {
+      if (visitFile(absPath) === false) break;
+    }
+  } else {
+    walkDir(rootResolved, visitFile, opts.visitDir);
+  }
 
   if (opts.onProgress) {
     opts.onProgress.heartbeat(`scanned ${scanned} pages in ${sourceId}`);

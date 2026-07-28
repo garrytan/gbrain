@@ -21,12 +21,13 @@
  * only does "row exists + repo is a real dir → render + atomic write".
  */
 
-import { existsSync, statSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from 'fs';
-import { dirname, join } from 'path';
+import { existsSync, statSync, mkdirSync, writeFileSync, renameSync, unlinkSync, readdirSync } from 'fs';
+import { basename, dirname, join } from 'path';
 import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import { serializePageToMarkdown, resolvePageFilePath } from './markdown.ts';
 import { isWriteTargetContained } from './path-confine.ts';
+import { isDurabilityHardened, commitWriteThroughFile } from './brain-repo-durability.ts';
 
 /** Minimal logger surface — structurally compatible with operations.ts `Logger`. */
 export interface WriteThroughLogger {
@@ -36,6 +37,13 @@ export interface WriteThroughLogger {
 export interface WriteThroughResult {
   written: boolean;
   path?: string;
+  /**
+   * True when the write was also committed to git (#2426). Only attempted on
+   * repos hardened via `gbrain sources harden` (durability hook installed);
+   * the hook then background-pushes the commit. Best-effort — a false/absent
+   * value never blocks the write.
+   */
+  committed?: boolean;
   /**
    * Non-error reasons the file was not written:
    *   - no_repo_configured: the resolved target (source `local_path` or, for a
@@ -48,8 +56,12 @@ export interface WriteThroughResult {
    *     DB write failed or targeted a different source).
    *   - path_escapes_source_root: the computed file path resolves outside the
    *     source's working tree (hostile slug row / symlinked subtree) — refused.
+   *   - case_insensitive_collision: on a case-insensitive filesystem
+   *     (macOS/Windows default), the target directory already holds a
+   *     differently-cased entry that the FS folds onto this page's file, so
+   *     writing would silently clobber the OTHER slug's file (#2831) — refused.
    */
-  skipped?: 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root';
+  skipped?: 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root' | 'case_insensitive_collision';
   /** Set when the render/write/rename itself threw (EACCES, ENOTDIR, disk full). */
   error?: string;
 }
@@ -138,7 +150,35 @@ export async function writePageThrough(
       frontmatterOverrides: opts.frontmatterOverrides,
     });
 
-    mkdirSync(dirname(filePath), { recursive: true });
+    // #2831: two distinct DB slugs differing only by case (FOO vs foo) resolve
+    // to the SAME file on a case-insensitive filesystem — the second write
+    // would silently clobber the first slug's artifact. Refuse when the target
+    // dir holds a differently-cased entry that the FS folds onto our path:
+    // exact-case entry present → normal update, falls through; on a
+    // case-sensitive FS the variant path doesn't exist, so the guard is a
+    // no-op there.
+    const dir = dirname(filePath);
+    if (existsSync(dir)) {
+      const base = basename(filePath);
+      const entries = readdirSync(dir);
+      if (!entries.includes(base) && existsSync(filePath)) {
+        // The path exists on disk but no exactly-named entry does → the FS
+        // folded the name (case, or unicode normalization on APFS) onto a
+        // different slug's file.
+        const clash =
+          entries.find((e) => e.toLowerCase() === base.toLowerCase()) ?? '(normalization variant)';
+        opts.logger?.warn(
+          `[write-through] case-insensitive collision for ${slug}: '${clash}' already occupies ${filePath} — file not written (DB row is intact)`,
+        );
+        return { written: false, skipped: 'case_insensitive_collision' };
+      }
+    }
+
+    // On Bun + Windows, mkdirSync(dir, { recursive: true }) can still throw
+    // EEXIST when the directory already exists (POSIX no-ops it). That aborts
+    // the put_page / enrich / capture write-through whenever the prefix dir
+    // already exists, silently leaving the DB and the .md file plane out of sync.
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
     // Atomic write: unique temp sibling + rename. Unique name (pid + random)
     // so two concurrent saves to the same target can't clobber each other's
@@ -157,7 +197,20 @@ export async function writePageThrough(
       throw writeErr;
     }
 
-    return { written: true, path: filePath };
+    // #2426: on a durability-hardened repo (user ran `gbrain sources harden`),
+    // commit the artifact so it reaches git — pre-fix, write-through content
+    // stayed uncommitted forever: never pushed, `last_sync_at` frozen, and
+    // silently deleted by a later `sync --full` delete-reconcile. The local
+    // post-commit hook background-pushes the commit. Best-effort: a commit
+    // failure never fails the write (the DB row + file are the durable sinks).
+    let committed = false;
+    try {
+      if (isDurabilityHardened(writeRoot)) {
+        committed = commitWriteThroughFile(writeRoot, filePath, slug);
+      }
+    } catch { /* best-effort */ }
+
+    return { written: true, path: filePath, ...(committed ? { committed } : {}) };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     opts.logger?.warn(`[write-through] failed for ${slug}: ${msg}`);

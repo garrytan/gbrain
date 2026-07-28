@@ -321,10 +321,21 @@ export function applyPattern(
   if (!body) return [];
   const out: MatchedMessage[] = [];
   const lines = body.split(/\r?\n/);
+  // Some multi-day conversation exports use markdown date headings instead
+  // of repeating a date on every message. Keep the caller's context immutable
+  // while advancing a local date anchor as those headings are encountered.
+  const runningCtx: DateContext = { ...dateCtx };
+  const dateHeaderRe = /^#{1,4}\s+(\d{4}-\d{2}-\d{2})\s*$/;
   for (let i = 0; i < lines.length; i++) {
     const rawLine = lines[i];
     const line = rawLine.trim();
     if (!line) continue;
+
+    const dateHeader = dateHeaderRe.exec(line);
+    if (dateHeader) {
+      runningCtx.fallbackDate = dateHeader[1];
+      continue;
+    }
 
     // Quick-reject fast path.
     if (entry.quick_reject && !entry.quick_reject.test(line)) {
@@ -339,7 +350,7 @@ export function applyPattern(
 
     const m = entry.regex.exec(line);
     if (m) {
-      const iso = buildIso(m, entry, dateCtx);
+      const iso = buildIso(m, entry, runningCtx);
       if (iso === null) continue; // reconstruction failed; skip line
       const rawSpeaker = m[entry.captures.speaker_group] ?? '';
       const speaker = cleanSpeaker(rawSpeaker, entry.speaker_clean);
@@ -380,7 +391,7 @@ function getNonBlankLines(body: string, headCap?: number): string[] {
  * window) and `scorePatternFull` (whole body) delegate here so the
  * quick_reject + regex loop lives in one place. Reused by
  * `parseConversation`'s fallback path which pre-splits ONCE and
- * passes the array to all 12 candidates (saves 11 redundant body
+ * passes the array to all 17 candidates (saves 16 redundant body
  * splits per fallback pass).
  */
 function scoreFromLines(
@@ -389,9 +400,28 @@ function scoreFromLines(
 ): number {
   if (lines.length === 0) return 0;
   let anchored = 0;
-  for (const line of lines) {
-    if (entry.quick_reject && !entry.quick_reject.test(line)) continue;
-    if (entry.regex.test(line)) anchored++;
+  let anchorCandidates = 0;
+  let firstLineAnchored = false;
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    if (entry.quick_reject && !entry.quick_reject.test(line)) {
+      continue;
+    }
+    anchorCandidates++;
+    if (entry.regex.test(line)) {
+      anchored++;
+      if (index === 0) firstLineAnchored = true;
+    }
+  }
+
+  if (
+    entry.score_continuations_as_body &&
+    entry.multi_line &&
+    entry.quick_reject &&
+    anchorCandidates > 0 &&
+    (anchored >= 2 || firstLineAnchored)
+  ) {
+    return anchored / anchorCandidates;
   }
   return anchored / lines.length;
 }
@@ -400,8 +430,10 @@ function scoreFromLines(
  * Score how well a pattern matches the first N lines of a body (D18).
  * Returns 0..1 ratio of matched lines. Higher = more confident.
  *
- * Quick_reject is honored (lines that don't pass quick_reject still
- * count as "could be continuation"; not penalized).
+ * Quick_reject is honored. Patterns that opt into
+ * `score_continuations_as_body` may exclude continuation lines from the
+ * denominator only after the scorer sees two anchors, or an anchor on the
+ * first non-blank line. Otherwise the ordinary full-body density applies.
  *
  * Exported for tests.
  */

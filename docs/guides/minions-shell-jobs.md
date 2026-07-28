@@ -155,6 +155,7 @@ child-spawn time:
 - `inherit: ["database_url"]` → child env `GBRAIN_DATABASE_URL`
 - `inherit: ["anthropic_api_key"]` → child env `ANTHROPIC_API_KEY`
 - `inherit: ["openai_api_key"]` → child env `OPENAI_API_KEY`
+- `inherit: ["openrouter_api_key"]` → child env `OPENROUTER_API_KEY`
 - `inherit: ["voyage_api_key"]` → child env `VOYAGE_API_KEY`
 - `inherit: ["groq_api_key", "zeroentropy_api_key"]` → both injected
 - Or any arbitrary config-key your worker has (`my_custom_field` →

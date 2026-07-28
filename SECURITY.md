@@ -8,6 +8,30 @@ on GitHub.
 
 Do not open a public issue for security vulnerabilities.
 
+## Automated security scanning
+
+CI runs three automated security checks alongside secret scanning (Gitleaks):
+
+- **Dependency vulnerabilities** — OSV-Scanner
+  (`.github/workflows/osv-scanner.yml`) runs weekly and on any PR that touches
+  `package.json` or `bun.lock`.
+- **Static analysis (SAST)** — Semgrep CE (`.github/workflows/semgrep.yml`)
+  runs on every PR and weekly. It is currently **advisory (non-blocking)**
+  while the finding baseline is tuned; the graduation path to a blocking check
+  is documented in the workflow file.
+- **Release binary provenance** — release builds
+  (`.github/workflows/release.yml`) attest each compiled binary with
+  [GitHub artifact attestations](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations).
+  Verify a downloaded release binary with:
+
+  ```bash
+  gh attestation verify ./gbrain-darwin-arm64 -R garrytan/gbrain
+  gh attestation verify ./gbrain-linux-x64 -R garrytan/gbrain
+  ```
+
+All security workflows use SHA-pinned actions and least-privilege permissions,
+enforced structurally by actionlint on every workflow change.
+
 ## Remote MCP Security
 
 ### ⚠️ Do NOT use open OAuth client registration for remote MCP
@@ -134,6 +158,18 @@ design and the `access_tokens` / `mcp_request_log` tables don't exist in
 the PGLite schema. Local agents continue to use stdio (`gbrain serve`).
 Running `--http` against a PGLite-backed install fails fast with a clear
 error message at startup.
+
+### Docker network isolation (self-hosted Postgres)
+
+OAuth and source scoping enforce isolation on the `serve --http` path only.
+Raw Postgres reachability bypasses both: a container that shares Docker's
+default `bridge` network with the brain's Postgres can open a direct DB
+session without any token and read every source. Put the brain's Postgres on
+a user-defined Docker network with nothing untrusted on it, publish its port
+loopback-only (if at all), and never put `DATABASE_URL` or a Postgres
+password in untrusted agent containers — those should reach the brain
+exclusively via OAuth against `serve --http`. Full operator checklist:
+[docs/mcp/DEPLOY.md — Co-located Docker workloads](docs/mcp/DEPLOY.md#co-located-docker-workloads-self-hosted-postgres).
 
 ### CORS
 

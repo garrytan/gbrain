@@ -24,6 +24,7 @@ import type { GBrainConfig } from './core/config.ts';
 import type { AIGatewayConfig } from './core/ai/types.ts';
 import type { BrainEngine } from './core/engine.ts';
 import { operations, OperationError } from './core/operations.ts';
+import { resolveSourceIdEngineFree } from './core/source-resolver.ts';
 import { formatVolunteeredPage } from './core/context/volunteer.ts';
 import type { Operation, OperationContext } from './core/operations.ts';
 import { shouldForceExitAfterMain, finishCliTeardown, flushThenExit, currentExitCode, setCliExitVerdict } from './core/cli-force-exit.ts';
@@ -43,8 +44,18 @@ for (const op of operations) {
   }
 }
 
+/**
+ * JSON replacer: `bigint` → string, matching the postgres.js wire shape (int8
+ * comes back as a string on the routed path). Lets the local-engine output
+ * normalizer round-trip bigint columns (e.g. a `BIGSERIAL` `id`) instead of
+ * throwing `TypeError: Do not know how to serialize a BigInt`.
+ */
+export function bigintToStringReplacer(_key: string, value: unknown): unknown {
+  return typeof value === 'bigint' ? value.toString() : value;
+}
+
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch']);
+export const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'maintain', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'reconcile-links', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'retrieval-upgrade', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch', 'reindex-search-vector']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -68,6 +79,8 @@ const CLI_ONLY_SELF_HELP = new Set([
   'capture',
   // v0.42 self-upgrade ships its own usage (flags + the agent-skill story).
   'self-upgrade',
+  // maintain (#3015) prints its own usage block (modes + not-auto-applied list).
+  'maintain',
   // v0.43 (#2095): watch ships WATCH_HELP (flags + the stdin-turn protocol).
   'watch',
   // v0.37 fix wave (Lane D.4 + CDX2-12): sync's --no-embed flag was
@@ -94,6 +107,10 @@ const CLI_ONLY_SELF_HELP = new Set([
   // `gbrain connect --help` prints its own usage (flags + examples) from
   // runConnect; route around the generic one-line short-circuit.
   'connect',
+  // #3390 — `gbrain migrate embeddings --help` / `gbrain retrieval-upgrade
+  // --help` print the migration flags from runMigrateEmbeddings. `migrate`
+  // (engine transfer) keeps its own dispatch too.
+  'migrate', 'retrieval-upgrade',
 ]);
 
 // v114 (#1941): alias -> operation lookup, kept separate from `cliOps` so
@@ -235,6 +252,17 @@ async function main() {
     command = 'query';
   }
 
+  // Local patch 2026-06-11 — mark one-shot CLI processes so the facts
+  // backstop routes absorb work to the durable jobs worker instead of the
+  // in-process queue that the exit teardown drains-then-aborts after ~1-2s
+  // (the `pipeline_error: [chat(...)] The operation was aborted.` class in
+  // ingest_log). Daemons keep the in-process queue: their event loop
+  // outlives the work. See src/core/facts/cli-process-mode.ts.
+  if (!['serve', 'jobs', 'autopilot'].includes(command)) {
+    const { markShortLivedCliProcess } = await import('./core/facts/cli-process-mode.ts');
+    markShortLivedCliProcess();
+  }
+
   // T5 — `gbrain search modes|stats|tune` is the read-only config dashboard,
   // NOT a free-text search for the literal word "modes". Free-text
   // `gbrain search "<query>"` falls through to the cheap-hybrid `search` op
@@ -361,6 +389,15 @@ async function main() {
     if (op.localOnly) {
       refuseThinClient(command, cfgPre!.remote_mcp!.mcp_url);
     }
+    // #2098: the local path resolves --source / GBRAIN_SOURCE / .gbrain-source
+    // inside makeContext (ctx.sourceId), which this route never reaches — so
+    // scope must be mapped onto the op's source_id wire param before the call.
+    try {
+      applyThinClientSourceScope(op, params);
+    } catch (e: unknown) {
+      console.error(e instanceof Error ? e.message : String(e));
+      process.exit(1);
+    }
     await runThinClientRouted(op, params, cfgPre!, cliOpts);
     return;
   }
@@ -442,7 +479,7 @@ async function main() {
     // path's return value so renderers see the same shape they'd see on the
     // routed path. Date → ISO string; bigint → string (postgres.js shape);
     // Buffer → object. Microsecond-cost; eliminates a whole drift bug class.
-    const result = JSON.parse(JSON.stringify(rawResult));
+    const result = JSON.parse(JSON.stringify(rawResult, bigintToStringReplacer));
     const output = formatResult(op.name, result);
     if (output) process.stdout.write(output);
   } catch (e: unknown) {
@@ -781,18 +818,80 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
   return params;
 }
 
+/**
+ * #2098: thin-client source scoping. Locally, --source / GBRAIN_SOURCE /
+ * .gbrain-source resolve to ctx.sourceId in makeContext; the thin-client
+ * route short-circuits before that, so `gbrain query --source X` against a
+ * remote brain silently searched unscoped. This runs the engine-free tiers
+ * (flag → env → dotfile; the DB-backed tiers can't run without an engine —
+ * the server's grant scoping covers the rest) and maps the result onto the
+ * op's `source_id` wire param.
+ *
+ * Ops that declare their OWN `source` param (facts add, etc.) are left
+ * untouched — their --source is an op param, not scope. An explicit --source
+ * on an op with no source_id wire param throws (loud beats silent drop);
+ * ambient env/dotfile scope with nowhere to send it is ignored, matching the
+ * pre-fix behavior for non-scopeable ops. Exported for tests.
+ */
+// Ops whose `source_id` wire param is NOT read-scope semantics: get_skill's
+// source_id flips the lookup from host catalog to brain-resident-pack
+// (getResidentSkillDetail). Ambient env/dotfile scope must never leak into
+// these; an explicit --source-id still passes through untouched above.
+const NON_SCOPE_SOURCE_ID_OPS = new Set(['get_skill']);
+
+export function applyThinClientSourceScope(
+  op: Operation,
+  params: Record<string, unknown>,
+  cwd?: string,
+): void {
+  if ('source' in op.params) return; // the op owns --source; not a scope flag
+  const explicit = typeof params.source === 'string' && params.source.length > 0
+    ? (params.source as string)
+    : null;
+  delete params.source; // never a wire param on these ops — don't leak it
+  // Explicit per-call scope already on the wire wins over ambient tiers.
+  if (params.source_id !== undefined || params.all_sources === true) {
+    if (explicit) {
+      throw new Error('Pass either --source or --source-id/--all-sources, not both.');
+    }
+    return;
+  }
+  const resolved = resolveSourceIdEngineFree(explicit, cwd);
+  if (!resolved) return;
+  if (!('source_id' in op.params) || NON_SCOPE_SOURCE_ID_OPS.has(op.name)) {
+    if (explicit) {
+      const hint = NON_SCOPE_SOURCE_ID_OPS.has(op.name)
+        ? `(its source_id parameter is not a scope filter; pass --source-id explicitly if you mean it)`
+        : `(the remote op has no source_id parameter; the server scopes it to your grant)`;
+      throw new Error(
+        `gbrain ${op.cliHints?.name || op.name} does not accept --source on a thin-client install ${hint}.`,
+      );
+    }
+    return; // ambient env/dotfile scope with nowhere to send it
+  }
+  params.source_id = resolved;
+}
+
 async function makeContext(engine: BrainEngine, params: Record<string, unknown>): Promise<OperationContext> {
   // v0.31.8 (D11): resolve sourceId via the canonical 6-tier chain. Honors
   // --source / GBRAIN_SOURCE / .gbrain-source / path-match / brain default /
   // 'default'. Wrapped in try/catch so a doctor / single-source brain that
   // never set up sources still returns 'default' silently.
   let sourceId: string | undefined;
+  // #2561: when the source resolved via a NON-explicit tier (path-match /
+  // brain default / sole-non-default / seed default), unqualified search-shaped
+  // reads span every `config.federated = true` source. Computed here (the
+  // trusted local boundary) and consumed by federatedSearchScope in
+  // operations.ts, which additionally gates on ctx.remote === false.
+  let localFederated: string[] | undefined;
   try {
-    const { resolveSourceId } = await import('./core/source-resolver.ts');
+    const { resolveSourceWithTier, localFederatedSourceIds } = await import('./core/source-resolver.ts');
     // params.source is set when a CLI flag was parsed for the op (rare; most
     // CLI ops don't take --source). Falls through to env/dotfile/path-match.
     const explicit = (params.source as string | undefined) ?? null;
-    sourceId = await resolveSourceId(engine, explicit);
+    const resolved = await resolveSourceWithTier(engine, explicit);
+    sourceId = resolved.source_id;
+    localFederated = await localFederatedSourceIds(engine, resolved.source_id, resolved.tier);
   } catch {
     // Source resolution failed (e.g. sources table doesn't exist on a fresh
     // pre-init brain). Leave sourceId unset; engine read methods fall through
@@ -813,6 +912,7 @@ async function makeContext(engine: BrainEngine, params: Record<string, unknown>)
     // table). Matches dispatch.ts's auto-fill so the contract holds across
     // every transport.
     sourceId: sourceId ?? 'default',
+    ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),
   };
 }
 
@@ -914,7 +1014,10 @@ export function formatResult(opName: string, result: unknown): string {
         lines.push(`Link coverage (entities): ${(h.link_coverage * 100).toFixed(1)}%`);
       }
       if (h.timeline_coverage !== undefined) {
-        lines.push(`Timeline coverage (entities): ${(h.timeline_coverage * 100).toFixed(1)}%`);
+        lines.push(`Timeline coverage (entity pages): ${(h.timeline_coverage * 100).toFixed(1)}%`);
+      }
+      if (h.timeline_coverage_score !== undefined) {
+        lines.push(`Timeline density (all pages): ${h.timeline_coverage_score}/15 (whole-brain brain-score component)`);
       }
       if (Array.isArray(h.most_connected) && h.most_connected.length > 0) {
         lines.push('Most connected entities:');
@@ -956,7 +1059,7 @@ export function formatResult(opName: string, result: unknown): string {
  * `runRemoteDoctor` for thin-client installs.
  */
 const THIN_CLIENT_REFUSED_COMMANDS = new Set([
-  'sync', 'embed', 'extract', 'extract-conversation-facts', 'enrich', 'migrate', 'apply-migrations',
+  'sync', 'embed', 'extract', 'extract-conversation-facts', 'enrich', 'migrate', 'retrieval-upgrade', 'apply-migrations',
   'repair-jsonb', 'orphans', 'integrity', 'serve',
   // v0.43 (#2095): watch streams against a LOCAL engine; thin clients get
   // the volunteer_context MCP op instead.
@@ -977,6 +1080,13 @@ const THIN_CLIENT_REFUSED_COMMANDS = new Set([
   // - `code-def`/`code-refs`/`code-callers`/`code-callees` have NO MCP ops
   //   in operations.ts:2630-2671; cannot be "fixed by routing" yet
   'pages', 'files', 'eval', 'code-def', 'code-refs', 'code-callers', 'code-callees',
+  // scratch-DB audit: `config` get/set operate on the host brain's config
+  // plane (DB rows / host file-plane). On a thin client they fabricated an
+  // ephemeral local PGLite (full migration replay per call) and read/wrote
+  // config nobody would ever see. NOTE: `jobs` is deliberately NOT here —
+  // it gets a partial dispatch (list/get route over MCP engine-free, the
+  // rest refuse) in the main dispatch before connectEngine().
+  'config',
 ]);
 
 /**
@@ -996,6 +1106,7 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   'extract-conversation-facts': 'extract-conversation-facts runs on the host (requires local engine + chat gateway). Run on the host machine.',
   enrich: 'enrich runs on the host (requires local engine + chat gateway for grounded synthesis). Run on the host machine.',
   migrate: "migrate runs on the host's local engine. Run on the host machine.",
+  'retrieval-upgrade': "retrieval-upgrade (embedding migration) rebuilds the host brain's schema + re-embeds. Run on the host machine.",
   'apply-migrations': 'schema migrations run on the host. SSH and run there.',
   'repair-jsonb': 'repair-jsonb operates on the local DB only.',
   integrity: 'integrity scans local files. Run on the host machine.',
@@ -1014,6 +1125,9 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   'code-refs': '`code-refs` has no MCP op yet. Run on the host.',
   'code-callers': '`code-callers` has no MCP op yet. Run on the host.',
   'code-callees': '`code-callees` has no MCP op yet. Run on the host.',
+  // scratch-DB audit additions
+  config: "config reads/writes the host brain's config plane. Edit the host's .gbrain/config.json (file-plane keys) or run on the host with GBRAIN_HOME set.",
+  jobs: '`jobs list` and `jobs get <id>` are thin-client routable; this subcommand runs against the host queue. Use the submit_job / list_jobs / get_job MCP tools from your agent, or run on the host with GBRAIN_HOME set.',
 };
 
 /**
@@ -1572,6 +1686,27 @@ async function handleCliOnly(command: string, args: string[]) {
     }
   }
 
+  // Thin-client `jobs` dispatch: `list` and `get` route over MCP (v0.32
+  // routing branches in commands/jobs.ts) and never touch a local engine —
+  // but falling through to connectEngine() below fabricates an empty
+  // scratch PGLite in the thin-client GBRAIN_HOME and replays the entire
+  // migration chain on every invocation before the remote call even runs.
+  // Dispatch them engine-free here; every other jobs subcommand is
+  // host-queue-bound, so refuse with a pinpoint hint instead of building
+  // the scratch store.
+  if (command === 'jobs') {
+    const cfgJobs = loadConfig();
+    if (isThinClient(cfgJobs)) {
+      const jobsSub = args[0];
+      if (jobsSub === 'list' || jobsSub === 'get') {
+        const { runJobs } = await import('./commands/jobs.ts');
+        await runJobs(null, args);
+        return;
+      }
+      refuseThinClient('jobs', cfgJobs!.remote_mcp!.mcp_url);
+    }
+  }
+
   // All remaining CLI-only commands need a DB connection
   const engine = await connectEngine();
   try {
@@ -1622,8 +1757,31 @@ async function handleCliOnly(command: string, args: string[]) {
       }
       // doctor is handled before connectEngine() above
       case 'migrate': {
+        // #3390: `gbrain migrate embeddings --to <provider:model>` — the
+        // provider-agnostic embedding migration. Everything else stays the
+        // engine-transfer path (`migrate --to <supabase|pglite>`).
+        if (args[0] === 'embeddings') {
+          const { runMigrateEmbeddings } = await import('./commands/migrate-embeddings.ts');
+          await runMigrateEmbeddings(engine, args.slice(1));
+          break;
+        }
+        if (args.includes('--help') || args.includes('-h')) {
+          console.log('Usage: gbrain migrate --to <supabase|pglite> [--url <url>] [--path <path>] [--force]');
+          console.log('       gbrain migrate embeddings --to <provider:model> [--dim N] [--dry-run] [--yes]');
+          console.log('');
+          console.log('The first form transfers the brain between engines; the second re-embeds');
+          console.log('onto a different embedding provider (run `gbrain migrate embeddings --help`).');
+          break;
+        }
         const { runMigrateEngine } = await import('./commands/migrate-engine.ts');
         await runMigrateEngine(engine, args);
+        break;
+      }
+      case 'retrieval-upgrade': {
+        // The command README.md + doctor.ts promised since v0.36 but never
+        // dispatched. Alias for `migrate embeddings` (#3390).
+        const { runMigrateEmbeddings } = await import('./commands/migrate-embeddings.ts');
+        await runMigrateEmbeddings(engine, args);
         break;
       }
       case 'eval': {
@@ -1703,6 +1861,11 @@ async function handleCliOnly(command: string, args: string[]) {
       case 'orphans': {
         const { runOrphans } = await import('./commands/orphans.ts');
         await runOrphans(engine, args);
+        break;
+      }
+      case 'maintain': {
+        const { runMaintain } = await import('./commands/maintain.ts');
+        await runMaintain(engine, args);
         break;
       }
       // v0.32.7 CJK wave — post-upgrade markdown re-chunk sweep.
@@ -1980,6 +2143,15 @@ async function handleCliOnly(command: string, args: string[]) {
         await runReindexCodeCli(engine, args);
         break;
       }
+      case 'reindex-search-vector': {
+        // Explicit recreate of FTS trigger functions + batched backfill,
+        // honoring GBRAIN_FTS_LANGUAGE. Use after changing the language
+        // env var on a brain that already ran the configurable_fts_language
+        // migration.
+        const { runReindexSearchVectorCli } = await import('./commands/reindex-search-vector.ts');
+        await runReindexSearchVectorCli(engine, args);
+        break;
+      }
       case 'reindex-frontmatter': {
         // v0.29.1: recovery / explicit-rebuild path for pages.effective_date.
         // Mirror of reindex-code shape. Wraps the shared library function in
@@ -2208,6 +2380,7 @@ USAGE
 SETUP
   init [--pglite|--supabase|--url]   Create brain (PGLite default, no server)
   migrate --to <supabase|pglite>     Transfer brain between engines
+  migrate embeddings --to <p:model>  Re-embed onto another embedding provider
   upgrade                            Self-update
   check-update [--json]              Check for new versions
   doctor [--json] [--fast]            Health check (resolver, skills, pgvector, RLS, embeddings)
@@ -2228,7 +2401,9 @@ IMPORT/EXPORT
   import <dir> [--no-embed]          Import markdown directory
   sync [--repo <path>] [flags]       Git-to-brain incremental sync
   sync --watch [--interval N]        Continuous sync (loops until stopped)
-  sync --install-cron                Install persistent sync daemon
+                                     See also: autopilot --install (continuous daemon).
+  sync --all --missing-path skip     Classify sources whose local_path is absent
+                                     on this machine as skipped, not failed
   export [--dir ./out/]              Export to markdown
   export --restore-only [--repo <p>] Restore missing supabase-only files
         [--type T] [--slug-prefix S] With optional filters
@@ -2294,7 +2469,14 @@ BRAIN (capture / ideate / explore — v0.37/v0.38)
 SOURCES (multi-repo / multi-brain)
   sources list                       Show registered sources
   sources add <id> --path <p>        Register a source (id = short name, e.g. 'wiki')
-  sources remove <id>                Remove a source + its pages
+  sources remove <id>                Remove a source + its pages (--confirm-destructive)
+  sources archive <id>               Soft-delete: hide from search, recoverable for 72h
+  sources restore <id>               Un-archive a soft-deleted source
+  sources archived                   List soft-deleted sources and their purge expiry
+  sources purge [<id>]               Permanently delete archived sources
+  sources status                     Per-source dashboard (sync lag, embed coverage)
+  sources --help                     Full subcommand list (rename, default, attach,
+                                     current, federate, set-cr-mode, webhook, harden, ...)
   sync --all                         Sync all sources with a local_path
   sync --source <id>                 Sync one specific source
   repos ...                          DEPRECATED alias for 'sources' (v0.19.0)
@@ -2308,6 +2490,9 @@ CODE INDEXING (v0.19.0 / v0.20.0 Cathedral II)
   query <q> --symbol-kind <k>        Filter to symbol type (function|class|method|...) (v0.20.0)
   reconcile-links [--dry-run]        Batch-recompute doc↔impl edges (v0.20.0)
   reindex-code [--source id] [--yes] Explicit code-page reindex (v0.20.0)
+  reindex-search-vector [--dry-run] [--yes] [--json]
+                                Recreate FTS triggers + backfill under
+                                $GBRAIN_FTS_LANGUAGE (default 'english')
   sync --strategy code               Sync code files into the brain
 
 JOBS (Minions)

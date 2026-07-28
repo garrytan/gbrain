@@ -158,7 +158,7 @@ gbrain serve --http --port 3131 --bind 0.0.0.0
 
 The `--bind 0.0.0.0` is important. By default the server binds to localhost only, which is correct for a personal install but blocks remote teammates. Setting `0.0.0.0` accepts connections from any interface.
 
-The server prints an admin bootstrap token to stderr on first start. Save it. You'll use it once for the admin dashboard.
+The server prints an admin bootstrap token to stderr on first start when run in an interactive terminal. Save it. You'll use it once for the admin dashboard. On a non-TTY start (systemd, Docker, piped logs) the token is hidden from logs — set `GBRAIN_ADMIN_BOOTSTRAP_TOKEN` yourself or pass `--print-admin-token` on a trusted terminal instead.
 
 For development, tunnel the local server out via ngrok:
 
@@ -483,6 +483,10 @@ gbrain sources status
 Returns a per-source dashboard: when each source last synced, how many pages, how many embedded, how many unacked sync failures. The at-a-glance health check.
 
 The admin dashboard at `https://brain.acme-co.com/admin` shows live request volume, registered OAuth clients, recent activity, and brain stats. Use the admin bootstrap token from Part 4 to log in the first time, then register additional admin users from inside the dashboard.
+
+### If agents run as containers on the same Docker host
+
+OAuth source scoping only guards the HTTP MCP path. If the brain's Postgres and your teammates' agent runtimes are containers on the same Docker host, make sure the agents can't reach Postgres directly over Docker's default bridge network — a direct DB session skips OAuth entirely. Put Postgres on its own user-defined network, publish it loopback-only if at all, and never hand agent containers a `DATABASE_URL`. The copy-paste operator checklist lives in [docs/mcp/DEPLOY.md — Co-located Docker workloads](../mcp/DEPLOY.md#co-located-docker-workloads-self-hosted-postgres).
 
 ---
 

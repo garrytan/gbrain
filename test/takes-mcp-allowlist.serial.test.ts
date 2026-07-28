@@ -58,8 +58,7 @@ describe('per-token takes-holder allow-list — takes_list', () => {
 
   test('allow-list ["world"] (default-deny token) returns ONLY world holders', async () => {
     const result = await dispatchToolCall(engine, 'takes_list', { page_slug: 'people/alice-example' }, {
-      remote: true,
-      takesHoldersAllowList: ['world'],
+      remote: true, sourceId: 'default',      takesHoldersAllowList: ['world'],
     });
     const takes = parseResult(result) as Array<{ holder: string; claim: string }>;
     expect(takes).toHaveLength(1);
@@ -69,8 +68,7 @@ describe('per-token takes-holder allow-list — takes_list', () => {
 
   test('allow-list ["world", "garry"] returns world + garry, hides brain hunches', async () => {
     const result = await dispatchToolCall(engine, 'takes_list', { page_slug: 'people/alice-example' }, {
-      remote: true,
-      takesHoldersAllowList: ['world', 'garry'],
+      remote: true, sourceId: 'default',      takesHoldersAllowList: ['world', 'garry'],
     });
     const takes = parseResult(result) as Array<{ holder: string }>;
     const holders = takes.map(t => t.holder).sort();
@@ -79,8 +77,7 @@ describe('per-token takes-holder allow-list — takes_list', () => {
 
   test('allow-list with no overlap returns empty (no fallback to default)', async () => {
     const result = await dispatchToolCall(engine, 'takes_list', { page_slug: 'people/alice-example' }, {
-      remote: true,
-      takesHoldersAllowList: ['nonexistent-holder'],
+      remote: true, sourceId: 'default',      takesHoldersAllowList: ['nonexistent-holder'],
     });
     const takes = parseResult(result) as unknown[];
     expect(takes).toHaveLength(0);
@@ -90,8 +87,7 @@ describe('per-token takes-holder allow-list — takes_list', () => {
 describe('per-token takes-holder allow-list — takes_search', () => {
   test('allow-list ["world"] filters search hits to public claims only', async () => {
     const result = await dispatchToolCall(engine, 'takes_search', { query: 'founder' }, {
-      remote: true,
-      takesHoldersAllowList: ['world'],
+      remote: true, sourceId: 'default',      takesHoldersAllowList: ['world'],
     });
     const hits = parseResult(result) as Array<{ holder: string; claim: string }>;
     expect(hits.every(h => h.holder === 'world')).toBe(true);
@@ -135,8 +131,7 @@ describe('per-token takes-holder allow-list — get_page body channel', () => {
 
   test('remote token with allow-list strips fence from compiled_truth', async () => {
     const result = await dispatchToolCall(engine, 'get_page', { slug: SLUG }, {
-      remote: true,
-      takesHoldersAllowList: ['world'],
+      remote: true, sourceId: 'default',      takesHoldersAllowList: ['world'],
     });
     const page = parseResult(result) as { compiled_truth: string };
     expect(page.compiled_truth).not.toContain(TAKES_FENCE_BEGIN);
@@ -160,8 +155,7 @@ describe('per-token takes-holder allow-list — get_page body channel', () => {
 
   test('fuzzy resolution path also strips for remote token', async () => {
     const result = await dispatchToolCall(engine, 'get_page', { slug: 'people/bob-example', fuzzy: true }, {
-      remote: true,
-      takesHoldersAllowList: ['world', 'garry'],
+      remote: true, sourceId: 'default',      takesHoldersAllowList: ['world', 'garry'],
     });
     const page = parseResult(result) as { compiled_truth: string };
     // Allow-list does not yet re-render filtered rows; whole fence is stripped.
@@ -184,8 +178,7 @@ describe('per-token takes-holder allow-list — get_versions body channel', () =
 
   test('remote token with allow-list strips fence from every snapshot', async () => {
     const result = await dispatchToolCall(engine, 'get_versions', { slug: SLUG }, {
-      remote: true,
-      takesHoldersAllowList: ['world'],
+      remote: true, sourceId: 'default',      takesHoldersAllowList: ['world'],
     });
     const versions = parseResult(result) as Array<{ compiled_truth: string }>;
     expect(versions.length).toBeGreaterThan(0);
@@ -210,8 +203,7 @@ describe('think op — read-only on remote callers (Lane D landed)', () => {
     // configured machine fires a real LLM call and the warning flips to
     // LLM_OUTPUT_NOT_JSON. runThink then returns gather-only + NO_ANTHROPIC_API_KEY.
     const result = await withoutAnthropicKey(() => dispatchToolCall(engine, 'think', { question: 'q', save: true, take: true }, {
-      remote: true,
-      takesHoldersAllowList: ['world', 'garry', 'brain'],
+      remote: true, sourceId: 'default',      takesHoldersAllowList: ['world', 'garry', 'brain'],
     }));
     const env = parseResult(result) as {
       remote_persisted_blocked: boolean;

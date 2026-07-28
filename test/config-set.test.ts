@@ -6,9 +6,16 @@
  * integration that calls `engine.setConfig` is exercised E2E in T12.
  */
 
-import { describe, test, expect } from 'bun:test';
-import { KNOWN_CONFIG_KEYS, KNOWN_CONFIG_KEY_PREFIXES } from '../src/core/config.ts';
+import { describe, test, expect, spyOn } from 'bun:test';
+import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { KNOWN_CONFIG_KEYS, KNOWN_CONFIG_KEY_PREFIXES, isConfigTruthy } from '../src/core/config.ts';
 import { suggestNearest } from '../src/core/levenshtein.ts';
+import { runConfig } from '../src/commands/config.ts';
+import { checkSubagentCapability } from '../src/commands/doctor.ts';
+import { withEnv } from './helpers/with-env.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 
 describe('KNOWN_CONFIG_KEYS', () => {
   test('contains the canonical embedding keys', () => {
@@ -17,6 +24,8 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('embedding_disabled');  // v0.37 D9
     expect(KNOWN_CONFIG_KEYS).toContain('expansion_model');
     expect(KNOWN_CONFIG_KEYS).toContain('chat_model');
+    expect(KNOWN_CONFIG_KEYS).toContain('openrouter_api_key');
+    expect(KNOWN_CONFIG_KEYS).toContain('provider_chat_options');
   });
 
   test('contains the search-mode keys (v0.32.3)', () => {
@@ -29,6 +38,11 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('models.tier.subagent');
   });
 
+  test('contains the dream synthesize timeout keys (#1594)', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain('dream.synthesize.subagent_timeout_ms');
+    expect(KNOWN_CONFIG_KEYS).toContain('dream.synthesize.subagent_wait_timeout_ms');
+  });
+
   test('contains the spend-control keys (v0.42.42.0, #2139) — no --force archaeology', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('spend.posture');
     expect(KNOWN_CONFIG_KEYS).toContain('sync.cost_gate_min_usd');
@@ -36,6 +50,21 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('embed.backfill_cooldown_min');
     expect(KNOWN_CONFIG_KEYS).toContain('embed.backfill_max_usd_per_source_24h');
     expect(KNOWN_CONFIG_KEYS).toContain('embed.backfill_max_usd');
+  });
+
+  test('includes the gateway-loop toggle and provider API keys the wave wires', () => {
+    // The subagent handler's error message tells users to run
+    // `gbrain config set agent.use_gateway_loop true`; it must be a known key
+    // or `config set` rejects the wave's own enable command without --force.
+    expect(KNOWN_CONFIG_KEYS).toContain('agent.use_gateway_loop');
+    expect(KNOWN_CONFIG_KEYS).toContain('openrouter_api_key');
+    expect(KNOWN_CONFIG_KEYS).toContain('zeroentropy_api_key');
+  });
+
+  test('registers only the live conversation-parser fallback key', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain('conversation_parser.llm_fallback_enabled');
+    expect(KNOWN_CONFIG_KEY_PREFIXES).not.toContain('conversation_parser.');
+    expect(KNOWN_CONFIG_KEYS).not.toContain('conversation_parser.llm_polish_enabled');
   });
 
   test('no duplicate entries', () => {
@@ -49,6 +78,7 @@ describe('KNOWN_CONFIG_KEY_PREFIXES', () => {
     expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('search.');
     expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('models.');
     expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('dream.');
+    expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('provider_chat_options.');
   });
 
   test('prefixes end in `.` (consistent shape)', () => {
@@ -124,6 +154,10 @@ describe('prefix vs known-key gate logic (mirrored from runConfig)', () => {
     expect(gate('models.custom.x')).toBe('prefix');
   });
 
+  test('provider_chat_options.anthropic (under prefix) → "prefix"', () => {
+    expect(gate('provider_chat_options.anthropic')).toBe('prefix');
+  });
+
   test('bug-reporter: embedding.provider → "unknown" (no prefix match)', () => {
     expect(gate('embedding.provider')).toBe('unknown');
   });
@@ -134,5 +168,114 @@ describe('prefix vs known-key gate logic (mirrored from runConfig)', () => {
 
   test('bug-reporter: embedding.dimensions → "unknown"', () => {
     expect(gate('embedding.dimensions')).toBe('unknown');
+  });
+});
+
+describe('#2753 — the doctor-proposed gateway-loop command is accepted by `config set`', () => {
+  // Pre-fix: `gbrain doctor --full` told users to run `gbrain config set
+  // agent.use_gateway_loop true`, but the key wasn't in KNOWN_CONFIG_KEYS,
+  // so the exact command doctor recommended failed with "Unknown config
+  // key" (or silently no-opped under --force with a false "nothing reads
+  // this" warning). This test drives `checkSubagentCapability` (the doctor
+  // check that emits the recommendation) end to end, extracts the literal
+  // command from its message, and feeds it into the real `runConfig` CLI
+  // entry point — so a future edit that lets the two drift apart again
+  // fails here instead of shipping.
+  const home = mkdtempSync(join(tmpdir(), 'gbrain-config-set-'));
+  mkdirSync(join(home, '.gbrain'), { recursive: true });
+  writeFileSync(
+    join(home, '.gbrain', 'config.json'),
+    JSON.stringify({ engine: 'pglite', chat_model: 'openai:gpt-5' }),
+  );
+
+  function doctorStubEngine(): BrainEngine {
+    // models.tier.subagent, models.default, agent.use_gateway_loop: all unset.
+    return { getConfig: async () => null } as unknown as BrainEngine;
+  }
+
+  function setStubEngine(): { engine: BrainEngine; setCalls: Array<[string, string]> } {
+    const setCalls: Array<[string, string]> = [];
+    const engine = {
+      getConfig: async () => null,
+      setConfig: async (key: string, value: string) => { setCalls.push([key, value]); },
+    } as unknown as BrainEngine;
+    return { engine, setCalls };
+  }
+
+  /** Run `runConfig(engine, args)`, capturing console output + exit code
+   *  the way `config-get-plane.test.ts` does for the `get` subcommand. */
+  async function runConfigCapture(
+    engine: BrainEngine,
+    args: string[],
+  ): Promise<{ logs: string[]; errs: string[]; exit: number | null }> {
+    const logs: string[] = [];
+    const errs: string[] = [];
+    let exit: number | null = null;
+    const logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { logs.push(a.join(' ')); });
+    const errSpy = spyOn(console, 'error').mockImplementation((...a: unknown[]) => { errs.push(a.join(' ')); });
+    const exitSpy = spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      exit = code ?? 0;
+      throw new Error(`EXIT:${code}`);
+    }) as never);
+    try {
+      await runConfig(engine, args);
+    } catch (e) {
+      if (!(e as Error).message.startsWith('EXIT:')) throw e;
+    } finally {
+      logSpy.mockRestore();
+      errSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+    return { logs, errs, exit };
+  }
+
+  test('doctor-proposed command round-trips through `config set` without --force', async () => {
+    const check = await withEnv(
+      { GBRAIN_HOME: home, GBRAIN_CHAT_MODEL: undefined, ANTHROPIC_API_KEY: undefined },
+      () => checkSubagentCapability(doctorStubEngine()),
+    );
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('agent.use_gateway_loop');
+
+    // Pull the exact backtick-quoted command out of the doctor message
+    // instead of hardcoding it, so the two call sites can't silently drift.
+    const match = check.message.match(/`(gbrain config set [^`]+)`/);
+    expect(match).not.toBeNull();
+
+    // Tokenize the WHOLE command and feed every argument through, rather than
+    // destructuring the first two and dropping the rest. If doctor ever starts
+    // recommending a trailing `--force`, that has to fail here — the entire
+    // point of #2753 is that the recommended command works without it.
+    const tokens = match![1].trim().split(/\s+/);
+    expect(tokens.slice(0, 3)).toEqual(['gbrain', 'config', 'set']);
+    expect(tokens).not.toContain('--force');
+    const args = tokens.slice(1); // ['config','set',key,value,...]
+    expect(args).toEqual(['config', 'set', 'agent.use_gateway_loop', 'true']);
+
+    const { engine, setCalls } = setStubEngine();
+    const { logs, errs, exit } = await runConfigCapture(engine, args.slice(1));
+    expect(exit).toBeNull();
+    expect(errs.join('\n')).not.toContain('Unknown config key');
+    expect(errs.join('\n')).not.toContain('Nothing in gbrain reads this');
+    expect(setCalls).toEqual([['agent.use_gateway_loop', 'true']]);
+    expect(logs.join('\n')).toContain('Set agent.use_gateway_loop = true');
+  });
+});
+
+describe('#2753 — doctor and the subagent worker share one truthiness set', () => {
+  // The doctor accepted true/1/yes/on; the worker accepted only true/1. So
+  // `gbrain config set agent.use_gateway_loop yes` produced a HEALTHY doctor
+  // report and a runtime refusal of the exact job the setting enables. Both
+  // now route through isConfigTruthy, so this asserts the shared contract.
+  test('accepts the documented on-values, case- and whitespace-insensitively', () => {
+    for (const v of ['true', '1', 'yes', 'on', 'TRUE', 'Yes', 'ON', ' true ', '\tyes\n']) {
+      expect(isConfigTruthy(v)).toBe(true);
+    }
+  });
+
+  test('fails closed on unset, non-string, and anything else', () => {
+    for (const v of [null, undefined, '', '   ', 'false', '0', 'no', 'off', 'maybe', 1, true, {}]) {
+      expect(isConfigTruthy(v)).toBe(false);
+    }
   });
 });

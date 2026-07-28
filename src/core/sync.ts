@@ -219,7 +219,7 @@ function globToRegex(pattern: string): RegExp {
   return new RegExp(regex);
 }
 
-function matchesAnyGlob(path: string, patterns?: string[]): boolean {
+export function matchesAnyGlob(path: string, patterns?: string[]): boolean {
   if (!patterns || patterns.length === 0) return false;
   const normalized = path.replace(/\\/g, '/');
   return patterns.some((pattern) => globToRegex(pattern).test(normalized));
@@ -255,7 +255,12 @@ const PRUNE_DIR_NAMES = new Set<string>([
   // with the first-sync walker in commands/import.ts.
   'venv',
   '.raw',
-  'ops',
+  // NOTE (#2404): `'ops'` used to be in this list (a v0.2.0-era carve-out for
+  // one brain layout). Matching the bare segment pruned EVERY user `ops/`
+  // directory at any depth — sync silently deleted `ops/*` pages and never
+  // imported `ops/*` files, while the bundled daily-task-manager skill
+  // prescribes `ops/tasks` as its canonical page. `ops/` is ordinary content;
+  // do NOT re-add it. Only generated/vendored trees belong here.
 ]);
 
 /**
@@ -324,10 +329,18 @@ export type SyncableReason =
  * surface them in user-facing logs / docs without re-declaring the list.
  *
  * These files are append-only domain logs / index pages / boilerplate
- * READMEs — not typed brain pages — by convention. A user who genuinely
- * wants to index one of these basenames as a page should rename it.
+ * READMEs / the master filing decision-tree — not typed brain pages — by
+ * convention. A user who genuinely wants to index one of these basenames as
+ * a page should rename it.
+ *
+ * `RESOLVER.md` is the brain's master routing/decision-tree config file. The
+ * recommended-schema docs group it with `schema.md` / `index.md` / `log.md`
+ * as a structural document ("a document … plus schema.md and RESOLVER.md …
+ * that tells the agent how the brain is structured"), NOT searchable content.
+ * It was the lone structural sibling missing from this list, so it leaked
+ * into the index as a content page (slug `resolver`).
  */
-export const SYNC_SKIP_FILES = ['schema.md', 'index.md', 'log.md', 'README.md'] as const;
+export const SYNC_SKIP_FILES = ['schema.md', 'index.md', 'log.md', 'README.md', 'RESOLVER.md'] as const;
 
 /**
  * Internal classifier. Returns null when the path IS syncable, or a tagged
@@ -344,8 +357,8 @@ function classifySync(path: string, opts: SyncableOptions = {}): SyncableReason 
   if (!isAllowedByStrategy(path, strategy)) return 'strategy';
 
   // Skip every path segment that pruneDir would block walkers from descending
-  // into. Catches hidden dirs (`.git`, `.obsidian`), `.raw/` sidecars,
-  // `node_modules/` (latent bug fix), and `ops/` at any depth.
+  // into. Catches hidden dirs (`.git`, `.obsidian`), `.raw/` sidecars, and
+  // vendor/generated trees (`node_modules/`, `vendor/`, …) at any depth.
   const segments = path.split('/');
   if (segments.some(p => !pruneDir(p))) return 'pruned-dir';
 

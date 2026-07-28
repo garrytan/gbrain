@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { writeFileSync, readFileSync, existsSync, mkdtempSync, rmSync } from 'fs';
+import { writeFileSync, readFileSync, existsSync, mkdtempSync, rmSync, mkdirSync, symlinkSync, realpathSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
@@ -7,6 +7,7 @@ import {
   saveCheckpoint,
   resumeFilter,
   clearCheckpoint,
+  resolveImportTargetDir,
   type ImportCheckpoint,
 } from '../src/core/import-checkpoint.ts';
 
@@ -52,6 +53,9 @@ describe('loadCheckpoint', () => {
 
   test('returns null when dir mismatches the current run', () => {
     const cp: ImportCheckpoint = {
+      schema_version: 1,
+      owner: 'gbrain',
+      kind: 'import',
       dir: '/other/brain',
       completedPaths: ['a.md'],
       timestamp: '2026-05-14T00:00:00Z',
@@ -86,6 +90,30 @@ describe('loadCheckpoint', () => {
     expect(stderrCaptured).not.toContain('Older checkpoint format');
   });
 
+  test('returns null when dir is relative (#1728 — CWD-dependent identity)', () => {
+    writeFileSync(cpPath, JSON.stringify({
+      schema_version: 1,
+      owner: 'gbrain',
+      kind: 'import',
+      dir: '.',
+      completedPaths: ['a.md'],
+      timestamp: '2026-01-01T00:00:00Z',
+    }));
+    expect(loadCheckpoint(cpPath, '.')).toBeNull();
+  });
+
+  test('returns null when self-describing metadata is wrong', () => {
+    writeFileSync(cpPath, JSON.stringify({
+      schema_version: 99,
+      owner: 'some-tool',
+      kind: 'other',
+      dir: '/tmp/example-brain',
+      completedPaths: ['a.md'],
+      timestamp: '2026-01-01T00:00:00Z',
+    }));
+    expect(loadCheckpoint(cpPath, '/tmp/example-brain')).toBeNull();
+  });
+
   test('returns null when completedPaths contains non-strings', () => {
     writeFileSync(cpPath, JSON.stringify({
       dir: '/tmp/example-brain',
@@ -97,6 +125,9 @@ describe('loadCheckpoint', () => {
 
   test('returns the checkpoint for valid v0.33.2 payload', () => {
     const cp: ImportCheckpoint = {
+      schema_version: 1,
+      owner: 'gbrain',
+      kind: 'import',
       dir: '/tmp/example-brain',
       completedPaths: ['meetings/2026-05-13.md', 'concepts/foo.md'],
       timestamp: '2026-05-14T12:34:56Z',
@@ -107,12 +138,31 @@ describe('loadCheckpoint', () => {
     expect(loaded?.dir).toBe('/tmp/example-brain');
     expect(loaded?.completedPaths).toEqual(['meetings/2026-05-13.md', 'concepts/foo.md']);
     expect(loaded?.timestamp).toBe('2026-05-14T12:34:56Z');
+    expect(loaded?.schema_version).toBe(1);
+    expect(loaded?.owner).toBe('gbrain');
+    expect(loaded?.kind).toBe('import');
+  });
+
+  test('returns legacy path-based checkpoint without metadata as v1 in memory', () => {
+    writeFileSync(cpPath, JSON.stringify({
+      dir: '/tmp/example-brain',
+      completedPaths: ['a.md'],
+      timestamp: '2026-05-14T12:34:56Z',
+    }));
+    const loaded = loadCheckpoint(cpPath, '/tmp/example-brain');
+    expect(loaded?.schema_version).toBe(1);
+    expect(loaded?.owner).toBe('gbrain');
+    expect(loaded?.kind).toBe('import');
+    expect(loaded?.dir).toBe('/tmp/example-brain');
   });
 });
 
 describe('saveCheckpoint', () => {
   test('round-trips through loadCheckpoint', () => {
     const cp: ImportCheckpoint = {
+      schema_version: 1,
+      owner: 'gbrain',
+      kind: 'import',
       dir: '/tmp/example-brain',
       completedPaths: ['a.md', 'b.md', 'c.md'],
       timestamp: '2026-05-14T00:00:00Z',
@@ -125,16 +175,25 @@ describe('saveCheckpoint', () => {
 
   test('serializes completedPaths sorted (deterministic output)', () => {
     saveCheckpoint(cpPath, {
+      schema_version: 1,
+      owner: 'gbrain',
+      kind: 'import',
       dir: '/tmp/example-brain',
       completedPaths: ['z.md', 'a.md', 'm.md'],
       timestamp: '2026-05-14T00:00:00Z',
     });
     const onDisk = JSON.parse(readFileSync(cpPath, 'utf-8'));
+    expect(onDisk.schema_version).toBe(1);
+    expect(onDisk.owner).toBe('gbrain');
+    expect(onDisk.kind).toBe('import');
     expect(onDisk.completedPaths).toEqual(['a.md', 'm.md', 'z.md']);
   });
 
   test('atomic-ish write — no stray .tmp file after success', () => {
     saveCheckpoint(cpPath, {
+      schema_version: 1,
+      owner: 'gbrain',
+      kind: 'import',
       dir: '/tmp/example-brain',
       completedPaths: ['a.md'],
       timestamp: '2026-05-14T00:00:00Z',
@@ -148,12 +207,41 @@ describe('saveCheckpoint', () => {
     const badPath = join(workDir, 'does-not-exist', 'cp.json');
     expect(() =>
       saveCheckpoint(badPath, {
+        schema_version: 1,
+        owner: 'gbrain',
+        kind: 'import',
         dir: '/tmp/example-brain',
         completedPaths: ['a.md'],
         timestamp: '2026-05-14T00:00:00Z',
       }),
     ).not.toThrow();
     expect(existsSync(badPath)).toBe(false);
+  });
+});
+
+describe('resolveImportTargetDir', () => {
+  test('captures a relative import target as an absolute real path', () => {
+    const target = join(workDir, 'staging');
+    mkdirSync(target);
+    const cwd = process.cwd();
+    try {
+      process.chdir(workDir);
+      expect(resolveImportTargetDir('staging')).toBe(realpathSync(target));
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+
+  test('collapses symlink spelling to the real import target', () => {
+    const target = join(workDir, 'real-staging');
+    const link = join(workDir, 'linked-staging');
+    mkdirSync(target);
+    symlinkSync(target, link);
+    expect(resolveImportTargetDir(link)).toBe(realpathSync(target));
+  });
+
+  test('throws when the target does not exist', () => {
+    expect(() => resolveImportTargetDir(join(workDir, 'nope'))).toThrow();
   });
 });
 

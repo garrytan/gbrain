@@ -45,6 +45,8 @@ import {
   parseRemoteUrl,
   cloneRepo,
   validateRepoState,
+  isInsideGitRepo,
+  hasTrackedContent,
   RemoteUrlError,
   GitOperationError,
   type RepoState,
@@ -67,7 +69,8 @@ export type SourceOpErrorCode =
   | 'protected_id'
   | 'clone_dir_outside_gbrain'
   | 'symlink_escape'
-  | 'unmanaged_path';
+  | 'unmanaged_path'
+  | 'not_a_git_repo';
 
 export class SourceOpError extends Error {
   constructor(
@@ -145,6 +148,13 @@ export interface AddSourceOpts {
    * Only honored when remoteUrl is set.
    */
   cloneDir?: string;
+  /**
+   * Skip the #2707 git-repo validation on `localPath`. Opt-in escape hatch
+   * for registering a path before it's git-initialized (e.g. an automated
+   * pipeline that populates + `git init`s the directory after `sources add`
+   * runs). Does NOT auto-`git init` anything — see `addSource` docstring.
+   */
+  force?: boolean;
 }
 
 export interface RemoveSourceOpts {
@@ -156,6 +166,20 @@ export interface RemoveSourceOpts {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * POSIX single-quote `arg` unless it's already shell-safe. #2707 codex round
+ * 1: the `not_a_git_repo` remediation error prints a pasteable `git ...`
+ * command built from the caller-supplied path — spaces, `$()`, backticks,
+ * etc. must be inert literals when pasted, which double-quoting would not
+ * guarantee (command substitution still runs inside "..."). Mirrors
+ * `src/commands/connect.ts:shellQuote` (not imported — that file is a
+ * commands/ caller of core/, not the other way around).
+ */
+function shellQuote(arg: string): string {
+  if (/^[A-Za-z0-9_.:/@-]+$/.test(arg)) return arg;
+  return `'${arg.replace(/'/g, "'\\''")}'`;
+}
 
 /**
  * Validate via the canonical regex from `source-id.ts` but rethrow as the
@@ -212,9 +236,17 @@ async function fetchSourceRow(engine: BrainEngine, id: string): Promise<SourceRo
   return { ...r, config: parseConfig(r.config) };
 }
 
-async function countPages(engine: BrainEngine, id: string): Promise<number> {
+async function countAllPages(engine: BrainEngine, id: string): Promise<number> {
   const rows = await engine.executeRaw<{ n: number }>(
     `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1`,
+    [id],
+  );
+  return rows[0]?.n ?? 0;
+}
+
+async function countVisiblePages(engine: BrainEngine, id: string): Promise<number> {
+  const rows = await engine.executeRaw<{ n: number }>(
+    `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL`,
     [id],
   );
   return rows[0]?.n ?? 0;
@@ -302,6 +334,18 @@ export function unownedHint(
 
 // ── addSource ───────────────────────────────────────────────────────────────
 
+/**
+ * #2707: `--path` registration used to accept any existing directory with
+ * zero git validation, deferring the failure to the first `gbrain sync`
+ * ("Not inside a git repository: ..."). By the time that surfaces the
+ * source has already been silently stale for however long nobody read the
+ * sync logs. This is registration-time, fail-fast validation ONLY — it
+ * never auto-`git init`s the directory (that would cross the consent
+ * boundary #2967 established for sync-time self-heal: a `--path` source is
+ * the user's own external directory, and gbrain must not mutate it without
+ * explicit ask). Callers who want to register before git-init exists opt in
+ * via `force: true` (CLI: `--force`).
+ */
 export async function addSource(
   engine: BrainEngine,
   opts: AddSourceOpts,
@@ -429,6 +473,37 @@ export async function addSource(
     }
   } else {
     // ── Path B: --path or no path (existing behavior, pre-v0.28) ─────────
+    // #2707: only validate when the path actually exists — a not-yet-created
+    // path is a different (pre-existing, out of scope) failure mode, and
+    // gating on existsSync keeps this a fail-fast check on the exact bug
+    // report ("plain directory accepted, sync fails later") rather than a
+    // broader "does this path exist" check nobody asked for.
+    //
+    // Both isInsideGitRepo AND hasTrackedContent must hold. isInsideGitRepo
+    // alone lets through a `git init`ed-but-never-committed directory (fails
+    // sync's "No commits in repo ..."), AND an empty-commit-then-untracked-
+    // files directory (git resolves HEAD fine but the tree is empty — the
+    // exact silent-staleness footgun #2707(c) describes: sync "succeeds"
+    // importing nothing, then never notices the untracked files change).
+    // hasTrackedContent's `ls-tree HEAD -- .` catches both (codex round 2).
+    if (
+      opts.localPath &&
+      !opts.force &&
+      existsSync(opts.localPath) &&
+      (!isInsideGitRepo(opts.localPath) || !hasTrackedContent(opts.localPath))
+    ) {
+      const q = shellQuote(opts.localPath);
+      throw new SourceOpError(
+        'not_a_git_repo',
+        `"${opts.localPath}" is not a git repository with committed, tracked files ` +
+          `(or a subdirectory of one). GBrain sync requires every --path source to ` +
+          `be git-initialized, with the files actually committed — an empty commit ` +
+          `is not enough (the walker reads through git objects, so untracked files ` +
+          `stay invisible). Fix: \`git -C ${q} init && git -C ${q} add -A && ` +
+          `git -C ${q} commit -m "initial import"\`, then re-run this command. To ` +
+          `register anyway and git-init later, pass --force.`,
+      );
+    }
     const config: Record<string, unknown> = {};
     if (opts.federated !== null && opts.federated !== undefined) {
       config.federated = opts.federated;
@@ -575,7 +650,7 @@ export async function listSources(
       local_path: r.local_path,
       remote_url: typeof cfg.remote_url === 'string' ? cfg.remote_url : null,
       federated: cfg.federated === true,
-      page_count: await countPages(engine, r.id),
+      page_count: await countVisiblePages(engine, r.id),
       last_sync_at: r.last_sync_at ? new Date(r.last_sync_at).toISOString() : null,
     });
   }
@@ -621,7 +696,7 @@ export async function removeSource(
     throw new SourceOpError('not_found', `Source "${opts.id}" not found.`);
   }
 
-  const pageCount = await countPages(engine, opts.id);
+  const pageCount = await countAllPages(engine, opts.id);
 
   if (opts.dryRun) {
     return {
@@ -720,7 +795,7 @@ export async function getSourceStatus(
     local_path: src.local_path,
     remote_url: remoteUrl,
     federated: isFederated(src.config),
-    page_count: await countPages(engine, id),
+    page_count: await countVisiblePages(engine, id),
     last_sync_at: src.last_sync_at ? new Date(src.last_sync_at).toISOString() : null,
     last_commit: src.last_commit,
     archived,

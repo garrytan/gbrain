@@ -33,21 +33,28 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import { validateSourceId } from '../../src/core/utils.ts';
 import { extractTakesFromDb } from '../../src/core/cycle/extract-takes.ts';
+import { copyMigrationSources } from '../../src/commands/migrate-engine.ts';
 
 let engine: PGLiteEngine;
+let migrationTarget: PGLiteEngine;
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({} as never);
   await engine.initSchema();
+  migrationTarget = new PGLiteEngine();
+  await migrationTarget.connect({} as never);
+  await migrationTarget.initSchema();
 });
 
 afterAll(async () => {
   if (engine) await engine.disconnect();
+  if (migrationTarget) await migrationTarget.disconnect();
 });
 
 beforeEach(async () => {
   await resetPgliteState(engine);
+  await resetPgliteState(migrationTarget);
   // Seed second source row. Default source is seeded by resetPgliteState.
   await engine.executeRaw(
     `INSERT INTO sources (id, name, config)
@@ -75,6 +82,48 @@ beforeEach(async () => {
 });
 
 describe('multi-source bug class', () => {
+  test('migration copies source metadata before overlapping-slug pages', async () => {
+    await engine.executeRaw(`
+      UPDATE sources SET
+        local_path = '/tmp/media-corpus', last_commit = 'commit-media',
+        last_sync_at = '2026-07-02T00:00:00Z',
+        config = '{"federated":false,"custom":"preserved"}'::jsonb,
+        archived = true, archived_at = '2026-07-03T00:00:00Z',
+        archive_expires_at = '2026-08-03T00:00:00Z',
+        contextual_retrieval_mode = 'tokenmax',
+        trust_frontmatter_overrides = true,
+        newest_content_at = '2026-07-01T00:00:00Z'
+      WHERE id = 'media-corpus'`);
+
+    await copyMigrationSources(engine, migrationTarget);
+    const sourceRows = await migrationTarget.executeRaw<any>(
+      `SELECT * FROM sources WHERE id = 'media-corpus'`,
+    );
+    expect(sourceRows).toHaveLength(1);
+    expect(sourceRows[0].last_commit).toBe('commit-media');
+    expect(sourceRows[0].archived).toBe(true);
+    expect(sourceRows[0].contextual_retrieval_mode).toBe('tokenmax');
+    expect(sourceRows[0].trust_frontmatter_overrides).toBe(true);
+    const config = typeof sourceRows[0].config === 'string'
+      ? JSON.parse(sourceRows[0].config)
+      : sourceRows[0].config;
+    expect(config.custom).toBe('preserved');
+
+    const overlapping = await engine.listPages({ limit: 100 });
+    for (const page of overlapping) {
+      await migrationTarget.putPage(page.slug, {
+        type: page.type,
+        title: page.title,
+        compiled_truth: page.compiled_truth,
+        timeline: page.timeline,
+        frontmatter: page.frontmatter,
+        content_hash: page.content_hash,
+      }, { sourceId: page.source_id });
+    }
+    expect(await migrationTarget.getPage('people/alice', { sourceId: 'default' })).not.toBeNull();
+    expect(await migrationTarget.getPage('people/alice', { sourceId: 'media-corpus' })).not.toBeNull();
+  });
+
   test('listAllPageRefs returns one row per (slug, source_id), ordered (F11)', async () => {
     const refs = await engine.listAllPageRefs();
     // 4 rows: alice@default, alice@media-corpus, widget@default, post-123@media-corpus

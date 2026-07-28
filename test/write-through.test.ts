@@ -172,6 +172,47 @@ describe('writePageThrough', () => {
     expect(walkFiles(globalDir).some((f) => f.endsWith('.md'))).toBe(false);
   });
 
+  test('[REGRESSION #2831] differently-cased entry occupying the target → skipped case_insensitive_collision, existing file untouched', async () => {
+    await engine.setConfig('sync.repo_path', brainDir);
+    const slug = 'wiki/ideas/note';
+    await seedPage(slug);
+
+    // A differently-cased file already occupies the target path's fold slot
+    // (e.g. an uncontrolled repo file, or another slug's normalization
+    // variant). On macOS/Windows the FS resolves `note.md` to it.
+    const dir = path.join(brainDir, 'wiki', 'ideas');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'NOTE.md'), 'precious existing content');
+
+    // Detect whether THIS filesystem folds case (macOS/Windows: yes; Linux
+    // CI: no — there the two names are distinct files and no guard fires).
+    const caseInsensitiveFs = fs.existsSync(path.join(dir, 'note.md'));
+
+    const res = await writePageThrough(engine, slug, { sourceId: 'default' });
+
+    if (caseInsensitiveFs) {
+      expect(res).toEqual({ written: false, skipped: 'case_insensitive_collision' });
+      // The pre-existing file was NOT clobbered — the whole point of #2831.
+      expect(fs.readFileSync(path.join(dir, 'NOTE.md'), 'utf8')).toBe('precious existing content');
+    } else {
+      expect(res.written).toBe(true);
+      expect(fs.readFileSync(path.join(dir, 'NOTE.md'), 'utf8')).toBe('precious existing content');
+      expect(fs.existsSync(path.join(dir, 'note.md'))).toBe(true);
+    }
+  });
+
+  test('[#2831] exact-case rewrite of the same slug still updates (guard falls through)', async () => {
+    await engine.setConfig('sync.repo_path', brainDir);
+    const slug = 'wiki/ideas/rewrite-me';
+    await seedPage(slug);
+
+    const first = await writePageThrough(engine, slug, { sourceId: 'default' });
+    expect(first.written).toBe(true);
+    const second = await writePageThrough(engine, slug, { sourceId: 'default' });
+    expect(second.written).toBe(true);
+    expect(second.path).toBe(first.path);
+  });
+
   test('[REGRESSION] mkdir ENOTDIR (parent is a file) → error, no partial .md, no .tmp', async () => {
     await engine.setConfig('sync.repo_path', brainDir);
     // Block the `wiki/` directory by putting a FILE named "wiki" under the repo,

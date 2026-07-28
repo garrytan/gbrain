@@ -203,6 +203,17 @@ describe('SlugRegistry', () => {
     })).rejects.toThrow(SlugRegistryError);
   });
 
+  test('create accepts CJK slugs (#738)', async () => {
+    const reg = new SlugRegistry(engine);
+    const r = await reg.create({
+      desiredSlug: '知识/品牌圣经',
+      displayName: '品牌圣经',
+      type: 'note',
+    });
+    expect(r.slug).toBe('知识/品牌圣经');
+    expect(r.exact).toBe(true);
+  });
+
   test('create throws on invalid slug', async () => {
     const reg = new SlugRegistry(engine);
     await expect(reg.create({

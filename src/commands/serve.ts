@@ -9,6 +9,17 @@ import { startMcpServer } from '../mcp/server.ts';
 // the dir, sees a dead PID, and removes it).
 const CLEANUP_DEADLINE_MS = 5_000;
 
+// Boot-readiness deadline (#3273). A serve process that wedges mid-boot
+// (e.g. an MCP boot step that never completes because a configured
+// upstream is unreachable) holds the PGLite write lock indefinitely: the
+// post-#2348 lock discipline never steals from a live holder, so every
+// CLI consumer times out until someone hunts down and kills the PID. If
+// startMcpServer hasn't finished connecting the transport within this
+// window, we release the engine (dropping the lock) and exit non-zero so
+// a supervisor can restart with backoff. Env-tunable via
+// GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS; 0 disables.
+const DEFAULT_BOOT_TIMEOUT_SECONDS = 60;
+
 // How often the parent-process watchdog polls the live kernel parent PID
 // (via `readLiveParentPid`, NOT the cached `process.ppid` — see that
 // helper's comment). We don't receive a signal when our parent dies (the
@@ -35,9 +46,12 @@ export interface ServeOptions {
   // Defaults to the real implementation when omitted.
   startMcpServer?: (engine: BrainEngine) => Promise<void>;
   // Test seam for the parent-process watchdog. The default
-  // (`readLiveParentPid`) reads the live kernel PPID via `ps` because
-  // `process.ppid` is captured at process creation and does not refresh
-  // on re-parent (Node/Bun parity). Tests inject a stub so they can
+  // (`readLiveParentPid`) reads the live kernel PPID via `ps` on POSIX
+  // because `process.ppid` is captured at process creation and does not
+  // refresh on re-parent (Node/Bun parity). On Windows — where the
+  // kernel never re-parents, so the cached ppid stays correct — it
+  // probes the original parent's liveness with signal-0 instead and
+  // reports 0 once the parent is gone. Tests inject a stub so they can
   // simulate the parent dying without spawning ps or re-parenting any
   // real process.
   getParentPid?: () => number;
@@ -47,8 +61,9 @@ export interface ServeOptions {
   setInterval?: (fn: () => void, ms: number) => unknown;
   clearInterval?: (handle: unknown) => void;
   // Test seam for the one-shot watchdog readiness probe. The default
-  // runs `spawnSync('ps', ['-o','ppid=','-p',PID])` and returns true on
-  // success. Tests inject a stub to simulate ps unavailability (e.g.
+  // runs `spawnSync('ps', ['-o','ppid=','-p',PID])` on POSIX (signal-0
+  // against our own PID on Windows) and returns true on success. Tests
+  // inject a stub to simulate ps unavailability (e.g.
   // stripped containers, busybox without procps) without modifying PATH.
   // When the probe returns false, `installStdioLifecycle` skips the
   // watchdog interval entirely and emits a loud stderr line. Without
@@ -63,6 +78,10 @@ export interface ServeOptions {
   // transport.onclose still cover legitimate shutdown.
   // Defaults to `process.env.MCP_STDIO === '1'` when omitted.
   mcpStdio?: boolean;
+  // Test seam for the boot-readiness deadline (#3273). Milliseconds.
+  // Defaults to GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS (seconds; 60 when
+  // unset, 0 disables) when omitted.
+  bootTimeoutMs?: number;
 }
 
 export async function runServe(
@@ -118,8 +137,13 @@ export async function runServe(
     // restart.
     const suppressBootstrapToken = args.includes('--suppress-bootstrap-token');
 
+    // #2624: by default the generated token only prints on an interactive
+    // TTY (never into container log storage). --print-admin-token forces the
+    // raw value even on a non-TTY start.
+    const printAdminToken = args.includes('--print-admin-token');
+
     const { runServeHttp } = await import('./serve-http.ts');
-    await runServeHttp(engine, { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams, bind, suppressBootstrapToken });
+    await runServeHttp(engine, { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams, bind, suppressBootstrapToken, printAdminToken });
     return;
   }
 
@@ -133,12 +157,64 @@ export async function runServe(
   installStdioLifecycle(engine, args, opts);
 
   const start = opts.startMcpServer ?? startMcpServer;
-  await start(engine);
+
+  // Boot-readiness deadline (#3273): never sit on the PGLite write lock
+  // forever with a boot that never completes. On expiry: log, release the
+  // engine (drops the lock), exit non-zero so supervisors restart with
+  // backoff. The disconnect itself is raced against CLEANUP_DEADLINE_MS,
+  // same as the graceful-shutdown path, so a wedged WASM close can't trap
+  // us either.
+  const bootTimeoutMs = opts.bootTimeoutMs ?? resolveBootTimeoutMs();
+  let bootDeadline: ReturnType<typeof setTimeout> | null = null;
+  if (bootTimeoutMs > 0) {
+    const log = opts.log ?? ((msg: string) => console.error(msg));
+    const exit = opts.exit ?? ((code?: number) => { process.exit(code); });
+    bootDeadline = setTimeout(() => {
+      log(
+        `GBrain MCP server: boot did not complete within ${bootTimeoutMs}ms — releasing DB lock and exiting so other consumers unblock (check configured provider endpoints; tune via GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS, 0 disables)`,
+      );
+      const cleanup = setTimeout(() => { exit(1); }, CLEANUP_DEADLINE_MS);
+      cleanup.unref?.();
+      Promise.resolve()
+        .then(() => engine.disconnect())
+        .catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          log(`GBrain MCP server: boot-deadline cleanup error: ${msg}`);
+        })
+        .finally(() => {
+          clearTimeout(cleanup);
+          exit(1);
+        });
+    }, bootTimeoutMs);
+    bootDeadline.unref?.();
+  }
+
+  try {
+    await start(engine);
+  } finally {
+    if (bootDeadline) clearTimeout(bootDeadline);
+  }
   // startMcpServer's `await server.connect(transport)` resolves once the
   // SDK has wired up its stdin 'data' listener; that listener keeps the
   // event loop alive. We deliberately do NOT add `await new Promise(() =>
   // {})` here — it would block this async frame and stop the lifecycle
   // hooks from being able to call process.exit() cleanly.
+}
+
+// Env resolution for the boot deadline. Lenient (warn + default) rather
+// than throw: this is an incident-time escape hatch, and a typo'd env var
+// must not turn a boot-safety net into a boot failure of its own.
+function resolveBootTimeoutMs(): number {
+  const raw = process.env.GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS;
+  if (raw === undefined || raw.trim() === '') return DEFAULT_BOOT_TIMEOUT_SECONDS * 1000;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) {
+    console.error(
+      `[gbrain serve] ignoring invalid GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS=${JSON.stringify(raw)} — using default ${DEFAULT_BOOT_TIMEOUT_SECONDS}s`,
+    );
+    return DEFAULT_BOOT_TIMEOUT_SECONDS * 1000;
+  }
+  return n * 1000;
 }
 
 interface StdioLifecycleDeps {
@@ -249,7 +325,13 @@ function installStdioLifecycle(
   // tmux, or a parent shell with PR_SET_CHILD_SUBREAPER). Polling is the
   // only portable way to notice; see `readLiveParentPid` for why we
   // cannot rely on `process.ppid` (cached at process creation and never
-  // refreshed on re-parent in Node or Bun).
+  // refreshed on re-parent in Node or Bun). On Windows the same class of
+  // orphan is WORSE in practice: MCP hosts typically launch the server
+  // through a `cmd.exe` wrapper (.bat/.cmd), and killing the wrapper
+  // does not kill the child — so without a watchdog the orphan holds the
+  // PGLite write lock until the machine reboots. `readLiveParentPid`
+  // handles the platform split internally (PPID-change on POSIX,
+  // parent-liveness on Windows); the comparison below works for both.
   //
   // We capture the initial parent PID once at install time and fire on
   // ANY change, not just reparent-to-PID-1. The PR-#676 author's original
@@ -267,11 +349,16 @@ function installStdioLifecycle(
   // — the watchdog claims to be installed but never fires. When the probe
   // fails, we skip installing the interval entirely and log loudly so the
   // operator sees the degraded mode instead of a phantom watchdog.
+  // `> 1` (was `!== 1`): PID 1 is the documented legitimate-init-child
+  // skip; PID 0 is the new "parent already gone at install time" report
+  // from the Windows liveness reader — installing an interval that
+  // compares 0 to 0 forever would be a phantom watchdog, and stdin
+  // 'close' already covers a parent that died before we booted.
   const initialParentPid = deps.getParentPid();
-  if (initialParentPid !== 1) {
+  if (initialParentPid > 1) {
     if (!deps.probeWatchdog()) {
       deps.log(
-        '[gbrain serve] watchdog disabled: ps unavailable, parent-death detection unavailable — child will rely on stdin EOF / signals only',
+        '[gbrain serve] watchdog disabled: no parent-liveness mechanism (ps / signal-0 probe failed) — child will rely on stdin EOF / signals only',
       );
     } else {
       parentWatchdog = deps.setInterval(() => {
@@ -311,6 +398,23 @@ function installStdioLifecycle(
 }
 
 /**
+ * Signal-0 process-liveness probe (`process.kill(pid, 0)` — existence
+ * check only, no signal delivered; OpenProcess under the hood on
+ * Windows). EPERM means the PID exists but we lack rights to signal it
+ * — that is still "alive" for watchdog purposes. Exported for direct
+ * unit testing of the Windows watchdog path.
+ */
+export function isPidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/**
  * Resolve the live parent PID from the kernel (not the cached startup
  * value). Both Node and Bun expose `process.ppid` as a property captured
  * at process creation, so it does NOT update when the kernel re-parents
@@ -320,14 +424,36 @@ function installStdioLifecycle(
  * indefinitely while `ps -o ppid= -p $$` reports the new parent within
  * one tick.
  *
- * Cost: ~10ms per spawn. Called every 5s (PARENT_WATCHDOG_INTERVAL_MS),
- * so amortized < 0.5% CPU. Falls back to `process.ppid` if `ps` fails
- * (best-effort safety net for stripped-down containers, etc.); the
- * startup probe at watchdog-install time loud-logs and skips the
- * interval entirely when ps is unavailable, so a per-tick fallback is
- * a redundant safety net rather than a primary mechanism.
+ * Windows has no `ps` — the original ps-only implementation made the
+ * startup probe fail on every Windows host, so the watchdog was always
+ * disabled and an orphaned serve (e.g. its cmd.exe .bat wrapper killed
+ * by the MCP host without closing stdin) held the PGLite write lock
+ * indefinitely. But Windows also never re-parents orphans, so the
+ * cached `process.ppid` stays correct for the process's lifetime and
+ * the question inverts from "did the live PPID change?" to "is the
+ * original parent still alive?" — answered in-process via signal-0,
+ * no external binary needed. Parent dead → report 0 (kernel PID 0 is
+ * the System Idle Process, never our parent), which differs from
+ * `initialParentPid` and fires the watchdog. Known degraded mode:
+ * Windows recycles PIDs aggressively, so a reused parent PID can mask
+ * a death — stdin EOF / signals remain the primary shutdown channels
+ * and the watchdog stays the backstop, same posture as POSIX.
+ *
+ * Cost: ~10ms per ps spawn on POSIX, effectively free on Windows.
+ * Called every 5s (PARENT_WATCHDOG_INTERVAL_MS), so amortized < 0.5%
+ * CPU. Falls back to `process.ppid` if `ps` fails (best-effort safety
+ * net for stripped-down containers, etc.); the startup probe at
+ * watchdog-install time loud-logs and skips the interval entirely when
+ * no mechanism is available, so a per-tick fallback is a redundant
+ * safety net rather than a primary mechanism.
+ *
+ * `platform` is a test seam (defaults to the real platform) so CI on
+ * any OS can exercise both branches — signal-0 works everywhere.
  */
-function readLiveParentPid(): number {
+export function readLiveParentPid(platform: NodeJS.Platform = process.platform): number {
+  if (platform === 'win32') {
+    return isPidAlive(process.ppid) ? process.ppid : 0;
+  }
   try {
     const r = spawnSync('ps', ['-o', 'ppid=', '-p', String(process.pid)], {
       encoding: 'utf8',
@@ -344,12 +470,14 @@ function readLiveParentPid(): number {
 }
 
 /**
- * One-shot probe at watchdog-install time to confirm ps actually works
- * on this host. Returns true iff `spawnSync('ps','-o','ppid=','-p',PID)`
- * exits 0 with a parseable integer. When it returns false, the caller
- * skips installing the watchdog and emits a loud stderr line — the
- * operator sees "watchdog disabled" instead of an installed-but-never-
- * fires phantom.
+ * One-shot probe at watchdog-install time to confirm the platform's
+ * parent-liveness mechanism actually works on this host. POSIX: true
+ * iff `spawnSync('ps','-o','ppid=','-p',PID)` exits 0 with a parseable
+ * integer. Windows: true iff signal-0 succeeds against our own PID
+ * (always alive — verifies the mechanism, not the parent). When it
+ * returns false, the caller skips installing the watchdog and emits a
+ * loud stderr line — the operator sees "watchdog disabled" instead of
+ * an installed-but-never-fires phantom.
  *
  * Why a separate probe rather than relying on the per-tick fallback in
  * `readLiveParentPid`: the per-tick fallback returns the cached
@@ -358,7 +486,10 @@ function readLiveParentPid(): number {
  * while still claiming to be active. The probe surfaces the gap once
  * at install time and lets the caller short-circuit cleanly.
  */
-function probeWatchdogAvailable(): boolean {
+export function probeWatchdogAvailable(platform: NodeJS.Platform = process.platform): boolean {
+  if (platform === 'win32') {
+    return isPidAlive(process.pid);
+  }
   try {
     const r = spawnSync('ps', ['-o', 'ppid=', '-p', String(process.pid)], {
       encoding: 'utf8',

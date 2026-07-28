@@ -23,10 +23,15 @@ import {
   isAvailable,
   getChatModel,
   getChatFallbackChain,
+  recipeSupportsStructuredOutputs,
+  parseExpansionResponse,
+  chat,
+  __setGenerateTextTransportForTests,
 } from '../../src/core/ai/gateway.ts';
 import { parseModelId, resolveRecipe, assertTouchpoint } from '../../src/core/ai/model-resolver.ts';
 import { AIConfigError } from '../../src/core/ai/errors.ts';
 import { listRecipes, getRecipe } from '../../src/core/ai/recipes/index.ts';
+import type { Recipe } from '../../src/core/ai/types.ts';
 
 describe('chat touchpoint — recipe registry', () => {
   test('all six chat-capable providers ship a chat touchpoint with supports_subagent_loop', () => {
@@ -40,11 +45,15 @@ describe('chat touchpoint — recipe registry', () => {
     }
   });
 
-  test('only Anthropic claims supports_prompt_cache=true', () => {
+  test('only Anthropic and model-family-gated OpenRouter claim supports_prompt_cache', () => {
     for (const r of listRecipes()) {
       if (!r.touchpoints.chat) continue;
       if (r.id === 'anthropic') {
         expect(r.touchpoints.chat.supports_prompt_cache).toBe(true);
+      } else if (r.id === 'openrouter') {
+        // Family-scoped predicate (openai/* + anthropic/claude-*), never a
+        // blanket true — see recipe-openrouter.test.ts for the model matrix.
+        expect(typeof r.touchpoints.chat.supports_prompt_cache).toBe('function');
       } else {
         expect(r.touchpoints.chat.supports_prompt_cache ?? false).toBe(false);
       }
@@ -60,6 +69,56 @@ describe('chat touchpoint — recipe registry', () => {
     expect(getRecipe('deepseek')!.base_url_default).toBe('https://api.deepseek.com/v1');
     expect(getRecipe('groq')!.base_url_default).toBe('https://api.groq.com/openai/v1');
     expect(getRecipe('together')!.base_url_default).toBe('https://api.together.xyz/v1');
+  });
+});
+
+describe('expansion — structured-output capability gating', () => {
+  test('openai-compat chat recipes default to no structured-output support', () => {
+    // The capability is opt-in per recipe: an openai-compatible recipe may front
+    // arbitrary backends, so expand() routes the default through the schemaless
+    // text path rather than requesting a json_schema the backend may reject.
+    for (const id of ['deepseek', 'groq', 'together']) {
+      expect(recipeSupportsStructuredOutputs(getRecipe(id)!)).toBe(false);
+    }
+  });
+
+  test('recipeSupportsStructuredOutputs is false when no chat touchpoint exists', () => {
+    // Embedding-only recipes have no chat touchpoint; the helper must not throw.
+    expect(recipeSupportsStructuredOutputs(getRecipe('voyage')!)).toBe(false);
+  });
+
+  test('recipeSupportsStructuredOutputs is true when a recipe opts in', () => {
+    const optedIn = {
+      id: 'synthetic',
+      touchpoints: { chat: { models: [], supports_tools: true, supports_subagent_loop: true, supports_structured_outputs: true } },
+    } as unknown as Recipe;
+    expect(recipeSupportsStructuredOutputs(optedIn)).toBe(true);
+  });
+});
+
+describe('expansion — schemaless recovery (parseExpansionResponse)', () => {
+  // The openai-compat expansion paths recover queries from raw model text. This
+  // is the testable seam both the default and the strict-fallback paths share.
+  test('recovers queries from clean JSON', () => {
+    expect(parseExpansionResponse('{"queries":["a","b","c"]}')).toEqual(['a', 'b', 'c']);
+  });
+
+  test('recovers queries from fenced JSON', () => {
+    expect(parseExpansionResponse('```json\n{"queries":["a","b"]}\n```')).toEqual(['a', 'b']);
+  });
+
+  test('recovers queries from prose-wrapped JSON', () => {
+    expect(parseExpansionResponse('Here you go: {"queries":["a"]} done')).toEqual(['a']);
+  });
+
+  test('returns null for non-JSON so the caller can drop expansion cleanly', () => {
+    expect(parseExpansionResponse('I cannot help with that.')).toBeNull();
+  });
+
+  test('returns null when the JSON violates the schema', () => {
+    expect(parseExpansionResponse('{"queries":[]}')).toBeNull(); // min(1)
+    expect(parseExpansionResponse('{"rewrites":["a"]}')).toBeNull(); // wrong key
+    expect(parseExpansionResponse('{"queries":[1,2]}')).toBeNull(); // wrong item type
   });
 });
 
@@ -104,6 +163,9 @@ describe('chat touchpoint — model resolver + aliases (Codex F-OV-5)', () => {
     expect(() => assertTouchpoint(getRecipe('anthropic')!, 'chat', 'claude-opus-4-7')).not.toThrow();
     expect(() => assertTouchpoint(getRecipe('openai')!, 'chat', 'gpt-5.2')).not.toThrow();
     expect(() => assertTouchpoint(getRecipe('google')!, 'chat', 'gemini-2.0-flash')).not.toThrow();
+    expect(() => assertTouchpoint(getRecipe('deepseek')!, 'chat', 'deepseek-v4-flash')).not.toThrow();
+    // Legacy id retired by DeepSeek 2026-07-24 (#1255): still passes local
+    // validation (openai-compat tier), rejection surfaces at the provider.
     expect(() => assertTouchpoint(getRecipe('deepseek')!, 'chat', 'deepseek-chat')).not.toThrow();
   });
 
@@ -217,5 +279,105 @@ describe('chat touchpoint — chat() smoke + stop-reason mapping (Codex D8)', ()
     // body is just a runtime touch.
     const mod = await import('../../src/core/ai/gateway.ts');
     expect(mod).toBeDefined();
+  });
+});
+
+describe('chat touchpoint — provider_chat_options passthrough', () => {
+  beforeEach(() => {
+    resetGateway();
+    __setGenerateTextTransportForTests(null);
+  });
+
+  async function captureProviderOptions(
+    config: Parameters<typeof configureGateway>[0],
+    opts: Partial<Parameters<typeof chat>[0]> = {},
+  ): Promise<Record<string, any> | undefined> {
+    let captured: Record<string, any> | undefined;
+    __setGenerateTextTransportForTests(async (args: any) => {
+      captured = args.providerOptions;
+      return {
+        content: [{ type: 'text', text: 'ok' }],
+        finishReason: 'stop',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      } as any;
+    });
+    configureGateway(config);
+    await chat({
+      model: config.chat_model ?? 'anthropic:claude-sonnet-4-6',
+      messages: [{ role: 'user', content: 'hello' }],
+      ...opts,
+    });
+    return captured;
+  }
+
+  test('provider-scoped option reaches generateText providerOptions[recipe.id]', async () => {
+    const providerOptions = await captureProviderOptions({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      provider_chat_options: {
+        anthropic: { thinking: { type: 'disabled' } },
+      },
+      env: { ANTHROPIC_API_KEY: 'fake' },
+    });
+
+    expect(providerOptions).toEqual({
+      anthropic: { thinking: { type: 'disabled' } },
+    });
+  });
+
+  test('model-scoped option overrides provider-scoped option', async () => {
+    const providerOptions = await captureProviderOptions({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      provider_chat_options: {
+        anthropic: {
+          thinking: { type: 'enabled', budget_tokens: 1024 },
+          temperature: 0.2,
+        },
+        'anthropic:claude-sonnet-4-6': {
+          thinking: { type: 'disabled' },
+        },
+      },
+      env: { ANTHROPIC_API_KEY: 'fake' },
+    });
+
+    expect(providerOptions).toEqual({
+      anthropic: {
+        thinking: { type: 'disabled', budget_tokens: 1024 },
+        temperature: 0.2,
+      },
+    });
+  });
+
+  test('no provider_chat_options keeps providerOptions undefined when cache is off', async () => {
+    const providerOptions = await captureProviderOptions({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      env: { ANTHROPIC_API_KEY: 'fake' },
+    });
+
+    expect(providerOptions).toBeUndefined();
+  });
+
+  test('anthropic cacheControl survives provider_chat_options merging', async () => {
+    // gbrain#2490: this call-level cacheControl is real (not a no-op) —
+    // @ai-sdk/anthropic serializes it as the Anthropic API's documented
+    // top-level "auto-cache the last cacheable block" shorthand. It's kept
+    // alongside the fix (an explicit breakpoint on the system message's own
+    // providerOptions — see test/ai/gateway-cache-breakpoint.test.ts) because
+    // it's what gives toolLoop()'s growing multi-turn conversation a rolling
+    // cache breakpoint on each turn's tail. See gateway.ts's `useCache` block
+    // for the full explanation of why both markers are needed.
+    const providerOptions = await captureProviderOptions({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      provider_chat_options: {
+        anthropic: { thinking: { type: 'disabled' } },
+      },
+      env: { ANTHROPIC_API_KEY: 'fake' },
+    }, { cacheSystem: true });
+
+    expect(providerOptions).toEqual({
+      anthropic: {
+        cacheControl: { type: 'ephemeral' },
+        thinking: { type: 'disabled' },
+      },
+    });
   });
 });

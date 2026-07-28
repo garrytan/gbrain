@@ -407,7 +407,13 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // now produces query-side vectors for asymmetric providers (zembed-1,
     // Voyage v3+), so rows keyed on pre-fix document-side query vectors
     // must not be served to post-fix lookups.
-    expect(KNOBS_HASH_VERSION).toBe(11);
+    // #2825: bumped 11→12 to fold the resolved hard-exclude prefix list
+    // (hx=) — cached rows leaked GBRAIN_SEARCH_EXCLUDE'd slugs across
+    // processes.
+    // #3390/#3391: bumped 12→13 for the embedding-provider migration wave —
+    // legacy callers hash prov=default before AND after a provider swap, so
+    // pre-migration cache rows must become unreachable on upgrade.
+    expect(KNOBS_HASH_VERSION).toBe(13);
   });
 
   test('T1 (codex): floor_ratio set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -572,8 +578,8 @@ describe('v0.40.4 — graph_signals knob', () => {
 });
 
 describe('v0.42.3.0 — autocut knobs', () => {
-  test('KNOBS_HASH_VERSION is 11 (10→11 asymmetric input_type fix, #1400)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(11);
+  test('KNOBS_HASH_VERSION is 13 (12→13 embedding-migration wave, #3390/#3391)', () => {
+    expect(KNOBS_HASH_VERSION).toBe(13);
   });
 
   test('bundle defaults: conservative off, balanced/tokenmax on @0.20', () => {

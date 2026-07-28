@@ -6,6 +6,7 @@ import {
   checkResolvable,
   parseResolverEntries,
   extractDelegationTargets,
+  extractTriggers,
 } from "../src/core/check-resolvable.ts";
 
 const SKILLS_DIR = join(import.meta.dir, "..", "skills");
@@ -192,6 +193,39 @@ describe("parseResolverEntries", () => {
 - **camelCase**: also silently dropped`;
     const entries = parseResolverEntries(content);
     expect(entries.length).toBe(0);
+  });
+});
+
+describe("extractTriggers", () => {
+  const LF_FRONTMATTER =
+    "---\nname: query\ndescription: Test\ntriggers:\n  - \"what do we know\"\n  - \"tell me about\"\ntools:\n  - search\n---\n\n# Body\n";
+
+  test("parses triggers from LF-terminated frontmatter", () => {
+    const triggers = extractTriggers(LF_FRONTMATTER);
+    expect(triggers).toEqual(["what do we know", "tell me about"]);
+  });
+
+  test("parses triggers from CRLF-terminated frontmatter (Windows checkouts)", () => {
+    // Regression: `core.autocrlf=true` is the Windows default. Without
+    // CRLF→LF normalization, every Windows skill is reported as a false
+    // mece_gap warning because the `^---\n` regex never matches `---\r\n`.
+    const crlf = LF_FRONTMATTER.replace(/\n/g, "\r\n");
+    const triggers = extractTriggers(crlf);
+    expect(triggers).toEqual(["what do we know", "tell me about"]);
+  });
+
+  test("returns [] when frontmatter is missing", () => {
+    expect(extractTriggers("# Just a body, no frontmatter\n")).toEqual([]);
+  });
+
+  test("returns [] when triggers field is absent from frontmatter", () => {
+    const fm = "---\nname: query\ndescription: Test\ntools:\n  - search\n---\n";
+    expect(extractTriggers(fm)).toEqual([]);
+  });
+
+  test("strips surrounding quotes from trigger values", () => {
+    const fm = "---\nname: x\ntriggers:\n  - \"double quoted\"\n  - 'single quoted'\n  - unquoted\n---\n";
+    expect(extractTriggers(fm)).toEqual(["double quoted", "single quoted", "unquoted"]);
   });
 });
 

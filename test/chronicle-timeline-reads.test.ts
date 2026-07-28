@@ -95,6 +95,25 @@ describe('Life Chronicle timeline reads', () => {
     expect(never.days_ago).toBeNull();
   });
 
+  test('getLastSeen ignores future-dated events (bounds to <= asof/today)', async () => {
+    // Chronicle legitimately stores future events (a scheduled calendar-event,
+    // a planned milestone). "Last seen" must not return one, or the entity
+    // reads as seen-today (days_ago clamped to 0). Regression for the missing
+    // upper date bound in getLastSeen.
+    const fut = await insertPage({ slug: 'life/events/2026-08-01-fut', type: 'event', effectiveDate: '2026-08-01T10:00:00Z', frontmatter: '{"event":{"who":["people/sarah-chen"],"kind":"event"}}' });
+    await insertProjection(ids.meeting, fut, '2026-08-01', 'Planned Q3 launch');
+    // asof BEFORE the future event: last-seen is the most recent PAST event.
+    const seen = await engine.getLastSeen('people/sarah-chen', { asof: '2026-06-25', sourceId: 'default' });
+    expect(seen.last_date).toBe('2026-06-20'); // NOT 2026-08-01
+    expect(seen.days_ago).toBe(5);             // NOT 0
+    // asof AFTER it: now it legitimately counts.
+    const later = await engine.getLastSeen('people/sarah-chen', { asof: '2026-08-02', sourceId: 'default' });
+    expect(later.last_date).toBe('2026-08-01');
+    expect(later.days_ago).toBe(1);
+    // Clean up so this future event doesn't leak into later shared-fixture tests.
+    await engine.executeRaw('UPDATE pages SET deleted_at = now() WHERE id = $1', [fut]);
+  });
+
   test('source isolation: default scope excludes other-source events', async () => {
     const def = await engine.getTimelineForDate('2026-06-18', { sourceId: 'default' });
     expect(def.some(r => r.event_slug === 'life/events/2026-06-18-099')).toBe(false);

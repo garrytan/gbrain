@@ -311,7 +311,13 @@ describe('Eng-review D3 — executeRaw has no per-call retry wrapper', () => {
     // can classify the triggering error for the pool-recovery audit. Match the
     // prefix so both `reconnect()` and `reconnect(ctx?)` satisfy the contract.
     expect(src).toContain('async reconnect(');
-    expect(src).toContain('await this.disconnect()');
+    // #1593 build-then-swap: reconnect() no longer disconnect()-then-connect()s
+    // on the instance-pool path (that nulled _sql, so a connect() failure during
+    // a transient blip left the engine permanently dead → worker respawn loop).
+    // It now snapshots the live pool, builds a fresh one, and ends the OLD pool
+    // only once the new one validates — restoring it on failure. Assert the
+    // old-pool teardown, which is the recovery contract this test guards.
+    expect(src).toContain('await oldSql.end(');
   });
 
   it('Supervisor still has the 3-strikes-then-reconnect path', () => {
