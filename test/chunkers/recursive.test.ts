@@ -135,13 +135,13 @@ describe('Recursive Text Chunker', () => {
 });
 
 describe('CJK chunking (v0.32.7)', () => {
-  test('MARKDOWN_CHUNKER_VERSION is 3', async () => {
-    // v0.40.3.0: bumped 2→3 to signal the post-upgrade reembed sweep that
-    // contextual retrieval wrapping is now applied at embed time. Chunk
-    // boundaries themselves are unchanged; the bump forces re-embed for
-    // pages where chunker_version < 3.
+  test('MARKDOWN_CHUNKER_VERSION is 4', async () => {
+    // v0.42.70 (issue #3037): bumped 3→4 to signal the CJK token-aware cap
+    // change. Post-upgrade sweep must re-chunk existing pages so CJK-dense
+    // content gets the tighter char budget that keeps chunks under the
+    // embedder's token limit.
     const mod = await import('../../src/core/chunkers/recursive.ts');
-    expect(mod.MARKDOWN_CHUNKER_VERSION).toBe(3);
+    expect(mod.MARKDOWN_CHUNKER_VERSION).toBe(4);
   });
 
   test('long pure-Chinese paragraph splits into multiple chunks', () => {
@@ -214,5 +214,41 @@ describe('CJK chunking (v0.32.7)', () => {
     expect(chunks.length).toBeGreaterThan(0);
     // Should have been chunked by word boundaries (English-dominant doc).
     expect(chunks.every(c => /^[\x20-\x7e\s]+$/.test(c.text))).toBe(true);
+  });
+
+  test('CJK token-aware cap reduces maxChars for CJK-dense text (issue #3037)', () => {
+    // Pure Chinese text has density ≈ 1.0, so the effective cap should be
+    // maxChars * (0.30 / 1.0) = 6000 * 0.30 ≈ 1800 chars. This prevents
+    // chunks from silently exceeding the embedder's token limit.
+    const text = '测试'.repeat(10000); // 20K CJK chars, no whitespace
+    const chunks = chunkText(text, { chunkSize: 100000, chunkOverlap: 0, maxChars: 6000 });
+    expect(chunks.length).toBeGreaterThan(1);
+    // For pure CJK (density=1.0), effectiveMaxChars ≈ 1800
+    // So chunks should be ≤ 1800 chars, not 6000
+    for (const c of chunks) {
+      // Allow some tolerance due to overlap
+      expect(c.text.length).toBeLessThanOrEqual(2000); // ~1800 + overlap
+    }
+  });
+
+  test('CJK token-aware cap fires earlier for very-high-density CJK', () => {
+    const text = '你好世界测试人工智能语义搜索'.repeat(500); // 7500 CJK chars
+    const chunks = chunkText(text, { chunkSize: 100000, chunkOverlap: 0, maxChars: 6000 });
+    expect(chunks.length).toBeGreaterThanOrEqual(3);
+    // Each chunk should be around 1800 chars (6000 * 0.30)
+    for (const c of chunks) {
+      expect(c.text.length).toBeLessThanOrEqual(2000);
+    }
+  });
+
+  test('English text keeps original maxChars cap', () => {
+    // Pure English text has CJK density ≈ 0, so effectiveMaxChars = maxChars
+    const text = 'A'.repeat(8000); // 8000 ASCII chars
+    const chunks = chunkText(text, { chunkSize: 100000, chunkOverlap: 0, maxChars: 6000 });
+    expect(chunks.length).toBeGreaterThanOrEqual(2);
+    // English text should respect the original 6000 char cap
+    for (const c of chunks) {
+      expect(c.text.length).toBeLessThanOrEqual(6000);
+    }
   });
 });

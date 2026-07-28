@@ -14,10 +14,17 @@
  * guarantees no chunk overflows OpenAI's 8192-token embedding limit even
  * on pathological CJK / whitespace-less text.
  *
+ * v0.42.70 (issue #3037): CJK-dense content gets a token-aware cap.
+ * The embedder limits by TOKENS not characters; for CJK text 1 char ≈ 1
+ * token, so a 6000-char CJK chunk can be ~6000 tokens and get silently
+ * rejected (exit 0, never embedded). The chunker now detects CJK density
+ * and applies a tighter char budget (3000 chars for CJK-dominant text)
+ * so chunks stay under the typical 8192-token limit.
+ *
  * Lossless invariant: non-overlapping portions reassemble to original.
  */
 
-import { countCJKAwareWords, CJK_SENTENCE_DELIMITERS, CJK_CLAUSE_DELIMITERS } from '../cjk.ts';
+import { countCJKAwareWords, CJK_SENTENCE_DELIMITERS, CJK_CLAUSE_DELIMITERS, CJK_DENSITY_THRESHOLD, hasCJK } from '../cjk.ts';
 
 /**
  * Markdown chunker version. Folded into the per-page chunker_version column
@@ -34,7 +41,7 @@ import { countCJKAwareWords, CJK_SENTENCE_DELIMITERS, CJK_CLAUSE_DELIMITERS } fr
  * post-upgrade reembed sweep. See
  * `src/core/contextual-retrieval-service.ts`.
  */
-export const MARKDOWN_CHUNKER_VERSION = 3;
+export const MARKDOWN_CHUNKER_VERSION = 4;
 
 const DELIMITERS: string[][] = [
   ['\n\n'],                          // L0: paragraphs
@@ -87,10 +94,17 @@ export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
   const stripped = stripFactsFence(stripTakesFence(text), { keepVisibility: ['world'] });
   if (!stripped || stripped.trim().length === 0) return [];
 
+  // v0.42.70 (issue #3037): detect CJK density upfront so we can apply
+  // a token-aware cap. CJK text has ~1 char/token ratio vs ~3.5 chars/
+  // token for English; the same char cap produces very different token
+  // counts. We compute an effective char cap that accounts for CJK
+  // density, ensuring chunks stay under the embedder's token limit.
+  const effectiveMaxChars = computeEffectiveMaxChars(stripped, maxChars);
+
   const wordCount = countWords(stripped);
   if (wordCount <= chunkSize) {
-    // Single-chunk path: still apply the maxChars cap.
-    const capped = capByChars(stripped.trim(), maxChars);
+    // Single-chunk path: still apply the CJK-aware maxChars cap.
+    const capped = capByChars(stripped.trim(), effectiveMaxChars);
     return capped.map((t, i) => ({ text: t, index: i }));
   }
 
@@ -101,11 +115,50 @@ export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
   // v0.32.7: hard char cap. Catches pathological CJK + whitespace-less text
   // that the word-level pipeline can't bound (a single Chinese paragraph can
   // exceed 8192 OpenAI embedding tokens at any word count).
+  //
+  // v0.42.70 (issue #3037): use the CJK-aware effective cap. CJK-dense
+  // chunks need a tighter char budget because 1 CJK char ≈ 1 token (vs
+  // 3.5 chars/token for English). Without this, a 6000-char CJK chunk
+  // would be ~6000 tokens, dangerously close to the 8192-token limit.
   const capped: string[] = [];
   for (const chunk of withOverlap) {
-    capped.push(...capByChars(chunk.trim(), maxChars));
+    capped.push(...capByChars(chunk.trim(), effectiveMaxChars));
   }
   return capped.map((t, i) => ({ text: t, index: i }));
+}
+
+/**
+ * Compute an effective char cap that accounts for CJK token density
+ * (issue #3037).
+ *
+ * The embedder limits by TOKENS, not characters. For English text,
+ * ~3.5 chars = 1 token; for CJK text, ~1 char = 1 token. The default
+ * maxChars (6000) is safe for English (≈1714 tokens) but dangerous for
+ * CJK (≈6000 tokens, close to the 8192-token limit).
+ *
+ * This function detects CJK density and scales the cap proportionally:
+ * - CJK density < 0.30: keep original maxChars (Latin-dominant)
+ * - CJK density ≥ 0.30: scale cap by density / CJK_DENSITY_THRESHOLD
+ *   so that at full CJK density (1.0), the cap is maxChars * 0.30
+ *   ≈ 1800 chars, keeping chunks well under the 8192-token limit.
+ *
+ * The formula: effectiveMaxChars = maxChars * (CJK_DENSITY_THRESHOLD / density)
+ * clamped to [500, maxChars].
+ */
+function computeEffectiveMaxChars(text: string, maxChars: number): number {
+  const cjkMatches = text.match(new RegExp(`[${'一-鿿぀-ゟ゠-ヿ가-힯'}]`, 'g'));
+  const cjkCount = cjkMatches ? cjkMatches.length : 0;
+  const nonWhitespace = text.replace(/\s/g, '').length;
+  if (nonWhitespace === 0) return maxChars;
+  const density = cjkCount / nonWhitespace;
+  if (density < CJK_DENSITY_THRESHOLD) return maxChars;
+  // CJK-dominant: scale down the char cap. At density=1.0 (pure CJK),
+  // effective = maxChars * (0.30 / 1.0) = maxChars * 0.30 ≈ 1800 chars.
+  // This keeps chunks well under the 8192-token embedder limit.
+  const scaleFactor = CJK_DENSITY_THRESHOLD / density;
+  const scaled = Math.floor(maxChars * scaleFactor);
+  // Never exceed the original cap; never go below a minimum useful size.
+  return Math.max(500, Math.min(maxChars, scaled));
 }
 
 /**
