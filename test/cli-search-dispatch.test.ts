@@ -57,4 +57,14 @@ describe('T5 — gbrain search dispatch', () => {
       expect(stdout).toMatch(/total_calls|cache_hit_rate|window_days/);
     });
   });
+
+  test('`search contract pin` routes to the contract command and verifies its write', () => {
+    withHome((home) => {
+      const pinned = run(['search', 'contract', 'pin', '--json'], home);
+      expect(pinned.status).toBe(0);
+      const report = JSON.parse(pinned.stdout);
+      expect(report.status).toBe('match');
+      expect(report.pinned_fingerprint).toBe(report.current_fingerprint);
+    });
+  });
 });

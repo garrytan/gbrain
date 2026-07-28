@@ -267,16 +267,22 @@ async function main() {
   // NOT a free-text search for the literal word "modes". Free-text
   // `gbrain search "<query>"` falls through to the cheap-hybrid `search` op
   // below (T4). Preserves the v0.41.6.0 read-only connect+dispatch timeout.
-  if (command === 'search' && ['modes', 'stats', 'tune', 'diagnose'].includes(subArgs[0] ?? '')) {
+  if (command === 'search' && ['modes', 'stats', 'tune', 'diagnose', 'contract'].includes(subArgs[0] ?? '')) {
     const { withTimeout, OperationTimeoutError } = await import('./core/timeout.ts');
     const isDiagnose = subArgs[0] === 'diagnose';
+    const isContract = subArgs[0] === 'contract';
     const label = 'gbrain search';
-    // diagnose runs real retrieval (keyword + vector + hybrid) so it gets a
-    // longer deadline than the read-only dashboard.
-    const timeoutMs = isDiagnose ? 60_000 : 10_000;
+    // Diagnose runs real retrieval; contract resolves both config planes and
+    // may hit a cold remote Postgres endpoint. Both need the operational
+    // budget rather than the lightweight dashboard ceiling.
+    const timeoutMs = isDiagnose || isContract ? 60_000 : 10_000;
     let engine: BrainEngine;
     try {
-      engine = await withTimeout(connectEngine(), timeoutMs, `${label}: connect`);
+      engine = await withTimeout(
+        connectEngine({ skipSearchContractCheck: subArgs[0] === 'contract' }),
+        timeoutMs,
+        `${label}: connect`,
+      );
     } catch (e) {
       if (e instanceof OperationTimeoutError) { console.error(`${e.label} timed out.`); process.exit(124); }
       throw e;
@@ -1358,13 +1364,13 @@ async function handleCliOnly(command: string, args: string[]) {
     // (cheap path D7), NOT the full doctor walk.
     if (args.includes('--remediation-plan')) {
       const { runRemediationPlan } = await import('./commands/doctor.ts');
-      const eng = await connectEngine();
+      const eng = await connectEngine({ skipSearchContractCheck: true });
       try { await runRemediationPlan(eng, args); } finally { await finishCliTeardown({ engine: eng }); }
       return;
     }
     if (args.includes('--remediate')) {
       const { runRemediate } = await import('./commands/doctor.ts');
-      const eng = await connectEngine();
+      const eng = await connectEngine({ skipSearchContractCheck: true });
       try { await runRemediate(eng, args); } finally { await finishCliTeardown({ engine: eng }); }
       return;
     }
@@ -1386,7 +1392,7 @@ async function handleCliOnly(command: string, args: string[]) {
       // teardown are a pre-existing class, tracked as a TODOS.md follow-up.
       let eng: BrainEngine | null = null;
       try {
-        eng = await connectEngine();
+        eng = await connectEngine({ skipSearchContractCheck: true });
         await runDoctor(eng, args);
       } catch {
         // DB unavailable — still run filesystem checks
@@ -1707,8 +1713,14 @@ async function handleCliOnly(command: string, args: string[]) {
     }
   }
 
-  // All remaining CLI-only commands need a DB connection
-  const engine = await connectEngine();
+  // All remaining CLI-only commands need a DB connection. Contract/config
+  // recovery and an explicit embedding migration must remain reachable when
+  // the current runtime has drifted from the pin.
+  const engine = await connectEngine({
+    skipSearchContractCheck:
+      command === 'config' ||
+      (command === 'migrate' && args[0] === 'embeddings'),
+  });
   try {
     switch (command) {
       case 'import': {
@@ -2248,7 +2260,10 @@ async function dispatchReadOnlyCommand(engine: BrainEngine, command: string, arg
 import { buildGatewayConfig } from './core/ai/build-gateway-config.ts';
 export { buildGatewayConfig };
 
-async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngine> {
+async function connectEngine(opts?: {
+  probeOnly?: boolean;
+  skipSearchContractCheck?: boolean;
+}): Promise<BrainEngine> {
   const config = loadConfig();
   if (!config) {
     console.error('No brain configured. Run: gbrain init');
@@ -2343,6 +2358,15 @@ async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngin
     await reconfigureGatewayWithEngine(engine);
   } catch {
     // Non-fatal. Pre-v39 brains may not have a usable config table yet.
+  }
+
+  // Search Contract v1 is opt-in. Once pinned, ordinary runtime entrypoints
+  // fail closed on model/config drift before reading or writing against a
+  // different embedding space. Recovery and migration commands bypass this
+  // assertion explicitly so the operator can inspect and repair the pin.
+  if (!opts?.skipSearchContractCheck) {
+    const { assertSearchContractV1 } = await import('./core/search/search-contract.ts');
+    await assertSearchContractV1(engine);
   }
 
   return engine;

@@ -8,6 +8,8 @@ lives in `CHANGELOG.md` + `git log` / `git blame`, NOT here. Do not append
 per-release `**vX.Y.Z:**` narration — CI enforces this
 (`scripts/check-key-files-current-state.sh`).
 
+- `docs/architecture/SEARCH_CONTRACT.md` + `src/core/search/search-contract.ts` — versioned retrieval compatibility pin. `gbrain search contract pin|check` records provider/model, dimensions, pgvector column/representation, query/document semantics, cosine metric, contextual-retrieval profile, reranker policy, and autocut. Ordinary runtime startup fails closed on pinned drift; doctor/config/migration recovery remain reachable. The contract fingerprint participates in query-cache identity.
+
 - `docs/operations/conversation-parser-llm-fallback.md` — operator and maintainer contract for the default-off LLM parse fallback: exact config key, deterministic-first dispatch boundary, sampled data surface, untrusted-content prompt handling, page-date/cache-key coupling, timestamp validation, cache/checkpoint behavior, observability, limitations, and focused test commands.
 
 - `src/commands/serve-http.ts` confidential revoke extension — a pre-router `/revoke` handler validates the RFC 7009 body, verifies hash-only secrets for both `client_secret_post` and `client_secret_basic`, rejects mixed authentication, preserves the SDK path for public clients, and separates opaque client-auth failures from retryable/backend failures. OAuth metadata advertises both confidential methods. Pinned by `test/e2e/serve-http-oauth.test.ts`.

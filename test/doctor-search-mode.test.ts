@@ -60,6 +60,13 @@ describe('checkSearchMode [CDX-20]', () => {
     expect(c.message).toContain('no per-key overrides');
   });
 
+  test('Search Contract v1 pin is excluded from override count', async () => {
+    await engine.setConfig('search.mode', 'balanced');
+    await engine.setConfig('search.contract.v1', '{"version":1}');
+    const c = await checkSearchMode(engine);
+    expect(c.message).toContain('no per-key overrides');
+  });
+
   test('tokenmax mode is recognized without any override warning', async () => {
     await engine.setConfig('search.mode', 'tokenmax');
     const c = await checkSearchMode(engine);

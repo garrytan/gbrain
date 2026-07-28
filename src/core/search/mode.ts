@@ -766,7 +766,11 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // written between the #3391 stale-fix (which changes which chunks count as
 // current) and the operator's migration run. Same one-time global cold-miss
 // pattern as the bumps above.
-export const KNOBS_HASH_VERSION = 13;
+// bump 13→14: Search Contract v1 fingerprint. Provider:model alone is not a
+// complete embedding-space identity: dimensions, vector representation,
+// query/document semantics, contextual wrapping, and reranker policy also
+// matter. `sc=` folds the canonical contract snapshot into cache identity.
+export const KNOBS_HASH_VERSION = 14;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -805,6 +809,8 @@ export interface KnobsHashContext {
    * 'none' for legacy callers that don't thread excludes.
    */
   hardExcludes?: string[];
+  /** Canonical Search Contract v1 fingerprint. */
+  searchContractFingerprint?: string;
 }
 
 export function knobsHash(
@@ -898,6 +904,9 @@ export function knobsHash(
     // across processes. Sorted copy so ['a/','b/'] and ['b/','a/'] hash
     // identically; undefined falls back to 'none' for legacy callers.
     `hx=${ctx?.hardExcludes ? [...ctx.hardExcludes].sort().join(',') : 'none'}`,
+    // v=14 addition (append-only): full embedding/retrieval compatibility
+    // fingerprint. Legacy callers use `none`; production hybrid supplies it.
+    `sc=${ctx?.searchContractFingerprint ?? 'none'}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));

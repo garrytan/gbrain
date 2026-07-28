@@ -8,6 +8,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runSearch } from '../src/commands/search.ts';
+import { checkSearchContractV1 } from '../src/core/search/search-contract.ts';
 import { recordSearchTelemetry, _resetTelemetryWriterForTest, getTelemetryWriter } from '../src/core/search/telemetry.ts';
 import type { HybridSearchMeta } from '../src/core/types.ts';
 
@@ -131,6 +132,29 @@ describe('gbrain search modes --reset', () => {
     // Notice key preserved (it's not an "override"); tokenBudget gone.
     expect(await engine.getConfig('search.mode_upgrade_notice_shown')).toBe('true');
     expect(await engine.getConfig('search.tokenBudget')).toBeNull();
+  });
+
+  test('--reset preserves the Search Contract v1 pin', async () => {
+    await engine.setConfig('search.contract.v1', '{"version":1}');
+    await engine.setConfig('search.tokenBudget', '4000');
+    await captureRun(() => runSearch(engine, ['modes', '--reset']));
+    expect(await engine.getConfig('search.contract.v1')).toBe('{"version":1}');
+    expect(await engine.getConfig('search.tokenBudget')).toBeNull();
+  });
+});
+
+describe('gbrain search contract', () => {
+  test('pin captures current behavior and later mode drift is explicit', async () => {
+    await engine.setConfig('search.mode', 'balanced');
+    await captureRun(() => runSearch(engine, ['contract', 'pin', '--json']));
+
+    const pinned = await checkSearchContractV1(engine);
+    expect(pinned.status).toBe('match');
+
+    await engine.setConfig('search.mode', 'tokenmax');
+    const drifted = await checkSearchContractV1(engine);
+    expect(drifted.status).toBe('drift');
+    expect(drifted.differences.some((d) => d.includes('retrieval.mode'))).toBe(true);
   });
 });
 

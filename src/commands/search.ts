@@ -39,6 +39,12 @@ import {
   type ModeBundle,
 } from '../core/search/mode.ts';
 import { readSearchStats } from '../core/search/telemetry.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import {
+  SEARCH_CONTRACT_V1_KEY,
+  checkSearchContractV1,
+  serializeSearchContractV1,
+} from '../core/search/search-contract.ts';
 
 const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   cache_enabled: 'Semantic query cache on/off',
@@ -172,7 +178,11 @@ async function runModesSubcommand(engine: BrainEngine, args: string[]): Promise<
       process.exit(1);
     }
     const overrides = await engine.listConfigKeys('search.');
-    const toRemove = overrides.filter((k) => k !== SEARCH_MODE_KEY && k !== 'search.mode_upgrade_notice_shown');
+    const toRemove = overrides.filter((k) =>
+      k !== SEARCH_MODE_KEY &&
+      k !== 'search.mode_upgrade_notice_shown' &&
+      k !== SEARCH_CONTRACT_V1_KEY
+    );
     if (toRemove.length === 0) {
       console.log('No search.* overrides set. Mode bundle is the only voice.');
       return;
@@ -520,7 +530,55 @@ function buildRevertCommand(r: TuneRecommendation): string {
   return r.apply_command;
 }
 
-const USAGE = `Usage: gbrain search <modes|stats|tune> [flags]
+async function runContractSubcommand(engine: BrainEngine, args: string[]): Promise<void> {
+  const action = args[0] ?? 'check';
+  const json = args.includes('--json');
+  const force = args.includes('--force');
+
+  if (!['check', 'show', 'pin'].includes(action)) {
+    console.error(`Unknown contract action: ${action}`);
+    console.error('Usage: gbrain search contract <check|show|pin> [--json] [--force]');
+    setCliExitVerdict(1);
+    return;
+  }
+
+  let report = await checkSearchContractV1(engine);
+  if (action === 'pin') {
+    if ((report.status === 'drift' || report.status === 'invalid') && !force) {
+      console.error('A different Search Contract v1 is already pinned. Refusing to overwrite it.');
+      console.error('Inspect with `gbrain search contract check`; after a deliberate migration, re-run `pin --force`.');
+      setCliExitVerdict(1);
+      return;
+    }
+    await engine.setConfig(SEARCH_CONTRACT_V1_KEY, serializeSearchContractV1(report.current));
+    report = await checkSearchContractV1(engine);
+  }
+
+  if (json) {
+    console.log(JSON.stringify(report, null, 2));
+  } else {
+    console.log(`GBrain Search Contract v1: ${report.status}`);
+    console.log(`  current fingerprint: ${report.current_fingerprint}`);
+    console.log(`  pinned fingerprint:  ${report.pinned_fingerprint ?? '(none)'}`);
+    console.log(`  embedding: ${report.current.embedding.model} / ${report.current.embedding.dimensions}d / ${report.current.embedding.representation}(${report.current.embedding.dimensions})`);
+    console.log(`  input semantics: ${report.current.embedding.input_semantics}; metric: ${report.current.embedding.metric}`);
+    console.log(`  retrieval: ${report.current.retrieval.mode}; contextual=${report.current.retrieval.contextual_retrieval}`);
+    console.log(`  reranker: ${report.current.reranker.enabled ? report.current.reranker.model : 'disabled'}; top_n=${report.current.reranker.top_n_in}; timeout=${report.current.reranker.timeout_ms}ms`);
+    if (report.differences.length > 0) {
+      console.log('  drift:');
+      for (const difference of report.differences) console.log(`    - ${difference}`);
+    }
+    if (report.error) console.log(`  error: ${report.error}`);
+    if (action === 'pin' && report.status === 'match') console.log('  pinned successfully');
+    if (report.status === 'unpinned') console.log('  pin with: gbrain search contract pin');
+  }
+
+  if (action !== 'pin' && (report.status === 'drift' || report.status === 'invalid')) {
+    setCliExitVerdict(1);
+  }
+}
+
+const USAGE = `Usage: gbrain search <modes|stats|tune|contract> [flags]
 
 Subcommands:
   modes [--json]              Show active mode, bundles, and per-knob source.
@@ -528,6 +586,8 @@ Subcommands:
   modes --source <mode>       Dry-run: list what --reset would change.
   stats [--days N] [--json]   Cache hit rate, intent mix, budget pressure.
   tune [--apply] [--json]     Print recommendations; --apply mutates config.
+  contract check [--json]     Compare resolved behavior with the v1 pin.
+  contract pin [--force]      Pin current behavior; refuse replacement by default.
 
 Examples:
   gbrain search modes
@@ -555,6 +615,9 @@ export async function runSearch(engine: BrainEngine, args: string[]): Promise<vo
       return;
     case 'tune':
       await runTuneSubcommand(engine, rest);
+      return;
+    case 'contract':
+      await runContractSubcommand(engine, rest);
       return;
     default:
       console.error(`Unknown subcommand: ${sub}`);

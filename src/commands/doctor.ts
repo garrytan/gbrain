@@ -922,6 +922,7 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   // search.reranker.enabled FIRST so absence-of-failures means different
   // things when reranker is on vs off.
   checks.push(await checkRerankerHealth(engine));
+  checks.push(await checkSearchContractV1Health(engine));
 
   // 9a. v0.40.4 graph_signals_coverage: when graph_signals is enabled
   // (via mode bundle default or explicit config override), surface
@@ -1660,6 +1661,69 @@ export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
       name: 'reranker_health',
       status: 'warn',
       message: `Could not check reranker audit: ${msg}`,
+    };
+  }
+}
+
+/** Search Contract v1 pin, drift, and stored-vector provenance health. */
+export async function checkSearchContractV1Health(engine: BrainEngine): Promise<Check> {
+  try {
+    const { checkSearchContractV1 } = await import('../core/search/search-contract.ts');
+    const report = await checkSearchContractV1(engine);
+    if (report.status === 'unpinned') {
+      return {
+        name: 'search_contract_v1',
+        status: 'ok',
+        message: 'Search Contract v1 is not pinned (optional). Pin current behavior with `gbrain search contract pin`.',
+      };
+    }
+    if (report.status === 'invalid') {
+      return {
+        name: 'search_contract_v1',
+        status: 'fail',
+        message: `Pinned Search Contract v1 is invalid: ${report.error}. Inspect with \`gbrain search contract check\`.`,
+      };
+    }
+    if (report.status === 'drift') {
+      return {
+        name: 'search_contract_v1',
+        status: 'fail',
+        message: `Search Contract v1 drift: ${report.differences.join('; ')}. Runtime is fail-closed. Inspect with \`gbrain search contract check\`.`,
+      };
+    }
+
+    // Re-embedding workflows need a reachable pending/null state, so stale
+    // provenance is a doctor warning rather than a startup blocker. Query the
+    // invariant directly so this check works across engine versions that
+    // predate countStaleChunks({ includeNullSignature }).
+    const signature = `${report.current.embedding.model}:${report.current.embedding.dimensions}`;
+    const rows = await engine.executeRaw<{ count: number | string }>(
+      `SELECT count(*)::int AS count
+         FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+        WHERE NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
+          AND (cc.embedding IS NULL OR p.embedding_signature IS DISTINCT FROM $1)`,
+      [signature],
+    );
+    const stale = Number(rows[0]?.count ?? 0);
+    if (stale > 0) {
+      return {
+        name: 'search_contract_v1',
+        status: 'warn',
+        message: `${stale} chunk(s) are stale or lack embedding-space provenance for ${signature}. ` +
+          'Repair with `gbrain embed --stale --include-null-signature`, then re-run doctor.',
+      };
+    }
+    return {
+      name: 'search_contract_v1',
+      status: 'ok',
+      message: `Pinned contract matches runtime (${report.current_fingerprint}); all chunks have current embedding provenance.`,
+    };
+  } catch (error) {
+    return {
+      name: 'search_contract_v1',
+      status: 'fail',
+      message: `Could not validate Search Contract v1: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
 }
@@ -2901,9 +2965,13 @@ export async function checkSearchMode(engine: BrainEngine): Promise<Check> {
   try {
     const mode = await engine.getConfig('search.mode');
     const overrides = await engine.listConfigKeys('search.');
-    // Exclude search.mode itself + the upgrade-notice state key from the
-    // override roster — they aren't knobs.
-    const overrideKeys = overrides.filter(k => k !== 'search.mode' && k !== 'search.mode_upgrade_notice_shown');
+    // Exclude search.mode itself, internal state, and the immutable contract
+    // pin from the override roster — none are tunable mode knobs.
+    const overrideKeys = overrides.filter(k =>
+      k !== 'search.mode' &&
+      k !== 'search.mode_upgrade_notice_shown' &&
+      k !== 'search.contract.v1'
+    );
 
     if (!mode) {
       return {
@@ -7638,6 +7706,8 @@ export async function buildChecks(
     // v0.35.0.0+ reranker_health — read JSONL audit; warn on auth or volume.
     progress.heartbeat('reranker_health');
     checks.push(await checkRerankerHealth(engine));
+    progress.heartbeat('search_contract_v1');
+    checks.push(await checkSearchContractV1Health(engine));
     // v0.41.18.0 batch_retry_health — Supavisor circuit-breaker incident
     // surfacing via the batch-retry audit JSONL. Codex H-9 thresholds.
     progress.heartbeat('batch_retry_health');
