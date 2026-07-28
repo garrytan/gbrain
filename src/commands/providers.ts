@@ -134,7 +134,7 @@ EXAMPLES
   gbrain providers list
   gbrain providers test --model openai:text-embedding-3-large
   gbrain providers test --touchpoint chat --model anthropic:claude-haiku-4-5
-  gbrain providers test --touchpoint chat --model deepseek:deepseek-chat
+  gbrain providers test --touchpoint chat --model deepseek:deepseek-v4-flash
   gbrain providers env ollama
   gbrain providers explain --json
 `);
