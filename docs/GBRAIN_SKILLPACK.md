@@ -91,6 +91,7 @@ Wiring up your life.
 | [Email-to-Brain](../recipes/email-to-brain.md) | Gmail messages flow into entity pages via deterministic collector |
 | [X-to-Brain](../recipes/x-to-brain.md) | Twitter monitoring with deletion detection + engagement velocity |
 | [Calendar-to-Brain](../recipes/calendar-to-brain.md) | Google Calendar events become searchable daily brain pages |
+| [Contacts-to-Brain](../recipes/contacts-to-brain.md) | Google Contacts become canonical people/ pages plus an email-to-slug alias map |
 | [Meeting Sync](../recipes/meeting-sync.md) | Circleback transcripts auto-import with attendee propagation |
 
 ## Administration

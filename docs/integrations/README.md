@@ -34,6 +34,7 @@ These are integration recipes your agent can set up for you. Run
 | [email-to-brain](../../recipes/email-to-brain.md) | Sense | credential-gateway | Gmail messages flow into entity pages via deterministic collector | 20 min |
 | [x-to-brain](../../recipes/x-to-brain.md) | Sense | — | Twitter timeline, mentions, keyword monitoring with deletion detection | 15 min |
 | [calendar-to-brain](../../recipes/calendar-to-brain.md) | Sense | credential-gateway | Google Calendar events become searchable daily brain pages | 20 min |
+| [contacts-to-brain](../../recipes/contacts-to-brain.md) | Sense | credential-gateway | Google Contacts become canonical people/ pages plus an email-to-slug alias map | 15 min |
 | [meeting-sync](../../recipes/meeting-sync.md) | Sense | — | Circleback meeting transcripts auto-import with attendee propagation | 15 min |
 
 ### Manual Integration Guides

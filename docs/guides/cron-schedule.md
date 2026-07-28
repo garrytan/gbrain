@@ -22,6 +22,7 @@ fixed. You wake up and the brain is smarter than when you went to sleep.
 | Every 30 min | X/Twitter collection | Create/update media pages, entity extraction | [x-to-brain](../../recipes/x-to-brain.md) |
 | 3x/day (weekdays) | Meeting sync | Full ingestion + attendee propagation | [meeting-sync](../../recipes/meeting-sync.md) |
 | Weekly | Calendar sync | Daily files + attendee enrichment | [calendar-to-brain](../../recipes/calendar-to-brain.md) |
+| 2x/week | Contacts sync | Staging files + alias map + people/ enrichment (syncToken expires in 7 days) | [contacts-to-brain](../../recipes/contacts-to-brain.md) |
 | Daily AM | Morning briefing | Search calendar attendees, deal status, active threads | [briefing skill](../../skills/briefing/SKILL.md) |
 | Weekly | Brain maintenance | `gbrain doctor`, embed stale, orphan detection | [maintain skill](../../skills/maintain/SKILL.md) |
 | Nightly | Dream cycle | Entity sweep, enrich thin spots, fix citations | See below |
