@@ -231,6 +231,44 @@ describe('runExtractFacts — happy path', () => {
     expect(rows.rows[0].fact).toBe('A');
   });
 
+  test('malformed fence rows make the page non-authoritative and preserve its indexed facts', async () => {
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | A | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |
+| 2 | B | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+    ));
+    await runExtractFacts(engine, { slugs: ['people/alice'] });
+
+    // A hand edit corrupts row 2. The parser can still recover row 1, but
+    // that partial result is not an authoritative replacement for the page.
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | A | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |
+| 2 | B | bogus | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+    ));
+    await putPage('people/bob', FACT_FENCE(
+      `| 1 | Clean | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+    ));
+
+    const r = await runExtractFacts(engine, { slugs: ['people/alice', 'people/bob'] });
+
+    expect(r.warnings.some(w => w.includes('FACTS_TABLE_MALFORMED'))).toBe(true);
+    expect(r.pagesScanned).toBe(2);
+    expect(r.factsInserted).toBe(1);
+    expect(r.factsDeleted).toBe(0);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      `SELECT fact FROM facts WHERE source_markdown_slug = 'people/alice' ORDER BY row_num`,
+    );
+    expect(rows.rows.map((row: { fact: string }) => row.fact)).toEqual(['A', 'B']);
+
+    // A warning is page-local: clean pages in the same cycle still reconcile.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cleanRows = await (engine as any).db.query(
+      `SELECT fact FROM facts WHERE source_markdown_slug = 'people/bob'`,
+    );
+    expect(cleanRows.rows.map((row: { fact: string }) => row.fact)).toEqual(['Clean']);
+  });
+
   test('page with no facts fence → DB facts for that page wiped (empty fence reconciles to empty index)', async () => {
     await putPage('people/alice', FACT_FENCE(
       `| 1 | seeded | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |`,

@@ -17,11 +17,12 @@
  *      DB rows need cleanup (#1781 — the unconditional wipe-and-reinsert
  *      made every cycle non-idempotent, re-appending duplicate rows).
  *
- * After the phase, the DB index for every affected page matches the
- * fence's canonical (claim, source) row set (modulo embeddings +
- * runtime-derived fields). Pages with no fence wipe DB rows for that
- * page coordinate only; legacy NULL-source_markdown_slug rows survive
- * because deleteFactsForPage targets source_markdown_slug = slug only.
+ * After the phase, the DB index for every cleanly parsed affected page
+ * matches the fence's canonical (claim, source) row set (modulo embeddings
+ * + runtime-derived fields). Warning-bearing parses are non-authoritative
+ * and preserve that page's existing index. Pages with no fence wipe DB rows
+ * for that page coordinate only; legacy NULL-source_markdown_slug rows
+ * survive because deleteFactsForPage targets source_markdown_slug = slug only.
  *
  * Empty-fence guard (Codex R2-#7; #2484): the phase refuses to do its
  * destructive reconciliation pass when genuinely-backfillable legacy
@@ -303,6 +304,11 @@ export async function runExtractFacts(
       result.warnings.push(
         ...parsed.warnings.map(w => `${slug}: ${w}`),
       );
+      // The parser deliberately skips malformed rows and returns any rows it
+      // could still recover. That partial result is not authoritative: using
+      // it for reconciliation would interpret skipped rows as deletions.
+      // Preserve this page's existing index and continue with other pages.
+      continue;
     }
 
     if (parsed.facts.length > 0) result.pagesWithFacts += 1;
