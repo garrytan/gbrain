@@ -16,8 +16,15 @@ import {
 import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
+const stdinTTYDescriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
 
 beforeAll(async () => {
+  // Keep the non-TTY contract deterministic even when the outer CI runner
+  // allocates a pseudo-terminal.
+  Object.defineProperty(process.stdin, 'isTTY', {
+    value: false,
+    configurable: true,
+  });
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -25,6 +32,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  if (stdinTTYDescriptor) {
+    Object.defineProperty(process.stdin, 'isTTY', stdinTTYDescriptor);
+  } else {
+    delete (process.stdin as unknown as { isTTY?: boolean }).isTTY;
+  }
 });
 
 beforeEach(async () => {
@@ -185,7 +197,7 @@ describe('runModePicker non-TTY surfaces full matrix + [AGENT] directive', () =>
 
 describe('runModePicker — non-TTY auto-select + idempotent', () => {
   test('non-TTY auto-selects + writes config + emits operator hint', async () => {
-    // Bun test runs non-TTY by default.
+    // This file pins stdin to non-TTY, including under pseudo-terminal CI.
     const picked = await runModePicker(engine);
     // Default model unset → balanced. Should write search.mode.
     const stored = await engine.getConfig('search.mode');

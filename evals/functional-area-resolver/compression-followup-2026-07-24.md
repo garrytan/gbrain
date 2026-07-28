@@ -148,6 +148,40 @@ sha256 e724372dd99d1f4d9e30750246c2a6889a6acaef8e221bef34a6bef2409dad26
 Limit: author and scorer were context-isolated sessions of the same model.
 This is stronger than the development corpus, but not perfect blindness.
 
+## Independent-model confirmation: Kimi K3/OpenCode
+
+The same frozen corpus and variant hashes were sent through the configured
+Hermes `kimi-coding:k3` route. Since the corpus author used `gpt-5.6-sol`,
+this is an independent scoring model.
+
+| Variant | Strict calls | Positive | Abstention |
+|---|---:|---:|---:|
+| `functional-areas` | **85/90 (94.4%)** | 67/72 | **18/18** |
+| `yaml-compressed` | 83/90 (92.2%) | 65/72 | **18/18** |
+| `hierarchical` | incomplete | — | — |
+
+YAML's independent-model delta is -2.2pp, inside the predeclared -3pp
+non-inferiority margin, with no abstention regression. Paired disagreements
+were 1 reference-wrong/YAML-right versus 3 reference-right/YAML-wrong.
+
+The route exhausted its billing-cycle quota after 219 successful calls. All
+51 failures were hierarchical HTTP 403 usage-limit responses; they are not
+routing mistakes and the raw `30/90` summary for hierarchy is invalid. No
+fallback or quota purchase was used.
+
+```text
+/root/audit-artifacts/gbrain-consolidation-20260728/resolver-cli-eval-2026-07-28T18-21-27-460Z.jsonl
+sha256 94c074f5af5b266811f537b7cf0898fa6208572d50e6ac631066881557ed9e4c
+provider kimi-coding
+model k3
+reference errors 0/90
+YAML errors 0/90
+hierarchical transport errors 51/90
+```
+
+Decision: independent Kimi evidence confirms YAML as the preferred
+non-inferior candidate. It does not establish an accuracy improvement.
+
 ## Canonical harness evaluation (not run)
 
 After an operator approves the external API cost and provides

@@ -192,6 +192,34 @@ sha256 e724372dd99d1f4d9e30750246c2a6889a6acaef8e221bef34a6bef2409dad26
 This is stronger than the development comparison but not perfectly blind:
 the author and scorer were isolated sessions of the same configured model.
 
+## Independent Kimi K3 validation (2026-07-28)
+
+The frozen isolated-author corpus was then scored with the independently
+configured Hermes route `kimi-coding:k3` (Kimi K3/OpenCode). The authoring
+session used `gpt-5.6-sol`, so this removes the same-model author/scorer
+limitation for the completed comparison.
+
+| Variant | Strict calls | Positive | Abstention | Per-repeat |
+|---|---:|---:|---:|---|
+| `functional-areas` | **85/90 (94.4%)** | 67/72 | **18/18** | 28/30, 29/30, 28/30 |
+| `yaml-compressed` | 83/90 (92.2%) | 65/72 | **18/18** | 27/30, 28/30, 28/30 |
+| `hierarchical` | **incomplete** | — | — | quota exhausted |
+
+YAML is -2.2pp against the reference and therefore passes the predeclared
+-3pp non-inferiority gate, with identical abstention. Paired calls show one
+reference failure fixed by YAML and three reference successes regressed by
+YAML. This supports non-inferiority, not superiority.
+
+Kimi/OpenCode reached its billing-cycle usage limit after 219 successful
+responses. The remaining 51 hierarchical calls returned HTTP 403, so no
+hierarchical score is reported. No fallback model or paid quota upgrade was
+used.
+
+```text
+/root/audit-artifacts/gbrain-consolidation-20260728/resolver-cli-eval-2026-07-28T18-21-27-460Z.jsonl
+sha256 94c074f5af5b266811f537b7cf0898fa6208572d50e6ac631066881557ed9e4c
+```
+
 ## How to reproduce
 
 From the gbrain repo root with `ANTHROPIC_API_KEY` set:
