@@ -4,9 +4,10 @@ Created 2026-07-24; evidence classification corrected 2026-07-28.
 
 ## Status
 
-`yaml-compressed.md` and `hierarchical.md` are candidate resolver variants,
-not validated replacements for `functional-areas.md`. They now have
-configured-CLI development evidence, but no blind canonical-harness result.
+`yaml-compressed.md` and `hierarchical.md` remain candidate resolver variants,
+not production replacements. An isolated-author configured-CLI comparison
+supports `yaml-compressed` as the preferred non-inferior candidate; a fully
+independent or canonical-harness result is still pending.
 
 The earlier draft reported `20/20` from a deterministic “local
 LLM-as-judge”. No JSONL receipt, model identifier, prompt hash, token usage,
@@ -100,6 +101,52 @@ wording where two listed slugs are plausible.
 
 The three passes are independent calls, not provider-controlled seeds: the
 Hermes CLI does not expose a seed in this invocation.
+
+## Isolated-author frozen comparison
+
+Before scoring, a separate Hermes session received only baseline catalog
+descriptions for skills common to all variants. It did not receive candidate
+content or previous results. Its 30-case output was validated without editing
+and committed before evaluation:
+
+```text
+fixtures-isolated-author-20260728.jsonl
+24 positive cases, 24 distinct targets, 6 abstentions
+sha256 6c8205a114409ea385da29ffc4652731278000ffa075e942e9f17b9595b39820
+freeze commit c6899005
+```
+
+Configured-CLI scoring: 3 variants × 30 fixtures × 3 repeats = 270 calls,
+zero CLI errors.
+
+| Variant | Strict calls | Positive | Abstention | Per-repeat |
+|---|---:|---:|---:|---|
+| `functional-areas` | 82/90 (91.1%) | 64/72 | **18/18** | 27, 27, 28 / 30 |
+| **`yaml-compressed`** | **83/90 (92.2%)** | **65/72** | **18/18** | 28, 28, 27 / 30 |
+| `hierarchical` | 81/90 (90.0%) | 63/72 | **18/18** | 27, 27, 27 / 30 |
+
+Paired disagreements against the reference:
+
+```text
+yaml-compressed: reference-wrong/YAML-right=2, reference-right/YAML-wrong=1
+hierarchical:    reference-wrong/hierarchy-right=0, reference-right/hierarchy-wrong=1
+```
+
+The evidence supports non-inferiority, not a statistically established
+accuracy gain. YAML meets the predeclared gate (delta +1.1pp, abstention
+equal), is 60% smaller than the reference, and is the preferred candidate.
+Hierarchical offers no measured benefit here.
+
+Receipt:
+
+```text
+/root/audit-artifacts/gbrain-consolidation-20260728/resolver-cli-eval-2026-07-28T18-07-15-894Z.jsonl
+sha256 e724372dd99d1f4d9e30750246c2a6889a6acaef8e221bef34a6bef2409dad26
+270 run rows, 270 unique keys, 0 non-zero CLI exits
+```
+
+Limit: author and scorer were context-isolated sessions of the same model.
+This is stronger than the development corpus, but not perfect blindness.
 
 ## Canonical harness evaluation (not run)
 

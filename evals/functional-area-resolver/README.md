@@ -157,6 +157,41 @@ This delta is not an unbiased compression estimate: 9/18 reference failures
 are on `cron-scheduler`, `reports`, and `migrate`, three targets added to the
 candidate dispatcher lists after this development corpus was reviewed.
 
+## Isolated-author comparison (2026-07-28)
+
+A separate Hermes session authored a frozen corpus from baseline catalog
+descriptions common to all three variants. It received neither candidate
+content nor prior results. The corpus has 30 cases: 24 distinct positive
+skills and 6 abstentions.
+
+The same configured CLI then scored all three frozen variants over three
+independent repeats (270 calls):
+
+| Variant | Strict calls | Positive | Abstention | Per-repeat |
+|---|---:|---:|---:|---|
+| `functional-areas` | 82/90 (91.1%) | 64/72 | **18/18** | 27/30, 27/30, 28/30 |
+| **`yaml-compressed`** | **83/90 (92.2%)** | **65/72** | **18/18** | 28/30, 28/30, 27/30 |
+| `hierarchical` | 81/90 (90.0%) | 63/72 | **18/18** | 27/30, 27/30, 27/30 |
+
+Paired against the reference, YAML fixes two calls and regresses one;
+hierarchical fixes none and regresses one. These tiny disagreement counts do
+not establish superiority, but YAML passes the predeclared non-inferiority
+gate (no worse than -3pp, abstention no worse), is smallest, and is therefore
+the preferred candidate. No production resolver was changed.
+
+Evidence:
+
+```text
+fixtures-isolated-author-20260728.jsonl
+sha256 6c8205a114409ea385da29ffc4652731278000ffa075e942e9f17b9595b39820
+
+/root/audit-artifacts/gbrain-consolidation-20260728/resolver-cli-eval-2026-07-28T18-07-15-894Z.jsonl
+sha256 e724372dd99d1f4d9e30750246c2a6889a6acaef8e221bef34a6bef2409dad26
+```
+
+This is stronger than the development comparison but not perfectly blind:
+the author and scorer were isolated sessions of the same configured model.
+
 ## How to reproduce
 
 From the gbrain repo root with `ANTHROPIC_API_KEY` set:
@@ -251,6 +286,7 @@ evals/functional-area-resolver/
 ├── fixtures.jsonl                                  # 20 training fixtures
 ├── fixtures-held-out.jsonl                         # 5 historical held-out fixtures
 ├── fixtures-compression-validation.jsonl           # 20 non-blind development fixtures
+├── fixtures-isolated-author-20260728.jsonl          # 30 frozen isolated-author fixtures
 ├── variants/
 │   ├── baseline.md                                 # 25KB, PII-scrubbed from production
 │   ├── functional-areas.md                         # 13KB, PII-scrubbed from production

@@ -314,6 +314,29 @@ test('compression validation corpus is parseable and positive targets are struct
   }
 });
 
+test('isolated-author corpus is frozen, balanced, and reachable in all compared variants', () => {
+  const evalDir = import.meta.dir;
+  const raw = readFileSync(join(evalDir, 'fixtures-isolated-author-20260728.jsonl'), 'utf8');
+  const fixtures = parseFixtures(raw);
+  expect(hashContent(raw)).toBe('6c8205a114409ea3');
+  expect(fixtures).toHaveLength(30);
+  expect(fixtures.filter(f => f.expected_skill === null)).toHaveLength(6);
+  expect(new Set(
+    fixtures.filter(f => f.expected_skill !== null).map(f => f.expected_skill),
+  ).size).toBe(24);
+
+  for (const name of ['functional-areas', 'yaml-compressed', 'hierarchical']) {
+    const dispatchers = parseDispatcherLists(
+      readFileSync(join(evalDir, 'variants', `${name}.md`), 'utf8'),
+    );
+    const reachable = new Set([...dispatchers.values()].flatMap(set => [...set]));
+    const missing = fixtures
+      .map(f => f.expected_skill)
+      .filter((skill): skill is string => skill !== null && !reachable.has(skill));
+    expect(missing).toEqual([]);
+  }
+});
+
 test('parseArgs: --limit', () => {
   expect(parseArgs(['--limit', '5']).limit).toBe(5);
 });
