@@ -2,6 +2,103 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.70.0] - 2026-07-28
+
+**A dry run now tells you exactly what GBrain would sync without changing your repository or index.**
+
+`gbrain sync --dry-run` used to have a dangerous gap: while preparing its
+answer, it could still pull or re-clone a repository, clear recovery state, and
+delete an indexed page that the selected strategy no longer accepted. A command
+presented as a preview could therefore leave the brain different afterward.
+
+This release builds one immutable sync plan first, then either prints it or
+applies that exact plan. Automation can also pin the repository commit, source
+bookmark, and clean-worktree requirement. If any of them changed, GBrain
+refuses the apply instead of guessing.
+
+### How to use it
+
+Capture the source bookmark with `gbrain sources list --json` and the target
+commit with `git rev-parse HEAD`, then run:
+
+```bash
+gbrain sync \
+  --strategy auto \
+  --source "$SOURCE_ID" \
+  --repo "$REPO_ROOT" \
+  --no-pull \
+  --expected-target "$TARGET_SHA" \
+  --expected-bookmark "$BOOKMARK_SHA_OR_NONE" \
+  --require-clean \
+  --no-embed \
+  --no-extract \
+  --dry-run \
+  --json
+```
+
+Use the literal `none` when the source has no bookmark. Inspect the receipt,
+then remove `--dry-run` and repeat the same command to apply.
+
+### What changes in practice
+
+| Situation | Before | Now |
+|---|---|---|
+| A tracked page falls outside the selected strategy | Preview could delete its indexed row | Receipt reports the operation; preview changes nothing |
+| HEAD, bookmark, or worktree changes between checks | Sync could use different evidence | Apply refuses with a typed reason |
+| An automation caller reads JSON | Some paths printed multiple documents | One schema-1 document is written to stdout |
+| A source is restored while purge is waiting | Deletion could race the restore | Lifecycle lock and archived-state recheck preserve it |
+
+### What is safe to know about
+
+The preview takes only the transient per-source lock. It does not pull, clone,
+initialize Git, import or delete pages, clear checkpoints, advance bookmarks,
+write strategy markers, extract, or embed. Exact-target runs read file bytes
+from a private materialization of the captured commit, not from a changing live
+checkout. Ordinary unpinned sync remains available for interactive use.
+
+## To take advantage of v0.42.70.0
+
+Upgrade normally:
+
+```bash
+gbrain upgrade
+```
+
+No schema migration is required. For an automated repository sync, update the
+caller to capture the current source bookmark and full 40-character commit,
+preview with the command above, and apply only after validating the receipt.
+
+### Itemized changes
+
+#### Added
+
+- Immutable `SyncPlan` evidence with deterministic operation counts, a capped
+  affected sample, preservation evidence, and a SHA-256 digest over the full
+  mutation set.
+- Exact-target preconditions for commit, bookmark, and worktree cleanliness,
+  plus one schema-1 JSON success or error envelope.
+- Source-list JSON fields for the current bookmark and last successful sync
+  strategy.
+
+#### Fixed
+
+- Every repository, checkpoint, page, failure-ledger, bookmark, and enrichment
+  mutation now stays behind the dry-run boundary.
+- Exact-target apply uses the captured commit's file bytes, history, timestamps,
+  delete slugs, and checkpoint provenance.
+- Paired runs refuse incomplete failure-skipping paths and fail closed when a
+  source anchor changes before the final write.
+- Source remove, purge, restore, re-clone, and sync share a canonical lifecycle
+  lock. Explicit and expiry purge recheck archived state and never delete the
+  protected `default` source.
+- `sources attach` atomically replaces the marker entry instead of following a
+  raced symlink.
+
+#### Documentation
+
+- `docs/guides/live-sync.md` now includes the paste-ready paired preview/apply
+  flow, receipt guarantees, deferred enrichment semantics, and recovery notes.
+
 ## [0.42.67.0] - 2026-07-28
 
 **If you develop GBrain on Windows, the test and check commands now actually run. Until this release they were quietly doing almost nothing.**
