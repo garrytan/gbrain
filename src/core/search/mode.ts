@@ -766,7 +766,17 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // written between the #3391 stale-fix (which changes which chunks count as
 // current) and the operator's migration run. Same one-time global cold-miss
 // pattern as the bumps above.
-export const KNOBS_HASH_VERSION = 13;
+//
+// bump 13→15 (#3515): `detail` folds into the key via ctx.detail (det=).
+// detail is result-affecting by design — it gates dedup, chunk-source
+// filtering, and the compiled_truth boost — but was absent from the key, so
+// a `--detail low` write (compiled-truth-only result set) was served to a
+// default `medium` lookup for the whole TTL. Same contamination class as
+// [CDX-4], floor_ratio (v=3), and relationalRetrieval (v=10). v=14 is
+// claimed by in-flight #3514 (compiled_truth boost scope, #3430), so this
+// lands as v=15 per the D8 sequencing convention (see the v=4/v=5 note
+// above). Same one-time global cold-miss pattern as the bumps above.
+export const KNOBS_HASH_VERSION = 15;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -805,6 +815,17 @@ export interface KnobsHashContext {
    * 'none' for legacy callers that don't thread excludes.
    */
   hardExcludes?: string[];
+  /**
+   * v=15 (#3515): the EFFECTIVE detail level for this call — per-call
+   * SearchOpts.detail, or the auto-detected level when the caller didn't
+   * specify (hybridSearchCached threads `opts.detail ?? autoDetectDetail(query)`,
+   * matching what bare hybridSearch resolves). detail gates dedup,
+   * chunk-source filtering, and the compiled_truth boost, so a detail=low
+   * write must never be served to a detail=medium lookup. Lives in ctx (not
+   * ResolvedSearchKnobs) because it's per-call, not a mode knob — same path
+   * as col=/prov=. Undefined falls back to 'medium' (the documented default).
+   */
+  detail?: 'low' | 'medium' | 'high';
 }
 
 export function knobsHash(
@@ -898,6 +919,11 @@ export function knobsHash(
     // across processes. Sorted copy so ['a/','b/'] and ['b/','a/'] hash
     // identically; undefined falls back to 'none' for legacy callers.
     `hx=${ctx?.hardExcludes ? [...ctx.hardExcludes].sort().join(',') : 'none'}`,
+    // v=15 addition (#3515, append-only): effective detail level. detail
+    // gates dedup, chunk-source filtering, and the compiled_truth boost, so
+    // a low write (compiled-truth-only set) must never be served to a
+    // medium/high lookup. Undefined falls back to 'medium' (the default).
+    `det=${ctx?.detail ?? 'medium'}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));

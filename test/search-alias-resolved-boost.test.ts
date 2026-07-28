@@ -89,7 +89,7 @@ describe('alias_resolved boost stage', () => {
 });
 
 describe('KNOBS_HASH_VERSION', () => {
-  it('is 13 (12→13 embedding-provider migration invalidates rows written against the prior embedding space, #3390)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(13);
+  it('is 15 (13→15 detail fold makes detail-contaminated rows unreachable, #3515; v=14 claimed by in-flight #3514)', () => {
+    expect(KNOBS_HASH_VERSION).toBe(15);
   });
 });

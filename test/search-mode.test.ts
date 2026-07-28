@@ -413,7 +413,24 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // #3390/#3391: bumped 12→13 for the embedding-provider migration wave —
     // legacy callers hash prov=default before AND after a provider swap, so
     // pre-migration cache rows must become unreachable on upgrade.
-    expect(KNOBS_HASH_VERSION).toBe(13);
+    // #3515: bumped 13→15 to fold the effective detail level (det=) — a
+    // detail=low write must not be served to a detail=medium lookup. v=14
+    // is claimed by in-flight #3514 (#3430 compiled_truth boost scope).
+    expect(KNOBS_HASH_VERSION).toBe(15);
+  });
+
+  test('#3515: detail set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
+    const knobs = resolveSearchMode({ mode: 'balanced' });
+    const low = knobsHash(knobs, { detail: 'low' });
+    const medium = knobsHash(knobs, { detail: 'medium' });
+    const high = knobsHash(knobs, { detail: 'high' });
+    const unset = knobsHash(knobs);
+    expect(low).not.toBe(medium);
+    expect(medium).not.toBe(high);
+    expect(low).not.toBe(high);
+    // Undefined falls back to 'medium' — the documented default — so legacy
+    // callers that don't thread detail share the default-detail rows.
+    expect(unset).toBe(medium);
   });
 
   test('T1 (codex): floor_ratio set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -578,8 +595,8 @@ describe('v0.40.4 — graph_signals knob', () => {
 });
 
 describe('v0.42.3.0 — autocut knobs', () => {
-  test('KNOBS_HASH_VERSION is 13 (12→13 embedding-migration wave, #3390/#3391)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(13);
+  test('KNOBS_HASH_VERSION is 15 (13→15 detail fold #3515; v=14 claimed by in-flight #3514)', () => {
+    expect(KNOBS_HASH_VERSION).toBe(15);
   });
 
   test('bundle defaults: conservative off, balanced/tokenmax on @0.20', () => {
