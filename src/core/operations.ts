@@ -1607,6 +1607,7 @@ const search: Operation = {
   description: SEARCH_DESCRIPTION,
   params: {
     query: { type: 'string', required: true },
+    type: { type: 'string', description: 'Filter to a single page type' },
     limit: { type: 'number', description: 'Max results (default 20)' },
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
     mode: { type: 'string', description: 'Search mode (conservative|balanced|tokenmax). Local callers only.' },
@@ -1616,6 +1617,7 @@ const search: Operation = {
     const queryText = p.query as string;
     const limit = (p.limit as number) || 20;
     const offset = (p.offset as number) || 0;
+    const pageType = typeof p.type === 'string' && p.type.length > 0 ? p.type as PageType : undefined;
     // #2561: unqualified trusted-local search spans federated sources.
     const scope = federatedSearchScope(ctx);
 
@@ -1630,7 +1632,7 @@ const search: Operation = {
     const keywordOnly = (await ctx.engine.getConfig('search.mcp_keyword_only')) === 'true';
 
     if (keywordOnly) {
-      const raw = await ctx.engine.searchKeyword(queryText, { limit, offset, ...scope });
+      const raw = await ctx.engine.searchKeyword(queryText, { limit, offset, type: pageType, ...scope });
       const results = dedupResults(raw);
       stampEvidenceSafe(results);
       // #1699: the keyword-only opt-out must STILL surface the content_flag
@@ -1653,6 +1655,7 @@ const search: Operation = {
       limit,
       offset,
       expansion: false,
+      type: pageType,
       ...scope,
       ...(perCallMode ? { mode: perCallMode } : {}),
       onMeta: (m) => { capturedMeta = m; },
@@ -1681,6 +1684,7 @@ const query: Operation = {
      *  CLI loads the file, base64-encodes, and passes through `image`). */
     image: { type: 'string', description: 'Base64-encoded image bytes for image-similarity search (CLI: --image <path>).' },
     image_mime: { type: 'string', description: 'MIME type for the image bytes (auto-derived from path on CLI; required when calling op directly).' },
+    type: { type: 'string', description: 'Filter to a single page type' },
     limit: { type: 'number', description: 'Max results (default 20)' },
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
     expand: { type: 'boolean', description: 'Enable multi-query expansion (default: true)' },
@@ -1772,6 +1776,7 @@ const query: Operation = {
     const queryText = p.query as string | undefined;
     const imageData = p.image as string | undefined;
     const imageMime = (p.image_mime as string) || 'image/jpeg';
+    const pageType = typeof p.type === 'string' && p.type.length > 0 ? p.type as PageType : undefined;
     const embeddingColumnParam =
       typeof p.embedding_column === 'string' && p.embedding_column.length > 0
         ? (p.embedding_column as string)
@@ -1803,6 +1808,7 @@ const query: Operation = {
         limit: (p.limit as number) || 20,
         offset: (p.offset as number) || 0,
         embeddingColumn: 'embedding_image',
+        type: pageType,
         ...querySourceScope,
       });
       return results;
@@ -1832,6 +1838,7 @@ const query: Operation = {
       expandFn: expand ? expandQuery : undefined,
       // T4/D5 — per-call mode (local/trusted only; remote ignored).
       ...((): { mode?: string } => { const m = resolvePerCallMode(ctx, p.mode); return m ? { mode: m } : {}; })(),
+      type: pageType,
       detail,
       language: (p.lang as string) || undefined,
       symbolKind: (p.symbol_kind as string) || undefined,

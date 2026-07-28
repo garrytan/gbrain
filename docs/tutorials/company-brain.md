@@ -223,14 +223,14 @@ export GBRAIN_REMOTE_CLIENT_ID=<Alice's client_id>
 export GBRAIN_REMOTE_CLIENT_SECRET=<Alice's client_secret>
 export GBRAIN_REMOTE_MCP_URL=https://brain.acme-co.com/mcp
 
-gbrain search "performance review" --remote
+gbrain search "performance review"
 ```
 
 Alice should see results only from `customers` and `shared`. The performance-review notes live in `internal`, which she's not scoped to read. She shouldn't see them.
 
 ```bash
 # Terminal 2, as Bob (export his credentials similarly)
-gbrain search "performance review" --remote
+gbrain search "performance review"
 ```
 
 Bob should see the performance-review notes from `internal`, plus anything related from `shared`. He shouldn't see anything that lives only in `customers`.
@@ -518,7 +518,7 @@ The first sync embeds every page, which takes time. Check `gbrain sources status
 
 ### "I see a page I shouldn't see"
 
-This shouldn't happen, but if you suspect it, run `gbrain search <query> --remote --json` as the constrained client and inspect the `source_id` field on every returned result. Every row should be in the client's `--federated-read` set. If one isn't, file an issue with the exact slug and source IDs.
+This shouldn't happen, but if you suspect it, run `gbrain search <query> --json` as the constrained client and inspect the `source_id` field on every returned result. Every row should be in the client's `--federated-read` set. If one isn't, file an issue with the exact slug and source IDs.
 
 ### "The synthesized answer is wrong"
 

@@ -973,6 +973,7 @@ export async function hybridSearch(
     // per-engine searchKeyword / searchVector apply the filters at SQL level.
     language: opts?.language,
     symbolKind: opts?.symbolKind,
+    type: opts?.type,
     // v0.33: multi-type filter for whoknows ('person','company'). Pushes
     // type filter to SQL level so the limit budget goes to candidate-typed
     // pages instead of being eaten by note/transcript/article pages.

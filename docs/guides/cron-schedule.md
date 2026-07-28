@@ -74,7 +74,7 @@ infer your current location and timezone. All times shown in YOUR local timezone
 // Hold the notification, fold into morning briefing
 
 get_user_timezone():
-  calendar = gbrain search "flight" --type calendar --recent 7d
+  calendar = gbrain query "flight" --type calendar --since 7d
   if recent_flight:
     return infer_timezone(flight.destination)
   return config.default_timezone  // fallback: US/Pacific

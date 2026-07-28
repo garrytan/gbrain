@@ -97,7 +97,7 @@ Run these queries to populate the briefing sections:
 - `gbrain query "active deals status"` -- deal pipeline snapshot
 - `gbrain query "meetings this week"` -- recent meeting pages with insights
 - `gbrain query "pending commitments follow-ups"` -- open threads and action items
-- `gbrain search --type person --sort updated --limit 10` -- people in play
+- `gbrain list --type person --sort updated_desc --limit 10` -- people in play
 
 ## Output Format
 

@@ -20,6 +20,69 @@ describe('parseOpArgs', () => {
     ])).toThrow('Unknown flag: -n');
   });
 
+  test('accepts --json as a CLI render flag for shared operations', () => {
+    const params = parseOpArgs(operationsByName.query, [
+      'type:concept',
+      '--limit',
+      '10000',
+      '--json',
+    ]);
+
+    expect(params).toEqual({
+      query: 'type:concept',
+      limit: 10000,
+      __cli_render_json: true,
+    });
+  });
+
+  test('accepts get --raw as a CLI render flag', () => {
+    const params = parseOpArgs(operationsByName.get_page, [
+      'notes/example',
+      '--raw',
+    ]);
+
+    expect(params).toEqual({
+      slug: 'notes/example',
+      __cli_render_raw: true,
+    });
+  });
+
+  test('honors -- as end-of-options for dash-leading positional text', () => {
+    const params = parseOpArgs(operationsByName.query, [
+      '--',
+      '--json',
+    ]);
+
+    expect(params).toEqual({
+      query: '--json',
+    });
+  });
+
+  test('accepts --type on search and query as a page-type filter', () => {
+    expect(parseOpArgs(operationsByName.search, [
+      'founders',
+      '--type',
+      'person',
+      '--limit',
+      '10',
+    ])).toEqual({
+      query: 'founders',
+      type: 'person',
+      limit: 10,
+    });
+
+    expect(parseOpArgs(operationsByName.query, [
+      'imported_from:markdown-greenfield',
+      '--type',
+      'atom',
+      '--json',
+    ])).toEqual({
+      query: 'imported_from:markdown-greenfield',
+      type: 'atom',
+      __cli_render_json: true,
+    });
+  });
+
   test('keeps dash-leading positional text for commands that accept it', () => {
     const params = parseOpArgs(operationsByName.query, [
       '-why does this still parse?',
