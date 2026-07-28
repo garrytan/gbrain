@@ -105,6 +105,48 @@ export function resolveImageAssetPath(
   return join(sourceLocalPath ?? fallbackRepoRoot, storagePath);
 }
 
+export interface DoctorImageAssetRow {
+  storage_path: string;
+  content_hash: string | null;
+  source_id: string | null;
+  source_local_path: string | null;
+}
+
+/**
+ * Count logical image assets, not files-table rows. Historical imports may
+ * leave both a basename-only row and a source-relative row for the same hash;
+ * one valid path is enough to prove that image is present.
+ */
+export function summarizeImageAssetPresence(
+  rows: DoctorImageAssetRow[],
+  fallbackRepoRoot: string,
+  pathExists: (path: string) => boolean = existsSync,
+): { total: number; missing: number; missingPaths: string[] } {
+  const assets = new Map<string, { present: boolean; examplePath: string }>();
+  for (const row of rows) {
+    const key = row.content_hash || `${row.source_id ?? 'default'}\0${row.storage_path}`;
+    const absolutePath = resolveImageAssetPath(
+      row.storage_path,
+      row.source_local_path,
+      fallbackRepoRoot,
+    );
+    const present = pathExists(absolutePath);
+    const current = assets.get(key);
+    if (!current) {
+      assets.set(key, { present, examplePath: row.storage_path });
+    } else if (present) {
+      current.present = true;
+      current.examplePath = row.storage_path;
+    }
+  }
+  const missingPaths = Array.from(assets.values())
+    .filter(asset => !asset.present)
+    .slice(0, 5)
+    .map(asset => asset.examplePath);
+  const missing = Array.from(assets.values()).filter(asset => !asset.present).length;
+  return { total: assets.size, missing, missingPaths };
+}
+
 /**
  * Structured doctor report. Stable shape consumed by:
  *   - gbrain doctor --json (CLI)
@@ -7524,42 +7566,29 @@ export async function buildChecks(
   if (engine) {
     progress.heartbeat('image_assets');
     try {
-      const rows = await engine.executeRaw<{
-        storage_path: string;
-        source_id: string | null;
-        source_local_path: string | null;
-      }>(
-        `SELECT f.storage_path, f.source_id, s.local_path AS source_local_path
+      const rows = await engine.executeRaw<DoctorImageAssetRow>(
+        `SELECT f.storage_path, f.content_hash, f.source_id,
+                s.local_path AS source_local_path
            FROM files f
            LEFT JOIN sources s ON s.id = COALESCE(f.source_id, 'default')
           WHERE f.mime_type LIKE 'image/%'
           LIMIT 1000`
       );
-      let vanished = 0;
-      const vanishedPaths: string[] = [];
-      const fs = await import('node:fs');
       // storage_path is repo-relative for sync-ingested assets. Resolving
       // against cwd made this check a false-positive WARN whenever doctor
-      // ran outside the brain repo.
+      // ran outside the brain repo. On multi-source brains each row must use
+      // its owning source's local_path, not the global sync.repo_path.
       const repoRoot = (await engine.getConfig('sync.repo_path')) ?? process.cwd();
-      for (const r of rows) {
-        const abs = resolveImageAssetPath(r.storage_path, r.source_local_path, repoRoot);
-        try {
-          fs.statSync(abs);
-        } catch {
-          vanished++;
-          if (vanishedPaths.length < 5) vanishedPaths.push(r.storage_path);
-        }
-      }
-      if (rows.length === 0) {
+      const presence = summarizeImageAssetPresence(rows, repoRoot);
+      if (presence.total === 0) {
         checks.push({ name: 'image_assets', status: 'ok', message: 'No image assets indexed yet' });
-      } else if (vanished === 0) {
-        checks.push({ name: 'image_assets', status: 'ok', message: `${rows.length} image(s) all present on disk` });
+      } else if (presence.missing === 0) {
+        checks.push({ name: 'image_assets', status: 'ok', message: `${presence.total} image(s) all present on disk` });
       } else {
         checks.push({
           name: 'image_assets',
           status: 'warn',
-          message: `${vanished} of ${rows.length} image(s) missing from disk (e.g. ${vanishedPaths.join(', ')}). ` +
+          message: `${presence.missing} of ${presence.total} image(s) missing from disk (e.g. ${presence.missingPaths.join(', ')}). ` +
                    `Fix: restore from git, or \`gbrain sync --skip-failed\` to acknowledge.`,
         });
       }
