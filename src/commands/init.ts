@@ -51,6 +51,23 @@ export async function runInit(args: string[]) {
     ? args[schemaPackIdx + 1]
     : 'gbrain-base-v2';
 
+  // #94 — `--mode claude-code`: Claude Code-native keyless init. No provider
+  // API keys required: PGLite engine, no embedding provider (keyword/FTS +
+  // graph + title search via hybrid's existing no-embedding-provider path),
+  // chat through the `claude-cli` recipe (Claude Code OAuth session).
+  const modeIdx = args.indexOf('--mode');
+  const initMode = modeIdx !== -1 ? args[modeIdx + 1] : null;
+  if (initMode !== null && initMode !== 'claude-code') {
+    failInitFlag(`gbrain init: unknown --mode "${initMode}" (supported: claude-code)`, jsonOutput);
+  }
+  const isClaudeCode = initMode === 'claude-code';
+  if (isClaudeCode && (isSupabase || manualUrl || isMcpOnly)) {
+    failInitFlag(
+      'gbrain init: --mode claude-code implies a local PGLite brain; drop --supabase/--url/--mcp-only',
+      jsonOutput,
+    );
+  }
+
   // Multi-topology v1: thin-client init. Skips local engine entirely; writes
   // remote_mcp config that the CLI dispatch guard reads to refuse DB-bound ops.
   if (isMcpOnly) {
@@ -108,13 +125,14 @@ export async function runInit(args: string[]) {
     expansion: expModelIdx !== -1 ? args[expModelIdx + 1] : null,
     chat: chatModelIdx !== -1 ? args[chatModelIdx + 1] : null,
     noEmbedding,
+    claudeCode: isClaudeCode,
     nonInteractive: isNonInteractive,
   });
 
-  // Explicit PGLite mode
-  if (isPGLite || (!isSupabase && !manualUrl && !isNonInteractive)) {
+  // Explicit PGLite mode (--mode claude-code implies it)
+  if (isPGLite || isClaudeCode || (!isSupabase && !manualUrl && !isNonInteractive)) {
     // Smart detection: scan for .md files unless --pglite flag forces it
-    if (!isPGLite && !isSupabase) {
+    if (!isPGLite && !isClaudeCode && !isSupabase) {
       const fileCount = countMarkdownFiles(process.cwd());
       if (fileCount >= 1000) {
         console.log(`Found ~${fileCount} .md files. For a brain this size, Supabase gives faster`);
@@ -169,6 +187,7 @@ const INIT_VALUE_FLAGS = new Set([
   '--url',
   '--key',
   '--path',
+  '--mode',
   '--schema-pack',
   '--embedding-model',
   '--model',
@@ -219,6 +238,7 @@ interface ResolveAIOptionsArgs {
   expansion: string | null;      // --expansion-model
   chat: string | null;           // --chat-model
   noEmbedding: boolean;          // --no-embedding (D9)
+  claudeCode: boolean;           // --mode claude-code (#94)
   nonInteractive: boolean;       // --non-interactive (forces D3 fail-loud, no picker)
 }
 
@@ -229,7 +249,16 @@ export interface ResolvedAIOptions {
   chat_model?: string;
   /** v0.37 (D9): user opted into deferred embedding setup. */
   noEmbedding?: boolean;
+  /** #94: Claude Code-native keyless mode (`--mode claude-code`). */
+  claudeCode?: boolean;
 }
+
+/**
+ * #94 — default chat model for `--mode claude-code`. Sonnet-tier via the
+ * `claude-cli` recipe (Claude Code OAuth session, no ANTHROPIC_API_KEY).
+ * The recipe's aliases keep `claude-cli:sonnet` etc. working for overrides.
+ */
+export const CLAUDE_CODE_DEFAULT_CHAT_MODEL = 'claude-cli:claude-sonnet-4-6';
 
 /**
  * Seed init's AI options from persisted config, falling back to the raw env
@@ -257,6 +286,9 @@ export function seedAIOptionsFromConfig(
   const out: ResolvedAIOptions = {};
   if (seed.embedding_disabled) {
     out.noEmbedding = true;
+    // #94: a claude-code brain re-inits back into claude-code mode without
+    // needing --mode claude-code on every invocation.
+    if ((seed as { claude_code_mode?: boolean }).claude_code_mode) out.claudeCode = true;
   } else if (seed.embedding_model) {
     out.embedding_model = seed.embedding_model;
     if (seed.embedding_dimensions) out.embedding_dimensions = seed.embedding_dimensions;
@@ -283,7 +315,7 @@ export function seedAIOptionsFromConfig(
  * persists nulls; embed callsites refuse with a config-set hint.
  */
 async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIOptions> {
-  const { verbose, shorthand, dimsArg, expansion, chat, noEmbedding, nonInteractive } = opts;
+  const { verbose, shorthand, dimsArg, expansion, chat, noEmbedding, claudeCode, nonInteractive } = opts;
   const out: ResolvedAIOptions = {};
 
   // --- D5: persisted config wins on re-init -----------------------------------
@@ -312,6 +344,13 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
 
   if (verbose) {
     out.embedding_model = verbose;
+    // Explicit --embedding-model clears a seeded deferred/keyless sentinel:
+    // this is the documented upgrade path out of `--no-embedding` and
+    // `--mode claude-code` brains (`gbrain init --force --embedding-model …`).
+    // Without this, the seeded noEmbedding wins in initPGLite and the
+    // explicit flag is silently ignored.
+    delete out.noEmbedding;
+    delete out.claudeCode;
   } else if (shorthand) {
     const { getRecipe } = await import('../core/ai/recipes/index.ts');
     const recipe = getRecipe(shorthand);
@@ -340,6 +379,9 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
     // #2051: width follows the model actually chosen, not the recipe default.
     const { embeddingDimsForModel } = await import('../core/ai/model-resolver.ts');
     out.embedding_dimensions = embeddingDimsForModel(recipe, firstModel);
+    // Same sentinel-clearing as the verbose path above.
+    delete out.noEmbedding;
+    delete out.claudeCode;
   }
 
   if (dimsArg !== null && !Number.isNaN(dimsArg) && dimsArg > 0) {
@@ -384,6 +426,19 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
     // Wipe any tentative embedding settings — opt-in means truly nothing.
     delete out.embedding_model;
     delete out.embedding_dimensions;
+  }
+
+  // --- #94: --mode claude-code ----------------------------------------------
+  // Keyless by construction: no embedding provider (implies the D9 skip),
+  // chat via the claude-cli recipe unless the user picked one explicitly.
+  // Expansion stays unset — the gateway's isAvailable('expansion') gate
+  // makes hybrid search skip LLM expansion gracefully without a key.
+  if (claudeCode) {
+    out.claudeCode = true;
+    out.noEmbedding = true;
+    delete out.embedding_model;
+    delete out.embedding_dimensions;
+    if (!out.chat_model) out.chat_model = CLAUDE_CODE_DEFAULT_CHAT_MODEL;
   }
 
   // --- Tier 3: env detection ------------------------------------------------
@@ -504,6 +559,10 @@ function printNoEmbeddingProviderHint(typos: Array<{ userSet: string; suggested:
   console.error('');
   console.error('Or defer setup: gbrain init --pglite --no-embedding');
   console.error('  (you can configure later with `gbrain config set embedding_model <id>`)');
+  console.error('');
+  console.error('Or run keyless with Claude Code (no API keys at all):');
+  console.error('  gbrain init --mode claude-code');
+  console.error('  (keyword + graph search; chat via your Claude Code subscription)');
   // D13: surface near-miss env vars (e.g. OPENAPI_API_KEY → OPENAI_API_KEY).
   if (typos.length > 0) {
     console.error('');
@@ -901,7 +960,23 @@ async function initPGLite(opts: {
   // gateway's resolved dim by construction — preflight validates that.
   let resolvedDim: number | undefined;
   let resolvedModel: string | undefined;
-  if (opts.aiOpts?.noEmbedding) {
+  if (opts.aiOpts?.claudeCode) {
+    // #94 claude-code keyless mode: embedding is off by design, not deferred.
+    console.log(`  Claude Code mode: no API keys — keyword + graph search, chat via the \`claude\` CLI`);
+    // Best-effort binary check (same pattern as the supabase CLI probe):
+    // warn loudly now instead of failing at first `gbrain think`.
+    const claudeBin = process.env.GBRAIN_CLAUDE_CLI_BIN ?? 'claude';
+    try {
+      execSync(`${claudeBin} --version`, { stdio: 'pipe' });
+    } catch {
+      console.warn('');
+      console.warn(`  Heads up: \`${claudeBin}\` CLI not found on PATH.`);
+      console.warn('  Import and search work without it, but chat commands (gbrain think)');
+      console.warn('  need Claude Code installed and logged in:');
+      console.warn('    npm install -g @anthropic-ai/claude-code && claude');
+      console.warn('  Or point at the binary: export GBRAIN_CLAUDE_CLI_BIN=/path/to/claude');
+    }
+  } else if (opts.aiOpts?.noEmbedding) {
     // D9 deferred-setup mode: skip preflight, no model/dim resolved.
     console.log(`  --no-embedding: deferred setup — configure with \`gbrain config set embedding_model <id>\` before import`);
   } else if (opts.aiOpts?.embedding_model) {
@@ -1031,7 +1106,7 @@ async function initPGLite(opts: {
       database_path: dbPath,
       ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
       ...(opts.aiOpts?.noEmbedding
-        ? { embedding_disabled: true }
+        ? { embedding_disabled: true, ...(opts.aiOpts?.claudeCode ? { claude_code_mode: true } : {}) }
         : (resolvedModel && resolvedDim)
           ? { embedding_model: resolvedModel, embedding_dimensions: resolvedDim }
           : {}),
@@ -1042,6 +1117,15 @@ async function initPGLite(opts: {
       // unless explicitly overridden by --schema-pack on re-init.
       ...(opts.schemaPack ? { schema_pack: opts.schemaPack } : {}),
     };
+    // #94: the sentinels and a configured embedding model are mutually
+    // exclusive ("init writes one or the other, never both"). When this
+    // invocation resolves a real model — the documented upgrade path out of
+    // deferred/keyless mode — clear stale sentinels the existingFile spread
+    // carried forward.
+    if (config.embedding_model) {
+      delete config.embedding_disabled;
+      delete config.claude_code_mode;
+    }
     // PR1: new installs publish their skill catalog over MCP by default
     // (existing config wins on re-init, so a prior opt-out is preserved).
     config.mcp = { publish_skills: true, ...(config.mcp ?? {}) };
@@ -1058,10 +1142,28 @@ async function initPGLite(opts: {
 
     // T6 (D7): post-init subagent-Anthropic caveat. Fires for both auto-pick
     // and picker paths so users see the implication of running on a chat
-    // provider that can't drive the subagent loop.
-    if (opts.aiOpts?.chat_model && !opts.aiOpts.chat_model.startsWith('anthropic:') && !process.env.ANTHROPIC_API_KEY) {
+    // provider that can't drive the subagent loop. claude-cli is exempt:
+    // its recipe declares supports_subagent_loop and drives Minions through
+    // the Claude Code OAuth session — the caveat would be flat wrong (#94).
+    if (opts.aiOpts?.chat_model && !opts.aiOpts.chat_model.startsWith('anthropic:') && !opts.aiOpts.chat_model.startsWith('claude-cli:') && !process.env.ANTHROPIC_API_KEY) {
       const { printSubagentAnthropicCaveat } = await import('./init-provider-picker.ts');
       printSubagentAnthropicCaveat((s) => process.stderr.write(s));
+    }
+
+    // #94: claude-code mode pre-seeds `search.mode = conservative` — the one
+    // bundle with no reranker (needs ZEROENTROPY_API_KEY) and no LLM
+    // expansion, i.e. the only bundle whose every knob works keylessly.
+    // Seeding before the picker makes the picker skip (idempotence contract);
+    // an existing operator-set mode is never overwritten.
+    if (opts.aiOpts?.claudeCode) {
+      try {
+        const { SEARCH_MODE_KEY } = await import('../core/search/mode.ts');
+        const existingMode = await engine.getConfig(SEARCH_MODE_KEY);
+        if (!existingMode) {
+          await engine.setConfig(SEARCH_MODE_KEY, 'conservative');
+          console.log('  Search mode: conservative (keyless — no reranker / LLM expansion)');
+        }
+      } catch { /* best-effort; picker below still runs */ }
     }
 
     // v0.32.3 search-lite install-time mode picker. Runs AFTER initSchema so
@@ -1602,11 +1704,15 @@ OPTIONS
   --chat-model <PROVIDER:MODEL>
                         Default subagent driver (v0.27+)
   --no-embedding        Defer embedding setup (skips the embedding-key check)
+  --mode claude-code    Keyless mode for Claude Code subscribers (#94): PGLite,
+                        keyword + graph search (no embedding provider), chat via
+                        the \`claude\` CLI OAuth session. No API keys required.
   --skip-embed-check    Skip the init-time embedding-key validation (config +
                         live test-embed). Also via GBRAIN_INIT_SKIP_EMBED_CHECK=1
 
 EXAMPLES
-  gbrain init --pglite                      # Local-only, no API keys
+  gbrain init --pglite                      # Local-only Postgres, embedding key needed
+  gbrain init --mode claude-code            # Fully keyless (Claude Code subscription)
   gbrain init --supabase                    # Interactive Supabase setup
   gbrain init --url postgresql://...        # Use a custom Postgres
   gbrain init --mcp-only --url https://...  # Thin-client mode

@@ -70,7 +70,32 @@ export class EmbeddingDisabledError extends Error {
   }
 }
 
-export function assertEmbeddingEnabled(cfg: { embedding_disabled?: boolean } | null): void {
+/**
+ * #94 — Claude Code-native keyless mode predicate. True when the brain was
+ * initialized with `gbrain init --mode claude-code`: embedding is off BY
+ * DESIGN (keyword/FTS + graph search), not deferred. Callsites that refuse
+ * on the deferred-setup sentinel (`gbrain import`) use this to proceed
+ * without vectors instead; callsites that only make sense with vectors
+ * (`gbrain embed`) still refuse, with an upgrade hint.
+ */
+export function isKeylessBrain(
+  cfg: { embedding_disabled?: boolean; claude_code_mode?: boolean } | null,
+): boolean {
+  return cfg?.claude_code_mode === true;
+}
+
+export function assertEmbeddingEnabled(
+  cfg: { embedding_disabled?: boolean; claude_code_mode?: boolean } | null,
+): void {
+  if (isKeylessBrain(cfg)) {
+    throw new EmbeddingDisabledError(
+      'This brain runs in Claude Code mode (keyless): search is keyword + graph,\n' +
+      'no embedding provider is configured. Embedding commands are not available.\n' +
+      'To upgrade to vector search, pick an embedding provider and re-init:\n' +
+      '  gbrain init --force --pglite --embedding-model <provider>:<model>\n' +
+      'then backfill with `gbrain embed --stale`.\n',
+    );
+  }
   if (cfg?.embedding_disabled) {
     throw new EmbeddingDisabledError(
       'This brain was initialized with `--no-embedding` (deferred setup).\n' +

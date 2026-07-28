@@ -2,6 +2,17 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- `gbrain init --mode claude-code` (#94): Claude Code-native keyless mode. No provider API keys required — PGLite engine, keyword + graph + title search via hybrid search's existing no-embedding-provider path, chat through the `claude-cli` recipe's OAuth session. Writes a `claude_code_mode: true` sentinel alongside `embedding_disabled: true`; `gbrain import` on such a brain proceeds without vectors (implicit `--no-embed`) instead of refusing, `search.mode` defaults to `conservative` (the one bundle with no reranker or LLM-expansion spend), and doctor/advisor treat the missing embedding provider as intentional rather than an unfinished setup.
+
+### Fixed
+
+- `gbrain init --force --embedding-model …` on a `--no-embedding` (deferred-setup) brain now actually configures the embedding provider — previously the persisted sentinel silently won over the explicit flag, leaving the brain deferred despite the documented upgrade path. Explicit embedding flags now clear the sentinel, and a resolved model removes stale `embedding_disabled` / `claude_code_mode` from config.json.
+- The post-init "subagent features require ANTHROPIC_API_KEY" caveat no longer fires for `claude-cli:*` chat models — that recipe drives the subagent loop through the Claude Code OAuth session and needs no key.
+
 ## [0.42.66.1] - 2026-07-27
 
 ### Fixed

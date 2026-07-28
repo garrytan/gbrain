@@ -73,10 +73,21 @@ export async function runImport(
     slugRoot?: string;
   } = {},
 ): Promise<RunImportResult> {
-  const noEmbed = args.includes('--no-embed');
+  let noEmbed = args.includes('--no-embed');
   const fresh = args.includes('--fresh');
   const jsonOutput = args.includes('--json');
   const includeGitignored = args.includes('--include-gitignored') || opts.includeGitignored === true;
+
+  // #94 — Claude Code keyless mode: embedding is off BY DESIGN, so import
+  // proceeds without vectors (implicit --no-embed) instead of refusing.
+  // Chunks land keyword-searchable; the graph + FTS arms serve queries.
+  if (!noEmbed) {
+    const { isKeylessBrain } = await import('../core/embedding-dim-check.ts');
+    const { loadConfig } = await import('../core/config.ts');
+    if (isKeylessBrain(loadConfig())) {
+      noEmbed = true;
+    }
+  }
 
   // T7 (D9): refuse cleanly when init persisted the deferred-setup sentinel,
   // unless the user is explicitly skipping embedding via `--no-embed` (in

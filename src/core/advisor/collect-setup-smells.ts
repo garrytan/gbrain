@@ -25,8 +25,10 @@ export const collectSetupSmells: AdvisorCollector = {
     const findings: AdvisorFinding[] = [];
     const cfg = ctx.config ?? ({} as typeof ctx.config);
 
-    // Embeddings disabled — deferred setup never completed.
-    if (cfg.embedding_disabled === true) {
+    // Embeddings disabled — deferred setup never completed. Exempt
+    // claude-code keyless brains (#94): there, no embedding provider is the
+    // designed steady state, not an unfinished setup.
+    if (cfg.embedding_disabled === true && cfg.claude_code_mode !== true) {
       findings.push({
         id: 'embeddings_disabled',
         severity: 'warn',

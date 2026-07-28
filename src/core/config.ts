@@ -81,6 +81,20 @@ export interface GBrainConfig {
    * or the other, never both.
    */
   embedding_disabled?: boolean;
+  /**
+   * Claude Code-native keyless mode (#94): the brain was initialized with
+   * `gbrain init --mode claude-code` and is DESIGNED to run without any
+   * provider API keys. Search is keyword/FTS + graph + title (the existing
+   * no-embedding-provider path in hybrid search); chat routes through the
+   * `claude-cli` recipe (Claude Code OAuth session). Distinct from bare
+   * `embedding_disabled` (deferred setup, "configure a key before import"):
+   * with this flag set, `gbrain import` proceeds without vectors instead of
+   * refusing, and doctor/advisor treat the missing embedding provider as
+   * intentional, not a smell. Always written alongside
+   * `embedding_disabled: true` so every existing skip-embed callsite
+   * (sync, cycle, backfill) keeps working unchanged.
+   */
+  claude_code_mode?: boolean;
   expansion_model?: string;
   /**
    * Default chat model for `gateway.chat()` callers (v0.27+).
@@ -925,6 +939,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'embedding_model',
   'embedding_dimensions',
   'embedding_disabled',
+  'claude_code_mode',
   'expansion_model',
   'chat_model',
   'chat_fallback_chain',
