@@ -516,7 +516,7 @@
   "test/resolver.test.ts": 58,
   "test/resolvers.test.ts": 4130,
   "test/restart-sweep.test.ts": 42,
-  "test/retrieval-upgrade-planner.test.ts": 8375,
+  "test/retrieval-upgrade-planner.serial.test.ts": 8375,
   "test/retry-matcher.test.ts": 2,
   "test/routing-eval-cli.test.ts": 1118,
   "test/routing-eval.test.ts": 34,

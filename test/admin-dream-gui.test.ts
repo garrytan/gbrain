@@ -304,6 +304,13 @@ describe('Dream GUI product contract', () => {
     expect(dream).toContain('通常不需要手动操作');
   });
 
+  test('manual Dream runs have no outer timeout unless advanced settings opt in', () => {
+    expect(dream).toContain("const [timeoutMinutes, setTimeoutMinutes] = useState('')");
+    expect(dream).toContain('placeholder="不限制"');
+    expect(dream).toContain('留空表示不限制');
+    expect(dream).toContain('手动整理默认不设外层时限');
+  });
+
   test('the overview does not duplicate a non-actionable start button', () => {
     expect(dream).not.toContain("scrollIntoView({ behavior: 'smooth' })");
   });

@@ -2,6 +2,10 @@
 import { isAbsolute, join } from 'path';
 import { homedir } from 'os';
 import type { EngineConfig, EmbeddingColumnConfig } from './types.ts';
+import {
+  DEFAULT_EMBEDDING_DIMENSIONS,
+  DEFAULT_EMBEDDING_MODEL,
+} from './ai/defaults.ts';
 
 /**
  * Where is the active DB URL coming from? Pure introspection, no connection
@@ -28,6 +32,42 @@ function getConfigPath() { return configPath(); }
 
 function envCompat(primary: string, legacy: string): string | undefined {
   return process.env[primary] ?? process.env[legacy];
+}
+
+export type EmbeddingEnvOverrideName =
+  | 'PMBRAIN_EMBEDDING_MODEL'
+  | 'GBRAIN_EMBEDDING_MODEL'
+  | 'PMBRAIN_EMBEDDING_DIMENSIONS'
+  | 'GBRAIN_EMBEDDING_DIMENSIONS';
+
+export interface EmbeddingEnvOverrideValue {
+  name: EmbeddingEnvOverrideName;
+  value: string;
+}
+
+/**
+ * Resolve the effective embedding env aliases using the same PMBRAIN-first
+ * precedence as loadConfig(). Empty values do not override persisted config.
+ */
+export function resolveEmbeddingEnvOverrides(
+  env: NodeJS.ProcessEnv = process.env,
+): {
+  model?: EmbeddingEnvOverrideValue;
+  dimensions?: EmbeddingEnvOverrideValue;
+} {
+  const modelName = env.PMBRAIN_EMBEDDING_MODEL !== undefined
+    ? 'PMBRAIN_EMBEDDING_MODEL'
+    : 'GBRAIN_EMBEDDING_MODEL';
+  const modelValue = (env[modelName] ?? '').trim();
+  const dimensionsName = env.PMBRAIN_EMBEDDING_DIMENSIONS !== undefined
+    ? 'PMBRAIN_EMBEDDING_DIMENSIONS'
+    : 'GBRAIN_EMBEDDING_DIMENSIONS';
+  const dimensionsValue = (env[dimensionsName] ?? '').trim();
+
+  return {
+    ...(modelValue ? { model: { name: modelName, value: modelValue } } : {}),
+    ...(dimensionsValue ? { dimensions: { name: dimensionsName, value: dimensionsValue } } : {}),
+  };
 }
 
 function stripJsonBom(content: string): string {
@@ -340,6 +380,69 @@ export function loadConfigFileOnly(): GBrainConfig | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Refuse a write-time embedding operation when env aliases silently disagree
+ * with canonical config.json. Env-only/headless installs remain supported.
+ */
+export function assertNoEmbeddingEnvConfigDrift(
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  const overrides = resolveEmbeddingEnvOverrides(env);
+  if (!overrides.model && !overrides.dimensions) return;
+
+  const fileConfig = loadConfigFileOnly();
+  if (!fileConfig) {
+    if (existsSync(configPath())) {
+      throw new Error(
+        `检测到环境变量正在控制向量模型，但无法读取持久化配置：${configPath()}。` +
+        '本次向量化已停止且没有修改数据，请先修复 config.json。',
+      );
+    }
+    // Preserve explicit env-only/headless deployments. Doctor still reports
+    // that runtime embedding is controlled by the environment.
+    return;
+  }
+
+  const persistedModel = typeof fileConfig.embedding_model === 'string'
+    && fileConfig.embedding_model.trim()
+    ? fileConfig.embedding_model.trim()
+    : DEFAULT_EMBEDDING_MODEL;
+  const configuredDim = Number(fileConfig.embedding_dimensions);
+  const persistedDimensions = Number.isInteger(configuredDim) && configuredDim > 0
+    ? configuredDim
+    : persistedModel === DEFAULT_EMBEDDING_MODEL
+      ? DEFAULT_EMBEDDING_DIMENSIONS
+      : null;
+  const mismatches: string[] = [];
+
+  if (overrides.model && overrides.model.value !== persistedModel) {
+    mismatches.push(
+      `${overrides.model.name}=${overrides.model.value}（config.json=${persistedModel}）`,
+    );
+  }
+  if (overrides.dimensions) {
+    const envDimensions = Number(overrides.dimensions.value);
+    if (
+      !Number.isInteger(envDimensions)
+      || envDimensions <= 0
+      || persistedDimensions === null
+      || envDimensions !== persistedDimensions
+    ) {
+      mismatches.push(
+        `${overrides.dimensions.name}=${overrides.dimensions.value}` +
+        `（config.json=${persistedDimensions ?? '未设置'}）`,
+      );
+    }
+  }
+  if (mismatches.length === 0) return;
+
+  throw new Error(
+    `检测到环境变量正在覆盖持久化向量配置：${mismatches.join('、')}。` +
+    '为避免界面配置与实际向量模型不一致，本次向量化已停止且没有修改数据。' +
+    '请将需要的模型和维度写入 config.json 后移除这些环境变量，再重新运行。',
+  );
 }
 
 export function loadConfig(): GBrainConfig | null {

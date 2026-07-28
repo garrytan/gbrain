@@ -32,6 +32,8 @@ export async function loadRecommendationContext(
   // OpenAI (was OpenAI-only). After Lane C.3, zeroentropy_api_key lives
   // in GBrainConfig + propagates to the gateway env dict.
   const repoPath = await engine.getConfig('sync.repo_path');
+  const { loadConfigFileOnly } = await import('../config.ts');
+  const fileCfg = loadConfigFileOnly();
   let embeddingModel: string | undefined;
   let embeddingDimensions: number | undefined;
   try {
@@ -39,12 +41,13 @@ export async function loadRecommendationContext(
     embeddingModel = gw.getEmbeddingModel();
     embeddingDimensions = gw.getEmbeddingDimensions();
   } catch {
-    // Gateway unconfigured — fall back to DB plane as a best-effort hint
-    // (preserves doctor running before any engine.connect()).
+    // Gateway unconfigured — prefer canonical file config, then retain the
+    // legacy DB fallback for headless/older brains without config.json.
     const dbModel = await engine.getConfig('embedding_model');
     const dbDims = await engine.getConfig('embedding_dimensions');
-    embeddingModel = dbModel ?? undefined;
-    embeddingDimensions = dbDims ? Number(dbDims) : undefined;
+    embeddingModel = fileCfg?.embedding_model ?? dbModel ?? undefined;
+    embeddingDimensions = fileCfg?.embedding_dimensions
+      ?? (dbDims ? Number(dbDims) : undefined);
   }
   // v0.40.x: recipe-aware provider check, shared with autopilot.ts via
   // embeddingProviderConfigured(). Local providers (ollama, llama-server —
@@ -52,8 +55,6 @@ export async function loadRecommendationContext(
   // their OWN required key (so a Voyage brain is judged by VOYAGE_API_KEY,
   // not by whether an OpenAI/ZE key happens to exist — the pre-fix wart).
   // fileCfg loads synchronously, so the resolveKey closure is sync.
-  const { loadConfigFileOnly } = await import('../config.ts');
-  const fileCfg = loadConfigFileOnly();
   const { embeddingProviderConfigured, HOSTED_EMBED_KEY_CONFIG } = await import(
     '../brain-score-recommendations.ts'
   );

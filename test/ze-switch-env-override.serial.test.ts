@@ -8,9 +8,12 @@
 //   - --ignore-env-override escape hatch bypasses both gates
 //   - ApplyResult tagged union extends with {status:'refused', reason, warning}
 //
-// Hermetic: PGLite + withEnv() per CLAUDE.md R1/R3/R4. No DATABASE_URL needed.
+// Serial: isolates PGLite and temporarily redirects PMBRAIN_HOME.
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
   detectEnvOverride,
@@ -26,10 +29,19 @@ import {
 } from '../src/core/retrieval-upgrade-planner.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { configPath } from '../src/core/config.ts';
 
 let engine: PGLiteEngine;
+let configHome: string;
+let originalPmbrainHome: string | undefined;
+let originalGbrainHome: string | undefined;
 
 beforeAll(async () => {
+  originalPmbrainHome = process.env.PMBRAIN_HOME;
+  originalGbrainHome = process.env.GBRAIN_HOME;
+  configHome = mkdtempSync(join(tmpdir(), 'pmbrain-ze-env-'));
+  process.env.PMBRAIN_HOME = configHome;
+  delete process.env.GBRAIN_HOME;
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -37,10 +49,16 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  if (originalPmbrainHome === undefined) delete process.env.PMBRAIN_HOME;
+  else process.env.PMBRAIN_HOME = originalPmbrainHome;
+  if (originalGbrainHome === undefined) delete process.env.GBRAIN_HOME;
+  else process.env.GBRAIN_HOME = originalGbrainHome;
+  rmSync(configHome, { recursive: true, force: true });
 });
 
 beforeEach(async () => {
   await resetPgliteState(engine);
+  rmSync(configPath(), { force: true });
 });
 
 // ─── detectEnvOverride: pure function tests (no env mutation needed) ────
@@ -69,6 +87,20 @@ describe('detectEnvOverride (pure)', () => {
     expect(w.vars[0].name).toBe('GBRAIN_EMBEDDING_MODEL');
     expect(w.vars[0].current).toBe('openai:text-embedding-3-large');
     expect(w.vars[0].target).toBe('zeroentropyai:zembed-1');
+  });
+
+  test('PMBRAIN aliases are checked with canonical precedence', () => {
+    const w = detectEnvOverride('zeroentropyai:zembed-1', 1280, {
+      PMBRAIN_EMBEDDING_MODEL: 'openai:text-embedding-3-large',
+      GBRAIN_EMBEDDING_MODEL: 'zeroentropyai:zembed-1',
+      PMBRAIN_EMBEDDING_DIMENSIONS: '1536',
+      GBRAIN_EMBEDDING_DIMENSIONS: '1280',
+    });
+    expect(w.triggered).toBe(true);
+    expect(w.vars.map((entry) => entry.name)).toEqual([
+      'PMBRAIN_EMBEDDING_MODEL',
+      'PMBRAIN_EMBEDDING_DIMENSIONS',
+    ]);
   });
 
   test('GBRAIN_EMBEDDING_DIMENSIONS string-vs-number comparison works', () => {

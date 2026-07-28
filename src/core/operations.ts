@@ -730,6 +730,10 @@ const put_page: Operation = {
     // so Gemini / Ollama / Voyage brains don't silently drop embeddings (Codex C2).
     const { isAvailable } = await import('./ai/gateway.ts');
     const noEmbed = !isAvailable('embedding');
+    if (!noEmbed) {
+      const { assertNoEmbeddingEnvConfigDrift } = await import('./config.ts');
+      assertNoEmbeddingEnvConfigDrift();
+    }
     // v0.31.8 (D7 / codex OV-1): thread ctx.sourceId so put_page on a
     // multi-source brain lands in the intended source instead of the
     // default-source clobber path. importFromContent already accepts

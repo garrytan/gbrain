@@ -226,9 +226,9 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     }
     // v0.37.11.0 fix wave (Lane C.2 + CDX2-13): refuse writes to schema-sizing
     // fields unconditionally. These fields size the `content_chunks.embedding`
-    // column at init time and are file-plane canonical. `gbrain config set
-    // embedding_model X` writes the DB plane, which the embed pipeline
-    // never reads — silent lie that took users hours to diagnose.
+    // column at init time and are file-plane canonical. embedding_model is
+    // handled above by the validated switch path; a raw dimension-only write
+    // would split config from the schema.
     //
     // No `--force` escape hatch (CDX2-13): keeping a known-no-op DB-only
     // write preserves the split-brain footgun the wave exists to close.

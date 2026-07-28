@@ -9,7 +9,7 @@
  *   1. v0.32.7 chunker-version bump (pages re-chunk + re-embed under the
  *      same provider). The legacy `runPostUpgradeReembedPrompt` covered this.
  *   2. v0.36.0.0 ZE-as-default switch (schema goes from current width to
- *      1024d via Matryoshka + provider flips to zeroentropyai:zembed-1).
+ *      1280d via Matryoshka + provider flips to zeroentropyai:zembed-1).
  *
  * Letting these fire as two separate prompts on the same `gbrain upgrade`
  * would double-charge the user for re-embed (codex outside-voice flag #2).
@@ -63,12 +63,23 @@ import type { BrainEngine } from './engine.ts';
 import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
 import { lookupEmbeddingPrice, estimateCostFromChars } from './embedding-pricing.ts';
 import { computeReembedEstimate } from './post-upgrade-reembed.ts';
+import {
+  configPath,
+  loadConfigFileOnly,
+  resolveEmbeddingEnvOverrides,
+  saveConfig,
+} from './config.ts';
+import {
+  DEFAULT_EMBEDDING_DIMENSIONS,
+  DEFAULT_EMBEDDING_MODEL,
+} from './ai/defaults.ts';
+import { existsSync } from 'fs';
 
 // ============================================================================
 // Constants
 // ============================================================================
 
-/** v0.36.0.0 cutover target: ZeroEntropy zembed-1 at 1024d via Matryoshka. */
+/** v0.36.0.0 cutover target: ZeroEntropy zembed-1 at 1280d via Matryoshka. */
 export const ZE_TARGET_EMBEDDING_MODEL = 'zeroentropyai:zembed-1';
 export const ZE_TARGET_EMBEDDING_DIM = 1280;
 export const ZE_TARGET_RERANKER_MODEL = 'zeroentropyai:zerank-2';
@@ -149,7 +160,7 @@ export type ApplyResult =
 /**
  * v0.41.2.1 — env-override safety gate.
  *
- * `process.env.GBRAIN_EMBEDDING_MODEL` and `GBRAIN_EMBEDDING_DIMENSIONS`
+ * `process.env.PMBRAIN_EMBEDDING_*` and legacy `GBRAIN_EMBEDDING_*`
  * win over DB+file config in `loadConfig()`. The 716K-chunk damage
  * incident (PR #1421) shipped because ze-switch wrote DB config but
  * the env override silently kept the old model active at embed time —
@@ -170,17 +181,20 @@ export function detectEnvOverride(
   env: NodeJS.ProcessEnv = process.env,
 ): EnvOverrideWarning {
   const vars: EnvOverrideWarning['vars'] = [];
-  const envModel = env.GBRAIN_EMBEDDING_MODEL?.trim();
-  if (envModel && envModel !== targetModel) {
-    vars.push({ name: 'GBRAIN_EMBEDDING_MODEL', current: envModel, target: targetModel });
+  const overrides = resolveEmbeddingEnvOverrides(env);
+  if (overrides.model && overrides.model.value !== targetModel) {
+    vars.push({
+      name: overrides.model.name,
+      current: overrides.model.value,
+      target: targetModel,
+    });
   }
-  const envDimRaw = env.GBRAIN_EMBEDDING_DIMENSIONS?.trim();
-  if (envDimRaw) {
-    const envDim = Number(envDimRaw);
+  if (overrides.dimensions) {
+    const envDim = Number(overrides.dimensions.value);
     if (!Number.isFinite(envDim) || envDim !== targetDim) {
       vars.push({
-        name: 'GBRAIN_EMBEDDING_DIMENSIONS',
-        current: envDimRaw,
+        name: overrides.dimensions.name,
+        current: overrides.dimensions.value,
         target: String(targetDim),
       });
     }
@@ -242,12 +256,9 @@ export interface ApplyOpts {
  *         - brain has > 100 non-deleted pages
  */
 export async function planRetrievalUpgrade(engine: BrainEngine): Promise<RetrievalUpgradeState> {
-  // Current config — file plane + DB plane both feed this; we read DB plane
-  // because that's what the upgrade flow writes.
-  const currentEmbeddingModel = await getStringConfig(engine, 'embedding_model')
-    ?? 'openai:text-embedding-3-large';
-  const currentDimStr = await engine.getConfig('embedding_dimensions');
-  const currentDim = currentDimStr ? parseInt(currentDimStr, 10) : 1536;
+  const currentConfig = await resolveCurrentEmbeddingConfig(engine);
+  const currentEmbeddingModel = currentConfig.model;
+  const currentDim = currentConfig.dimensions;
 
   const declinedAtStr = await engine.getConfig(KEY_DECLINED_AT);
   const declinedAt = declinedAtStr ? new Date(declinedAtStr) : null;
@@ -404,8 +415,11 @@ export async function applyRetrievalUpgrade(
     await runSchemaTransition(engine, targetDim);
 
     // 4. Write config.
-    await engine.setConfig('embedding_model', plan.target_embedding_model ?? ZE_TARGET_EMBEDDING_MODEL);
-    await engine.setConfig('embedding_dimensions', String(targetDim));
+    await persistCanonicalEmbeddingConfig(
+      engine,
+      plan.target_embedding_model ?? ZE_TARGET_EMBEDDING_MODEL,
+      targetDim,
+    );
     await engine.setConfig('search.reranker.enabled', 'true');
     await engine.setConfig('search.reranker.model', ZE_TARGET_RERANKER_MODEL);
 
@@ -471,8 +485,7 @@ export async function resumeRetrievalUpgrade(
   // then write config + mark applied.
   try {
     await runSchemaTransition(engine, targetDim);
-    await engine.setConfig('embedding_model', ZE_TARGET_EMBEDDING_MODEL);
-    await engine.setConfig('embedding_dimensions', String(targetDim));
+    await persistCanonicalEmbeddingConfig(engine, ZE_TARGET_EMBEDDING_MODEL, targetDim);
     await engine.setConfig('search.reranker.enabled', 'true');
     await engine.setConfig('search.reranker.model', ZE_TARGET_RERANKER_MODEL);
     await engine.setConfig(KEY_APPLIED, 'true');
@@ -514,8 +527,11 @@ export async function undoRetrievalUpgrade(engine: BrainEngine): Promise<
 
   try {
     await runSchemaTransition(engine, snapshot.embedding_dimensions);
-    await engine.setConfig('embedding_model', snapshot.embedding_model);
-    await engine.setConfig('embedding_dimensions', String(snapshot.embedding_dimensions));
+    await persistCanonicalEmbeddingConfig(
+      engine,
+      snapshot.embedding_model,
+      snapshot.embedding_dimensions,
+    );
     await engine.setConfig('search.reranker.enabled', snapshot.search_reranker_enabled ? 'true' : 'false');
     if (snapshot.search_reranker_model) {
       await engine.setConfig('search.reranker.model', snapshot.search_reranker_model);
@@ -598,8 +614,63 @@ async function runSchemaTransition(engine: BrainEngine, targetDim: number): Prom
 // Helpers
 // ============================================================================
 
-async function getStringConfig(engine: BrainEngine, key: string): Promise<string | null> {
-  return await engine.getConfig(key);
+function parsePositiveDimension(value: unknown): number | null {
+  const parsed = typeof value === 'number' ? value : Number(String(value ?? '').trim());
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+async function resolveCurrentEmbeddingConfig(
+  engine: BrainEngine,
+): Promise<{ model: string; dimensions: number }> {
+  const fileConfig = loadConfigFileOnly();
+  if (fileConfig) {
+    return {
+      model: typeof fileConfig.embedding_model === 'string' && fileConfig.embedding_model.trim()
+        ? fileConfig.embedding_model.trim()
+        : DEFAULT_EMBEDDING_MODEL,
+      dimensions: parsePositiveDimension(fileConfig.embedding_dimensions)
+        ?? DEFAULT_EMBEDDING_DIMENSIONS,
+    };
+  }
+  if (existsSync(configPath())) {
+    throw new Error(`Cannot read canonical embedding config: ${configPath()}`);
+  }
+
+  // Legacy/headless compatibility: older brains and direct SDK callers may
+  // have no config file yet. Keep their DB metadata readable without allowing
+  // stale DB rows to override an existing canonical file.
+  const dbModel = (await engine.getConfig('embedding_model'))?.trim();
+  const dbDimensions = parsePositiveDimension(await engine.getConfig('embedding_dimensions'));
+  return {
+    model: dbModel || DEFAULT_EMBEDDING_MODEL,
+    dimensions: dbDimensions ?? DEFAULT_EMBEDDING_DIMENSIONS,
+  };
+}
+
+async function persistCanonicalEmbeddingConfig(
+  engine: BrainEngine,
+  model: string,
+  dimensions: number,
+): Promise<void> {
+  const fileConfig = loadConfigFileOnly();
+  if (fileConfig) {
+    saveConfig({
+      ...fileConfig,
+      embedding_model: model,
+      embedding_dimensions: dimensions,
+    });
+    // Remove legacy duplicates only after the canonical file write succeeds.
+    await engine.unsetConfig('embedding_model');
+    await engine.unsetConfig('embedding_dimensions');
+    return;
+  }
+  if (existsSync(configPath())) {
+    throw new Error(`Cannot update canonical embedding config: ${configPath()}`);
+  }
+
+  // Legacy/headless compatibility for direct SDK users without config.json.
+  await engine.setConfig('embedding_model', model);
+  await engine.setConfig('embedding_dimensions', String(dimensions));
 }
 
 /** For tests + introspection: re-export the chunker version we plan against. */

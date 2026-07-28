@@ -2097,6 +2097,11 @@ export async function runSync(engine: BrainEngine, args: string[]) {
   const breakLock = args.includes('--break-lock');
   const forceBreakLock = args.includes('--force-break-lock');
 
+  if (!noEmbed && !dryRun && !breakLock && !forceBreakLock) {
+    const { assertNoEmbeddingEnvConfigDrift } = await import('../core/config.ts');
+    assertNoEmbeddingEnvConfigDrift();
+  }
+
   // v0.41.13.0 (T4 + T16) — --max-age <s>: age-gated lock break via
   // last_refreshed_at semantic (NOT acquired_at — D-V3-4). Only valid with
   // --break-lock; mutually exclusive with --force-break-lock (--force skips

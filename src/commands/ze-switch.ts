@@ -55,7 +55,7 @@ function parseFlags(args: string[]): Flags {
     confirmReembed: args.includes('--confirm-reembed'),
     ignoreMissingKey: args.includes('--ignore-missing-key'),
     // v0.41.2.1: escape hatch for power users running parallel experiments
-    // with GBRAIN_EMBEDDING_MODEL set. Loud stderr line when used.
+    // with PMBRAIN/GBRAIN embedding overrides set. Loud stderr line when used.
     ignoreEnvOverride: args.includes('--ignore-env-override'),
   };
 }

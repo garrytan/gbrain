@@ -1124,7 +1124,7 @@ function DreamRunPanel({
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [dryRun, setDryRun] = useState(false);
-  const [timeoutMinutes, setTimeoutMinutes] = useState('120');
+  const [timeoutMinutes, setTimeoutMinutes] = useState('');
   const [runMode, setRunMode] = useState<DreamRunMode>(() => {
     const saved = window.localStorage.getItem(DREAM_RUN_MODE_KEY);
     return saved === 'quick' || saved === 'meeting' || saved === 'cycle' || saved === 'advanced'
@@ -1422,7 +1422,8 @@ function DreamRunPanel({
         {showAdvancedControls && (
           <label>
             <span>超时时间（分钟）</span>
-            <input value={timeoutMinutes} onChange={event => setTimeoutMinutes(event.target.value)} placeholder="120" inputMode="numeric" />
+            <input value={timeoutMinutes} onChange={event => setTimeoutMinutes(event.target.value)} placeholder="不限制" inputMode="numeric" />
+            <span className="pm-hint">留空表示不限制；运行中仍可随时中止。</span>
           </label>
         )}
         {showAdvancedControls && (
@@ -1434,7 +1435,7 @@ function DreamRunPanel({
       </div>
       {error && <div className="pm-error-text">{error}</div>}
       <div className="pm-hint dream-run-persist-note">
-        整理会在后台继续运行，离开页面不会中断。
+        手动整理默认不设外层时限，会在后台继续运行；离开页面不会中断，也可随时中止。
       </div>
       <KnowledgeJourney run={run} />
       {run && (

@@ -318,7 +318,7 @@ export async function startDreamRun(input: {
     buildDreamCommand({ ...input, json: true }),
     cwd,
     { ...hooks, captureJsonResult: true },
-    input.timeoutMs,
+    input.timeoutMs ?? null,
   );
 }
 

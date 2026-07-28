@@ -60,9 +60,13 @@ export async function runImport(
   // later with `gbrain embed --stale` after configuring a provider).
   if (!noEmbed) {
     const { assertEmbeddingEnabled } = await import('../core/embedding-dim-check.ts');
-    const { loadConfig } = await import('../core/config.ts');
+    const {
+      assertNoEmbeddingEnvConfigDrift,
+      loadConfig,
+    } = await import('../core/config.ts');
     try {
       assertEmbeddingEnabled(loadConfig());
+      assertNoEmbeddingEnvConfigDrift();
     } catch (e) {
       console.error(`\n${e instanceof Error ? e.message : e}`);
       console.error('Tip: run `gbrain import <dir> --no-embed` to import without embedding now.');

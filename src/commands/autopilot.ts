@@ -22,7 +22,11 @@ import { join } from 'path';
 import { execSync } from 'child_process';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadPreferences } from '../core/preferences.ts';
-import { loadConfig, gbrainPath as gbrainHomePath } from '../core/config.ts';
+import {
+  loadConfig,
+  loadConfigFileOnly,
+  gbrainPath as gbrainHomePath,
+} from '../core/config.ts';
 import { ChildWorkerSupervisor } from '../core/minions/child-worker-supervisor.ts';
 import { resolveAutopilotDispatchTimeoutMs } from './autopilot-timeout.ts';
 
@@ -497,7 +501,9 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           const gw = await import('../core/ai/gateway.ts');
           embeddingModel = gw.getEmbeddingModel();
         } catch {
-          embeddingModel = (await engine.getConfig('embedding_model')) ?? undefined;
+          embeddingModel = loadConfigFileOnly()?.embedding_model
+            ?? (await engine.getConfig('embedding_model'))
+            ?? undefined;
         }
         const embedKeyCfg: Record<string, string | null> = {};
         for (const field of Object.values(HOSTED_EMBED_KEY_CONFIG)) {

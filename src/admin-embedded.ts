@@ -1,6 +1,6 @@
 // AUTO-GENERATED — do not edit by hand.
 // Run `bun run scripts/build-admin-embedded.ts` to regenerate.
-// Source: admin/dist/ at 2026-07-26.
+// Source: admin/dist/ at 2026-07-28.
 //
 // Bun resolves the file: imports to a path that works at runtime even
 // inside a compiled binary (`bun build --compile`). The manifest maps
@@ -9,9 +9,9 @@
 // @ts-ignore — type: 'file' is Bun ESM, not in lib.d.ts
 import A_0_assets_charts_BO6HVfrh_js from '../admin/dist/assets/charts-BO6HVfrh.js' with { type: 'file' };
 // @ts-ignore — type: 'file' is Bun ESM, not in lib.d.ts
-import A_1_assets_index_Bl5bZtdg_js from '../admin/dist/assets/index-Bl5bZtdg.js' with { type: 'file' };
+import A_1_assets_index_DkvaX795_css from '../admin/dist/assets/index-DkvaX795.css' with { type: 'file' };
 // @ts-ignore — type: 'file' is Bun ESM, not in lib.d.ts
-import A_2_assets_index_DkvaX795_css from '../admin/dist/assets/index-DkvaX795.css' with { type: 'file' };
+import A_2_assets_index_Y2QcbOeP_js from '../admin/dist/assets/index-Y2QcbOeP.js' with { type: 'file' };
 // @ts-ignore — type: 'file' is Bun ESM, not in lib.d.ts
 import A_3_assets_react_LdaKN5mt_js from '../admin/dist/assets/react-LdaKN5mt.js' with { type: 'file' };
 // @ts-ignore — type: 'file' is Bun ESM, not in lib.d.ts
@@ -30,8 +30,8 @@ export interface AdminAsset {
 
 export const ADMIN_ASSETS: Record<string, AdminAsset> = {
   "/admin/assets/charts-BO6HVfrh.js": { path: A_0_assets_charts_BO6HVfrh_js as unknown as string, mime: "application/javascript; charset=utf-8" },
-  "/admin/assets/index-Bl5bZtdg.js": { path: A_1_assets_index_Bl5bZtdg_js as unknown as string, mime: "application/javascript; charset=utf-8" },
-  "/admin/assets/index-DkvaX795.css": { path: A_2_assets_index_DkvaX795_css as unknown as string, mime: "text/css; charset=utf-8" },
+  "/admin/assets/index-DkvaX795.css": { path: A_1_assets_index_DkvaX795_css as unknown as string, mime: "text/css; charset=utf-8" },
+  "/admin/assets/index-Y2QcbOeP.js": { path: A_2_assets_index_Y2QcbOeP_js as unknown as string, mime: "application/javascript; charset=utf-8" },
   "/admin/assets/react-LdaKN5mt.js": { path: A_3_assets_react_LdaKN5mt_js as unknown as string, mime: "application/javascript; charset=utf-8" },
   "/admin/assets/ui-D9xECtl0.js": { path: A_4_assets_ui_D9xECtl0_js as unknown as string, mime: "application/javascript; charset=utf-8" },
   "/admin/index.html": { path: A_5_index_html as unknown as string, mime: "text/html; charset=utf-8" },

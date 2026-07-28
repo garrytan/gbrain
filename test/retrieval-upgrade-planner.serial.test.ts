@@ -1,13 +1,26 @@
 /**
  * v0.36.0.0 — RetrievalUpgradePlanner state-machine + apply-path tests.
  *
+ * Serial: isolates PGLite and temporarily redirects PMBRAIN_HOME.
  * Pins D12 (three config keys), D15 (tagged-union ApplyResult), D16 (snapshot),
  * D18 (HNSW index recreation atomic), and the C3 eligibility logic.
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import {
+  configPath,
+  loadConfigFileOnly,
+  saveConfig,
+} from '../src/core/config.ts';
+import {
+  DEFAULT_EMBEDDING_DIMENSIONS,
+  DEFAULT_EMBEDDING_MODEL,
+} from '../src/core/ai/defaults.ts';
 import {
   planRetrievalUpgrade,
   applyRetrievalUpgrade,
@@ -27,8 +40,16 @@ import {
 } from '../src/core/retrieval-upgrade-planner.ts';
 
 let engine: PGLiteEngine;
+let configHome: string;
+let originalPmbrainHome: string | undefined;
+let originalGbrainHome: string | undefined;
 
 beforeAll(async () => {
+  originalPmbrainHome = process.env.PMBRAIN_HOME;
+  originalGbrainHome = process.env.GBRAIN_HOME;
+  configHome = mkdtempSync(join(tmpdir(), 'pmbrain-retrieval-planner-'));
+  process.env.PMBRAIN_HOME = configHome;
+  delete process.env.GBRAIN_HOME;
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -36,10 +57,16 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  if (originalPmbrainHome === undefined) delete process.env.PMBRAIN_HOME;
+  else process.env.PMBRAIN_HOME = originalPmbrainHome;
+  if (originalGbrainHome === undefined) delete process.env.GBRAIN_HOME;
+  else process.env.GBRAIN_HOME = originalGbrainHome;
+  rmSync(configHome, { recursive: true, force: true });
 });
 
 beforeEach(async () => {
   await resetPgliteState(engine);
+  rmSync(configPath(), { force: true });
 });
 
 // Helpers
@@ -60,6 +87,36 @@ async function setLegacyDefaultConfig() {
 }
 
 describe('planRetrievalUpgrade — C3 eligibility', () => {
+  test('canonical file config wins over stale DB rows', async () => {
+    saveConfig({
+      engine: 'pglite',
+      embedding_model: 'ollama:qwen3-embedding:0.6b',
+      embedding_dimensions: 1024,
+    });
+    await engine.setConfig('embedding_model', 'zeroentropyai:zembed-1');
+    await engine.setConfig('embedding_dimensions', '1280');
+    await seedPages(101);
+
+    const plan = await planRetrievalUpgrade(engine);
+
+    expect(plan.current_embedding_model).toBe('ollama:qwen3-embedding:0.6b');
+    expect(plan.current_dim).toBe(1024);
+    expect(plan.ze_switch_offered).toBe(true);
+    expect(plan.pages_pending_dim).toBe(101);
+  });
+
+  test('missing file values use current ZE defaults, not legacy OpenAI defaults', async () => {
+    saveConfig({ engine: 'pglite' });
+    await engine.setConfig('embedding_model', 'openai:text-embedding-3-large');
+    await engine.setConfig('embedding_dimensions', '1536');
+
+    const plan = await planRetrievalUpgrade(engine);
+
+    expect(plan.current_embedding_model).toBe(DEFAULT_EMBEDDING_MODEL);
+    expect(plan.current_dim).toBe(DEFAULT_EMBEDDING_DIMENSIONS);
+    expect(plan.ze_switch_offered).toBe(false);
+  });
+
   test('fresh brain on legacy default with > 100 pages: offered = true', async () => {
     await setLegacyDefaultConfig();
     await seedPages(101);
@@ -162,6 +219,32 @@ describe('planRetrievalUpgrade — cost math (C4 MAX-not-SUM)', () => {
 });
 
 describe('applyRetrievalUpgrade — state machine + atomicity (D12, D18)', () => {
+  test('file-backed apply and undo update config.json and clear stale DB duplicates', async () => {
+    saveConfig({
+      engine: 'pglite',
+      embedding_model: 'openai:text-embedding-3-large',
+      embedding_dimensions: 1536,
+    });
+    await engine.setConfig('embedding_model', 'zeroentropyai:zembed-1');
+    await engine.setConfig('embedding_dimensions', '1280');
+    await seedPages(150);
+
+    const plan = await planRetrievalUpgrade(engine);
+    const applied = await applyRetrievalUpgrade(engine, plan);
+    expect(applied.status).toBe('applied');
+    expect(loadConfigFileOnly()?.embedding_model).toBe(ZE_TARGET_EMBEDDING_MODEL);
+    expect(loadConfigFileOnly()?.embedding_dimensions).toBe(ZE_TARGET_EMBEDDING_DIM);
+    expect(await engine.getConfig('embedding_model')).toBeNull();
+    expect(await engine.getConfig('embedding_dimensions')).toBeNull();
+
+    const undone = await undoRetrievalUpgrade(engine);
+    expect(undone.status).toBe('undone');
+    expect(loadConfigFileOnly()?.embedding_model).toBe('openai:text-embedding-3-large');
+    expect(loadConfigFileOnly()?.embedding_dimensions).toBe(1536);
+    expect(await engine.getConfig('embedding_model')).toBeNull();
+    expect(await engine.getConfig('embedding_dimensions')).toBeNull();
+  });
+
   test('happy path: schema swaps, config writes, applied=true', async () => {
     await setLegacyDefaultConfig();
     await seedPages(150);
@@ -220,7 +303,7 @@ describe('applyRetrievalUpgrade — state machine + atomicity (D12, D18)', () =>
     expect(result.status).toBe('skipped_no_work');
   });
 
-  test('schema width is 1024d on content_chunks.embedding after apply', async () => {
+  test('schema width is 1280d on content_chunks.embedding after apply', async () => {
     await setLegacyDefaultConfig();
     await seedPages(150);
     const plan = await planRetrievalUpgrade(engine);
@@ -234,7 +317,7 @@ describe('applyRetrievalUpgrade — state machine + atomicity (D12, D18)', () =>
     expect(rows.length).toBe(1);
     // pgvector reports as 'vector' udt; the dimension is encoded as a typmod
     // we can't introspect cleanly, but the absence of an error on the next
-    // INSERT-at-1024 is the contract test.
+    // INSERT-at-target-width is the contract tested by the surrounding suite.
     expect(rows[0].udt_name).toBe('vector');
   });
 

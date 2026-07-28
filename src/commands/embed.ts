@@ -5,7 +5,10 @@ import { chunkText } from '../core/chunkers/recursive.ts';
 import { createProgress, type ProgressReporter } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { assertEmbeddingEnabled } from '../core/embedding-dim-check.ts';
-import { loadConfig } from '../core/config.ts';
+import {
+  assertNoEmbeddingEnvConfigDrift,
+  loadConfig,
+} from '../core/config.ts';
 import { slog, serr } from '../core/console-prefix.ts';
 import { filterOutEmbedSkipped } from '../core/embed-skip.ts';
 import { runSlidingPool } from '../core/worker-pool.ts';
@@ -190,6 +193,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
   // sentinel. Skipped in dryRun mode so plan-mode introspection still works.
   if (!opts.dryRun) {
     assertEmbeddingEnabled(loadConfig());
+    assertNoEmbeddingEnvConfigDrift();
   }
 
   // v0.41.6.0 D1: preflight embedding credentials. Skipped in dryRun mode

@@ -4,6 +4,10 @@ import { ANTHROPIC_PRICING } from './anthropic-pricing.ts';
 import { lookupEmbeddingPrice, estimateCostFromChars } from './embedding-pricing.ts';
 import { getRecipe } from './ai/recipes/index.ts';
 import { parseModelId } from './ai/model-resolver.ts';
+import {
+  DEFAULT_EMBEDDING_DIMENSIONS,
+  DEFAULT_EMBEDDING_MODEL,
+} from './ai/defaults.ts';
 
 /**
  * v0.40.x: env-var name → file/DB config field, for hosted embedding providers
@@ -212,8 +216,8 @@ export function computeRecommendations(
   // ---------------------------------------------------------------------
   if (health.missing_embeddings > 0 && ctx.embeddingProviderConfigured !== false) {
     const params = { stale: true, sourceId: ctx.sourceId };
-    const embedModel = ctx.embeddingModel ?? 'openai:text-embedding-3-large';
-    const embedDims = ctx.embeddingDimensions ?? 3072;
+    const embedModel = ctx.embeddingModel ?? DEFAULT_EMBEDDING_MODEL;
+    const embedDims = ctx.embeddingDimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
     // Rough char estimate per chunk ~ 1.5k chars (chunker target).
     const estChars = health.missing_embeddings * 1500;
     let est_usd_cost = 0;

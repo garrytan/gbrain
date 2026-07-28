@@ -23,7 +23,16 @@ import { createProgress, startHeartbeat, type ProgressReporter } from '../core/p
 import { categorizeCheck, type CheckCategory } from '../core/doctor-categories.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import type { DbUrlSource } from '../core/config.ts';
-import { gbrainPath } from '../core/config.ts';
+import {
+  configPath,
+  gbrainPath,
+  loadConfigFileOnly,
+  resolveEmbeddingEnvOverrides,
+} from '../core/config.ts';
+import {
+  DEFAULT_EMBEDDING_DIMENSIONS,
+  DEFAULT_EMBEDDING_MODEL,
+} from '../core/ai/defaults.ts';
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
@@ -2198,12 +2207,11 @@ export async function checkEvalDrift(engine: BrainEngine): Promise<Check> {
  * ze-switch env-override class (the 716K-chunk damage incident from
  * PR #1421's description).
  *
- * GBRAIN_EMBEDDING_MODEL / GBRAIN_EMBEDDING_DIMENSIONS win over DB+file
- * config in loadConfig(). When env disagrees with DB, the gateway embeds
- * with the env-selected model — even after ze-switch wrote a different
- * value to DB. This check surfaces that disagreement on every hourly
- * doctor run so users can spot the drift before the embed sweep corrupts
- * vectors at the wrong width.
+ * PMBRAIN_EMBEDDING_MODEL / PMBRAIN_EMBEDDING_DIMENSIONS and their legacy
+ * GBRAIN aliases win over persisted config in loadConfig(). This check
+ * compares the effective aliases with canonical config.json (falling back
+ * to legacy DB metadata only when no file exists) so users can spot drift
+ * before an embed sweep starts.
  *
  * Uses Check.details (NOT Check.issues, which has a different schema)
  * so the structured `mismatches[]` payload is consumable by monitoring
@@ -2215,49 +2223,100 @@ export async function checkEvalDrift(engine: BrainEngine): Promise<Check> {
  * for the embed pipeline running there.
  */
 async function checkEmbeddingEnvOverride(engine: BrainEngine): Promise<Check> {
-  const envModel = process.env.GBRAIN_EMBEDDING_MODEL?.trim();
-  const envDim = process.env.GBRAIN_EMBEDDING_DIMENSIONS?.trim();
-  if (!envModel && !envDim) {
+  const overrides = resolveEmbeddingEnvOverrides();
+  if (!overrides.model && !overrides.dimensions) {
     return {
       name: 'embedding_env_override',
       status: 'ok',
       message: 'no embedding env overrides set',
     };
   }
-  let dbModel: string | null = null;
-  let dbDim: string | null = null;
-  try {
-    dbModel = await engine.getConfig('embedding_model');
-    dbDim = await engine.getConfig('embedding_dimensions');
-  } catch (err) {
+
+  const fileConfig = loadConfigFileOnly();
+  if (!fileConfig && existsSync(configPath())) {
     return {
       name: 'embedding_env_override',
       status: 'warn',
-      message: `couldn't read DB config to compare env: ${err instanceof Error ? err.message : String(err)}`,
+      message: `embedding env override is active, but canonical config cannot be read: ${configPath()}`,
     };
   }
-  const mismatches: Array<{ key: string; env: string; db: string }> = [];
-  if (envModel && dbModel && envModel !== dbModel) {
-    mismatches.push({ key: 'GBRAIN_EMBEDDING_MODEL', env: envModel, db: dbModel });
+
+  let configuredModel: string;
+  let configuredDim: number;
+  let source: 'config-file' | 'database' | 'default';
+  if (fileConfig) {
+    configuredModel = typeof fileConfig.embedding_model === 'string'
+      && fileConfig.embedding_model.trim()
+      ? fileConfig.embedding_model.trim()
+      : DEFAULT_EMBEDDING_MODEL;
+    const parsedDim = Number(fileConfig.embedding_dimensions);
+    configuredDim = Number.isInteger(parsedDim) && parsedDim > 0
+      ? parsedDim
+      : DEFAULT_EMBEDDING_DIMENSIONS;
+    source = 'config-file';
+  } else {
+    try {
+      const dbModel = (await engine.getConfig('embedding_model'))?.trim();
+      const dbDim = Number(await engine.getConfig('embedding_dimensions'));
+      configuredModel = dbModel || DEFAULT_EMBEDDING_MODEL;
+      configuredDim = Number.isInteger(dbDim) && dbDim > 0
+        ? dbDim
+        : DEFAULT_EMBEDDING_DIMENSIONS;
+      const hasDbEmbeddingConfig = Boolean(dbModel)
+        || (Number.isInteger(dbDim) && dbDim > 0);
+      source = hasDbEmbeddingConfig ? 'database' : 'default';
+    } catch (err) {
+      return {
+        name: 'embedding_env_override',
+        status: 'warn',
+        message: `couldn't read persisted config to compare env: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
   }
-  if (envDim && dbDim && envDim !== dbDim) {
-    mismatches.push({ key: 'GBRAIN_EMBEDDING_DIMENSIONS', env: envDim, db: dbDim });
+
+  const mismatches: Array<{
+    key: string;
+    env: string;
+    db: string;
+    configured: string;
+    source: string;
+  }> = [];
+  if (overrides.model && overrides.model.value !== configuredModel) {
+    mismatches.push({
+      key: overrides.model.name,
+      env: overrides.model.value,
+      db: configuredModel,
+      configured: configuredModel,
+      source,
+    });
+  }
+  if (overrides.dimensions) {
+    const envDim = Number(overrides.dimensions.value);
+    if (!Number.isInteger(envDim) || envDim <= 0 || envDim !== configuredDim) {
+      mismatches.push({
+        key: overrides.dimensions.name,
+        env: overrides.dimensions.value,
+        db: String(configuredDim),
+        configured: String(configuredDim),
+        source,
+      });
+    }
   }
   if (mismatches.length === 0) {
     return {
       name: 'embedding_env_override',
       status: 'ok',
-      message: 'env vars agree with DB config',
+      message: `embedding env overrides agree with ${source} config`,
     };
   }
   return {
     name: 'embedding_env_override',
     status: 'warn',
     message:
-      `${mismatches.length} embedding env var(s) disagree with DB config (env wins at runtime). ` +
+      `${mismatches.length} embedding env var(s) disagree with ${source} config (env wins at runtime). ` +
       `Fix: \`unset ${mismatches.map((m) => m.key).join(' ')}\` in your shell profile / .env, ` +
-      `or update DB config to match.`,
-    details: { mismatches },
+      `or persist the intended model in config.json first.`,
+    details: { config_source: source, mismatches },
   };
 }
 

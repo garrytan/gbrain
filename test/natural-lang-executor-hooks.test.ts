@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { PgliteRunCoordinator, startRun } from '../src/commands/natural-lang/executor.ts';
+import { PgliteRunCoordinator, resolveRunTimeoutMs, startRun } from '../src/commands/natural-lang/executor.ts';
 
 async function waitFor(predicate: () => boolean, timeoutMs = 3_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -10,6 +10,12 @@ async function waitFor(predicate: () => boolean, timeoutMs = 3_000): Promise<voi
 }
 
 describe('natural language child-process hooks', () => {
+  test('keeps the generic default while allowing Dream to opt out of the outer timeout', () => {
+    expect(resolveRunTimeoutMs(undefined)).toBe(10 * 60 * 1000);
+    expect(resolveRunTimeoutMs(120_000)).toBe(120_000);
+    expect(resolveRunTimeoutMs(null)).toBeNull();
+  });
+
   test('does not expose a completed run until PGLite reconnection finishes', async () => {
     let releaseReconnect!: () => void;
     const reconnect = new Promise<void>(resolve => {

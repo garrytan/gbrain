@@ -109,7 +109,7 @@ export async function runRetrievalUpgradePrompt(
     // want to override use the non-interactive `--ignore-env-override`.
     const result = await applyRetrievalUpgrade(engine, plan);
     if (result.status === 'applied') {
-      writeFn('[ze-switch] Schema rebuilt at 1024d. Run `gbrain embed --stale` to refill embeddings (or wait for autopilot).');
+      writeFn('[ze-switch] Schema rebuilt at 1280d. Run `gbrain embed --stale` to refill embeddings (or wait for autopilot).');
       return { status: 'applied', plan };
     }
     if (result.status === 'refused' && result.reason === 'env_override') {

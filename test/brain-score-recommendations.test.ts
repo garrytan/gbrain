@@ -8,6 +8,10 @@ import {
   HOSTED_EMBED_KEY_CONFIG,
 } from '../src/core/brain-score-recommendations.ts';
 import type { BrainHealth } from '../src/core/types.ts';
+import {
+  DEFAULT_EMBEDDING_DIMENSIONS,
+  DEFAULT_EMBEDDING_MODEL,
+} from '../src/core/ai/defaults.ts';
 
 /**
  * v0.40.x — recipe-aware embedding-provider check (shared by doctor +
@@ -157,6 +161,22 @@ describe('computeRecommendations', () => {
     const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true });
     const embed = recs.find((r) => r.id === 'embed.stale');
     expect(embed?.depends_on).toEqual([]);
+  });
+
+  test('missing context uses the current embedding defaults', () => {
+    const health = makeHealth({ missing_embeddings: 100 });
+    const implicit = computeRecommendations(health, {
+      repoPath: '/brain',
+      embeddingProviderConfigured: true,
+    });
+    const explicit = computeRecommendations(health, {
+      repoPath: '/brain',
+      embeddingProviderConfigured: true,
+      embeddingModel: DEFAULT_EMBEDDING_MODEL,
+      embeddingDimensions: DEFAULT_EMBEDDING_DIMENSIONS,
+    });
+    expect(implicit.find((item) => item.id === 'embed.stale')?.idempotency_key)
+      .toBe(explicit.find((item) => item.id === 'embed.stale')?.idempotency_key);
   });
 
   test('severity ordering: critical before high before medium', () => {
