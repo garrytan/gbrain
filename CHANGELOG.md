@@ -6,7 +6,9 @@ All notable changes to GBrain will be documented in this file.
 
 ### Added
 
-- `gbrain init --mode claude-code` (#94): Claude Code-native keyless mode. No provider API keys required — PGLite engine, keyword + graph + title search via hybrid search's existing no-embedding-provider path, chat through the `claude-cli` recipe's OAuth session. Writes a `claude_code_mode: true` sentinel alongside `embedding_disabled: true`; `gbrain import` on such a brain proceeds without vectors (implicit `--no-embed`) instead of refusing, `search.mode` defaults to `conservative` (the one bundle with no reranker or LLM-expansion spend), and doctor/advisor treat the missing embedding provider as intentional rather than an unfinished setup.
+- `gbrain init --mode claude-code` (#94): Claude Code-native keyless mode. No provider API keys required — PGLite engine, chat through the `claude-cli` recipe's OAuth session, and search that uses the most capable keyless stack available. Writes a `claude_code_mode: true` sentinel alongside `embedding_disabled: true` when no embedder is found; `gbrain import` on such a brain proceeds without vectors (implicit `--no-embed`) instead of refusing, `search.mode` defaults to `conservative` (the one bundle with no reranker or LLM-expansion spend), and doctor/advisor treat the missing embedding provider as intentional rather than an unfinished setup.
+- Keyless semantic search via local Ollama (#94): `--mode claude-code` probes the local Ollama daemon (`OLLAMA_BASE_URL` honored) and, when a recipe-known embedding model is pulled, configures it automatically — full hybrid vector + keyword + graph search with zero API keys. Explicit `--embedding-model` and `--no-embedding` both override the probe.
+- Keyless LLM query expansion (#94): the `claude-cli` recipe now declares an `expansion` touchpoint, and the gateway routes its expansion calls through the schemaless text path (the CLI subprocess has no structured-output mode). `--mode claude-code` defaults `expansion_model` to `claude-cli:claude-haiku-4-5-20251001`; whether expansion fires per search stays governed by the search-mode bundle, as with every other provider.
 
 ### Fixed
 

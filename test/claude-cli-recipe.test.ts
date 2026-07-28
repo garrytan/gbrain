@@ -78,7 +78,7 @@ function userMessage(text: string): LanguageModelV2CallOptions['prompt'][number]
 }
 
 describe('claude-cli recipe registration', () => {
-  test('getRecipe returns chat-only Recipe with the documented models', async () => {
+  test('getRecipe returns chat+expansion Recipe with the documented models (no embedding)', async () => {
     const { getRecipe } = await import('../src/core/ai/recipes/index.ts');
     const recipe = getRecipe('claude-cli');
     expect(recipe).toBeDefined();
@@ -88,8 +88,12 @@ describe('claude-cli recipe registration', () => {
     expect(recipe!.touchpoints.chat!.supports_tools).toBe(true);
     expect(recipe!.touchpoints.chat!.supports_subagent_loop).toBe(true);
     expect(recipe!.touchpoints.chat!.models).toContain('claude-sonnet-4-6');
+    // Claude has no first-party embedding model — still undeclared.
     expect(recipe!.touchpoints.embedding).toBeUndefined();
-    expect(recipe!.touchpoints.expansion).toBeUndefined();
+    // #94: expansion declared so keyless brains get LLM query expansion
+    // through the subscription (gateway's claude-cli expansion branch).
+    expect(recipe!.touchpoints.expansion).toBeDefined();
+    expect(recipe!.touchpoints.expansion!.models).toContain('claude-haiku-4-5-20251001');
   });
 
   test('recipe aliases map short names to canonical model ids', async () => {

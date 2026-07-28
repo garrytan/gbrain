@@ -11,9 +11,17 @@ import type { Recipe } from '../types.ts';
  * pick per call: `anthropic:claude-sonnet-4-6` (API key + per-token billing)
  * vs `claude-cli:claude-sonnet-4-6` (OAuth subscription, no API key).
  *
- * Chat-only. Claude has no first-party embedding model; users wanting an
- * Anthropic chat path with embeddings still combine this with openai/google/
- * voyage for embedding the way the existing `anthropic` recipe documents.
+ * Chat + expansion. Claude has no first-party embedding model; users wanting
+ * an Anthropic chat path with embeddings still combine this with openai/
+ * google/voyage (or a local ollama daemon) for embedding the way the
+ * existing `anthropic` recipe documents.
+ *
+ * Expansion (#94): declared so keyless brains get LLM query expansion
+ * through the subscription. The gateway's expansion dispatch already has a
+ * claude-cli branch; declaring the touchpoint activates it. Latency caveat:
+ * each expansion is a `claude --print` subprocess (~1-3s), so it only fires
+ * where the search-mode bundle enables expansion (tokenmax) or the user
+ * turns it on explicitly — same knob semantics as every other provider.
  *
  * Auth: `auth_env.required: []` because the CLI handles auth itself. The
  * `claude` binary on PATH (or `GBRAIN_CLAUDE_CLI_BIN`) IS the auth surface;
@@ -32,7 +40,15 @@ export const claudeCli: Recipe = {
     required: [],
   },
   touchpoints: {
-    // No embedding or expansion touchpoints — chat-only.
+    // No embedding touchpoint — Claude has no first-party embedding model.
+    expansion: {
+      models: ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6'],
+      // Cost figures mirror the anthropic recipe for the budget ledger;
+      // the actual bill is borne by the subscription (nominal accounting,
+      // same convention as the chat touchpoint below).
+      cost_per_1m_tokens_usd: 0.25,
+      price_last_verified: '2026-06-17',
+    },
     chat: {
       models: [
         'claude-opus-4-7',

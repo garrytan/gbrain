@@ -261,6 +261,65 @@ export interface ResolvedAIOptions {
 export const CLAUDE_CODE_DEFAULT_CHAT_MODEL = 'claude-cli:claude-sonnet-4-6';
 
 /**
+ * #94 — default expansion model for `--mode claude-code`. Haiku-tier via the
+ * `claude-cli` recipe (subscription-billed subprocess). Setting it makes
+ * `isAvailable('expansion')` true so LLM query expansion works keylessly;
+ * whether expansion actually FIRES per search stays governed by the
+ * search-mode bundle (off in conservative/balanced, on in tokenmax).
+ */
+export const CLAUDE_CODE_DEFAULT_EXPANSION_MODEL = 'claude-cli:claude-haiku-4-5-20251001';
+
+/**
+ * #94 — best-effort local Ollama embedding detection for `--mode claude-code`.
+ *
+ * The mode's promise is "maximum functionality with zero API keys", and
+ * semantic search doesn't inherently need a hosted key — a local Ollama
+ * daemon serves embeddings keylessly. When the daemon is reachable AND has
+ * one of the ollama recipe's known embedding models pulled, return
+ * `{ fullModel, dims }` so init configures full hybrid (vector + keyword)
+ * search; otherwise return null and the mode falls back to keyword + graph.
+ *
+ * Deliberately conservative: only models the recipe already declares (their
+ * dims are known, so the schema column is sized correctly), preferred in
+ * recipe order. Injectable fetch/env for hermetic tests. Never throws.
+ */
+export async function detectOllamaEmbedding(
+  env: NodeJS.ProcessEnv = process.env,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ fullModel: string; dims: number } | null> {
+  const base = env.OLLAMA_BASE_URL ?? 'http://localhost:11434/v1';
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 1500);
+  try {
+    const res = await fetchImpl(new URL('/v1/models', base).toString(), {
+      signal: controller.signal,
+      headers: { accept: 'application/json' },
+    });
+    if (!res.ok) return null;
+    const body = (await res.json().catch(() => null)) as { data?: Array<{ id?: string }> } | null;
+    if (!body || !Array.isArray(body.data)) return null;
+    // Ollama ids carry tags ("nomic-embed-text:latest") — match on the bare name.
+    const installed = new Set(
+      body.data.map(m => String(m?.id ?? '').split(':')[0]).filter(Boolean),
+    );
+    const { getRecipe } = await import('../core/ai/recipes/index.ts');
+    const recipe = getRecipe('ollama');
+    const models = recipe?.touchpoints.embedding?.models ?? [];
+    for (const m of models) {
+      if (!installed.has(m)) continue;
+      const { embeddingDimsForModel } = await import('../core/ai/model-resolver.ts');
+      const dims = embeddingDimsForModel(recipe!, m);
+      if (dims > 0) return { fullModel: `ollama:${m}`, dims };
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Seed init's AI options from persisted config, falling back to the raw env
  * vars when loadConfig() returned null (#1058). On a cold install (no
  * config.json AND no DATABASE_URL) loadConfig short-circuits BEFORE its env
@@ -429,16 +488,30 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
   }
 
   // --- #94: --mode claude-code ----------------------------------------------
-  // Keyless by construction: no embedding provider (implies the D9 skip),
-  // chat via the claude-cli recipe unless the user picked one explicitly.
-  // Expansion stays unset — the gateway's isAvailable('expansion') gate
-  // makes hybrid search skip LLM expansion gracefully without a key.
+  // Zero API keys, maximum functionality: chat AND expansion route through
+  // the claude-cli recipe (subscription-billed) unless the user picked
+  // providers explicitly. For embeddings — Claude has no first-party
+  // embedding model, but a local Ollama daemon serves them keylessly, so
+  // probe for one before falling back to keyword + graph search. Explicit
+  // --embedding-model (kept from Tier 1 above) and --no-embedding both win
+  // over the probe.
   if (claudeCode) {
     out.claudeCode = true;
-    out.noEmbedding = true;
-    delete out.embedding_model;
-    delete out.embedding_dimensions;
     if (!out.chat_model) out.chat_model = CLAUDE_CODE_DEFAULT_CHAT_MODEL;
+    if (!out.expansion_model) out.expansion_model = CLAUDE_CODE_DEFAULT_EXPANSION_MODEL;
+    if (!out.embedding_model && !out.noEmbedding) {
+      const local = noEmbedding ? null : await detectOllamaEmbedding();
+      if (local) {
+        out.embedding_model = local.fullModel;
+        if (!out.embedding_dimensions) out.embedding_dimensions = local.dims;
+        console.error(
+          `Detected local Ollama embedding model. Using ${local.fullModel} (${out.embedding_dimensions}d) — ` +
+          `semantic search stays keyless. Override with --embedding-model, or --no-embedding for keyword-only.`,
+        );
+      } else {
+        out.noEmbedding = true;
+      }
+    }
   }
 
   // --- Tier 3: env detection ------------------------------------------------
@@ -961,8 +1034,14 @@ async function initPGLite(opts: {
   let resolvedDim: number | undefined;
   let resolvedModel: string | undefined;
   if (opts.aiOpts?.claudeCode) {
-    // #94 claude-code keyless mode: embedding is off by design, not deferred.
-    console.log(`  Claude Code mode: no API keys — keyword + graph search, chat via the \`claude\` CLI`);
+    // #94 claude-code keyless mode. Chat (and expansion) run via the claude
+    // CLI either way; embedding is either a detected local Ollama model
+    // (falls through to the normal preflight below) or off by design.
+    if (opts.aiOpts?.noEmbedding) {
+      console.log(`  Claude Code mode: no API keys — keyword + graph search, chat via the \`claude\` CLI`);
+    } else {
+      console.log(`  Claude Code mode: no API keys — local embeddings + keyword + graph search, chat via the \`claude\` CLI`);
+    }
     // Best-effort binary check (same pattern as the supabase CLI probe):
     // warn loudly now instead of failing at first `gbrain think`.
     const claudeBin = process.env.GBRAIN_CLAUDE_CLI_BIN ?? 'claude';
@@ -976,9 +1055,12 @@ async function initPGLite(opts: {
       console.warn('    npm install -g @anthropic-ai/claude-code && claude');
       console.warn('  Or point at the binary: export GBRAIN_CLAUDE_CLI_BIN=/path/to/claude');
     }
-  } else if (opts.aiOpts?.noEmbedding) {
-    // D9 deferred-setup mode: skip preflight, no model/dim resolved.
-    console.log(`  --no-embedding: deferred setup — configure with \`gbrain config set embedding_model <id>\` before import`);
+  }
+  if (opts.aiOpts?.noEmbedding) {
+    // D9 deferred-setup mode (or keyless keyword-only): skip preflight.
+    if (!opts.aiOpts?.claudeCode) {
+      console.log(`  --no-embedding: deferred setup — configure with \`gbrain config set embedding_model <id>\` before import`);
+    }
   } else if (opts.aiOpts?.embedding_model) {
     const { resolveSchemaEmbeddingDim } = await import('../core/embedding-dim-check.ts');
     const pre = resolveSchemaEmbeddingDim({
@@ -1704,9 +1786,11 @@ OPTIONS
   --chat-model <PROVIDER:MODEL>
                         Default subagent driver (v0.27+)
   --no-embedding        Defer embedding setup (skips the embedding-key check)
-  --mode claude-code    Keyless mode for Claude Code subscribers (#94): PGLite,
-                        keyword + graph search (no embedding provider), chat via
-                        the \`claude\` CLI OAuth session. No API keys required.
+  --mode claude-code    Keyless mode for Claude Code subscribers (#94): PGLite;
+                        chat + query expansion via the \`claude\` CLI OAuth
+                        session; embeddings from a local Ollama daemon when one
+                        is running (auto-detected), else keyword + graph search.
+                        No API keys required.
   --skip-embed-check    Skip the init-time embedding-key validation (config +
                         live test-embed). Also via GBRAIN_INIT_SKIP_EMBED_CHECK=1
 

@@ -10,7 +10,12 @@
  * (helpers take cfg/env as arguments per CLAUDE.md test isolation rules).
  */
 import { describe, test, expect } from 'bun:test';
-import { seedAIOptionsFromConfig, CLAUDE_CODE_DEFAULT_CHAT_MODEL } from '../src/commands/init.ts';
+import {
+  seedAIOptionsFromConfig,
+  CLAUDE_CODE_DEFAULT_CHAT_MODEL,
+  CLAUDE_CODE_DEFAULT_EXPANSION_MODEL,
+  detectOllamaEmbedding,
+} from '../src/commands/init.ts';
 import {
   assertEmbeddingEnabled,
   isKeylessBrain,
@@ -107,5 +112,53 @@ describe('claude-cli default chat model — keyless contract', () => {
   test('claude-cli recipe supports the subagent loop (D7 caveat exemption is sound)', () => {
     const { recipe } = resolveRecipe(CLAUDE_CODE_DEFAULT_CHAT_MODEL);
     expect(recipe.touchpoints.chat?.supports_subagent_loop).toBe(true);
+  });
+
+  test('CLAUDE_CODE_DEFAULT_EXPANSION_MODEL resolves to a declared claude-cli expansion model', () => {
+    const { recipe, parsed } = resolveRecipe(CLAUDE_CODE_DEFAULT_EXPANSION_MODEL);
+    expect(recipe.id).toBe('claude-cli');
+    expect(recipe.touchpoints.expansion?.models).toContain(parsed.modelId);
+  });
+});
+
+describe('detectOllamaEmbedding — keyless local semantic search probe', () => {
+  const modelsResponse = (ids: string[]) =>
+    ({
+      ok: true,
+      json: async () => ({ object: 'list', data: ids.map(id => ({ id })) }),
+    }) as unknown as Response;
+
+  test('daemon with a known embedding model (tagged id) → ollama model + dims', async () => {
+    const fetchStub = (async () => modelsResponse(['llama3.2:latest', 'nomic-embed-text:latest'])) as unknown as typeof fetch;
+    const got = await detectOllamaEmbedding({}, fetchStub);
+    expect(got).toEqual({ fullModel: 'ollama:nomic-embed-text', dims: 768 });
+  });
+
+  test('daemon with only chat models → null (no silent wrong-width column)', async () => {
+    const fetchStub = (async () => modelsResponse(['llama3.2:latest', 'qwen2.5-coder:7b'])) as unknown as typeof fetch;
+    expect(await detectOllamaEmbedding({}, fetchStub)).toBeNull();
+  });
+
+  test('daemon unreachable → null (probe never throws)', async () => {
+    const fetchStub = (async () => { throw new Error('ECONNREFUSED'); }) as unknown as typeof fetch;
+    expect(await detectOllamaEmbedding({}, fetchStub)).toBeNull();
+  });
+
+  test('non-OK / malformed responses → null', async () => {
+    const bad = (async () => ({ ok: false } as unknown as Response)) as unknown as typeof fetch;
+    expect(await detectOllamaEmbedding({}, bad)).toBeNull();
+    const junk = (async () => ({ ok: true, json: async () => ({ nope: 1 }) } as unknown as Response)) as unknown as typeof fetch;
+    expect(await detectOllamaEmbedding({}, junk)).toBeNull();
+  });
+
+  test('OLLAMA_BASE_URL is honored', async () => {
+    let seenUrl = '';
+    const fetchStub = (async (url: string | URL) => {
+      seenUrl = String(url);
+      return modelsResponse(['bge-m3:latest']);
+    }) as unknown as typeof fetch;
+    const got = await detectOllamaEmbedding({ OLLAMA_BASE_URL: 'http://10.0.0.5:11434/v1' }, fetchStub);
+    expect(seenUrl).toBe('http://10.0.0.5:11434/v1/models');
+    expect(got?.fullModel).toBe('ollama:bge-m3');
   });
 });

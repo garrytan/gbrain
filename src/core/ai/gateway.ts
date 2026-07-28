@@ -2499,7 +2499,14 @@ export async function expand(query: string): Promise<string[]> {
       return parseExpansionResponse(text) ?? [];
     };
 
-    if (recipe.implementation !== 'openai-compatible') {
+    if (recipe.implementation === 'claude-cli') {
+      // #94: the CLI subprocess model has no native structured-output mode
+      // (doGenerate returns plain text). The prompt already pins the JSON
+      // shape; the tolerant text path recovers it the same way schemaless
+      // openai-compatible backends do. On parse failure, expand()'s
+      // best-effort contract returns the original query alone.
+      expansions = await viaText();
+    } else if (recipe.implementation !== 'openai-compatible') {
       // Native providers (Anthropic, OpenAI, Google) support generateObject's
       // structured output natively — unchanged path.
       const result = await generateObject({
