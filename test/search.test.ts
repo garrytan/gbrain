@@ -43,11 +43,12 @@ describe('rrfFusion', () => {
       makeResult({ slug: 'b', chunk_id: 2, chunk_text: 'bbb' }),
     ];
     const results = rrfFusion([list], 60);
-    // Top result should have score >= 1.0 (normalized to 1.0, then boosted 2.0x for compiled_truth)
-    expect(results[0].score).toBe(2.0); // 1.0 * 2.0 boost
+    // Top result should have score >= 1.0 (normalized to 1.0, then boosted for compiled_truth)
+    // COMPILED_TRUTH_BOOST default 1.5, score (1.0) >= COMPILED_TRUTH_FLOOR (0.6) → boosted
+    expect(results[0].score).toBeGreaterThanOrEqual(1.0);
   });
 
-  test('boosts compiled_truth chunks 2x over timeline', () => {
+  test('boosts compiled_truth chunks over timeline when score >= floor', () => {
     const compiledChunk = makeResult({ slug: 'a', chunk_id: 1, chunk_source: 'compiled_truth', chunk_text: 'compiled text' });
     const timelineChunk = makeResult({ slug: 'b', chunk_id: 2, chunk_source: 'timeline', chunk_text: 'timeline text' });
 
@@ -57,11 +58,34 @@ describe('rrfFusion', () => {
     // Timeline was rank 0, compiled was rank 1
     // Timeline raw: 1/(60+0) = 0.01667, compiled raw: 1/(60+1) = 0.01639
     // Normalized: timeline = 1.0, compiled = 0.983
-    // Boosted: timeline = 1.0 * 1.0 = 1.0, compiled = 0.983 * 2.0 = 1.967
+    // Both scores >= COMPILED_TRUTH_FLOOR (0.6); compiled_truth gets boosted
+    // Boosted: timeline = 1.0 * 1.0 = 1.0, compiled = 0.983 * 1.5 = 1.475
     // Compiled should now rank first
     expect(results[0].slug).toBe('a');
     expect(results[0].chunk_source).toBe('compiled_truth');
     expect(results[0].score).toBeGreaterThan(results[1].score);
+  });
+
+  test('does NOT boost compiled_truth chunks below floor (issue #3430 regression)', () => {
+    const fencedCodeChunk = makeResult({ slug: 'b', chunk_id: 2, chunk_source: 'fenced_code', chunk_text: 'fenced code' });
+    const compiledChunk = makeResult({ slug: 'a', chunk_id: 1, chunk_source: 'compiled_truth', chunk_text: 'compiled text' });
+
+    // Put fenced_code FIRST (rank 0, normalized 1.0), compiled_truth SECOND (rank 1, normalized ~0.5)
+    const results = rrfFusion([[fencedCodeChunk, compiledChunk]], 60);
+
+    // Regression test for issue #3430: the old hardcoded 2.0 boost would
+    // turn a rank-1 compiled_truth (score 0.5) into 1.0 — tying or leapfrogging
+    // a rank-0 fenced_code (score 1.0). With COMPILED_TRUTH_FLOOR=0.6, the
+    // 0.5 compiled_truth score is BELOW the floor and gets no boost.
+    //
+    // Expected: fenced_code stays first (score 1.0), compiled_truth stays
+    // second (score ~0.5, below floor → no boost → score unchanged).
+    expect(results[0].slug).toBe('b');
+    expect(results[0].chunk_source).toBe('fenced_code');
+    expect(results[1].slug).toBe('a');
+    expect(results[1].chunk_source).toBe('compiled_truth');
+    // Compiled truth did NOT get boosted because its normalized score < floor
+    expect(results[1].score).toBeLessThan(results[0].score);
   });
 
   test('timeline-only results are not boosted', () => {

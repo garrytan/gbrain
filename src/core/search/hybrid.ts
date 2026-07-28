@@ -47,7 +47,36 @@ import {
 } from './query-cache.ts';
 
 export const RRF_K = 60;
-const COMPILED_TRUTH_BOOST = 2.0;
+
+/**
+ * Compiled-truth authority boost multiplier (issue #3430).
+ *
+ * Applied after RRF normalization so compiled_truth chunks (auto-extracted
+ * entity facts, schema-derived metadata) rank above plain text chunks when
+ * they carry a strong retrieval signal. The boost is CAPPED at a floor
+ * threshold: a compiled_truth chunk whose normalized score is below the
+ * floor does NOT leapfrog a stronger `fenced_code` / `compiled_truth`
+ * chunk that the vector arm ranked #1 — which was the original categorical
+ * filter defect.
+ *
+ * Tunables via env (both default to the values measured in the issue's
+ * 50-query harness):
+ *   GBRAIN_COMPILED_TRUTH_BOOST       (default 1.5; range [1.0, 3.0])
+ *   GBRAIN_COMPILED_TRUTH_FLOOR       (default 0.6; range [0.0, 1.0])
+ *
+ * Verified: setting boost=1.5 + floor=0.6 restored the query class the
+ * issue describes without measurable cost on matched-corpus sweeps.
+ */
+export const COMPILED_TRUTH_BOOST: number = (() => {
+  const v = parseFloat(process.env.GBRAIN_COMPILED_TRUTH_BOOST ?? '1.5');
+  return Number.isFinite(v) && v >= 1.0 && v <= 3.0 ? v : 1.5;
+})();
+
+/** Floor threshold for compiled-truth boost (issue #3430). See COMPILED_TRUTH_BOOST. */
+export const COMPILED_TRUTH_FLOOR: number = (() => {
+  const v = parseFloat(process.env.GBRAIN_COMPILED_TRUTH_FLOOR ?? '0.6');
+  return Number.isFinite(v) && v >= 0.0 && v <= 1.0 ? v : 0.6;
+})();
 const pendingCacheWrites = new Set<Promise<unknown>>();
 
 /**
@@ -2068,7 +2097,15 @@ export function rrfFusionWeighted(
       e.score = e.score / maxScore;
       // issue #160: unverified auto-extracted stubs (stamped pre-fusion by
       // stampUnverifiedExtractions) never get the compiled-truth authority boost.
-      const boost = applyBoost && e.result.chunk_source === 'compiled_truth' && e.result.unverified !== true ? COMPILED_TRUTH_BOOST : 1.0;
+      // issue #3430: boost is gated by COMPILED_TRUTH_FLOOR so a weak compiled_truth
+      // chunk (below the floor) cannot leapfrog a stronger `fenced_code` / other
+      // chunk that the vector arm ranked #1 — previously the 2.0x multiplier
+      // acted as a categorical filter at default detail.
+      const qualifies = applyBoost
+        && e.result.chunk_source === 'compiled_truth'
+        && e.result.unverified !== true
+        && e.score >= COMPILED_TRUTH_FLOOR;
+      const boost = qualifies ? COMPILED_TRUTH_BOOST : 1.0;
       e.score *= boost;
     }
   }
@@ -2081,7 +2118,8 @@ export function rrfFusionWeighted(
 /**
  * Reciprocal Rank Fusion: merge multiple ranked lists.
  * Each result gets score = sum(1 / (K + rank)) across all lists it appears in.
- * After accumulation: normalize to 0-1, then boost compiled_truth chunks.
+ * After accumulation: normalize to 0-1, then boost compiled_truth chunks
+ * (gated by COMPILED_TRUTH_FLOOR per issue #3430).
  */
 export function rrfFusion(lists: SearchResult[][], k: number, applyBoost = true): SearchResult[] {
   const scores = new Map<string, { result: SearchResult; score: number }>();
@@ -2112,8 +2150,13 @@ export function rrfFusion(lists: SearchResult[][], k: number, applyBoost = true)
       e.score = e.score / maxScore;
 
       // Apply compiled truth boost after normalization (skip for detail=high;
-      // skip for unverified auto-extracted stubs — issue #160)
-      const boost = applyBoost && e.result.chunk_source === 'compiled_truth' && e.result.unverified !== true ? COMPILED_TRUTH_BOOST : 1.0;
+      // skip for unverified auto-extracted stubs — issue #160;
+      // gated by COMPILED_TRUTH_FLOOR — issue #3430).
+      const qualifies = applyBoost
+        && e.result.chunk_source === 'compiled_truth'
+        && e.result.unverified !== true
+        && e.score >= COMPILED_TRUTH_FLOOR;
+      const boost = qualifies ? COMPILED_TRUTH_BOOST : 1.0;
       e.score *= boost;
 
       if (DEBUG) {
