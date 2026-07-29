@@ -227,7 +227,7 @@ function parseArgs(args: string[]): RunOpts | { help: true } | { error: string }
   return { ...(opts as RunOpts), entitySlug: positional[0] };
 }
 
-export async function runFounder(engine: BrainEngine, args: string[]): Promise<void> {
+export async function runFounder(engine: BrainEngine | null, args: string[]): Promise<void> {
   const parsed = parseArgs(args);
   if ('help' in parsed) {
     console.log(HELP);
@@ -296,6 +296,7 @@ export async function runFounder(engine: BrainEngine, args: string[]): Promise<v
       takes: [],
     });
   } else {
+    if (!engine) throw new Error('gbrain founder requires a local engine');
     // Local: full pipeline. Get the trajectory + the entity's resolved takes.
     // v0.40.2.0: kind:'metric' is explicit clarity (downstream math already
     // skips NULL-metric rows so this is a no-op behaviorally; surfaces

@@ -304,7 +304,7 @@ Examples:
 `;
 
 export async function runWhoknows(
-  engine: BrainEngine,
+  engine: BrainEngine | null,
   args: string[],
 ): Promise<void> {
   const parsed = parseArgs(args);
@@ -331,6 +331,7 @@ export async function runWhoknows(
     }, { timeoutMs: 30_000 });
     results = unpackToolResult<WhoknowsResult[]>(raw);
   } else {
+    if (!engine) throw new Error('gbrain whoknows requires a local engine');
     // v0.40.6.0 T1.5 wiring (D4): consult the active pack for expert
     // types. Pack-load failure → empty filter (NOT hardcoded defaults
     // per the silent-violation bug class Finding 1.3 closed). Local

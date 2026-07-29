@@ -180,7 +180,7 @@ function validateAndNormalizeFlags(flags: ParsedFlags): void {
 }
 
 async function resolveSourceForRecall(
-  engine: BrainEngine,
+  engine: BrainEngine | null,
   flagValue: string,
   thinClient: boolean,
 ): Promise<string> {
@@ -197,6 +197,7 @@ async function resolveSourceForRecall(
   // pre-v0.32 "query whatever source the user typed and let it return
   // empty" behavior so existing tests + scripts keep working while
   // recall still benefits from the env/dotfile resolution chain.
+  if (!engine) throw new Error('gbrain recall requires a local engine');
   try {
     return await resolveSourceId(engine, flagValue !== 'default' ? flagValue : null);
   } catch (e) {
@@ -207,7 +208,7 @@ async function resolveSourceForRecall(
   }
 }
 
-export async function runRecall(engine: BrainEngine, args: string[]): Promise<void> {
+export async function runRecall(engine: BrainEngine | null, args: string[]): Promise<void> {
   const flags = parseFlags(args);
   validateAndNormalizeFlags(flags);
 
@@ -231,7 +232,7 @@ export async function runRecall(engine: BrainEngine, args: string[]): Promise<vo
 }
 
 async function runRecallOnce(
-  engine: BrainEngine,
+  engine: BrainEngine | null,
   flags: ParsedFlags,
   sourceId: string,
   thinClient: boolean,
@@ -280,6 +281,7 @@ async function runRecallOnce(
     rows = unpacked.facts.map(remoteFactToRow);
     pendingCount = unpacked.pending_consolidation_count;
   } else {
+    if (!engine) throw new Error('gbrain recall requires a local engine');
     rows = await fetchRowsLocal(engine, flags, sourceId, resolvedSince);
     if (flags.pending) {
       pendingCount = await engine.countUnconsolidatedFacts(sourceId);
@@ -392,7 +394,7 @@ function renderRollup(rollup: Array<{ entity_slug: string; count: number }>): st
 }
 
 async function runWatchLoop(
-  engine: BrainEngine,
+  engine: BrainEngine | null,
   flags: ParsedFlags,
   sourceId: string,
   thinClient: boolean,
@@ -538,7 +540,7 @@ function factRowToJson(r: FactRow): Record<string, unknown> {
   };
 }
 
-export async function runForget(engine: BrainEngine, args: string[]): Promise<void> {
+export async function runForget(engine: BrainEngine | null, args: string[]): Promise<void> {
   const idArg = args.find(a => /^\d+$/.test(a));
   if (!idArg) {
     process.stderr.write('Usage: gbrain forget <fact-id> [--reason <text>]\n');
@@ -574,6 +576,7 @@ export async function runForget(engine: BrainEngine, args: string[]): Promise<vo
   // page's `## Facts` fence and survives `gbrain rebuild`. Legacy rows
   // fall back to the legacy DB-only expire path; the helper handles
   // the fallback internally.
+  if (!engine) throw new Error('gbrain forget requires a local engine');
   const { forgetFactInFence } = await import('../core/facts/forget.ts');
   const result = await forgetFactInFence(engine, id, { reason });
 

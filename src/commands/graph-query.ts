@@ -127,7 +127,7 @@ async function countForeignEdges(
   }
 }
 
-export async function runGraphQuery(engine: BrainEngine, argv: string[]) {
+export async function runGraphQuery(engine: BrainEngine | null, argv: string[]) {
   const args = parseArgs(argv);
   if (args.showHelp || !args.slug) {
     printHelp();
@@ -149,6 +149,7 @@ export async function runGraphQuery(engine: BrainEngine, argv: string[]) {
     }, { timeoutMs: 30_000 });
     paths = unpackToolResult<GraphPath[]>(raw);
   } else {
+    if (!engine) throw new Error('gbrain graph-query requires a local engine');
     paths = await engine.traversePaths(args.slug, {
       depth: args.depth,
       linkType: args.linkType,
@@ -161,6 +162,7 @@ export async function runGraphQuery(engine: BrainEngine, argv: string[]) {
     // Still report foreign edges so the user knows they exist in other
     // sources even when the scoped traversal returned nothing.
     if (!args.includeForeign && !isThinClient(cfg)) {
+      if (!engine) throw new Error('gbrain graph-query requires a local engine');
       const foreign = await countForeignEdges(engine, args.slug, args.direction);
       if (foreign > 0) {
         console.error(
@@ -179,6 +181,7 @@ export async function runGraphQuery(engine: BrainEngine, argv: string[]) {
   // (engine query not available); local path runs the count and prints
   // the footer when there are hidden edges AND the user didn't opt in.
   if (!args.includeForeign && !isThinClient(cfg)) {
+    if (!engine) throw new Error('gbrain graph-query requires a local engine');
     const foreign = await countForeignEdges(engine, args.slug, args.direction);
     if (foreign > 0) {
       console.error(

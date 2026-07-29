@@ -63,7 +63,7 @@ Options:
   --help, -h          Show this help
 `;
 
-export async function runSalience(engine: BrainEngine, args: string[]): Promise<void> {
+export async function runSalience(engine: BrainEngine | null, args: string[]): Promise<void> {
   const parsed = parseArgs(args);
   if ('help' in parsed) {
     console.log(HELP);
@@ -84,6 +84,7 @@ export async function runSalience(engine: BrainEngine, args: string[]): Promise<
     }, { timeoutMs: 30_000 });
     rows = unpackToolResult<Awaited<ReturnType<BrainEngine['getRecentSalience']>>>(raw);
   } else {
+    if (!engine) throw new Error('gbrain salience requires a local engine');
     rows = await engine.getRecentSalience({
       days: parsed.days,
       limit: parsed.limit,
