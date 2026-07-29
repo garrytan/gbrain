@@ -13,11 +13,15 @@
  * v0.32.7: maxChars hard cap (default 6000) sliding-window safety belt
  * guarantees no chunk overflows OpenAI's 8192-token embedding limit even
  * on pathological CJK / whitespace-less text.
+ * #3477 follow-up: the belt also bounds ESTIMATED embedding tokens
+ * (DEFAULT_MAX_CHUNK_TOKENS, shared with the code chunker's oversize cap) —
+ * a char-only cap cannot bound tokens for CJK/dense text (#3037, #2826).
  *
  * Lossless invariant: non-overlapping portions reassemble to original.
  */
 
 import { countCJKAwareWords, CJK_SENTENCE_DELIMITERS, CJK_CLAUSE_DELIMITERS } from '../cjk.ts';
+import { estimateEmbedTokens, DEFAULT_MAX_CHUNK_TOKENS } from './token-estimate.ts';
 
 /**
  * Markdown chunker version. Folded into the per-page chunker_version column
@@ -109,10 +113,23 @@ export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
 }
 
 /**
- * Hard-cap a chunk's char length via a sliding window. Returns the input
- * unchanged when it's already ≤ maxChars.
+ * Hard-cap a chunk via a sliding window — by char length AND by estimated
+ * embedding tokens. Returns the input unchanged when it fits both budgets.
  *
- * Overlap is min(500, maxChars/10) so successive windows preserve semantic
+ * The char budget (maxChars, default 6000) is the historical belt; the token
+ * budget (DEFAULT_MAX_CHUNK_TOKENS, shared with the code chunker's oversize
+ * cap) is the constraint embedders actually enforce. A char-only cap cannot
+ * bound tokens: 6000 CJK-dense chars run 3-6k tokens, past strict embedder
+ * contexts (nomic-embed-text 2048), so those chunks fail on every embed
+ * sweep, silently, forever (#3037) — and URL-dense CJK markdown emits
+ * over-limit chunks well under maxChars (#2826). When the text over-runs the
+ * token budget, the window is derived from its own measured density —
+ * floor(length × budget / estimate) — and every slice is re-checked (local
+ * density can exceed the whole-text average), re-deriving on the slice until
+ * each piece fits. ASCII prose is unaffected: 6000 chars measure ~1.5-1.7k
+ * cl100k tokens, under the budget, so the window stays maxChars.
+ *
+ * Overlap is min(500, window/10) so successive windows preserve semantic
  * continuity across the cut.
  *
  * v0.32.7. BMP-only safe (does not split astral surrogate pairs in practice
@@ -120,14 +137,25 @@ export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
  * is a v0.33+ follow-up that requires Array.from-style codepoint iteration).
  */
 function capByChars(text: string, maxChars: number): string[] {
-  if (text.length <= maxChars) return text.length > 0 ? [text] : [];
-  const overlap = Math.min(500, Math.floor(maxChars / 10));
-  const stride = Math.max(1, maxChars - overlap);
+  if (text.length === 0) return [];
+  const est = estimateEmbedTokens(text);
+  const window = est <= DEFAULT_MAX_CHUNK_TOKENS
+    ? maxChars
+    : Math.max(1, Math.min(maxChars, Math.floor((text.length * DEFAULT_MAX_CHUNK_TOKENS) / est)));
+  if (text.length <= window) return [text];
+  const overlap = Math.min(500, Math.floor(window / 10));
+  const stride = Math.max(1, window - overlap);
   const out: string[] = [];
   for (let i = 0; i < text.length; i += stride) {
-    const slice = text.slice(i, i + maxChars).trim();
-    if (slice.length > 0) out.push(slice);
-    if (i + maxChars >= text.length) break;
+    const slice = text.slice(i, i + window).trim();
+    if (slice.length > 0) {
+      if (estimateEmbedTokens(slice) > DEFAULT_MAX_CHUNK_TOKENS) {
+        out.push(...capByChars(slice, maxChars)); // denser than the text average — re-derive locally
+      } else {
+        out.push(slice);
+      }
+    }
+    if (i + window >= text.length) break;
   }
   return out;
 }
