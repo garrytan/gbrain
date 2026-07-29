@@ -12,9 +12,15 @@
 #   bash scripts/run-unit-parallel.sh [--shards N] [--max-concurrency N] [--dry-run]
 #
 # Env overrides:
-#   SHARDS=N                     same as --shards
-#   GBRAIN_TEST_SHARD_TIMEOUT    per-shard wallclock cap, seconds (default 600)
-#   GBRAIN_TEST_MAX_CONCURRENCY  passed through to bun test (default 4)
+#   SHARDS=N                          same as --shards
+#   GBRAIN_TEST_MAX_CONCURRENCY       passed through to bun test (default 4)
+#   GBRAIN_TEST_SHARD_TIMEOUT         per-shard wallclock cap, seconds. Default is
+#                                     DERIVED (see "Per-shard caps" below), not a
+#                                     constant; set this to pin it explicitly.
+#   GBRAIN_TEST_SECONDS_PER_FILE      per-file budget the derived cap is built from
+#                                     (default: 6 on Unix, 30 on Windows).
+#   GBRAIN_TEST_SHARD_STALL_SECONDS   kill a shard that writes nothing to its log
+#                                     for this long (default 600; 0 disables).
 #
 # Output files (workspace-local; falls back to /tmp if .context/ unwritable):
 #   .context/test-failures.log   failure blocks (cleared at start)
@@ -71,14 +77,98 @@ if [ -z "${SHARDS_OVERRIDE:-}" ] && [ -z "${SHARDS:-}" ] && [ "$N" -gt 4 ]; then
 fi
 
 INTRA_CONC="${MAX_CONCURRENCY_OVERRIDE:-${GBRAIN_TEST_MAX_CONCURRENCY:-4}}"
-# v0.40.10 flake-hardening: bump per-shard cap 600 → 1500 (was 900). At
-# 4-shard default each shard runs 159 files / ~2420 tests with internal
-# wallclock 960-1020s. The 900s value (sized for 8-shard's ~80 files /
-# 1100 tests at 620-770s) false-killed shard 1 at 900s even though it
-# had completed in 968s. 1500s cap gives ~55% headroom over observed
-# 4-shard wallclock; real hangs still hit it. Override via
-# GBRAIN_TEST_SHARD_TIMEOUT=N.
-SHARD_TIMEOUT="${GBRAIN_TEST_SHARD_TIMEOUT:-1500}"
+
+# ──────────────────────────────────────────────────────────────────────────
+# Per-shard caps.
+#
+# TWO independent guards, because one number cannot do both jobs:
+#
+#   1. SHARD_TIMEOUT — wallclock backstop. DERIVED, never a bare constant:
+#      per-file budget × files-per-shard. A constant encodes a snapshot of
+#      (suite size × host speed) and silently rots when either moves. It has
+#      rotted twice: 900s was sized for the 8-shard/~80-file split and
+#      false-killed the 4-shard/159-file split (v0.40.10), and its 1500s
+#      successor — calibrated on Apple Silicon at ~6s/file — false-killed
+#      ALL FOUR shards on Windows, where per-file process spawn + module load
+#      + PGLite WASM init is several times slower. Deriving from the file
+#      count means growing the suite no longer re-breaks the cap.
+#
+#   2. STALL_SECONDS — progress watchdog. The wallclock cap must be generous
+#      to be safe, which makes it a poor hang detector (a genuinely hung
+#      shard would ride it for hours). A shard that has written NOTHING to
+#      its log for this long is not slow, it is stuck. Same instrument
+#      gbrain already uses for sync (GBRAIN_SYNC_STALL_ABORT_SECONDS): watch
+#      forward progress, not elapsed time. Default 600s is 10× bun's 60s
+#      per-test cap, so it clears any legitimate quiet period with room to
+#      spare on a loaded box.
+#
+# Bias for both: too high costs a longer wait before a real hang is reported;
+# too low false-kills healthy runs and makes the suite unusable. Bias high.
+# ──────────────────────────────────────────────────────────────────────────
+UNIX_SECONDS_PER_FILE=6
+WINDOWS_SECONDS_PER_FILE=30
+SHARD_TIMEOUT_FLOOR=600
+
+# Windows here means the MSYS2 / Git-Bash / Cygwin userland this script runs
+# under; `uname -s` reports MINGW*/MSYS*/CYGWIN* there. $OS is the belt-and-
+# suspenders fallback for a userland whose uname doesn't say so. WSL reports
+# Linux and does not set $OS — correctly treated as Unix.
+detect_seconds_per_file() {
+  case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*) echo "$WINDOWS_SECONDS_PER_FILE"; return ;;
+  esac
+  if [ "${OS:-}" = "Windows_NT" ]; then echo "$WINDOWS_SECONDS_PER_FILE"; return; fi
+  echo "$UNIX_SECONDS_PER_FILE"
+}
+
+# Ask the shard runner itself for the file set, rather than duplicating its
+# `find` expression here — the exclusion list (e2e / .slow / .serial) lives in
+# ONE place and can't drift. SHARD= (empty) makes it list the unsharded set.
+count_unit_files() {
+  local n
+  n=$(SHARD= bash scripts/run-unit-shard.sh --dry-run-list 2>/dev/null | wc -l | tr -d ' ')
+  printf '%s' "${n:-0}"
+}
+
+require_positive_int() {
+  local name="$1"; local val="$2"
+  if ! printf '%s' "$val" | grep -qE '^[0-9]+$' || [ "$val" -lt 1 ]; then
+    echo "ERROR: $name must be a positive integer, got: $val" >&2; exit 2
+  fi
+}
+
+SECONDS_PER_FILE="${GBRAIN_TEST_SECONDS_PER_FILE:-$(detect_seconds_per_file)}"
+require_positive_int "GBRAIN_TEST_SECONDS_PER_FILE" "$SECONDS_PER_FILE"
+
+TOTAL_UNIT_FILES=$(count_unit_files)
+if [ "$TOTAL_UNIT_FILES" -gt 0 ]; then
+  FILES_PER_SHARD=$(( (TOTAL_UNIT_FILES + N - 1) / N ))
+else
+  # Discovery failed (bad cwd, unreadable test/). Fail open to the floor
+  # rather than deriving a nonsense cap of 0 and killing every shard.
+  FILES_PER_SHARD=0
+fi
+DERIVED_TIMEOUT=$(( FILES_PER_SHARD * SECONDS_PER_FILE ))
+[ "$DERIVED_TIMEOUT" -lt "$SHARD_TIMEOUT_FLOOR" ] && DERIVED_TIMEOUT="$SHARD_TIMEOUT_FLOOR"
+
+if [ -n "${GBRAIN_TEST_SHARD_TIMEOUT:-}" ]; then
+  SHARD_TIMEOUT="$GBRAIN_TEST_SHARD_TIMEOUT"
+  require_positive_int "GBRAIN_TEST_SHARD_TIMEOUT" "$SHARD_TIMEOUT"
+  TIMEOUT_ORIGIN="env GBRAIN_TEST_SHARD_TIMEOUT"
+elif [ "$FILES_PER_SHARD" -gt 0 ] && [ "$DERIVED_TIMEOUT" -gt "$SHARD_TIMEOUT_FLOOR" ]; then
+  SHARD_TIMEOUT="$DERIVED_TIMEOUT"
+  TIMEOUT_ORIGIN="${FILES_PER_SHARD} files/shard × ${SECONDS_PER_FILE}s"
+else
+  SHARD_TIMEOUT="$DERIVED_TIMEOUT"
+  TIMEOUT_ORIGIN="floor ${SHARD_TIMEOUT_FLOOR}s"
+fi
+
+STALL_SECONDS="${GBRAIN_TEST_SHARD_STALL_SECONDS:-600}"
+if ! printf '%s' "$STALL_SECONDS" | grep -qE '^[0-9]+$'; then
+  echo "ERROR: GBRAIN_TEST_SHARD_STALL_SECONDS must be a non-negative integer, got: $STALL_SECONDS" >&2
+  exit 2
+fi
+STALL_POLL=10
 
 # ──────────────────────────────────────────────────────────────────────────
 # Output directories. Prefer workspace-local .context/, fall back to /tmp.
@@ -95,7 +185,8 @@ else
   mkdir -p "$LOG_DIR" || { echo "ERROR: cannot create log dir" >&2; exit 2; }
 fi
 # Clear from prior run.
-rm -f "$LOG_DIR"/shard-*.log "$LOG_DIR"/shard-*.exit "$LOG_DIR"/shard-*.wedged 2>/dev/null
+rm -f "$LOG_DIR"/shard-*.log "$LOG_DIR"/shard-*.exit \
+      "$LOG_DIR"/shard-*.wedged "$LOG_DIR"/shard-*.stalled 2>/dev/null
 : > "$FAILURES_LOG"
 : > "$SUMMARY_FILE"
 
@@ -109,7 +200,14 @@ elif command -v timeout >/dev/null 2>&1; then TIMEOUT_BIN="timeout"
 fi
 
 START_TS=$(date +%s)
-echo "[unit-parallel] N=$N shards | --max-concurrency=$INTRA_CONC | timeout=${SHARD_TIMEOUT}s | logs=$LOG_DIR" >&2
+# Show HOW the cap was derived, not just its value — the next person staring
+# at a WEDGED shard needs to know which knob to turn.
+if [ "$STALL_SECONDS" -gt 0 ]; then
+  STALL_NOTE="stall=${STALL_SECONDS}s"
+else
+  STALL_NOTE="stall=off"
+fi
+echo "[unit-parallel] N=$N shards | --max-concurrency=$INTRA_CONC | timeout=${SHARD_TIMEOUT}s (${TIMEOUT_ORIGIN}) | ${STALL_NOTE} | logs=$LOG_DIR" >&2
 
 if [ "$DRY_RUN" = "1" ]; then
   echo "[unit-parallel] dry-run: would spawn $N shards with the above settings."
@@ -121,6 +219,50 @@ if [ "$DRY_RUN" = "1" ]; then
 fi
 
 # ──────────────────────────────────────────────────────────────────────────
+# Stall watchdog. Polls one shard's log size; if it hasn't grown in
+# STALL_SECONDS the shard is stuck (not merely slow) — drop the sentinel and
+# tear down its process tree. Log size is strictly monotonic while a shard is
+# alive, so it is the one liveness signal bun's default reporter always
+# leaves behind (it prints no per-file progress markers, only a final
+# summary).
+#
+# Kills the work FIRST, then the leader, and goes straight to SIGKILL. Both
+# choices are deliberate:
+#   - run-unit-shard.sh ends in `exec bun test`, so under timeout(1) the tree
+#     is `timeout` → `bun` (the intermediate env/bash are exec'd away).
+#     pkill -P therefore reaches bun itself.
+#   - No TERM-then-grace ladder. A grace period here is a race: the moment the
+#     leader dies the shard subshell's `wait` returns and tears this watchdog
+#     down, which would strand a bun that hadn't finished honoring SIGTERM.
+#     We have already concluded the shard is hung, and its output is written
+#     straight to the log by redirect, so there is nothing to flush politely.
+# ──────────────────────────────────────────────────────────────────────────
+stall_watchdog() {
+  local pid="$1" logf="$2" sentinel="$3"
+  [ "$STALL_SECONDS" -gt 0 ] || return 0
+  local last_size=-1 last_change size now
+  last_change=$(date +%s)
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep "$STALL_POLL"
+    # An unreadable log reads as 0. That is intentional: a shard whose log
+    # never appears at all is as stuck as one whose log stopped growing, and
+    # bun writes its version banner immediately on a healthy start.
+    size=$(wc -c < "$logf" 2>/dev/null | tr -d ' ')
+    size="${size:-0}"
+    now=$(date +%s)
+    if [ "$size" != "$last_size" ]; then
+      last_size="$size"
+      last_change="$now"
+    elif [ $((now - last_change)) -ge "$STALL_SECONDS" ]; then
+      echo "STALLED" > "$sentinel"
+      pkill -KILL -P "$pid" 2>/dev/null
+      kill -KILL "$pid" 2>/dev/null
+      return 0
+    fi
+  done
+}
+
+# ──────────────────────────────────────────────────────────────────────────
 # Spawn shards. Each child captures its own exit code into a sentinel file
 # so $? is recoverable per-shard (we never trust `wait`'s aggregate value).
 # ──────────────────────────────────────────────────────────────────────────
@@ -128,35 +270,50 @@ SHARD_PIDS=()
 for i in $(seq 1 "$N"); do
   (
     SHARD_LOG="$LOG_DIR/shard-$i.log"
+    # Create the log up front so the watchdog's first poll reads a real size
+    # instead of treating a not-yet-created file as a stall.
+    : > "$SHARD_LOG"
     if [ -n "$TIMEOUT_BIN" ]; then
+      # timeout(1) owns the wallclock cap (and gives us rc=124 for free);
+      # the watchdog only has to catch stalls.
       "$TIMEOUT_BIN" "${SHARD_TIMEOUT}s" \
         env SHARD="$i/$N" \
         bash scripts/run-unit-shard.sh --max-concurrency="$INTRA_CONC" \
-        > "$SHARD_LOG" 2>&1
-      rc=$?
+        > "$SHARD_LOG" 2>&1 &
+      run_pid=$!
+      cap_pid=""
     else
       env SHARD="$i/$N" \
         bash scripts/run-unit-shard.sh --max-concurrency="$INTRA_CONC" \
         > "$SHARD_LOG" 2>&1 &
-      pid=$!
-      ( sleep "$SHARD_TIMEOUT" && kill -TERM "$pid" 2>/dev/null && \
-        sleep 5 && kill -KILL "$pid" 2>/dev/null ) &
+      run_pid=$!
+      # No timeout(1): a sleep-then-kill sibling enforces the wallclock cap.
+      ( sleep "$SHARD_TIMEOUT" && echo "WEDGED" > "$LOG_DIR/shard-$i.wedged" && \
+        kill -TERM "$run_pid" 2>/dev/null && \
+        sleep 5 && kill -KILL "$run_pid" 2>/dev/null ) &
       cap_pid=$!
-      wait "$pid" 2>/dev/null
-      # Capture the shard's exit code from ITS `wait`, before any watchdog
-      # teardown runs. The teardown commands below overwrite $? — the killed
-      # watchdog reports 143 — which used to get stamped into every shard's
-      # sentinel on machines with no gtimeout/timeout: every run "failed"
-      # with rc=143 summaries even when all tests passed.
-      rc=$?
-      # Reap the watchdog's `sleep` child too (pkill -P), then the watchdog.
-      # Killing only the subshell leaves the sleep orphaned until
-      # $SHARD_TIMEOUT elapses — same quirk the heartbeat cleanup below works
-      # around; CI's orphan-process sweep flags those.
-      pkill -P "$cap_pid" 2>/dev/null
-      kill "$cap_pid" 2>/dev/null
-      wait "$cap_pid" 2>/dev/null
     fi
+
+    stall_watchdog "$run_pid" "$SHARD_LOG" "$LOG_DIR/shard-$i.stalled" &
+    wd_pid=$!
+
+    wait "$run_pid" 2>/dev/null
+    # Capture the shard's status from ITS wait, before any teardown below
+    # overwrites $?. A killed watchdog reports 143; letting that land in the
+    # sentinel is how every shard once "failed" with rc=143 even when green.
+    rc=$?
+
+    # Reap the watchdog and the cap sibling, children first: SIGTERM to a
+    # shell parked in `sleep` doesn't reach the sleep, so killing only the
+    # subshell orphans it until its timer expires. CI's orphan sweep reports
+    # those as phantom test failures.
+    for helper in "$wd_pid" "$cap_pid"; do
+      [ -n "$helper" ] || continue
+      pkill -P "$helper" 2>/dev/null
+      kill "$helper" 2>/dev/null
+      wait "$helper" 2>/dev/null
+    done
+
     echo "$rc" > "$LOG_DIR/shard-$i.exit"
     [ "$rc" = "124" ] && echo "WEDGED" > "$LOG_DIR/shard-$i.wedged"
   ) &
@@ -212,9 +369,26 @@ shard_total_files() {
 # default reporter leaves in the log (bun has no per-file progress markers,
 # only a final shard-end summary).
 shard_pglite_init_count() {
+  # Routed through grep_count deliberately: a bare `grep -c ... || echo 0`
+  # prints BOTH grep's own "0" and the fallback "0" on no-match, and the
+  # resulting two-line value renders as "~0\n0/253f" in the heartbeat.
+  grep_count 'Schema version [0-9]+ . [0-9]+' "$1"
+}
+
+# shard_quiet_seconds: how long since the shard last wrote anything. This is
+# what the stall watchdog keys on, surfaced in the heartbeat so a run that is
+# drifting toward a stall abort is visible before it gets killed.
+shard_quiet_seconds() {
   local file="$1"
   [ -f "$file" ] || { echo 0; return; }
-  grep -cE 'Schema version [0-9]+ → [0-9]+' "$file" 2>/dev/null || echo 0
+  local mtime now
+  # GNU coreutils then BSD/macOS. (`date -r` is NOT portable here: on macOS it
+  # reads a timestamp argument, not a file.)
+  mtime=$(stat -c %Y "$file" 2>/dev/null)
+  [ -n "$mtime" ] || mtime=$(stat -f %m "$file" 2>/dev/null)
+  [ -n "$mtime" ] || { echo 0; return; }
+  now=$(date +%s)
+  echo $(( now - mtime ))
 }
 
 # log_size_kb: total stderr+stdout written by the shard so far. Strictly
@@ -267,10 +441,18 @@ heartbeat() {
           local pglite; pglite=$(shard_pglite_init_count "$lf")
           local kb; kb=$(log_size_kb "$lf")
           local et; et=$(fmt_elapsed "$hb_elapsed")
+          # Surface a lengthening quiet period once it's over a minute — this
+          # is the signal the stall watchdog will act on, so showing it early
+          # turns a surprise kill into something you saw coming.
+          local quiet; quiet=$(shard_quiet_seconds "$lf")
+          local qnote=""
+          if [ "$STALL_SECONDS" -gt 0 ] && [ "$quiet" -ge 60 ]; then
+            qnote=" quiet ${quiet}s/${STALL_SECONDS}s"
+          fi
           if [ "$total" -gt 0 ]; then
-            line="$line [s$i: ~${pglite}/${total}f ${kb}KB ${et}]"
+            line="$line [s$i: ~${pglite}/${total}f ${kb}KB ${et}${qnote}]"
           else
-            line="$line [s$i: starting ${kb}KB ${et}]"
+            line="$line [s$i: starting ${kb}KB ${et}${qnote}]"
           fi
         else
           line="$line [s$i: spawning]"
@@ -315,6 +497,7 @@ for i in $(seq 1 "$N"); do
   SHARD_LOG="$LOG_DIR/shard-$i.log"
   EXIT_FILE="$LOG_DIR/shard-$i.exit"
   WEDGED_FILE="$LOG_DIR/shard-$i.wedged"
+  STALLED_FILE="$LOG_DIR/shard-$i.stalled"
   rc=1
   [ -f "$EXIT_FILE" ] && rc=$(cat "$EXIT_FILE" 2>/dev/null || echo 1)
 
@@ -325,10 +508,30 @@ for i in $(seq 1 "$N"); do
   TOTAL_FAILURES=$((TOTAL_FAILURES + fail_count))
   TOTAL_SKIP=$((TOTAL_SKIP + skip_count))
 
+  # Stall is checked BEFORE wedge: the watchdog's kill can also trip the
+  # wallclock path, and "stopped making progress" is the more specific — and
+  # more actionable — diagnosis of the two.
+  if [ -f "$STALLED_FILE" ]; then
+    TOTAL_RC=1
+    {
+      echo "--- shard $i: STALLED — no log output for ${STALL_SECONDS}s ---"
+      echo "    (a shard that writes nothing for this long is stuck, not slow."
+      echo "     If this box is just heavily loaded, raise or disable it:"
+      echo "     GBRAIN_TEST_SHARD_STALL_SECONDS=1800  # or =0 to disable)"
+      [ -f "$SHARD_LOG" ] && tail -50 "$SHARD_LOG"
+      echo ""
+    } >> "$FAILURES_LOG"
+    echo "shard $i/$N: STALLED after ${STALL_SECONDS}s with no output (rc=$rc)" >> "$SUMMARY_FILE"
+    continue
+  fi
+
   if [ -f "$WEDGED_FILE" ]; then
     TOTAL_RC=1
     {
-      echo "--- shard $i: WEDGED after ${SHARD_TIMEOUT}s ---"
+      echo "--- shard $i: WEDGED after ${SHARD_TIMEOUT}s (${TIMEOUT_ORIGIN}) ---"
+      echo "    (the cap is derived from the file count; if this shard was"
+      echo "     healthy but slow, raise the per-file budget rather than the"
+      echo "     cap itself: GBRAIN_TEST_SECONDS_PER_FILE=$((SECONDS_PER_FILE * 2)))"
       [ -f "$SHARD_LOG" ] && tail -50 "$SHARD_LOG"
       echo ""
     } >> "$FAILURES_LOG"

@@ -2,6 +2,75 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.67.3] - 2026-07-28
+
+**The parallel test runner stops killing healthy test shards, and a genuinely stuck one now gets caught in ten minutes instead of running all afternoon.**
+
+`bun run test` splits the unit suite across four shards and gives each shard a wallclock limit. That limit was a fixed number of seconds. A fixed number is really a guess about two things that keep moving: how many test files there are, and how fast your machine runs them. The guess has gone stale twice already. It was 900 seconds when the suite ran as eight small shards, and it began killing healthy shards once the split changed to four larger ones. Its 1500-second replacement was measured on a Mac, and it kills healthy shards on Windows, where each file costs several times more.
+
+The limit is now worked out from the suite itself: files per shard times a per-file budget, with a floor of 600 seconds. Add test files and the limit grows on its own. Nobody has to remember to edit a constant, which is what made this rot twice.
+
+A limit generous enough to be safe is useless for spotting a hang, so there is now a second guard that works on a different signal. It watches whether a shard is still writing to its log. A shard that goes quiet for ten minutes is stuck rather than slow, so it gets stopped and reported as STALLED. Before this, a hang rode the whole limit before anyone heard about it. The two outcomes are now reported separately because the remedy differs: STALLED means read the last thing the shard printed, WEDGED means the work genuinely wanted more time.
+
+Nothing changes for a passing run on Linux or macOS. The derived limit there works out to 1518 seconds against the 1500 it replaces.
+
+### The numbers
+
+At 253 files per shard, which is roughly where the suite sits today:
+
+| Platform | Per-file budget | Limit |
+|---|---|---|
+| Linux and macOS | 6s | 1518s, against the 1500s constant it replaces |
+| Windows | 30s | 7590s |
+| Either, floor | n/a | never below 600s |
+
+The file count is whatever your checkout holds, so these move as the suite grows. That is the whole point of deriving them.
+
+The banner now states how the limit was reached, so a shard that gets killed tells you which knob to turn:
+
+```
+[unit-parallel] N=4 shards | --max-concurrency=4 | timeout=7590s (253 files/shard x 30s) | stall=600s | logs=.context/test-shards
+```
+
+### Things to watch
+
+The Windows per-file budget of 30 seconds was picked for headroom, not measured end to end. It is deliberately generous. If you run the suite on Windows and shards finish far inside the limit, the stall guard is what will catch a real hang, not the limit itself.
+
+### How to use it
+
+Nothing to run. The limit is derived on every invocation. Three environment variables override it when you need them:
+
+```bash
+GBRAIN_TEST_SECONDS_PER_FILE=60 bun run test
+```
+
+```bash
+GBRAIN_TEST_SHARD_STALL_SECONDS=1800 bun run test
+```
+
+`GBRAIN_TEST_SHARD_TIMEOUT` still pins the wallclock limit outright and now wins over the derived value. `GBRAIN_TEST_SHARD_STALL_SECONDS=0` turns the stall guard off. All three reject a non-numeric value with exit code 2 instead of deriving a limit of zero and killing every shard on the spot.
+
+### Itemized changes
+
+- `scripts/run-unit-parallel.sh` derives the per-shard wallclock cap from files per shard times a per-file budget (6s on Linux and macOS, 30s on Windows, floor 600s) instead of a hardcoded constant. Platform detection reads `uname -s` for MINGW, MSYS and CYGWIN, falling back to the `OS` variable.
+- The same script gains a progress-keyed stall watchdog. It polls each shard's log size and kills a shard that has not grown its log for `GBRAIN_TEST_SHARD_STALL_SECONDS` (default 600), reporting STALLED with its own remedy text, separate from the WEDGED wallclock path. This is the instrument gbrain already uses for sync's stall abort.
+- Shards now run in the background under both the `timeout(1)` path and the fallback path so the watchdog can attach to them. Each shard's exit code is still read straight from its own `wait`, before any watchdog teardown can overwrite it, and both helper processes are reaped children first so no `sleep` is left orphaned.
+- A heartbeat rendering bug is fixed where a `grep -c` with no match printed two lines and broke the arithmetic that builds the progress line.
+- `test/scripts/run-unit-parallel.test.ts` adds coverage for the derived cap (floor, scaling with the file count, explicit override, non-numeric rejection, and the banner naming its own derivation) and for the stall watchdog (banner, disable, rejection, and a real top-level hang that must be killed on the progress signal rather than the cap).
+- The same test file fixes two pre-existing Windows failures, an MSYS `/tmp` versus Windows path assertion and an EBUSY teardown race on the temp directory, and skips the no-timeout-binary suite on hosts that cannot create symlinks. Creating a symlink on Windows needs a privilege that is off by default, and the suite's setup failed there in a way that also disturbed unrelated tests in the same file.
+- `docs/TESTING.md` documents both guards, the three environment variables, and how to read a STALLED block against a WEDGED one.
+
+## To take advantage of v0.42.67.3
+
+Nothing to install and nothing to configure. The next `bun run test` derives its own limit and prints it in the banner.
+
+1. **Check what your machine derives:**
+   ```bash
+   bash scripts/run-unit-parallel.sh --dry-run
+   ```
+   The first line reports the limit and how it was reached.
+2. **If a shard is killed**, read which of the two it was. `.context/test-failures.log` carries either a `--- shard N: STALLED ...` block or a `--- shard N: WEDGED ...` block, each with the last 50 lines of that shard's log and the knob to turn.
+
 ## [0.42.67.0] - 2026-07-28
 
 **If you develop GBrain on Windows, the test and check commands now actually run. Until this release they were quietly doing almost nothing.**

@@ -11,7 +11,7 @@ Seven test command tiers, each with a clear scope:
 
 | Command | What it runs | Wallclock | When to use |
 |---|---|---|---|
-| `bun run test` | Parallel unit-test fast loop. 8-shard fan-out via `scripts/run-unit-parallel.sh`, then a serial pass over `*.serial.test.ts`. Excludes `*.slow.test.ts` and `test/e2e/*`. No pre-checks, no typecheck. | ~85s on a Mac dev box (3650+ tests) | Inner edit loop. Default. |
+| `bun run test` | Parallel unit-test fast loop. 4-shard fan-out via `scripts/run-unit-parallel.sh`, then a serial pass over `*.serial.test.ts`. Excludes `*.slow.test.ts` and `test/e2e/*`. No pre-checks, no typecheck. | ~85s on a Mac dev box (3650+ tests); minutes on Windows — see "Per-shard caps" below | Inner edit loop. Default. |
 | `bun run verify` | CI's authoritative pre-test gate set, fanned out in parallel by `scripts/run-verify-parallel.sh`: the full `check:*` battery (~30 checks — privacy, jsonb, progress, source-id, test-isolation, wasm, …) plus `bun run typecheck`. The `CHECKS` array in that script is the single source of truth — CI literally calls `bun run verify` in a dedicated job. | ~16s (parallel; typecheck dominates) | Before pushing; before `/ship`. |
 | `bun run test:full` | `verify && bun run test && bun run test:slow && [smart e2e]`. The local equivalent of "everything CI runs." Smart e2e: runs e2e only when `DATABASE_URL` is set; else loud skip notice to stderr. | ~3-5min depending on slow + e2e | Pre-merge sanity, before opening a PR. |
 | `bun run test:slow` | Just the `*.slow.test.ts` set (intentional cold-path correctness checks). | seconds-to-minutes | When touching slow-path code. |
@@ -58,7 +58,36 @@ When `bun run test` finds any failure, the wrapper:
 3. Writes a one-line-per-shard summary to `.context/test-summary.txt` (`shard N/M: pass=X fail=Y skip=Z rc=W`).
 4. Exits non-zero. Empty failure log + non-zero exit = infrastructure problem (wedged shard, killed child); the banner says so.
 
-If a shard wedges (per-shard `GBRAIN_TEST_SHARD_TIMEOUT` cap, default 600s), the wrapper writes `--- shard N: WEDGED after ${SHARD_TIMEOUT}s ---` to the failure log, includes the last 50 lines of the shard log, and proceeds with other shards' results.
+If a shard is killed, the wrapper writes a `--- shard N: WEDGED ... ---` or `--- shard N: STALLED ... ---` block to the failure log, includes the last 50 lines of the shard log, and proceeds with the other shards' results. The two are different diagnoses — see below.
+
+### Per-shard caps (wallclock + stall)
+
+Two independent guards bound a shard. One number cannot do both jobs: the wallclock cap has to be generous to be safe, which makes it useless as a hang detector.
+
+| Guard | Default | Env override | Fires when |
+|---|---|---|---|
+| Wallclock cap | **derived**: files-per-shard × per-file budget, floor 600s | `GBRAIN_TEST_SHARD_TIMEOUT=<seconds>` (pins it outright) | Shard exceeds its total budget → `WEDGED` |
+| Per-file budget | 6s on Unix/macOS, 30s on Windows | `GBRAIN_TEST_SECONDS_PER_FILE=<seconds>` | (input to the cap above) |
+| Stall watchdog | 600s with no log output | `GBRAIN_TEST_SHARD_STALL_SECONDS=<seconds>`, `0` disables | Shard writes nothing for that long → `STALLED` |
+
+The cap is **derived, never a constant**. A constant encodes a snapshot of (suite size × host speed) and silently rots when either moves — it has rotted twice already, once when the shard split changed and once when the platform did. Deriving it from the file count means growing the suite no longer re-breaks it.
+
+The wrapper prints the derivation up front, so a killed shard tells you which knob to turn:
+
+```
+[unit-parallel] N=4 shards | --max-concurrency=4 | timeout=7590s (253 files/shard × 30s) | stall=600s | logs=.context/test-shards
+```
+
+**`WEDGED` vs `STALLED`:** `WEDGED` means the shard was still making progress but ran out of total budget — it was healthy and slow, so raise `GBRAIN_TEST_SECONDS_PER_FILE` rather than the cap itself. `STALLED` means the shard produced no output at all for the stall window, which is a hang, not slowness. Log size is the progress signal because bun's default reporter emits no per-file markers, only a final summary.
+
+### Running the suite on Windows
+
+The fast loop works under MSYS2 / Git Bash / Cygwin (`uname -s` reporting `MINGW*`/`MSYS*`/`CYGWIN*`), which the wrapper detects to pick the 30s per-file budget. Per-file cost is several times higher than on macOS: process spawn, module load, and PGLite WASM init are all slower, and each test file that opens a PGLite engine replays the full migration set.
+
+Two things to know before blaming the runner:
+
+- **Don't run it alongside other test suites.** Each shard runs `bun test --max-concurrency=4`, so the default fan-out is up to 16 concurrent PGLite WASM instances. Stacking a second suite on the same box (a second worktree, a second agent session) drives per-file cost up several-fold and can make `bun test` fail to start at all, exiting 127 right after its version banner. If shards die early with `rc=127` and near-empty logs, check for competing `bun` processes before touching any timeout.
+- **The stall watchdog is contention-sensitive by design.** On a heavily loaded box a healthy shard can go quiet for minutes. If you see a spurious `STALLED`, raise `GBRAIN_TEST_SHARD_STALL_SECONDS` (e.g. `1800`) or set it to `0`; the wallclock cap still backstops you. The heartbeat prints `quiet Ns/Ms` once a shard has been silent for over a minute, so you can see a stall coming.
 
 ### File taxonomy
 

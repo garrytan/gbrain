@@ -1,5 +1,17 @@
 # TODOS
 
+## v0.42.67.3 follow-ups (derived shard cap + stall watchdog)
+
+- [ ] **P2 — calibrate `WINDOWS_SECONDS_PER_FILE` end to end.** The 30s Windows per-file
+  budget in `scripts/run-unit-parallel.sh` was chosen for headroom, not measured. Nobody has
+  run the full unit suite to completion on Windows to find the real per-file cost, so the
+  derived cap there (about 7600s at today's ~253 files per shard) is a generous guess rather
+  than a calibrated number. Calibrating needs a quiet box and a suite that runs to completion on
+  Windows, which is blocked on the separate `uv_spawn` ENOENT and PGLite-WASM crash work.
+  Until then the stall watchdog, not the cap, is what catches a real hang on Windows. The
+  Unix side is already anchored: 253 files per shard times 6s is 1518s against the 1500s
+  constant it replaced.
+
 ## v0.42.67.0 follow-ups (Windows build tooling)
 
 Filed as follow-ups from v0.42.67.0 (`.gitattributes` LF pin for `*.sh` +
