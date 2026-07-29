@@ -2500,6 +2500,21 @@ export async function expand(query: string): Promise<string[]> {
       const result = await generateObject({
         model,
         schema: ExpansionSchema,
+        // Name the schema. On the native-anthropic path the SDK turns the schema
+        // into a tool, and without a name+description that tool carries no
+        // `description` field. api.anthropic.com tolerates that; an
+        // Anthropic-COMPATIBLE endpoint need not, and at least one (z.ai/GLM)
+        // then ignores `tool_choice: {type:'tool'}` and answers with
+        // markdown-fenced JSON as ordinary text. Measured 3/3 deterministic both
+        // ways against z.ai: with a description, 3/3 tool_use; without it, 3/3
+        // end_turn+text. generateObject then sees no object, `result.object` is
+        // undefined, and expansion degrades to the bare query — on EVERY call,
+        // with no error line, because the catch below only reports AIConfigError.
+        // The two openai-compatible branches already recover via viaText(); this
+        // native branch has no such fallback, so naming the schema is its only
+        // guard.
+        schemaName: 'query_expansions',
+        schemaDescription: 'The rewritten search queries used to retrieve relevant documents.',
         abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
         prompt: expansionPrompt,
       });
