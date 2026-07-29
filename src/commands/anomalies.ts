@@ -63,7 +63,7 @@ Options:
   --help, -h           Show this help
 `;
 
-export async function runAnomalies(engine: BrainEngine, args: string[]): Promise<void> {
+export async function runAnomalies(engine: BrainEngine | null, args: string[]): Promise<void> {
   const parsed = parseArgs(args);
   if ('help' in parsed) {
     console.log(HELP);
@@ -80,6 +80,7 @@ export async function runAnomalies(engine: BrainEngine, args: string[]): Promise
     }, { timeoutMs: 30_000 });
     rows = unpackToolResult<Awaited<ReturnType<BrainEngine['findAnomalies']>>>(raw);
   } else {
+    if (!engine) throw new Error('gbrain anomalies requires a local engine');
     rows = await engine.findAnomalies({
       since: parsed.since,
       lookback_days: parsed.lookbackDays,

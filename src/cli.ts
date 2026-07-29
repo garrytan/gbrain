@@ -56,6 +56,20 @@ export function bigintToStringReplacer(_key: string, value: unknown): unknown {
 
 // CLI-only commands that bypass the operation layer
 export const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'maintain', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'reconcile-links', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'retrieval-upgrade', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch', 'reindex-search-vector', 'backfill']);
+
+// Thin-client CLI-only commands that already have remote-MCP branches inside
+// their handlers. They must bypass connectEngine() so the client does not
+// replay migrations locally before the handler can route remotely.
+const THIN_CLIENT_ROUTED_CLI_ONLY = new Set([
+  'graph-query',
+  'salience',
+  'anomalies',
+  'think',
+  'recall',
+  'forget',
+  'whoknows',
+  'founder',
+]);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -1796,6 +1810,52 @@ async function handleCliOnly(command: string, args: string[]) {
         return;
       }
       refuseThinClient('jobs', cfgJobs!.remote_mcp!.mcp_url);
+    }
+  }
+
+  const cfgThinClient = loadConfig();
+  if (cfgThinClient && isThinClient(cfgThinClient) && THIN_CLIENT_ROUTED_CLI_ONLY.has(command)) {
+    switch (command) {
+      case 'graph-query': {
+        const { runGraphQuery } = await import('./commands/graph-query.ts');
+        await runGraphQuery(null, args);
+        return;
+      }
+      case 'salience': {
+        const { runSalience } = await import('./commands/salience.ts');
+        await runSalience(null, args);
+        return;
+      }
+      case 'anomalies': {
+        const { runAnomalies } = await import('./commands/anomalies.ts');
+        await runAnomalies(null, args);
+        return;
+      }
+      case 'think': {
+        const { runThinkCli } = await import('./commands/think.ts');
+        await runThinkCli(null, args);
+        return;
+      }
+      case 'recall': {
+        const { runRecall } = await import('./commands/recall.ts');
+        await runRecall(null, args);
+        return;
+      }
+      case 'forget': {
+        const { runForget } = await import('./commands/recall.ts');
+        await runForget(null, args);
+        return;
+      }
+      case 'whoknows': {
+        const { runWhoknows } = await import('./commands/whoknows.ts');
+        await runWhoknows(null, args);
+        return;
+      }
+      case 'founder': {
+        const { runFounder } = await import('./commands/founder-scorecard.ts');
+        await runFounder(null, args);
+        return;
+      }
     }
   }
 

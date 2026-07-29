@@ -42,7 +42,7 @@ export function computeThinkCostUsd(
   );
 }
 
-export async function runThinkCli(engine: BrainEngine, args: string[]): Promise<void> {
+export async function runThinkCli(engine: BrainEngine | null, args: string[]): Promise<void> {
   if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
     console.log(`Usage: gbrain think "<question>" [options]
 
@@ -130,6 +130,7 @@ prints what would have been the input (exit 0).
     }, { timeoutMs: 180_000 });
     result = unpackToolResult<any>(raw);
   } else {
+    if (!engine) throw new Error('gbrain think requires a local engine');
     try {
       result = await runThink(engine, {
         question, anchor, rounds, save, take, model, since, until,
