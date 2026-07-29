@@ -835,7 +835,21 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // degraded:[{stage:'cache_prestamp'}] at hit time (belt-and-braces).
 // (Merge note: both this wave and master's #3515 wave claimed v=16 in
 // flight; the merge sequences them as 16 then 17.)
-export const KNOBS_HASH_VERSION = 18;
+//
+// bump 18→20: qwen3-embedding query-side Instruct template. 16 (det=), 17
+// (degradation stamp) and 18 (acm=) were claimed upstream while this PR was
+// open, and 19 is claimed by the sibling #3617 kof= knob, so this PR takes
+// the next free number per the D8 sequencing convention. The gateway now
+// prepends the model card's instruction template to QUERY-side embeds for
+// qwen3-embedding models, so embedQuery() produces different vectors than
+// pre-template builds — pre-template rows (key embedding AND result set)
+// must not be served to post-template lookups. Same one-time global
+// cold-miss pattern as bump 10→11 (the input_type fix — the same class of
+// change). The effective sentence also folds into the key via
+// ctx.queryInstruct (append-only `qi=` part) so processes running different
+// GBRAIN_QUERY_INSTRUCT values never cross-serve (same per-process
+// contamination class as #2825's hardExcludes).
+export const KNOBS_HASH_VERSION = 20;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -885,6 +899,17 @@ export interface KnobsHashContext {
    * as col=/prov=. Undefined falls back to 'medium' (the documented default).
    */
   detail?: 'low' | 'medium' | 'high';
+  /**
+   * v=20: the effective query-side instruction sentence the gateway
+   * prepends for the resolved embedding model
+   * (gateway.effectiveQueryInstruct) — undefined when the model takes no
+   * text template or it is disabled. Folded so a row written under one
+   * instruction (default, custom GBRAIN_QUERY_INSTRUCT, or disabled) is
+   * never served to a lookup under another — they sit in different
+   * query-vector spaces. Undefined falls back to the literal 'none' for
+   * legacy callers.
+   */
+  queryInstruct?: string;
 }
 
 export function knobsHash(
@@ -997,6 +1022,11 @@ export function knobsHash(
     // a low write (compiled-truth-only set) must never be served to a
     // medium/high lookup. Undefined falls back to 'medium' (the default).
     `det=${ctx?.detail ?? 'medium'}`,
+    // v=20 addition (append-only): query-side instruction template. The
+    // instruction changes what embedQuery() produces for qwen3-embedding
+    // models — the same contamination class as the input_type fix (v=11)
+    // and hardExcludes (v=12).
+    `qi=${ctx?.queryInstruct ?? 'none'}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));

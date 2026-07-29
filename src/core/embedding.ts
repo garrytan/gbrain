@@ -22,6 +22,9 @@ import { lookupEmbeddingPrice } from './embedding-pricing.ts';
 // variants) for hybridSearch routing image-intent queries to the multimodal
 // column. embedMultimodalSafe is the partial-failure variant Phase 3 reindex
 // uses to make forward progress on transient batch failures.
+// v=15: the effective query-side instruction (qwen3-embedding Instruct
+// template) — hybridSearch folds it into the query-cache knobs hash.
+export { effectiveQueryInstruct } from './ai/gateway.ts';
 export {
   embedMultimodal,
   embedMultimodalSafe,

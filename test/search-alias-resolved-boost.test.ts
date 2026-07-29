@@ -89,7 +89,9 @@ describe('alias_resolved boost stage', () => {
 });
 
 describe('KNOBS_HASH_VERSION', () => {
-  it('is 18 (16→17 degradation-stamp epoch; 17→18 autocut weak-top floor #1863)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(18);
+  it('is 20 (16→17 degradation-stamp epoch; 17→18 autocut weak-top floor #1863; 18→20 adds the qi= qwen3 query-side instruct, so rows written before the switch become unreachable)', () => {
+    // 18→20: qi= (qwen3 query-side Instruct template) joins the key
+    // (19 is claimed by the sibling #3617 kof= knob).
+    expect(KNOBS_HASH_VERSION).toBe(20);
   });
 });

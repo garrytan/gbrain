@@ -429,7 +429,9 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // #3515: bumped 15→16 to fold the effective detail level (det=) — a
     // detail=low write must not be served to a detail=medium lookup.
     // v0.46.15 (#1863): bumped 17→18 to fold the autocut weak-top floor (acm=).
-    expect(KNOBS_HASH_VERSION).toBe(18);
+    // 18→20: qi= (qwen3 query-side Instruct template) joins the key
+    // (19 is claimed by the sibling #3617 kof= knob).
+    expect(KNOBS_HASH_VERSION).toBe(20);
   });
 
   test('#3515: detail set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -447,7 +449,9 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // WP2/T3: bumped 16→17 for the degradation-stamp epoch — cache rows now
     // carry degraded[]/retrieved_count; pre-stamp rows must not claim clean.
     // v0.46.15 (#1863): 17→18 — autocut weak-top floor folds in (acm=).
-    expect(KNOBS_HASH_VERSION).toBe(18);
+    // 18→20: qi= (qwen3 query-side Instruct template) joins the key
+    // (19 is claimed by the sibling #3617 kof= knob).
+    expect(KNOBS_HASH_VERSION).toBe(20);
   });
 
   test('T1 (codex): floor_ratio set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -612,8 +616,10 @@ describe('v0.40.4 — graph_signals knob', () => {
 });
 
 describe('v0.42.3.0 — autocut knobs', () => {
-  test('KNOBS_HASH_VERSION is 18 (16→17 degradation-stamp epoch; 17→18 autocut weak-top floor #1863)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(18);
+  test('KNOBS_HASH_VERSION is 20 (16→17 degradation-stamp epoch; 17→18 autocut weak-top floor #1863; 18→20 qwen3 query-side instruct)', () => {
+    // 18→20: qi= (qwen3 query-side Instruct template) joins the key
+    // (19 is claimed by the sibling #3617 kof= knob).
+    expect(KNOBS_HASH_VERSION).toBe(20);
   });
 
   test('bundle defaults: conservative off, balanced/tokenmax on @0.20', () => {

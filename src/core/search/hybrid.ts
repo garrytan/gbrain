@@ -19,7 +19,7 @@ import type {
   DegradedStageEntry,
   DegradedReason,
 } from '../types.ts';
-import { embed, embedQuery } from '../embedding.ts';
+import { embed, embedQuery, effectiveQueryInstruct } from '../embedding.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
 import { resolveEmbeddingColumn, isCacheSafe } from './embedding-column.ts';
 import { resolveHardExcludes } from './source-boost.ts';
@@ -2050,6 +2050,10 @@ export async function hybridSearchCached(
     // bare hybridSearch does (opts.detail ?? autoDetectDetail(query)) so an
     // auto-detected `high` query keys like an explicit `high` one.
     detail: opts?.detail ?? autoDetectDetail(query),
+    // v=18 — fold the effective query-side instruction (the gateway's
+    // qwen3-embedding Instruct template) so rows written under different
+    // instruction settings never cross-serve.
+    queryInstruct: effectiveQueryInstruct(resolvedColCached.embeddingModel),
   });
 
   // Cache decision: opts.useCache (explicit) wins over global config; global
