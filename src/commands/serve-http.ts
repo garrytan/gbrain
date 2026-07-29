@@ -135,6 +135,24 @@ export type ProbeHealthResult =
   | { ok: true; status: 200; body: { status: 'ok'; version: string; engine: string; [k: string]: unknown } }
   | { ok: false; status: 503; body: { error: 'service_unavailable'; error_description: string } };
 
+type AdminSseResponse = Pick<Response, 'setHeader' | 'flushHeaders' | 'write'>;
+
+/**
+ * Complete the admin EventSource handshake immediately.
+ *
+ * `flushHeaders()` alone can leave reverse proxies and browsers waiting for
+ * the first response body bytes. An SSE comment is protocol-valid, ignored by
+ * EventSource consumers, and makes the stream observable end-to-end without
+ * fabricating an application event.
+ */
+export function openAdminSseStream(res: AdminSseResponse): void {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  res.write(': connected\n\n');
+}
+
 /**
  * Pure async health probe. Races `engine.getStats()` against a timeout,
  * returns a tagged result. No Express coupling — easy to unit-test with a
@@ -1632,10 +1650,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // SSE live activity feed
   // ---------------------------------------------------------------------------
   app.get('/admin/events', requireAdmin, (req: Request, res: Response) => {
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
+    openAdminSseStream(res);
 
     sseClients.add(res);
     req.on('close', () => sseClients.delete(res));
