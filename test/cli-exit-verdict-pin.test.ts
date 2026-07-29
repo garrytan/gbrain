@@ -13,6 +13,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { execSync } from 'child_process';
+import { REPO_ROOT } from './helpers/repo-root.ts';
 
 describe('exit-verdict ownership — no raw process.exitCode assignments', () => {
   test('every exit-code write in src/ routes through setCliExitVerdict', () => {
@@ -27,7 +28,7 @@ describe('exit-verdict ownership — no raw process.exitCode assignments', () =>
     // form — every shape is equally zeroed by the owned-verdict read.
     const hits = execSync(
       String.raw`grep -rnE "process(\.|\[')exitCode('\])?[[:space:]]*([?|&]{2})?=[^=]" src --include='*.ts' | grep -v "core/cli-force-exit.ts" | grep -v "core/pglite-engine.ts" || true`,
-      { encoding: 'utf-8', cwd: new URL('..', import.meta.url).pathname },
+      { encoding: 'utf-8', cwd: REPO_ROOT },
     ).trim();
     expect(hits).toBe('');
   });

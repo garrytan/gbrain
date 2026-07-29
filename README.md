@@ -429,6 +429,14 @@ entirely. The v0.13.1 grandfather migration that hung 70+ minutes on an
 pass (keyed on the page PK, soft-delete-filtered, source-safe) that
 completes in ~1-2 seconds. (Closes #1605, #1581.)
 
+**`gbrain schema use <pack>` finds nothing on Windows?** Fixed in
+v0.42.70.0. Bundled packs were located by converting the code's own
+location into a folder path, and the conversion produced a leading-slash
+Windows path (`/C:/Users/...`) that no filesystem call accepts, so every
+name in the bundled set resolved to empty. `gbrain upgrade` picks up the
+fix; run `gbrain schema active` to confirm the pack resolves. macOS and
+Linux were never affected.
+
 ## Docs
 
 - [`docs/INSTALL.md`](docs/INSTALL.md) — every install path, end to end

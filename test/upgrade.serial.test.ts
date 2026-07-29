@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path';
 import { tmpdir } from 'os';
 import { resolveBunGlobalRoot } from '../src/commands/upgrade.ts';
+import { REPO_ROOT } from './helpers/repo-root.ts';
 
 // We can't easily mock process.execPath in bun, so we test the upgrade
 // command's --help output and the detection logic via subprocess
@@ -10,7 +11,7 @@ import { resolveBunGlobalRoot } from '../src/commands/upgrade.ts';
 describe('upgrade command', () => {
   test('--help prints usage and exits 0', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'upgrade', '--help'], {
-      cwd: new URL('..', import.meta.url).pathname,
+      cwd: REPO_ROOT,
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -23,7 +24,7 @@ describe('upgrade command', () => {
 
   test('-h also prints usage', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'upgrade', '-h'], {
-      cwd: new URL('..', import.meta.url).pathname,
+      cwd: REPO_ROOT,
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -149,7 +150,10 @@ describe('resolveBunGlobalRoot', () => {
     try {
       process.env.BUN_INSTALL = '/custom/bun';
       process.env.HOME = '/ignored/home';
-      expect(resolveBunGlobalRoot()).toBe('/custom/bun/install/global');
+      // Build the expectation with join() so it carries native separators —
+      // resolveBunGlobalRoot joins too, and win32 emits '\'. A hardcoded
+      // POSIX literal here fails on Windows.
+      expect(resolveBunGlobalRoot()).toBe(join('/custom/bun', 'install', 'global'));
     } finally {
       restoreEnv();
     }
@@ -205,7 +209,7 @@ describe('post-upgrade behavior (post v0.12.0 merge)', () => {
 
   test('--help prints usage', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'post-upgrade', '--help'], {
-      cwd: new URL('..', import.meta.url).pathname,
+      cwd: REPO_ROOT,
       stdout: 'pipe',
       stderr: 'pipe',
     });

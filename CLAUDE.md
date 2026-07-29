@@ -67,6 +67,14 @@ Per-file detail is in `docs/architecture/KEY_FILES.md`.
   text, the cast parses it). Guarded by `scripts/check-jsonb-pattern.sh` (template grep) +
   `scripts/check-jsonb-params.mjs` (positional AST scanner); the real backstop is the DATABASE_URL-gated
   e2e parity tests, since PGLite can't surface the bug. Full rule in `docs/ENGINES.md`.
+- **Filesystem paths: never `new URL(...).pathname`.** `URL.pathname` is a URL path. On
+  Windows `new URL('..', import.meta.url).pathname` yields `/C:/Users/...`, which no Win32
+  API accepts — as a `Bun.spawn` `cwd:` it surfaces as `ENOENT … uv_spawn 'bun'` (that error
+  names argv[0], NOT the missing directory, so it reads as "bun isn't installed"). It is an
+  identity transform on POSIX, so Linux CI can never catch it. Use `fileURLToPath()` from
+  `node:url` or `import.meta.dir`; in tests use `REPO_ROOT`/`repoPath()` from
+  `test/helpers/repo-root.ts`. Guarded by `scripts/check-url-pathname-fs.sh` (opt out a
+  genuine URL-path use with a `url-pathname-guard-ok` comment).
 - **Engine parity.** `src/core/postgres-engine.ts` and `src/core/pglite-engine.ts` move in
   lockstep — a new method/SQL shape lands in BOTH, pinned by `test/e2e/engine-parity.test.ts`.
   Forward-referenced columns/indexes go in the bootstrap probe set (guarded by

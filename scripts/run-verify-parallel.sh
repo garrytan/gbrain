@@ -43,6 +43,7 @@ CHECKS=(
   "check:source-config-leak"
   "check:progress"
   "check:no-tracked-symlinks"
+  "check:url-pathname"
   "check:test-isolation"
   "check:wasm"
   "check:admin-build"

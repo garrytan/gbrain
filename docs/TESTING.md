@@ -12,12 +12,12 @@ Seven test command tiers, each with a clear scope:
 | Command | What it runs | Wallclock | When to use |
 |---|---|---|---|
 | `bun run test` | Parallel unit-test fast loop. 8-shard fan-out via `scripts/run-unit-parallel.sh`, then a serial pass over `*.serial.test.ts`. Excludes `*.slow.test.ts` and `test/e2e/*`. No pre-checks, no typecheck. | ~85s on a Mac dev box (3650+ tests) | Inner edit loop. Default. |
-| `bun run verify` | CI's authoritative pre-test gate set, fanned out in parallel by `scripts/run-verify-parallel.sh`: the full `check:*` battery (~30 checks — privacy, jsonb, progress, source-id, test-isolation, wasm, …) plus `bun run typecheck`. The `CHECKS` array in that script is the single source of truth — CI literally calls `bun run verify` in a dedicated job. | ~16s (parallel; typecheck dominates) | Before pushing; before `/ship`. |
+| `bun run verify` | CI's authoritative pre-test gate set, fanned out in parallel by `scripts/run-verify-parallel.sh`: the full `check:*` battery (33 checks — privacy, jsonb, progress, source-id, test-isolation, wasm, url-pathname, …) plus `bun run typecheck`. The `CHECKS` array in that script is the single source of truth — CI literally calls `bun run verify` in a dedicated job. | ~16s (parallel; typecheck dominates) | Before pushing; before `/ship`. |
 | `bun run test:full` | `verify && bun run test && bun run test:slow && [smart e2e]`. The local equivalent of "everything CI runs." Smart e2e: runs e2e only when `DATABASE_URL` is set; else loud skip notice to stderr. | ~3-5min depending on slow + e2e | Pre-merge sanity, before opening a PR. |
 | `bun run test:slow` | Just the `*.slow.test.ts` set (intentional cold-path correctness checks). | seconds-to-minutes | When touching slow-path code. |
 | `bun run test:serial` | Just the `*.serial.test.ts` set (cross-file-contention quarantine; one bun process per file for true module-registry isolation). | ~1s per quarantined file | Debugging a specific quarantined file. |
 | `bun run test:e2e` | Real Postgres E2E. Requires Docker + `DATABASE_URL`. Sequential. | ~5-10min | Pre-ship; nightly. |
-| `bun run check:all` | The historical pre-check scripts (22, chained sequentially in package.json). Overlaps `verify` heavily but is NOT a superset — `verify`'s `CHECKS` array in `scripts/run-verify-parallel.sh` (~30 entries incl. typecheck) is the authoritative gate; `check:all` keeps a few local-only extras (trailing-newline, exports-count, no-legacy-getconnection). | ~10s | Local-only sweep for the extras. |
+| `bun run check:all` | The historical pre-check scripts (24, chained sequentially in package.json). Overlaps `verify` heavily but is NOT a superset — `verify`'s `CHECKS` array in `scripts/run-verify-parallel.sh` (33 entries incl. typecheck) is the authoritative gate; `check:all` keeps a few local-only extras (trailing-newline, exports-count, no-legacy-getconnection). | ~10s | Local-only sweep for the extras. |
 
 ### Shell dispatch and Windows
 
@@ -41,6 +41,27 @@ substantially slower because each check pays full process-creation cost, and thr
 tree-walking checks (`check:privacy`, `check:test-names`, `check:test-isolation`)
 plus `typecheck` can exceed the 120s per-check cap in `run-verify-parallel.sh`
 there even though they pass on Linux and macOS.
+
+### Filesystem paths in tests
+
+Never derive a filesystem path from `URL.pathname`. On Windows
+`new URL('..', import.meta.url).pathname` yields `/C:/Users/...`, which no Win32
+API accepts: as a `Bun.spawn` `cwd:` it fails the chdir and reports
+`ENOENT ... uv_spawn 'bun'` (that error names argv[0], not the missing directory,
+so it reads as a missing bun install), and interpolated into an argument it gives
+`Module not found "/C:/.../src/cli.ts"`. The expression is an identity transform on
+POSIX, so Linux CI can never catch it.
+
+Use `REPO_ROOT` / `repoPath(...segments)` from `test/helpers/repo-root.ts`, or
+`fileURLToPath()` / `import.meta.dir` for anything else.
+`scripts/check-url-pathname-fs.sh` (`bun run check:url-pathname`) fails the build
+on the old form. It only flags file URLs, so parsing a connection string or
+routing an HTTP request stays clean; a genuine URL-path use opts out with a
+`url-pathname-guard-ok` comment.
+
+Assertions on those paths must be separator-agnostic too. Build the expectation
+with `join()` rather than a POSIX literal, or normalize before comparing, or the
+test passes everywhere except the platform it is meant to protect.
 
 ### CI vs local: intentionally divergent file sets
 
@@ -226,6 +247,8 @@ Unit tests and what they cover:
 - `test/check-resolvable-cli.test.ts` — CLI wrapper: exit codes, JSON envelope shape, AGENTS.md fallback chain.
 - `test/regression-v0_16_4.test.ts` — `findRepoRoot` regression guard, hermetic startDir parameterization.
 - `test/repo-root.test.ts` — `findRepoRoot` walk semantics + default-arg parity; the 4-tier `autoDetectSkillsDir` fallback chain (`$OPENCLAW_WORKSPACE` → `~/.openclaw/workspace` → repo-root → `./skills`); RESOLVER.md/AGENTS.md filename precedence; explicit-env-wins-over-repo-root; tier-0 `$GBRAIN_SKILLS_DIR` valid/invalid/precedence-over-`OPENCLAW_WORKSPACE`; the install-path walk in `autoDetectSkillsDirReadOnly`; no-drift on primary success; `AUTO_DETECT_HINT` + `AUTO_DETECT_HINT_READ_ONLY` content; regression guard asserting the shared `autoDetectSkillsDir` MUST NEVER return `'install_path'` source (how the read-path/write-path split stays safe).
+- `test/helpers/repo-root.test.ts` — pins the test-side repo-root helper (distinct from `src`'s `findRepoRoot` above): `REPO_ROOT` is absolute, native-format, carries no trailing separator, and never starts with the `/C:/` shape `URL.pathname` produces on Windows; `repoPath()` joins with native separators and resolves real tree entries.
+- `test/check-url-pathname-fs.test.ts` — self-test for `scripts/check-url-pathname-fs.sh`. 6 known-bad shapes (single expression, formatter-split call, leading-dot continuation, `file:` literal, `pathToFileURL` result, two-step variable form) must all exit 1; 7 known-good ones taken from real call sites (connection-string parsing, HTTP request routing, `u.pathname` assignment, `fileURLToPath`, commented rule text, `url-pathname-guard-ok` opt-out) must all exit 0. Scan roots overridable via argv.
 - `test/resolver-merge.test.ts` — multi-file resolver merge: `findAllResolverFiles` empty / RESOLVER.md-only / AGENTS.md-only / both-present (RESOLVER.md first); `checkResolvable` merge semantics across `skills/RESOLVER.md` + `../AGENTS.md` for the OpenClaw layout where the skillpack ships a thin RESOLVER.md and the real dispatcher lives at the workspace root; dedup by `skillPath` (first occurrence wins); AGENTS.md-at-workspace-root works alone.
 - `test/filing-audit.test.ts` — filing audit: `writes_pages` / `writes_to` frontmatter, filing-rules JSON validation.
 - `test/skill-brain-first.test.ts` — shared frontmatter parser; `analyzeSkillBrainFirst` compliance ladder across 9 fixtures under `test/fixtures/brain-first-skills/` (compliant-callout, compliant-phase, compliant-position, exempt-frontmatter, missing-brain-first, multi-pattern, negation-prose, no-external, typo-frontmatter); offset helpers; external-lookup regex shape; audit snapshot+diff transition logic; `FORMERLY_HARDCODED_EXEMPT` regression absorption.

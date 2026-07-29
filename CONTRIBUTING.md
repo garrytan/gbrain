@@ -33,6 +33,15 @@ Every `check:*` entry in `package.json` invokes its script as `bash scripts/<nam
 rather than relying on the shebang, because bun on Windows cannot exec a `.sh`
 directly. Keep that prefix when you add a new shell-script check.
 
+Never build a filesystem path out of `URL.pathname`. On Windows
+`new URL('..', import.meta.url).pathname` yields `/C:/Users/...`, which no Win32
+API accepts, and the failure is misleading: passed to `Bun.spawn` as `cwd:` it
+comes back as `ENOENT ... uv_spawn 'bun'`, naming the program instead of the
+directory that was missing. Use `fileURLToPath()` or `import.meta.dir`, and in
+tests use `REPO_ROOT` / `repoPath()` from `test/helpers/repo-root.ts`.
+`bun run check:url-pathname` enforces this; it has to, because the expression is
+an exact no-op on macOS and Linux and CI runs on Linux.
+
 ## Project structure
 
 ```

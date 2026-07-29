@@ -28,8 +28,7 @@ import { describe, test, expect } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, chmodSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-
-const REPO = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
+import { REPO_ROOT as REPO } from './helpers/repo-root.ts';
 
 /**
  * Make a shim `gbrain` binary that routes to `bun run <repo>/src/cli.ts`.

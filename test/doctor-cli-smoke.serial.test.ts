@@ -21,8 +21,7 @@ import { describe, test, expect } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-
-const REPO = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
+import { REPO_ROOT as REPO } from './helpers/repo-root.ts';
 const SKIP = process.env.GBRAIN_SKIP_SUBPROCESS_TESTS === '1';
 
 function makeGbrainShim(): { binDir: string; cleanup: () => void } {

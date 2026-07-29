@@ -2,6 +2,47 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.70.0] - 2026-07-28
+
+**If you run GBrain on Windows, the built-in schema packs work now. Before this release every one of them came back empty.**
+
+GBrain finds its bundled schema packs by turning the location of its own code into a folder path. The conversion it used produced a Windows path with a stray slash on the front, like `/C:/Users/you/gbrain`. Windows accepts no such path, so the lookup found nothing and every bundled pack resolved to empty. `gbrain schema use gbrain-base` had nothing to load. macOS and Linux were never affected, because there the same conversion happens to give the correct answer.
+
+The same mistake sat in 23 more places in the test suite, where the bad path was handed to a command as its working directory. Windows rejected the folder and the failure came back as `ENOENT: no such file or directory, uv_spawn 'bun'`. That message names `bun` because it names the program being started, not the folder that was missing. So it read as "bun is not installed" while bun was installed and working fine, and contributors lost time chasing a PATH problem that did not exist. On a full run the same error also surfaced between tests and stopped the run early.
+
+All 24 places now use the right conversion. A new check runs as part of `bun run verify` and fails the build if the old form comes back. That backstop carries more weight than usual here: the bad conversion is an exact no-op on macOS and Linux, so the project's CI, which runs on Linux, cannot catch this on its own no matter how carefully it is written.
+
+Nothing changes for macOS and Linux. Same paths, same results.
+
+## To take advantage of v0.42.70.0
+
+Upgrade and confirm the packs resolve. Windows users get a real fix here; macOS and Linux users have nothing to do.
+
+1. **Upgrade:**
+   ```bash
+   gbrain upgrade
+   ```
+2. **Confirm a bundled pack resolves** (this printed nothing usable on Windows before):
+   ```bash
+   gbrain schema active
+   ```
+3. **Contributors: run the new check on its own:**
+   ```bash
+   bun run check:url-pathname
+   ```
+   It prints `ok` and how many files it scanned. It is also part of `bun run verify` and `bun run check:all`.
+
+### Itemized changes
+
+- `src/commands/schema.ts` `packPathByName` resolves the bundled-pack directory with `fileURLToPath()` instead of `new URL(import.meta.url).pathname`. This is the one production call site; it made every name in `BUNDLED_PACK_NAMES` return null on Windows.
+- New `test/helpers/repo-root.ts` exports `REPO_ROOT` (absolute, native separators, no trailing separator) and `repoPath(...segments)`. It replaces 23 hand-rolled repo-root expressions across ten test files, so there is one sanctioned way to do this instead of twenty. `test/helpers/repo-root.test.ts` pins its invariants.
+- New `scripts/check-url-pathname-fs.sh` fails the build when a filesystem path is derived from `URL.pathname`. It flags three shapes, all of which require a file URL: the single expression including formatter-split calls, a `file:` literal or a `pathToFileURL()` result, and the two-step form where a variable holds the URL and is read later. Non-file URLs stay unflagged, because parsing a connection string, routing an HTTP request, and assigning `u.pathname` are all correct usage. Comments are stripped so documentation of the rule does not trip it, and a `url-pathname-guard-ok` marker opts a line out. Validated against 6 bad shapes and 7 good ones taken from real call sites.
+- The check prefilters candidate files with `git grep`, so a full-tree scan reads 17 files rather than 2124. That takes it from 2m6s to 23s on Windows, inside verify's 120s per-check cap.
+- `test/upgrade.serial.test.ts` builds its `BUN_INSTALL` expectation with `join()` instead of a hardcoded POSIX literal. `resolveBunGlobalRoot` returns a native path because the value is used as an `execFileSync` working directory and printed as a paste-ready recovery hint, so the test was wrong, not the implementation. `posix.join` returns the old string byte for byte, so this is a no-op off Windows.
+- `CLAUDE.md` gains the rule as a cross-cutting invariant, next to the JSONB and engine-parity entries, and `docs/architecture/KEY_FILES.md` documents the check and the helper.
+- `CONTRIBUTING.md` and `docs/TESTING.md` carry the rule for contributors, next to the existing Windows shell-dispatch notes, and `README.md` gets a troubleshooting entry for the schema-pack symptom. `docs/TESTING.md` also corrects its check counts, which listed 22 and "~30" against an actual 24 and 33.
+- Wired into `bun run verify`, `bun run check:all`, and `scripts/run-verify-parallel.sh`. `package.json` invokes it through `bash`, matching how the other checks are called.
+
 ## [0.42.67.0] - 2026-07-28
 
 **If you develop GBrain on Windows, the test and check commands now actually run. Until this release they were quietly doing almost nothing.**

@@ -28,8 +28,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import type { Subprocess } from 'bun';
-
-const REPO = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
+import { REPO_ROOT as REPO } from './helpers/repo-root.ts';
 
 interface ServeProc {
   proc: Subprocess;
