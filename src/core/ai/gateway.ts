@@ -1531,6 +1531,10 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       throw new AIConfigError(
         `claude-cli has no embedding model. Use openai or google for embeddings.`,
       );
+    case 'codex-cli':
+      throw new AIConfigError(
+        `codex-cli has no embedding model. Use openai or google for embeddings.`,
+      );
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
       const auth = applyResolveAuth(recipe, cfg, 'embedding');
@@ -2484,6 +2488,12 @@ function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       const { ClaudeCliLanguageModel } = require('./providers/claude-cli-language-model.ts');
       return new ClaudeCliLanguageModel(modelId);
     }
+    case 'codex-cli': {
+      // Same subprocess pattern as claude-cli: the Codex CLI owns auth
+      // (ChatGPT OAuth session); chat-only recipe, no expansion touchpoint.
+      const { CodexCliLanguageModel } = require('./providers/codex-cli-language-model.ts');
+      return new CodexCliLanguageModel(modelId);
+    }
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
       const auth = applyResolveAuth(recipe, cfg, 'expansion');
@@ -3045,6 +3055,14 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
       // openai-compatible path below. No env-var switch, no global flag.
       const { ClaudeCliLanguageModel } = require('./providers/claude-cli-language-model.ts');
       return new ClaudeCliLanguageModel(modelId);
+    }
+    case 'codex-cli': {
+      // The GPT sibling of claude-cli: `codex exec` owns auth (ChatGPT
+      // OAuth session managed by `codex login`). `codex-cli:gpt-5.6-terra`
+      // lands here; `openai:gpt-5.6` continues through native-openai with
+      // per-token API billing. No env-var switch, no global flag.
+      const { CodexCliLanguageModel } = require('./providers/codex-cli-language-model.ts');
+      return new CodexCliLanguageModel(modelId);
     }
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
