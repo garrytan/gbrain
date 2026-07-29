@@ -64,7 +64,11 @@ for (const [i, c] of conversations.entries()) {
   // other. The date only leads as a human/chronological sort prefix; the id
   // carries uniqueness. Positional fallback keeps names unique and deterministic
   // when an envelope omits an id.
-  const convId = (typeof c.id === 'string' && c.id.trim()) ? c.id.trim() : `conv-${i + 1}`;
+  // One predicate for "this conversation carries its own id", shared by the
+  // filename and the frontmatter below. Keeping it in a single place is what
+  // stops the two from disagreeing about whether an id exists.
+  const hasId = typeof c.id === 'string' && c.id.trim() !== '';
+  const convId = hasId ? c.id.trim() : `conv-${i + 1}`;
   const name = `${date || '0000-00-00'}-${slug(convId, `conv-${i + 1}`)}.md`;
   // gbrain reads YAML frontmatter + markdown body; keep provenance in frontmatter.
   // Emit `type: conversation` so gbrain stores these as conversation pages rather
@@ -77,8 +81,15 @@ for (const [i, c] of conversations.entries()) {
     'type: conversation',
     `title: ${JSON.stringify(c.title || 'Untitled conversation')}`,
     `date: ${date || 'null'}`,
-    `source: ${env.meta?.source_provider || 'unknown'}`,
-    `memvelope_conversation_id: ${JSON.stringify(c.id)}`,
+    // Every interpolated value is quoted. An envelope is a third-party file, so
+    // a provider string carrying a newline would otherwise close this scalar and
+    // inject arbitrary frontmatter keys into the page gbrain ingests.
+    `source: ${JSON.stringify(env.meta?.source_provider || 'unknown')}`,
+    // Omit the key entirely when the envelope carries no id, rather than
+    // emitting the literal `undefined` or a synthesized `conv-N` — the positional
+    // fallback names the file, but it is not a memvelope conversation id and
+    // must not be recorded as one.
+    ...(hasId ? [`memvelope_conversation_id: ${JSON.stringify(convId)}`] : []),
     'origin: memvelope/envelope-v0',
     '---',
     '',

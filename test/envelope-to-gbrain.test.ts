@@ -6,6 +6,9 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+// The same parser gbrain uses to ingest frontmatter (src/core/markdown.ts), so
+// the injection test asserts against the real consumer rather than a substring.
+import { safeLoad as yamlSafeLoad } from 'js-yaml';
 
 const SCRIPT_PATH = join(import.meta.dir, '..', 'scripts', 'envelope-to-gbrain.mjs');
 const FIXTURE_PATH = join(import.meta.dir, 'fixtures', 'memvelope', 'sample.mve.json');
@@ -70,7 +73,7 @@ describe('envelope-to-gbrain importer', () => {
     expect(page).toContain('type: conversation');
     expect(page).toContain('title: "Onboarding Checklist Draft"');
     expect(page).toContain('date: 2025-11-02');
-    expect(page).toContain('source: chatgpt');
+    expect(page).toContain('source: "chatgpt"');
     expect(page).toContain('memvelope_conversation_id: "c-3f9a2b"');
     expect(page).toContain('origin: memvelope/envelope-v0');
   });
@@ -155,5 +158,69 @@ describe('envelope-to-gbrain importer', () => {
 
     expect(result.exitCode).toBe(0);
     expect(markdownFiles(result.outDir)).toEqual(['2025-11-02-conv-1.md']);
+  });
+
+  test('missing conversation id omits the provenance key rather than emitting a value', async () => {
+    const inputDir = tempDir();
+    const envelopePath = join(inputDir, 'missing-id-frontmatter.mve.json');
+    writeFileSync(envelopePath, JSON.stringify({
+      memvelope: 'envelope-v0',
+      meta: { source_provider: 'chatgpt' },
+      conversations: [
+        {
+          title: 'Missing id example',
+          created_at: '2025-11-02T14:22:51.000Z',
+          messages: [{ id: 'm1', role: 'user', ts: '2025-11-02T14:22:51.000Z', text: 'alice-example asked about frontmatter.' }],
+        },
+      ],
+    }));
+
+    const result = await runImporter(envelopePath);
+    const page = readOnlyMarkdown(result.outDir);
+
+    expect(result.exitCode).toBe(0);
+    // Absent means absent: never the literal string `undefined`, and never the
+    // positional filename fallback masquerading as a real conversation id.
+    expect(page).not.toContain('memvelope_conversation_id');
+    expect(page).not.toContain('undefined');
+    expect(page).toContain('source: "chatgpt"');
+  });
+
+  test('a provider string carrying a newline cannot inject frontmatter keys', async () => {
+    const inputDir = tempDir();
+    const envelopePath = join(inputDir, 'injecting-provider.mve.json');
+    writeFileSync(envelopePath, JSON.stringify({
+      memvelope: 'envelope-v0',
+      meta: { source_provider: 'chatgpt\ntype: injected\nowner: attacker' },
+      conversations: [
+        {
+          id: 'c-inject',
+          title: 'Injection attempt',
+          created_at: '2025-11-02T14:22:51.000Z',
+          messages: [{ id: 'm1', role: 'user', ts: '2025-11-02T14:22:51.000Z', text: 'alice-example sent a hostile provider string.' }],
+        },
+      ],
+    }));
+
+    const result = await runImporter(envelopePath);
+    const page = readOnlyMarkdown(result.outDir);
+    const frontmatter = page.split('---')[1] ?? '';
+    const parsed = yamlSafeLoad(frontmatter) as Record<string, unknown>;
+
+    expect(result.exitCode).toBe(0);
+    // The newline is escaped inside a quoted scalar, so the hostile text stays
+    // one value instead of becoming keys. Asserted structurally: a substring
+    // check cannot tell a real key from the same characters inside a quoted
+    // value, and would pass for the wrong reason.
+    expect(Object.keys(parsed).sort()).toEqual([
+      'date',
+      'memvelope_conversation_id',
+      'origin',
+      'source',
+      'title',
+      'type',
+    ]);
+    expect(parsed.type).toBe('conversation');
+    expect(parsed.source).toBe('chatgpt\ntype: injected\nowner: attacker');
   });
 });
