@@ -42,6 +42,11 @@ import {
   embeddingMismatchMessage,
 } from '../../src/core/embedding-dim-check.ts';
 
+// These cases exercise fresh initialization with custom dimensions and
+// deliberately rewind initialized schemas. A CI snapshot would pre-initialize
+// every PGLiteEngine at 1536 dimensions and make later initSchema calls no-op.
+delete process.env.GBRAIN_PGLITE_SNAPSHOT;
+
 describe('v0.28.5 cluster A — PGLite upgrade wedge regression', () => {
   test('pre-v0.20 brain (missing v0.20+v0.26.3+v0.27 columns) re-runs initSchema cleanly', async () => {
     const engine = new PGLiteEngine();

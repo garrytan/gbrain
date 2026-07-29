@@ -34,7 +34,7 @@ describePostgres('Postgres CJK keyword fallback', () => {
     await engine.executeRaw(
       `INSERT INTO sources (id, name, config, archived)
        VALUES
-         ('default', 'Default', '{}'::jsonb, false),
+         ('default', 'default', '{"federated": true}'::jsonb, false),
          ('alpha', 'Alpha', '{}'::jsonb, false),
          ('beta', 'Beta', '{}'::jsonb, false),
          ('archived', 'Archived', '{}'::jsonb, true)`,

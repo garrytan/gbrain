@@ -1,4 +1,4 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, spyOn } from 'bun:test';
 
 describe('doctor command', () => {
   test('doctor module exports runDoctor', async () => {
@@ -480,11 +480,22 @@ describe('v0.32.4 — sync_freshness check', () => {
     const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
     // Exactly 72h. Strict `>` on fail threshold means 72h-stale is still in
     // the warn window. (Tested boundary semantics.)
-    const result = await checkSyncFreshness(makeStubEngine([
-      { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: agoMs(72 * 60 * 60 * 1000) },
-    ]));
-    expect(result.status).toBe('warn');
-    expect(result.message).toContain('72h ago');
+    const fixedNow = Date.UTC(2026, 0, 15, 12);
+    const nowSpy = spyOn(Date, 'now').mockReturnValue(fixedNow);
+    try {
+      const result = await checkSyncFreshness(makeStubEngine([
+        {
+          id: 'wiki',
+          name: '',
+          local_path: '/tmp/wiki',
+          last_sync_at: new Date(fixedNow - 72 * 60 * 60 * 1000),
+        },
+      ]));
+      expect(result.status).toBe('warn');
+      expect(result.message).toContain('72h ago');
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   test('24h < last_sync_at < 72h → warn with hour-rounded "Nh ago"', async () => {
@@ -499,11 +510,22 @@ describe('v0.32.4 — sync_freshness check', () => {
   test('exact 24h boundary → ok (>24h strict)', async () => {
     const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
     // Exactly 24h. Strict `>` on warn threshold means 24h-stale is still ok.
-    const result = await checkSyncFreshness(makeStubEngine([
-      { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: agoMs(24 * 60 * 60 * 1000) },
-    ]));
-    expect(result.status).toBe('ok');
-    expect(result.message).toContain('synced recently');
+    const fixedNow = Date.UTC(2026, 0, 15, 12);
+    const nowSpy = spyOn(Date, 'now').mockReturnValue(fixedNow);
+    try {
+      const result = await checkSyncFreshness(makeStubEngine([
+        {
+          id: 'wiki',
+          name: '',
+          local_path: '/tmp/wiki',
+          last_sync_at: new Date(fixedNow - 24 * 60 * 60 * 1000),
+        },
+      ]));
+      expect(result.status).toBe('ok');
+      expect(result.message).toContain('synced recently');
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   test('last_sync_at <= 24h → ok with "synced recently"', async () => {
