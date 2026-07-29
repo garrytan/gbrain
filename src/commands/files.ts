@@ -16,7 +16,7 @@ interface FileRecord {
   filename: string;
   storage_path: string;
   mime_type: string | null;
-  size_bytes: number;
+  size_bytes: number | bigint | string | null;
   content_hash: string;
   metadata: Record<string, unknown>;
   created_at: string;
@@ -40,6 +40,14 @@ function getMimeType(filePath: string): string | null {
 function fileHash(filePath: string): string {
   const content = readFileSync(filePath);
   return createHash('sha256').update(content).digest('hex');
+}
+
+export function formatFileSizeKb(rawSizeBytes: number | bigint | string | null): string {
+  if (rawSizeBytes == null) return '?';
+  const sizeBytes = Number(rawSizeBytes);
+  return Number.isFinite(sizeBytes) && sizeBytes >= 0
+    ? `${Math.round(sizeBytes / 1024)}KB`
+    : '?';
 }
 
 export async function runFiles(engine: BrainEngine, args: string[]) {
@@ -116,7 +124,7 @@ async function listFiles(engine: BrainEngine, slug?: string) {
 
   console.log(`${rows.length} file(s):`);
   for (const row of rows) {
-    const size = row.size_bytes ? `${Math.round(Number(row.size_bytes) / 1024)}KB` : '?';
+    const size = formatFileSizeKb(row.size_bytes as FileRecord['size_bytes']);
     console.log(`  ${row.page_slug || '(unlinked)'} / ${row.filename}  [${size}, ${row.mime_type || '?'}]`);
   }
 }

@@ -4,7 +4,7 @@ import { join, basename } from 'path';
 import { createHash } from 'crypto';
 import { extname } from 'path';
 import { tmpdir } from 'os';
-import { collectFiles } from '../src/commands/files.ts';
+import { collectFiles, formatFileSizeKb } from '../src/commands/files.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import * as db from '../src/core/db.ts';
 
@@ -49,6 +49,25 @@ beforeAll(() => {
 
 afterAll(() => {
   rmSync(TMP, { recursive: true, force: true });
+});
+
+describe('formatFileSizeKb', () => {
+  test('formats number, bigint, and string database values', () => {
+    expect(formatFileSizeKb(35 * 1024)).toBe('35KB');
+    expect(formatFileSizeKb(35n * 1024n)).toBe('35KB');
+    expect(formatFileSizeKb('35840')).toBe('35KB');
+  });
+
+  test('preserves zero-byte files instead of reporting an unknown size', () => {
+    expect(formatFileSizeKb(0)).toBe('0KB');
+    expect(formatFileSizeKb(0n)).toBe('0KB');
+  });
+
+  test('reports missing or invalid sizes as unknown', () => {
+    expect(formatFileSizeKb(null)).toBe('?');
+    expect(formatFileSizeKb('not-a-number')).toBe('?');
+    expect(formatFileSizeKb(-1)).toBe('?');
+  });
 });
 
 describe('getMimeType', () => {
