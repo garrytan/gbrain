@@ -457,6 +457,30 @@ describe('codex-cli LanguageModel — abort + error surfaces', () => {
     });
   });
 
+  test('appends a cwd-reachability hint to sandbox-confinement failures only', async () => {
+    await withStubEnv(async () => {
+      const { CodexCliLanguageModel } = await import('../src/core/ai/providers/codex-cli-language-model.ts');
+      const failWith = async (stderrLine: string): Promise<string> => {
+        writeFileSync(stubBin, ['#!/bin/sh', 'cat > /dev/null', `echo "${stderrLine}" >&2`, 'exit 1'].join('\n'));
+        chmodSync(stubBin, 0o755);
+        const model = new CodexCliLanguageModel('gpt-5.6-terra');
+        return model
+          .doGenerate({ prompt: [userMessage('x')] } as LanguageModelV2CallOptions)
+          .then(() => '', (e: unknown) => (e instanceof Error ? e.message : String(e)));
+      };
+      try {
+        // The snap failure mode: an opaque errno from a cwd the child cannot open.
+        const confined = await failWith('Error: No such file or directory (os error 2)');
+        expect(confined).toMatch(/--- hint ---/);
+        expect(confined).toMatch(/TMPDIR/);
+        // Ordinary CLI failures stay clean.
+        expect(await failWith('usage limit reached')).not.toMatch(/--- hint ---/);
+      } finally {
+        restoreFastStub();
+      }
+    });
+  });
+
   test('rejects when the CLI exits 0 without writing the -o file', async () => {
     await withStubEnv(async () => {
       const silentStub = [

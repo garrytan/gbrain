@@ -20,6 +20,10 @@
  * Context isolation:
  *   - Spawned from a dedicated tmpdir (`-C`) so AGENTS.md auto-discovery has
  *     no local files to find; `--skip-git-repo-check` skips the repo probe.
+ *     Sandbox-confined codex builds (notably the Ubuntu snap) cannot open
+ *     arbitrary paths under /tmp, which surfaces as a bare "No such file or
+ *     directory" from the child; set TMPDIR to a non-hidden directory inside
+ *     $HOME on those hosts. See docs/ai-providers/codex-cli.md.
  *   - `--ignore-user-config` stops ~/.codex/config.toml from loading — user
  *     MCP servers (including gbrain's own MCP → recursion + PGLite lock
  *     contention), custom model defaults, and instruction overrides all stay
@@ -63,6 +67,27 @@ function ensureCleanCwd(): string {
     cwdEnsured = true;
   }
   return CODEX_CWD;
+}
+
+/**
+ * Explain a child failure that is really a cwd-reachability problem.
+ *
+ * The dedicated cwd is handed to both `-C` and `-o`, so the child must be able
+ * to open it. Sandbox-confined builds cannot: snap's `home` interface allows
+ * only non-hidden paths under $HOME, so nothing under /tmp is reachable and
+ * codex reports a bare "No such file or directory (os error 2)" that names
+ * neither the path nor the cause. Point at the cwd and the TMPDIR escape hatch
+ * instead of leaving the operator with the raw errno.
+ *
+ * Returns '' for unrelated failures so ordinary CLI errors stay untouched.
+ */
+function cwdAccessHint(detail: string): string {
+  if (!/no such file or directory|os error 2|permission denied|os error 13/i.test(detail)) return '';
+  return (
+    `\n--- hint ---\ncodex ran with cwd ${CODEX_CWD}. Sandbox-confined installs ` +
+    `(e.g. the Ubuntu snap) cannot open arbitrary paths under ${tmpdir()}; set ` +
+    `TMPDIR to a non-hidden directory inside $HOME and retry.`
+  );
 }
 
 /**
@@ -261,7 +286,8 @@ function runCodex(
     child.on('close', code => {
       if (signal) signal.removeEventListener('abort', onAbort);
       if (code !== 0) {
-        reject(new Error(`codex-cli exited ${code}: ${stderr.trim() || stdout.trim()}`));
+        const detail = stderr.trim() || stdout.trim();
+        reject(new Error(`codex-cli exited ${code}: ${detail}${cwdAccessHint(detail)}`));
         return;
       }
       const text = readOutFile();
