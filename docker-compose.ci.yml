@@ -21,14 +21,21 @@
 # shards take BASE..BASE+3.
 
 services:
+  # Hard project budget on this 16 GiB CI host: 4 x 256 MiB Postgres + 4 GiB
+  # runner = 5 GiB maximum. scripts/ci-local.sh requires 6 GiB MemAvailable
+  # before launch. memswap_limit equals mem_limit so a failing test is contained
+  # in its cgroup instead of consuming host swap or causing global OOM.
   postgres-1:
     image: pgvector/pgvector:pg16
+    mem_limit: 256m
+    memswap_limit: 256m
+    pids_limit: 128
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: gbrain_test
     ports:
-      - "${GBRAIN_CI_PG_PORT:-5434}:5432"
+      - "127.0.0.1:${GBRAIN_CI_PG_PORT:-5434}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d gbrain_test"]
       interval: 10s
@@ -39,12 +46,15 @@ services:
 
   postgres-2:
     image: pgvector/pgvector:pg16
+    mem_limit: 256m
+    memswap_limit: 256m
+    pids_limit: 128
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: gbrain_test
     ports:
-      - "${GBRAIN_CI_PG_PORT_2:-5435}:5432"
+      - "127.0.0.1:${GBRAIN_CI_PG_PORT_2:-5435}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d gbrain_test"]
       interval: 10s
@@ -55,12 +65,15 @@ services:
 
   postgres-3:
     image: pgvector/pgvector:pg16
+    mem_limit: 256m
+    memswap_limit: 256m
+    pids_limit: 128
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: gbrain_test
     ports:
-      - "${GBRAIN_CI_PG_PORT_3:-5436}:5432"
+      - "127.0.0.1:${GBRAIN_CI_PG_PORT_3:-5436}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d gbrain_test"]
       interval: 10s
@@ -71,12 +84,15 @@ services:
 
   postgres-4:
     image: pgvector/pgvector:pg16
+    mem_limit: 256m
+    memswap_limit: 256m
+    pids_limit: 128
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: gbrain_test
     ports:
-      - "${GBRAIN_CI_PG_PORT_4:-5437}:5432"
+      - "127.0.0.1:${GBRAIN_CI_PG_PORT_4:-5437}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d gbrain_test"]
       interval: 10s
@@ -87,6 +103,9 @@ services:
 
   runner:
     image: oven/bun:1
+    mem_limit: 4g
+    memswap_limit: 4g
+    pids_limit: 512
     working_dir: /app
     depends_on:
       postgres-1:

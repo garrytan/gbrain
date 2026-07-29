@@ -18,16 +18,26 @@ cd "$(dirname "$0")/.."
 
 # --max-concurrency=N is forwarded to `bun test`. v0.26.4: invoked by
 # run-unit-parallel.sh; safe to call without (defaults to bun's default cap).
+# --batch-size=N starts a fresh Bun process after every N files, bounding memory
+# growth during long CI runs. Without it, the historical single-process path stays.
 MAX_CONC=""
+BATCH_SIZE=0
 DRY_RUN=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --max-concurrency) MAX_CONC="$2"; shift 2 ;;
     --max-concurrency=*) MAX_CONC="${1#*=}"; shift ;;
+    --batch-size) BATCH_SIZE="$2"; shift 2 ;;
+    --batch-size=*) BATCH_SIZE="${1#*=}"; shift ;;
     --dry-run-list) DRY_RUN=1; shift ;;
     *) echo "ERROR: unknown arg: $1" >&2; exit 2 ;;
   esac
 done
+
+if ! printf '%s' "$BATCH_SIZE" | grep -qE '^[0-9]+$'; then
+  echo "ERROR: --batch-size must be a non-negative integer" >&2
+  exit 2
+fi
 
 # All non-E2E test files, sorted for deterministic shard splits.
 # Tier 4: *.slow.test.ts is "always-slow" (cold-path correctness checks);
@@ -72,6 +82,19 @@ if [ "$DRY_RUN" = "1" ]; then
 fi
 
 echo "[unit-shard ${SHARD:-(unsharded)}] running ${#files[@]} files"
+if [ "$BATCH_SIZE" -gt 0 ]; then
+  for ((start = 0; start < ${#files[@]}; start += BATCH_SIZE)); do
+    batch=("${files[@]:start:BATCH_SIZE}")
+    echo "[unit-shard ${SHARD:-(unsharded)}] batch $((start / BATCH_SIZE + 1)): ${#batch[@]} files"
+    if [ -n "$MAX_CONC" ]; then
+      bun test --max-concurrency="$MAX_CONC" --timeout=60000 "${batch[@]}"
+    else
+      bun test --timeout=60000 "${batch[@]}"
+    fi
+  done
+  exit 0
+fi
+
 if [ -n "$MAX_CONC" ]; then
   exec bun test --max-concurrency="$MAX_CONC" --timeout=60000 "${files[@]}"
 fi

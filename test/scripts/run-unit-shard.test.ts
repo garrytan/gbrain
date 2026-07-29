@@ -15,7 +15,9 @@
 
 import { describe, it, expect } from 'bun:test';
 import { execFileSync } from 'child_process';
-import { resolve } from 'path';
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join, resolve } from 'path';
 
 const REPO_ROOT = resolve(import.meta.dir, '..', '..');
 const SHARD_SH = resolve(REPO_ROOT, 'scripts/run-unit-shard.sh');
@@ -52,5 +54,41 @@ describe('run-unit-shard.sh exclusion symmetry', () => {
     const files = dryRunList();
     const leaks = files.filter(f => f.startsWith('test/e2e/'));
     expect(leaks).toEqual([]);
+  });
+});
+
+describe('run-unit-shard.sh bounded batches', () => {
+  it('starts a fresh Bun process for each requested file batch', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-unit-batches-'));
+    try {
+      const scriptsDir = join(root, 'scripts');
+      const testsDir = join(root, 'test');
+      const binDir = join(root, 'bin');
+      mkdirSync(scriptsDir, { recursive: true });
+      mkdirSync(testsDir, { recursive: true });
+      mkdirSync(binDir, { recursive: true });
+      copyFileSync(SHARD_SH, join(scriptsDir, 'run-unit-shard.sh'));
+
+      const testFiles = ['a', 'b', 'c', 'd', 'e'].map(name => `test/${name}.test.ts`);
+      for (const file of testFiles) writeFileSync(join(root, file), '');
+
+      const invocationLog = join(root, 'bun-invocations.log');
+      const fakeBun = join(binDir, 'bun');
+      writeFileSync(fakeBun, '#!/bin/sh\nprintf "%s\\n" "$*" >> "$BUN_LOG"\n');
+      chmodSync(fakeBun, 0o755);
+
+      execFileSync('bash', [join(scriptsDir, 'run-unit-shard.sh'), '--batch-size=2', '--max-concurrency=1'], {
+        cwd: root,
+        env: { ...process.env, BUN_LOG: invocationLog, PATH: `${binDir}:${process.env.PATH}`, SHARD: '' },
+      });
+
+      const invocations = readFileSync(invocationLog, 'utf-8').trim().split('\n');
+      expect(invocations).toHaveLength(3);
+      expect(invocations.map(line => line.match(/test\/[a-e]\.test\.ts/g)?.length)).toEqual([2, 2, 1]);
+      expect(invocations.every(line => line.startsWith('test --max-concurrency=1 --timeout=60000 '))).toBe(true);
+      expect(invocations.flatMap(line => line.match(/test\/[a-e]\.test\.ts/g) ?? [])).toEqual(testFiles);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
