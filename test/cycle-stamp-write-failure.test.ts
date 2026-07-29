@@ -17,7 +17,7 @@
  *     back 'skipped', `deriveStatus` ignores them by design, and the status stays
  *     a success status. This is the conflation the maintainer flagged on #3504.
  */
-import { describe, test, expect, beforeAll, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -40,6 +40,10 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+});
+
+afterAll(async () => {
+  await engine.disconnect();
 });
 
 beforeEach(async () => {
