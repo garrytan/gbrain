@@ -20,7 +20,7 @@
  *     `afterAll`) per CLAUDE.md test-isolation rules R3 + R4.
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync, realpathSync } from 'fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync, realpathSync, chmodSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -145,6 +145,59 @@ describe('runImport checkpoint resume — v0.33.2 path-based', () => {
 
       // After clean completion the checkpoint is cleaned up so the next
       // run doesn't think it needs to resume.
+      expect(existsSync(cpPath)).toBe(false);
+    });
+  }, 30_000);
+
+  test('interrupted run preserves its tail below the 100-file boundary', async () => {
+    // The periodic checkpoint save fires on `completed.size % 100 === 0`. With
+    // fewer than 100 successful files there is no boundary to hit, so before
+    // the final save every completed file in a run that ends with errors was
+    // discarded and re-done on the next invocation. On a corpus whose files
+    // are individually expensive, `completed` can advance ~1 per several
+    // minutes, putting the next boundary hours away — the run then never
+    // converges under repeated kills.
+    await withEnv({ GBRAIN_HOME: workspace }, async () => {
+      // Three small good files (well under the 100-boundary) plus one that
+      // exceeds the content-sanity block threshold. That throws, so `errors`
+      // is non-zero and the checkpoint is PRESERVED rather than cleared —
+      // note a SLUG_MISMATCH would NOT work here: it is a soft `failures`
+      // entry that leaves `errors` at 0, so upstream clears the checkpoint.
+      writeBrainFile('people/alice.md', validMarkdown('people/alice'));
+      writeBrainFile('people/carol.md', validMarkdown('people/carol'));
+      writeBrainFile('people/dave.md', validMarkdown('people/dave'));
+      // A file the reader cannot open raises inside importFile, which is the
+      // path that increments `errors` (a SLUG_MISMATCH would NOT work: it is
+      // a soft `failures` entry leaving `errors` at 0, so upstream clears the
+      // checkpoint rather than preserving it).
+      writeBrainFile('people/unreadable.md', validMarkdown('people/unreadable'));
+      chmodSync(join(brainDir, 'people/unreadable.md'), 0o000);
+
+      const result = await runImport(engine, [brainDir, '--no-embed']);
+      expect(result.errors).toBeGreaterThan(0);
+
+      // The checkpoint exists AND carries the successful files, even though
+      // no 100-boundary was ever crossed.
+      expect(existsSync(cpPath)).toBe(true);
+      const cp = JSON.parse(readFileSync(cpPath, 'utf8'));
+      expect(cp.completedPaths).toContain('people/alice.md');
+      expect(cp.completedPaths).toContain('people/carol.md');
+      expect(cp.completedPaths).toContain('people/dave.md');
+      // The failed file must still be absent so the next run retries it.
+      expect(cp.completedPaths).not.toContain('people/unreadable.md');
+    });
+  }, 30_000);
+
+  test('clean completion still leaves no checkpoint (final save must not resurrect it)', async () => {
+    // Guards the ordering of the final save: it runs BEFORE the
+    // clear/preserve decision and only on the error path, so a fully clean
+    // run must still end with no checkpoint file.
+    await withEnv({ GBRAIN_HOME: workspace }, async () => {
+      writeBrainFile('x.md', validMarkdown('x'));
+      writeBrainFile('y.md', validMarkdown('y'));
+
+      const result = await runImport(engine, [brainDir, '--no-embed']);
+      expect(result.errors).toBe(0);
       expect(existsSync(cpPath)).toBe(false);
     });
   }, 30_000);
