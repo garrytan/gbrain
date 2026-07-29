@@ -779,7 +779,20 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // to cache.ttl_seconds, with no warning and no way for an operator to tell.
 // Same one-time global cold-miss pattern as the bumps above; refills within
 // cache.ttl_seconds (3600s default).
-export const KNOBS_HASH_VERSION = 15;
+//
+// bump 17→18: qwen3-embedding query-side Instruct template. 15 was taken by
+// the merged #3677 fts= fold, 16 by the sibling #3621 acm= floor and 17 by
+// #3617's kof= knob, so this PR claims the next free number. The gateway now
+// prepends the model card's instruction template to QUERY-side embeds for
+// qwen3-embedding models, so embedQuery() produces different vectors than
+// pre-template builds — pre-template rows (key embedding AND result set)
+// must not be served to post-template lookups. Same one-time global
+// cold-miss pattern as bump 10→11 (the input_type fix — the same class of
+// change). The effective sentence also folds into the key via
+// ctx.queryInstruct (append-only `qi=` part) so processes running different
+// GBRAIN_QUERY_INSTRUCT values never cross-serve (same per-process
+// contamination class as #2825's hardExcludes).
+export const KNOBS_HASH_VERSION = 18;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -818,6 +831,17 @@ export interface KnobsHashContext {
    * 'none' for legacy callers that don't thread excludes.
    */
   hardExcludes?: string[];
+  /**
+   * v=15: the effective query-side instruction sentence the gateway
+   * prepends for the resolved embedding model
+   * (gateway.effectiveQueryInstruct) — undefined when the model takes no
+   * text template or it is disabled. Folded so a row written under one
+   * instruction (default, custom GBRAIN_QUERY_INSTRUCT, or disabled) is
+   * never served to a lookup under another — they sit in different
+   * query-vector spaces. Undefined falls back to the literal 'none' for
+   * legacy callers.
+   */
+  queryInstruct?: string;
 }
 
 export function knobsHash(
@@ -921,6 +945,11 @@ export function knobsHash(
     // memoizes and validates against /^[a-z][a-z0-9_]*$/, so this stays a
     // cheap, bounded string.
     `fts=${getFtsLanguage()}`,
+    // v=18 addition (append-only): query-side instruction template. The
+    // instruction changes what embedQuery() produces for qwen3-embedding
+    // models — the same contamination class as the input_type fix (v=11)
+    // and hardExcludes (v=12).
+    `qi=${ctx?.queryInstruct ?? 'none'}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));

@@ -1687,6 +1687,84 @@ export interface EmbedOpts {
   dimensions?: number;
 }
 
+
+// ---- Query-side instruction template (asymmetric instruction-tuned models) ----
+//
+// Qwen3-Embedding is trained with an `Instruct: {task}\nQuery:{query}`
+// template on the QUERY side only; documents are embedded raw. The model
+// card reports a 1-5% retrieval drop when the query-side instruction is
+// omitted. The existing `inputType: 'query'` signal only feeds the
+// wire-level `input_type` field (dims.ts), which the openai-compatible
+// endpoints serving these models don't have — the signal silently dropped
+// and every query was embedded document-side. This closes the gap at the
+// text layer instead.
+//
+// Document/index side and every stored artifact stay untouched (the same
+// input-only invariant as the contextual-retrieval wrapper in
+// embedding-context.ts) — existing brains need NO re-embedding, because
+// raw document-side vectors are already this model family's correct usage.
+//
+// Scope: qwen3-embedding model ids only — the same family match as
+// dimsProviderOptions' Matryoshka branch. Hosted Qwen3 derivatives with a
+// server-side instruct parameter (e.g. DashScope text-embedding-v4) have
+// different model ids and are untouched. nomic-embed-text has the same
+// class of gap but requires BOTH-side prefixes (an existing-corpus
+// re-embed/migration), so it is deliberately out of scope here.
+//
+// GBRAIN_QUERY_INSTRUCT overrides the task sentence — retrieval quality is
+// corpus/language-sensitive (a Korean-heavy corpus measured a Korean task
+// sentence significantly ahead of this English default); an empty string
+// disables the template entirely (operational kill switch). Read per call —
+// a deliberate, narrow exception to the C3 no-env-at-call-time rule: this
+// is an operational toggle, not provider config, and per-call reads keep
+// one-shot CLI A/B runs and tests seam-free. The effective sentence folds
+// into the query-cache key via effectiveQueryInstruct() below.
+const QUERY_INSTRUCT_DEFAULT =
+  'Given a web search query, retrieve relevant passages that answer the query';
+
+function isQwen3EmbeddingModel(modelId: string): boolean {
+  return modelId === 'qwen3-embedding' || modelId.startsWith('qwen3-embedding:');
+}
+
+function resolveQueryInstruct(): string {
+  const task = process.env.GBRAIN_QUERY_INSTRUCT ?? QUERY_INSTRUCT_DEFAULT;
+  return task.trim() === '' ? '' : task;
+}
+
+function applyQueryInstruct(
+  texts: string[],
+  modelId: string,
+  inputType: 'query' | 'document' | undefined,
+): string[] {
+  if (inputType !== 'query' || !isQwen3EmbeddingModel(modelId)) return texts;
+  const task = resolveQueryInstruct();
+  if (task === '') return texts;
+  return texts.map(t => `Instruct: ${task}\nQuery:${t ?? ''}`);
+}
+
+/**
+ * The effective query-side instruction for a 'provider:model' string (the
+ * globally configured embedding model when omitted) — undefined when the
+ * model takes no text template or the template is disabled. hybridSearch
+ * folds this into the query-cache knobs hash so a cache row written under
+ * one instruction is never served to a lookup under another (the
+ * instruction changes what embedQuery() produces — the same contamination
+ * class as the v=11 input_type fix and #2825's hardExcludes). Never
+ * throws: callers may run before configureGateway() (eval replay,
+ * telemetry); an unresolvable model just means "no template".
+ */
+export function effectiveQueryInstruct(modelString?: string): string | undefined {
+  try {
+    const target = modelString ?? getEmbeddingModel();
+    const { modelId } = parseModelId(target);
+    if (!isQwen3EmbeddingModel(modelId)) return undefined;
+    const task = resolveQueryInstruct();
+    return task === '' ? undefined : task;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32Array[]> {
   if (!texts || texts.length === 0) return [];
 
@@ -1698,7 +1776,10 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   const resolveTarget = opts?.embeddingModel ?? getEmbeddingModel();
   const tracker = __budgetStore.getStore() ?? null;
   const { model, recipe, modelId } = await resolveEmbeddingProvider(resolveTarget);
-  const truncated = texts.map(t => (t ?? '').slice(0, MAX_CHARS));
+  // Prefix BEFORE the MAX_CHARS cap so the instruction template always
+  // survives truncation intact (queries are short; the cap is a safety net).
+  const truncated = applyQueryInstruct(texts, modelId, opts?.inputType)
+    .map(t => (t ?? '').slice(0, MAX_CHARS));
 
   // Reserve up front for the worst-case batch token count. Embeddings have
   // no output rate, so maxOutputTokens=0. record() at the end uses the
