@@ -2,6 +2,12 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- BREAKING CHANGE: shared-operation CLI commands now reject unknown flags instead of silently swallowing them and, for valued flags, the next token. This turns typoed or unsupported invocations into explicit errors; use `gbrain <cmd> --help` to check supported flags. Documented `query`/`search --json`, `query`/`search --type`, `get --raw`, and POSIX `--` invocations are preserved or corrected so shipped docs and skills do not hard-fail on upgrade.
+
 ## [0.42.67.0] - 2026-07-28
 
 **If you develop GBrain on Windows, the test and check commands now actually run. Until this release they were quietly doing almost nothing.**
