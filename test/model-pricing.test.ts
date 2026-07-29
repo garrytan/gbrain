@@ -128,6 +128,8 @@ describe('DRIFT GUARD — derived views stay equal to canonical (re-hardcode tri
       'google:gemini-2.0-flash',
       'together:meta-llama/Llama-3.3-70B-Instruct-Turbo',
       'deepseek:deepseek-chat',
+      'deepseek:deepseek-v4-flash',
+      'deepseek:deepseek-v4-pro',
     ]) {
       expect(canonicalLookup(id)).toBeDefined();
     }

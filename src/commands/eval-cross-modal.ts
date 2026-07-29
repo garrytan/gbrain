@@ -78,7 +78,7 @@ FLAGS:
                            cycle is 3 model calls; verdict aggregates over them.
   --slot-a-model <id>      Override default 'openai:gpt-5.2'.
   --slot-b-model <id>      Override default 'anthropic:claude-opus-4-7'.
-  --slot-c-model <id>      Override default 'google:gemini-1.5-pro'.
+  --slot-c-model <id>      Override default 'deepseek:deepseek-v4-pro'.
   --receipt-dir <path>     Default: gbrainPath('eval-receipts').
   --max-tokens N           Output token budget per call. Default: 4000.
   --json                   Emit final aggregate as JSON to stdout (progress to stderr).

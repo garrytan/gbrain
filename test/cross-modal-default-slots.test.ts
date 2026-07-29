@@ -15,6 +15,14 @@ import { splitProviderModelId } from '../src/core/model-id.ts';
 import { canonicalLookup } from '../src/core/model-pricing.ts';
 
 describe('cross-modal DEFAULT_SLOTS ↔ recipe consistency', () => {
+  test('uses the current three-provider judge panel', () => {
+    expect(DEFAULT_SLOTS).toEqual([
+      { id: 'A', model: 'openai:gpt-5.2' },
+      { id: 'B', model: 'anthropic:claude-opus-4-7' },
+      { id: 'C', model: 'deepseek:deepseek-v4-pro' },
+    ]);
+  });
+
   test('every default slot model is listed in its recipe chat touchpoint', () => {
     for (const slot of DEFAULT_SLOTS) {
       const { provider, model } = splitProviderModelId(slot.model);
