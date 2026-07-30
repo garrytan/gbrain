@@ -91,7 +91,8 @@ export function aggregate(input: AggregateInput): AggregateResult {
   for (const s of successes) {
     if (s.ok) {
       for (const dim of Object.keys(s.parsed.scores)) {
-        allDimNames.add(dim);
+        const normalized = normalizeDimensionName(dim);
+        if (normalized) allDimNames.add(normalized);
       }
     }
   }
@@ -99,7 +100,8 @@ export function aggregate(input: AggregateInput): AggregateResult {
     const scores: number[] = [];
     for (const s of successes) {
       if (s.ok) {
-        const entry = s.parsed.scores[dim];
+        const entry = Object.entries(s.parsed.scores)
+          .find(([name]) => normalizeDimensionName(name) === dim)?.[1];
         if (entry && Number.isFinite(entry.score)) scores.push(entry.score);
       }
     }
@@ -140,6 +142,10 @@ export function aggregate(input: AggregateInput): AggregateResult {
     errors,
     verdictMessage,
   };
+}
+
+function normalizeDimensionName(name: string): string {
+  return name.trim().toLowerCase();
 }
 
 function describeFailure(
