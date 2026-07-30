@@ -154,6 +154,33 @@ async function dropInvalidConcurrentIndex(
   return isInvalid;
 }
 
+/**
+ * Opt-in escape hatch for the RLS-enable migrations (v24/v29/v31/v35).
+ *
+ * Enabling RLS from a session that lacks BYPASSRLS would lock a NON-owning role
+ * out of its own data, so these migrations fail closed by default: a role
+ * without BYPASSRLS gets a RAISE EXCEPTION and the migration aborts (the runner
+ * leaves schema_version unchanged, so it retries cleanly once the role is
+ * fixed). That default is correct for the common managed-Postgres split where
+ * the migrating role and the runtime app role differ.
+ *
+ * On a single-principal deployment the tradeoff inverts: when the migrating
+ * role also OWNS the tables and is the runtime role (e.g. a managed Cloud SQL
+ * `postgres` that cannot hold BYPASSRLS but owns every table), the owner is
+ * exempt from RLS as long as no FORCE ROW LEVEL SECURITY / policies apply, so
+ * enabling RLS is a harmless no-op and the hard failure only wedges the
+ * migration chain. Set GBRAIN_RLS_ALLOW_NONBYPASS=1 there to downgrade the
+ * abort to a WARNING and PROCEED with the ALTER. Unset (the default) is
+ * unchanged fail-closed behavior. Read at module load, so one env var flips all
+ * four migrations together. Compare v32, which already warns-and-skips
+ * OAuth-table RLS for the same non-BYPASSRLS case.
+ */
+function rlsBypassGuard(label: string): string {
+  return process.env.GBRAIN_RLS_ALLOW_NONBYPASS === '1'
+    ? `RAISE WARNING '${label}: role % lacks BYPASSRLS — enabling RLS anyway (GBRAIN_RLS_ALLOW_NONBYPASS opt-in; safe only when this role owns the tables and no FORCE ROW LEVEL SECURITY / policies apply).', current_user;`
+    : `RAISE EXCEPTION '${label}: role % does not have BYPASSRLS privilege — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role), or set GBRAIN_RLS_ALLOW_NONBYPASS=1 if this role owns the tables. The migration will retry automatically on the next initSchema call.', current_user;`;
+}
+
 // Migrations are embedded here, not loaded from files.
 // Add new migrations at the end. Never modify existing ones.
 // Exported for tests that structurally assert migration contents (e.g., "v9 must
@@ -913,13 +940,14 @@ export const MIGRATIONS: Migration[] = [
       BEGIN
         SELECT EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) INTO has_bypass; -- #1385: superuser + inherited-role BYPASSRLS, not just the role's own rolbypassrls
         IF NOT has_bypass THEN
-          -- Fail the migration loudly instead of WARNING + version-bump.
-          -- The runner unconditionally records schema_version on success,
-          -- so a silent WARNING here would permanently lock the backfill out
-          -- on future runs even after switching to a bypass role. Raising
-          -- aborts the transaction, leaves schema_version at the prior value,
-          -- and lets the next invocation retry after the role is fixed.
-          RAISE EXCEPTION 'v24 rls_backfill_missing_tables: role % does not have BYPASSRLS privilege — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role). The migration will retry automatically on the next initSchema call.', current_user;
+          -- Fail closed by default: the runner records schema_version on
+          -- success, so a silent proceed would permanently lock a non-owning
+          -- role out of its own data with no clean retry. Raising aborts the
+          -- transaction, leaves schema_version at the prior value, and retries
+          -- on the next invocation once the role is fixed. GBRAIN_RLS_ALLOW_NONBYPASS=1
+          -- downgrades this to a WARNING + proceed for single-principal owners
+          -- (see rlsBypassGuard above).
+          ${rlsBypassGuard('v24 rls_backfill_missing_tables')}
         END IF;
 
         -- These 8 are guaranteed to exist: schema.sql creates them (idempotent
@@ -1202,7 +1230,7 @@ export const MIGRATIONS: Migration[] = [
         BEGIN
           SELECT EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) INTO has_bypass; -- #1385: superuser + inherited-role BYPASSRLS, not just the role's own rolbypassrls
           IF NOT has_bypass THEN
-            RAISE EXCEPTION 'v29 cathedral_ii_code_edges_rls: role % does not have BYPASSRLS privilege — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role). The migration will retry automatically on the next initSchema call.', current_user;
+            ${rlsBypassGuard('v29 cathedral_ii_code_edges_rls')}
           END IF;
 
           ALTER TABLE code_edges_chunk ENABLE ROW LEVEL SECURITY;
@@ -1431,7 +1459,7 @@ export const MIGRATIONS: Migration[] = [
         BEGIN
           SELECT EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) INTO has_bypass; -- #1385: superuser + inherited-role BYPASSRLS, not just the role's own rolbypassrls
           IF NOT has_bypass THEN
-            RAISE EXCEPTION 'v31 eval_capture_tables: role % does not have BYPASSRLS privilege — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role). The migration will retry automatically on the next initSchema call.', current_user;
+            ${rlsBypassGuard('v31 eval_capture_tables')}
           END IF;
 
           CREATE TABLE IF NOT EXISTS eval_candidates (
@@ -1773,7 +1801,7 @@ export const MIGRATIONS: Migration[] = [
           IF NOT has_bypass THEN
             -- Same posture as v24: raise to abort the migration so the runner
             -- leaves config.version unbumped and retries on the next call.
-            RAISE EXCEPTION 'v35 auto_rls_event_trigger backfill: role % does not have BYPASSRLS — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role).', current_user;
+            ${rlsBypassGuard('v35 auto_rls_event_trigger backfill')}
           END IF;
 
           FOR r IN
