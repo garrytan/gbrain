@@ -333,6 +333,20 @@ const TOP_LEVEL_TYPES: Partial<Record<SupportedCodeLanguage, Set<string>>> = {
     'protocol_declaration', 'enum_declaration', 'import_declaration',
   ]),
   kotlin: new Set(['function_declaration', 'class_declaration', 'property_declaration', 'object_declaration']),
+  // Dart (UserNobody14): a member is TWO sibling nodes — `method_signature`
+  // followed by `function_body` — rather than one node containing the body.
+  // Only the signature is listed here, so a Dart symbol chunk spans the
+  // declaration line(s); the body lands in its own unnamed chunk and stays
+  // reachable by semantic search. `static_final_declaration_list` covers
+  // top-level `final x = ...` bindings, which is how Riverpod providers and
+  // most Dart module-level constants are declared.
+  dart: new Set([
+    'class_definition', 'enum_declaration', 'mixin_declaration',
+    'extension_declaration', 'extension_type_declaration', 'type_alias',
+    'function_signature', 'method_signature', 'getter_signature',
+    'setter_signature', 'constructor_signature', 'factory_constructor_signature',
+    'static_final_declaration_list', 'initialized_variable_definition',
+  ]),
   scala: new Set(['function_definition', 'class_definition', 'object_definition', 'trait_definition']),
   lua: new Set(['function_declaration', 'function_definition', 'local_declaration']),
   elixir: new Set(['call']),
@@ -625,8 +639,27 @@ export async function chunkCodeTextFull(
     const chunks: CodeChunk[] = [];
     const nestedConfig = NESTED_EMIT_CONFIG[language];
 
+    // Dart (UserNobody14): a function is TWO sibling nodes — the signature,
+    // then a separate `function_body`. Every other grammar here nests the
+    // body inside the declaration node. Left unpaired, a top-level function
+    // chunk is just its signature line, so mergeSmallSiblings() folds it into
+    // an unnamed `merged` chunk and the symbol name is lost — which is why
+    // top-level functions stayed unfindable even once the grammar loaded,
+    // while classes and enums resolved fine.
+    // Pairing them makes a Dart function chunk look like every other
+    // language's. Methods inside a class body are unaffected: they are not
+    // root children, so the enclosing class chunk already covers them.
+    const spanEnd = new Map<any, any>();
+    if (language === 'dart') {
+      for (const n of semanticNodes) {
+        const next = n.nextNamedSibling;
+        if (next?.type === 'function_body') spanEnd.set(n, next);
+      }
+    }
+
     for (const node of semanticNodes) {
-      const nodeText = source.slice(node.startIndex, node.endIndex).trim();
+      const endNode = spanEnd.get(node) ?? node;
+      const nodeText = source.slice(node.startIndex, endNode.endIndex).trim();
       if (!nodeText) continue;
 
       // v0.20.0 Cathedral II Layer 6 (A3): for class/module/impl nodes,
@@ -665,20 +698,27 @@ export async function chunkCodeTextFull(
         chunks.push(buildChunk({
           body: nodeText, filePath, language, symbolName, symbolType,
           startLine: node.startPosition.row + 1,
-          endLine: node.endPosition.row + 1,
+          endLine: endNode.endPosition.row + 1,
           index: chunks.length,
           parentSymbolPath: [],
         }));
         continue;
       }
 
-      // Split very large nodes at nested block boundaries
-      const subRanges = splitLargeNode(node, source, chunkTarget);
+      // Split very large nodes at nested block boundaries. For a paired Dart
+      // function the splittable mass is the body, so split that and pull the
+      // first range back to the signature's start — otherwise the declaration
+      // line (the part naming the symbol) would be dropped from the chunks.
+      const subRanges = splitLargeNode(endNode, source, chunkTarget);
+      if (subRanges.length > 0 && endNode !== node) {
+        subRanges[0].startIndex = node.startIndex;
+        subRanges[0].startLine = node.startPosition.row + 1;
+      }
       if (subRanges.length === 0) {
         chunks.push(buildChunk({
           body: nodeText, filePath, language, symbolName, symbolType,
           startLine: node.startPosition.row + 1,
-          endLine: node.endPosition.row + 1,
+          endLine: endNode.endPosition.row + 1,
           index: chunks.length,
           parentSymbolPath: [],
         }));
@@ -1174,9 +1214,51 @@ function extractSymbolName(node: any): string | null {
     if (nested) return nested;
   }
 
+  // Dart: two shapes defeat the generic scan below. A signature carries its
+  // return type as a `type_identifier` child BEFORE the plain `identifier`
+  // that names the thing, so `endsWith('identifier')` returns `Future` for
+  // `Future<T?> _approve(...)`. And `method_signature` /
+  // `static_final_declaration_list` hold no identifier of their own — the
+  // name sits one level down. Runs after the `name` field check, so grammars
+  // that share a node name (TS has `function_signature` and
+  // `method_signature`, both with a `name` field) never reach here.
+  if (DART_SIGNATURE_NODES.has(node.type)) {
+    const dartName = extractDartSymbolName(node);
+    if (dartName) return dartName;
+  }
+
   for (const child of node.namedChildren) {
     if (child.type.endsWith('identifier') || child.type === 'constant') {
       const v = sanitize(child.text);
+      if (v) return v;
+    }
+  }
+  return null;
+}
+
+// Node names verified against tree-sitter-dart's src/node-types.json rather
+// than inferred — the grammar distinguishes `identifier` from
+// `type_identifier`, and that distinction is the whole point here.
+const DART_SIGNATURE_NODES = new Set([
+  'method_signature', 'function_signature', 'getter_signature',
+  'setter_signature', 'constructor_signature', 'factory_constructor_signature',
+  'static_final_declaration_list', 'static_final_declaration',
+  'initialized_variable_definition',
+]);
+
+// Prefer an exact `identifier` child at the shallowest depth, then dive
+// through one wrapper layer. Depth-capped so a malformed tree cannot walk far.
+function extractDartSymbolName(node: any, depth = 0): string | null {
+  if (depth > 2) return null;
+  for (const child of node.namedChildren) {
+    if (child.type === 'identifier') {
+      const v = sanitize(child.text);
+      if (v) return v;
+    }
+  }
+  for (const child of node.namedChildren) {
+    if (DART_SIGNATURE_NODES.has(child.type)) {
+      const v = extractDartSymbolName(child, depth + 1);
       if (v) return v;
     }
   }
