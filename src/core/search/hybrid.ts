@@ -2046,16 +2046,25 @@ function rrfKey(r: SearchResult): string {
  * cache only saw scalar `sourceId`; a federated query fell through to
  * `'default'` and could cross-serve an unrelated scope.
  *
- *   - federated (sourceIds set) → `__set__:` + sorted, comma-joined ids
- *     (order-independent; two different source-sets get distinct keys)
- *   - scalar sourceId           → the id itself (single-source unchanged)
- *   - unscoped                  → `'default'` (single-source brains unchanged)
+ * Every shape uses type-tagged canonical JSON. Federated IDs are deduplicated
+ * and sorted, so set order is irrelevant without reintroducing delimiter or
+ * scalar-vs-set collisions. This intentionally cold-misses legacy cache rows
+ * once; they remain harmless, become unreadable under the existing per-row
+ * TTL, and are removable by the stock cache-prune path.
  */
 export function cacheScopeKey(opts?: { sourceId?: string; sourceIds?: string[] }): string {
+  // Empty sourceIds is deliberately not a federated scope. Both engines use
+  // the same length>0 contract and fall through to scalar/unscoped behavior.
   if (opts?.sourceIds && opts.sourceIds.length > 0) {
-    return '__set__:' + [...opts.sourceIds].sort().join(',');
+    return `scope:v1:${JSON.stringify({
+      kind: 'set',
+      sourceIds: [...new Set(opts.sourceIds)].sort(),
+    })}`;
   }
-  return opts?.sourceId ?? 'default';
+  if (opts?.sourceId !== undefined) {
+    return `scope:v1:${JSON.stringify({ kind: 'single', sourceId: opts.sourceId })}`;
+  }
+  return `scope:v1:${JSON.stringify({ kind: 'default' })}`;
 }
 
 /**
