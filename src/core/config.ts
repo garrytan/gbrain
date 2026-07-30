@@ -69,9 +69,18 @@ export interface GBrainConfig {
   azure_openai_endpoint?: string;
   azure_openai_deployment?: string;
   azure_openai_use_entra?: string;
-  /** AI gateway config (v0.14+). v0.36+ default: "zeroentropyai:zembed-1" / 1280 / "anthropic:claude-haiku-4-5-20251001". */
+  /** AI gateway config (v0.14+). Default: "ollama:bge-m3" / 1024 / "anthropic:claude-haiku-4-5-20251001" (see src/core/ai/defaults.ts). */
   embedding_model?: string;
   embedding_dimensions?: number;
+  /**
+   * Set by `gbrain init` when the declared default embedder (ollama:bge-m3)
+   * was unavailable and init landed on the hosted fallback instead. Holds
+   * the default model that was skipped. While set AND embedding_model still
+   * equals the fallback, `gbrain doctor` probes Ollama and prints the
+   * migrate command back to the default. Cleared by a re-init that resolves
+   * anything other than the fallback.
+   */
+  embedding_default_fallback?: string;
   /**
    * v0.37 (D9): user opted into deferred-setup mode at init time via
    * `gbrain init --no-embedding`. When true, embed callsites and `gbrain

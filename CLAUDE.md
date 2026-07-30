@@ -252,7 +252,27 @@ The install picker fires inside `gbrain init` AFTER `engine.initSchema()`
 (non-TTY auto-selects). The upgrade banner fires once via `runPostUpgrade`
 in `src/commands/upgrade.ts`, gated by `search.mode_upgrade_notice_shown`.
 
-## Eval discipline (v0.32.3)
+## Default-provider policy
+
+**A gbrain DEFAULT embedding or reranking model must be either open-weight, or
+from the vendor with the longest proven model-lifetime record. Novel/startup
+providers may ship as opt-in recipes, never as the default.** Rationale: the
+v0.36 zembed-1 default stranded every default-config brain when ZeroEntropy
+was acquired and gave ~6 weeks notice (hosted API sunsets 2026-09-04).
+
+Current defaults live in `src/core/ai/defaults.ts`:
+`DEFAULT_EMBEDDING_MODEL = 'ollama:bge-m3'`,
+`DEFAULT_EMBEDDING_DIMENSIONS = 1024` (bge-m3's native width — open-weight,
+local, cannot be sunset by anyone). Because the default has no hosted vendor,
+it also has a **declared hosted fallback**: `FALLBACK_EMBEDDING_MODEL =
+'openai:text-embedding-3-small'` at 1024 (Matryoshka width pinned to bge-m3's
+so a later fallback→default migration rebuilds vectors only — no column ALTER,
+no HNSW rebuild). `gbrain init` probes Ollama ONCE (`src/core/ai/ollama-detect.ts`,
+≤1.5s, fail-open), persists the resolved choice to config.json, and falls back
+LOUDLY — the notice names the multilingual quality cost and the paste-ready way
+back, and the `embedding_default_fallback` config marker makes `gbrain doctor`
+re-probe on every run so "installed Ollama later" surfaces the switch. Embed
+calls never probe. A silent downgrade onto the fallback is a bug.
 
 Every metric printed by any `gbrain eval *` or `gbrain search stats` command
 resolves through `src/core/eval/metric-glossary.ts` so industry terms

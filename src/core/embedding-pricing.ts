@@ -26,6 +26,10 @@ export interface EmbeddingPricing {
  * gateway model strings (e.g. 'openai:text-embedding-3-large').
  */
 export const EMBEDDING_PRICING: Record<string, EmbeddingPricing> = {
+  // The system default (src/core/ai/defaults.ts): local Ollama, no API cost.
+  // Listed so migrate/upgrade cost previews for the default show $0 rather
+  // than "estimate unavailable".
+  'ollama:bge-m3':                 { pricePerMTok: 0 },
   // OpenAI (https://openai.com/api/pricing/, verified 2026-05-11)
   'openai:text-embedding-3-large': { pricePerMTok: 0.13 },
   'openai:text-embedding-3-small': { pricePerMTok: 0.02 },

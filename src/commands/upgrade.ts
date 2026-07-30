@@ -472,8 +472,27 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
         // `ze_sunset_notice_shown` (same pattern as the search-mode banner).
         try {
           const shown = await engine.getConfig('ze_sunset_notice_shown');
-          const { DEFAULT_EMBEDDING_MODEL } = await import('../core/ai/defaults.ts');
-          const effectiveModel = cfgSchema.embedding_model ?? DEFAULT_EMBEDDING_MODEL;
+          const {
+            DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS,
+            FALLBACK_EMBEDDING_MODEL,
+          } = await import('../core/ai/defaults.ts');
+          // DEFAULT_EMBEDDING_MODEL is no longer a ZE model, so the file
+          // plane alone would stop detecting brains created under the
+          // v0.36–v0.42 ZE default that never wrote `embedding_model` to
+          // ~/.gbrain/config.json. Those brains DO carry the DB-plane row
+          // seeded by initSchema, so read the DB plane as the second source
+          // before falling back to the compiled default.
+          const dbModel = await engine.getConfig('embedding_model');
+          const effectiveModel = cfgSchema.embedding_model ?? dbModel ?? DEFAULT_EMBEDDING_MODEL;
+          // Current width, for the keep-your-column hosted option
+          // (applyEmbeddingMigration only runs a schema transition when
+          // col.dims !== plan.to_dims — migrating AT the current width
+          // rebuilds vectors only).
+          const dbDims = await engine.getConfig('embedding_dimensions');
+          const parsedDbDims = dbDims ? parseInt(dbDims, 10) : NaN;
+          const currentDims = cfgSchema.embedding_dimensions
+            ?? (Number.isFinite(parsedDbDims) && parsedDbDims > 0 ? parsedDbDims : undefined)
+            ?? 1280; // the v0.36–v0.42 ZE default width
           const rerankerModel = await engine.getConfig('search.reranker.model');
           const onZeEmbedding = effectiveModel.startsWith('zeroentropyai:');
           const onZeReranker = !!rerankerModel?.startsWith('zeroentropyai:');
@@ -492,9 +511,15 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
             }
             console.log('═══════════════════════════════════════════════════════════════');
             console.log('');
-            console.log('Migrate before the sunset (resumable; preview cost first):');
-            console.log('  gbrain migrate embeddings --to <provider:model> --dry-run');
-            console.log('  gbrain migrate embeddings --to <provider:model>');
+            console.log('Migrate before 2026-09-04 (resumable; preview cost first with --dry-run):');
+            console.log('');
+            console.log(`Option A — the default (open-weight, local, free; requires Ollama +`);
+            console.log(`\`ollama pull ${DEFAULT_EMBEDDING_MODEL.split(':')[1]}\`; changes column width ${currentDims}→${DEFAULT_EMBEDDING_DIMENSIONS}):`);
+            console.log(`  gbrain migrate embeddings --to ${DEFAULT_EMBEDDING_MODEL} --dim ${DEFAULT_EMBEDDING_DIMENSIONS}`);
+            console.log('');
+            console.log(`Option B — hosted (needs OPENAI_API_KEY; keeps your vector(${currentDims})`);
+            console.log('column and HNSW index — vectors rebuilt only; weaker on non-English content):');
+            console.log(`  gbrain migrate embeddings --to ${FALLBACK_EMBEDDING_MODEL} --dim ${currentDims}`);
             console.log('');
             console.log('Self-hosting zembed-1 (weights are Apache-2.0) via llama-server /');
             console.log('ollama also works and preserves your existing vectors — point');

@@ -58,6 +58,11 @@ function makeTempHome(): string {
   return mkdtempSync(join(tmpdir(), 'gbrain-e2e-init-'));
 }
 
+// Pin the Ollama probe at a dead port so env-detection tests are
+// deterministic on machines that run a real Ollama daemon (the default
+// embedder ollama:bge-m3 would otherwise win over every env key).
+const DEAD_OLLAMA = { OLLAMA_BASE_URL: 'http://127.0.0.1:9' };
+
 // ============================================================================
 
 describe('v0.37 T12 — fresh init env-detection (D1, D2, D3) + persistence (D5)', () => {
@@ -66,23 +71,25 @@ describe('v0.37 T12 — fresh init env-detection (D1, D2, D3) + persistence (D5)
   beforeAll(() => { tmpHome = makeTempHome(); });
   afterAll(() => { rmSync(tmpHome, { recursive: true, force: true }); });
 
-  test('OPENAI_API_KEY auto-picks OpenAI, persists embedding_model + embedding_dimensions', async () => {
+  test('OPENAI_API_KEY with Ollama absent lands on the hosted fallback, loudly', async () => {
     const r = await runCli(['init', '--pglite'], {
       gbrainHome: tmpHome,
-      env: { OPENAI_API_KEY: 'sk-test-only-for-init-resolution-NOT-CALLED' },
+      env: { OPENAI_API_KEY: 'sk-test-only-for-init-resolution-NOT-CALLED', GBRAIN_INIT_SKIP_EMBED_CHECK: '1', ...DEAD_OLLAMA },
     });
-    // Init may or may not succeed (depends on whether OpenAI key is real for
-    // any side effect — but init.ts has no live embed call, just config
-    // writes + schema). Assert the auto-pick stderr notice fired.
-    expect(r.stderr).toMatch(/Detected OPENAI_API_KEY|Using openai:text-embedding-3-large/);
+    // The declared default is ollama:bge-m3; with Ollama unreachable and an
+    // OpenAI key present, init lands on the designated hosted fallback —
+    // and says so (never a silent downgrade).
+    expect(r.stderr).toMatch(/default embedder is ollama:bge-m3/);
+    expect(r.stderr).toMatch(/Falling back to the hosted openai:text-embedding-3-small/);
     expect(r.exitCode).toBe(0);
 
-    // Config persisted with the right embedding fields.
+    // Config persisted with the fallback + the doctor-recheck marker.
     const cfgPath = join(tmpHome, '.gbrain', 'config.json');
     expect(existsSync(cfgPath)).toBe(true);
     const cfg = JSON.parse(readFileSync(cfgPath, 'utf-8'));
-    expect(cfg.embedding_model).toBe('openai:text-embedding-3-large');
-    expect(cfg.embedding_dimensions).toBe(1536);
+    expect(cfg.embedding_model).toBe('openai:text-embedding-3-small');
+    expect(cfg.embedding_dimensions).toBe(1024);
+    expect(cfg.embedding_default_fallback).toBe('ollama:bge-m3');
     expect(cfg.engine).toBe('pglite');
   }, 240000);
 });
@@ -98,13 +105,13 @@ describe('v0.37 T12 — D3 non-TTY no-key fail-loud', () => {
   test('--non-interactive with zero provider keys → exit 1 + paste-ready hint', async () => {
     const r = await runCli(['init', '--pglite', '--non-interactive'], {
       gbrainHome: tmpHome,
-      env: {}, // no provider keys
+      env: { ...DEAD_OLLAMA }, // no provider keys, no Ollama
     });
     expect(r.exitCode).toBe(1);
-    // Fail-loud message includes the canonical env var list.
+    // Fail-loud message leads with the default and lists hosted keys.
     expect(r.stderr).toContain('No embedding provider configured');
+    expect(r.stderr).toContain('ollama pull bge-m3');
     expect(r.stderr).toContain('OPENAI_API_KEY');
-    expect(r.stderr).toContain('ZEROENTROPY_API_KEY');
     expect(r.stderr).toContain('VOYAGE_API_KEY');
     // Suggests --no-embedding alternative.
     expect(r.stderr).toContain('--no-embedding');
@@ -113,7 +120,7 @@ describe('v0.37 T12 — D3 non-TTY no-key fail-loud', () => {
   test('--non-interactive with env-key typo surfaces Levenshtein hint', async () => {
     const r = await runCli(['init', '--pglite', '--non-interactive'], {
       gbrainHome: tmpHome,
-      env: { OPENAPI_API_KEY: 'sk-test-typo' },
+      env: { OPENAPI_API_KEY: 'sk-test-typo', ...DEAD_OLLAMA },
     });
     expect(r.exitCode).toBe(1);
     // D13 typo detection: surfaces "did you mean OPENAI_API_KEY"

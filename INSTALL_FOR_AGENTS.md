@@ -40,15 +40,22 @@ restart the shell or add the PATH export to the shell profile.
 
 ## Step 2: API Keys
 
-Ask the user for these. gbrain defaults to the ZeroEntropy embedding + reranker stack
-(as of v0.36.2.0); OpenAI/Voyage are still supported as fallbacks via `gbrain config
-set embedding_model <provider:model>`.
+gbrain's default embedder is `ollama:bge-m3` at 1024 dimensions — local,
+open-weight, no API key. If Ollama is installed with the model pulled
+(`ollama pull bge-m3`), `gbrain init` detects it automatically. Otherwise
+init falls back (loudly) to the hosted `openai:text-embedding-3-small` when
+`OPENAI_API_KEY` is set; other providers via `gbrain config set
+embedding_model <provider:model>`.
 
 ```bash
-export ZEROENTROPY_API_KEY=ze-...     # default embedding + reranker (v0.36.2.0+)
-export OPENAI_API_KEY=sk-...          # fallback for vector search; also used for chat models
+ollama pull bge-m3                    # default embedding (local; install Ollama from https://ollama.ai)
+export OPENAI_API_KEY=sk-...          # hosted fallback embedding; also used for chat models
 export ANTHROPIC_API_KEY=sk-ant-...   # optional, improves search quality via query expansion
 ```
+
+> ZeroEntropy was the default embedder + reranker from v0.36.2.0 through
+> v0.42.x. Its hosted API shuts down 2026-09-04. Brains still on it get a
+> one-time `gbrain upgrade` banner with the exact migration commands.
 
 Save to shell profile or `.env`. Keys are picked up by `gbrain config set` automatically
 or can be stored in `~/.gbrain/config.json` (file plane). Without any embedding provider,

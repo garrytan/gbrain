@@ -103,11 +103,10 @@ Render will build a Docker container with the harness. First deploy takes about 
 
 In the AlphaClaw UI (Providers tab):
 
-- **OpenAI API Key.** Required for embeddings if you use the OpenAI provider.
+- **OpenAI API Key.** Recommended. GBrain's default embedder is the local `ollama:bge-m3`; on a hosted deployment without Ollama, init falls back to `openai:text-embedding-3-small` via this key.
 - **Anthropic API Key.** Required for Claude (the main model the agent talks through).
 - **Perplexity API Key.** Optional, for web search.
 - **Voyage API Key.** Optional, alternative to OpenAI for embeddings.
-- **ZeroEntropy API Key.** Recommended. GBrain ships with ZeroEntropy as the default embedder + reranker because it's about 2× faster than OpenAI and about 2.6× cheaper.
 
 You can use the same keys across multiple agents.
 

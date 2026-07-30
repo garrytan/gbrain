@@ -15,7 +15,13 @@ gbrain init --pglite --model voyage            # use a non-default provider
 
 ## Init resolves your provider from env keys
 
-As of v0.37, `gbrain init --pglite` auto-detects which provider to use from your env vars. With `OPENAI_API_KEY` set, you get OpenAI. With `ZEROENTROPY_API_KEY` set, you get ZeroEntropy. If multiple provider keys are set, init fires an interactive picker. If no provider keys are set in a non-TTY context (CI, Docker build), init exits 1 with a paste-ready setup hint. Explicit flags (`--embedding-model`, `--no-embedding`) always win over env detection.
+As of v0.37, `gbrain init --pglite` auto-detects which provider to use. Detection order:
+
+1. **The default: `ollama:bge-m3` (1024d, local, open-weight).** Init probes the local Ollama daemon once (≤1.5s, `OLLAMA_BASE_URL` honored). If it's running with `bge-m3` pulled, the default wins — over every env key, since it needs no key and costs nothing.
+2. **The hosted fallback: `openai:text-embedding-3-small` (1024d).** If Ollama is unreachable (or the model isn't pulled) and `OPENAI_API_KEY` is set, init falls back — loudly. The notice names the trade-off (text-embedding-3-small is the weakest multilingual performer among the candidates we evaluated) and the paste-ready way back; a config marker makes `gbrain doctor` re-probe for Ollama on every run, so installing Ollama later surfaces the switch automatically.
+3. **Other single env keys** auto-pick that provider; multiple keys fire an interactive picker. If nothing resolves in a non-TTY context (CI, Docker build), init exits 1 with a paste-ready setup hint. Explicit flags (`--embedding-model`, `--no-embedding`) always win over detection.
+
+The probe runs ONCE at init — never on embed calls.
 
 The resolved provider + dimensions get persisted to `~/.gbrain/config.json` atomically, so subsequent runs are deterministic across releases.
 
@@ -23,8 +29,9 @@ The resolved provider + dimensions get persisted to `~/.gbrain/config.json` atom
 
 | Provider | env vars | default dims | cost ($/1M tokens) | local? | multimodal? |
 |---|---|---|---|---|---|
-| `zeroentropyai` | `ZEROENTROPY_API_KEY` | 2560 (Matryoshka to 1280/640/320/...) | 0.05 | no | no |
-| `openai` | `OPENAI_API_KEY` | 1536 | 0.13 | no | no |
+| `ollama` (**default**: `bge-m3` @ 1024) | (none — runs locally; `OLLAMA_BASE_URL` optional) | per-model (bge-m3 1024, nomic 768, ...) | 0 | yes | no |
+| `openai` (**hosted fallback**: `text-embedding-3-small` @ 1024) | `OPENAI_API_KEY` | recipe 1536; fallback pins 1024 | 0.02 (-small) / 0.13 (-large) | no | no |
+| `zeroentropyai` (sunsets 2026-09-04) | `ZEROENTROPY_API_KEY` | 2560 (Matryoshka to 1280/640/320/...) | 0.05 | no | no |
 | `openrouter` | `OPENROUTER_API_KEY` | 1536 | 0.02 | no | model-dependent |
 | `voyage` | `VOYAGE_API_KEY` | 1024 | 0.18 | no | yes (`voyage-multimodal-3`) |
 | `google` | `GOOGLE_GENERATIVE_AI_API_KEY` | 768 | 0.025 | no | no |
@@ -32,7 +39,6 @@ The resolved provider + dimensions get persisted to `~/.gbrain/config.json` atom
 | `minimax` | `MINIMAX_API_KEY` | 1536 | 0.07 | no | no |
 | `dashscope` | `DASHSCOPE_API_KEY` | 1024 | varies | no | no |
 | `zhipu` | `ZHIPUAI_API_KEY` | 1024 | varies | no | no |
-| `ollama` | (none — runs locally) | 768 | 0 | yes | no |
 | `llama-server` | (none — runs locally) | user-set | 0 | yes | no |
 | `litellm` | `LITELLM_API_KEY` (optional) | user-set | varies | yes (proxy) | yes (backend permitting) |
 | `together` | `TOGETHER_API_KEY` | 768 | varies | no | no |
@@ -40,7 +46,7 @@ The resolved provider + dimensions get persisted to `~/.gbrain/config.json` atom
 | `deepseek` | (no embedding model — chat only) | — | — | — | — |
 | `groq` | (no embedding model — chat only) | — | — | — | — |
 
-**Note on local providers.** Ollama and llama-server have no required API key, so they don't show up in env-detection auto-pick. Pick them explicitly with `--embedding-model ollama:<model>` to avoid silently routing to a daemon that may not be running.
+**Note on local providers.** llama-server has no required API key, so it never shows up in env-detection auto-pick — pick it explicitly with `--embedding-model llama-server:<model>`. Ollama is special-cased as the system default: init verifies the daemon is actually reachable AND `bge-m3` is pulled before selecting it, so it can never silently route to a daemon that isn't running. Other Ollama models remain explicit-only (`--embedding-model ollama:<model>`).
 
 ## If first import fails
 
@@ -75,7 +81,9 @@ The doctor distinguishes two repair paths:
 
 ### OpenAI
 
-Default. Set `OPENAI_API_KEY`. Models: `text-embedding-3-large` (3072 max, 1536 default), `text-embedding-3-small` (1536). Matryoshka via the `dimensions` field — gbrain pins it from `embedding_dimensions` config so existing 1536-dim brains stay aligned across SDK upgrades.
+**The hosted fallback.** When Ollama isn't available at init and `OPENAI_API_KEY` is set, init lands on `openai:text-embedding-3-small` at **1024** dimensions — pinned to bge-m3's width so a later switch to the default rebuilds vectors only (no column change, no HNSW rebuild). Be aware of the trade-off: `text-embedding-3-small` was the weakest multilingual performer among the candidates we evaluated; if your brain carries substantial non-English content, prefer the bge-m3 default.
+
+Set `OPENAI_API_KEY`. Models: `text-embedding-3-large` (3072 max, 1536 recipe default), `text-embedding-3-small` (1536 native). Both are Matryoshka via the `dimensions` field (any integer width ≤ native) — gbrain pins it from `embedding_dimensions` config so existing brains stay aligned across SDK upgrades.
 
 Optional `OPENAI_BASE_URL` — point the native OpenAI provider at an OpenAI-compatible gateway. A bare host is normalized to carry the `/v1` suffix automatically (so `https://gw.example.com` and `https://gw.example.com/v1` both work); when unset, the SDK's default endpoint is untouched. `ANTHROPIC_BASE_URL` gets the same normalization for Anthropic chat/expansion calls.
 
@@ -139,13 +147,17 @@ CJK-dominant content tokenizes denser than OpenAI tiktoken; gbrain declares `cha
 
 Set `ZHIPUAI_API_KEY`. Models: `embedding-3` (current; Matryoshka 256-2048 dims), `embedding-2`. v0.32 default is 1024 (HNSW-compatible). The 2048-dim option works but falls into the exact-scan branch (see Voyage 4 Large note above).
 
-### Ollama (local)
+### Ollama (local) — the default
 
-No env required — Ollama runs unauthenticated locally. Optional `OLLAMA_BASE_URL` (default `http://localhost:11434/v1`) and `OLLAMA_API_KEY` (for auth-enabled deployments).
+**`ollama:bge-m3` at its native 1024 dimensions is gbrain's default embedder.** Open-weight (nobody can sunset it), free, local, and the strongest open-weight multilingual retriever among the candidates we evaluated — it holds retrieval quality on non-Latin-script content where small hosted models degrade sharply. Setup: install Ollama from https://ollama.ai, then `ollama pull bge-m3`; `gbrain init` detects it automatically.
 
-Recipe ships with `nomic-embed-text` (768d, recommended), `mxbai-embed-large` (1024d), `all-minilm` (384d), plus the larger modern embedders `qwen3-embed-8b` (4096d) and `snowflake-arctic-embed-l-v2` (1024d). `gbrain providers test --model ollama:nomic-embed-text` smoke-tests the local install.
+**Throughput expectation (one-time):** local bge-m3 embeds roughly 8× slower than hosted APIs (~7 docs/s vs ~60 docs/s on the eval hardware). For a 10K-page brain, that's the first full embed taking ~23 minutes instead of ~3. After the initial sync, embeds are incremental and the difference is unnoticeable — and queries are unaffected.
 
-The recipe default is `nomic-embed-text`'s 768 dims. If you run one of the larger models, declare its native dimension with `--embedding-dimensions <N>` at init — gbrain trusts the value you declare for local recipes instead of rejecting a non-768 width.
+No env required — Ollama runs unauthenticated locally. Optional `OLLAMA_BASE_URL` (default `http://localhost:11434/v1`; also honored by init's availability probe) and `OLLAMA_API_KEY` (for auth-enabled deployments).
+
+Recipe also ships `nomic-embed-text` (768d), `mxbai-embed-large` (1024d), `all-minilm` (384d), plus the larger modern embedders `qwen3-embed-8b` (4096d) and `snowflake-arctic-embed-l-v2` (1024d). `gbrain providers test --model ollama:bge-m3` smoke-tests the local install.
+
+Widths resolve per model (`model_dims` in the recipe); for models not named there, declare the native dimension with `--embedding-dimensions <N>` at init — gbrain trusts the value you declare for local recipes.
 
 ### llama-server (local, llama.cpp)
 

@@ -492,7 +492,11 @@ OAuth source scoping only guards the HTTP MCP path. If the brain's Postgres and 
 
 ## Part 13: Cost and speed expectations
 
-Real numbers from the published benchmark, running the default stack (GBrain with ZeroEntropy for embedding + reranker):
+Real numbers from the published benchmark. The benchmark run used ZeroEntropy
+for embedding + reranker, which was the default through v0.42.x; the default
+embedder is now the local `ollama:bge-m3` at 1024 dimensions ($0 per token,
+see the Default-provider policy in `CLAUDE.md`), with
+`openai:text-embedding-3-small` ($0.02/M tokens) as the hosted fallback:
 
 - **Embedding cost:** $0.05 per million tokens. For comparison, GBrain configured with OpenAI is $0.13 (2.6× more expensive), Voyage is $0.18 (3.6× more).
 - **Ingest speed:** about 22 seconds for a small test corpus of 164 pages on the host machine. For a 10K-page corpus, expect about 20 minutes the first time, then most syncs are incremental and finish in seconds.
@@ -502,7 +506,7 @@ Real numbers from the published benchmark, running the default stack (GBrain wit
 
 Full methodology and per-run receipt JSONs live in [the gbrain-evals repo](https://github.com/garrytan/gbrain-evals/blob/main/docs/benchmarks/2026-05-23-v0.40.6.0-snapshot.md).
 
-For a 25-person company at sustained use, expect about $35 a month in embeddings (ZeroEntropy at $0.05/million tokens), $50 a month in Anthropic calls for the synthesized-answer queries, plus your hosting bill. Under $100 a month for the AI side at most companies your size.
+For a 25-person company at sustained use, expect $0 a month in embeddings on the default (local `ollama:bge-m3`) or about $15 a month on the hosted fallback (`text-embedding-3-small` at $0.02/million tokens), $50 a month in Anthropic calls for the synthesized-answer queries, plus your hosting bill. Under $100 a month for the AI side at most companies your size.
 
 ---
 
@@ -514,7 +518,7 @@ Check `gbrain auth list` on the host and confirm their client has `--source` set
 
 ### "Sync is slow and feels stuck"
 
-The first sync embeds every page, which takes time. Check `gbrain sources status` for the live page count. If it's climbing you're not stuck, you're just embedding. If you've got a 10K-page corpus and ZeroEntropy is being throttled, the per-source parallel sync looks like progress on three sources at once rather than one source moving fast.
+The first sync embeds every page, which takes time. Check `gbrain sources status` for the live page count. If it's climbing you're not stuck, you're just embedding. If you've got a 10K-page corpus and your embedding provider is slow or throttled (the local bge-m3 default embeds at roughly an eighth of hosted-API speed — about 23 minutes for a 10K-page first sync instead of ~3, one time), the per-source parallel sync looks like progress on three sources at once rather than one source moving fast.
 
 ### "I see a page I shouldn't see"
 

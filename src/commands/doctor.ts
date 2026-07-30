@@ -2338,6 +2338,65 @@ export async function checkZeEmbeddingHealth(engine: BrainEngine): Promise<Check
 }
 
 /**
+ * embedding_default_fallback doctor check.
+ *
+ * When `gbrain init` couldn't reach Ollama (or bge-m3 wasn't pulled) it
+ * lands on the hosted fallback and writes the `embedding_default_fallback`
+ * marker to config.json. This check is how "install Ollama later" becomes
+ * visible: while the marker is set AND the brain is still on the fallback
+ * model, re-probe Ollama (bounded ≤1.5s, fail-open) and print the paste-ready
+ * migrate command back to the default. Exported for test/doctor tests.
+ */
+export async function checkEmbeddingDefaultFallback(_engine: BrainEngine): Promise<Check> {
+  const name = 'embedding_default_fallback';
+  try {
+    const { loadConfigFileOnly } = await import('../core/config.ts');
+    const cfg = loadConfigFileOnly();
+    if (!cfg?.embedding_default_fallback) {
+      return { name, status: 'ok', message: 'Not on the hosted embedding fallback — skip.' };
+    }
+    const { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS, FALLBACK_EMBEDDING_MODEL } =
+      await import('../core/ai/defaults.ts');
+    if (cfg.embedding_model !== FALLBACK_EMBEDDING_MODEL) {
+      // Stale marker (user moved to another model since); ignore.
+      return {
+        name,
+        status: 'ok',
+        message: `Fallback marker present but embedding_model="${cfg.embedding_model}" is no longer the fallback — stale, ignoring.`,
+      };
+    }
+    const bareModel = DEFAULT_EMBEDDING_MODEL.split(':')[1];
+    const { probeOllamaModel } = await import('../core/ai/ollama-detect.ts');
+    const probe = await probeOllamaModel(bareModel);
+    if (probe.ok) {
+      return {
+        name,
+        status: 'warn',
+        message:
+          `This brain is on the hosted embedding fallback (${FALLBACK_EMBEDDING_MODEL}), but Ollama ` +
+          `with ${bareModel} is now available. The default (${DEFAULT_EMBEDDING_MODEL}) is local, free, ` +
+          `open-weight, and stronger on non-English content. Switch (same column width, vectors ` +
+          `rebuilt, no schema change): gbrain migrate embeddings --to ${DEFAULT_EMBEDDING_MODEL} --dim ${DEFAULT_EMBEDDING_DIMENSIONS}`,
+      };
+    }
+    const why = probe.serverUp
+      ? `Ollama is running but ${bareModel} is not pulled (fix: ollama pull ${bareModel})`
+      : 'Ollama is not reachable';
+    return {
+      name,
+      status: 'ok',
+      message:
+        `On the hosted embedding fallback (${FALLBACK_EMBEDDING_MODEL}); ${why}. ` +
+        `To move to the default: install Ollama, \`ollama pull ${bareModel}\`, then ` +
+        `\`gbrain migrate embeddings --to ${DEFAULT_EMBEDDING_MODEL} --dim ${DEFAULT_EMBEDDING_DIMENSIONS}\`.`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { name, status: 'warn', message: `Could not check embedding fallback state: ${msg}` };
+  }
+}
+
+/**
  * v0.36.0.0 (A5): embedding_width_consistency doctor check.
  *
  * Cross-checks that `config.embedding_dimensions` matches the actual
@@ -7678,6 +7737,10 @@ export async function buildChecks(
     checks.push(await checkZeEmbeddingHealth(engine));
     progress.heartbeat('embedding_width_consistency');
     checks.push(await checkEmbeddingWidthConsistency(engine));
+    // Hosted-fallback re-check: nags (warn) only when Ollama+bge-m3 became
+    // available after an install that fell back to the hosted embedder.
+    progress.heartbeat('embedding_default_fallback');
+    checks.push(await checkEmbeddingDefaultFallback(engine));
     // v0.41.15.0 (T6, codex #19/#20) — facts.embedding column drift
     // parity check. Same drift class as content_chunks, separate column.
     progress.heartbeat('facts_embedding_width_consistency');

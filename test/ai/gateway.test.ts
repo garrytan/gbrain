@@ -41,13 +41,15 @@ describe('gateway configuration', () => {
     expect(getExpansionModel()).toBe('anthropic:claude-haiku-4-5-20251001');
   });
 
-  test('defaults are ZE 1280d as of v0.36.0.0 (D3)', () => {
-    // The default flipped from openai:text-embedding-3-large 1536d to
-    // zeroentropyai:zembed-1 1280d in v0.36.0.0. The cost story is in
-    // CHANGELOG.md; the rationale lives in src/core/ai/gateway.ts:45-54.
+  test('defaults are ollama:bge-m3 1024d (open-weight default, ZE sunset)', () => {
+    // v0.36.0.0 flipped the default to zeroentropyai:zembed-1 @ 1280d. With
+    // ZE's hosted API sunsetting 2026-09-04, the default moved to the
+    // open-weight ollama:bge-m3 at its native 1024d — a model nobody can
+    // sunset. Rationale + hosted-fallback policy in src/core/ai/defaults.ts
+    // and CLAUDE.md's Default-provider policy.
     configureGateway({ env: {} });
-    expect(getEmbeddingModel()).toBe('zeroentropyai:zembed-1');
-    expect(getEmbeddingDimensions()).toBe(1280);
+    expect(getEmbeddingModel()).toBe('ollama:bge-m3');
+    expect(getEmbeddingDimensions()).toBe(1024);
     expect(getExpansionModel()).toBe('anthropic:claude-haiku-4-5-20251001');
   });
 });

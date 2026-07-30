@@ -3,15 +3,15 @@ import { getPGLiteSchema, PGLITE_SCHEMA_SQL } from '../../src/core/pglite-schema
 import { getPostgresSchema } from '../../src/core/postgres-engine.ts';
 
 describe('getPGLiteSchema', () => {
-  test('default produces gateway-default schema (v0.37+: 1280d + zeroentropyai:zembed-1)', () => {
+  test('default produces gateway-default schema (1024d + ollama:bge-m3)', () => {
     // v0.37 fix wave Lane A.1 + CDX2-1: defaults now track the canonical
     // gateway constants in `ai/defaults.ts` instead of the stale v0.13
     // OpenAI literals (1536 / text-embedding-3-large). Fixes the
     // headline bug where bare `gbrain init --pglite` produced a 1536
-    // schema while the ZE default model emitted 1280-dim vectors.
+    // schema while the default model emitted a different width.
     const sql = getPGLiteSchema();
-    expect(sql).toMatch(/vector\(1280\)/);
-    expect(sql).toMatch(/'zeroentropyai:zembed-1'/);
+    expect(sql).toMatch(/vector\(1024\)/);
+    expect(sql).toMatch(/'ollama:bge-m3'/);
     expect(sql).not.toMatch(/__EMBEDDING_DIMS__/);
     expect(sql).not.toMatch(/__EMBEDDING_MODEL__/);
   });

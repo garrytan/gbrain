@@ -3,9 +3,30 @@
 `gbrain migrate embeddings` re-embeds an entire brain onto a different
 embedding provider/model, safely and resumably. It is the forward path off a
 sunsetting provider (for example ZeroEntropy's hosted API, which shuts down
-2026-09-04 and is the shipped default for brains that never picked a model) —
-but it is provider-agnostic: any configured `provider:model` works as a
-target.
+2026-09-04 and was the shipped default from v0.36.2.0 through v0.42.x) — but
+it is provider-agnostic: any configured `provider:model` works as a target.
+
+**Coming off the ZeroEntropy default?** Two targets, pick one:
+
+```bash
+# A) The current default — open-weight, local, free. Requires Ollama with
+#    `ollama pull bge-m3`. Changes column width (e.g. 1280 → 1024), so this
+#    includes a dimension transition + index rebuild:
+gbrain migrate embeddings --to ollama:bge-m3 --dim 1024 --dry-run
+gbrain migrate embeddings --to ollama:bge-m3 --dim 1024
+
+# B) Hosted, no schema change — pass --dim at your brain's CURRENT width
+#    (check `gbrain doctor`). OpenAI text-embedding-3-* is Matryoshka, so
+#    migrating at the width you already have reuses the existing vector(N)
+#    column and its HNSW index; only the vectors are rebuilt. Note: weaker
+#    on non-English content than bge-m3.
+gbrain migrate embeddings --to openai:text-embedding-3-small --dim 1280 --dry-run
+gbrain migrate embeddings --to openai:text-embedding-3-small --dim 1280
+```
+
+Omitting `--dim` resolves the target recipe's default width (1536 for the
+OpenAI recipe), which forces a needless dimension transition — always pass it
+explicitly.
 
 Also reachable as `gbrain retrieval-upgrade` (the name `doctor` and the
 README reference).

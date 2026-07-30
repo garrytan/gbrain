@@ -401,7 +401,27 @@ The install picker fires inside `gbrain init` AFTER `engine.initSchema()`
 (non-TTY auto-selects). The upgrade banner fires once via `runPostUpgrade`
 in `src/commands/upgrade.ts`, gated by `search.mode_upgrade_notice_shown`.
 
-## Eval discipline (v0.32.3)
+## Default-provider policy
+
+**A gbrain DEFAULT embedding or reranking model must be either open-weight, or
+from the vendor with the longest proven model-lifetime record. Novel/startup
+providers may ship as opt-in recipes, never as the default.** Rationale: the
+v0.36 zembed-1 default stranded every default-config brain when ZeroEntropy
+was acquired and gave ~6 weeks notice (hosted API sunsets 2026-09-04).
+
+Current defaults live in `src/core/ai/defaults.ts`:
+`DEFAULT_EMBEDDING_MODEL = 'ollama:bge-m3'`,
+`DEFAULT_EMBEDDING_DIMENSIONS = 1024` (bge-m3's native width — open-weight,
+local, cannot be sunset by anyone). Because the default has no hosted vendor,
+it also has a **declared hosted fallback**: `FALLBACK_EMBEDDING_MODEL =
+'openai:text-embedding-3-small'` at 1024 (Matryoshka width pinned to bge-m3's
+so a later fallback→default migration rebuilds vectors only — no column ALTER,
+no HNSW rebuild). `gbrain init` probes Ollama ONCE (`src/core/ai/ollama-detect.ts`,
+≤1.5s, fail-open), persists the resolved choice to config.json, and falls back
+LOUDLY — the notice names the multilingual quality cost and the paste-ready way
+back, and the `embedding_default_fallback` config marker makes `gbrain doctor`
+re-probe on every run so "installed Ollama later" surfaces the switch. Embed
+calls never probe. A silent downgrade onto the fallback is a bug.
 
 Every metric printed by any `gbrain eval *` or `gbrain search stats` command
 resolves through `src/core/eval/metric-glossary.ts` so industry terms
@@ -1043,15 +1063,22 @@ restart the shell or add the PATH export to the shell profile.
 
 ## Step 2: API Keys
 
-Ask the user for these. gbrain defaults to the ZeroEntropy embedding + reranker stack
-(as of v0.36.2.0); OpenAI/Voyage are still supported as fallbacks via `gbrain config
-set embedding_model <provider:model>`.
+gbrain's default embedder is `ollama:bge-m3` at 1024 dimensions — local,
+open-weight, no API key. If Ollama is installed with the model pulled
+(`ollama pull bge-m3`), `gbrain init` detects it automatically. Otherwise
+init falls back (loudly) to the hosted `openai:text-embedding-3-small` when
+`OPENAI_API_KEY` is set; other providers via `gbrain config set
+embedding_model <provider:model>`.
 
 ```bash
-export ZEROENTROPY_API_KEY=ze-...     # default embedding + reranker (v0.36.2.0+)
-export OPENAI_API_KEY=sk-...          # fallback for vector search; also used for chat models
+ollama pull bge-m3                    # default embedding (local; install Ollama from https://ollama.ai)
+export OPENAI_API_KEY=sk-...          # hosted fallback embedding; also used for chat models
 export ANTHROPIC_API_KEY=sk-ant-...   # optional, improves search quality via query expansion
 ```
+
+> ZeroEntropy was the default embedder + reranker from v0.36.2.0 through
+> v0.42.x. Its hosted API shuts down 2026-09-04. Brains still on it get a
+> one-time `gbrain upgrade` banner with the exact migration commands.
 
 Save to shell profile or `.env`. Keys are picked up by `gbrain config set` automatically
 or can be stored in `~/.gbrain/config.json` (file plane). Without any embedding provider,
@@ -1797,8 +1824,8 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 
 - **Voice**: Phone calls create brain pages via Twilio + OpenAI Realtime (or DIY STT+LLM+TTS). Setup recipe: [`recipes/twilio-voice-brain.md`](recipes/twilio-voice-brain.md).
 - **Email + calendar**: webhook handlers that route to brain signals. [`docs/integrations/meeting-webhooks.md`](docs/integrations/meeting-webhooks.md).
-- **Embedding providers**: 16 recipes covering OpenAI (default fallback), OpenRouter, Voyage, ZeroEntropy (default), Google Gemini, Azure OpenAI, MiniMax, Alibaba DashScope, Zhipu, Ollama (local), llama.cpp llama-server (local), LiteLLM proxy. Pricing matrix + decision tree in [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md).
-- **Rerankers**: ZeroEntropy `zerank-2` hosted (default in `tokenmax` mode) plus the v0.40.6.1 `llama-server-reranker` recipe for fully-local cross-encoder rerank via llama.cpp — runs Qwen3-Reranker or self-hosted ZeroEntropy weights against the same `gateway.rerank()` seam. Setup walkthrough in [`docs/ai-providers/llama-server-reranker.md`](docs/ai-providers/llama-server-reranker.md).
+- **Embedding providers**: 16 recipes covering Ollama (local — `bge-m3` at 1024d is the default: open-weight, multilingual, cannot be sunset), OpenAI (`text-embedding-3-small` is the hosted fallback when Ollama isn't available), OpenRouter, Voyage, Google Gemini, Azure OpenAI, MiniMax, Alibaba DashScope, Zhipu, llama.cpp llama-server (local), LiteLLM proxy. Pricing matrix + decision tree in [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md). ZeroEntropy was the default from v0.36.2.0 to v0.42.x; its hosted API sunsets 2026-09-04 — `gbrain upgrade` prints the migration commands. Default-provider policy lives in [`CLAUDE.md`](CLAUDE.md).
+- **Rerankers**: ZeroEntropy `zerank-2` hosted (still the `tokenmax`-mode default; its hosted API sunsets 2026-09-04 — `gbrain upgrade` prints the switch instructions, and the `zerank` weights are Apache-2.0 so the local recipe below keeps working) plus the v0.40.6.1 `llama-server-reranker` recipe for fully-local cross-encoder rerank via llama.cpp — runs Qwen3-Reranker or self-hosted ZeroEntropy weights against the same `gateway.rerank()` seam. Setup walkthrough in [`docs/ai-providers/llama-server-reranker.md`](docs/ai-providers/llama-server-reranker.md).
 - **Credential gateway**: vault-aware secret distribution. [`docs/integrations/credential-gateway.md`](docs/integrations/credential-gateway.md).
 - **MCP clients**: every major MCP client is supported. [`docs/mcp/`](docs/mcp/) per-client setup.
 
@@ -1966,7 +1993,7 @@ MIT. I built GBrain to run my OpenClaw and Hermes deployments — the production
 
 Origin story: [`docs/ethos/ORIGIN.md`](docs/ethos/ORIGIN.md).
 
-Community PR contributors are credited in `CHANGELOG.md` per release. ZeroEntropy ([@zeroentropy](https://zeroentropy.dev)) for the embedding + reranker stack that ships as the default. Voyage AI for the asymmetric-encoding recipe template. Ramp Labs for the search quality improvements lineage.
+Community PR contributors are credited in `CHANGELOG.md` per release. ZeroEntropy ([@zeroentropy](https://zeroentropy.dev)) for the embedding + reranker stack that shipped as the default from v0.36.2.0 to v0.42.x. Voyage AI for the asymmetric-encoding recipe template. Ramp Labs for the search quality improvements lineage.
 
 ---
 

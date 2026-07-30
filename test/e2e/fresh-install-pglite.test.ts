@@ -26,36 +26,44 @@ import {
 describe('E2E: fresh gbrain init --pglite → import → embed works end-to-end', () => {
   let tmpHome: string;
   let origHome: string | undefined;
-  let origZeKey: string | undefined;
   let origOpenaiKey: string | undefined;
-  let origVoyageKey: string | undefined;
+  let origOllamaUrl: string | undefined;
+  let fakeOllama: ReturnType<typeof Bun.serve> | null = null;
 
   beforeEach(() => {
     tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-e2e-fresh-'));
     origHome = process.env.GBRAIN_HOME;
-    origZeKey = process.env.ZEROENTROPY_API_KEY;
-    // Save + clear OPENAI_API_KEY + VOYAGE_API_KEY so init only sees
-    // one provider as env-ready (ZE). Without this, dev machines with
-    // multi-provider env (Garry's setup) fail init's disambiguation gate
-    // ("Multiple embedding providers env-ready: openai, voyage,
-    // zeroentropyai") before the test body runs.
+    // The default embedder is ollama:bge-m3, resolved via a one-shot
+    // /api/tags probe at init. Serve a fake Ollama daemon so the bare-init
+    // happy path is hermetic and deterministic regardless of whether the
+    // dev machine runs a real Ollama (or has hosted provider keys set —
+    // the probe wins before env-key detection runs, so no key clearing
+    // is needed beyond OPENAI_API_KEY hygiene for the embed-check path).
+    fakeOllama = Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname === '/api/tags') {
+          return Response.json({ models: [{ name: 'bge-m3:latest' }] });
+        }
+        return new Response('not found', { status: 404 });
+      },
+    });
+    origOllamaUrl = process.env.OLLAMA_BASE_URL;
+    process.env.OLLAMA_BASE_URL = `http://127.0.0.1:${fakeOllama.port}`;
     origOpenaiKey = process.env.OPENAI_API_KEY;
-    origVoyageKey = process.env.VOYAGE_API_KEY;
     delete process.env.OPENAI_API_KEY;
-    delete process.env.VOYAGE_API_KEY;
     process.env.GBRAIN_HOME = tmpHome;
-    // Stub key so init's setup-hint check passes.
-    process.env.ZEROENTROPY_API_KEY = 'sk-test-ze';
   });
 
   afterEach(() => {
+    fakeOllama?.stop(true);
+    fakeOllama = null;
     rmSync(tmpHome, { recursive: true, force: true });
     if (origHome === undefined) delete process.env.GBRAIN_HOME;
     else process.env.GBRAIN_HOME = origHome;
-    if (origZeKey === undefined) delete process.env.ZEROENTROPY_API_KEY;
-    else process.env.ZEROENTROPY_API_KEY = origZeKey;
+    if (origOllamaUrl === undefined) delete process.env.OLLAMA_BASE_URL;
+    else process.env.OLLAMA_BASE_URL = origOllamaUrl;
     if (origOpenaiKey !== undefined) process.env.OPENAI_API_KEY = origOpenaiKey;
-    if (origVoyageKey !== undefined) process.env.VOYAGE_API_KEY = origVoyageKey;
     __setEmbedTransportForTests(null);
     // Restore legacy-preload gateway state.
     configureGateway({
@@ -65,7 +73,7 @@ describe('E2E: fresh gbrain init --pglite → import → embed works end-to-end'
     });
   });
 
-  test('bare `init --pglite`: schema sized to gateway defaults (ZE/1280)', async () => {
+  test('bare `init --pglite`: schema sized to gateway defaults (ollama:bge-m3/1024)', async () => {
     // Reset gateway so init.ts has to resolve defaults from
     // ai/defaults.ts. This is the actual production code path for a
     // fresh install: bare `gbrain init --pglite` with no env or file

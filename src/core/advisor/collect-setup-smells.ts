@@ -36,14 +36,22 @@ export const collectSetupSmells: AdvisorCollector = {
         collector: 'setup-smells',
         ask_user: true,
       });
-    } else if (!cfg.embedding_model && !cfg.zeroentropy_api_key && !process.env.ZEROENTROPY_API_KEY) {
-      // Default provider needs a key; none present anywhere → embeds will fail.
+    } else if (!cfg.embedding_model && !cfg.openai_api_key && !process.env.OPENAI_API_KEY) {
+      // No embedding_model configured → the compiled default (ollama:bge-m3)
+      // applies at embed time, which needs a running Ollama daemon with the
+      // model pulled. Post-v0.37 installs always persist embedding_model at
+      // init, so landing here usually means setup never completed. No key
+      // for the hosted fallback either → flag it. (Deliberately no network
+      // probe here — advisor collectors stay cheap; `gbrain doctor` probes.)
       findings.push({
         id: 'embedding_key_missing',
         severity: 'warn',
-        title: 'No embedding provider key is set — embedding will fail at write time.',
-        detail: 'Set zeroentropy_api_key (or choose another provider via embedding_model).',
-        fix: { command_argv: ['gbrain', 'config', 'set', 'zeroentropy_api_key', '<key>'] },
+        title: 'No embedding provider configured — embedding may fail at write time.',
+        detail:
+          'The default (ollama:bge-m3) needs Ollama running with the model pulled ' +
+          '(`ollama pull bge-m3`). Alternatively set openai_api_key for the hosted ' +
+          'fallback, or pick a provider via embedding_model. Run `gbrain doctor` to verify.',
+        fix: { command_argv: ['gbrain', 'doctor'] },
         collector: 'setup-smells',
         ask_user: true,
       });

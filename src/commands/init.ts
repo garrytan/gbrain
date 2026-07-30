@@ -229,6 +229,13 @@ export interface ResolvedAIOptions {
   chat_model?: string;
   /** v0.37 (D9): user opted into deferred embedding setup. */
   noEmbedding?: boolean;
+  /**
+   * Set when init landed on the hosted FALLBACK_EMBEDDING_MODEL because the
+   * declared default (ollama:bge-m3) was unavailable. Persisted to
+   * config.json as `embedding_default_fallback` so `gbrain doctor` can
+   * re-check for Ollama later and offer the way back to the default.
+   */
+  embeddingFallback?: boolean;
 }
 
 /**
@@ -493,14 +500,15 @@ export async function findEnvKeyTypos(
 
 /** Emit the fail-loud "no embedding provider" message + paste-ready setup. */
 function printNoEmbeddingProviderHint(typos: Array<{ userSet: string; suggested: string }>): void {
-  console.error('\nNo embedding provider configured. Set one of:');
-  console.error('  export OPENAI_API_KEY=sk-…        # openai:text-embedding-3-large (1536d)');
-  console.error('  export ZEROENTROPY_API_KEY=ze-…   # zeroentropyai:zembed-1 (2560d, Matryoshka)');
+  console.error('\nNo embedding provider configured. The default is local + open-weight:');
+  console.error('  ollama pull bge-m3                # default: ollama:bge-m3 (1024d) — install Ollama from https://ollama.ai');
+  console.error('Or set a hosted provider key:');
+  console.error('  export OPENAI_API_KEY=sk-…        # fallback: openai:text-embedding-3-small (1024d)');
   console.error('  export VOYAGE_API_KEY=pa-…        # voyage:voyage-3-large (1024d)');
   console.error('Then re-run: gbrain init --pglite');
   console.error('');
   console.error('Or pick explicitly:');
-  console.error('  gbrain init --pglite --embedding-model openai:text-embedding-3-large');
+  console.error('  gbrain init --pglite --embedding-model openai:text-embedding-3-small');
   console.error('');
   console.error('Or defer setup: gbrain init --pglite --no-embedding');
   console.error('  (you can configure later with `gbrain config set embedding_model <id>`)');
@@ -513,9 +521,62 @@ function printNoEmbeddingProviderHint(typos: Array<{ userSet: string; suggested:
   }
 }
 
-async function resolveEmbeddingByEnv(out: ResolvedAIOptions, nonInteractive: boolean): Promise<void> {
+/** Exported for unit tests (probe stubbed via __setOllamaProbeForTests). */
+export async function resolveEmbeddingByEnv(out: ResolvedAIOptions, nonInteractive: boolean): Promise<void> {
+  // --- Tier 3a: the declared default (ollama:bge-m3, open-weight, local). ---
+  // One cheap probe (≤1.5s, instant ECONNREFUSED when no daemon) per init;
+  // the resolved choice persists into config.json so no other code path
+  // ever probes. When Ollama is up with bge-m3 pulled, the default wins
+  // over every env key — it needs no key, costs nothing, and cannot be
+  // sunset. See the Default-provider policy in CLAUDE.md.
+  const {
+    DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS,
+    FALLBACK_EMBEDDING_MODEL, FALLBACK_EMBEDDING_DIMENSIONS,
+  } = await import('../core/ai/defaults.ts');
+  const { probeOllamaModel } = await import('../core/ai/ollama-detect.ts');
+  const defaultBareModel = DEFAULT_EMBEDDING_MODEL.split(':')[1];
+  const probe = await probeOllamaModel(defaultBareModel);
+  if (probe.ok) {
+    out.embedding_model = DEFAULT_EMBEDDING_MODEL;
+    out.embedding_dimensions = DEFAULT_EMBEDDING_DIMENSIONS;
+    console.error(
+      `Detected Ollama with ${defaultBareModel}. ` +
+      `Using ${DEFAULT_EMBEDDING_MODEL} (${DEFAULT_EMBEDDING_DIMENSIONS}d, local, open-weight — the default). ` +
+      `Override with --embedding-model.`,
+    );
+    return;
+  }
+
   const ready = await groupReadyByProvider('embedding');
   const isTTY = !nonInteractive && !!process.stdin.isTTY;
+
+  // --- Tier 3b: hosted fallback (loud, never silent). --------------------
+  // Ollama is unreachable or bge-m3 isn't pulled. Rather than failing the
+  // install, land on the designated hosted fallback when its key is
+  // present — and say exactly what that costs and how to get back to the
+  // default. The `embedding_default_fallback` marker persists to config so
+  // `gbrain doctor` re-checks for Ollama on every run.
+  const fallbackProvider = FALLBACK_EMBEDDING_MODEL.split(':')[0];
+  if (ready.some(p => p.recipeId === fallbackProvider)) {
+    out.embedding_model = FALLBACK_EMBEDDING_MODEL;
+    out.embedding_dimensions = FALLBACK_EMBEDDING_DIMENSIONS;
+    out.embeddingFallback = true;
+    const why = probe.serverUp
+      ? `Ollama is running but ${defaultBareModel} is not pulled`
+      : 'Ollama is not reachable';
+    console.error('');
+    console.error(`NOTE: gbrain's default embedder is ${DEFAULT_EMBEDDING_MODEL} (local, open-weight), but ${why}.`);
+    console.error(`Falling back to the hosted ${FALLBACK_EMBEDDING_MODEL} (${FALLBACK_EMBEDDING_DIMENSIONS}d) via OPENAI_API_KEY.`);
+    console.error('Trade-off: the fallback is noticeably weaker on non-English content (worst multilingual');
+    console.error('performer among evaluated candidates), and embedding stops working if the key is removed.');
+    console.error('To move to the default later:');
+    console.error(`  ollama pull ${defaultBareModel}   # after installing Ollama from https://ollama.ai`);
+    console.error(`  gbrain migrate embeddings --to ${DEFAULT_EMBEDDING_MODEL} --dim ${DEFAULT_EMBEDDING_DIMENSIONS}`);
+    console.error(`(same ${FALLBACK_EMBEDDING_DIMENSIONS}d column width — vectors are rebuilt, no schema change.`);
+    console.error(' `gbrain doctor` will remind you when Ollama becomes available.)');
+    console.error('');
+    return;
+  }
 
   if (ready.length === 1) {
     const r = ready[0].recipe;
@@ -523,20 +584,20 @@ async function resolveEmbeddingByEnv(out: ResolvedAIOptions, nonInteractive: boo
     if (Array.isArray(tp.models) && tp.models.length > 0) {
       const model = tp.models[0];
       const fullModel = `${r.id}:${model}`;
-      // When the resolved provider matches the canonical default model
-      // (DEFAULT_EMBEDDING_MODEL), use the gateway's
-      // DEFAULT_EMBEDDING_DIMENSIONS instead of the recipe's `default_dims`
-      // (which is the recipe's "largest sensible" tier). This keeps
-      // fresh-install schema width aligned with the v0.37.11.0 system
-      // default — for ZE that means 1280 (the Matryoshka step closest to
-      // legacy OpenAI 1536), not the recipe's 2560.
-      const { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } =
-        await import('../core/ai/defaults.ts');
       const { embeddingDimsForModel } = await import('../core/ai/model-resolver.ts');
       // #2051: non-canonical models resolve per-model, not recipe-wide.
+      // The DEFAULT_EMBEDDING_MODEL check is kept for the day a keyed
+      // provider becomes the default again; today's default (ollama) never
+      // appears in `ready` (local-only providers are excluded above) and
+      // resolves in Tier 3a. The zembed-1 pin preserves the width the
+      // v0.36–v0.42 canonical default gave ZE-key installs (1280, not the
+      // recipe's 2560) so new ZE brains stay consistent with the migration
+      // docs until the 2026-09-04 sunset.
       const dims = fullModel === DEFAULT_EMBEDDING_MODEL
         ? DEFAULT_EMBEDDING_DIMENSIONS
-        : embeddingDimsForModel(r, model);
+        : fullModel === 'zeroentropyai:zembed-1'
+          ? 1280
+          : embeddingDimsForModel(r, model);
       out.embedding_model = fullModel;
       out.embedding_dimensions = dims;
       console.error(
@@ -1035,6 +1096,13 @@ async function initPGLite(opts: {
         : (resolvedModel && resolvedDim)
           ? { embedding_model: resolvedModel, embedding_dimensions: resolvedDim }
           : {}),
+      // Fallback marker: records that this install WANTED the default
+      // (ollama:bge-m3) but landed on the hosted fallback because Ollama
+      // was unavailable at init. `gbrain doctor` probes Ollama while this
+      // is set and prints the way back to the default.
+      ...(opts.aiOpts?.embeddingFallback
+        ? { embedding_default_fallback: (await import('../core/ai/defaults.ts')).DEFAULT_EMBEDDING_MODEL }
+        : {}),
       ...(opts.aiOpts?.expansion_model ? { expansion_model: opts.aiOpts.expansion_model } : {}),
       ...(opts.aiOpts?.chat_model ? { chat_model: opts.aiOpts.chat_model } : {}),
       // v0.42 (T17): default new brains to the schema_pack selected at init
@@ -1049,6 +1117,13 @@ async function initPGLite(opts: {
     // gbrain invocation). mode_prompted=true so the upgrade-time banner doesn't
     // also fire on a fresh install. Hands-off: gbrain config set self_upgrade.mode auto
     config.self_upgrade = { mode: 'notify', mode_prompted: true, ...(config.self_upgrade ?? {}) };
+    // Stale-marker hygiene: a re-init that resolves anything other than the
+    // hosted fallback (e.g. --embedding-model ollama:bge-m3 once Ollama is
+    // installed) clears the fallback marker so doctor stops re-probing.
+    if (!opts.aiOpts?.embeddingFallback && config.embedding_default_fallback) {
+      const { FALLBACK_EMBEDDING_MODEL } = await import('../core/ai/defaults.ts');
+      if (config.embedding_model !== FALLBACK_EMBEDDING_MODEL) delete config.embedding_default_fallback;
+    }
     saveConfig(config);
     if (opts.schemaPack) {
       process.stderr.write(
@@ -1285,6 +1360,13 @@ async function initPostgres(opts: {
         : (resolvedModel && resolvedDim)
           ? { embedding_model: resolvedModel, embedding_dimensions: resolvedDim }
           : {}),
+      // Fallback marker: records that this install WANTED the default
+      // (ollama:bge-m3) but landed on the hosted fallback because Ollama
+      // was unavailable at init. `gbrain doctor` probes Ollama while this
+      // is set and prints the way back to the default.
+      ...(opts.aiOpts?.embeddingFallback
+        ? { embedding_default_fallback: (await import('../core/ai/defaults.ts')).DEFAULT_EMBEDDING_MODEL }
+        : {}),
       ...(opts.aiOpts?.expansion_model ? { expansion_model: opts.aiOpts.expansion_model } : {}),
       ...(opts.aiOpts?.chat_model ? { chat_model: opts.aiOpts.chat_model } : {}),
       // v0.42 (T17): same schema_pack default as PGLite path.
@@ -1297,6 +1379,13 @@ async function initPostgres(opts: {
     // gbrain invocation). mode_prompted=true so the upgrade-time banner doesn't
     // also fire on a fresh install. Hands-off: gbrain config set self_upgrade.mode auto
     config.self_upgrade = { mode: 'notify', mode_prompted: true, ...(config.self_upgrade ?? {}) };
+    // Stale-marker hygiene: a re-init that resolves anything other than the
+    // hosted fallback (e.g. --embedding-model ollama:bge-m3 once Ollama is
+    // installed) clears the fallback marker so doctor stops re-probing.
+    if (!opts.aiOpts?.embeddingFallback && config.embedding_default_fallback) {
+      const { FALLBACK_EMBEDDING_MODEL } = await import('../core/ai/defaults.ts');
+      if (config.embedding_model !== FALLBACK_EMBEDDING_MODEL) delete config.embedding_default_fallback;
+    }
     saveConfig(config);
     console.log('Config saved to ~/.gbrain/config.json');
     if (opts.schemaPack) {

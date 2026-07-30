@@ -1,5 +1,17 @@
 # ZeroEntropy — zembed-1 + zerank-2
 
+> **Deprecated as a hosted provider. The ZeroEntropy hosted API shuts down
+> 2026-09-04.** `zembed-1` was GBrain's default embedder from v0.36.2.0
+> through v0.42.x; the default is now `ollama:bge-m3` at 1024 dimensions
+> (open-weight, local — see the Default-provider policy in `CLAUDE.md`),
+> with `openai:text-embedding-3-small` as the hosted fallback. If your
+> brain still embeds through ZeroEntropy, migrate before that date —
+> `gbrain upgrade` prints the exact commands for your brain, and
+> [`../guides/embedding-migration.md`](../guides/embedding-migration.md)
+> walks both targets. The `zembed-1` and `zerank` weights are Apache-2.0,
+> so self-hosting via llama-server or Ollama is the other forward path and
+> preserves your existing vectors outright.
+
 [ZeroEntropy](https://zeroentropy.dev) ships two specialized small models
 for retrieval pipelines:
 
