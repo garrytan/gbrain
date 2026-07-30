@@ -37,9 +37,15 @@
  */
 
 import postgres from 'postgres';
-import { resolvePrepare, resolveSessionTimeouts, resolvePoolSize, endPoolBounded } from './db.ts';
+import {
+  resolvePrepare,
+  resolveMaxPipeline,
+  resolveSessionTimeouts,
+  resolvePoolSize,
+  endPoolBounded,
+} from './db.ts';
 import { redactPgUrl } from './url-redact.ts';
-import { logConnectionEvent } from './connection-audit.ts';
+import { logConnectionEvent, postgresConnectionTraceOptions } from './connection-audit.ts';
 
 export type Sql = ReturnType<typeof postgres>;
 
@@ -309,6 +315,9 @@ export class ConnectionManager {
     if (Object.keys(timeouts).length > 0) opts.connection = timeouts;
     const prepare = resolvePrepare(this.opts.url);
     if (typeof prepare === 'boolean') opts.prepare = prepare;
+    const maxPipeline = resolveMaxPipeline(this.opts.url, prepare);
+    if (maxPipeline !== undefined) opts.max_pipeline = maxPipeline;
+    Object.assign(opts, postgresConnectionTraceOptions('read'));
     this._readPool = postgres(this.opts.url, opts);
     logConnectionEvent({ pool: 'read', op: 'init' });
     return this._readPool;
@@ -419,6 +428,7 @@ export class ConnectionManager {
         maintenance_work_mem: BULK_MAINTENANCE_WORK_MEM,
       },
     };
+    Object.assign(opts, postgresConnectionTraceOptions('ddl'));
     const t0 = Date.now();
     let pool: Sql | null = null;
     try {
