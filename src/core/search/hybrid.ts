@@ -1903,8 +1903,8 @@ export async function hybridSearch(
   // returned set (mode.ts D4: top_n_in = searchLimit), so there is no un-scored
   // tail to wrongly drop; applyAutocut additionally no-ops when <2 items carry
   // a finite rerank_score (covers the fail-open reranker path, where
-  // applyReranker returns RRF order with no scores). minKeep is the fixed
-  // never-empty failsafe (1); jumpRatio comes from the resolved mode.
+  // applyReranker returns RRF order with no scores). jumpRatio + minKeep come
+  // from the resolved mode (`search.autocut_jump` / `search.autocut_min_keep` ≥ 1, the never-empty failsafe).
   let autocutDecision: AutocutDecision | undefined;
   if (resolvedMode.autocut && offset === 0) {
     const r = applyAutocut(
@@ -1912,7 +1912,7 @@ export async function hybridSearch(
       (x) => x.rerank_score,
       // v0.46.15 (#1863): minTopScore is the weak-top floor — below it the
       // cliff signal is untrustworthy and autocut no-ops.
-      { enabled: true, jumpRatio: resolvedMode.autocut_jump, minKeep: 1, minTopScore: resolvedMode.autocut_min_top },
+      { enabled: true, jumpRatio: resolvedMode.autocut_jump, minKeep: resolvedMode.autocut_min_keep, minTopScore: resolvedMode.autocut_min_top },
       // Preserve alias-hop exact matches: applyAliasHop injects the canonical
       // page AFTER reranking, so it has no rerank_score. Without this it would
       // be dropped whenever autocut cuts on the scored set (Codex P1).

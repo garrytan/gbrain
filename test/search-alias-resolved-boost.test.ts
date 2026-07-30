@@ -89,7 +89,9 @@ describe('alias_resolved boost stage', () => {
 });
 
 describe('KNOBS_HASH_VERSION', () => {
-  it('is 18 (16→17 degradation-stamp epoch; 17→18 autocut weak-top floor #1863)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(18);
+  it('is 21 (16→17 degradation-stamp epoch; 17→18 autocut weak-top floor #1863; 18→21 adds the amk= autocut minKeep floor — a minKeep=1 write must not serve a raised-floor lookup)', () => {
+    // 18→21: amk= (autocut minKeep floor) joins the key — a minKeep=1 write
+    // must not serve a raised-floor lookup (19/20 = siblings #3617/#3584).
+    expect(KNOBS_HASH_VERSION).toBe(21);
   });
 });
