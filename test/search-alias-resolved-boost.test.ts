@@ -89,7 +89,8 @@ describe('alias_resolved boost stage', () => {
 });
 
 describe('KNOBS_HASH_VERSION', () => {
-  it('is 18 (16→17 degradation-stamp epoch; 17→18 autocut weak-top floor #1863)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(18);
+  it('is 19 (16→17 degradation-stamp epoch; 17→18 autocut weak-top floor #1863; 18→19 adds the kof= keyword AND→OR fallback knob, so rows written before the switch become unreachable)', () => {
+    // 18→19: kof= (keyword AND→OR fallback knob) joins the key.
+    expect(KNOBS_HASH_VERSION).toBe(19);
   });
 });

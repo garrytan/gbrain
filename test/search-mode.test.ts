@@ -60,6 +60,7 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       cache_similarity_threshold: 0.92,
       cache_ttl_seconds: 3600,
       intentWeighting: true,
+      keywordOrFallback: true,
       tokenBudget: 4000,
       expansion: false,
       searchLimit: 10,
@@ -93,6 +94,7 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       cache_similarity_threshold: 0.92,
       cache_ttl_seconds: 3600,
       intentWeighting: true,
+      keywordOrFallback: true,
       tokenBudget: 12000,
       expansion: false,
       searchLimit: 25,
@@ -125,6 +127,7 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       cache_similarity_threshold: 0.92,
       cache_ttl_seconds: 3600,
       intentWeighting: true,
+      keywordOrFallback: true,
       tokenBudget: undefined,
       expansion: true,
       searchLimit: 50,
@@ -429,7 +432,8 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // #3515: bumped 15→16 to fold the effective detail level (det=) — a
     // detail=low write must not be served to a detail=medium lookup.
     // v0.46.15 (#1863): bumped 17→18 to fold the autocut weak-top floor (acm=).
-    expect(KNOBS_HASH_VERSION).toBe(18);
+    // 18→19: kof= (keyword AND→OR fallback knob) joins the key.
+    expect(KNOBS_HASH_VERSION).toBe(19);
   });
 
   test('#3515: detail set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -447,7 +451,8 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // WP2/T3: bumped 16→17 for the degradation-stamp epoch — cache rows now
     // carry degraded[]/retrieved_count; pre-stamp rows must not claim clean.
     // v0.46.15 (#1863): 17→18 — autocut weak-top floor folds in (acm=).
-    expect(KNOBS_HASH_VERSION).toBe(18);
+    // 18→19: kof= (keyword AND→OR fallback knob) joins the key.
+    expect(KNOBS_HASH_VERSION).toBe(19);
   });
 
   test('T1 (codex): floor_ratio set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -612,8 +617,9 @@ describe('v0.40.4 — graph_signals knob', () => {
 });
 
 describe('v0.42.3.0 — autocut knobs', () => {
-  test('KNOBS_HASH_VERSION is 18 (16→17 degradation-stamp epoch; 17→18 autocut weak-top floor #1863)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(18);
+  test('KNOBS_HASH_VERSION is 19 (16→17 degradation-stamp epoch; 17→18 autocut weak-top floor #1863; 18→19 keywordOrFallback knob)', () => {
+    // 18→19: kof= (keyword AND→OR fallback knob) joins the key.
+    expect(KNOBS_HASH_VERSION).toBe(19);
   });
 
   test('bundle defaults: conservative off, balanced/tokenmax on @0.20', () => {
@@ -748,5 +754,27 @@ describe('v0.46.15 — retrieval-wave knobs (evidence_cosine_floor + autocut_min
     const base = knobsHash(resolveSearchMode({ mode: 'balanced' }));
     const relabeled = knobsHash(resolveSearchMode({ mode: 'balanced', overrides: { evidence_cosine_floor: 0.5 } }));
     expect(relabeled).toBe(base);
+  });
+});
+
+describe('keywordOrFallback knob (v=19)', () => {
+  test('config override turns the fallback off; bundle default stays on', () => {
+    expect(resolveSearchMode({ mode: 'balanced' }).keywordOrFallback).toBe(true);
+    const off = resolveSearchMode({ mode: 'balanced', overrides: { keywordOrFallback: false } });
+    expect(off.keywordOrFallback).toBe(false);
+  });
+
+  test('loadOverridesFromConfig parses search.keywordOrFallback', () => {
+    expect(loadOverridesFromConfig({ 'search.keywordOrFallback': 'false' }).keywordOrFallback).toBe(false);
+    expect(loadOverridesFromConfig({ 'search.keywordOrFallback': '0' }).keywordOrFallback).toBe(false);
+    expect(loadOverridesFromConfig({ 'search.keywordOrFallback': '1' }).keywordOrFallback).toBe(true);
+    expect(loadOverridesFromConfig({ 'search.keywordOrFallback': 'true' }).keywordOrFallback).toBe(true);
+    expect(loadOverridesFromConfig({}).keywordOrFallback).toBeUndefined();
+  });
+
+  test('kof participates in knobsHash — a fallback-on row cannot serve a fallback-off lookup', () => {
+    const on = knobsHash(resolveSearchMode({ mode: 'balanced' }));
+    const off = knobsHash(resolveSearchMode({ mode: 'balanced', overrides: { keywordOrFallback: false } }));
+    expect(on).not.toBe(off);
   });
 });
