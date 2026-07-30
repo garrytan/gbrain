@@ -26,6 +26,7 @@ import {
   embed,
   __setEmbedTransportForTests,
 } from '../../src/core/ai/gateway.ts';
+import { withEnv } from '../helpers/with-env.ts';
 
 function fakeEmbeddings(values: string[], dims: number): { embeddings: number[][] } {
   return {
@@ -46,87 +47,86 @@ function configureOllama(): void {
 const ENV_KEY = 'GBRAIN_EMBED_MAX_BATCH_TOKENS';
 
 describe('GBRAIN_EMBED_MAX_BATCH_TOKENS env cap for no_batch_cap recipes', () => {
-  let savedEnv: string | undefined;
-
   beforeEach(() => {
-    savedEnv = process.env[ENV_KEY];
-    delete process.env[ENV_KEY];
     resetGateway();
   });
 
   afterEach(() => {
-    if (savedEnv === undefined) delete process.env[ENV_KEY];
-    else process.env[ENV_KEY] = savedEnv;
     __setEmbedTransportForTests(null);
   });
 
   test('env cap set → ollama batches are pre-split and each stays within the token budget', async () => {
-    process.env[ENV_KEY] = '1000';
-    configureOllama();
+    await withEnv({ [ENV_KEY]: '1000' }, async () => {
+      configureOllama();
 
-    const stub = mock(async ({ values }: { values: string[] }) => fakeEmbeddings(values, 768));
-    __setEmbedTransportForTests(stub as any);
+      const stub = mock(async ({ values }: { values: string[] }) => fakeEmbeddings(values, 768));
+      __setEmbedTransportForTests(stub as any);
 
-    // 10 texts × 2000 chars = 500 tokens each at the default 4 chars/token.
-    // Budget 1000 tokens → at most 2 texts per batch (fewer if the safety
-    // factor tightens it) → at least 5 transport calls, never 1.
-    const texts = Array.from({ length: 10 }, (_, i) => `${i}`.repeat(2000));
-    const result = await embed(texts);
+      // 10 texts × 2000 chars = 500 tokens each at the default 4 chars/token.
+      // Budget 1000 tokens → at most 2 texts per batch (fewer if the safety
+      // factor tightens it) → at least 5 transport calls, never 1.
+      const texts = Array.from({ length: 10 }, (_, i) => `${i}`.repeat(2000));
+      const result = await embed(texts);
 
-    expect(result).toHaveLength(10);
-    expect(stub.mock.calls.length).toBeGreaterThan(1);
-    for (const [arg] of stub.mock.calls) {
-      const batch = (arg as { values: string[] }).values;
-      const batchChars = batch.reduce((s, t) => s + t.length, 0);
-      // 1000 tokens × 4 chars/token = 4000 chars absolute ceiling per batch.
-      expect(batchChars).toBeLessThanOrEqual(4000);
-    }
+      expect(result).toHaveLength(10);
+      expect(stub.mock.calls.length).toBeGreaterThan(1);
+      for (const [arg] of stub.mock.calls) {
+        const batch = (arg as { values: string[] }).values;
+        const batchChars = batch.reduce((s, t) => s + t.length, 0);
+        // 1000 tokens × 4 chars/token = 4000 chars absolute ceiling per batch.
+        expect(batchChars).toBeLessThanOrEqual(4000);
+      }
+    });
   });
 
   test('env cap absent → single transport call (existing fast-path preserved)', async () => {
-    configureOllama();
+    await withEnv({ [ENV_KEY]: undefined }, async () => {
+      configureOllama();
 
-    const stub = mock(async ({ values }: { values: string[] }) => fakeEmbeddings(values, 768));
-    __setEmbedTransportForTests(stub as any);
+      const stub = mock(async ({ values }: { values: string[] }) => fakeEmbeddings(values, 768));
+      __setEmbedTransportForTests(stub as any);
 
-    const texts = Array.from({ length: 10 }, (_, i) => `${i}`.repeat(2000));
-    const result = await embed(texts);
+      const texts = Array.from({ length: 10 }, (_, i) => `${i}`.repeat(2000));
+      const result = await embed(texts);
 
-    expect(stub).toHaveBeenCalledTimes(1);
-    expect(result).toHaveLength(10);
+      expect(stub).toHaveBeenCalledTimes(1);
+      expect(result).toHaveLength(10);
+    });
   });
 
   test.each(['0', '-5', 'abc', ''])('invalid env value %j → fast path unchanged', async (bad) => {
-    process.env[ENV_KEY] = bad;
-    configureOllama();
+    await withEnv({ [ENV_KEY]: bad }, async () => {
+      configureOllama();
 
-    const stub = mock(async ({ values }: { values: string[] }) => fakeEmbeddings(values, 768));
-    __setEmbedTransportForTests(stub as any);
+      const stub = mock(async ({ values }: { values: string[] }) => fakeEmbeddings(values, 768));
+      __setEmbedTransportForTests(stub as any);
 
-    const result = await embed(['a'.repeat(8000), 'b'.repeat(8000)]);
-    expect(stub).toHaveBeenCalledTimes(1);
-    expect(result).toHaveLength(2);
+      const result = await embed(['a'.repeat(8000), 'b'.repeat(8000)]);
+      expect(stub).toHaveBeenCalledTimes(1);
+      expect(result).toHaveLength(2);
+    });
   });
 
   test('recipe-declared max_batch_tokens wins over a larger env value', async () => {
     // Voyage declares max_batch_tokens=120000 with safety_factor 0.5 →
     // 60K-token effective budget. A huge env value must NOT loosen it.
-    process.env[ENV_KEY] = '99000000';
-    configureGateway({
-      embedding_model: 'voyage:voyage-3-large',
-      embedding_dimensions: 1024,
-      env: { VOYAGE_API_KEY: 'sk-fake' },
+    await withEnv({ [ENV_KEY]: '99000000' }, async () => {
+      configureGateway({
+        embedding_model: 'voyage:voyage-3-large',
+        embedding_dimensions: 1024,
+        env: { VOYAGE_API_KEY: 'sk-fake' },
+      });
+
+      const stub = mock(async ({ values }: { values: string[] }) => fakeEmbeddings(values, 1024));
+      __setEmbedTransportForTests(stub as any);
+
+      // 20 texts × 8000 chars (= MAX_CHARS, so no truncation) = 8000 tokens
+      // each at voyage's 1 char/token density → 160K tokens total against a
+      // 60K effective budget → must split into >1 call. If the env value
+      // (99M) leaked past the recipe cap, everything would fit in 1 call.
+      const texts = Array.from({ length: 20 }, (_, i) => `${i % 10}`.repeat(8000));
+      await embed(texts);
+      expect(stub.mock.calls.length).toBeGreaterThan(1);
     });
-
-    const stub = mock(async ({ values }: { values: string[] }) => fakeEmbeddings(values, 1024));
-    __setEmbedTransportForTests(stub as any);
-
-    // 20 texts × 8000 chars (= MAX_CHARS, so no truncation) = 8000 tokens
-    // each at voyage's 1 char/token density → 160K tokens total against a
-    // 60K effective budget → must split into >1 call. If the env value
-    // (99M) leaked past the recipe cap, everything would fit in 1 call.
-    const texts = Array.from({ length: 20 }, (_, i) => `${i % 10}`.repeat(8000));
-    await embed(texts);
-    expect(stub.mock.calls.length).toBeGreaterThan(1);
   });
 });
