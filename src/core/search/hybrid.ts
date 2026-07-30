@@ -1038,7 +1038,11 @@ export async function hybridSearch(
     // is a recall arm — opt in to the engine's AND→OR zero-recall fallback.
     // Direct searchKeyword consumers (countMentions, link-extraction, eval)
     // do NOT set this and keep the strict-AND contract.
-    orFallback: true,
+    // Mode-resolved since v=15 (`search.keywordOrFallback`): corpora the FTS
+    // config can't stem (CJK under 'english') get OR floods that IDF-less
+    // ts_rank can't demote — operators there turn the fallback off. The
+    // bundle default stays true (previous hardcoded behavior).
+    orFallback: resolvedMode.keywordOrFallback,
   };
   // Track what actually ran for the optional onMeta callback (v0.25.0).
   // Caller leaves onMeta undefined → these flags are computed but never
