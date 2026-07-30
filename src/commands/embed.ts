@@ -10,6 +10,31 @@ import { slog, serr } from '../core/console-prefix.ts';
 import { filterOutEmbedSkipped } from '../core/embed-skip.ts';
 import { runSlidingPool } from '../core/worker-pool.ts';
 
+/**
+ * Failure quarantine for the --stale path. A page whose embed fails keeps
+ * its NULL chunks, so every stale pass re-sends the identical request — a
+ * page that fails deterministically (e.g. always outlives a local server's
+ * timeout) is retried forever, and against a serial embedding server the
+ * abandoned work compounds into congestion collapse. After
+ * GBRAIN_EMBED_QUARANTINE_AFTER consecutive failures (default 3) a page is
+ * skipped for the rest of this process; a success resets its counter.
+ * Process-lifetime by design: a long-lived autopilot stops re-sending
+ * doomed pages every cycle, while a restart (or frontmatter.embed_skip for
+ * a permanent block) lets the operator retry deliberately.
+ * Keyed `${source_id}::${slug}` to match the stale-batch grouping.
+ */
+const _embedFailureCounts = new Map<string, number>();
+
+/** Test seam: clear quarantine state between test runs. */
+export function _resetEmbedQuarantineForTest(): void {
+  _embedFailureCounts.clear();
+}
+
+function embedQuarantineThreshold(): number {
+  const raw = parseInt(process.env.GBRAIN_EMBED_QUARANTINE_AFTER || '3', 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : 3;
+}
+
 export interface EmbedOpts {
   /** Embed ALL pages (every chunk). */
   all?: boolean;
@@ -683,7 +708,12 @@ async function embedAllStale(
         else byKey.set(key, [row]);
       }
 
-      const keys = Array.from(byKey.keys());
+      const QUARANTINE_AFTER = embedQuarantineThreshold();
+      const allKeys = Array.from(byKey.keys());
+      const keys = allKeys.filter(k => (_embedFailureCounts.get(k) ?? 0) < QUARANTINE_AFTER);
+      if (keys.length < allKeys.length) {
+        serr(`\n  [embed] skipping ${allKeys.length - keys.length} page(s) quarantined after ${QUARANTINE_AFTER} consecutive failed embed attempts (this process); set frontmatter.embed_skip to skip permanently, or restart to retry`);
+      }
       result.total_chunks += batch.length;
 
       async function embedOneKey(key: string) {
@@ -715,11 +745,17 @@ async function embedAllStale(
             await engine.setPageEmbeddingSignature(slug, { sourceId: keySourceId, signature });
           }
           result.embedded += stale.length;
+          _embedFailureCounts.delete(key);
         } catch (e: unknown) {
           // Budget-fired aborts are expected on the way out; don't spam
           // per-page "Error embedding" lines when we're shutting down.
           if (budgetSignal.aborted) return;
           serr(`\n  Error embedding ${slug}: ${e instanceof Error ? e.message : e}`);
+          const failures = (_embedFailureCounts.get(key) ?? 0) + 1;
+          _embedFailureCounts.set(key, failures);
+          if (failures === QUARANTINE_AFTER) {
+            serr(`\n  [embed] ${slug}: ${failures} consecutive failed attempt(s) — quarantined for the rest of this process`);
+          }
         }
         totalProcessedPages++;
         result.pages_processed++;
