@@ -39,6 +39,7 @@ import {
 } from './search/recency-decay.ts';
 import { logBatchRetry as auditLogBatchRetry, logBatchExhausted as auditLogBatchExhausted } from './audit/batch-retry-audit.ts';
 import { runMigrations } from './migrate.ts';
+import { hnswEfSearchFor } from './vector-index.ts';
 import { PGLITE_SCHEMA_SQL, getPGLiteSchema } from './pglite-schema.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
@@ -2166,7 +2167,13 @@ export class PGLiteEngine implements BrainEngine {
       modalityFilter = `AND cc.modality = 'text'`;
     }
 
-    const { rows } = await this.db.query(
+    // hnsw.ef_search: an HNSW scan returns at most ef_search rows (default
+    // 40), so LIMIT $2 past 40 was silently unreachable — see hnswEfSearchFor.
+    // SET LOCAL semantics need a transaction (PGLite autocommits bare
+    // queries); scoping it locally keeps the engine's single session clean.
+    const { rows } = await this.db.transaction(async (tx) => {
+      await tx.query(`SELECT set_config('hnsw.ef_search', $1, true)`, [String(hnswEfSearchFor(innerLimit))]);
+      return tx.query(
       `WITH hnsw_candidates AS (
          SELECT
            p.slug, p.id as page_id, p.title, p.type, p.source_id, p.updated_at,
@@ -2215,7 +2222,8 @@ export class PGLiteEngine implements BrainEngine {
        LIMIT $3
        OFFSET $4`,
       params
-    );
+      );
+    });
 
     return (rows as Record<string, unknown>[]).map(rowToSearchResult);
   }
