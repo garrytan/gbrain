@@ -30,7 +30,12 @@ import { chat as gatewayChat, isAvailable } from '../ai/gateway.ts';
 // source-boost's 1.3× 'concepts/' weighting can actually reach them.
 import { importFromContent } from '../import-file.ts';
 import { serializeMarkdown } from '../markdown.ts';
+import { createHash } from 'crypto';
 
+// Bump to force a full re-synthesis pass (e.g. when SYNTH_PROMPT or the model
+// changes). Folded into the per-concept membership signature so a prompt
+// change invalidates every stored signature at once.
+const SYNTH_VERSION = 'v0.41';
 const DEFAULT_BUDGET_USD = 1.5;
 const TIER_T1_MIN = 10;
 const TIER_T2_MIN = 5;
@@ -50,13 +55,16 @@ export interface SynthesizeConceptsOpts {
   /** Test seam: alternative chat function. */
   _chat?: typeof gatewayChat;
   /** Test seam: skip DB query; cluster these atoms directly. */
-  _atoms?: Array<{ slug: string; concept_refs: string[]; body: string; title: string }>;
+  _atoms?: Array<{ slug: string; concept_refs: string[]; body: string; title: string; content_hash?: string }>;
 }
 
 interface AtomGroup {
   conceptSlug: string;
   atomTitles: string[];
   atomBodies: string[];
+  /** (slug, content_hash) of every atom in the group — drives the membership
+   * signature used to skip re-synthesis when nothing changed. */
+  members: Array<{ slug: string; hash: string }>;
   tier: 'T1' | 'T2' | 'T3' | 'T4';
 }
 
@@ -81,9 +89,10 @@ export async function runPhaseSynthesizeConcepts(
         slug: string;
         title: string;
         compiled_truth: string;
+        content_hash: string | null;
         frontmatter: { concepts?: string[]; imported_from?: string };
       }>(
-        `SELECT slug, title, compiled_truth, frontmatter
+        `SELECT slug, title, compiled_truth, content_hash, frontmatter
            FROM pages
           WHERE type = 'atom'
             AND deleted_at IS NULL
@@ -96,6 +105,7 @@ export async function runPhaseSynthesizeConcepts(
           title: r.title,
           body: r.compiled_truth,
           concept_refs: r.frontmatter!.concepts!,
+          content_hash: r.content_hash ?? undefined,
         }));
     } catch {
       // No atoms table or query failed — phase no-ops cleanly.
@@ -113,12 +123,13 @@ export async function runPhaseSynthesizeConcepts(
   }
 
   // 2. Group atoms by concept slug
-  const groups = new Map<string, { titles: string[]; bodies: string[] }>();
+  const groups = new Map<string, { titles: string[]; bodies: string[]; members: Array<{ slug: string; hash: string }> }>();
   for (const atom of atoms) {
     for (const conceptSlug of atom.concept_refs) {
-      const existing = groups.get(conceptSlug) ?? { titles: [], bodies: [] };
+      const existing = groups.get(conceptSlug) ?? { titles: [], bodies: [], members: [] };
       existing.titles.push(atom.title);
       existing.bodies.push(atom.body);
+      existing.members.push({ slug: atom.slug, hash: atom.content_hash ?? '' });
       groups.set(conceptSlug, existing);
     }
   }
@@ -134,6 +145,7 @@ export async function runPhaseSynthesizeConcepts(
       conceptSlug,
       atomTitles: data.titles,
       atomBodies: data.bodies,
+      members: data.members,
       tier,
     });
   }
@@ -154,6 +166,25 @@ export async function runPhaseSynthesizeConcepts(
   const budgetCap = DEFAULT_BUDGET_USD;
   const failures: Array<{ concept: string; error: string }> = [];
   const tierCounts = { T1: 0, T2: 0, T3: 0, T4: 0 };
+  let skippedUnchanged = 0;
+
+  // Prefetch existing concept-page membership signatures so we can skip the
+  // LLM call + page write for concepts whose atom membership is unchanged
+  // since the last run. Fail-soft: any query error → empty map → behaves like
+  // the pre-signature phase (re-synthesize everything).
+  const existingSigs = new Map<string, string>();
+  try {
+    const sigRows = await engine.executeRaw<{ slug: string; sig: string | null }>(
+      `SELECT slug, frontmatter->>'member_sig' AS sig
+         FROM pages
+        WHERE type = 'concept' AND deleted_at IS NULL`,
+    );
+    for (const r of sigRows) {
+      if (r.sig) existingSigs.set(r.slug, r.sig);
+    }
+  } catch {
+    // No concept pages yet / query failed — skip nothing.
+  }
 
   // v0.41.19.0 (T3): throttled yield helper. Fires `opts.yieldDuringPhase`
   // every 30s — cycle.ts threads `buildYieldDuringPhase(lock, outer)` so
@@ -176,6 +207,17 @@ export async function runPhaseSynthesizeConcepts(
   }
 
   for (const group of atomGroups) {
+    const title = group.conceptSlug.split('/').pop() ?? group.conceptSlug;
+    const pageSlug = `concepts/${title}`;
+    const memberSig = memberSignature(group);
+    // Skip concepts whose atom membership is unchanged since last run — no LLM
+    // call, no page write. The full group is still recomputed above, so any
+    // membership change (add / edit / soft-delete / re-tag) refreshes it.
+    if (existingSigs.get(pageSlug) === memberSig) {
+      skippedUnchanged++;
+      opts.progress?.tick(0, `${skippedUnchanged} unchanged`);
+      continue;
+    }
     tierCounts[group.tier]++;
     let narrative: string;
     if (group.tier === 'T1' || group.tier === 'T2') {
@@ -221,7 +263,6 @@ export async function runPhaseSynthesizeConcepts(
     }
 
     if (!opts.dryRun) {
-      const title = group.conceptSlug.split('/').pop() ?? group.conceptSlug;
       // #2163: serialize to markdown and import via the canonical pipeline so
       // the page is chunked (+ embedded when a provider is configured) —
       // mirrors put_page's isAvailable('embedding') → noEmbed gate.
@@ -230,6 +271,7 @@ export async function runPhaseSynthesizeConcepts(
           tier: group.tier,
           mention_count: group.atomTitles.length,
           composite_score: group.atomTitles.length,
+          member_sig: memberSig,
           synthesized_at: new Date().toISOString(),
           synthesized_by: 'synthesize_concepts-v0.41',
         },
@@ -292,9 +334,11 @@ export async function runPhaseSynthesizeConcepts(
     summary:
       `synthesize_concepts: ${conceptsWritten} concepts ` +
       `(T1=${tierCounts.T1} T2=${tierCounts.T2} T3=${tierCounts.T3})` +
+      (skippedUnchanged > 0 ? `, ${skippedUnchanged} unchanged skipped` : '') +
       (failures.length > 0 ? ` (${failures.length} LLM-failed → template fallback)` : ''),
     details: {
       concepts_written: conceptsWritten,
+      concepts_skipped_unchanged: skippedUnchanged,
       tier_counts: tierCounts,
       groups_found: atomGroups.length,
       atoms_seen: atoms.length,
@@ -304,6 +348,21 @@ export async function runPhaseSynthesizeConcepts(
       dry_run: opts.dryRun ?? false,
     },
   };
+}
+
+/**
+ * Stable signature of a concept group's membership, stored on the concept page
+ * as `frontmatter.member_sig`. Re-synthesis is skipped when the freshly-computed
+ * signature equals the stored one. Sorted (slug, content_hash) pairs make adds,
+ * soft-deletes, re-tagging, AND atom-body edits observable; SYNTH_VERSION forces
+ * a full re-synthesis when the prompt/model changes.
+ */
+function memberSignature(group: AtomGroup): string {
+  const members = group.members
+    .map((m) => `${m.slug}:${m.hash}`)
+    .sort()
+    .join(',');
+  return createHash('sha256').update(`${SYNTH_VERSION}|${members}`).digest('hex').slice(0, 16);
 }
 
 /**
