@@ -2,6 +2,22 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.78.0] - 2026-07-30
+
+**`gbrain sync --dry-run` no longer pulls from `origin` or deletes a previously indexed page when a modified file falls outside the selected sync strategy.**
+
+Previously, an incremental dry run could mutate both sides of the preview. A pull could change the source working tree, and out-of-strategy cleanup ran before the dry-run return, so a tracked page could be removed from the brain. Dry runs now skip the pull and return before that cleanup. A normal sync still deletes the stale page as before.
+
+## To take advantage of v0.42.78.0
+
+Run `gbrain upgrade`. There are no migrations or configuration changes.
+
+### Itemized changes
+
+- `sync --dry-run` skips `pullRepo`, leaving the source checkout untouched by the preview.
+- Incremental dry runs report strategy changes without deleting the existing page or advancing its sync bookmark.
+- Focused regressions prove that a normal sync still performs the same out-of-strategy cleanup.
+
 ## [0.42.67.0] - 2026-07-28
 
 **If you develop GBrain on Windows, the test and check commands now actually run. Until this release they were quietly doing almost nothing.**
