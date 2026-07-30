@@ -24,8 +24,7 @@
 import { describe, expect, it } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-
-const REPO_ROOT = new URL('..', import.meta.url).pathname;
+import { REPO_ROOT } from './helpers/repo-root.ts';
 
 async function runCli(args: string[]): Promise<{
   stdout: string;

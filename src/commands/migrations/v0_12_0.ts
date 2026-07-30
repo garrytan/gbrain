@@ -61,6 +61,41 @@ interface ConfigCheckResult {
   raw?: string;
 }
 
+/**
+ * Wall-clock guard for the short `gbrain …` probes this orchestrator runs
+ * (`config get`, `stats`). NOT for the backfills, which have their own 600s.
+ *
+ * The 10s and 30s these used to hardcode are below the floor on Windows, where
+ * every probe pays a cold `bun` start plus a PGLite open before it does any
+ * work. Measured against an already-migrated brain:
+ *
+ *   gbrain config get auto_link   15.2s   (vs a 10s timeout — never succeeded)
+ *   gbrain stats                  17.7s   (vs a 30s timeout — fits only when idle)
+ *
+ * Both matter. `config get` failing is quiet but wrong: the catch treats it as
+ * "unset", so a user who explicitly set `auto_link=false` had that ignored on
+ * Windows and the backfill ran anyway. `stats` failing makes phase E report
+ * `could not read gbrain stats`, which marks the whole migration PARTIAL — and
+ * `MAX_CONSECUTIVE_PARTIALS=3` then WEDGES it. That is exactly what happened
+ * intermittently: 17.7s is comfortable on an idle box, but the cold-spawn floor
+ * on this machine ranged 11.3s-28.9s (2.5x) purely from contention, so the same
+ * probe lands past 30s under load.
+ *
+ * 120s ≈ 7x the slowest observed. These are cheap probes whose failure silently
+ * degrades behaviour, so a generous ceiling costs nothing when they succeed in
+ * ~20s and prevents a wedged migration when they don't.
+ */
+export const DEFAULT_MIGRATE_CLI_TIMEOUT_MS = 120_000;
+
+export function resolveMigrateCliTimeoutMs(): number {
+  const raw = process.env.GBRAIN_MIGRATE_CLI_TIMEOUT_MS;
+  if (raw) {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return DEFAULT_MIGRATE_CLI_TIMEOUT_MS;
+}
+
 function phaseBConfigCheck(opts: OrchestratorOpts): OrchestratorPhaseResult & { autoLink: ConfigCheckResult } {
   if (opts.dryRun) {
     return { name: 'config', status: 'skipped', detail: 'dry-run', autoLink: { status: 'unknown' } };
@@ -69,7 +104,11 @@ function phaseBConfigCheck(opts: OrchestratorOpts): OrchestratorPhaseResult & { 
   // Default behavior when unset = enabled (per isAutoLinkEnabled).
   let raw = '';
   try {
-    raw = execSync('gbrain config get auto_link', { encoding: 'utf-8', timeout: 10_000, env: process.env }).trim();
+    raw = execSync('gbrain config get auto_link', {
+      encoding: 'utf-8',
+      timeout: resolveMigrateCliTimeoutMs(),
+      env: process.env,
+    }).trim();
   } catch {
     // get exits non-zero when the key isn't set — that's fine, defaults to enabled.
     raw = '';
@@ -122,19 +161,47 @@ interface StatsSnapshot {
   timeline_entry_count: number;
 }
 
-function readStats(): StatsSnapshot | null {
+/**
+ * Run one `gbrain …` invocation, discarding stderr. Returns null on any
+ * failure so the caller can fall through to the next candidate.
+ *
+ * Deliberately ONE command with no shell operators. `execSync` runs its string
+ * through `cmd.exe` on Windows, which does not understand POSIX `2>/dev/null`:
+ * it tries to create a file literally named `\dev\null`, fails with
+ * `Access is denied.`, produces no output, and then burns the ENTIRE declared
+ * timeout instead of falling through to the `||` branch. Measured directly —
+ * `gbrain get_stats --json 2>/dev/null || gbrain stats` threw
+ * `spawnSync cmd.exe ETIMEDOUT` after 30.7s having printed only
+ * `Access is denied.`, and no `dev/null` file was created.
+ *
+ * In the v0.12.0 orchestrator that made phase E's verify unreachable on
+ * Windows, so the migration finished PARTIAL on every run — and
+ * MAX_CONSECUTIVE_PARTIALS=3 then marks it WEDGED on the third attempt.
+ * `stdio: 'ignore'` on fd 2 is the portable way to say `2>/dev/null`.
+ */
+function tryReadStatsCommand(cmd: string): string | null {
   try {
-    const out = execSync('gbrain get_stats --json 2>/dev/null || gbrain stats', {
-      encoding: 'utf-8', timeout: 30_000, env: process.env,
+    return execSync(cmd, {
+      encoding: 'utf-8',
+      timeout: resolveMigrateCliTimeoutMs(),
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'ignore'],
     });
-    // The fallback `gbrain stats` prints human-readable output; parse loosely.
-    const pages = parseInt((out.match(/Pages:\s+(\d+)/) || ['', '0'])[1], 10);
-    const links = parseInt((out.match(/Links:\s+(\d+)/) || ['', '0'])[1], 10);
-    const timeline = parseInt((out.match(/Timeline:\s+(\d+)/) || ['', '0'])[1], 10);
-    return { page_count: pages, link_count: links, timeline_entry_count: timeline };
   } catch {
     return null;
   }
+}
+
+function readStats(): StatsSnapshot | null {
+  // Preferred machine-readable form first, human-readable as the fallback.
+  const out = tryReadStatsCommand('gbrain get_stats --json')
+    ?? tryReadStatsCommand('gbrain stats');
+  if (out === null) return null;
+  // `gbrain stats` prints human-readable output; parse loosely.
+  const pages = parseInt((out.match(/Pages:\s+(\d+)/) || ['', '0'])[1], 10);
+  const links = parseInt((out.match(/Links:\s+(\d+)/) || ['', '0'])[1], 10);
+  const timeline = parseInt((out.match(/Timeline:\s+(\d+)/) || ['', '0'])[1], 10);
+  return { page_count: pages, link_count: links, timeline_entry_count: timeline };
 }
 
 function phaseEVerify(opts: OrchestratorOpts, autoLinkDisabled: boolean): OrchestratorPhaseResult {

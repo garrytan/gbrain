@@ -2,6 +2,46 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.74.0] - 2026-07-28
+
+**GBrain's Windows tests now run the checkout you asked them to test, instead of failing on Windows-style paths or quietly finding a different installed copy.**
+
+Several subprocess tests built a repository path from a URL. On Windows that produces a path shaped like `/C:/...`, which cannot be used as a working directory. Other tests put a Unix-only shim on PATH with the wrong separator, so the intended test binary was invisible and a globally installed `gbrain` could answer instead. Fresh PGLite tests also used timeout literals below the measured Windows startup floor.
+
+This release gives those tests one native repository-root helper, one platform-specific command shim, and shared cold-start budgets. Upgrade migrations also give their short Windows CLI probes enough wall-clock room and perform command fallbacks without POSIX-only shell syntax. The same path correction lets bundled schema packs resolve on Windows. Nothing changes for normal CLI use, stored brain data, macOS, or Linux.
+
+### What to expect
+
+| Before | Now |
+|---|---|
+| Windows subprocesses could fail before launch with a misleading `uv_spawn 'bun'` error | Spawned commands receive a native filesystem working directory |
+| A hand-built PATH could skip the checkout and find a global `gbrain` | Tests use one complete platform-correct `pathValue` |
+| A cold PGLite bootstrap could be killed by a 90-second literal | The smoke test uses the shared 420-second bootstrap budget |
+
+There is no setup or migration step. Contributors can rerun the affected checks normally:
+
+```bash
+bun test test/helpers/repo-root.test.ts test/migrations-subprocess-portability.test.ts
+bun test test/doctor-cli-smoke.serial.test.ts
+bun test test/apply-migrations-pglite-spawn.serial.test.ts
+```
+
+### Itemized changes
+
+#### Windows path and subprocess correctness
+
+- `test/helpers/repo-root.ts` resolves the repository root with `fileURLToPath()` and centralizes path joins for subprocess tests.
+- `src/commands/schema.ts` uses a native filesystem path when loading bundled schema packs.
+- `test/helpers/gbrain-shim.ts` creates a `.cmd` shim on Windows and a shell shim on POSIX, returns the full PATH value, and preserves argument and exit-code behavior.
+- `src/commands/migrations/v0_11_0.ts` and `v0_12_0.ts` avoid POSIX-only subprocess syntax on Windows while keeping migration smoke checks fail-closed.
+
+#### Test reliability
+
+- `test/helpers/pglite-spawn-budget.ts` is the single owner of cold-bootstrap, normal CLI-spawn, and migration-cascade budgets.
+- `test/doctor-cli-smoke.serial.test.ts` derives both subprocess and file-level limits from the shared budgets instead of a sub-floor literal.
+- Repository-root, shim, migration portability, schema-pack, CLI, integration, upgrade, and serial test callers now share the same cross-platform helpers.
+- `docs/TESTING.md` documents the ownership boundary: timing budgets stay in `pglite-spawn-budget.ts`; executable shims stay in `gbrain-shim.ts`.
+
 ## [0.42.67.0] - 2026-07-28
 
 **If you develop GBrain on Windows, the test and check commands now actually run. Until this release they were quietly doing almost nothing.**

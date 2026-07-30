@@ -138,6 +138,24 @@ Rename to `*.serial.test.ts` when:
 
 The quarantine has grown to dozens of files — treat it as debt: every addition needs a reason from the list above, and prefer fixing the contention root cause when one exists.
 
+### Budgets for CLI-spawn tests against a fresh PGLite brain
+
+A few serial files (`apply-migrations-pglite-spawn`, `admin-embed-spawn`) spawn the real CLI against a brand-new PGLite brain. That is expensive: `PGlite.create()` runs `initdb` under WASM, then the whole schema is applied, before the command under test does anything. Linux/macOS absorb it; Windows does not.
+
+Budgets live in `test/helpers/pglite-spawn-budget.ts` — never as literals in the test files — so the measurements behind each number stay next to the number:
+
+| constant | env override | default | sized against |
+|---|---|---|---|
+| `PGLITE_BOOTSTRAP_MS` | `GBRAIN_TEST_PGLITE_BOOTSTRAP_MS` | 420s | one cold bootstrap (worst observed 199s) |
+| `ORCHESTRATOR_CASCADE_MS` | `GBRAIN_TEST_CASCADE_MS` | 1500s | `apply-migrations --yes` walking all 19 orchestrators (observed 698s) |
+| `CLI_SPAWN_MS` | `GBRAIN_TEST_CLI_SPAWN_MS` | 120s | a spawn with no schema replay (`--list`, one HTTP GET) |
+
+Defaults are ~2x the worst observed value, not ~1.5x like `GBRAIN_TEST_SHARD_TIMEOUT`: two back-to-back reps of the same cold spawn measured 11.3s and 28.9s on a contended box, so tighter headroom just re-creates the flake. They are hang detectors, not latency targets — raising one never makes anything slower, and a genuinely wedged run still trips it.
+
+`GBRAIN_SKIP_SUBPROCESS_TESTS=1` skips `apply-migrations-pglite-spawn` and `doctor-cli-smoke` for a fast inner loop — the two that cost minutes. CI never sets it. `admin-embed-spawn` runs unconditionally; sharing one server across its four cases brought it to ~93s, which is cheap enough not to need an opt-out.
+
+Filesystem-root and executable-shim ownership are separate from timing budgets. `test/helpers/repo-root.ts` resolves the checkout with `fileURLToPath()` and exposes `repoPath(...)`; subprocess tests must use it instead of `new URL(...).pathname`, which is a URL path rather than a native Windows filesystem path. `test/helpers/gbrain-shim.ts` creates the platform-specific shim and returns its complete `pathValue`. On Windows, `cmd.exe` resolves commands through PATHEXT and cannot see an extensionless `#!/bin/sh` shim, while PATH entries join with `path.delimiter` (`;`), not `:`. Tests must use `pathValue` rather than assembling PATH themselves; otherwise `gbrain` can silently resolve to a globally linked binary from another checkout instead of the code under test.
+
 ### Unit test inventory
 
 `bun test` runs all tests without a database. E2E tests skip gracefully when `DATABASE_URL` is not set.

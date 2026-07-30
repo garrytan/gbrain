@@ -18,25 +18,14 @@
  * Per-spawn cold-start on CI is ~10-20s. Single test, single brain.
  */
 import { describe, test, expect } from 'bun:test';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { REPO_ROOT as REPO } from './helpers/repo-root.ts';
+import { makeGbrainShim } from './helpers/gbrain-shim.ts';
+import { PGLITE_BOOTSTRAP_MS, CLI_SPAWN_MS } from './helpers/pglite-spawn-budget.ts';
 
-const REPO = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const SKIP = process.env.GBRAIN_SKIP_SUBPROCESS_TESTS === '1';
-
-function makeGbrainShim(): { binDir: string; cleanup: () => void } {
-  const binDir = mkdtempSync(join(tmpdir(), 'gbrain-shim-doctor-'));
-  const shimPath = join(binDir, 'gbrain');
-  writeFileSync(shimPath, `#!/bin/sh\nexec bun run ${REPO}/src/cli.ts "$@"\n`, { mode: 0o755 });
-  chmodSync(shimPath, 0o755);
-  return {
-    binDir,
-    cleanup: () => {
-      try { rmSync(binDir, { recursive: true, force: true }); } catch { /* best effort */ }
-    },
-  };
-}
 
 async function runCli(
   args: string[],
@@ -67,7 +56,7 @@ async function runCli(
 describe('gbrain doctor --json subprocess smoke (D10/CMT-2)', () => {
   test.skipIf(SKIP)('exits 0 on freshly-initialized PGLite brain; JSON envelope is well-formed', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-doctor-smoke-'));
-    const shim = makeGbrainShim();
+    const shim = makeGbrainShim('gbrain-shim-doctor-');
     try {
       mkdirSync(join(home, '.gbrain'), { recursive: true });
       writeFileSync(
@@ -78,22 +67,32 @@ describe('gbrain doctor --json subprocess smoke (D10/CMT-2)', () => {
           embedding_dimensions: 1536,
         }) + '\n',
       );
+      // `GBRAIN_HOME` is what actually redirects the brain: `configDir()`
+      // honors it and only falls back to `homedir()`, which on Windows
+      // reads USERPROFILE and would ignore a bare `HOME`. `shim.pathValue`
+      // joins with the platform PATH delimiter (`;` on Windows).
       const env = {
         HOME: home,
         GBRAIN_HOME: home,
-        PATH: `${shim.binDir}:${process.env.PATH ?? ''}`,
+        PATH: shim.pathValue,
       };
 
       // Step 1: init + apply migrations so the brain is at head before doctor runs.
       // Without this, the brain would be detected as mid-migration and doctor would
       // (correctly) report partial state.
-      const init = await runCli(['init', '--migrate-only'], env, 90_000);
+      // Cold PGLite bootstrap: `PGlite.create()` initdb + the whole MIGRATIONS
+      // replay. The old 90s literal sat BELOW the Windows floor for this leg
+      // (109-196s measured), so the runCli killer fired and the step failed
+      // with exit 137 — a budget artifact, not a defect in the code under test.
+      const init = await runCli(['init', '--migrate-only'], env, PGLITE_BOOTSTRAP_MS);
       expect(init.exitCode).toBe(0);
 
       // Step 2: doctor --json against the fresh brain. This is the load-bearing
       // assertion that covers runDoctor's wrapper (render + exit code) — the
       // path that buildChecks-only tests deliberately don't exercise.
-      const doctor = await runCli(['doctor', '--json'], env, 120_000);
+      // Reads the already-built brain — no schema replay, so the cheap budget
+      // applies. Dominated by the cold `bun` spawn floor, not doctor's own work.
+      const doctor = await runCli(['doctor', '--json'], env, CLI_SPAWN_MS);
       if (doctor.exitCode !== 0) {
         console.error('--- doctor stdout ---\n' + doctor.stdout);
         console.error('--- doctor stderr ---\n' + doctor.stderr);
@@ -119,5 +118,9 @@ describe('gbrain doctor --json subprocess smoke (D10/CMT-2)', () => {
       try { rmSync(home, { recursive: true, force: true }); } catch { /* best effort */ }
       shim.cleanup();
     }
-  }, 300_000);
+    // Derived, not hand-picked: the test-level cap must sit ABOVE the sum of the
+    // per-step budgets, or it fires first and you lose the per-step diagnostic
+    // saying WHICH spawn hung. Mirrors the steps — bootstrap (init) + cli
+    // (doctor) — so a GBRAIN_TEST_* override scales this automatically.
+  }, PGLITE_BOOTSTRAP_MS + CLI_SPAWN_MS + 60_000);
 });

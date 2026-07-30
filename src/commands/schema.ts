@@ -19,6 +19,7 @@
 
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   addAliasToType,
   addLinkTypeToPack,
@@ -369,7 +370,10 @@ function runUse(args: string[]): void {
 function packPathByName(name: string): string | null {
   if (BUNDLED_PACK_NAMES.has(name)) {
     // Resolve bundled YAML — try a few locations.
-    const here = dirname(new URL(import.meta.url).pathname);
+    // fileURLToPath, NOT `.pathname`: on Windows the latter yields
+    // `/C:/...`, which no filesystem call accepts, so every bundled pack
+    // resolved to null. No-op on POSIX.
+    const here = dirname(fileURLToPath(import.meta.url));
     const candidates = [
       join(here, '..', 'core', 'schema-pack', 'base', `${name}.yaml`),
       join(here, '..', '..', 'src', 'core', 'schema-pack', 'base', `${name}.yaml`),

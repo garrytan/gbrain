@@ -10,6 +10,7 @@
 import { describe, test, expect } from 'bun:test';
 import { VERSION } from '../../src/version.ts';
 import { isNewerVersion } from '../../src/commands/check-update.ts';
+import { REPO_ROOT } from '../helpers/repo-root.ts';
 
 // Check if we can reach GitHub
 async function hasNetwork(): Promise<boolean> {
@@ -31,7 +32,7 @@ if (skip) {
 describeE2E('E2E: Check-Update', () => {
   test('check-update --json returns valid JSON with current version', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'check-update', '--json'], {
-      cwd: new URL('../..', import.meta.url).pathname,
+      cwd: REPO_ROOT,
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -48,7 +49,7 @@ describeE2E('E2E: Check-Update', () => {
 
   test('check-update without --json prints human-readable output', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'check-update'], {
-      cwd: new URL('../..', import.meta.url).pathname,
+      cwd: REPO_ROOT,
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -61,7 +62,7 @@ describeE2E('E2E: Check-Update', () => {
 
   test('check-update --help prints usage', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'check-update', '--help'], {
-      cwd: new URL('../..', import.meta.url).pathname,
+      cwd: REPO_ROOT,
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -75,7 +76,7 @@ describeE2E('E2E: Check-Update', () => {
 
   test('check-update --json contract holds regardless of real release state', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'check-update', '--json'], {
-      cwd: new URL('../..', import.meta.url).pathname,
+      cwd: REPO_ROOT,
       stdout: 'pipe',
       stderr: 'pipe',
     });

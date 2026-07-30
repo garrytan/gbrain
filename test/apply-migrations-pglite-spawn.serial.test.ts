@@ -18,46 +18,33 @@
  * needed; runs in standard unit CI.
  *
  * Single-test design: every `bun run <abs-path>/src/cli.ts` from a tmpdir
- * cwd pays a cold parse/transpile cost (no near-cwd .bun cache). On
- * Ubuntu CI that's ~10-20s per spawn. Consolidating into one test with
- * one shared tmpdir keeps wall-clock under the runner's default timeout.
+ * cwd pays a cold parse/transpile cost (no near-cwd .bun cache). Measured
+ * 11.3s and 28.9s on two back-to-back Windows spawns. Consolidating into one
+ * test with one shared tmpdir keeps wall-clock under the runner's default
+ * timeout.
+ *
+ * Per-step budgets come from `helpers/pglite-spawn-budget.ts` (measurements +
+ * `GBRAIN_TEST_*` overrides documented there), NOT from literals here. They
+ * are hang detectors, not latency targets.
  *
  * Serial because it spawns subprocesses + writes a tmpdir.
  */
 import { describe, test, expect } from 'bun:test';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, chmodSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { REPO_ROOT as REPO } from './helpers/repo-root.ts';
+import { makeGbrainShim } from './helpers/gbrain-shim.ts';
+import {
+  PGLITE_BOOTSTRAP_MS,
+  ORCHESTRATOR_CASCADE_MS,
+  CLI_SPAWN_MS,
+} from './helpers/pglite-spawn-budget.ts';
 
-const REPO = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
-
-/**
- * Make a shim `gbrain` binary that routes to `bun run <repo>/src/cli.ts`.
- *
- * The v0.11.0 orchestrator chain spawns subprocesses via `execSync('gbrain
- * jobs smoke')` and `execSync('gbrain init --migrate-only')` (the Postgres
- * path; PGLite now routes in-process, but phase B's smoke still shells out).
- * On a developer machine `gbrain` resolves via `bun link`; on CI it
- * doesn't exist on PATH and execSync fails with "command not found",
- * propagating up as an orchestrator failure. The shim avoids the global-
- * install dependency.
- */
-function makeGbrainShim(): { binDir: string; cleanup: () => void } {
-  const binDir = mkdtempSync(join(tmpdir(), 'gbrain-shim-'));
-  const shimPath = join(binDir, 'gbrain');
-  writeFileSync(
-    shimPath,
-    `#!/bin/sh\nexec bun run ${REPO}/src/cli.ts "$@"\n`,
-    { mode: 0o755 },
-  );
-  chmodSync(shimPath, 0o755);
-  return {
-    binDir,
-    cleanup: () => {
-      try { rmSync(binDir, { recursive: true, force: true }); } catch { /* best effort */ }
-    },
-  };
-}
+// Same fast-loop escape hatch doctor-cli-smoke.serial.test.ts offers: this file
+// is minutes of real subprocess work on Windows, and an inner edit loop rarely
+// needs it. CI never sets this.
+const SKIP = process.env.GBRAIN_SKIP_SUBPROCESS_TESTS === '1';
 
 async function runCli(
   args: string[],
@@ -87,9 +74,9 @@ async function runCli(
 
 describe('apply-migrations on fresh PGLite (v0.36.1.x #1100)', () => {
   // ONE test, ONE brain, ONE end-to-end pass through the lifecycle. The
-  // per-spawn cold-start on Ubuntu CI (~10-20s) is the dominant cost; we
-  // pay it 4 times here, not 8.
-  test('init --migrate-only → apply-migrations --yes → re-run → --list (all exit 0)', async () => {
+  // per-spawn cold-start is the dominant cost (11.3s / 28.9s measured on two
+  // back-to-back Windows spawns); we pay it 4 times here, not 8.
+  test.skipIf(SKIP)('init --migrate-only → apply-migrations --yes → re-run → --list (all exit 0)', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-pglite-spawn-'));
     const shim = makeGbrainShim();
     try {
@@ -106,29 +93,40 @@ describe('apply-migrations on fresh PGLite (v0.36.1.x #1100)', () => {
       // and similar resolve to our shim instead of requiring a global
       // install. This matches the contract users hit in production
       // (gbrain on PATH) without depending on `bun link` having run.
+      //
+      // `shim.pathValue` joins with the platform PATH delimiter. A
+      // hardcoded ':' does not error on Windows — it silently makes the
+      // shim dir (and every inherited entry) unresolvable, so lookup falls
+      // through to whatever `gbrain` is globally installed.
+      // `GBRAIN_HOME` is what actually redirects the brain: `configDir()`
+      // honors it and only falls back to `homedir()`, which on Windows
+      // reads USERPROFILE and would ignore a bare `HOME`.
       const env = {
         HOME: home,
         GBRAIN_HOME: home,
-        PATH: `${shim.binDir}:${process.env.PATH ?? ''}`,
+        PATH: shim.pathValue,
       };
 
       // Step 1: init --migrate-only seeds the schema. Pre-fix on PGLite this
       // worked but the next step then deadlocked.
-      const init = await runCli(['init', '--migrate-only'], env, 90_000);
+      const init = await runCli(['init', '--migrate-only'], env, PGLITE_BOOTSTRAP_MS);
       expect(init.exitCode).toBe(0);
       expect(init.stdout + init.stderr).toMatch(/Schema up to date|migration\(s\) applied/);
 
       // Step 2: apply-migrations --yes runs the orchestrator chain. Pre-fix
       // this wedged on v0.11.0 phase A with the PGLite lock timeout.
+      // Cascade budget, not bootstrap: this walks all 19 orchestrators and
+      // each shells out. Measured 698.3s end-to-end on Windows.
       const apply = await runCli(
         ['apply-migrations', '--yes', '--non-interactive'],
         env,
-        180_000,
+        ORCHESTRATOR_CASCADE_MS,
       );
       if (apply.exitCode !== 0) {
-        // Dump for CI triage — local repro passes; this surfaces the
-        // Ubuntu-specific failure mode (probably env-related: BUN_INSTALL,
-        // HOME-relative path, or a PGLite WASM quirk).
+        // Dump for triage. The two failure shapes seen so far: exit 137 (the
+        // runCli killer fired — a real hang), and exit 1 from an orchestrator
+        // phase aborting on its OWN internal timeout, which no budget here
+        // can influence. The stderr dump is what tells them apart.
         console.error('--- apply-migrations stdout ---\n' + apply.stdout);
         console.error('--- apply-migrations stderr ---\n' + apply.stderr);
         console.error('--- init stdout ---\n' + init.stdout);
@@ -142,17 +140,27 @@ describe('apply-migrations on fresh PGLite (v0.36.1.x #1100)', () => {
 
       // Step 3: re-run is idempotent — "All migrations up to date" must exit
       // 0, not fall through to implicit non-zero (the #1062 fix path).
-      const second = await runCli(['apply-migrations', '--yes', '--non-interactive'], env, 90_000);
+      const second = await runCli(
+        ['apply-migrations', '--yes', '--non-interactive'],
+        env,
+        PGLITE_BOOTSTRAP_MS,
+      );
       expect(second.exitCode).toBe(0);
       expect(second.stdout + second.stderr).toMatch(/All migrations up to date|up to date/);
 
-      // Step 4: --list exits 0 (third leg of the #1062 contract).
-      const list = await runCli(['apply-migrations', '--list'], env, 60_000);
+      // Step 4: --list exits 0 (third leg of the #1062 contract). Reads the
+      // already-built brain — no schema replay, so the cheap budget applies.
+      const list = await runCli(['apply-migrations', '--list'], env, CLI_SPAWN_MS);
       expect(list.exitCode).toBe(0);
       expect(list.stdout + list.stderr).toMatch(/applied|pending|migration/i);
     } finally {
       try { rmSync(home, { recursive: true, force: true }); } catch { /* best effort */ }
       shim.cleanup();
     }
-  }, 480_000);
+    // Derived, not a hand-picked constant: the test-level cap must sit ABOVE
+    // the sum of the four per-step budgets, or it fires first and you lose the
+    // per-step diagnostic that says WHICH spawn hung. Mirror the steps exactly
+    // — bootstrap (init) + cascade (apply) + bootstrap (re-run) + cli (--list).
+    // Deriving it also means a GBRAIN_TEST_* override scales this automatically.
+  }, PGLITE_BOOTSTRAP_MS * 2 + ORCHESTRATOR_CASCADE_MS + CLI_SPAWN_MS + 60_000);
 });

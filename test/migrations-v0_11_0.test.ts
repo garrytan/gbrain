@@ -15,7 +15,16 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync
 import { join } from 'path';
 import { tmpdir } from 'os';
 
-import { __testing, type PendingHostWorkEntry } from '../src/commands/migrations/v0_11_0.ts';
+import {
+  __testing,
+  resolveSmokeTimeoutMs,
+  DEFAULT_SMOKE_TIMEOUT_MS,
+  type PendingHostWorkEntry,
+} from '../src/commands/migrations/v0_11_0.ts';
+import {
+  resolveMigrateCliTimeoutMs,
+  DEFAULT_MIGRATE_CLI_TIMEOUT_MS,
+} from '../src/commands/migrations/v0_12_0.ts';
 
 const {
   injectAgentsMdMarker,
@@ -300,5 +309,77 @@ describe('BUILTIN_HANDLERS — lock the canonical set', () => {
     expect([...BUILTIN_HANDLERS].sort()).toEqual([
       'autopilot-cycle', 'backlinks', 'embed', 'extract', 'import', 'lint', 'sync',
     ]);
+  });
+});
+
+describe('phase-B smoke timeout knob', () => {
+  const KEY = 'GBRAIN_MIGRATE_SMOKE_TIMEOUT_MS';
+  let orig: string | undefined;
+
+  beforeEach(() => { orig = process.env[KEY]; });
+  afterEach(() => {
+    if (orig === undefined) delete process.env[KEY];
+    else process.env[KEY] = orig;
+  });
+
+  test('defaults to 300s — sized off measured Windows wall-clock, not the old 30s', () => {
+    delete process.env[KEY];
+    expect(resolveSmokeTimeoutMs()).toBe(DEFAULT_SMOKE_TIMEOUT_MS);
+    // The regression this guards: `gbrain jobs smoke` measured 84.3s/54.9s/53.1s
+    // end-to-end on Windows + PGLite, so anything at or under 90s aborts the
+    // whole v0.11.0 cascade on a machine that is working correctly.
+    expect(DEFAULT_SMOKE_TIMEOUT_MS).toBeGreaterThan(90_000);
+  });
+
+  test('env override wins', () => {
+    process.env[KEY] = '12345';
+    expect(resolveSmokeTimeoutMs()).toBe(12345);
+  });
+
+  test('junk and non-positive values fall back to the default', () => {
+    for (const bad of ['', 'abc', '0', '-1', 'NaN']) {
+      process.env[KEY] = bad;
+      expect(resolveSmokeTimeoutMs()).toBe(DEFAULT_SMOKE_TIMEOUT_MS);
+    }
+  });
+
+  test('resolves per call, not at import — a later env write still takes effect', () => {
+    delete process.env[KEY];
+    expect(resolveSmokeTimeoutMs()).toBe(DEFAULT_SMOKE_TIMEOUT_MS);
+    process.env[KEY] = '777';
+    expect(resolveSmokeTimeoutMs()).toBe(777);
+  });
+});
+
+describe('v0.12.0 short-CLI-probe timeout knob', () => {
+  const KEY = 'GBRAIN_MIGRATE_CLI_TIMEOUT_MS';
+  let orig: string | undefined;
+
+  beforeEach(() => { orig = process.env[KEY]; });
+  afterEach(() => {
+    if (orig === undefined) delete process.env[KEY];
+    else process.env[KEY] = orig;
+  });
+
+  test('default clears the measured Windows floor for both probes', () => {
+    delete process.env[KEY];
+    expect(resolveMigrateCliTimeoutMs()).toBe(DEFAULT_MIGRATE_CLI_TIMEOUT_MS);
+    // `gbrain config get auto_link` measured 15.2s against its old 10s cap, so
+    // it ALWAYS failed on Windows and the user's auto_link setting was ignored.
+    // `gbrain stats` measured 17.7s against 30s — fine idle, over it under load,
+    // which made phase E fail and marked the migration PARTIAL.
+    expect(DEFAULT_MIGRATE_CLI_TIMEOUT_MS).toBeGreaterThan(60_000);
+  });
+
+  test('env override wins', () => {
+    process.env[KEY] = '4242';
+    expect(resolveMigrateCliTimeoutMs()).toBe(4242);
+  });
+
+  test('junk and non-positive values fall back to the default', () => {
+    for (const bad of ['', 'abc', '0', '-5', 'NaN']) {
+      process.env[KEY] = bad;
+      expect(resolveMigrateCliTimeoutMs()).toBe(DEFAULT_MIGRATE_CLI_TIMEOUT_MS);
+    }
   });
 });

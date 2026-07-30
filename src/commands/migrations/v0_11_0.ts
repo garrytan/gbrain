@@ -79,10 +79,42 @@ async function phaseASchema(opts: OrchestratorOpts): Promise<OrchestratorPhaseRe
 // Phase B — Smoke
 // -----------------------------------------------------------------------
 
+/**
+ * Wall-clock guard for the phase-B smoke subprocess.
+ *
+ * The 30s this used to hardcode is not survivable on Windows + PGLite. The
+ * smoke's OWN work is fast — it self-reports `SMOKE PASS — Minions healthy in
+ * 3.3s` — but that number excludes everything around it: `bun` cold start
+ * (measured 11.3s and 28.9s on two back-to-back spawns) plus opening a
+ * file-backed PGLite brain, which is a WASM Postgres `initdb`/attach. End-to-
+ * end wall-clock over three runs: 84.3s / 54.9s / 53.1s. Every one of them
+ * aborted the whole v0.11.0 cascade at 30s with
+ * `Phase B (smoke) failed: spawnSync ... ETIMEDOUT`, AFTER the smoke had
+ * already printed SMOKE PASS — so an operator saw a passing smoke and a
+ * failed migration in the same output.
+ *
+ * 300s is ~3.5x the slowest observed. It is deliberately far above the
+ * sibling phases' 30-60s: those don't pay a cold PGLite open. This is an
+ * abort-the-cascade backstop for a genuinely wedged smoke, not a latency
+ * target — a wedged subprocess never returns and still trips it.
+ */
+export const DEFAULT_SMOKE_TIMEOUT_MS = 300_000;
+
+/** Resolved per call (not at import) so the env knob works regardless of
+ *  module-load order — matches `resolveChunkerTimeoutMs` in core/chunkers/code.ts. */
+export function resolveSmokeTimeoutMs(): number {
+  const raw = process.env.GBRAIN_MIGRATE_SMOKE_TIMEOUT_MS;
+  if (raw) {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return DEFAULT_SMOKE_TIMEOUT_MS;
+}
+
 function phaseBSmoke(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'smoke', status: 'skipped', detail: 'dry-run' };
   try {
-    execSync('gbrain jobs smoke', { stdio: 'inherit', timeout: 30_000, env: process.env });
+    execSync('gbrain jobs smoke', { stdio: 'inherit', timeout: resolveSmokeTimeoutMs(), env: process.env });
     return { name: 'smoke', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
