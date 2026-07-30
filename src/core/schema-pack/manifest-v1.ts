@@ -63,6 +63,13 @@ const ExtractableSpecSchema = z.object({
   /** Pack-supplied LLM prompt template. Plain text; sent to gateway.chat()
    * with NO conversation context per the v0.41.23 threat model. */
   prompt_template: z.string().optional(),
+  /** Pack-supplied INLINE extraction system prompt (the prompt text itself,
+   * not a file path). Unlike `prompt_template` - which is a pack-root-relative
+   * file unreadable on bundled / no-on-disk-checkout deploys - this is usable
+   * on a read-only Cloud Run brain. When set, the `extract_atoms` cycle phase
+   * uses it as the per-type system prompt in place of the built-in
+   * EXTRACT_PROMPT when distilling pages of this type. */
+  prompt_inline: z.string().optional(),
   /** Relative path within pack root to a JSONL fixture corpus. Validated
    * against path traversal at parse + load time. */
   fixture_corpus: z.string().optional(),

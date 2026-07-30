@@ -145,7 +145,7 @@ export interface ExtractAtomsOpts {
    * Mirrors _transcripts shape. `undefined` triggers discovery; `[]`
    * explicitly suppresses page discovery (for transcript-only tests).
    */
-  _pages?: Array<{ slug: string; content: string; contentHash: string }>;
+  _pages?: Array<{ slug: string; content: string; contentHash: string; type?: string }>;
   /**
    * v0.41.19.0 (T3): cooperative yield hook fired from inside the work
    * loop on a 30s throttle AND immediately after every `await chat()`
@@ -214,6 +214,43 @@ interface DiscoveredPage {
   slug: string;
   content: string;
   contentHash: string;
+  /** Page type — drives per-type pack prompt resolution in the work loop. */
+  type: string;
+}
+
+/**
+ * v0.42 — resolve the active pack's per-type extraction prompts for this phase.
+ * `promptByType`: per-type `extractable.prompt_inline`, when declared. The work
+ * loop uses it as the system prompt for pages of that type, falling back to the
+ * built-in EXTRACT_PROMPT. This is the per-vertical "secret sauce" seam — the
+ * same `prompt_inline` the facts backstop already reads.
+ *
+ * Type discovery itself is upstream's `resolveExtractableTypes` (adopted in the
+ * v0.42.63.0 merge; it excludes synthesis outputs), so we no longer compute a
+ * type union here.
+ *
+ * Best-effort: any pack-resolution failure falls back to the built-in prompt.
+ */
+async function resolveExtractableContext(): Promise<{
+  promptByType: Map<string, string>;
+}> {
+  const promptByType = new Map<string, string>();
+  try {
+    const { loadActivePack } = await import('../schema-pack/load-active.ts');
+    const { loadConfig } = await import('../config.ts');
+    const { extractableTypesFromPack, getInlineExtractionPrompt } = await import(
+      '../schema-pack/extractable.ts'
+    );
+    const resolved = await loadActivePack({ cfg: loadConfig(), remote: false });
+    const packTypes = extractableTypesFromPack(resolved.manifest);
+    for (const t of packTypes) {
+      const inline = getInlineExtractionPrompt(resolved.manifest, t);
+      if (inline) promptByType.set(t, inline);
+    }
+    return { promptByType };
+  } catch {
+    return { promptByType };
+  }
 }
 
 /**
@@ -241,12 +278,14 @@ export async function discoverExtractablePages(
   engine: BrainEngine,
   sourceId: string,
   affectedSlugs?: string[],
+  types: string[] = [...LEGACY_EXTRACTABLE_TYPES],
 ): Promise<DiscoveredPage[]> {
   const hasFilter = Array.isArray(affectedSlugs) && affectedSlugs.length > 0;
   const sql = `
     SELECT p.slug,
            p.compiled_truth,
-           p.content_hash
+           p.content_hash,
+           p.type
     FROM pages p
     WHERE p.source_id = $1
       AND p.type = ANY($2::text[])
@@ -282,11 +321,13 @@ export async function discoverExtractablePages(
       slug: string;
       compiled_truth: string;
       content_hash: string;
+      type: string;
     }>(sql, params);
     return rows.map((r) => ({
       slug: r.slug,
       content: r.compiled_truth,
       contentHash: r.content_hash,
+      type: r.type,
     }));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -456,7 +497,11 @@ export async function runPhaseExtractAtoms(
   // 1b. Get pages (test seam OR production discovery).
   //     _pages === undefined triggers discovery; _pages: [] suppresses it
   //     deliberately (transcript-only regression tests).
-  let pages: Array<{ slug: string; content: string; contentHash: string }>;
+  // Resolve the active pack's per-type prompts once (the per-item system prompt
+  // below reads from this). Type discovery is upstream's resolveExtractableTypes.
+  const { promptByType } = await resolveExtractableContext();
+
+  let pages: Array<{ slug: string; content: string; contentHash: string; type?: string }>;
   if (opts._pages !== undefined) {
     pages = opts._pages;
   } else {
@@ -487,7 +532,7 @@ export async function runPhaseExtractAtoms(
   //    as a brain page).
   type WorkItem =
     | { kind: 'transcript'; filePath: string; content: string; contentHash: string }
-    | { kind: 'page'; slug: string; content: string; contentHash: string };
+    | { kind: 'page'; slug: string; content: string; contentHash: string; type: string };
 
   const seenHashes = new Set<string>();
   const work: WorkItem[] = [];
@@ -499,7 +544,13 @@ export async function runPhaseExtractAtoms(
   for (const p of pages) {
     if (seenHashes.has(p.contentHash)) { duplicatesSkipped++; continue; }
     seenHashes.add(p.contentHash);
-    work.push({ kind: 'page', ...p });
+    work.push({
+      kind: 'page',
+      slug: p.slug,
+      content: p.content,
+      contentHash: p.contentHash,
+      type: p.type ?? '',
+    });
   }
 
   // Phase-level no-op: nothing to extract today.
@@ -587,10 +638,17 @@ export async function runPhaseExtractAtoms(
     }
 
     const originLabel = item.kind === 'transcript' ? item.filePath : item.slug;
+    // Per-vertical distillation: a page whose type declares an inline
+    // extraction prompt in the active pack uses it as the system prompt.
+    // Transcripts and types with no pack prompt fall back to EXTRACT_PROMPT.
+    const systemPrompt =
+      item.kind === 'page' ? (promptByType.get(item.type) ?? EXTRACT_PROMPT) : EXTRACT_PROMPT;
     try {
       const result = await chat({
         model: extractModel,
-        system: EXTRACT_PROMPT,
+        // Fork: per-vertical prompt (resolved above) rather than the bare
+        // EXTRACT_PROMPT upstream passes here.
+        system: systemPrompt,
         messages: [
           {
             role: 'user',

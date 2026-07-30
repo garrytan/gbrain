@@ -106,6 +106,23 @@ export function getExtractableSpec(
 }
 
 /**
+ * v0.42 — Return the pack-supplied INLINE extraction prompt for a type, or
+ * null when none is declared. The wired counterpart to `prompt_template`
+ * (a file path, unreadable on bundled / no-on-disk-checkout deploys): the
+ * `extract_atoms` cycle phase uses this string as the per-type system prompt
+ * in place of the built-in EXTRACT_PROMPT when distilling pages of this type.
+ * Empty/whitespace prompts resolve to null so a blank field can't silently
+ * blank out extraction.
+ */
+export function getInlineExtractionPrompt(
+  pack: Pick<SchemaPackManifest, 'page_types'>,
+  type: string,
+): string | null {
+  const inline = getExtractableSpec(pack, type)?.prompt_inline?.trim();
+  return inline && inline.length > 0 ? inline : null;
+}
+
+/**
  * v0.42 — Forward-compat runtime gate for D-EXTRACT-37. A pack-supplied
  * `verifier_path` field is RESERVED in v0.42 — accepted at parse time,
  * REFUSED at runtime. Call this anywhere a runtime would attempt to load
