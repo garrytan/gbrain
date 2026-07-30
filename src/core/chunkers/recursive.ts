@@ -22,6 +22,7 @@
 
 import { countCJKAwareWords, CJK_SENTENCE_DELIMITERS, CJK_CLAUSE_DELIMITERS } from '../cjk.ts';
 import { estimateEmbedTokens, DEFAULT_MAX_CHUNK_TOKENS } from './token-estimate.ts';
+import { safeSplitIndex } from '../text-safe.ts';
 
 /**
  * Markdown chunker version. Folded into the per-page chunker_version column
@@ -132,32 +133,75 @@ export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
  * Overlap is min(500, window/10) so successive windows preserve semantic
  * continuity across the cut.
  *
- * v0.32.7. BMP-only safe (does not split astral surrogate pairs in practice
- * because declared CJK ranges are all BMP; widening to astral Han support
- * is a v0.33+ follow-up that requires Array.from-style codepoint iteration).
+ * v0.32.7. Surrogate-safe: the window is derived from measured density and so
+ * has arbitrary parity, which a raw slice would use to cut an astral pair in
+ * half — every boundary goes through safeSplitIndex. (The former "BMP-only
+ * safe" note rested on maxChars=6000 and stride=5500 both being even;
+ * deriving the window from density retired that guarantee.)
  */
-function capByChars(text: string, maxChars: number): string[] {
+function capByChars(text: string, maxChars: number, knownEst?: number): string[] {
   if (text.length === 0) return [];
-  const est = estimateEmbedTokens(text);
+  const est = knownEst ?? probeEmbedTokens(text);
   const window = est <= DEFAULT_MAX_CHUNK_TOKENS
     ? maxChars
     : Math.max(1, Math.min(maxChars, Math.floor((text.length * DEFAULT_MAX_CHUNK_TOKENS) / est)));
-  if (text.length <= window) return [text];
+  if (text.length <= window) {
+    // Emitting the text whole is the one path that skips the per-slice
+    // re-check below, so a PROBED estimate has to be confirmed exactly first:
+    // a sparse ASCII head can under-read a dense CJK tail.
+    if (knownEst !== undefined || text.length <= DENSITY_PROBE_CHARS) return [text];
+    const exact = estimateEmbedTokens(text);
+    return exact <= DEFAULT_MAX_CHUNK_TOKENS ? [text] : capByChars(text, maxChars, exact);
+  }
+  // The stride keeps its nominal window-minus-overlap value. Evening the
+  // windows out (as the header-budget hard split does) is WRONG here: that
+  // splitter partitions, this one overlaps, so shrinking the stride to land
+  // the last window flush against the end collapses successive windows into
+  // near-duplicates — measured on scripts/test-weights.json, two 6,047-char
+  // chunks differing by 47 chars. A short final window is the cheaper end of
+  // that trade and is the behavior this loop has always had.
   const overlap = Math.min(500, Math.floor(window / 10));
   const stride = Math.max(1, window - overlap);
   const out: string[] = [];
-  for (let i = 0; i < text.length; i += stride) {
-    const slice = text.slice(i, i + window).trim();
+  let i = 0;
+  while (i < text.length) {
+    const end = safeSplitIndex(text, Math.min(text.length, i + window));
+    const slice = text.slice(i, end).trim();
     if (slice.length > 0) {
-      if (estimateEmbedTokens(slice) > DEFAULT_MAX_CHUNK_TOKENS) {
-        out.push(...capByChars(slice, maxChars)); // denser than the text average — re-derive locally
+      const sliceEst = estimateEmbedTokens(slice);
+      if (sliceEst > DEFAULT_MAX_CHUNK_TOKENS) {
+        // Denser than the text average — re-derive locally, reusing the exact
+        // figure just measured (it also guarantees window < slice.length, so
+        // the recursion strictly shrinks).
+        out.push(...capByChars(slice, maxChars, sliceEst));
       } else {
         out.push(slice);
       }
     }
-    if (i + window >= text.length) break;
+    if (end >= text.length) break;
+    const next = safeSplitIndex(text, Math.min(text.length, i + stride));
+    i = next > i ? next : i + 1;
   }
   return out;
+}
+
+/**
+ * Chars measured to derive the window. estimateEmbedTokens is SUPERLINEAR on
+ * CJK — measured on this repo's encoder: 2K chars 11ms, 6K 99ms, 20K 1,138ms —
+ * and capByChars runs on every chunk, so measuring the whole text up front
+ * dominates the chunker (the 20K-char whitespace-less CJK cap test went from
+ * an O(1) length compare to a 6.7s run, past bun's 5s per-test limit, on a
+ * cold encoder). The window only needs an approximate density: every emitted
+ * slice is re-measured exactly, denser-than-average slices recurse on that
+ * exact figure, and the one path that emits without a re-check confirms
+ * exactly first — so the cap holds regardless of what the probe reads.
+ */
+const DENSITY_PROBE_CHARS = 2000;
+
+function probeEmbedTokens(text: string): number {
+  if (text.length <= DENSITY_PROBE_CHARS) return estimateEmbedTokens(text);
+  const head = text.slice(0, safeSplitIndex(text, DENSITY_PROBE_CHARS));
+  return Math.ceil((estimateEmbedTokens(head) * text.length) / head.length);
 }
 
 function recursiveSplit(text: string, level: number, target: number): string[] {

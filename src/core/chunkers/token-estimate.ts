@@ -86,7 +86,36 @@ const CJK_CHARS_G = new RegExp(`[${CJK_SLUG_CHARS}]`, 'g');
 export function estimateEmbedTokens(text: string): number {
   const cjk = (text.match(CJK_CHARS_G) || []).length;
   if (cjk === 0) return estimateTokens(text);
+  return Math.max(estimateTokens(text), weightedTokens(text, cjk));
+}
+
+/** The per-char-class overestimate half of estimateEmbedTokens. Linear (two
+ *  regex scans), unlike the cl100k encoder — see estimateEmbedTokensCeiling. */
+function weightedTokens(text: string, cjk: number): number {
   const ws = (text.match(/\s/g) || []).length;
-  const weighted = Math.ceil(cjk + (text.length - cjk - ws) * 0.75 + ws * 0.1);
-  return Math.max(estimateTokens(text), weighted);
+  return Math.ceil(cjk + (text.length - cjk - ws) * 0.75 + ws * 0.1);
+}
+
+/**
+ * Upper bound on what `text` contributes to `estimateEmbedTokens(text + rest)`
+ * for ANY `rest` — i.e. the figure to RESERVE when a fragment will be glued
+ * onto a body whose script mix is not yet known.
+ *
+ * estimateEmbedTokens is super-additive across a mixed-script join. It only
+ * switches to the weighted branch when the text it is handed contains CJK, so
+ * a pure-ASCII fragment measured ALONE costs cl100k (a 59-char structured
+ * chunk header = 17 tokens) while the SAME fragment inside a chunk whose body
+ * contains CJK costs ~0.75/char on the weighted branch (~42 tokens). Reserving
+ * the standalone figure under-counts ~2.5x, and capOversizedChunks then emits
+ * body-capped pieces that re-emerge over the cap once the header is re-added
+ * (measured: 2,006- and 2,023-token chunks on src/core/migrate.ts against a
+ * 2,000 cap, where the pre-#3564 chunker emitted none).
+ *
+ * Taking max(cl100k, weighted) unconditionally is a true bound because the
+ * weighted form is additive per char class, so weighted(a + b) <=
+ * weighted(a) + weighted(b), and cl100k does not gain tokens across the
+ * header's trailing blank line.
+ */
+export function estimateEmbedTokensCeiling(text: string): number {
+  return Math.max(estimateTokens(text), weightedTokens(text, (text.match(CJK_CHARS_G) || []).length));
 }

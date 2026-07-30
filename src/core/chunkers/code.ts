@@ -20,7 +20,8 @@
 
 import { chunkText as recursiveChunk } from './recursive.ts';
 import { buildQualifiedName } from './qualified-names.ts';
-import { estimateTokens, estimateEmbedTokens, DEFAULT_MAX_CHUNK_TOKENS } from './token-estimate.ts';
+import { estimateTokens, estimateEmbedTokens, estimateEmbedTokensCeiling, DEFAULT_MAX_CHUNK_TOKENS } from './token-estimate.ts';
+import { safeSplitIndex } from '../text-safe.ts';
 
 // Both estimators moved to token-estimate.ts (#3477 follow-up) so
 // recursive.ts can share them without an import cycle. Re-exported here:
@@ -860,9 +861,14 @@ function capOversizedChunks(
     // re-added header costs tokens too — budget for it, or every piece split
     // to exactly `cap` re-emerges a header's-worth over it (measured: a 2,000
     // cap emitted 2,011-token fence chunks when the body alone was capped).
+    // The reservation must be an UPPER bound on the header's contribution:
+    // estimateEmbedTokens is super-additive across a mixed-script join, so the
+    // header's standalone cl100k figure under-counts ~2.5x once the body
+    // contains CJK and the weighted branch takes over (see
+    // estimateEmbedTokensCeiling).
     const headerMatch = c.text.match(/^\[[^\]]+\] [^\n]+\n\n/);
     const body = headerMatch ? c.text.slice(headerMatch[0].length) : c.text;
-    const bodyCap = Math.max(1, cap - (headerMatch ? estimateEmbedTokens(headerMatch[0]) : 0));
+    const bodyCap = Math.max(1, cap - (headerMatch ? estimateEmbedTokensCeiling(headerMatch[0]) : 0));
     for (const piece of splitToTokenBudget(body, bodyCap, opts)) {
       if (!piece.trim()) continue;
       out.push(buildChunk({
@@ -907,7 +913,46 @@ function splitToTokenBudget(text: string, cap: number, opts: CodeChunkOptions): 
       out.push(p); // 1-char floor on a tiny cap — nothing left to split
       return;
     }
-    for (let i = 0; i < p.length; i += charBudget) hardSplit(p.slice(i, i + charBudget));
+    // Even out the slice width instead of striding by charBudget and shedding
+    // `p.length mod charBudget` as a standalone piece at EVERY recursion
+    // level: buildChunk re-headers each remainder into its own embedding row,
+    // so a 14.4K fence emitted 5 chunks of 50-86 chars (and, deeper in the
+    // recursion, 3-char slivers) alongside its real content. Evening is free —
+    // the piece count is ceil(length / charBudget) either way, so the same
+    // content is spread over the same number of chunks — and width <=
+    // charBudget by construction, so the token budget still holds.
+    //
+    // The width is re-derived from what REMAINS on every step rather than
+    // fixed up front, because safeSplitIndex can back a cut off by up to two
+    // units and a fixed width lets that drift accumulate into a tail runt
+    // (measured on an all-astral blob: 4-unit chunks trailing 724-unit ones).
+    let i = 0;
+    while (i < p.length) {
+      const remaining = p.length - i;
+      const partsLeft = Math.ceil(remaining / charBudget);
+      // `i === 0` cannot recurse on the whole piece — charBudget < p.length is
+      // checked above, so partsLeft >= 2 on the first step. The guard keeps a
+      // degenerate budget from looping instead of terminating.
+      if (partsLeft <= 1) {
+        if (i === 0) out.push(p);
+        else hardSplit(p.slice(i));
+        return;
+      }
+      // The budget is derived from measured density, so it has arbitrary
+      // parity: a raw slice at `i + width` orphans a UTF-16 surrogate half.
+      // safeSplitIndex backs the cut off a pair (#2011 — a lone surrogate is
+      // rejected by Postgres inside a ::jsonb cast and aborts the whole batch).
+      const end = safeSplitIndex(p, i + Math.ceil(remaining / partsLeft));
+      if (end <= i) {
+        // Degenerate width (a 1-char budget backing off a surrogate pair) —
+        // emit rather than drop, and never re-enter on the same string.
+        if (i === 0) out.push(p);
+        else hardSplit(p.slice(i));
+        return;
+      }
+      hardSplit(p.slice(i, end));
+      i = end;
+    }
   };
   for (const piece of pieces) hardSplit(piece);
   return out;
