@@ -140,6 +140,22 @@ This is the compiled truth.
     expect((engine as any)._calls.length).toBe(0);
   });
 
+  test('rejects code files containing NUL bytes before database writes', async () => {
+    const filePath = join(TMP, 'binary-fixture.ts');
+    writeFileSync(filePath, Buffer.concat([
+      Buffer.from('const fixture = "text";\n'.repeat(500)),
+      Buffer.from([0]),
+      Buffer.from('binary tail'),
+    ]));
+
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'src/binary-fixture.ts', { noEmbed: true });
+
+    expect(result.status).toBe('skipped');
+    expect(result.error).toContain('Content contains null bytes');
+    expect((engine as any)._calls.length).toBe(0);
+  });
+
   test('rejects frontmatter slug that does not match the file path', async () => {
     // In a shared brain where contributors can land PRs, this prevents a
     // poisoned notes/random.md from declaring `slug: people/elon` in its

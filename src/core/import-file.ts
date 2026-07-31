@@ -1157,6 +1157,9 @@ export async function importCodeFile(
   opts: { noEmbed?: boolean; force?: boolean; sourceId?: string } = {},
 ): Promise<ImportResult> {
   const slug = slugifyCodePath(relativePath);
+  if (content.indexOf('\0') !== -1) {
+    return { slug, status: 'skipped', chunks: 0, error: 'Content contains null bytes (likely binary corruption)' };
+  }
   const lang = detectCodeLanguage(relativePath) || 'unknown';
   const title = `${relativePath} (${lang})`;
   const sourceId = opts.sourceId;
