@@ -78,8 +78,11 @@ describe('protected-names', () => {
     expect(isProtectedJobName('SHELL')).toBe(false);
   });
   test('non-protected names pass through', () => {
-    expect(isProtectedJobName('sync')).toBe(false);
+    // NOT 'sync' or 'import' — both are protected (their handlers take a
+    // caller-supplied path). 'embed' and 'noop' are the honest examples of
+    // names an untrusted caller may submit.
     expect(isProtectedJobName('embed')).toBe(false);
+    expect(isProtectedJobName('noop')).toBe(false);
     expect(isProtectedJobName('')).toBe(false);
   });
 });
@@ -108,11 +111,20 @@ describe('MinionQueue.add protected-name guard', () => {
     expect(job.name).toBe('Shell');
     expect(job.status).toBe('waiting');
   });
-  // Regression: non-protected names unaffected (Codex iron-rule)
-  test('REGRESSION: add("sync", ...) without trusted arg still succeeds', async () => {
-    const job = await queue.add('sync', { full: true });
-    expect(job.name).toBe('sync');
+  // Regression: non-protected names unaffected (Codex iron-rule).
+  // Was add("sync", ...) until 'sync' itself became protected; the assertion
+  // is about the default path staying open, so it needs a name that is still
+  // outside PROTECTED_JOB_NAMES.
+  test('REGRESSION: add("noop", ...) without trusted arg still succeeds', async () => {
+    const job = await queue.add('noop', { full: true });
+    expect(job.name).toBe('noop');
     expect(job.status).toBe('waiting');
+  });
+  test('add("sync", ...) without trusted arg now throws (filesystem-reach guard)', async () => {
+    expect(queue.add('sync', { repoPath: '/etc' })).rejects.toThrow(/protected job name/);
+  });
+  test('add("import", ...) without trusted arg now throws (filesystem-reach guard)', async () => {
+    expect(queue.add('import', { dir: '/etc' })).rejects.toThrow(/protected job name/);
   });
   test('REGRESSION: trusted flag does NOT bypass empty-name check', async () => {
     expect(queue.add('', {}, undefined, { allowProtectedSubmit: true })).rejects.toThrow(/cannot be empty/);

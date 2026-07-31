@@ -1,3 +1,17 @@
+// Queue mechanics: CRUD, state machine, retry/backoff, stall detection,
+// parent/child, idempotency.
+//
+// 'noop' is the placeholder job name throughout. It used to be 'sync', which
+// only ever stood in for "some job name" — but 'sync' became a
+// PROTECTED_JOB_NAMES entry (its handler takes a caller-supplied repoPath, so
+// a remote admin caller could point it at any directory), and
+// MinionQueue.add rejects protected names without allowProtectedSubmit. These
+// tests are about queue behavior, not about trust, so the placeholder moved
+// to a name with no such gate rather than every call sprouting a trusted
+// argument that would quietly stop exercising the default path. The
+// protected-name guard itself is covered by
+// test/protected-names-import-sync.test.ts and test/minions-shell.test.ts.
+
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGlite } from '@electric-sql/pglite';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -29,8 +43,8 @@ beforeEach(async () => {
 
 describe('MinionQueue: CRUD', () => {
   test('add creates a job with waiting status', async () => {
-    const job = await queue.add('sync', { full: true });
-    expect(job.name).toBe('sync');
+    const job = await queue.add('noop', { full: true });
+    expect(job.name).toBe('noop');
     expect(job.status).toBe('waiting');
     expect(job.data).toEqual({ full: true });
     expect(job.queue).toBe('default');
@@ -57,14 +71,14 @@ describe('MinionQueue: CRUD', () => {
   });
 
   test('getJobs returns all jobs', async () => {
-    await queue.add('sync', {});
+    await queue.add('noop', {});
     await queue.add('embed', {});
     const jobs = await queue.getJobs();
     expect(jobs.length).toBe(2);
   });
 
   test('getJobs filters by status', async () => {
-    await queue.add('sync', {});
+    await queue.add('noop', {});
     const jobs = await queue.getJobs({ status: 'active' });
     expect(jobs.length).toBe(0);
     const waiting = await queue.getJobs({ status: 'waiting' });
@@ -72,7 +86,7 @@ describe('MinionQueue: CRUD', () => {
   });
 
   test('removeJob deletes terminal jobs', async () => {
-    const job = await queue.add('sync', {});
+    const job = await queue.add('noop', {});
     // Can't remove waiting job
     const removed = await queue.removeJob(job.id);
     expect(removed).toBe(false);
@@ -83,14 +97,14 @@ describe('MinionQueue: CRUD', () => {
   });
 
   test('removeJob rejects active jobs', async () => {
-    const job = await queue.add('sync', {});
+    const job = await queue.add('noop', {});
     const removed = await queue.removeJob(job.id);
     expect(removed).toBe(false); // waiting is not terminal
   });
 
   test('duplicate submit creates new row', async () => {
-    const j1 = await queue.add('sync', { full: true });
-    const j2 = await queue.add('sync', { full: true });
+    const j1 = await queue.add('noop', { full: true });
+    const j2 = await queue.add('noop', { full: true });
     expect(j1.id).not.toBe(j2.id);
   });
 });
@@ -99,8 +113,8 @@ describe('MinionQueue: CRUD', () => {
 
 describe('MinionQueue: State Machine', () => {
   test('waiting → active via claim', async () => {
-    const job = await queue.add('sync', {});
-    const claimed = await queue.claim('tok1', 30000, 'default', ['sync']);
+    const job = await queue.add('noop', {});
+    const claimed = await queue.claim('tok1', 30000, 'default', ['noop']);
     expect(claimed).not.toBeNull();
     expect(claimed!.id).toBe(job.id);
     expect(claimed!.status).toBe('active');
@@ -110,8 +124,8 @@ describe('MinionQueue: State Machine', () => {
   });
 
   test('active → completed via completeJob', async () => {
-    const job = await queue.add('sync', {});
-    await queue.claim('tok1', 30000, 'default', ['sync']);
+    const job = await queue.add('noop', {});
+    await queue.claim('tok1', 30000, 'default', ['noop']);
     const completed = await queue.completeJob(job.id, 'tok1', { pages: 42 });
     expect(completed!.status).toBe('completed');
     expect(completed!.result).toEqual({ pages: 42 });
@@ -120,8 +134,8 @@ describe('MinionQueue: State Machine', () => {
   });
 
   test('active → failed via failJob', async () => {
-    const job = await queue.add('sync', {});
-    await queue.claim('tok1', 30000, 'default', ['sync']);
+    const job = await queue.add('noop', {});
+    await queue.claim('tok1', 30000, 'default', ['noop']);
     const failed = await queue.failJob(job.id, 'tok1', 'timeout', 'dead');
     expect(failed!.status).toBe('dead');
     expect(failed!.error_text).toBe('timeout');
@@ -129,15 +143,15 @@ describe('MinionQueue: State Machine', () => {
   });
 
   test('failed → delayed (retry with backoff)', async () => {
-    const job = await queue.add('sync', {});
-    await queue.claim('tok1', 30000, 'default', ['sync']);
+    const job = await queue.add('noop', {});
+    await queue.claim('tok1', 30000, 'default', ['noop']);
     const delayed = await queue.failJob(job.id, 'tok1', 'timeout', 'delayed', 5000);
     expect(delayed!.status).toBe('delayed');
     expect(delayed!.delay_until).not.toBeNull();
   });
 
   test('delayed → waiting (promote)', async () => {
-    const job = await queue.add('sync', {}, { delay: 1 }); // 1ms delay
+    const job = await queue.add('noop', {}, { delay: 1 }); // 1ms delay
     expect(job.status).toBe('delayed');
     await new Promise(r => setTimeout(r, 10));
     const promoted = await queue.promoteDelayed();
@@ -147,8 +161,8 @@ describe('MinionQueue: State Machine', () => {
   });
 
   test('failed → dead (exhausted attempts)', async () => {
-    const job = await queue.add('sync', {}, { max_attempts: 1 });
-    await queue.claim('tok1', 30000, 'default', ['sync']);
+    const job = await queue.add('noop', {}, { max_attempts: 1 });
+    await queue.claim('tok1', 30000, 'default', ['noop']);
     const failed = await queue.failJob(job.id, 'tok1', 'error', 'dead');
     expect(failed!.status).toBe('dead');
   });
@@ -204,10 +218,10 @@ describe('calculateBackoff', () => {
 
 describe('MinionQueue: Stall Detection', () => {
   test('detect stalled job (lock_until expired)', async () => {
-    const job = await queue.add('sync', {});
+    const job = await queue.add('noop', {});
     // Set max_stalled=2 so first stall requeues (0+1 < 2)
     await engine.executeRaw('UPDATE minion_jobs SET max_stalled = 2 WHERE id = $1', [job.id]);
-    await queue.claim('tok1', 30000, 'default', ['sync']);
+    await queue.claim('tok1', 30000, 'default', ['noop']);
     // Force lock_until to the past
     await engine.executeRaw(
       "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
@@ -220,12 +234,12 @@ describe('MinionQueue: Stall Detection', () => {
   });
 
   test('stall counter increments and eventually dead-letters', async () => {
-    const job = await queue.add('sync', {}, { max_attempts: 3 });
+    const job = await queue.add('noop', {}, { max_attempts: 3 });
     // Set max_stalled=3 to see multiple requeues before dead
     await engine.executeRaw('UPDATE minion_jobs SET max_stalled = 3 WHERE id = $1', [job.id]);
 
     // First stall: counter 0+1=1 < 3, requeued
-    await queue.claim('tok1', 30000, 'default', ['sync']);
+    await queue.claim('tok1', 30000, 'default', ['noop']);
     await engine.executeRaw(
       "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
       [job.id]
@@ -235,7 +249,7 @@ describe('MinionQueue: Stall Detection', () => {
     expect(r1.requeued[0].stalled_counter).toBe(1);
 
     // Second stall: counter 1+1=2 < 3, requeued
-    await queue.claim('tok2', 30000, 'default', ['sync']);
+    await queue.claim('tok2', 30000, 'default', ['noop']);
     await engine.executeRaw(
       "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
       [job.id]
@@ -244,7 +258,7 @@ describe('MinionQueue: Stall Detection', () => {
     expect(r2.requeued.length).toBe(1);
 
     // Third stall: counter 2+1=3 >= 3, dead-lettered
-    await queue.claim('tok3', 30000, 'default', ['sync']);
+    await queue.claim('tok3', 30000, 'default', ['noop']);
     await engine.executeRaw(
       "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
       [job.id]
@@ -256,9 +270,9 @@ describe('MinionQueue: Stall Detection', () => {
 
   test('max_stalled → dead', async () => {
     // max_stalled=0 means first stall = dead immediately (0+1 >= 0 is always true)
-    const job = await queue.add('sync', {});
+    const job = await queue.add('noop', {});
     await engine.executeRaw('UPDATE minion_jobs SET max_stalled = 0 WHERE id = $1', [job.id]);
-    await queue.claim('tok1', 30000, 'default', ['sync']);
+    await queue.claim('tok1', 30000, 'default', ['noop']);
     await engine.executeRaw(
       "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
       [job.id]
@@ -274,10 +288,10 @@ describe('MinionQueue: Stall Detection', () => {
 
 describe('MinionQueue: #1737 attempt accounting on dead-letter', () => {
   test('wall-clock dead-letter increments attempts_made (no more 0/N (started:M))', async () => {
-    const job = await queue.add('sync', {}, { max_attempts: 2 });
+    const job = await queue.add('noop', {}, { max_attempts: 2 });
     // Per-job timeout so the wall-clock threshold is timeout_ms * 2 = 2s.
     await engine.executeRaw('UPDATE minion_jobs SET timeout_ms = 1000 WHERE id = $1', [job.id]);
-    await queue.claim('tok1', 30000, 'default', ['sync']);
+    await queue.claim('tok1', 30000, 'default', ['noop']);
     expect((await queue.getJob(job.id))!.attempts_made).toBe(0); // bug repro: started but not made
 
     // Force cumulative wall-clock past timeout_ms * 2.
@@ -296,9 +310,9 @@ describe('MinionQueue: #1737 attempt accounting on dead-letter', () => {
   });
 
   test('wall-clock dead-letter is terminal — does NOT retry even with attempts remaining', async () => {
-    const job = await queue.add('sync', {}, { max_attempts: 5 });
+    const job = await queue.add('noop', {}, { max_attempts: 5 });
     await engine.executeRaw('UPDATE minion_jobs SET timeout_ms = 1000 WHERE id = $1', [job.id]);
-    await queue.claim('tok1', 30000, 'default', ['sync']);
+    await queue.claim('tok1', 30000, 'default', ['noop']);
     await engine.executeRaw(
       "UPDATE minion_jobs SET started_at = now() - interval '10 seconds' WHERE id = $1",
       [job.id]
@@ -311,11 +325,11 @@ describe('MinionQueue: #1737 attempt accounting on dead-letter', () => {
   });
 
   test('stall dead-letter increments attempts_made; requeue does NOT', async () => {
-    const job = await queue.add('sync', {}, { max_attempts: 3 });
+    const job = await queue.add('noop', {}, { max_attempts: 3 });
     await engine.executeRaw('UPDATE minion_jobs SET max_stalled = 2 WHERE id = $1', [job.id]);
 
     // First stall: requeued, attempts_made stays 0 (lease-loss recovery, not an app attempt).
-    await queue.claim('tok1', 30000, 'default', ['sync']);
+    await queue.claim('tok1', 30000, 'default', ['noop']);
     await engine.executeRaw(
       "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
       [job.id]
@@ -325,7 +339,7 @@ describe('MinionQueue: #1737 attempt accounting on dead-letter', () => {
     expect(r1.requeued[0].attempts_made).toBe(0);
 
     // Second stall: dead-lettered, attempts_made now increments.
-    await queue.claim('tok2', 30000, 'default', ['sync']);
+    await queue.claim('tok2', 30000, 'default', ['noop']);
     await engine.executeRaw(
       "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
       [job.id]
@@ -376,7 +390,7 @@ describe('MinionQueue: #1737 per-handler default timeout', () => {
   });
 
   test('short handler keeps null timeout_ms (tight wall-clock default applies)', async () => {
-    const job = await queue.add('sync', {});
+    const job = await queue.add('noop', {});
     expect(job.timeout_ms).toBeNull();
   });
 });
@@ -490,7 +504,7 @@ describe('MinionQueue: v0.13.1 live-queue rescue regression (#219)', () => {
 describe('MinionQueue: Dependencies', () => {
   test('parent waits for child', async () => {
     const parent = await queue.add('enrich', {});
-    const child = await queue.add('sync', {}, { parent_job_id: parent.id });
+    const child = await queue.add('noop', {}, { parent_job_id: parent.id });
     // add() now flips parent to 'waiting-children' atomically; child is 'waiting'.
     const parentAfterAdd = await queue.getJob(parent.id);
     expect(parentAfterAdd!.status).toBe('waiting-children');
@@ -510,7 +524,7 @@ describe('MinionQueue: Dependencies', () => {
 
   test('child fail → fail_parent', async () => {
     const parent = await queue.add('enrich', {});
-    await queue.add('sync', {}, { parent_job_id: parent.id, on_child_fail: 'fail_parent' });
+    await queue.add('noop', {}, { parent_job_id: parent.id, on_child_fail: 'fail_parent' });
     // add() flipped parent to 'waiting-children' automatically.
     const failed = await queue.failParent(parent.id, 2, 'child died');
     expect(failed!.status).toBe('failed');
@@ -519,7 +533,7 @@ describe('MinionQueue: Dependencies', () => {
 
   test('child fail → continue policy', async () => {
     const parent = await queue.add('enrich', {});
-    const child = await queue.add('sync', {}, { parent_job_id: parent.id, on_child_fail: 'continue' });
+    const child = await queue.add('noop', {}, { parent_job_id: parent.id, on_child_fail: 'continue' });
     // Mark child as dead
     await engine.executeRaw(
       "UPDATE minion_jobs SET status = 'dead' WHERE id = $1",
@@ -533,7 +547,7 @@ describe('MinionQueue: Dependencies', () => {
 
   test('child fail → remove_dep', async () => {
     const parent = await queue.add('enrich', {});
-    const child = await queue.add('sync', {}, { parent_job_id: parent.id, on_child_fail: 'remove_dep' });
+    const child = await queue.add('noop', {}, { parent_job_id: parent.id, on_child_fail: 'remove_dep' });
     await queue.removeChildDependency(child.id);
     const updatedChild = await queue.getJob(child.id);
     expect(updatedChild!.parent_job_id).toBeNull();
@@ -541,7 +555,7 @@ describe('MinionQueue: Dependencies', () => {
 
   test('orphan handling (parent deleted)', async () => {
     const parent = await queue.add('enrich', {});
-    const child = await queue.add('sync', {}, { parent_job_id: parent.id });
+    const child = await queue.add('noop', {}, { parent_job_id: parent.id });
     await queue.cancelJob(parent.id);
     await queue.removeJob(parent.id);
     // Child should still exist with parent_job_id = null (ON DELETE SET NULL)
@@ -629,8 +643,8 @@ describe('MinionWorker', () => {
 
 describe('MinionQueue: Lock Management', () => {
   test('lock renewed during execution', async () => {
-    await queue.add('sync', {});
-    const claimed = await queue.claim('tok1', 30000, 'default', ['sync']);
+    await queue.add('noop', {});
+    const claimed = await queue.claim('tok1', 30000, 'default', ['noop']);
     const originalLockUntil = claimed!.lock_until!.getTime();
 
     const renewed = await queue.renewLock(claimed!.id, 'tok1', 60000);
@@ -641,16 +655,16 @@ describe('MinionQueue: Lock Management', () => {
   });
 
   test('lock renewal fails with wrong token', async () => {
-    await queue.add('sync', {});
-    const claimed = await queue.claim('tok1', 30000, 'default', ['sync']);
+    await queue.add('noop', {});
+    const claimed = await queue.claim('tok1', 30000, 'default', ['noop']);
 
     const renewed = await queue.renewLock(claimed!.id, 'wrong-token', 60000);
     expect(renewed).toBe(false);
   });
 
   test('claim sets lock_token, lock_until, attempts_started', async () => {
-    await queue.add('sync', {});
-    const claimed = await queue.claim('worker-abc', 30000, 'default', ['sync']);
+    await queue.add('noop', {});
+    const claimed = await queue.claim('worker-abc', 30000, 'default', ['noop']);
     expect(claimed!.lock_token).toBe('worker-abc');
     expect(claimed!.lock_until).not.toBeNull();
     expect(claimed!.attempts_started).toBe(1);
@@ -662,7 +676,7 @@ describe('MinionQueue: Lock Management', () => {
 
 describe('MinionQueue: Claim Mechanics', () => {
   test('claim from empty queue returns null', async () => {
-    const claimed = await queue.claim('tok1', 30000, 'default', ['sync']);
+    const claimed = await queue.claim('tok1', 30000, 'default', ['noop']);
     expect(claimed).toBeNull();
   });
 
@@ -682,7 +696,7 @@ describe('MinionQueue: Claim Mechanics', () => {
   });
 
   test('claim only claims registered names', async () => {
-    await queue.add('sync', {});
+    await queue.add('noop', {});
     await queue.add('embed', {});
 
     // Worker only handles 'embed'
@@ -692,7 +706,7 @@ describe('MinionQueue: Claim Mechanics', () => {
     // sync job is still waiting
     const remaining = await queue.getJobs({ status: 'waiting' });
     expect(remaining.length).toBe(1);
-    expect(remaining[0].name).toBe('sync');
+    expect(remaining[0].name).toBe('noop');
   });
 
   test('promote delayed but not future jobs', async () => {
@@ -710,7 +724,7 @@ describe('MinionQueue: Claim Mechanics', () => {
 
 describe('MinionQueue: Prune', () => {
   test('only prunes terminal statuses, respects age filter', async () => {
-    const job1 = await queue.add('sync', {});
+    const job1 = await queue.add('noop', {});
     const job2 = await queue.add('embed', {});
     await queue.cancelJob(job1.id); // cancelled = terminal
     // job2 stays waiting = not terminal
@@ -722,7 +736,7 @@ describe('MinionQueue: Prune', () => {
   // #2712: --dry-run used to be silently ignored — the destructive default
   // ran and deleted rows while the operator believed they were previewing.
   test('dryRun counts prunable jobs without deleting', async () => {
-    const job1 = await queue.add('sync', {});
+    const job1 = await queue.add('noop', {});
     await queue.cancelJob(job1.id); // terminal → prunable
 
     const wouldPrune = await queue.prune({ olderThan: new Date(Date.now() + 86400000), dryRun: true });
@@ -744,7 +758,7 @@ describe('MinionQueue: Prune', () => {
 
 describe('MinionQueue: Stats', () => {
   test('getStats returns status breakdown', async () => {
-    await queue.add('sync', {});
+    await queue.add('noop', {});
     await queue.add('embed', {});
     const stats = await queue.getStats();
     expect(stats.by_status['waiting']).toBe(2);
@@ -757,15 +771,15 @@ describe('MinionQueue: Stats', () => {
 
 describe('MinionQueue: Cancel & Retry', () => {
   test('cancel active job sets cancelled', async () => {
-    const job = await queue.add('sync', {});
-    await queue.claim('tok1', 30000, 'default', ['sync']);
+    const job = await queue.add('noop', {});
+    await queue.claim('tok1', 30000, 'default', ['noop']);
     const cancelled = await queue.cancelJob(job.id);
     expect(cancelled!.status).toBe('cancelled');
   });
 
   test('retry dead job re-queues', async () => {
-    const job = await queue.add('sync', {}, { max_attempts: 1 });
-    await queue.claim('tok1', 30000, 'default', ['sync']);
+    const job = await queue.add('noop', {}, { max_attempts: 1 });
+    await queue.claim('tok1', 30000, 'default', ['noop']);
     await queue.failJob(job.id, 'tok1', 'error', 'dead');
     const retried = await queue.retryJob(job.id);
     expect(retried!.status).toBe('waiting');
@@ -776,8 +790,8 @@ describe('MinionQueue: Cancel & Retry', () => {
   // stalled_counter — an explicit `jobs retry` is an operator asserting
   // "run this fresh".
   test('retry resets started_at/attempts_made/attempts_started/stalled_counter', async () => {
-    const job = await queue.add('sync', {}, { max_attempts: 3, max_stalled: 3 });
-    await queue.claim('tok1', 30000, 'default', ['sync']);
+    const job = await queue.add('noop', {}, { max_attempts: 3, max_stalled: 3 });
+    await queue.claim('tok1', 30000, 'default', ['noop']);
     await queue.failJob(job.id, 'tok1', 'error', 'dead');
     // Simulate the original claim having stamped started_at long ago,
     // attempts already elevated, and a near-exhausted stall budget —
@@ -798,9 +812,9 @@ describe('MinionQueue: Cancel & Retry', () => {
   // #2783 repro: retry issued long after the original claim must NOT be
   // immediately dead-lettered by the wall-clock sweep on re-claim.
   test('retry survives handleWallClockTimeouts after re-claim, even long after the original attempt', async () => {
-    const job = await queue.add('sync', {}, { max_attempts: 3 });
+    const job = await queue.add('noop', {}, { max_attempts: 3 });
     await engine.executeRaw('UPDATE minion_jobs SET timeout_ms = 1000 WHERE id = $1', [job.id]);
-    await queue.claim('tok1', 30000, 'default', ['sync']);
+    await queue.claim('tok1', 30000, 'default', ['noop']);
     // Original attempt dies from a wall-clock timeout — matches the issue's
     // repro (an outage that outlasts timeout_ms).
     await engine.executeRaw(
@@ -815,7 +829,7 @@ describe('MinionQueue: Cancel & Retry', () => {
     // (this is the exact scenario that used to dead-letter in <1s: without
     // the fix, started_at would still be the original claim's timestamp).
     await queue.retryJob(job.id);
-    const reclaimed = await queue.claim('tok2', 30000, 'default', ['sync']);
+    const reclaimed = await queue.claim('tok2', 30000, 'default', ['noop']);
     expect(reclaimed).not.toBeNull();
     expect(reclaimed!.attempts_made).toBe(0);
 
@@ -830,17 +844,17 @@ describe('MinionQueue: Cancel & Retry', () => {
   // get a fresh stall budget on retry, not immediately re-die on its first
   // stall after being re-claimed.
   test('retry survives one stall after re-claim, even after the original stall budget was exhausted', async () => {
-    const job = await queue.add('sync', {}, { max_attempts: 3, max_stalled: 2 });
+    const job = await queue.add('noop', {}, { max_attempts: 3, max_stalled: 2 });
 
     // Exhaust the stall budget the same way the existing stall test does:
     // one requeue stall, then one dead-lettering stall.
-    await queue.claim('tok1', 30000, 'default', ['sync']);
+    await queue.claim('tok1', 30000, 'default', ['noop']);
     await engine.executeRaw(
       "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
       [job.id],
     );
     await queue.handleStalled();
-    await queue.claim('tok2', 30000, 'default', ['sync']);
+    await queue.claim('tok2', 30000, 'default', ['noop']);
     await engine.executeRaw(
       "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
       [job.id],
@@ -855,7 +869,7 @@ describe('MinionQueue: Cancel & Retry', () => {
     // and dead-letter again despite "run this fresh".
     const retried = await queue.retryJob(job.id);
     expect(retried!.stalled_counter).toBe(0);
-    await queue.claim('tok3', 30000, 'default', ['sync']);
+    await queue.claim('tok3', 30000, 'default', ['noop']);
     await engine.executeRaw(
       "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
       [job.id],
@@ -870,14 +884,14 @@ describe('MinionQueue: Cancel & Retry', () => {
 
 describe('MinionQueue: Pause/Resume', () => {
   test('pause waiting job → paused', async () => {
-    const job = await queue.add('sync', {});
+    const job = await queue.add('noop', {});
     const paused = await queue.pauseJob(job.id);
     expect(paused!.status).toBe('paused');
   });
 
   test('pause active job clears lock', async () => {
-    const job = await queue.add('sync', {});
-    await queue.claim('tok1', 30000, 'default', ['sync']);
+    const job = await queue.add('noop', {});
+    await queue.claim('tok1', 30000, 'default', ['noop']);
     const paused = await queue.pauseJob(job.id);
     expect(paused!.status).toBe('paused');
     expect(paused!.lock_token).toBeNull();
@@ -885,22 +899,22 @@ describe('MinionQueue: Pause/Resume', () => {
   });
 
   test('pause completed job returns null', async () => {
-    const job = await queue.add('sync', {});
-    await queue.claim('tok1', 30000, 'default', ['sync']);
+    const job = await queue.add('noop', {});
+    await queue.claim('tok1', 30000, 'default', ['noop']);
     await queue.completeJob(job.id, 'tok1');
     const paused = await queue.pauseJob(job.id);
     expect(paused).toBeNull();
   });
 
   test('resume paused job → waiting', async () => {
-    const job = await queue.add('sync', {});
+    const job = await queue.add('noop', {});
     await queue.pauseJob(job.id);
     const resumed = await queue.resumeJob(job.id);
     expect(resumed!.status).toBe('waiting');
   });
 
   test('resume non-paused job returns null', async () => {
-    const job = await queue.add('sync', {});
+    const job = await queue.add('noop', {});
     const resumed = await queue.resumeJob(job.id);
     expect(resumed).toBeNull();
   });
@@ -914,8 +928,8 @@ describe('MinionQueue: Inbox', () => {
   });
 
   test('send message to active job from admin', async () => {
-    const job = await queue.add('sync', {});
-    await queue.claim('tok1', 30000, 'default', ['sync']);
+    const job = await queue.add('noop', {});
+    await queue.claim('tok1', 30000, 'default', ['noop']);
     const msg = await queue.sendMessage(job.id, { directive: 'focus on X' }, 'admin');
     expect(msg).not.toBeNull();
     expect(msg!.sender).toBe('admin');
@@ -938,23 +952,23 @@ describe('MinionQueue: Inbox', () => {
   });
 
   test('send message from unauthorized sender returns null', async () => {
-    const job = await queue.add('sync', {});
-    await queue.claim('tok1', 30000, 'default', ['sync']);
+    const job = await queue.add('noop', {});
+    await queue.claim('tok1', 30000, 'default', ['noop']);
     const msg = await queue.sendMessage(job.id, { hack: true }, 'rogue-agent');
     expect(msg).toBeNull();
   });
 
   test('send message to completed job returns null', async () => {
-    const job = await queue.add('sync', {});
-    await queue.claim('tok1', 30000, 'default', ['sync']);
+    const job = await queue.add('noop', {});
+    await queue.claim('tok1', 30000, 'default', ['noop']);
     await queue.completeJob(job.id, 'tok1');
     const msg = await queue.sendMessage(job.id, { too: 'late' }, 'admin');
     expect(msg).toBeNull();
   });
 
   test('readInbox returns unread messages and marks read', async () => {
-    const job = await queue.add('sync', {});
-    await queue.claim('tok1', 30000, 'default', ['sync']);
+    const job = await queue.add('noop', {});
+    await queue.claim('tok1', 30000, 'default', ['noop']);
     await queue.sendMessage(job.id, { msg: 1 }, 'admin');
     await queue.sendMessage(job.id, { msg: 2 }, 'admin');
 
@@ -969,8 +983,8 @@ describe('MinionQueue: Inbox', () => {
   });
 
   test('readInbox with wrong token returns empty', async () => {
-    const job = await queue.add('sync', {});
-    await queue.claim('tok1', 30000, 'default', ['sync']);
+    const job = await queue.add('noop', {});
+    await queue.claim('tok1', 30000, 'default', ['noop']);
     await queue.sendMessage(job.id, { msg: 1 }, 'admin');
 
     const messages = await queue.readInbox(job.id, 'wrong-token');
@@ -1015,7 +1029,7 @@ describe('MinionQueue: Token Accounting', () => {
   });
 
   test('new jobs start with zero tokens', async () => {
-    const job = await queue.add('sync', {});
+    const job = await queue.add('noop', {});
     expect(job.tokens_input).toBe(0);
     expect(job.tokens_output).toBe(0);
     expect(job.tokens_cache_read).toBe(0);
@@ -1050,7 +1064,7 @@ describe('MinionQueue: Replay', () => {
   });
 
   test('replay non-terminal job returns null', async () => {
-    const job = await queue.add('sync', {});
+    const job = await queue.add('noop', {});
     const replay = await queue.replayJob(job.id);
     expect(replay).toBeNull();
   });
@@ -1577,30 +1591,30 @@ describe('MinionQueue: removeOnComplete/Fail', () => {
 
 describe('MinionQueue: Idempotency', () => {
   test('same idempotency_key returns same job id', async () => {
-    const j1 = await queue.add('sync', { full: true }, { idempotency_key: 'sync:2026-04-17' });
-    const j2 = await queue.add('sync', { full: true }, { idempotency_key: 'sync:2026-04-17' });
+    const j1 = await queue.add('noop', { full: true }, { idempotency_key: 'sync:2026-04-17' });
+    const j2 = await queue.add('noop', { full: true }, { idempotency_key: 'sync:2026-04-17' });
     expect(j2.id).toBe(j1.id);
     // Only one row exists
-    const all = await queue.getJobs({ name: 'sync' });
+    const all = await queue.getJobs({ name: 'noop' });
     expect(all.length).toBe(1);
   });
 
   test('different idempotency_keys produce different jobs', async () => {
-    const j1 = await queue.add('sync', {}, { idempotency_key: 'a' });
-    const j2 = await queue.add('sync', {}, { idempotency_key: 'b' });
+    const j1 = await queue.add('noop', {}, { idempotency_key: 'a' });
+    const j2 = await queue.add('noop', {}, { idempotency_key: 'b' });
     expect(j1.id).not.toBe(j2.id);
   });
 
   test('null idempotency_key allows duplicate inserts (default behavior)', async () => {
-    const j1 = await queue.add('sync', {});
-    const j2 = await queue.add('sync', {});
+    const j1 = await queue.add('noop', {});
+    const j2 = await queue.add('noop', {});
     expect(j1.id).not.toBe(j2.id);
   });
 
   test('concurrent inserts with same key collapse to one row', async () => {
     // Fire 5 simultaneous adds — only one row should win
     const promises = Array.from({ length: 5 }, () =>
-      queue.add('sync', {}, { idempotency_key: 'race-key' })
+      queue.add('noop', {}, { idempotency_key: 'race-key' })
     );
     const results = await Promise.all(promises);
     const ids = new Set(results.map(j => j.id));
@@ -1613,8 +1627,8 @@ describe('MinionQueue: Idempotency', () => {
   });
 
   test('different data with same idempotency_key returns first job (documented semantics)', async () => {
-    const j1 = await queue.add('sync', { v: 1 }, { idempotency_key: 'same' });
-    const j2 = await queue.add('sync', { v: 2 }, { idempotency_key: 'same' });
+    const j1 = await queue.add('noop', { v: 1 }, { idempotency_key: 'same' });
+    const j2 = await queue.add('noop', { v: 2 }, { idempotency_key: 'same' });
     expect(j2.id).toBe(j1.id);
     expect(j2.data).toEqual({ v: 1 }); // first wins
   });
@@ -1657,14 +1671,14 @@ describe('MinionQueue: Idempotency', () => {
   });
 
   test('completed job with idempotency_key still blocks re-submission', async () => {
-    const j1 = await queue.add('sync', {}, {
+    const j1 = await queue.add('noop', {}, {
       idempotency_key: 'dream:synth:test:completed',
     });
     await engine.executeRaw(
       `UPDATE minion_jobs SET status = 'completed', finished_at = now() WHERE id = $1`,
       [j1.id]
     );
-    const j2 = await queue.add('sync', {}, {
+    const j2 = await queue.add('noop', {}, {
       idempotency_key: 'dream:synth:test:completed',
     });
     expect(j2.id).toBe(j1.id);
@@ -1672,14 +1686,14 @@ describe('MinionQueue: Idempotency', () => {
   });
 
   test('active job with idempotency_key still blocks re-submission', async () => {
-    const j1 = await queue.add('sync', {}, {
+    const j1 = await queue.add('noop', {}, {
       idempotency_key: 'dream:synth:test:active',
     });
     await engine.executeRaw(
       `UPDATE minion_jobs SET status = 'active' WHERE id = $1`,
       [j1.id]
     );
-    const j2 = await queue.add('sync', {}, {
+    const j2 = await queue.add('noop', {}, {
       idempotency_key: 'dream:synth:test:active',
     });
     expect(j2.id).toBe(j1.id);

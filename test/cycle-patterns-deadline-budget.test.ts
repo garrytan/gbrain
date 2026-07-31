@@ -94,8 +94,8 @@ describe('claim stamps timeout_at (deadlineAtMs ground truth)', () => {
 
   test('job with timeout_ms → claim sets timeout_at ≈ now + timeout_ms', async () => {
     const before = Date.now();
-    await queue.add('sync', {}, { timeout_ms: 600_000 });
-    const claimed = await queue.claim('tok-dl-1', 30000, 'default', ['sync']);
+    await queue.add('noop', {}, { timeout_ms: 600_000 });
+    const claimed = await queue.claim('tok-dl-1', 30000, 'default', ['noop']);
     const after = Date.now();
     expect(claimed).not.toBeNull();
     expect(claimed!.timeout_at).not.toBeNull();
@@ -105,12 +105,15 @@ describe('claim stamps timeout_at (deadlineAtMs ground truth)', () => {
   });
 
   test('job without timeout_ms and no handler default → timeout_at stays null', async () => {
-    // 'sync' is not in the long-handler default set, so no stamp either way.
-    await queue.add('sync', { which: 'no-timeout' });
+    // 'noop' is not in the long-handler default set, so no stamp either way.
+    // (It stands in for any ordinary job name; it replaced 'sync' here when
+    // 'sync' joined PROTECTED_JOB_NAMES and stopped being submittable without
+    // a trusted flag.)
+    await queue.add('noop', { which: 'no-timeout' });
     // Drain the possibly-remaining job from the prior test first.
-    let claimed = await queue.claim('tok-dl-2', 30000, 'default', ['sync']);
+    let claimed = await queue.claim('tok-dl-2', 30000, 'default', ['noop']);
     while (claimed && claimed.timeout_ms != null) {
-      claimed = await queue.claim('tok-dl-2', 30000, 'default', ['sync']);
+      claimed = await queue.claim('tok-dl-2', 30000, 'default', ['noop']);
     }
     expect(claimed).not.toBeNull();
     expect(claimed!.timeout_ms).toBeNull();

@@ -146,7 +146,15 @@ async function minionsPipeline(month: string, engine: any): Promise<CallResult> 
     
     // 4. Submit sync job to Minions
     const queue = new MinionQueue(engine);
-    await queue.add('sync', { repo: BRAIN_PATH, noPull: true, bench: true });
+    // 'sync' is a PROTECTED job name. This is a genuine sync submission from a
+    // local bench harness against a path the harness itself owns, which is
+    // exactly the trusted-submitter case the flag exists for.
+    await queue.add(
+      'sync',
+      { repo: BRAIN_PATH, noPull: true, bench: true },
+      undefined,
+      { allowProtectedSubmit: true },
+    );
     
     const wallMs = Math.round(performance.now() - t0);
     return { ok: true, wallMs, reply: `${count} tweets` };

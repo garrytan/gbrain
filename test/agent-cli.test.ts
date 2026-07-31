@@ -190,7 +190,8 @@ describe('protected-name guard includes subagent + aggregator', () => {
   });
 
   test('a random non-protected name is not protected', () => {
-    expect(isProtectedJobName('sync')).toBe(false);
+    // Was 'sync', which is now protected for filesystem reach.
+    expect(isProtectedJobName('noop')).toBe(false);
   });
 
   test('trim normalization still blocks " subagent "', () => {
