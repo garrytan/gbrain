@@ -677,9 +677,9 @@ async function activeSlugsBySourcePath(
 interface TrackedSlugIndex {
   /**
    * The slugs some tracked file derives to. A SET, not a slug -> paths map:
-   * liveness only ever asks "does any file still derive to this slug", and
-   * carrying the paths invited a reader to trust a payload nothing keeps
-   * accurate.
+   * liveness only ever asks "does any file still derive to this slug"
+   * (`has`), so the paths were accurate but unread — state a later reader
+   * would have had to re-derive the purpose of.
    */
   slugs: Set<string>;
   complete: boolean;
@@ -785,9 +785,13 @@ function frontmatterSlugShapes(content: string, rel: string): string[] {
  * comparable content signals — the content-level answer to "is this row
  * genuinely the file's own row". Bookkeeping alone is spoofable from both
  * sides (a decoy claiming the path; a decoy claiming the path AND occupying
- * the derived slug), but the brain reflects `anchorCommit`, so the row
- * imported from this file MUST hold the signals its anchor blob parses to —
- * a rename+edit changes the file at HEAD, never the anchor blob. Callers
+ * the derived slug). This is the check that survives that: the brain
+ * reflects `anchorCommit`, so the row imported from this file necessarily
+ * holds the signals its anchor blob parses to, and a rename+edit changes
+ * the file at HEAD but never the anchor blob. It is a NECESSARY condition,
+ * not an identity proof — a byte-identical twin satisfies it too, which is
+ * why callers pair it with a bookkeeping claim rather than relying on it
+ * alone. Callers
  * treat an unreadable or unparsable blob as "no proof" and defer, never as
  * a match; a clean/smudge filter or CRLF conversion likewise makes the blob
  * differ from what import read in the working tree, and that mismatch also
@@ -2563,6 +2567,18 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       const fromRows = dbSlugsByFrom.get(from) ?? [];
       let oldSlug =
         derivedFrom !== '' && fromRows.includes(derivedFrom) ? derivedFrom : '';
+      // A LEGACY row sits at a slug the current algorithm no longer derives
+      // (#3417 changed what non-Latin ordinary paths derive to), so the
+      // intersection above never selects it — and when identity dedup then
+      // skips the re-import against that same row, the destination never
+      // materializes and the rename banks as done with the row stranded at
+      // the old slug and a dead source_path. Master moves it. Recover that
+      // convergence WITHOUT reopening the decoy hole: take a non-derived
+      // claimant only when it is the SOLE claimant of this path, and only
+      // through the same content proof below. Two or more claimants stay
+      // ambiguous and still defer (adversarial review, executed
+      // merge-base control).
+      if (oldSlug === '' && fromRows.length === 1) oldSlug = fromRows[0];
       if (oldSlug !== '') {
         try {
           const targetRows = await engine.executeRaw<{
@@ -2687,6 +2703,16 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // delete outage a permanent duplicate. The sentinel clears through the
       // ordinary success path once the rename converges on a later run.
       let reconcileFailed = false;
+      // A candidate spared because its staleness was UNPROVABLE this run is
+      // a deferral, not a convergence: the duplicate the sentinel guards may
+      // still be sitting there. Clearing the sentinel (and checkpointing the
+      // rename) on that outcome let one unrelated unreadable file retire the
+      // operator's only signal while the duplicate survived — observed with
+      // an executed probe. Deferring is NOT a failure either: recording one
+      // would block the whole sync over a file this rename never touched.
+      // So it gets its own state — keep the sentinel, keep retrying, do not
+      // block.
+      let reconcileDeferred = false;
       if (!renameApplied && importResult !== undefined) {
         const destMaterialized = importResult.status === 'imported' ||
           (importResult.status === 'skipped' && !importResult.error && importResult.slug === newSlug);
@@ -2747,10 +2773,12 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
                   `file still derives to it (source_path ${from} is stale bookkeeping).`,
                 );
               } else if (verdict === 'unknown') {
+                reconcileDeferred = true;
                 serr(
                   `  [sync] rename reconcile: leaving row ${s} in place — staleness ` +
                   `is unprovable this run (an unreadable tracked file could own this ` +
-                  `slug), so it is spared rather than deleted.`,
+                  `slug), so it is spared rather than deleted. The rename is NOT ` +
+                  `converged: any open sentinel stays open and the next run retries.`,
                 );
               } else if (s !== derivedFrom || derivedFrom === '') {
                 // Established bookkeeping cleanup (#3056 → gate 6): a stale
@@ -2834,13 +2862,13 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       }
       // Converged (cheap rename, clean reconcile, or nothing to reconcile):
       // clear any `<rename:…>` sentinel a previous failing run recorded.
-      if (!reconcileFailed) succeededPaths.push(renameSentinelPath(to));
+      if (!reconcileFailed && !reconcileDeferred) succeededPaths.push(renameSentinelPath(to));
       pagesAffected.push(newSlug);
       deletedSlugs.delete(newSlug); // #1284: rename landed on a previously-deleted slug → embeddable again
       // A failed reconcile must NOT checkpoint: banking `to` would make the
       // resume filter skip this rename on the retry run, turning a transient
       // delete failure into a permanent duplicate — the exact bug being fixed.
-      if (!reconcileFailed) await markCompleted(to);
+      if (!reconcileFailed && !reconcileDeferred) await markCompleted(to);
       progress.tick(1, newSlug);
     }
     progress.finish();

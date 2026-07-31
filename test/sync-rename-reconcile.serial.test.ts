@@ -2641,3 +2641,143 @@ describe('#3583 review: GATE25 — the upgrade path for someone already wedged b
     )).toHaveLength(1);
   });
 });
+
+describe('#3583 review: GATE26 — the sole-claimant move still needs the content proof', () => {
+  test('a legacy row the import dedup-matches converges to the destination', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    // A row imported under an OLDER slug algorithm sits at a slug the
+    // current one never derives, so the derived-slug intersection cannot
+    // select it. With a stable frontmatter id, identity dedup then skips the
+    // re-import against that same row, the destination never materializes,
+    // and the rename banks as done with the row stranded at the old slug and
+    // a dead source_path — permanently, because the checkpoint means it is
+    // never retried. Master converges here; the sole-claimant rail restores
+    // that (executed merge-base control).
+    const md = ['---', 'type: person', 'title: Alpha', 'id: alpha-ext-001', '---', '', 'Alpha file body.'].join('\n');
+    const repo = mkRepo({ 'people/alpha.md': md });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    await engine.executeRaw(
+      `UPDATE pages SET slug = 'people/legacy-alpha'
+        WHERE source_id = 'default' AND slug = 'people/alpha'`,
+    );
+
+    execSync('git mv people/alpha.md people/beta.md', { cwd: repo, stdio: 'pipe' });
+    execSync('git commit -m "rename alpha to beta"', { cwd: repo, stdio: 'pipe' });
+    const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(result.status).toBe('synced');
+
+    // The row moved to the destination AND its bookkeeping was repaired, so
+    // a later full sync does not read it as "source file removed".
+    const rows = await engine.executeRaw<{ slug: string; source_path: string | null }>(
+      `SELECT slug, source_path FROM pages WHERE source_id = 'default' AND deleted_at IS NULL`,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].slug).toBe('people/beta');
+    expect(rows[0].source_path).toBe('people/beta.md');
+    const beta = await engine.getPage('people/beta');
+    expect(beta!.compiled_truth).toContain('Alpha file body');
+  });
+
+  test('G26_SOLE_CLAIMANT_DECOY_LOSS: a sole claimant at a non-derived slug is NOT moved when its content disagrees', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    // The shape the sole-claimant rail newly reaches: exactly one row claims
+    // the from-path, it sits at a slug the path does not derive, and its
+    // content is not what the anchor blob parses to. Here it is a LIVE page
+    // — its own tracked file still derives its slug — that merely carries
+    // stale bookkeeping from an earlier cheap rename. Selecting it by claim
+    // alone moves it to the destination and lets the re-import overwrite its
+    // body; only the content proof tells it apart. (The reconcile's own
+    // liveness rail is what keeps it afterwards, so what this pins is the
+    // MOVE decision.)
+    const repo = mkRepo({
+      'people/alpha.md': personMd('Alpha', 'Alpha file body.'),
+      'people/curated.md': personMd('Curated', 'CURATED BODY, nothing to do with alpha.'),
+    });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    // Its bookkeeping drifts to alpha's path, and alpha's own row leaves, so
+    // the curated row becomes the SOLE claimant of people/alpha.md.
+    await engine.executeRaw(
+      `UPDATE pages SET source_path = 'people/alpha.md'
+        WHERE source_id = 'default' AND slug = 'people/curated'`,
+    );
+    expect(await engine.softDeletePage('people/alpha', { sourceId: 'default' })).not.toBeNull();
+
+    execSync('git mv people/alpha.md people/beta.md', { cwd: repo, stdio: 'pipe' });
+    execSync('git commit -m "rename alpha to beta"', { cwd: repo, stdio: 'pipe' });
+    const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(result.status).toBe('synced');
+
+    // The curated page keeps its slug and its body — it was never moved.
+    const curated = await engine.getPage('people/curated');
+    expect(curated).not.toBeNull();
+    expect(curated!.compiled_truth).toContain('CURATED BODY');
+    // …and the rename still converged at the destination via add.
+    const beta = await engine.getPage('people/beta');
+    expect(beta).not.toBeNull();
+    expect(beta!.compiled_truth).toContain('Alpha file body');
+  });
+});
+
+describe('#3583 review: an unprovable reconcile is a deferral, not a convergence', () => {
+  test('FUGU_UNKNOWN_CLEARS_SENTINEL: a spared-as-unknown candidate keeps the sentinel open', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const { recordFailures, renameSentinelPath, renameReconcileErrorMessage, loadSyncFailures } =
+      await import('../src/core/sync-failure-ledger.ts');
+    // The reconcile spares a candidate whose staleness it cannot prove — the
+    // right call. But sparing is not converging: the duplicate the sentinel
+    // guards may still be sitting there, and clearing the sentinel retires
+    // the operator's only signal for a wedge that still exists. One
+    // unrelated unreadable file was enough to do it.
+    const repo = mkRepo({
+      'people/alpha.md': personMd('Alpha', 'Alpha body.'),
+      'people/keeper.md': personMd('Keeper', 'Keeper stays.'),
+    });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+
+    // A fallback-regime tracked file: unreadable later, so the liveness
+    // index cannot be completed and misses become 'unknown' rather than
+    // 'stale'.
+    const weird = join(repo, '\u{1F600}');
+    writeFileSync(weird, ['---', 'type: note', 'slug: emoji-note', 'title: E', '---', '', 'body'].join('\n'));
+    execSync('git add -A && git commit -m "add emoji file"', { cwd: repo, stdio: 'pipe' });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+
+    // Occupy the destination so the cheap move cannot short-circuit the
+    // reconcile, and plant the duplicate the sentinel is guarding.
+    await engine.putPage('people/gamma', {
+      type: 'person', title: 'Gamma occupant', compiled_truth: 'occupies destination',
+    }, { sourceId: 'default' });
+    await engine.putPage('people/stale-dup', {
+      type: 'person', title: 'Stale dup', compiled_truth: 'a real duplicate',
+    }, { sourceId: 'default' });
+    await engine.executeRaw(
+      `UPDATE pages SET source_path = 'people/alpha.md'
+        WHERE source_id = 'default' AND slug = 'people/stale-dup'`,
+    );
+    recordFailures('default', [{
+      path: renameSentinelPath('people/gamma.md'),
+      error: renameReconcileErrorMessage('people/alpha.md', 'people/stale-dup', 'injected wedge'),
+    }], 'deadbeef');
+    const openRows = () => loadSyncFailures().filter(
+      f => f.path === '<rename:people/gamma.md>' && f.state === 'open',
+    );
+    expect(openRows()).toHaveLength(1);
+
+    chmodSync(weird, 0o000);
+    try {
+      execSync('git mv people/alpha.md people/gamma.md', { cwd: repo, stdio: 'pipe' });
+      execSync('git commit -m "rename into occupied destination"', { cwd: repo, stdio: 'pipe' });
+      const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+
+      // Sparing is correct — the duplicate survives, unproven.
+      expect(await engine.getPage('people/stale-dup')).not.toBeNull();
+      // …and because it survives, the sentinel guarding it must too.
+      expect(openRows()).toHaveLength(1);
+      // Deferring must NOT block the sync: an unreadable file this rename
+      // never touched cannot be allowed to wedge the whole run.
+      expect(result.status).not.toBe('blocked_by_failures');
+    } finally {
+      try { chmodSync(weird, 0o644); } catch { /* ignore */ }
+    }
+  });
+});
