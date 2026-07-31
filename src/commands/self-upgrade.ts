@@ -35,7 +35,8 @@ export async function runSelfUpgrade(args: string[]): Promise<void> {
   const force = args.includes('--force');
   const json = args.includes('--json');
 
-  const release = await fetchLatestRelease();
+  const result = await fetchLatestRelease();
+  const release = result.ok ? result : null;
   const latest = release ? release.tag.replace(/^v/, '') : null;
   const behind = !!latest && isValidVersionString(latest) && isNewerVersion(VERSION, latest);
 

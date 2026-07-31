@@ -534,9 +534,20 @@ export class MinionQueue {
   }
 
   /** Prune old jobs in terminal statuses. Returns count of deleted rows. */
-  async prune(opts?: { olderThan?: Date; status?: MinionJobStatus[] }): Promise<number> {
+  async prune(opts?: { olderThan?: Date; status?: MinionJobStatus[]; dryRun?: boolean }): Promise<number> {
     const statuses = opts?.status ?? ['completed', 'dead', 'cancelled'];
     const olderThan = opts?.olderThan ?? new Date(Date.now() - 30 * 86400000);
+
+    // #2712: dryRun counts the would-be-pruned rows without deleting.
+    // Silent-ignoring a safety flag on a delete path is data loss.
+    if (opts?.dryRun) {
+      const rows = await this.engine.executeRaw<{ count: string }>(
+        `SELECT count(*)::text as count FROM minion_jobs
+         WHERE status = ANY($1) AND updated_at < $2`,
+        [statuses, olderThan.toISOString()]
+      );
+      return parseInt(rows[0]?.count ?? '0', 10);
+    }
 
     const rows = await this.engine.executeRaw<{ count: string }>(
       `WITH pruned AS (

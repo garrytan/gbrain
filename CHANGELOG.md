@@ -2,6 +2,60 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.68.1] - 2026-07-30
+
+**If you run `gbrain reindex-frontmatter` or `gbrain backfill` on the default embedded database, they now work. Until this release both failed every time, after waiting 30 seconds.**
+
+The embedded database allows one process at a time, and holds a lock to enforce it. These two commands opened a second connection to the same database from inside the process that already held that lock, then waited for a lock that could never be released — because the thing holding it was the waiting process itself. The wait ran its full 30 seconds and the command exited with an error naming a blocking process that was, in fact, itself. Both commands now reuse the connection that is already open.
+
+Nothing changes for brains on Postgres, where a second connection was always allowed.
+
+## To take advantage of v0.42.68.1
+
+Nothing to undo — the commands failed without writing anything. Just run whichever you needed:
+```bash
+gbrain reindex-frontmatter
+```
+
+## [0.42.67.0] - 2026-07-28
+
+**If you develop GBrain on Windows, the test and check commands now actually run. Until this release they were quietly doing almost nothing.**
+
+`bun run test`, `bun run verify`, `bun run ci:local` and `bun run test:e2e` all hand off to shell scripts, and on Windows that hand-off was broken in two separate places. The commands did not stop with an obvious error. They reported a result, so a run could look finished when barely any of the checks had actually inspected anything. On a clean Windows clone, `bun run verify` got 1 check to pass and 31 to fail. It now gets 25 to pass and 7 to fail, and none of the 7 are caused by this change.
+
+The first problem was line endings. Git for Windows installs with `core.autocrlf=true`, which rewrites shell scripts to Windows line endings when you clone or check out. Bash refuses to run those, so a script died on its second line before doing any work. The scripts stored in the repository were always correct; only the copy on your disk was wrong. A new `.gitattributes` pins every `.sh` file to Unix line endings at checkout, no matter how your Git is configured.
+
+The second problem was how the checks were started. Thirty three of them pointed straight at a `.sh` file. On macOS and Linux the shell reads the `#!/usr/bin/env bash` line at the top of the script and runs it correctly. Bun on Windows does not do that, so those commands failed the moment they were called. They now go through `bash` explicitly, the same way the other eleven were already written.
+
+Nothing changes for macOS and Linux. No stored file content moves, and no check behaves differently on those platforms.
+
+## To take advantage of v0.42.67.0
+
+Only Windows contributors need to do anything, and only once. `.gitattributes` applies at checkout time, so shell scripts already sitting on your disk keep their old line endings until you refresh them.
+
+1. **Refresh the working copy** from the repository root:
+   ```bash
+   git rm --cached -r . -q
+   git reset --hard
+   ```
+2. **Confirm bash can read the scripts:**
+   ```bash
+   bash -n scripts/run-unit-parallel.sh
+   ```
+   Silence means it worked. `$'\r': command not found` means step 1 did not take effect.
+3. **Run the gate:**
+   ```bash
+   bun run verify
+   ```
+
+### Itemized changes
+
+- New root `.gitattributes` pins `*.sh text eol=lf`, so shell scripts check out with Unix line endings regardless of the contributor's `core.autocrlf` setting. All 59 tracked `.sh` files were already stored with Unix endings, so `git add --renormalize .` reports nothing to do and no stored content changes.
+- `package.json` now routes the remaining 33 `.sh` check commands through `bash`, matching the 11 that already did. Every tracked `.sh` file carries a bash shebang (52 `#!/usr/bin/env bash` and 7 `#!/bin/bash`), so the treatment is uniform across all of them.
+- The five `scripts/*.ts` entries still run under bun and are untouched.
+- `CONTRIBUTING.md` gains a Windows section covering the one-time working-copy refresh and the `bash scripts/<name>.sh` convention for new checks.
+- `docs/TESTING.md` records how the test commands dispatch through bash, and notes that three tree-walking checks plus `typecheck` can exceed the 120s per-check cap on Windows while passing on Linux and macOS.
+
 ## [0.42.66.1] - 2026-07-27
 
 ### Fixed

@@ -90,6 +90,22 @@ afterAll(() => {
 });
 
 describe('importFile', () => {
+  test('stores code containing NUL bytes without dropping the page', async () => {
+    const filePath = join(TMP, 'nul-fixture.ts');
+    writeFileSync(filePath, "export const nul = '\0';\n");
+
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'src/nul-fixture.ts', { noEmbed: true });
+
+    expect(result.status).toBe('imported');
+    const calls = (engine as any)._calls;
+    const putCall = calls.find((c: any) => c.method === 'putPage');
+    const chunkCall = calls.find((c: any) => c.method === 'upsertChunks');
+    expect(putCall.args[1].compiled_truth).toContain("'\\0'");
+    expect(putCall.args[1].compiled_truth).not.toContain('\0');
+    expect(chunkCall.args[1].every((chunk: { chunk_text: string }) => !chunk.chunk_text.includes('\0'))).toBe(true);
+  });
+
   test('imports a valid markdown file', async () => {
     const filePath = join(TMP, 'test-page.md');
     writeFileSync(filePath, `---
@@ -522,7 +538,7 @@ just content.
     const result = await importFile(engine, filePath, '🌟🚀.md', { noEmbed: true });
     expect(result.status).toBe('skipped');
     expect(result.error).toContain('no usable slug');
-    expect(result.error).toContain('ASCII / Chinese / Japanese / Korean');
+    expect(result.error).toContain('at least one letter or number (any script)');
     expect((engine as any)._calls.length).toBe(0);
   });
 

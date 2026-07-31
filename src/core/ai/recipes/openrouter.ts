@@ -180,6 +180,17 @@ export const openrouter: Recipe = {
       // to pre-split batches, NOT per-input. Per-input is enforced upstream.
       max_batch_tokens: 300_000,
     },
+    // Expansion uses the same routed OpenAI-compatible language-model endpoint
+    // as chat. Keep a small cheap/fast advisory set; the openai-compat tier
+    // still accepts any user-configured OpenRouter provider/model ID.
+    expansion: {
+      models: [
+        'anthropic/claude-haiku-4.5',
+        'google/gemini-3-flash-preview',
+        'deepseek/deepseek-chat',
+      ],
+      price_last_verified: '2026-05-20',
+    },
     chat: {
       // Curated entry points (verified against OR's catalog 2026-05-20). The
       // openai-compat tier does NOT enforce this list at runtime — users can

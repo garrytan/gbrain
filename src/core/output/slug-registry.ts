@@ -72,9 +72,10 @@ export class SlugRegistryError extends Error {
 // SlugRegistry
 // ---------------------------------------------------------------------------
 
-// Shares the page-slug segment grammar (incl. CJK ranges, #738) with
+// Shares the page-slug segment grammar (all scripts, #738/#3417) with
 // validatePageSlug; keeps this site's dir/name shape (>= 2 segments).
-const SLUG_RE = new RegExp(`^${PAGE_SLUG_SEG}(\\/${PAGE_SLUG_SEG})+$`);
+// `u` flag required by PAGE_SLUG_SEG's \p{...} classes.
+const SLUG_RE = new RegExp(`^${PAGE_SLUG_SEG}(\\/${PAGE_SLUG_SEG})+$`, 'u');
 
 export class SlugRegistry {
   constructor(private engine: BrainEngine) {}

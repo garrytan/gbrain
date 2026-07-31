@@ -231,6 +231,44 @@ describe('runExtractFacts — happy path', () => {
     expect(rows.rows[0].fact).toBe('A');
   });
 
+  test('malformed fence rows make the page non-authoritative and preserve its indexed facts', async () => {
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | A | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |
+| 2 | B | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+    ));
+    await runExtractFacts(engine, { slugs: ['people/alice'] });
+
+    // A hand edit corrupts row 2. The parser can still recover row 1, but
+    // that partial result is not an authoritative replacement for the page.
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | A | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |
+| 2 | B | bogus | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+    ));
+    await putPage('people/bob', FACT_FENCE(
+      `| 1 | Clean | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+    ));
+
+    const r = await runExtractFacts(engine, { slugs: ['people/alice', 'people/bob'] });
+
+    expect(r.warnings.some(w => w.includes('FACTS_TABLE_MALFORMED'))).toBe(true);
+    expect(r.pagesScanned).toBe(2);
+    expect(r.factsInserted).toBe(1);
+    expect(r.factsDeleted).toBe(0);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      `SELECT fact FROM facts WHERE source_markdown_slug = 'people/alice' ORDER BY row_num`,
+    );
+    expect(rows.rows.map((row: { fact: string }) => row.fact)).toEqual(['A', 'B']);
+
+    // A warning is page-local: clean pages in the same cycle still reconcile.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cleanRows = await (engine as any).db.query(
+      `SELECT fact FROM facts WHERE source_markdown_slug = 'people/bob'`,
+    );
+    expect(cleanRows.rows.map((row: { fact: string }) => row.fact)).toEqual(['Clean']);
+  });
+
   test('page with no facts fence → DB facts for that page wiped (empty fence reconciles to empty index)', async () => {
     await putPage('people/alice', FACT_FENCE(
       `| 1 | seeded | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
@@ -332,6 +370,186 @@ describe('runExtractFacts — empty-fence guard (Codex R2-#7)', () => {
     expect(r.guardTriggered).toBe(false);
     expect(r.legacyRowsPending).toBe(0);
     expect(r.factsInserted).toBe(1);
+  });
+
+  test('soft-expired legacy rows do NOT trigger the guard (#2646 — forget_fact drains the backlog)', async () => {
+    // A legacy row that forget_fact already soft-expired. Before #2646
+    // the guard counted it forever: apply-migrations no-ops (migration
+    // marked applied) and forget_fact only sets expired_at, so the
+    // phase was permanently blocked with no sanctioned way out.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
+                          valid_from, source, confidence, expired_at)
+       VALUES ('default', 'people/alice', 'forgotten legacy claim', 'fact', 'private', 'medium',
+               now(), 'mcp:put_page', 1.0, now())`,
+    );
+
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | new fact | fact | 1.0 | world | high | 2026-01-01 |  | s |  |`,
+    ));
+
+    const r = await runExtractFacts(engine, { slugs: ['people/alice'] });
+
+    expect(r.guardTriggered).toBe(false);
+    expect(r.legacyRowsPending).toBe(0);
+    expect(r.factsInserted).toBe(1);
+
+    // The expired legacy row itself is untouched (soft-expire is the
+    // record of the forget; the phase must not hard-delete it).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      `SELECT fact FROM facts WHERE row_num IS NULL AND expired_at IS NOT NULL`,
+    );
+    expect(rows.rows).toHaveLength(1);
+    expect(rows.rows[0].fact).toBe('forgotten legacy claim');
+  });
+
+  test('expired legacy row WITH source_markdown_slug set survives reconcile untouched (#2646 codex P2)', async () => {
+    // Hybrid shape: row_num NULL (legacy — never fence-owned) but
+    // source_markdown_slug matching a live page. Without the
+    // preserveExpiredLegacy filter, the reconcile pass would count it
+    // as "stale", trigger a wipe, hard-delete the forget record, and
+    // reinsert the fence's rows fresh — reviving a forgotten claim as
+    // an active fact.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
+                          valid_from, source, confidence, expired_at, source_markdown_slug)
+       VALUES ('default', 'people/alice', 'forgotten hybrid claim', 'fact', 'private', 'medium',
+               now(), 'mcp:put_page', 1.0, now(), 'people/alice')`,
+    );
+
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | fence fact | fact | 1.0 | world | high | 2026-01-01 |  | s |  |`,
+    ));
+
+    const r1 = await runExtractFacts(engine, { slugs: ['people/alice'] });
+    const r2 = await runExtractFacts(engine, { slugs: ['people/alice'] });
+
+    expect(r1.guardTriggered).toBe(false);
+    // The expired hybrid row is invisible to the reconcile: the fence
+    // fact inserts normally, nothing is wiped, and re-running stays
+    // idempotent (the hybrid row must not read as perpetually stale).
+    expect(r1.factsInserted).toBe(1);
+    expect(r1.factsDeleted).toBe(0);
+    expect(r2.factsInserted).toBe(0);
+    expect(r2.factsDeleted).toBe(0);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      `SELECT fact, expired_at FROM facts WHERE source_markdown_slug = 'people/alice' ORDER BY id`,
+    );
+    expect(rows.rows).toHaveLength(2);
+    expect(rows.rows[0].fact).toBe('forgotten hybrid claim');
+    expect(rows.rows[0].expired_at).not.toBeNull();
+    expect(rows.rows[1].fact).toBe('fence fact');
+    expect(rows.rows[1].expired_at).toBeNull();
+  });
+
+  test('expired legacy hybrid row survives even a stale-row wipe on the same page (#2646 codex P2)', async () => {
+    // Force the wipe path: seed a fence, reconcile, then change the
+    // fence so the old DB row goes stale. The wipe must delete the
+    // stale fence-owned row but preserve the expired legacy hybrid.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
+                          valid_from, source, confidence, expired_at, source_markdown_slug)
+       VALUES ('default', 'people/alice', 'forgotten hybrid claim', 'fact', 'private', 'medium',
+               now(), 'mcp:put_page', 1.0, now(), 'people/alice')`,
+    );
+
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | old fact | fact | 1.0 | world | high | 2026-01-01 |  | s |  |`,
+    ));
+    await runExtractFacts(engine, { slugs: ['people/alice'] });
+
+    // Replace the fence content — 'old fact' is now stale in the DB.
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | replacement fact | fact | 1.0 | world | high | 2026-01-01 |  | s |  |`,
+    ));
+    const r = await runExtractFacts(engine, { slugs: ['people/alice'] });
+
+    expect(r.factsDeleted).toBe(1); // only the stale fence-owned row
+    expect(r.factsInserted).toBe(1);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      `SELECT fact FROM facts WHERE source_markdown_slug = 'people/alice' ORDER BY id`,
+    );
+    expect(rows.rows.map((row: { fact: string }) => row.fact))
+      .toEqual(['forgotten hybrid claim', 'replacement fact']);
+  });
+
+  test('fence claim matching an expired legacy row is inserted active — fence is canonical (#2646)', async () => {
+    // Deliberate semantics, pinned: legacy DB-only forgets are
+    // documented NOT to survive rebuild (forget.ts header — the
+    // explicit DB-only exception). When the fence still carries the
+    // same (claim, source), the reconcile inserts a fresh active
+    // fence-owned row; the expired legacy row survives alongside as
+    // the record of the earlier forget. Suppressing the insert would
+    // create silent fence↔DB divergence ("0 facts" while the fence
+    // says otherwise) — the exact failure mode the guard prevents.
+    // To durably forget, forget the fence-owned row (fence path).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
+                          valid_from, source, confidence, expired_at, source_markdown_slug)
+       VALUES ('default', 'people/alice', 'shared claim', 'fact', 'private', 'medium',
+               now(), 's', 1.0, now(), 'people/alice')`,
+    );
+
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | shared claim | fact | 1.0 | world | high | 2026-01-01 |  | s |  |`,
+    ));
+
+    const r1 = await runExtractFacts(engine, { slugs: ['people/alice'] });
+    const r2 = await runExtractFacts(engine, { slugs: ['people/alice'] });
+
+    expect(r1.factsInserted).toBe(1);
+    expect(r1.factsDeleted).toBe(0);
+    // Idempotent thereafter — the coexisting pair is stable state.
+    expect(r2.factsInserted).toBe(0);
+    expect(r2.factsDeleted).toBe(0);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      `SELECT fact, row_num, expired_at FROM facts
+        WHERE source_markdown_slug = 'people/alice' ORDER BY id`,
+    );
+    expect(rows.rows).toHaveLength(2);
+    expect(rows.rows[0]).toMatchObject({ fact: 'shared claim', row_num: null });
+    expect(rows.rows[0].expired_at).not.toBeNull();   // forget record preserved
+    expect(rows.rows[1]).toMatchObject({ fact: 'shared claim', row_num: 1 });
+    expect(rows.rows[1].expired_at).toBeNull();       // fence-canonical active row
+  });
+
+  test('mixed active + expired legacy rows: guard counts only the active ones (#2646)', async () => {
+    // One active legacy row + one soft-expired legacy row. The guard
+    // must still trigger (an active row is pending backfill) but the
+    // pending count must exclude the expired row — so each forget_fact
+    // visibly drains the counter toward release.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
+                          valid_from, source, confidence, expired_at)
+       VALUES
+         ('default', 'people/alice', 'active legacy claim', 'fact', 'private', 'medium',
+          now(), 'mcp:put_page', 1.0, NULL),
+         ('default', 'people/alice', 'expired legacy claim', 'fact', 'private', 'medium',
+          now(), 'mcp:put_page', 1.0, now())`,
+    );
+
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | new fact | fact | 1.0 | world | high | 2026-01-01 |  | s |  |`,
+    ));
+
+    const r = await runExtractFacts(engine, { slugs: ['people/alice'] });
+
+    expect(r.guardTriggered).toBe(true);
+    expect(r.legacyRowsPending).toBe(1);
+    expect(r.factsInserted).toBe(0);
+    expect(r.factsDeleted).toBe(0);
   });
 
   test('NULL entity_slug legacy rows do NOT trigger the guard (they are structurally unfenceable)', async () => {
@@ -454,6 +672,51 @@ describe('runExtractFacts — empty-fence guard (Codex R2-#7)', () => {
 });
 
 describe('runExtractFacts — multi-source isolation', () => {
+  test('a pending legacy row in source A does NOT jam extraction for source B (#2646 source-scope)', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO sources (id, name, config) VALUES ('work', 'work', '{}'::jsonb)
+       ON CONFLICT (id) DO NOTHING`,
+    );
+
+    // Source "work": a genuine pending legacy row (row_num NULL, active,
+    // live backing page) — the exact shape that must gate work's cycle.
+    await engine.putPage('people/alice', {
+      title: 'people/alice', type: 'person',
+      compiled_truth: FACT_FENCE(`| 1 | work fence fact | fact | 1.0 | world | high | 2026-01-01 |  | s |  |`),
+      frontmatter: {}, timeline: '',
+    }, { sourceId: 'work' });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
+                          valid_from, source, confidence)
+       VALUES ('work', 'people/alice', 'work legacy claim', 'fact', 'private', 'medium',
+               now(), 'mcp:put_page', 1.0)`,
+    );
+
+    // Source "default": clean — no legacy rows, one fenced page.
+    await putPage('people/bob', FACT_FENCE(
+      `| 1 | default fact | fact | 1.0 | world | high | 2026-01-01 |  | s |  |`,
+    ));
+
+    // default's run must NOT be jammed by work's pending backlog.
+    const rDefault = await runExtractFacts(engine, { slugs: ['people/bob'], sourceId: 'default' });
+    expect(rDefault.guardTriggered).toBe(false);
+    expect(rDefault.legacyRowsPending).toBe(0);
+    expect(rDefault.factsInserted).toBe(1);
+
+    // work's own run still gates (discriminator stays sharp).
+    const rWork = await runExtractFacts(engine, { slugs: ['people/alice'], sourceId: 'work' });
+    expect(rWork.guardTriggered).toBe(true);
+    expect(rWork.legacyRowsPending).toBe(1);
+    expect(rWork.factsInserted).toBe(0);
+    // The drain advice must be one that actually re-runs Phase B — a bare
+    // `apply-migrations --yes` no-ops once the ledger says complete.
+    expect(rWork.warnings.some(w => w.includes('--force-retry 0.32.2'))).toBe(true);
+    expect(rWork.warnings.some(w => w.includes('forget_fact'))).toBe(true);
+    expect(rWork.warnings.some(w => w.includes('source "work"'))).toBe(true);
+  });
+
   test('deleteFactsForPage scoping does not affect other sources', async () => {
     // Seed sources work + home.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

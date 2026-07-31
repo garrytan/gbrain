@@ -19,6 +19,29 @@ Seven test command tiers, each with a clear scope:
 | `bun run test:e2e` | Real Postgres E2E. Requires Docker + `DATABASE_URL`. Sequential. | ~5-10min | Pre-ship; nightly. |
 | `bun run check:all` | The historical pre-check scripts (22, chained sequentially in package.json). Overlaps `verify` heavily but is NOT a superset — `verify`'s `CHECKS` array in `scripts/run-verify-parallel.sh` (~30 entries incl. typecheck) is the authoritative gate; `check:all` keeps a few local-only extras (trailing-newline, exports-count, no-legacy-getconnection). | ~10s | Local-only sweep for the extras. |
 
+### Shell dispatch and Windows
+
+All four of `test`, `verify`, `ci:local` and `test:e2e` hand off to shell scripts
+under `scripts/`, so every `check:*` entry in `package.json` invokes its script as
+`bash scripts/<name>.sh` instead of relying on the shebang — bun on Windows cannot
+exec a `.sh` directly. Add a new shell-script check with that same prefix. The
+`scripts/*.ts` entries run under bun and take no prefix.
+
+The scripts must also be on disk with Unix line endings. A strict bash (WSL, Linux
+CI, macOS) rejects CRLF and dies on the script's first meaningful line; the Cygwin
+bash that ships with Git for Windows tolerates it, so a green local run is not by
+itself evidence that a script is CRLF-clean.
+The root `.gitattributes` pins `*.sh text eol=lf`, which overrides the
+`core.autocrlf=true` default that Git for Windows installs. Working copies cloned
+before that pin need a one-time `git rm --cached -r . -q && git reset --hard` to
+pick it up; see the Windows section of `CONTRIBUTING.md`.
+
+Wallclock figures in the table above are from a Mac dev box. Windows is
+substantially slower because each check pays full process-creation cost, and three
+tree-walking checks (`check:privacy`, `check:test-names`, `check:test-isolation`)
+plus `typecheck` can exceed the 120s per-check cap in `run-verify-parallel.sh`
+there even though they pass on Linux and macOS.
+
 ### CI vs local: intentionally divergent file sets
 
 - **CI matrix** (`.github/workflows/test.yml`) runs `scripts/test-shard.sh` across 10 matrix shards partitioned by weight-aware LPT bin-packing (`scripts/sharding.ts`) and INCLUDES `*.slow.test.ts` (the two outlier slow files run as dedicated jobs alongside the matrix). CI EXCLUDES `*.serial.test.ts` from the shards and runs them in a dedicated job via `bun run test:serial`, one bun process per file — keeping serial files out of the shard processes is what preserves the `mock.module` quarantine (a top-level mock in one file leaks into every other file sharing its process). `bun run verify` gets its own job too. CI is the ground truth for "did everything pass."

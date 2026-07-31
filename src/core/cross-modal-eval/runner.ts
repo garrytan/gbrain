@@ -51,7 +51,11 @@ export const DEFAULT_SLOTS: SlotConfig[] = [
   // 2-model quorum without a Google key (verdict: permanently inconclusive).
   { id: 'A', model: 'openai:gpt-5.2' },
   { id: 'B', model: 'anthropic:claude-opus-4-7' },
-  { id: 'C', model: 'google:gemini-1.5-pro' },
+  // gemini-1.5-pro was retired by Google (#3510), so slot C failed even with
+  // a Google key configured. deepseek:deepseek-v4-pro preserves the
+  // three-distinct-provider contract with a model registered in both the
+  // recipe and canonical pricing tables (same replacement as PR #3501).
+  { id: 'C', model: 'deepseek:deepseek-v4-pro' },
 ];
 
 export interface SlotConfig {

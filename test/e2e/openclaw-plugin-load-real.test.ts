@@ -274,10 +274,23 @@ describe('openclaw-plugin-load-real (Tier 2 e2e)', () => {
       // level fixture proved openclaw is installed and reachable.
       let registerContextEngine: ((id: string, factory: () => unknown) => void) | undefined;
 
+      // Minimal structural shape of the openclaw plugin SDK surface this
+      // test uses. `openclaw` is deliberately NOT a declared dependency —
+      // the test probes whatever install is present at runtime — so the
+      // import result is cast to this local interface instead of letting
+      // TypeScript type-check against whichever openclaw version happens
+      // to be resolvable from an ancestor node_modules. That keeps
+      // `bunx tsc --noEmit` hermetic on a clean checkout (#2729); the
+      // export's presence/shape is still verified at runtime below.
+      interface OpenclawPluginSdk {
+        registerContextEngine?: (id: string, factory: () => unknown) => void;
+      }
+
       const importErrors: string[] = [];
       try {
-        // @ts-ignore — bare specifier resolution depends on node_modules.
-        const sdk = await import('openclaw/plugin-sdk');
+        // @ts-ignore — bare specifier; whether this resolves (TS2307 or not)
+        // depends on ambient node_modules, so @ts-expect-error would flip.
+        const sdk = (await import('openclaw/plugin-sdk')) as unknown as OpenclawPluginSdk;
         registerContextEngine = sdk.registerContextEngine;
       } catch (err) {
         importErrors.push(`bare 'openclaw/plugin-sdk': ${err instanceof Error ? err.message : String(err)}`);

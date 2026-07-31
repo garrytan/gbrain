@@ -6,7 +6,11 @@
  * process.env.
  */
 import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
-import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
+import {
+  configureGateway,
+  resetGateway,
+  __unconfigureGatewayForTests,
+} from '../src/core/ai/gateway.ts';
 import {
   validateEmbeddingCreds,
   formatEmbeddingCredsError,
@@ -22,18 +26,12 @@ import type { AIGatewayConfig } from '../src/core/ai/types.ts';
 // isAvailable('embedding') check. That's what made facts-backstop-gating
 // fail intermittently (bin-pack-dependent) on CI shard 10.
 //
-// Don't end on a bare resetGateway() either: the NEXT file's beforeAll
-// (often engine.initSchema, which sizes vector columns from ambient gateway
-// state) runs before the legacy-embedding-preload's per-test restore, so a
-// null gateway here would seed 1280-d schemas under 1536-d fixtures.
-// Restore the preload's legacy pin instead.
+// #3554: resetGateway() now restores the preload's legacy pin itself (the
+// preload registers it via __setGatewayResetBaselineForTests), so a bare
+// reset is safe here — the NEXT file's beforeAll sees the 1536-d baseline,
+// not a null gateway that would seed 1280-d schemas under 1536-d fixtures.
 afterAll(() => {
   resetGateway();
-  configureGateway({
-    embedding_model: 'openai:text-embedding-3-large',
-    embedding_dimensions: 1536,
-    env: { ...process.env },
-  });
 });
 
 function baseConfig(overrides: Partial<AIGatewayConfig> = {}): AIGatewayConfig {
@@ -138,7 +136,9 @@ describe('validateEmbeddingCreds', () => {
   });
 
   test('throws no_gateway_config when gateway was not configured', () => {
-    // resetGateway() in beforeEach already cleared _config.
+    // resetGateway() restores the preload's test baseline (#3554), so this
+    // test needs the hard variant to get a genuinely unconfigured gateway.
+    __unconfigureGatewayForTests();
     let caught: unknown;
     try { validateEmbeddingCreds(); } catch (e) { caught = e; }
     expect(caught).toBeInstanceOf(EmbeddingCredentialError);

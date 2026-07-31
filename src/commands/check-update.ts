@@ -8,7 +8,7 @@ import {
   semverGt,
   semverLte,
 } from '../core/semver.ts';
-import { writeUpdateCache, type UpdateMarker } from '../core/self-upgrade.ts';
+import { readUpdateCache, writeUpdateCache, type UpdateMarker } from '../core/self-upgrade.ts';
 
 /** Best-effort cache write — a read-only ~/.gbrain must never make the check throw. */
 function safeWriteCache(marker: UpdateMarker): void {
@@ -45,26 +45,53 @@ function upgradeCommandForMethod(method: string): string {
   }
 }
 
+/** Where the latest version is resolved from. gbrain publishes NO GitHub
+ * releases (the `releases/latest` API is a permanent 404), so the release
+ * train's source of truth is the `VERSION` file on master — same trusted host
+ * `fetchChangelog` already uses. An npm fallback was rejected: the `gbrain`
+ * package on npm is an unrelated GPU library (#505), so it would produce false
+ * upgrade prompts pointing at a stranger's package. */
+const VERSION_SOURCE_URL = 'https://raw.githubusercontent.com/garrytan/gbrain/master/VERSION';
+const RELEASE_NOTES_URL = 'https://github.com/garrytan/gbrain/blob/master/CHANGELOG.md';
+
+/** Extract a version from the raw VERSION file body: first line, optional `v`
+ * prefix, optional `-suffix` channel tag (`0.31.1.1-fixwave` compares as its
+ * numeric base — fail-safe: a suffix-only bump never prompts). Body is bounded
+ * before parsing so a malformed/huge response can't blow up the check. */
+export function parseVersionFileBody(body: string): string | null {
+  const firstLine = body.slice(0, 256).trim().split('\n')[0].trim();
+  const m = firstLine.match(/^v?(\d+\.\d+\.\d+(?:\.\d+)?)(?:[-+][0-9A-Za-z.-]+)?$/);
+  return m && isValidVersionString(m[1]) ? m[1] : null;
+}
+
+export type LatestReleaseResult =
+  | { ok: true; tag: string; published_at: string; url: string }
+  | { ok: false; reason: 'network_error' | 'no_releases' };
+
 /**
- * Fetch the latest GitHub release. Exported (v0.42) so the self-upgrade refresh
- * path and tests can reuse it. 5s timeout (was 10s) — this runs on the detached
- * refresh, never the hot path, but a tight bound keeps the refresh cheap.
+ * Resolve the latest published gbrain version (from VERSION on master — see
+ * VERSION_SOURCE_URL). Exported (v0.42) so the self-upgrade refresh path and
+ * tests can reuse it. 5s timeout — this runs on the detached refresh, never the
+ * hot path. Failures are discriminated: `network_error` (offline/timeout) vs
+ * `no_releases` (endpoint answered but no usable version).
  */
-export async function fetchLatestRelease(): Promise<{ tag: string; published_at: string; url: string } | null> {
+export async function fetchLatestRelease(): Promise<LatestReleaseResult> {
+  let res: Response;
   try {
-    const res = await fetch('https://api.github.com/repos/garrytan/gbrain/releases/latest', {
+    res = await fetch(VERSION_SOURCE_URL, {
       headers: { 'User-Agent': `gbrain/${VERSION}` },
       signal: AbortSignal.timeout(5_000),
     });
-    if (!res.ok) return null;
-    const data = await res.json() as any;
-    return {
-      tag: data.tag_name || '',
-      published_at: data.published_at || '',
-      url: data.html_url || '',
-    };
   } catch {
-    return null;
+    return { ok: false, reason: 'network_error' };
+  }
+  try {
+    if (!res.ok) return { ok: false, reason: 'no_releases' };
+    const tag = parseVersionFileBody(await res.text());
+    if (!tag) return { ok: false, reason: 'no_releases' };
+    return { ok: true, tag, published_at: '', url: RELEASE_NOTES_URL };
+  } catch {
+    return { ok: false, reason: 'network_error' };
   }
 }
 
@@ -118,17 +145,33 @@ export function extractChangelogBetween(changelog: string, from: string, to: str
 }
 
 /**
- * Fetch the latest release and write the self-upgrade cache (the marker line
- * read by the CLI startup hook). Fail-open: on any network failure we cache
- * `UP_TO_DATE <current>` so the TTL prevents hammering GitHub on every
- * invocation. Returns the resolved marker for callers that want it. This is the
- * function the detached single-flight refresh (`gbrain check-update
- * --refresh-cache`) invokes.
+ * A failed check must NEVER write `up_to_date` — that was #486: the fetch
+ * failed permanently (dead releases API) and every user was told "you're
+ * current" forever. Instead, re-write the last-known-good marker (bumping its
+ * mtime so the cache TTL still throttles retries and a network blip can't
+ * erase a pending upgrade_available notice). No prior marker → write nothing;
+ * the next invocation retries.
+ */
+function preserveCacheOnFailedCheck(): void {
+  try {
+    const prior = readUpdateCache();
+    if (prior) safeWriteCache(prior.marker);
+  } catch {
+    /* best-effort */
+  }
+}
+
+/**
+ * Fetch the latest version and write the self-upgrade cache (the marker line
+ * read by the CLI startup hook). On fetch failure the last-known-good marker is
+ * preserved (see preserveCacheOnFailedCheck) — never a fabricated `up_to_date`.
+ * This is the function the detached single-flight refresh (`gbrain
+ * check-update --refresh-cache`) invokes.
  */
 export async function refreshUpdateCache(): Promise<void> {
   const release = await fetchLatestRelease();
-  if (!release) {
-    safeWriteCache({ kind: 'up_to_date', current: VERSION });
+  if (!release.ok) {
+    preserveCacheOnFailedCheck();
     return;
   }
   const latestVersion = release.tag.replace(/^v/, '');
@@ -166,9 +209,8 @@ export async function runCheckUpdate(args: string[]) {
 
   const release = await fetchLatestRelease();
 
-  if (!release) {
-    // Warm the cache fail-open so the startup hook doesn't re-fetch every call.
-    safeWriteCache({ kind: 'up_to_date', current: VERSION });
+  if (!release.ok) {
+    preserveCacheOnFailedCheck();
     if (json) {
       console.log(JSON.stringify({
         current_version: VERSION,
@@ -179,10 +221,12 @@ export async function runCheckUpdate(args: string[]) {
         release_url: '',
         changelog_diff: '',
         published_at: '',
-        error: 'no_releases',
+        error: release.reason,
       }, null, 2));
+    } else if (release.reason === 'network_error') {
+      console.log(`GBrain ${VERSION} — could not check for updates (network unavailable).`);
     } else {
-      console.log(`GBrain ${VERSION} — could not check for updates (no releases found or network unavailable).`);
+      console.log(`GBrain ${VERSION} — could not determine the latest published version.`);
     }
     return;
   }

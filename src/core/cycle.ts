@@ -895,8 +895,17 @@ export async function resolveSourceForDir(
   // (the cycleSourceId precedence) or 'default'.
   if (brainDir === null) return undefined;
   try {
+    // #2540: exclude archived rows (dream's --source guard refuses to stamp
+    // them, so an archived alias winning here means the stamp silently never
+    // lands and doctor's cycle_freshness stays red on a healthy install) and
+    // order deterministically so a duplicate registration of the same path
+    // can't shadow the active source on whichever row the engine scans first.
+    // Ordering matches listAllSources/sources-ops for operator-output parity.
     const rows = await engine.executeRaw<{ id: string }>(
-      `SELECT id FROM sources WHERE local_path = $1 LIMIT 1`,
+      `SELECT id FROM sources
+        WHERE local_path = $1 AND archived = false
+        ORDER BY (id = 'default') DESC, id
+        LIMIT 1`,
       [brainDir],
     );
     if (rows[0]) return rows[0].id;
@@ -1179,7 +1188,9 @@ async function runPhaseExtractFacts(
         summary: `extract_facts skipped: ${result.legacyRowsPending} legacy v0.31 facts pending fence backfill`,
         details: {
           legacyRowsPending: result.legacyRowsPending,
-          hint: 'gbrain apply-migrations --yes',
+          // A bare `apply-migrations --yes` no-ops once the v0.32.2 ledger
+          // entry is complete; the retry marker is what re-runs Phase B.
+          hint: 'gbrain apply-migrations --force-retry 0.32.2 && gbrain apply-migrations --yes',
           warnings: result.warnings,
         },
       };
@@ -2430,7 +2441,7 @@ export async function runCycle(
         try {
           const { runSchemaSuggestPhase } = await import('./cycle/schema-suggest.ts');
           const { result, duration_ms } = await timePhase(async () => {
-            const r = await runSchemaSuggestPhase(engine, { dryRun: !!opts.dryRun });
+            const r = await runSchemaSuggestPhase(engine, { sourceId: cycleSourceId, dryRun: !!opts.dryRun });
             return {
               phase: 'schema-suggest' as const,
               status: (r.skipped ? 'skipped' : 'ok') as PhaseStatus,

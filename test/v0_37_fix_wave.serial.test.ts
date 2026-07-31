@@ -55,24 +55,20 @@ describe('v0.37 Lane A — defaults sweep', () => {
   test('A.5: embedding-column registry builtin defaults to ZE/1280 on empty config + gateway', async () => {
     // The registry's resolution chain is cfg > gateway > DEFAULT. With
     // no cfg AND no gateway, it should fall through to the canonical
-    // default (ZE/1280). Reset gateway first to exercise that path.
-    const { resetGateway } = await import('../src/core/ai/gateway.ts');
+    // default (ZE/1280). Hard-unconfigure first to exercise that path —
+    // resetGateway() would restore the preload's 1536 baseline (#3554).
+    const { __unconfigureGatewayForTests, resetGateway } = await import('../src/core/ai/gateway.ts');
     const { getEmbeddingColumnRegistry } = await import('../src/core/search/embedding-column.ts');
-    resetGateway();
+    __unconfigureGatewayForTests();
     try {
       const reg = getEmbeddingColumnRegistry({ engine: 'pglite' } as any);
       expect(reg['embedding']).toBeDefined();
       expect(reg['embedding'].provider).toBe('zeroentropyai:zembed-1');
       expect(reg['embedding'].dimensions).toBe(1280);
     } finally {
-      // Re-apply legacy preload defaults so the rest of the file's tests
-      // (and subsequent files in this shard) see a configured gateway.
-      const { configureGateway } = await import('../src/core/ai/gateway.ts');
-      configureGateway({
-        embedding_model: 'openai:text-embedding-3-large',
-        embedding_dimensions: 1536,
-        env: { ...process.env },
-      });
+      // Restore the preload's legacy baseline so the rest of the file's
+      // tests (and subsequent files in this shard) see a configured gateway.
+      resetGateway();
     }
   });
 

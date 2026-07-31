@@ -4349,8 +4349,18 @@ export async function checkCycleFreshness(
         : `'${source.id}'`;
       const raw = source.config?.last_full_cycle_at;
       if (typeof raw !== 'string') {
+        // #2540: WARN, not FAIL. This check iterates EVERY local_path source,
+        // so on a multi-source install where only some vaults are cycled
+        // (e.g. one nightly `gbrain dream --dir <vault>`), a never-cycled
+        // sibling source turned doctor permanently red — which erodes the
+        // check's signal until real staleness hides inside the noise (the
+        // reporter's install masked genuinely stale sources for weeks this
+        // way). "Never cycled" also fires on a source added minutes ago.
+        // A source that HAS cycled and then went stale still escalates
+        // through the warn/fail age thresholds below — that is the
+        // regression signal this check exists for.
         issues.push(`Source ${display} has never completed a full cycle`);
-        hasFailures = true;
+        hasWarnings = true;
         continue;
       }
       const last = new Date(raw).getTime();
@@ -4386,7 +4396,7 @@ export async function checkCycleFreshness(
       return {
         name: 'cycle_freshness',
         status: 'warn',
-        message: `${issues.join('; ')}.`,
+        message: `${issues.join('; ')}. Run \`gbrain dream --source <id>\` to cycle a source, or start \`gbrain autopilot\`.`,
       };
     }
     return {
@@ -5590,6 +5600,42 @@ export async function buildChecks(
     }
   } catch {
     // Best-effort filesystem-hygiene check; never block doctor.
+  }
+
+  // 3f. npm_squat (#505). The npm registry name `gbrain` belongs to an
+  // unrelated third-party package — this project is NOT distributed on npm.
+  // A reflexive `npm i -g gbrain` / `bun add -g gbrain` installs something
+  // unrelated that can shadow the real binary on PATH. Classify every
+  // `gbrain` that `which -a` finds (pure helpers in
+  // src/core/npm-squat-check.ts) and warn when an unrelated install wins on
+  // PATH or the entry is broken. Skips silently when gbrain isn't on PATH
+  // at all (e.g. running via `bun src/cli.ts`).
+  try {
+    const { execSync } = await import('node:child_process');
+    let candidates: string[] = [];
+    try {
+      candidates = execSync('which -a gbrain', {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      })
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    } catch {
+      // `which` exits non-zero when gbrain isn't on PATH (or is missing
+      // entirely on this platform) — nothing to check.
+    }
+    const { assessGbrainBinaries } = await import('../core/npm-squat-check.ts');
+    const assessment = assessGbrainBinaries(candidates);
+    if (assessment.status !== 'skip') {
+      checks.push({
+        name: 'npm_squat',
+        status: assessment.status,
+        message: assessment.message,
+      });
+    }
+  } catch {
+    // Best-effort environment check; never block doctor.
   }
 
   // 3b-multi-source. Multi-source drift (v0.31.8 — D8 + D17 + OV12 + OV13).

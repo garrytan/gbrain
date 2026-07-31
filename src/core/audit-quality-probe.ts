@@ -118,5 +118,10 @@ export function readRecentQualityProbeEvents(
       }
     }
   }
-  return out;
+  // Chronological order (oldest → newest). Events accumulate across two
+  // week files read current-week-FIRST, so without sorting the array tail
+  // is the OLDEST in-window event whenever last week's file has entries —
+  // and doctor's "Latest:" (which reads the tail) reported a days-old run
+  // while the counts included the newest one.
+  return out.sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
 }

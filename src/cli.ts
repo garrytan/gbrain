@@ -9,7 +9,7 @@ installSigchldHandler();
 import { installSignalHandlers as installCleanupSignalHandlers } from './core/process-cleanup.ts';
 installCleanupSignalHandlers();
 
-import { readFileSync, existsSync, unlinkSync } from 'fs';
+import { readFileSync, existsSync, unlinkSync, fstatSync } from 'fs';
 import { spawn } from 'child_process';
 import {
   readUpdateCache,
@@ -55,7 +55,7 @@ export function bigintToStringReplacer(_key: string, value: unknown): unknown {
 }
 
 // CLI-only commands that bypass the operation layer
-export const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'maintain', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'reconcile-links', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'retrieval-upgrade', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch', 'reindex-search-vector']);
+export const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'maintain', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'reconcile-links', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'retrieval-upgrade', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch', 'reindex-search-vector', 'backfill']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -343,6 +343,11 @@ async function main() {
   // transform, and required-param check are all engine-free; refactoring
   // them out of the engine try/catch is safe and unlocks routing.
   const params = parseOpArgs(op, subArgs);
+
+  // #3513: stdin fill moved out of parseOpArgs so a non-TTY stdin with no
+  // piped input can't block the parse forever — the bounded read leaves the
+  // param unset on timeout and the required-param check below fails fast.
+  await applyStdinParam(op, params);
 
   // v0.27.1 (`gbrain query --image <path>`): swap the `image` param from
   // a filesystem path into base64 bytes + mime. The op accepts base64; the
@@ -804,18 +809,99 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
     }
   }
 
-  // Read stdin for content params
+  return params;
+}
+
+/**
+ * #3513: read stdin into an op's stdin-capable param without ever blocking
+ * forever. The old inline `readFileSync(0)` in parseOpArgs assumed non-TTY
+ * implies piped content; a non-TTY stdin with NO input (CI step, cron job,
+ * agent harness holding an unwritten pipe open) blocked the read until kill.
+ *
+ * Strategy by fd kind (fstat):
+ *  - TTY: skip, as before (interactive input is not an op-param source).
+ *  - regular file / /dev/null / anything not a pipe or socket: readFileSync
+ *    returns without blocking (`gbrain put x < file`, `< /dev/null` → '').
+ *  - FIFO/socket: stream-read with a deadline on the FIRST byte only. A real
+ *    pipe (`echo foo | gbrain put x`, heredocs) delivers its first byte
+ *    within milliseconds; once any data arrives the deadline is lifted and
+ *    we read to EOF like readFileSync did (slow producers stay supported).
+ *    An empty-but-closed pipe (`: | gbrain put x`) EOFs immediately → ''.
+ *    A pipe that never delivers a byte times out → param stays unset, so
+ *    the existing required-param usage error fires (fail fast, exit 1).
+ *
+ * GBRAIN_STDIN_TIMEOUT_MS overrides the first-byte deadline (default 5000).
+ * Exported for tests; called by the op dispatch right after parseOpArgs.
+ */
+export async function applyStdinParam(
+  op: Operation,
+  params: Record<string, unknown>,
+): Promise<void> {
+  // Branch shape (stdin hint + missing param + `!process.stdin.isTTY` gate +
+  // 5MB cap) is pinned by the R4 regression test for PR #1325's Windows fix
+  // (test/cycle/regression-pr-wave-r1-r2-r4.test.ts) — keep the spelling.
   if (op.cliHints?.stdin && !params[op.cliHints.stdin] && !process.stdin.isTTY) {
-    const stdinContent = readFileSync(0, 'utf-8');
+    const content = await readStdinBounded();
+    if (content === null) return; // no input arrived — let the required-param check fail fast
     const MAX_STDIN = 5_000_000; // 5MB
-    if (Buffer.byteLength(stdinContent, 'utf-8') > MAX_STDIN) {
+    if (Buffer.byteLength(content, 'utf-8') > MAX_STDIN) {
       console.error(`Error: stdin content exceeds ${MAX_STDIN} bytes. Split into smaller inputs.`);
       process.exit(1);
     }
-    params[op.cliHints.stdin] = stdinContent;
+    params[op.cliHints.stdin] = content;
   }
+}
 
-  return params;
+/** First-byte deadline for pipe/socket stdin (#3513). Env-overridable escape hatch. */
+function stdinFirstByteTimeoutMs(): number {
+  const n = Number(process.env.GBRAIN_STDIN_TIMEOUT_MS);
+  return Number.isFinite(n) && n > 0 ? n : 5000;
+}
+
+/**
+ * Returns the full stdin content, '' for a readable-but-empty stdin, or
+ * null when stdin is a pipe/socket that never delivered a byte within the
+ * first-byte deadline (or the fd is closed/unreadable).
+ */
+export async function readStdinBounded(): Promise<string | null> {
+  let isPipeOrSocket: boolean;
+  try {
+    const st = fstatSync(0);
+    isPipeOrSocket = st.isFIFO() || st.isSocket();
+  } catch {
+    return null; // closed/invalid fd — treat as no input
+  }
+  if (!isPipeOrSocket) {
+    // Regular file redirect, /dev/null, etc. — read returns without blocking.
+    try {
+      return readFileSync(0, 'utf-8');
+    } catch {
+      return null;
+    }
+  }
+  return await new Promise<string | null>((resolve) => {
+    const chunks: Buffer[] = [];
+    let gotData = false;
+    const timer = setTimeout(() => {
+      if (!gotData) {
+        process.stdin.destroy();
+        resolve(null);
+      }
+    }, stdinFirstByteTimeoutMs());
+    const finish = () => {
+      clearTimeout(timer);
+      resolve(Buffer.concat(chunks).toString('utf-8'));
+    };
+    process.stdin.on('data', (c: Buffer) => {
+      if (!gotData) {
+        gotData = true;
+        clearTimeout(timer); // deadline applies to the FIRST byte only
+      }
+      chunks.push(c);
+    });
+    process.stdin.once('end', finish);
+    process.stdin.once('error', finish);
+  });
 }
 
 /**
@@ -872,7 +958,8 @@ export function applyThinClientSourceScope(
   params.source_id = resolved;
 }
 
-async function makeContext(engine: BrainEngine, params: Record<string, unknown>): Promise<OperationContext> {
+// Exported for tests (same import-safety contract as applyThinClientSourceScope).
+export async function makeContext(engine: BrainEngine, params: Record<string, unknown>): Promise<OperationContext> {
   // v0.31.8 (D11): resolve sourceId via the canonical 6-tier chain. Honors
   // --source / GBRAIN_SOURCE / .gbrain-source / path-match / brain default /
   // 'default'. Wrapped in try/catch so a doctor / single-source brain that
@@ -884,16 +971,21 @@ async function makeContext(engine: BrainEngine, params: Record<string, unknown>)
   // trusted local boundary) and consumed by federatedSearchScope in
   // operations.ts, which additionally gates on ctx.remote === false.
   let localFederated: string[] | undefined;
+  // params.source is set when a CLI flag was parsed for the op (rare; most
+  // CLI ops don't take --source). Falls through to env/dotfile/path-match.
+  const explicit = (params.source as string | undefined) ?? null;
   try {
     const { resolveSourceWithTier, localFederatedSourceIds } = await import('./core/source-resolver.ts');
-    // params.source is set when a CLI flag was parsed for the op (rare; most
-    // CLI ops don't take --source). Falls through to env/dotfile/path-match.
-    const explicit = (params.source as string | undefined) ?? null;
     const resolved = await resolveSourceWithTier(engine, explicit);
     sourceId = resolved.source_id;
     localFederated = await localFederatedSourceIds(engine, resolved.source_id, resolved.tier);
-  } catch {
-    // Source resolution failed (e.g. sources table doesn't exist on a fresh
+  } catch (err) {
+    // #1712: an EXPLICIT --source that fails to resolve (invalid id, or a
+    // source that doesn't exist) must error loudly — the blanket swallow
+    // turned `--source __all__` and typos into a silent `default` scope,
+    // which is how three bug reports became debugging sessions.
+    if (explicit) throw err;
+    // Ambient resolution failed (e.g. sources table doesn't exist on a fresh
     // pre-init brain). Leave sourceId unset; engine read methods fall through
     // to the cross-source view (D16 back-compat path).
     sourceId = undefined;
@@ -1615,14 +1707,12 @@ async function handleCliOnly(command: string, args: string[]) {
   // Per-command default: search 30s, sources list 10s. User --timeout=Ns wins.
   // Other commands (import, embed, doctor, etc.) keep their existing
   // unbounded connect — destructive / long-running commands shouldn't get
-  // a default kill switch.
-  const readOnlyDefaultTimeoutMs =
-    command === 'search' ? 30_000 :
-    command === 'sources' && (args[0] === 'list' || args[0] === undefined) ? 10_000 :
-    null;
+  // a default kill switch. The gate below is per-command (#3013): only the
+  // commands dispatchReadOnlyCommand handles may enter this path — a
+  // user-supplied --timeout on a write command must never reroute it here.
   const cliOptsResolved = getCliOptions();
   const userTimeoutMs = cliOptsResolved.timeoutMs;
-  const readOnlyTimeoutMs = userTimeoutMs ?? readOnlyDefaultTimeoutMs;
+  const readOnlyTimeoutMs = resolveReadOnlyDispatchTimeoutMs(command, args, userTimeoutMs);
 
   if (readOnlyTimeoutMs !== null) {
     const { withTimeout, OperationTimeoutError } = await import('./core/timeout.ts');
@@ -2161,16 +2251,24 @@ async function handleCliOnly(command: string, args: string[]) {
         //
         // v0.30.1: still works; canonical entrypoint is now `gbrain backfill
         // effective_date`. This command stays as a thin alias for back-compat.
+        //
+        // #1963: pass the already-connected engine. The command used to build
+        // + connect its OWN engine here, which self-deadlocked on the PGLite
+        // data-dir lock (this process already holds it via connectEngine
+        // above) — 30s spin, then exit 1, on every PGLite invocation.
         const { reindexFrontmatterCli } = await import('./commands/reindex-frontmatter.ts');
-        await reindexFrontmatterCli(args);
-        return; // reindexFrontmatterCli handles its own engine lifecycle
+        await reindexFrontmatterCli(engine, args);
+        break;
       }
       case 'backfill': {
         // v0.30.1: first-class generic backfill command. Subcommand dispatch
         // is inside runBackfillCommand (kind | list | --help).
+        // #1963: same double-connect class as reindex-frontmatter — reuse the
+        // connected engine instead of building a second one on the same
+        // PGLite data dir.
         const { runBackfillCommand } = await import('./commands/backfill.ts');
-        await runBackfillCommand(args);
-        return;
+        await runBackfillCommand(engine, args);
+        break;
       }
       case 'code-callers': {
         // v0.20.0 Cathedral II Layer 10 (C4): "who calls <symbol>?"
@@ -2211,6 +2309,28 @@ async function handleCliOnly(command: string, args: string[]) {
       await finishCliTeardown({ engine });
     }
   }
+}
+
+/**
+ * #3013: decide whether an invocation enters the read-only connect+dispatch
+ * timeout path, and with what wallclock. Returns null for every command
+ * dispatchReadOnlyCommand can't handle. The gate used to be "a timeout is
+ * present" — so a user-supplied --timeout on a write command (`sync`,
+ * `embed`, `import`, ...) hijacked dispatch into the read-only path, which
+ * threw and exited 1 before any work ran. Pure; exported for the
+ * regression test.
+ */
+export function resolveReadOnlyDispatchTimeoutMs(
+  command: string,
+  subArgs: string[],
+  userTimeoutMs: number | null,
+): number | null {
+  if (command !== 'search' && command !== 'sources') return null;
+  const defaultMs =
+    command === 'search' ? 30_000 :
+    (subArgs[0] === 'list' || subArgs[0] === undefined) ? 10_000 :
+    null;
+  return userTimeoutMs ?? defaultMs;
 }
 
 /**
@@ -2448,6 +2568,7 @@ TOOLS
   publish <page.md> [--password]     Shareable HTML (strips private data, optional AES-256)
   check-backlinks <check|fix> [dir]  Find/fix missing back-links across brain
   lint <dir|file> [--fix]            Catch LLM artifacts, placeholder dates, bad frontmatter
+  backfill <kind|list>               v0.30.1: run a registered backfill (effective-date, ...)
   orphans [--json] [--count]         Find pages with no inbound wikilinks
   salience [--days N] [--kind P]     v0.29: pages ranked by emotional + activity salience
   anomalies [--since D] [--sigma N]  v0.29: cohort-based statistical anomalies (tag, type)

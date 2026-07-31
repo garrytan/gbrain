@@ -48,6 +48,32 @@ import {
 
 export const RRF_K = 60;
 const COMPILED_TRUTH_BOOST = 2.0;
+
+/**
+ * Which detail levels get the compiled_truth boost (#3430).
+ *
+ * ONLY `low`. The documented contract (`src/core/operations.ts`) is
+ * "low (compiled truth only), medium (default, all with dedup), high (all
+ * chunks)" — so `low` is the level that privileges compiled truth, and both
+ * `medium` and `high` are supposed to see everything on equal footing.
+ *
+ * This was previously spelled `detail !== 'high'`, i.e. written as though
+ * `high` were the special case. Because COMPILED_TRUTH_BOOST is applied AFTER
+ * RRF normalization, and RRF's whole range over a 100-deep pool is 1/60 → 1/160,
+ * a 2.0x multiplier is not a tilt — break-even is `2/(60+r) >= 1/60`, so any
+ * boosted chunk inside the first 60 ranks outranks an unboosted rank-1 chunk.
+ * At the default detail that made search categorically compiled-truth-only:
+ * a page whose answer lived in a `fenced_code` chunk returned the prose chunk,
+ * and the code chunk fell out of the window entirely.
+ *
+ * Extracted as a named predicate rather than left inline at three call sites so
+ * the detail→boost mapping is directly testable. An inline expression can only
+ * be covered through a full `hybridSearch` round trip, which is why the
+ * original inversion went unnoticed.
+ */
+export function shouldBoostCompiledTruth(detail: string | null | undefined): boolean {
+  return detail === 'low';
+}
 const pendingCacheWrites = new Set<Promise<unknown>>();
 
 /**
@@ -841,11 +867,12 @@ export async function embedQueryBounded(
   embedOpts: { embeddingModel?: string; dimensions?: number } | undefined,
   dl: QueryEmbedDeadline,
 ): Promise<Float32Array> {
-  const p = embedQuery(text, { ...(embedOpts ?? {}), abortSignal: dl.signal });
-  p.catch(() => { /* swallow the loser's late rejection */ });
   // Floor the budget so a healthy embed isn't starved when the shared absolute
   // deadline was mostly consumed by prior work (codex). Still bounded overall.
   const remaining = Math.max(MIN_QUERY_EMBED_BUDGET_MS, dl.deadlineAt - Date.now());
+  const signal = AbortSignal.timeout(remaining);
+  const p = embedQuery(text, { ...(embedOpts ?? {}), abortSignal: signal });
+  p.catch(() => { /* swallow the loser's late rejection */ });
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(
@@ -1169,7 +1196,7 @@ export async function hybridSearch(
       const noEmbedLists = [{ list: keywordResults, k: fk }];
       if (titleResults.length > 0) noEmbedLists.push({ list: titleResults, k: fk });
       if (relationalList.length > 0) noEmbedLists.push({ list: relationalList, k: fk });
-      noEmbedResults = rrfFusionWeighted(noEmbedLists, detailResolved !== 'high');
+      noEmbedResults = rrfFusionWeighted(noEmbedLists, shouldBoostCompiledTruth(detailResolved));
     }
     if (noEmbedResults.length > 0) {
       await runPostFusionStages(engine, noEmbedResults, postFusionOpts);
@@ -1413,7 +1440,7 @@ export async function hybridSearch(
       const fallbackLists = [{ list: keywordResults, k: fk }];
       if (titleResults.length > 0) fallbackLists.push({ list: titleResults, k: fk });
       if (relationalList.length > 0) fallbackLists.push({ list: relationalList, k: fk });
-      fallbackResults = rrfFusionWeighted(fallbackLists, detail !== 'high');
+      fallbackResults = rrfFusionWeighted(fallbackLists, shouldBoostCompiledTruth(detail));
     }
     if (fallbackResults.length > 0) {
       await runPostFusionStages(engine, fallbackResults, postFusionOpts);
@@ -1500,7 +1527,7 @@ export async function hybridSearch(
   // arms BEFORE fusion so the compiled-truth authority boost skips them.
   await stampUnverifiedExtractions(engine, allLists.flatMap((l) => l.list));
 
-  let fused = rrfFusionWeighted(allLists, detail !== 'high');
+  let fused = rrfFusionWeighted(allLists, shouldBoostCompiledTruth(detail));
 
   // Cosine re-scoring before dedup so semantically better chunks survive.
   // v0.36 (D9): hydrate from the active embedding column so rescore happens

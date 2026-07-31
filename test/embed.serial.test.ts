@@ -907,3 +907,76 @@ describe('runEmbed preserves code-chunk metadata across re-embed (regression for
     expect(metadataOf(upsertChunkArgs![0])).toEqual(metadataOf(fullCodeChunk));
   });
 });
+
+// ────────────────────────────────────────────────────────────────
+// #3507 — `embed --stale` must reproduce the page's STORED
+// contextual-retrieval wrapping convention instead of embedding raw
+// chunk_text (which silently stripped contextual prefixes on every
+// re-embed, including the normal post-model-migration path).
+// ────────────────────────────────────────────────────────────────
+
+describe('embed --stale contextual-retrieval wrapping (#3507)', () => {
+  const wrapChunks = [
+    { chunk_index: 0, chunk_text: 'prose chunk', chunk_source: 'compiled_truth', embedded_at: null, token_count: 1 },
+    { chunk_index: 1, chunk_text: 'const x = 1;', chunk_source: 'fenced_code', embedded_at: null, token_count: 1 },
+  ];
+  const wrapStale = [
+    { slug: 'wrapped', chunk_index: 0, chunk_text: 'prose chunk', chunk_source: 'compiled_truth' as const, model: null, token_count: 1, source_id: 'default', page_id: 1 },
+    { slug: 'wrapped', chunk_index: 1, chunk_text: 'const x = 1;', chunk_source: 'fenced_code' as any, model: null, token_count: 1, source_id: 'default', page_id: 1 },
+  ];
+
+  function wrappingHarness(mode: string | null) {
+    const seen: string[] = [];
+    const restamps: any[][] = [];
+    embedBatchBehavior = async (texts: string[]) => {
+      seen.push(...texts);
+      return texts.map(() => new Float32Array(1536));
+    };
+    const engine = mockEngine({
+      countStaleChunks: async () => 2,
+      listStaleChunks: async () => wrapStale,
+      getPage: async () => ({
+        slug: 'wrapped',
+        title: 'Widget Notes',
+        source_id: 'default',
+        compiled_truth: 'x',
+        timeline: '',
+        contextual_retrieval_mode: mode,
+      }),
+      getChunks: async () => wrapChunks,
+      upsertChunks: async () => {},
+      updatePageContextualRetrievalState: async (...args: any[]) => { restamps.push(args); },
+    });
+    return { engine, seen, restamps };
+  }
+
+  test('title-mode page: stale re-embed wraps prose with the title prefix; fenced_code stays raw', async () => {
+    const { engine, seen, restamps } = wrappingHarness('title');
+    const result = await runEmbedCore(engine, { stale: true });
+    expect(result.embedded).toBe(2);
+    expect(seen).toContain('<context>Widget Notes\n</context>\nprose chunk');
+    expect(seen).toContain('const x = 1;');
+    expect(restamps).toHaveLength(0); // title tier: stamp already honest
+  });
+
+  test('per_chunk_synopsis page: fully re-embedded page restamps to the title tier', async () => {
+    const { engine, seen, restamps } = wrappingHarness('per_chunk_synopsis');
+    const result = await runEmbedCore(engine, { stale: true });
+    expect(result.embedded).toBe(2);
+    expect(seen).toContain('<context>Widget Notes\n</context>\nprose chunk');
+    expect(restamps).toHaveLength(1);
+    const [slug, sourceId, newMode] = restamps[0];
+    expect(slug).toBe('wrapped');
+    expect(sourceId).toBe('default');
+    expect(newMode).toBe('title');
+  });
+
+  test('page with no stored CR mode embeds raw chunk_text (convention preserved)', async () => {
+    const { engine, seen, restamps } = wrappingHarness(null);
+    const result = await runEmbedCore(engine, { stale: true });
+    expect(result.embedded).toBe(2);
+    expect(seen).toContain('prose chunk');
+    expect(seen.some((t) => t.startsWith('<context>'))).toBe(false);
+    expect(restamps).toHaveLength(0);
+  });
+});

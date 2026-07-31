@@ -1815,11 +1815,22 @@ export interface BrainEngine {
    * never recreate them (the page has no `## Facts` fence). Omitted ⇒ legacy
    * behavior (delete every fact on the page coordinate). NULL/empty `source`
    * rows are always deletable (fence default).
+   *
+   * #2646: `preserveExpiredLegacy` protects soft-expired legacy rows
+   * (`row_num IS NULL AND expired_at IS NOT NULL`) — the record left by
+   * `forget_fact`'s legacy DB-only path. Fence rows always carry a
+   * `row_num`, so these rows are never fence-owned and a wipe would
+   * destroy the forget record (the audit trail of the forget). Note what
+   * this does NOT promise: it protects the record, not the forget itself —
+   * if the fence still carries the same claim, fence canonicality
+   * independently reinserts it as a fresh active row (legacy DB-only
+   * forgets are documented as non-durable; see extract-facts.ts). Omitted
+   * ⇒ legacy behavior.
    */
   deleteFactsForPage(
     slug: string,
     source_id: string,
-    opts?: { excludeSourcePrefixes?: string[] },
+    opts?: { excludeSourcePrefixes?: string[]; preserveExpiredLegacy?: boolean },
   ): Promise<{ deleted: number }>;
 
   /**
@@ -1940,8 +1951,13 @@ export interface BrainEngine {
    * preserved via stable page_id). `opts.sourceId` scopes the UPDATE — without
    * it, the bare `WHERE slug = old` matches every row across every source and
    * would either rename them all OR violate the (source_id, slug) UNIQUE.
+   *
+   * Returns the number of rows moved. 0 means the old slug had no row in the
+   * scoped source — an UPDATE that matches nothing does NOT throw, so callers
+   * that need to know whether the rename actually happened (the sync rename
+   * path, #3056) must check the return value rather than rely on the catch.
    */
-  updateSlug(oldSlug: string, newSlug: string, opts?: { sourceId?: string }): Promise<void>;
+  updateSlug(oldSlug: string, newSlug: string, opts?: { sourceId?: string }): Promise<number>;
   rewriteLinks(oldSlug: string, newSlug: string): Promise<void>;
 
   /**

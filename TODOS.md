@@ -1,5 +1,25 @@
 # TODOS
 
+## v0.42.67.0 follow-ups (Windows build tooling)
+
+Filed as follow-ups from v0.42.67.0 (`.gitattributes` LF pin for `*.sh` +
+`bash` prefix on the 33 `package.json` check commands). Both items are newly
+observable: before that release these checks never executed on Windows at all,
+so nothing about their runtime was measurable.
+
+- [ ] **P2 — three guard scripts exceed the 120s `run-verify-parallel.sh` cap on Windows.**
+  With the dispatch fixed, `bun run verify` on Windows gets 25 passes and 7 failures, and
+  `check:privacy`, `check:test-names` and `check:test-isolation` are timeouts rather than
+  real failures (they pass on Linux and macOS well inside the cap). They walk the tree with
+  per-file shell loops, which is far slower under Windows process creation. Either raise the
+  cap for these three, or replace the per-file loop with a single `grep -r` pass. Same cap
+  swallows `typecheck`, though standalone `bun run typecheck` exits 0.
+- [ ] **P3 — `check:wasm` cannot create its `node_modules` symlink on Windows.**
+  `scripts/check-wasm-embedded.sh` fails with `ln: failed to create symbolic link
+  '/tmp/gbrain-wasm-check.XXXX/node_modules': No such file or directory`. Unprivileged
+  Windows accounts cannot create symlinks without developer mode. Consider a junction, a
+  copy, or skipping the check with a clear message when symlink creation is unavailable.
+
 ## community fix-wave follow-ups (filed v0.42.60.0)
 
 - [x] **P2 — cherry-pick #2112's uncovered doctor.ts hunk.** Fix-wave A (#2820) superseded
@@ -62,17 +82,20 @@ Deferred from the provider-agnostic plumbing wave (#1249/#1250/#1292/#2271/#2209
 Plan + review trail at `~/.claude/plans/system-instruction-you-are-working-keen-newell.md`.
 The eng-review + Codex outside-voice narrowed the wave to these deferrals:
 
-- [ ] **P2 — Capability-aware query expansion on OpenAI-compat providers (#2372).**
+- [x] **P2 — Capability-aware query expansion on OpenAI-compat providers (#2372).**
   Expansion only runs for recipes that declare an `expansion` touchpoint, and only the
   native providers (anthropic/openai/google) do. To make expansion work on
   litellm/openrouter/groq/together/deepseek you must ADD expansion touchpoints to those
   chat-capable recipes AND add a `generateObject`→`generateText` capability fallback for
   backends without strict structured outputs. Feature-shaped; overlaps the general
   OpenAI-compat proxy story (`docs/designs/COMMUNITY_IDEAS.md`). Community PR #2373 is a
-  starting point. Where: `src/core/ai/gateway.ts:expand`, recipe files, `types.ts` (ExpansionTouchpoint).
-- [ ] **P2 — LiteLLM as a chat/expansion backend.** `litellm-proxy` declares ONLY an
+  starting point. Implemented by #2373 plus the DeepSeek/Groq/Together recipe wave,
+  LiteLLM chat/expansion support, and the OpenRouter expansion touchpoint. Where:
+  `src/core/ai/gateway.ts:expand`, recipe files, `types.ts` (ExpansionTouchpoint).
+- [x] **P2 — LiteLLM as a chat/expansion backend.** `litellm-proxy` declares ONLY an
   embedding touchpoint, so `think`/chat on LiteLLM is dead. Add chat (and expansion) so a
-  LiteLLM proxy is a full LLM backend, not embedding-only. The general OpenAI-compat proxy story.
+  LiteLLM proxy is a full LLM backend, not embedding-only. Implemented by #2208.
+  The general OpenAI-compat proxy story.
 - [ ] **P3 — Per-model embedding dims metadata on `EmbeddingTouchpoint`.** `default_dims`
   is recipe-wide, so a recipe (ollama) can't carry different native dims per model. This
   wave added the modern ollama model NAMES + a `trust_custom_dims` passthrough (user supplies

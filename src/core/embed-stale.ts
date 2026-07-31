@@ -19,7 +19,8 @@
 
 import type { BrainEngine } from './engine.ts';
 import type { ChunkInput } from './types.ts';
-import { embedBatchWithBackoff } from '../commands/embed.ts';
+import { embedBatchWithBackoff, restampIfDemotedToTitleTier } from '../commands/embed.ts';
+import { wrapChunkTextsForStoredMode } from './embedding-context.ts';
 import { type DbPacer, createNoopPacer, observed } from './db-pacer.ts';
 import { AbortError } from './abort-check.ts';
 
@@ -189,8 +190,15 @@ export async function embedStaleForSource(
       const keySourceId = stale[0]?.source_id ?? sourceId;
       const slug = stale[0].slug;
       try {
+        // #3507: fetch the page row for its title + stored CR mode so the
+        // re-embed reproduces the page's wrapping convention instead of
+        // silently stripping contextual prefixes (mirrors
+        // src/commands/embed.ts:embedAllStale).
+        const pageRow = await observed(pacer, () =>
+          engine.getPage(slug, { sourceId: keySourceId }),
+        );
         const embeddings = await embedFn(
-          stale.map((c) => c.chunk_text),
+          wrapChunkTextsForStoredMode(pageRow, stale),
           { abortSignal: signal },
         );
         const existing = await observed(pacer, () =>
@@ -231,6 +239,13 @@ export async function embedStaleForSource(
         if (signature && stale.length === existing.length) {
           await observed(pacer, () =>
             engine.setPageEmbeddingSignature(slug, { sourceId: keySourceId, signature }),
+          );
+        }
+        // #3507: a FULLY re-embedded per_chunk_synopsis page landed at the
+        // title tier — keep the stamped mode honest (mixed pages stay as-is).
+        if (stale.length === existing.length) {
+          await observed(pacer, () =>
+            restampIfDemotedToTitleTier(engine, pageRow, slug, keySourceId),
           );
         }
         result.embedded += stale.length;

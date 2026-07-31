@@ -6,7 +6,7 @@
  * the env override is process-global.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, readdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -72,6 +72,33 @@ describe('parser-probe audit trail', () => {
     const old = new Date(Date.now() - 10 * 86400000).toISOString();
     logParserProbeEvent(makeEvent({ ts: old }));
     expect(readRecentParserProbeEvents(7).length).toBe(0);
+  });
+
+  test('cross-week ordering: events come back chronological so the tail is the newest run', () => {
+    // Regression: the shared week-file reader walks the current week's file
+    // first, then the previous week's. Without sorting, the array tail —
+    // which doctor's conversation_parser_probe_health reports as "latest" —
+    // was the OLDEST in-window event whenever last week's file had entries.
+    // Write the two week files directly so the cross-file case is genuinely
+    // exercised (the writer routes by write time, not event ts).
+    const now = new Date('2026-07-23T12:00:00Z');
+    const thisWeekFile = computeParserProbeAuditFilename(now);
+    const prevWeekFile = computeParserProbeAuditFilename(new Date(now.getTime() - 7 * 86400000));
+    writeFileSync(join(auditDir, thisWeekFile), [
+      JSON.stringify(makeEvent({ ts: '2026-07-22T08:00:00Z' })),
+      JSON.stringify(makeEvent({ ts: '2026-07-23T08:00:00Z' })),
+    ].join('\n') + '\n');
+    writeFileSync(join(auditDir, prevWeekFile), [
+      JSON.stringify(makeEvent({ ts: '2026-07-17T08:00:00Z' })),
+      JSON.stringify(makeEvent({ ts: '2026-07-18T08:00:00Z' })),
+    ].join('\n') + '\n');
+    const events = readRecentParserProbeEvents(7, now);
+    expect(events.map(e => e.ts)).toEqual([
+      '2026-07-17T08:00:00Z',
+      '2026-07-18T08:00:00Z',
+      '2026-07-22T08:00:00Z',
+      '2026-07-23T08:00:00Z',
+    ]);
   });
 });
 

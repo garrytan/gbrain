@@ -33,6 +33,17 @@
 
 export const SOURCE_ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 
+/**
+ * Sentinel meaning "span every source" (#1712). Deliberately NOT a valid
+ * source id (underscores are rejected by SOURCE_ID_RE), so it can never
+ * collide with a real source, be created via `sources add`, or leak into
+ * lock ids / path joins. The resolver's explicit/env tiers pass it through
+ * verbatim; `sourceScopeOpts` translates it to an unscoped read for trusted
+ * local callers and keeps it as an unsatisfiable literal for remote callers
+ * (fail-closed).
+ */
+export const ALL_SOURCES = '__all__';
+
 /** Returns true if the string matches the canonical source_id regex. */
 export function isValidSourceId(s: unknown): s is string {
   return typeof s === 'string' && SOURCE_ID_RE.test(s);

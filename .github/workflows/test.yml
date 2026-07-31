@@ -113,6 +113,11 @@ jobs:
           key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
       - run: bun install
       - run: bun run verify
+      # Guard: no bare `bun test` in workflows/scripts — bun ignores
+      # bunfig.toml's timeout, and hooks (beforeAll/afterAll) get the 5s
+      # default regardless of per-test third-arg timeouts. Runs directly
+      # (not via verify's CHECKS array) to avoid a package.json edit.
+      - run: bash scripts/check-bun-test-timeout.sh
 
   serial-tests:
     # *.serial.test.ts at --max-concurrency=1. Lives in its own runner so

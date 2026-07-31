@@ -354,6 +354,15 @@ describe('MinionQueue: #1737 per-handler default timeout', () => {
     expect(sub.timeout_ms).toBe(30 * 60 * 1000);
   });
 
+  // #3207 — facts-absorb is one LLM extraction call per page (same shape as
+  // chronicle_extract) but was missing from HANDLER_DEFAULT_TIMEOUT_MS, so it
+  // inherited the tight null-default wall-clock and was dead-lettered
+  // mid-generation on slow chat providers (facts silently lost).
+  test('facts-absorb gets the 10-min LLM-extraction default (#3207)', async () => {
+    const job = await queue.add('facts-absorb', { slug: 'people/alice-example' });
+    expect(job.timeout_ms).toBe(10 * 60 * 1000);
+  });
+
   test('contextual per-chunk reindex gets the 60-min default', async () => {
     const job = await queue.add('contextual_reindex_per_chunk', { page_slug: 'large-transcript' }, undefined, {
       allowProtectedSubmit: true,
@@ -708,6 +717,26 @@ describe('MinionQueue: Prune', () => {
 
     const count = await queue.prune({ olderThan: new Date(Date.now() + 86400000) }); // future date = prune everything old enough
     expect(count).toBe(1); // only the cancelled one
+  });
+
+  // #2712: --dry-run used to be silently ignored — the destructive default
+  // ran and deleted rows while the operator believed they were previewing.
+  test('dryRun counts prunable jobs without deleting', async () => {
+    const job1 = await queue.add('sync', {});
+    await queue.cancelJob(job1.id); // terminal → prunable
+
+    const wouldPrune = await queue.prune({ olderThan: new Date(Date.now() + 86400000), dryRun: true });
+    expect(wouldPrune).toBe(1);
+
+    // The row must still exist after a dry run.
+    const stillThere = await queue.getJob(job1.id);
+    expect(stillThere).not.toBeNull();
+    expect(stillThere!.status).toBe('cancelled');
+
+    // A real prune afterwards actually deletes it.
+    const pruned = await queue.prune({ olderThan: new Date(Date.now() + 86400000) });
+    expect(pruned).toBe(1);
+    expect(await queue.getJob(job1.id)).toBeNull();
   });
 });
 

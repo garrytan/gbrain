@@ -11,7 +11,7 @@
  *   pathToSlug()  →  convert file paths to page slugs
  */
 
-import { CJK_SLUG_CHARS } from './cjk.ts';
+import { SLUG_WORD_CHARS } from './cjk.ts';
 // v0.37.7.0 #1169 submodule-detection helpers. Bottom-of-file already
 // aliases existsSync as `_existsSync` for other purposes; the top-of-file
 // import keeps the pruneDir helper's deps near its callsite.
@@ -396,8 +396,10 @@ export function unsyncableReason(path: string, opts: SyncableOptions = {}): Sync
 
 /**
  * Character class for the lowercase-canonical form of a slug segment after
- * slugifySegment() has run. Lowercase letters, digits, dots, underscores,
- * hyphens. Exposed so adjacent code (e.g. takes-fence holder validation,
+ * slugifySegment() has run. Letters/numbers in any script (lowercase where
+ * the script has case — #3417), dots, underscores, hyphens. Uses \p{...}
+ * classes, so composed regexes need the `u` flag (this one carries it).
+ * Exposed so adjacent code (e.g. takes-fence holder validation,
  * v0.32 EXP-4) can reuse the actual repo slug grammar instead of inventing
  * a stricter parallel one and emitting false-positive warnings on legitimate
  * `companies/acme.io` / `people/foo_bar` slugs (codex review #3).
@@ -405,15 +407,18 @@ export function unsyncableReason(path: string, opts: SyncableOptions = {}): Sync
  * Pattern is the inner character class only (no anchors); callers wrap it
  * in `^...$` or compose it with prefixes like `(?:people|companies)/...`.
  */
-export const SLUG_SEGMENT_PATTERN = new RegExp(`[a-z0-9._\\-${CJK_SLUG_CHARS}]+`);
+export const SLUG_SEGMENT_PATTERN = new RegExp(`[${SLUG_WORD_CHARS}._\\-]+`, 'u');
 
 /**
  * Slugify a single path segment: lowercase, strip special chars, spaces → hyphens.
- * CJK ranges (Han / Hiragana / Katakana / Hangul Syllables) are preserved (v0.32.7).
- * NFC re-normalize after the NFD-strip-accents pass so Hangul Jamo recomposes back
- * into precomposed syllables that fall inside the whitelist.
+ * Letters and numbers from EVERY script are preserved (#3417): previously only
+ * Latin + CJK survived, so Hebrew/Arabic/Cyrillic/Greek/Thai/... filenames
+ * collapsed to empty segments and distinct files silently merged onto one slug.
+ * NFC re-normalize after the NFD-strip-accents pass so Hangul Jamo recomposes
+ * back into precomposed syllables, and so NFD filenames (macOS) and NFC
+ * filenames (Linux/git) of the same name produce the SAME slug.
  */
-const SLUGIFY_KEEP_RE = new RegExp(`[^a-z0-9.\\s_\\-${CJK_SLUG_CHARS}]`, 'g');
+const SLUGIFY_KEEP_RE = new RegExp(`[^${SLUG_WORD_CHARS}.\\s_\\-]`, 'gu');
 
 export function slugifySegment(segment: string): string {
   return segment

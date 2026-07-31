@@ -15,6 +15,7 @@ import {
 } from '../src/core/search/llm-intent.ts';
 import {
   __setChatTransportForTests,
+  __unconfigureGatewayForTests,
   configureGateway,
   resetGateway,
 } from '../src/core/ai/gateway.ts';
@@ -122,7 +123,9 @@ describe('classifyModalityWithLLM — fail-open', () => {
   });
 
   test('Gateway not configured → returns fallback', async () => {
-    resetGateway();
+    // Hard-unconfigure: resetGateway() would restore the preload's test
+    // baseline (#3554), whose {...process.env} could make chat available.
+    __unconfigureGatewayForTests();
     // No configureGateway called → isAvailable('chat') returns false.
     expect(await classifyModalityWithLLM('q', 'text')).toBe('text');
   });

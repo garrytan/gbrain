@@ -186,3 +186,41 @@ export function modeRequiresHaiku(mode: CRMode): boolean {
 export function modeRequiresWrapper(mode: CRMode): boolean {
   return mode !== 'none';
 }
+
+/**
+ * #3507 — build the embedding inputs for a re-embed of EXISTING chunk rows,
+ * reproducing the wrapping convention the page's vectors were originally
+ * built under (recorded in `pages.contextual_retrieval_mode`).
+ *
+ * Used by every plain re-embed path (`embed <slug>`, `embed --all`,
+ * `embed --stale`, the embed-backfill Minion loop). Before this helper those
+ * paths embedded raw `chunk_text`, so any re-embed — including the NORMAL
+ * post-model-migration `embed --stale` — silently replaced context-wrapped
+ * vectors with unwrapped ones, degrading retrieval with no signature change
+ * to show for it.
+ *
+ * Convention rules (embed PRESERVES conventions; changing them is
+ * sync/reindex's job):
+ *   - mode NULL/undefined/'none' → raw chunk_text (status quo).
+ *   - mode 'title'               → title-only prefix (pure string concat).
+ *   - mode 'per_chunk_synopsis'  → title-only prefix. Re-generating Haiku
+ *     synopses is a paid backfill concern; title-only is the service's own
+ *     documented fallback tier (D14). Callers that fully re-embed a page
+ *     this way should restamp the page to 'title' so the column stays
+ *     honest (see contextual-retrieval-service.ts:titleTierCorpusGeneration).
+ *   - `fenced_code` chunks are NEVER wrapped (D20-T4), same as sync.
+ */
+export function wrapChunkTextsForStoredMode(
+  page:
+    | { title?: string | null; contextual_retrieval_mode?: CRMode | null }
+    | null
+    | undefined,
+  chunks: ReadonlyArray<{ chunk_text: string; chunk_source?: string | null }>,
+): string[] {
+  const mode = page?.contextual_retrieval_mode;
+  if (mode == null || !modeRequiresWrapper(mode)) {
+    return chunks.map((c) => c.chunk_text);
+  }
+  const prefix = buildContextualPrefix(page?.title ?? '', null);
+  return chunks.map((c) => wrapChunkForEmbedding(c.chunk_text, prefix, c.chunk_source));
+}

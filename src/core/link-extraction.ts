@@ -28,10 +28,11 @@ import { ensureWellFormed } from './text-safe.ts';
  * OR updated_at > links_extracted_at`. It is an ISO-8601 string (NOT a number) —
  * the column is TIMESTAMPTZ and the predicate binds it as `::timestamptz`.
  */
-// 2026-07-10: bumped for the #2576 --stale nullResolver fix — sweeps before it
-// stamped pages with their bare wikilinks silently dropped; the bump re-flags
-// them so the fixed sweep re-extracts.
-export const LINK_EXTRACTOR_VERSION_TS = '2026-07-10T00:00:00Z';
+// 2026-07-30: bumped for the #3466 inferTypeByDir fix — unevidenced
+// people/ -> companies/ adjacency now infers 'mentions' instead of
+// 'works_at'; the bump re-flags stamped pages so the next --stale sweep
+// re-extracts them under the corrected inference.
+export const LINK_EXTRACTOR_VERSION_TS = '2026-07-30T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 

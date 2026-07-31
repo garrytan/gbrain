@@ -146,6 +146,19 @@ export function computeCorpusGeneration(args: {
 }
 
 /**
+ * #3507 — the corpus_generation a page lands on when a plain re-embed path
+ * (`embed --stale` and friends) re-embeds a `per_chunk_synopsis` page at the
+ * title-only tier (the D14 fallback tier; synopsis re-generation is a paid
+ * backfill concern). Callers restamp
+ * `updatePageContextualRetrievalState(slug, sourceId, 'title', titleTierCorpusGeneration())`
+ * so the stamped mode keeps describing the vectors actually in the column.
+ * Matches what the inline import path writes for its title-tier pages.
+ */
+export function titleTierCorpusGeneration(): string {
+  return computeCorpusGeneration({ crMode: 'title', haikuModel: DEFAULT_HAIKU_MODEL });
+}
+
+/**
  * Compute source_text_hash for D27 P1-4 cache key composition. The
  * synopsis cache invalidates correctly when adjacent text changes (page
  * content edit, frontmatter change, fallback chain different source).

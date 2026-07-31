@@ -110,6 +110,12 @@ export function rowToPage(row: Record<string, unknown>): Page {
   const sourceUri = row.source_uri === undefined ? undefined : (row.source_uri as string | null);
   const ingestedVia = row.ingested_via === undefined ? undefined : (row.ingested_via as string | null);
   const ingestedAt = readOptionalDate(row.ingested_at);
+  // #3507: the CR tier the page was last embedded under (three-state, same
+  // pattern as the provenance columns above). Re-embed paths (`embed --stale`
+  // and friends) read this to reproduce the page's stored wrapping convention.
+  const contextualRetrievalMode = row.contextual_retrieval_mode === undefined
+    ? undefined
+    : (row.contextual_retrieval_mode as Page['contextual_retrieval_mode']);
   return {
     id: row.id as number,
     slug: row.slug as string,
@@ -135,6 +141,7 @@ export function rowToPage(row: Record<string, unknown>): Page {
     ...(sourceUri !== undefined && { source_uri: sourceUri }),
     ...(ingestedVia !== undefined && { ingested_via: ingestedVia }),
     ...(ingestedAt !== undefined && { ingested_at: ingestedAt }),
+    ...(contextualRetrievalMode !== undefined && { contextual_retrieval_mode: contextualRetrievalMode }),
     // v0.31.12: propagate source_id so downstream callers (embed, reconcile-links)
     // can thread it through getChunks / upsertChunks without defaulting to 'default'.
     // v0.32.8: Page.source_id is required. Every SELECT feeding rowToPage now

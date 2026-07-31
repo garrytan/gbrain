@@ -233,7 +233,7 @@ USAGE
   gbrain jobs get <id>
   gbrain jobs cancel <id>
   gbrain jobs retry <id>
-  gbrain jobs prune [--older-than 30d]
+  gbrain jobs prune [--older-than 30d] [--dry-run]
   gbrain jobs delete <id>
   gbrain jobs stats
   gbrain jobs smoke
@@ -633,8 +633,15 @@ HANDLER TYPES (built in)
       try { await queue.ensureSchema(); }
       catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
 
-      const count = await queue.prune({ olderThan: new Date(Date.now() - days * 86400000) });
-      console.log(`Pruned ${count} jobs older than ${days} days.`);
+      // #2712: --dry-run previews the count without deleting. It used to be
+      // silently ignored (the destructive default ran anyway).
+      const dryRun = hasFlag(args, '--dry-run');
+      const count = await queue.prune({ olderThan: new Date(Date.now() - days * 86400000), dryRun });
+      if (dryRun) {
+        console.log(`[dry-run] Would prune ${count} jobs older than ${days} days. Nothing deleted.`);
+      } else {
+        console.log(`Pruned ${count} jobs older than ${days} days.`);
+      }
       break;
     }
 

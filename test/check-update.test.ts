@@ -35,6 +35,13 @@ describe('isNewerVersion', () => {
     expect(isNewerVersion('0.42.66.0', '0.42.66.1')).toBe(true);
   });
 
+  test('orders legacy 3-segment against 4-segment: 0.42.67.0 > 0.42.66.1 > 0.42.66', () => {
+    expect(isNewerVersion('0.42.66.1', '0.42.67.0')).toBe(true);
+    expect(isNewerVersion('0.42.66', '0.42.66.1')).toBe(true);
+    expect(isNewerVersion('0.42.66', '0.42.66.0')).toBe(false); // 3-segment == its .0 micro
+    expect(isNewerVersion('0.42.67.0', '0.42.66.1')).toBe(false);
+  });
+
   test('rejects equal, older, and malformed versions', () => {
     expect(isNewerVersion('0.42.66.0', '0.42.66.0')).toBe(false);
     expect(isNewerVersion('0.42.66.1', '0.42.66.0')).toBe(false);

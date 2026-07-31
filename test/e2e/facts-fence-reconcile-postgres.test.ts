@@ -73,3 +73,90 @@ describe.skipIf(skip)('facts-fence escaped-pipe reconciliation on Postgres', () 
     ]);
   }, 30_000);
 });
+
+describe.skipIf(skip)('deleteFactsForPage preserveExpiredLegacy on Postgres (#2646)', () => {
+  // The PGLite side of this contract is pinned by
+  // test/extract-facts-phase.test.ts; this pins the postgres.js
+  // tagged-fragment SQL (the two branches interpolate `expiredLegacyFilter`
+  // differently) AND the returned delete count on a real Postgres.
+  const slug = 'people/expired-legacy-preserve-example';
+  let engine: PostgresEngine;
+
+  beforeAll(async () => {
+    engine = new PostgresEngine();
+    await engine.connect({ database_url: databaseUrl! });
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    if (engine) {
+      await engine.executeRaw('DELETE FROM facts WHERE source_markdown_slug = $1', [slug]);
+      await engine.executeRaw('DELETE FROM pages WHERE slug = $1', [slug]);
+      await engine.disconnect();
+    }
+  });
+
+  async function seedRows(): Promise<void> {
+    await engine.executeRaw('DELETE FROM facts WHERE source_markdown_slug = $1', [slug]);
+    // One fence-owned active row (deletable) + one soft-expired legacy row
+    // (row_num NULL, expired_at set — forget_fact's record, must survive).
+    await engine.executeRaw(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
+                          valid_from, source, confidence, row_num, expired_at, source_markdown_slug)
+       VALUES
+         ('default', $1, 'fence-owned active fact', 'fact', 'world', 'high',
+          now(), 'fence:reconcile', 1.0, 1, NULL, $1),
+         ('default', $1, 'forgotten legacy claim', 'fact', 'private', 'medium',
+          now(), 'mcp:put_page', 1.0, NULL, now(), $1)`,
+      [slug],
+    );
+  }
+
+  test('no-prefix branch: expired legacy row survives, count reflects only real deletions', async () => {
+    await seedRows();
+    const { deleted } = await engine.deleteFactsForPage(slug, 'default', {
+      preserveExpiredLegacy: true,
+    });
+    expect(deleted).toBe(1); // only the fence-owned row
+
+    const rows = await engine.executeRaw<{ fact: string }>(
+      'SELECT fact FROM facts WHERE source_markdown_slug = $1', [slug],
+    );
+    expect(Array.from(rows).map(r => r.fact)).toEqual(['forgotten legacy claim']);
+  }, 30_000);
+
+  test('prefix branch: excludeSourcePrefixes and preserveExpiredLegacy compose', async () => {
+    await seedRows();
+    // Add a cli:-origin row that the prefix exclusion must protect.
+    await engine.executeRaw(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
+                          valid_from, source, confidence, row_num, expired_at, source_markdown_slug)
+       VALUES ('default', $1, 'conversation fact', 'fact', 'private', 'medium',
+               now(), 'cli:extract-conversation-facts', 1.0, NULL, NULL, $1)`,
+      [slug],
+    );
+    const { deleted } = await engine.deleteFactsForPage(slug, 'default', {
+      excludeSourcePrefixes: ['cli:'],
+      preserveExpiredLegacy: true,
+    });
+    expect(deleted).toBe(1); // only the fence-owned row
+
+    const rows = await engine.executeRaw<{ fact: string }>(
+      'SELECT fact FROM facts WHERE source_markdown_slug = $1 ORDER BY id', [slug],
+    );
+    expect(Array.from(rows).map(r => r.fact)).toEqual([
+      'forgotten legacy claim',
+      'conversation fact',
+    ]);
+  }, 30_000);
+
+  test('omitted option keeps legacy wipe behavior (expired row IS deleted)', async () => {
+    await seedRows();
+    const { deleted } = await engine.deleteFactsForPage(slug, 'default');
+    expect(deleted).toBe(2);
+    const rows = await engine.executeRaw<{ fact: string }>(
+      'SELECT fact FROM facts WHERE source_markdown_slug = $1', [slug],
+    );
+    expect(Array.from(rows)).toHaveLength(0);
+  }, 30_000);
+});

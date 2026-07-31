@@ -20,7 +20,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import { buildGatewayConfig } from '../../src/cli.ts';
-import type { GBrainConfig } from '../../src/core/config.ts';
+import { KNOWN_CONFIG_KEYS, type GBrainConfig } from '../../src/core/config.ts';
 import { withEnv } from '../helpers/with-env.ts';
 
 const PASSTHROUGHS: Array<{ envVar: string; recipeId: string }> = [
@@ -138,6 +138,105 @@ describe('buildGatewayConfig config-plane API-key folding', () => {
       } as unknown as GBrainConfig);
       expect(cfg.env.VOYAGE_API_KEY).toBe('pa-env-plane');
     });
+  });
+
+  // #3500: dashscope_api_key was accepted at the file plane but never folded,
+  // so the dashscope/dashscope-rerank recipes (required: DASHSCOPE_API_KEY)
+  // could only be keyed via a process-env export.
+  test('dashscope_api_key folds into gateway env as DASHSCOPE_API_KEY', async () => {
+    await withEnv({ DASHSCOPE_API_KEY: undefined }, async () => {
+      const cfg = buildGatewayConfig({
+        dashscope_api_key: 'sk-ds-config-plane',
+      } as unknown as GBrainConfig);
+      expect(cfg.env.DASHSCOPE_API_KEY).toBe('sk-ds-config-plane');
+    });
+  });
+
+  test('a real DASHSCOPE_API_KEY process.env value wins over the config-plane fallback', async () => {
+    await withEnv({ DASHSCOPE_API_KEY: 'sk-ds-env-plane' }, async () => {
+      const cfg = buildGatewayConfig({
+        dashscope_api_key: 'sk-ds-config-plane',
+      } as unknown as GBrainConfig);
+      expect(cfg.env.DASHSCOPE_API_KEY).toBe('sk-ds-env-plane');
+    });
+  });
+
+  // #3500: the google recipe reads GOOGLE_GENERATIVE_AI_API_KEY; before this
+  // fold the ONLY configuration route was exporting that exact env name.
+  test('google_api_key folds into gateway env as GOOGLE_GENERATIVE_AI_API_KEY', async () => {
+    await withEnv(
+      { GOOGLE_GENERATIVE_AI_API_KEY: undefined, GEMINI_API_KEY: undefined },
+      async () => {
+        const cfg = buildGatewayConfig({
+          google_api_key: 'AIza-config-plane',
+        } as unknown as GBrainConfig);
+        expect(cfg.env.GOOGLE_GENERATIVE_AI_API_KEY).toBe('AIza-config-plane');
+      },
+    );
+  });
+
+  // Recurring-class guard: EVERY *_api_key field declared in
+  // KNOWN_CONFIG_KEYS must reach the gateway env dict. Adding a new
+  // provider key field to GBrainConfig without folding it in
+  // buildGatewayConfig fails here — the #121/#2662/#3500 bug class.
+  test('every KNOWN_CONFIG_KEYS *_api_key field reaches the gateway env', async () => {
+    const keyFields = KNOWN_CONFIG_KEYS.filter((k) => k.endsWith('_api_key'));
+    expect(keyFields.length).toBeGreaterThanOrEqual(7);
+    for (const field of keyFields) {
+      const sentinel = `sentinel-${field}`;
+      // Clear the two env names the field could map to so config must win.
+      await withEnv(
+        {
+          [field.replace(/_api_key$/, '').toUpperCase() + '_API_KEY']: undefined,
+          GOOGLE_GENERATIVE_AI_API_KEY: undefined,
+          GEMINI_API_KEY: undefined,
+        },
+        async () => {
+          const cfg = buildGatewayConfig({ [field]: sentinel } as unknown as GBrainConfig);
+          expect(
+            Object.values(cfg.env).includes(sentinel),
+            `config field "${field}" never reaches the gateway env — add a fold in buildGatewayConfig`,
+          ).toBe(true);
+        },
+      );
+    }
+  });
+});
+
+describe('buildGatewayConfig GEMINI_API_KEY alias (#3500)', () => {
+  // GEMINI_API_KEY is the env name Google's own docs and SDKs use; the
+  // recipe/gateway read GOOGLE_GENERATIVE_AI_API_KEY. Precedence:
+  // env GOOGLE_GENERATIVE_AI_API_KEY > env GEMINI_API_KEY > config google_api_key.
+  test('GEMINI_API_KEY aliases to GOOGLE_GENERATIVE_AI_API_KEY', async () => {
+    await withEnv(
+      { GOOGLE_GENERATIVE_AI_API_KEY: undefined, GEMINI_API_KEY: 'AIza-gemini-env' },
+      async () => {
+        const cfg = buildGatewayConfig(baseConfig);
+        expect(cfg.env.GOOGLE_GENERATIVE_AI_API_KEY).toBe('AIza-gemini-env');
+      },
+    );
+  });
+
+  test('canonical GOOGLE_GENERATIVE_AI_API_KEY env wins over the GEMINI_API_KEY alias', async () => {
+    await withEnv(
+      { GOOGLE_GENERATIVE_AI_API_KEY: 'AIza-canonical', GEMINI_API_KEY: 'AIza-alias' },
+      async () => {
+        const cfg = buildGatewayConfig(baseConfig);
+        expect(cfg.env.GOOGLE_GENERATIVE_AI_API_KEY).toBe('AIza-canonical');
+      },
+    );
+  });
+
+  test('GEMINI_API_KEY (process env) wins over the config-plane google_api_key', async () => {
+    await withEnv(
+      { GOOGLE_GENERATIVE_AI_API_KEY: undefined, GEMINI_API_KEY: 'AIza-gemini-env' },
+      async () => {
+        const cfg = buildGatewayConfig({
+          google_api_key: 'AIza-config-plane',
+        } as unknown as GBrainConfig);
+        expect(cfg.env.GOOGLE_GENERATIVE_AI_API_KEY).toBe('AIza-gemini-env');
+      },
+    );
   });
 });
 

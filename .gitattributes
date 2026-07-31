@@ -1,0 +1,16 @@
+# Line-ending policy.
+#
+# Shell scripts MUST be checked out with LF endings on every platform.
+# Git for Windows installs with `core.autocrlf=true` by default, which
+# rewrites LF -> CRLF on checkout. A strict bash (WSL, Linux CI, macOS)
+# then chokes on the trailing CR:
+#
+#   scripts/run-unit-parallel.sh: line 23: $'\r': command not found
+#   scripts/run-unit-parallel.sh: line 24: set: pipefail : invalid option name
+#   scripts/run-unit-parallel.sh: line 32: syntax error near unexpected token `$'{\r''
+#
+# That silently disabled `bun run test`, `bun run verify`, `bun run ci:local`
+# and `bun run test:e2e` for Windows contributors, since all four dispatch
+# through bash. `eol=lf` pins the checkout regardless of the user's
+# core.autocrlf setting.
+*.sh text eol=lf

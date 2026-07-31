@@ -19,6 +19,26 @@ import {
 } from '../core/pace-mode.ts';
 import { tryAcquireDbLock, type DbLockHandle } from '../core/db-lock.ts';
 import { embedBackfillLockId } from '../core/embed-backfill-lock.ts';
+import { wrapChunkTextsForStoredMode } from '../core/embedding-context.ts';
+import { titleTierCorpusGeneration } from '../core/contextual-retrieval-service.ts';
+import type { Page } from '../core/types.ts';
+
+/**
+ * #3507 — after a plain re-embed fully re-embedded a `per_chunk_synopsis`
+ * page at the title-only tier (see wrapChunkTextsForStoredMode), restamp the
+ * page's CR state to 'title' so `contextual_retrieval_mode` keeps describing
+ * the vectors actually in the column. The reindex sweep restores the synopsis
+ * tier later. No-op for every other mode.
+ */
+export async function restampIfDemotedToTitleTier(
+  engine: BrainEngine,
+  page: Pick<Page, 'contextual_retrieval_mode'> | null | undefined,
+  slug: string,
+  sourceId: string,
+): Promise<void> {
+  if (page?.contextual_retrieval_mode !== 'per_chunk_synopsis') return;
+  await engine.updatePageContextualRetrievalState(slug, sourceId, 'title', titleTierCorpusGeneration());
+}
 
 export interface EmbedOpts {
   /** Embed ALL pages (every chunk). */
@@ -599,7 +619,11 @@ async function embedPage(
     return;
   }
 
-  const embeddings = await embedBatch(toEmbed.map(c => c.chunk_text), { abortSignal: signal });
+  // #3507: embed with the page's STORED wrapping convention (title-tier
+  // contextual prefix when the page was embedded wrapped), not raw
+  // chunk_text — otherwise a re-embed silently strips the contextual
+  // prefixes the sync path applied. fenced_code chunks stay unwrapped.
+  const embeddings = await embedBatch(wrapChunkTextsForStoredMode(page, toEmbed), { abortSignal: signal });
   const embeddingMap = new Map<number, Float32Array>();
   for (let j = 0; j < toEmbed.length; j++) {
     embeddingMap.set(toEmbed[j].chunk_index, embeddings[j]);
@@ -622,6 +646,9 @@ async function embedPage(
   // such a page and then stamps it.
   if (toEmbed.length === chunks.length) {
     await engine.setPageEmbeddingSignature(slug, { sourceId, signature: currentEmbeddingSignature() });
+    // #3507: a fully re-embedded per_chunk_synopsis page landed at the
+    // title tier — keep the stamped mode honest.
+    await restampIfDemotedToTitleTier(engine, page, slug, page.source_id);
   }
   result.embedded += toEmbed.length;
   result.pages_processed++;
@@ -763,7 +790,8 @@ async function embedAll(
     }
 
     try {
-      const embeddings = await embedBatch(toEmbed.map(c => c.chunk_text));
+      // #3507: reproduce the page's stored wrapping convention (see embedPage).
+      const embeddings = await embedBatch(wrapChunkTextsForStoredMode(page, toEmbed));
       // Build a map of new embeddings by chunk_index
       const embeddingMap = new Map<number, Float32Array>();
       for (let j = 0; j < toEmbed.length; j++) {
@@ -784,6 +812,11 @@ async function embedAll(
       // detectable as stale.
       await observed(pacer, () =>
         engine.setPageEmbeddingSignature(page.slug, { sourceId: pageSourceId, signature }),
+      );
+      // #3507: --all fully re-embeds; a per_chunk_synopsis page landed at
+      // the title tier — keep the stamped mode honest.
+      await observed(pacer, () =>
+        restampIfDemotedToTitleTier(engine, page, page.slug, pageSourceId),
       );
       result.embedded += toEmbed.length;
     } catch (e: unknown) {
@@ -1098,7 +1131,13 @@ async function embedAllStale(
         const keySourceId = stale[0]?.source_id ?? 'default';
         const slug = stale[0].slug;
         try {
-          const embeddings = await embedBatchWithBackoff(stale.map(c => c.chunk_text), { abortSignal: effectiveSignal });
+          // #3507: fetch the page row for its title + stored CR mode so the
+          // re-embed reproduces the page's wrapping convention instead of
+          // silently stripping contextual prefixes — `embed --stale` is the
+          // NORMAL post-model-migration path, so raw-text embedding here
+          // quietly converted whole corpora to the unwrapped convention.
+          const pageRow = await observed(pacer, () => engine.getPage(slug, { sourceId: keySourceId }));
+          const embeddings = await embedBatchWithBackoff(wrapChunkTextsForStoredMode(pageRow, stale), { abortSignal: effectiveSignal });
           // Re-fetch existing chunks and merge to avoid deleting non-stale chunks.
           const existing = await observed(pacer, () => engine.getChunks(slug, { sourceId: keySourceId }));
           const staleIdxToEmbedding = new Map<number, Float32Array>();
@@ -1124,6 +1163,14 @@ async function embedAllStale(
           if (signature && stale.length === existing.length) {
             await observed(pacer, () =>
               engine.setPageEmbeddingSignature(slug, { sourceId: keySourceId, signature }),
+            );
+          }
+          // #3507: a FULLY re-embedded per_chunk_synopsis page landed at the
+          // title tier — keep the stamped mode honest. Partially-stale pages
+          // stay stamped as-is (mixed provenance; reindex sweeps fix them).
+          if (stale.length === existing.length) {
+            await observed(pacer, () =>
+              restampIfDemotedToTitleTier(engine, pageRow, slug, keySourceId),
             );
           }
           result.embedded += stale.length;

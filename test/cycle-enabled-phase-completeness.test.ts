@@ -38,7 +38,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv, emptyHome } from './helpers/with-env.ts';
 import { runCycle, ALL_PHASES } from '../src/core/cycle.ts';
-import { mkdtempSync, writeFileSync } from 'fs';
+import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { execSync } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -139,19 +139,25 @@ describe('#2540 (i) — pack omitting optional phases, all enabled phases comple
 
 describe('#2540 (ii) — an enabled phase that never completes still prevents the stamp', () => {
   test('every selected phase failing reports status=failed and does NOT stamp last_full_cycle_at', async () => {
-    await withEnv({ GBRAIN_HOME: gbrainHome, OPENAI_API_KEY: undefined, ANTHROPIC_API_KEY: undefined }, async () => {
+    await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
       await seedSource('always-fails');
       expect(await readLastFullCycleAt('always-fails')).toBeNull();
 
-      // embed is a real, always-enabled phase (no pack gate, no config
-      // .enabled toggle). With no embedding provider key configured it
-      // deterministically fails — this is NOT the fix under test, it's
-      // the pre-existing "an enabled phase genuinely never completes"
-      // case the issue says must keep failing doctor's check.
+      // Deterministic, environment-independent failure: run the sync phase
+      // against a brain directory that no longer exists. The previous shape
+      // ('embed' with OPENAI_API_KEY/ANTHROPIC_API_KEY unset) was
+      // environment-sensitive — on a machine where any OTHER embedding
+      // provider resolves (Voyage, ZeroEntropy, a local endpoint, …), embed
+      // with zero stale chunks succeeds and the cycle reports 'clean',
+      // flipping this test's expectation. A vanished checkout fails the
+      // sync phase on every machine. This is NOT the fix under test; it's
+      // the pre-existing "an enabled phase genuinely never completes" case
+      // the issue says must keep failing doctor's check.
+      rmSync(brainDir, { recursive: true, force: true });
       const report = await runCycle(engine, {
         brainDir,
         sourceId: 'always-fails',
-        phases: ['embed'],
+        phases: ['sync'],
       });
 
       expect(report.status).toBe('failed');

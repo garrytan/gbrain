@@ -277,3 +277,79 @@ describe('embedStaleForSource', () => {
     expect(txtRow.embedded_at).not.toBeNull();
   });
 });
+
+// ────────────────────────────────────────────────────────────────
+// #3507 — re-embed must reproduce the page's STORED contextual-retrieval
+// wrapping convention. Before the fix, every plain re-embed (including the
+// normal post-model-migration `embed --stale`) embedded raw chunk_text,
+// silently replacing context-wrapped vectors with unwrapped ones.
+// ────────────────────────────────────────────────────────────────
+
+describe('contextual-retrieval wrapping on re-embed (#3507)', () => {
+  /** embedFn that records every text it is asked to embed. */
+  function capturingEmbedFn(seen: string[]) {
+    return (texts: string[]): Promise<Float32Array[]> => {
+      seen.push(...texts);
+      return fakeEmbedFn(texts);
+    };
+  }
+
+  async function seedWrappablePage(slug: string, title: string): Promise<void> {
+    await engine.putPage(slug, { type: 'note', title, compiled_truth: 'seeded' });
+    await engine.upsertChunks(slug, [
+      { chunk_index: 0, chunk_text: 'prose chunk about widgets', chunk_source: 'compiled_truth', token_count: 4 },
+      { chunk_index: 1, chunk_text: 'const x = 1;', chunk_source: 'fenced_code', token_count: 4 },
+    ]);
+  }
+
+  test('title-mode page: stale re-embed sends title-wrapped texts; fenced_code stays raw', async () => {
+    await seedWrappablePage('wrapped-page', 'Widget Notes');
+    await engine.updatePageContextualRetrievalState('wrapped-page', 'default', 'title', 'gen-title');
+
+    const seen: string[] = [];
+    const result = await embedStaleForSource(engine, 'default', { embedFn: capturingEmbedFn(seen) });
+    expect(result.embedded).toBe(2);
+
+    expect(seen).toContain('<context>Widget Notes\n</context>\nprose chunk about widgets');
+    expect(seen).toContain('const x = 1;'); // fenced_code is NEVER wrapped (D20-T4)
+
+    // D20-T1: the canonical chunk_text is NOT rewritten — wrapping is embed-input-only.
+    const chunks = await engine.getChunks('wrapped-page');
+    expect(chunks.map((c) => c.chunk_text).sort()).toEqual(['const x = 1;', 'prose chunk about widgets']);
+    // Mode stamp unchanged for title-tier pages.
+    const rows = await engine.executeRaw<{ contextual_retrieval_mode: string }>(
+      `SELECT contextual_retrieval_mode FROM pages WHERE slug = 'wrapped-page'`,
+    );
+    expect(rows[0].contextual_retrieval_mode).toBe('title');
+  });
+
+  test('per_chunk_synopsis page: re-embed applies the title-tier wrapper and restamps honestly', async () => {
+    await seedWrappablePage('synopsis-page', 'Synopsis Notes');
+    await engine.updatePageContextualRetrievalState('synopsis-page', 'default', 'per_chunk_synopsis', 'gen-synopsis');
+
+    const seen: string[] = [];
+    const result = await embedStaleForSource(engine, 'default', { embedFn: capturingEmbedFn(seen) });
+    expect(result.embedded).toBe(2);
+
+    // Synopsis re-generation is a paid backfill concern; the plain re-embed
+    // lands at the title tier (the service's own D14 fallback tier)…
+    expect(seen).toContain('<context>Synopsis Notes\n</context>\nprose chunk about widgets');
+    // …and the stamped mode is updated so it keeps describing the vectors.
+    const rows = await engine.executeRaw<{ contextual_retrieval_mode: string }>(
+      `SELECT contextual_retrieval_mode FROM pages WHERE slug = 'synopsis-page'`,
+    );
+    expect(rows[0].contextual_retrieval_mode).toBe('title');
+  });
+
+  test('unstamped page (NULL mode) embeds raw chunk_text — convention preserved', async () => {
+    await seedWrappablePage('plain-page', 'Plain Notes');
+    // No updatePageContextualRetrievalState call: pre-CR page.
+
+    const seen: string[] = [];
+    const result = await embedStaleForSource(engine, 'default', { embedFn: capturingEmbedFn(seen) });
+    expect(result.embedded).toBe(2);
+
+    expect(seen).toContain('prose chunk about widgets');
+    expect(seen.some((t) => t.startsWith('<context>'))).toBe(false);
+  });
+});

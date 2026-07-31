@@ -26,10 +26,21 @@ describe('lookupEmbeddingPrice — first-class providers', () => {
     if (r.kind === 'known') expect(r.pricePerMTok).toBe(0.18);
   });
 
-  test('Voyage voyage-4-large at $0.18/MTok (v0.35.1.0+)', () => {
-    const r = lookupEmbeddingPrice('voyage:voyage-4-large');
+  // Voyage v4 family, verified against docs.voyageai.com/docs/pricing 2026-07-28.
+  test.each([
+    ['voyage:voyage-4-large', 0.12],
+    ['voyage:voyage-4', 0.06],
+    ['voyage:voyage-4-lite', 0.02],
+  ])('Voyage %s at $%d/MTok', (model, expected) => {
+    const r = lookupEmbeddingPrice(model);
     expect(r.kind).toBe('known');
-    if (r.kind === 'known') expect(r.pricePerMTok).toBe(0.18);
+    if (r.kind === 'known') expect(r.pricePerMTok).toBe(expected);
+  });
+
+  // voyage-4-nano is the open-weight variant with no hosted rate published;
+  // it must stay unpriced so callers say "estimate unavailable" (see table comment).
+  test('voyage-4-nano is deliberately unpriced', () => {
+    expect(lookupEmbeddingPrice('voyage:voyage-4-nano').kind).toBe('unknown');
   });
 
   test('ZeroEntropy zembed-1 at $0.05/MTok (v0.35.1.0+)', () => {

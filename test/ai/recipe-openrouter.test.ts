@@ -65,6 +65,18 @@ describe('recipe: openrouter', () => {
     ).not.toThrow();
   });
 
+  test('3b. expansion reuses routed chat models and accepts arbitrary provider/model IDs', () => {
+    const r = getRecipe('openrouter')!;
+    expect(r.touchpoints.expansion).toBeDefined();
+    expect(r.touchpoints.expansion!.models.length).toBeGreaterThanOrEqual(3);
+    expect(() =>
+      assertTouchpoint(r, 'expansion', 'some/provider-model'),
+    ).not.toThrow();
+    expect(() =>
+      assertTouchpoint(r, 'expansion', 'meta-llama/llama-future-2030'),
+    ).not.toThrow();
+  });
+
   test('4. chat models list — every entry matches provider/model shape (D5 regression)', () => {
     // Codex correction: pinning specific slugs creates false confidence (the
     // list is advisory; OR's catalog churns). The shape test catches the

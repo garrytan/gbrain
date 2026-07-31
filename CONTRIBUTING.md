@@ -11,6 +11,28 @@ bun test
 
 Requires Bun 1.0+.
 
+### Windows
+
+`bun run test`, `verify`, `ci:local` and `test:e2e` all dispatch through bash, so
+the shell scripts under `scripts/` must be checked out with Unix line endings.
+The root `.gitattributes` pins `*.sh text eol=lf`, which overrides the
+`core.autocrlf=true` that Git for Windows installs by default. A fresh clone is
+correct with no extra steps.
+
+If you cloned before that pin existed, your working copy still has the old
+Windows line endings and bash will fail with `$'\r': command not found`. Refresh
+it once, from the repository root:
+
+```bash
+git rm --cached -r . -q
+git reset --hard
+bash -n scripts/run-unit-parallel.sh   # silence means bash can read the scripts
+```
+
+Every `check:*` entry in `package.json` invokes its script as `bash scripts/<name>.sh`
+rather than relying on the shebang, because bun on Windows cannot exec a `.sh`
+directly. Keep that prefix when you add a new shell-script check.
+
 ## Project structure
 
 ```
