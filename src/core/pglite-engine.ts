@@ -3356,7 +3356,8 @@ export class PGLiteEngine implements BrainEngine {
              array_agg(DISTINCT n.last_link_type)
                FILTER (WHERE n.last_link_type IS NOT NULL) AS via_link_types,
              (array_agg(array_to_string(n.path, chr(9))
-               ORDER BY n.depth ASC, array_length(n.path, 1) ASC))[1] AS path_str,
+               ORDER BY n.depth ASC, array_length(n.path, 1) ASC,
+                        array_to_string(n.path, chr(9)) ASC))[1] AS path_str,
              (SELECT cc.id FROM content_chunks cc
                WHERE cc.page_id = n.id ORDER BY cc.chunk_index ASC LIMIT 1) AS canonical_chunk_id
       FROM walk n

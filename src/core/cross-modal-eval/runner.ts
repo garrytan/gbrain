@@ -79,6 +79,8 @@ export interface RunEvalOpts {
   abortSignal?: AbortSignal;
   /** Stderr progress callback (cycle 1/3, slot A done, etc.). */
   onProgress?: (event: ProgressEvent) => void;
+  /** Test seam: alternative chat function; production defaults to the gateway. */
+  _chat?: typeof gwChat;
 }
 
 export type ProgressEvent =
@@ -142,6 +144,7 @@ export async function runEval(opts: RunEvalOpts): Promise<RunEvalResult> {
       abortSignal: opts.abortSignal,
       cycle,
       onProgress: opts.onProgress,
+      chat: opts._chat ?? gwChat,
     });
 
     const agg = aggregate({ slots: slotResults });
@@ -199,6 +202,7 @@ interface OneCycleOpts {
   abortSignal?: AbortSignal;
   cycle: number;
   onProgress?: (event: ProgressEvent) => void;
+  chat: typeof gwChat;
 }
 
 async function runOneCycle(opts: OneCycleOpts): Promise<SlotResult[]> {
@@ -226,7 +230,7 @@ async function callSlot(
     const messages: ChatMessage[] = [
       { role: 'user', content: prompt },
     ];
-    const result = await gwChat({
+    const result = await opts.chat({
       model: slot.model,
       system: SYSTEM_PROMPT,
       messages,

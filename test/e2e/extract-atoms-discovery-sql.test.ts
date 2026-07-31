@@ -38,7 +38,7 @@ afterAll(async () => {
 beforeEach(async () => {
   if (skip) return;
   // Clean test-source rows + atoms + meeting pages between tests
-  await engine.executeRaw(`DELETE FROM pages WHERE source_id IN ('default', 'dept-x') AND (type = 'atom' OR type IN ('meeting', 'source', 'article', 'video', 'book', 'original'))`);
+  await engine.executeRaw(`DELETE FROM pages WHERE source_id IN ('default', 'dept-x') AND (type = 'atom' OR type IN ('meeting', 'source', 'article', 'video', 'book', 'original', 'note'))`);
   await engine.executeRaw(`DELETE FROM sources WHERE id = 'dept-x'`);
 });
 
@@ -80,22 +80,22 @@ describeIfDB('v0.41.2.1 D10 — discoverExtractablePages on real Postgres', () =
     const slugs = discovered.map((d) => d.slug).sort();
     expect(slugs).toContain('meeting/a');
     expect(slugs).toContain('source/b');
-    expect(slugs).not.toContain('notes/skip');
+    expect(slugs).toContain('notes/skip');
   });
 
   test('ANY($::text[]) bind works through postgres.unsafe (PGLite parity proof)', async () => {
-    // Seed all 6 extractable types + one non-extractable. The SQL uses
+    // Seed the legacy 6 types plus pack-extractable note. The SQL uses
     // type = ANY($2::text[]) — if the binding shape differs between
     // PGLite and postgres.js's unsafe(), this catches it.
     for (const type of ['meeting', 'source', 'article', 'video', 'book', 'original']) {
       await seedPage({ slug: `${type}/x`, type, content_hash: `hash-${type}-1234567890ab` });
     }
-    await seedPage({ slug: 'note/skip', type: 'note', content_hash: 'hash-note-1234567890' });
+    await seedPage({ slug: 'note/x', type: 'note', content_hash: 'hash-note-1234567890' });
 
     const discovered = await discoverExtractablePages(engine, 'default');
     const slugs = discovered.map((d) => d.slug).sort();
     expect(slugs).toEqual([
-      'article/x', 'book/x', 'meeting/x', 'original/x', 'source/x', 'video/x',
+      'article/x', 'book/x', 'meeting/x', 'note/x', 'original/x', 'source/x', 'video/x',
     ]);
   });
 
