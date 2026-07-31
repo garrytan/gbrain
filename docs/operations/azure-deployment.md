@@ -171,6 +171,26 @@ The schedule's real cost is the overnight cycle: `synthesize`, `patterns`,
 morning warm-up window is the mitigation — compute comes up before anyone is
 querying, so the cycle still drains, just time-shifted.
 
+## If `/mcp` starts returning 421
+
+DNS-rebinding protection exact-matches the `Host` header against a list
+derived from the public URL plus loopback. A 421 means a client is reaching
+the app under a hostname that list does not contain — most often because a
+custom domain was added without updating `GBRAIN_PUBLIC_URL`, or because
+requests arrive at the default Container Apps FQDN while the public URL names
+the custom domain.
+
+Fix it by making `GBRAIN_PUBLIC_URL` match what clients actually use (which
+also keeps the OAuth issuer correct), or list both explicitly:
+
+```bash
+GBRAIN_HTTP_ALLOWED_HOSTS=brain.example.com,ca-gbrain-mcp.<region>.azurecontainerapps.io
+```
+
+`GBRAIN_HTTP_DNS_REBINDING_PROTECTION=0` disables the check entirely. That is
+an incident escape hatch, not a fix — it turns off the `Origin` validation the
+MCP spec requires.
+
 ## Expected failures
 
 **`gbrain doctor`'s `rls` check fails permanently.** gbrain enables row-level
