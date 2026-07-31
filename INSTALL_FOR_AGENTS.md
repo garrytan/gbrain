@@ -16,6 +16,13 @@ If you fetched this file by URL without cloning yet, the companion files live at
 
 ## Step 1: Install GBrain
 
+> **NEVER install from the npm registry.** GBrain is not distributed on npm; the npm
+> package named `gbrain` is an unrelated package. Do NOT run `npm install -g gbrain` or
+> `bun add -g gbrain` (note the missing `github:` prefix — that's the trap). The only
+> supported sources are `github:garrytan/gbrain` and a git clone, exactly as shown below.
+> If an unrelated npm install is already present, remove it first
+> (`npm uninstall -g gbrain` / `bun remove -g gbrain`); `gbrain doctor` also detects this.
+
 Default path (Bun is required — gbrain is a Bun + TypeScript runtime):
 
 ```bash

@@ -20,9 +20,32 @@ import { SemanticQueryCache, cacheRowId } from '../src/core/search/query-cache.t
 import type { SearchResult } from '../src/core/types.ts';
 import { knobsHash, resolveSearchMode } from '../src/core/search/mode.ts';
 import { resolveHardExcludes } from '../src/core/search/source-boost.ts';
+import { resetFtsLanguageCache } from '../src/core/fts-language.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
+
+/**
+ * Run `fn` with GBRAIN_FTS_LANGUAGE pinned, then restore this process's
+ * original value. getFtsLanguage() memoizes, so the cache is reset on both
+ * edges — otherwise the pin would leak into the mode hashes computed below
+ * (and, for an operator who runs the suite with the env set, flip them).
+ * Serial file: direct process.env mutation is the sanctioned pattern here
+ * (isolation guard R1).
+ */
+function withFtsLanguage<T>(language: string | undefined, fn: () => T): T {
+  const saved = process.env.GBRAIN_FTS_LANGUAGE;
+  if (language === undefined) delete process.env.GBRAIN_FTS_LANGUAGE;
+  else process.env.GBRAIN_FTS_LANGUAGE = language;
+  resetFtsLanguageCache();
+  try {
+    return fn();
+  } finally {
+    if (saved === undefined) delete process.env.GBRAIN_FTS_LANGUAGE;
+    else process.env.GBRAIN_FTS_LANGUAGE = saved;
+    resetFtsLanguageCache();
+  }
+}
 
 const conservativeHash = knobsHash(resolveSearchMode({ mode: 'conservative' }));
 const balancedHash = knobsHash(resolveSearchMode({ mode: 'balanced' }));
@@ -275,5 +298,57 @@ describe('hard-exclude cache isolation (#2825)', () => {
 
     expect((await cache.lookup(emb, { knobsHash: noEnvHash })).hit).toBe(false);
     expect((await cache.lookup(emb, { knobsHash: envExcludeHash })).hit).toBe(true);
+  });
+});
+
+describe('FTS language cache isolation', () => {
+  // GBRAIN_FTS_LANGUAGE retokenizes BOTH sides of the keyword arm (the
+  // trigger-built search_vector and the query-side websearch_to_tsquery), so
+  // rows written under one language describe a different index than the one a
+  // post-`reindex-search-vector` process queries. knobsHash folds the resolved
+  // language in (`fts=`) so those rows can never be served across the switch.
+  const englishHash = withFtsLanguage(undefined, () =>
+    knobsHash(resolveSearchMode({ mode: 'balanced' })));
+  const portugueseHash = withFtsLanguage('portuguese', () =>
+    knobsHash(resolveSearchMode({ mode: 'balanced' })));
+
+  test('the resolved language changes the hash', () => {
+    expect(englishHash).not.toBe(portugueseHash);
+    // An invalid value falls back to english inside getFtsLanguage(), so it
+    // must land on the english row rather than minting an unreachable one.
+    expect(withFtsLanguage('NOT A CONFIG', () =>
+      knobsHash(resolveSearchMode({ mode: 'balanced' })))).toBe(englishHash);
+  });
+
+  test('a row written under english is NOT served after switching to portuguese', async () => {
+    const cache = new SemanticQueryCache(engine);
+    const emb = makeEmbedding(8);
+
+    // English-tokenized run: 'running' stems to 'run', so these rows reflect
+    // an index the portuguese-configured process no longer has.
+    await cache.store('running', emb, makeResults('english-stemmed', 4), {
+      vector_enabled: true, detail_resolved: null, expansion_applied: false,
+    }, { knobsHash: englishHash });
+
+    // Post-reindex process → MISS (falls through to a fresh keyword query
+    // against the retokenized index).
+    expect((await cache.lookup(emb, { knobsHash: portugueseHash })).hit).toBe(false);
+
+    // Same-language process still hits its own row.
+    const same = await cache.lookup(emb, { knobsHash: englishHash });
+    expect(same.hit).toBe(true);
+    expect(same.results?.length).toBe(4);
+  });
+
+  test('switching back does not resurrect the other language rows', async () => {
+    const cache = new SemanticQueryCache(engine);
+    const emb = makeEmbedding(9);
+
+    await cache.store('running', emb, makeResults('portuguese-stemmed', 2), {
+      vector_enabled: true, detail_resolved: null, expansion_applied: false,
+    }, { knobsHash: portugueseHash });
+
+    expect((await cache.lookup(emb, { knobsHash: englishHash })).hit).toBe(false);
+    expect((await cache.lookup(emb, { knobsHash: portugueseHash })).hit).toBe(true);
   });
 });

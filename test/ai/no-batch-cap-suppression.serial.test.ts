@@ -11,7 +11,28 @@
 
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test';
 import { capBatchItems, configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
-import { listRecipes, getRecipe } from '../../src/core/ai/recipes/index.ts';
+import { listRecipes, getRecipe, __setTestRecipesForTests } from '../../src/core/ai/recipes/index.ts';
+import type { Recipe } from '../../src/core/ai/types.ts';
+
+/**
+ * A recipe that declares an embedding touchpoint but omits every batch cap
+ * (no max_batch_tokens, no no_batch_cap, no max_batch_items). This is the
+ * exact shape a future provider PR might forget — the case the startup
+ * warning exists to catch. Kept synthetic because every shipped recipe now
+ * declares a cap, so no real recipe can play this role anymore.
+ */
+const CAPLESS_RECIPE: Recipe = {
+  id: 'synthetic-capless',
+  name: 'Synthetic cap-less (test fixture)',
+  tier: 'openai-compat',
+  implementation: 'openai-compatible',
+  touchpoints: {
+    embedding: {
+      models: ['synthetic-embed-1'],
+      default_dims: 768,
+    },
+  },
+};
 
 describe('v0.32 #779: no_batch_cap suppresses the missing-max_batch_tokens warning', () => {
   let warnSpy: ReturnType<typeof mock>;
@@ -75,7 +96,12 @@ describe('v0.32 #779: no_batch_cap suppresses the missing-max_batch_tokens warni
     }
   });
 
-  test('configureGateway warns for google only when google embedding is configured', () => {
+  test('google no longer warns — it now declares max_batch_tokens', () => {
+    // google's gemini-embedding endpoint ships a declared batch-token budget,
+    // so configuring it must NOT trip the missing-cap warning.
+    const r = getRecipe('google');
+    expect(r?.touchpoints.embedding?.max_batch_tokens).toBeGreaterThan(0);
+
     warnSpy.mockClear();
     resetGateway();
     configureGateway({ env: {} });
@@ -95,8 +121,33 @@ describe('v0.32 #779: no_batch_cap suppresses the missing-max_batch_tokens warni
     messages = warnSpy.mock.calls.map(c => String(c[0] ?? ''));
     expect(
       messages.some(m => m.includes('"google"') && m.includes('without max_batch_tokens')),
-      'google should warn when configured because it has fixed-cap models',
-    ).toBe(true);
+      'google now declares a cap and must stay quiet even when configured',
+    ).toBe(false);
+  });
+
+  test('a configured recipe that omits every batch cap still warns', () => {
+    // Regression guard the google fixture used to provide. Every shipped
+    // embedding recipe now declares a cap, so the warn-fires path is exercised
+    // with a synthetic cap-less recipe injected into the registry.
+    __setTestRecipesForTests([CAPLESS_RECIPE]);
+    try {
+      warnSpy.mockClear();
+      resetGateway();
+      configureGateway({
+        embedding_model: 'synthetic-capless:synthetic-embed-1',
+        embedding_dimensions: 768,
+        env: {},
+      });
+      const messages = warnSpy.mock.calls.map(c => String(c[0] ?? ''));
+      expect(
+        messages.some(
+          m => m.includes('"synthetic-capless"') && m.includes('without max_batch_tokens'),
+        ),
+        'a configured recipe missing every batch cap must warn',
+      ).toBe(true);
+    } finally {
+      __setTestRecipesForTests([]);
+    }
   });
 
   test('every recipe with empty models[] declares user_provided_models OR has openai-fast-path', () => {

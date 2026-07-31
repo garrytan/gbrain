@@ -1707,14 +1707,12 @@ async function handleCliOnly(command: string, args: string[]) {
   // Per-command default: search 30s, sources list 10s. User --timeout=Ns wins.
   // Other commands (import, embed, doctor, etc.) keep their existing
   // unbounded connect — destructive / long-running commands shouldn't get
-  // a default kill switch.
-  const readOnlyDefaultTimeoutMs =
-    command === 'search' ? 30_000 :
-    command === 'sources' && (args[0] === 'list' || args[0] === undefined) ? 10_000 :
-    null;
+  // a default kill switch. The gate below is per-command (#3013): only the
+  // commands dispatchReadOnlyCommand handles may enter this path — a
+  // user-supplied --timeout on a write command must never reroute it here.
   const cliOptsResolved = getCliOptions();
   const userTimeoutMs = cliOptsResolved.timeoutMs;
-  const readOnlyTimeoutMs = userTimeoutMs ?? readOnlyDefaultTimeoutMs;
+  const readOnlyTimeoutMs = resolveReadOnlyDispatchTimeoutMs(command, args, userTimeoutMs);
 
   if (readOnlyTimeoutMs !== null) {
     const { withTimeout, OperationTimeoutError } = await import('./core/timeout.ts');
@@ -2311,6 +2309,28 @@ async function handleCliOnly(command: string, args: string[]) {
       await finishCliTeardown({ engine });
     }
   }
+}
+
+/**
+ * #3013: decide whether an invocation enters the read-only connect+dispatch
+ * timeout path, and with what wallclock. Returns null for every command
+ * dispatchReadOnlyCommand can't handle. The gate used to be "a timeout is
+ * present" — so a user-supplied --timeout on a write command (`sync`,
+ * `embed`, `import`, ...) hijacked dispatch into the read-only path, which
+ * threw and exited 1 before any work ran. Pure; exported for the
+ * regression test.
+ */
+export function resolveReadOnlyDispatchTimeoutMs(
+  command: string,
+  subArgs: string[],
+  userTimeoutMs: number | null,
+): number | null {
+  if (command !== 'search' && command !== 'sources') return null;
+  const defaultMs =
+    command === 'search' ? 30_000 :
+    (subArgs[0] === 'list' || subArgs[0] === undefined) ? 10_000 :
+    null;
+  return userTimeoutMs ?? defaultMs;
 }
 
 /**
