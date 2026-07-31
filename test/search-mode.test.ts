@@ -416,7 +416,11 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // v0.42.67.x bumped 13→14: the compiled_truth boost no longer applies at
     // detail=medium (#3430). Cached rows were ranked under the old semantics,
     // so they must become unreachable rather than be served under the new ones.
-    expect(KNOBS_HASH_VERSION).toBe(14);
+    // Bumped 14→15 to fold the resolved FTS configuration name (fts=) —
+    // GBRAIN_FTS_LANGUAGE retokenizes both the trigger-built search_vector and
+    // the query-side tsquery, so rows written under the previous language must
+    // not survive a `reindex-search-vector` switch.
+    expect(KNOBS_HASH_VERSION).toBe(15);
   });
 
   test('T1 (codex): floor_ratio set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -581,8 +585,8 @@ describe('v0.40.4 — graph_signals knob', () => {
 });
 
 describe('v0.42.3.0 — autocut knobs', () => {
-  test('KNOBS_HASH_VERSION is 14 (13→14 compiled_truth boost scope fix, #3430)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(14);
+  test('KNOBS_HASH_VERSION is 15 (14→15 FTS language fold)', () => {
+    expect(KNOBS_HASH_VERSION).toBe(15);
   });
 
   test('bundle defaults: conservative off, balanced/tokenmax on @0.20', () => {

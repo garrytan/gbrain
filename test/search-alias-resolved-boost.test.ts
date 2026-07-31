@@ -89,7 +89,7 @@ describe('alias_resolved boost stage', () => {
 });
 
 describe('KNOBS_HASH_VERSION', () => {
-  it('is 14 (13→14 compiled_truth boost no longer applies at detail=medium, so pre-fix rankings must be unreachable, #3430)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(14);
+  it('is 15 (14→15 folds the resolved FTS configuration name, so rows written before a reindex-search-vector language switch become unreachable)', () => {
+    expect(KNOBS_HASH_VERSION).toBe(15);
   });
 });
