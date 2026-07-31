@@ -33,6 +33,8 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
   buildGazetteer,
   findMentionedEntities,
+  tokenizeForScan,
+  tokenizeTitle,
   LINKABLE_ENTITY_TYPES,
   type Gazetteer,
   type GazetteerEntry,
@@ -56,31 +58,15 @@ beforeEach(async () => {
 });
 
 // Tiny gazetteer builder for pure-fn cases that don't need engine.
+//
+// Deliberately calls the PRODUCTION `tokenizeTitle` rather than re-declaring
+// the tokenizer. A duplicated copy makes every test here non-discriminating:
+// reverting the source tokenizer would leave the fixture on the new one, so
+// title and body would keep agreeing and the tests would pass either way.
 function gazetteerFromEntries(entries: Omit<GazetteerEntry, 'tokens'>[]): Gazetteer {
-  // Mirror the production tokenizer: Unicode letters/marks/numbers excluding
-  // CJK (which is split char-level below). Keeps Vietnamese names whole.
-  const TOKEN_RE = /[[\p{L}\p{M}\p{N}]--[㐀-䶿一-鿿぀-ゟ゠-ヿ가-힯]]+/gv;
-  const isCJK = (s: string): boolean => {
-    const cp = s.codePointAt(0) ?? 0;
-    return (cp >= 0x4e00 && cp <= 0x9fff) || (cp >= 0x3400 && cp <= 0x4dbf) ||
-           (cp >= 0x3040 && cp <= 0x309f) || (cp >= 0x30a0 && cp <= 0x30ff) ||
-           (cp >= 0xac00 && cp <= 0xd7af);
-  };
-  const hasCJKTitle = (s: string): boolean => [...s].some(isCJK);
-  const tokenize = (s: string): string[] => {
-    TOKEN_RE.lastIndex = 0;
-    if (!hasCJKTitle(s)) {
-      const out: string[] = [];
-      let m: RegExpExecArray | null;
-      while ((m = TOKEN_RE.exec(s)) !== null) out.push(m[0].toLowerCase());
-      return out;
-    }
-    // CJK: split into individual characters, lowercased.
-    return [...s].map(c => isCJK(c) ? c.toLowerCase() : '').filter(Boolean);
-  };
   const g: Gazetteer = new Map();
   for (const raw of entries) {
-    const tokens = tokenize(raw.title);
+    const tokens = tokenizeTitle(raw.title);
     if (tokens.length === 0) continue;
     const key = tokens[0]!;
     const entry: GazetteerEntry = { ...raw, tokens };
@@ -400,25 +386,42 @@ describe('findMentionedEntities — CJK cases', () => {
 
 // Fictional Vietnamese names only (privacy rule: no real people in fixtures).
 // "Đà Nẵng" is a public city, not a person, and is the canonical đ-diacritic case.
+//
+// Every case below asserts TOKENIZATION, not just the resolved mention. A
+// mention-only assertion does not discriminate: the previous ASCII tokenizer
+// fragmented the gazetteer title and the body symmetrically, so a 5-fragment
+// entry still matched a 5-fragment body run, and `Mention.name` is copied from
+// the untouched `title` column rather than derived from tokens.
 describe('findMentionedEntities — Vietnamese cases', () => {
   test('VN multi-syllable name matches as a WHOLE (regression: no diacritic fragmentation)', () => {
+    // Discriminating assertion: the ASCII tokenizer produced
+    // ['nguy','n','v','n','c'] for this title.
+    expect(tokenizeTitle('Nguyễn Văn Đức')).toEqual(['nguyễn', 'văn', 'đức']);
+    const body = 'Hôm nay mình học bài của thầy Nguyễn Văn Đức.';
+    expect(tokenizeForScan(body).map(t => t.text)).toContain('nguyễn');
+
     const g = gazetteerFromEntries([
       { slug: 'people/nguyen-van-duc', source_id: 'default', title: 'Nguyễn Văn Đức' },
     ]);
-    const mentions = findMentionedEntities('Hôm nay mình học bài của thầy Nguyễn Văn Đức.', g, {
+    const mentions = findMentionedEntities(body, g, {
       fromSlug: 'writing/post-1', fromSourceId: 'default',
     });
     expect(mentions).toHaveLength(1);
     expect(mentions[0]!.slug).toBe('people/nguyen-van-duc');
-    // The whole diacritic name is captured, not a fragment like "nguy".
     expect(mentions[0]!.name).toBe('Nguyễn Văn Đức');
   });
 
   test('VN place name with đ/diacritics — "Đà Nẵng" matched', () => {
+    // Discriminating assertion: the ASCII tokenizer produced ['n','ng'],
+    // which is what made this entity match 820 pages instead of 440.
+    expect(tokenizeTitle('Đà Nẵng')).toEqual(['đà', 'nẵng']);
+    const body = 'Gia đình mình chuyển tới Đà Nẵng năm ngoái.';
+    expect(tokenizeForScan(body).map(t => t.text)).toContain('nẵng');
+
     const g = gazetteerFromEntries([
       { slug: 'places/da-nang', source_id: 'default', title: 'Đà Nẵng' },
     ]);
-    const mentions = findMentionedEntities('Gia đình mình chuyển tới Đà Nẵng năm ngoái.', g, {
+    const mentions = findMentionedEntities(body, g, {
       fromSlug: 'writing/post-1', fromSourceId: 'default',
     });
     expect(mentions).toHaveLength(1);
@@ -426,7 +429,26 @@ describe('findMentionedEntities — Vietnamese cases', () => {
     expect(mentions[0]!.name).toBe('Đà Nẵng');
   });
 
+  test('VN NFD body matches an NFC gazetteer title (and the reverse)', () => {
+    const nfc = 'Nguyễn Văn';
+    const nfd = nfc.normalize('NFD');
+    expect(nfd).not.toBe(nfc);                       // fixture really is decomposed
+    expect(tokenizeTitle(nfd)).toEqual(tokenizeTitle(nfc));
+    expect(tokenizeTitle(nfd)).toEqual(['nguyễn', 'văn']);
+
+    const opts = { fromSlug: 'writing/post-1', fromSourceId: 'default' };
+    const gNfc = gazetteerFromEntries([{ slug: 'people/nvd', source_id: 'default', title: nfc }]);
+    expect(findMentionedEntities(`Thầy ${nfd} nói.`, gNfc, opts)).toHaveLength(1);
+
+    const gNfd = gazetteerFromEntries([{ slug: 'people/nvd', source_id: 'default', title: nfd }]);
+    expect(findMentionedEntities(`Thầy ${nfc} nói.`, gNfd, opts)).toHaveLength(1);
+  });
+
   test('VN diacritics are significant — "Hồng" title does NOT match diacritic-free "Hong"', () => {
+    // The title must survive tokenization intact for this to mean anything:
+    // under the ASCII tokenizer it became ['l','th','h','ng'] and missed for
+    // the wrong reason.
+    expect(tokenizeTitle('Lê Thị Hồng')).toEqual(['lê', 'thị', 'hồng']);
     const g = gazetteerFromEntries([
       { slug: 'people/le-thi-hong', source_id: 'default', title: 'Lê Thị Hồng' },
     ]);
@@ -438,11 +460,17 @@ describe('findMentionedEntities — Vietnamese cases', () => {
   });
 
   test('VN mixed with ASCII — Vietnamese name + ASCII company in one body', () => {
+    const body = 'Phạm Quốc Bảo hợp tác với Acme.';
+    // Discriminating: the ASCII tokenizer emitted ['ph','m','qu','c','b','o',
+    // 'h','p','t','c','v','i','acme'] here — only the ASCII control survived.
+    expect(tokenizeForScan(body).map(t => t.text))
+      .toEqual(['phạm', 'quốc', 'bảo', 'hợp', 'tác', 'với', 'acme']);
+
     const g = gazetteerFromEntries([
       { slug: 'people/pham-quoc-bao', source_id: 'default', title: 'Phạm Quốc Bảo' },
       { slug: 'companies/acme', source_id: 'default', title: 'Acme' },
     ]);
-    const mentions = findMentionedEntities('Phạm Quốc Bảo hợp tác với Acme.', g, {
+    const mentions = findMentionedEntities(body, g, {
       fromSlug: 'writing/post-1', fromSourceId: 'default',
     });
     expect(mentions).toHaveLength(2);
@@ -452,6 +480,10 @@ describe('findMentionedEntities — Vietnamese cases', () => {
   });
 
   test('VN longest-match wins — "Nguyễn Văn Đức" beats a shorter "Nguyễn Văn" entry', () => {
+    // Both entries must share a real first token for maximal-munch to be
+    // exercised at all; under the ASCII tokenizer both keyed on 'nguy'.
+    expect(tokenizeTitle('Nguyễn Văn')).toEqual(['nguyễn', 'văn']);
+    expect(tokenizeTitle('Nguyễn Văn Đức')[0]).toBe('nguyễn');
     const g = gazetteerFromEntries([
       { slug: 'people/nguyen-van-duc', source_id: 'default', title: 'Nguyễn Văn Đức' },
       { slug: 'people/nguyen-van', source_id: 'default', title: 'Nguyễn Văn' },
@@ -468,6 +500,8 @@ describe('findMentionedEntities — Vietnamese cases', () => {
       { slug: 'people/nguyen-van-duc', source_id: 'default', title: 'Nguyễn Văn Đức' },
     ]);
     const body = 'Nguyễn Văn Đức nói. Sau đó Nguyễn Văn Đức nói tiếp.';
+    // The cap must be capping a WHOLE-name match, not a fragment run.
+    expect(tokenizeForScan(body).map(t => t.text).slice(0, 3)).toEqual(['nguyễn', 'văn', 'đức']);
     const mentions = findMentionedEntities(body, g, {
       fromSlug: 'writing/post-1', fromSourceId: 'default',
     });
@@ -480,6 +514,8 @@ describe('findMentionedEntities — Vietnamese cases', () => {
       { slug: 'places/da-nang', source_id: 'default', title: 'Đà Nẵng' },
     ]);
     const body = 'Thầy Nguyễn Văn Đức ở Đà Nẵng. Nguyễn Văn Đức lần nữa.';
+    expect(tokenizeForScan(body).map(t => t.text))
+      .toEqual(['thầy', 'nguyễn', 'văn', 'đức', 'ở', 'đà', 'nẵng', 'nguyễn', 'văn', 'đức', 'lần', 'nữa']);
     const refs = new Set<string>();
     for (let i = 0; i < 10; i++) {
       refs.add(JSON.stringify(findMentionedEntities(body, g, {
@@ -487,6 +523,68 @@ describe('findMentionedEntities — Vietnamese cases', () => {
       })));
     }
     expect(refs.size).toBe(1);
+  });
+});
+
+// ============================================================
+// Tokenizer boundaries — non-word glyphs
+// ============================================================
+
+// Guards for the two ways a Unicode tokenizer regresses against the ASCII one
+// it replaces. Both were found in review of the first version of this change,
+// which used /[[\p{L}\p{M}\p{N}]--[CJK]]+/gv: \p{M} let a token consist of
+// combining marks alone, and \p{N} minted tokens the ASCII regex never emitted.
+describe('tokenizer boundaries — marks and non-ASCII numerics', () => {
+  const opts = { fromSlug: 'writing/post-1', fromSourceId: 'default' };
+
+  test('a token can never be combining marks alone (U+FE0F does not become a key)', () => {
+    // VARIATION SELECTOR-16 is \p{Mn} and rides on most emoji. Allowing a
+    // mark-only token made every emoji-prefixed entity title key on a bare
+    // U+FE0F, collapsing them into one mutually-confusable bucket.
+    expect(tokenizeTitle('❤️ Health Notes')).toEqual(['health', 'notes']);
+    expect(tokenizeTitle('⭐️ Budget Notes')).toEqual(['budget', 'notes']);
+    expect(tokenizeForScan('❤️').map(t => t.text)).toEqual([]);
+
+    const g = gazetteerFromEntries([
+      { slug: 'companies/health-notes', source_id: 'default', title: '❤️ Health Notes' },
+      { slug: 'companies/budget-notes', source_id: 'default', title: '⭐️ Budget Notes' },
+    ]);
+    expect([...g.keys()].sort()).toEqual(['budget', 'health']);
+
+    // The plain-text link survives...
+    expect(findMentionedEntities('Plain health notes, no emoji.', g, opts).map(m => m.slug))
+      .toEqual(['companies/health-notes']);
+    // ...and an unrelated emoji in the body does not drag in the other entity.
+    expect(findMentionedEntities('Sprint ⚠️ health notes were fine.', g, opts).map(m => m.slug))
+      .toEqual(['companies/health-notes']);
+  });
+
+  test('non-ASCII numerics do not break strict token adjacency of an ASCII name', () => {
+    // findMentionedEntities requires an entry's tokens to be STRICTLY
+    // ADJACENT in the body, so any glyph that newly tokenizes between the
+    // words of "Acme Corp" silently kills a match that used to work.
+    const g = gazetteerFromEntries([
+      { slug: 'companies/acme-corp', source_id: 'default', title: 'Acme Corp' },
+    ]);
+    for (const body of [
+      'We met Acme Corp today.',    // control
+      'We met Acme¹ Corp today.',   // U+00B9 superscript one (No)
+      'Acme ½ Corp',                // U+00BD vulgar fraction (No)
+      'Acme １ Corp',                // U+FF11 fullwidth digit one (Nd)
+      'Acme ❤️ Corp',          // emoji + VS16 (So + Mn)
+    ]) {
+      expect(findMentionedEntities(body, g, opts)).toHaveLength(1);
+    }
+    // ASCII digits still tokenize exactly as /[a-zA-Z0-9]+/ did.
+    expect(tokenizeForScan('web3 and h2o').map(t => t.text)).toEqual(['web3', 'and', 'h2o']);
+  });
+
+  test('Han Extension A stays on the char-level path, as it was before', () => {
+    // src/core/cjk.ts scopes Ext-A out of CJK_SLUG_CHARS repo-wide, but this
+    // module's walkers have always counted it as CJK. by-mention appends it to
+    // the shared class in one place so the tokenizer and the walkers agree.
+    expect(tokenizeForScan('㐀㐁').map(t => t.text)).toEqual(['㐀', '㐁']);
+    expect(tokenizeTitle('纳瓦尔')).toEqual(['纳', '瓦', '尔']);
   });
 });
 
