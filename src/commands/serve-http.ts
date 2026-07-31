@@ -199,6 +199,43 @@ export function resolveOAuthTokenRateLimit(env: NodeJS.ProcessEnv = process.env)
 }
 
 /**
+ * The three URLs the OAuth protected-resource surface needs, all derived
+ * from the issuer so they cannot disagree.
+ *
+ * gbrain's protected resource is `/mcp`, not the server root. Left
+ * undeclared, the MCP SDK falls back to treating the authorization server
+ * as its own resource — it advertises `resource: <issuer origin>` and
+ * mounts the metadata at the bare `/.well-known/oauth-protected-resource`.
+ * Clients honoring RFC 8707 resource indicators would then request tokens
+ * bound to the wrong resource.
+ *
+ * Declaring it moves the document to RFC 9728 §3.1's path-suffixed
+ * location, `/.well-known/oauth-protected-resource/mcp`. That is why the
+ * 401 `WWW-Authenticate: resource_metadata=` value is computed here from
+ * the same input rather than written out by hand: hand-building it would
+ * have kept advertising the bare path the SDK no longer serves, turning
+ * discovery into a 404 — the exact failure the header exists to prevent.
+ *
+ * `legacyResourceMetadataPath` is the bare path, kept as an alias for
+ * clients (and runbooks) that cached it from an earlier release.
+ */
+export function resolveProtectedResourceUrls(issuerUrl: URL): {
+  resourceServerUrl: URL;
+  resourceMetadataPath: string;
+  resourceMetadataUrl: string;
+  legacyResourceMetadataPath: string;
+} {
+  const resourceServerUrl = new URL('/mcp', issuerUrl);
+  const resourceMetadataPath = `/.well-known/oauth-protected-resource${resourceServerUrl.pathname}`;
+  return {
+    resourceServerUrl,
+    resourceMetadataPath,
+    resourceMetadataUrl: `${issuerUrl.toString().replace(/\/$/, '')}${resourceMetadataPath}`,
+    legacyResourceMetadataPath: '/.well-known/oauth-protected-resource',
+  };
+}
+
+/**
  * Whether to disable the entire `/admin` tree (`GBRAIN_DISABLE_ADMIN`).
  *
  * Opt-IN, defaulting to enabled, because the admin plane is how a laptop
@@ -1151,7 +1188,24 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // parameter, so MCP clients couldn't begin the OAuth flow from a fresh
   // 401 — they would silently fail to connect with a generic "couldn't
   // reach the MCP server" error.
-  const resourceMetadataUrl = `${issuerUrl.toString().replace(/\/$/, '')}/.well-known/oauth-protected-resource`;
+  //
+  // The protected resource here is `/mcp`, not the server root. Left
+  // unset, the SDK falls back to treating the authorization server as its
+  // own resource: it advertises `resource: <issuer origin>` and mounts the
+  // metadata at the bare `/.well-known/oauth-protected-resource`. Clients
+  // that honor RFC 8707 resource indicators would then request tokens
+  // bound to the wrong resource.
+  //
+  // Declaring it moves the document to the RFC 9728 §3.1 path-suffixed
+  // location — `/.well-known/oauth-protected-resource/mcp` — so
+  // resourceMetadataUrl is derived from the same value rather than
+  // hand-built, or the 401 header would advertise a URL that 404s. The old
+  // root path stays served as an alias below for clients that cached it.
+  const {
+    resourceServerUrl,
+    resourceMetadataUrl,
+    legacyResourceMetadataPath,
+  } = resolveProtectedResourceUrls(issuerUrl);
 
   // F9: cookie `secure` flag honors both the request's TLS state (req.secure
   // is set when express trust-proxy lands an X-Forwarded-Proto: https) AND
@@ -1176,6 +1230,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     // ['read','write','admin'] list left those new scopes invisible.
     scopesSupported: [...ALLOWED_SCOPES_LIST],
     resourceName: 'GBrain MCP Server',
+    // See resourceServerUrl above: without this the SDK advertises the
+    // issuer origin as the protected resource instead of /mcp.
+    resourceServerUrl,
   };
 
   // F12: DCR disable lives on the provider's constructor option above. The
@@ -1209,6 +1266,24 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       };
     }
     next();
+  });
+
+  // Back-compat alias. Moving the protected-resource metadata to its RFC
+  // 9728 path-suffixed location would otherwise 404 any client that cached
+  // the bare path from an earlier release — including gbrain's own runbook
+  // curl. Serves the identical document; registered BEFORE authRouter so
+  // it wins the bare path while the SDK owns the suffixed one.
+  //
+  // `resource` intentionally names /mcp in both copies: the alias is a
+  // second location for one document, not a claim that the server root is
+  // a second protected resource.
+  app.get(legacyResourceMetadataPath, (_req: Request, res: Response) => {
+    res.json({
+      resource: resourceServerUrl.href,
+      authorization_servers: [issuerUrl.href],
+      scopes_supported: [...ALLOWED_SCOPES_LIST],
+      resource_name: 'GBrain MCP Server',
+    });
   });
 
   app.use(authRouter);
