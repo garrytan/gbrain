@@ -265,27 +265,41 @@ export interface SynthesizePhaseOpts {
   once?: boolean;
 }
 
-const INLINE_PGLITE_LOCK_MS = 30_000;
+const INLINE_LOCK_MS = 30_000;
 
 /**
- * PGLite cannot be served by a separate Minions worker process: the embedded
- * data-dir holds an exclusive file lock, so subagent children enqueued by the
- * synth parent would sit in 'waiting' until waitForCompletion times out.
- * Drive the same claim → run → complete/fail loop a worker would perform,
- * inline, against this phase's private child queue.
+ * Drain this phase's private child queue inline: drive the same claim → run →
+ * complete/fail loop a worker would perform, from the parent's own slot.
+ *
+ * Why inline on BOTH engines:
+ *   - PGLite: no separate Minions worker can run at all (the embedded
+ *     data-dir holds an exclusive file lock), so children would sit in
+ *     'waiting' until waitForCompletion times out.
+ *   - Postgres (#2050): the parent phase itself runs as a job inside a
+ *     `jobs work` process. A worker whose slots are all occupied by such
+ *     parents (autopilot spawns its drain worker at the default
+ *     concurrency=1) can never claim the child the parent is blocking on —
+ *     a structural self-deadlock. Running children inline means a child
+ *     never needs a worker slot, so the deadlock is impossible at ANY
+ *     concurrency, and no extra DB-pool pressure is added: the child's work
+ *     replaces the parent's idle waitForCompletion polling in the slot the
+ *     parent already holds.
  *
  * `yieldDuringPhase` is ticked on a 60s interval while a child runs so the
  * 5-min cycle lock TTL keeps refreshing during long (up to 30-min) children.
+ * The child's own claim lock is heartbeated at lockMs/3 (worker cadence
+ * parity) — on Postgres a concurrent worker sweeps handleStalled() across
+ * ALL queues, so without renewal any child running longer than lockMs would
+ * be requeued mid-run and stall-churned to dead.
  */
-export async function runPgliteSubagentsInline(
+export async function runSubagentsInline(
   engine: BrainEngine,
   queue: MinionQueue,
   queueName: string,
   yieldDuringPhase?: () => Promise<void>,
   handler: MinionHandler = makeSubagentHandler({ engine }),
+  lockMs: number = INLINE_LOCK_MS,
 ): Promise<void> {
-  if (engine.kind !== 'pglite') return;
-
   while (true) {
     // Housekeeping a worker would normally perform, so child rows can reach
     // terminal states (delayed retries promoted, timeouts dead-lettered)
@@ -293,10 +307,10 @@ export async function runPgliteSubagentsInline(
     await queue.promoteDelayed();
     await queue.handleStalled();
     await queue.handleTimeouts();
-    await queue.handleWallClockTimeouts(INLINE_PGLITE_LOCK_MS);
+    await queue.handleWallClockTimeouts(lockMs);
 
     const lockToken = randomUUID();
-    const job = await queue.claim(lockToken, INLINE_PGLITE_LOCK_MS, queueName, ['subagent']);
+    const job = await queue.claim(lockToken, lockMs, queueName, ['subagent']);
     if (!job) return;
 
     const abort = new AbortController();
@@ -353,6 +367,18 @@ export async function runPgliteSubagentsInline(
     const keepalive = yieldDuringPhase
       ? setInterval(() => { yieldDuringPhase().catch(() => { /* best-effort */ }); }, 60_000)
       : null;
+    // #2050: heartbeat the child's claim lock while the handler runs so a
+    // concurrent Postgres worker's handleStalled() sweep (all queues, not
+    // just its own) can't requeue a live child. A false return means the row
+    // was cancelled or reclaimed — abort the handler. Errors are swallowed
+    // (best-effort; the next tick retries), never an unhandledRejection.
+    const renewTimer = setInterval(() => {
+      queue.renewLock(job.id, lockToken, lockMs)
+        .then((ok) => {
+          if (!ok && !abort.signal.aborted) abort.abort(new Error('lock-renewal-failed'));
+        })
+        .catch(() => { /* best-effort; next tick retries */ });
+    }, Math.max(50, Math.floor(lockMs / 3)));
     try {
       const result = await handler(context);
       await queue.completeJob(
@@ -376,6 +402,7 @@ export async function runPgliteSubagentsInline(
     } finally {
       if (timeoutTimer) clearTimeout(timeoutTimer);
       if (keepalive) clearInterval(keepalive);
+      clearInterval(renewTimer);
     }
   }
 }
@@ -546,12 +573,11 @@ export async function runPhaseSynthesize(
     }
 
     const queue = new MinionQueue(engine);
-    // PGLite children drain inline (no separate worker can open the embedded
-    // data-dir), so give them a private per-run queue: the inline drain must
-    // never claim unrelated 'default'-queue jobs a Postgres worker owns.
-    const childQueueName = engine.kind === 'pglite'
-      ? `dream-inline-${Date.now()}-${randomUUID().slice(0, 8)}`
-      : 'default';
+    // #2050: children drain inline on BOTH engines (see runSubagentsInline),
+    // so give them a private per-run queue: the inline drain must never claim
+    // unrelated 'default'-queue jobs, and a 'default'-queue worker must never
+    // claim a child this parent is about to run itself.
+    const childQueueName = `dream-inline-${Date.now()}-${randomUUID().slice(0, 8)}`;
     const childIds: number[] = [];
     /** Map child job_id → chunk metadata for D6 orchestrator-side slug rewrite. */
     const chunkInfo = new Map<number, { idx: number; hash6: string }>();
@@ -659,11 +685,11 @@ export async function runPhaseSynthesize(
       }
     }
 
-    // PGLite cannot run a separate Minions worker because the embedded DB
-    // holds an exclusive file lock. Drain this phase's private child queue
-    // inline so the parent observes terminal child states instead of polling
-    // waiters until subagentWaitTimeoutMs expires. No-op on Postgres.
-    await runPgliteSubagentsInline(engine, queue, childQueueName, opts.yieldDuringPhase);
+    // Drain this phase's private child queue inline so the parent observes
+    // terminal child states instead of polling waiters until
+    // subagentWaitTimeoutMs expires. Runs on BOTH engines — on Postgres the
+    // parent job otherwise deadlocks a fully-occupied worker (#2050).
+    await runSubagentsInline(engine, queue, childQueueName, opts.yieldDuringPhase);
 
     // Wait for every child to reach a terminal state. Tick yieldDuringPhase
     // every 5 min so the cycle lock TTL refreshes.
@@ -1598,5 +1624,5 @@ export const __testing = {
   buildSynthesisPrompt,
   stampDreamProvenance,
   reverseWriteRefs,
-  runPgliteSubagentsInline,
+  runSubagentsInline,
 };

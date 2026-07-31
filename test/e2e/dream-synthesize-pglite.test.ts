@@ -532,7 +532,7 @@ describe('E2E synthesize — PGLite inline subagent drain (takeover of #2699)', 
       );
 
       let ticks = 0;
-      await synthTesting.runPgliteSubagentsInline(
+      await synthTesting.runSubagentsInline(
         rig.engine,
         queue,
         queueName,
@@ -573,7 +573,7 @@ describe('E2E synthesize — PGLite inline subagent drain (takeover of #2699)', 
         { allowProtectedSubmit: true },
       );
 
-      await synthTesting.runPgliteSubagentsInline(
+      await synthTesting.runSubagentsInline(
         rig.engine,
         queue,
         queueName,
@@ -607,7 +607,7 @@ describe('E2E synthesize — PGLite inline subagent drain (takeover of #2699)', 
       // Handler only ends when ctx.signal fires — like the real subagent
       // handler mid-LLM-call. Without the inline timeout timer this awaits
       // forever and the drain (and the whole cycle) wedges.
-      await synthTesting.runPgliteSubagentsInline(
+      await synthTesting.runSubagentsInline(
         rig.engine,
         queue,
         queueName,
