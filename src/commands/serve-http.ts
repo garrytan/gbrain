@@ -374,6 +374,90 @@ export function parseCorsAllowlistOAuth(): Set<string> | null {
  * cors package translates to "no CORS headers needed" — they're not
  * cross-origin so they don't trigger the gate.
  */
+/**
+ * DNS-rebinding / Origin-validation options for the MCP transport.
+ *
+ * The MCP Streamable HTTP spec requires the server to validate the `Origin`
+ * header and reject mismatches. The SDK ships the middleware but defaults it
+ * OFF for backwards compatibility, so it does nothing unless passed — which
+ * is what this resolves.
+ *
+ * The attack it closes is DNS rebinding: a page the operator visits resolves
+ * its own hostname to 127.0.0.1, then speaks to a loopback-bound MCP server
+ * from inside the browser's same-origin bubble. Because the request really
+ * does originate from the operator's machine, network placement is no
+ * defense — the `Host`/`Origin` headers are. That threat is sharpest for the
+ * default localhost bind, so host validation is derived even when no public
+ * URL is configured, not only for internet-facing deployments.
+ *
+ * Precision matters: the SDK does an exact string match on the `Host` header.
+ * A missing entry is a 421 on every request, so we emit both the bare host
+ * and the `host:port` form (browsers omit the port only for 80/443) and
+ * always leave an escape hatch.
+ *
+ * Resolution:
+ *   - `GBRAIN_HTTP_DNS_REBINDING_PROTECTION=0` → disabled outright. The
+ *     escape hatch for a proxy that rewrites Host to something unguessable.
+ *   - `GBRAIN_HTTP_ALLOWED_HOSTS` (comma list) overrides the derived hosts.
+ *   - Otherwise hosts derive from the public URL (when set) plus the
+ *     loopback forms for the bound port.
+ *   - Origins come from `GBRAIN_HTTP_ALLOWED_ORIGINS`, else fall back to the
+ *     existing CORS allowlist so operators maintain ONE list. An empty
+ *     origin list means the SDK skips origin checking — deliberate, because
+ *     non-browser clients (Claude Code, Copilot CLI) send no Origin at all
+ *     and the host check already covers them.
+ */
+export function resolveDnsRebindingOptions(opts: {
+  publicUrl?: string;
+  port: number;
+  corsAllowlist?: Set<string> | null;
+  env?: Record<string, string | undefined>;
+}): { enableDnsRebindingProtection: boolean; allowedHosts?: string[]; allowedOrigins?: string[] } {
+  const env = opts.env ?? process.env;
+
+  if (env.GBRAIN_HTTP_DNS_REBINDING_PROTECTION === '0' || env.GBRAIN_HTTP_DNS_REBINDING_PROTECTION === 'false') {
+    return { enableDnsRebindingProtection: false };
+  }
+
+  const splitList = (v: string | undefined): string[] =>
+    (v ?? '').split(',').map(s => s.trim()).filter(Boolean);
+
+  const explicitHosts = splitList(env.GBRAIN_HTTP_ALLOWED_HOSTS);
+  const hosts = new Set<string>(explicitHosts);
+
+  if (explicitHosts.length === 0) {
+    if (opts.publicUrl) {
+      try {
+        const u = new URL(opts.publicUrl);
+        // `u.host` carries the port only when non-default, which is exactly
+        // the Host header's own rule — but a proxy may still forward the
+        // explicit form, so accept both.
+        hosts.add(u.host);
+        hosts.add(u.hostname);
+        if (u.port) hosts.add(`${u.hostname}:${u.port}`);
+      } catch {
+        // Malformed public URL: fall through to the loopback defaults rather
+        // than locking the operator out of their own server.
+      }
+    }
+    for (const h of ['localhost', '127.0.0.1', '[::1]']) {
+      hosts.add(`${h}:${opts.port}`);
+      hosts.add(h);
+    }
+  }
+
+  const explicitOrigins = splitList(env.GBRAIN_HTTP_ALLOWED_ORIGINS);
+  const origins = explicitOrigins.length > 0
+    ? explicitOrigins
+    : [...(opts.corsAllowlist ?? [])];
+
+  return {
+    enableDnsRebindingProtection: true,
+    allowedHosts: [...hosts],
+    ...(origins.length > 0 ? { allowedOrigins: origins } : {}),
+  };
+}
+
 export function resolveCorsOrigin(allowlist: Set<string> | null): cors.CorsOptions['origin'] {
   if (allowlist === null) return false;
   return (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
@@ -763,6 +847,21 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     methods: ['GET', 'POST', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
   };
+
+  // DNS-rebinding / Origin validation for the MCP transport. Resolved once
+  // here (all inputs are process-lifetime constants) and spread into every
+  // per-request StreamableHTTPServerTransport. Reuses the CORS allowlist as
+  // the origin source so operators keep one list, not two.
+  const dnsRebindingOptions = resolveDnsRebindingOptions({
+    publicUrl,
+    port,
+    corsAllowlist: corsAllowlistOAuth,
+  });
+  if (!dnsRebindingOptions.enableDnsRebindingProtection) {
+    console.error(
+      '[serve-http] WARNING: DNS-rebinding protection is DISABLED (GBRAIN_HTTP_DNS_REBINDING_PROTECTION=0). The MCP endpoint will not validate the Host or Origin header.',
+    );
+  }
   app.use('/mcp', cors(corsOAuthOptions));
   app.use('/token', cors(corsOAuthOptions));
   app.use('/authorize', cors(corsOAuthOptions));
@@ -2073,7 +2172,14 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     // !res.headersSent we emit a minimal JSON 500 so the client at least
     // gets parseable JSON back.
     try {
-      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined as any });
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined as any,
+        // MCP spec mandates Origin validation; the SDK ships the middleware
+        // but defaults it off, so it only runs because it's passed here.
+        // Resolved once at startup (see dnsRebindingOptions) rather than
+        // per-request — the inputs are all process-lifetime constants.
+        ...dnsRebindingOptions,
+      });
       await server.connect(transport);
       await transport.handleRequest(req, res, req.body);
     } catch (e) {
