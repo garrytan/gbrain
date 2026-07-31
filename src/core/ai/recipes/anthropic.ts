@@ -44,6 +44,14 @@ export const anthropic: Recipe = {
   // and pinned (no alias needed). Only pre-4.6 models need date-suffixed aliases.
   // The reverse entry rewrites the v0.31.6-shipped broken ID back to canonical
   // so users with stale `models.dream.synthesize` etc. configs keep working.
+  //
+  // DEPLOYMENT NOTE for gateway-style hosts (Azure AI Foundry, any proxy
+  // where `model` names a DEPLOYMENT rather than an Anthropic model id):
+  // the RESOLVED id is what lands in the wire `model` field, so a config of
+  // `claude-haiku-4-5` sends `claude-haiku-4-5-20251001`. Deployment names
+  // are immutable after creation, so either name the deployment with the
+  // dated form or set the model config to the dated id explicitly. Getting
+  // it wrong 404s at the first query with an opaque error.
   aliases: {
     'claude-haiku-4-5': 'claude-haiku-4-5-20251001',
     'claude-sonnet-4-6-20250929': 'claude-sonnet-4-6',

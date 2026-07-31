@@ -439,6 +439,34 @@ export function applyOpenAICompatConfig(
  * unproven (Gemini's OpenAI-compat route is `/v1beta/openai`), so it's deferred
  * to a follow-up rather than risk a regression on a wrong assumption.
  *
+ * DEPLOYMENT NOTE — this is the seam that points Claude at a non-Anthropic
+ * host, e.g. an Azure AI Foundry Claude deployment:
+ *
+ *   ANTHROPIC_BASE_URL=https://<resource>.services.ai.azure.com/anthropic
+ *
+ * normalizes to `.../anthropic/v1`, and `@ai-sdk/anthropic` appends
+ * `/messages` and sends the key as `x-api-key` — Foundry's documented Claude
+ * contract, with no transport code of gbrain's own.
+ *
+ * DO NOT "clean this up" into a separate `foundry-claude` recipe. It looks
+ * tidier and silently breaks three things, because they key on the literal
+ * recipe id `anthropic`:
+ *
+ *   1. `cache_control` markers are applied in `chat()` only when
+ *      `recipe.id === 'anthropic'`. A new id forfeits prompt caching — a
+ *      5-10x cost increase on subagent loops, with no error.
+ *   2. `test/ai/gateway-chat.test.ts` forbids any other recipe from claiming
+ *      `supports_prompt_cache`.
+ *   3. `CANONICAL_PRICING` is keyed `provider:model` and `canonicalLookup`
+ *      does not fall back across provider prefixes, so a
+ *      `foundry-claude:claude-sonnet-5` key would not exist and every
+ *      `--max-cost` caller would hard-fail with
+ *      `BudgetExhausted(reason:'no_pricing')`.
+ *
+ * Accepted consequence: there is one `anthropic` recipe id and one global
+ * ANTHROPIC_BASE_URL, so routing is all-Foundry or all-direct. Splitting
+ * traffic per model would be new work, not a config change.
+ *
  * @internal exported for tests.
  */
 export function resolveNativeBaseUrl(
