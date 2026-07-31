@@ -28,7 +28,6 @@ import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import { GBrainOAuthProvider, validateTokenEndpointAuthMethod } from '../core/oauth-provider.ts';
-import type { SqlQuery } from '../core/oauth-provider.ts';
 import { hasScope, ALLOWED_SCOPES_LIST, normalizeScopesInput } from '../core/scope.ts';
 import { summarizeMcpParams, dispatchToolCall } from '../mcp/dispatch.ts';
 import { paramDefToSchema } from '../mcp/tool-defs.ts';
@@ -271,7 +270,11 @@ export async function probeHealth(
 
 /**
  * Lightweight liveness probe. Races `SELECT 1` against the same timeout
- * `probeHealth` uses, returns the same tagged-union result type, but the
+ * `probeHealth` uses and aborts the query if the timeout wins. Returning a
+ * timeout while leaving the losing query alive slowly consumes the pool under
+ * a stalled transaction pooler because Fly calls this route continuously.
+ *
+ * Returns the same tagged-union result type as `probeHealth`, but the
  * 200 body is intentionally bare: `{status, version, engine}` — no engine
  * stats. Stats moved to `/admin/api/full-stats` (admin auth) in v0.28.10
  * because `getStats()`'s six count(*) queries exceeded HEALTH_TIMEOUT_MS
@@ -279,17 +282,23 @@ export async function probeHealth(
  * triggered orchestrator restart cascades and advisory-lock pile-ups.
  */
 export async function probeLiveness(
-  sql: SqlQuery,
+  engine: BrainEngine,
   engineName: string,
   version: string,
   timeoutMs: number = HEALTH_TIMEOUT_MS,
 ): Promise<ProbeHealthResult> {
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let timedOut = false;
+  const controller = new AbortController();
   try {
     await Promise.race([
-      sql`SELECT 1`,
+      engine.executeRaw('SELECT 1', undefined, { signal: controller.signal }),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('health_timeout')), timeoutMs);
+        timer = setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+          reject(new Error('health_timeout'));
+        }, timeoutMs);
       }),
     ]);
     return {
@@ -298,7 +307,10 @@ export async function probeLiveness(
       body: { status: 'ok', version, engine: engineName },
     };
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : 'unknown';
+    // Aborting the query rejects it synchronously in some engines, so its
+    // AbortError can win Promise.race ahead of the timeout rejection queued in
+    // the same timer callback. `timedOut` preserves the correct public result.
+    const msg = timedOut ? 'health_timeout' : (e instanceof Error ? e.message : 'unknown');
     return {
       ok: false,
       status: 503,
@@ -1065,7 +1077,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // /admin/api/full-stats (requireAdmin). See probeLiveness above for the why.
   // ---------------------------------------------------------------------------
   app.get('/health', async (_req, res) => {
-    const result = await probeLiveness(sql, config.engine || 'pglite', VERSION);
+    const result = await probeLiveness(engine, config.engine || 'pglite', VERSION);
     res.status(result.status).json(result.body);
   });
 

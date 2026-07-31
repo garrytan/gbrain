@@ -3,6 +3,7 @@ import { GBrainError, type EngineConfig } from './types.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import type { BrainEngine } from './engine.ts';
 import { verifySchema } from './schema-verify.ts';
+import { postgresConnectionTraceOptions } from './connection-audit.ts';
 
 let sql: ReturnType<typeof postgres> | null = null;
 let connectedUrl: string | null = null;
@@ -102,6 +103,57 @@ export function resolvePrepare(url: string): boolean | undefined {
   }
 
   return undefined;
+}
+
+/**
+ * Bound postgres.js pipelining for transaction-pooler connections.
+ *
+ * postgres.js normally allows up to 100 in-flight statements on one socket.
+ * With prepare=false through transaction poolers, mixing parameter-free and
+ * parameterized statements can leave the client queue stuck while Postgres is
+ * waiting in ClientRead (postgres.js#1033). A limit of 1 allows at most one
+ * statement behind the active statement instead of 100, constraining the
+ * failure's blast radius while retaining concurrency across pool connections.
+ *
+ * This deliberately does not use 0. postgres.js gates its internal
+ * transaction `onexecute` callback behind the same limit, so 0 prevents
+ * sql.begin() from receiving its reserved connection and breaks transactions.
+ * The health-query AbortSignal is the actual abandoned-query fix; this bound is
+ * defense in depth while the driver/pooler pipeline issue remains open.
+ *
+ * Precedence:
+ *   1. GBRAIN_MAX_PIPELINE positive integer
+ *   2. ?max_pipeline=<positive integer> on the URL
+ *   3. prepare=false → 1
+ *   4. otherwise undefined (postgres.js default)
+ */
+export function resolveMaxPipeline(
+  url: string,
+  prepare: boolean | undefined,
+): number | undefined {
+  const safeDefault = prepare === false ? 1 : undefined;
+  const parsePositiveInteger = (raw: string | null | undefined): number | undefined => {
+    if (raw === null || raw === undefined || raw === '') return undefined;
+    const value = Number(raw);
+    return Number.isSafeInteger(value) && value > 0 ? value : undefined;
+  };
+
+  const envRaw = process.env.GBRAIN_MAX_PIPELINE;
+  if (envRaw !== undefined) {
+    return parsePositiveInteger(envRaw) ?? safeDefault;
+  }
+
+  try {
+    const parsed = new URL(url.replace(/^postgres(ql)?:\/\//, 'http://'));
+    const urlRaw = parsed.searchParams.get('max_pipeline');
+    if (urlRaw !== null) {
+      return parsePositiveInteger(urlRaw) ?? safeDefault;
+    }
+  } catch {
+    // URL parse failure — use the prepare-derived safe default.
+  }
+
+  return safeDefault;
 }
 
 export function resolvePoolSize(explicit?: number): number {
@@ -234,6 +286,7 @@ export async function connect(config: EngineConfig): Promise<boolean> {
 
   try {
     const prepare = resolvePrepare(url);
+    const maxPipeline = resolveMaxPipeline(url, prepare);
     const timeouts = resolveSessionTimeouts();
     const opts: Record<string, unknown> = {
       max: resolvePoolSize(),
@@ -260,6 +313,10 @@ export async function connect(config: EngineConfig): Promise<boolean> {
         );
       }
     }
+    if (maxPipeline !== undefined) {
+      opts.max_pipeline = maxPipeline;
+    }
+    Object.assign(opts, postgresConnectionTraceOptions('read'));
     sql = postgres(url, opts);
 
     // Test connection

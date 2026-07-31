@@ -83,7 +83,11 @@ import { finalizeLastSeen } from './chronicle/last-seen.ts';
 import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import * as db from './db.ts';
 import { ConnectionManager } from './connection-manager.ts';
-import { logConnectionEvent } from './connection-audit.ts';
+import {
+  logConnectionEvent,
+  postgresConnectionTraceOptions,
+  startConnectionTraceSpan,
+} from './connection-audit.ts';
 import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, takeRowToTake, takeHitRowToHit, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery } from './search/sql-ranking.ts';
@@ -286,6 +290,7 @@ export class PostgresEngine implements BrainEngine {
       // "prepared statement does not exist" under load just like the module
       // singleton did before v0.15.4.
       const prepare = db.resolvePrepare(url);
+      const maxPipeline = db.resolveMaxPipeline(url, prepare);
       // Session timeouts (statement_timeout + idle_in_transaction_session_timeout)
       // keep orphan pgbouncer backends from holding locks for hours when the
       // postgres.js client disconnects mid-transaction. See resolveSessionTimeouts
@@ -308,6 +313,10 @@ export class PostgresEngine implements BrainEngine {
       if (typeof prepare === 'boolean') {
         opts.prepare = prepare;
       }
+      if (maxPipeline !== undefined) {
+        opts.max_pipeline = maxPipeline;
+      }
+      Object.assign(opts, postgresConnectionTraceOptions('read'));
       this._sql = postgres(url, opts);
       await this._sql`SELECT 1`;
       await db.setSessionDefaults(this._sql);
@@ -5910,19 +5919,33 @@ export class PostgresEngine implements BrainEngine {
     sql: string,
     params?: unknown[],
     opts?: { signal?: AbortSignal },
+    tracePool: 'read' | 'ddl' = 'read',
+    traceCaller: string = 'PostgresEngine.executeRaw',
   ): Promise<T[]> {
-    const pending = conn.unsafe(sql, params as Parameters<typeof conn.unsafe>[1]);
+    if (opts?.signal?.aborted) {
+      throw new DOMException('aborted', 'AbortError');
+    }
+
+    const trace = startConnectionTraceSpan({
+      pool: tracePool,
+      caller: traceCaller,
+      queryKind: params && params.length > 0 ? 'parameterized' : 'static',
+    });
+
+    let pending: ReturnType<typeof conn.unsafe>;
+    try {
+      pending = conn.unsafe(
+        sql,
+        params as Parameters<typeof conn.unsafe>[1],
+        trace.unsafeOptions as Parameters<typeof conn.unsafe>[2],
+      );
+    } catch (error) {
+      trace.finish(error);
+      throw error;
+    }
+
+    let result = pending as unknown as Promise<T[]>;
     if (opts?.signal) {
-      if (opts.signal.aborted) {
-        // .cancel() is fire-and-forget; the awaited query rejects with the
-        // postgres "query was cancelled" error which the caller catches.
-        try {
-          (pending as unknown as { cancel?: () => void }).cancel?.();
-        } catch {
-          // best-effort
-        }
-        throw new DOMException('aborted', 'AbortError');
-      }
       const onAbort = () => {
         try {
           (pending as unknown as { cancel?: () => void }).cancel?.();
@@ -5931,11 +5954,20 @@ export class PostgresEngine implements BrainEngine {
         }
       };
       opts.signal.addEventListener('abort', onAbort, { once: true });
-      return (pending as unknown as Promise<T[]>).finally(() => {
+      result = result.finally(() => {
         opts.signal?.removeEventListener('abort', onAbort);
       });
     }
-    return pending as unknown as Promise<T[]>;
+    return result.then(
+      rows => {
+        trace.finish();
+        return rows;
+      },
+      error => {
+        trace.finish(error);
+        throw error;
+      },
+    );
   }
 
   async executeRaw<T = Record<string, unknown>>(
@@ -5943,7 +5975,14 @@ export class PostgresEngine implements BrainEngine {
     params?: unknown[],
     opts?: { signal?: AbortSignal },
   ): Promise<T[]> {
-    return this.runUnsafe<T>(this.sql, sql, params, opts);
+    return this.runUnsafe<T>(
+      this.sql,
+      sql,
+      params,
+      opts,
+      'read',
+      'PostgresEngine.executeRaw',
+    );
     // Pre-#406 behavior: throw on any error including connection death.
     // Per-call auto-retry is not safe here because executeRaw is also used
     // for non-transactional mutations (DELETE/UPDATE/INSERT in sources.ts,
@@ -5979,7 +6018,14 @@ export class PostgresEngine implements BrainEngine {
     const conn = (!inTransaction && this.connectionManager?.isDualPoolActive())
       ? await this.connectionManager.ddl()
       : this.sql;
-    return this.runUnsafe<T>(conn, sql, params, opts);
+    return this.runUnsafe<T>(
+      conn,
+      sql,
+      params,
+      opts,
+      this.connectionManager?.isDualPoolActive() && !inTransaction ? 'ddl' : 'read',
+      'PostgresEngine.executeRawDirect',
+    );
   }
 
   // ============================================================
