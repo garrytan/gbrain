@@ -1161,6 +1161,10 @@ export async function importCodeFile(
   const title = `${relativePath} (${lang})`;
   const sourceId = opts.sourceId;
   const txOpts = sourceId ? { sourceId } : undefined;
+  // PostgreSQL text columns reject U+0000 even though source files may
+  // legitimately contain it inside string/regex fixtures. Preserve a visible,
+  // searchable representation instead of dropping the entire code page.
+  const storageContent = content.replaceAll('\0', '\\0');
 
   const byteLength = Buffer.byteLength(content, 'utf-8');
   if (byteLength > MAX_FILE_SIZE) {
@@ -1202,7 +1206,7 @@ export async function importCodeFile(
   // from the chunker (nested methods carry ['ClassName'] etc.) so the
   // chunk-grain FTS trigger picks up scope for ranking and downstream
   // Layer 5 edge resolution can use scope-qualified identity.
-  const { chunks: codeChunks, edges: extractedEdges } = await chunkCodeTextFull(content, relativePath);
+  const { chunks: codeChunks, edges: extractedEdges } = await chunkCodeTextFull(storageContent, relativePath);
   const chunks: ChunkInput[] = codeChunks.map((c, i) => ({
     chunk_index: i,
     chunk_text: c.text,
@@ -1270,7 +1274,7 @@ export async function importCodeFile(
       type: 'code' as string,
       page_kind: 'code',
       title,
-      compiled_truth: content,
+      compiled_truth: storageContent,
       timeline: '',
       frontmatter: { language: lang, file: relativePath },
       content_hash: hash,
@@ -1342,7 +1346,7 @@ export async function importCodeFile(
 
       const edgeInputs: import('./types.ts').CodeEdgeInput[] = [];
       for (const e of extractedEdges) {
-        const idx = findChunkForOffset(e.callSiteByteOffset, content, rangeList);
+        const idx = findChunkForOffset(e.callSiteByteOffset, storageContent, rangeList);
         if (idx == null) continue;
         const from = rangeList[idx]!;
         if (!from.id || !from.symbol_name_qualified) continue;

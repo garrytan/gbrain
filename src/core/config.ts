@@ -63,6 +63,23 @@ export interface GBrainConfig {
    * config.json file-plane route is wired through today.
    */
   voyage_api_key?: string;
+  /**
+   * Alibaba DashScope API key (#3500). File-plane slot so config.json's
+   * `dashscope_api_key` reaches the dashscope / dashscope-rerank recipes:
+   * file plane → buildGatewayConfig env dict → recipe reads
+   * DASHSCOPE_API_KEY. Same fold pattern (and same DB-plane caveat) as
+   * voyage_api_key above.
+   */
+  dashscope_api_key?: string;
+  /**
+   * Google Gemini API key (#3500). File-plane slot folded into the gateway
+   * env as GOOGLE_GENERATIVE_AI_API_KEY (the name the google recipe reads).
+   * buildGatewayConfig also accepts process-env GEMINI_API_KEY — the name
+   * Google's own docs/SDKs use — as an alias for
+   * GOOGLE_GENERATIVE_AI_API_KEY. Same fold pattern (and same DB-plane
+   * caveat) as voyage_api_key above.
+   */
+  google_api_key?: string;
   /** Azure OpenAI (keyless/Entra). Non-secret endpoint + deployment + Entra opt-in,
    * folded into the gateway env so the azure-openai recipe works in any shell.
    * The bearer token is minted at request time via `az` — no secret stored here. */
@@ -919,6 +936,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'zeroentropy_api_key',
   'openrouter_api_key',
   'voyage_api_key',
+  'dashscope_api_key',
+  'google_api_key',
   'azure_openai_endpoint',
   'azure_openai_deployment',
   'azure_openai_use_entra',

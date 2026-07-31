@@ -127,4 +127,68 @@ describe('runPostWriteLint', () => {
     expect(r.ran).toBe(true);
     expect(r.findings).toEqual([]);
   });
+
+  test('nested backlink reads preserve the exact non-default source', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('team-x', 'team-x') ON CONFLICT (id) DO NOTHING`,
+    );
+    for (const sourceId of ['default', 'team-x']) {
+      await engine.putPage('notes/source-backlink', {
+        type: 'note', title: `Origin ${sourceId}`,
+        compiled_truth: '## See Also\n- [Source: X/origin, 2026-04-18](https://x.com/origin/1)',
+        frontmatter: {},
+      }, { sourceId });
+      await engine.putPage('people/target', {
+        type: 'person', title: `Target ${sourceId}`,
+        compiled_truth: '## See Also\n- [Source: X/target, 2026-04-18](https://x.com/target/1)',
+        frontmatter: {},
+      }, { sourceId });
+    }
+    await engine.addLink(
+      'notes/source-backlink', 'people/target', 'forward', 'mentions', 'manual', undefined, undefined,
+      { fromSourceId: 'team-x', toSourceId: 'team-x' },
+    );
+    await engine.addLink(
+      'people/target', 'notes/source-backlink', 'wrong reverse', 'mentions', 'manual', undefined, undefined,
+      { fromSourceId: 'team-x', toSourceId: 'default' },
+    );
+
+    const r = await runPostWriteLint(engine, 'notes/source-backlink', {
+      force: true,
+      noLog: true,
+      sourceId: 'team-x',
+    });
+
+    expect(r.ran).toBe(true);
+    expect(r.findings).toContainEqual(expect.objectContaining({
+      validator: 'back-link',
+      severity: 'warning',
+    }));
+  });
+
+  test('nested markdown-link reads do not fall through to a same-slug page in another source', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('team-x', 'team-x') ON CONFLICT (id) DO NOTHING`,
+    );
+    await engine.putPage('notes/source-link', {
+      type: 'note', title: 'Team origin',
+      compiled_truth: '[Target](people/target.md)',
+      frontmatter: {},
+    }, { sourceId: 'team-x' });
+    await engine.putPage('people/target', {
+      type: 'person', title: 'Default-only target', compiled_truth: 'target', frontmatter: {},
+    }, { sourceId: 'default' });
+
+    const r = await runPostWriteLint(engine, 'notes/source-link', {
+      force: true,
+      noLog: true,
+      sourceId: 'team-x',
+    });
+
+    expect(r.findings).toContainEqual(expect.objectContaining({
+      validator: 'link',
+      severity: 'error',
+      message: expect.stringContaining('people/target'),
+    }));
+  });
 });

@@ -79,12 +79,38 @@ describe('doctor checkCycleFreshness', () => {
     expect(result.message).toMatch(/gbrain dream --source/);
   });
 
-  test('source with NO last_full_cycle_at (never cycled) returns fail', async () => {
+  test('source with NO last_full_cycle_at (never cycled) returns warn, not fail (#2540)', async () => {
+    // #2540: never-cycled used to FAIL, which turned doctor permanently red
+    // on any install that doesn't cycle every local_path source (e.g. one
+    // nightly `dream --dir <vault>` plus other federated sources) — and on
+    // any source added minutes ago. It surfaces as a warning; only a source
+    // that HAS cycled and then went stale escalates to fail.
     await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
     await seed('virgin');
     const result = await checkCycleFreshness(engine, { nowMs: NOW });
-    expect(result.status).toBe('fail');
+    expect(result.status).toBe('warn');
     expect(result.message).toMatch(/never completed a full cycle/);
+    expect(result.message).toMatch(/gbrain dream --source/);
+  });
+
+  test('reporter case (#2540): one cycled vault + never-cycled siblings is warn, not permanent fail', async () => {
+    await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+    await seed('nightly-vault', agoH(2)); // the one vault dreamt via --dir
+    await seed('federated-a');            // never cycled
+    await seed('federated-b');            // never cycled
+    const result = await checkCycleFreshness(engine, { nowMs: NOW });
+    expect(result.status).toBe('warn');
+    expect(result.message).toMatch(/federated-a/);
+    expect(result.message).toMatch(/federated-b/);
+    expect(result.message).not.toMatch(/nightly-vault/);
+  });
+
+  test('a previously-cycled source gone stale still fails even next to never-cycled sources', async () => {
+    await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+    await seed('stale', agoH(72));  // real regression signal
+    await seed('virgin');           // never cycled — warn-only
+    const result = await checkCycleFreshness(engine, { nowMs: NOW });
+    expect(result.status).toBe('fail');
   });
 
   test('mixed sources: highest severity wins (fail > warn > ok)', async () => {

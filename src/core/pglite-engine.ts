@@ -17,7 +17,26 @@ import type {
   SourceRow,
 } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
-import { withRetry, BULK_RETRY_OPTS, resolveBulkRetryOpts, computeNextDelay, type BatchAuditSite } from './retry.ts';
+// Engine-path imports stay static unless a call site carries an explicit
+// engine-dynamic-import-ok justification. The gateway is the only current
+// exception because its local try/catch preserves a soft fallback.
+import {
+  withRetry,
+  BULK_RETRY_OPTS,
+  resolveBulkRetryOpts,
+  computeNextDelay,
+  isRetryableConnError,
+  type BatchAuditSite,
+} from './retry.ts';
+import {
+  valueHash,
+  normalizeDimension,
+  isNovelDimension,
+} from './chronicle/ontology.ts';
+import {
+  resolveRecencyDecayMap,
+  DEFAULT_FALLBACK,
+} from './search/recency-decay.ts';
 import { logBatchRetry as auditLogBatchRetry, logBatchExhausted as auditLogBatchExhausted } from './audit/batch-retry-audit.ts';
 import { runMigrations } from './migrate.ts';
 import { PGLITE_SCHEMA_SQL, getPGLiteSchema } from './pglite-schema.ts';
@@ -419,7 +438,9 @@ export class PGLiteEngine implements BrainEngine {
     let dims: number = DEFAULT_EMBEDDING_DIMENSIONS;
     let model: string = DEFAULT_EMBEDDING_MODEL;
     try {
-      const gw = await import('./ai/gateway.ts');
+      // Keep the gateway lazy: its static closure is large, and evaluation inside
+      // this try/catch preserves the unconfigured-gateway default fallback.
+      const gw = await import('./ai/gateway.ts'); // engine-dynamic-import-ok
       // Both accessors THROW when the gateway is unconfigured (they never
       // return falsy), so the catch below is the only fallback path (#3461).
       dims = gw.getEmbeddingDimensions();
@@ -2264,7 +2285,6 @@ export class PGLiteEngine implements BrainEngine {
       });
     } catch (err) {
       if (err instanceof Error && err.name === 'RetryAbortError') throw err;
-      const { isRetryableConnError } = await import('./retry.ts');
       if (isRetryableConnError(err)) {
         auditLogBatchExhausted(auditSite, batchSize, opts.maxRetries + 1, err);
       }
@@ -2330,7 +2350,9 @@ export class PGLiteEngine implements BrainEngine {
     // rationale — pglite mirrors it for parity.
     let resolvedModel: string | null = null;
     try {
-      const gw = await import('./ai/gateway.ts');
+      // Keep the gateway lazy so module-load failure remains inside this soft
+      // fallback boundary; eager evaluation would bypass the config-row fallback.
+      const gw = await import('./ai/gateway.ts'); // engine-dynamic-import-ok
       resolvedModel = gw.getEmbeddingModel();
     } catch {
       try {
@@ -2879,9 +2901,11 @@ export class PGLiteEngine implements BrainEngine {
     // Remote MCP clients always land here.
     if (opts?.sourceIds && opts.sourceIds.length > 0) {
       const { rows } = await this.db.query(
-        `SELECT f.slug as from_slug, t.slug as to_slug,
+        `SELECT f.slug as from_slug, f.source_id as from_source_id,
+                t.slug as to_slug, t.source_id as to_source_id,
                 l.link_type, l.context, l.link_source,
-                o.slug as origin_slug, l.origin_field
+                o.slug as origin_slug, o.source_id as origin_source_id,
+                l.origin_field
          FROM links l
          JOIN pages f ON f.id = l.from_page_id
          JOIN pages t ON t.id = l.to_page_id
@@ -2897,9 +2921,11 @@ export class PGLiteEngine implements BrainEngine {
     // opts.sourceId, scope to that source (D20).
     if (opts?.sourceId) {
       const { rows } = await this.db.query(
-        `SELECT f.slug as from_slug, t.slug as to_slug,
+        `SELECT f.slug as from_slug, f.source_id as from_source_id,
+                t.slug as to_slug, t.source_id as to_source_id,
                 l.link_type, l.context, l.link_source,
-                o.slug as origin_slug, l.origin_field
+                o.slug as origin_slug, o.source_id as origin_source_id,
+                l.origin_field
          FROM links l
          JOIN pages f ON f.id = l.from_page_id
          JOIN pages t ON t.id = l.to_page_id
@@ -2910,9 +2936,11 @@ export class PGLiteEngine implements BrainEngine {
       return rows as unknown as Link[];
     }
     const { rows } = await this.db.query(
-      `SELECT f.slug as from_slug, t.slug as to_slug,
+      `SELECT f.slug as from_slug, f.source_id as from_source_id,
+              t.slug as to_slug, t.source_id as to_source_id,
               l.link_type, l.context, l.link_source,
-              o.slug as origin_slug, l.origin_field
+              o.slug as origin_slug, o.source_id as origin_source_id,
+              l.origin_field
        FROM links l
        JOIN pages f ON f.id = l.from_page_id
        JOIN pages t ON t.id = l.to_page_id
@@ -2929,9 +2957,11 @@ export class PGLiteEngine implements BrainEngine {
     // foreign referrer nor a foreign origin slug is disclosed to the caller.
     if (opts?.sourceIds && opts.sourceIds.length > 0) {
       const { rows } = await this.db.query(
-        `SELECT f.slug as from_slug, t.slug as to_slug,
+        `SELECT f.slug as from_slug, f.source_id as from_source_id,
+                t.slug as to_slug, t.source_id as to_source_id,
                 l.link_type, l.context, l.link_source,
-                o.slug as origin_slug, l.origin_field
+                o.slug as origin_slug, o.source_id as origin_source_id,
+                l.origin_field
          FROM links l
          JOIN pages f ON f.id = l.from_page_id
          JOIN pages t ON t.id = l.to_page_id
@@ -2944,9 +2974,11 @@ export class PGLiteEngine implements BrainEngine {
     // v0.31.8 (D16) + #2200: federated arm above is first; two below mirror getLinks.
     if (opts?.sourceId) {
       const { rows } = await this.db.query(
-        `SELECT f.slug as from_slug, t.slug as to_slug,
+        `SELECT f.slug as from_slug, f.source_id as from_source_id,
+                t.slug as to_slug, t.source_id as to_source_id,
                 l.link_type, l.context, l.link_source,
-                o.slug as origin_slug, l.origin_field
+                o.slug as origin_slug, o.source_id as origin_source_id,
+                l.origin_field
          FROM links l
          JOIN pages f ON f.id = l.from_page_id
          JOIN pages t ON t.id = l.to_page_id
@@ -2957,9 +2989,11 @@ export class PGLiteEngine implements BrainEngine {
       return rows as unknown as Link[];
     }
     const { rows } = await this.db.query(
-      `SELECT f.slug as from_slug, t.slug as to_slug,
+      `SELECT f.slug as from_slug, f.source_id as from_source_id,
+              t.slug as to_slug, t.source_id as to_source_id,
               l.link_type, l.context, l.link_source,
-              o.slug as origin_slug, l.origin_field
+              o.slug as origin_slug, o.source_id as origin_source_id,
+              l.origin_field
        FROM links l
        JOIN pages f ON f.id = l.from_page_id
        JOIN pages t ON t.id = l.to_page_id
@@ -3842,7 +3876,6 @@ export class PGLiteEngine implements BrainEngine {
 
   async mergeOntologyFact(obs: OntologyObservationInput): Promise<OntologyMergeResult> {
     const sourceId = obs.sourceId ?? 'default';
-    const { valueHash, normalizeDimension, isNovelDimension } = await import('./chronicle/ontology.ts');
     const dimension = normalizeDimension(obs.dimension);
     const vh = valueHash(obs.value);
     const conf = obs.confidence ?? 0.7;
@@ -6005,7 +6038,6 @@ export class PGLiteEngine implements BrainEngine {
     const recencyBias = opts.recency_bias ?? 'flat';
     let recencySql: string;
     if (recencyBias === 'on') {
-      const { resolveRecencyDecayMap, DEFAULT_FALLBACK } = await import('./search/recency-decay.ts');
       recencySql = buildRecencyComponentSql({
         slugColumn: 'p.slug',
         dateExpr: 'COALESCE(p.effective_date, p.updated_at)',

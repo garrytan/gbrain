@@ -33,10 +33,17 @@ import type { TakesQualityReceipt } from './receipt.ts';
 import { estimateCost, getPricing, PricingNotFoundError } from './pricing.ts';
 import { DEFAULT_CYCLES_NONTTY } from '../eval/cycle-default.ts';
 
+/**
+ * Three distinct providers (uncorrelated judge blind spots). Every entry MUST
+ * be listed in its recipe's chat touchpoint AND in the SUPPORTED_MODELS
+ * pricing allowlist — pinned by test/default-model-panels.test.ts.
+ * google:gemini-1.5-pro (retired by Google) and openai:gpt-4o (dropped from
+ * the OpenAI recipe's chat list) sat here dead until #3510.
+ */
 export const DEFAULT_MODEL_PANEL = [
-  'openai:gpt-4o',
+  'openai:gpt-5.2',
   'anthropic:claude-opus-4-7',
-  'google:gemini-1.5-pro',
+  'google:gemini-2.0-flash',
 ] as const;
 
 export interface RunOpts {

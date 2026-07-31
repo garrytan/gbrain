@@ -9,7 +9,7 @@
  * import it from `../../src/cli.ts`.
  *
  * The single ownership site for: (a) folding file-plane API keys
- * (openai/anthropic/zeroentropy/openrouter/voyage) into the gateway env, and (b) threading
+ * (openai/anthropic/zeroentropy/openrouter/voyage/dashscope/google) into the gateway env, and (b) threading
  * local-server `*_BASE_URL` env vars into base_urls. Both matter for the
  * init-time embedding-key probe — without (a) it would false-warn on
  * config.json-keyed users, and without (b) a live probe could hit the wrong
@@ -44,6 +44,18 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   // multimodal/image embeds despite config.json looking complete. process.env
   // still wins via the later spread.
   if (c.voyage_api_key) envFromConfig.VOYAGE_API_KEY = c.voyage_api_key;
+  // #3500: same seam for DashScope. The dashscope + dashscope-rerank recipes
+  // require DASHSCOPE_API_KEY, but the config-plane key was never folded, so
+  // daemon/launchd/MCP contexts with no process-env export failed auth
+  // despite config.json looking complete. process.env still wins via the
+  // later spread.
+  if (c.dashscope_api_key) envFromConfig.DASHSCOPE_API_KEY = c.dashscope_api_key;
+  // #3500: same seam for Google Gemini. The google recipe reads
+  // GOOGLE_GENERATIVE_AI_API_KEY; before this fold, the ONLY way to
+  // configure Gemini was exporting that exact env var. (This closes the
+  // deferral noted in src/core/brain-score-recommendations.ts, whose
+  // HOSTED_EMBED_KEY_CONFIG entry lands in the same change.)
+  if (c.google_api_key) envFromConfig.GOOGLE_GENERATIVE_AI_API_KEY = c.google_api_key;
   // Azure OpenAI (keyless/Entra): fold the non-secret endpoint/deployment + the
   // Entra opt-in into the gateway env so the azure-openai recipe works in any
   // shell (incl. non-interactive agent shells). The bearer token is minted at
@@ -86,11 +98,26 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
     // every gateway op then throws NO_ANTHROPIC_API_KEY. Drop empty-string /
     // undefined entries before the merge. Only '' and undefined are dropped —
     // '0' and 'false' are legitimate values and survive.
-    env: {
-      ...envFromConfig,
-      ...Object.fromEntries(
-        Object.entries(process.env).filter(([, v]) => v !== undefined && v !== ''),
-      ),
-    },
+    env: buildEnv(envFromConfig),
   };
+}
+
+/**
+ * Merge config-plane fallbacks with process.env (env wins for keys carrying a
+ * real value — see #1249 note above), then apply the GEMINI_API_KEY alias:
+ * Google's own docs/SDKs export GEMINI_API_KEY, but the google recipe (and
+ * every gateway read site) uses GOOGLE_GENERATIVE_AI_API_KEY. Precedence:
+ * env GOOGLE_GENERATIVE_AI_API_KEY > env GEMINI_API_KEY > config
+ * google_api_key — i.e. the alias is still process-env, so it beats the
+ * config-plane fallback, but never the canonical env name.
+ */
+function buildEnv(envFromConfig: Record<string, string>): Record<string, string> {
+  const envReal = Object.fromEntries(
+    Object.entries(process.env).filter(([, v]) => v !== undefined && v !== ''),
+  ) as Record<string, string>;
+  const merged = { ...envFromConfig, ...envReal };
+  if (!envReal.GOOGLE_GENERATIVE_AI_API_KEY && envReal.GEMINI_API_KEY) {
+    merged.GOOGLE_GENERATIVE_AI_API_KEY = envReal.GEMINI_API_KEY;
+  }
+  return merged;
 }

@@ -63,9 +63,11 @@ describe('embeddingProviderConfigured (recipe-aware helper)', () => {
     // #2662: buildGatewayConfig now folds voyage_api_key → VOYAGE_API_KEY,
     // so this producer-facing map must recognize it as gateway-propagated.
     expect(HOSTED_EMBED_KEY_CONFIG.VOYAGE_API_KEY).toBe('voyage_api_key');
-    // Not propagated to the gateway today → must NOT be backed by a config field
-    // (producer closures fall through to process.env only for this one).
-    expect(HOSTED_EMBED_KEY_CONFIG.GOOGLE_GENERATIVE_AI_API_KEY).toBeUndefined();
+    // #3500: buildGatewayConfig now folds google_api_key and
+    // dashscope_api_key, so both are gateway-propagated and must be mapped
+    // (a config-plane key is genuinely usable by the gateway).
+    expect(HOSTED_EMBED_KEY_CONFIG.GOOGLE_GENERATIVE_AI_API_KEY).toBe('google_api_key');
+    expect(HOSTED_EMBED_KEY_CONFIG.DASHSCOPE_API_KEY).toBe('dashscope_api_key');
   });
 
   // #2662: end-to-end regression through the REAL file-plane loader

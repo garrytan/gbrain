@@ -283,19 +283,79 @@ describe('schema_apply_mutations', () => {
     });
   });
 
-  it('returns partial_results on mid-batch failure with a single batch_id', async () => {
+  it('mid-batch failure reports nothing applied — no partial_results implying a landed write (#2581)', async () => {
     await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_AUDIT_DIR: auditDir }, async () => {
-      seedPack('mine');
+      const packPath = seedPack('mine');
+      const before = readFileSync(packPath, 'utf-8');
       const result = await operationsByName.schema_apply_mutations!.handler(ctxOf(), {
         pack: 'mine',
         mutations: [
           { op: 'add_type', name: 'company', primitive: 'entity', prefix: 'companies/' },
-          { op: 'add_type', name: 'person', primitive: 'entity', prefix: 'people/' }, // collides with seed
+          { op: 'add_type', name: 'person', primitive: 'entity', prefix: 'people/' }, // name collision with seed
         ],
       }) as Record<string, unknown>;
       expect(result.error).toBe('mutation_failed');
-      const partial = result.partial_results as Array<unknown>;
-      expect(partial.length).toBe(1);  // first mutation succeeded
+      expect(result.code).toBe('TYPE_EXISTS');
+      // Nothing was written: mutations_applied is 0, the response says so
+      // explicitly, and there is no `partial_results` field implying the
+      // first mutation landed on disk (it never did — see the byte-identical
+      // assertion in the dedicated regression test below).
+      expect(result.mutations_applied).toBe(0);
+      expect(result.pack_unchanged).toBe(true);
+      expect(result.failed_at_index).toBe(1);
+      expect('partial_results' in result).toBe(false);
+      expect(readFileSync(packPath, 'utf-8')).toBe(before);
+    });
+  });
+
+  // Regression test for #2581: schema_apply_mutations documented itself as
+  // ATOMIC ("all mutations succeed or all roll back"), but each mutation
+  // independently read/validated/WROTE the pack file as the batch loop ran.
+  // A batch that failed partway therefore left every earlier mutation
+  // permanently applied to disk — the exact repro from the issue (7
+  // add_type mutations, a later one fails prefix_collision, and the type
+  // from index 0 is found already written to pack.yaml). This test fails
+  // on pre-fix code (the sha8/content changes) and passes once the batch
+  // validates entirely in-memory before a single write.
+  it('#2581: a batch that fails partway leaves the pack file byte-identical to its pre-batch state', async () => {
+    await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_AUDIT_DIR: auditDir }, async () => {
+      const packPath = seedPack('mine');
+      const beforeContent = readFileSync(packPath, 'utf-8');
+
+      const result = await operationsByName.schema_apply_mutations!.handler(ctxOf(), {
+        pack: 'mine',
+        mutations: [
+          { op: 'add_type', name: 'alpha', primitive: 'entity', prefix: 'alpha/' },
+          { op: 'add_type', name: 'beta', primitive: 'entity', prefix: 'beta/' },
+          // Same path_prefix as `alpha` — fails schema_apply_mutations'
+          // prefix_collision lint rule, matching the issue's repro.
+          { op: 'add_type', name: 'gamma', primitive: 'entity', prefix: 'alpha/' },
+        ],
+      }) as Record<string, unknown>;
+
+      expect(result.error).toBe('mutation_failed');
+      expect(result.code).toBe('INVALID_RESULT');
+      expect(String(result.message)).toContain('prefix_collision');
+      expect(result.mutations_applied).toBe(0);
+      expect(result.pack_unchanged).toBe(true);
+      expect(result.failed_at_index).toBe(2);
+
+      const afterContent = readFileSync(packPath, 'utf-8');
+      expect(afterContent).toBe(beforeContent);
+
+      // A corrected re-submission (without the colliding prefix) must
+      // succeed cleanly — pre-fix, this failed with TYPE_EXISTS for
+      // `alpha` because it was already stuck on disk from the failed
+      // batch, wedging the user until they restored from a backup.
+      const retry = await operationsByName.schema_apply_mutations!.handler(ctxOf(), {
+        pack: 'mine',
+        mutations: [
+          { op: 'add_type', name: 'alpha', primitive: 'entity', prefix: 'alpha/' },
+          { op: 'add_type', name: 'beta', primitive: 'entity', prefix: 'beta/' },
+        ],
+      }) as Record<string, unknown>;
+      expect(retry.error).toBeUndefined();
+      expect(retry.mutations_applied).toBe(2);
     });
   });
 

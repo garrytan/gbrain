@@ -895,8 +895,17 @@ export async function resolveSourceForDir(
   // (the cycleSourceId precedence) or 'default'.
   if (brainDir === null) return undefined;
   try {
+    // #2540: exclude archived rows (dream's --source guard refuses to stamp
+    // them, so an archived alias winning here means the stamp silently never
+    // lands and doctor's cycle_freshness stays red on a healthy install) and
+    // order deterministically so a duplicate registration of the same path
+    // can't shadow the active source on whichever row the engine scans first.
+    // Ordering matches listAllSources/sources-ops for operator-output parity.
     const rows = await engine.executeRaw<{ id: string }>(
-      `SELECT id FROM sources WHERE local_path = $1 LIMIT 1`,
+      `SELECT id FROM sources
+        WHERE local_path = $1 AND archived = false
+        ORDER BY (id = 'default') DESC, id
+        LIMIT 1`,
       [brainDir],
     );
     if (rows[0]) return rows[0].id;

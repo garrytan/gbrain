@@ -1203,7 +1203,11 @@ export interface CodeEdgeResult {
 // Links
 export interface Link {
   from_slug: string;
+  /** Exact source identity of the from-page joined by from_page_id. */
+  from_source_id: string;
   to_slug: string;
+  /** Exact source identity of the to-page joined by to_page_id. */
+  to_source_id: string;
   link_type: string;
   context: string;
   /**
@@ -1221,6 +1225,8 @@ export interface Link {
    * multiple pages reference the same (from, to, type) tuple.
    */
   origin_slug?: string | null;
+  /** Exact source identity of origin_slug; null when absent or grant-redacted. */
+  origin_source_id?: string | null;
   /**
    * The frontmatter field name that created this edge (e.g. 'key_people',
    * 'investors'). Used for debug output and the `unresolved` response list.

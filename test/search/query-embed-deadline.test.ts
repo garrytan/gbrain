@@ -74,6 +74,23 @@ describe('embedQueryBounded — query-embed deadline', () => {
     expect(elapsed).toBeLessThan(3500);
   });
 
+  test('an already-aborted shared signal does not starve a healthy embed', async () => {
+    const vec = Array.from({ length: 1024 }, () => 0.2);
+    const seen: boolean[] = [];
+    __setEmbedTransportForTests(async (opts) => {
+      seen.push(Boolean(opts.abortSignal?.aborted));
+      await new Promise(resolve => setTimeout(resolve, 25));
+      return { embeddings: [vec], usage: { tokens: 1 } } as any;
+    });
+
+    const dl = { signal: AbortSignal.abort(), deadlineAt: Date.now() - 5 };
+    const out = await embedQueryBounded('q', undefined, dl);
+
+    expect(out).toBeInstanceOf(Float32Array);
+    expect(out.length).toBe(1024);
+    expect(seen).toEqual([false]);
+  });
+
   test('resolves with the embedding when the transport returns in time', async () => {
     const vec = Array.from({ length: 1024 }, () => 0.1);
     __setEmbedTransportForTests(async () => ({ embeddings: [vec], usage: { tokens: 1 } }) as any);

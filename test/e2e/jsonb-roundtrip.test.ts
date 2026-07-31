@@ -26,8 +26,12 @@ if (skip) {
 }
 
 describeE2E('E2E: JSONB roundtrip — v0.12.1 reliability wave', () => {
-  beforeAll(async () => { await setupDB(); });
-  afterAll(async () => { await teardownDB(); });
+  // 60s hook budget: setupDB runs connect + the full migration chain, which
+  // exceeds bun's default 5s hook timeout on loaded CI runners. Hooks do NOT
+  // inherit a test's third-arg timeout (verified on bun 1.3.14) — they need
+  // their own second-arg budget. Same pattern as op-checkpoint-jsonb-parity.
+  beforeAll(async () => { await setupDB(); }, 60_000);
+  afterAll(async () => { await teardownDB(); }, 60_000);
 
   test('putPage writes frontmatter as object, not double-encoded string', async () => {
     const engine = getEngine();

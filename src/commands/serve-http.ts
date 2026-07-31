@@ -12,6 +12,7 @@
 
 import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
+import type { Server as HttpServer } from 'http';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
@@ -46,6 +47,7 @@ import {
   type IngestionEvent,
 } from '../core/ingestion/types.ts';
 import { resolveOwnerHolder } from '../core/owner-holder.ts';
+import { registerCleanup } from '../core/process-cleanup.ts';
 
 /**
  * /health endpoint timeout. 3s rather than 5s: Fly.io's default
@@ -54,6 +56,71 @@ import { resolveOwnerHolder } from '../core/owner-holder.ts';
  * 3s leaves 2s of headroom for TCP, response framing, and clock skew.
  */
 export const HEALTH_TIMEOUT_MS = 3000;
+
+/** Exported so tests can type their structural fakes exactly (#3599). */
+export type HttpServerLifecycle = Pick<HttpServer, 'listening' | 'once' | 'off' | 'close'>;
+/** Exported so tests can type their structural fakes exactly (#3599). */
+export type SignalSource = Pick<NodeJS.Process, 'once' | 'off'>;
+type CleanupRegistrar = typeof registerCleanup;
+
+/**
+ * Keep the HTTP server strongly referenced and make the daemon lifetime
+ * explicit instead of relying on runtime-specific event-loop behavior for an
+ * unobserved `app.listen()` return value. The shared abnormal-termination
+ * cleanup pass closes it before process exit.
+ */
+export function waitForHttpServerLifecycle(
+  server: HttpServerLifecycle,
+  options: {
+    signals?: SignalSource;
+    register?: CleanupRegistrar;
+  } = {},
+): Promise<void> {
+  const signals = options.signals ?? process;
+  const register = options.register ?? registerCleanup;
+
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let closePromise: Promise<void> | null = null;
+
+    const closeServer = (): Promise<void> => {
+      if (closePromise) return closePromise;
+      closePromise = new Promise<void>((closeResolve, closeReject) => {
+        if (!server.listening) {
+          closeResolve();
+          return;
+        }
+        server.close((error?: Error) => {
+          if (error) closeReject(error);
+          else closeResolve();
+        });
+      });
+      return closePromise;
+    };
+
+    const deregister = register('http-server', closeServer);
+
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      server.off('close', onClose);
+      server.off('error', onError);
+      signals.off('SIGINT', onSigint);
+      deregister();
+      if (error) reject(error);
+      else resolve();
+    };
+    const onClose = () => finish();
+    const onError = (error: Error) => finish(error);
+    const onSigint = () => {
+      void closeServer().catch(onError);
+    };
+
+    server.once('close', onClose);
+    server.once('error', onError);
+    signals.once('SIGINT', onSigint);
+  });
+}
 
 /**
  * v0.36.1.x #1024: bootstrap token resolution.
@@ -134,6 +201,25 @@ export function resolveOAuthTokenRateLimit(env: NodeJS.ProcessEnv = process.env)
 export type ProbeHealthResult =
   | { ok: true; status: 200; body: { status: 'ok'; version: string; engine: string; [k: string]: unknown } }
   | { ok: false; status: 503; body: { error: 'service_unavailable'; error_description: string } };
+
+/** Exported so tests can type their structural fakes exactly (#3598). */
+export type AdminSseResponse = Pick<Response, 'setHeader' | 'flushHeaders' | 'write'>;
+
+/**
+ * Complete the admin EventSource handshake immediately.
+ *
+ * `flushHeaders()` alone can leave reverse proxies and browsers waiting for
+ * the first response body bytes. An SSE comment is protocol-valid, ignored by
+ * EventSource consumers, and makes the stream observable end-to-end without
+ * fabricating an application event.
+ */
+export function openAdminSseStream(res: AdminSseResponse): void {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  res.write(': connected\n\n');
+}
 
 /**
  * Pure async health probe. Races `engine.getStats()` against a timeout,
@@ -1632,10 +1718,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // SSE live activity feed
   // ---------------------------------------------------------------------------
   app.get('/admin/events', requireAdmin, (req: Request, res: Response) => {
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
+    openAdminSseStream(res);
 
     sseClients.add(res);
     req.on('close', () => sseClients.delete(res));
@@ -2410,7 +2493,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   const clientCount = await sql`SELECT count(*)::int as count FROM oauth_clients`;
 
-  app.listen(port, bind, () => {
+  const httpServer = app.listen(port, bind, () => {
     console.error(`
 ╔══════════════════════════════════════════════════════╗
 ║  GBrain MCP Server v${VERSION.padEnd(37)}║
@@ -2435,4 +2518,6 @@ ${bootstrapFromEnv
     : `║  Admin Token (paste into /admin login):              ║\n║  ${bootstrapToken.substring(0, 50)}  ║\n║  ${bootstrapToken.substring(50).padEnd(50)}  ║\n╚══════════════════════════════════════════════════════╝`}
 `);
   });
+
+  await waitForHttpServerLifecycle(httpServer);
 }

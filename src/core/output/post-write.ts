@@ -38,6 +38,10 @@ export interface PostWriteLintOpts {
   force?: boolean;
   /** Skip file writes; used by tests. */
   noLog?: boolean;
+  /** Exact scalar source for the page and nested validation reads. */
+  sourceId?: string;
+  /** Federated read scope; when non-empty, takes precedence over sourceId. */
+  sourceIds?: string[];
 }
 
 export interface PostWriteLintResult {
@@ -80,7 +84,12 @@ export async function runPostWriteLint(
     return { ran: false, slug, findings: [], skippedReason: 'flag_disabled' };
   }
 
-  const page = await engine.getPage(slug);
+  const sourceOpts = opts.sourceIds && opts.sourceIds.length > 0
+    ? { sourceIds: opts.sourceIds }
+    : opts.sourceId
+      ? { sourceId: opts.sourceId }
+      : undefined;
+  const page = await engine.getPage(slug, sourceOpts);
   if (!page) {
     return { ran: false, slug, findings: [], skippedReason: 'page_not_found' };
   }
@@ -97,6 +106,8 @@ export async function runPostWriteLint(
     timeline: page.timeline,
     frontmatter: page.frontmatter ?? {},
     engine,
+    sourceId: opts.sourceId,
+    sourceIds: opts.sourceIds,
   };
 
   const findings: ValidationFinding[] = [];

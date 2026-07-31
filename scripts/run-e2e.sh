@@ -162,8 +162,9 @@ for f in "${files[@]}"; do
   if [ -n "${DATABASE_URL:-}" ]; then
     psql "$DATABASE_URL" -At -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid != pg_backend_pid() AND datname = current_database()" >/dev/null 2>&1 || true
   fi
-  # Hard outer timeout (180s per file). bun's --timeout is per-test; if a
-  # PGLite WASM call hangs in beforeAll/afterAll, --timeout never fires and
+  # Hard outer timeout (180s per file). bun's --timeout covers tests AND
+  # hooks (measured on 1.3.14), but it's timer-based: a PGLite WASM call
+  # that blocks the event loop synchronously never lets the timer fire and
   # the file wedges indefinitely. gtimeout/timeout SIGKILLs the file so the
   # suite advances. gtimeout (macOS via coreutils) preferred; timeout (Linux)
   # fallback; bare bun (no outer cap) if neither is installed.
