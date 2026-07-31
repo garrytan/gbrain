@@ -64,6 +64,20 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
     expect(merged?.embedding_image_ocr_model).toBe('openai:gpt-4o-mini');
   });
 
+  test('DB-plane OpenAI key scope round-trips and malformed values fail closed', async () => {
+    const restricted = await loadConfigWithEngine(
+      makeEngine({ openai_api_key_scope: 'embedding_only' }),
+      { engine: 'pglite' },
+    );
+    expect(restricted?.openai_api_key_scope).toBe('embedding_only');
+
+    const malformed = await loadConfigWithEngine(
+      makeEngine({ openai_api_key_scope: 'typo' }),
+      { engine: 'pglite' },
+    );
+    expect(malformed?.openai_api_key_scope).toBe('embedding_only');
+  });
+
   test('file/env precedence: file value wins over DB value', async () => {
     const base: GBrainConfig = {
       engine: 'pglite',

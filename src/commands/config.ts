@@ -310,6 +310,11 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       }
     }
 
+    if (key === 'openai_api_key_scope' && value !== 'all' && value !== 'embedding_only') {
+      console.error('[config] openai_api_key_scope must be "all" or "embedding_only"');
+      process.exit(1);
+    }
+
     // v0.40.3.0 (D3 + Phase 2B): capture the OLD search.mode BEFORE the
     // setConfig so summarizeTransition() can classify the kind correctly.
     // Read fails silently → oldMode null → treated as broadening.

@@ -1,3 +1,5 @@
+import type { OpenAIApiKeyScope } from './openai-key-scope.ts';
+
 /**
  * AI provider types.
  *
@@ -402,6 +404,8 @@ export interface Recipe {
 }
 
 export interface AIGatewayConfig {
+  /** Policy boundary for the credential in env.OPENAI_API_KEY. */
+  openai_api_key_scope?: OpenAIApiKeyScope;
   /** Current embedding model as "provider:modelId" (e.g. "openai:text-embedding-3-large"). */
   embedding_model?: string;
   /** Target embedding dims. Gateway asserts returned embeddings match this. */

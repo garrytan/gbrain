@@ -100,6 +100,16 @@ describe('buildGatewayConfig env-baseURL passthrough', () => {
 });
 
 describe('buildGatewayConfig config-plane API-key folding', () => {
+  test('openai_api_key_scope passes through to the gateway policy', async () => {
+    await withEnv({ OPENAI_API_KEY: undefined }, async () => {
+      const cfg = buildGatewayConfig({
+        openai_api_key: 'sk-embedding-only',
+        openai_api_key_scope: 'embedding_only',
+      } as unknown as GBrainConfig);
+      expect(cfg.openai_api_key_scope).toBe('embedding_only');
+    });
+  });
+
   test('openrouter_api_key folds into gateway env as OPENROUTER_API_KEY', async () => {
     await withEnv({ OPENROUTER_API_KEY: undefined }, async () => {
       const cfg = buildGatewayConfig({

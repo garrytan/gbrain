@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync } from 'f
 import { isAbsolute, join } from 'path';
 import { homedir } from 'os';
 import type { EngineConfig, EmbeddingColumnConfig } from './types.ts';
+import type { OpenAIApiKeyScope } from './ai/openai-key-scope.ts';
 
 /**
  * Where is the active DB URL coming from? Pure introspection, no connection
@@ -30,6 +31,12 @@ export interface GBrainConfig {
   database_url?: string;
   database_path?: string;
   openai_api_key?: string;
+  /**
+   * Restrict OPENAI_API_KEY to embedding calls. When set to
+   * `embedding_only`, native OpenAI chat and query-expansion routes fail
+   * closed even when a caller supplies an explicit `openai:*` model.
+   */
+  openai_api_key_scope?: OpenAIApiKeyScope;
   anthropic_api_key?: string;
   /**
    * ZeroEntropy API key. v0.37 fix wave (CDX2-5+6): ZE became the default
@@ -723,6 +730,7 @@ export async function loadConfigWithEngine(
     return Object.keys(out).length > 0 ? out : undefined;
   }
 
+  const dbOpenAIKeyScope = await dbStr('openai_api_key_scope');
   const dbMultimodal = await dbBool('embedding_multimodal');
   const dbMultimodalModel = await dbStr('embedding_multimodal_model');
   const dbOcr = await dbBool('embedding_image_ocr');
@@ -739,6 +747,10 @@ export async function loadConfigWithEngine(
   // sync loadConfig() already setting the field. For each flag, prefer the
   // existing fileConfig value when defined; otherwise fall through to DB.
   const merged: GBrainConfig = { ...fileConfig };
+  if (merged.openai_api_key_scope === undefined && dbOpenAIKeyScope !== undefined) {
+    // Malformed DB values fail closed rather than silently restoring API-funded reasoning.
+    merged.openai_api_key_scope = dbOpenAIKeyScope === 'all' ? 'all' : 'embedding_only';
+  }
   if (merged.embedding_multimodal === undefined && dbMultimodal !== undefined) {
     merged.embedding_multimodal = dbMultimodal;
   }
@@ -915,6 +927,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'database_url',
   'database_path',
   'openai_api_key',
+  'openai_api_key_scope',
   'anthropic_api_key',
   'zeroentropy_api_key',
   'openrouter_api_key',

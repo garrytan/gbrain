@@ -242,6 +242,43 @@ describe('chat touchpoint — gateway config plumbing', () => {
     configureGateway({ chat_model: 'voyage:voyage-3', env: { VOYAGE_API_KEY: 'fake' } });
     expect(isAvailable('chat')).toBe(false);
   });
+
+  test('embedding-only OpenAI key scope rejects native OpenAI chat, including an explicit override', async () => {
+    configureGateway({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      openai_api_key_scope: 'embedding_only',
+      env: { OPENAI_API_KEY: 'fake', ANTHROPIC_API_KEY: 'fake' },
+    });
+
+    expect(isAvailable('chat', 'openai:gpt-5.2')).toBe(false);
+    await expect(chat({
+      model: 'openai:gpt-5.2',
+      messages: [{ role: 'user', content: 'must not reach OpenAI chat' }],
+    })).rejects.toThrow('OPENAI_API_KEY is restricted to embedding requests');
+  });
+
+  test('embedding-only OpenAI key scope keeps OpenAI embeddings available but blocks expansion', () => {
+    configureGateway({
+      embedding_model: 'openai:text-embedding-3-small',
+      expansion_model: 'openai:gpt-5.2',
+      openai_api_key_scope: 'embedding_only',
+      env: { OPENAI_API_KEY: 'fake' },
+    });
+
+    expect(isAvailable('embedding')).toBe(true);
+    expect(isAvailable('expansion')).toBe(false);
+  });
+
+  test('malformed OpenAI key scope fails closed', () => {
+    configureGateway({
+      chat_model: 'openai:gpt-5.2',
+      expansion_model: 'openai:gpt-5.2',
+      openai_api_key_scope: 'typo' as any,
+      env: { OPENAI_API_KEY: 'fake' },
+    });
+    expect(isAvailable('chat')).toBe(false);
+    expect(isAvailable('expansion')).toBe(false);
+  });
 });
 
 describe('chat touchpoint — config alias resolution', () => {

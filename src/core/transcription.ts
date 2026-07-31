@@ -8,6 +8,8 @@
 
 import { statSync, readFileSync, rmSync } from 'fs';
 import { basename, extname, join } from 'path';
+import { loadConfig } from './config.ts';
+import { isOpenAIApiKeyRestricted } from './ai/openai-key-scope.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -64,6 +66,9 @@ export async function transcribe(
 
   // Determine provider and API key
   const provider = config.provider || detectProvider();
+  if (provider === 'openai' && isOpenAIApiKeyRestricted(loadConfig()?.openai_api_key_scope)) {
+    throw new Error('OPENAI_API_KEY is restricted to embedding requests; refusing OpenAI transcription.');
+  }
   const apiKey = config.apiKey || getApiKey(provider);
   if (!apiKey) {
     const envVar = provider === 'groq' ? 'GROQ_API_KEY' : 'OPENAI_API_KEY';

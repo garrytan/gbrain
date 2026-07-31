@@ -17,6 +17,8 @@ import { execSync } from 'child_process';
 import { statSync } from 'fs';
 import type { AgentRunner, DetectResult, InvokeOpts, InvokeResult } from '../agent-runner.ts';
 import { spawnWithCapture } from '../transcript-capture.ts';
+import { loadConfig } from '../../config.ts';
+import { isOpenAIApiKeyRestricted } from '../../ai/openai-key-scope.ts';
 
 const DEFAULT_AGENT_NAME = 'default';
 /** Allow-list for env propagation when spawning openclaw. */
@@ -79,6 +81,10 @@ export class OpenClawRunner implements AgentRunner {
       if (typeof v === 'string') baseEnv[key] = v;
     }
     const env: Record<string, string> = { ...baseEnv, ...opts.env };
+    if (isOpenAIApiKeyRestricted(loadConfig()?.openai_api_key_scope)) {
+      // Caller overrides cannot smuggle the embeddings-only credential into a child agent.
+      delete env.OPENAI_API_KEY;
+    }
 
     const result = await spawnWithCapture(detected.binPath, args, {
       cwd: opts.cwd,

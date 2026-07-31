@@ -21,8 +21,9 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { createHash } from 'crypto';
 
-import { gbrainPath, loadConfig } from '../core/config.ts';
+import { gbrainPath, loadConfig, type GBrainConfig } from '../core/config.ts';
 import { configureGateway, isAvailable } from '../core/ai/gateway.ts';
+import { buildGatewayConfig } from '../core/ai/build-gateway-config.ts';
 import { runWithLimit } from '../core/worker-pool.ts';
 import { resolveCycleDefault, cycleDefaultSuffix } from '../core/eval/cycle-default.ts';
 import {
@@ -265,31 +266,9 @@ function isTTY(): boolean {
  */
 function configureGatewayForCli(): boolean {
   const config = loadConfig();
-  if (!config) {
-    // No config file is fine for the eval command — env vars alone may serve.
-    // We still call configureGateway so gateway recipes can read the env map.
-    configureGateway({
-      embedding_model: undefined,
-      embedding_dimensions: undefined,
-      expansion_model: undefined,
-      chat_model: undefined,
-      chat_fallback_chain: undefined,
-      base_urls: undefined,
-      provider_chat_options: undefined,
-      env: { ...process.env },
-    });
-    return true;
-  }
-  configureGateway({
-    embedding_model: config.embedding_model,
-    embedding_dimensions: config.embedding_dimensions,
-    expansion_model: config.expansion_model,
-    chat_model: config.chat_model,
-    chat_fallback_chain: config.chat_fallback_chain,
-    base_urls: config.provider_base_urls,
-    provider_chat_options: config.provider_chat_options,
-    env: { ...process.env },
-  });
+  // Use the canonical builder so credential-purpose policy cannot drift from
+  // the normal CLI path. An absent file still permits env-only providers.
+  configureGateway(buildGatewayConfig(config ?? ({ engine: 'postgres' } as GBrainConfig)));
   return true;
 }
 

@@ -47,6 +47,7 @@ import type {
   TouchpointKind,
 } from './types.ts';
 import { resolveRecipe, assertTouchpoint, parseModelId } from './model-resolver.ts';
+import { isOpenAIApiKeyRestricted } from './openai-key-scope.ts';
 import {
   OPENROUTER_CACHE_HEADER,
   openrouterRequiresExplicitPromptCache,
@@ -469,6 +470,7 @@ export function recipeSupportsStructuredOutputs(recipe: Recipe): boolean {
 /** Configure the gateway. Called by cli.ts#connectEngine. Clears cached models. */
 export function configureGateway(config: AIGatewayConfig): void {
   _config = {
+    openai_api_key_scope: config.openai_api_key_scope,
     embedding_model: config.embedding_model ?? DEFAULT_EMBEDDING_MODEL,
     // #1292/D6: do NOT fabricate a default here. Every gateway-internal reader
     // already applies `?? DEFAULT_EMBEDDING_DIMENSIONS` (getEmbeddingDimensions,
@@ -964,6 +966,8 @@ export function isAvailable(touchpoint: TouchpointKind, modelOverride?: string):
     if (!modelStr) return false;
     const { recipe } = resolveRecipe(modelStr);
 
+    if (!isCredentialScopeAllowed(recipe, touchpoint, _config)) return false;
+
     // Recipe must actually support the requested touchpoint.
     // Anthropic declares only expansion + chat (no embedding model); requesting
     // embedding from an anthropic-configured brain is unavailable regardless of auth.
@@ -977,6 +981,30 @@ export function isAvailable(touchpoint: TouchpointKind, modelOverride?: string):
   } catch {
     return false;
   }
+}
+
+function isCredentialScopeAllowed(
+  recipe: Recipe,
+  touchpoint: TouchpointKind,
+  cfg: AIGatewayConfig | null,
+): boolean {
+  return !(
+    recipe.id === 'openai'
+    && isOpenAIApiKeyRestricted(cfg?.openai_api_key_scope)
+    && touchpoint !== 'embedding'
+  );
+}
+
+function assertCredentialScopeAllowed(
+  recipe: Recipe,
+  touchpoint: TouchpointKind,
+  cfg: AIGatewayConfig,
+): void {
+  if (isCredentialScopeAllowed(recipe, touchpoint, cfg)) return;
+  throw new AIConfigError(
+    `OPENAI_API_KEY is restricted to embedding requests; refusing OpenAI ${touchpoint}.`,
+    'Use a non-OpenAI-API provider for reasoning, or explicitly change openai_api_key_scope only if API-funded reasoning is intended.',
+  );
 }
 
 // ---- Embedding ----
@@ -2457,6 +2485,7 @@ async function resolveExpansionProvider(modelStr: string): Promise<{ model: any;
 }
 
 function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayConfig): any {
+  assertCredentialScopeAllowed(recipe, 'expansion', cfg);
   switch (recipe.implementation) {
     case 'native-openai': {
       const apiKey = cfg.env.OPENAI_API_KEY;
@@ -3019,6 +3048,7 @@ async function resolveChatProvider(modelStr: string): Promise<{ model: any; reci
 }
 
 function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig): any {
+  assertCredentialScopeAllowed(recipe, 'chat', cfg);
   switch (recipe.implementation) {
     case 'native-openai': {
       const apiKey = cfg.env.OPENAI_API_KEY;
