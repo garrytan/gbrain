@@ -2619,6 +2619,7 @@ IMPORT/EXPORT
   export [--dir ./out/]              Export to markdown
   export --restore-only [--repo <p>] Restore missing supabase-only files
         [--type T] [--slug-prefix S] With optional filters
+        [--source ID]                Scope to one source (default: every source)
 
 FILES
   files list [slug]                  List stored files

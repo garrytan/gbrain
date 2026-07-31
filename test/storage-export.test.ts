@@ -14,7 +14,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -201,5 +201,94 @@ describe('export sidecar reads are scoped to the page owning source', () => {
     const raw = JSON.parse(readFileSync(join(outDir, 'notes', '.raw', 'shared.json'), 'utf-8'));
     expect(Object.keys(raw)).toEqual(['feed-other']);
     expect(raw['feed-other']).toEqual({ owner: 'other' });
+  });
+});
+
+describe('export --source (scope to a single source)', () => {
+  async function seedTwoSources(): Promise<void> {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('src-x', 'Source X'), ('src-y', 'Source Y') ON CONFLICT DO NOTHING`,
+    );
+    await engine.putPage(
+      'notes/x-only',
+      { type: 'note', title: 'X only', compiled_truth: 'belongs to src-x', frontmatter: {} },
+      { sourceId: 'src-x' },
+    );
+    await engine.putPage(
+      'notes/y-only',
+      { type: 'note', title: 'Y only', compiled_truth: 'belongs to src-y', frontmatter: {} },
+      { sourceId: 'src-y' },
+    );
+  }
+
+  test('exports only the named source, omitting pages from other sources', async () => {
+    await seedTwoSources();
+
+    await tryRunExport(['--dir', outDir, '--source', 'src-x']);
+
+    expect(exitCode).toBeNull();
+    expect(existsSync(join(outDir, 'notes/x-only.md'))).toBe(true);
+    expect(existsSync(join(outDir, 'notes/y-only.md'))).toBe(false);
+    // The scope is reflected in the count line for operator visibility.
+    expect(stdout.some((line) => line.includes("from source 'src-x'"))).toBe(true);
+  });
+
+  test('without --source, exports pages from every source (backward compatible)', async () => {
+    await seedTwoSources();
+
+    await tryRunExport(['--dir', outDir]);
+
+    expect(exitCode).toBeNull();
+    expect(existsSync(join(outDir, 'notes/x-only.md'))).toBe(true);
+    expect(existsSync(join(outDir, 'notes/y-only.md'))).toBe(true);
+  });
+
+  test('an unknown source id is a hard error, not a silent empty export', async () => {
+    await seedTwoSources();
+
+    // #1712: the failure mode this guards is `--source src-xx` exporting zero
+    // pages and reporting success, which reads as "the brain is empty".
+    await expect(runExport(engine, ['--dir', outDir, '--source', 'src-xx'])).rejects.toThrow(
+      /not found/i,
+    );
+    expect(existsSync(join(outDir, 'notes/x-only.md'))).toBe(false);
+  });
+
+  test('a malformed source id is rejected before any page query', async () => {
+    await seedTwoSources();
+
+    await expect(runExport(engine, ['--dir', outDir, '--source', 'Not A Source'])).rejects.toThrow(
+      /Invalid --source/i,
+    );
+  });
+
+  test('--source __all__ spans every source rather than matching a literal id', async () => {
+    await seedTwoSources();
+
+    // The sentinel resolves to ALL_SOURCES, which must clear the filter -
+    // passing it through as a source id would match nothing.
+    await tryRunExport(['--dir', outDir, '--source', '__all__']);
+
+    expect(exitCode).toBeNull();
+    expect(existsSync(join(outDir, 'notes/x-only.md'))).toBe(true);
+    expect(existsSync(join(outDir, 'notes/y-only.md'))).toBe(true);
+  });
+
+  test('an absent --source does NOT consult GBRAIN_SOURCE (bare export stays brain-wide)', async () => {
+    await seedTwoSources();
+
+    // Export output is a backup; letting the env var or a `.gbrain-source`
+    // dotfile narrow a bare run silently drops pages from the archive.
+    const prior = process.env.GBRAIN_SOURCE;
+    process.env.GBRAIN_SOURCE = 'src-x';
+    try {
+      await tryRunExport(['--dir', outDir]);
+    } finally {
+      if (prior === undefined) delete process.env.GBRAIN_SOURCE;
+      else process.env.GBRAIN_SOURCE = prior;
+    }
+
+    expect(exitCode).toBeNull();
+    expect(existsSync(join(outDir, 'notes/y-only.md'))).toBe(true);
   });
 });
