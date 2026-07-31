@@ -47,6 +47,27 @@ export const EMBEDDING_PRICING: Record<string, EmbeddingPricing> = {
   // Perplexity (https://docs.perplexity.ai/getting-started/pricing, verified 2026-07-21)
   'perplexity:pplx-embed-v1-0.6b': { pricePerMTok: 0.004 },
   'perplexity:pplx-embed-v1-4b':   { pricePerMTok: 0.03 },
+  // Azure OpenAI. Same three models as the `openai:` rows above, at
+  // OpenAI-list parity — Azure has not diverged these meters.
+  //
+  // PRICE PROVENANCE (read before "refreshing" these): Azure does NOT
+  // publish per-token embedding prices in a machine-readable form. The
+  // Retail Prices API returns no rows for these meters, and
+  // azure.microsoft.com/pricing/details/cognitive-services/openai-service/
+  // renders `$-` placeholders unless you sign in to the pricing calculator
+  // under your own agreement. So these are OpenAI list prices asserted as
+  // parity, NOT numbers read off an Azure page.
+  //
+  // They exist because `budget-tracker.ts:lookupPricing` returns null on a
+  // miss and the caller hard-throws BudgetExhausted(reason:'no_pricing') —
+  // so without these rows, EVERY `--max-cost`-bounded embed against an
+  // `azure-openai:` model fails outright rather than costing slightly the
+  // wrong amount. A parity estimate is strictly better than a hard failure.
+  // Confirm against your own Azure invoice or signed-in calculator and
+  // correct here if your agreement differs.
+  'azure-openai:text-embedding-3-large': { pricePerMTok: 0.13 },
+  'azure-openai:text-embedding-3-small': { pricePerMTok: 0.02 },
+  'azure-openai:text-embedding-ada-002': { pricePerMTok: 0.10 },
 };
 
 export type PriceLookupResult =

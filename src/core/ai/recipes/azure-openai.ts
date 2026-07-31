@@ -1,8 +1,42 @@
 import type { Recipe } from '../types.ts';
 import { AIConfigError } from '../errors.ts';
+import { EMBEDDING_PRICING } from '../../embedding-pricing.ts';
 import { execSync } from 'node:child_process';
 
 const DEFAULT_API_VERSION = '2024-10-21'; // stable Azure OpenAI version as of 2026-05
+
+/**
+ * Models this recipe's embedding touchpoint offers, most expensive first.
+ * Exported so the pricing drift-guard test can assert every entry has a row
+ * in EMBEDDING_PRICING (a model listed here with no price hard-fails every
+ * `--max-cost` embed against it — see budget-tracker's no_pricing throw).
+ */
+export const AZURE_OPENAI_EMBEDDING_MODELS = [
+  'text-embedding-3-large',
+  'text-embedding-3-small',
+  'text-embedding-ada-002',
+] as const;
+
+/**
+ * The touchpoint's advertised $/1M tokens, DERIVED from EMBEDDING_PRICING
+ * rather than hand-copied.
+ *
+ * CLAUDE.md's canonical-pricing invariant says a price lives in exactly one
+ * table and every other surface is a derived view. This field used to be a
+ * literal `0.13`, which is the classic drift shape: correct the table, and
+ * the recipe keeps quoting last year's number forever.
+ *
+ * `cost_per_1m_tokens_usd` is one number for a touchpoint that serves three
+ * models at three prices, so it cannot be exact for all of them. We take the
+ * MAX — a cost *estimate* that over-quotes is a user who isn't surprised by
+ * their invoice; one that under-quotes is. Pinned by
+ * test/embedding-pricing-azure.test.ts.
+ */
+export const AZURE_OPENAI_EMBEDDING_COST_PER_MTOK = Math.max(
+  ...AZURE_OPENAI_EMBEDDING_MODELS.map(
+    m => EMBEDDING_PRICING[`azure-openai:${m}`]?.pricePerMTok ?? 0,
+  ),
+);
 
 // Entra (keyless) auth support. Subscriptions that enforce disableLocalAuth via
 // Azure Policy reject api-key auth, so when no AZURE_OPENAI_API_KEY is present
@@ -94,16 +128,19 @@ export const azureOpenAI: Recipe = {
   },
   touchpoints: {
     embedding: {
-      models: [
-        'text-embedding-3-large',
-        'text-embedding-3-small',
-        'text-embedding-ada-002',
-      ],
+      models: [...AZURE_OPENAI_EMBEDDING_MODELS],
       default_dims: 1536,
       // Matryoshka via text-embedding-3-*; ada-002 is fixed at 1536.
+      //
+      // NOTE 3072 is offered here but is a trap on Azure Postgres: pgvector
+      // refuses hnsw/ivfflat above 2000 dims, and gbrain's
+      // chunkEmbeddingIndexSql (vector-index.ts:19) silently emits a SQL
+      // comment instead of an index above that width. A 3072-d Azure brain
+      // stores fine and then sequential-scans forever with no error at any
+      // layer. Use 1536.
       dims_options: [256, 512, 768, 1024, 1536, 3072],
-      cost_per_1m_tokens_usd: 0.13,
-      price_last_verified: '2026-05-10',
+      cost_per_1m_tokens_usd: AZURE_OPENAI_EMBEDDING_COST_PER_MTOK,
+      price_last_verified: '2026-07-31',
       max_batch_tokens: 8192,
     },
   },
