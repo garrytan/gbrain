@@ -1707,14 +1707,12 @@ async function handleCliOnly(command: string, args: string[]) {
   // Per-command default: search 30s, sources list 10s. User --timeout=Ns wins.
   // Other commands (import, embed, doctor, etc.) keep their existing
   // unbounded connect — destructive / long-running commands shouldn't get
-  // a default kill switch.
-  const readOnlyDefaultTimeoutMs =
-    command === 'search' ? 30_000 :
-    command === 'sources' && (args[0] === 'list' || args[0] === undefined) ? 10_000 :
-    null;
+  // a default kill switch. The gate below is per-command (#3013): only the
+  // commands dispatchReadOnlyCommand handles may enter this path — a
+  // user-supplied --timeout on a write command must never reroute it here.
   const cliOptsResolved = getCliOptions();
   const userTimeoutMs = cliOptsResolved.timeoutMs;
-  const readOnlyTimeoutMs = userTimeoutMs ?? readOnlyDefaultTimeoutMs;
+  const readOnlyTimeoutMs = resolveReadOnlyDispatchTimeoutMs(command, args, userTimeoutMs);
 
   if (readOnlyTimeoutMs !== null) {
     const { withTimeout, OperationTimeoutError } = await import('./core/timeout.ts');
@@ -2253,16 +2251,24 @@ async function handleCliOnly(command: string, args: string[]) {
         //
         // v0.30.1: still works; canonical entrypoint is now `gbrain backfill
         // effective_date`. This command stays as a thin alias for back-compat.
+        //
+        // #1963: pass the already-connected engine. The command used to build
+        // + connect its OWN engine here, which self-deadlocked on the PGLite
+        // data-dir lock (this process already holds it via connectEngine
+        // above) — 30s spin, then exit 1, on every PGLite invocation.
         const { reindexFrontmatterCli } = await import('./commands/reindex-frontmatter.ts');
-        await reindexFrontmatterCli(args);
-        return; // reindexFrontmatterCli handles its own engine lifecycle
+        await reindexFrontmatterCli(engine, args);
+        break;
       }
       case 'backfill': {
         // v0.30.1: first-class generic backfill command. Subcommand dispatch
         // is inside runBackfillCommand (kind | list | --help).
+        // #1963: same double-connect class as reindex-frontmatter — reuse the
+        // connected engine instead of building a second one on the same
+        // PGLite data dir.
         const { runBackfillCommand } = await import('./commands/backfill.ts');
-        await runBackfillCommand(args);
-        return;
+        await runBackfillCommand(engine, args);
+        break;
       }
       case 'code-callers': {
         // v0.20.0 Cathedral II Layer 10 (C4): "who calls <symbol>?"
@@ -2303,6 +2309,28 @@ async function handleCliOnly(command: string, args: string[]) {
       await finishCliTeardown({ engine });
     }
   }
+}
+
+/**
+ * #3013: decide whether an invocation enters the read-only connect+dispatch
+ * timeout path, and with what wallclock. Returns null for every command
+ * dispatchReadOnlyCommand can't handle. The gate used to be "a timeout is
+ * present" — so a user-supplied --timeout on a write command (`sync`,
+ * `embed`, `import`, ...) hijacked dispatch into the read-only path, which
+ * threw and exited 1 before any work ran. Pure; exported for the
+ * regression test.
+ */
+export function resolveReadOnlyDispatchTimeoutMs(
+  command: string,
+  subArgs: string[],
+  userTimeoutMs: number | null,
+): number | null {
+  if (command !== 'search' && command !== 'sources') return null;
+  const defaultMs =
+    command === 'search' ? 30_000 :
+    (subArgs[0] === 'list' || subArgs[0] === undefined) ? 10_000 :
+    null;
+  return userTimeoutMs ?? defaultMs;
 }
 
 /**

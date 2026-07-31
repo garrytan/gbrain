@@ -23,6 +23,52 @@ describe('recipe metadata', () => {
   });
 });
 
+// #2789: the x-to-brain secret name must be the one the resolver actually
+// reads. The recipe + RECIPE_META used to pin X_BEARER_TOKEN while the
+// x_handle_to_tweet resolver reads only config x_api_bearer_token / env
+// X_API_BEARER_TOKEN — so no single name worked end-to-end. All three
+// surfaces must agree on the resolver's canonical name.
+describe('x-to-brain secret name alignment (#2789)', () => {
+  const read = (p: string) => {
+    const { readFileSync } = require('fs');
+    return readFileSync(new URL(p, import.meta.url), 'utf-8') as string;
+  };
+
+  it('features registry pins the resolver-canonical name', () => {
+    const src = read('../src/commands/features.ts');
+    expect(src).toContain("{ id: 'x-to-brain', name: 'X/Twitter to Brain', secrets: ['X_API_BEARER_TOKEN'] }");
+  });
+
+  it('the x-to-brain recipe declares and uses only the canonical name', async () => {
+    const { parseRecipe } = await import('../src/commands/integrations.ts');
+    const raw = read('../recipes/x-to-brain.md');
+    const recipe = parseRecipe(raw, 'x-to-brain.md');
+    expect(recipe).not.toBeNull();
+    // Frontmatter: the declared secret is the canonical name.
+    const secretNames = recipe!.frontmatter.secrets.map(s => s.name);
+    expect(secretNames).toContain('X_API_BEARER_TOKEN');
+    expect(secretNames).not.toContain('X_BEARER_TOKEN');
+    // Health check: the bearer interpolation uses the canonical name.
+    const hc = recipe!.frontmatter.health_checks[0] as { auth_token?: string };
+    expect(hc.auth_token).toBe('$X_API_BEARER_TOKEN');
+    // Body: every $-interpolated token reference (curl examples etc.) is the
+    // canonical name — catches a third misspelled variant, not just the exact
+    // legacy string. (The legacy name may still appear as PROSE in the
+    // upgrade/migration note; only $VAR references are load-bearing.)
+    const tokenRefs = raw.match(/\$X_[A-Z_]*TOKEN\b/g) ?? [];
+    expect(tokenRefs.length).toBeGreaterThan(0);
+    for (const ref of tokenRefs) expect(ref).toBe('$X_API_BEARER_TOKEN');
+  });
+
+  it('the resolver reads the same env var the recipe documents', () => {
+    // Alignment guard (not a behavior test — resolver behavior is pinned in
+    // test/resolvers.test.ts): if the resolver's env name ever changes, this
+    // forces the recipe + registry to move with it.
+    const resolver = read('../src/core/resolvers/builtin/x-api/handle-to-tweet.ts');
+    expect(resolver).toContain('process.env.X_API_BEARER_TOKEN');
+  });
+});
+
 // Test brain_score in BrainHealth type
 describe('BrainHealth type', () => {
   it('includes brain_score field', async () => {

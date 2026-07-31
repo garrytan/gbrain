@@ -97,11 +97,24 @@ describe('extractLinksFromFile', () => {
     expect(links).toEqual([]);
   });
 
-  it('infers link type from directory structure', async () => {
+  it('people -> companies adjacency without evidence infers mentions, not works_at (#3466)', async () => {
+    // The content carries no employment language, so the directory pair alone
+    // must not assert a specific employment claim. Evidence-based works_at
+    // still flows through the company: frontmatter path (covered above) and
+    // prose inference in link-extraction.ts.
     const content = 'See [Brex](../companies/brex.md).';
     const allSlugs = new Set(['people/pedro', 'companies/brex']);
     const links = await extractLinksFromFile(content, 'people/pedro.md', allSlugs);
-    expect(links[0].link_type).toBe('works_at');
+    expect(links).toHaveLength(1);
+    expect(links[0].link_type).toBe('mentions');
+  });
+
+  it('people -> companies with founded frontmatter infers founded', async () => {
+    const content = '---\nfounded: [brex]\n---\nSee [Brex](../companies/brex.md).';
+    const allSlugs = new Set(['people/pedro', 'companies/brex']);
+    const links = await extractLinksFromFile(content, 'people/pedro.md', allSlugs);
+    expect(links).toHaveLength(1);
+    expect(links[0].link_type).toBe('founded');
   });
 
   it('infers deal_for type for deals -> companies', async () => {

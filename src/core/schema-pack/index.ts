@@ -186,6 +186,9 @@ export {
   removeLinkTypeFromPack,
   setExtractableOnType,
   setExpertRoutingOnType,
+  type BatchMutationRequest,
+  type BatchMutationResult,
+  applyMutationsAtomic,
 } from './mutate.ts';
 
 export { invalidateQueryCache } from './query-cache-invalidator.ts';

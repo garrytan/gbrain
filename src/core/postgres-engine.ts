@@ -3058,9 +3058,11 @@ export class PostgresEngine implements BrainEngine {
       if (opts?.sourceIds && opts.sourceIds.length > 0) {
         const ids = opts.sourceIds;
         const rows = await tx`
-          SELECT f.slug as from_slug, t.slug as to_slug,
+          SELECT f.slug as from_slug, f.source_id as from_source_id,
+                 t.slug as to_slug, t.source_id as to_source_id,
                  l.link_type, l.context, l.link_source,
-                 o.slug as origin_slug, l.origin_field
+                 o.slug as origin_slug, o.source_id as origin_source_id,
+                 l.origin_field
           FROM links l
           JOIN pages f ON f.id = l.from_page_id
           JOIN pages t ON t.id = l.to_page_id
@@ -3075,9 +3077,11 @@ export class PostgresEngine implements BrainEngine {
       // opts.sourceId, scope the from-page lookup.
       if (opts?.sourceId) {
         const rows = await tx`
-          SELECT f.slug as from_slug, t.slug as to_slug,
+          SELECT f.slug as from_slug, f.source_id as from_source_id,
+                 t.slug as to_slug, t.source_id as to_source_id,
                  l.link_type, l.context, l.link_source,
-                 o.slug as origin_slug, l.origin_field
+                 o.slug as origin_slug, o.source_id as origin_source_id,
+                 l.origin_field
           FROM links l
           JOIN pages f ON f.id = l.from_page_id
           JOIN pages t ON t.id = l.to_page_id
@@ -3087,9 +3091,11 @@ export class PostgresEngine implements BrainEngine {
         return rows as unknown as Link[];
       }
       const rows = await tx`
-        SELECT f.slug as from_slug, t.slug as to_slug,
+        SELECT f.slug as from_slug, f.source_id as from_source_id,
+               t.slug as to_slug, t.source_id as to_source_id,
                l.link_type, l.context, l.link_source,
-               o.slug as origin_slug, l.origin_field
+               o.slug as origin_slug, o.source_id as origin_source_id,
+               l.origin_field
         FROM links l
         JOIN pages f ON f.id = l.from_page_id
         JOIN pages t ON t.id = l.to_page_id
@@ -3111,9 +3117,11 @@ export class PostgresEngine implements BrainEngine {
       if (opts?.sourceIds && opts.sourceIds.length > 0) {
         const ids = opts.sourceIds;
         const rows = await tx`
-          SELECT f.slug as from_slug, t.slug as to_slug,
+          SELECT f.slug as from_slug, f.source_id as from_source_id,
+                 t.slug as to_slug, t.source_id as to_source_id,
                  l.link_type, l.context, l.link_source,
-                 o.slug as origin_slug, l.origin_field
+                 o.slug as origin_slug, o.source_id as origin_source_id,
+                 l.origin_field
           FROM links l
           JOIN pages f ON f.id = l.from_page_id
           JOIN pages t ON t.id = l.to_page_id
@@ -3125,9 +3133,11 @@ export class PostgresEngine implements BrainEngine {
       // v0.31.8 (D16) + #2200: federated arm above is first; two below mirror getLinks.
       if (opts?.sourceId) {
         const rows = await tx`
-          SELECT f.slug as from_slug, t.slug as to_slug,
+          SELECT f.slug as from_slug, f.source_id as from_source_id,
+                 t.slug as to_slug, t.source_id as to_source_id,
                  l.link_type, l.context, l.link_source,
-                 o.slug as origin_slug, l.origin_field
+                 o.slug as origin_slug, o.source_id as origin_source_id,
+                 l.origin_field
           FROM links l
           JOIN pages f ON f.id = l.from_page_id
           JOIN pages t ON t.id = l.to_page_id
@@ -3137,9 +3147,11 @@ export class PostgresEngine implements BrainEngine {
         return rows as unknown as Link[];
       }
       const rows = await tx`
-        SELECT f.slug as from_slug, t.slug as to_slug,
+        SELECT f.slug as from_slug, f.source_id as from_source_id,
+               t.slug as to_slug, t.source_id as to_source_id,
                l.link_type, l.context, l.link_source,
-               o.slug as origin_slug, l.origin_field
+               o.slug as origin_slug, o.source_id as origin_source_id,
+               l.origin_field
         FROM links l
         JOIN pages f ON f.id = l.from_page_id
         JOIN pages t ON t.id = l.to_page_id
@@ -4485,9 +4497,13 @@ export class PostgresEngine implements BrainEngine {
             ${input.row_num}, ${input.source_markdown_slug},
             ${claimMetric}, ${claimValue}, ${claimUnit}, ${claimPeriod},
             ${eventType}
-          ) RETURNING id
+          )
+          ON CONFLICT (source_id, source_markdown_slug, row_num)
+          WHERE row_num IS NOT NULL
+          DO NOTHING
+          RETURNING id
         `;
-        out.push(Number(ins[0].id));
+        if (ins[0]) out.push(Number(ins[0].id));
       }
       return out;
     });

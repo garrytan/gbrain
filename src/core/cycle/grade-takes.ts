@@ -219,7 +219,7 @@ export interface GradeTakesOpts extends BasePhaseOpts {
   /**
    * E2 ensemble judges. When useEnsemble=true and the single-model verdict
    * is borderline, all three judges are called in parallel via Promise.allSettled.
-   * Defaults to [openai:gpt-4o, anthropic:claude-sonnet-4-6, google:gemini-1.5-pro]
+   * Defaults to [openai:gpt-5.2, anthropic:claude-sonnet-4-6, google:gemini-2.0-flash]
    * via defaultJudge with model-string overrides. Tests inject deterministic
    * judges.
    */

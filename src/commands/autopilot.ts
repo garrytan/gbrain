@@ -981,12 +981,21 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           // can't shrink throughput (codex #9/D5). autopilot-cycle jobs run on
           // the 'default' queue, so that's the concurrency we compare against.
           const fanoutMax = await resolveEffectiveFanoutMax(engine, 'default');
+          // #2781: both 'autopilot-cycle' (per-source) and 'autopilot-global-
+          // maintenance' carry a 30-min handler anchor (handler-timeouts.ts)
+          // because a full cycle can outlive short daemon intervals — unlike
+          // the lighter interval-derived `timeoutMs` above (sync/freshness,
+          // extract-atoms-drain, targeted small-plan steps), which have no
+          // such anchor and are meant to stay interval-derived. Naming this
+          // separately (rather than reusing the outer `timeoutMs`) avoids
+          // the #2781 bug class: dispatchGlobalMaintenance previously reused
+          // the outer non-full-cycle `timeoutMs` by shorthand, silently
+          // dropping its own handler anchor.
+          const fullCycleTimeoutMs = resolveAutopilotDispatchTimeoutMs(baseInterval, true);
           const result = await dispatchPerSource(engine, queue, {
             repoPath,
             slot,
-            // Full cycles can outlive short daemon intervals. Keep lighter dispatches
-            // interval-derived while giving per-source consolidation enough time.
-            timeoutMs: resolveAutopilotDispatchTimeoutMs(baseInterval, true),
+            timeoutMs: fullCycleTimeoutMs,
             fanoutMax,
             jsonMode,
           });
@@ -997,7 +1006,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           // the per-source path (legacy single-source still runs everything).
           if (!result.legacy_fallback) {
             try {
-              await dispatchGlobalMaintenance(engine, queue, { repoPath, slot, timeoutMs, jsonMode });
+              await dispatchGlobalMaintenance(engine, queue, { repoPath, slot, timeoutMs: fullCycleTimeoutMs, jsonMode });
             } catch (e) {
               if (jsonMode) process.stderr.write(JSON.stringify({ event: 'global_maintenance_dispatch_failed', error: e instanceof Error ? e.message : String(e) }) + '\n');
             }

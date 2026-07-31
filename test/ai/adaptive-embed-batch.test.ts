@@ -40,6 +40,8 @@ import {
   __getShrinkStateForTests,
 } from '../../src/core/ai/gateway.ts';
 import { AIConfigError, AITransientError } from '../../src/core/ai/errors.ts';
+import { __setTestRecipesForTests } from '../../src/core/ai/recipes/index.ts';
+import type { Recipe } from '../../src/core/ai/types.ts';
 
 // The last test in this file leaves the gateway configured with a remote
 // provider + fake key and a REAL embed transport. Without a final reset,
@@ -91,6 +93,31 @@ function configureGoogle(): void {
     embedding_model: 'google:gemini-embedding-001',
     embedding_dimensions: 768,
     env: { GOOGLE_GENERATIVE_AI_API_KEY: 'fake' },
+  });
+}
+
+// A recipe that declares an embedding touchpoint but omits every batch cap.
+// Every shipped recipe now declares one (google gained max_batch_tokens), so
+// the startup warning is exercised against this synthetic cap-less recipe —
+// injected into the registry only for the duration of the test that needs it.
+const CAPLESS_RECIPE: Recipe = {
+  id: 'synthetic-capless',
+  name: 'Synthetic cap-less (test fixture)',
+  tier: 'openai-compat',
+  implementation: 'openai-compatible',
+  touchpoints: {
+    embedding: {
+      models: ['synthetic-embed-1'],
+      default_dims: 768,
+    },
+  },
+};
+
+function configureCapless(): void {
+  configureGateway({
+    embedding_model: 'synthetic-capless:synthetic-embed-1',
+    embedding_dimensions: 768,
+    env: {},
   });
 }
 
@@ -429,20 +456,22 @@ describe('startup warning for recipes missing max_batch_tokens', () => {
   beforeEach(() => resetGateway());
 
   test('configured missing-cap recipe warns once; unrelated recipes stay quiet', () => {
+    __setTestRecipesForTests([CAPLESS_RECIPE]);
     const warnings: string[] = [];
     const original = console.warn;
     console.warn = (msg: string) => warnings.push(String(msg));
     try {
       configureOpenAI();
       expect(warnings.length).toBe(0);
-      configureGoogle();
+      configureCapless();
       const firstCallCount = warnings.length;
-      // Reconfigure: the warning should NOT re-fire for the same recipes
+      // Reconfigure: the warning should NOT re-fire for the same recipe
       // within one process (we already told the operator).
-      configureGoogle();
+      configureCapless();
       expect(warnings.length).toBe(firstCallCount);
     } finally {
       console.warn = original;
+      __setTestRecipesForTests([]);
     }
 
     // The warning text should match the documented contract.
@@ -451,11 +480,12 @@ describe('startup warning for recipes missing max_batch_tokens', () => {
     );
     expect(contractMatch.length).toBe(1);
 
-    // Voyage declares max_batch_tokens → suppressed. OpenAI is the
-    // canonical fast-path recipe → also suppressed by id. Both must be
-    // absent from the warnings.
+    // Voyage + google declare max_batch_tokens → suppressed. OpenAI is the
+    // canonical fast-path recipe → also suppressed by id. Only the synthetic
+    // cap-less recipe warns.
     expect(warnings.find(w => w.includes('"voyage"'))).toBeUndefined();
     expect(warnings.find(w => w.includes('"openai"'))).toBeUndefined();
-    expect(warnings.find(w => w.includes('"google"'))).toBeDefined();
+    expect(warnings.find(w => w.includes('"google"'))).toBeUndefined();
+    expect(warnings.find(w => w.includes('"synthetic-capless"'))).toBeDefined();
   });
 });

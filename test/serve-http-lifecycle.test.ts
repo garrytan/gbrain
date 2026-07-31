@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { EventEmitter } from 'events';
-import { waitForHttpServerLifecycle } from '../src/commands/serve-http.ts';
+import { waitForHttpServerLifecycle, type HttpServerLifecycle } from '../src/commands/serve-http.ts';
 
 class FakeHttpServer extends EventEmitter {
   listening = true;
@@ -25,8 +25,8 @@ describe('HTTP server lifecycle', () => {
     let deregistered = false;
     let resolved = false;
 
-    const lifecycle = waitForHttpServerLifecycle(server, {
-      signals,
+    const lifecycle = waitForHttpServerLifecycle(server as unknown as HttpServerLifecycle, {
+      signals: signals as unknown as NodeJS.Process,
       register(_name, fn) {
         cleanup = fn;
         return () => { deregistered = true; };
@@ -49,8 +49,8 @@ describe('HTTP server lifecycle', () => {
     const server = new FakeHttpServer();
     const signals = new EventEmitter();
 
-    const lifecycle = waitForHttpServerLifecycle(server, {
-      signals,
+    const lifecycle = waitForHttpServerLifecycle(server as unknown as HttpServerLifecycle, {
+      signals: signals as unknown as NodeJS.Process,
       register() {
         return () => {};
       },

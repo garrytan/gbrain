@@ -57,8 +57,10 @@ import { registerCleanup } from '../core/process-cleanup.ts';
  */
 export const HEALTH_TIMEOUT_MS = 3000;
 
-type HttpServerLifecycle = Pick<HttpServer, 'listening' | 'once' | 'off' | 'close'>;
-type SignalSource = Pick<NodeJS.Process, 'once' | 'off'>;
+/** Exported so tests can type their structural fakes exactly (#3599). */
+export type HttpServerLifecycle = Pick<HttpServer, 'listening' | 'once' | 'off' | 'close'>;
+/** Exported so tests can type their structural fakes exactly (#3599). */
+export type SignalSource = Pick<NodeJS.Process, 'once' | 'off'>;
 type CleanupRegistrar = typeof registerCleanup;
 
 /**
@@ -200,7 +202,8 @@ export type ProbeHealthResult =
   | { ok: true; status: 200; body: { status: 'ok'; version: string; engine: string; [k: string]: unknown } }
   | { ok: false; status: 503; body: { error: 'service_unavailable'; error_description: string } };
 
-type AdminSseResponse = Pick<Response, 'setHeader' | 'flushHeaders' | 'write'>;
+/** Exported so tests can type their structural fakes exactly (#3598). */
+export type AdminSseResponse = Pick<Response, 'setHeader' | 'flushHeaders' | 'write'>;
 
 /**
  * Complete the admin EventSource handshake immediately.

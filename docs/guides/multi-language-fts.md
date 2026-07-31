@@ -59,6 +59,12 @@ streaming progress to stderr. It is idempotent: re-running with the same
 language produces identical vectors. `--json` prints a machine-readable
 result envelope but still requires `--yes` (or an interactive confirm).
 
+No cache purge is needed. The resolved language is part of the query-cache
+key, so rows written under the previous language are unreachable after the
+switch — searches read the retokenized index immediately instead of being
+served pre-switch results for up to `search.cache.ttl_seconds`. Switching
+back reaches the original rows rather than rebuilding them.
+
 ## Recipe: accent-insensitive Portuguese (`pt_br`)
 
 Brazilian Portuguese content often mixes accented and unaccented spellings
