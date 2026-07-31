@@ -2,6 +2,36 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.68.0] - 2026-07-31
+
+**Contextual retrieval can now generate per-chunk synopses with the chat model you actually configured instead of always falling through to Anthropic Haiku.**
+
+The `per_chunk_synopsis` path previously carried a hardcoded Anthropic model through import, worker, and cache-generation code. That made the feature unreachable for installations whose working chat provider—such as `claude-cli`—does not use `ANTHROPIC_API_KEY`. Synopsis generation now resolves through the normal model hierarchy, accepts a dedicated `models.contextual_synopsis` override, and registers an explicitly selected native model only for the chat touchpoint before invoking the gateway.
+
+Existing installations remain compatible. The old `contextual_retrieval.haiku_model` key and the `haikuModel` service argument are still honored with deprecation warnings, while the default remains `anthropic:claude-haiku-4-5-20251001`. Title-only embeddings retain their historical generation identity because they do not call the configured synopsis model.
+
+## To take advantage of v0.42.68.0
+
+No schema migration is required. To choose a dedicated synopsis model without changing the rest of the utility tier:
+
+```bash
+gbrain config set models.contextual_synopsis <provider:model>
+gbrain models
+```
+
+`gbrain models` now reports the resolved contextual-synopsis route and whether it came from the dedicated key, legacy key, global default, utility tier, or `GBRAIN_CONTEXTUAL_SYNOPSIS_MODEL`. Existing title-only pages can be regenerated through the normal contextual reindex workflow when you are ready to incur provider usage.
+
+Each resolved synopsis model now receives its own cross-worker lease bucket, so provider changes do not contend with or inherit an Anthropic-named bucket. Set `GBRAIN_CONTEXTUAL_SYNOPSIS_RPM` to tune the synopsis concurrency cap; the old `GBRAIN_CONTEXTUAL_HAIKU_RPM` name remains a lower-precedence compatibility alias.
+
+### Itemized changes
+
+- Resolve contextual synopsis generation through `models.contextual_synopsis` → deprecated `contextual_retrieval.haiku_model` → `models.default` → `models.tier.utility` → `GBRAIN_CONTEXTUAL_SYNOPSIS_MODEL` → the existing Haiku fallback. (#3597)
+- Thread the resolved provider-neutral model through the Minion handler and contextual retrieval service exactly once per page job.
+- Allow an explicitly configured native model at the chat touchpoint without broadening its embedding, expansion, or reranker allowlists.
+- Keep title-only corpus generations independent of the unused synopsis model while preserving model-sensitive invalidation for `per_chunk_synopsis` embeddings.
+- Isolate cross-worker synopsis leases by resolved model and add the provider-neutral `GBRAIN_CONTEXTUAL_SYNOPSIS_RPM` setting while retaining the Haiku-named alias.
+- Preserve the deprecated `modeRequiresHaiku`, `haikuModel`, and legacy configuration surfaces for downstream compatibility.
+
 ## [0.42.67.0] - 2026-07-28
 
 **If you develop GBrain on Windows, the test and check commands now actually run. Until this release they were quietly doing almost nothing.**

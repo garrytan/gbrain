@@ -139,34 +139,40 @@ export function configureGatewayIfUninitialized(): void {
 /**
  * v0.31.12 recipe-models merge: per-gateway-instance set of model ids the
  * user opted into via config. Keyed by provider id (`anthropic`, `openai`,
- * etc.). Passed into `assertTouchpoint` so native-recipe allowlist checks
- * skip these models — provider 404s surface at HTTP call time instead of
- * config-build time.
+ * etc.) AND touchpoint so a chat-only selection cannot silently authorize
+ * expansion/embedding/reranker. Passed into `assertTouchpoint` so native-recipe
+ * allowlist checks skip these models — provider 404s surface at HTTP call time
+ * instead of config-build time.
  *
  * Replaces the earlier plan to soften `assertTouchpoint` from throw to
  * warn (Codex F4/F5 — too broad, removed fail-fast for chat/expand/embed
  * across all callers). This narrower approach preserves fail-fast for
  * source-code typos while allowing config-time model selection of any id.
  */
-const _extendedModels: Map<string, Set<string>> = new Map();
+const _extendedModels: Map<string, Map<TouchpointKind, Set<string>>> = new Map();
 
 /**
- * v0.31.12 — register a model id under its provider so `assertTouchpoint`
- * (called via the gateway's chat/embed/expand entry points) permits it
- * even when it isn't in the recipe's declared `models:` array.
+ * v0.31.12 — register a model id under its provider+touchpoint so
+ * `assertTouchpoint` (called via the gateway's chat/embed/expand entry points)
+ * permits it there even when it isn't in the recipe's declared `models:` array.
  *
  * Idempotent + safe to call before/after configureGateway. Exported only
  * for the `gbrain models doctor` probe path (where the operator may want
  * to probe any user-supplied id without re-running configure).
  */
-function registerExtendedModel(modelStr: string): void {
+function registerExtendedModel(touchpoint: TouchpointKind, modelStr: string): void {
   if (!modelStr) return;
   try {
     const { providerId, modelId } = parseModelId(modelStr);
-    let set = _extendedModels.get(providerId);
+    let byTouchpoint = _extendedModels.get(providerId);
+    if (!byTouchpoint) {
+      byTouchpoint = new Map();
+      _extendedModels.set(providerId, byTouchpoint);
+    }
+    let set = byTouchpoint.get(touchpoint);
     if (!set) {
       set = new Set();
-      _extendedModels.set(providerId, set);
+      byTouchpoint.set(touchpoint, set);
     }
     set.add(modelId);
   } catch {
@@ -175,8 +181,24 @@ function registerExtendedModel(modelStr: string): void {
   }
 }
 
-function getExtendedModelsForProvider(providerId: string): ReadonlySet<string> | undefined {
-  return _extendedModels.get(providerId);
+/**
+ * Register a model that was selected through a DB/env config resolver for a
+ * chat-backed call site outside the gateway's built-in chat/expansion defaults.
+ *
+ * This preserves `assertTouchpoint`'s native-provider fail-fast behavior for
+ * hardcoded source models while allowing an explicit operator-selected chat
+ * model (for example `models.contextual_synopsis`) to reach the provider even
+ * when the recipe's curated model list has not yet learned the new id.
+ */
+export function registerConfigSelectedChatModel(modelStr: string): void {
+  registerExtendedModel('chat', modelStr);
+}
+
+function getExtendedModelsForProvider(
+  providerId: string,
+  touchpoint: TouchpointKind,
+): ReadonlySet<string> | undefined {
+  return _extendedModels.get(providerId)?.get(touchpoint);
 }
 
 /**
@@ -497,15 +519,13 @@ export function configureGateway(config: AIGatewayConfig): void {
   _extendedModels.clear();
   // Register configured models so assertTouchpoint allows them even when
   // they aren't in the recipe's declared models: array (v0.31.12).
-  for (const m of [
-    _config.embedding_model,
-    _config.embedding_multimodal_model,
-    _config.expansion_model,
-    _config.chat_model,
-    _config.reranker_model,
-    ...(_config.chat_fallback_chain ?? []),
-  ]) {
-    if (m) registerExtendedModel(m);
+  if (_config.embedding_model) registerExtendedModel('embedding', _config.embedding_model);
+  if (_config.embedding_multimodal_model) registerExtendedModel('embedding', _config.embedding_multimodal_model);
+  if (_config.expansion_model) registerExtendedModel('expansion', _config.expansion_model);
+  if (_config.chat_model) registerExtendedModel('chat', _config.chat_model);
+  if (_config.reranker_model) registerExtendedModel('reranker', _config.reranker_model);
+  for (const m of _config.chat_fallback_chain ?? []) {
+    if (m) registerExtendedModel('chat', m);
   }
   warnRecipesMissingBatchTokens();
 }
@@ -570,16 +590,16 @@ export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise
   _modelCache.clear();
   _shrinkState.clear();
   _extendedModels.clear();
-  for (const m of [
-    _config.embedding_model,
-    _config.embedding_multimodal_model,
-    _config.expansion_model,
-    _config.chat_model,
-    _config.reranker_model,
-    ...(_config.chat_fallback_chain ?? []),
-    ...tierModels,
-  ]) {
-    if (m) registerExtendedModel(m);
+  if (_config.embedding_model) registerExtendedModel('embedding', _config.embedding_model);
+  if (_config.embedding_multimodal_model) registerExtendedModel('embedding', _config.embedding_multimodal_model);
+  if (_config.expansion_model) registerExtendedModel('expansion', _config.expansion_model);
+  if (_config.chat_model) registerExtendedModel('chat', _config.chat_model);
+  if (_config.reranker_model) registerExtendedModel('reranker', _config.reranker_model);
+  for (const m of _config.chat_fallback_chain ?? []) {
+    if (m) registerExtendedModel('chat', m);
+  }
+  for (const m of tierModels) {
+    if (m) registerExtendedModel('chat', m);
   }
   return _config;
 }
@@ -1485,7 +1505,7 @@ export const perplexityCompatFetch = (async (input: RequestInfo | URL, init?: Re
 
 async function resolveEmbeddingProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
-  assertTouchpoint(recipe, 'embedding', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
+  assertTouchpoint(recipe, 'embedding', parsed.modelId, getExtendedModelsForProvider(parsed.providerId, 'embedding'));
   const cfg = requireConfig();
 
   const cacheKey = `emb:${recipe.id}:${parsed.modelId}:${cfg.base_urls?.[recipe.id] ?? ''}`;
@@ -2444,7 +2464,7 @@ export async function embedMultimodalSafe(
 
 async function resolveExpansionProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
-  assertTouchpoint(recipe, 'expansion', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
+  assertTouchpoint(recipe, 'expansion', parsed.modelId, getExtendedModelsForProvider(parsed.providerId, 'expansion'));
   const cfg = requireConfig();
 
   const cacheKey = `exp:${recipe.id}:${parsed.modelId}:${cfg.base_urls?.[recipe.id] ?? ''}`;
@@ -2942,7 +2962,10 @@ export type ModelIdValidity =
   | { ok: true; parsed: ParsedModelId; recipe: Recipe }
   | { ok: false; reason: 'unknown_provider' | 'unknown_model'; detail: string; fix?: string };
 
-export function validateModelId(modelStr: string): ModelIdValidity {
+export function validateModelId(
+  modelStr: string,
+  touchpoint: TouchpointKind = 'chat',
+): ModelIdValidity {
   let parsed: ParsedModelId;
   let recipe: Recipe;
   try {
@@ -2952,7 +2975,7 @@ export function validateModelId(modelStr: string): ModelIdValidity {
     throw e;
   }
   try {
-    assertTouchpoint(recipe, 'chat', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
+    assertTouchpoint(recipe, touchpoint, parsed.modelId, getExtendedModelsForProvider(parsed.providerId, touchpoint));
   } catch (e) {
     if (e instanceof AIConfigError) return { ok: false, reason: 'unknown_model', detail: e.message, fix: e.fix };
     throw e;
@@ -3006,7 +3029,7 @@ function chatSupportsPromptCache(recipe: Recipe, modelId: string): boolean {
 
 async function resolveChatProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
-  assertTouchpoint(recipe, 'chat', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
+  assertTouchpoint(recipe, 'chat', parsed.modelId, getExtendedModelsForProvider(parsed.providerId, 'chat'));
   const cfg = requireConfig();
 
   const cacheKey = `chat:${recipe.id}:${parsed.modelId}:${cfg.base_urls?.[recipe.id] ?? ''}`;

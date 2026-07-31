@@ -37,7 +37,15 @@ import {
 
 const TIERS: ModelTier[] = ['utility', 'reasoning', 'deep', 'subagent'];
 
-const PER_TASK_KEYS: Array<{ key: string; tier: ModelTier; description: string }> = [
+interface PerTaskModelRoute {
+  key: string;
+  tier: ModelTier;
+  description: string;
+  deprecatedConfigKey?: string;
+  envVar?: string;
+}
+
+const PER_TASK_KEYS: PerTaskModelRoute[] = [
   { key: 'models.dream.synthesize',         tier: 'reasoning', description: 'Dream synthesis (conversation → brain pages)' },
   { key: 'models.dream.synthesize_verdict', tier: 'utility',   description: 'Dream synthesis verdict (Haiku judge)' },
   { key: 'models.dream.patterns',           tier: 'reasoning', description: 'Pattern discovery (cross-take themes)' },
@@ -49,6 +57,13 @@ const PER_TASK_KEYS: Array<{ key: string; tier: ModelTier; description: string }
   { key: 'models.eval.longmemeval',         tier: 'reasoning', description: 'LongMemEval benchmark answer-gen' },
   { key: 'models.eval.contradictions_judge', tier: 'utility',  description: 'Contradiction probe judge (v0.34 temporal-aware)' },
   { key: 'models.expansion',                tier: 'utility',   description: 'Query expansion for hybrid search' },
+  {
+    key: 'models.contextual_synopsis',
+    tier: 'utility',
+    description: 'Per-chunk contextual synopsis generation',
+    deprecatedConfigKey: 'contextual_retrieval.haiku_model',
+    envVar: 'GBRAIN_CONTEXTUAL_SYNOPSIS_MODEL',
+  },
   { key: 'models.chat',                     tier: 'reasoning', description: 'Default `gateway.chat()` model' },
 ];
 
@@ -66,12 +81,26 @@ interface ModelsReport {
   aliases: { defaults: Record<string, string>; user: Record<string, string> };
 }
 
-async function probeSource(engine: BrainEngine, configKey: string, envVar: string): Promise<string | null> {
+async function probeSource(
+  engine: BrainEngine,
+  route: Pick<PerTaskModelRoute, 'key' | 'tier' | 'deprecatedConfigKey' | 'envVar'>,
+): Promise<string | null> {
   // For per-task probes, return the source the resolver USED (config / env /
-  // tier default / hardcoded). The resolver itself is the source of truth;
-  // we re-walk a subset of its precedence here to attribute the value.
-  const configVal = await engine.getConfig(configKey);
-  if (configVal && configVal.trim()) return `config: ${configKey}`;
+  // tier default / hardcoded). Keep this walk in the same order as
+  // resolveModel so dedicated task env vars and compatibility keys are
+  // attributed truthfully in `gbrain models` output.
+  const configVal = await engine.getConfig(route.key);
+  if (configVal && configVal.trim()) return `config: ${route.key}`;
+  if (route.deprecatedConfigKey) {
+    const deprecated = await engine.getConfig(route.deprecatedConfigKey);
+    if (deprecated && deprecated.trim()) return `config: ${route.deprecatedConfigKey}`;
+  }
+  const globalDefault = await engine.getConfig('models.default');
+  if (globalDefault && globalDefault.trim()) return 'config: models.default';
+  const tierKey = `models.tier.${route.tier}`;
+  const tierValue = await engine.getConfig(tierKey);
+  if (tierValue && tierValue.trim()) return `config: ${tierKey}`;
+  const envVar = route.envVar ?? 'GBRAIN_MODEL';
   if (process.env[envVar] && process.env[envVar]!.trim()) return `env: ${envVar}`;
   return null;
 }
@@ -96,9 +125,16 @@ async function buildReport(engine: BrainEngine): Promise<ModelsReport> {
   }
 
   const per_task: ModelsReport['per_task'] = [];
-  for (const { key, tier, description } of PER_TASK_KEYS) {
-    const resolved = await resolveModel(engine, { configKey: key, tier, fallback: TIER_DEFAULTS[tier] });
-    const explicit = await probeSource(engine, key, 'GBRAIN_MODEL');
+  for (const route of PER_TASK_KEYS) {
+    const { key, tier, description, deprecatedConfigKey, envVar } = route;
+    const resolved = await resolveModel(engine, {
+      configKey: key,
+      deprecatedConfigKey,
+      envVar,
+      tier,
+      fallback: TIER_DEFAULTS[tier],
+    });
+    const explicit = await probeSource(engine, route);
     const source = explicit ?? `tier.${tier}`;
     per_task.push({ key, tier, resolved, source, description });
   }

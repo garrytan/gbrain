@@ -1,10 +1,10 @@
 /**
- * v0.40.3.0 — per-chunk Haiku synopsis generator.
+ * v0.40.3.0 — per-chunk synopsis generator.
  *
  * For the tokenmax tier (D1 — Anthropic's published per-chunk synopsis
  * method), this module owns:
  *
- *   - Routing the Haiku call through `gateway.chat(tier='utility')` —
+ *   - Routing the synopsis call through `gateway.chat()` —
  *     the cheapest tier per CLAUDE.md gateway docs.
  *   - The richer failure envelope from D27 P1-2: distinguishing
  *     refusal / empty / malformed (→ page-level fall-back to title-only
@@ -35,14 +35,14 @@ import { logSynopsisFailure, type SynopsisFailureKind } from './audit-synopsis.t
 import { sanitizeSynopsis } from './embedding-context.ts';
 
 /**
- * Hard cap on Haiku output tokens. ~200 tokens gives 50-100 token
+ * Hard cap on synopsis output tokens. ~200 tokens gives 50-100 token
  * synopsis with some headroom; the wrapper layer caps the final
  * synopsis at SUMMARY_HARD_CAP_CHARS (300) regardless.
  */
-const HAIKU_MAX_TOKENS = 200;
+const SYNOPSIS_MAX_TOKENS = 200;
 
 /** Default model when caller doesn't override. Resolves through the gateway. */
-const DEFAULT_SYNOPSIS_MODEL = 'anthropic:claude-haiku-4-5-20251001';
+export const DEFAULT_SYNOPSIS_MODEL = 'anthropic:claude-haiku-4-5-20251001';
 
 /**
  * Hard cap on `documentText` length (chars) before send.
@@ -100,7 +100,7 @@ export interface GeneratePerChunkSynopsisArgs {
   documentText: string;
   /** The chunk for which we're generating the synopsis. */
   chunkText: string;
-  /** The page's title — gives Haiku document-level anchor. */
+  /** The page's title — gives the synopsis model a document-level anchor. */
   pageTitle: string;
   /** Page slug for audit logging on failure. */
   pageSlug: string;
@@ -131,8 +131,7 @@ export type GeneratePerChunkSynopsisResult =
  *
  * Caller is responsible for:
  *   - Rate-leasing via `src/core/minions/rate-leases.ts` (the SERVICE
- *     layer does this with the global `anthropic:utility:contextual-synopsis`
- *     key per D26 P0-3).
+ *     layer does this with a resolved-model-specific synopsis key per D26 P0-3).
  *   - LRU caching by `(content_hash, chunk_index, corpus_generation,
  *     source_text_hash)`. This module is a pure transformer — no cache
  *     lookup here; the service decides when to call us.
@@ -150,7 +149,7 @@ export async function generatePerChunkSynopsis(
     model: args.model ?? DEFAULT_SYNOPSIS_MODEL,
     system: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: userPrompt }],
-    maxTokens: HAIKU_MAX_TOKENS,
+    maxTokens: SYNOPSIS_MAX_TOKENS,
     abortSignal: args.abortSignal,
     cacheSystem: true,
   };
