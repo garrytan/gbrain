@@ -201,18 +201,22 @@ first request.
 
 ### Rate limiting
 
-Two buckets, both stored in a bounded LRU map (default 10K keys, evicts
-least-recently-used on overflow, prunes entries older than 2× the
-window):
+Two buckets on `POST /mcp`, sitting on opposite sides of the bearer-auth
+middleware:
 
 | Bucket | When it fires | Default | Env var |
 |---|---|---|---|
 | Pre-auth IP | Before the DB lookup, on every `/mcp` request | 30 req / 60s | `GBRAIN_HTTP_RATE_LIMIT_IP` |
-| Post-auth token | After a valid token is resolved | 60 req / 60s | `GBRAIN_HTTP_RATE_LIMIT_TOKEN` |
-| LRU cap | Maximum distinct keys across both buckets | 10000 | `GBRAIN_HTTP_RATE_LIMIT_LRU` |
+| Post-auth token | After a valid token is resolved, keyed on client id | 60 req / 60s | `GBRAIN_HTTP_RATE_LIMIT_TOKEN` |
+| Window | Shared by both buckets | 60s | `GBRAIN_HTTP_RATE_LIMIT_WINDOW_MS` |
 
-On exhaustion the server returns `429 Too Many Requests` with a
-`Retry-After` header.
+On exhaustion the server returns `429 Too Many Requests` with
+`RateLimit-*` (draft-7) headers.
+
+Buckets are in-process maps, so they are per-replica: two replicas of the
+MCP app enforce these limits independently. That is one of the reasons the
+server is a single-replica design — see the Addendum in
+`plans/AzureIntegration.md` for the scale-out consequences.
 
 **Caveat for tunneled deployments (ngrok, Tailscale Funnel, Cloudflare
 Tunnel):** all requests share one egress IP, so the pre-auth IP bucket

@@ -198,6 +198,42 @@ export function resolveOAuthTokenRateLimit(env: NodeJS.ProcessEnv = process.env)
   };
 }
 
+export type McpRateLimitConfig = {
+  /** Shared window for both buckets, in ms. */
+  windowMs: number;
+  /** Pre-auth, keyed on client IP. Bounds unauthenticated DB load. */
+  ipMax: number;
+  /** Post-auth, keyed on the resolved OAuth client id. */
+  tokenMax: number;
+};
+
+/**
+ * Rate-limit config for `POST /mcp`.
+ *
+ * SECURITY.md has documented these two buckets and their env vars for
+ * several releases, but they only ever existed in the superseded
+ * `src/mcp/http-transport.ts`. The Express server that actually serves
+ * `/mcp` had NO limiter on it — /token, /admin/auth and /ingest each had
+ * one, and the busiest authenticated surface had none. The defaults here
+ * are the ones SECURITY.md already promises, so the doc becomes true rather
+ * than changing.
+ *
+ * Two buckets rather than one because they fail differently. The IP bucket
+ * is what stops an unauthenticated flood from reaching the token lookup at
+ * all — but for any tunnelled deployment (ngrok, Cloudflare Tunnel,
+ * Container Apps ingress) every client shares one egress IP, so it degrades
+ * into a global cap. The token bucket is the load-bearing per-client limit
+ * there, which is why it must key on the resolved client id and therefore
+ * run after auth.
+ */
+export function resolveMcpRateLimit(env: NodeJS.ProcessEnv = process.env): McpRateLimitConfig {
+  return {
+    windowMs: parsePositiveIntEnv(env.GBRAIN_HTTP_RATE_LIMIT_WINDOW_MS, 60 * 1000),
+    ipMax: parsePositiveIntEnv(env.GBRAIN_HTTP_RATE_LIMIT_IP, 30),
+    tokenMax: parsePositiveIntEnv(env.GBRAIN_HTTP_RATE_LIMIT_TOKEN, 60),
+  };
+}
+
 export type ProbeHealthResult =
   | { ok: true; status: 200; body: { status: 'ok'; version: string; engine: string; [k: string]: unknown } }
   | { ok: false; status: 503; body: { error: 'service_unavailable'; error_description: string } };
@@ -1900,7 +1936,43 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     res.status(405).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed' }, id: null });
   });
 
-  app.post('/mcp', requireBearerAuth({ verifier: oauthProvider, resourceMetadataUrl }), async (req: Request, res: Response) => {
+  // Rate limits for POST /mcp. Two buckets, deliberately on opposite sides
+  // of the auth middleware:
+  //
+  //   mcpIpRateLimiter    — pre-auth, keyed on IP. Stops an unauthenticated
+  //                         flood before it reaches the token lookup.
+  //   mcpTokenRateLimiter — post-auth, keyed on the resolved client id.
+  //
+  // The IP bucket collapses to a single global cap behind any tunnel or
+  // managed ingress (ngrok, Cloudflare Tunnel, Container Apps envoy), where
+  // every client shares one egress address — so the token bucket is the
+  // load-bearing per-client limit on exactly the deployments that face the
+  // internet. Defaults and env vars match what SECURITY.md already
+  // documents; they had only ever been implemented in the superseded
+  // src/mcp/http-transport.ts, leaving this route unlimited.
+  const mcpRateLimit = resolveMcpRateLimit();
+  const mcpIpRateLimiter = rateLimit({
+    windowMs: mcpRateLimit.windowMs,
+    limit: mcpRateLimit.ipMax,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { jsonrpc: '2.0', error: { code: -32000, message: 'rate_limit_exceeded' }, id: null },
+  });
+  const mcpTokenRateLimiter = rateLimit({
+    windowMs: mcpRateLimit.windowMs,
+    limit: mcpRateLimit.tokenMax,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    // Keyed on the authenticated client, NOT the IP — that is the whole
+    // point of running this bucket after requireBearerAuth. Falls back to
+    // the IP only if auth somehow left no client id, so a missing id can
+    // never mean "unlimited".
+    keyGenerator: (req: Request) =>
+      (req as Request & { auth?: AuthInfo }).auth?.clientId ?? `ip:${req.ip}`,
+    message: { jsonrpc: '2.0', error: { code: -32000, message: 'rate_limit_exceeded' }, id: null },
+  });
+
+  app.post('/mcp', mcpIpRateLimiter, requireBearerAuth({ verifier: oauthProvider, resourceMetadataUrl }), mcpTokenRateLimiter, async (req: Request, res: Response) => {
     const startTime = Date.now();
     const authInfo = (req as any).auth as AuthInfo;
 
