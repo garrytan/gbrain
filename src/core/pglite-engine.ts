@@ -2,6 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite/vector';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import type { Transaction } from '@electric-sql/pglite';
+import packageManifest from '../../package.json';
 import type {
   BrainEngine,
   BatchOpts,
@@ -39,7 +40,7 @@ import {
 } from './search/recency-decay.ts';
 import { logBatchRetry as auditLogBatchRetry, logBatchExhausted as auditLogBatchExhausted } from './audit/batch-retry-audit.ts';
 import { runMigrations } from './migrate.ts';
-import { PGLITE_SCHEMA_SQL, getPGLiteSchema } from './pglite-schema.ts';
+import { getPGLiteSchema } from './pglite-schema.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from './source-config-sql.ts';
@@ -92,63 +93,102 @@ import { hasCJK, escapeLikePattern } from './cjk.ts';
 type PGLiteDB = PGlite;
 
 // Tier 3 snapshot fast-restore. Reads a tar dump produced by
-// `bun run scripts/build-pglite-snapshot.ts`. Snapshot is matched against
-// the current MIGRATIONS hash via a sidecar `.version` file; on mismatch we
-// silently fall through to a normal initSchema (snapshot is just an
-// optimization, never authoritative).
+// `bun run scripts/build-pglite-snapshot.ts`. Metadata binds the tar bytes to
+// the runtime-rendered schema and full migration semantics; any mismatch is a
+// cold-init fallback because snapshots are accelerators, never authority.
 let _snapshotWarnLogged = false;
-function tryLoadSnapshot(snapshotPath: string): Blob | null {
+function snapshotMetadataPath(snapshotPath: string): string {
+  const replaced = snapshotPath.replace(/\.tar(?:\.gz)?$/, '.metadata.json');
+  return replaced === snapshotPath ? `${snapshotPath}.metadata.json` : replaced;
+}
+
+function warnSnapshotFallback(message: string): void {
+  if (_snapshotWarnLogged) return;
+  // eslint-disable-next-line no-console
+  console.warn(`[pglite] ${message} — using normal init.`);
+  _snapshotWarnLogged = true;
+}
+
+function tryLoadSnapshot(snapshotPath: string, renderedSchemaSQL: string): Blob | null {
   try {
     // Lazy require so production builds without these imports don't crash.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const fs = require('node:fs') as typeof import('node:fs');
     const crypto = require('node:crypto') as typeof import('node:crypto');
     const { MIGRATIONS } = require('./migrate.ts') as typeof import('./migrate.ts');
-    const { PGLITE_SCHEMA_SQL } = require('./pglite-schema.ts') as typeof import('./pglite-schema.ts');
 
     if (!fs.existsSync(snapshotPath)) {
-      if (!_snapshotWarnLogged) {
-        // eslint-disable-next-line no-console
-        console.warn(`[pglite] GBRAIN_PGLITE_SNAPSHOT set but file missing: ${snapshotPath} — using normal init.`);
-        _snapshotWarnLogged = true;
-      }
+      warnSnapshotFallback(`GBRAIN_PGLITE_SNAPSHOT set but file missing: ${snapshotPath}`);
       return null;
     }
-    const versionPath = snapshotPath.replace(/\.tar(?:\.gz)?$/, '.version');
-    if (!fs.existsSync(versionPath)) {
-      if (!_snapshotWarnLogged) {
-        // eslint-disable-next-line no-console
-        console.warn(`[pglite] snapshot version file missing: ${versionPath} — using normal init.`);
-        _snapshotWarnLogged = true;
-      }
+    const metadataPath = snapshotMetadataPath(snapshotPath);
+    if (!fs.existsSync(metadataPath)) {
+      warnSnapshotFallback(`snapshot metadata missing: ${metadataPath}`);
       return null;
     }
-    const expectedHash = computeSnapshotSchemaHash(MIGRATIONS, PGLITE_SCHEMA_SQL, crypto);
-    const actualHash = fs.readFileSync(versionPath, 'utf8').trim();
-    if (expectedHash !== actualHash) {
-      if (!_snapshotWarnLogged) {
-        // eslint-disable-next-line no-console
-        console.warn(`[pglite] snapshot stale (schema hash mismatch) — using normal init. Rebuild with: bun run build:pglite-snapshot`);
-        _snapshotWarnLogged = true;
-      }
-      return null;
-    }
+
     const buf = fs.readFileSync(snapshotPath);
+    const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8')) as unknown;
+    if (!isSnapshotMetadataCompatible(metadata, buf, MIGRATIONS, renderedSchemaSQL, crypto)) {
+      warnSnapshotFallback('snapshot metadata/schema/tar mismatch; rebuild with: bun run build:pglite-snapshot');
+      return null;
+    }
     return new Blob([buf]);
   } catch {
-    // Any failure -> fall through to normal init. Never block tests.
+    // Any read/parse/hash failure -> cold init. Never block tests.
+    warnSnapshotFallback('snapshot could not be validated');
     return null;
   }
 }
 
+type SnapshotMigration = {
+  version: number;
+  name: string;
+  sql?: string;
+  sqlFor?: { pglite?: string };
+  transaction?: boolean;
+  idempotent?: boolean;
+  handler?: (...args: any[]) => unknown;
+  verify?: (...args: any[]) => unknown;
+};
+
+export interface PgliteSnapshotMetadata {
+  format: 2;
+  compatibilityHash: string;
+  runtimeHash: string;
+  pgliteVersion: string;
+  tarSha256: string;
+}
+
+// Bump this format whenever non-migration bootstrap logic changes the physical
+// database state captured by build-pglite-snapshot.ts. The explicit gate is
+// intentional: helper dependencies cannot be fingerprinted reliably from
+// Function#toString alone.
+const PGLITE_SNAPSHOT_FORMAT = 2 as const;
+const PGLITE_PACKAGE_VERSION = packageManifest.dependencies['@electric-sql/pglite'];
+
+function computeSnapshotRuntimeHash(crypto: typeof import('node:crypto')): string {
+  const hash = crypto.createHash('sha256');
+  hash.update(`snapshot-format:${PGLITE_SNAPSHOT_FORMAT}\n`);
+  hash.update(`pglite-package:${PGLITE_PACKAGE_VERSION}\n`);
+  hash.update(PGlite.create.toString());
+  for (const extension of [vector, pg_trgm]) {
+    hash.update('\n');
+    hash.update(extension.name);
+    hash.update('\t');
+    hash.update(extension.setup.toString());
+  }
+  return hash.digest('hex');
+}
+
 export function computeSnapshotSchemaHash(
-  migrations: Array<{ version: number; name: string; sql?: string; sqlFor?: { pglite?: string } }>,
-  schemaSQL: string,
+  migrations: SnapshotMigration[],
+  renderedSchemaSQL: string,
   crypto: typeof import('node:crypto'),
 ): string {
   const hash = crypto.createHash('sha256');
-  hash.update('schema:');
-  hash.update(schemaSQL);
+  hash.update('rendered-schema:');
+  hash.update(renderedSchemaSQL);
   hash.update('\nmigrations:\n');
   for (const m of migrations) {
     hash.update(String(m.version));
@@ -158,9 +198,62 @@ export function computeSnapshotSchemaHash(
     hash.update(m.sql ?? '');
     hash.update('\t');
     hash.update(m.sqlFor?.pglite ?? '');
+    hash.update('\t');
+    hash.update(String(m.transaction ?? true));
+    hash.update('\t');
+    hash.update(String(m.idempotent ?? true));
+    hash.update('\t');
+    hash.update(m.handler?.toString() ?? '');
+    hash.update('\t');
+    hash.update(m.verify?.toString() ?? '');
     hash.update('\n');
   }
   return hash.digest('hex');
+}
+
+export function createSnapshotMetadata(
+  tarBytes: Uint8Array,
+  migrations: SnapshotMigration[],
+  renderedSchemaSQL: string,
+  crypto: typeof import('node:crypto'),
+): PgliteSnapshotMetadata {
+  return {
+    format: PGLITE_SNAPSHOT_FORMAT,
+    compatibilityHash: computeSnapshotSchemaHash(migrations, renderedSchemaSQL, crypto),
+    runtimeHash: computeSnapshotRuntimeHash(crypto),
+    pgliteVersion: PGLITE_PACKAGE_VERSION,
+    tarSha256: crypto.createHash('sha256').update(tarBytes).digest('hex'),
+  };
+}
+
+export function isSnapshotMetadataCompatible(
+  metadata: unknown,
+  tarBytes: Uint8Array,
+  migrations: SnapshotMigration[],
+  renderedSchemaSQL: string,
+  crypto: typeof import('node:crypto'),
+): metadata is PgliteSnapshotMetadata {
+  if (!metadata || typeof metadata !== 'object') return false;
+  const candidate = metadata as Partial<PgliteSnapshotMetadata>;
+  if (candidate.format !== PGLITE_SNAPSHOT_FORMAT) return false;
+  const expected = createSnapshotMetadata(tarBytes, migrations, renderedSchemaSQL, crypto);
+  return candidate.compatibilityHash === expected.compatibilityHash
+    && candidate.runtimeHash === expected.runtimeHash
+    && candidate.pgliteVersion === expected.pgliteVersion
+    && candidate.tarSha256 === expected.tarSha256;
+}
+
+async function resolveRenderedPgliteSchema(): Promise<string> {
+  let dims: number = DEFAULT_EMBEDDING_DIMENSIONS;
+  let model: string = DEFAULT_EMBEDDING_MODEL;
+  try {
+    // Keep the gateway lazy: its static closure is large, and evaluation inside
+    // this try/catch preserves the unconfigured-gateway default fallback.
+    const gw = await import('./ai/gateway.ts'); // engine-dynamic-import-ok
+    dims = gw.getEmbeddingDimensions();
+    model = gw.getEmbeddingModel();
+  } catch { /* gateway not configured — use defaults */ }
+  return getPGLiteSchema(dims, model);
 }
 
 /**
@@ -305,6 +398,7 @@ export class PGLiteEngine implements BrainEngine {
   // Lifecycle
   async connect(config: EngineConfig): Promise<void> {
     this._savedConfig = config; // #2034: remember for reconnect()
+    this._snapshotLoaded = false;
     const dataDir = config.database_path || undefined; // undefined = in-memory
 
     // Acquire file lock to prevent concurrent PGLite access (crashes with Aborted())
@@ -316,12 +410,12 @@ export class PGLiteEngine implements BrainEngine {
 
     // Tier 3: optional snapshot fast-restore. Only applies to in-memory
     // engines (no persistent dataDir). The snapshot was built from a fresh
-    // `initSchema()` run; if the version file matches the current MIGRATIONS
-    // hash, load the dump and skip the schema replay. Mismatch or missing
-    // file silently falls back to normal init.
+    // `initSchema()` run; metadata must match the runtime-rendered schema,
+    // migration semantics, and tar checksum. Any mismatch falls back cold.
     let loadDataDir: Blob | undefined;
     if (!dataDir && process.env.GBRAIN_PGLITE_SNAPSHOT) {
-      const snapshotResult = tryLoadSnapshot(process.env.GBRAIN_PGLITE_SNAPSHOT);
+      const renderedSchemaSQL = await resolveRenderedPgliteSchema();
+      const snapshotResult = tryLoadSnapshot(process.env.GBRAIN_PGLITE_SNAPSHOT, renderedSchemaSQL);
       if (snapshotResult) {
         loadDataDir = snapshotResult;
         this._snapshotLoaded = true;
@@ -334,22 +428,37 @@ export class PGLiteEngine implements BrainEngine {
     // a snapshot/restore around these awaits does NOT contain them. That is
     // why the CLI's exit paths read gbrain's own verdict
     // (cli-force-exit.ts currentExitCode), never ambient process.exitCode.
+    const createDb = (snapshotDataDir?: Blob) => preservingProcessExitCode(() =>
+      PGlite.create({
+        dataDir,
+        loadDataDir: snapshotDataDir,
+        extensions: { vector, pg_trgm },
+      }),
+    );
     try {
-      this._db = await preservingProcessExitCode(() =>
-        PGlite.create({
-          dataDir,
-          loadDataDir,
-          extensions: { vector, pg_trgm },
-        }),
-      );
+      this._db = await createDb(loadDataDir);
     } catch (err) {
+      let initError = err;
+      if (loadDataDir) {
+        // The metadata may be valid while the tar is incompatible with the
+        // installed PGLite runtime. Retry from an empty data dir before
+        // surfacing an init failure; snapshots must never block correctness.
+        warnSnapshotFallback('snapshot restore failed');
+        this._snapshotLoaded = false;
+        try {
+          this._db = await createDb(undefined);
+          return;
+        } catch (coldErr) {
+          initError = coldErr;
+        }
+      }
       // v0.13.1: any PGLite.create() failure becomes actionable. v0.41.8.0
       // (#1340): the previous error hint hardcoded the macOS 26.3 link, but
       // the same crash shape can come from Bun's vfs (`/$$bunfs/root` is
       // read-only on older macOS + Bun 1.3.x, so PGLite can't extract its
       // pglite.data WASM payload). Route the hint by failure shape so
       // users get the right next step.
-      const original = stringifyPgliteInitError(err); // #2674
+      const original = stringifyPgliteInitError(initError); // #2674
       const verdict = classifyPgliteInitError(original);
       const wrapped = new Error(buildPgliteInitErrorMessage(verdict, original));
       // Release the lock so a fresh process can try again; leaking the lock
@@ -429,25 +538,7 @@ export class PGLiteEngine implements BrainEngine {
     // installs and modern brains.
     await this.applyForwardReferenceBootstrap();
 
-    // Resolve embedding dim/model from gateway. v0.37 fix wave: fallbacks
-    // track the canonical defaults in `ai/defaults.ts` (zeroentropyai:zembed-1
-    // / 1280d) instead of the stale v0.13 OpenAI literals, AND we store the
-    // full `provider:model` string in the DB config table — consumers like
-    // ze-switch, doctor, and recommendation-context expect the provider
-    // prefix. (Round-1 CDX-4 + A.8.)
-    let dims: number = DEFAULT_EMBEDDING_DIMENSIONS;
-    let model: string = DEFAULT_EMBEDDING_MODEL;
-    try {
-      // Keep the gateway lazy: its static closure is large, and evaluation inside
-      // this try/catch preserves the unconfigured-gateway default fallback.
-      const gw = await import('./ai/gateway.ts'); // engine-dynamic-import-ok
-      // Both accessors THROW when the gateway is unconfigured (they never
-      // return falsy), so the catch below is the only fallback path (#3461).
-      dims = gw.getEmbeddingDimensions();
-      model = gw.getEmbeddingModel();
-    } catch { /* gateway not configured — use defaults */ }
-
-    await this.db.exec(getPGLiteSchema(dims, model));
+    await this.db.exec(await resolveRenderedPgliteSchema());
 
     const { applied } = await runMigrations(this);
     if (applied > 0) {

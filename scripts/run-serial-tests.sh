@@ -41,10 +41,23 @@ echo "[serial-tests] running ${#files[@]} file(s), one bun process per file"
 fail_count=0
 failed_files=()
 for f in "${files[@]}"; do
-  if ! bun test --max-concurrency=1 --timeout=60000 "$f"; then
-    fail_count=$((fail_count + 1))
-    failed_files+=("$f")
-  fi
+  # Migration/bootstrap contracts must exercise a genuinely empty data dir;
+  # the pre-migrated snapshot would turn initSchema() into a no-op. Keep this
+  # list aligned with run-unit-shard.sh's cold-path classifier.
+  case "$f" in
+    test/*migrat*.serial.test.ts|test/*bootstrap*.serial.test.ts|test/unified-multimodal.serial.test.ts)
+      if ! GBRAIN_PGLITE_SNAPSHOT= bun test --max-concurrency=1 --timeout=60000 "$f"; then
+        fail_count=$((fail_count + 1))
+        failed_files+=("$f")
+      fi
+      ;;
+    *)
+      if ! bun test --max-concurrency=1 --timeout=60000 "$f"; then
+        fail_count=$((fail_count + 1))
+        failed_files+=("$f")
+      fi
+      ;;
+  esac
 done
 
 if [ "$fail_count" -gt 0 ]; then

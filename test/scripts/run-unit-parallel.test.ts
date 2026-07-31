@@ -244,3 +244,12 @@ describe('failing-on-purpose', () => {
     }
   });
 });
+
+describe('run-unit-parallel.sh heartbeat contracts', () => {
+  it('uses the single-value grep helper when snapshot batches emit no schema lines', () => {
+    const source = readFileSync(PARALLEL_SH_SRC, 'utf-8');
+    const body = source.match(/shard_pglite_init_count\(\) \{([\s\S]*?)\n\}/)?.[1] ?? '';
+    expect(body).toContain("grep_count 'Schema version");
+    expect(body).not.toContain('|| echo 0');
+  });
+});

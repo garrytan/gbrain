@@ -45,6 +45,7 @@ AGENTS.local.md
 
 # Tier 3 PGLite snapshot fixture (built on demand by build:pglite-snapshot)
 test/fixtures/pglite-snapshot.tar
+test/fixtures/pglite-snapshot.metadata.json
 test/fixtures/pglite-snapshot.version
 
 # Private brain reports — never check these in (per CLAUDE.md privacy rule)

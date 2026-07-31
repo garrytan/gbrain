@@ -9,12 +9,15 @@
 # prefixes, prints loud stderr banner if any failures, exit non-zero.
 #
 # Usage:
-#   bash scripts/run-unit-parallel.sh [--shards N] [--max-concurrency N] [--dry-run]
+#   bash scripts/run-unit-parallel.sh [--shards N] [--max-concurrency N] [--batch-size N] [--dry-run]
 #
 # Env overrides:
 #   SHARDS=N                     same as --shards
 #   GBRAIN_TEST_SHARD_TIMEOUT    per-shard wallclock cap, seconds (default 600)
 #   GBRAIN_TEST_MAX_CONCURRENCY  passed through to bun test (default 4)
+#   GBRAIN_TEST_BATCH_SIZE       files per recycled Bun process (default 10)
+#   GBRAIN_TEST_COLD_BATCH_SIZE  migration/bootstrap files per process (default 2)
+#   GBRAIN_PGLITE_SNAPSHOT=off   disable the local pre-migrated snapshot
 #
 # Output files (workspace-local; falls back to /tmp if .context/ unwritable):
 #   .context/test-failures.log   failure blocks (cleared at start)
@@ -42,6 +45,7 @@ detect_cpus() {
 # ──────────────────────────────────────────────────────────────────────────
 SHARDS_OVERRIDE=""
 MAX_CONCURRENCY_OVERRIDE=""
+BATCH_SIZE_OVERRIDE=""
 DRY_RUN=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -49,6 +53,8 @@ while [ $# -gt 0 ]; do
     --shards=*) SHARDS_OVERRIDE="${1#*=}"; shift ;;
     --max-concurrency) MAX_CONCURRENCY_OVERRIDE="$2"; shift 2 ;;
     --max-concurrency=*) MAX_CONCURRENCY_OVERRIDE="${1#*=}"; shift ;;
+    --batch-size) BATCH_SIZE_OVERRIDE="$2"; shift 2 ;;
+    --batch-size=*) BATCH_SIZE_OVERRIDE="${1#*=}"; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     *) echo "ERROR: unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -58,26 +64,23 @@ N="${SHARDS_OVERRIDE:-${SHARDS:-$(detect_cpus)}}"
 if ! printf '%s' "$N" | grep -qE '^[0-9]+$' || [ "$N" -lt 1 ]; then
   echo "ERROR: invalid shard count: $N" >&2; exit 2
 fi
-# v0.40.10 flake-hardening: clamp default to 4 (was 8) to match CI's
-# test-shard.sh fan-out. At 8-shard parallel on Apple Silicon we observed
-# shard 5 SIGKILL during source-health.test.ts's PGLite migration replay —
-# 8 parallel PGLite WASM inits contend severely on the lockfile, and the
-# 92-migration replay × 8 simultaneous can wedge past even 900s. CI uses
-# 4 and is stable. Trade ~2x wallclock for reliability + parity with CI's
-# fan-out. Override via --shards N or SHARDS=N (still capped at 8).
+# Memory-safe local default: four concurrent 10-file PGLite batches reached
+# 4.42 GiB and started swapping on a 12 GiB host. Three keeps the same fan-out
+# architecture while leaving cgroup headroom. Explicit overrides remain
+# available for larger CI hosts (hard-capped at 8).
 [ "$N" -gt 8 ] && N=8
-if [ -z "${SHARDS_OVERRIDE:-}" ] && [ -z "${SHARDS:-}" ] && [ "$N" -gt 4 ]; then
-  N=4
+if [ -z "${SHARDS_OVERRIDE:-}" ] && [ -z "${SHARDS:-}" ] && [ "$N" -gt 3 ]; then
+  N=3
 fi
 
 INTRA_CONC="${MAX_CONCURRENCY_OVERRIDE:-${GBRAIN_TEST_MAX_CONCURRENCY:-4}}"
-# v0.40.10 flake-hardening: bump per-shard cap 600 → 1500 (was 900). At
-# 4-shard default each shard runs 159 files / ~2420 tests with internal
-# wallclock 960-1020s. The 900s value (sized for 8-shard's ~80 files /
-# 1100 tests at 620-770s) false-killed shard 1 at 900s even though it
-# had completed in 968s. 1500s cap gives ~55% headroom over observed
-# 4-shard wallclock; real hangs still hit it. Override via
-# GBRAIN_TEST_SHARD_TIMEOUT=N.
+BATCH_SIZE="${BATCH_SIZE_OVERRIDE:-${GBRAIN_TEST_BATCH_SIZE:-10}}"
+if ! printf '%s' "$BATCH_SIZE" | grep -qE '^[0-9]+$' || [ "$BATCH_SIZE" -lt 1 ]; then
+  echo "ERROR: invalid batch size: $BATCH_SIZE" >&2; exit 2
+fi
+# Per-shard wallclock cap. Recycled processes add bounded startup overhead, so
+# retain the existing 1500s safety margin; real hangs still terminate here.
+# Override via GBRAIN_TEST_SHARD_TIMEOUT=N.
 SHARD_TIMEOUT="${GBRAIN_TEST_SHARD_TIMEOUT:-1500}"
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -109,7 +112,7 @@ elif command -v timeout >/dev/null 2>&1; then TIMEOUT_BIN="timeout"
 fi
 
 START_TS=$(date +%s)
-echo "[unit-parallel] N=$N shards | --max-concurrency=$INTRA_CONC | timeout=${SHARD_TIMEOUT}s | logs=$LOG_DIR" >&2
+echo "[unit-parallel] N=$N shards | batch-size=$BATCH_SIZE | --max-concurrency=$INTRA_CONC | timeout=${SHARD_TIMEOUT}s | logs=$LOG_DIR" >&2
 
 if [ "$DRY_RUN" = "1" ]; then
   echo "[unit-parallel] dry-run: would spawn $N shards with the above settings."
@@ -118,6 +121,23 @@ if [ "$DRY_RUN" = "1" ]; then
       | sed "s|^|  [s$i] |"
   done
   exit 0
+fi
+
+# Build one compatible pre-migrated fixture before fan-out. `ci-local` may
+# already provide an explicit path; direct/local `bun run test` gets the same
+# acceleration automatically. A build failure is fail-open because process
+# batching still bounds memory and snapshots are never authoritative.
+if [ "${GBRAIN_PGLITE_SNAPSHOT:-}" = "off" ]; then
+  unset GBRAIN_PGLITE_SNAPSHOT
+elif [ -z "${GBRAIN_PGLITE_SNAPSHOT:-}" ] && [ -f scripts/build-pglite-snapshot.ts ]; then
+  SNAPSHOT_LOG="$LOG_DIR/snapshot-build.log"
+  if bun run build:pglite-snapshot > "$SNAPSHOT_LOG" 2>&1; then
+    export GBRAIN_PGLITE_SNAPSHOT="test/fixtures/pglite-snapshot.tar"
+    echo "[unit-parallel] PGLite snapshot ready: $GBRAIN_PGLITE_SNAPSHOT" >&2
+  else
+    unset GBRAIN_PGLITE_SNAPSHOT
+    echo "[unit-parallel] WARN: snapshot build failed; continuing with cold init (log: $SNAPSHOT_LOG)" >&2
+  fi
 fi
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -131,12 +151,12 @@ for i in $(seq 1 "$N"); do
     if [ -n "$TIMEOUT_BIN" ]; then
       "$TIMEOUT_BIN" "${SHARD_TIMEOUT}s" \
         env SHARD="$i/$N" \
-        bash scripts/run-unit-shard.sh --max-concurrency="$INTRA_CONC" \
+        bash scripts/run-unit-shard.sh --max-concurrency="$INTRA_CONC" --batch-size="$BATCH_SIZE" \
         > "$SHARD_LOG" 2>&1
       rc=$?
     else
       env SHARD="$i/$N" \
-        bash scripts/run-unit-shard.sh --max-concurrency="$INTRA_CONC" \
+        bash scripts/run-unit-shard.sh --max-concurrency="$INTRA_CONC" --batch-size="$BATCH_SIZE" \
         > "$SHARD_LOG" 2>&1 &
       pid=$!
       ( sleep "$SHARD_TIMEOUT" && kill -TERM "$pid" 2>/dev/null && \
@@ -178,11 +198,8 @@ grep_count() {
   echo "${n:-0}"
 }
 
-# bun_summary_count: parses Bun's summary lines (one per `bun test` invocation
-# inside a shard — there's only one when we pass an explicit file list).
-# Looks for ` N pass` / ` N fail` / ` N skip` patterns and sums them across
-# all summary blocks the shard emitted. `bun test` prints these near the end
-# of its output. Format: leading whitespace + integer + space + label.
+# bun_summary_count: parses Bun's summary lines (one per recycled batch
+# invocation inside a shard) and sums them across all summary blocks.
 bun_summary_count() {
   local label="$1"; local file="$2"
   if [ ! -f "$file" ]; then echo 0; return; fi
@@ -205,6 +222,19 @@ shard_total_files() {
   echo "${n:-0}"
 }
 
+shard_total_batches() {
+  local file="$1"
+  [ -f "$file" ] || { echo 0; return; }
+  local n
+  n=$(sed -n 's/^\[unit-shard .*\] running [0-9][0-9]* files in \([0-9][0-9]*\) batch(es).*/\1/p' "$file" 2>/dev/null | head -1)
+  echo "${n:-0}"
+}
+
+shard_completed_batches() {
+  local file="$1"
+  grep_count '^Ran [0-9]+ tests across' "$file"
+}
+
 # shard_pglite_init_count: count "Schema version" lines as a proxy for "test
 # files initialized so far." Each PGLite-using test file's beforeAll triggers
 # one initSchema() which prints this. Undercounts because not every test file
@@ -213,8 +243,7 @@ shard_total_files() {
 # only a final shard-end summary).
 shard_pglite_init_count() {
   local file="$1"
-  [ -f "$file" ] || { echo 0; return; }
-  grep -cE 'Schema version [0-9]+ → [0-9]+' "$file" 2>/dev/null || echo 0
+  grep_count 'Schema version [0-9]+ → [0-9]+' "$file"
 }
 
 # log_size_kb: total stderr+stdout written by the shard so far. Strictly
@@ -259,16 +288,18 @@ heartbeat() {
         local lf="$LOG_DIR/shard-$i.log"
         if [ -f "$lf" ]; then
           # Bun's default reporter has no per-file progress markers, only a
-          # final shard-end summary, so we surface three complementary signals
-          # mid-run: (1) PGLite initSchema() count as a "files started" proxy,
-          # (2) total files this shard was assigned (from the runner banner),
-          # (3) log size in KB as a strictly-monotonic liveness signal.
+          # final shard-end summary, so we surface four complementary signals
+          # mid-run: (1) completed recycled batches, (2) PGLite cold
+          # initSchema() count, (3) total files assigned, and (4) log size in
+          # KB as a strictly-monotonic liveness signal.
           local total; total=$(shard_total_files "$lf")
+          local batches; batches=$(shard_total_batches "$lf")
+          local completed; completed=$(shard_completed_batches "$lf")
           local pglite; pglite=$(shard_pglite_init_count "$lf")
           local kb; kb=$(log_size_kb "$lf")
           local et; et=$(fmt_elapsed "$hb_elapsed")
           if [ "$total" -gt 0 ]; then
-            line="$line [s$i: ~${pglite}/${total}f ${kb}KB ${et}]"
+            line="$line [s$i: b${completed}/${batches} ~${pglite}/${total}f ${kb}KB ${et}]"
           else
             line="$line [s$i: starting ${kb}KB ${et}]"
           fi

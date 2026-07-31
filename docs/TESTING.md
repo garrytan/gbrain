@@ -11,13 +11,23 @@ Seven test command tiers, each with a clear scope:
 
 | Command | What it runs | Wallclock | When to use |
 |---|---|---|---|
-| `bun run test` | Parallel unit-test fast loop. 8-shard fan-out via `scripts/run-unit-parallel.sh`, then a serial pass over `*.serial.test.ts`. Excludes `*.slow.test.ts` and `test/e2e/*`. No pre-checks, no typecheck. | ~85s on a Mac dev box (3650+ tests) | Inner edit loop. Default. |
+| `bun run test` | Parallel unit-test fast loop. 3-shard fan-out via `scripts/run-unit-parallel.sh`; each shard recycles Bun after bounded file batches, then a serial pass over `*.serial.test.ts`. Excludes `*.slow.test.ts` and `test/e2e/*`. Builds and validates a pre-migrated PGLite snapshot before fan-out. No pre-checks, no typecheck. | Host-dependent | Inner edit loop. Default. |
 | `bun run verify` | CI's authoritative pre-test gate set, fanned out in parallel by `scripts/run-verify-parallel.sh`: the full `check:*` battery (~30 checks — privacy, jsonb, progress, source-id, test-isolation, wasm, …) plus `bun run typecheck`. The `CHECKS` array in that script is the single source of truth — CI literally calls `bun run verify` in a dedicated job. | ~16s (parallel; typecheck dominates) | Before pushing; before `/ship`. |
 | `bun run test:full` | `verify && bun run test && bun run test:slow && [smart e2e]`. The local equivalent of "everything CI runs." Smart e2e: runs e2e only when `DATABASE_URL` is set; else loud skip notice to stderr. | ~3-5min depending on slow + e2e | Pre-merge sanity, before opening a PR. |
 | `bun run test:slow` | Just the `*.slow.test.ts` set (intentional cold-path correctness checks). | seconds-to-minutes | When touching slow-path code. |
 | `bun run test:serial` | Just the `*.serial.test.ts` set (cross-file-contention quarantine; one bun process per file for true module-registry isolation). | ~1s per quarantined file | Debugging a specific quarantined file. |
 | `bun run test:e2e` | Real Postgres E2E. Requires Docker + `DATABASE_URL`. Sequential. | ~5-10min | Pre-ship; nightly. |
 | `bun run check:all` | The historical pre-check scripts (22, chained sequentially in package.json). Overlaps `verify` heavily but is NOT a superset — `verify`'s `CHECKS` array in `scripts/run-verify-parallel.sh` (~30 entries incl. typecheck) is the authoritative gate; `check:all` keeps a few local-only extras (trailing-newline, exports-count, no-legacy-getconnection). | ~10s | Local-only sweep for the extras. |
+
+#### Unit-runner memory controls
+
+The fast-loop runner limits retained PGLite/WASM memory in two complementary ways:
+
+- `GBRAIN_TEST_BATCH_SIZE` (default `10`) limits files per Bun process. The process exits after each batch so its WASM high-water memory returns to the OS. `--batch-size N` overrides it locally. Cold migration/bootstrap coverage uses the stricter `GBRAIN_TEST_COLD_BATCH_SIZE` (default `2`).
+- `run-unit-parallel.sh` builds `test/fixtures/pglite-snapshot.tar` once and exports `GBRAIN_PGLITE_SNAPSHOT` to all snapshot-safe batches. Metadata binds the tar checksum to the rendered embedding schema and migration handlers. Stale, corrupt, or profile-incompatible fixtures fall back to cold `initSchema()` with a warning.
+- Migration/bootstrap files run in dedicated cold batches with `GBRAIN_PGLITE_SNAPSHOT` cleared. Set `GBRAIN_PGLITE_SNAPSHOT=off` to force the complete fast loop cold for debugging.
+
+Snapshot files are generated and gitignored. Rebuild manually with `bun run build:pglite-snapshot`; the default builder profile matches `bun test` (`openai:text-embedding-3-large`, 1536 dimensions). Alternate controlled profiles may use `GBRAIN_PGLITE_SNAPSHOT_DIMS`, `GBRAIN_PGLITE_SNAPSHOT_MODEL`, and `GBRAIN_PGLITE_SNAPSHOT_PATH`.
 
 ### Shell dispatch and Windows
 

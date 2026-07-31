@@ -7,11 +7,11 @@
 // 1-3 seconds of cold init and load the post-schema state directly.
 //
 // Output: test/fixtures/pglite-snapshot.tar (binary, gitignored)
-//         test/fixtures/pglite-snapshot.version (hex SHA256 of MIGRATIONS SQL)
+//         test/fixtures/pglite-snapshot.metadata.json (gitignored)
 //
-// The version file lets the engine detect snapshot staleness — if the tar's
-// recorded version doesn't match the current MIGRATIONS hash, the engine
-// ignores the snapshot and runs a normal initSchema.
+// Metadata binds the tar checksum to the runtime-rendered test schema and full
+// migration semantics. A mismatch makes the engine ignore the snapshot and
+// run normal initSchema.
 //
 // Run: bun run scripts/build-pglite-snapshot.ts
 //      (or: bun run build:pglite-snapshot)
@@ -22,21 +22,31 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import * as crypto from "node:crypto";
 
-import { PGLiteEngine, computeSnapshotSchemaHash } from "../src/core/pglite-engine.ts";
+import { PGLiteEngine, createSnapshotMetadata } from "../src/core/pglite-engine.ts";
 import { MIGRATIONS } from "../src/core/migrate.ts";
-import { PGLITE_SCHEMA_SQL } from "../src/core/pglite-schema.ts";
-
-function computeSchemaHash(): string {
-  return computeSnapshotSchemaHash(MIGRATIONS, PGLITE_SCHEMA_SQL, crypto);
-}
+import { getPGLiteSchema } from "../src/core/pglite-schema.ts";
+import { configureGateway } from "../src/core/ai/gateway.ts";
 
 async function main() {
-  const fixturePath = "test/fixtures/pglite-snapshot.tar";
-  const versionPath = "test/fixtures/pglite-snapshot.version";
+  const fixturePath = process.env.GBRAIN_PGLITE_SNAPSHOT_PATH || "test/fixtures/pglite-snapshot.tar";
+  const replacedMetadataPath = fixturePath.replace(/\.tar(?:\.gz)?$/, ".metadata.json");
+  const metadataPath = replacedMetadataPath === fixturePath
+    ? `${fixturePath}.metadata.json`
+    : replacedMetadataPath;
   mkdirSync(dirname(fixturePath), { recursive: true });
 
-  const schemaHash = computeSchemaHash();
-  console.log(`[build-pglite-snapshot] schema hash: ${schemaHash.slice(0, 16)}...`);
+  // `bun run` does not load bunfig's test preload. Build explicitly with the
+  // same legacy profile used by `bun test`; tests that choose another profile
+  // receive a metadata mismatch and safely cold-initialize.
+  const dims = Number(process.env.GBRAIN_PGLITE_SNAPSHOT_DIMS || "1536");
+  const model = process.env.GBRAIN_PGLITE_SNAPSHOT_MODEL || "openai:text-embedding-3-large";
+  if (!Number.isInteger(dims) || dims <= 0) {
+    throw new Error(`invalid GBRAIN_PGLITE_SNAPSHOT_DIMS: ${process.env.GBRAIN_PGLITE_SNAPSHOT_DIMS}`);
+  }
+  configureGateway({ embedding_dimensions: dims, embedding_model: model, env: { ...process.env } });
+  const renderedSchema = getPGLiteSchema(dims, model);
+
+  console.log(`[build-pglite-snapshot] profile: ${model} / ${dims}d`);
   console.log(`[build-pglite-snapshot] booting PGLite (in-memory)...`);
   const engine = new PGLiteEngine();
 
@@ -53,12 +63,13 @@ async function main() {
   const dump = await engine.db.dumpDataDir("none");
   const buffer = Buffer.from(await dump.arrayBuffer());
 
+  const metadata = createSnapshotMetadata(buffer, MIGRATIONS, renderedSchema, crypto);
   writeFileSync(fixturePath, buffer);
-  writeFileSync(versionPath, schemaHash + "\n");
+  writeFileSync(metadataPath, JSON.stringify(metadata, null, 2) + "\n");
   await engine.disconnect();
 
   console.log(`[build-pglite-snapshot] wrote ${fixturePath} (${buffer.length} bytes)`);
-  console.log(`[build-pglite-snapshot] wrote ${versionPath}`);
+  console.log(`[build-pglite-snapshot] wrote ${metadataPath}`);
 }
 
 await main();
