@@ -1,0 +1,39 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {
+      "value": "eastus2"
+    },
+    "namePrefix": {
+      "value": "gbrain"
+    },
+    "postgresSkuName": {
+      "value": "Standard_B2s"
+    },
+    "postgresSkuTier": {
+      "value": "Burstable"
+    },
+    "postgresStorageGB": {
+      "value": 32
+    },
+    "workerReplicas": {
+      "value": 1
+    },
+    "deployApps": {
+      "value": false
+    },
+    "deployClaude": {
+      "value": false
+    },
+    "chatModel": {
+      "value": "anthropic:claude-sonnet-5"
+    },
+    "expansionModel": {
+      "value": "anthropic:claude-haiku-4-5"
+    },
+    "publicUrl": {
+      "value": ""
+    }
+  }
+}
