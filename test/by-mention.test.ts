@@ -579,12 +579,19 @@ describe('tokenizer boundaries — marks and non-ASCII numerics', () => {
     expect(tokenizeForScan('web3 and h2o').map(t => t.text)).toEqual(['web3', 'and', 'h2o']);
   });
 
-  test('Han Extension A stays on the char-level path, as it was before', () => {
-    // src/core/cjk.ts scopes Ext-A out of CJK_SLUG_CHARS repo-wide, but this
-    // module's walkers have always counted it as CJK. by-mention appends it to
-    // the shared class in one place so the tokenizer and the walkers agree.
-    expect(tokenizeForScan('㐀㐁').map(t => t.text)).toEqual(['㐀', '㐁']);
+  test('Han Extension A is no longer CJK here — aligned with cjk.ts scope', () => {
+    // Deliberate behaviour change. by-mention's walkers used to carry their
+    // own range copy covering Ext-A (U+3400–4DBF); cjk.ts scopes Ext-A out
+    // repo-wide, and this module now uses CJK_SLUG_CHARS verbatim. Ext-A
+    // therefore tokenizes as a word run instead of per character, and an
+    // Ext-A-only title is one sub-MIN_NAME_LENGTH token rather than N
+    // char-level ones. Search, chunking and slug grammar already ignore
+    // Ext-A, so this removes by-mention as the lone subsystem that disagreed.
+    expect(tokenizeForScan('㐀㐁').map(t => t.text)).toEqual(['㐀㐁']);
+    expect(tokenizeTitle('㐀㐁')).toEqual(['㐀㐁']);
+    // In-scope CJK is untouched: still char-level.
     expect(tokenizeTitle('纳瓦尔')).toEqual(['纳', '瓦', '尔']);
+    expect(tokenizeForScan('纳瓦尔说').map(t => t.text)).toEqual(['纳', '瓦', '尔', '说']);
   });
 });
 

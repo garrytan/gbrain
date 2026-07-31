@@ -109,21 +109,27 @@ export interface FindMentionsOpts {
  * The CJK character set this module treats as char-level, declared ONCE.
  *
  * `CJK_SLUG_CHARS` (src/core/cjk.ts) is the repo-wide single source of truth
- * — Han U+4E00–9FFF, Hiragana, Katakana, Hangul syllables. This module has
- * additionally always treated Han Extension A (U+3400–4DBF) as CJK in its
- * walkers, while cjk.ts scopes Ext-A out deliberately (see its header), so
- * Ext-A is named and appended here rather than widening the shared constant.
+ * — Han U+4E00–9FFF, Hiragana, Katakana, Hangul syllables — and this module
+ * now uses it verbatim.
+ *
+ * Note the deliberate behaviour change: the walkers here used to carry their
+ * own copy of the ranges that also covered Han Extension A (U+3400–4DBF),
+ * which cjk.ts scopes out repo-wide (see its header). Aligning on the shared
+ * constant means Ext-A characters are no longer treated as CJK by
+ * by-mention: they tokenize as word runs and, being a single sub-4-character
+ * token, an Ext-A-only entity title now falls below MIN_NAME_LENGTH instead
+ * of qualifying under MIN_CJK_NAME_LENGTH. Search, chunking and slug grammar
+ * already ignore Ext-A, so this makes by-mention consistent with them rather
+ * than being the one subsystem that disagrees.
  *
  * Everything below — TOKEN_RE, hasCJK(), cjkCharCount() and the two
- * per-character walkers — derives from this one declaration. There are no
- * other copies of the ranges in this file.
+ * per-character walkers — derives from this one import. There are no copies
+ * of the ranges in this file.
  */
-const HAN_EXT_A_CHARS = '㐀-䶿';
-const CJK_CHARS = `${CJK_SLUG_CHARS}${HAN_EXT_A_CHARS}`;
-const CJK_CHAR_RE = new RegExp(`^[${CJK_CHARS}]$`, 'u');
+const CJK_CHAR_RE = new RegExp(`^[${CJK_SLUG_CHARS}]$`, 'u');
 
 /**
- * Conservative code-point bounds for CJK_CHARS, derived from the range
+ * Conservative code-point bounds for CJK_SLUG_CHARS, derived from the range
  * string itself (strip the `-` separators and the remaining characters are
  * exactly the range endpoints) so they can never drift from it. Used only
  * as a cheap pre-filter — Latin/Vietnamese text short-circuits before the
@@ -132,7 +138,7 @@ const CJK_CHAR_RE = new RegExp(`^[${CJK_CHARS}]$`, 'u');
 const CJK_BOUNDS = ((): { min: number; max: number } => {
   let min = 0x10ffff;
   let max = 0;
-  for (const ch of CJK_CHARS.replace(/-/g, '')) {
+  for (const ch of CJK_SLUG_CHARS.replace(/-/g, '')) {
     const cp = ch.codePointAt(0)!;
     if (cp < min) min = cp;
     if (cp > max) max = cp;
@@ -172,12 +178,12 @@ function isCJKChar(ch: string): boolean {
  *    ADJACENT in the body — so a superscript between the words of
  *    "Acme Corp" would silently break a match that used to work.
  *  - Plain `u` flag, not `v`: the CJK exclusion is a negative lookahead
- *    over CJK_CHARS, the same construction src/core/think/gather.ts
+ *    over CJK_SLUG_CHARS, the same construction src/core/think/gather.ts
  *    already uses. No es2024 target requirement, no set-subtraction syntax.
  */
 const TOKEN_RE = new RegExp(
-  `(?![${CJK_CHARS}])[\\p{L}0-9]` +
-  `(?:(?![${CJK_CHARS}])[\\p{L}\\p{M}0-9])*`,
+  `(?![${CJK_SLUG_CHARS}])[\\p{L}0-9]` +
+  `(?:(?![${CJK_SLUG_CHARS}])[\\p{L}\\p{M}0-9])*`,
   'gu',
 );
 
