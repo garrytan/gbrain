@@ -9,7 +9,11 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { isAvailable, resetGateway } from '../src/core/ai/gateway.ts';
+import {
+  __unconfigureGatewayForTests,
+  isAvailable,
+  resetGateway,
+} from '../src/core/ai/gateway.ts';
 import { runExtractConversationFacts } from '../src/commands/extract-conversation-facts.ts';
 import { runEnrich } from '../src/commands/enrich.ts';
 
@@ -27,7 +31,10 @@ beforeEach(() => {
   }));
   process.env.GBRAIN_HOME = home;
   process.env.OPENAI_API_KEY = 'test-key';
-  resetGateway();
+  // Hard-unconfigure: this suite exists to exercise the COLD-gateway path
+  // (#2590), and resetGateway() now restores the preload's test baseline
+  // (#3554), which would make configureGatewayIfUninitialized a no-op.
+  __unconfigureGatewayForTests();
 });
 
 afterEach(() => {

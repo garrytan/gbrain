@@ -23,25 +23,46 @@ export const backLinkValidator: PageValidator = {
 
   async validate(ctx: PageValidationContext): Promise<ValidationFinding[]> {
     const findings: ValidationFinding[] = [];
+    const federatedSourceIds = ctx.sourceIds && ctx.sourceIds.length > 0
+      ? ctx.sourceIds
+      : undefined;
+    const outboundOpts = federatedSourceIds
+      ? { sourceIds: federatedSourceIds }
+      : ctx.sourceId
+        ? { sourceId: ctx.sourceId }
+        : undefined;
 
-    const outbound = await ctx.engine.getLinks(ctx.slug);
+    const outbound = await ctx.engine.getLinks(ctx.slug, outboundOpts);
     if (outbound.length === 0) return findings;
 
-    // Iron Law: if ctx.slug → target, target must ALSO link back to ctx.slug.
-    // We check target's outbound links; if none of them point at ctx.slug,
-    // the back-link is missing.
-    const uniqueTargets = new Set<string>();
-    for (const link of outbound) uniqueTargets.add(link.to_slug);
+    // A federated lookup can return same-slug origins and targets from several
+    // sources. Deduplicate only identical endpoint pairs; every distinct origin
+    // still needs its own exact reverse.
+    const uniqueEdges = new Map<string, typeof outbound[number]>();
+    for (const link of outbound) {
+      uniqueEdges.set(
+        `${link.from_source_id}\0${link.from_slug}\0${link.to_source_id}\0${link.to_slug}`,
+        link,
+      );
+    }
 
-    for (const target of uniqueTargets) {
-      const targetOutbound = await ctx.engine.getLinks(target);
-      const hasReverse = targetOutbound.some(l => l.to_slug === ctx.slug);
+    for (const target of uniqueEdges.values()) {
+      const targetOpts = federatedSourceIds
+        ? { sourceIds: federatedSourceIds }
+        : { sourceId: target.to_source_id };
+      const targetOutbound = await ctx.engine.getLinks(target.to_slug, targetOpts);
+      const hasReverse = targetOutbound.some(link =>
+        link.from_source_id === target.to_source_id
+        && link.from_slug === target.to_slug
+        && link.to_source_id === target.from_source_id
+        && link.to_slug === target.from_slug
+      );
       if (!hasReverse) {
         findings.push({
           slug: ctx.slug,
           validator: 'back-link',
           severity: 'warning',
-          message: `Outbound link to ${target} has no back-link (${target} does not reference ${ctx.slug}). runAutoLink should reconcile this on next put_page; flag for inspection.`,
+          message: `Outbound link to ${target.to_slug} has no back-link (${target.to_slug} does not reference ${ctx.slug}). runAutoLink should reconcile this on next put_page; flag for inspection.`,
         });
       }
     }

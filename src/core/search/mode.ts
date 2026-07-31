@@ -25,6 +25,7 @@
 
 import { createHash } from 'crypto';
 import { CR_MODES, type CRMode } from '../types.ts';
+import { getFtsLanguage } from '../fts-language.ts';
 import { getRecipe } from '../ai/recipes/index.ts';
 
 /**
@@ -766,7 +767,19 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // written between the #3391 stale-fix (which changes which chunks count as
 // current) and the operator's migration run. Same one-time global cold-miss
 // pattern as the bumps above.
-export const KNOBS_HASH_VERSION = 13;
+//
+// bump 14→15: the FTS configuration name (GBRAIN_FTS_LANGUAGE, resolved by
+// getFtsLanguage()) folds into the key via the `fts=` part. It reaches BOTH
+// engines' keyword SQL (websearch_to_tsquery/to_tsvector in postgres-engine
+// and pglite-engine) and the two search_vector trigger functions, so it
+// changes which rows the keyword arm returns — but it only applied at
+// DB-query build time (cache miss). Switching language and running
+// `gbrain reindex-search-vector` therefore left every pre-switch query_cache
+// row reachable: the freshly retokenized index was silently bypassed for up
+// to cache.ttl_seconds, with no warning and no way for an operator to tell.
+// Same one-time global cold-miss pattern as the bumps above; refills within
+// cache.ttl_seconds (3600s default).
+export const KNOBS_HASH_VERSION = 15;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -898,6 +911,16 @@ export function knobsHash(
     // across processes. Sorted copy so ['a/','b/'] and ['b/','a/'] hash
     // identically; undefined falls back to 'none' for legacy callers.
     `hx=${ctx?.hardExcludes ? [...ctx.hardExcludes].sort().join(',') : 'none'}`,
+    // v=15 addition (append-only): the resolved FTS configuration name. Read
+    // from getFtsLanguage() rather than threaded through KnobsHashContext on
+    // purpose — the language is a process-global env read with no per-call
+    // dimension, and the `prov=` bump note above records what threading costs:
+    // a ctx field only isolates callers that pass it, so legacy callers keep
+    // hashing the fallback literal on both sides of a switch. Reading it here
+    // covers every knobsHash() caller, present and future. getFtsLanguage()
+    // memoizes and validates against /^[a-z][a-z0-9_]*$/, so this stays a
+    // cheap, bounded string.
+    `fts=${getFtsLanguage()}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));

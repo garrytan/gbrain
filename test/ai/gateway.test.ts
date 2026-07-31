@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
 import {
   configureGateway,
   resetGateway,
+  __unconfigureGatewayForTests,
   isAvailable,
   embed,
   getEmbeddingModel,
@@ -55,6 +56,9 @@ describe('gateway.isAvailable (silent-drop regression surface)', () => {
   beforeEach(() => resetGateway());
 
   test('returns false when gateway not configured', () => {
+    // resetGateway() restores the preload's test baseline (#3554); go
+    // genuinely unconfigured for this one assertion.
+    __unconfigureGatewayForTests();
     expect(isAvailable('embedding')).toBe(false);
   });
 

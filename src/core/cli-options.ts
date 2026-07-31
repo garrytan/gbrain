@@ -51,9 +51,29 @@ export const DEFAULT_CLI_OPTIONS: CliOptions = {
  *
  * Unknown flags are passed through unchanged — per-command parsers see them.
  */
+/**
+ * #3013: commands that parse their own `--timeout` flag out of argv.
+ * `sync` reads a seconds-based graceful-abort budget (src/commands/sync.ts +
+ * resolveSyncHardDeadline); `remote` reads a ms-based request budget
+ * (src/commands/remote.ts). For these commands the global parser must hand
+ * the flag back: claiming it stripped the flag before the per-command parser
+ * could read it, and — for `sync` — a non-null global timeoutMs flipped the
+ * read-only dispatch gate in cli.ts, rerouting a write command into
+ * dispatchReadOnlyCommand (exit 1 before any work ran).
+ */
+export const TIMEOUT_OWNING_COMMANDS = new Set(['sync', 'remote']);
+
 export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: string[] } {
   const cliOpts: CliOptions = { ...DEFAULT_CLI_OPTIONS };
-  const rest: string[] = [];
+  // #3013: --timeout can't be resolved inline — whether the GLOBAL parser
+  // claims it depends on which command is running, and the command token is
+  // only known once the whole argv has been scanned (global flags may precede
+  // it). The scan collects positional slots; --timeout slots are resolved in
+  // a second pass below.
+  type Slot =
+    | { plain: string }
+    | { timeoutValue: string; equalsForm: boolean };
+  const slots: Slot[] = [];
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -74,7 +94,7 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
         continue;
       }
       // not a number — let per-command parser handle; pass through
-      rest.push(a);
+      slots.push({ plain: a });
       continue;
     }
     if (a.startsWith('--progress-interval=')) {
@@ -84,29 +104,20 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
         cliOpts.progressInterval = parsed;
         continue;
       }
-      rest.push(a);
+      slots.push({ plain: a });
       continue;
     }
     // v0.31.1: --timeout=Ns or --timeout Ns. Accepts plain ms, "30s", "2m".
-    if (a === '--timeout' && i + 1 < argv.length) {
-      const next = argv[i + 1];
-      const parsed = parseTimeout(next);
-      if (parsed !== null) {
-        cliOpts.timeoutMs = parsed;
-        i++;
-        continue;
-      }
-      rest.push(a);
+    // A following token that is itself a flag is NOT a value — leave it for
+    // its own iteration (pre-#3013 behavior: an unparseable next token was
+    // never consumed).
+    if (a === '--timeout' && i + 1 < argv.length && !argv[i + 1].startsWith('-')) {
+      slots.push({ timeoutValue: argv[i + 1], equalsForm: false });
+      i++;
       continue;
     }
     if (a.startsWith('--timeout=')) {
-      const val = a.slice('--timeout='.length);
-      const parsed = parseTimeout(val);
-      if (parsed !== null) {
-        cliOpts.timeoutMs = parsed;
-        continue;
-      }
-      rest.push(a);
+      slots.push({ timeoutValue: a.slice('--timeout='.length), equalsForm: true });
       continue;
     }
     // v0.40.4 — --explain for `gbrain search/query` per-stage attribution.
@@ -114,8 +125,49 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
       cliOpts.explain = true;
       continue;
     }
-    rest.push(a);
+    slots.push({ plain: a });
   }
+
+  // The command is the first plain token (matches `command = rest[0]` in
+  // cli.ts). If it owns --timeout, every --timeout is handed back in the
+  // space-separated spelling (the only form the owning parsers read; this
+  // also normalizes `--timeout=60s`), value verbatim so the owning command
+  // applies its own unit + validity rules (`sync`: bare integers are
+  // SECONDS, `ms`/fractional rejected loudly; `remote` accepts `h`).
+  // Handed-back flags are APPENDED after every other token: both owning
+  // commands treat leading args as positional subcommands (`sync trigger`,
+  // `remote ping`) and locate --timeout by scanning args, so appending can't
+  // shadow a subcommand while duplicate flags keep their argv order (the
+  // owning parsers' first-occurrence-wins precedence matches what the user
+  // typed). Non-owning commands keep the pre-#3013 global behavior:
+  // parseable values are claimed into cliOpts.timeoutMs (last one wins),
+  // unparseable ones pass through in their original spelling for the
+  // per-command parser.
+  const commandSlot = slots.find((s): s is { plain: string } => 'plain' in s);
+  const commandOwnsTimeout =
+    commandSlot !== undefined && TIMEOUT_OWNING_COMMANDS.has(commandSlot.plain);
+
+  const rest: string[] = [];
+  const handback: string[] = [];
+  for (const s of slots) {
+    if ('plain' in s) {
+      rest.push(s.plain);
+      continue;
+    }
+    if (commandOwnsTimeout) {
+      handback.push('--timeout', s.timeoutValue);
+      continue;
+    }
+    const parsed = parseTimeout(s.timeoutValue);
+    if (parsed !== null) {
+      cliOpts.timeoutMs = parsed;
+    } else if (s.equalsForm) {
+      rest.push(`--timeout=${s.timeoutValue}`);
+    } else {
+      rest.push('--timeout', s.timeoutValue);
+    }
+  }
+  rest.push(...handback);
 
   return { cliOpts, rest };
 }

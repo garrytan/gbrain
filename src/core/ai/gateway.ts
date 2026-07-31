@@ -642,8 +642,42 @@ function warnRecipesMissingBatchTokens(): void {
   }
 }
 
-/** Reset (for tests). */
-export function resetGateway(): void {
+/**
+ * Test-only reset baseline (#3554). The bunfig preload
+ * (`test/helpers/legacy-embedding-preload.ts`) pins the gateway to the legacy
+ * OpenAI/1536 config at process start, but `resetGateway()` used to wipe that
+ * pin to `_config = null`. The next test file's engine connect then
+ * reconfigured from the SHIPPED default (zembed-1 @ 1280) and every 1536-d
+ * fixture in that file exploded with `expected 1280 dimensions, not 1536` —
+ * a cross-file mine whose placement depended on shard bin-packing.
+ *
+ * When a baseline factory is registered, `resetGateway()` means "back to the
+ * test baseline" instead of "unconfigured": it clears everything as before,
+ * then re-applies the factory's config via `configureGateway()`. A factory
+ * (not a frozen config) so each re-application captures fresh
+ * `process.env`, matching the preload's original `applyLegacy()` semantics.
+ *
+ * Production is untouched: nothing in `src/` calls `resetGateway()` or this
+ * setter, so in production the baseline is never registered and
+ * `resetGateway()` still fully unconfigures. Same `__*ForTests` seam
+ * convention as `__setEmbedTransportForTests` above.
+ */
+let _resetBaseline: (() => AIGatewayConfig) | null = null;
+
+/**
+ * Register (or clear, with `null`) the config factory that `resetGateway()`
+ * re-applies. Called once by the bunfig test preload.
+ *
+ * @internal exported for tests; not part of the public gateway API.
+ */
+export function __setGatewayResetBaselineForTests(
+  factory: (() => AIGatewayConfig) | null,
+): void {
+  _resetBaseline = factory;
+}
+
+/** Clear every piece of module state. Shared by both reset flavors. */
+function clearGatewayState(): void {
   _config = null;
   _modelCache.clear();
   _shrinkState.clear();
@@ -653,6 +687,33 @@ export function resetGateway(): void {
   _chatTransport = null;
   _warnedRecipes.clear();
   _extendedModels.clear();
+}
+
+/**
+ * Reset (for tests). Clears all module state (config, model cache, shrink
+ * state, transports, warned recipes, extended models), then — if a test
+ * baseline is registered — re-applies it so the gateway returns to the
+ * process-wide test default instead of an unconfigured limbo (#3554).
+ */
+export function resetGateway(): void {
+  clearGatewayState();
+  // configureGateway re-clears _modelCache/_shrinkState/_extendedModels and
+  // registers the baseline's models; transports are NOT touched by it, so a
+  // stale test transport can never leak back in through this path.
+  if (_resetBaseline) configureGateway(_resetBaseline());
+}
+
+/**
+ * Reset AND stay unconfigured, ignoring any registered baseline. For the
+ * handful of tests that assert genuine no-gateway behavior
+ * (`no_gateway_config` diagnosis, `isAvailable() === false`, graceful
+ * degradation paths). The preload's per-test beforeEach restores the
+ * baseline before the next test, so this cannot leak across tests.
+ *
+ * @internal exported for tests; not part of the public gateway API.
+ */
+export function __unconfigureGatewayForTests(): void {
+  clearGatewayState();
 }
 
 /**

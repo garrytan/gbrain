@@ -282,12 +282,19 @@ describe('shell-audit: computeAuditFilename', () => {
 
 describe('shell-audit: write', () => {
   let tmpDir: string;
+  // #3554-sibling: the audit-dir preload sets GBRAIN_AUDIT_DIR once at
+  // process start; deleting it here (instead of restoring) let every file
+  // AFTER this one in the shard write audit fixtures to the operator's
+  // real ~/.gbrain/audit/ — and failed audit-dir-preload.test.ts whenever
+  // bin-packing placed it later in the shard. Restore the prior value.
+  const priorAuditDir = process.env.GBRAIN_AUDIT_DIR;
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shell-audit-test-'));
     process.env.GBRAIN_AUDIT_DIR = tmpDir;
   });
   afterAll(() => {
-    delete process.env.GBRAIN_AUDIT_DIR;
+    if (priorAuditDir === undefined) delete process.env.GBRAIN_AUDIT_DIR;
+    else process.env.GBRAIN_AUDIT_DIR = priorAuditDir;
   });
 
   test('GBRAIN_AUDIT_DIR env override resolves to the custom dir', () => {

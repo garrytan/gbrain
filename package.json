@@ -48,7 +48,8 @@
     "check:system-of-record": "bash scripts/check-system-of-record.sh",
     "check:admin-scope-drift": "bash scripts/check-admin-scope-drift.sh",
     "check:cli-exec": "bash scripts/check-cli-executable.sh",
-    "check:all": "bash scripts/check-privacy.sh && bash scripts/check-proposal-pii.sh && bash scripts/check-test-real-names.sh && bash scripts/check-jsonb-pattern.sh && bash scripts/check-source-id-projection.sh && bash scripts/check-source-config-leak.sh && bash scripts/check-progress-to-stdout.sh && bash scripts/check-no-tracked-symlinks.sh && bash scripts/check-no-legacy-getconnection.sh && bash scripts/check-test-isolation.sh && bash scripts/check-trailing-newline.sh && bash scripts/check-wasm-embedded.sh && bash scripts/check-exports-count.sh && bash scripts/check-admin-build.sh && bash scripts/check-admin-scope-drift.sh && bash scripts/check-cli-executable.sh && bash scripts/check-skill-brain-first.sh && bash scripts/check-operations-filter-bypass.sh && bash scripts/check-gateway-routed-no-direct-anthropic.sh && bash scripts/check-worker-pool-atomicity.sh && bash scripts/check-key-files-current-state.sh && bash scripts/check-no-double-retry.sh && bash scripts/check-batch-audit-site.sh",
+    "check:engine-dynamic-import": "bash scripts/check-engine-dynamic-import.sh",
+    "check:all": "bash scripts/check-privacy.sh && bash scripts/check-proposal-pii.sh && bash scripts/check-test-real-names.sh && bash scripts/check-jsonb-pattern.sh && bash scripts/check-source-id-projection.sh && bash scripts/check-source-config-leak.sh && bash scripts/check-progress-to-stdout.sh && bash scripts/check-no-tracked-symlinks.sh && bash scripts/check-no-legacy-getconnection.sh && bash scripts/check-test-isolation.sh && bash scripts/check-trailing-newline.sh && bash scripts/check-wasm-embedded.sh && bash scripts/check-exports-count.sh && bash scripts/check-admin-build.sh && bash scripts/check-admin-scope-drift.sh && bash scripts/check-cli-executable.sh && bash scripts/check-skill-brain-first.sh && bash scripts/check-operations-filter-bypass.sh && bash scripts/check-gateway-routed-no-direct-anthropic.sh && bash scripts/check-worker-pool-atomicity.sh && bash scripts/check-key-files-current-state.sh && bash scripts/check-no-double-retry.sh && bash scripts/check-batch-audit-site.sh && bash scripts/check-engine-dynamic-import.sh",
     "check:gateway-routed": "bash scripts/check-gateway-routed-no-direct-anthropic.sh",
     "check:worker-pool-atomicity": "bash scripts/check-worker-pool-atomicity.sh",
     "check:doc-history": "bash scripts/check-key-files-current-state.sh",
@@ -146,7 +147,7 @@
     "bun": ">=1.3.10"
   },
   "license": "MIT",
-  "version": "0.42.67.0",
+  "version": "0.42.68.1",
   "overrides": {
     "@hono/node-server": "^2.0.5",
     "fast-uri": "^3.1.4",

@@ -81,6 +81,11 @@ function copyFixturesIntoTempWorkspace(): Workspace {
 
 let workspace: Workspace;
 
+// Restore (not delete) after each test: the audit-dir preload sets
+// GBRAIN_AUDIT_DIR once at process start, and deleting it leaks the
+// operator's real ~/.gbrain/audit/ to every later file in the shard.
+const priorAuditDir = process.env.GBRAIN_AUDIT_DIR;
+
 beforeEach(() => {
   workspace = copyFixturesIntoTempWorkspace();
   // Redirect audit dir to the tempdir so the snapshot file doesn't pollute
@@ -89,7 +94,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  delete process.env.GBRAIN_AUDIT_DIR;
+  if (priorAuditDir === undefined) delete process.env.GBRAIN_AUDIT_DIR;
+  else process.env.GBRAIN_AUDIT_DIR = priorAuditDir;
   workspace.cleanup();
 });
 

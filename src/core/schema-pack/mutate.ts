@@ -497,11 +497,18 @@ export interface AddTypeOpts {
   aliases?: string[];
 }
 
-export async function addTypeToPack(packName: string, opts: AddTypeOpts, mutateOpts: MutateOpts = {}): Promise<MutateResult> {
+// Each `build*Mutator` below does the primitive's up-front (file-free,
+// lock-free) shape validation and returns the pure `(current) => next`
+// transform. The public async functions wrap the builder with
+// `withMutation` for the single-mutation (CLI) path; `applyMutationsAtomic`
+// (batch path, below) reuses the SAME builders so single-call and batched
+// mutations can never drift in what they accept or reject.
+
+function buildAddTypeMutator(opts: AddTypeOpts): (m: SchemaPackManifest) => SchemaPackManifest {
   validateTypeName(opts.name);
   validatePrimitive(opts.primitive);
   validatePrefix(opts.prefix);
-  return withMutation(packName, mutateOpts, (m) => {
+  return (m) => {
     if (m.page_types.some((pt) => pt.name === opts.name)) {
       throw new SchemaPackMutationError(
         'TYPE_EXISTS',
@@ -518,16 +525,24 @@ export async function addTypeToPack(packName: string, opts: AddTypeOpts, mutateO
       expert_routing: opts.expertRouting ?? false,
     };
     return { ...m, page_types: [...m.page_types, newType] };
-  }, 'add_type', { type: opts.name, prefix: opts.prefix });
+  };
 }
 
-export async function removeTypeFromPack(packName: string, name: string, mutateOpts: MutateOpts = {}): Promise<MutateResult> {
+export async function addTypeToPack(packName: string, opts: AddTypeOpts, mutateOpts: MutateOpts = {}): Promise<MutateResult> {
+  return withMutation(packName, mutateOpts, buildAddTypeMutator(opts), 'add_type', { type: opts.name, prefix: opts.prefix });
+}
+
+function buildRemoveTypeMutator(name: string): (m: SchemaPackManifest) => SchemaPackManifest {
   validateTypeName(name);
-  return withMutation(packName, mutateOpts, (m) => {
+  return (m) => {
     findType(m, name);  // throws TYPE_NOT_FOUND if missing
     checkNoReferences(m, name);  // codex C14
     return { ...m, page_types: m.page_types.filter((t) => t.name !== name) };
-  }, 'remove_type', { type: name });
+  };
+}
+
+export async function removeTypeFromPack(packName: string, name: string, mutateOpts: MutateOpts = {}): Promise<MutateResult> {
+  return withMutation(packName, mutateOpts, buildRemoveTypeMutator(name), 'remove_type', { type: name });
 }
 
 export interface UpdateTypeOpts {
@@ -535,56 +550,76 @@ export interface UpdateTypeOpts {
   patch: Partial<Omit<PackPageType, 'name'>>;
 }
 
-export async function updateTypeOnPack(packName: string, opts: UpdateTypeOpts, mutateOpts: MutateOpts = {}): Promise<MutateResult> {
+function buildUpdateTypeMutator(opts: UpdateTypeOpts): (m: SchemaPackManifest) => SchemaPackManifest {
   validateTypeName(opts.name);
   if (opts.patch.primitive !== undefined) validatePrimitive(opts.patch.primitive);
-  return withMutation(packName, mutateOpts, (m) => {
+  return (m) => {
     const existing = findType(m, opts.name);
     const updated: PackPageType = { ...existing, ...opts.patch, name: existing.name };
     return { ...m, page_types: m.page_types.map((t) => (t.name === opts.name ? updated : t)) };
-  }, 'update_type', { type: opts.name });
+  };
 }
 
-export async function addAliasToType(packName: string, typeName: string, alias: string, mutateOpts: MutateOpts = {}): Promise<MutateResult> {
+export async function updateTypeOnPack(packName: string, opts: UpdateTypeOpts, mutateOpts: MutateOpts = {}): Promise<MutateResult> {
+  return withMutation(packName, mutateOpts, buildUpdateTypeMutator(opts), 'update_type', { type: opts.name });
+}
+
+function buildAddAliasMutator(typeName: string, alias: string): (m: SchemaPackManifest) => SchemaPackManifest {
   validateTypeName(typeName);
   validateTypeName(alias);
-  return withMutation(packName, mutateOpts, (m) => {
+  return (m) => {
     const t = findType(m, typeName);
     if (t.aliases.includes(alias)) return m;  // idempotent
     const next: PackPageType = { ...t, aliases: [...t.aliases, alias] };
     return { ...m, page_types: m.page_types.map((pt) => (pt.name === typeName ? next : pt)) };
-  }, 'add_alias', { type: typeName });
+  };
 }
 
-export async function removeAliasFromType(packName: string, typeName: string, alias: string, mutateOpts: MutateOpts = {}): Promise<MutateResult> {
+export async function addAliasToType(packName: string, typeName: string, alias: string, mutateOpts: MutateOpts = {}): Promise<MutateResult> {
+  return withMutation(packName, mutateOpts, buildAddAliasMutator(typeName, alias), 'add_alias', { type: typeName });
+}
+
+function buildRemoveAliasMutator(typeName: string, alias: string): (m: SchemaPackManifest) => SchemaPackManifest {
   validateTypeName(typeName);
-  return withMutation(packName, mutateOpts, (m) => {
+  return (m) => {
     const t = findType(m, typeName);
     if (!t.aliases.includes(alias)) return m;  // idempotent
     const next: PackPageType = { ...t, aliases: t.aliases.filter((a) => a !== alias) };
     return { ...m, page_types: m.page_types.map((pt) => (pt.name === typeName ? next : pt)) };
-  }, 'remove_alias', { type: typeName });
+  };
 }
 
-export async function addPrefixToType(packName: string, typeName: string, prefix: string, mutateOpts: MutateOpts = {}): Promise<MutateResult> {
+export async function removeAliasFromType(packName: string, typeName: string, alias: string, mutateOpts: MutateOpts = {}): Promise<MutateResult> {
+  return withMutation(packName, mutateOpts, buildRemoveAliasMutator(typeName, alias), 'remove_alias', { type: typeName });
+}
+
+function buildAddPrefixMutator(typeName: string, prefix: string): (m: SchemaPackManifest) => SchemaPackManifest {
   validateTypeName(typeName);
   validatePrefix(prefix);
-  return withMutation(packName, mutateOpts, (m) => {
+  return (m) => {
     const t = findType(m, typeName);
     if (t.path_prefixes.includes(prefix)) return m;
     const next: PackPageType = { ...t, path_prefixes: [...t.path_prefixes, prefix] };
     return { ...m, page_types: m.page_types.map((pt) => (pt.name === typeName ? next : pt)) };
-  }, 'add_prefix', { type: typeName, prefix });
+  };
 }
 
-export async function removePrefixFromType(packName: string, typeName: string, prefix: string, mutateOpts: MutateOpts = {}): Promise<MutateResult> {
+export async function addPrefixToType(packName: string, typeName: string, prefix: string, mutateOpts: MutateOpts = {}): Promise<MutateResult> {
+  return withMutation(packName, mutateOpts, buildAddPrefixMutator(typeName, prefix), 'add_prefix', { type: typeName, prefix });
+}
+
+function buildRemovePrefixMutator(typeName: string, prefix: string): (m: SchemaPackManifest) => SchemaPackManifest {
   validateTypeName(typeName);
-  return withMutation(packName, mutateOpts, (m) => {
+  return (m) => {
     const t = findType(m, typeName);
     if (!t.path_prefixes.includes(prefix)) return m;
     const next: PackPageType = { ...t, path_prefixes: t.path_prefixes.filter((p) => p !== prefix) };
     return { ...m, page_types: m.page_types.map((pt) => (pt.name === typeName ? next : pt)) };
-  }, 'remove_prefix', { type: typeName, prefix });
+  };
+}
+
+export async function removePrefixFromType(packName: string, typeName: string, prefix: string, mutateOpts: MutateOpts = {}): Promise<MutateResult> {
+  return withMutation(packName, mutateOpts, buildRemovePrefixMutator(typeName, prefix), 'remove_prefix', { type: typeName, prefix });
 }
 
 export interface AddLinkTypeOpts {
@@ -593,11 +628,11 @@ export interface AddLinkTypeOpts {
   inference?: { regex?: string; page_type?: string; target_type?: string };
 }
 
-export async function addLinkTypeToPack(packName: string, opts: AddLinkTypeOpts, mutateOpts: MutateOpts = {}): Promise<MutateResult> {
+function buildAddLinkTypeMutator(opts: AddLinkTypeOpts): (m: SchemaPackManifest) => SchemaPackManifest {
   if (typeof opts.name !== 'string' || opts.name.length === 0) {
     throw new SchemaPackMutationError('INVALID_RESULT', `link_type.name is required`);
   }
-  return withMutation(packName, mutateOpts, (m) => {
+  return (m) => {
     if (m.link_types.some((lt) => lt.name === opts.name)) {
       throw new SchemaPackMutationError(
         'TYPE_EXISTS',
@@ -611,11 +646,15 @@ export async function addLinkTypeToPack(packName: string, opts: AddLinkTypeOpts,
       ...(opts.inference ? { inference: opts.inference } : {}),
     } as PackLinkType;
     return { ...m, link_types: [...m.link_types, newLink] };
-  }, 'add_link_type', { type: opts.name });
+  };
 }
 
-export async function removeLinkTypeFromPack(packName: string, linkName: string, mutateOpts: MutateOpts = {}): Promise<MutateResult> {
-  return withMutation(packName, mutateOpts, (m) => {
+export async function addLinkTypeToPack(packName: string, opts: AddLinkTypeOpts, mutateOpts: MutateOpts = {}): Promise<MutateResult> {
+  return withMutation(packName, mutateOpts, buildAddLinkTypeMutator(opts), 'add_link_type', { type: opts.name });
+}
+
+function buildRemoveLinkTypeMutator(linkName: string): (m: SchemaPackManifest) => SchemaPackManifest {
+  return (m) => {
     if (!m.link_types.some((lt) => lt.name === linkName)) {
       throw new SchemaPackMutationError(
         'TYPE_NOT_FOUND',
@@ -633,7 +672,11 @@ export async function removeLinkTypeFromPack(packName: string, linkName: string,
       );
     }
     return { ...m, link_types: m.link_types.filter((lt) => lt.name !== linkName) };
-  }, 'remove_link_type', { type: linkName });
+  };
+}
+
+export async function removeLinkTypeFromPack(packName: string, linkName: string, mutateOpts: MutateOpts = {}): Promise<MutateResult> {
+  return withMutation(packName, mutateOpts, buildRemoveLinkTypeMutator(linkName), 'remove_link_type', { type: linkName });
 }
 
 export async function setExtractableOnType(packName: string, typeName: string, value: boolean, mutateOpts: MutateOpts = {}): Promise<MutateResult> {
@@ -642,4 +685,220 @@ export async function setExtractableOnType(packName: string, typeName: string, v
 
 export async function setExpertRoutingOnType(packName: string, typeName: string, value: boolean, mutateOpts: MutateOpts = {}): Promise<MutateResult> {
   return updateTypeOnPack(packName, { name: typeName, patch: { expert_routing: value } }, { ...mutateOpts });
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Atomic batch application (issue #2581) — one lock, one file read, one
+// write. `schema_apply_mutations` used to loop over these same primitives
+// and let each one independently read/validate/WRITE the pack file, so a
+// batch that failed partway left every earlier mutation permanently on
+// disk even though the op is documented as all-or-nothing. Here every
+// mutation in the batch is applied + lint-validated against an IN-MEMORY
+// manifest only; `writePackManifest` is called at most once, after every
+// mutation in the batch has been proven valid. A failure at any index
+// therefore leaves the pack file byte-identical to its pre-batch state —
+// partial application is structurally impossible, not just cleaned up
+// after the fact.
+// ────────────────────────────────────────────────────────────────────────
+
+export interface BatchMutationRequest {
+  op: string;
+  [key: string]: unknown;
+}
+
+export interface BatchMutationResult {
+  index: number;
+  op: string;
+  pack: string;
+  path: string;
+  format: PackFileFormat;
+  /** sha8 of the manifest immediately before this mutation (chained). */
+  prev_sha8: string;
+  /** sha8 of the manifest immediately after this mutation (chained). */
+  new_sha8: string;
+}
+
+/**
+ * Resolve one batch entry to its pure mutator + audit context, reusing the
+ * exact same `build*Mutator` a single-mutation call would use. Throws
+ * `SchemaPackMutationError('INVALID_RESULT', ...)` for an unrecognized
+ * `op`, matching the pre-existing single-mutation shape-validation
+ * contract: this runs before the file is touched, so it is deliberately
+ * NOT audit-logged here (mirrors `addTypeToPack` etc. throwing from their
+ * own up-front `validate*` calls, before `withMutation` ever starts).
+ */
+function buildBatchMutator(
+  m: BatchMutationRequest,
+  index: number,
+): { mutate: (current: SchemaPackManifest) => SchemaPackManifest; auditContext: { type?: string; prefix?: string } } {
+  switch (m.op) {
+    case 'add_type':
+      return {
+        mutate: buildAddTypeMutator({
+          name: m.name as string,
+          primitive: m.primitive as never,
+          prefix: m.prefix as string,
+          extractable: m.extractable as boolean | undefined,
+          expertRouting: m.expert_routing as boolean | undefined,
+          aliases: m.aliases as string[] | undefined,
+        }),
+        auditContext: { type: m.name as string, prefix: m.prefix as string },
+      };
+    case 'remove_type':
+      return { mutate: buildRemoveTypeMutator(m.name as string), auditContext: { type: m.name as string } };
+    case 'update_type':
+      return {
+        mutate: buildUpdateTypeMutator({ name: m.name as string, patch: (m.patch as object) ?? {} }),
+        auditContext: { type: m.name as string },
+      };
+    case 'add_alias':
+      return { mutate: buildAddAliasMutator(m.type as string, m.alias as string), auditContext: { type: m.type as string } };
+    case 'remove_alias':
+      return { mutate: buildRemoveAliasMutator(m.type as string, m.alias as string), auditContext: { type: m.type as string } };
+    case 'add_prefix':
+      return {
+        mutate: buildAddPrefixMutator(m.type as string, m.prefix as string),
+        auditContext: { type: m.type as string, prefix: m.prefix as string },
+      };
+    case 'remove_prefix':
+      return {
+        mutate: buildRemovePrefixMutator(m.type as string, m.prefix as string),
+        auditContext: { type: m.type as string, prefix: m.prefix as string },
+      };
+    case 'add_link_type':
+      return {
+        mutate: buildAddLinkTypeMutator({
+          name: m.name as string,
+          inverse: m.inverse as string | undefined,
+          inference: m.inference as { regex?: string; page_type?: string; target_type?: string } | undefined,
+        }),
+        auditContext: { type: m.name as string },
+      };
+    case 'remove_link_type':
+      return { mutate: buildRemoveLinkTypeMutator(m.name as string), auditContext: { type: m.name as string } };
+    case 'set_extractable':
+      return {
+        mutate: buildUpdateTypeMutator({ name: m.type as string, patch: { extractable: m.value as boolean } }),
+        auditContext: { type: m.type as string },
+      };
+    case 'set_expert_routing':
+      return {
+        mutate: buildUpdateTypeMutator({ name: m.type as string, patch: { expert_routing: m.value as boolean } }),
+        auditContext: { type: m.type as string },
+      };
+    default:
+      throw new SchemaPackMutationError('INVALID_RESULT', `unknown mutation op: '${m.op}' at index ${index}`, { index, op: m.op });
+  }
+}
+
+export async function applyMutationsAtomic(
+  packName: string,
+  mutations: BatchMutationRequest[],
+  opts: MutateOpts,
+): Promise<BatchMutationResult[]> {
+  const actor: MutationActor = opts.actor ?? 'cli';
+  const firstOp = (mutations[0]?.op as MutationOp) ?? 'add_type';
+
+  // Bundled-pack guard, same as withMutation step 1 — happens once for
+  // the whole batch since `pack` is constant across mutations.
+  let path: string;
+  let format: PackFileFormat;
+  try {
+    ({ path, format } = locateMutablePackFile(packName));
+  } catch (e) {
+    if (e instanceof SchemaPackMutationError) {
+      await logMutationFailure({ op: firstOp, pack: packName, actor, reason: e.code, batch_id: opts.batchId });
+    }
+    throw e;
+  }
+
+  return withPackLock(packName, opts, async () => {
+    let current: SchemaPackManifest;
+    let batchPrevSha8: string;
+    try {
+      current = loadPackFromFile(path);
+      batchPrevSha8 = await computeManifestSha8(current);
+    } catch (e) {
+      const err = new SchemaPackMutationError(
+        'PACK_CORRUPT',
+        `cannot read or parse pack file at ${path}: ${(e as Error).message}`,
+        { path },
+      );
+      await logMutationFailure({ op: firstOp, pack: packName, actor, reason: err.code, batch_id: opts.batchId });
+      throw err;
+    }
+
+    // Phase 1: apply + lint-validate every mutation against the IN-MEMORY
+    // manifest only. Nothing here touches disk — a throw at any index
+    // propagates straight out (lock released by withPackLock's finally)
+    // and `path` is left completely untouched.
+    const pending: Array<{ index: number; op: string; auditContext: { type?: string; prefix?: string }; prevSha8: string; newSha8: string }> = [];
+    let runningPrevSha8 = batchPrevSha8;
+    for (let i = 0; i < mutations.length; i++) {
+      const m = mutations[i]!;
+      const opForAudit = (m.op as MutationOp) ?? firstOp;
+      const built = buildBatchMutator(m, i);  // shape validation — unaudited, matches single-mutation contract
+      let next: SchemaPackManifest;
+      try {
+        next = built.mutate(current);
+      } catch (e) {
+        const base = e instanceof SchemaPackMutationError ? e : new SchemaPackMutationError('INVALID_RESULT', (e as Error).message);
+        // Re-wrap so `details.index` is always present for the batch
+        // caller (operations.ts) to report which mutation failed,
+        // without losing the primitive's own code/message/details.
+        const wrapped = new SchemaPackMutationError(base.code, base.message, { ...base.details, index: i });
+        await logMutationFailure({
+          op: opForAudit, pack: packName, actor, ...built.auditContext,
+          reason: wrapped.code, prev_sha8: runningPrevSha8, batch_id: opts.batchId,
+        });
+        throw wrapped;
+      }
+      const lintReport = await runFilePlaneLintRules(next);
+      if (!lintReport.ok) {
+        const msg = lintReport.errors.map((iss) => `${iss.rule}: ${iss.message}`).join('; ');
+        const err = new SchemaPackMutationError('INVALID_RESULT', `mutation would produce invalid pack: ${msg}`, { index: i, errors: lintReport.errors });
+        await logMutationFailure({
+          op: opForAudit, pack: packName, actor, ...built.auditContext,
+          reason: err.code, prev_sha8: runningPrevSha8, batch_id: opts.batchId,
+        });
+        throw err;
+      }
+      const newSha8 = await computeManifestSha8(next);
+      pending.push({ index: i, op: m.op, auditContext: built.auditContext, prevSha8: runningPrevSha8, newSha8 });
+      current = next;
+      runningPrevSha8 = newSha8;
+    }
+
+    // Phase 2: every mutation validated clean — write ONCE.
+    try {
+      writePackManifest(path, current, format);
+    } catch (e) {
+      const err = e instanceof SchemaPackMutationError ? e : new SchemaPackMutationError('IO_ERROR', (e as Error).message, { path });
+      const last = pending[pending.length - 1];
+      await logMutationFailure({
+        op: (last?.op as MutationOp) ?? firstOp, pack: packName, actor, ...(last?.auditContext ?? {}),
+        reason: err.code, prev_sha8: batchPrevSha8, batch_id: opts.batchId,
+      });
+      throw err;
+    }
+
+    // Step 7 equivalent: best-effort post-hooks, once for the whole batch.
+    try { invalidatePackCache(packName); } catch { /* swallow — cache invalidation must not block mutation success */ }
+    if (opts.engine) {
+      try { await invalidateQueryCache(opts.engine, opts.sourceId); } catch { /* swallow */ }
+    }
+
+    // Only now — after the single write has actually landed on disk — do
+    // we log success and report results. Nothing above this point may
+    // ever be reported as applied.
+    const results: BatchMutationResult[] = [];
+    for (const p of pending) {
+      await logMutationSuccess({
+        op: p.op as MutationOp, pack: packName, actor, ...p.auditContext,
+        prev_sha8: p.prevSha8, new_sha8: p.newSha8, batch_id: opts.batchId,
+      });
+      results.push({ index: p.index, op: p.op, pack: packName, path, format, prev_sha8: p.prevSha8, new_sha8: p.newSha8 });
+    }
+    return results;
+  });
 }

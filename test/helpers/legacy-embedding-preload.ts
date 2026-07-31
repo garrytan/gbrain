@@ -18,7 +18,11 @@
  * `configureGateway()` explicitly in their own beforeAll, which
  * overwrites this preload.
  */
-import { configureGateway, getEmbeddingDimensions } from '../../src/core/ai/gateway.ts';
+import {
+  configureGateway,
+  getEmbeddingDimensions,
+  __setGatewayResetBaselineForTests,
+} from '../../src/core/ai/gateway.ts';
 import { beforeEach } from 'bun:test';
 
 const LEGACY_CONFIG = {
@@ -26,12 +30,16 @@ const LEGACY_CONFIG = {
   embedding_dimensions: 1536,
 } as const;
 
-function applyLegacy() {
-  configureGateway({
+function legacyGatewayConfig() {
+  return {
     embedding_model: LEGACY_CONFIG.embedding_model,
     embedding_dimensions: LEGACY_CONFIG.embedding_dimensions,
     env: { ...process.env },
-  });
+  };
+}
+
+function applyLegacy() {
+  configureGateway(legacyGatewayConfig());
 }
 
 if (process.env.GBRAIN_DEBUG_PRELOAD === '1') {
@@ -40,6 +48,16 @@ if (process.env.GBRAIN_DEBUG_PRELOAD === '1') {
 
 // Initial application — covers tests that don't reset the gateway.
 applyLegacy();
+
+// #3554: make resetGateway() mean "back to this baseline" instead of
+// "unconfigured". Without this, a file whose teardown calls resetGateway()
+// leaves _config = null; the NEXT file's beforeAll engine-connect then
+// reconfigures from the shipped default (zembed-1 @ 1280) BEFORE the
+// beforeEach below can fire, and the 1280-sized schema rejects the file's
+// 1536-d fixtures. Which file pairs collide depends on shard bin-packing,
+// so adding any test file reshuffles the mines. A factory (not a frozen
+// config) so each re-application captures fresh process.env.
+__setGatewayResetBaselineForTests(legacyGatewayConfig);
 
 // Per-test re-application — handles tests that call `resetGateway()`
 // in their setup/teardown. Bun's preload allows registering global

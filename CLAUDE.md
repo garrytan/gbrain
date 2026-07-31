@@ -67,6 +67,19 @@ Per-file detail is in `docs/architecture/KEY_FILES.md`.
   text, the cast parses it). Guarded by `scripts/check-jsonb-pattern.sh` (template grep) +
   `scripts/check-jsonb-params.mjs` (positional AST scanner); the real backstop is the DATABASE_URL-gated
   e2e parity tests, since PGLite can't surface the bug. Full rule in `docs/ENGINES.md`.
+- **Engine-live paths avoid runtime dynamic `import()` for helper dependencies.** In
+  `src/core/pglite-engine.ts`, `src/core/postgres-engine.ts`, and
+  `src/core/migrate.ts`, dependencies previously reached through runtime dynamic
+  imports use static top-level imports. The only current dynamic-`import()` exceptions
+  are the four `ai/gateway.ts` lookups in both engines'
+  `initSchema()` and `_upsertChunksOnce()` methods; each remains lazy inside a
+  local `try/catch` because the gateway has a large provider/config closure and,
+  more importantly, eager evaluation would occur before the catch and could
+  turn a recoverable default/config-row fallback into a module-load failure.
+  Every exception carries `engine-dynamic-import-ok` on the import line.
+  `scripts/check-engine-dynamic-import.sh` enforces the rule. For history, use
+  `git log -G'await[[:space:]]+import\\('`, not `git log -S`: a dynamic-to-static
+  rewrite can preserve the searched token while changing its context.
 - **Engine parity.** `src/core/postgres-engine.ts` and `src/core/pglite-engine.ts` move in
   lockstep — a new method/SQL shape lands in BOTH, pinned by `test/e2e/engine-parity.test.ts`.
   Forward-referenced columns/indexes go in the bootstrap probe set (guarded by

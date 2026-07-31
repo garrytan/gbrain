@@ -96,6 +96,28 @@ describe('gbrain dream --dir <path> freshness stamp (#1869)', () => {
       expect(await readLastFullCycleAt('mothballed')).toBeNull();
     });
   }, 60_000);
+
+  test('an ARCHIVED alias of the same path does not shadow the active source (#2540)', async () => {
+    await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
+      // Ordinary shape: a source was archived and re-added under a new id
+      // pointing at the same checkout. Seed the archived twin FIRST so a
+      // filterless `LIMIT 1` scan finds it first.
+      await seedSource('retired-twin', true);
+      await seedSource('active-twin', false);
+
+      const report = await runDream(engine, ['--dir', brainDir, '--phase', 'lint', '--json']);
+      expect(report).toBeTruthy();
+      if (report) expect(['ok', 'clean']).toContain(report.status);
+
+      // Pre-fix, resolveSourceForDir's exact match had no `archived = false`
+      // filter and no ORDER BY, so the archived twin won the lookup; dream's
+      // archived guard then (correctly) refused to stamp it — and the ACTIVE
+      // source silently never got its stamp, leaving doctor's cycle_freshness
+      // permanently stale on a healthy install.
+      expect(await readLastFullCycleAt('active-twin')).not.toBeNull();
+      expect(await readLastFullCycleAt('retired-twin')).toBeNull();
+    });
+  }, 60_000);
 });
 
 /**

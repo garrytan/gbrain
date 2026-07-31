@@ -139,9 +139,9 @@ edits writes a new receipt).
 
 | Slot | Default | Provider |
 |------|---------|----------|
-| A | `openai:gpt-4o` | OpenAI |
+| A | `openai:gpt-5.2` | OpenAI |
 | B | `anthropic:claude-opus-4-7` | Anthropic |
-| C | `google:gemini-1.5-pro` | Google |
+| C | `deepseek:deepseek-v4-pro` | DeepSeek |
 
 **These MUST be frontier models from DIFFERENT providers.** Using a single
 provider's family or budget models defeats the purpose — different families

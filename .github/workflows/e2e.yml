@@ -61,7 +61,10 @@ jobs:
       - name: Run JSONB double-encode parity tests on real Postgres
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
-        run: bun test test/e2e/op-checkpoint-jsonb-parity.test.ts test/e2e/jsonb-roundtrip.test.ts
+        # --timeout also raises bun's 5s default hook budget (beforeAll/afterAll
+        # do NOT inherit a test's third-arg timeout; verified on bun 1.3.x).
+        # Every runner script in scripts/ passes it; bare invocations must too.
+        run: bun test --timeout=60000 test/e2e/op-checkpoint-jsonb-parity.test.ts test/e2e/jsonb-roundtrip.test.ts
 
   tier1:
     name: Tier 1 (Mechanical)
@@ -88,7 +91,7 @@ jobs:
           bun-version: 1.3.13
       - run: bun install
       - name: Run Tier 1 E2E tests
-        run: bun test test/e2e/mechanical.test.ts test/e2e/mcp.test.ts
+        run: bun test --timeout=60000 test/e2e/mechanical.test.ts test/e2e/mcp.test.ts
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
 
@@ -155,7 +158,7 @@ jobs:
           }
           EOF
       - name: Run Tier 2 skill tests
-        run: bun test test/e2e/skills.test.ts test/e2e/zeroentropy-live.test.ts
+        run: bun test --timeout=60000 test/e2e/skills.test.ts test/e2e/zeroentropy-live.test.ts
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

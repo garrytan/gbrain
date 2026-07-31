@@ -23,7 +23,8 @@ import matter from 'gray-matter';
 import { readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync } from 'fs';
 import { join, basename } from 'path';
 import { homedir } from 'os';
-import { gbrainPath } from '../core/config.ts';
+import { gbrainPath, loadConfig } from '../core/config.ts';
+import { buildGatewayConfig } from '../core/ai/build-gateway-config.ts';
 import { execSync } from 'child_process';
 
 // --- Types ---
@@ -122,9 +123,28 @@ export function isUnsafeHealthCheck(check: string): boolean {
   return /[;&|`$(){}\\<>\n]/.test(check);
 }
 
-/** Expand $VAR references with process.env values */
+/**
+ * Env view for secret resolution (#2789): apply the same config.json→env
+ * folding the runtime applies via buildGatewayConfig, so a credential stored
+ * only in ~/.gbrain/config.json — which powers a perfectly healthy
+ * integration — is not reported [missing] by show/status. process.env still
+ * wins for non-empty values (buildGatewayConfig spreads it last, dropping
+ * only ''/undefined entries). Falls back to bare process.env before
+ * `gbrain init` (no config file yet). Mirrors the #2728 fix on the
+ * providers command.
+ */
+export function secretEnv(): Record<string, string | undefined> {
+  try {
+    const cfg = loadConfig();
+    if (cfg) return buildGatewayConfig(cfg).env;
+  } catch { /* integrations must keep working pre-init — fall through */ }
+  return process.env;
+}
+
+/** Expand $VAR references with gateway-env (config-folded) values */
 export function expandVars(s: string): string {
-  return s.replace(/\$([A-Z_][A-Z0-9_]*)/g, (_, name) => process.env[name] || '');
+  const env = secretEnv();
+  return s.replace(/\$([A-Z_][A-Z0-9_]*)/g, (_, name) => env[name] || '');
 }
 
 // --- SSRF Protection ---
@@ -249,7 +269,7 @@ export async function executeHealthCheck(
     }
 
     case 'env_exists': {
-      const val = process.env[check.name];
+      const val = secretEnv()[check.name];
       return {
         ...base,
         status: val ? 'ok' : 'fail',
@@ -457,11 +477,12 @@ function readHeartbeat(id: string): HeartbeatEntry[] {
 
 // --- Secret Checking ---
 
-function checkSecrets(secrets: RecipeSecret[]): { set: string[]; missing: RecipeSecret[] } {
+export function checkSecrets(secrets: RecipeSecret[]): { set: string[]; missing: RecipeSecret[] } {
   const set: string[] = [];
   const missing: RecipeSecret[] = [];
+  const env = secretEnv();
   for (const s of secrets) {
-    if (process.env[s.name]) {
+    if (env[s.name]) {
       set.push(s.name);
     } else {
       missing.push(s);
@@ -607,8 +628,9 @@ function cmdShow(args: string[]): void {
   if (f.requires.length > 0) console.log(`Requires:   ${f.requires.join(', ')}`);
 
   console.log('\nSecrets needed:');
+  const env = secretEnv();
   for (const s of f.secrets) {
-    const isSet = process.env[s.name] ? '  [set]' : '  [missing]';
+    const isSet = env[s.name] ? '  [set]' : '  [missing]';
     console.log(`  ${s.name}${isSet}`);
     console.log(`    ${s.description}`);
     console.log(`    Get it: ${s.where}`);
