@@ -65,6 +65,16 @@ This is the difference between a search engine and a brain. Search finds the pag
 
 ## Install
 
+> [!WARNING]
+> **GBrain is NOT distributed on npm.** The npm package named `gbrain` is an unrelated
+> package with no connection to this project. Do not run `npm install -g gbrain` or
+> `bun add -g gbrain` — you'll get something else, and it can shadow the real binary on
+> your PATH. Install and upgrade ONLY via the documented paths below
+> (`bun install -g github:garrytan/gbrain`, or `git clone` + `bun install && bun link`).
+> If you already ran the npm install by mistake: `npm uninstall -g gbrain` /
+> `bun remove -g gbrain`, then reinstall from GitHub. `gbrain doctor` detects a
+> shadowing npm install and prints the fix.
+
 GBrain is designed to be installed and operated by an AI agent. The fastest path is to have your agent do it for you. The CLI and MCP paths below are for people who want to wire it up themselves.
 
 ### Have your agent install it (recommended)

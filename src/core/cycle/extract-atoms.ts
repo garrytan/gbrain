@@ -482,24 +482,52 @@ export async function runPhaseExtractAtoms(
   }
 
   // 3. Dual-source merge: transcripts + pages, dedup by contentHash.
-  //    Transcripts win on collision (origin attribution stays with the
-  //    raw transcript file even if the same content was later imported
-  //    as a brain page).
+  //    Transcripts win on COLLISION (origin attribution stays with the raw
+  //    transcript file even if the same content was later imported as a
+  //    brain page) — that's decided by the two loops below, which register
+  //    every transcript hash into `seenHashes` before any page is checked,
+  //    same as before this fix. It's independent of the FINAL work-item
+  //    ORDER built after them.
+  //
+  //    Order is page-item-first, interleaved 1-for-1 with transcripts (NOT
+  //    concatenated transcripts-then-pages). The per-call budget cap (step
+  //    4 below) stops processing `work` in list order once
+  //    budgetTracker.totalSpent >= budgetCap, skipping everything after
+  //    that point. Two failure modes this avoids:
+  //      - Concatenation (old code): a transcript corpus that alone
+  //        exceeds the budget cap starves the page pool completely, no
+  //        matter how many drain batches run.
+  //      - Interleaving with transcripts first: still starves ALL pages
+  //        whenever the budget only covers exactly one call (item 0 is a
+  //        transcript, item 1 — the first page — never gets attempted).
+  //    Pages are the ONLY pool `countExtractAtomsBacklog`/doctor's
+  //    extract_atoms_backlog check measures (see that function's
+  //    docstring), so page-first guarantees the doctor-visible backlog
+  //    makes forward progress on every budget-capped call, however tight
+  //    the cap — `--drain` can no longer report the same backlog number
+  //    forever while atoms keep getting extracted from transcripts.
   type WorkItem =
     | { kind: 'transcript'; filePath: string; content: string; contentHash: string }
     | { kind: 'page'; slug: string; content: string; contentHash: string };
 
   const seenHashes = new Set<string>();
-  const work: WorkItem[] = [];
+  const transcriptItems: WorkItem[] = [];
   for (const t of transcriptsLive) {
     if (seenHashes.has(t.contentHash)) { duplicatesSkipped++; continue; }
     seenHashes.add(t.contentHash);
-    work.push({ kind: 'transcript', ...t });
+    transcriptItems.push({ kind: 'transcript', ...t });
   }
+  const pageItems: WorkItem[] = [];
   for (const p of pages) {
     if (seenHashes.has(p.contentHash)) { duplicatesSkipped++; continue; }
     seenHashes.add(p.contentHash);
-    work.push({ kind: 'page', ...p });
+    pageItems.push({ kind: 'page', ...p });
+  }
+  const work: WorkItem[] = [];
+  const maxPoolLen = Math.max(transcriptItems.length, pageItems.length);
+  for (let i = 0; i < maxPoolLen; i++) {
+    if (i < pageItems.length) work.push(pageItems[i]);
+    if (i < transcriptItems.length) work.push(transcriptItems[i]);
   }
 
   // Phase-level no-op: nothing to extract today.

@@ -34,6 +34,7 @@ export interface ModelPricing {
 const SUPPORTED_MODELS = [
   'openai:gpt-4o',
   'openai:gpt-5',
+  'openai:gpt-5.2',
   'openai:gpt-5.5',
   'anthropic:claude-opus-5',
   'anthropic:claude-opus-4-8',
@@ -41,7 +42,9 @@ const SUPPORTED_MODELS = [
   'anthropic:claude-sonnet-5',
   'anthropic:claude-sonnet-4-6',
   'anthropic:claude-haiku-4-5',
-  'google:gemini-1.5-pro',
+  // gemini-1.5-pro was retired by Google (#3510); gemini-2.0-flash replaces
+  // it in DEFAULT_MODEL_PANEL. `gemini-2-flash` stays as the legacy alias.
+  'google:gemini-2.0-flash',
   'google:gemini-2-flash',
 ] as const;
 

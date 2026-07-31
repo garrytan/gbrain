@@ -96,7 +96,7 @@ const ENTITY_PATTERNS = [
   /\boverview\b/i,
   /\bbackground\b/i,
   /\bprofile\b/i,
-  /\bwhat\s+do\s+(you|we)\s+know\b/i,
+  /\bwhat\s+do\s+(i|you|we)\s+know\b/i,
 ];
 
 const FULL_CONTEXT_PATTERNS = [

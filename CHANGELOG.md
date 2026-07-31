@@ -2,6 +2,21 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.68.1] - 2026-07-30
+
+**If you run `gbrain reindex-frontmatter` or `gbrain backfill` on the default embedded database, they now work. Until this release both failed every time, after waiting 30 seconds.**
+
+The embedded database allows one process at a time, and holds a lock to enforce it. These two commands opened a second connection to the same database from inside the process that already held that lock, then waited for a lock that could never be released — because the thing holding it was the waiting process itself. The wait ran its full 30 seconds and the command exited with an error naming a blocking process that was, in fact, itself. Both commands now reuse the connection that is already open.
+
+Nothing changes for brains on Postgres, where a second connection was always allowed.
+
+## To take advantage of v0.42.68.1
+
+Nothing to undo — the commands failed without writing anything. Just run whichever you needed:
+```bash
+gbrain reindex-frontmatter
+```
+
 ## [0.42.67.0] - 2026-07-28
 
 **If you develop GBrain on Windows, the test and check commands now actually run. Until this release they were quietly doing almost nothing.**
