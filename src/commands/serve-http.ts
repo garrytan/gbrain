@@ -32,6 +32,16 @@ import { summarizeMcpParams, dispatchToolCall } from '../mcp/dispatch.ts';
 import { paramDefToSchema } from '../mcp/tool-defs.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { loadConfig } from '../core/config.ts';
+import type { GBrainConfig } from '../core/config.ts';
+import {
+  cleanupStaleSocket,
+  resolveSocketPath,
+  startResolveIpcServer,
+} from '../core/context/resolve-ipc.ts';
+import {
+  logDeliveredReflexPointers,
+  resolveEntitiesToPointers,
+} from '../core/context/retrieval-reflex.ts';
 import { buildError, serializeError } from '../core/errors.ts';
 import { VERSION } from '../version.ts';
 import * as db from '../core/db.ts';
@@ -51,6 +61,17 @@ import {
  * 3s leaves 2s of headroom for TCP, response framing, and clock skew.
  */
 export const HEALTH_TIMEOUT_MS = 3000;
+
+/**
+ * Return the PGLite retrieval-reflex IPC socket owned by `serve --http`.
+ * HTTP and stdio are alternative transports for the same single database
+ * owner; both must expose this local resolve capability or the context engine
+ * cannot open PGLite while the daemon holds its exclusive lock.
+ */
+export function httpResolveIpcSocket(config: GBrainConfig | null): string | null {
+  if (config?.engine !== 'pglite' || !config.database_path) return null;
+  return resolveSocketPath(config.database_path);
+}
 
 /**
  * v0.36.1.x #1024: bootstrap token resolution.
@@ -411,6 +432,41 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // than silently binding loopback only.
   const bind = options.bind ?? '127.0.0.1';
   const config = loadConfig() || { engine: 'pglite' as const };
+
+  // Retrieval Reflex: the HTTP daemon is just as much the sole PGLite owner
+  // as stdio `serve`. Expose the same narrow local IPC resolver rather than
+  // forcing the context engine to contend for a second PGLite connection.
+  // The callback logs only after the pointer block has been delivered on the
+  // socket, preserving the ambient-channel precision contract.
+  const resolveSocket = httpResolveIpcSocket(config);
+  let resolveServer: import('node:net').Server | null = null;
+  if (resolveSocket) {
+    try {
+      const defaultSource = process.env.GBRAIN_SOURCE || 'default';
+      resolveServer = await startResolveIpcServer(
+        resolveSocket,
+        (request) => resolveEntitiesToPointers(
+          engine,
+          request.sourceId || defaultSource,
+          request.candidates ?? [],
+          {
+            priorContextText: request.priorContextText,
+            maxPointers: request.maxPointers,
+            suppression: request.suppression,
+          },
+        ),
+        (block) => logDeliveredReflexPointers(engine, block.pointers),
+      );
+      process.once('exit', () => {
+        try { resolveServer?.close(); } catch { /* process exit: best effort */ }
+        cleanupStaleSocket(resolveSocket);
+      });
+    } catch (error) {
+      console.error(
+        `[serve-http] retrieval-reflex IPC unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
 
   if (logFullParams) {
     console.error(
