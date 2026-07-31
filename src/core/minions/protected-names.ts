@@ -63,6 +63,27 @@ export const PROTECTED_JOB_NAMES: ReadonlySet<string> = new Set([
   // auto-drain branch, an explicit `gbrain jobs submit extract-atoms-drain
   // --allow-protected`) can insert it.
   'extract-atoms-drain',
+  // v0.42.67.0 (Azure plan §6 change #2, §9.1 item 1) — filesystem reach.
+  //
+  // Unlike every other name above, these two are protected for PATH access,
+  // not for spend. `submit_job` is `scope:'admin'` with NO `localOnly`
+  // (operations.ts), so any OAuth client holding the admin scope can submit
+  // over HTTP — and both handlers take a caller-supplied absolute path:
+  // the `import` handler passes `data.dir` straight to runImport, and the
+  // `sync` handler passes `data.repoPath` straight to performSync. A remote
+  // caller could therefore point either at an arbitrary directory on the
+  // server's filesystem and pull its contents into the brain, where they
+  // become readable through ordinary `read`-scoped search.
+  //
+  // This matters most on a network-exposed deployment (the Azure container
+  // app), where the filesystem holds things the brain should never index.
+  // Trusted local callers are unaffected: the CLI, autopilot's freshness
+  // sweep, `doctor --remediate`, and the HMAC-verified GitHub webhook all
+  // pass allowProtectedSubmit. The webhook is safe to trust because it
+  // resolves the path server-side from the source row — the request payload
+  // never supplies one.
+  'import',
+  'sync',
 ]);
 
 /** Check a job name against the protected set. Normalizes whitespace first. */

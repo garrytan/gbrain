@@ -73,6 +73,26 @@ export interface RemediationOpts {
    * only applicable work was an extra (e.g. extract-ner).
    */
   extraRemediations?: RemediationStep[];
+  /**
+   * Whether this caller is allowed to submit PROTECTED_JOB_NAMES steps.
+   * Default false — the fail-closed posture.
+   *
+   * The runner computes its own base recommendations internally
+   * (computeRecommendations), so a caller filtering its `extraRemediations`
+   * does NOT filter the base plan. Before this flag existed that was
+   * invisible, because no base recommendation named a protected job. Adding
+   * 'sync' to PROTECTED_JOB_NAMES made it load-bearing: the `sync.repo`
+   * recommendation is a base one, so without a trust signal the runner would
+   * either hand a remote MCP `run_onboard` caller a protected submission, or
+   * hard-throw on the CLI path. Neither is acceptable, so trust is now
+   * explicit and travels from the entry point.
+   *
+   * Set true by the local CLI (`gbrain doctor --remediate`). Set from the
+   * caller's `run_protected_onboard` scope by MCP run_onboard. When false,
+   * protected steps are dropped from the plan and reported in
+   * `skipped_protected` rather than attempted.
+   */
+  allowProtected?: boolean;
 }
 
 /**
@@ -98,6 +118,13 @@ export interface RemediationResult {
   target_reached: boolean;
   submitted: StepResult[];
   aborted_count: number;
+  /**
+   * Steps dropped from the plan because they name a PROTECTED job and the
+   * caller did not pass `allowProtected`. Present (possibly empty) on every
+   * run so an untrusted caller can see WHY the plan did less than the
+   * `check`-mode preview promised, instead of silently under-remediating.
+   */
+  skipped_protected?: Array<{ id: string; job: string; reason: string }>;
   /** Set when the run aborted on BudgetExhausted. Caller decides exit code. */
   budget_exhausted?: {
     spent: number;

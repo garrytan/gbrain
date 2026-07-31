@@ -67,7 +67,13 @@ describe('runRemediation recheck loop guard', () => {
       getConfig: async (key: string) => key === 'sync.repo_path' ? '/brain' : null,
     } as BrainEngine;
 
-    const result = await runRemediation(engine, { maxJobs: 4 });
+    // allowProtected models the trusted local CLI caller. Required because
+    // 'sync' is a PROTECTED job name and the `sync.repo` recommendation is
+    // part of the plan this loop-guard test asserts on; without the flag the
+    // runner correctly drops that step and the ordering assertion below has
+    // nothing to say about the recheck. Trust posture itself is pinned in
+    // test/remediation-run-protected.serial.test.ts.
+    const result = await runRemediation(engine, { maxJobs: 4, allowProtected: true });
 
     expect(attemptedJobs.filter((name) => name === 'backlinks')).toHaveLength(1);
     expect(attemptedJobs).toEqual(['backlinks', 'sync', 'extract']);

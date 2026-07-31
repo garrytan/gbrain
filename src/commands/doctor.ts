@@ -8305,6 +8305,10 @@ export async function runRemediate(
       dryRun,
       resume: resumeMode,
       resumePlanHash,
+      // `gbrain doctor --remediate` is a trusted local CLI submitter — one of
+      // the callers PROTECTED_JOB_NAMES explicitly names. Without this the
+      // 'sync' recommendation would be silently dropped from every plan.
+      allowProtected: true,
     },
     {
       onTargetUnreachable: (target, ceiling) => {

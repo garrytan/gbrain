@@ -764,6 +764,10 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
                     timeout_ms: timeoutMs,
                     maxWaiting: 1,
                   },
+                  // 'sync' is PROTECTED (handler takes a caller-supplied
+                  // repoPath). Autopilot is a trusted local daemon and
+                  // src.local_path comes from the sources table.
+                  { allowProtectedSubmit: true },
                 );
                 if (jsonMode) {
                   process.stderr.write(JSON.stringify({

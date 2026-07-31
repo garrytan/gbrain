@@ -2478,6 +2478,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
             idempotency_key: `webhook:sync:${source.id}:${Math.floor(Date.now() / 30_000)}`,
             maxWaiting: 1,
           },
+          // 'sync' is a PROTECTED job name because its handler takes a
+          // caller-supplied `repoPath`. This submitter is safe to trust
+          // precisely because it supplies NO path: the payload is
+          // HMAC-verified against the per-source webhook secret, and the
+          // handler resolves the repo path server-side from the source row.
+          // Do not add a payload-derived repoPath here.
+          { allowProtectedSubmit: true },
         );
         res.status(202).json({ job_id: job.id, source_id: source.id });
       } catch (err) {

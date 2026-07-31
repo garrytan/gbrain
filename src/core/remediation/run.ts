@@ -67,6 +67,8 @@ export async function runRemediation(
 
   const ctx = await loadRecommendationContext(engine);
   const extraRemediations = opts.extraRemediations ?? [];
+  // Fail-closed: only an explicit `true` grants protected submission.
+  const allowProtected = opts.allowProtected === true;
 
   // Pre-flight ceiling check via the shared plan computation.
   const initialPlan = await computeRemediationPlan(engine, { targetScore, extraRemediations });
@@ -90,6 +92,34 @@ export async function runRemediation(
   const initialHealth = await engine.getHealth();
   let recs: RemediationStep[] = computeRecommendations(initialHealth, ctx, extraRemediations)
     .filter((r) => r.status === 'remediable');
+
+  // Protected-name gate. The base recommendations are computed HERE, not by
+  // the caller, so a caller that filtered its own extraRemediations has not
+  // filtered this list — `sync.repo` (job 'sync', PROTECTED) arrives via
+  // computeRecommendations regardless. Drop those steps unless the caller
+  // declared itself trusted, and report them so the omission is visible.
+  const { isProtectedJobName } = await import('../minions/protected-names.ts');
+  const skippedProtected: Array<{ id: string; job: string; reason: string }> = [];
+  const seenSkipped = new Set<string>();
+  const dropProtected = (list: RemediationStep[]): RemediationStep[] => {
+    if (allowProtected) return list;
+    return list.filter((r) => {
+      if (!isProtectedJobName(r.job)) return true;
+      // The D7 recheck re-derives the same steps from fresh health every
+      // iteration, so dedupe or the report fills with copies of one step.
+      if (!seenSkipped.has(r.id)) {
+        seenSkipped.add(r.id);
+        skippedProtected.push({
+          id: r.id,
+          job: r.job,
+          reason: 'protected job name; caller is not a trusted local submitter',
+        });
+      }
+      return false;
+    });
+  };
+  recs = dropProtected(recs);
+
   if (recs.length === 0) {
     hooks.onNothingToDo?.(initialHealth.brain_score, targetScore);
     return {
@@ -100,6 +130,7 @@ export async function runRemediation(
       target_reached: initialHealth.brain_score >= targetScore,
       submitted: [],
       aborted_count: 0,
+      skipped_protected: skippedProtected,
     };
   }
 
@@ -157,6 +188,7 @@ export async function runRemediation(
       target_reached: false,
       submitted: [],
       aborted_count: 0,
+      skipped_protected: skippedProtected,
     };
   }
 
@@ -177,6 +209,7 @@ export async function runRemediation(
         status: 'dry_run',
       })),
       aborted_count: 0,
+      skipped_protected: skippedProtected,
     };
   }
 
@@ -252,7 +285,11 @@ export async function runRemediation(
 
       hooks.onStepStart?.(stepCount, totalSteps, step);
       try {
-        const isProtected = !!step.protected;
+        // Any protected step still standing implies allowProtected — the
+        // filter above removed the rest. `step.protected` stays honored for
+        // producer-declared steps; isProtectedJobName covers base
+        // recommendations, whose producers don't set the flag.
+        const isProtected = allowProtected && (!!step.protected || isProtectedJobName(step.job));
         const job = await queue.add(
           step.job,
           { ...step.params, doctor_run_id: doctorRunId },
@@ -317,8 +354,13 @@ export async function runRemediation(
       // ids this run already processed (any terminal status), or the recheck
       // would resubmit completed extras every iteration, forever.
       const pendingExtras = extraRemediations.filter((r) => !attemptedIds.has(r.id));
-      recs = computeRecommendations(freshHealth, ctx, pendingExtras)
-        .filter((r) => r.status === 'remediable' && !attemptedIds.has(r.id));
+      // dropProtected again: the recheck re-derives the plan from scratch, so
+      // without it a protected step filtered out up front walks straight back
+      // in on the next iteration.
+      recs = dropProtected(
+        computeRecommendations(freshHealth, ctx, pendingExtras)
+          .filter((r) => r.status === 'remediable' && !attemptedIds.has(r.id)),
+      );
     }
   };
 
@@ -350,6 +392,7 @@ export async function runRemediation(
     target_reached: finalHealth.brain_score >= targetScore,
     submitted,
     aborted_count: abortedIds.size,
+    skipped_protected: skippedProtected,
     budget_exhausted: budgetAbort,
   };
 }

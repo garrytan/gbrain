@@ -152,6 +152,11 @@ export async function runOnboard(engine: BrainEngine, args: string[]): Promise<v
       targetScore,
       maxUsd,
       extraRemediations,
+      // `gbrain onboard` is a trusted local CLI submitter, so protected steps
+      // (e.g. the 'sync' recommendation) stay in the plan. The remote
+      // equivalent, MCP run_onboard, derives this from the caller's
+      // run_protected_onboard scope instead.
+      allowProtected: true,
       // --auto --yes opts into the prompt_required tier too; library
       // doesn't distinguish auto_apply vs prompt_required, it just runs
       // every remediation in the plan. The plan-building side (T12 render)

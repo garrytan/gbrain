@@ -5283,9 +5283,15 @@ const run_onboard: Operation = {
     // upstream submit-side gating in submit_job filters protected names
     // for ctx.remote !== false callers, so even if MCP run_onboard had a
     // typo, the underlying queue.add would reject. Defense-in-depth.
+    // allowProtected mirrors the extras filter above onto the runner's OWN
+    // base recommendations, which this handler never sees. Without it, a
+    // remote admin caller lacking run_protected_onboard would still reach
+    // protected base steps such as `sync.repo` — the filter on `allowedExtras`
+    // covers only what we pass in. Protected steps the runner drops come back
+    // on result.skipped_protected.
     const result = await runRemediation(
       ctx.engine,
-      { targetScore, maxUsd, extraRemediations: allowedExtras },
+      { targetScore, maxUsd, extraRemediations: allowedExtras, allowProtected: canRunProtected },
       {},
     );
 

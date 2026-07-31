@@ -1462,6 +1462,10 @@ See also:
       idempotency_key: `sync-trigger:${sourceIdArg}:${Math.floor(Date.now() / 30_000)}`,
       maxWaiting: 1,
     },
+    // 'sync' is a PROTECTED job name (its handler takes a caller-supplied
+    // repoPath). This is the local CLI submitter, and the path comes from the
+    // sources row we just fetched — not from any remote input.
+    { allowProtectedSubmit: true },
   );
 
   console.log(`job_id=${job.id}`);
