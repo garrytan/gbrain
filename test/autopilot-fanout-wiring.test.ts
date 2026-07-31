@@ -16,9 +16,15 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { resolveAutopilotDispatchTimeoutMs } from '../src/commands/autopilot-timeout.ts';
+import { defaultTimeoutMsFor } from '../src/core/minions/handler-timeouts.ts';
 
 const AUTOPILOT_SRC = readFileSync(
   join(import.meta.dir, '..', 'src', 'commands', 'autopilot.ts'),
+  'utf8',
+);
+
+const AUTOPILOT_TIMEOUT_SRC = readFileSync(
+  join(import.meta.dir, '..', 'src', 'commands', 'autopilot-timeout.ts'),
   'utf8',
 );
 
@@ -59,15 +65,92 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     expect(AUTOPILOT_SRC).toContain(
       'const timeoutMs = resolveAutopilotDispatchTimeoutMs(baseInterval, false);',
     );
-    expect(AUTOPILOT_SRC).toMatch(
-      /dispatchPerSource\(engine, queue, \{[\s\S]{0,300}timeoutMs: resolveAutopilotDispatchTimeoutMs\(baseInterval, true\)/,
+    expect(AUTOPILOT_SRC).toContain(
+      'const fullCycleTimeoutMs = resolveAutopilotDispatchTimeoutMs(baseInterval, true);',
     );
+    expect(AUTOPILOT_SRC).toMatch(
+      /dispatchPerSource\(engine, queue, \{[\s\S]{0,300}timeoutMs: fullCycleTimeoutMs/,
+    );
+  });
+
+  test('#2781: dispatchGlobalMaintenance gets the full-cycle floor, not the outer (non-full-cycle) timeoutMs', () => {
+    // Live #2781 regression, found in review: dispatchGlobalMaintenance's
+    // call used the object-shorthand `timeoutMs`, which resolved to the
+    // OUTER `const timeoutMs = resolveAutopilotDispatchTimeoutMs(baseInterval, false)`
+    // declared earlier in the same function for the sync/freshness dispatch
+    // — not to the full-cycle value computed for dispatchPerSource a few
+    // lines above it. 'autopilot-global-maintenance' carries the same
+    // 30-min handler anchor as 'autopilot-cycle' (handler-timeouts.ts), so
+    // this silently starved brain-wide maintenance (embed/orphans/purge/…)
+    // at exactly the #2781 symptom (600s budget at the default 300s
+    // interval) even after the per-source path was fixed. Pin the correct
+    // wiring by source-shape: the call must pass the *full-cycle* variable.
+    const dispatchGlobalIdx = AUTOPILOT_SRC.indexOf('dispatchGlobalMaintenance(engine, queue');
+    expect(dispatchGlobalIdx).toBeGreaterThan(-1);
+    const dispatchGlobalCall = AUTOPILOT_SRC.slice(dispatchGlobalIdx, dispatchGlobalIdx + 200);
+    expect(dispatchGlobalCall).toContain('timeoutMs: fullCycleTimeoutMs');
+    // Guard against the exact regression: the shorthand `timeoutMs` (bare,
+    // no colon) resolving to the non-full-cycle outer const.
+    expect(dispatchGlobalCall).not.toMatch(/\{\s*repoPath,\s*slot,\s*timeoutMs,/);
   });
 
   test('updates lastFullCycleAt on dispatch (so the 60-min floor is honored)', () => {
     // After the dispatchPerSource call, the lastFullCycleAt module var
     // must update so the next tick doesn't immediately re-fan-out.
     expect(AUTOPILOT_SRC).toMatch(/lastFullCycleAt\s*=\s*Date\.now\(\)/);
+  });
+
+  test('#2781: full-cycle floor is derived from BOTH handler anchors, not a duplicated literal', () => {
+    // #2781's root cause: autopilot stamped an explicit `timeout_ms` that was
+    // only a `Math.max(interval-derived, 300_000)`-shaped literal, so it
+    // silently overrode the 'autopilot-cycle' handler's own #1737 anchor
+    // (`queue.ts`: an explicit stamp always wins over `defaultTimeoutMsFor`).
+    // A prior fix (#2852) hardcoded a matching `1_800_000` floor for
+    // full-cycle dispatch, but a literal that merely happens to equal the
+    // handler anchor can drift from it again if the anchor is ever retuned
+    // in handler-timeouts.ts without a matching edit here — reintroducing
+    // the exact #2781 bug class.
+    //
+    // Prove the floor is *derived* (not just numerically coincidental) two
+    // ways: (a) it equals Math.max of BOTH job names' anchors — a bare
+    // duplicated literal could accidentally match a SINGLE anchor (as the
+    // prior #2852 fix did) but wiring `Math.max(cycle, global)` is what
+    // actually protects a future divergence between the two anchors; (b) a
+    // source-shape check that both job-name string literals reach
+    // `defaultTimeoutMsFor` (directly or via a thin wrapper), and that no
+    // bare numeric literal sits in the full-cycle branch.
+    const cycleAnchorMs = defaultTimeoutMsFor('autopilot-cycle');
+    const globalAnchorMs = defaultTimeoutMsFor('autopilot-global-maintenance');
+    if (cycleAnchorMs === null) throw new Error("expected a handler anchor for 'autopilot-cycle'");
+    if (globalAnchorMs === null) throw new Error("expected a handler anchor for 'autopilot-global-maintenance'");
+    const expectedFloorMs = Math.max(cycleAnchorMs, globalAnchorMs);
+
+    // A short interval collapses the interval-derived component to its
+    // 300_000ms minimum, so the full-cycle result must equal the derived
+    // floor exactly.
+    expect(resolveAutopilotDispatchTimeoutMs(1, true)).toBe(expectedFloorMs);
+    // A regular (non-full-cycle) dispatch — e.g. the 'sync' freshness job,
+    // which has no long-job handler anchor — must NOT pick up the floor.
+    expect(resolveAutopilotDispatchTimeoutMs(1, false)).toBe(300_000);
+
+    // Guard against reintroducing a hardcoded literal floor directly in the
+    // full-cycle branch instead of the derived FULL_CYCLE_TIMEOUT_FLOOR_MS.
+    expect(AUTOPILOT_TIMEOUT_SRC).not.toMatch(/fullCycle\s*\?\s*Math\.max\([^)]*,\s*1_?800_?000\)/);
+    // Pin the derivation END TO END in source shape (codex round-2): both
+    // job-name anchor lookups must participate in the floor's Math.max, and
+    // the full-cycle branch must consume that derived const — otherwise the
+    // floor could be swapped back to a bare literal while the wrapper,
+    // import, and job-name strings survive as dead code and the assertions
+    // above still pass.
+    expect(AUTOPILOT_TIMEOUT_SRC).toMatch(
+      /FULL_CYCLE_TIMEOUT_FLOOR_MS\s*=\s*Math\.max\(\s*requireHandlerAnchorMs\('autopilot-cycle'\),\s*requireHandlerAnchorMs\('autopilot-global-maintenance'\),?\s*\)/,
+    );
+    expect(AUTOPILOT_TIMEOUT_SRC).toMatch(
+      /fullCycle\s*\?\s*Math\.max\(intervalDerivedTimeoutMs,\s*FULL_CYCLE_TIMEOUT_FLOOR_MS\)/,
+    );
+    // The wrapper itself must consult defaultTimeoutMsFor (fail-loud on a
+    // missing anchor, never a numeric fallback).
+    expect(AUTOPILOT_TIMEOUT_SRC).toMatch(/requireHandlerAnchorMs[\s\S]{0,200}defaultTimeoutMsFor\(jobName\)/);
   });
 
   test('does NOT regress to the single-job dispatch on the full-cycle path', () => {

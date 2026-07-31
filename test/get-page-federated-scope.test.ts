@@ -185,9 +185,16 @@ describe('#2200 get_tags honors the federated grant', () => {
 });
 
 describe('#2200 get_links honors the grant and scopes BOTH endpoints (D4A)', () => {
-  test('[alpha,beta] returns the in-grant beta→beta link', async () => {
+  test('[alpha,beta] returns the in-grant beta→beta link with exact endpoint identity', async () => {
     const links = (await get_links.handler(remoteCtx(['alpha', 'beta']), { slug: 'secret/beta-doc' })) as any[];
-    expect(links.map(l => l.to_slug)).toContain('secret/beta-target');
+    const target = links.find(l => l.to_slug === 'secret/beta-target');
+    expect(target).toBeDefined();
+    expect(target).toMatchObject({
+      from_source_id: 'beta',
+      from_slug: 'secret/beta-doc',
+      to_source_id: 'beta',
+      to_slug: 'secret/beta-target',
+    });
   });
 
   test('[alpha,beta] does NOT leak the beta→default far-endpoint link', async () => {
@@ -205,8 +212,9 @@ describe('#2200 get_links honors the grant and scopes BOTH endpoints (D4A)', () 
     const links = (await get_links.handler(remoteCtx(['alpha', 'beta']), { slug: 'secret/beta-doc' })) as any[];
     const originLeakLink = links.find(l => l.link_type === 'mentions' && l.to_slug === 'secret/beta-target');
     expect(originLeakLink).toBeDefined();
-    // origin page 'default/only-doc' is out of the [alpha,beta] grant → origin_slug nulled.
+    // origin page 'default/only-doc' is out of the [alpha,beta] grant → origin identity nulled.
     expect(originLeakLink.origin_slug ?? null).toBeNull();
+    expect(originLeakLink.origin_source_id ?? null).toBeNull();
     expect(links.map(l => l.origin_slug)).not.toContain('default/only-doc');
   });
 
@@ -219,18 +227,30 @@ describe('#2200 get_links honors the grant and scopes BOTH endpoints (D4A)', () 
     expect(links.map(l => l.origin_slug)).not.toContain('default/only-doc'); // origin too
   });
 
-  test('D1: TRUSTED local CLI (remote=false) with a scalar scope keeps the cross-source view', async () => {
+  test('D1: TRUSTED local CLI scalar scope keeps cross-source view and identifies both endpoints', async () => {
     // reconcileLinks / validators depend on this — local CLI sees cross-source links.
     const ctx = ctxOf({ remote: false, sourceId: 'beta', auth: undefined });
     const links = (await get_links.handler(ctx, { slug: 'secret/beta-doc' })) as any[];
-    expect(links.map(l => l.to_slug)).toContain('default/only-doc'); // cross-source visible for trusted local
+    const crossSource = links.find(l => l.to_slug === 'default/only-doc');
+    expect(crossSource).toMatchObject({
+      from_source_id: 'beta',
+      from_slug: 'secret/beta-doc',
+      to_source_id: 'default',
+      to_slug: 'default/only-doc',
+    });
   });
 });
 
 describe('#2200 get_backlinks honors the grant and scopes BOTH endpoints (D4A)', () => {
-  test('[alpha,beta] returns the in-grant beta→beta backlink', async () => {
+  test('[alpha,beta] returns the in-grant beta→beta backlink with exact endpoint identity', async () => {
     const back = (await get_backlinks.handler(remoteCtx(['alpha', 'beta']), { slug: 'secret/beta-doc' })) as any[];
-    expect(back.map(l => l.from_slug)).toContain('secret/beta-target');
+    const referrer = back.find(l => l.from_slug === 'secret/beta-target');
+    expect(referrer).toMatchObject({
+      from_source_id: 'beta',
+      from_slug: 'secret/beta-target',
+      to_source_id: 'beta',
+      to_slug: 'secret/beta-doc',
+    });
   });
 
   test('[alpha,beta] does NOT leak the default→beta far-referrer backlink', async () => {

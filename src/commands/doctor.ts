@@ -5602,6 +5602,42 @@ export async function buildChecks(
     // Best-effort filesystem-hygiene check; never block doctor.
   }
 
+  // 3f. npm_squat (#505). The npm registry name `gbrain` belongs to an
+  // unrelated third-party package — this project is NOT distributed on npm.
+  // A reflexive `npm i -g gbrain` / `bun add -g gbrain` installs something
+  // unrelated that can shadow the real binary on PATH. Classify every
+  // `gbrain` that `which -a` finds (pure helpers in
+  // src/core/npm-squat-check.ts) and warn when an unrelated install wins on
+  // PATH or the entry is broken. Skips silently when gbrain isn't on PATH
+  // at all (e.g. running via `bun src/cli.ts`).
+  try {
+    const { execSync } = await import('node:child_process');
+    let candidates: string[] = [];
+    try {
+      candidates = execSync('which -a gbrain', {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      })
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    } catch {
+      // `which` exits non-zero when gbrain isn't on PATH (or is missing
+      // entirely on this platform) — nothing to check.
+    }
+    const { assessGbrainBinaries } = await import('../core/npm-squat-check.ts');
+    const assessment = assessGbrainBinaries(candidates);
+    if (assessment.status !== 'skip') {
+      checks.push({
+        name: 'npm_squat',
+        status: assessment.status,
+        message: assessment.message,
+      });
+    }
+  } catch {
+    // Best-effort environment check; never block doctor.
+  }
+
   // 3b-multi-source. Multi-source drift (v0.31.8 — D8 + D17 + OV12 + OV13).
   // Pre-v0.30.3 putPage misrouted multi-source writes to (default, slug).
   // For each non-default source with local_path set, walk the FS and surface

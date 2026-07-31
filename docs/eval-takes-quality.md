@@ -31,7 +31,7 @@ receipt file from disk and re-renders it. The other modes need the brain.
 | `--budget-usd N` | unset | Abort before next call's projected cost would exceed cap. Models without a `pricing.ts` entry fail loud (codex #4). |
 | `--source db|fs` | `db` | `fs` is reserved for v0.33+. |
 | `--slug-prefix P` | unset | Filter takes to pages whose slug starts with P. |
-| `--models a,b,c` | `openai:gpt-4o,anthropic:claude-opus-4-7,google:gemini-1.5-pro` | Comma-separated panel. |
+| `--models a,b,c` | `openai:gpt-5.2,anthropic:claude-opus-4-7,google:gemini-2.0-flash` | Comma-separated panel. |
 | `--json` | off | Emit the full receipt to stdout. |
 
 ## Receipt JSON shape (`schema_version: 1`)
@@ -50,7 +50,7 @@ receipt file from disk and re-renders it. The other modes need the brain.
   },
   "prompt_sha8": "abcd1234",
   "models_sha8": "abcd1234",
-  "models": ["openai:gpt-4o", "anthropic:claude-opus-4-7", "google:gemini-1.5-pro"],
+  "models": ["openai:gpt-5.2", "anthropic:claude-opus-4-7", "google:gemini-2.0-flash"],
   "cycles_run": 3,
   "successes_per_cycle": [3, 3, 2],
   "verdict": "pass",

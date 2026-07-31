@@ -1,9 +1,13 @@
-import { describe, test, expect, beforeAll } from 'bun:test';
+import { describe, test, expect, beforeAll, beforeEach, afterEach } from 'bun:test';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import {
   parseRecipe,
   isUnsafeHealthCheck,
   expandVars,
   executeHealthCheck,
+  checkSecrets,
   parseOctet,
   hostnameToOctets,
   isPrivateIpv4,
@@ -677,5 +681,79 @@ describe('getRecipeDirs (B1 trust boundary)', () => {
         expect(d.trusted).toBe(false);
       }
     }
+  });
+});
+
+// --- #2789: secret resolution folds the config plane (buildGatewayConfig seam) ---
+
+describe('secret resolution folds config plane (#2789)', () => {
+  let dir: string;
+  let savedHome: string | undefined;
+  let savedKey: string | undefined;
+
+  beforeEach(() => {
+    savedHome = process.env.GBRAIN_HOME;
+    savedKey = process.env.OPENAI_API_KEY;
+    dir = mkdtempSync(join(tmpdir(), 'gbrain-integrations-2789-'));
+    mkdirSync(join(dir, '.gbrain'), { recursive: true });
+    process.env.GBRAIN_HOME = dir;
+    delete process.env.OPENAI_API_KEY;
+  });
+
+  afterEach(() => {
+    if (savedHome === undefined) delete process.env.GBRAIN_HOME;
+    else process.env.GBRAIN_HOME = savedHome;
+    if (savedKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = savedKey;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeConfig(cfg: Record<string, unknown>) {
+    writeFileSync(join(dir, '.gbrain', 'config.json'), JSON.stringify(cfg));
+  }
+
+  const secret = { name: 'OPENAI_API_KEY', description: 'test key', where: 'https://example.com' };
+
+  test('checkSecrets sees a key stored only in config.json', () => {
+    writeConfig({ engine: 'pglite', openai_api_key: 'sk-test-config-only' });
+    const { set, missing } = checkSecrets([secret]);
+    expect(set).toEqual(['OPENAI_API_KEY']);
+    expect(missing).toHaveLength(0);
+  });
+
+  test('checkSecrets still reports missing when the key is nowhere', () => {
+    writeConfig({ engine: 'pglite' });
+    const { set, missing } = checkSecrets([secret]);
+    expect(set).toHaveLength(0);
+    expect(missing.map(m => m.name)).toEqual(['OPENAI_API_KEY']);
+  });
+
+  test('expandVars expands a config-folded key', () => {
+    writeConfig({ engine: 'pglite', openai_api_key: 'sk-from-config' });
+    expect(expandVars('Bearer $OPENAI_API_KEY')).toBe('Bearer sk-from-config');
+  });
+
+  test('non-empty process.env still wins over the config plane', () => {
+    writeConfig({ engine: 'pglite', openai_api_key: 'sk-from-config' });
+    process.env.OPENAI_API_KEY = 'sk-from-env';
+    expect(expandVars('$OPENAI_API_KEY')).toBe('sk-from-env');
+  });
+
+  test('env_exists health check sees a config-folded key', async () => {
+    writeConfig({ engine: 'pglite', openai_api_key: 'sk-from-config' });
+    const result = await executeHealthCheck(
+      { type: 'env_exists', name: 'OPENAI_API_KEY', label: 'key present' },
+      'test-id',
+      true,
+    );
+    expect(result.status).toBe('ok');
+    expect(result.output).toContain('set');
+  });
+
+  test('falls back to process.env when no config file exists (pre-init)', () => {
+    // No config.json written — pre-`gbrain init` shape.
+    process.env.OPENAI_API_KEY = 'sk-env-only';
+    const { set } = checkSecrets([secret]);
+    expect(set).toEqual(['OPENAI_API_KEY']);
   });
 });

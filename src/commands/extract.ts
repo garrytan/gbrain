@@ -349,7 +349,13 @@ function inferTypeByDir(fromDir: string, toDir: string, frontmatter?: Record<str
   const to = toDir.split('/')[0];
   if (from === 'people' && to === 'companies') {
     if (Array.isArray(frontmatter?.founded)) return 'founded';
-    return 'works_at';
+    // #3466: bare people/ -> companies/ adjacency is not evidence of
+    // employment, so it gets the neutral 'mentions' verb instead of
+    // 'works_at'. Real works_at edges still come from the two paths that
+    // read actual evidence: the company:/companies: frontmatter fields
+    // (FRONTMATTER_LINK_MAP) and employment phrasing in prose
+    // (inferLinkType in link-extraction.ts).
+    return 'mentions';
   }
   if (from === 'people' && to === 'deals') return 'involved_in';
   if (from === 'deals' && to === 'companies') return 'deal_for';
