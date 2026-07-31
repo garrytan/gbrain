@@ -93,6 +93,22 @@ describeIfDB('#3583: rename reconcile on PostgreSQL', () => {
     await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
     expect(await engine.getPage('people/beta')).not.toBeNull();
 
+    // Put the row back into the LEGACY state — the one production brains
+    // actually carry. The cheap rename above repairs source_path now, but
+    // every row renamed before that repair existed still points at its old
+    // path, and those are exactly the rows the reconcile must not delete.
+    // Without this, beta is not even a candidate and the live-row assertion
+    // below passes with liveness protection disabled (adversarial review).
+    await engine.executeRaw(
+      `UPDATE pages SET source_path = 'people/alpha.md'
+        WHERE source_id = 'default' AND slug = 'people/beta'`,
+    );
+    const betaRows = await engine.executeRaw<{ source_path: string | null }>(
+      `SELECT source_path FROM pages WHERE source_id = 'default' AND slug = 'people/beta'`,
+    );
+    expect(betaRows).toHaveLength(1);
+    expect(betaRows[0].source_path).toBe('people/alpha.md');
+
     // A NEW unrelated file at the old path…
     writeFileSync(join(repo, 'people/alpha.md'), personMd('Alpha Two', 'A different Alpha.'));
     execSync('git add -A && git commit -m "new alpha"', { cwd: repo, stdio: 'pipe' });
@@ -110,7 +126,8 @@ describeIfDB('#3583: rename reconcile on PostgreSQL', () => {
 
     // The destination carries the renamed file's content, the stale duplicate
     // is gone, and — the review's blocker-1 assertion — the LIVE beta row
-    // (whose bookkeeping shared the old path) survives.
+    // survives even though its bookkeeping still names the old path: a
+    // tracked file (people/beta.md) derives to its slug, so it is live.
     const gamma = await engine.getPage('people/gamma');
     expect(gamma).not.toBeNull();
     expect(gamma!.compiled_truth).toContain('A different Alpha.');

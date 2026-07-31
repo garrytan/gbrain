@@ -675,23 +675,25 @@ async function activeSlugsBySourcePath(
  * catch records the `<rename:…>` sentinel (fail-closed) instead of guessing.
  */
 interface TrackedSlugIndex {
-  bySlug: Map<string, string[]>;
+  /**
+   * The slugs some tracked file derives to. A SET, not a slug -> paths map:
+   * liveness only ever asks "does any file still derive to this slug", and
+   * carrying the paths invited a reader to trust a payload nothing keeps
+   * accurate.
+   */
+  slugs: Set<string>;
   complete: boolean;
 }
 
 function trackedSlugIndex(gitContextRoot: string, anchorCommit?: string): TrackedSlugIndex {
-  const bySlug = new Map<string, string[]>();
+  const slugs = new Set<string>();
   let complete = true;
-  const addSlug = (slug: string, rel: string): void => {
-    const arr = bySlug.get(slug);
-    if (arr) arr.push(rel);
-    else bySlug.set(slug, [rel]);
-  };
+  const addSlug = (slug: string): void => { slugs.add(slug); };
   const listing = gitRawOutput(gitContextRoot, ['ls-files', '-z']);
   for (const rel of listing.split('\u0000')) {
     if (!rel) continue;
     const slug = resolveSlugForPath(rel);
-    addSlug(slug, rel);
+    addSlug(slug);
     // Fallback-regime candidates are every non-code file whose path derives
     // no slug. NOT just `.md`/`.mdx`: importFromFile has no extension gate —
     // an extensionless emoji-named file imports under its frontmatter slug
@@ -701,7 +703,7 @@ function trackedSlugIndex(gitContextRoot: string, anchorCommit?: string): Tracke
     if (slug === '' && !isCodeFilePath(rel)) {
       try {
         const fallback = fallbackSlugsForFile(gitContextRoot, rel);
-        for (const fmSlug of fallback.slugs) addSlug(fmSlug, rel);
+        for (const fmSlug of fallback.slugs) addSlug(fmSlug);
         if (!fallback.proofIntact) {
           complete = false;
           serr(
@@ -739,7 +741,7 @@ function trackedSlugIndex(gitContextRoot: string, anchorCommit?: string): Tracke
         if (!rel) continue;
         if (resolveSlugForPath(rel) !== '' || isCodeFilePath(rel)) continue;
         const res = anchorBlobSlugs(gitContextRoot, anchorCommit, rel, historicalFilter);
-        for (const s of res.slugs) addSlug(s, rel);
+        for (const s of res.slugs) addSlug(s);
         if (!res.proofIntact) {
           complete = false;
           serr(
@@ -758,7 +760,7 @@ function trackedSlugIndex(gitContextRoot: string, anchorCommit?: string): Tracke
       );
     }
   }
-  return { bySlug, complete };
+  return { slugs, complete };
 }
 
 /**
@@ -779,22 +781,18 @@ function frontmatterSlugShapes(content: string, rel: string): string[] {
 }
 
 /**
- * #3583 gate18: the compiled_truth the ANCHOR state of a path parses to —
- * the content-level signal for "is this row genuinely the file's own row".
- * Bookkeeping alone is spoofable from both sides (gate 16: a decoy claiming
- * the path; gate 18: a decoy claiming the path AND occupying the derived
- * slug), but the brain reflects `anchorCommit`, so the row imported from
- * this file MUST hold the compiled_truth its anchor blob parses to — a
- * rename+edit changes the file at HEAD, never the anchor blob. Returns
- * null when the blob is unreadable or unparsable; callers treat null as
- * "no proof" and defer, never as a match. A clean/smudge filter or CRLF
- * conversion makes the clean blob differ from what import read in the
- * working tree; that mismatch also defers — the safe direction (the
- * filter family is exactly where content proofs go blind).
- */
-/**
  * Parse a blob's content the way IMPORT parses it and reduce it to the
- * comparable content signals. Mirrors importFile end to end: frontmatter
+ * comparable content signals — the content-level answer to "is this row
+ * genuinely the file's own row". Bookkeeping alone is spoofable from both
+ * sides (a decoy claiming the path; a decoy claiming the path AND occupying
+ * the derived slug), but the brain reflects `anchorCommit`, so the row
+ * imported from this file MUST hold the signals its anchor blob parses to —
+ * a rename+edit changes the file at HEAD, never the anchor blob. Callers
+ * treat an unreadable or unparsable blob as "no proof" and defer, never as
+ * a match; a clean/smudge filter or CRLF conversion likewise makes the blob
+ * differ from what import read in the working tree, and that mismatch also
+ * defers (the safe direction — the filter family is exactly where content
+ * proofs go blind). Mirrors importFile end to end: frontmatter
  * inference runs first (sync's importFile calls never disable it) — a raw
  * parse compared against a row stored through inference falsely deferred
  * every date-prefixed batch rename (gate 20).
@@ -2473,7 +2471,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // lastCommit = the commit the brain reflects; its blob is one of the
       // consulted content states (see fallbackSlugsForFile).
       treeSlugIndex ??= trackedSlugIndex(gitContextRoot, lastCommit);
-      if (treeSlugIndex.bySlug.has(s)) return 'live';
+      if (treeSlugIndex.slugs.has(s)) return 'live';
       return treeSlugIndex.complete ? 'stale' : 'unknown';
     };
 
@@ -2549,16 +2547,16 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // Every other shape (legacy-slug rows, drifted or absent bookkeeping,
       // fallback-regime paths, a failed batch resolve) skips the move and
       // falls through to add + reconcile, whose dedup-skip rail keeps the
-      // old row alive when the destination doesn't materialize — and the
-      // full-sync purge now spares dedup-matched rows, so deferral is
-      // never loss.
+      // old row alive when the destination doesn't materialize: the
+      // reconcile never deletes a row this run's import dedup-matched
+      // against, so deferring the cheap move cannot lose it here.
       //
       // And even BOTH bookkeeping signals can be co-spoofed (gate 18): a
       // decoy sitting at the derived slug AND claiming the from-path is
       // indistinguishable from the healthy row by bookkeeping alone, while
       // the real row's own bookkeeping drifted elsewhere. The third rail is
       // content-level: the target must hold the compiled_truth the ANCHOR
-      // blob of `from` parses to (see anchorCompiledTruth) — the state the
+      // blob of `from` parses to (see anchorContentSignals) — the state the
       // brain reflects, which a rename+edit at HEAD cannot change. Any
       // mismatch or unprovable read skips the move (deferral, never loss).
       const derivedFrom = resolveSlugForPath(from);
@@ -2609,8 +2607,13 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         // a no-write skip, so the stale bookkeeping survived indefinitely
         // and the full-sync purge later read it as "source file removed"
         // and hard-deleted the LIVE renamed page. Repair the bookkeeping at
-        // the moment the rename lands (best-effort: the purge's own
-        // liveness spare is the backstop for rows this misses).
+        // the moment the rename lands. Best-effort, and nothing downstream
+        // covers a miss: rows renamed BEFORE this repair — and rows whose
+        // repair query fails — keep the stale path and stay exposed to the
+        // full-sync purge exactly as they are on master. That exposure is
+        // pre-existing (verified against the merge base) and out of scope
+        // here; this repair stops the shape being manufactured going
+        // forward.
         try {
           // Scope EXACTLY the way updateSlug scoped the move it repairs:
           // no sourceId means the DEFAULT source, never every source — an
@@ -2719,7 +2722,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
             const candidates = (active.get(from) ?? []).filter(s => s !== newSlug);
             const staleSlugs: string[] = [];
             // gate 18: memoized per rename — the content-level signal for
-            // the delete side (see anchorCompiledTruth and the cheap-move
+            // the delete side (see anchorContentSignals and the cheap-move
             // rail above). `undefined` = not yet computed; `null` = no proof.
             let anchorTruthForFrom: ReturnType<typeof anchorContentSignals> | undefined;
             for (const s of candidates) {

@@ -577,7 +577,7 @@ describe('#3479: non-unique source_path — a soft-deleted row must not mask a l
 });
 
 describe('#3583 review: a live page sharing the stale source_path survives the reconcile', () => {
-  test('cheap rename leaves the old source_path on the live row; a later occupied-destination rename must not delete it', async () => {
+  test('a LEGACY row still carrying an old source_path is not deleted by a later occupied-destination rename', async () => {
     const { performSync } = await import('../src/commands/sync.ts');
     const repo = mkRepo({ 'people/alpha.md': personMd('Alpha', 'Alpha original body.') });
     await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
@@ -2378,6 +2378,61 @@ describe('#3583 review: GATE17 — the derived-authority move cannot overwrite a
     expect(await engine.getPage('people-legacy')).toBeNull();
   });
 
+  test('G17_PATH_CLAIM_ISOLATION: a row at the derived slug whose CONTENT matches is still not moved unless it claims the path', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    // Isolates the path-claim half of the intersection. The neighbouring
+    // test's manual page has mismatched content, so the content rail also
+    // refuses that move and the test passes even with the claim requirement
+    // removed (adversarial review). Here the row occupying the derived slug
+    // holds EXACTLY the content the anchor blob parses to — the content rail
+    // waves it through — and only "does an active row at that slug claim
+    // this path?" tells it apart from the file's own row.
+    //
+    // Reachable shape: the same content imported at two paths (a copy, a
+    // vendored duplicate), and the file's own row later drifting to another
+    // slug. Simulated with raw UPDATEs the way the sibling legacy tests do.
+    const repo = mkRepo({ 'people/alpha.md': personMd('Alpha', 'Alpha file body.') });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    const imported = await engine.getPage('people/alpha');
+    expect(imported).not.toBeNull();
+
+    // The file's OWN row drifts to a non-derived slug, keeping the claim.
+    await engine.executeRaw(
+      `UPDATE pages SET slug = 'people-own-legacy'
+        WHERE source_id = 'default' AND slug = 'people/alpha'`,
+    );
+    // A twin at the DERIVED slug with byte-identical content, claiming a
+    // different path — so it matches on content but never on the claim.
+    await engine.putPage('people/alpha', {
+      type: imported!.type,
+      title: imported!.title,
+      compiled_truth: imported!.compiled_truth,
+      timeline: imported!.timeline,
+    }, { sourceId: 'default' });
+    await engine.executeRaw(
+      `UPDATE pages SET source_path = 'vendor/alpha-copy.md'
+        WHERE source_id = 'default' AND slug = 'people/alpha'`,
+    );
+
+    execSync('git mv people/alpha.md people/beta.md', { cwd: repo, stdio: 'pipe' });
+    execSync('git commit -m "rename alpha to beta"', { cwd: repo, stdio: 'pipe' });
+    const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(result.status).toBe('synced');
+
+    // The twin was NOT moved: it still sits at its own slug with its own
+    // bookkeeping. (Without the claim requirement it is moved to
+    // people/beta and the re-import overwrites it.)
+    const twinRows = await engine.executeRaw<{ source_path: string | null }>(
+      `SELECT source_path FROM pages WHERE source_id = 'default' AND slug = 'people/alpha' AND deleted_at IS NULL`,
+    );
+    expect(twinRows).toHaveLength(1);
+    expect(twinRows[0].source_path).toBe('vendor/alpha-copy.md');
+    // …and the rename still converged at the destination.
+    const beta = await engine.getPage('people/beta');
+    expect(beta).not.toBeNull();
+    expect(beta!.compiled_truth).toContain('Alpha file body');
+  });
+
 });
 
 describe('#3583 review: GATE18 — content-level rail on the cheap move', () => {
@@ -2407,8 +2462,9 @@ describe('#3583 review: GATE18 — content-level rail on the cheap move', () => 
 
     const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
     expect(result.status).toBe('synced');
-    // The decoy survives at its own slug with its own body (it was moved
-    // to people/beta and overwritten with the file body).
+    // The decoy survives at its own slug with its own body. Without the
+    // content rail it is moved to people/beta and overwritten with the file
+    // body — that is the failure this pins, not the passing behavior.
     const decoy = await engine.getPage('people/alpha');
     expect(decoy).not.toBeNull();
     expect(decoy!.compiled_truth).toContain('UNRELATED DECOY BODY');
