@@ -198,6 +198,24 @@ export function resolveOAuthTokenRateLimit(env: NodeJS.ProcessEnv = process.env)
   };
 }
 
+/**
+ * Whether to disable the entire `/admin` tree (`GBRAIN_DISABLE_ADMIN`).
+ *
+ * Opt-IN, defaulting to enabled, because the admin plane is how a laptop
+ * install is normally driven and silently removing it on upgrade would be a
+ * breaking change. Network-exposed deployments set it; see the guard's
+ * comment at the mount site for why "disable" beats "firewall".
+ *
+ * Accepts the same spellings as the other boolean env switches here: `1` and
+ * `true` enable the kill switch, anything else (including unset) leaves the
+ * admin plane mounted. Deliberately NOT "any non-empty value is truthy" —
+ * `GBRAIN_DISABLE_ADMIN=0` must mean what it says.
+ */
+export function resolveAdminDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = env.GBRAIN_DISABLE_ADMIN;
+  return v === '1' || v === 'true';
+}
+
 export type McpRateLimitConfig = {
   /** Shared window for both buckets, in ms. */
   windowMs: number;
@@ -1203,6 +1221,38 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     const result = await probeLiveness(sql, config.engine || 'pglite', VERSION);
     res.status(result.status).json(result.body);
   });
+
+  // ---------------------------------------------------------------------------
+  // Admin plane kill switch (GBRAIN_DISABLE_ADMIN=1)
+  //
+  // The whole /admin tree — login, magic-link issuance, redemption, every
+  // /admin/api/* route and the SPA — mounts on the SAME Express app and the
+  // SAME port as /mcp. There is no way to firewall one without the other:
+  // Container Apps IP restrictions (and most reverse proxies) apply
+  // per-app, not per-path, so allowlisting /admin also allowlists /mcp,
+  // which breaks a roaming laptop. And /admin/login carries no rate limiter
+  // of its own; only /admin/auth/:token does.
+  //
+  // For a single-user deployment the admin web plane earns nothing: the
+  // same operations are available over the CLI inside the container
+  // (`az containerapp exec` on Azure, `docker exec` elsewhere). So the
+  // correct posture there is for the surface not to exist on the internet
+  // at all, rather than to exist behind a password.
+  //
+  // Implemented as a terminating guard registered ahead of every /admin
+  // route rather than as a conditional around ~700 lines of interleaved
+  // registration. Same externally observable result — 404, identical to a
+  // route that was never mounted, revealing nothing about whether an admin
+  // plane exists — with no risk of a future /admin route being added below
+  // the guard and silently escaping it.
+  // ---------------------------------------------------------------------------
+  const adminDisabled = resolveAdminDisabled();
+  if (adminDisabled) {
+    console.error('[serve-http] admin plane DISABLED (GBRAIN_DISABLE_ADMIN). /admin/* returns 404; administer via the CLI inside the container.');
+    app.use('/admin', (_req: Request, res: Response) => {
+      res.status(404).json({ error: 'not_found' });
+    });
+  }
 
   // ---------------------------------------------------------------------------
   // Admin authentication (cookie-based)
@@ -2692,11 +2742,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 ║  Skills:    ${skillStatus.bannerValue.padEnd(40)}║
 ║  Token TTL: ${(tokenTtl + 's').padEnd(40)}║
 ╠══════════════════════════════════════════════════════╣
-║  Admin:     http://localhost:${port}/admin${' '.repeat(Math.max(0, 19 - String(port).length))}║
+║  Admin:     ${(adminDisabled ? 'disabled (GBRAIN_DISABLE_ADMIN)' : `http://localhost:${port}/admin`).padEnd(40)}║
 ║  MCP:       http://localhost:${port}/mcp${' '.repeat(Math.max(0, 21 - String(port).length))}║
 ║  Health:    http://localhost:${port}/health${' '.repeat(Math.max(0, 18 - String(port).length))}║
 ╠══════════════════════════════════════════════════════╣
-${bootstrapFromEnv
+${adminDisabled
+  ? '║  Admin Token: n/a (admin plane disabled)             ║\n╚══════════════════════════════════════════════════════╝'
+  : bootstrapFromEnv
   ? '║  Admin Token: from $GBRAIN_ADMIN_BOOTSTRAP_TOKEN     ║\n╚══════════════════════════════════════════════════════╝'
   : suppressBootstrapPrint
     ? '║  Admin Token: hidden (non-TTY log-leak guard)        ║\n║  set $GBRAIN_ADMIN_BOOTSTRAP_TOKEN, or pass          ║\n║  --print-admin-token on a trusted terminal.          ║\n╚══════════════════════════════════════════════════════╝'
