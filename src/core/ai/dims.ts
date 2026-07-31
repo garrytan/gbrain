@@ -312,6 +312,19 @@ export function dimsProviderOptions(
       // widths hard-fail with a dim-mismatch error. Pattern match the bare
       // model name + any `:tag` (e.g. `qwen3-embedding:4b`, `qwen3-embedding:0.6b`).
       if (modelId === 'qwen3-embedding' || modelId.startsWith('qwen3-embedding:')) {
+        // Only send `dimensions` when it actually differs from the model's
+        // native width. Fixed-dim OpenAI-compatible backends serving this
+        // family (e.g. vLLM) reject the parameter outright with HTTP 400
+        // ("does not support matryoshka representation") even when the
+        // requested value equals the native size; omitting it in the equal
+        // case is semantically identical for Ollama and keeps vLLM working.
+        const QWEN3_EMBEDDING_NATIVE_DIMS: Record<string, number> = {
+          'qwen3-embedding': 1024,
+          'qwen3-embedding:0.6b': 1024,
+          'qwen3-embedding:4b': 2560,
+          'qwen3-embedding:8b': 4096,
+        };
+        if (QWEN3_EMBEDDING_NATIVE_DIMS[modelId] === dims) return undefined;
         return { openaiCompatible: { dimensions: dims } };
       }
       // MiniMax embo-01 takes a `type: 'db' | 'query'` field for asymmetric
