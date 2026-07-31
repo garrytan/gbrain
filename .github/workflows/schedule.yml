@@ -1,0 +1,107 @@
+name: Azure schedule
+
+# Start the deployment on weekday mornings, stop it on weekday evenings.
+#
+# Cuts the compute bill by roughly 60% at a ~39% duty cycle (Mon-Fri
+# 06:00-19:00 = 65 of 168 hours). Data-safe because nothing here holds
+# volatile state: no git-backed sources means nothing on the container
+# filesystem must survive, and a Postgres compute stop leaves storage alone.
+#
+# WHAT IT COSTS YOU: the overnight cycle. synthesize / patterns / consolidate
+# / extract-takes are designed to run while you sleep, and a deployment that
+# is off overnight never runs them. The mitigation is the shape of the
+# window, not a separate mechanism — Postgres and the worker come up an hour
+# before anyone is querying, so the cycle still drains, just time-shifted.
+#
+# Uses the same federated OIDC credential as deploy.yml. No new Azure
+# resource, no stored cloud credentials, no scheduler to operate.
+
+on:
+  schedule:
+    # UTC. Pick times allowing for GitHub cron drift (see below).
+    - cron: '0 5 * * 1-5'    # 05:00 UTC weekdays — start
+    - cron: '0 18 * * 1-5'   # 18:00 UTC weekdays — stop
+  workflow_dispatch:
+    inputs:
+      action:
+        description: start | stop | verify
+        required: true
+        type: choice
+        options: [start, stop, verify]
+
+permissions:
+  id-token: write
+  contents: read
+
+# Never overlap a start with a stop. cancel-in-progress stays false: a
+# half-completed start that gets cancelled leaves the database running and
+# the worker down, which is the worst of both.
+concurrency:
+  group: azure-schedule
+  cancel-in-progress: false
+
+env:
+  RG: rg-gbrain
+  PG: pg-gbrain
+  MCP: ca-gbrain-mcp
+  WORKER: ca-gbrain-worker
+
+jobs:
+  schedule:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+
+      - name: Resolve action
+        id: act
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = 'workflow_dispatch' ]; then
+            echo "action=$DISPATCH_ACTION" >> "$GITHUB_OUTPUT"
+          elif [ "$CRON" = '0 5 * * 1-5' ]; then
+            echo "action=start" >> "$GITHUB_OUTPUT"
+          else
+            echo "action=stop" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_ACTION: ${{ inputs.action }}
+          CRON: ${{ github.event.schedule }}
+
+      - uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5  # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Start
+        if: steps.act.outputs.action == 'start'
+        run: bash scripts/azure/start.sh
+
+      - name: Stop
+        if: steps.act.outputs.action == 'stop'
+        run: bash scripts/azure/stop.sh
+
+      # Verify after a start, and on an explicit verify. Not after a stop:
+      # everything is deliberately down, so the checks would fail by design.
+      - name: Verify
+        if: steps.act.outputs.action != 'stop'
+        run: bash scripts/azure/verify.sh
+
+      # A silently failed 06:00 start is otherwise discovered at 09:00 as a
+      # broken client connection, which is the wrong way to learn about it.
+      # GitHub emails the workflow's actor on failure by default; this makes
+      # the reason visible in the run itself rather than only in the logs.
+      - name: Report failure
+        if: failure()
+        run: |
+          {
+            echo "### gbrain schedule FAILED"
+            echo
+            echo "Action: \`${ACTION}\`"
+            echo
+            echo "The deployment may be half-up. Re-run this workflow with"
+            echo "\`workflow_dispatch\` and action \`verify\` to see which layer is wrong."
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          ACTION: ${{ steps.act.outputs.action }}

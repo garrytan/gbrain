@@ -161,3 +161,11 @@ jobs:
             -g "$RESOURCE_GROUP" -n "ca-${NAME_PREFIX}-worker" \
             --image "${{ steps.image.outputs.ref }}" \
             --output none
+
+      # Same script the runbook and the schedule workflow use, so a deploy is
+      # held to the same bar as a morning start rather than to a weaker
+      # deploy-specific smoke test.
+      - name: Verify
+        run: bash scripts/azure/verify.sh
+        env:
+          RG: ${{ env.RESOURCE_GROUP }}
