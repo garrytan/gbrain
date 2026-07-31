@@ -4309,7 +4309,11 @@ export class PGLiteEngine implements BrainEngine {
                  $14, $15,
                  $16, $17, $18, $19,
                  $20
-               ) RETURNING id`
+               )
+               ON CONFLICT (source_id, source_markdown_slug, row_num)
+               WHERE row_num IS NOT NULL
+               DO NOTHING
+               RETURNING id`
             : `INSERT INTO facts (
                  source_id, entity_slug, fact, kind, visibility, notability, context,
                  valid_from, valid_until, source, source_session, confidence,
@@ -4323,12 +4327,16 @@ export class PGLiteEngine implements BrainEngine {
                  $15, $16,
                  $17, $18, $19, $20,
                  $21
-               ) RETURNING id`,
+               )
+               ON CONFLICT (source_id, source_markdown_slug, row_num)
+               WHERE row_num IS NOT NULL
+               DO NOTHING
+               RETURNING id`,
           embedStr === null
             ? [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, embeddedAt, input.row_num, input.source_markdown_slug, claimMetric, claimValue, claimUnit, claimPeriod, eventType]
             : [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, embedStr, embeddedAt, input.row_num, input.source_markdown_slug, claimMetric, claimValue, claimUnit, claimPeriod, eventType],
         );
-        out.push(ins.rows[0].id);
+        if (ins.rows[0]) out.push(ins.rows[0].id);
       }
       return out;
     });

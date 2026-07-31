@@ -4491,9 +4491,13 @@ export class PostgresEngine implements BrainEngine {
             ${input.row_num}, ${input.source_markdown_slug},
             ${claimMetric}, ${claimValue}, ${claimUnit}, ${claimPeriod},
             ${eventType}
-          ) RETURNING id
+          )
+          ON CONFLICT (source_id, source_markdown_slug, row_num)
+          WHERE row_num IS NOT NULL
+          DO NOTHING
+          RETURNING id
         `;
-        out.push(Number(ins[0].id));
+        if (ins[0]) out.push(Number(ins[0].id));
       }
       return out;
     });

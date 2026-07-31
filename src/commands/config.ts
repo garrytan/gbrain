@@ -46,7 +46,14 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     }
     console.log('GBrain config:');
     for (const [k, v] of Object.entries(config)) {
-      const display = typeof v === 'string' ? redactConfigValue(k, v) : v;
+      // #575: objects interpolated into the template literal printed
+      // `[object Object]` — render them as JSON instead. Sensitive keys
+      // stay redacted whether the value is a string or an object.
+      const display = typeof v === 'string'
+        ? redactConfigValue(k, v)
+        : v !== null && typeof v === 'object'
+          ? (isSensitiveConfigKey(k) ? '***' : JSON.stringify(v))
+          : v;
       console.log(`  ${k}: ${display}`);
     }
     return;

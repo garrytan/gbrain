@@ -2441,7 +2441,7 @@ export async function runCycle(
         try {
           const { runSchemaSuggestPhase } = await import('./cycle/schema-suggest.ts');
           const { result, duration_ms } = await timePhase(async () => {
-            const r = await runSchemaSuggestPhase(engine, { dryRun: !!opts.dryRun });
+            const r = await runSchemaSuggestPhase(engine, { sourceId: cycleSourceId, dryRun: !!opts.dryRun });
             return {
               phase: 'schema-suggest' as const,
               status: (r.skipped ? 'skipped' : 'ok') as PhaseStatus,
