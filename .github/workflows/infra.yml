@@ -1,0 +1,165 @@
+name: Azure infra
+
+# Owns the Bicep. what-if on a pull request, real deployment on merge.
+#
+# Separate from deploy.yml because the two have very different blast radii and
+# very different secret needs. This one changes the shape of the deployment
+# and needs the database password and admin bootstrap token; deploy.yml only
+# swaps an image tag and needs neither. Keeping them apart means the frequent
+# action does not carry the credentials of the structural one.
+#
+# what-if on PRs is the point of this workflow. Bicep is declarative, so a
+# subtle change (a subnet prefix, an immutable Postgres property) reads as a
+# one-line diff and lands as a resource replacement. what-if says so before
+# review, not after merge.
+
+on:
+  pull_request:
+    paths:
+      - 'infra/**'
+      - '.github/workflows/infra.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'infra/**'
+  workflow_dispatch:
+    inputs:
+      deploy_apps:
+        description: Deploy the container apps and migration job (requires an image in the registry)
+        type: boolean
+        default: true
+      image:
+        description: Fully qualified image reference (required when deploy_apps is true)
+        type: string
+        default: ''
+
+permissions:
+  id-token: write
+  contents: read
+  # what-if output is posted back to the PR.
+  pull-requests: write
+
+concurrency:
+  group: azure-infra
+  cancel-in-progress: false
+
+env:
+  LOCATION: eastus2
+  RESOURCE_GROUP: rg-gbrain
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+
+      # Compiles and lints without touching Azure, so a syntax error fails in
+      # seconds rather than after a login round-trip.
+      - name: Bicep build
+        run: |
+          az bicep install
+          az bicep build --file infra/main.bicep --stdout > /dev/null
+
+  what-if:
+    # Same-repo pull requests only. A fork PR gets neither the OIDC token nor
+    # the repository secrets, so it would fail on login rather than tell
+    # anyone anything useful.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+
+      - uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5  # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: what-if
+        run: |
+          set -euo pipefail
+          # The secure parameters are still required for what-if to evaluate
+          # the template, even though nothing is created. They come from
+          # repository secrets, never from the event payload.
+          az deployment sub what-if \
+            --location "$LOCATION" \
+            --template-file infra/main.bicep \
+            --parameters infra/main.parameters.json \
+            --parameters dbAdminPassword="$DB_ADMIN_PASSWORD" \
+                         adminBootstrapToken="$ADMIN_BOOTSTRAP_TOKEN" \
+            --result-format FullResourcePayloads \
+            > what-if.txt
+          {
+            echo '### Azure what-if'
+            echo
+            echo '```'
+            # Truncated: a FullResourcePayloads diff can exceed the 65535-char
+            # step-summary limit and would be dropped entirely rather than
+            # clipped. The full text is in the raw job log.
+            head -c 60000 what-if.txt
+            echo
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          DB_ADMIN_PASSWORD: ${{ secrets.AZURE_PG_ADMIN_PASSWORD }}
+          ADMIN_BOOTSTRAP_TOKEN: ${{ secrets.GBRAIN_ADMIN_BOOTSTRAP_TOKEN }}
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+
+      - uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5  # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # On a plain push we keep whatever image the apps already run, rather
+      # than defaulting to `latest`. Redeploying the template must not
+      # silently roll the apps onto a different build — that is deploy.yml's
+      # job, and doing it here would make an infra change an app release too.
+      - name: Resolve current image
+        id: current
+        run: |
+          set -euo pipefail
+          # Via env, not direct interpolation: a workflow_dispatch input is
+          # attacker-shaped the moment anyone with write access is
+          # compromised, and it lands in a shell here.
+          image="$INPUT_IMAGE"
+          if [ -z "$image" ]; then
+            image=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-gbrain-mcp \
+              --query 'properties.template.containers[0].image' -o tsv 2>/dev/null || true)
+          fi
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          if [ -z "$image" ]; then
+            echo "No existing image found — deploying foundation only."
+            echo "deploy_apps=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy_apps=$WANT_APPS" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          INPUT_IMAGE: ${{ inputs.image }}
+          WANT_APPS: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_apps || 'true' }}
+
+      - name: Deploy
+        run: |
+          set -euo pipefail
+          az deployment sub create \
+            --name "gbrain-${GITHUB_SHA::12}" \
+            --location "$LOCATION" \
+            --template-file infra/main.bicep \
+            --parameters infra/main.parameters.json \
+            --parameters dbAdminPassword="$DB_ADMIN_PASSWORD" \
+                         adminBootstrapToken="$ADMIN_BOOTSTRAP_TOKEN" \
+                         deployApps="$DEPLOY_APPS" \
+                         image="$IMAGE" \
+            --output none
+        env:
+          DB_ADMIN_PASSWORD: ${{ secrets.AZURE_PG_ADMIN_PASSWORD }}
+          ADMIN_BOOTSTRAP_TOKEN: ${{ secrets.GBRAIN_ADMIN_BOOTSTRAP_TOKEN }}
+          DEPLOY_APPS: ${{ steps.current.outputs.deploy_apps }}
+          IMAGE: ${{ steps.current.outputs.image }}

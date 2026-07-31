@@ -1,0 +1,27 @@
+# Keep the build context small and free of anything secret.
+#
+# The context is uploaded in full to the Docker daemon before the first
+# instruction runs, so an entry here is both a speed and a safety measure —
+# a file excluded here cannot end up in a layer by accident.
+
+.git
+node_modules
+bin
+dist
+
+# Never in an image.
+.env
+.env.*
+!.env.testing.example
+*.pem
+*.key
+
+# Test and eval artifacts: large, and irrelevant to a runtime binary.
+.gbrain-evals
+coverage
+test-results
+evals/**/baseline-runs
+
+# Local scratch.
+*.log
+.DS_Store

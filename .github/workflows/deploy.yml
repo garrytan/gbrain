@@ -1,0 +1,163 @@
+name: Azure deploy
+
+# Build the image, migrate the schema, then roll both container apps onto it.
+#
+# Deliberately NOT a template deployment. infra.yml owns the Bicep and needs
+# the secure parameters (database password, admin bootstrap token) to run at
+# all; this workflow only ever swaps an image tag, so it needs no secret
+# beyond the federated identity. Keeping them apart means the routine,
+# frequent action does not carry the credentials of the rare, structural one.
+#
+# Requires the apps to exist. Create them once via infra.yml with
+# deployApps=true after the first image is pushed.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'src/**'
+      - 'Dockerfile'
+      - 'package.json'
+      - 'bun.lock'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+    inputs:
+      skip_migration:
+        description: Skip the migration job (only when you know the schema is unchanged)
+        type: boolean
+        default: false
+
+# Least privilege: id-token to obtain the federated credential, contents to
+# check out. No stored cloud credentials anywhere.
+permissions:
+  id-token: write
+  contents: read
+
+# One deploy at a time. Two concurrent runs would race on the migration job
+# (which takes a Postgres advisory lock for the whole replay) and could leave
+# the apps on different images. cancel-in-progress stays FALSE: cancelling a
+# run mid-migration is worse than queueing behind it.
+concurrency:
+  group: azure-deploy
+  cancel-in-progress: false
+
+env:
+  RESOURCE_GROUP: rg-gbrain
+  NAME_PREFIX: gbrain
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+
+      - uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5  # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve registry
+        id: acr
+        run: |
+          set -euo pipefail
+          # The registry name carries a uniqueString suffix, so it is
+          # discovered rather than hardcoded — hardcoding it would break on
+          # any redeploy into a different resource group.
+          name=$(az acr list -g "$RESOURCE_GROUP" --query '[0].name' -o tsv)
+          if [ -z "$name" ]; then
+            echo "::error::No container registry found in $RESOURCE_GROUP. Run infra.yml first."
+            exit 1
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "login_server=$(az acr show -n "$name" --query loginServer -o tsv)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image
+        id: image
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_SHA::12}"
+          # `az acr build` builds inside ACR Tasks rather than on the runner.
+          # No Docker daemon, no registry credentials on the runner, and the
+          # build runs on the same architecture the apps do — which matters
+          # because a Bun-compiled binary is architecture-specific and cannot
+          # be cross-executed by the runtime stage.
+          az acr build \
+            --registry "${{ steps.acr.outputs.name }}" \
+            --platform linux/amd64 \
+            --image "gbrain:$tag" \
+            --image "gbrain:latest" \
+            --file Dockerfile \
+            .
+          echo "ref=${{ steps.acr.outputs.login_server }}/gbrain:$tag" >> "$GITHUB_OUTPUT"
+
+      # Migration runs BEFORE any serving revision is promoted, and it runs as
+      # its own job rather than as app startup work: initSchema holds a
+      # Postgres advisory lock for the entire replay, so every replica doing
+      # it on boot would serialize behind replica 1 and fail readiness.
+      - name: Migrate schema
+        if: ${{ !inputs.skip_migration }}
+        run: |
+          set -euo pipefail
+          job="caj-${NAME_PREFIX}-migrate"
+
+          # Point the job at the new image first, or it migrates using the
+          # previous release's migration set — which is exactly backwards.
+          az containerapp job update \
+            -g "$RESOURCE_GROUP" -n "$job" \
+            --image "${{ steps.image.outputs.ref }}" \
+            --output none
+
+          execution=$(az containerapp job start \
+            -g "$RESOURCE_GROUP" -n "$job" \
+            --query name -o tsv)
+          echo "Started execution: $execution"
+
+          # Poll to a terminal state. `job start` returns as soon as the
+          # execution is queued, so without this the apps would roll onto a
+          # schema that is still being applied.
+          deadline=$(( SECONDS + 3600 ))
+          while true; do
+            status=$(az containerapp job execution show \
+              -g "$RESOURCE_GROUP" --name "$job" --job-execution-name "$execution" \
+              --query properties.status -o tsv)
+            case "$status" in
+              Succeeded)
+                echo "Migration succeeded."
+                break
+                ;;
+              Failed|Cancelled)
+                echo "::error::Migration execution $execution ended as $status"
+                az containerapp job logs show \
+                  -g "$RESOURCE_GROUP" --name "$job" --container gbrain-migrate \
+                  --job-execution-name "$execution" --tail 200 || true
+                exit 1
+                ;;
+              *)
+                if [ "$SECONDS" -ge "$deadline" ]; then
+                  echo "::error::Migration still $status after 60 minutes; not promoting a revision against an unknown schema."
+                  exit 1
+                fi
+                echo "status=$status; waiting..."
+                sleep 20
+                ;;
+            esac
+          done
+
+      # MCP app first, worker second. The MCP app is the surface a human
+      # notices immediately if the image is bad; discovering it while the
+      # worker is still on the old image keeps the blast radius to
+      # interactive queries rather than the background cycle too.
+      - name: Roll the MCP app
+        run: |
+          az containerapp update \
+            -g "$RESOURCE_GROUP" -n "ca-${NAME_PREFIX}-mcp" \
+            --image "${{ steps.image.outputs.ref }}" \
+            --output none
+
+      - name: Roll the worker
+        run: |
+          az containerapp update \
+            -g "$RESOURCE_GROUP" -n "ca-${NAME_PREFIX}-worker" \
+            --image "${{ steps.image.outputs.ref }}" \
+            --output none
