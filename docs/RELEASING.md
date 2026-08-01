@@ -16,9 +16,13 @@ Two equivalent paths:
   guards + typecheck, then 4-shard parallel unit + E2E against four pgvector
   containers plus a transaction-mode PgBouncer service (unit phase keeps
   `DATABASE_URL` unset; `--no-shard` for the legacy sequential flow). Stronger
-  than PR CI's 2-file Tier 1 set; closer to what nightly Tier 1 catches. Spins
-  up + tears down postgres automatically via `docker-compose.ci.yml`. Override
-  the host port with `GBRAIN_CI_PG_PORT=5435 bun run ci:local` if 5434 collides.
+  than PR CI's 2-file Tier 1 set; closer to what nightly Tier 1 catches. Compose
+  pulls the database and pooler images with `pull --ignore-buildable`, then
+  rebuilds the repository-owned Git-ready Bun runner with `build --pull runner`;
+  `--no-pull` skips that refresh and `--clean` removes its named volumes for a
+  cold run. Services are started and torn down automatically via
+  `docker-compose.ci.yml`. Override the host port with
+  `GBRAIN_CI_PG_PORT=5435 bun run ci:local` if 5434 collides.
 - `bun run ci:local:diff` runs only the E2E files matched by the diff selector
   (`scripts/select-e2e.ts`), falling back to ALL E2E files on unmapped src/
   paths or schema/skills/package.json changes. Fast iteration during a focused

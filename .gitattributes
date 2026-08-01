@@ -27,3 +27,6 @@
 # Markdown it does not own), but pinning this repo's own .md checkout to LF
 # removes the whole class for anyone working here.
 *.md text eol=lf
+
+# The parser accepts CRLF, but keep the repository-owned baseline canonical.
+scripts/check-test-isolation.allowlist text eol=lf

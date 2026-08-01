@@ -43,12 +43,13 @@ cd "$ROOT"
 TARGET_DIR="${1:-test}"
 ALLOWLIST_FILE="$ROOT/scripts/check-test-isolation.allowlist"
 
-# Read allowlist (one filename per line, # comments allowed). Empty file
-# is fine — every violation will fail. Cached into ALLOWLIST so the
+# Read allowlist (one filename per line, # comments allowed), stripping a
+# terminal CR so CRLF checkouts match the LF-delimited pure-bash `case` check.
+# Empty file is fine — every violation will fail. Cached into ALLOWLIST so the
 # per-file check (~700 lookups per run) is one pure-bash `case` match.
 ALLOWLIST=""
 if [ -f "$ALLOWLIST_FILE" ]; then
-  ALLOWLIST="$(grep -v '^[[:space:]]*#' "$ALLOWLIST_FILE" | grep -v '^[[:space:]]*$' || true)"
+  ALLOWLIST="$(awk 'sub(/\r$/, ""); !/^[[:space:]]*#/ && !/^[[:space:]]*$/' "$ALLOWLIST_FILE")"
 fi
 
 is_allowlisted() {

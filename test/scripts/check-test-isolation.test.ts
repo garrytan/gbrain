@@ -29,7 +29,11 @@ interface RunResult {
   stderr: string;
 }
 
-function runLintIn(files: FakeFile[], allowlist: string[] = []): RunResult {
+function runLintIn(
+  files: FakeFile[],
+  allowlist: string[] = [],
+  allowlistEol = '\n',
+): RunResult {
   const dir = mkdtempSync(join(tmpdir(), 'lint-isolation-'));
   mkdirSync(join(dir, 'test'), { recursive: true });
   mkdirSync(join(dir, 'scripts'), { recursive: true });
@@ -43,7 +47,7 @@ function runLintIn(files: FakeFile[], allowlist: string[] = []): RunResult {
   // real repo's, regardless of git toplevel resolution.
   writeFileSync(
     join(dir, 'scripts/check-test-isolation.allowlist'),
-    allowlist.length > 0 ? allowlist.join('\n') + '\n' : '',
+    allowlist.length > 0 ? allowlist.join(allowlistEol) + allowlistEol : '',
   );
 
   const r = spawnSync('bash', [LINT_SH, 'test'], {
@@ -248,6 +252,26 @@ describe('check-test-isolation.sh', () => {
           },
         ],
         ['test/allowed.test.ts'],
+      );
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain('fresh.test.ts');
+      expect(r.stdout).not.toContain('allowed.test.ts');
+    });
+
+    it('matches CRLF-terminated allowlist entries', () => {
+      const r = runLintIn(
+        [
+          {
+            path: 'allowed.test.ts',
+            contents: `process.env.X = 'a';\n`,
+          },
+          {
+            path: 'fresh.test.ts',
+            contents: `process.env.Y = 'b';\n`,
+          },
+        ],
+        ['test/allowed.test.ts'],
+        '\r\n',
       );
       expect(r.status).toBe(1);
       expect(r.stdout).toContain('fresh.test.ts');

@@ -124,10 +124,12 @@ fi
 gitleaks dir . --redact --no-banner
 gitleaks git . --redact --no-banner --log-opts="origin/master..HEAD"
 
-# Step 1: pull. Refreshes pgvector + oven/bun:1 (both are `image:` not `build:`).
+# Step 1: refresh pulled services, then rebuild the thin runner image from
+# the latest oven/bun:1 base. Use --no-pull to skip the refresh.
 if [ "$NO_PULL" = "0" ]; then
   echo "[ci-local] Pulling base images (use --no-pull to skip)..."
-  docker compose -f "$COMPOSE_FILE" pull 2>&1 | tail -5
+  docker compose -f "$COMPOSE_FILE" pull --ignore-buildable 2>&1 | tail -5
+  docker compose -f "$COMPOSE_FILE" build --pull runner
 fi
 
 # Step 2: 4 postgres shards up + wait for healthy.

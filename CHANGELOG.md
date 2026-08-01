@@ -2,6 +2,30 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.78.0] - 2026-08-01
+
+**Local Docker CI now has the Git tools the test suite expects, and Windows line endings no longer break the test-isolation allowlist.**
+
+Repository tests create temporary Git histories, but the stock Bun container did not include Git. The local CI runner now uses a small repository-owned image with Git and trusted certificates installed, so the same checks work inside Docker instead of failing at setup. `ci:local` rebuilds that runner while still pulling the database images normally.
+
+The isolation allowlist also now accepts both LF and CRLF files. This matters on Windows checkouts, where an invisible carriage return could make an allowlisted test look like a new violation inside Linux CI. The parser removes only that one line-ending character, and the repository keeps future allowlist checkouts in canonical LF form.
+
+### To take advantage of v0.42.78.0
+
+No user action is required. Contributors can run the repaired local gate as usual:
+
+```bash
+bun run ci:local
+```
+
+### Itemized changes
+
+- The Docker CI runner is built from `docker/ci-runner.Dockerfile`, which adds Git and trusted certificates to the Bun base image.
+- `docker-compose.ci.yml` and `scripts/ci-local.sh` build and refresh the repository-owned runner without treating it as a pull-only service.
+- `scripts/check-test-isolation.sh` accepts CRLF-terminated allowlist entries while preserving exact whole-line matching.
+- `.gitattributes` keeps the repository-owned allowlist on LF as defense in depth without requiring existing checkouts to be renormalized.
+- Focused regressions cover Docker runner wiring, runner refresh behavior, and CRLF allowlist matching.
+
 ## [0.42.71.0] - 2026-08-01
 
 **GBrain now publishes real releases. Every version bump from here on lands on the [Releases page](https://github.com/garrytan/gbrain/releases) with organized notes and downloadable binaries — and binary self-update finally works.**

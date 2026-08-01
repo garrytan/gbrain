@@ -4,8 +4,9 @@
 # runner that bind-mounts the repo. Used by `bun run ci:local` and
 # `bun run ci:local:diff` (see scripts/ci-local.sh).
 #
-# All services are pulled as `image:` (no build) so `docker compose pull`
-# refreshes everything. The bun version floats with `oven/bun:1` to track CI's
+# Postgres and PgBouncer are pulled as images. The runner is a thin,
+# repository-owned layer on `oven/bun:1` that provides Git for fixture tests.
+# The bun version still floats with `oven/bun:1` to track CI's
 # `bun-version: latest`. Named volumes isolate the Linux container's deps from
 # the host's darwin-arm64 deps and keep bun + postgres data warm across runs.
 #
@@ -120,7 +121,9 @@ services:
         condition: service_healthy
 
   runner:
-    image: oven/bun:1
+    build:
+      context: .
+      dockerfile: docker/ci-runner.Dockerfile
     working_dir: /app
     depends_on:
       postgres-1:

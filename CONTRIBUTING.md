@@ -176,20 +176,31 @@ time** ... never add new entries. v0.26.8 (env sweep) and v0.26.9 (PGLite sweep
 ### Local CI gate (recommended before pushing, v0.23.1+)
 
 ```bash
-bun run ci:local         # full gate: gitleaks + unit + ALL 29 E2E files (sequential)
+bun run ci:local         # full gate: gitleaks + guards + typecheck + unit + all E2E
 bun run ci:local:diff    # gate with diff-aware E2E selector
 bun run ci:select-e2e    # print which E2E files the selector would run
 ```
 
-`ci:local` spins up `pgvector/pgvector:pg16` + `oven/bun:1` via
-`docker-compose.ci.yml`, runs everything PR CI runs plus the full E2E suite, then
-tears down. Named volumes keep the install warm across runs (~16-20 min sequential
-E2E after the first cold pull). Requires Docker (Docker Desktop, OrbStack, or
-Colima) and `gitleaks` on host (`brew install gitleaks`). Override the postgres
-host port with `GBRAIN_CI_PG_PORT=5435 bun run ci:local` if 5434 collides.
+`ci:local` uses `docker-compose.ci.yml` to start four isolated
+`pgvector/pgvector:pg16` services plus transaction-mode PgBouncer. It builds the
+repository-owned Bun runner from `docker/ci-runner.Dockerfile`; that image extends
+`oven/bun:1` with Git and trusted certificates for repository fixtures. On a
+normal run, Compose pulls the database and pooler images with
+`pull --ignore-buildable`, then rebuilds the runner with `build --pull runner` so
+its Bun base stays fresh. Use `--no-pull` for offline/debug reruns, or `--clean`
+to remove the named dependency, Bun-cache, and database volumes before a cold
+run.
 
-Fail-closed selector: an unmapped `src/` change runs all 29 E2E files. Hand-tune
-narrower mappings via `scripts/e2e-test-map.ts`.
+After guards and typecheck, the default gate fans unit and E2E work across four
+parallel shards, one Postgres service per shard; `--no-shard` keeps the legacy
+sequential debug path. Named volumes keep dependencies and database state warm
+between runs. The gate tears services down afterward. It requires Docker (Docker
+Desktop, OrbStack, or Colima) and `gitleaks` on the host (`brew install
+gitleaks`). Override the four-port range's base with
+`GBRAIN_CI_PG_PORT=5435 bun run ci:local` if 5434 collides.
+
+The selector is fail-closed: an unmapped `src/` change runs every E2E file.
+Hand-tune narrower mappings via `scripts/e2e-test-map.ts`.
 
 ### PR-side security checks
 
