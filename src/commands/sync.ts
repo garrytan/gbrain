@@ -2672,20 +2672,19 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
                 );
               } else if (verdict === 'unknown') {
                 // An unreadable tracked file could own this slug, so the row
-                // is NOT deleted. It is also not silently accepted: banking
-                // the rename would clear any `<rename:…>` sentinel through
-                // the success path below (the gate deletes succeeded ledger
-                // rows before it decides), advance the bookmark past the
-                // rename, and leave the duplicate with nothing to retry it —
-                // and a second such rename would bank a second duplicate.
-                // Recorded as a reconcile failure instead: the sentinel
-                // survives, the bookmark freezes, and the run converges as
-                // soon as the unreadable file becomes readable.
+                // is NOT deleted. What happens to the RENAME depends on
+                // whether it was already unresolved (see the check after this
+                // loop): a first unprovable run is accepted and banks
+                // normally — the usual cause is a live row whose slug merely
+                // could not be read (content filter, shallow clone, sparse
+                // checkout, over-size file), where nothing is pending — but a
+                // rename that already carries an open sentinel is not
+                // retired on this evidence.
                 unprovable.push(s);
                 serr(
                   `  [sync] rename reconcile: cannot prove row ${s} stale — an ` +
                   `unreadable tracked file could still own this slug, so it is ` +
-                  `neither deleted nor accepted; this rename stays open.`,
+                  `spared rather than deleted.`,
                 );
               } else {
                 // Established bookkeeping cleanup (#3056 → gate 6): a stale
@@ -2720,7 +2719,15 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
               // to the success path, which the gate clears before it decides.
               // Clearing a non-convergence marker requires proof of
               // convergence, and 'unprovable' is not proof.
-              staleSlug = unprovable[0];
+              // Deliberately NOT named: `staleSlug` feeds the sentinel's
+              // "stale row X" slot and the blocked-run remedy tells the
+              // operator to `gbrain delete X`. An unprovable row may well be
+              // LIVE — that is the whole reason it was spared — so naming one
+              // here would tell the operator to delete a page this very code
+              // just refused to delete. Clearing it also drops whatever
+              // actionable slug an earlier failure had recorded. `undefined`
+              // renders as `?`, which is the truth: not known.
+              staleSlug = undefined;
               throw new Error(
                 `staleness unprovable for ${unprovable.length} row(s) ` +
                 `(${unprovable.join(', ')}): the tracked-file slug index is ` +

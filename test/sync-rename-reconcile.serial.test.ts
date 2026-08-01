@@ -1033,6 +1033,13 @@ describe('#3583 review: an over-size-gate fallback-regime file suspends deletes 
       f => f.path === renameSentinelPath('people/beta.md') && f.state === 'open',
     );
     expect(stillOpen).toHaveLength(1);
+    // ...and it must NOT name an unprovable row as the stale one: that slug
+    // feeds the operator remedy (`gbrain delete <slug>`), and an unprovable
+    // row may be live — exactly the row this path refused to delete.
+    expect(stillOpen[0]?.error).toContain('stale row ? for');
+    for (const slug of ['party-notes', 'people/ghost', 'people/alpha']) {
+      expect(stillOpen[0]?.error).not.toContain(`stale row "${slug}"`);
+    }
     // ...the run does not report a clean sync...
     expect(result.status).not.toBe('synced');
     // ...the bookmark does not advance past the unresolved rename...
