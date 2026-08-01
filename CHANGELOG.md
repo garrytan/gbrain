@@ -2,6 +2,16 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.72.1] - 2026-08-02
+
+**Every issue and pull request now needs a human-written paragraph and a screenshot of gbrain actually being used.**
+
+Effective immediately, opening an issue or a PR requires two things from you personally: a paragraph you wrote yourself saying why you're opening it — what you were doing, what went wrong or what you needed, why it matters — and a screenshot of your terminal, agent session, or logs showing the real situation. Rough grammar is fine and preferred over polish. AI-generated or AI-polished intent text is not accepted; the paragraph is the human part. AI assistance for the *code* is still welcome.
+
+Issues and PRs missing either are closed without review, and can be reopened once both are added. Scrub private names, companies, keys, and brain contents from screenshots before attaching — a redacted screenshot is fine, a missing one is not.
+
+The requirement is stated in `CONTRIBUTING.md` and pre-filled in the bug-report and feature-request issue templates plus a new pull-request template, so the fields are in front of you when you open one.
+
 ## [0.42.72.0] - 2026-08-01
 
 **Per-person write isolation inside a shared source, and a guide for putting gbrain behind a multi-user agent harness.**
