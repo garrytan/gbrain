@@ -54,7 +54,7 @@ function unpack(res: { content: { text: string }[]; isError?: boolean }): {
 async function call(
   name: string,
   params: Record<string, unknown>,
-  opts: { remote: boolean; auth?: AuthInfo },
+  opts: { remote: boolean; auth?: AuthInfo; transport?: 'stdio' },
 ) {
   return unpack(await dispatchToolCall(engine, name, params, { sourceId: 'default', ...opts }));
 }
@@ -136,6 +136,35 @@ describe('get_skill over dispatch', () => {
       const r = await call('get_skill', { name: 'nope' }, { remote: false });
       expect(r.isError).toBe(true);
       expect(r.body.error).toBe('page_not_found');
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #3635: stdio transport must see usable_tools, not empty
+// ---------------------------------------------------------------------------
+
+describe('stdio transport — catalog advertises tools as usable (#3635)', () => {
+  test('list_skills over stdio reports brain-ops tools in usable_tools', async () => {
+    await withEnv({ GBRAIN_HOME: home }, async () => {
+      await engine.setConfig('mcp.publish_skills', 'true');
+      const r = await call('list_skills', {}, { remote: true, transport: 'stdio' });
+      expect(r.isError).toBe(false);
+      const bo = r.body.skills.find((s: any) => s.name === 'brain-ops');
+      expect(bo.usable_tools).toContain('search');
+      expect(bo.usable_tools).toContain('put_page');
+      expect(bo.unavailable_tools).not.toContain('search');
+      expect(bo.unavailable_tools).not.toContain('put_page');
+    });
+  });
+
+  test('localOnly ops remain unavailable on stdio', async () => {
+    await withEnv({ GBRAIN_HOME: home }, async () => {
+      await engine.setConfig('mcp.publish_skills', 'true');
+      const r = await call('list_skills', {}, { remote: true, transport: 'stdio' });
+      expect(r.isError).toBe(false);
+      const allUsable = r.body.skills.flatMap((s: any) => s.usable_tools);
+      expect(allUsable).not.toContain('purge_deleted_pages');
     });
   });
 });
