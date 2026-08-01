@@ -182,11 +182,18 @@ describe('hardenBrainRepo', () => {
     execFileSync('git', ['-c', 'protocol.file.allow=always', '-C', secondClone, 'push', '-q', 'origin', 'main'], { stdio: 'ignore' });
 
     const headBefore = git(work, 'rev-parse', 'HEAD');
+    const trackingBefore = git(work, 'rev-parse', 'refs/remotes/origin/main');
     const r = await harden({ dryRun: true });
 
     // Working tree must not have advanced — no fetch, no pull.
     expect(git(work, 'rev-parse', 'HEAD')).toBe(headBefore);
     expect(existsSync(join(work, 'upstream.md'))).toBe(false);
+
+    // Tracking ref unchanged — proves fetch itself was skipped, not just pull.
+    expect(git(work, 'rev-parse', 'refs/remotes/origin/main')).toBe(trackingBefore);
+
+    // FETCH_HEAD absent — no network call happened at all.
+    expect(existsSync(join(work, '.git', 'FETCH_HEAD'))).toBe(false);
 
     // The pull step should report skipped (dry-run), not ok/advanced.
     const pull = r.steps.find(s => s.step === 'pull');
