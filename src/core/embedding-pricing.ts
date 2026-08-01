@@ -55,6 +55,14 @@ export const EMBEDDING_PRICING: Record<string, EmbeddingPricing> = {
   // Mistral (https://mistral.ai/pricing/api/, verified 2026-07-28)
   'mistral:mistral-embed':         { pricePerMTok: 0.10 },
   'mistral:mistral-embed-2312':    { pricePerMTok: 0.10 },
+  // OrcaRouter (gateway-published rate, verified 2026-08-01). Unlike the other
+  // entries this did not come from a pricing page: the gateway's own
+  // /v1/models reports `pricing.prompt_per_million: "0.020000"` for this
+  // model, so it is quoted from the source that bills it. Only the one model
+  // the recipe lists is priced; other routable ids fall through to `unknown`
+  // and the caller prints "estimate unavailable" rather than assuming the
+  // upstream's list price survives the relay.
+  'orcarouter:openai/text-embedding-3-small': { pricePerMTok: 0.02 },
   // Perplexity (https://docs.perplexity.ai/getting-started/pricing, verified 2026-07-28)
   'perplexity:pplx-embed-v1-0.6b': { pricePerMTok: 0.004 },
   'perplexity:pplx-embed-v1-4b':   { pricePerMTok: 0.03 },

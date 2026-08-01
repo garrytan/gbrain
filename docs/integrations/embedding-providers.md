@@ -1,6 +1,6 @@
 # Embedding providers
 
-GBrain ships with 16 embedding-provider recipes covering OpenAI, ZeroEntropy, Voyage, OpenRouter (single key, many hosted models), the major hosted alternatives, three local options, and a universal escape hatch (LiteLLM proxy). Run `gbrain providers list` to see the live registry; `gbrain providers explain --json` emits a machine-readable matrix for agents.
+GBrain ships with 17 embedding-provider recipes covering OpenAI, ZeroEntropy, Voyage, OpenRouter and OrcaRouter (single key, many hosted models), the major hosted alternatives, three local options, and a universal escape hatch (LiteLLM proxy). Run `gbrain providers list` to see the live registry; `gbrain providers explain --json` emits a machine-readable matrix for agents.
 
 This page is the human-readable counterpart: capability per provider, env-var setup, dimensions, cost, and known constraints.
 
@@ -26,6 +26,7 @@ The resolved provider + dimensions get persisted to `~/.gbrain/config.json` atom
 | `zeroentropyai` | `ZEROENTROPY_API_KEY` | 2560 (Matryoshka to 1280/640/320/...) | 0.05 | no | no |
 | `openai` | `OPENAI_API_KEY` | 1536 | 0.13 | no | no |
 | `openrouter` | `OPENROUTER_API_KEY` | 1536 | 0.02 | no | model-dependent |
+| `orcarouter` | `ORCAROUTER_API_KEY` | 1536 | 0.02 | no | no |
 | `voyage` | `VOYAGE_API_KEY` | 1024 | 0.18 | no | yes (`voyage-multimodal-3`) |
 | `google` | `GOOGLE_GENERATIVE_AI_API_KEY` | 768 | 0.025 | no | no |
 | `azure-openai` | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT` | 1536 | 0.13 | no | no |
@@ -114,6 +115,24 @@ Single OpenAI-compatible API for fan-out to OpenAI, Anthropic, Google, DeepSeek,
 - `OPENROUTER_REFERER` (default `https://gbrain.ai`) and `OPENROUTER_TITLE` (default `gbrain`) — attribution headers for OR's leaderboard. Forks running gbrain inside a different agent stack (OpenClaw deployments etc.) should set these so their traffic gets attributed to them, not gbrain.
 
 **Subagent loops**: gbrain's subagent infrastructure hard-pins to Anthropic-direct (stable `tool_use_id` across crashes/replays). OR-routed Anthropic is rejected at submit time regardless of the recipe flag. If you want the price/availability story OR offers for tool-calling, use it for chat only and keep an Anthropic key for subagent work.
+
+### OrcaRouter
+
+Another single OpenAI-compatible endpoint fanning out to OpenAI, Anthropic, Google, DeepSeek and ~180 other models. Set `ORCAROUTER_API_KEY`, then use `orcarouter:<provider>/<model>` (e.g. `orcarouter:openai/gpt-5.5`, `orcarouter:anthropic/claude-sonnet-4.6`). Same nested-id convention as OpenRouter, so the model-resolver treats them identically.
+
+**Embedding**: `openai/text-embedding-3-small` (1536d default, Matryoshka shrink to 512/768/1024 — verified against the live endpoint). `openai/text-embedding-3-large` (3072d) and `google/gemini-embedding-001` (3072d) are routable too, but the recipe lists only the 1536d model because a touchpoint carries one `default_dims`; opt into a wider one with an explicit `--embedding-model` plus a matching `embedding_dimensions`. Batch ceiling is a measured 300K tokens per request.
+
+**Chat**: the recipe lists 8 curated entry points (GPT-5.2/5.4/5.5, Claude Haiku 4.5 + Sonnet 4.6, Gemini 3 Flash Preview, DeepSeek); any other routable ID also works. Every listed model was checked against the live endpoint with a function tool attached.
+
+**Differences from OpenRouter worth knowing:**
+- **No reranking.** The gateway routes no cross-encoder rerank models, so the recipe has no `reranker` touchpoint. Pair it with ZeroEntropy, Voyage, or a local `llama-server-reranker` if you need rerank.
+- **No prompt caching.** Probed on both families and neither engaged, so `supports_prompt_cache` is `false` and there is no `cache_control` compat fetch. Budget for uncached input on long system prompts, or keep an Anthropic-direct key for cache-heavy loops.
+- **No attribution headers.** The gateway defines no `HTTP-Referer` / `X-Title` convention, so there is nothing to configure.
+- **No `orcarouter_api_key` config.json slot.** Like mistral/perplexity/nvidia, this recipe reads the env var only.
+
+**Optional env**: `ORCAROUTER_BASE_URL` — point at a self-hosted compatible proxy.
+
+**Subagent loops**: same rule as OpenRouter — gbrain pins subagent infrastructure to Anthropic-direct, so routed Anthropic is rejected at submit time regardless of the recipe flag.
 
 ### Azure OpenAI
 
