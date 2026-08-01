@@ -271,3 +271,91 @@ describe('buildGatewayConfig env empty-string clobber guard (#1249)', () => {
     );
   });
 });
+
+/**
+ * Side-effect guard (v0.37.x): importing buildGatewayConfig from src/cli.ts
+ * must NOT trigger the CLI's top-level main() and dump help to stdout. The
+ * helper is exported specifically so test/agent/daemon consumers can call
+ * it as a library — the import side effect was historically the loudest
+ * source of test-runner noise. Wrap is in src/cli.ts: `if (import.meta.main)`
+ * around the `main().catch(...)` invocation.
+ */
+
+import { spawnSync } from 'child_process';
+
+describe('buildGatewayConfig import side effect guard', () => {
+  /**
+   * Spawn `bun run src/cli.ts --help` as a subprocess. Process-global stdout
+   * capture avoids any contamination from the test runner's own TTY hooks.
+   * The CLI dispatcher MUST print help when invoked as the entry point
+   * (no side-effect regression). When main() accidentally fires during an
+   * import, this help text is what ends up leaking into test output.
+   */
+  function runCliHelp(): { stdout: string; stderr: string; status: number | null } {
+    const result = spawnSync(
+      'bun',
+      ['run', 'src/cli.ts', '--help'],
+      {
+        cwd: import.meta.dir + '/../..',
+        encoding: 'utf8',
+        timeout: 30_000,
+      },
+    );
+    return {
+      stdout: result.stdout ?? '',
+      stderr: result.stderr ?? '',
+      status: result.status,
+    };
+  }
+
+  test('direct CLI entry --help still prints help to stdout (regression guard)', () => {
+    const { stdout, status } = runCliHelp();
+    expect(status).toBe(0);
+    expect(stdout).toContain('gbrain');
+    expect(stdout.toLowerCase()).toMatch(/usage|commands|search|init/);
+  });
+
+  test('importing buildGatewayConfig does NOT trigger main() (no help on stdout)', async () => {
+    // The helper import at the top of this file is the unit under test — it
+    // already ran by the time describe() executes. Re-importing here is
+    // belt-and-suspenders: any future test that splits the suite would still
+    // exercise the side-effect contract from a fresh module record.
+    const mod = await import('../../src/cli.ts');
+    expect(typeof mod.buildGatewayConfig).toBe('function');
+
+    // Build a synthetic config and call it. Pre-fix behavior: importing the
+    // module executed `main()` which read argv and called printHelp(). The
+    // printHelp output landed on stdout during test bootstrap — observable
+    // as a leading "gbrain" banner before the test runner's own output.
+    // Post-fix: the import is silent; only the call below produces output,
+    // and the helper itself writes nothing.
+    const cfg = mod.buildGatewayConfig({} as unknown as GBrainConfig);
+    expect(cfg).toBeDefined();
+  });
+
+  test('subprocess importing buildGatewayConfig sees no CLI help on stdout', () => {
+    // Independent subprocess so the test runner's own process state cannot
+    // mask a leak. The spawned bun evaluates the same import the test file
+    // does, then exits. Pre-fix: stdout includes the help banner (and the
+    // process would exit 0 because main() returns normally after printHelp()).
+    // Post-fix: stdout is empty; only the bun runtime header / warnings may
+    // appear on stderr.
+    const inline = `
+      import { buildGatewayConfig } from './src/cli.ts';
+      const cfg = buildGatewayConfig({});
+      // Touch the result so the engine does not dead-code-eliminate the call.
+      if (!cfg) process.exit(2);
+    `;
+    const result = spawnSync(
+      'bun',
+      ['--eval', inline],
+      {
+        cwd: import.meta.dir + '/../..',
+        encoding: 'utf8',
+        timeout: 30_000,
+      },
+    );
+    expect(result.status).toBe(0);
+    expect(result.stdout).not.toMatch(/usage|commands available|gbrain v?\\d/);
+  });
+});

@@ -887,6 +887,41 @@ export async function embedQueryBounded(
   }
 }
 
+/**
+ * #3442 — resolve the public `since`/`until` contract (SearchOpts v0.29.1):
+ * ISO-8601 passes through, relative durations ('7d', '2w', '1y') resolve to a
+ * concrete timestamp, and a plain YYYY-MM-DD `until` lands at end-of-day.
+ * The relative form was documented since v0.29.1 but never implemented — the
+ * raw string ('60d') flowed into the engines' `::timestamptz` casts, every
+ * arm failed fail-open, and the date filter was SILENTLY ignored.
+ * Unparseable input now throws loudly instead of degrading.
+ */
+export function resolveDateBoundary(
+  raw: string | undefined,
+  boundary: 'since' | 'until',
+): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  const s = String(raw).trim();
+  if (!s) return undefined;
+  const rel = /^(\d+)\s*([dwmy])$/i.exec(s);
+  if (rel) {
+    const n = parseInt(rel[1], 10);
+    const unit = rel[2].toLowerCase();
+    // m = months (30d). Minutes make no sense for an effective_date filter.
+    const days = unit === 'd' ? n : unit === 'w' ? n * 7 : unit === 'm' ? n * 30 : n * 365;
+    return new Date(Date.now() - days * 86400000).toISOString();
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    // Plain date: `until` lands at end-of-day (documented SearchOpts
+    // semantics); `since` keeps UTC start-of-day.
+    return boundary === 'until' ? `${s}T23:59:59.999Z` : s;
+  }
+  if (Number.isFinite(Date.parse(s))) return s;
+  throw new Error(
+    `Invalid ${boundary} value "${s}" — expected ISO-8601 (YYYY-MM-DD or timestamp) or a relative duration like '7d', '2w', '1y'.`,
+  );
+}
+
 export async function hybridSearch(
   engine: BrainEngine,
   query: string,
@@ -981,8 +1016,10 @@ export async function hybridSearch(
     // v0.29.1: since/until take precedence over deprecated afterDate/beforeDate.
     // The engine still consumes the legacy field names; this aliasing keeps
     // PR #618 callers compiling while the new names are the public surface.
-    afterDate: opts?.since ?? opts?.afterDate,
-    beforeDate: opts?.until ?? opts?.beforeDate,
+    // #3442: resolveDateBoundary implements the documented contract (relative
+    // durations + end-of-day for plain-date `until`) at this single seam.
+    afterDate: resolveDateBoundary(opts?.since ?? opts?.afterDate, 'since'),
+    beforeDate: resolveDateBoundary(opts?.until ?? opts?.beforeDate, 'until'),
     // v0.34.1 (#861, D9 — P0 leak seal): thread source-scoping through so the
     // inner engine.searchKeyword / engine.searchVector calls apply the
     // WHERE source_id filter at SQL level. Pre-fix, this explicit pick
@@ -1830,12 +1867,19 @@ export async function hybridSearchCached(
     opts?.adaptiveReturn,
     cfgCached as unknown as Record<string, unknown> | null,
   );
+  // #3442: date-filtered requests skip the cache — since/until are not part
+  // of knobsHash, so a filtered result set could be served to an unfiltered
+  // lookup (and vice versa). Relative forms ('60d') also resolve to a
+  // now-relative timestamp, which a persisted cache row can't express.
+  const dateFiltered =
+    Boolean(opts?.since ?? opts?.afterDate) || Boolean(opts?.until ?? opts?.beforeDate);
   const skipCache =
     !cache.isEnabled() ||
     (opts?.walkDepth ?? 0) > 0 ||
     Boolean(opts?.nearSymbol) ||
     isNonDefaultColumn ||
-    adaptiveReturnOn;
+    adaptiveReturnOn ||
+    dateFiltered;
 
   let cacheStatus: 'hit' | 'miss' | 'disabled' = skipCache ? 'disabled' : 'miss';
   let cacheSimilarity: number | undefined;

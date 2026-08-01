@@ -24,7 +24,12 @@ describe('schema packPathByName', () => {
     for (const name of ['gbrain-base', 'gbrain-recommended', 'gbrain-base-v2']) {
       const path = _testHelpers.packPathByName(name);
       expect(path).toBeTruthy();
-      expect(path!.endsWith(`src/core/schema-pack/base/${name}.yaml`)).toBe(true);
+      // The resolved path is native-format, so it ends with `src\core\...`
+      // on Windows. Only the separator comes from `path`; the directory
+      // structure stays hand-written. Byte-identical on POSIX.
+      expect(path!.endsWith(join('src', 'core', 'schema-pack', 'base', `${name}.yaml`))).toBe(
+        true,
+      );
       expect(existsSync(path!)).toBe(true);
     }
   });

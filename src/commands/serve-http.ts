@@ -11,8 +11,8 @@
  */
 
 import express from 'express';
+import type { Socket } from 'net';
 import type { Request, Response, NextFunction } from 'express';
-import type { Server as HttpServer } from 'http';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
@@ -57,10 +57,35 @@ import { registerCleanup } from '../core/process-cleanup.ts';
  */
 export const HEALTH_TIMEOUT_MS = 3000;
 
-/** Exported so tests can type their structural fakes exactly (#3599). */
-export type HttpServerLifecycle = Pick<HttpServer, 'listening' | 'once' | 'off' | 'close'>;
-/** Exported so tests can type their structural fakes exactly (#3599). */
-export type SignalSource = Pick<NodeJS.Process, 'once' | 'off'>;
+/**
+ * The narrowest contract this module actually consumes: subscribe, unsubscribe.
+ * Every return value is discarded, so it is `unknown` rather than `this` — a
+ * `Pick<>` of the full Node types would demand a fidelity no caller needs and
+ * no test double can honestly provide.
+ */
+type EventSubscriber = {
+  once(event: string, listener: (...args: any[]) => void): unknown;
+  off(event: string, listener: (...args: any[]) => void): unknown;
+};
+/**
+ * Only what socket teardown needs. This one IS a `Pick` of the real type, on
+ * purpose: no typechecked test double has to satisfy it (fakes reach it through
+ * `emit`, which is untyped), so binding it to `net.Socket` costs nothing and
+ * buys drift detection. A hand-written structural shape here would be an
+ * unchecked assertion — method parameters are bivariant, so annotating the
+ * listener param would match our own declaration whatever a real socket does.
+ */
+type TrackedSocket = Pick<Socket, 'destroy' | 'once'>;
+type HttpServerLifecycle = EventSubscriber & {
+  readonly listening: boolean;
+  close(callback?: (error?: Error) => void): unknown;
+  // Narrowed to the one event this module subscribes with `on`, so the listener
+  // parameter is genuinely checked against TrackedSocket. A `(...args: any[])`
+  // signature here would make the annotation at the call site an unchecked
+  // assertion — the same defect this file was just cleaned of.
+  on(event: 'connection', listener: (socket: TrackedSocket) => void): unknown;
+};
+type SignalSource = EventSubscriber;
 type CleanupRegistrar = typeof registerCleanup;
 
 /**
@@ -79,6 +104,17 @@ export function waitForHttpServerLifecycle(
   const signals = options.signals ?? process;
   const register = options.register ?? registerCleanup;
 
+  // `close()` stops the listener and then waits for every open connection to
+  // drain. One attached admin-SSE EventSource — or any keep-alive socket —
+  // holds it open forever, so shutdown has to sever them itself. Bun 1.3.x
+  // ships `closeAllConnections()`/`closeIdleConnections()` as no-op stubs, so
+  // tracking is the only portable teardown.
+  const sockets = new Set<TrackedSocket>();
+  server.on('connection', (socket: TrackedSocket) => {
+    sockets.add(socket);
+    socket.once('close', () => sockets.delete(socket));
+  });
+
   return new Promise<void>((resolve, reject) => {
     let settled = false;
     let closePromise: Promise<void> | null = null;
@@ -94,6 +130,9 @@ export function waitForHttpServerLifecycle(
           if (error) closeReject(error);
           else closeResolve();
         });
+        // After close() so the listener stops accepting first, then in-flight
+        // connections are severed rather than waited on.
+        for (const socket of sockets) socket.destroy();
       });
       return closePromise;
     };
@@ -202,8 +241,12 @@ export type ProbeHealthResult =
   | { ok: true; status: 200; body: { status: 'ok'; version: string; engine: string; [k: string]: unknown } }
   | { ok: false; status: 503; body: { error: 'service_unavailable'; error_description: string } };
 
-/** Exported so tests can type their structural fakes exactly (#3598). */
-export type AdminSseResponse = Pick<Response, 'setHeader' | 'flushHeaders' | 'write'>;
+/** Narrowest contract the handshake consumes; see {@link EventSubscriber}. */
+type AdminSseResponse = {
+  setHeader(name: string, value: string): unknown;
+  flushHeaders(): void;
+  write(chunk: string): unknown;
+};
 
 /**
  * Complete the admin EventSource handshake immediately.
@@ -1674,7 +1717,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // validator inside rescopeClient.
   app.post('/admin/api/rescope-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
     try {
-      const { clientId, sourceId, federatedRead } = req.body ?? {};
+      const { clientId, sourceId, federatedRead, boundSlugPrefixes } = req.body ?? {};
       if (!clientId || typeof clientId !== 'string') {
         res.status(400).json({ error: 'clientId required' });
         return;
@@ -1688,12 +1731,20 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         res.status(400).json({ error: 'sourceId must be a string' });
         return;
       }
-      const result = await oauthProvider.rescopeClient(clientId, { sourceId, federatedRead });
+      // v0.42.72.0: tri-state write-fence rescope — omitted = untouched,
+      // null = clear, array of strings = replace (mirrors the CLI's
+      // --bound-slug-prefixes p1,p2|none).
+      if (boundSlugPrefixes !== undefined && boundSlugPrefixes !== null &&
+          !(Array.isArray(boundSlugPrefixes) && boundSlugPrefixes.every((s: unknown) => typeof s === 'string'))) {
+        res.status(400).json({ error: 'boundSlugPrefixes must be null or an array of slug-prefix strings' });
+        return;
+      }
+      const result = await oauthProvider.rescopeClient(clientId, { sourceId, federatedRead, boundSlugPrefixes });
       res.json(result);
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Rescope failed';
       const status = /No OAuth client found/.test(message) ? 404
-        : /Invalid source_id|requires --source|cannot be empty|does not exist/.test(message) ? 400
+        : /Invalid source_id|requires --source|cannot be empty|does not exist|cannot be an empty list|bound_slug_prefixes entr/.test(message) ? 400
         : 500;
       res.status(status).json({ error: message });
     }
@@ -2234,6 +2285,31 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const sourceUri = (req.header('x-gbrain-source-uri') || `mcp-webhook:${authInfo.clientId}:${Date.now()}`).slice(0, 1024);
       const sourceId = (req.header('x-gbrain-source-id') || `webhook-${authInfo.clientId}`).slice(0, 256);
       const callerSlug = req.header('x-gbrain-slug');
+
+      // Slug-bound clients cannot use /ingest at all. The route hands its
+      // payload to the ingest_capture minion handler, which deliberately
+      // bypasses the put_page op layer — so no OperationContext exists and
+      // enforceClientSlugFence never runs, and because the payload is marked
+      // untrusted the handler also refuses to honor any source id, landing
+      // every write in the DEFAULT source. Fencing just the slug here would
+      // still write the right slug into the WRONG source, outside the
+      // client's grant. These clients have put_page over MCP, which enforces
+      // both the prefix fence and the source scope; webhook integrations use
+      // unbound clients.
+      const boundPrefixes = authInfo.boundSlugPrefixes;
+      if (boundPrefixes || authInfo.fenceProjectionDegraded) {
+        res.status(403).json({
+          error: 'permission_denied',
+          message: authInfo.fenceProjectionDegraded
+            ? 'POST /ingest is unavailable: this brain\'s oauth_clients projection is missing ' +
+              'bound_slug_prefixes, so client write bindings cannot be evaluated. ' +
+              'Run `gbrain apply-migrations --yes` on the brain host.'
+            : 'POST /ingest is not available to clients restricted to slug prefixes ' +
+              `(bound_slug_prefixes: ${boundPrefixes!.join(', ')}). Write through the MCP put_page op, ` +
+              'which enforces the prefix fence and your source scope.',
+        });
+        return;
+      }
 
       const event: IngestionEvent = {
         source_id: sourceId,

@@ -5,7 +5,7 @@
  * worker-driven). The primitive's audit + cost-cap value lives at the
  * SUBMITTER side (`gbrain reindex --markdown`, which IS retrofitted in
  * T11), not at the handler. The handler already routes its cost through
- * the global Haiku rate-leaser (D26 P0-3). No further retrofit needed.
+ * the global synopsis rate-leaser (D26 P0-3). No further retrofit needed.
  *
  * v0.40.3.0 — Minion handler for per-page contextual retrieval re-embed.
  *
@@ -15,14 +15,14 @@
  *   - `doctor --remediate` when contextual_retrieval_coverage flags drift.
  *   - The reindex command for backfill orchestration.
  *
- * This handler is DELIBERATELY thin (D23) — it wires the global Haiku
+ * This handler is DELIBERATELY thin (D23) — it wires the global synopsis
  * rate-leaser (D26 P0-3), validates the job payload, and delegates the
  * actual re-embed work to `src/core/contextual-retrieval-service.ts:
  * reembedPageWithContextualRetrieval`. The service owns the two-phase
  * build pattern + page-level fall-back per D14. This handler owns:
- *   - Rate-lease acquire/release per Haiku call (shared key across the
- *     whole worker pool so concurrent page jobs don't blow the 50 RPM
- *     default per D26 P0-3).
+ *   - Rate-lease acquire/release per synopsis call (shared, resolved-model
+ *     key across the whole worker pool so concurrent page jobs stay under
+ *     the configured provider-neutral cap per D26 P0-3).
  *   - Source-id derivation from page-id (D27 P2-1 defense-in-depth
  *     against stale/malicious payloads that try to apply source-level
  *     trust decisions from the wrong source).
@@ -48,23 +48,39 @@ import {
   releaseLease,
 } from '../rate-leases.ts';
 import { resolveSearchMode, loadSearchModeConfig } from '../../search/mode.ts';
-
-const RATE_LEASE_KEY = 'anthropic:utility:contextual-synopsis';
+import { resolveModel } from '../../model-config.ts';
+import { DEFAULT_SYNOPSIS_MODEL } from '../../page-summary.ts';
+import { registerConfigSelectedChatModel } from '../../ai/gateway.ts';
 
 /**
- * Default global Haiku RPM for contextual synopsis calls. Anthropic's
- * published default is 50 RPM for Haiku 4.5; operators can raise via
- * the env override on a tier with higher quota.
+ * Default global concurrency cap for contextual synopsis calls. The public
+ * setting keeps the historical RPM name; the lease primitive enforces active
+ * calls, while provider SDKs own request-rate retries.
  */
-const DEFAULT_HAIKU_RPM = 50;
+const DEFAULT_SYNOPSIS_RPM = 50;
 
-function resolveMaxConcurrent(): number {
-  const env = process.env.GBRAIN_CONTEXTUAL_HAIKU_RPM;
-  if (env) {
-    const n = parseInt(env, 10);
-    if (Number.isFinite(n) && n > 0) return n;
+export function resolveContextualSynopsisLeaseSettings(
+  synopsisModel: string,
+  env: Record<string, string | undefined> = process.env,
+): { key: string; maxConcurrent: number } {
+  const configuredLimits = [
+    env.GBRAIN_CONTEXTUAL_SYNOPSIS_RPM,
+    env.GBRAIN_CONTEXTUAL_HAIKU_RPM,
+  ];
+  for (const configuredLimit of configuredLimits) {
+    if (!configuredLimit) continue;
+    const parsed = parseInt(configuredLimit, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return {
+        key: `contextual-synopsis:${synopsisModel}`,
+        maxConcurrent: parsed,
+      };
+    }
   }
-  return DEFAULT_HAIKU_RPM;
+  return {
+    key: `contextual-synopsis:${synopsisModel}`,
+    maxConcurrent: DEFAULT_SYNOPSIS_RPM,
+  };
 }
 
 /**
@@ -84,6 +100,22 @@ export interface ContextualReindexJobData {
 
 export interface MakeContextualReindexHandlerOpts {
   engine: BrainEngine;
+  /** @internal Hermetic handler seam; production callers omit this. */
+  reembedPage?: typeof reembedPageWithContextualRetrieval;
+}
+
+export async function resolveContextualSynopsisModel(
+  engine: BrainEngine,
+  explicitModel?: string,
+): Promise<string> {
+  return resolveModel(engine, {
+    cliFlag: explicitModel,
+    configKey: 'models.contextual_synopsis',
+    deprecatedConfigKey: 'contextual_retrieval.haiku_model',
+    envVar: 'GBRAIN_CONTEXTUAL_SYNOPSIS_MODEL',
+    tier: 'utility',
+    fallback: DEFAULT_SYNOPSIS_MODEL,
+  });
 }
 
 /**
@@ -92,6 +124,7 @@ export interface MakeContextualReindexHandlerOpts {
  */
 export function makeContextualReindexHandler(opts: MakeContextualReindexHandlerOpts) {
   const { engine } = opts;
+  const reembedPage = opts.reembedPage ?? reembedPageWithContextualRetrieval;
 
   return async function contextualReindexHandler(
     ctx: MinionJobContext,
@@ -129,18 +162,21 @@ export function makeContextualReindexHandler(opts: MakeContextualReindexHandlerO
     const globalMode = knobs.contextual_retrieval;
     const killSwitchDisabled = knobs.contextual_retrieval_disabled;
 
-    // Run the service with rate-leasing hooks (D26 P0-3). Each Haiku
+    // Run the service with rate-leasing hooks (D26 P0-3). Each synopsis
     // call inside the service acquires/releases a lease against the
     // shared key across all worker processes.
-    const maxConcurrent = resolveMaxConcurrent();
     const chunkConcurrency = resolveContextualChunkConcurrency();
+    const synopsisModel = await resolveContextualSynopsisModel(engine);
+    const leaseSettings = resolveContextualSynopsisLeaseSettings(synopsisModel);
+    registerConfigSelectedChatModel(synopsisModel);
 
-    const result: ReembedPageResult = await reembedPageWithContextualRetrieval({
+    const result: ReembedPageResult = await reembedPage({
       engine,
       pageSlug: data.page_slug,
       sourceId: foundPage.source_id,
       globalMode,
       killSwitchDisabled,
+      synopsisModel,
       abortSignal: ctx.signal,
       chunkConcurrency,
       acquireSynopsisLease: async () => {
@@ -151,9 +187,15 @@ export function makeContextualReindexHandler(opts: MakeContextualReindexHandlerO
         const maxAttempts = 60; // ~1 min max wait per chunk before giving up
         while (attempts < maxAttempts) {
           if (ctx.signal.aborted) throw abortError();
-          const res = await acquireLease(engine, RATE_LEASE_KEY, ctx.id, maxConcurrent, {
-            ttlMs: 60_000,
-          });
+          const res = await acquireLease(
+            engine,
+            leaseSettings.key,
+            ctx.id,
+            leaseSettings.maxConcurrent,
+            {
+              ttlMs: 60_000,
+            },
+          );
           if (res.acquired && res.leaseId != null) {
             return res.leaseId;
           }
@@ -161,8 +203,8 @@ export function makeContextualReindexHandler(opts: MakeContextualReindexHandlerO
           await sleepWithAbort(1000, ctx.signal);
         }
         throw new Error(
-          `Failed to acquire ${RATE_LEASE_KEY} lease after ${maxAttempts} attempts; ` +
-            `Haiku rate limit pile-up too deep.`,
+          `Failed to acquire ${leaseSettings.key} lease after ${maxAttempts} attempts; ` +
+            `Synopsis rate limit pile-up too deep.`,
         );
       },
       releaseSynopsisLease: async (lease) => {

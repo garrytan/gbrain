@@ -1,5 +1,27 @@
 # Contributing to GBrain
 
+## Human-authored intent (required, no exceptions)
+
+Effective 2026-08-02, every issue and every pull request must include:
+
+1. **A paragraph you wrote yourself**, explaining why you are opening this.
+   What you were doing, what went wrong or what you needed, why it matters to
+   you. AI-generated or AI-polished text is not accepted here — this one
+   paragraph is the human part. Rough grammar is fine and preferred over
+   polish.
+2. **A screenshot showing gbrain actually being used** in the situation you
+   are describing — your terminal, your agent session, your logs. Proof the
+   need is real, not hypothetical.
+
+Issues or PRs without both are closed without review. You may reopen once
+they're added.
+
+Scrub anything private before you attach a screenshot: real names, companies,
+API keys, brain contents. See the privacy rule in `CLAUDE.md`. A redacted
+screenshot is fine; a missing one is not.
+
+AI assistance for the *code* is fine. The intent paragraph is not code.
+
 ## Setup
 
 ```bash
@@ -19,14 +41,20 @@ The root `.gitattributes` pins `*.sh text eol=lf`, which overrides the
 `core.autocrlf=true` that Git for Windows installs by default. A fresh clone is
 correct with no extra steps.
 
-If you cloned before that pin existed, your working copy still has the old
-Windows line endings and bash will fail with `$'\r': command not found`. Refresh
-it once, from the repository root:
+`.gitattributes` pins `*.md text eol=lf` for the same reason. The frontmatter
+readers anchor on a `---` fence followed by a Unix line ending, so a CRLF
+checkout makes a well-formed document parse as having no frontmatter. That
+failure is silent: no error, the field just comes back empty.
+
+If you cloned before either pin existed, your working copy still has the old
+Windows line endings. Bash will fail with `$'\r': command not found`, and
+frontmatter will read as absent. Refresh it once, from the repository root:
 
 ```bash
 git rm --cached -r . -q
 git reset --hard
-bash -n scripts/run-unit-parallel.sh   # silence means bash can read the scripts
+bash -n scripts/run-unit-parallel.sh          # silence means bash can read the scripts
+git ls-files --eol -- '*.md' | grep -c w/crlf # 0 means Markdown is clean
 ```
 
 Every `check:*` entry in `package.json` invokes its script as `bash scripts/<name>.sh`

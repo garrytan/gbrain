@@ -53,7 +53,7 @@ on upcoming_meeting(meeting):
                 "last_interaction": page.timeline[0],     # most recent
                 "open_threads": page.open_threads,
                 "relationship_temperature": page.relationship,
-                "relevant_deals": gbrain get_links <attendee_slug>,
+                "relevant_deals": gbrain call get_links '{"slug": "<attendee_slug>"}',
             }
         else:
             briefing[attendee] = "No brain page -- consider enriching"
@@ -67,14 +67,14 @@ on inbox_cleared():
     for email in processed_emails:
         if email.contained_new_information:
             # Update the sender's brain page with new signal
-            gbrain add_timeline_entry <sender_slug> \
-                --entry "Email re: {subject}. Key info: {extracted_signal}" \
+            gbrain timeline-add <sender_slug> {date} \
+                "Email re: {subject}. Key info: {extracted_signal}" \
                 --source "email from {sender} re {subject}, {date}"
 
             # Update any mentioned entity pages too
             for entity in email.mentioned_entities:
-                gbrain add_timeline_entry <entity_slug> \
-                    --entry "{what_was_said_about_them}" \
+                gbrain timeline-add <entity_slug> {date} \
+                    "{what_was_said_about_them}" \
                     --source "email from {sender}, {date}"
 
 # WORKFLOW 4: Scheduling Nudges

@@ -268,6 +268,12 @@ export async function runImport(
   let skipped = 0;
   let errors = 0;
   let processed = 0;
+  // Time-based checkpoint floor (see the save site below). Chunking cost scales
+  // with paragraph count, not bytes, so a single reference-style file can take
+  // many minutes; a count-only trigger leaves that work undurable.
+  const CHECKPOINT_MAX_INTERVAL_MS = 120_000;
+  let lastCheckpointMs = Date.now();
+  let lastCheckpointSize = completed.size;
   let chunksCreated = 0;
   const importedSlugs: string[] = [];
   const errorCounts: Record<string, number> = {};
@@ -343,7 +349,17 @@ export async function runImport(
     // Save checkpoint every 100 SUCCESSFUL adds (not every 100 processed).
     // Failed files never enter `completed`, so a flaky file can't push the
     // checkpoint past it — the next run will retry it.
-    if (completed.size > 0 && completed.size % 100 === 0) {
+    // ...and ALSO save on a time interval. On a corpus with an expensive tail
+    // `completed` can advance ~1 file per several minutes, so the next
+    // 100-boundary may be hours away; any kill before it discards every file
+    // since the last boundary and the run can never converge.
+    const nowMs = Date.now();
+    const dueByCount = completed.size > 0 && completed.size % 100 === 0;
+    const dueByTime = completed.size > lastCheckpointSize
+      && nowMs - lastCheckpointMs >= CHECKPOINT_MAX_INTERVAL_MS;
+    if (dueByCount || dueByTime) {
+      lastCheckpointMs = nowMs;
+      lastCheckpointSize = completed.size;
       const cpDir = gbrainPath();
       if (!existsSync(cpDir)) {
         try { const { mkdirSync } = await import('fs'); mkdirSync(cpDir, { recursive: true }); }
@@ -427,6 +443,30 @@ export async function runImport(
     if (count > 5) {
       console.error(`  ${count} files failed: ${err.slice(0, 100)}`);
     }
+  }
+
+  // Final checkpoint save BEFORE the clear/preserve decision below. The
+  // periodic triggers above are gated on a 100-file boundary or an interval,
+  // so a run that ends between them would otherwise leave its tail unsaved.
+  // This must run before clearCheckpoint() so a clean run still ends with no
+  // checkpoint file — it only makes the ERROR path's preserved checkpoint
+  // complete.
+  if (errors > 0 && completed.size > lastCheckpointSize) {
+    try {
+      const cpDir = gbrainPath();
+      if (!existsSync(cpDir)) {
+        const { mkdirSync } = await import('fs');
+        mkdirSync(cpDir, { recursive: true });
+      }
+      saveCheckpoint(checkpointPath, {
+        schema_version: 1,
+        owner: 'gbrain',
+        kind: 'import',
+        dir,
+        completedPaths: Array.from(completed),
+        timestamp: new Date().toISOString(),
+      });
+    } catch { /* non-fatal: the next run simply redoes the tail */ }
   }
 
   // Clear checkpoint on clean completion. On error, the path-based checkpoint

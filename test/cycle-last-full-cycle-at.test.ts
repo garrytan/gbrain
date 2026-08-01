@@ -9,7 +9,9 @@
  *   - status is 'ok' | 'clean' | 'partial' (failed/skipped don't mark fresh)
  *   - dryRun is false
  *
- * Best-effort: a write failure does NOT change the CycleReport status.
+ * Best-effort in that it never throws out of runCycle. As of #3504 a write
+ * failure IS surfaced: it sets `stamp_write_failed` on the report and degrades
+ * a successful status to 'partial'. See test/cycle-stamp-write-failure.test.ts.
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';

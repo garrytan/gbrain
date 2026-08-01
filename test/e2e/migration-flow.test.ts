@@ -250,7 +250,8 @@ describeE2E('E2E: v0.11.0 orchestrator against live Postgres', () => {
       for (const todo of todos) {
         expect(todo.type).toBe('cron-handler-needs-host-registration');
         expect(todo.status).toBe('pending');
-        expect(todo.manifest_path).toContain('cron/jobs.json');
+        // manifest_path is join(scope, 'cron', 'jobs.json') — '\' on win32.
+        expect(todo.manifest_path).toContain(join('cron', 'jobs.json'));
       }
     } finally {
       restoreHomePath();

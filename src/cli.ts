@@ -55,12 +55,17 @@ export function bigintToStringReplacer(_key: string, value: unknown): unknown {
 }
 
 // CLI-only commands that bypass the operation layer
-export const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'maintain', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'reconcile-links', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'retrieval-upgrade', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch', 'reindex-search-vector', 'backfill']);
+export const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'maintain', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'reconcile-links', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'retrieval-upgrade', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch', 'reindex-search-vector', 'pages', 'bench', 'backfill']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
 const CLI_ONLY_SELF_HELP = new Set([
   'upgrade', 'post-upgrade', 'check-update',
+  // #3502 sweep: pages + bench print their own usage (pages.ts printHelp,
+  // bench-publish.ts printHelp). Both were documented but undispatchable —
+  // `pages` had a live handleCliOnly case but was missing from CLI_ONLY
+  // (the #2035 calibration bug class); `bench` was never wired at all.
+  'pages', 'bench',
   'embed', 'config',
   'skillpack', 'skillpack-check',
   'integrations', 'friction',
@@ -107,6 +112,11 @@ const CLI_ONLY_SELF_HELP = new Set([
   // `gbrain connect --help` prints its own usage (flags + examples) from
   // runConnect; route around the generic one-line short-circuit.
   'connect',
+  // `gbrain init --help` prints its own usage from runInit; route around the
+  // generic one-line short-circuit (matches `connect`). Without this, `init`
+  // is in CLI_ONLY but not CLI_ONLY_SELF_HELP, so the dispatcher's generic
+  // short-circuit fires and the printInitHelp() guard in init.ts is dead code.
+  'init',
   // #3390 — `gbrain migrate embeddings --help` / `gbrain retrieval-upgrade
   // --help` print the migration flags from runMigrateEmbeddings. `migrate`
   // (engine transfer) keeps its own dispatch too.
@@ -393,6 +403,18 @@ async function main() {
   if (isThinClient(cfgPre)) {
     if (op.localOnly) {
       refuseThinClient(command, cfgPre!.remote_mcp!.mcp_url);
+    }
+    // A thin client has no local mounts — an explicit --brain cannot be
+    // honored and must not be silently dropped (same loud-beats-silent rule
+    // as applyThinClientSourceScope's --source refusal). Ambient tiers
+    // (GBRAIN_BRAIN_ID / .gbrain-mount) are ignored here, matching the
+    // source axis's ambient-with-nowhere-to-send behavior.
+    if (cliOpts.brain) {
+      console.error(
+        '--brain is not supported on a thin-client install: the remote server is a single brain. ' +
+        'Remove the flag, or run from a machine with local mounts (gbrain mounts list).',
+      );
+      process.exit(1);
     }
     // #2098: the local path resolves --source / GBRAIN_SOURCE / .gbrain-source
     // inside makeContext (ctx.sourceId), which this route never reaches — so
@@ -1004,6 +1026,10 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
     // table). Matches dispatch.ts's auto-fill so the contract holds across
     // every transport.
     sourceId: sourceId ?? 'default',
+    // Brain axis: the id connectEngine resolved for this process. Module
+    // state, NEVER params — caller-supplied params.brain must not select a
+    // brain (that would be an untrusted-caller cross-brain hole over MCP).
+    brainId: activeBrainId,
     ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),
   };
 }
@@ -1264,6 +1290,20 @@ async function handleCliOnly(command: string, args: string[]) {
     const { runInit } = await import('./commands/init.ts');
     await runInit(args);
     return;
+  }
+  if (command === 'bench') {
+    // #3502 sweep: `gbrain bench publish` was documented (docs/eval-bench.md,
+    // KEY_FILES.md, and eval-gate's own --help text) but never dispatched —
+    // the promised-but-unwired class retrieval-upgrade (#3390) fixed before.
+    // Pure file-in/file-out (NDJSON → baseline); no DB, no engine.
+    if (args[0] === 'publish') {
+      const { runBenchPublish } = await import('./commands/bench-publish.ts');
+      await runBenchPublish(args.slice(1));
+      return;
+    }
+    console.error('Usage: gbrain bench publish --from <captured.ndjson> --to <X.baseline.ndjson> [flags]');
+    console.error('Run `gbrain bench publish --help` for the full flag list.');
+    process.exit(args[0] === '--help' || args[0] === '-h' ? 0 : 2);
   }
   // v0.37 fix wave (deferred TODO, shipped): one-command wipe-and-reinit.
   // Spawns its own engine internally so no pre-bound engine needed.
@@ -1827,7 +1867,14 @@ async function handleCliOnly(command: string, args: string[]) {
       }
       case 'embed': {
         const { runEmbed } = await import('./commands/embed.ts');
-        await runEmbed(engine, args);
+        // #3037: mirror the `import` case above — the CLI was discarding the
+        // result, so a run where every chunk failed to embed still exited 0
+        // and cron/CI/health gates read total silence as success. Surface
+        // non-zero on failures > 0. (undefined = backgrounded via --background.)
+        const embedResult = await runEmbed(engine, args);
+        if (embedResult && embedResult.failures > 0) {
+          setCliExitVerdict(1);
+        }
         break;
       }
       case 'serve': {
@@ -2368,7 +2415,52 @@ async function dispatchReadOnlyCommand(engine: BrainEngine, command: string, arg
 import { buildGatewayConfig } from './core/ai/build-gateway-config.ts';
 export { buildGatewayConfig };
 
+/**
+ * Which brain this process's engine targets. Set by connectEngine after brain
+ * resolution; read by makeContext so ctx.brainId carries the audit id. Never
+ * derived from op params — an untrusted caller must not be able to name a
+ * brain (same fail-closed shape as the #3524 remote source sentinel).
+ */
+let activeBrainId: string = 'host';
+
+/**
+ * Connect to a mounted brain (brain axis, non-host). Routes through
+ * BrainRegistry so:
+ *   - an unknown/disabled mount id throws UnknownBrainError. Fail-closed:
+ *     the pre-fix CLI silently fell back to the host brain, returning
+ *     confident wrong answers (mirror of #3524's explicit --source decision);
+ *   - postgres mounts get a per-instance pool, never the db.ts singleton;
+ *   - NO migrations run against the mount — schema is the publisher's job
+ *     (same decision as BrainRegistry.initMountBrain). Write access control
+ *     is the mount's own DB credential grants: a read-only role rejects
+ *     writes at the database; gbrain does not re-implement that client-side.
+ * The AI gateway still configures from the HOST config (the caller's API
+ * keys + model tiers) — embedding/expansion spend stays the caller's, and
+ * a mount's DB-plane model config is never merged into the caller's gateway.
+ */
+async function connectMountEngine(brainId: string): Promise<BrainEngine> {
+  const config = loadConfig();
+  if (config) {
+    const { configureGateway } = await import('./core/ai/gateway.ts');
+    configureGateway(buildGatewayConfig(config));
+  }
+  const { loadRegistry } = await import('./core/brain-registry.ts');
+  const handle = await loadRegistry().getBrain(brainId);
+  activeBrainId = brainId;
+  return handle.engine;
+}
+
 async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngine> {
+  // Brain axis: resolve WHICH DATABASE this invocation targets before touching
+  // the host engine. --brain (global flag) / GBRAIN_BRAIN_ID / .gbrain-mount /
+  // mount-path-prefix resolve via the canonical 6-tier chain — the mirror of
+  // the source axis in makeContext. connectEngine is the single choke point
+  // every local CLI command routes through (shared ops, CLI-only commands,
+  // and the search-dashboard path), so routing lands here once.
+  const { resolveBrainId } = await import('./core/brain-resolver.ts');
+  const brainId = resolveBrainId(getCliOptions().brain);
+  if (brainId !== 'host') return connectMountEngine(brainId);
+
   const config = loadConfig();
   if (!config) {
     console.error('No brain configured. Run: gbrain init');

@@ -404,20 +404,79 @@ export class ChildWorkerSupervisor {
         tini: this.tiniPath !== '',
       });
 
-      // Async spawn errors (ENOENT, EACCES). Node fires 'error' first, then
-      // 'exit' with code=null. We log the error; the 'exit' handler increments
-      // crashCount as usual so the restart loop bounds permanent misconfigs
-      // via max_crashes.
+      // Settle-once guard shared by the 'exit' path (the child ran) and the
+      // spawn-failure path (the child never became a process).
+      let settled = false;
+      let spawnErrored = false;
+
+      /**
+       * The child never launched — ENOENT/EACCES on `cliPath`, or a target the
+       * OS refuses to execute (e.g. a `.sh` on Windows). Node and Bun emit
+       * 'error' and then 'close' for such a spawn but NEVER 'exit', so the
+       * 'exit' handler below can never settle this promise.
+       *
+       * Without this path `run()` awaits a promise that can never resolve: the
+       * supervisor wedges forever on the FIRST bad spawn — no respawn, no crash
+       * accounting, no give-up — which is the exact opposite of the bounded-retry
+       * contract this class exists to provide. (The comment that used to live
+       * here claimed 'exit' fires after 'error'; it does not.)
+       *
+       * A worker that can never start is a crash: increment `_crashCount` so it
+       * pays the normal exponential backoff in applyBackoff() and is ultimately
+       * bounded by `hardStopMaxCrashes`, the same as any other permanent misconfig.
+       */
+      const settleSpawnFailure = () => {
+        if (settled) return;
+        settled = true;
+        this._child = null;
+        this._intentionalRestart = false;
+
+        if (this.opts.isStopping()) {
+          resolve();
+          return;
+        }
+
+        const runDuration = this.now() - this._lastStartTime;
+        this._lastExitCode = null;
+        this._crashCount++;
+
+        this.opts.onEvent({
+          kind: 'worker_exited',
+          code: null,
+          signal: null,
+          runDurationMs: runDuration,
+          likelyCause: 'spawn_failed',
+          crashCount: this._crashCount,
+        });
+
+        resolve();
+      };
+
+      // Async spawn errors (ENOENT, EACCES).
       child.on('error', (err) => {
+        spawnErrored = true;
         this.opts.onEvent({
           kind: 'worker_spawn_failed',
           error: err.message,
           phase: 'async',
           errnoCode: (err as NodeJS.ErrnoException).code,
         });
+        // No pid means the OS never created a process, so no 'exit' is coming.
+        // Settle now instead of awaiting an event that can never fire.
+        if (child.pid === undefined) settleSpawnFailure();
+      });
+
+      // Belt-and-braces for a failed spawn that did get a pid (platform-dependent
+      // EACCES shapes). Gated on `spawnErrored` so a normal run — which never
+      // emits 'error' — can't have its classified 'exit' path pre-empted by
+      // 'close', whose ordering relative to 'exit' is not guaranteed.
+      child.on('close', () => {
+        if (spawnErrored) settleSpawnFailure();
       });
 
       child.on('exit', (code, signal) => {
+        if (settled) return;
+        settled = true;
         this._child = null;
 
         if (this.opts.isStopping()) {

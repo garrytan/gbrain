@@ -34,15 +34,18 @@ enforced structurally by actionlint on every workflow change.
 
 ## Remote MCP Security
 
-### ⚠️ Do NOT use open OAuth client registration for remote MCP
+### Keep dynamic client registration disabled unless explicitly needed
 
-If you deploy GBrain's MCP server behind an HTTP wrapper with OAuth 2.1
-support, **never allow unauthenticated client registration**. An attacker
-who discovers your server URL can:
+GBrain disables Dynamic Client Registration (DCR) by default. Keep that
+default for internet-reachable deployments and pre-register trusted clients
+with operator-approved scopes and source access. Enabling DCR lets network
+callers create OAuth client records, so use it only when the deployment's
+trust model requires self-service registration and browser approval remains
+part of the authorization flow.
 
-1. Register a new OAuth client via `POST /register`
-2. Use `client_credentials` grant to obtain a bearer token
-3. Access all brain data via the MCP tools
+Do not enable `--enable-dcr-insecure` on an untrusted network. That option is
+reserved for deployments that intentionally allow self-registered
+machine-to-machine clients without browser approval.
 
 ### Recommended: `gbrain serve --http`
 
@@ -104,12 +107,10 @@ Auth methods (`--token-endpoint-auth-method`):
 - `none` — public PKCE-only client (no secret minted; ChatGPT custom
   connector, Claude Code, Cursor)
 
-The validator rejects unknown methods at the registration boundary, and
-the same gate applies to the admin endpoint `POST /admin/api/register-client`
-and the DCR `POST /register` path. Pre-v0.41.3 the CLI hard-coded
-`redirect_uris = []` and `token_endpoint_auth_method = NULL`, forcing
-operators to UPDATE `oauth_clients` rows by hand to make claude.ai work
-without `--enable-dcr`. That footgun is gone.
+The same validator applies to CLI, admin, and DCR registration paths, so
+unknown authentication methods are rejected consistently. Browser-based
+clients can be configured entirely through the supported CLI flags; operators
+do not need to edit OAuth database rows by hand.
 
 ### DCR consent default (v0.42.55+)
 
@@ -186,16 +187,10 @@ When the request `Origin` matches the allowlist, the server echoes it
 back in `Access-Control-Allow-Origin` (with `Vary: Origin`). Otherwise no
 CORS header is sent and the browser blocks the request.
 
-**v0.41.3:** the same allowlist now gates every OAuth endpoint (`/mcp`,
-`/token`, `/authorize`, `/register`, `/revoke`). Pre-v0.41.3 these used
-default-wide-open `cors()` middleware, leaking
-`Access-Control-Allow-Origin: *` on every response — any web origin could
-complete a token exchange from a logged-in operator's browser. The CORS
-preflight handler in the legacy bearer transport was also asymmetric
-(actual-request path correctly default-deny, but OPTIONS preflight leaked
-`Access-Control-Allow-Methods` + `Access-Control-Allow-Headers` to every
-Origin); both are now consolidated through a single allowlist-gated path.
-A startup stderr WARN fires when `--bind 0.0.0.0` is set without
+The same allowlist gates the complete MCP and OAuth HTTP surface. Actual
+requests and browser preflight requests use one allowlist-gated policy, so
+unlisted origins receive no cross-origin authorization. A startup stderr
+warning fires when `--bind 0.0.0.0` is set without
 `GBRAIN_HTTP_CORS_ORIGIN`, surfacing the default-deny posture before the
 first request.
 

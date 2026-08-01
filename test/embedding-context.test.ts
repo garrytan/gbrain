@@ -5,6 +5,7 @@ import {
   sanitizeTitle,
   sanitizeSynopsis,
   extractFirstTwoSentences,
+  modeRequiresSynopsis,
   modeRequiresHaiku,
   modeRequiresWrapper,
 } from '../src/core/embedding-context.ts';
@@ -130,11 +131,12 @@ describe('extractFirstTwoSentences', () => {
   });
 });
 
-describe('modeRequiresHaiku / modeRequiresWrapper', () => {
-  test('per_chunk_synopsis requires Haiku', () => {
-    expect(modeRequiresHaiku('per_chunk_synopsis')).toBe(true);
-    expect(modeRequiresHaiku('title')).toBe(false);
-    expect(modeRequiresHaiku('none')).toBe(false);
+describe('modeRequiresSynopsis / modeRequiresWrapper', () => {
+  test('provider-neutral guard retains the deprecated Haiku alias', () => {
+    for (const mode of ['per_chunk_synopsis', 'title', 'none'] as const) {
+      expect(modeRequiresSynopsis(mode)).toBe(mode === 'per_chunk_synopsis');
+      expect(modeRequiresHaiku(mode)).toBe(modeRequiresSynopsis(mode));
+    }
   });
 
   test('title and per_chunk_synopsis require wrapper; none does not', () => {

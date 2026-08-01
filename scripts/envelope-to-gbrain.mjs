@@ -69,7 +69,10 @@ for (const [i, c] of conversations.entries()) {
   // stops the two from disagreeing about whether an id exists.
   const hasId = typeof c.id === 'string' && c.id.trim() !== '';
   const convId = hasId ? c.id.trim() : `conv-${i + 1}`;
-  const name = `${date || '0000-00-00'}-${slug(convId, `conv-${i + 1}`)}.md`;
+  // `date` is third-party, exactly like `convId`, so it gets the same slug()
+  // treatment. Interpolating it raw let a `created_at` of `../…` resolve the
+  // join below outside outDir and write there.
+  const name = `${slug(date, '0000-00-00')}-${slug(convId, `conv-${i + 1}`)}.md`;
   // gbrain reads YAML frontmatter + markdown body; keep provenance in frontmatter.
   // Emit `type: conversation` so gbrain stores these as conversation pages rather
   // than defaulting to the generic `concept`. gbrain is open-typed — it takes an
@@ -79,11 +82,15 @@ for (const [i, c] of conversations.entries()) {
   const front = [
     '---',
     'type: conversation',
+    // Every interpolated value below is quoted. An envelope is a third-party
+    // file, so any string carrying a newline would otherwise close its scalar
+    // and inject arbitrary frontmatter keys into the page gbrain ingests — or
+    // duplicate an existing key, which makes the parse throw and silently
+    // strips every provenance field from the page.
     `title: ${JSON.stringify(c.title || 'Untitled conversation')}`,
-    `date: ${date || 'null'}`,
-    // Every interpolated value is quoted. An envelope is a third-party file, so
-    // a provider string carrying a newline would otherwise close this scalar and
-    // inject arbitrary frontmatter keys into the page gbrain ingests.
+    // `date` is the first 10 chars of the envelope's `created_at`; 10 is plenty
+    // to smuggle a newline plus a short key. Absent stays an unquoted YAML null.
+    `date: ${date ? JSON.stringify(date) : 'null'}`,
     `source: ${JSON.stringify(env.meta?.source_provider || 'unknown')}`,
     // Omit the key entirely when the envelope carries no id, rather than
     // emitting the literal `undefined` or a synthesized `conv-N` — the positional

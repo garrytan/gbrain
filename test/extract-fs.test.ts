@@ -389,6 +389,33 @@ describe('resolveSlugAll', () => {
   });
 });
 
+// ─── issue #1964: cross-directory wikilinks — slug/path mismatch ──────────
+
+describe('issue #1964: raw Obsidian wikilink paths resolve to sync-slugified slugs', () => {
+  test('resolveSlug slugifies the candidate (sync-consistent), no flag needed', () => {
+    const all = new Set(['llm-wiki/entities/ai-3.0']);
+    // Wikilink literal `[[llm-wiki/entities/AI 3.0]]` — spaces + uppercase.
+    expect(resolveSlug('llm-wiki/notes', 'llm-wiki/entities/AI 3.0.md', all))
+      .toBe('llm-wiki/entities/ai-3.0');
+  });
+
+  test('resolveSlug slugifies raw (unslugified) fileDir too', () => {
+    const all = new Set(['llm-wiki/entities/ai-3.0']);
+    // fileDir comes from dirname(relPath) — the raw on-disk directory.
+    expect(resolveSlug('LLM Wiki/Notes', 'entities/AI 3.0.md', all))
+      .toBe('llm-wiki/entities/ai-3.0');
+  });
+
+  test('extractLinksFromFile resolves cross-directory wikilink with flag OFF as a typed edge', async () => {
+    const allSlugs = new Set(['llm-wiki/entities/ai-3.0', 'llm-wiki/notes/roadmap']);
+    const content = '---\ntitle: Roadmap\ntype: concept\n---\n\nSee [[llm-wiki/entities/AI 3.0]].\n';
+    const links = await extractLinksFromFile(content, 'llm-wiki/notes/roadmap.md', allSlugs);
+    expect(links.map(l => l.to_slug)).toEqual(['llm-wiki/entities/ai-3.0']);
+    // Dir-qualified path resolution is exact, NOT the basename fallback.
+    expect(links[0].link_type).not.toBe('wikilink_basename');
+  });
+});
+
 describe('issue #972 repro: bare wikilinks resolve when flag is on', () => {
   // End-to-end: reproduces the issue's exact repro inside a tempdir +
   // PGLite, then asserts edge count under both flag states.

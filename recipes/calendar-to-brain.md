@@ -1,7 +1,7 @@
 ---
 id: calendar-to-brain
 name: Calendar-to-Brain
-version: 0.7.0
+version: 0.8.0
 description: Google Calendar events become searchable brain pages. Daily files with attendees, locations, and meeting prep context.
 category: sense
 requires: [credential-gateway]
@@ -28,6 +28,11 @@ health_checks:
       - type: env_exists
         name: GOOGLE_CLIENT_ID
         label: "Google OAuth"
+  - type: heartbeat_max_age
+    max_age: 48h
+    label: "Calendar data freshness"
+output_paths:
+  - daily/calendar/
 setup_time: 20 min
 cost_estimate: "$0 (both options are free)"
 ---

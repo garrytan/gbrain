@@ -32,7 +32,7 @@ gbrain schema sync --apply
 The sync backfills `page.type = 'meeting'` on all 4000 pages in 1000-row batches. Now:
 
 - `gbrain whoknows "Q3 roadmap discussion"` routes through the meeting type, ranking by `expert_routing` signal (attendees, recency, salience) instead of raw text.
-- `gbrain extract-facts` runs on every meeting page automatically (because `extractable: true`), pulling typed facts like `attended_by=alice-example`, `date=2026-05-23`.
+- The `extract_facts` cycle runs on every meeting page automatically (because `extractable: true`), pulling typed facts like `attended_by=alice-example`, `date=2026-05-23`.
 - The downstream `think` skill can now answer "what did we decide about pricing in the last three roadmap meetings" by querying the meeting graph instead of grep'ing 4000 files.
 
 One command. 4000 pages went from invisible to queryable. The content didn't change. The structure did.
@@ -62,7 +62,7 @@ gbrain schema add-link-type led-by      --page-type deal     --target-type inves
 gbrain schema sync --apply
 ```
 
-Now `gbrain whoknows "Series A SaaS"` routes through `investor` and `portco` types specifically, not the noisy general type set. `gbrain graph-query alice-example --type intro-from --depth 2` walks two hops of intros to surface "Alice introduced you to Bob who introduced you to Charlie." `gbrain extract-facts` starts producing typed claims from the fence in your deal pages: `(deals/acme-seed, raise=2000000, valuation=15000000, lead=widget-vc, closed_at=2026-05-23)`.
+Now `gbrain whoknows "Series A SaaS"` routes through `investor` and `portco` types specifically, not the noisy general type set. `gbrain graph-query alice-example --type intro-from --depth 2` walks two hops of intros to surface "Alice introduced you to Bob who introduced you to Charlie." The `extract_facts` cycle starts producing typed claims from the fence in your deal pages: `(deals/acme-seed, raise=2000000, valuation=15000000, lead=widget-vc, closed_at=2026-05-23)`.
 
 The CRM you've been promising yourself you'll set up next quarter? You just shipped it in 4 commands. It's downstream of your notes, not parallel to them.
 
@@ -143,7 +143,7 @@ Re-run the same `whoknows` query. Top-3 should shift, because the new type is no
 
 Three things gbrain does that generic note systems can't:
 
-**1. The brain knows the difference between a person and an idea.** Page-type matters at query time. `gbrain whoknows` only considers `expert_routing: true` types. `gbrain extract-facts` only runs on `extractable: true` types. `gbrain graph-query` walks declared link verbs. None of that works on a flat tag system because tags don't have semantics — they're labels. Types are first-class citizens with rules attached.
+**1. The brain knows the difference between a person and an idea.** Page-type matters at query time. `gbrain whoknows` only considers `expert_routing: true` types. The `extract_facts` cycle only runs on `extractable: true` types. `gbrain graph-query` walks declared link verbs. None of that works on a flat tag system because tags don't have semantics — they're labels. Types are first-class citizens with rules attached.
 
 **2. Untyped content is invisible content.** If your meetings are typed as `note`, expert routing skips them, facts extraction ignores them, link inference doesn't fire. They exist on disk and they're indexed for text search, but the structural surfaces (whoknows, find_experts, recall, think) treat them as second-class. Adding a type isn't cosmetic; it's structural promotion.
 

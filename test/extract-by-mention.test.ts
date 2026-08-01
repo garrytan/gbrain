@@ -73,7 +73,7 @@ beforeAll(async () => {
   await engine.initSchema();
   // Default CLI options (quiet enough that the progress reporter doesn't
   // pollute the capture buffer beyond what the assertions need).
-  setCliOptions({ quiet: false, progressJson: false, progressInterval: 1000, explain: false, timeoutMs: null });
+  setCliOptions({ quiet: false, progressJson: false, progressInterval: 1000, explain: false, timeoutMs: null, brain: null });
 }, 60_000);
 
 afterAll(async () => {

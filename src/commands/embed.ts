@@ -19,9 +19,25 @@ import {
 } from '../core/pace-mode.ts';
 import { tryAcquireDbLock, type DbLockHandle } from '../core/db-lock.ts';
 import { embedBackfillLockId } from '../core/embed-backfill-lock.ts';
+import { AITransientError } from '../core/ai/errors.ts';
 import { wrapChunkTextsForStoredMode } from '../core/embedding-context.ts';
 import { titleTierCorpusGeneration } from '../core/contextual-retrieval-service.ts';
 import type { Page } from '../core/types.ts';
+
+/** #3037: cap failure samples so a corpus-wide outage doesn't bloat --json. */
+const FAILURE_SAMPLE_CAP = 10;
+
+/**
+ * #3037: record embed failures on the run result. `chunkCount` is the number
+ * of chunks left un-embedded by this failure (1 for page-level errors where
+ * the chunk count isn't known at the catch site).
+ */
+function recordFailure(result: EmbedResult, chunkCount: number, slug: string, e: unknown): void {
+  result.failures += chunkCount;
+  if (result.failure_samples.length < FAILURE_SAMPLE_CAP) {
+    result.failure_samples.push(`${slug}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
 
 /**
  * #3507 — after a plain re-embed fully re-embedded a `per_chunk_synopsis`
@@ -166,6 +182,20 @@ export interface EmbedResult {
   total_chunks: number;
   /** Number of pages processed (whether or not they had stale chunks). */
   pages_processed: number;
+  /**
+   * #3037: chunks that FAILED to embed this run (batch failures + per-chunk
+   * isolation failures). Callers must not read total silence as success:
+   * `src/cli.ts` turns `failures > 0` into a non-zero exit verdict (mirrors
+   * the `import` errors>0 guard), and structured consumers (--json, minion
+   * handlers) can surface it. 0 on a clean run. Additive field.
+   */
+  failures: number;
+  /**
+   * #3037: up to 10 `slug: error-message` samples of what failed, so the
+   * operator gets a diagnosis without scrolling stderr. Capped so a
+   * corpus-wide outage doesn't bloat structured output. Additive field.
+   */
+  failure_samples: string[];
   /** True if this run was a dry-run. */
   dryRun: boolean;
   /**
@@ -284,6 +314,8 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
     would_embed: 0,
     total_chunks: 0,
     pages_processed: 0,
+    failures: 0,
+    failure_samples: [],
     dryRun: !!opts.dryRun,
   };
 
@@ -293,6 +325,11 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
       try {
         await embedPage(engine, s, !!opts.dryRun, result, opts.sourceId, opts.signal, opts.quiet);
       } catch (e: unknown) {
+        if (isAborted(opts.signal)) break; // shutdown, not a failure
+        // #3037: a page-level error (not found, DB write) must not exit 0.
+        // Chunk-level embed failures are counted inside embedPage; this
+        // counts the page itself (chunk count unknown at this site).
+        recordFailure(result, 1, s, e);
         serr(`  Error embedding ${s}: ${e instanceof Error ? e.message : e}`);
       }
     }
@@ -535,6 +572,12 @@ export async function runEmbed(engine: BrainEngine, args: string[]): Promise<Emb
   try {
     const result = await runEmbedCore(engine, opts);
     if (progressStarted) progress.finish();
+    // #3037: loud end-of-run summary so failures are visible even when the
+    // per-page stderr lines scrolled away. cli.ts turns failures>0 into a
+    // non-zero exit verdict.
+    if (result.failures > 0) {
+      serr(`[embed] ${result.failures} chunk(s) failed to embed. First error: ${result.failure_samples[0] ?? 'unknown'}`);
+    }
     return result;
   } catch (e) {
     if (progressStarted) progress.finish();
@@ -623,10 +666,32 @@ async function embedPage(
   // contextual prefix when the page was embedded wrapped), not raw
   // chunk_text — otherwise a re-embed silently strips the contextual
   // prefixes the sync path applied. fenced_code chunks stay unwrapped.
-  const embeddings = await embedBatch(wrapChunkTextsForStoredMode(page, toEmbed), { abortSignal: signal });
+  // #3037: per-chunk failure isolation — one bad chunk must not leave the
+  // page's sibling chunks NULL. The wrapped texts (computed once) feed the
+  // fan-out too, so an isolation retry never strips the prefixes. Total
+  // embed failure is recorded here (where the chunk count is known) and
+  // swallowed: the page stays NULL exactly as before, but the run now
+  // reports it (result.failures → non-zero exit) instead of pretending
+  // success. Abort (shutdown) still propagates.
+  let embeddings: (Float32Array | null)[];
+  let failed = 0;
+  let firstError: unknown;
+  try {
+    ({ embeddings, failed, firstError } = await embedPageTexts(
+      wrapChunkTextsForStoredMode(page, toEmbed),
+      signal ? { abortSignal: signal } : {},
+    ));
+  } catch (e: unknown) {
+    if (isAborted(signal)) throw e;
+    recordFailure(result, toEmbed.length, slug, e);
+    result.pages_processed++;
+    serr(`  Error embedding ${slug}: ${e instanceof Error ? e.message : e}`);
+    return;
+  }
   const embeddingMap = new Map<number, Float32Array>();
   for (let j = 0; j < toEmbed.length; j++) {
-    embeddingMap.set(toEmbed[j].chunk_index, embeddings[j]);
+    const emb = embeddings[j];
+    if (emb) embeddingMap.set(toEmbed[j].chunk_index, emb);
   }
   const updated: ChunkInput[] = chunks.map(c => preserveCodeMetadata(c, {
     chunk_index: c.chunk_index,
@@ -643,16 +708,21 @@ async function embedPage(
   // Guard: only stamp when EVERY chunk was (re)embedded this pass. If some
   // chunks were preserved from a prior embed (unknown/old provenance), the
   // page is mixed — don't claim it's current. `embed --all` fully re-embeds
-  // such a page and then stamps it.
-  if (toEmbed.length === chunks.length) {
+  // such a page and then stamps it. #3037: a partial failure leaves failed
+  // chunks NULL, so don't stamp then either.
+  if (failed === 0 && toEmbed.length === chunks.length) {
     await engine.setPageEmbeddingSignature(slug, { sourceId, signature: currentEmbeddingSignature() });
     // #3507: a fully re-embedded per_chunk_synopsis page landed at the
     // title tier — keep the stamped mode honest.
     await restampIfDemotedToTitleTier(engine, page, slug, page.source_id);
   }
-  result.embedded += toEmbed.length;
+  result.embedded += toEmbed.length - failed;
+  if (failed > 0) {
+    recordFailure(result, failed, slug, firstError);
+    serr(`  ${slug}: ${failed} chunk(s) failed to embed; embedded the other ${toEmbed.length - failed}`);
+  }
   result.pages_processed++;
-  if (!quiet) slog(`${slug}: embedded ${toEmbed.length} chunks`);
+  if (!quiet) slog(`${slug}: embedded ${toEmbed.length - failed} chunks`);
 }
 
 /**
@@ -791,11 +861,18 @@ async function embedAll(
 
     try {
       // #3507: reproduce the page's stored wrapping convention (see embedPage).
-      const embeddings = await embedBatch(wrapChunkTextsForStoredMode(page, toEmbed));
+      // #3037: per-chunk failure isolation — one bad chunk costs one chunk,
+      // not the whole page's siblings. The wrapped texts feed the fan-out
+      // too, so an isolation retry never strips the contextual prefixes.
+      const { embeddings, failed, firstError } = await embedPageTexts(
+        wrapChunkTextsForStoredMode(page, toEmbed),
+        signal ? { abortSignal: signal } : {},
+      );
       // Build a map of new embeddings by chunk_index
       const embeddingMap = new Map<number, Float32Array>();
       for (let j = 0; j < toEmbed.length; j++) {
-        embeddingMap.set(toEmbed[j].chunk_index, embeddings[j]);
+        const emb = embeddings[j];
+        if (emb) embeddingMap.set(toEmbed[j].chunk_index, emb);
       }
       // Preserve ALL chunks, only update embeddings for stale ones.
       // preserveCodeMetadata threads code-chunk metadata (#769) so re-embed
@@ -809,17 +886,30 @@ async function embedAll(
       }));
       await observed(pacer, () => engine.upsertChunks(page.slug, updated, pageOpts));
       // v0.41.31: stamp embedding provenance so a later model swap is
-      // detectable as stale.
-      await observed(pacer, () =>
-        engine.setPageEmbeddingSignature(page.slug, { sourceId: pageSourceId, signature }),
-      );
-      // #3507: --all fully re-embeds; a per_chunk_synopsis page landed at
-      // the title tier — keep the stamped mode honest.
-      await observed(pacer, () =>
-        restampIfDemotedToTitleTier(engine, page, page.slug, pageSourceId),
-      );
-      result.embedded += toEmbed.length;
+      // detectable as stale. #3037: not on partial failure — failed chunks
+      // stay NULL under unknown provenance.
+      if (failed === 0) {
+        await observed(pacer, () =>
+          engine.setPageEmbeddingSignature(page.slug, { sourceId: pageSourceId, signature }),
+        );
+        // #3507: --all fully re-embeds; a per_chunk_synopsis page landed at
+        // the title tier — keep the stamped mode honest. #3037: gated on
+        // failed === 0 — a partially-failed page was NOT fully re-embedded,
+        // so restamping would make contextual_retrieval_mode lie again
+        // (the exact #3461 bug).
+        await observed(pacer, () =>
+          restampIfDemotedToTitleTier(engine, page, page.slug, pageSourceId),
+        );
+      }
+      result.embedded += toEmbed.length - failed;
+      if (failed > 0) {
+        recordFailure(result, failed, page.slug, firstError);
+        serr(`\n  ${page.slug}: ${failed} chunk(s) failed to embed; embedded the other ${toEmbed.length - failed}`);
+      }
     } catch (e: unknown) {
+      // #3037: count the darkened page so the run can't exit 0 (abort is a
+      // shutdown, not a failure).
+      if (!isAborted(signal)) recordFailure(result, toEmbed.length, page.slug, e);
       serr(`\n  Error embedding ${page.slug}: ${e instanceof Error ? e.message : e}`);
     }
 
@@ -1037,10 +1127,8 @@ async function embedAllStale(
   let afterUpdatedAt: string | null = null;
   let totalChunksLoaded = 0;
   let budgetExitNotified = false;
-  // #1946 (OV2a): track chunks that errored out so a catch-up pass that finishes
-  // with stale chunks still remaining (un-embeddable for a non-transient reason)
-  // surfaces that loudly instead of looking like a clean run.
-  let embedFailures = 0;
+  // #1946 (OV2a) + #3037: embed failures are tracked on result.failures so
+  // the catch-up warning below AND the CLI exit verdict both see them.
 
   // E-3 (paced-backfill): bounded end-of-run re-entry. A longer paced run gives
   // a live writer (sync / put_page) more time to insert NEW stale rows BEHIND
@@ -1137,12 +1225,19 @@ async function embedAllStale(
           // NORMAL post-model-migration path, so raw-text embedding here
           // quietly converted whole corpora to the unwrapped convention.
           const pageRow = await observed(pacer, () => engine.getPage(slug, { sourceId: keySourceId }));
-          const embeddings = await embedBatchWithBackoff(wrapChunkTextsForStoredMode(pageRow, stale), { abortSignal: effectiveSignal });
+          // #3037: per-chunk failure isolation — one bad chunk costs one
+          // chunk, not the whole page's siblings. The wrapped texts feed the
+          // fan-out too, so an isolation retry never strips the prefixes.
+          const { embeddings, failed, firstError } = await embedPageTexts(
+            wrapChunkTextsForStoredMode(pageRow, stale),
+            { abortSignal: effectiveSignal },
+          );
           // Re-fetch existing chunks and merge to avoid deleting non-stale chunks.
           const existing = await observed(pacer, () => engine.getChunks(slug, { sourceId: keySourceId }));
           const staleIdxToEmbedding = new Map<number, Float32Array>();
           for (let j = 0; j < stale.length; j++) {
-            staleIdxToEmbedding.set(stale[j].chunk_index, embeddings[j]);
+            const emb = embeddings[j];
+            if (emb) staleIdxToEmbedding.set(stale[j].chunk_index, emb);
           }
           // preserveCodeMetadata threads code-chunk metadata (#769) so the
           // autopilot --stale path doesn't clobber language/symbol_name/etc
@@ -1160,7 +1255,8 @@ async function embedAllStale(
           // A partially-stale page keeps preserved chunks of unknown/old
           // provenance, so don't claim it's current. (After invalidate, a
           // signature-drifted page IS fully stale → this stamps it.)
-          if (signature && stale.length === existing.length) {
+          // #3037: not on partial failure — failed chunks stay NULL.
+          if (signature && failed === 0 && stale.length === existing.length) {
             await observed(pacer, () =>
               engine.setPageEmbeddingSignature(slug, { sourceId: keySourceId, signature }),
             );
@@ -1168,17 +1264,24 @@ async function embedAllStale(
           // #3507: a FULLY re-embedded per_chunk_synopsis page landed at the
           // title tier — keep the stamped mode honest. Partially-stale pages
           // stay stamped as-is (mixed provenance; reindex sweeps fix them).
-          if (stale.length === existing.length) {
+          // #3037: `failed === 0` is part of "fully re-embedded" — if the
+          // per-chunk isolation left some chunks NULL, restamping would make
+          // contextual_retrieval_mode lie again (the exact #3461 bug).
+          if (failed === 0 && stale.length === existing.length) {
             await observed(pacer, () =>
               restampIfDemotedToTitleTier(engine, pageRow, slug, keySourceId),
             );
           }
-          result.embedded += stale.length;
+          result.embedded += stale.length - failed;
+          if (failed > 0) {
+            recordFailure(result, failed, slug, firstError);
+            serr(`\n  ${slug}: ${failed} chunk(s) failed to embed; embedded the other ${stale.length - failed}`);
+          }
         } catch (e: unknown) {
           // Budget/abort-fired cancellations are expected on the way out; don't
           // spam per-page "Error embedding" lines when we're shutting down.
           if (effectiveSignal.aborted) return;
-          embedFailures++;
+          recordFailure(result, stale.length, slug, e);
           serr(`\n  Error embedding ${slug}: ${e instanceof Error ? e.message : e}`);
         }
         totalProcessedPages++;
@@ -1231,14 +1334,14 @@ async function embedAllStale(
   // chunks unembedded means those chunks are stuck (a non-transient embed
   // failure), not that we ran out of time. Surface it loudly so it doesn't read
   // as a clean run — re-running won't help until the underlying failure is fixed.
-  if (staleOpts?.catchUp && !effectiveSignal.aborted && embedFailures > 0) {
+  if (staleOpts?.catchUp && !effectiveSignal.aborted && result.failures > 0) {
     const remaining = await engine.countStaleChunks(
       signature
         ? { signature, ...(sourceId ? { sourceId } : {}), ...(includeNullSig && { includeNullSignature: true }) }
         : (sourceId ? { sourceId } : undefined),
     );
     if (remaining > 0) {
-      serr(`\n  [embed] catch-up finished but ${remaining} chunk(s) remain stale after ${embedFailures} embed failure(s). These are not embeddable as-is; re-running won't clear them until the underlying error is resolved.`);
+      serr(`\n  [embed] catch-up finished but ${remaining} chunk(s) remain stale after ${result.failures} embed failure(s). These are not embeddable as-is; re-running won't clear them until the underlying error is resolved.`);
     }
   }
 }
@@ -1358,12 +1461,7 @@ export async function embedBatchWithBackoff(
       // If the budget fired we may have been aborted mid-fetch; bubble out.
       if (signal?.aborted) throw e;
       const msg = e instanceof Error ? e.message : String(e);
-      // D4: structured detection first (handles gateway-wrapped errors via
-      // cause chain); message-match as fallback for providers whose wrappers
-      // strip `cause.status`.
-      const isRateLimit = detect429FromCause(e)
-        || /rate.?limit|429/i.test(msg);
-      if (!isRateLimit || attempt === MAX_RATE_LIMIT_RETRIES) throw e;
+      if (!isRateLimitError(e) || attempt === MAX_RATE_LIMIT_RETRIES) throw e;
 
       const delayMs = parseRetryDelayMs(msg);
       serr(`  [rate-limit] attempt ${attempt + 1}/${MAX_RATE_LIMIT_RETRIES}, waiting ${delayMs}ms...`);
@@ -1372,4 +1470,87 @@ export async function embedBatchWithBackoff(
   }
   // Unreachable, but TypeScript needs it.
   return embedBatch(texts);
+}
+
+/**
+ * 429 judgment shared by embedBatchWithBackoff (retry decision) and
+ * embedPageTexts (fan-out decision). D4: structured detection first
+ * (gateway-wrapped errors via cause chain); message-match as fallback for
+ * providers whose wrappers strip `cause.status`.
+ */
+function isRateLimitError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return detect429FromCause(e) || /rate.?limit|429/i.test(msg);
+}
+
+/** Walk the cause chain (like detect429FromCause) for the first HTTP status. */
+function statusFromCause(e: unknown): number | undefined {
+  let cur: unknown = e;
+  for (let depth = 0; depth < 5 && cur !== undefined && cur !== null; depth++) {
+    const obj = cur as { status?: unknown; statusCode?: unknown; cause?: unknown };
+    if (typeof obj.status === 'number') return obj.status;
+    if (typeof obj.statusCode === 'number') return obj.statusCode;
+    cur = obj.cause;
+  }
+  return undefined;
+}
+
+/**
+ * #3037: embed one page's chunk texts with per-chunk failure isolation.
+ *
+ * All three embed paths used to send a page's chunks in ONE
+ * embedBatch call, so one bad chunk (e.g. an oversized chunk the provider
+ * 400s) left EVERY sibling chunk NULL — an ~8.6x blast radius. This wrapper
+ * tries the batch first (the cheap, common path), and only on a
+ * PERMANENT-looking batch failure retries once per chunk so one bad chunk
+ * costs one chunk.
+ *
+ * Cost bounding — when we do NOT fan out (rethrow instead):
+ *   - 429 / rate limit: embedBatchWithBackoff already retried with backoff;
+ *     fanning out N single-chunk calls would hammer the same limiter N-fold.
+ *   - AITransientError (5xx / network / unknown, per normalizeAIError): the
+ *     batch CONTENT isn't the problem, so isolation can't help — during an
+ *     outage it would just multiply failing calls per page.
+ *   - 401/403 (auth): nothing chunk-specific; every call would fail.
+ * When we DO fan out (permanent request-shaped 4xx like 400/413/422), the
+ * per-chunk pass happens at most ONCE per page per run and re-spends roughly
+ * the same tokens the failed batch would have — bounded, no recursion. A
+ * fresh 429 arising DURING the fan-out still gets the normal backoff (each
+ * single-chunk call goes through embedBatchWithBackoff).
+ *
+ * Throws when nothing could be embedded (total failure — same contract as
+ * the pre-#3037 single batch call). Returns `null` at the index of each
+ * failed chunk otherwise.
+ */
+async function embedPageTexts(
+  texts: string[],
+  opts: EmbedBatchWithBackoffOpts = {},
+): Promise<{ embeddings: (Float32Array | null)[]; failed: number; firstError?: unknown }> {
+  try {
+    return { embeddings: await embedBatchWithBackoff(texts, opts), failed: 0 };
+  } catch (e: unknown) {
+    if (opts.abortSignal?.aborted) throw e; // shutdown, not a chunk problem
+    if (texts.length <= 1) throw e; // nothing to isolate
+    if (isRateLimitError(e) || e instanceof AITransientError) throw e;
+    const status = statusFromCause(e);
+    if (status === 401 || status === 403) throw e;
+
+    const embeddings: (Float32Array | null)[] = [];
+    let failed = 0;
+    let firstError: unknown;
+    for (const t of texts) {
+      try {
+        const single = await embedBatchWithBackoff([t], opts);
+        embeddings.push(single[0] ?? null);
+        if (single[0] === undefined) { failed++; firstError ??= e; }
+      } catch (chunkErr: unknown) {
+        if (opts.abortSignal?.aborted) throw chunkErr;
+        embeddings.push(null);
+        failed++;
+        firstError ??= chunkErr;
+      }
+    }
+    if (failed === texts.length) throw firstError ?? e; // total failure: pre-#3037 contract
+    return { embeddings, failed, firstError };
+  }
 }

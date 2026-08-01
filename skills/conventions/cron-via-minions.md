@@ -73,13 +73,13 @@ stock worker auto-loads on startup) registers handlers before `start()`.
 Users who set `minion_mode: off` in `~/.gbrain/preferences.json` keep
 using `agentTurn`. Respect that. No auto-rewrite.
 
-## Forward note (v0.12.0)
+## Forward note
 
-GBrain v0.12.0 ships `gbrain cron`: a scheduler loop inside
-`gbrain jobs work` that owns cron expressions natively — no more
-handing off to host schedulers. Until v0.12.0 lands, the host
-scheduler keeps firing on schedule; v0.11.1 only replaces the execution
-layer (what the cron trigger *does*), not the scheduling layer.
+A native scheduler loop inside `gbrain jobs work` (owning cron
+expressions directly, with no host-scheduler hand-off) has been on the
+roadmap since v0.11.1 but has not shipped. The host scheduler keeps
+firing on schedule; this convention only replaces the execution layer
+(what the cron trigger *does*), not the scheduling layer.
 
 ## Related
 

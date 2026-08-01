@@ -230,6 +230,148 @@ function enforceSubagentSlugFence(ctx: OperationContext, slug: string, opName: s
 }
 
 /**
+ * OAuth-client slug-fence enforcement (v0.42.72.0 — write-side isolation
+ * symmetry). When the authenticated client was registered with
+ * --bound-slug-prefixes, every direct slug-mutating write must target a
+ * slug under one of those prefixes. Shared by put_page, delete_page,
+ * restore_page, add_tag, remove_tag, add_link/remove_link (`from`
+ * endpoint), add_timeline_entry, revert_version, and put_raw_data; runs
+ * BEFORE each op's dry-run short-circuit so preview calls surface the
+ * same rejection.
+ *
+ * Semantics deliberately match submit_agent's bound_slug_prefixes check
+ * (plain startsWith, NOT the `/*` glob grammar of the subagent allow-list
+ * above): a non-null binding fences fail-closed (empty array = deny all
+ * writes), no binding / no auth = no fence (local CLI and unbound clients
+ * keep full-source write authority). Register prefixes with a trailing
+ * slash ('wiki/agents/alice/') — a bare 'notes' also admits
+ * 'notes-archive/...' by startsWith construction.
+ */
+function enforceClientSlugFence(ctx: OperationContext, slug: string, opName: string): void {
+  if (ctx.auth?.fenceProjectionDegraded) {
+    throw new OperationError(
+      'permission_denied',
+      `${opName}: this brain's oauth_clients projection is missing bound_slug_prefixes, so the write fence cannot be evaluated. Refusing the write rather than running unfenced.`,
+      'Run `gbrain apply-migrations --yes` on the brain host.',
+    );
+  }
+  const prefixes = ctx.auth?.boundSlugPrefixes;
+  if (!prefixes) return;
+  if (!slugUnderBoundPrefixes(prefixes, slug)) {
+    throw new OperationError(
+      'permission_denied',
+      `${opName}: slug '${slug}' is not under any of client ${ctx.auth?.clientId ?? '(unknown)'}'s bound_slug_prefixes (${prefixes.join(', ')})`,
+    );
+  }
+}
+
+/**
+ * The one place the fence's match rule lives. Exported so non-op write
+ * surfaces that never build an OperationContext (the `/ingest` route in
+ * serve-http.ts) enforce byte-identical semantics instead of re-deriving
+ * them.
+ *
+ * An empty-string prefix is IGNORED rather than honored: `startsWith('')`
+ * is true for every slug, so a stray `''` (an unset shell variable in a
+ * provisioning template) would silently turn a binding into a wildcard
+ * while still rendering as "fenced" to the operator. Registration now
+ * rejects empty prefixes outright; this is the second line of defence for
+ * rows already in the database.
+ */
+export function slugUnderBoundPrefixes(prefixes: readonly string[], slug: string): boolean {
+  // Compare against the CANONICAL slug. `validateSlug` lowercases before the
+  // row is written, so checking the caller's raw string let `EMP-ALICE/x`
+  // satisfy an `EMP-ALICE/` binding, commit as `emp-alice/x`, and only then
+  // trip the resolved-slug re-check — an error returned after the write had
+  // already landed. Registration rejects non-lowercase prefixes going
+  // forward; lowercasing both sides keeps pre-existing rows meaning what
+  // their operator intended.
+  const canonical = slug.toLowerCase();
+  return prefixes.some((bp) => {
+    const base = normalizeSlugPrefix(bp);
+    if (base === '') return false;
+    // Boundary-aware: a prefix must match whole SEGMENTS. Plain `startsWith`
+    // let a boundary-less `emp-alice` admit `emp-alice-2/onboarding` — and
+    // with the `emp-<slug>` naming this guide recommends, sibling collisions
+    // (`alice` vs `alice-2`) are the common case, not a corner case.
+    return base.endsWith('/')
+      ? canonical.startsWith(base)
+      : canonical === base || canonical.startsWith(`${base}/`);
+  });
+}
+
+/**
+ * Canonical form of one stored prefix, lowercased. `oauth_clients.bound_slug_prefixes`
+ * predates this fence — migration v85 introduced it as submit_agent's binding,
+ * whose grammar is the `<prefix>/*` glob of `matchesSlugAllowList` — so both
+ * spellings have to mean the same span of slugs or upgrading silently changes
+ * what an existing client may write.
+ */
+export function normalizeSlugPrefix(prefix: string): string {
+  return (prefix.endsWith('/*') ? prefix.slice(0, -1) : prefix).toLowerCase();
+}
+
+/**
+ * Write ops a slug-bound client may call: every op that routes through
+ * `enforceClientSlugFence`, plus `think` (scope `write`, but remote callers
+ * cannot persist — `save`/`take` are forced false for `remote !== false`).
+ *
+ * This list is an ALLOW-list on purpose. The fence used to be enforced op
+ * by op, which made every unfenced write op a silent hole — `extract_entities`
+ * mutating `people/*` timelines, `forget_fact` rewriting another source's
+ * page by numeric id, `extract_facts` appending to any entity's fact fence.
+ * Enumerating what is SAFE fails closed instead: a write op added later is
+ * denied to bound clients until someone fences it and adds it here.
+ */
+export const CLIENT_FENCED_WRITE_OPS: ReadonlySet<string> = new Set([
+  'put_page', 'delete_page', 'restore_page', 'add_tag', 'remove_tag',
+  'add_link', 'remove_link', 'add_timeline_entry', 'revert_version',
+  'put_raw_data', 'think',
+  // submit_agent enforces bound_slug_prefixes itself (it is the op the column
+  // was introduced for — see its bound_* binding check), so denying it here
+  // would break the original feature for clients that legitimately hold both
+  // a binding and `agent` scope.
+  'submit_agent',
+]);
+
+/**
+ * Fail-closed gate for slug-bound clients, applied at dispatch (the single
+ * choke point both MCP transports share) so it cannot be forgotten per op.
+ * Read ops are untouched — read scope is enforced by source federation.
+ */
+export function enforceBoundClientOpAllowList(
+  auth: AuthInfo | undefined,
+  op: Pick<Operation, 'name' | 'scope' | 'mutating'>,
+): void {
+  // A degraded projection means we could not read the binding, not that
+  // there isn't one. Deny every non-read op outright — otherwise the
+  // unfenceable ops stay reachable precisely when the fence is unreadable.
+  const degraded = auth?.fenceProjectionDegraded === true;
+  if (!degraded && !auth?.boundSlugPrefixes) return;
+  // Gate on "mutates, or carries any non-read scope" rather than on the two
+  // literal scope strings 'write'/'admin': `sources_add` / `sources_remove`
+  // carry the bespoke `sources_admin` scope and are `mutating: true`, so a
+  // scope-string check let a bound client DROP AN ENTIRE SOURCE — every page
+  // in it, far outside any prefix. Anything that isn't a plain read must be
+  // explicitly allow-listed.
+  const isRead = op.scope === 'read' && op.mutating !== true;
+  if (isRead) return;
+  if (degraded) {
+    throw new OperationError(
+      'permission_denied',
+      `${op.name}: this brain's oauth_clients projection is missing bound_slug_prefixes, so client write bindings cannot be evaluated. Refusing every non-read operation rather than running unfenced.`,
+      'Run `gbrain apply-migrations --yes` on the brain host.',
+    );
+  }
+  if (CLIENT_FENCED_WRITE_OPS.has(op.name)) return;
+  throw new OperationError(
+    'permission_denied',
+    `${op.name} is not available to slug-bound clients: it can write outside client ${auth?.clientId ?? '(unknown)'}'s bound_slug_prefixes (${(auth?.boundSlugPrefixes ?? []).join(', ')}).`,
+    'Use put_page / add_timeline_entry / add_link under your own prefixes, or ask an operator to clear the binding with `gbrain auth rescope-client <id> --bound-slug-prefixes none`.',
+  );
+}
+
+/**
  * Allowlist validator for uploaded file basenames. Rejects control chars, backslashes,
  * RTL overrides (\u202E), leading dot (hidden files) and leading dash (CLI flag confusion).
  * Allows extension dots and underscores. Max 255 chars.
@@ -308,6 +450,31 @@ export interface AuthInfo {
    * case (back-compat).
    */
   allowedSources?: string[];
+  /**
+   * v0.42.72.0: slug-prefix WRITE binding from
+   * `oauth_clients.bound_slug_prefixes`, threaded at token-verification
+   * time (same JOIN as sourceId/allowedSources — no per-op roundtrip).
+   * When present, every direct slug-mutating write op is fenced to slugs
+   * under one of these prefixes via `enforceClientSlugFence` — the same
+   * plain-startsWith semantics (and the same fail-closed empty-array
+   * posture) as submit_agent's bound_slug_prefixes check, so one column
+   * means one thing everywhere it's read. Closes the write-side half of
+   * shared-source isolation: reads were SQL-fenced via `allowedSources`,
+   * but same-source writes were folder-convention-only.
+   *
+   * Undefined = client has no binding, or the brain predates the
+   * bound_slug_prefixes column → no fence (unbound clients keep
+   * full-source write authority, back-compat).
+   */
+  boundSlugPrefixes?: string[];
+  /**
+   * Set when token verification could not read `bound_slug_prefixes` (the
+   * projection degraded on a brain missing an OAuth column). The fence can't
+   * distinguish "no binding" from "binding unknown" otherwise, so writes are
+   * refused rather than silently unfenced. Read/auth degradation is
+   * unaffected — this axis alone fails closed.
+   */
+  fenceProjectionDegraded?: boolean;
 }
 
 export interface OperationContext {
@@ -904,6 +1071,7 @@ const put_page: Operation = {
     // short-circuit so preview calls surface the same rejection. See
     // enforceSubagentSlugFence for the fail-closed policy.
     enforceSubagentSlugFence(ctx, slug, 'put_page');
+    enforceClientSlugFence(ctx, slug, 'put_page');
 
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
 
@@ -977,6 +1145,29 @@ const put_page: Operation = {
       source_uri: provenanceUri,
       ingested_via: provenanceVia,
     });
+
+    // The dedup pre-check in importFromContent can resolve the write to a
+    // DIFFERENT page than the one requested (same content_hash, or the same
+    // `frontmatter.id`), and the disk write-through below runs against that
+    // RESOLVED slug. Fence it too: a bound client can read a victim page's
+    // frontmatter id over its federated grant, echo it back in an in-prefix
+    // put_page, and otherwise have write-through rewrite the victim's file
+    // with falsified provenance. Dedup returns status 'skipped' without
+    // touching the DB, so throwing here leaves nothing to roll back.
+    if (result.slug && result.slug !== slug) {
+      // Deliberately does NOT name the resolved slug: it belongs to a page
+      // outside the binding, and echoing it would turn frontmatter-id guessing
+      // into a slug-enumeration oracle.
+      if (!slugUnderBoundPrefixes(ctx.auth?.boundSlugPrefixes ?? [], result.slug)
+          && ctx.auth?.boundSlugPrefixes) {
+        ctx.logger.warn(`[put_page] dedup resolved '${slug}' to an out-of-fence page; refusing (client ${ctx.auth.clientId ?? 'unknown'})`);
+        throw new OperationError(
+          'permission_denied',
+          `put_page: this content already exists on a page outside your bound_slug_prefixes, so the write would have modified that page instead.`,
+          'Remove the `id:` frontmatter field (or change the content) to write a new page under your own prefix.',
+        );
+      }
+    }
 
     // v0.39 T13 — auto-prompt on first unknown-type write.
     //
@@ -1127,6 +1318,22 @@ const put_page: Operation = {
     // (MEDIUM facts wait for the dream cycle but DO land via put_page,
     // matching the pre-fix behavior on this surface).
     let factsQueued: { queued: boolean } | { skipped: string } | undefined;
+    // Slug-bound clients do not get the facts backstop. It extracts entities
+    // from the (attacker-controllable) page body and writes fact rows — and,
+    // on a source with a local_path, a `## Facts` fence in the entity's own
+    // .md — keyed to `people/…` / `companies/…` slugs the caller never named.
+    // That is exactly the capability `extract_facts` is denied at dispatch
+    // for, reachable indirectly through a perfectly in-prefix put_page. The
+    // sibling post-hooks above already skip for untrusted callers (auto-link
+    // at `remote !== false && !trustedWorkspace`, chronicle at
+    // `remote !== false`); this one had no gate at all.
+    // Keyed on "the caller is slug-confined at all", not on ctx.auth alone:
+    // the delegated (submit_agent → subagent) context carries
+    // `allowedSlugPrefixes` but NOT `auth`, so an auth-only test would let a
+    // bound client re-open this path simply by delegating the write.
+    if (ctx.auth?.boundSlugPrefixes || ctx.viaSubagent === true) {
+      factsQueued = { skipped: 'slug_bound_client' };
+    } else {
     try {
       const { runFactsBackstop } = await import('./facts/backstop.ts');
       const r = await runFactsBackstop(
@@ -1158,6 +1365,7 @@ const put_page: Operation = {
       }
     } catch {
       factsQueued = { skipped: 'backstop_error' };
+    }
     }
 
     // v0.42.x (#2390): Life Chronicle backstop. ONLY on a real import
@@ -1421,6 +1629,7 @@ const delete_page: Operation = {
   scope: 'write',
   handler: async (ctx, p) => {
     const slug = p.slug as string;
+    enforceClientSlugFence(ctx, slug, 'delete_page');
     if (ctx.dryRun) return { dry_run: true, action: 'soft_delete_page', slug };
     // v0.31.8 (D7): thread ctx.sourceId so multi-source brains soft-delete the
     // intended row instead of always targeting (default, slug).
@@ -1454,6 +1663,7 @@ const restore_page: Operation = {
   scope: 'write',
   handler: async (ctx, p) => {
     const slug = p.slug as string;
+    enforceClientSlugFence(ctx, slug, 'restore_page');
     if (ctx.dryRun) return { dry_run: true, action: 'restore_page', slug };
     // v0.31.8 (D7): thread ctx.sourceId.
     const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
@@ -2097,6 +2307,7 @@ const add_tag: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
+    enforceClientSlugFence(ctx, p.slug as string, 'add_tag');
     if (ctx.dryRun) return { dry_run: true, action: 'add_tag', slug: p.slug, tag: p.tag };
     // v0.31.8 (D7): thread ctx.sourceId.
     const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
@@ -2116,6 +2327,7 @@ const remove_tag: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
+    enforceClientSlugFence(ctx, p.slug as string, 'remove_tag');
     if (ctx.dryRun) return { dry_run: true, action: 'remove_tag', slug: p.slug, tag: p.tag };
     const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
     await ctx.engine.removeTag(p.slug as string, p.tag as string, sourceOpts);
@@ -2169,6 +2381,10 @@ const add_link: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
+    // Client fence on the `from` endpoint only: the edge originates from
+    // (and renders on) the from page; linking TO a page outside the
+    // binding is a reference, not a mutation of the target.
+    enforceClientSlugFence(ctx, p.from as string, 'add_link');
     if (ctx.dryRun) return { dry_run: true, action: 'add_link', from: p.from, to: p.to };
     // v114 (#1941): default omitted provenance to 'manual' (NOT the engine's
     // 'markdown' default) so hand/tool-created CLI edges are honestly manual,
@@ -2209,6 +2425,7 @@ const remove_link: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
+    enforceClientSlugFence(ctx, p.from as string, 'remove_link');
     if (ctx.dryRun) return { dry_run: true, action: 'remove_link', from: p.from, to: p.to };
     const linkOpts = ctx.sourceId
       ? { fromSourceId: ctx.sourceId, toSourceId: ctx.sourceId }
@@ -2336,6 +2553,7 @@ const add_timeline_entry: Operation = {
     // confined to the same namespace/allow-list as page writes. Runs before
     // the dry-run short-circuit so preview calls surface the same rejection.
     enforceSubagentSlugFence(ctx, p.slug as string, 'add_timeline_entry');
+    enforceClientSlugFence(ctx, p.slug as string, 'add_timeline_entry');
     if (ctx.dryRun) return { dry_run: true, action: 'add_timeline_entry', slug: p.slug };
     const date = p.date as string;
     // Reject anything that isn't a strict YYYY-MM-DD with year 1900-2199 and
@@ -2708,9 +2926,7 @@ const get_versions: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    // v0.31.8 (D20): thread ctx.sourceId.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
-    const versions = await ctx.engine.getVersions(p.slug as string, sourceOpts);
+    const versions = await ctx.engine.getVersions(p.slug as string, sourceScopeOpts(ctx));
     // Same takes-allow-list privacy boundary as get_page. Snapshots persist
     // historical compiled_truth verbatim, including the takes fence, so
     // a remote token bypassing get_page via /history would re-introduce
@@ -2732,6 +2948,7 @@ const revert_version: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
+    enforceClientSlugFence(ctx, p.slug as string, 'revert_version');
     if (ctx.dryRun) return { dry_run: true, action: 'revert_version', slug: p.slug, version_id: p.version_id };
     // v0.31.8 (D7): thread ctx.sourceId so multi-source brains revert the
     // intended page row instead of whichever same-slug row Postgres returns
@@ -2761,12 +2978,18 @@ const sync_brain: Operation = {
   localOnly: true,
   handler: async (ctx, p) => {
     const { performSync } = await import('../commands/sync.ts');
+    // #2830: thread ctx.sourceId (D7 pattern, same as revert_version /
+    // put_page) so a no-`repo` call resolves the CALLER's sync anchor.
+    // Without it, performSync read the default source's repo_path/last_commit
+    // and silently synced against the wrong repo on multi-source brains.
+    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
     return performSync(ctx.engine, {
       repoPath: p.repo as string | undefined,
       dryRun: ctx.dryRun || (p.dry_run as boolean) || false,
       noEmbed: (p.no_embed as boolean) || false,
       noPull: (p.no_pull as boolean) || false,
       full: (p.full as boolean) || false,
+      ...sourceOpts,
     });
   },
   cliHints: { name: 'sync', hidden: true },
@@ -2785,6 +3008,7 @@ const put_raw_data: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
+    enforceClientSlugFence(ctx, p.slug as string, 'put_raw_data');
     if (ctx.dryRun) return { dry_run: true, action: 'put_raw_data', slug: p.slug, source: p.source };
     // v0.31.8 (D7 + D21): thread ctx.sourceId.
     const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
@@ -2801,9 +3025,7 @@ const get_raw_data: Operation = {
     source: { type: 'string', description: 'Filter by source' },
   },
   handler: async (ctx, p) => {
-    // v0.31.8 (D20 + D21): thread ctx.sourceId.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
-    return ctx.engine.getRawData(p.slug as string, p.source as string | undefined, sourceOpts);
+    return ctx.engine.getRawData(p.slug as string, p.source as string | undefined, sourceScopeOpts(ctx));
   },
   scope: 'read',
 };
@@ -2833,9 +3055,7 @@ const get_chunks: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    // v0.31.8 (D20): thread ctx.sourceId.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
-    return ctx.engine.getChunks(p.slug as string, sourceOpts);
+    return ctx.engine.getChunks(p.slug as string, sourceScopeOpts(ctx));
   },
   scope: 'read',
 };
@@ -3189,7 +3409,20 @@ const submit_agent: Operation = {
     }
 
     // Validate each param against the binding.
-    const requestedTools = (p.allowed_tools as string[] | undefined) ?? boundTools;
+    //
+    // An EXPLICIT empty array is not "no restriction" here — downstream the
+    // subagent worker reads empty `allowed_tools` as "the full tool registry"
+    // and empty `allowed_slug_prefixes` as "fall back to the legacy
+    // wiki/agents/<job-id>/ namespace". Both subset loops below pass
+    // vacuously over an empty list, so `{allowed_tools: [], allowed_slug_prefixes: []}`
+    // from a client bound to `['search']` + `['emp-alice/']` would hand its
+    // subagent the whole registry (including put_page) writing outside the
+    // binding. `??` only substitutes null/undefined, so collapse the empty
+    // case to the binding explicitly.
+    const requestedToolsRaw = p.allowed_tools as string[] | undefined;
+    const requestedTools = requestedToolsRaw === undefined || requestedToolsRaw.length === 0
+      ? boundTools
+      : requestedToolsRaw;
     for (const t of requestedTools) {
       if (!boundTools.includes(t)) {
         throw new OperationError(
@@ -3198,10 +3431,35 @@ const submit_agent: Operation = {
         );
       }
     }
-    const requestedSlugPrefixes = (p.allowed_slug_prefixes as string[] | undefined) ?? boundSlugPrefixes ?? [];
+    const requestedSlugPrefixesRaw = p.allowed_slug_prefixes as string[] | undefined;
+    const requestedSlugPrefixes =
+      requestedSlugPrefixesRaw === undefined || requestedSlugPrefixesRaw.length === 0
+        ? (boundSlugPrefixes ?? [])
+        : requestedSlugPrefixesRaw;
+    // A bound client must end up with a non-empty delegated fence: an empty
+    // list reaches the subagent as "use the legacy wiki/agents/<id>/ namespace",
+    // which is outside every bound prefix.
+    if (boundSlugPrefixes !== null && requestedSlugPrefixes.length === 0) {
+      throw new OperationError(
+        'permission_denied',
+        `submit_agent: client ${clientId} is slug-bound but its binding resolved to an empty prefix list, which the subagent would read as the unfenced legacy namespace.`,
+        'Re-scope the client with a non-empty --bound-slug-prefixes.',
+      );
+    }
     if (boundSlugPrefixes !== null) {
       for (const sp of requestedSlugPrefixes) {
-        if (!boundSlugPrefixes.some(bp => sp.startsWith(bp) || bp === sp)) {
+        // Boundary-aware, same rule as the direct fence: a raw `startsWith`
+        // let a boundary-less binding (`emp-alice`) authorize a requested
+        // prefix in a SIBLING namespace (`emp-alice-2/`), which is then handed
+        // to the child as a full glob grant over another employee's pages.
+        if (!boundSlugPrefixes.some(bp => {
+          const base = normalizeSlugPrefix(bp);
+          const req = normalizeSlugPrefix(sp);
+          if (base === '') return false;
+          return base.endsWith('/')
+            ? req.startsWith(base)
+            : req === base || req.startsWith(`${base}/`);
+        })) {
           throw new OperationError(
             'permission_denied',
             `submit_agent: slug_prefix "${sp}" is not under any of client ${clientId}'s bound_slug_prefixes.`,
@@ -3227,6 +3485,14 @@ const submit_agent: Operation = {
     }
 
     // Dry-run echo.
+    // The subagent fence uses `matchesSlugAllowList`, whose grammar makes a
+    // BARE entry match that one slug exactly — so a plain `emp-alice/` binding
+    // would let the delegated agent write nothing. Normalize the
+    // trailing-slash form into the glob the delegated matcher expects, so one
+    // stored column means the same span of slugs on both paths.
+    const delegatedSlugPrefixes = requestedSlugPrefixes.map(sp =>
+      sp.endsWith('/') ? `${sp}*` : sp);
+
     if (ctx.dryRun) {
       return {
         dry_run: true,
@@ -3235,6 +3501,10 @@ const submit_agent: Operation = {
         bound_tools: boundTools,
         bound_source: boundSource,
         bound_max_concurrent: boundMaxConcurrent,
+        // What the delegated job would ACTUALLY be granted, after the binding
+        // is applied — a preview that hides this can't show a widening bug.
+        resolved_tools: requestedTools,
+        resolved_slug_prefixes: delegatedSlugPrefixes,
       };
     }
 
@@ -3248,11 +3518,24 @@ const submit_agent: Operation = {
       prompt: p.prompt as string,
       max_turns: Math.min((p.max_turns as number) ?? 20, 100),
       allowed_tools: requestedTools,
-      allowed_slug_prefixes: requestedSlugPrefixes,
+      allowed_slug_prefixes: delegatedSlugPrefixes,
       __owner_client_id: clientId,
     };
     if (typeof p.model === 'string') jobData.model = p.model;
-    if (boundSource) jobData.source_id = boundSource;
+    // Write source for the delegated job comes from the AUTHENTICATED client
+    // whenever we have it. `bound_source_id` is an optional, separately-set
+    // column: unset it defaulted the child to 'default', and if it disagreed
+    // with the token's own source the child followed the column — either way
+    // a correctly slug-fenced client could act on the wrong source.
+    const delegatedSource = ctx.auth?.sourceId ?? boundSource;
+    if (boundSource && ctx.auth?.sourceId && boundSource !== ctx.auth.sourceId) {
+      throw new OperationError(
+        'permission_denied',
+        `submit_agent: client ${clientId}'s bound_source_id (${boundSource}) disagrees with its authenticated source (${ctx.auth.sourceId}); refusing to guess which one governs the delegated write.`,
+        'Re-scope the client so the two agree: `gbrain auth rescope-client <id> --source <source>`.',
+      );
+    }
+    if (delegatedSource) jobData.source_id = delegatedSource;
     const job = await queue.add(
       'subagent',
       jobData,

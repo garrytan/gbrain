@@ -356,6 +356,52 @@ export function isDbOnly(slug: string, config: StorageConfig): boolean {
   return config.db_only.some((dir) => matchesTierDir(slug, dir));
 }
 
+/**
+ * Derive-phase output prefixes the engine itself writes as DB-only machine
+ * output (issue #2784, reported by @alexputici). These are re-derivable by
+ * design and rarely file-backed, so the `undeclared_db_only_pages` doctor
+ * check treats them as implicitly declared db_only. They are deliberately
+ * NOT merged into `loadStorageConfig` — doing so would auto-gitignore these
+ * dirs via `manageGitignore` and silently kill ingestion for brains that DO
+ * file-back them (the exact #2788 silent-death class).
+ */
+export const DERIVE_PHASE_DB_ONLY_DEFAULTS: readonly string[] = [
+  'life/events/',
+  'atoms/',
+  'extracts/',
+  'dream-cycle-summaries/',
+];
+
+/** Declared db_only dirs plus the derive-phase defaults, deduped. */
+export function effectiveDbOnlyDirs(declared: string[]): string[] {
+  return [...new Set([...declared, ...DERIVE_PHASE_DB_ONLY_DEFAULTS])];
+}
+
+/**
+ * Collector-output vs db_only collision detection (issue #2788, reported by
+ * @alexputici). A collector output path collides when it equals a db_only
+ * dir or sits anywhere inside one — such dirs are auto-gitignored by sync,
+ * so both the git-walking sync AND `gbrain import` (which honors .gitignore)
+ * silently skip every file the collector writes.
+ */
+export function findDbOnlyCollisions(
+  outputs: Array<{ id: string; output_path: string }>,
+  dbOnlyDirs: string[],
+): Array<{ id: string; output_path: string; db_only_dir: string }> {
+  const hits: Array<{ id: string; output_path: string; db_only_dir: string }> = [];
+  for (const o of outputs) {
+    const out = o.output_path.endsWith('/') ? o.output_path : o.output_path + '/';
+    for (const rawDir of dbOnlyDirs) {
+      const dir = rawDir.endsWith('/') ? rawDir : rawDir + '/';
+      if (out.startsWith(dir)) {
+        hits.push({ id: o.id, output_path: o.output_path, db_only_dir: rawDir });
+        break;
+      }
+    }
+  }
+  return hits;
+}
+
 export function getStorageTier(slug: string, config: StorageConfig): StorageTier {
   if (isDbTracked(slug, config)) return 'db_tracked';
   if (isDbOnly(slug, config)) return 'db_only';

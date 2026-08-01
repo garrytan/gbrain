@@ -60,6 +60,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'calibration_freshness',
   'child_table_orphans',
   'chronicle_projection_health',
+  'content_hash_duplicates',
   'content_sanity_audit_recent',
   'contextual_retrieval_coverage',
   'contradictions',
@@ -111,6 +112,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'takes_count',
   'takes_weight_grid',
   'timeline_coverage',
+  'undeclared_db_only_pages',
   'unified_multimodal_coverage',
   'unverified_extractions',
   'voice_gate_health',
@@ -129,6 +131,7 @@ export const SKILL_CHECK_NAMES: ReadonlySet<string> = new Set([
   'retrieval_reflex_health',
   'skill_brain_first',
   'skill_conformance',
+  'skills_manifest_integrity',
   'whoknows_health',
 ]);
 
@@ -142,6 +145,7 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'batch_retry_health',
   'brainstorm_health',
   'connection',
+  'db_only_collector_collision',
   'federation_health',
   'home_dir_in_worktree',
   'index_audit',

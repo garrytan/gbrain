@@ -195,7 +195,12 @@ describe('CLI dispatch integration', () => {
       });
       const stdout = await new Response(proc.stdout).text();
       const exitCode = await proc.exited;
-      expect(stdout).toContain('Usage: gbrain init');
+      // init prints its OWN detailed help (printInitHelp), not the generic
+      // CLI-only one-line stub. Assert on markers unique to the real help...
+      expect(stdout).toContain('gbrain init [flags]');
+      expect(stdout).toContain('ENGINE SELECTION');
+      // ...and confirm the generic stub (printCliOnlyHelp) did NOT fire.
+      expect(stdout).not.toContain('run gbrain --help for the full command list');
       expect(existsSync(join(home, '.gbrain', 'config.json'))).toBe(false);
       expect(exitCode).toBe(0);
     } finally {

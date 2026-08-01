@@ -29,12 +29,12 @@
  * propagate the throw up).
  *
  * Per D27 P2-2 the embedBatch call runs ONCE per page after the per-chunk
- * Haiku loop completes, not per-chunk. Saves per-call overhead + reduces
+ * synopsis loop completes, not per-chunk. Saves per-call overhead + reduces
  * failure surface.
  *
  * Rate-leasing is the caller's responsibility (D26 P0-3 — the Minion
- * handler acquires a shared `anthropic:utility:contextual-synopsis` lease
- * per chunk before invoking the service's optional `acquireSynopsisLease`
+ * handler acquires a shared, resolved-model-specific synopsis lease per chunk
+ * before invoking the service's optional `acquireSynopsisLease`
  * / `releaseSynopsisLease` hooks). Inline callers (import-file, reindex
  * command) pass no hooks and rely on the gateway's own rate-limit retry.
  */
@@ -45,12 +45,13 @@ import { embedBatch } from './embedding.ts';
 import { resolveContextualRetrievalMode } from './contextual-retrieval-resolver.ts';
 import {
   buildContextualPrefix,
-  modeRequiresHaiku,
+  modeRequiresSynopsis,
   modeRequiresWrapper,
   sanitizeTitle,
   wrapChunkForEmbedding,
 } from './embedding-context.ts';
 import {
+  DEFAULT_SYNOPSIS_MODEL,
   generatePerChunkSynopsis,
   SYNOPSIS_PROMPT_VERSION,
   SYNOPSIS_DOC_MAX_CHARS,
@@ -70,7 +71,6 @@ import type { SourceRow } from './sources-ops.ts';
  * corpus_generation hash.
  */
 export const TITLE_WRAPPER_VERSION = 1;
-const DEFAULT_HAIKU_MODEL = 'anthropic:claude-haiku-4-5-20251001';
 export const DEFAULT_CONTEXTUAL_CHUNK_CONCURRENCY = 4;
 export const MAX_CONTEXTUAL_CHUNK_CONCURRENCY = 16;
 
@@ -108,17 +108,18 @@ function getEmbeddingModelTag(): string {
 }
 
 /**
- * Compose the corpus_generation hash per D27 P1-5. Folds the prompt
- * version + Haiku model + wrapper version + embedding model so a tweak
- * to ANY of those invalidates prior cache rows via the
+ * Compose the corpus_generation hash per D27 P1-5. Per-chunk synopsis
+ * generations fold in the prompt version + synopsis model; title-only
+ * generations retain the historical default-model identity because they do
+ * not call a synopsis model. Both include the wrapper version + embedding
+ * model so a relevant tweak invalidates prior cache rows via the
  * `query_cache.page_generations` LEFT JOIN.
  *
  * Pure function — `embedding_dimensions` and `embedding_column` stay in
  * the existing KNOBS_HASH_VERSION space per A6 in the eng-review pass.
  */
-export function computeCorpusGeneration(args: {
+export type ComputeCorpusGenerationArgs = {
   crMode: CRMode;
-  haikuModel: string;
   /**
    * Resolved `SYNOPSIS_DOC_MAX_CHARS` for per_chunk_synopsis runs. When
    * present, folded into the hash so changes to
@@ -128,13 +129,31 @@ export function computeCorpusGeneration(args: {
    * back-compat with pre-cap embeddings.
    */
   synopsisDocMaxChars?: number;
-}): string {
+} & (
+  | {
+      /** Canonical provider-neutral synopsis model identifier. */
+      synopsisModel: string;
+      /** @deprecated Use `synopsisModel`. Ignored when both are present. */
+      haikuModel?: string;
+    }
+  | {
+      synopsisModel?: undefined;
+      /** @deprecated Use `synopsisModel`. */
+      haikuModel: string;
+    }
+);
+
+export function computeCorpusGeneration(args: ComputeCorpusGenerationArgs): string {
+  const synopsisModel =
+    args.crMode === 'per_chunk_synopsis'
+      ? args.synopsisModel ?? args.haikuModel
+      : DEFAULT_SYNOPSIS_MODEL;
   const h = createHash('sha256')
     .update(args.crMode)
     .update('|')
     .update(String(SYNOPSIS_PROMPT_VERSION))
     .update('|')
-    .update(args.haikuModel)
+    .update(synopsisModel)
     .update('|')
     .update(String(TITLE_WRAPPER_VERSION))
     .update('|')
@@ -155,7 +174,7 @@ export function computeCorpusGeneration(args: {
  * Matches what the inline import path writes for its title-tier pages.
  */
 export function titleTierCorpusGeneration(): string {
-  return computeCorpusGeneration({ crMode: 'title', haikuModel: DEFAULT_HAIKU_MODEL });
+  return computeCorpusGeneration({ crMode: 'title', synopsisModel: DEFAULT_SYNOPSIS_MODEL });
 }
 
 /**
@@ -223,10 +242,11 @@ export interface ReembedPageArgs {
    * already in `content_chunks` continue serving queries.
    */
   killSwitchDisabled?: boolean;
+  /** Resolved provider-neutral model used for per-chunk synopsis generation. */
+  synopsisModel?: string;
   /**
-   * Optional Haiku model override. When unset, page-summary.ts falls back
-   * to its default (Haiku 4.5). Threaded so eval / future per-source
-   * model overrides can choose a different model.
+   * @deprecated Use `synopsisModel`. Retained for callers compiled against
+   * the pre-provider-neutral service shape.
    */
   haikuModel?: string;
   /** Optional abort signal threaded into gateway.chat + embedBatch. */
@@ -240,7 +260,7 @@ export interface ReembedPageArgs {
   releaseSynopsisLease?: (lease?: unknown) => Promise<void>;
   /**
    * Intra-page per-chunk synopsis concurrency. 1 preserves the legacy
-   * sequential loop exactly; higher values only parallelize Haiku synopsis
+   * sequential loop exactly; higher values only parallelize synopsis
    * calls. Embedding remains one batch after all synopses succeed.
    */
   chunkConcurrency?: number;
@@ -299,7 +319,7 @@ export async function reembedPageWithContextualRetrieval(
       resolution.mode,
       computeCorpusGeneration({
         crMode: resolution.mode,
-        haikuModel: args.haikuModel ?? DEFAULT_HAIKU_MODEL,
+        synopsisModel: args.synopsisModel ?? args.haikuModel ?? DEFAULT_SYNOPSIS_MODEL,
         synopsisDocMaxChars: resolution.mode === 'per_chunk_synopsis' ? SYNOPSIS_DOC_MAX_CHARS : undefined,
       }),
     );
@@ -312,7 +332,7 @@ export async function reembedPageWithContextualRetrieval(
   // fall-back path is the D14 page-level consistency guarantee: a
   // single bad chunk demotes the whole page to title-only so all
   // chunks on the page share the same wrapper shape.
-  const haikuModel = args.haikuModel ?? DEFAULT_HAIKU_MODEL;
+  const synopsisModel = args.synopsisModel ?? args.haikuModel ?? DEFAULT_SYNOPSIS_MODEL;
   let attemptMode: CRMode = resolution.mode;
   let fallbackReason: SynopsisFailureKind | null = null;
 
@@ -323,13 +343,13 @@ export async function reembedPageWithContextualRetrieval(
       page,
       chunks: chunks as ChunkInput[],
       args,
-      haikuModel,
+      synopsisModel,
     });
 
     if (phase1.kind === 'success') {
       const corpus_generation = computeCorpusGeneration({
         crMode: attemptMode,
-        haikuModel,
+        synopsisModel,
         synopsisDocMaxChars: attemptMode === 'per_chunk_synopsis' ? SYNOPSIS_DOC_MAX_CHARS : undefined,
       });
 
@@ -424,17 +444,17 @@ async function tryBuildPhase1(opts: {
   page: Page;
   chunks: ChunkInput[];
   args: ReembedPageArgs;
-  haikuModel: string;
+  synopsisModel: string;
 }): Promise<Phase1Result> {
-  const { attemptMode, page, chunks, args, haikuModel } = opts;
+  const { attemptMode, page, chunks, args, synopsisModel } = opts;
 
   // Build the wrapper prefix for THIS page. Title-only tier: one prefix
   // reused across all chunks. per_chunk_synopsis tier: prefix is built
-  // per-chunk with the chunk-specific Haiku synopsis.
+  // per-chunk with the chunk-specific generated synopsis.
   const safeTitle = sanitizeTitle(page.title);
 
-  if (attemptMode === 'title' || !modeRequiresHaiku(attemptMode)) {
-    // Title-only path. No Haiku calls; pure string concat.
+  if (attemptMode === 'title' || !modeRequiresSynopsis(attemptMode)) {
+    // Title-only path. No synopsis-model calls; pure string concat.
     // Use compiled_truth first sentences as a free pseudo-summary when
     // the title tier wants slightly more context — but per D2 the
     // balanced default is title-only without summary. Keep it pure for
@@ -485,7 +505,7 @@ async function tryBuildPhase1(opts: {
         safeTitle,
         page,
         args,
-        haikuModel,
+        synopsisModel,
       });
     },
   });
@@ -532,9 +552,9 @@ async function buildWrappedChunkText(opts: {
   safeTitle: string;
   page: Page;
   args: ReembedPageArgs;
-  haikuModel: string;
+  synopsisModel: string;
 }): Promise<string> {
-  const { chunk: c, sourceText, safeTitle, page, args, haikuModel } = opts;
+  const { chunk: c, sourceText, safeTitle, page, args, synopsisModel } = opts;
 
   // Code chunks always bypass the wrapper (D20-T4) — pass through.
   if (c.chunk_source === 'fenced_code') {
@@ -569,7 +589,7 @@ async function buildWrappedChunkText(opts: {
       pageSlug: args.pageSlug,
       sourceId: args.sourceId,
       chunkIndex: c.chunk_index,
-      model: haikuModel,
+      model: synopsisModel,
       abortSignal: args.abortSignal,
     });
   } finally {

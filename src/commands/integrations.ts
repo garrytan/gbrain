@@ -55,6 +55,13 @@ interface RecipeFrontmatter {
   health_checks: HealthCheck[];
   setup_time: string;
   cost_estimate?: string;
+  /**
+   * Repo-relative dirs (slug prefixes, trailing '/') this recipe's collector
+   * writes files to. Ground truth for the `db_only_collector_collision`
+   * doctor check (issue #2788): output inside a db_only path is silently
+   * skipped by sync and import (auto-gitignored).
+   */
+  output_paths: string[];
 }
 
 interface ParsedRecipe {
@@ -106,7 +113,20 @@ interface AnyOfCheck {
   checks: HealthCheck[];
 }
 
-type HealthCheck = string | HttpCheck | EnvExistsCheck | CommandCheck | AnyOfCheck;
+/**
+ * Staleness-aware check type (issue #2787, reported by @alexputici). All
+ * other types are point-in-time — a sense whose gateway is up and env vars
+ * are set passes forever even when zero data flows. This one reads the
+ * integration's heartbeat file and FAILS when the newest event is older
+ * than the declared cadence (`max_age`, e.g. "48h", "2d", "90m").
+ */
+interface HeartbeatMaxAgeCheck {
+  type: 'heartbeat_max_age';
+  max_age: string;
+  label?: string;
+}
+
+type HealthCheck = string | HttpCheck | EnvExistsCheck | CommandCheck | AnyOfCheck | HeartbeatMaxAgeCheck;
 
 interface CheckResult {
   integration: string;
@@ -139,6 +159,26 @@ export function secretEnv(): Record<string, string | undefined> {
     if (cfg) return buildGatewayConfig(cfg).env;
   } catch { /* integrations must keep working pre-init — fall through */ }
   return process.env;
+}
+
+/**
+ * Parse a heartbeat_max_age duration string ("30s", "90m", "48h", "2d")
+ * into milliseconds. Returns null on anything unparseable.
+ */
+export function parseMaxAge(s: string): number | null {
+  const m = /^(\d+(?:\.\d+)?)\s*(s|m|h|d)$/i.exec(String(s).trim());
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const unit = { s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2].toLowerCase() as 's' | 'm' | 'h' | 'd'];
+  return n * unit;
+}
+
+/** Human-readable age for heartbeat_max_age output ("3d", "17h", "42m"). */
+function formatAge(ms: number): string {
+  if (ms >= 86_400_000) return `${Math.floor(ms / 86_400_000)}d`;
+  if (ms >= 3_600_000) return `${Math.floor(ms / 3_600_000)}h`;
+  return `${Math.max(0, Math.floor(ms / 60_000))}m`;
 }
 
 /** Expand $VAR references with gateway-env (config-folded) values */
@@ -299,6 +339,29 @@ export async function executeHealthCheck(
       }
     }
 
+    case 'heartbeat_max_age': {
+      // No embedded gate: reads only the local heartbeat file — no exec, no
+      // network. Safe for user-provided recipes.
+      const maxMs = parseMaxAge(check.max_age);
+      if (maxMs === null) {
+        return { ...base, status: 'fail', output: `${check.label || 'heartbeat_max_age'}: invalid max_age '${check.max_age}' (use e.g. 90m, 48h, 2d)` };
+      }
+      const entries = readHeartbeat(integrationId);
+      if (entries.length === 0) {
+        return { ...base, status: 'fail', output: `${check.label || 'heartbeat'}: no heartbeat events in the last 30 days (expected activity within ${check.max_age}) — the sense has stopped producing data` };
+      }
+      let newest = 0;
+      for (const e of entries) {
+        const t = new Date(e.ts).getTime();
+        if (Number.isFinite(t) && t > newest) newest = t;
+      }
+      const ageMs = Date.now() - newest;
+      if (ageMs > maxMs) {
+        return { ...base, status: 'fail', output: `${check.label || 'heartbeat'}: last event ${formatAge(ageMs)} ago exceeds max_age ${check.max_age} — the sense has stopped producing data` };
+      }
+      return { ...base, status: 'ok', output: `${check.label || 'heartbeat'}: last event ${formatAge(ageMs)} ago (within ${check.max_age})` };
+    }
+
     case 'any_of': {
       for (const sub of check.checks) {
         const result = await executeHealthCheck(sub, integrationId, isEmbedded);
@@ -340,6 +403,7 @@ export function parseRecipe(content: string, filename: string): ParsedRecipe | n
         health_checks: (data.health_checks || []) as HealthCheck[],
         setup_time: data.setup_time || 'unknown',
         cost_estimate: data.cost_estimate,
+        output_paths: Array.isArray(data.output_paths) ? data.output_paths.map(String) : [],
       },
       body: body.trim(),
       filename,
@@ -401,6 +465,25 @@ function loadAllRecipes(): ParsedRecipe[] {
   }
 
   return recipes;
+}
+
+/**
+ * Output paths of every CONFIGURED recipe (secrets present — the collector
+ * can actually be running). Ground truth for the
+ * `db_only_collector_collision` doctor check and the sync-time warning
+ * (issue #2788). Unconfigured recipes are skipped: a collector that can't
+ * run can't silently die.
+ */
+export function getConfiguredCollectorOutputs(): Array<{ id: string; output_path: string }> {
+  const out: Array<{ id: string; output_path: string }> = [];
+  for (const r of loadAllRecipes()) {
+    if (r.frontmatter.output_paths.length === 0) continue;
+    if (getStatus(r) === 'available') continue;
+    for (const p of r.frontmatter.output_paths) {
+      out.push({ id: r.frontmatter.id, output_path: p });
+    }
+  }
+  return out;
 }
 
 function findRecipe(id: string): ParsedRecipe | null {

@@ -1,14 +1,67 @@
 name: Release
 
+# Publishes a GitHub release for every VERSION bump that lands on master:
+# tag + title `v<VERSION>`, notes from that version's CHANGELOG.md entry,
+# compiled binaries attached (#3521).
+#
+# Why every bump: `gbrain check-update` resolves the latest version from the
+# VERSION file on master, but binary self-update
+# (src/core/binary-self-update.ts) downloads assets from `releases/latest`.
+# If releases lag VERSION, binary installs are told an upgrade exists that
+# self-update cannot apply. Keeping releases/latest == VERSION closes that gap.
+#
+# Idempotent: the `version` job skips build+release when a release for
+# v<VERSION> already exists WITH all expected assets. A half-published release
+# (tag exists / assets incomplete) is repaired on the next run — softprops
+# updates the existing release in place. Historical 3-segment tags are never
+# touched; a new 4-segment VERSION always mints a new tag.
+#
+# The asset names are a contract with expectedAssetName() in
+# src/core/binary-self-update.ts, pinned by test/release-workflow.test.ts.
+
 on:
   push:
-    tags: ['v*']
+    branches: [master]
+    paths: [VERSION]
+  workflow_dispatch: {}  # manual first run / backfill of the current VERSION
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      exists: ${{ steps.v.outputs.exists }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - id: v
+        name: Read VERSION and check for an existing complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # Complete = release exists AND carries every asset the self-updater
+          # can request. A partial release must NOT short-circuit, so a re-run
+          # can repair it.
+          assets="$(gh release view "v$version" --repo "$GITHUB_REPOSITORY" \
+            --json assets --jq '[.assets[].name] | sort | join(",")' 2>/dev/null || true)"
+          if [ "$assets" = "gbrain-darwin-arm64,gbrain-linux-x64" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release v$version already published with all assets — nothing to do."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: version
+    if: needs.version.outputs.exists == 'false'
     strategy:
       matrix:
         include:
@@ -29,11 +82,19 @@ jobs:
         with:
           bun-version: 1.3.13
       - run: bun install
-      # --timeout matches every scripts/ runner and covers hook budgets too
-      # (bunfig.toml's timeout key is ignored by bun; hooks default to 5s).
-      - run: bun test --timeout=60000
-      - run: bun run verify
+      # No test re-run here: the Test workflow already gated this exact SHA at
+      # merge (10 shards + E2E). Re-running the whole suite serially on the
+      # release runner is a flakier duplicate gate — it blocked the first
+      # release on ambient-env tests (run 30698650484). The build job's gate
+      # is the artifact itself: compile, then smoke-test the binary.
       - run: bun build --compile --target=${{ matrix.target }} --outfile bin/${{ matrix.artifact }} src/cli.ts
+      - name: Smoke-test the compiled binary
+        run: |
+          chmod +x bin/${{ matrix.artifact }}
+          out="$(./bin/${{ matrix.artifact }} --version)"
+          echo "binary reports: $out"
+          v="$(tr -d '[:space:]' < VERSION)"
+          case "$out" in *"$v"*) echo "version matches VERSION file" ;; *) echo "binary version '$out' does not contain '$v'" >&2; exit 1 ;; esac
       - name: Attest build provenance
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373  # v4.1.1
         with:
@@ -44,16 +105,35 @@ jobs:
           path: bin/${{ matrix.artifact }}
 
   release:
-    needs: build
+    needs: [version, build]
+    if: needs.version.outputs.exists == 'false'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # create the tag + release (scoped to this job only)
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           path: artifacts
+      - name: Extract CHANGELOG entry for release notes
+        # env-bound, not inlined into the script: VERSION comes from master so
+        # it isn't attacker-reachable today, but a `${{ }}` inside `run:` is
+        # shell injection by construction if that ever changes.
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          v="$RELEASE_VERSION"
+          if ! bash scripts/changelog-entry.sh "$v" > /tmp/release-notes.md || ! [ -s /tmp/release-notes.md ]; then
+            echo "See [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/master/CHANGELOG.md) for v$v." > /tmp/release-notes.md
+          fi
       - name: Create release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
         with:
+          tag_name: v${{ needs.version.outputs.version }}
+          name: v${{ needs.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          body_path: /tmp/release-notes.md
+          fail_on_unmatched_files: true
           files: |
             artifacts/gbrain-darwin-arm64/gbrain-darwin-arm64
             artifacts/gbrain-linux-x64/gbrain-linux-x64
-          generate_release_notes: true

@@ -34,10 +34,19 @@ import {
   resolveModel,
   type ModelTier,
 } from '../core/model-config.ts';
+import { resolveRecipe } from '../core/ai/model-resolver.ts';
 
 const TIERS: ModelTier[] = ['utility', 'reasoning', 'deep', 'subagent'];
 
-const PER_TASK_KEYS: Array<{ key: string; tier: ModelTier; description: string }> = [
+interface PerTaskModelRoute {
+  key: string;
+  tier: ModelTier;
+  description: string;
+  deprecatedConfigKey?: string;
+  envVar?: string;
+}
+
+const PER_TASK_KEYS: PerTaskModelRoute[] = [
   { key: 'models.dream.synthesize',         tier: 'reasoning', description: 'Dream synthesis (conversation → brain pages)' },
   { key: 'models.dream.synthesize_verdict', tier: 'utility',   description: 'Dream synthesis verdict (Haiku judge)' },
   { key: 'models.dream.patterns',           tier: 'reasoning', description: 'Pattern discovery (cross-take themes)' },
@@ -49,6 +58,13 @@ const PER_TASK_KEYS: Array<{ key: string; tier: ModelTier; description: string }
   { key: 'models.eval.longmemeval',         tier: 'reasoning', description: 'LongMemEval benchmark answer-gen' },
   { key: 'models.eval.contradictions_judge', tier: 'utility',  description: 'Contradiction probe judge (v0.34 temporal-aware)' },
   { key: 'models.expansion',                tier: 'utility',   description: 'Query expansion for hybrid search' },
+  {
+    key: 'models.contextual_synopsis',
+    tier: 'utility',
+    description: 'Per-chunk contextual synopsis generation',
+    deprecatedConfigKey: 'contextual_retrieval.haiku_model',
+    envVar: 'GBRAIN_CONTEXTUAL_SYNOPSIS_MODEL',
+  },
   { key: 'models.chat',                     tier: 'reasoning', description: 'Default `gateway.chat()` model' },
 ];
 
@@ -66,12 +82,26 @@ interface ModelsReport {
   aliases: { defaults: Record<string, string>; user: Record<string, string> };
 }
 
-async function probeSource(engine: BrainEngine, configKey: string, envVar: string): Promise<string | null> {
+async function probeSource(
+  engine: BrainEngine,
+  route: Pick<PerTaskModelRoute, 'key' | 'tier' | 'deprecatedConfigKey' | 'envVar'>,
+): Promise<string | null> {
   // For per-task probes, return the source the resolver USED (config / env /
-  // tier default / hardcoded). The resolver itself is the source of truth;
-  // we re-walk a subset of its precedence here to attribute the value.
-  const configVal = await engine.getConfig(configKey);
-  if (configVal && configVal.trim()) return `config: ${configKey}`;
+  // tier default / hardcoded). Keep this walk in the same order as
+  // resolveModel so dedicated task env vars and compatibility keys are
+  // attributed truthfully in `gbrain models` output.
+  const configVal = await engine.getConfig(route.key);
+  if (configVal && configVal.trim()) return `config: ${route.key}`;
+  if (route.deprecatedConfigKey) {
+    const deprecated = await engine.getConfig(route.deprecatedConfigKey);
+    if (deprecated && deprecated.trim()) return `config: ${route.deprecatedConfigKey}`;
+  }
+  const globalDefault = await engine.getConfig('models.default');
+  if (globalDefault && globalDefault.trim()) return 'config: models.default';
+  const tierKey = `models.tier.${route.tier}`;
+  const tierValue = await engine.getConfig(tierKey);
+  if (tierValue && tierValue.trim()) return `config: ${tierKey}`;
+  const envVar = route.envVar ?? 'GBRAIN_MODEL';
   if (process.env[envVar] && process.env[envVar]!.trim()) return `env: ${envVar}`;
   return null;
 }
@@ -96,9 +126,16 @@ async function buildReport(engine: BrainEngine): Promise<ModelsReport> {
   }
 
   const per_task: ModelsReport['per_task'] = [];
-  for (const { key, tier, description } of PER_TASK_KEYS) {
-    const resolved = await resolveModel(engine, { configKey: key, tier, fallback: TIER_DEFAULTS[tier] });
-    const explicit = await probeSource(engine, key, 'GBRAIN_MODEL');
+  for (const route of PER_TASK_KEYS) {
+    const { key, tier, description, deprecatedConfigKey, envVar } = route;
+    const resolved = await resolveModel(engine, {
+      configKey: key,
+      deprecatedConfigKey,
+      envVar,
+      tier,
+      fallback: TIER_DEFAULTS[tier],
+    });
+    const explicit = await probeSource(engine, route);
     const source = explicit ?? `tier.${tier}`;
     per_task.push({ key, tier, resolved, source, description });
   }
@@ -184,6 +221,44 @@ function classifyError(err: unknown): { status: ProbeStatus; message: string } {
     return { status: 'network', message: msg };
   }
   return { status: 'unknown', message: msg };
+}
+
+const OPENAI_COMPAT_V1_HINT =
+  'If the API key is correct, the base URL may be missing the /v1 suffix. ' +
+  'OpenAI-shaped proxies (codex-proxy, Azure-OpenAI mirrors, LiteLLM fronting an OpenAI route) ' +
+  'serve /v1/chat/completions and 401 on the bare path. ' +
+  'Confirm with: `curl <base>/models` returns 200 with the same bearer, then append /v1 to the base URL.';
+
+/**
+ * Fix-hint for the openai-compatible-proxy `/v1`-suffix trap.
+ *
+ * An OpenAI-shaped proxy whose base URL omits `/v1` (codex-proxy, some
+ * Azure-OpenAI mirrors, a LiteLLM proxy fronting an OpenAI-route backend)
+ * serves `/v1/chat/completions` and returns 401 on the bare `/chat/completions`
+ * the AI SDK appends to the base. `classifyError` reads that 401 as `auth` and
+ * points the operator at the bearer token, when the real fix is the URL shape.
+ *
+ * Returns the corrective hint only when the model routes through an
+ * openai-compatible recipe (proxy tier, not native anthropic/openai/google),
+ * `baseURL` is set, and `baseURL` does not already end in `/v1` (optionally with
+ * a trailing slash). Pure: recipe resolution is synchronous and does no
+ * network/engine work; any resolution failure returns undefined.
+ *
+ * @internal exported for tests.
+ */
+export function openAiCompatV1Hint(
+  modelStr: string,
+  baseURL: string | undefined | null,
+): string | undefined {
+  if (!baseURL || !baseURL.trim()) return undefined;
+  if (/\/v1\/?$/.test(baseURL.trim())) return undefined;
+  try {
+    const { recipe } = resolveRecipe(modelStr);
+    if (recipe.tier !== 'openai-compat') return undefined;
+    return OPENAI_COMPAT_V1_HINT;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -523,7 +598,29 @@ async function probeModel(modelStr: string, touchpoint: 'chat' | 'expansion'): P
     }
   } catch (err) {
     const { status, message } = classifyError(err);
-    return { model: modelStr, touchpoint, status, message, elapsed_ms: Date.now() - start };
+    const result: ProbeResult = { model: modelStr, touchpoint, status, message, elapsed_ms: Date.now() - start };
+    // An openai-compatible proxy whose base URL omits `/v1` returns 401 (not
+    // 404) on the bare `/chat/completions` path, which classifyError reads as
+    // `auth`. Attach the URL-shape hint so the operator doesn't chase the
+    // bearer token. Fail open: any error resolving the base URL yields no hint
+    // and never breaks the probe.
+    if (status === 'auth') {
+      try {
+        const { loadConfig } = await import('../core/config.ts');
+        const { buildGatewayConfig } = await import('../core/ai/build-gateway-config.ts');
+        const fileCfg = loadConfig();
+        if (fileCfg) {
+          const cfg = buildGatewayConfig(fileCfg);
+          const { recipe } = resolveRecipe(modelStr);
+          const baseURL = cfg.base_urls?.[recipe.id] ?? recipe.base_url_default;
+          const hint = openAiCompatV1Hint(modelStr, baseURL);
+          if (hint) result.fix = hint;
+        }
+      } catch {
+        // fail open — no hint
+      }
+    }
+    return result;
   }
 }
 

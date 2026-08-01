@@ -524,13 +524,17 @@ async function registerClient(name: string, args: string[]) {
  * /admin/api/rescope-client endpoint.
  */
 async function rescopeClient(clientId: string, args: string[]) {
-  const usage = 'Usage: auth rescope-client <client_id> [--source SOURCE] [--federated-read SRC1,SRC2,...]';
+  const usage = 'Usage: auth rescope-client <client_id> [--source SOURCE] [--federated-read SRC1,SRC2,...] [--bound-slug-prefixes P1,P2|none]';
   if (!clientId) {
     console.error(usage);
     process.exit(1);
   }
   let sourceId: string | undefined;
   let federatedRead: string[] | undefined;
+  // v0.42.72.0: tri-state — undefined = untouched, null = clear ('none'),
+  // array = replace. Lets roster churn (channel joins/leaves) update the
+  // write fence in place instead of register+rotate.
+  let boundSlugPrefixes: string[] | null | undefined;
   for (let i = 0; i < args.length; i += 2) {
     const flag = args[i];
     const value = args[i + 1];
@@ -542,14 +546,18 @@ async function rescopeClient(clientId: string, args: string[]) {
     if (flag === '--source') sourceId = value;
     else if (flag === '--federated-read') {
       federatedRead = value.split(',').map(s => s.trim()).filter(Boolean);
+    } else if (flag === '--bound-slug-prefixes') {
+      boundSlugPrefixes = value === 'none'
+        ? null
+        : value.split(',').map(s => s.trim()).filter(Boolean);
     } else {
       console.error(`Error: Unknown flag: ${flag}`);
       console.error(usage);
       process.exit(1);
     }
   }
-  if (sourceId === undefined && federatedRead === undefined) {
-    console.error('Error: pass --source and/or --federated-read');
+  if (sourceId === undefined && federatedRead === undefined && boundSlugPrefixes === undefined) {
+    console.error('Error: pass --source, --federated-read, and/or --bound-slug-prefixes');
     console.error(usage);
     process.exit(1);
   }
@@ -557,10 +565,13 @@ async function rescopeClient(clientId: string, args: string[]) {
     await withConfiguredSql(async (sql) => {
       const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
       const provider = new GBrainOAuthProvider({ sql });
-      const result = await provider.rescopeClient(clientId, { sourceId, federatedRead });
+      const result = await provider.rescopeClient(clientId, { sourceId, federatedRead, boundSlugPrefixes });
       console.log(`OAuth client rescoped: "${result.clientName}" (${result.clientId})\n`);
       console.log(`  Write source:        ${result.sourceId}`);
       console.log(`  Federated reads:     ${result.federatedRead.join(', ') || '<none>'}`);
+      if (result.boundSlugPrefixes !== undefined) {
+        console.log(`  Bound slug prefixes: ${result.boundSlugPrefixes?.join(', ') ?? '<none — full-source write authority>'}`);
+      }
       console.log('\nTakes effect on the client\'s next request (existing tokens included).');
     });
   } catch (e: any) {
@@ -645,14 +656,22 @@ Usage:
      --bound-tools <tool1,tool2>                           Bind submit_agent to an allow-list of tools
      --bound-source <id>                                   Bind submit_agent jobs to a source id
      --bound-brain <id>                                    Bind submit_agent jobs to a brain id
-     --bound-slug-prefixes <prefix1,prefix2>               Bind submit_agent writes to slug prefixes
+     --bound-slug-prefixes <prefix1,prefix2>               Fence ALL direct slug writes (put_page, delete_page,
+                                                          tags, links, timeline, revert, raw data) AND
+                                                          submit_agent to these prefixes. Each MUST end with
+                                                          '/' or '/*' — a boundary-less 'emp-alice' would also
+                                                          name 'emp-alice-2/...'. Ops that write by something
+                                                          other than a slug (extract_*, forget_fact,
+                                                          ontology_propose, sources_*) and POST /ingest become
+                                                          unavailable to a bound client. Omit = full-source writes.
      --bound-max-concurrent <n>                            Bound submit_agent concurrency (default: 1)
      --budget-usd-per-day <usd>                            Bound submit_agent daily spend cap
   gbrain auth rescope-client <client_id> [options]        Change an existing client's source scope (e.g. a DCR
                                                           client stuck on the 'default' source). Only the flags
-                                                          you pass change; the other axis is left as-is.
+                                                          you pass change; the other axes are left as-is.
      --source <id>                                        New write source
      --federated-read <id1,id2,...>                       New read-scope source list
+     --bound-slug-prefixes <p1,p2|none>                   Replace the slug-prefix write fence ('none' clears it)
   gbrain auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
   gbrain auth test <url> --token <token>                  Smoke-test a remote MCP server
 `);

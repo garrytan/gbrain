@@ -19,11 +19,13 @@ entire DB from scratch.
 
 This means:
 
-- **Disaster recovery is one command.** If your DB volume corrupts, if
-  Postgres eats itself, if PGLite's WASM lock wedges — you don't need
-  a backup. You wipe the DB, re-import from your brain repo, and the
-  derived state regenerates. v0.32.3 ships `gbrain rebuild
-  --confirm-destructive` as the documented one-liner.
+- **Disaster recovery is a short, boring sequence.** If your DB volume
+  corrupts, if Postgres eats itself, if PGLite's WASM lock wedges — you
+  don't need a backup. You wipe the derived tables (on PGLite,
+  `gbrain reinit-pglite` wipes the whole embedded DB), re-import from
+  your brain repo with `gbrain sync`, and `gbrain extract all`
+  regenerates the derived state. See "Disaster recovery" below for the
+  exact commands.
 - **Multi-machine sync is git.** Your brain is a repo. Push from one
   machine, pull from another, and the second machine's DB rebuilds on
   its next sync. No "back up the database" step.
@@ -146,11 +148,9 @@ The promise the rule makes:
 # Snapshot what's there
 gbrain stats > /tmp/before.txt
 
-# Wipe and rebuild
-gbrain rebuild --confirm-destructive   # v0.32.3 — deletes derived tables
-                                       # (pages + content_chunks survive
-                                       # the CASCADE-safe design)
-                                       # OR manually for v0.32.2:
+# Wipe and rebuild — delete the derived tables (pages + content_chunks
+# survive the CASCADE-safe design), then re-derive from the repo.
+# On PGLite, `gbrain reinit-pglite` wipes the whole embedded DB instead.
 psql -c 'DELETE FROM facts; DELETE FROM takes; DELETE FROM links; DELETE FROM timeline_entries;'
 gbrain sync
 gbrain extract all

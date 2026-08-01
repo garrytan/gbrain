@@ -20,7 +20,14 @@
 
 import { chunkText as recursiveChunk } from './recursive.ts';
 import { buildQualifiedName } from './qualified-names.ts';
-import { CJK_SLUG_CHARS, CJK_RANGES_REGEX } from '../cjk.ts';
+import { estimateTokens, estimateEmbedTokens, estimateEmbedTokensCeiling, DEFAULT_MAX_CHUNK_TOKENS } from './token-estimate.ts';
+import { safeSplitIndex } from '../text-safe.ts';
+
+// Both estimators moved to token-estimate.ts (#3477 follow-up) so
+// recursive.ts can share them without an import cycle. Re-exported here:
+// commands/sync.ts, commands/reindex-code.ts, and tests import them from
+// this module.
+export { estimateTokens, estimateEmbedTokens } from './token-estimate.ts';
 
 // Embed the tree-sitter runtime + per-language grammars as files.
 // `with { type: 'file' }` returns a path (string) at runtime. Bun bundles
@@ -559,7 +566,6 @@ export function parseWithTimeout(
 }
 
 const DEFAULT_CHUNKER_TIMEOUT_MS = 30_000;
-const DEFAULT_MAX_CHUNK_TOKENS = 2000;
 
 function resolveChunkerTimeoutMs(): number {
   const raw = process.env.GBRAIN_CHUNKER_TIMEOUT_MS;
@@ -851,9 +857,19 @@ function capOversizedChunks(
       continue;
     }
     // Strip the structured header ("[Lang] path:N-M symbol\n\n") so the splitter
-    // works on the raw body; buildChunk re-adds a header to each piece.
-    const body = c.text.replace(/^\[[^\]]+\] [^\n]+\n\n/, '');
-    for (const piece of splitToTokenBudget(body, cap, opts)) {
+    // works on the raw body; buildChunk re-adds a header to each piece. The
+    // re-added header costs tokens too — budget for it, or every piece split
+    // to exactly `cap` re-emerges a header's-worth over it (measured: a 2,000
+    // cap emitted 2,011-token fence chunks when the body alone was capped).
+    // The reservation must be an UPPER bound on the header's contribution:
+    // estimateEmbedTokens is super-additive across a mixed-script join, so the
+    // header's standalone cl100k figure under-counts ~2.5x once the body
+    // contains CJK and the weighted branch takes over (see
+    // estimateEmbedTokensCeiling).
+    const headerMatch = c.text.match(/^\[[^\]]+\] [^\n]+\n\n/);
+    const body = headerMatch ? c.text.slice(headerMatch[0].length) : c.text;
+    const bodyCap = Math.max(1, cap - (headerMatch ? estimateEmbedTokensCeiling(headerMatch[0]) : 0));
+    for (const piece of splitToTokenBudget(body, bodyCap, opts)) {
       if (!piece.trim()) continue;
       out.push(buildChunk({
         body: piece,
@@ -880,42 +896,66 @@ function splitToTokenBudget(text: string, cap: number, opts: CodeChunkOptions): 
     chunkSize: opts.fallbackChunkSizeWords ?? 300,
     chunkOverlap: opts.fallbackOverlapWords ?? 50,
   }).map((p) => p.text);
-  for (const piece of pieces) {
-    if (estimateEmbedTokens(piece) <= cap) {
-      out.push(piece);
-      continue;
+  // Hard-split budget is derived from each piece's own measured density
+  // (chars per estimated token) scaled to the cap, not a fixed chars-per-
+  // token guess: the previous 3.5 chars/token ASCII assumption undercuts
+  // URL-dense JSON (~2.6 chars/token measured), leaving 2,070–2,095-token
+  // slices past a 2,000 cap. Slices are re-measured and re-derived (density
+  // varies within a piece), so the cap holds by construction.
+  const hardSplit = (p: string): void => {
+    const est = estimateEmbedTokens(p);
+    if (est <= cap) {
+      out.push(p);
+      return;
     }
-    // Hard-split slice size. Pure-ASCII pieces: ~3.5 chars/token is a
-    // conservative cl100k estimate for source text. CJK-containing pieces:
-    // the weighted estimate can reach 1 token/char, so budget 1 char/token
-    // to keep every slice under cap by construction.
-    const charBudget = Math.max(1, Math.floor(cap * (CJK_RANGES_REGEX.test(piece) ? 1 : 3.5)));
-    for (let i = 0; i < piece.length; i += charBudget) out.push(piece.slice(i, i + charBudget));
-  }
+    const charBudget = Math.max(1, Math.floor((p.length * cap) / est));
+    if (charBudget >= p.length) {
+      out.push(p); // 1-char floor on a tiny cap — nothing left to split
+      return;
+    }
+    // Even out the slice width instead of striding by charBudget and shedding
+    // `p.length mod charBudget` as a standalone piece at EVERY recursion
+    // level: buildChunk re-headers each remainder into its own embedding row,
+    // so a 14.4K fence emitted 5 chunks of 50-86 chars (and, deeper in the
+    // recursion, 3-char slivers) alongside its real content. Evening is free —
+    // the piece count is ceil(length / charBudget) either way, so the same
+    // content is spread over the same number of chunks — and width <=
+    // charBudget by construction, so the token budget still holds.
+    //
+    // The width is re-derived from what REMAINS on every step rather than
+    // fixed up front, because safeSplitIndex can back a cut off by up to two
+    // units and a fixed width lets that drift accumulate into a tail runt
+    // (measured on an all-astral blob: 4-unit chunks trailing 724-unit ones).
+    let i = 0;
+    while (i < p.length) {
+      const remaining = p.length - i;
+      const partsLeft = Math.ceil(remaining / charBudget);
+      // `i === 0` cannot recurse on the whole piece — charBudget < p.length is
+      // checked above, so partsLeft >= 2 on the first step. The guard keeps a
+      // degenerate budget from looping instead of terminating.
+      if (partsLeft <= 1) {
+        if (i === 0) out.push(p);
+        else hardSplit(p.slice(i));
+        return;
+      }
+      // The budget is derived from measured density, so it has arbitrary
+      // parity: a raw slice at `i + width` orphans a UTF-16 surrogate half.
+      // safeSplitIndex backs the cut off a pair (#2011 — a lone surrogate is
+      // rejected by Postgres inside a ::jsonb cast and aborts the whole batch).
+      const end = safeSplitIndex(p, i + Math.ceil(remaining / partsLeft));
+      if (end <= i) {
+        // Degenerate width (a 1-char budget backing off a surrogate pair) —
+        // emit rather than drop, and never re-enter on the same string.
+        if (i === 0) out.push(p);
+        else hardSplit(p.slice(i));
+        return;
+      }
+      hardSplit(p.slice(i, end));
+      i = end;
+    }
+  };
+  for (const piece of pieces) hardSplit(piece);
   return out;
-}
-
-const CJK_CHARS_G = new RegExp(`[${CJK_SLUG_CHARS}]`, 'g');
-
-/**
- * Embedding-safe token estimate for the oversize cap. estimateTokens
- * (cl100k) matches embedding-family tokenizers closely on pure-ASCII source
- * (measured identical on English prose and JSON vs Qwen3-Embedding), but
- * UNDERCOUNTS mixed CJK+ASCII chunks — measured −31% on URL-dense Korean
- * text vs the Qwen3 embedding tokenizer, which is exactly the shape that
- * overflows strict embedding backends (#2826). For chunks containing CJK,
- * take the max of cl100k and a per-char-class overestimate (CJK 1.0/char,
- * other non-whitespace 0.75/char, whitespace 0.1/char). CJK-DOMINANT text
- * is unaffected too: cl100k already counts it above the weighted form, so
- * max() returns the same value as today. Only mixed-script chunks — the
- * measured divergence class — estimate higher.
- */
-export function estimateEmbedTokens(text: string): number {
-  const cjk = (text.match(CJK_CHARS_G) || []).length;
-  if (cjk === 0) return estimateTokens(text);
-  const ws = (text.match(/\s/g) || []).length;
-  const weighted = Math.ceil(cjk + (text.length - cjk - ws) * 0.75 + ws * 0.1);
-  return Math.max(estimateTokens(text), weighted);
 }
 
 // ---------- Internals ----------
@@ -1243,54 +1283,6 @@ function normalizeSymbolType(type: string): string {
 
 function sanitize(name: string): string {
   return name.replace(/[\n\r\t]+/g, ' ').replace(/\s+/g, ' ').trim();
-}
-
-// v0.19.0 (Layer 5): accurate token count via @dqbd/tiktoken cl100k_base,
-// the same encoder text-embedding-3-large uses. The old len/4 heuristic was
-// 2-3x off for code. Lazy-init so dev and compiled-binary both only pay
-// the init cost once. Falls back to the heuristic if the encoder fails
-// to load (vanishingly unlikely but keeps the chunker available).
-let tiktokenEncoder: { encode: (s: string) => Uint32Array; free: () => void } | null = null;
-let tiktokenInitialized = false;
-
-// v0.20.0 Cathedral II Layer 8 (D1) — exported so commands/sync.ts can
-// estimate embed cost before a --all sync blows a surprise OpenAI bill.
-// Same cl100k_base tokenizer the embedding path actually uses, so cost
-// estimates match actual billing within tokenizer noise.
-export function estimateTokens(text: string): number {
-  if (!text) return 0;
-  if (!tiktokenInitialized) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const m = require('@dqbd/tiktoken');
-      tiktokenEncoder = m.get_encoding('cl100k_base');
-    } catch {
-      tiktokenEncoder = null;
-    }
-    tiktokenInitialized = true;
-  }
-  if (tiktokenEncoder) {
-    try {
-      return tiktokenEncoder.encode(text).length;
-    } catch {
-      // Code legitimately contains tiktoken special-token strings (e.g. CLIP/GPT
-      // tokenizers embed the literal "<|endoftext|>"). The default encode() uses
-      // disallowed_special='all' and THROWS on those, crashing reindex-code on
-      // valid source files. For a token COUNT we don't need special-token
-      // semantics: re-encode treating them as ordinary text (never throws),
-      // heuristic only if even that fails.
-      try {
-        return (
-          tiktokenEncoder as unknown as {
-            encode: (s: string, allowed: string[], disallowed: string[]) => Uint32Array;
-          }
-        ).encode(text, [], []).length;
-      } catch {
-        return Math.max(1, Math.ceil(text.length / 4));
-      }
-    }
-  }
-  return Math.max(1, Math.ceil(text.length / 4));
 }
 
 // v0.20.0 Cathedral II Layer 4: display name derived from the language

@@ -2,6 +2,7 @@ import { describe, test, expect, beforeAll, beforeEach, afterEach } from 'bun:te
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { resolve, sep } from 'node:path';
 import {
   parseRecipe,
   isUnsafeHealthCheck,
@@ -13,6 +14,8 @@ import {
   isPrivateIpv4,
   isInternalUrl,
 } from '../src/commands/integrations.ts';
+
+const RECIPES_DIR = resolve(import.meta.dir, '..', 'recipes');
 
 // --- parseRecipe tests ---
 
@@ -259,7 +262,7 @@ describe('twilio-voice-brain recipe', () => {
     );
     const recipe = parseRecipe(content, 'twilio-voice-brain.md');
     expect(recipe).not.toBeNull();
-    const recipesDir = new URL('../recipes/', import.meta.url).pathname;
+    const recipesDir = RECIPES_DIR;
     for (const dep of recipe!.frontmatter.requires) {
       const depPath = resolve(recipesDir, `${dep}.md`);
       expect(existsSync(depPath)).toBe(true);
@@ -302,7 +305,7 @@ describe('all recipes', () => {
   test('every recipe file in recipes/ parses correctly', () => {
     const { readFileSync, readdirSync } = require('fs');
     const { resolve } = require('path');
-    const recipesDir = new URL('../recipes/', import.meta.url).pathname;
+    const recipesDir = RECIPES_DIR;
     const files = readdirSync(recipesDir).filter((f: string) => f.endsWith('.md'));
     expect(files.length).toBeGreaterThan(0);
     for (const file of files) {
@@ -316,7 +319,7 @@ describe('all recipes', () => {
   test('no recipe contains personal references', () => {
     const { readFileSync, readdirSync } = require('fs');
     const { resolve } = require('path');
-    const recipesDir = new URL('../recipes/', import.meta.url).pathname;
+    const recipesDir = RECIPES_DIR;
     const files = readdirSync(recipesDir).filter((f: string) => f.endsWith('.md'));
     const personalPatterns = /wintermute|mercury|16507969501|\+1650796/i;
     for (const file of files) {
@@ -328,7 +331,7 @@ describe('all recipes', () => {
   test('typed health_checks parse correctly in all recipes', () => {
     const { readFileSync, readdirSync } = require('fs');
     const { resolve } = require('path');
-    const recipesDir = new URL('../recipes/', import.meta.url).pathname;
+    const recipesDir = RECIPES_DIR;
     const files = readdirSync(recipesDir).filter((f: string) => f.endsWith('.md'));
     for (const file of files) {
       const content = readFileSync(resolve(recipesDir, file), 'utf-8');
@@ -340,7 +343,7 @@ describe('all recipes', () => {
           expect(typeof check).toBe('string');
         } else {
           // Typed checks must have a valid type
-          expect(['http', 'env_exists', 'command', 'any_of']).toContain((check as any).type);
+          expect(['http', 'env_exists', 'command', 'any_of', 'heartbeat_max_age']).toContain((check as any).type);
         }
       }
     }
@@ -665,7 +668,9 @@ describe('getRecipeDirs (B1 trust boundary)', () => {
       expect(typeof d.dir).toBe('string');
     }
     // In this repo, the source recipes dir must be trusted
-    const source = dirs.find(d => d.dir.endsWith('/recipes') && d.trusted);
+    // `dir` is native-format (`...\recipes` on Windows). Only the separator
+    // comes from `path`; the directory name stays hand-written.
+    const source = dirs.find(d => d.dir.endsWith(`${sep}recipes`) && d.trusted);
     expect(source).toBeDefined();
   });
 

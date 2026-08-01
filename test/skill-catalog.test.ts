@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { join } from 'path';
+import { join, sep } from 'path';
 import type { OperationContext } from '../src/core/operations.ts';
 import {
   buildSkillCatalog,
@@ -158,6 +158,6 @@ describe('crossReferenceTools', () => {
 describe('resolveSkillMdPath (happy path)', () => {
   test('resolves a real skill to its SKILL.md', () => {
     const p = resolveSkillMdPath(FIXTURE, 'brain-ops');
-    expect(p.endsWith('/brain-ops/SKILL.md')).toBe(true);
+    expect(p.endsWith(sep + join('brain-ops', 'SKILL.md'))).toBe(true);
   });
 });

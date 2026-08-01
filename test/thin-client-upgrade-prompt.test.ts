@@ -39,6 +39,7 @@ const DEFAULT_CLI_OPTS: CliOptions = {
   progressInterval: 1000,
   timeoutMs: null,
   explain: false,
+  brain: null,
 };
 
 let tmpHome: string;

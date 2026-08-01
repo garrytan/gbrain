@@ -69,7 +69,7 @@ update_brain_page(slug, new_info, source):
   page = gbrain get {slug}
 
   // TIMELINE: always APPEND (never edit existing entries)
-  gbrain add_timeline_entry {slug} {
+  gbrain timeline-add {slug} {
     date: today,
     summary: new_info.summary,
     detail: new_info.detail,

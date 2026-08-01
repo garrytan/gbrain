@@ -426,7 +426,9 @@ export async function checkPackUpgradeAvailable(
         makeRemediationStep({
           id: 'onboard.pack_upgrade_' + successor.manifest.name,
           job: 'unify-types',
-          params: { target_pack: successor.manifest.name },
+          // #1575: the worker defaults `apply` to false (dry-run); a
+          // remediation step is a consented apply, so carry it explicitly.
+          params: { target_pack: successor.manifest.name, apply: true },
           severity: 'medium',
           est_seconds: 600,  // ~10min on 186K-page brain (production proxy)
           est_usd_cost: 0,   // pure SQL; no LLM spend

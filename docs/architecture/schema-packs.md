@@ -214,7 +214,7 @@ gbrain schema downgrade
 
 1. `git revert <merge-commit>` — restores the code.
 2. `gbrain schema downgrade --to gbrain-base` — restores config.
-3. (Optional) `gbrain pages purge-deleted --older-than 0h` — drops
+3. (Optional) `gbrain purge-deleted --older-than 0h` — drops
    v0.39-typed pages that no longer have a matching type in the active
    pack.
 

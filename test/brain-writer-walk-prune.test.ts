@@ -20,10 +20,19 @@
 import { describe, expect, test, beforeAll, afterAll } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'fs';
 import { execFileSync } from 'child_process';
-import { join } from 'path';
+import { join, sep } from 'path';
 import { tmpdir } from 'os';
 import { scanBrainSources, walkDir } from '../src/core/brain-writer.ts';
 import { collectFiles } from '../src/commands/frontmatter.ts';
+
+/**
+ * Build a separator-prefixed path fragment for suffix/substring predicates.
+ * The walkers emit native-separator paths, so a hardcoded '/' fragment makes
+ * the positive assertions fail on Windows AND — worse — makes every negative
+ * `toBe(false)` guard pass vacuously, proving nothing. Byte-identical to the
+ * old '/foo/bar' literals on POSIX.
+ */
+const seg = (...parts: string[]) => sep + join(...parts);
 
 let root: string;
 
@@ -64,19 +73,19 @@ describe('walkDir (brain-writer.ts) — descent-time pruning', () => {
   test('does NOT descend into node_modules at any depth', () => {
     const visited: string[] = [];
     walkDir(root, () => {}, (dir) => visited.push(dir));
-    expect(visited.some(d => d.includes('/node_modules'))).toBe(false);
+    expect(visited.some(d => d.includes(seg('node_modules')))).toBe(false);
   });
 
   test('does NOT descend into .git', () => {
     const visited: string[] = [];
     walkDir(root, () => {}, (dir) => visited.push(dir));
-    expect(visited.some(d => d.endsWith('/.git') || d.includes('/.git/'))).toBe(false);
+    expect(visited.some(d => d.endsWith(seg('.git')) || d.includes(seg('.git') + sep))).toBe(false);
   });
 
   test('does NOT descend into .obsidian (dot-prefix heuristic)', () => {
     const visited: string[] = [];
     walkDir(root, () => {}, (dir) => visited.push(dir));
-    expect(visited.some(d => d.includes('/.obsidian'))).toBe(false);
+    expect(visited.some(d => d.includes(seg('.obsidian')))).toBe(false);
   });
 
   test('does NOT descend into *.raw sidecar dirs', () => {
@@ -88,22 +97,22 @@ describe('walkDir (brain-writer.ts) — descent-time pruning', () => {
   test('does NOT descend into git submodule directories (.git as FILE)', () => {
     const visited: string[] = [];
     walkDir(root, () => {}, (dir) => visited.push(dir));
-    expect(visited.some(d => d.endsWith('/people/submod'))).toBe(false);
+    expect(visited.some(d => d.endsWith(seg('people', 'submod')))).toBe(false);
   });
 
   test('DOES descend into regular subdirs and visits .md files there', () => {
     const visited: string[] = [];
     const files: string[] = [];
     walkDir(root, (f) => { files.push(f); }, (dir) => visited.push(dir));
-    expect(visited.some(d => d.endsWith('/people'))).toBe(true);
-    expect(visited.some(d => d.endsWith('/concepts/subdir'))).toBe(true);
+    expect(visited.some(d => d.endsWith(seg('people')))).toBe(true);
+    expect(visited.some(d => d.endsWith(seg('concepts', 'subdir')))).toBe(true);
     // ops/ is ordinary content — descended, not pruned (#2404).
-    expect(visited.some(d => d.endsWith('/ops/logs'))).toBe(true);
-    expect(files.some(f => f.endsWith('/people/alice.md'))).toBe(true);
-    expect(files.some(f => f.endsWith('/concepts/subdir/thing.md'))).toBe(true);
-    expect(files.some(f => f.endsWith('/ops/logs/run.md'))).toBe(true);
+    expect(visited.some(d => d.endsWith(seg('ops', 'logs')))).toBe(true);
+    expect(files.some(f => f.endsWith(seg('people', 'alice.md')))).toBe(true);
+    expect(files.some(f => f.endsWith(seg('concepts', 'subdir', 'thing.md')))).toBe(true);
+    expect(files.some(f => f.endsWith(seg('ops', 'logs', 'run.md')))).toBe(true);
     // And explicitly does NOT visit the file under node_modules.
-    expect(files.some(f => f.includes('/node_modules/'))).toBe(false);
+    expect(files.some(f => f.includes(seg('node_modules') + sep))).toBe(false);
   });
 
   test('regression: pre-v0.38.2.0 walker would have descended into node_modules and stat\'d every entry', () => {
@@ -112,7 +121,7 @@ describe('walkDir (brain-writer.ts) — descent-time pruning', () => {
     // visitDir would be called with node_modules paths.
     const descents: string[] = [];
     walkDir(root, () => {}, (d) => descents.push(d));
-    const vendor = descents.filter(d => /\/(node_modules|\.git|\.obsidian)(\/|$)/.test(d) || /\.raw$/.test(d));
+    const vendor = descents.filter(d => /[\\/](node_modules|\.git|\.obsidian)([\\/]|$)/.test(d) || /\.raw$/.test(d));
     expect(vendor).toEqual([]);
   });
 });
@@ -121,38 +130,38 @@ describe('collectFiles (frontmatter.ts) — descent-time pruning parity', () => 
   test('does NOT descend into node_modules at any depth', () => {
     const visited: string[] = [];
     collectFiles(root, (dir) => visited.push(dir));
-    expect(visited.some(d => d.includes('/node_modules'))).toBe(false);
+    expect(visited.some(d => d.includes(seg('node_modules')))).toBe(false);
   });
 
   test('does NOT descend into .git, .obsidian, or *.raw', () => {
     const visited: string[] = [];
     collectFiles(root, (dir) => visited.push(dir));
-    expect(visited.some(d => d.includes('/.git'))).toBe(false);
-    expect(visited.some(d => d.includes('/.obsidian'))).toBe(false);
+    expect(visited.some(d => d.includes(seg('.git')))).toBe(false);
+    expect(visited.some(d => d.includes(seg('.obsidian')))).toBe(false);
     expect(visited.some(d => d.endsWith('.raw'))).toBe(false);
   });
 
   test('DOES descend into ops/ — ordinary content, not a vendor tree (#2404)', () => {
     const visited: string[] = [];
     collectFiles(root, (dir) => visited.push(dir));
-    expect(visited.some(d => d.endsWith('/ops') || d.includes('/ops/'))).toBe(true);
+    expect(visited.some(d => d.endsWith(seg('ops')) || d.includes(seg('ops') + sep))).toBe(true);
     const files = collectFiles(root);
-    expect(files.some(f => f.endsWith('/ops/logs/run.md'))).toBe(true);
+    expect(files.some(f => f.endsWith(seg('ops', 'logs', 'run.md')))).toBe(true);
   });
 
   test('does NOT descend into git submodule directories', () => {
     const visited: string[] = [];
     collectFiles(root, (dir) => visited.push(dir));
-    expect(visited.some(d => d.endsWith('/people/submod'))).toBe(false);
+    expect(visited.some(d => d.endsWith(seg('people', 'submod')))).toBe(false);
   });
 
   test('DOES collect .md files under regular subdirs', () => {
     const files = collectFiles(root);
-    expect(files.some(f => f.endsWith('/people/alice.md'))).toBe(true);
-    expect(files.some(f => f.endsWith('/concepts/subdir/thing.md'))).toBe(true);
-    expect(files.some(f => f.includes('/node_modules/'))).toBe(false);
-    expect(files.some(f => f.includes('/.git/'))).toBe(false);
-    expect(files.some(f => f.includes('.raw/'))).toBe(false);
+    expect(files.some(f => f.endsWith(seg('people', 'alice.md')))).toBe(true);
+    expect(files.some(f => f.endsWith(seg('concepts', 'subdir', 'thing.md')))).toBe(true);
+    expect(files.some(f => f.includes(seg('node_modules') + sep))).toBe(false);
+    expect(files.some(f => f.includes(seg('.git') + sep))).toBe(false);
+    expect(files.some(f => f.includes('.raw' + sep))).toBe(false);
   });
 
   test('single-file target returns that file unchanged (no walk)', () => {
@@ -173,9 +182,9 @@ describe('frontmatter walkers — git-visible file parity', () => {
       writeFileSync(join(repo, 'people', 'alice.md'), '---\ntitle: Alice\n---\n\nbody\n');
       writeFileSync(join(repo, 'local-skills', 'SKILL.md'), '---\nname: bad\n# malformed frontmatter\n');
 
-      const files = collectFiles(repo).map((f) => f.replace(repo + '/', ''));
-      expect(files).toContain('people/alice.md');
-      expect(files).not.toContain('local-skills/SKILL.md');
+      const files = collectFiles(repo).map((f) => f.replace(repo + sep, ''));
+      expect(files).toContain(join('people', 'alice.md'));
+      expect(files).not.toContain(join('local-skills', 'SKILL.md'));
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }

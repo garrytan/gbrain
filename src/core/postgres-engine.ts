@@ -48,7 +48,7 @@ import { sanitizeForJsonb, buildLinkRows, buildTimelineRows, buildTakeRows } fro
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import { verifySchema } from './schema-verify.ts';
-import { applyChunkEmbeddingIndexPolicy, dropZombieIndexes } from './vector-index.ts';
+import { applyChunkEmbeddingIndexPolicy, dropZombieIndexes, hnswEfSearchFor } from './vector-index.ts';
 import {
   normalizeEngineColumn,
   buildVectorCastFragment,
@@ -2299,8 +2299,14 @@ export class PostgresEngine implements BrainEngine {
     // RLS scope binding + search-only timeout. alwaysTransaction: master
     // already wrapped this in sql.begin() for the SET LOCAL; flag off is
     // identical to that wrap, flag on adds set_config in the same tx.
+    //
+    // hnsw.ef_search: an HNSW scan returns at most ef_search rows (default
+    // 40), so the inner CTE's LIMIT past 40 was silently unreachable — see
+    // hnswEfSearchFor. Transaction-local (is_local=true); non-HNSW plans
+    // (seq scan, or corpora without the index) ignore the GUC.
     const rows = await this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async (tx) => {
       await tx`SET LOCAL statement_timeout = '8s'`;
+      await tx`SELECT set_config('hnsw.ef_search', ${String(hnswEfSearchFor(innerLimit))}, true)`;
       return await tx.unsafe(rawQuery, params as Parameters<typeof tx.unsafe>[1]);
     }, { alwaysTransaction: true });
     return rows.map(rowToSearchResult);
@@ -2527,15 +2533,15 @@ export class PostgresEngine implements BrainEngine {
 
     // Single statement upsert: preserves existing embeddings via COALESCE when new value is NULL.
     // CONSISTENCY: when chunk_text changes and no new embedding is supplied, BOTH embedding AND
-    // embedded_at must reset to NULL so `embed --stale` correctly picks up the row for re-embedding.
+    // embedded_at must reset to NULL so 'embed --stale' correctly picks up the row for re-embedding.
     // Without this, embedded_at lies (says "embedded" while embedding=NULL), and any staleness
     // predicate on embedded_at would silently skip the row. This is why the egress fix predicates
-    // on `embedding IS NULL` rather than `embedded_at IS NULL` — and it's why we now keep both
+    // on 'embedding IS NULL' rather than `embedded_at IS NULL` — and it's why we now keep both
     // columns honest at write time.
     //
     // v0.40.3.0 D24 NULL→non-NULL race fix (TODOS.md v0.35.x item).
     // Two writers racing on the same chunk (e.g., autopilot sync + manual
-    // `embed --stale` + contextual reindex) previously raced last-write-wins
+    // 'embed --stale' + contextual reindex) previously raced last-write-wins
     // via `COALESCE(EXCLUDED.embedding, content_chunks.embedding)`. With
     // per-chunk Haiku synopsis the cost of an overwrite jumped from
     // ~$0.000001 to ~$0.0003. New rule for the text-unchanged branch:
@@ -2599,14 +2605,18 @@ export class PostgresEngine implements BrainEngine {
     );
   }
 
-  async getChunks(slug: string, opts?: { sourceId?: string }): Promise<Chunk[]> {
-    const sourceId = opts?.sourceId ?? 'default';
+  async getChunks(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<Chunk[]> {
+    const sourceIds = opts?.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : undefined;
+    const scalarSourceId = opts?.sourceId ?? 'default';
     // RLS scope binding (opt-in via GBRAIN_RLS_SCOPE_BINDING).
-    return await this.withScopedReadTransaction(undefined, sourceId, async (tx) => {
+    return await this.withScopedReadTransaction(sourceIds, sourceIds ? undefined : scalarSourceId, async (tx) => {
+      const scope = sourceIds
+        ? tx`p.source_id = ANY(${sourceIds}::text[])`
+        : tx`p.source_id = ${scalarSourceId}`;
       const rows = await tx`
         SELECT cc.* FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
-        WHERE p.slug = ${slug} AND p.source_id = ${sourceId}
+        WHERE p.slug = ${slug} AND ${scope}
         ORDER BY cc.chunk_index
       `;
       return rows.map((r: Record<string, unknown>) => rowToChunk(r));
@@ -4182,15 +4192,21 @@ export class PostgresEngine implements BrainEngine {
   async getRawData(
     slug: string,
     source?: string,
-    opts?: { sourceId?: string },
+    opts?: { sourceId?: string; sourceIds?: string[] },
   ): Promise<RawData[]> {
     const sql = this.sql;
-    // v0.31.8 (D21): four-branch shape on (source provided, sourceId provided).
-    // Postgres.js template-literal style doesn't compose fragments cleanly so
-    // we enumerate.
-    const sourceId = opts?.sourceId;
+    const sourceIds = opts?.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : undefined;
+    const sourceId = sourceIds ? undefined : opts?.sourceId;
     let rows;
-    if (source && sourceId) {
+    if (source && sourceIds) {
+      rows = await sql`SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
+        JOIN pages p ON p.id = rd.page_id
+        WHERE p.slug = ${slug} AND rd.source = ${source} AND p.source_id = ANY(${sourceIds}::text[])`;
+    } else if (sourceIds) {
+      rows = await sql`SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
+        JOIN pages p ON p.id = rd.page_id
+        WHERE p.slug = ${slug} AND p.source_id = ANY(${sourceIds}::text[])`;
+    } else if (source && sourceId) {
       rows = await sql`SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
         JOIN pages p ON p.id = rd.page_id
         WHERE p.slug = ${slug} AND rd.source = ${source} AND p.source_id = ${sourceId}`;
@@ -5378,9 +5394,17 @@ export class PostgresEngine implements BrainEngine {
     return rows[0] as unknown as PageVersion;
   }
 
-  async getVersions(slug: string, opts?: { sourceId?: string }): Promise<PageVersion[]> {
+  async getVersions(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<PageVersion[]> {
     const sql = this.sql;
-    // v0.31.8 (D16): two-branch.
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      const rows = await sql`
+        SELECT pv.* FROM page_versions pv
+        JOIN pages p ON p.id = pv.page_id
+        WHERE p.slug = ${slug} AND p.source_id = ANY(${opts.sourceIds}::text[])
+        ORDER BY pv.snapshot_at DESC
+      `;
+      return rows as unknown as PageVersion[];
+    }
     if (opts?.sourceId) {
       const rows = await sql`
         SELECT pv.* FROM page_versions pv
@@ -5489,7 +5513,25 @@ export class PostgresEngine implements BrainEngine {
         (SELECT count(*) FROM links l
          WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = l.to_page_id)
         ) as dead_links,
-        (SELECT count(*) FROM content_chunks WHERE embedded_at IS NULL) as missing_embeddings,
+        -- missing_embeddings uses the same predicate as the thing that
+        -- resolves it: buildStaleChunkWhere / countStaleChunks, i.e. what
+        -- 'embed --stale' actually processes. Two divergences existed:
+        --   1. embedded_at vs embedding. upsertChunks resets BOTH to NULL
+        --      when chunk_text changes, but the stale-chunk predicate keys
+        --      on 'embedding IS NULL' deliberately (see the CONSISTENCY note
+        --      on that upsert) because embedded_at can be non-NULL while
+        --      embedding is NULL. Health should agree with the embedder.
+        --   2. embed_skip pages were counted here but excluded there, so
+        --      chunks the author opted out of read as permanently "missing"
+        --      and the count could never reach zero.
+        -- Effect of the mismatch: computeRecommendations emits an embed.stale
+        -- step from a number that 'embed --stale' reports as 0, so the step
+        -- cannot move it and 'doctor --remediate' re-plans it every pass.
+        (SELECT count(*) FROM content_chunks cc
+           JOIN pages p ON p.id = cc.page_id
+          WHERE cc.embedding IS NULL
+            AND NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip')
+        ) as missing_embeddings,
         (SELECT count(*) FROM links) as link_count,
         (SELECT count(*) FROM entity_pages e
          WHERE EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = e.id))::float /

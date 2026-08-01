@@ -52,7 +52,7 @@ import type { PhaseResult } from '../cycle.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { ProgressReporter } from '../progress.ts';
 import { chat as gatewayChat, withBudgetTracker } from '../ai/gateway.ts';
-import { BudgetExhausted, BudgetTracker } from '../budget/budget-tracker.ts';
+import { BudgetExhausted, BudgetTracker, isModelPriceable } from '../budget/budget-tracker.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { createHash } from 'crypto';
@@ -577,8 +577,21 @@ export async function runPhaseExtractAtoms(
   } catch {
     // Keep safe defaults: Haiku + $0.30.
   }
+  // A cost cap is only meaningful for a model the tracker can price.
+  // BudgetTracker.reserve() hard-fails with BudgetExhausted(reason:'no_pricing')
+  // when the model is absent from the pricing maps AND a cap is set; with no cap
+  // it warns once and proceeds. Because this phase always set a cap, every
+  // non-Anthropic model tripped that hard-fail on the first item, latched
+  // `budgetExhausted`, and skipped the entire workload while reporting ok.
+  const priceable = isModelPriceable(extractModel, 'chat');
+  if (!priceable) {
+    console.error(
+      `[extract_atoms] model "${extractModel}" is not in the pricing maps; ` +
+        `running without a cost gate (a cap cannot be enforced on an unpriced model).`,
+    );
+  }
   const budgetTracker = new BudgetTracker({
-    maxCostUsd: budgetCap,
+    maxCostUsd: priceable ? budgetCap : undefined,
     label: 'cycle.extract_atoms',
   });
 
@@ -754,7 +767,16 @@ export async function runPhaseExtractAtoms(
 
   return {
     phase: 'extract_atoms',
-    status: failures.length > 0 ? 'warn' : 'ok',
+    // A phase that skipped every work item and produced nothing did not
+    // succeed, even though skips are not failures and leave failures[] empty.
+    // Reporting 'ok' there hides a total no-op behind a green status.
+    status:
+      failures.length > 0 ||
+      (work.length > 0 &&
+        totalAtomsExtracted === 0 &&
+        transcriptsSkipped + pagesSkipped === work.length)
+        ? 'warn'
+        : 'ok',
     duration_ms: 0,
     summary:
       `extract_atoms: ${totalAtomsExtracted} atoms from ` +

@@ -100,7 +100,9 @@ describe('composeResolvers — mount skills', () => {
     expect(result.entries).toHaveLength(1);
     expect(result.entries[0].qualifiedName).toBe('yc-media::ingest');
     expect(result.entries[0].brainId).toBe('yc-media');
-    expect(result.entries[0].absolutePath).toContain('/skills/ingest/SKILL.md');
+    // absolutePath is join()-built, so it carries '\' on win32 — build the
+    // expected tail with join() rather than a POSIX literal.
+    expect(result.entries[0].absolutePath).toContain(join('/skills', 'ingest', 'SKILL.md'));
   });
 
   test('disabled mount is excluded', () => {

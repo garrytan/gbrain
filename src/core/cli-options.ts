@@ -29,6 +29,15 @@ export interface CliOptions {
    * the reranker. Has no effect on other commands.
    */
   explain: boolean;
+  /**
+   * `--brain <id>` — which BRAIN (database) this invocation targets: 'host'
+   * or a mount id from ~/.gbrain/mounts.json. Parsed here (stripped before
+   * per-command parsing, like --source) so it can never collide with
+   * per-op flag parsing. `null` = no explicit flag; connectEngine resolves
+   * the ambient tiers (GBRAIN_BRAIN_ID / .gbrain-mount / mount-path / 'host')
+   * via src/core/brain-resolver.ts.
+   */
+  brain: string | null;
 }
 
 export const DEFAULT_CLI_OPTIONS: CliOptions = {
@@ -37,7 +46,28 @@ export const DEFAULT_CLI_OPTIONS: CliOptions = {
   progressInterval: 1000,
   timeoutMs: null,
   explain: false,
+  brain: null,
 };
+
+/**
+ * Brain-id shape. Same regex as brain-registry's BRAIN_ID_RE (kept in sync;
+ * brain-resolver.ts follows the same convention). 'host' matches. Validated
+ * at parse time so an invalid id fails LOUDLY here — and so childGlobalFlags
+ * can safely splice the value into execSync('gbrain ...') command strings.
+ */
+const BRAIN_ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
+
+function parseBrainValue(val: string | undefined): string {
+  if (val === undefined || val.length === 0 || val.startsWith('-')) {
+    throw new Error('--brain requires a value (a mount id from `gbrain mounts list`, or "host").');
+  }
+  if (!BRAIN_ID_RE.test(val)) {
+    throw new Error(
+      `Invalid --brain value "${val}". Must match [a-z0-9-]{1,32}, start+end alphanumeric.`,
+    );
+  }
+  return val;
+}
 
 /**
  * Parse recognized global flags from the front / anywhere in argv and return
@@ -123,6 +153,20 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
     // v0.40.4 — --explain for `gbrain search/query` per-stage attribution.
     if (a === '--explain') {
       cliOpts.explain = true;
+      continue;
+    }
+    // --brain <id> / --brain=<id> — brain (database) axis. Exact-match only:
+    // `--brain-wide-max-cost-usd` (skillopt) and other `--brain-*` flags pass
+    // through to per-command parsers untouched. A missing or malformed value
+    // THROWS rather than falling through — a dropped --brain silently routes
+    // to the wrong database (the exact bug class this flag's wiring fixes).
+    if (a === '--brain') {
+      cliOpts.brain = parseBrainValue(argv[i + 1]);
+      i++;
+      continue;
+    }
+    if (a.startsWith('--brain=')) {
+      cliOpts.brain = parseBrainValue(a.slice('--brain='.length));
       continue;
     }
     slots.push({ plain: a });
@@ -256,6 +300,13 @@ export function childGlobalFlags(cliOpts?: CliOptions): string {
   if (opts.progressInterval !== DEFAULT_CLI_OPTIONS.progressInterval) {
     parts.push(`--progress-interval=${opts.progressInterval}`);
   }
+  // Brain routing must survive into child `gbrain ...` subprocesses: the env
+  // and dotfile tiers self-propagate (children inherit env + cwd), but an
+  // explicit --brain does not — without this, a parent routed to a mount
+  // spawns children that silently operate on the host brain. The value is
+  // BRAIN_ID_RE-validated at parse time, so splicing it into an exec string
+  // is safe.
+  if (opts.brain) parts.push(`--brain=${opts.brain}`);
   return parts.length > 0 ? ' ' + parts.join(' ') : '';
 }
 

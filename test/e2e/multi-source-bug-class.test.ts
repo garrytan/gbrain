@@ -28,7 +28,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import { validateSourceId } from '../../src/core/utils.ts';
@@ -253,7 +253,8 @@ describe('multi-source bug class', () => {
 
       // The two paths must NOT collide.
       expect(defaultPath).not.toBe(mediaPath);
-      expect(mediaPath).toContain('.sources/media-corpus/');
+      // computePath joins, so the segment separator is '\' on win32.
+      expect(mediaPath).toContain(join('.sources', 'media-corpus') + sep);
 
       // Actually write to both paths to prove disk separation.
       mkdirSync(join(tmpDir, 'people'), { recursive: true });

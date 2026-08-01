@@ -28,8 +28,12 @@ describe('dims: ollama Matryoshka models', () => {
   });
 
   test('bare qwen3-embedding (no quant tag) also recognized', () => {
-    expect(dimsProviderOptions('openai-compatible', 'qwen3-embedding', 1024))
-      .toEqual({ openaiCompatible: { dimensions: 1024 } });
+    // 512 not 1024: bare qwen3-embedding's native width is 1024, and a
+    // request equal to the native width omits the param entirely (fixed-dim
+    // vLLM backends 400 on it) — pinned by dims-qwen3-native.test.ts. This
+    // test's job is only that the bare id is recognized as Matryoshka-capable.
+    expect(dimsProviderOptions('openai-compatible', 'qwen3-embedding', 512))
+      .toEqual({ openaiCompatible: { dimensions: 512 } });
   });
 
   test('unrelated openai-compat model returns undefined (regression guard)', () => {

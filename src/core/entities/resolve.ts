@@ -74,6 +74,21 @@ export async function resolveEntitySlug(
   }
 
   // 4. Fallback: deterministic slugify.
+  return fallbackSlugify(trimmed);
+}
+
+/**
+ * #3447 — shared fallback for both resolvers. slugify()'s `[^a-z0-9]+ → '-'`
+ * rule rewrites the path separator, so running slug-shaped input through it
+ * corrupts a well-formed slug (`people/alice-example` → `people-alice-example`)
+ * into one no page can ever have — and the flattened slug never resolves, so
+ * every re-extraction re-mints it. Path-shaped input is slugified PER SEGMENT
+ * (identity for already-well-formed slugs); display names keep plain slugify.
+ */
+function fallbackSlugify(trimmed: string): string {
+  if (trimmed.includes('/')) {
+    return trimmed.split('/').map(slugify).filter(Boolean).join('/');
+  }
   return slugify(trimmed);
 }
 
@@ -141,7 +156,7 @@ export async function resolveEntitySlugWithSource(
     if (fuzzy) return { slug: fuzzy, source: 'fuzzy_match' };
   }
 
-  return { slug: slugify(trimmed), source: 'fallback_slugify' };
+  return { slug: fallbackSlugify(trimmed), source: 'fallback_slugify' };
 }
 
 /**

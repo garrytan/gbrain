@@ -27,6 +27,7 @@
  */
 
 import type { BrainEngine } from './engine.ts';
+import { CJK_SLUG_CHARS } from './cjk.ts';
 import { stripCodeBlocks } from './link-extraction.ts';
 
 /** D2: hardcoded entity types for v1. Pack-aware extension is TODO-1. */
@@ -105,18 +106,101 @@ export interface FindMentionsOpts {
 // ============================================================
 
 /**
- * Token-only tokenizer. Returns `[token, offset]` pairs.
+ * The CJK character set this module treats as char-level, declared ONCE.
  *
- * ASCII: each `[a-zA-Z0-9]+` run is a single token, lowercased.
- * CJK: each CJK character (Chinese/Japanese/Korean) is an individual
- *   token, lowercased. This allows the normal maximal-munch scan path
- *   to reach CJK gazetteer entries without a separate substring pass.
+ * `CJK_SLUG_CHARS` (src/core/cjk.ts) is the repo-wide single source of truth
+ * — Han U+4E00–9FFF, Hiragana, Katakana, Hangul syllables — and this module
+ * now uses it verbatim.
  *
- * Possessive "Acme's" tokenizes as ['acme', 's'] (single-quote breaks the
- * run) — single-word "Acme" lookup succeeds at offset 0; the trailing 's'
- * is harmless noise.
+ * Note the deliberate behaviour change: the walkers here used to carry their
+ * own copy of the ranges that also covered Han Extension A (U+3400–4DBF),
+ * which cjk.ts scopes out repo-wide (see its header). Aligning on the shared
+ * constant means Ext-A characters are no longer treated as CJK by
+ * by-mention: they tokenize as word runs and, being a single sub-4-character
+ * token, an Ext-A-only entity title now falls below MIN_NAME_LENGTH instead
+ * of qualifying under MIN_CJK_NAME_LENGTH. Search, chunking and slug grammar
+ * already ignore Ext-A, so this makes by-mention consistent with them rather
+ * than being the one subsystem that disagrees.
+ *
+ * Everything below — TOKEN_RE, hasCJK(), cjkCharCount() and the two
+ * per-character walkers — derives from this one import. There are no copies
+ * of the ranges in this file.
  */
-const TOKEN_RE = /[a-zA-Z0-9]+/g;
+const CJK_CHAR_RE = new RegExp(`^[${CJK_SLUG_CHARS}]$`, 'u');
+
+/**
+ * Conservative code-point bounds for CJK_SLUG_CHARS, derived from the range
+ * string itself (strip the `-` separators and the remaining characters are
+ * exactly the range endpoints) so they can never drift from it. Used only
+ * as a cheap pre-filter — Latin/Vietnamese text short-circuits before the
+ * regex in the per-character walkers, which run over every body byte.
+ */
+const CJK_BOUNDS = ((): { min: number; max: number } => {
+  let min = 0x10ffff;
+  let max = 0;
+  for (const ch of CJK_SLUG_CHARS.replace(/-/g, '')) {
+    const cp = ch.codePointAt(0)!;
+    if (cp < min) min = cp;
+    if (cp > max) max = cp;
+  }
+  return { min, max };
+})();
+
+function isCJKChar(ch: string): boolean {
+  const cp = ch.codePointAt(0) ?? 0;
+  if (cp < CJK_BOUNDS.min || cp > CJK_BOUNDS.max) return false;
+  return CJK_CHAR_RE.test(ch);
+}
+
+/**
+ * Word-run tokenizer: a letter or ASCII digit, followed by any run of
+ * letters, ASCII digits and combining marks — CJK excluded throughout, so
+ * CJK keeps flowing through the per-character path in the walkers below.
+ *
+ * Latin scripts with diacritics tokenize as whole words instead of
+ * fragmenting on every accented character — "Nguyễn" is one token, not
+ * ["nguy","n"], and "Đà Nẵng" is ["đà","nẵng"], not ["n","ng"].
+ *
+ * Four deliberate boundaries, each of which was a real regression:
+ *
+ *  - The LEAD must be a letter or digit, so a token can never consist of
+ *    combining marks alone. U+FE0F (VARIATION SELECTOR-16, category Mn)
+ *    rides on most emoji, so a mark-only token would hijack the gazetteer
+ *    key of every emoji-prefixed entity title ("❤️ Health Notes" keying on
+ *    U+FE0F instead of "health") and collapse all of them into one shared,
+ *    mutually-confusable bucket.
+ *  - Combining marks ARE allowed after the lead. NFD Vietnamese is base
+ *    letter + mark, so excluding \p{M} would re-fragment the exact names
+ *    this tokenizer exists to keep whole.
+ *  - Digits are ASCII-only, exactly as the previous /[a-zA-Z0-9]+/ was.
+ *    \p{N} would additionally mint tokens for ¹ ½ １ (Nl/No/non-ASCII Nd),
+ *    and findMentionedEntities requires gazetteer tokens to be STRICTLY
+ *    ADJACENT in the body — so a superscript between the words of
+ *    "Acme Corp" would silently break a match that used to work.
+ *  - Plain `u` flag, not `v`: the CJK exclusion is a negative lookahead
+ *    over CJK_SLUG_CHARS, the same construction src/core/think/gather.ts
+ *    already uses. No es2024 target requirement, no set-subtraction syntax.
+ */
+const TOKEN_RE = new RegExp(
+  `(?![${CJK_SLUG_CHARS}])[\\p{L}0-9]` +
+  `(?:(?![${CJK_SLUG_CHARS}])[\\p{L}\\p{M}0-9])*`,
+  'gu',
+);
+
+/**
+ * Canonical form for a single token. NFC only — canonical composition, no
+ * compatibility folding — so an NFD body and an NFC gazetteer title produce
+ * the same token, while diacritics stay significant ("Hồng" still must not
+ * match "Hong").
+ *
+ * Applied PER TOKEN, never to the whole text: `Mention.offset` is contracted
+ * to index into the ORIGINAL body (extract-ner.ts slices a context window
+ * from it to infer the link verb), and normalizing the text up front would
+ * silently shift every offset.
+ */
+function normalizeToken(s: string): string {
+  return s.normalize('NFC').toLowerCase();
+}
 
 interface ScannedToken {
   text: string;       // lowercase
@@ -124,48 +208,64 @@ interface ScannedToken {
   length: number;     // original length (for span tracking)
 }
 
-function tokenizeForScan(text: string): ScannedToken[] {
+/**
+ * Body-text tokenizer. Returns `[token, offset]` pairs.
+ *
+ * Word runs: each TOKEN_RE match is one token, NFC-normalized and
+ *   lowercased. Covers ASCII and diacritic Latin scripts like Vietnamese
+ *   ("Nguyễn" → one token, not ["nguy","n"]).
+ * CJK: each CJK character (Chinese/Japanese/Korean) is an individual
+ *   token. This allows the normal maximal-munch scan path to reach CJK
+ *   gazetteer entries without a separate substring pass.
+ *
+ * `offset` and `length` index into the ORIGINAL string — callers slice
+ * context windows out of the untouched body with them.
+ *
+ * Possessive "Acme's" tokenizes as ['acme', 's'] (single-quote breaks the
+ * run) — single-word "Acme" lookup succeeds at offset 0; the trailing 's'
+ * is harmless noise.
+ *
+ * Exported so tests can assert on TOKENIZATION rather than only on the
+ * resolved mention (see tokenizeTitle).
+ */
+export function tokenizeForScan(text: string): ScannedToken[] {
   const out: ScannedToken[] = [];
   TOKEN_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
 
-  // Collect ASCII token spans first.
-  const asciiSpans: Array<{ start: number; end: number }> = [];
+  // Collect word-run token spans first.
+  const wordSpans: Array<{ start: number; end: number }> = [];
   while ((m = TOKEN_RE.exec(text)) !== null) {
-    asciiSpans.push({ start: m.index, end: m.index + m[0].length });
+    wordSpans.push({ start: m.index, end: m.index + m[0].length });
   }
 
-  // Walk character-by-character: emit ASCII tokens at their start positions,
-  // then emit individual CJK characters for non-ASCII positions that fall
-  // outside ASCII token spans.
-  let asciiIdx = 0;
+  // Walk character-by-character: emit word-run tokens at their start
+  // positions, then emit individual CJK characters for positions that fall
+  // outside every word-run span.
+  let spanIdx = 0;
   for (let i = 0; i < text.length;) {
-    const cp = text.codePointAt(i) ?? 0;
-    const isCJK = (cp >= 0x4e00 && cp <= 0x9fff) || (cp >= 0x3400 && cp <= 0x4dbf) ||
-                  (cp >= 0x3040 && cp <= 0x309f) || (cp >= 0x30a0 && cp <= 0x30ff) ||
-                  (cp >= 0xac00 && cp <= 0xd7af);
-
-    // Advance asciiIdx past any spans that end before or at i.
-    while (asciiIdx < asciiSpans.length && asciiSpans[asciiIdx]!.end <= i) {
-      asciiIdx++;
+    // Advance spanIdx past any spans that end before or at i.
+    while (spanIdx < wordSpans.length && wordSpans[spanIdx]!.end <= i) {
+      spanIdx++;
     }
 
-    // If position i is inside an ASCII token span, emit the full ASCII token
-    // and jump past it.
-    if (asciiIdx < asciiSpans.length && i >= asciiSpans[asciiIdx]!.start && i < asciiSpans[asciiIdx]!.end) {
-      const span = asciiSpans[asciiIdx]!;
+    // If position i is inside a word-run span, emit the full token and jump
+    // past it.
+    if (spanIdx < wordSpans.length && i >= wordSpans[spanIdx]!.start && i < wordSpans[spanIdx]!.end) {
+      const span = wordSpans[spanIdx]!;
       const token = text.slice(span.start, span.end);
-      out.push({ text: token.toLowerCase(), offset: span.start, length: token.length });
+      out.push({ text: normalizeToken(token), offset: span.start, length: token.length });
       i = span.end;
-      asciiIdx++;
+      spanIdx++;
       continue;
     }
 
     // CJK: emit as individual character token.
-    if (isCJK) {
-      const charLen = cp > 0xffff ? 2 : 1; // surrogate pair
-      const charStr = text.slice(i, i + charLen);
-      out.push({ text: charStr.toLowerCase(), offset: i, length: charLen });
+    const cp = text.codePointAt(i) ?? 0;
+    const charLen = cp > 0xffff ? 2 : 1; // surrogate pair
+    const charStr = text.slice(i, i + charLen);
+    if (isCJKChar(charStr)) {
+      out.push({ text: normalizeToken(charStr), offset: i, length: charLen });
       i += charLen;
     } else {
       i++;
@@ -176,10 +276,7 @@ function tokenizeForScan(text: string): ScannedToken[] {
 
 function hasCJK(s: string): boolean {
   for (const ch of s) {
-    const cp = ch.codePointAt(0) ?? 0;
-    if ((cp >= 0x4e00 && cp <= 0x9fff) || (cp >= 0x3400 && cp <= 0x4dbf) ||
-        (cp >= 0x3040 && cp <= 0x309f) || (cp >= 0x30a0 && cp <= 0x30ff) ||
-        (cp >= 0xac00 && cp <= 0xd7af)) return true;
+    if (isCJKChar(ch)) return true;
   }
   return false;
 }
@@ -187,10 +284,7 @@ function hasCJK(s: string): boolean {
 function cjkCharCount(s: string): number {
   let count = 0;
   for (const ch of s) {
-    const cp = ch.codePointAt(0) ?? 0;
-    if ((cp >= 0x4e00 && cp <= 0x9fff) || (cp >= 0x3400 && cp <= 0x4dbf) ||
-        (cp >= 0x3040 && cp <= 0x309f) || (cp >= 0x30a0 && cp <= 0x30ff) ||
-        (cp >= 0xac00 && cp <= 0xd7af)) count++;
+    if (isCJKChar(ch)) count++;
   }
   return count;
 }
@@ -198,40 +292,46 @@ function cjkCharCount(s: string): number {
 /**
  * Tokenize a page title for gazetteer insertion.
  *
- * ASCII titles: standard `[a-zA-Z0-9]+` tokenization, lowercased.
- * CJK titles (no ASCII content): split into individual characters —
+ * Word-run titles: TOKEN_RE tokenization, NFC-normalized and lowercased —
+ *   ASCII plus diacritic Latin scripts (Vietnamese, etc.).
+ * CJK titles (no word-run content): split into individual characters —
  *   e.g. "纳瓦尔" → ["纳","瓦","尔"]. This allows normal multi-token
  *   maximal-munch matching to work with character-level CJK tokens
  *   produced by `tokenizeForScan`.
- * Mixed CJK+ASCII titles: ASCII parts tokenized normally, CJK parts
+ * Mixed CJK+word-run titles: word-run parts tokenized normally, CJK parts
  *   split into individual characters.
+ *
+ * Exported so tests can assert on TOKENIZATION rather than only on the
+ * resolved mention — a mention-only assertion passes even with a tokenizer
+ * that fragments the title and the body symmetrically.
  */
-function tokenizeTitle(title: string): string[] {
+export function tokenizeTitle(title: string): string[] {
   const tokens: string[] = [];
   TOKEN_RE.lastIndex = 0;
-  const hasAscii = TOKEN_RE.test(title);
-  if (hasAscii) {
-    // Mixed ASCII+CJK or pure ASCII: tokenize ASCII normally, then
-    // append individual CJK characters in order.
+  const hasWordRun = TOKEN_RE.test(title);
+  if (hasWordRun) {
+    // Mixed word-run+CJK or pure word-run: tokenize word runs normally,
+    // then append individual CJK characters in order.
     TOKEN_RE.lastIndex = 0;
     let m: RegExpExecArray | null;
-    const asciiSpans: Array<{ start: number; end: number; text: string }> = [];
+    const wordSpans: Array<{ start: number; end: number; text: string }> = [];
     while ((m = TOKEN_RE.exec(title)) !== null) {
-      asciiSpans.push({ start: m.index, end: m.index + m[0].length, text: m[0].toLowerCase() });
+      wordSpans.push({ start: m.index, end: m.index + m[0].length, text: normalizeToken(m[0]) });
     }
-    let asciiIdx = 0;
+    let spanIdx = 0;
     for (let i = 0; i < title.length;) {
-      while (asciiIdx < asciiSpans.length && asciiSpans[asciiIdx]!.end <= i) asciiIdx++;
-      if (asciiIdx < asciiSpans.length && i >= asciiSpans[asciiIdx]!.start && i < asciiSpans[asciiIdx]!.end) {
-        tokens.push(asciiSpans[asciiIdx]!.text);
-        i = asciiSpans[asciiIdx]!.end;
-        asciiIdx++;
+      while (spanIdx < wordSpans.length && wordSpans[spanIdx]!.end <= i) spanIdx++;
+      if (spanIdx < wordSpans.length && i >= wordSpans[spanIdx]!.start && i < wordSpans[spanIdx]!.end) {
+        tokens.push(wordSpans[spanIdx]!.text);
+        i = wordSpans[spanIdx]!.end;
+        spanIdx++;
         continue;
       }
       const cp = title.codePointAt(i) ?? 0;
-      if (hasCJK(title[i]!)) {
-        const charLen = cp > 0xffff ? 2 : 1;
-        tokens.push(title.slice(i, i + charLen).toLowerCase());
+      const charLen = cp > 0xffff ? 2 : 1;
+      const charStr = title.slice(i, i + charLen);
+      if (isCJKChar(charStr)) {
+        tokens.push(normalizeToken(charStr));
         i += charLen;
       } else {
         i++;
@@ -239,12 +339,12 @@ function tokenizeTitle(title: string): string[] {
     }
     return tokens;
   }
-  // Pure CJK (no ASCII content): split into individual characters.
+  // Pure CJK (no word-run content): split into individual characters.
   if (hasCJK(title)) {
     for (let i = 0; i < title.length;) {
       const cp = title.codePointAt(i) ?? 0;
       const charLen = cp > 0xffff ? 2 : 1;
-      tokens.push(title.slice(i, i + charLen).toLowerCase());
+      tokens.push(normalizeToken(title.slice(i, i + charLen)));
       i += charLen;
     }
     return tokens;

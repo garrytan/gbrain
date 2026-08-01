@@ -98,8 +98,10 @@ describe('walkMarkdownFiles', () => {
       const out = walkMarkdownFiles(root);
       const sorted = out.slice().sort();
       expect(sorted.length).toBe(2);
-      expect(sorted[0]).toBe('meetings/one.md');
-      expect(sorted[1]).toBe('personal/three.md');
+      // walkMarkdownFiles builds its relative paths with join(), which emits
+      // '\' on win32 — build the expectations the same way.
+      expect(sorted[0]).toBe(join('meetings', 'one.md'));
+      expect(sorted[1]).toBe(join('personal', 'three.md'));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -180,8 +182,12 @@ describe('JSONL utilities', () => {
   });
 
   test('default paths resolve under ~/.gbrain/eval/', () => {
-    expect(defaultMiningOutPath()).toContain('.gbrain/eval/notability-mining-candidates.jsonl');
-    expect(defaultReviewOutPath()).toContain('.gbrain/eval/notability-real.jsonl');
+    // Both defaults are join()-built, so the substring must carry native
+    // separators too ('\.gbrain\eval\…' on win32).
+    expect(defaultMiningOutPath()).toContain(
+      join('.gbrain', 'eval', 'notability-mining-candidates.jsonl'),
+    );
+    expect(defaultReviewOutPath()).toContain(join('.gbrain', 'eval', 'notability-real.jsonl'));
   });
 });
 

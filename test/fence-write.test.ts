@@ -292,6 +292,77 @@ describe('lookupSourceLocalPath', () => {
   });
 });
 
+describe('writeFactsToFence — row_num survives a fence-less rewrite', () => {
+  // Regression: row_num uniqueness is enforced by idx_facts_fence_key on
+  // (source_id, source_markdown_slug, row_num), but the value was derived
+  // from the markdown fence alone, falling back to 1 when the file has no
+  // fence. Any write path that rewrites a page without preserving its facts
+  // fence (put_page write-through, sync, dream-cycle reverse-render) then
+  // makes the next absorb re-issue an already-taken row_num, and the whole
+  // batch dies on a duplicate-key error.
+  test('does not reuse a row_num after the fence is stripped from the file', async () => {
+    const slug = 'people/carol';
+    const filePath = join(brainDir, `${slug}.md`);
+
+    const first = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug },
+      [baseInput({ fact: 'First fact' }), baseInput({ fact: 'Second fact' })],
+    );
+    expect(first.inserted).toBe(2);
+
+    // Simulate a non-fence-aware writer replacing the page body. The DB still
+    // holds row_num 1 and 2; the file now advertises none.
+    writeFileSync(
+      filePath,
+      '---\ntype: person\ntitle: Carol\nslug: people/carol\n---\n\n# Carol\n\nRegenerated without the fence.\n',
+      'utf-8',
+    );
+    expect(readFileSync(filePath, 'utf-8')).not.toContain('First fact');
+
+    // Pre-fix this threw: upsertFactRow restarted at 1, colliding with the
+    // existing rows on idx_facts_fence_key.
+    const second = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug },
+      [baseInput({ fact: 'Third fact' })],
+    );
+    expect(second.inserted).toBe(1);
+    expect(second.fenceWriteFailed).toBeUndefined();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      'SELECT row_num, fact FROM facts WHERE source_markdown_slug = $1 ORDER BY row_num',
+      [slug],
+    );
+    const rowNums = rows.rows.map((r: { row_num: number }) => r.row_num);
+    // Three distinct row_nums, and the new one clears the previous maximum.
+    expect(new Set(rowNums).size).toBe(3);
+    expect(Math.max(...rowNums)).toBeGreaterThan(2);
+  });
+
+  test('still writes when the facts table cannot be consulted', async () => {
+    // The DB seed is a hint, not a hard dependency: a lookup failure must
+    // degrade to the previous file-derived behaviour rather than making
+    // fence writes impossible (pre-v51 brains, transient DB errors).
+    const brokenEngine = Object.create(engine) as typeof engine;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (brokenEngine as any).executeRaw = async (sqlText: string, params: unknown[]) => {
+      if (sqlText.includes('MAX(row_num)')) throw new Error('simulated lookup failure');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (engine as any).executeRaw(sqlText, params);
+    };
+
+    const result = await writeFactsToFence(
+      brokenEngine,
+      { sourceId: 'default', localPath: brainDir, slug: 'people/dave' },
+      [baseInput({ fact: 'Written despite the failed hint' })],
+    );
+    expect(result.inserted).toBe(1);
+    expect(result.fenceWriteFailed).toBeUndefined();
+  });
+});
+
 // Cleanup any leftover tempdirs after the whole suite.
 afterAll(() => {
   // No-op: each test cleaned up via the beforeEach; this is a safety net.

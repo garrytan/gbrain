@@ -250,7 +250,7 @@ All 30 GBrain operations are available remotely, including `sync_brain` and
 directory where `gbrain serve` was launched. Symlinks, `..` traversal, and absolute
 paths outside cwd are rejected. Page slugs and filenames are allowlist-validated
 (alphanumeric + hyphens; no control chars, RTL overrides, or backslashes). Local
-CLI callers (`gbrain file upload ...`) keep unrestricted filesystem access since
+CLI callers (`gbrain files upload ...`) keep unrestricted filesystem access since
 the user owns the machine.
 
 ## Deployment Options

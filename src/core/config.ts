@@ -1003,6 +1003,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'models.think',
   'models.subagent',
   'models.expansion',
+  'models.contextual_synopsis',
   'models.chat',
   'models.brainstorm.judge',
   'models.eval.longmemeval',

@@ -67,15 +67,19 @@ afterAll(() => {
 describe('#2607 — git fast path excludes what incremental sync excludes', () => {
   test('tracked files under pruned dirs are NOT collected', () => {
     const files = rel(collectSyncableFiles(repo, { strategy: 'markdown' }));
-    expect(files).toContain('notes/real.md');
-    expect(files).toContain('ops/tasks.md'); // ordinary content (#2404)
-    expect(files).not.toContain('.obsidian/plugin-notes.md');
-    expect(files).not.toContain('vendor/pkg/notes.md');
-    expect(files).not.toContain('node_modules/dep/CHANGELOG.md');
-    expect(files).not.toContain('people/pedro.raw/source.md');
+    // rel() returns relative() output, which carries native separators — build
+    // every expectation with join() to match. A hardcoded '/' literal would not
+    // just fail the positives, it would make each not.toContain() below pass
+    // vacuously on Windows, silently retiring the #2607 guard.
+    expect(files).toContain(join('notes', 'real.md'));
+    expect(files).toContain(join('ops', 'tasks.md')); // ordinary content (#2404)
+    expect(files).not.toContain(join('.obsidian', 'plugin-notes.md'));
+    expect(files).not.toContain(join('vendor', 'pkg', 'notes.md'));
+    expect(files).not.toContain(join('node_modules', 'dep', 'CHANGELOG.md'));
+    expect(files).not.toContain(join('people', 'pedro.raw', 'source.md'));
     // Metafiles stay excluded too.
     expect(files).not.toContain('README.md');
-    expect(files).not.toContain('notes/index.md');
+    expect(files).not.toContain(join('notes', 'index.md'));
   });
 
   test('full-sync enumeration agrees with incremental isSyncable for every collected file', () => {
@@ -104,8 +108,8 @@ describe('#2607 — git fast path excludes what incremental sync excludes', () =
         includeGitignored: true,
       }));
 
-      expect(defaultFiles).not.toContain('Meetings/weekly.md');
-      expect(includeIgnored).toContain('Meetings/weekly.md');
+      expect(defaultFiles).not.toContain(join('Meetings', 'weekly.md'));
+      expect(includeIgnored).toContain(join('Meetings', 'weekly.md'));
     } finally {
       rmSync(ignoredRepo, { recursive: true, force: true });
     }

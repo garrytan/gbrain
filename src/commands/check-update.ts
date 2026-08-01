@@ -45,12 +45,15 @@ function upgradeCommandForMethod(method: string): string {
   }
 }
 
-/** Where the latest version is resolved from. gbrain publishes NO GitHub
- * releases (the `releases/latest` API is a permanent 404), so the release
- * train's source of truth is the `VERSION` file on master — same trusted host
- * `fetchChangelog` already uses. An npm fallback was rejected: the `gbrain`
- * package on npm is an unrelated GPU library (#505), so it would produce false
- * upgrade prompts pointing at a stranger's package. */
+/** Where the latest version is resolved from. The release train's source of
+ * truth is the `VERSION` file on master — same trusted host `fetchChangelog`
+ * already uses. GitHub releases are published from it per VERSION bump
+ * (`.github/workflows/release.yml`, #3521) and carry the binary assets, but
+ * this check deliberately does NOT read `releases/latest`: it was a permanent
+ * 404 before releases existed (#3520) and can still lag master. An npm
+ * fallback was rejected: the `gbrain` package on npm is an unrelated GPU
+ * library (#505), so it would produce false upgrade prompts pointing at a
+ * stranger's package. */
 const VERSION_SOURCE_URL = 'https://raw.githubusercontent.com/garrytan/gbrain/master/VERSION';
 const RELEASE_NOTES_URL = 'https://github.com/garrytan/gbrain/blob/master/CHANGELOG.md';
 

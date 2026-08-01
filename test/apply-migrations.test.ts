@@ -10,7 +10,7 @@ import { describe, test, expect } from 'bun:test';
 import { __testing } from '../src/commands/apply-migrations.ts';
 import type { CompletedMigrationEntry } from '../src/core/preferences.ts';
 
-const { parseArgs, indexCompleted, buildPlan, statusForVersion } = __testing;
+const { parseArgs, indexCompleted, buildPlan, statusForVersion, resolveSchemaBehind } = __testing;
 
 describe('parseArgs', () => {
   test('default flags', () => {
@@ -226,5 +226,62 @@ describe('failed migration prints phase detail (#921)', () => {
     expect(src).toMatch(
       /reported status=failed[\s\S]{0,400}for \(const p of result\.phases\)[\s\S]{0,200}p\.status === 'failed'[\s\S]{0,200}console\.error\([\s\S]{0,80}p\.name[\s\S]{0,80}p\.detail/,
     );
+  });
+});
+
+// #1530: apply-migrations must not report "All migrations up to date" (exit 0)
+// while the SCHEMA is behind. --yes runs the schema migrations in the
+// pre-flight; interactive runs flag schemaBehind and exit 1.
+describe('resolveSchemaBehind (#1530)', () => {
+  test('schema up to date → false, migrations not run', async () => {
+    let ran = false;
+    const behind = await resolveSchemaBehind({
+      schemaVer: 5,
+      latest: 5,
+      autoApply: true,
+      run: async () => { ran = true; return { applied: 0, current: 5 }; },
+    });
+    expect(behind).toBe(false);
+    expect(ran).toBe(false);
+  });
+
+  test('behind + autoApply → runs schema migrations, no longer behind', async () => {
+    let ran = false;
+    const behind = await resolveSchemaBehind({
+      schemaVer: 3,
+      latest: 5,
+      autoApply: true,
+      run: async () => { ran = true; return { applied: 2, current: 5 }; },
+    });
+    expect(behind).toBe(false);
+    expect(ran).toBe(true);
+  });
+
+  test('behind + interactive → warns and stays behind, migrations not run', async () => {
+    let ran = false;
+    const behind = await resolveSchemaBehind({
+      schemaVer: 3,
+      latest: 5,
+      autoApply: false,
+      run: async () => { ran = true; return { applied: 2, current: 5 }; },
+    });
+    expect(behind).toBe(true);
+    expect(ran).toBe(false);
+  });
+
+  test('behind + autoApply + migration failure → stays behind', async () => {
+    const behind = await resolveSchemaBehind({
+      schemaVer: 3,
+      latest: 5,
+      autoApply: true,
+      run: async () => { throw new Error('boom'); },
+    });
+    expect(behind).toBe(true);
+  });
+
+  test('up-to-date branch exits 1 when schemaBehind (source shape)', async () => {
+    const { readFileSync } = await import('fs');
+    const src = readFileSync('src/commands/apply-migrations.ts', 'utf8');
+    expect(src).toMatch(/if \(schemaBehind\)[\s\S]{0,300}process\.exit\(1\)[\s\S]{0,120}All migrations up to date/);
   });
 });

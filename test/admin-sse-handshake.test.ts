@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { openAdminSseStream, type AdminSseResponse } from '../src/commands/serve-http.ts';
+import { openAdminSseStream } from '../src/commands/serve-http.ts';
 
 describe('admin SSE handshake', () => {
   test('flushes a protocol-valid comment immediately after the headers', () => {
@@ -19,7 +19,7 @@ describe('admin SSE handshake', () => {
         calls.push(`write:${String(chunk)}`);
         return true;
       },
-    } as unknown as AdminSseResponse);
+    });
 
     expect(headers).toEqual(new Map([
       ['Content-Type', 'text/event-stream'],

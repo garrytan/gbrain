@@ -50,6 +50,7 @@ CHECKS=(
   "check:cli-exec"
   "check:system-of-record"
   "check:eval-glossary"
+  "check:skills-manifest"
   "check:no-pii-agent-voice"
   "check:synthetic-corpus-privacy"
   "check:skill-brain-first"

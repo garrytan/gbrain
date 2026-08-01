@@ -29,7 +29,7 @@ import {
 import { loadConfig, loadConfigWithEngine } from './config.ts';
 import {
   buildContextualPrefix,
-  modeRequiresHaiku,
+  modeRequiresSynopsis,
   modeRequiresWrapper,
   sanitizeTitle,
   wrapChunkForEmbedding,
@@ -38,6 +38,7 @@ import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
 import { normalizeAliasList } from './search/alias-normalize.ts';
 import { isUndefinedTableError, warnOncePerProcess, validateSlug } from './utils.ts';
 import { computeCorpusGeneration } from './contextual-retrieval-service.ts';
+import { DEFAULT_SYNOPSIS_MODEL } from './page-summary.ts';
 import { runGuardrails } from './guardrails.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence } from './facts-fence.ts';
 
@@ -737,7 +738,7 @@ export async function importFromContent(
   // v0.40.3.0 contextual retrieval wrapper (D20-T1 chunk_text separation):
   // - Resolve effective CR mode via the page/source/global override chain.
   // - For title tier (free): build the title-only prefix and wrap chunks
-  //   inline at embed time. Per-chunk Haiku synopsis tier is NOT supported
+  //   inline at embed time. Per-chunk generated synopsis tier is NOT supported
   //   on the import path — that's an async backfill via the Minion handler
   //   (the cost prompt + 10s grace UX from D3 gates spending; inline import
   //   path takes the cheaper title-only treatment for tokenmax pages here
@@ -770,7 +771,7 @@ export async function importFromContent(
   if (!opts.noEmbed && chunks.length > 0) {
     const safeTitle = sanitizeTitle(parsed.title);
     const prefix =
-      modeRequiresWrapper(effectiveCRMode) && !modeRequiresHaiku(effectiveCRMode)
+      modeRequiresWrapper(effectiveCRMode) && !modeRequiresSynopsis(effectiveCRMode)
         ? buildContextualPrefix(safeTitle, null)
         : null;
     const wrappedTexts = prefix
@@ -793,7 +794,7 @@ export async function importFromContent(
       ? null
       : computeCorpusGeneration({
           crMode: effectiveCRMode,
-          haikuModel: 'anthropic:claude-haiku-4-5-20251001',
+          synopsisModel: DEFAULT_SYNOPSIS_MODEL,
           // Inline import-file path never uses per_chunk_synopsis (refuses
           // upstream); pass undefined so the doc-cap field stays out of
           // the hash here. Per_chunk_synopsis runs through the Minion

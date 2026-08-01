@@ -172,11 +172,16 @@ function escapeRegex(s: string): string {
 
 /**
  * Exported guard for D26 P0-4 verification — given a CRMode, does it
- * NEED Haiku synopsis generation? Used by the service to decide whether
+ * NEED model-generated synopsis generation? Used by the service to decide whether
  * to invoke `page-summary.ts:generatePerChunkSynopsis` per chunk.
  */
-export function modeRequiresHaiku(mode: CRMode): boolean {
+export function modeRequiresSynopsis(mode: CRMode): boolean {
   return mode === 'per_chunk_synopsis';
+}
+
+/** @deprecated Use `modeRequiresSynopsis`. */
+export function modeRequiresHaiku(mode: CRMode): boolean {
+  return modeRequiresSynopsis(mode);
 }
 
 /**
