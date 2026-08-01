@@ -324,7 +324,7 @@ const TOP_LEVEL_TYPES: Partial<Record<SupportedCodeLanguage, Set<string>>> = {
   c_sharp: new Set([
     'method_declaration', 'class_declaration', 'interface_declaration',
     'struct_declaration', 'enum_declaration', 'namespace_declaration',
-    'using_directive', 'property_declaration',
+    'file_scoped_namespace_declaration', 'using_directive', 'property_declaration',
   ]),
   cpp: new Set([
     'function_definition', 'class_specifier', 'struct_specifier',

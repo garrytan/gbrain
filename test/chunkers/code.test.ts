@@ -424,3 +424,45 @@ describe('chunkCodeText — empty input', () => {
     expect(await chunkCodeText('   \n  ', 'foo.ts')).toEqual([]);
   });
 });
+
+describe('chunkCodeText — C# file-scoped namespace (#3601)', () => {
+  const FILE_SCOPED = `using System;
+namespace Demo;
+
+public class OrderService
+{
+    public decimal ComputeRefund(decimal amount) => amount * 0.9m;
+    public void Ship(string id) => Console.WriteLine(id);
+}
+`;
+
+  const BLOCK_SCOPED = `using System;
+namespace Demo
+{
+    public class OrderService
+    {
+        public decimal ComputeRefund(decimal amount) => amount * 0.9m;
+        public void Ship(string id) => Console.WriteLine(id);
+    }
+}
+`;
+
+  test('file-scoped namespace body is indexed (class appears in chunks)', async () => {
+    const result = await chunkCodeText(FILE_SCOPED, 'OrderService.cs');
+    const allText = result.map(c => c.text).join('\n');
+    expect(allText).toContain('OrderService');
+    expect(allText).toContain('ComputeRefund');
+  });
+
+  test('file-scoped and block-scoped produce equivalent coverage', async () => {
+    const fileScopedResult = await chunkCodeText(FILE_SCOPED, 'OrderService.cs');
+    const blockScopedResult = await chunkCodeText(BLOCK_SCOPED, 'OrderService.cs');
+    const fileScopedText = fileScopedResult.map(c => c.text).join('\n');
+    const blockScopedText = blockScopedResult.map(c => c.text).join('\n');
+    // Both must contain the class body — neither should silently drop it.
+    expect(fileScopedText).toContain('OrderService');
+    expect(blockScopedText).toContain('OrderService');
+    expect(fileScopedText).toContain('ComputeRefund');
+    expect(blockScopedText).toContain('ComputeRefund');
+  });
+});
