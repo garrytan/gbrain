@@ -29,6 +29,7 @@ The resolved provider + dimensions get persisted to `~/.gbrain/config.json` atom
 | `voyage` | `VOYAGE_API_KEY` | 1024 | 0.18 | no | yes (`voyage-multimodal-3`) |
 | `google` | `GOOGLE_GENERATIVE_AI_API_KEY` | 768 | 0.025 | no | no |
 | `azure-openai` | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT` | 1536 | 0.13 | no | no |
+| `azure-openai-v1` | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT` | 3072 | 0.13 | no | no |
 | `minimax` | `MINIMAX_API_KEY` | 1536 | 0.07 | no | no |
 | `dashscope` | `DASHSCOPE_API_KEY` | 1024 | varies | no | no |
 | `zhipu` | `ZHIPUAI_API_KEY` | 1024 | varies | no | no |
@@ -122,6 +123,22 @@ Enterprise OpenAI behind Azure tenancy. Required env: `AZURE_OPENAI_API_KEY`, `A
 Unlike vanilla OpenAI, Azure uses `api-key:` header (not `Authorization: Bearer`) and a templated URL with `?api-version=` query param — gbrain handles both via the recipe's resolveAuth + resolveOpenAICompatConfig overrides.
 
 Models: `text-embedding-3-large`, `text-embedding-3-small`, `text-embedding-ada-002` (your Azure deployment must serve the requested model).
+
+### Azure OpenAI (v1 route)
+
+Same Azure resource, different URL shape. Required env: `AZURE_OPENAI_ENDPOINT`. Then either `AZURE_OPENAI_API_KEY` or keyless Entra auth (`az login` plus the "Cognitive Services OpenAI User" role, forced with `AZURE_OPENAI_USE_ENTRA=1`). `AZURE_OPENAI_API_VERSION` is optional here and only gets added to the URL when you set it.
+
+The classic `azure-openai` recipe puts the deployment name in the URL path, so one process can only reach one deployment. This recipe uses Azure's OpenAI-compatible `/openai/v1/` route, where the deployment name travels in the request body as `model`. That means one recipe covers embeddings, query expansion and chat at the same time, and there's no `AZURE_OPENAI_DEPLOYMENT` to set:
+
+```bash
+export AZURE_OPENAI_ENDPOINT="https://my-resource.openai.azure.com"
+export AZURE_OPENAI_API_KEY="..."
+gbrain init --embedding-model azure-openai-v1:text-embedding-3-large --embedding-dimensions 3072
+```
+
+Name your Azure deployments after the model ids (Azure's default) so the `dimensions` parameter gets threaded for `text-embedding-3-*`. Models: `text-embedding-3-large`, `text-embedding-3-small` for embeddings; any GPT deployment you have for expansion and chat.
+
+Use the classic `azure-openai` recipe if your resource only exposes the deployment-scoped route, or if you're already set up on it.
 
 ### MiniMax (海螺AI)
 

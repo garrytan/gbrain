@@ -183,15 +183,19 @@ describe('IRON RULE: existing 9 recipes survive the v0.32 resolveAuth refactor',
     }
   });
 
-  test('only Azure overrides resolveAuth in v0.32 (default applies elsewhere)', () => {
-    // The default resolver covers every openai-compatible recipe except
-    // Azure, which uses the api-key custom-header path. The IRON RULE
+  test('only the Azure recipes override resolveAuth (default applies elsewhere)', () => {
+    // The default resolver covers every openai-compatible recipe except the
+    // two Azure ones, which use the api-key custom-header path. The IRON RULE
     // contract: any new override beyond Azure must be reviewed for
     // double-auth + back-compat regression.
+    //
+    // azure-openai-v1 is the same api-key header approach on Azure's
+    // OpenAI-compatible /openai/v1/ route (deployment in the body instead of
+    // the URL), so it inherits the same review.
     const overrides = listRecipes().filter(
       r => r.implementation === 'openai-compatible' && r.resolveAuth,
     );
-    expect(overrides.map(r => r.id).sort()).toEqual(['azure-openai']);
+    expect(overrides.map(r => r.id).sort()).toEqual(['azure-openai', 'azure-openai-v1']);
   });
 });
 
