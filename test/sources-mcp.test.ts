@@ -281,19 +281,18 @@ describe('sources_add — remote callers ignore path/clone_dir overrides', () =>
     });
   });
 
-  test('remote sources_admin: path override (without url) gets nulled', async () => {
+  test('remote sources_admin: path override (without url) is rejected with an error', async () => {
     await withEnv({ GBRAIN_HOME, PATH: fakePath() }, async () => {
       const op = findOp('sources_add');
       const ctx = ctxRemote(['sources_admin']);
-      // Without a URL and with a remote-supplied path, the path is dropped.
-      // The op then has neither path nor url, which is fine — it creates a
-      // pure DB-only source row (local_path=null).
-      const row = (await op.handler(ctx, {
+      // Remote callers must not silently succeed when passing path — the call
+      // should fail so the client knows the source was NOT registered with a
+      // usable local_path. Silent success + null local_path means sync --all
+      // skips the source forever (#3645).
+      await expect(op.handler(ctx, {
         id: 'attack-path',
         path: '/etc',
-      })) as any;
-      // local_path was nulled — /etc is NOT registered as a source.
-      expect(row.local_path).toBeNull();
+      })).rejects.toThrow(/path.*clone_dir.*not honored|confinement/i);
     });
   });
 
