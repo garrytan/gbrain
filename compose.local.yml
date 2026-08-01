@@ -1,4 +1,4 @@
-# Postgres for running a real brain on this machine.
+# Postgres for running a real brain on this machine, under podman.
 #
 # Separate from docker-compose.test.yml / docker-compose.ci.yml on purpose:
 # those listen on 5434-5437 and the test suite wipes them with TRUNCATE
@@ -10,11 +10,22 @@
 # (test/e2e/engine-parity.test.ts). The pg17 image also ships pgvector 0.8, so
 # halfvec columns work instead of falling back to vector.
 #
-#   docker compose -f docker-compose.local.yml up -d
+#   podman machine start
+#   podman compose -f compose.local.yml up -d
 #   export DATABASE_URL="postgresql://gbrain:gbrain@localhost:5432/gbrain"
+#
+# `podman compose` hands this file to whatever compose binary it can find. If
+# you don't have one, the same thing without any compose tool:
+#
+#   podman volume create gbrain-local-pgdata
+#   podman run -d --name gbrain-postgres \
+#     -e POSTGRES_USER=gbrain -e POSTGRES_PASSWORD=gbrain -e POSTGRES_DB=gbrain \
+#     -p 5432:5432 -v gbrain-local-pgdata:/var/lib/postgresql/data \
+#     docker.io/pgvector/pgvector:pg17
 services:
   postgres:
-    image: pgvector/pgvector:pg17
+    # Fully qualified: podman has no implicit Docker Hub prefix.
+    image: docker.io/pgvector/pgvector:pg17
     environment:
       POSTGRES_USER: gbrain
       POSTGRES_PASSWORD: gbrain
