@@ -6511,6 +6511,79 @@ export async function buildChecks(
     checks.push({ name: 'orphan_ratio', status: 'warn', message: 'Could not check orphan ratio' });
   }
 
+  // 9c. stale_mentions — auto-linked mentions the current gazetteer no
+  // longer produces (issue #3674).
+  //
+  // `extract links --by-mention` writes through addLinksBatch, which is
+  // purely additive, and put_page reconciliation deliberately excludes
+  // 'mentions'. So a link survives its own justification: rewrite a body so
+  // it stops naming the entity, delete or retype the entity page, or change
+  // the tokenizer, and the row stays. Re-running the scan does not help —
+  // it adds today's correct links ALONGSIDE the old ones.
+  //
+  // READ-ONLY by design. There is no repair path yet (a scoped
+  // delete-then-insert needs a new bulk engine method on both backends,
+  // coordinated with extract-ner's link_kind='typed_ner' rows and the
+  // resume checkpoint), so this check makes the drift visible and stops
+  // there rather than shipping a destructive write nobody reviewed.
+  // No RemediationStep for the same reason.
+  //
+  // Never 'fail': the data is wrong but a per-pair `gbrain unlink`
+  // workaround exists, which is the p2 bar.
+  progress.heartbeat('stale_mentions');
+  const staleMentionsHb = startHeartbeat(progress, 're-deriving by-mention links…');
+  try {
+    const { scanStaleMentions } = await import('../core/by-mention.ts');
+    const res = await scanStaleMentions(engine);
+    // Say what was NOT covered rather than implying the whole brain was.
+    const coverage = res.pagesScanned < res.totalPagesWithMentions
+      ? ` (sampled ${res.pagesScanned} of ${res.totalPagesWithMentions} pages carrying mentions links)`
+      : '';
+
+    if (res.totalPagesWithMentions === 0) {
+      checks.push({
+        name: 'stale_mentions',
+        status: 'ok',
+        message: 'No by-mention links in this brain.',
+      });
+    } else if (res.staleLinks === 0) {
+      checks.push({
+        name: 'stale_mentions',
+        status: 'ok',
+        message: `Re-derived ${res.linksScanned} by-mention link(s) across ${res.pagesScanned} page(s)${coverage}; all still follow from the current gazetteer.`,
+      });
+    } else {
+      const kinds = Object.entries(res.staleByKind)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, n]) => `${n} ${k}`)
+        .join(', ');
+      const eg = res.examples.map(e => `${e.from} -> ${e.to}`).join(', ');
+      // An empty gazetteer makes EVERY mentions row unreproducible, which is
+      // a different diagnosis from ordinary drift — name it, or the operator
+      // reads "everything is stale" and starts deleting real links.
+      const why = res.emptyGazetteer
+        ? 'This brain currently has NO linkable entity pages, so every mentions row is unreproducible — check whether entity pages were deleted or retyped before treating these as garbage. '
+        : '';
+      checks.push({
+        name: 'stale_mentions',
+        status: 'warn',
+        message:
+          `${res.staleLinks} of ${res.linksScanned} by-mention link(s) no longer follow from the current gazetteer${coverage} (${kinds}). ` +
+          `${why}Re-running the scan will NOT remove them — the write path is additive. ` +
+          `Remove individually with: gbrain unlink <from> <to> --link-type mentions --link-source mentions. ` +
+          `e.g. ${eg}`,
+      });
+    }
+  } catch (e) {
+    checks.push({
+      name: 'stale_mentions',
+      status: 'warn',
+      message: `stale-mentions scan skipped: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  } finally {
+    staleMentionsHb();
+  }
+
   // 10. Integrity sample scan (v0.13 knowledge runtime).
   // Read-only — no network, no writes, no resolver calls. Samples the first
   // 500 pages by slug order and surfaces bare-tweet + dead-link counts as a
