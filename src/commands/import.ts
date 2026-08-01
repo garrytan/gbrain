@@ -78,6 +78,17 @@ export async function runImport(
   const jsonOutput = args.includes('--json');
   const includeGitignored = args.includes('--include-gitignored') || opts.includeGitignored === true;
 
+  // #3637: under --json, stdout belongs to the JSON document alone. The
+  // informational lines below are useful — they just belong on the other
+  // channel, the same rule progress already follows (CLAUDE.md: "Progress
+  // always writes to stderr. Stdout stays clean for data output (--json
+  // payloads)"). Pre-fix, `import --json` prefixed the payload with
+  // "Found N markdown files", so JSON.parse of stdout failed outright.
+  const info = (msg: string): void => {
+    if (jsonOutput) console.error(msg);
+    else console.log(msg);
+  };
+
   // T7 (D9): refuse cleanly when init persisted the deferred-setup sentinel,
   // unless the user is explicitly skipping embedding via `--no-embed` (in
   // which case the chunks land without vectors and the user can backfill
@@ -225,7 +236,7 @@ export async function runImport(
   if (opts.exclude && opts.exclude.length > 0) {
     const beforeExclude = allFiles.length;
     allFiles = allFiles.filter(abs => !matchesAnyGlob(relative(dir, abs), opts.exclude));
-    console.log(
+    info(
       `Found ${allFiles.length} ${fileTypeLabel} files ` +
       `(${beforeExclude - allFiles.length} excluded by --exclude patterns)`,
     );
@@ -237,7 +248,7 @@ export async function runImport(
       );
     }
   } else {
-    console.log(`Found ${allFiles.length} ${fileTypeLabel} files`);
+    info(`Found ${allFiles.length} ${fileTypeLabel} files`);
   }
 
   // Sort newest-first so date-prefixed brain paths get embedded before older ones.
@@ -253,7 +264,7 @@ export async function runImport(
     const cp = loadCheckpoint(checkpointPath, dir);
     if (cp) {
       for (const p of cp.completedPaths) completed.add(p);
-      console.log(`Resuming from checkpoint: skipping ${completed.size} already-processed files`);
+      info(`Resuming from checkpoint: skipping ${completed.size} already-processed files`);
     }
   }
   const files = resumeFilter(allFiles, dir, completed);
@@ -261,7 +272,7 @@ export async function runImport(
   // Determine actual worker count
   const actualWorkers = workerCount > 1 ? workerCount : 1;
   if (actualWorkers > 1) {
-    console.log(`Using ${actualWorkers} parallel workers`);
+    info(`Using ${actualWorkers} parallel workers`);
   }
 
   let imported = 0;
@@ -475,7 +486,7 @@ export async function runImport(
   if (errors === 0) {
     clearCheckpoint(checkpointPath);
   } else if (existsSync(checkpointPath)) {
-    console.log(`  Checkpoint preserved (${errors} errors). Run again to retry failed files.`);
+    info(`  Checkpoint preserved (${errors} errors). Run again to retry failed files.`);
   }
 
   const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
