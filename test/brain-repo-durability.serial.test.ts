@@ -169,6 +169,29 @@ describe('hardenBrainRepo', () => {
     expect(commitCount(work)).toBe(before);
     expect(existsSync(join(work, 'scripts', 'brain-commit-push.sh'))).toBe(false);
   });
+
+  test('dry-run does not fetch or pull from origin (no network, no working-tree mutation)', async () => {
+    // Advance origin with a new commit that the working tree does not have.
+    const secondClone = mkdtempSync(join(root, 'pusher-'));
+    execFileSync('git', ['-c', 'protocol.file.allow=always', 'clone', '-q', bare, secondClone], { stdio: 'ignore' });
+    execFileSync('git', ['-C', secondClone, 'config', 'user.email', 't@t.t'], { stdio: 'ignore' });
+    execFileSync('git', ['-C', secondClone, 'config', 'user.name', 'tester'], { stdio: 'ignore' });
+    writeFileSync(join(secondClone, 'upstream.md'), 'new upstream content\n');
+    execFileSync('git', ['-C', secondClone, 'add', 'upstream.md'], { stdio: 'ignore' });
+    execFileSync('git', ['-C', secondClone, 'commit', '-qm', 'advance origin'], { stdio: 'ignore' });
+    execFileSync('git', ['-c', 'protocol.file.allow=always', '-C', secondClone, 'push', '-q', 'origin', 'main'], { stdio: 'ignore' });
+
+    const headBefore = git(work, 'rev-parse', 'HEAD');
+    const r = await harden({ dryRun: true });
+
+    // Working tree must not have advanced — no fetch, no pull.
+    expect(git(work, 'rev-parse', 'HEAD')).toBe(headBefore);
+    expect(existsSync(join(work, 'upstream.md'))).toBe(false);
+
+    // The pull step should report skipped (dry-run), not ok/advanced.
+    const pull = r.steps.find(s => s.step === 'pull');
+    expect(pull?.status).toBe('skipped');
+  });
 });
 
 describe('unhardenBrainRepo', () => {
