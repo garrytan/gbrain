@@ -393,6 +393,38 @@ describe('envelope-to-gbrain importer — declared-count integrity (F1)', () => 
     expect(result.stderr).toContain('message_count');
   });
 
+  // From the adversarial pass. Duplicate ids are CONFORMING input — the spec is
+  // explicit that merging never deduplicates — and converting an old export
+  // together with a newer one is what the memvelope CLI tells users to do. The
+  // first wording of this warning announced "N message(s) in the envelope are
+  // not on disk" on exactly that flow, while every unique turn WAS on disk. A
+  // data-loss alarm that fires on the mainstream path trains its reader to
+  // ignore the one that matters.
+  test('the message-delta warning ties itself to the overwritten pages rather than claiming loss', async () => {
+    const envelopePath = writeEnvelope({
+      conversations: [
+        conversation({ id: 'c-same', messages: [message('m1', 'TURN_ONE')] }),
+        conversation({
+          id: 'c-same',
+          messages: [message('m1', 'TURN_ONE'), message('m2', 'TURN_TWO', 'assistant')],
+        }),
+      ],
+    });
+
+    const result = await runImporter(envelopePath);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain('overwritten page(s) carried');
+    // The raw tally still has to be there — hiding it is what made every
+    // message-level loss invisible in the first place.
+    expect(result.stderr).toContain('3 read, 2 written');
+    expect(result.stderr).toContain('may already contain');
+    // The surviving page is the superset, so nothing unique is actually gone.
+    const page = readFileSync(join(result.outDir, markdownFiles(result.outDir)[0]), 'utf8');
+    expect(page).toContain('TURN_ONE');
+    expect(page).toContain('TURN_TWO');
+  });
+
   test('the stdout receipt reports messages as well as pages', async () => {
     const envelopePath = writeEnvelope({
       conversations: [
@@ -617,6 +649,83 @@ describe('envelope-to-gbrain importer — cross-run overwrite (F2)', () => {
     expect(result.stderr).toBe('');
     expect(readFileSync(join(outDir, 'my-own-note.md'), 'utf8')).toBe('UNRELATED_NOTE\n');
     expect(markdownFiles(outDir)).toContain('2025-11-02-c-neighbour.md');
+  });
+
+  // Found by the adversarial pass. The filename slugs `c.id.trim()`, and the
+  // first version of this guard compared the TRIMMED id too — so two ids
+  // differing only by surrounding whitespace looked like one conversation to
+  // both halves, and the second import destroyed the first at exit 0 with zero
+  // stderr bytes. The spec has ids copied verbatim, so the whitespace is part
+  // of the id; identity is now compared raw.
+  test('ids differing only by surrounding whitespace are not the same conversation', async () => {
+    const outDir = tempDir();
+    const first = writeEnvelope({
+      fileName: 'untrimmed-a.mve.json',
+      conversations: [conversation({ id: 'c-ws', messages: [message('m1', 'WHITESPACE_ORIGINAL')] })],
+    });
+    const second = writeEnvelope({
+      fileName: 'untrimmed-b.mve.json',
+      conversations: [conversation({ id: 'c-ws ', messages: [message('m1', 'WHITESPACE_IMPOSTOR')] })],
+    });
+
+    expect((await runImporter(first, outDir)).exitCode).toBe(0);
+    const result = await runImporter(second, outDir);
+
+    expect(result.exitCode).not.toBe(0);
+    const surviving = readFileSync(join(outDir, '2025-11-02-c-ws.md'), 'utf8');
+    expect(surviving).toContain('WHITESPACE_ORIGINAL');
+    expect(surviving).not.toContain('WHITESPACE_IMPOSTOR');
+  });
+
+  // Also from the adversarial pass, and the nastier half: the identity scan
+  // required the file to start with exactly `---\n`, so a page THIS IMPORTER
+  // WROTE that later picked up CRLF line endings (a git autocrlf checkout, a
+  // cross-platform sync, an editor save) or a UTF-8 BOM was reclassified as
+  // foreign — and one such page refused the WHOLE envelope. Under the previous
+  // script that was a harmless overwrite, so this guard had turned a cosmetic
+  // byte change into an unrecoverable block.
+  test.each([
+    ['CRLF line endings', (b: string) => b.replace(/\n/g, '\r\n')],
+    ['a UTF-8 BOM', (b: string) => `﻿${b}`],
+    ['a trailing newline', (b: string) => `${b}\n`],
+  ])('our own page still recognized after it picks up %s', async (_label, mutate) => {
+    const outDir = tempDir();
+    const before = writeEnvelope({
+      fileName: 'mutated-before.mve.json',
+      conversations: [conversation({ id: 'c-mut', messages: [message('m1', 'MUTATED_FIRST')] })],
+    });
+    const after = writeEnvelope({
+      fileName: 'mutated-after.mve.json',
+      conversations: [conversation({
+        id: 'c-mut',
+        messages: [message('m1', 'MUTATED_FIRST'), message('m2', 'MUTATED_SECOND', 'assistant')],
+      })],
+    });
+
+    expect((await runImporter(before, outDir)).exitCode).toBe(0);
+    const page = join(outDir, '2025-11-02-c-mut.md');
+    writeFileSync(page, mutate(readFileSync(page, 'utf8')));
+
+    const result = await runImporter(after, outDir);
+
+    expect(result.exitCode).toBe(0);
+    expect(readFileSync(page, 'utf8')).toContain('MUTATED_SECOND');
+  });
+
+  test('an unrecognizable target file is described without asserting who wrote it', async () => {
+    const outDir = tempDir();
+    writeFileSync(join(outDir, '2025-11-02-c-unknown.md'), 'SOMETHING_ELSE_ENTIRELY\n');
+    const envelopePath = writeEnvelope({
+      conversations: [conversation({ id: 'c-unknown', messages: [message('m1', 'IMPORTED')] })],
+    });
+
+    const result = await runImporter(envelopePath, outDir);
+
+    expect(result.exitCode).not.toBe(0);
+    // The importer cannot know who wrote a file it does not recognize, and
+    // saying otherwise put a false statement in front of the operator.
+    expect(result.stderr).not.toContain('was not written by this importer');
+    expect(result.stderr).toContain('could not be recognized');
   });
 
   test('CONTROL: a fresh output directory is unaffected by an earlier import', async () => {

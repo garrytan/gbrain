@@ -54,12 +54,30 @@
  * Exit codes: 0 success · 1 usage or unrecognized format · 2 refused import
  * (declared-count mismatch, or a target file that must not be overwritten).
  *
- * Known limit: check 2 is check-then-write, not atomic. Two imports running
- * SIMULTANEOUSLY into one directory can both pass the check before either
- * writes, and one then clobbers the other. Measured 2026-08-02 over 40 trials
- * of two concurrent conflicting imports: 19 refused, 21 raced. Sequential runs
- * — what this CLI is for — are fully covered; closing the race needs a lock
- * file, which is a larger change than this guard.
+ * Known limits:
+ *   - Check 2 is check-then-write, not atomic. Two imports running
+ *     SIMULTANEOUSLY into one directory can both pass the check before either
+ *     writes, and one then clobbers the other. Measured 2026-08-02 over three
+ *     independent sets of 40 trials of two concurrent conflicting imports: 19,
+ *     22, and 24 refused out of 40 — roughly half, and it is a race, so expect
+ *     the number to move. Against the previous script the same experiment
+ *     refused 0 of 40. Closing it needs a lock file, which is a larger change
+ *     than this guard. Sequential runs are what this CLI is for, and are what
+ *     check 2 covers.
+ *   - An id-less conversation cannot be REFRESHED in place. A changed re-import
+ *     of an `id: null` export is refused rather than applied, because nothing
+ *     in either file distinguishes it from a different conversation at the same
+ *     array position. Import it into a fresh directory. This is a deliberate
+ *     trade: the same ambiguity, resolved the other way, is what silently
+ *     destroyed the earlier import.
+ *   - Identity is matched on the conversation id alone, while the filename is
+ *     date + id. A conversation whose `created_at` changes between exports
+ *     therefore lands on a NEW filename and orphans its earlier page rather
+ *     than updating it — duplication, not loss, and true of this script before
+ *     these guards existed too.
+ *   - A file carrying this importer's own frontmatter shape is treated as this
+ *     importer's page. There is no signature, so a hand-written lookalike is
+ *     indistinguishable from the real thing.
  *
  * Memory: the whole envelope is held in memory (no streaming); envelopes are
  * far smaller than the vendor exports they serialize.
@@ -77,9 +95,12 @@
  *   - 2026-08-02, the two guards above: verified against all 12 golden fixtures
  *     from the memvelope reference converter and against fresh envelopes
  *     produced by running that converter over synthetic ChatGPT and Claude
- *     exports — every one imports at exit 0 with zero stderr bytes and message
- *     text byte-identical to the envelope. Neither guard has been run against a
- *     full-size real export.
+ *     exports. All 19 import at exit 0 with zero stderr bytes, and 18 of them
+ *     reproduce every message text byte-verbatim. The exception is the
+ *     lone-surrogate golden fixture, where an unpaired `U+D800` becomes
+ *     `U+FFFD` on UTF-8 write — behavior of `writeFileSync`, unchanged by these
+ *     guards and identical on the previous script. Neither guard has been run
+ *     against a full-size real export.
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -124,7 +145,12 @@ function readIfPresent(path) {
  *  overwrite. `{ id: null }` means "ours, but written from a conversation that
  *  carried no id", which is a different thing from "not ours" and must not be
  *  collapsed into it. */
-function existingPageIdentity(text) {
+function existingPageIdentity(raw) {
+  // A page we wrote can pick up cosmetic byte changes without ceasing to be
+  // ours: a git checkout with core.autocrlf, a cross-platform sync, an editor
+  // that adds a BOM. Refusing to recognize those made a whole envelope
+  // unimportable over a line ending, so normalize them away before the scan.
+  const text = raw.replace(/^﻿/, '').replace(/\r\n/g, '\n');
   if (!text.startsWith('---\n')) return null;
   const end = text.indexOf('\n---\n', 3);
   if (end === -1) return null;
@@ -262,7 +288,12 @@ for (const [i, c] of conversations.entries()) {
     // emitting the literal `undefined` or a synthesized `conv-N` — the positional
     // fallback names the file, but it is not a memvelope conversation id and
     // must not be recorded as one.
-    ...(hasId ? [`memvelope_conversation_id: ${JSON.stringify(convId)}`] : []),
+    // The id VERBATIM, not the trimmed form used for the filename. The spec has
+    // converters copy ids exactly, and recording the trimmed one made two ids
+    // differing only by surrounding whitespace indistinguishable on disk — so
+    // the conflict check below read them as one conversation and let the second
+    // import destroy the first.
+    ...(hasId ? [`memvelope_conversation_id: ${JSON.stringify(c.id)}`] : []),
     'origin: memvelope/envelope-v0',
     '---',
     '',
@@ -283,9 +314,11 @@ for (const [i, c] of conversations.entries()) {
   pages.set(name, {
     content: front + `# ${c.title || 'Conversation'}\n\n` + body + '\n',
     messageCount: messages.length,
-    // The conversation's OWN id, or null. Never the positional fallback: that
-    // is a filename, not an identity, and treating it as one is the whole bug.
-    conversationId: hasId ? convId : null,
+    // The conversation's OWN id, verbatim, or null. Never the positional
+    // fallback: that is a filename, not an identity, and treating it as one is
+    // the whole bug. Verbatim rather than trimmed for the same reason — see the
+    // frontmatter note above.
+    conversationId: hasId ? c.id : null,
   });
 }
 
@@ -304,7 +337,10 @@ for (const [name, page] of pages) {
   if (existing === null || existing === page.content) continue;
   const identity = existingPageIdentity(existing);
   if (identity === null) {
-    conflicts.push(`  ${name} — already exists and was not written by this importer.`);
+    // Say what is true — the file was not recognized. Asserting that this
+    // importer did not write it is a claim this code is in no position to make,
+    // and it is wrong for any page of ours that has been edited since.
+    conflicts.push(`  ${name} — already exists and could not be recognized as a page written by this importer.`);
   } else if (identity.id === null) {
     // Ours, but written from an id-less conversation, so its filename encodes
     // array position rather than identity. An update and a wholly different
@@ -344,5 +380,12 @@ if (collisions) {
 if (messagesWritten !== actualMessages) {
   // The page count alone cannot show this: an overwritten page still leaves one
   // file on disk, so only the message tally reveals the turns that went with it.
-  console.warn(`warning: ${actualMessages - messagesWritten} message(s) in the envelope are not on disk — ${actualMessages} read, ${messagesWritten} written.`);
+  //
+  // Worded as a fact about the overwritten pages, not as an announcement of
+  // loss. Duplicate ids are conforming input — the spec has merging never
+  // deduplicate — so converting an old export together with a newer one, which
+  // is what the memvelope CLI tells users to do, lands here routinely with the
+  // surviving page already holding every unique turn. An alarm that cries wolf
+  // on the mainstream path teaches its reader to ignore the one that matters.
+  console.warn(`warning: the overwritten page(s) carried ${actualMessages - messagesWritten} message(s) that are not on disk (${actualMessages} read, ${messagesWritten} written). If they were earlier copies of the same conversation, the surviving page may already contain those turns; if not, this is real loss.`);
 }
