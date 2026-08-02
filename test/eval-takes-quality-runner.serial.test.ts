@@ -176,9 +176,9 @@ describe('runner — budget cap (codex review #4)', () => {
     const r = await runEval(engine, {
       limit: 5,
       cycles: 3,
-      // gemini-2.0-flash (not the retired 1.5-pro) — the budget path
-      // pre-flights getPricing, which is allowlist-gated (#3510).
-      models: ['openai:gpt-4o', 'anthropic:claude-opus-4-7', 'google:gemini-2.0-flash'],
+      // gemini-2.5-flash (not the retired 1.5-pro or 2.0 family) — the
+      // budget path pre-flights getPricing, which is allowlist-gated (#3510).
+      models: ['openai:gpt-4o', 'anthropic:claude-opus-4-7', 'google:gemini-2.5-flash'],
       budgetUsd: 0.05, // tighter than projected per-cycle cost (~$0.109)
     });
     // No cycle ever ran successfully because pre-flight aborted cycle 1.
