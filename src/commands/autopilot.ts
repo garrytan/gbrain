@@ -1329,7 +1329,7 @@ source ~/.zshrc 2>/dev/null || source ~/.bashrc 2>/dev/null || true
 # lockfile that blocks every subsequent tick. Prepending ~/.bun/bin here
 # keeps the wrapper self-contained regardless of which init file the OS
 # loaded.
-export PATH="$HOME/.bun/bin:$PATH"
+export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 exec '${safeGbrainPath}' autopilot --repo '${safeRepoPath}'
 `;
   writeFileSync(wrapperPath, wrapper, { mode: 0o755 });
