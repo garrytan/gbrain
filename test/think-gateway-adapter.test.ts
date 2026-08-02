@@ -215,4 +215,37 @@ describe('think gateway adapter — graceful fallback shape', () => {
     expect(m.usage.output_tokens).toBe(0);
     expect(m.stop_reason).toBe('end_turn');
   });
+
+  // The sentinel is surfaced verbatim as the user's answer, so it has to name
+  // the credential that would actually fix the run. Naming Anthropic on a
+  // Google-configured brain sends operators to the wrong key entirely.
+  test('the sentinel names the resolved provider credential, not Anthropic', () => {
+    const m = __thinkAdapter.buildGracefulMessage('google:gemini-2.5-flash');
+    expect(m.content[0].text).toContain('GOOGLE_GENERATIVE_AI_API_KEY');
+    expect(m.content[0].text).not.toContain('ANTHROPIC_API_KEY');
+  });
+
+  test('each provider gets its own env var and key page', () => {
+    expect(__thinkAdapter.missingCredentialHint('openai:gpt-5.2')).toContain('OPENAI_API_KEY');
+    expect(__thinkAdapter.missingCredentialHint('deepseek:deepseek-chat')).toContain(
+      'DEEPSEEK_API_KEY',
+    );
+    expect(__thinkAdapter.missingCredentialHint('google:gemini-2.5-flash')).toContain(
+      'aistudio.google.com',
+    );
+  });
+
+  test('an anthropic model still gets the Anthropic wording', () => {
+    expect(__thinkAdapter.missingCredentialHint('anthropic:claude-opus-4-7')).toContain(
+      'ANTHROPIC_API_KEY',
+    );
+  });
+
+  test('an unresolvable provider falls back rather than throwing', () => {
+    // resolveRecipe throws on an unknown provider; the sentinel path must
+    // still produce an answer, since its whole job is degrading gracefully.
+    expect(__thinkAdapter.missingCredentialHint('not-a-provider:some-model')).toContain(
+      'ANTHROPIC_API_KEY',
+    );
+  });
 });
