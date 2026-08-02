@@ -20,6 +20,7 @@ import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runExport } from '../src/commands/export.ts';
 import { __resetMissingStorageWarning } from '../src/core/storage-config.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
 let tmp: string;
@@ -279,14 +280,9 @@ describe('export --source (scope to a single source)', () => {
 
     // Export output is a backup; letting the env var or a `.gbrain-source`
     // dotfile narrow a bare run silently drops pages from the archive.
-    const prior = process.env.GBRAIN_SOURCE;
-    process.env.GBRAIN_SOURCE = 'src-x';
-    try {
+    await withEnv({ GBRAIN_SOURCE: 'src-x' }, async () => {
       await tryRunExport(['--dir', outDir]);
-    } finally {
-      if (prior === undefined) delete process.env.GBRAIN_SOURCE;
-      else process.env.GBRAIN_SOURCE = prior;
-    }
+    });
 
     expect(exitCode).toBeNull();
     expect(existsSync(join(outDir, 'notes/y-only.md'))).toBe(true);
