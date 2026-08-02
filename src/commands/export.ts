@@ -108,7 +108,11 @@ export async function runExport(engine: BrainEngine, args: string[]) {
   let exported = 0;
 
   for (const page of pages) {
-    const tags = await engine.getTags(page.slug);
+    // Slugs are unique per source, not brain-wide, so both sidecar reads are
+    // pinned to the page's own source. Unscoped, `getTags` falls back to
+    // `source_id = 'default'` and stamps the default source's tags onto a
+    // same-slug page from another source (dropping its real ones).
+    const tags = await engine.getTags(page.slug, { sourceId: page.source_id });
     const md = serializeMarkdown(
       page.frontmatter,
       page.compiled_truth,
@@ -120,8 +124,13 @@ export async function runExport(engine: BrainEngine, args: string[]) {
     mkdirSync(dirname(filePath), { recursive: true });
     writeFileSync(filePath, md);
 
-    // Export raw data as sidecar JSON
-    const rawData = await engine.getRawData(page.slug);
+    // Export raw data as sidecar JSON. Unscoped, this matches the slug in
+    // EVERY source and the loop below merges the rows into one sidecar keyed
+    // by `rd.source`, so another source's raw data silently overwrites this
+    // page's own on a key collision.
+    const rawData = await engine.getRawData(page.slug, undefined, {
+      sourceId: page.source_id,
+    });
     if (rawData.length > 0) {
       const slugParts = page.slug.split('/');
       const rawDir = join(outDir, ...slugParts.slice(0, -1), '.raw');
