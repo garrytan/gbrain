@@ -67,3 +67,32 @@ export function getFtsLanguage(): string {
 export function resetFtsLanguageCache(): void {
   cachedLanguage = null;
 }
+
+/**
+ * Rewrites a schema template's hardcoded `to_tsvector('english', ...)` calls
+ * to the configured text search configuration.
+ *
+ * Why this exists: migration v123 (`configurable_fts_language`) stamps the
+ * two search_vector trigger functions with `getFtsLanguage()` at apply time,
+ * but the schema templates that `initSchema()` replays still carry the
+ * literal 'english'. Those templates are applied with `CREATE OR REPLACE
+ * FUNCTION`, so every `initSchema()` — including the one behind
+ * `gbrain init --migrate-only`, which reports "Schema up to date" — silently
+ * reverts a non-English brain's trigger functions to english. The write side
+ * then tokenizes under a different configuration than the read side, and
+ * nothing warns: rows keep being indexed, just unreachable by the queries
+ * that were supposed to find them.
+ *
+ * Mirrors `applyChunkEmbeddingIndexPolicy()`: a runtime-config-driven rewrite
+ * of the static schema template, applied at the same seam in both engines.
+ *
+ * No-op for the default configuration, so English installs get a
+ * byte-identical schema string.
+ */
+export function applyFtsLanguagePolicy(sql: string): string {
+  const lang = getFtsLanguage();
+  if (lang === DEFAULT_LANGUAGE) return sql;
+  // getFtsLanguage() validates against VALID_CONFIG_NAME, so the value is
+  // safe to interpolate as a SQL string literal.
+  return sql.replaceAll(`to_tsvector('${DEFAULT_LANGUAGE}',`, `to_tsvector('${lang}',`);
+}
