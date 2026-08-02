@@ -10,33 +10,82 @@
  * Zero dependencies. Deterministic. No network. It does NOT call gbrain — it
  * only writes Markdown files.
  *
+ * All-or-nothing. Both integrity checks below run BEFORE the first write, so a
+ * refused import leaves no partial output behind to be mistaken for a whole one.
+ *
+ *   1. Declared counts. envelope-v0 requires `meta.conversation_count` and
+ *      `meta.message_count`: the envelope states its own totals. Each is judged
+ *      on its own. One that disagrees with what the file actually contains, or
+ *      that is present but is not a non-negative integer, refuses the import
+ *      (exit 2) — a mismatch means the envelope is truncated, hand-edited, or
+ *      from a broken converter, and nothing here can tell which part is
+ *      missing. A count that is simply absent cannot be checked against
+ *      anything; the envelope imports, and stderr names the field whose half of
+ *      the check was skipped.
+ *   2. Existing target files. A file already occupying a target filename is
+ *      only overwritten when it is safe: byte-identical content (a re-import),
+ *      or a page this importer wrote from the SAME conversation id (a refreshed
+ *      export legitimately updating its own page). Anything else — a foreign
+ *      file, or one of our pages whose conversation id cannot be matched — is a
+ *      conflict, and the import is refused (exit 2).
+ *
  * Output layout:
  *   - One page per conversation, filename = date + conversation id (shared
  *     titles cannot collide; the id is the natural key). A duplicate id
  *     overwrites its own filename and warns on stderr; stdout reports DISTINCT
  *     files written, not write calls.
+ *   - `id` is `string | null` in envelope-v0 and a converter must not synthesize
+ *     one, so null is a conforming shape, not malformed input. Such a
+ *     conversation falls back to a POSITIONAL filename (`conv-N`) — a function
+ *     of array position, not of identity. That is precisely why check 2 refuses
+ *     to overwrite an id-less page: two unrelated exports both put their first
+ *     conversation at `conv-1`, and nothing in either file can distinguish
+ *     "this conversation, updated" from "a different conversation entirely".
  *   - Frontmatter: `type: conversation` (keeps pages eligible for
  *     conversation-facts extraction and chronicle behavior after sync), the
  *     source provider, the conversation id, and `origin: memvelope/envelope-v0`.
  *   - Page `date` is the first 10 chars of the conversation's ISO-8601
  *     `created_at`. Body keeps message-id citations beside each speaker turn.
  *
+ * The stdout receipt reports MESSAGES as well as pages. Counting only pages hid
+ * every message-level loss by construction: a conversation that arrives with
+ * one turn instead of forty still writes exactly one page.
+ *
+ * Exit codes: 0 success · 1 usage or unrecognized format · 2 refused import
+ * (declared-count mismatch, or a target file that must not be overwritten).
+ *
+ * Known limit: check 2 is check-then-write, not atomic. Two imports running
+ * SIMULTANEOUSLY into one directory can both pass the check before either
+ * writes, and one then clobbers the other. Measured 2026-08-02 over 40 trials
+ * of two concurrent conflicting imports: 19 refused, 21 raced. Sequential runs
+ * — what this CLI is for — are fully covered; closing the race needs a lock
+ * file, which is a larger change than this guard.
+ *
  * Memory: the whole envelope is held in memory (no streaming); envelopes are
  * far smaller than the vendor exports they serialize.
  *
  * Verify:
  *   node scripts/envelope-to-gbrain.mjs test/fixtures/memvelope/sample.mve.json /tmp/out
- *     -> expect "wrote 1 markdown page(s)"
+ *     -> expect "wrote 1 markdown page(s) (4 message(s))"
  *   bun test test/envelope-to-gbrain.test.ts
  *
- * STATUS: live-verified against gbrain v0.42.56.0 on 2026-07-03: the sample
- * fixture -> 1 page; a real 662MB Claude export -> 353 conversations = 353
- * distinct pages (no collisions), searchable after sync with provenance and
- * message-id citations intact.
+ * STATUS:
+ *   - 2026-07-03, pre-guard behavior, live-verified against gbrain v0.42.56.0:
+ *     the sample fixture -> 1 page; a real 662MB Claude export -> 353
+ *     conversations = 353 distinct pages (no collisions), searchable after sync
+ *     with provenance and message-id citations intact.
+ *   - 2026-08-02, the two guards above: verified against all 12 golden fixtures
+ *     from the memvelope reference converter and against fresh envelopes
+ *     produced by running that converter over synthetic ChatGPT and Claude
+ *     exports — every one imports at exit 0 with zero stderr bytes and message
+ *     text byte-identical to the envelope. Neither guard has been run against a
+ *     full-size real export.
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+
+const EXIT_REFUSED = 2;
 
 const [, , envelopePath, outDir = './brain/conversations'] = process.argv;
 if (!envelopePath) {
@@ -53,10 +102,126 @@ if (env.memvelope !== 'envelope-v0') {
 const slug = (s, fallback) =>
   (String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || fallback).slice(0, 60);
 
-mkdirSync(outDir, { recursive: true });
-const filesWritten = new Set();
-let collisions = 0;
+/** The file's contents, or null if it does not exist. Any other error is the
+ *  caller's problem to fail on — an unreadable target must never be silently
+ *  treated as an absent one, because "absent" is the answer that permits a
+ *  write. */
+function readIfPresent(path) {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return null;
+    throw err;
+  }
+}
+
+/** The conversation identity recorded in a page this importer previously wrote,
+ *  or null if the file is not recognizably one of ours.
+ *
+ *  A deliberate line scan of our own emitted shape rather than a YAML parse:
+ *  this script has no dependencies, and anything it cannot confidently
+ *  recognize must fall through to "foreign" — the answer that refuses the
+ *  overwrite. `{ id: null }` means "ours, but written from a conversation that
+ *  carried no id", which is a different thing from "not ours" and must not be
+ *  collapsed into it. */
+function existingPageIdentity(text) {
+  if (!text.startsWith('---\n')) return null;
+  const end = text.indexOf('\n---\n', 3);
+  if (end === -1) return null;
+  const ID_KEY = 'memvelope_conversation_id: ';
+  let ours = false;
+  let id = null;
+  for (const line of text.slice(4, end).split('\n')) {
+    if (line === 'origin: memvelope/envelope-v0') {
+      ours = true;
+    } else if (line.startsWith(ID_KEY)) {
+      try {
+        const value = JSON.parse(line.slice(ID_KEY.length));
+        if (typeof value !== 'string') return null;
+        id = value;
+      } catch {
+        return null;
+      }
+    }
+  }
+  return ours ? { id } : null;
+}
+
 const conversations = env.conversations || [];
+
+// ---------------------------------------------------------------------------
+// Check 1 — the envelope's own declared counts, before anything is written.
+//
+// Each count is judged on its own. Treating "either field exists" as "the
+// envelope is checkable" gave a half-declared envelope a half check and total
+// silence, which is the very defect this guard exists to close.
+// ---------------------------------------------------------------------------
+
+/** How a declared count is to be read: a usable number, absent, or present but
+ *  not a count at all. The third case must not collapse into the second —
+ *  saying "declares no count" about a file that declares a broken one is a
+ *  false statement, and it would be printed over a real truncation. */
+function readDeclaredCount(value) {
+  if (value === undefined) return { state: 'absent' };
+  if (Number.isInteger(value) && value >= 0) return { state: 'declared', value };
+  return { state: 'malformed' };
+}
+
+const actualConversations = conversations.length;
+const actualMessages = conversations.reduce((sum, c) => sum + (c.messages || []).length, 0);
+const counts = [
+  { field: 'meta.conversation_count', raw: env.meta?.conversation_count, actual: actualConversations },
+  { field: 'meta.message_count', raw: env.meta?.message_count, actual: actualMessages },
+].map((c) => ({ ...c, ...readDeclaredCount(c.raw) }));
+
+const malformed = counts.filter((c) => c.state === 'malformed');
+if (malformed.length) {
+  // envelope-v0 types both counts as non-negative integers. A count that is
+  // present but is not one cannot be compared, and an envelope this malformed
+  // is not a file to trust with an unchecked import.
+  console.error('refusing to import: the envelope declares a count that is not a non-negative integer.');
+  for (const c of malformed) console.error(`  ${c.field} = ${JSON.stringify(c.raw)}`);
+  console.error('Nothing was written. Re-export, or correct the declared counts if the contents are known-good.');
+  process.exit(EXIT_REFUSED);
+}
+
+const mismatched = counts.filter((c) => c.state === 'declared' && c.value !== c.actual);
+if (mismatched.length) {
+  // Fail closed. The counts are the envelope's own statement of what it holds,
+  // and they disagree with what it holds — so the file is not what it claims,
+  // and nothing here can tell which conversations or turns went missing. A
+  // partial import that exits 0 is how an archive silently becomes a fragment.
+  console.error("refusing to import: the envelope's declared counts disagree with its contents.");
+  // Print both counts, not only the failing one: seeing which half agrees is
+  // what tells a truncated download apart from a broken converter.
+  for (const c of counts) {
+    const declared = c.state === 'declared' ? c.value : 'not declared';
+    console.error(`  ${c.field} declared ${declared}, envelope contains ${c.actual}`);
+  }
+  console.error('This envelope is truncated, hand-edited, or from a broken converter. Nothing was written. Re-export, or correct the declared counts if the contents are known-good.');
+  process.exit(EXIT_REFUSED);
+}
+
+const absent = counts.filter((c) => c.state === 'absent');
+if (absent.length) {
+  // envelope-v0 requires both fields, so this file is already non-conforming.
+  // Import it anyway — hand-authored envelopes are useful — but never let an
+  // unchecked import look identical to a checked one on the way past. Naming
+  // the missing field matters: with one count present, only half the envelope
+  // was verified, and the receipt alone cannot show which half.
+  console.warn(
+    `warning: envelope declares no ${absent.map((c) => c.field).join(' and no ')} (envelope-v0 requires both) — integrity check skipped for ${absent.length === 2 ? 'conversations and messages' : absent[0].field.replace('meta.', '').replace('_count', 's')}; a truncated envelope would import silently.`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Render every page in memory first. Rendering has no side effects, so the
+// conflict check below can see the complete set of target files — including the
+// final content of any filename an envelope writes more than once — while the
+// output directory is still untouched.
+// ---------------------------------------------------------------------------
+const pages = new Map();
+let collisions = 0;
 for (const [i, c] of conversations.entries()) {
   const date = (c.created_at || '').slice(0, 10);
   // Name the file by the conversation's own id — the natural unique key — so two
@@ -65,8 +230,9 @@ for (const [i, c] of conversations.entries()) {
   // carries uniqueness. Positional fallback keeps names unique and deterministic
   // when an envelope omits an id.
   // One predicate for "this conversation carries its own id", shared by the
-  // filename and the frontmatter below. Keeping it in a single place is what
-  // stops the two from disagreeing about whether an id exists.
+  // filename, the frontmatter below, and the conflict check further down.
+  // Keeping it in a single place is what stops them disagreeing about whether
+  // an id exists.
   const hasId = typeof c.id === 'string' && c.id.trim() !== '';
   const convId = hasId ? c.id.trim() : `conv-${i + 1}`;
   // `date` is third-party, exactly like `convId`, so it gets the same slug()
@@ -101,21 +267,82 @@ for (const [i, c] of conversations.entries()) {
     '---',
     '',
   ].join('\n');
-  const body = (c.messages || [])
+  const messages = c.messages || [];
+  const body = messages
     .map((m) => `**${m.role === 'user' ? 'Me' : 'Assistant'}** (${m.ts || 'no timestamp'} · ${m.id}):\n\n${m.text}`)
     .join('\n\n---\n\n');
   // Never lose a page silently: if two conversations still map to the same
-  // filename (e.g. an envelope carrying duplicate ids), warn loudly instead of
-  // overwriting in silence, and report the count of DISTINCT files written — not
-  // the number of write calls, which is what hid the old title-collision bug.
-  if (filesWritten.has(name)) {
+  // filename (e.g. an envelope carrying duplicate ids — which the spec permits,
+  // since merging never deduplicates), warn loudly instead of overwriting in
+  // silence, and report the count of DISTINCT files written — not the number of
+  // write calls, which is what hid the old title-collision bug.
+  if (pages.has(name)) {
     collisions += 1;
     console.warn(`warning: filename collision on "${name}" — conversation id ${JSON.stringify(c.id)} is not unique; overwriting the earlier page.`);
   }
-  writeFileSync(join(outDir, name), front + `# ${c.title || 'Conversation'}\n\n` + body + '\n');
-  filesWritten.add(name);
+  pages.set(name, {
+    content: front + `# ${c.title || 'Conversation'}\n\n` + body + '\n',
+    messageCount: messages.length,
+    // The conversation's OWN id, or null. Never the positional fallback: that
+    // is a filename, not an identity, and treating it as one is the whole bug.
+    conversationId: hasId ? convId : null,
+  });
 }
-console.log(`wrote ${filesWritten.size} markdown page(s) to ${outDir} — point gbrain's sync at this directory.`);
+
+// ---------------------------------------------------------------------------
+// Check 2 — target files that already exist and were not written by this run.
+// `pages` is per-process and the default outDir is a fixed literal, so without
+// this a second import into the same directory clobbered the first in silence.
+// Only the exact target filenames are examined: unrelated markdown sitting in
+// the output directory is none of this script's business.
+// ---------------------------------------------------------------------------
+const conflicts = [];
+for (const [name, page] of pages) {
+  const existing = readIfPresent(join(outDir, name));
+  // Absent, or already exactly what we are about to write (a re-import of the
+  // same envelope). Rewriting identical bytes changes nothing.
+  if (existing === null || existing === page.content) continue;
+  const identity = existingPageIdentity(existing);
+  if (identity === null) {
+    conflicts.push(`  ${name} — already exists and was not written by this importer.`);
+  } else if (identity.id === null) {
+    // Ours, but written from an id-less conversation, so its filename encodes
+    // array position rather than identity. An update and a wholly different
+    // conversation are indistinguishable here; guessing either way risks
+    // destroying an import.
+    conflicts.push(`  ${name} — written by this importer from a conversation with no id, so it cannot be matched to this envelope's conversation. Refusing to guess.`);
+  } else if (identity.id !== page.conversationId) {
+    // Distinct ids that slug to one filename (truncation at 60 chars, or
+    // characters that slug away). Rare, but silently fatal if permitted.
+    conflicts.push(`  ${name} — holds conversation ${JSON.stringify(identity.id)}, but this envelope maps ${JSON.stringify(page.conversationId)} to the same filename.`);
+  }
+  // Otherwise: same conversation id, different content — a refreshed export
+  // updating its own page. That is exactly what re-importing is for.
+}
+
+if (conflicts.length) {
+  console.error(`refusing to import: ${conflicts.length} target file(s) in ${outDir} would be overwritten with different content.`);
+  for (const line of conflicts) console.error(line);
+  console.error('Nothing was written. Import into a different output directory, or delete the listed file(s) if they are stale.');
+  process.exit(EXIT_REFUSED);
+}
+
+// ---------------------------------------------------------------------------
+// Write. Everything above has already passed, so this loop cannot refuse.
+// ---------------------------------------------------------------------------
+mkdirSync(outDir, { recursive: true });
+let messagesWritten = 0;
+for (const [name, page] of pages) {
+  writeFileSync(join(outDir, name), page.content);
+  messagesWritten += page.messageCount;
+}
+
+console.log(`wrote ${pages.size} markdown page(s) (${messagesWritten} message(s)) to ${outDir} — point gbrain's sync at this directory.`);
 if (collisions) {
   console.warn(`warning: ${collisions} filename collision(s) — ${collisions} page(s) overwritten. Deduplicate conversation ids in the envelope to avoid data loss.`);
+}
+if (messagesWritten !== actualMessages) {
+  // The page count alone cannot show this: an overwritten page still leaves one
+  // file on disk, so only the message tally reveals the turns that went with it.
+  console.warn(`warning: ${actualMessages - messagesWritten} message(s) in the envelope are not on disk — ${actualMessages} read, ${messagesWritten} written.`);
 }
