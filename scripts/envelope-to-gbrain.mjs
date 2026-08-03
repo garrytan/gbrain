@@ -314,15 +314,33 @@ function headerClock(ts) {
   const m = TS_SHAPE.exec(ts.trim());
   if (m === null) return null;
   const [, year, month, day, hour, minute, sign, offsetHour, offsetMinute] = m;
-  if (sign === undefined) return `${year}-${month}-${day} ${hour}:${minute}`;
-  const offset = (Number(offsetHour) * 60 + Number(offsetMinute)) * (sign === '-' ? -1 : 1);
-  // Numbers only — no string parsing, so no engine-dependent interpretation of
-  // the input. Built with the UTC setters rather than `Date.UTC`, which applies
-  // MakeFullYear and would silently read a four-digit year of `0050` as 1950.
+  const [y, mo, d, h, mi] = [year, month, day, hour, minute].map(Number);
+  // The regex counts digits; it does not know a calendar. Without this it
+  // accepts `2025-99-99T99:99` — and `imessage-slack` MATCHES a header built
+  // from those digits, so gbrain stores an instant no calendar contains.
+  // `2025-02-30` is worse: it yields a VALID Date silently shifted to March 2.
+  // `created_at` is already validated before it reaches a header (see
+  // `pageDate`); the per-message clock is the same untrusted surface and is
+  // used far more often. Numbers only — no string parsing, so no
+  // engine-dependent interpretation of the input; and the UTC setters rather
+  // than `Date.UTC`, which applies MakeFullYear and would read a four-digit
+  // year of `0050` as 1950.
+  if (h > 23 || mi > 59) return null;
   const utc = new Date(0);
-  utc.setUTCFullYear(Number(year), Number(month) - 1, Number(day));
-  utc.setUTCHours(Number(hour), Number(minute) - offset, 0, 0);
-  if (!Number.isFinite(utc.getTime())) return null;
+  utc.setUTCFullYear(y, mo - 1, d);
+  utc.setUTCHours(h, mi, 0, 0);
+  // A date that does not survive its own round trip was never a date: month 99
+  // and February 30 both roll, and the roll is what this catches.
+  if (utc.getUTCFullYear() !== y || utc.getUTCMonth() !== mo - 1 || utc.getUTCDate() !== d) {
+    return null;
+  }
+  // No offset: the digits are already UTC by this script's policy, so they are
+  // copied across rather than reformatted. This is the common path, and it does
+  // no arithmetic at all.
+  if (sign === undefined) return `${year}-${month}-${day} ${hour}:${minute}`;
+  const [oh, om] = [offsetHour, offsetMinute].map(Number);
+  if (oh > 23 || om > 59) return null;
+  utc.setUTCMinutes(utc.getUTCMinutes() - (oh * 60 + om) * (sign === '-' ? -1 : 1));
   const pad = (n, width = 2) => String(n).padStart(width, '0');
   // The year is padded to four digits like every other field: the pattern's
   // regex requires `\d{4}`, so an unpadded `49` would emit a header that does

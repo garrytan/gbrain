@@ -32,12 +32,20 @@ function tempDir(): string {
   return dir;
 }
 
-async function runImporter(envelopePath: string, outDir = tempDir()) {
+async function runImporter(
+  envelopePath: string,
+  outDir = tempDir(),
+  // Extra environment for the child. Used to pin TZ: a test that only catches a
+  // local-time bug because THIS box happens to be in one silently stops
+  // catching it on a UTC runner.
+  extraEnv: Record<string, string> = {},
+) {
   // The script is plain Node-compatible ESM; Bun can execute it directly in CI
   // without requiring a separate node toolchain.
   const proc = Bun.spawn([process.execPath, SCRIPT_PATH, envelopePath, outDir], {
     stdout: 'pipe',
     stderr: 'pipe',
+    env: { ...process.env, ...extraEnv },
   });
   await proc.exited;
   const stdout = await new Response(proc.stdout).text();
@@ -1481,5 +1489,105 @@ describe('envelope-to-gbrain importer — F5 non-conforming scalars', () => {
     expect(first).toContain('  - id: m1');
     expect(first).toContain("    ts: '2025-11-02T14:22:51.000Z'");
     expect(parsed.frontmatter.messages).toEqual([{ id: 'm1', ts: '2025-11-02T14:22:51.000Z' }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F5 — the two guards an adversarial pass found had NO test that fires. A guard
+// with a threat-model comment and no failing test is a comment, not a guard.
+// ---------------------------------------------------------------------------
+describe('envelope-to-gbrain importer — F5 guards that must stay armed', () => {
+  function envelopeFile(conversation: Record<string, unknown>): string {
+    const messages = conversation.messages as unknown[];
+    return writeEnvelope({
+      memvelope: 'envelope-v0',
+      meta: { source_provider: 'chatgpt', conversation_count: 1, message_count: messages.length },
+      conversations: [{
+        id: 'c-guard',
+        title: 'Guard',
+        created_at: '2025-11-02T14:22:51.000Z',
+        updated_at: '2025-11-02T14:22:51.000Z',
+        ...conversation,
+      }],
+    });
+  }
+
+  // GUARD 1 — `created_at` is validated before it reaches a header. It is
+  // third-party and only length-limited, so ten characters can carry a newline.
+  test('a hostile created_at cannot break the turn header it anchors', async () => {
+    const result = await runImporter(envelopeFile({
+      created_at: '1\nowner: z\n',
+      messages: [
+        { id: 'm1', role: 'user', ts: null, text: 'first' },
+        { id: 'm2', role: 'assistant', ts: null, text: 'second' },
+      ],
+    }));
+    const page = readOnlyMarkdown(result.outDir);
+    const md = parseMarkdown(page, 'brain/conversations/p.md');
+
+    expect(result.exitCode).toBe(0);
+    // Falls back to the epoch rather than interpolating the hostile value.
+    expect(bodyOf(page)).toContain('**Me** (1970-01-01 00:00):');
+    expect(bodyOf(page)).not.toContain('owner: z');
+    // Both turns still anchor: the guard protects the turn, not just the bytes.
+    const parsed = parseConversation(md.compiled_truth, {
+      page: { frontmatter: md.frontmatter } as never,
+    });
+    expect(parsed.messages).toHaveLength(2);
+    // The frontmatter still records what the envelope actually said.
+    expect(frontmatterOf(page).date).toBe('1\nowner: z');
+  });
+
+  // GUARD 2 — the reason `TS_SHAPE` exists instead of `new Date(string)`: a
+  // date-time with no zone designator is parsed as LOCAL time by ECMAScript, so
+  // the same envelope would import differently on two machines. TZ is pinned
+  // explicitly; relying on the host's zone makes this pass on a UTC CI box for
+  // the wrong reason.
+  test.each(['UTC', 'Asia/Kolkata', 'America/Los_Angeles', 'Pacific/Kiritimati'])(
+    'a designator-less timestamp imports identically under TZ=%s',
+    async (tz) => {
+      const result = await runImporter(
+        envelopeFile({ messages: [{ id: 'm1', role: 'user', ts: '2025-11-02T14:22:51', text: 'x' }] }),
+        tempDir(),
+        { TZ: tz },
+      );
+      expect(result.exitCode).toBe(0);
+      expect(bodyOf(readOnlyMarkdown(result.outDir))).toContain('**Me** (2025-11-02 14:22):');
+    },
+  );
+
+  // GUARD 3 — the shape regex counts digits, not calendars.
+  test.each([
+    ['month 99 and minute 99', '2025-99-99T99:99:00Z'],
+    ['hour 24', '2025-11-02T24:00:00Z'],
+    ['February 30', '2025-02-30T10:00:00Z'],
+    ['month 13', '2025-13-01T10:00:00Z'],
+    ['day 00', '2025-11-00T10:00:00Z'],
+    ['minute 60', '2025-11-02T10:60:00Z'],
+    ['offset 99:99', '2025-11-02T14:22:51+99:99'],
+  ])('an impossible timestamp (%s) falls back instead of being written', async (_label, ts) => {
+    const result = await runImporter(envelopeFile({ messages: [{ id: 'm1', role: 'user', ts, text: 'x' }] }));
+    const page = readOnlyMarkdown(result.outDir);
+
+    expect(result.exitCode).toBe(0);
+    // The conversation's date at midnight — never the impossible digits, which
+    // imessage-slack WOULD have matched, filing the turn at an instant no
+    // calendar contains. February 30 is the sharp one: it yields a valid JS
+    // Date silently shifted to March 2.
+    expect(bodyOf(page)).toContain('**Me** (2025-11-02 00:00):');
+    // The envelope's own value is still recorded, verbatim and quoted.
+    expect(frontmatterOf(page).messages).toEqual([{ id: 'm1', ts }]);
+  });
+
+  test('CONTROL: the legal boundaries of each field are still accepted', async () => {
+    for (const [ts, expected] of [
+      ['2025-12-31T23:59:00Z', '2025-12-31 23:59'],
+      ['2024-02-29T00:00:00Z', '2024-02-29 00:00'],
+      ['2025-01-01T00:00:00Z', '2025-01-01 00:00'],
+      ['2025-11-02T14:22:51+23:59', '2025-11-01 14:23'],
+    ] as const) {
+      const result = await runImporter(envelopeFile({ messages: [{ id: 'm1', role: 'user', ts, text: 'x' }] }));
+      expect(bodyOf(readOnlyMarkdown(result.outDir))).toContain(`**Me** (${expected}):`);
+    }
   });
 });
