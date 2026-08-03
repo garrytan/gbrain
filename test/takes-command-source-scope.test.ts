@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -193,5 +193,81 @@ describe('gbrain takes CLI source scoping', () => {
     });
 
     expect(listCalls).toEqual([{ page_id: 11, active: true, limit: 500 }]);
+  });
+});
+
+describe('gbrain takes add — page validated before markdown is written', () => {
+  test('missing page leaves no orphaned .md on disk', async () => {
+    const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-takes-orphan-'));
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-takes-orphan-home-'));
+    tmpRoots.push(brainDir, home);
+    const { engine, added } = makeEngine();
+
+    // makeEngine returns [] for any slug other than shared/page, so getPageId
+    // takes its not-found path and exits 1.
+    const errs: string[] = [];
+    const errSpy = spyOn(console, 'error').mockImplementation((...a: unknown[]) => { errs.push(a.join(' ')); });
+    const exitSpy = spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`EXIT:${code}`);
+    }) as never);
+
+    let exited: string | null = null;
+    try {
+      await withEnv({ GBRAIN_SOURCE: undefined, GBRAIN_HOME: home }, async () => {
+        await runTakes(engine, [
+          'add',
+          'missing/page',
+          '--claim',
+          'Claim against a page that was never synced',
+          '--kind',
+          'bet',
+          '--who',
+          'council',
+          '--dir',
+          brainDir,
+        ]);
+      });
+    } catch (e) {
+      if (!(e as Error).message.startsWith('EXIT:')) throw e;
+      exited = (e as Error).message;
+    } finally {
+      errSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+
+    expect(exited).toBe('EXIT:1');
+    expect(errs.join('\n')).toContain('Page not found in brain: missing/page');
+    // Pre-fix the .md was written before getPageId ran, so the take survived
+    // on disk with no DB row — invisible to scorecard, but real enough to
+    // shift row numbering on the next add.
+    expect(existsSync(join(brainDir, 'missing/page.md'))).toBe(false);
+    expect(added).toEqual([]);
+  });
+
+  test('existing page still writes both markdown and DB', async () => {
+    const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-takes-ok-'));
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-takes-ok-home-'));
+    tmpRoots.push(brainDir, home);
+    const { engine, added } = makeEngine();
+
+    await withEnv({ GBRAIN_SOURCE: undefined, GBRAIN_HOME: home }, async () => {
+      await runTakes(engine, [
+        'add',
+        'shared/page',
+        '--claim',
+        'Claim against a real page',
+        '--kind',
+        'bet',
+        '--who',
+        'council',
+        '--dir',
+        brainDir,
+      ]);
+    });
+
+    expect(existsSync(join(brainDir, 'shared/page.md'))).toBe(true);
+    expect(readFileSync(join(brainDir, 'shared/page.md'), 'utf8')).toContain('Claim against a real page');
+    expect(added.flat()).toHaveLength(1);
+    expect(added.flat()[0]!.page_id).toBe(11);
   });
 });

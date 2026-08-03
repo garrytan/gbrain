@@ -210,6 +210,13 @@ async function cmdAdd(engine: BrainEngine, args: string[], sourceId?: string): P
   const brainDir = await resolveBrainDir(engine, dirArg ?? null);
 
   await withPageLock(slug, async () => {
+    // Resolve the page BEFORE touching the markdown. getPageId exits 1 when the
+    // page isn't in the brain; doing this after writeBody left a .md file
+    // carrying a take with no DB row — invisible to scorecard/calibration but
+    // present on disk, so a later `takes add` would number the next row past a
+    // take the DB never saw. update/supersede/resolve already resolve first.
+    const pageId = await getPageId(engine, slug, sourceId);
+
     const path = pageFilePath(brainDir, slug);
     const body = readBodyOrEmpty(path);
     const { body: nextBody, rowNum } = upsertTakeRow(body, {
@@ -217,8 +224,6 @@ async function cmdAdd(engine: BrainEngine, args: string[], sourceId?: string): P
     });
     writeBody(path, nextBody);
 
-    // Mirror to DB. Page may not be in DB yet if not synced — caller must run sync first.
-    const pageId = await getPageId(engine, slug, sourceId);
     await engine.addTakesBatch([{
       page_id: pageId, row_num: rowNum, claim, kind, holder, weight,
       since_date: since, source, active: true, superseded_by: null,
