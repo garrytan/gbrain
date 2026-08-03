@@ -136,18 +136,11 @@ function roundTrip(page: string): { first: string; second: string; parsed: Retur
   return { first, second, parsed: p2 };
 }
 
-/** Write an envelope to a temp file and return its path. */
-function writeEnvelope(envelope: unknown): string {
-  const path = join(tempDir(), 'envelope.mve.json');
-  writeFileSync(path, JSON.stringify(envelope));
-  return path;
-}
-
 /** A one-conversation envelope with the given messages. */
 function envelopeWith(
   messages: Array<Record<string, unknown>>,
   conversation: Record<string, unknown> = {},
-): unknown {
+): { memvelope: string; meta: Record<string, unknown>; conversations: Array<Record<string, unknown>> } {
   return {
     memvelope: 'envelope-v0',
     meta: { source_provider: 'chatgpt', conversation_count: 1, message_count: messages.length },
@@ -443,6 +436,7 @@ describe('envelope-to-gbrain importer', () => {
 // overrides them explicitly, and one that doesn't gets a self-consistent
 // envelope rather than an accidental mismatch.
 function writeEnvelope(fields: {
+  memvelope?: string;
   meta?: Record<string, unknown>;
   conversations: Array<Record<string, unknown>>;
   fileName?: string;
