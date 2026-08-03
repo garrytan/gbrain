@@ -6,6 +6,7 @@
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { embedStaleTakes } from '../src/core/embed-takes.ts';
 
 let engine: PGLiteEngine;
 let alicePageId: number;
@@ -390,5 +391,36 @@ describe('countStaleTakes + listStaleTakes', () => {
     expect(stale.length).toBe(count);
     expect(stale[0]).toHaveProperty('take_id');
     expect(stale[0]).toHaveProperty('claim');
+  });
+});
+
+describe('take embedding writes', () => {
+  test('persists a take vector and removes it from the stale set', async () => {
+    const [take] = await engine.listTakes({ page_id: alicePageId, active: true, limit: 1 });
+    expect(take).toBeDefined();
+    const dims = Number(await engine.getConfig('embedding_dimensions')) || 1536;
+
+    const updated = await engine.updateTakeEmbeddings([{
+      take_id: take!.id,
+      embedding: new Float32Array(dims).fill(0.25),
+    }]);
+
+    expect(updated).toBe(1);
+    expect(await engine.countStaleTakes()).toBeGreaterThanOrEqual(0);
+    const stored = await engine.getTakeEmbeddings([take!.id]);
+    expect(stored.get(take!.id)?.length).toBe(dims);
+  });
+
+  test('embedding pass writes provider vectors and activates vector search', async () => {
+    const dims = Number(await engine.getConfig('embedding_dimensions')) || 1536;
+    const result = await embedStaleTakes(engine, {
+      batchSize: 2,
+      embedFn: async (texts) => texts.map(() => new Float32Array(dims).fill(0.5)),
+    });
+
+    expect(result.failures).toBe(0);
+    expect(result.embedded).toBeGreaterThan(0);
+    const hits = await engine.searchTakesVector(new Float32Array(dims).fill(0.5), { limit: 10 });
+    expect(hits.length).toBeGreaterThan(0);
   });
 });

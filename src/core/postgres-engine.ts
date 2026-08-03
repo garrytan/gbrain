@@ -6,7 +6,7 @@ import type {
   ReservedConnection,
   DreamVerdict, DreamVerdictInput,
   FileSpec, FileRow,
-  TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow,
+  TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow, TakeEmbeddingInput,
   TakeResolution, SynthesisEvidenceInput,
   TakesScorecard, TakesScorecardOpts, CalibrationBucket, CalibrationCurveOpts,
   FactRow, FactKind, FactVisibility, FactInsertStatus,
@@ -4839,6 +4839,48 @@ export class PostgresEngine implements BrainEngine {
          active        = EXCLUDED.active,
          updated_at    = now()
        RETURNING 1`,
+      [],
+      [{ rows }],
+    );
+    return result.length;
+  }
+
+  async updateTakeEmbeddings(rowsIn: TakeEmbeddingInput[], opts?: BatchOpts): Promise<number> {
+    if (rowsIn.length === 0) return 0;
+    return this.batchRetry(
+      opts?.auditSite ?? 'updateTakeEmbeddings',
+      opts?.signal,
+      () => this._updateTakeEmbeddingsOnce(rowsIn),
+      rowsIn.length,
+    );
+  }
+
+  private async _updateTakeEmbeddingsOnce(rowsIn: TakeEmbeddingInput[]): Promise<number> {
+    const seen = new Set<number>();
+    const rows = rowsIn.map(({ take_id, embedding }) => {
+      if (!Number.isInteger(take_id) || take_id <= 0) {
+        throw new Error(`invalid take_id: ${take_id}`);
+      }
+      if (seen.has(take_id)) throw new Error(`duplicate take_id in embedding batch: ${take_id}`);
+      seen.add(take_id);
+      const values = Array.from(embedding);
+      if (values.length === 0 || values.some(v => !Number.isFinite(v))) {
+        throw new Error(`invalid embedding for take_id=${take_id}`);
+      }
+      return { take_id, embedding: `[${values.join(',')}]` };
+    });
+    const result = await executeRawJsonb(
+      this,
+      `WITH updated AS (
+         UPDATE takes AS t
+            SET embedding = v.embedding::vector,
+                embedded_at = now(),
+                updated_at = now()
+           FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v(take_id bigint, embedding text)
+          WHERE t.id = v.take_id AND t.active
+          RETURNING t.id
+       )
+       SELECT id FROM updated`,
       [],
       [{ rows }],
     );
