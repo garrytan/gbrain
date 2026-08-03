@@ -76,19 +76,22 @@
  *
  * Fenced code blocks (``` or ~~~, up to three leading spaces) are not scanned
  * for turn headers, timeline sentinels or the H1 - but a fence reaches only to
- * the end of the turn it opened in. On the recorded path the scan runs in two
- * phases so that balanced fences genuinely win: the first pass honors every
- * fence that closes, keeping even a quoted line that carries the next
- * expected clock as sample text - a pasted transcript quoting this very
- * conversation must not steal a boundary from outside its fence. Only when
- * that pass anchors fewer turns than the record holds is a fence plausibly
- * swallowing a real boundary, and the scan reruns with the demotion rule
- * armed: a fence still open at a line carrying the next expected clock loses
- * - it is read as ordinary text, with a warning naming the line it opened on.
- * A fence still open at the end of the page is demoted in either phase. All
- * of it is the same trade: a fence must never be allowed to swallow the
- * turns after it, and a spurious stretch of ordinary text is a far smaller
- * failure than a turn deleted in silence. On
+ * the end of the turn it opened in. On the recorded path the scan runs in
+ * stages so that balanced fences genuinely win: the first honors every fence
+ * that closes, keeping even a quoted line that carries the next expected
+ * clock as sample text - a pasted transcript quoting this very conversation
+ * must not steal a boundary from outside its fence. Only when that stage
+ * anchors fewer turns than the record holds is some fence plausibly
+ * swallowing a real boundary, and then each fence is tried ALONE: the fence
+ * to lose is the one whose demotion by itself anchors every recorded turn,
+ * which is what keeps a balanced fence that merely quotes a boundary from
+ * being demoted when a different fence caused the shortfall. Only if no
+ * single demotion suffices does a greedy pass demote every fence still open
+ * at a next-expected-clock line. Each demotion is warned, naming the line
+ * the fence opened on; a fence still open at the end of the page is demoted
+ * in every stage. All of it is the same trade: a fence must never be allowed
+ * to swallow the turns after it, and a spurious stretch of ordinary text is
+ * a far smaller failure than a turn deleted in silence. On
  * the legacy path the fence-versus-boundary signal is the blank / `---` /
  * blank separator the old importer wrote between turns, as before - and note
  * the demotion's reach, which an earlier revision of this header overstated:
@@ -528,15 +531,80 @@ function parseFrontmatter(lines) {
 // What a plain (unquoted) YAML scalar means to js-yaml 3.14's default schema
 // - the reader and writer gbrain actually uses: null, boolean and number
 // forms are not strings. The importer JSON-quotes every string it takes from
-// an envelope and js-yaml re-quotes any string that LOOKS like one of these
+// an envelope and js-yaml re-quotes any string that resolves to one of these
 // on the way back out, so an unquoted `id: 123` really is a number and
 // refusing it is correct - reading it as the string "123" would fabricate an
-// id the record does not hold. js-yaml 3.14 also reads binary (`0b1010`) and
-// sexagesimal (`190:20:30`) integers and sexagesimal floats, so those refuse
-// too. (`yes`, `no`, `on`, `off` are strings to js-yaml 3.14's default
-// schema, and stay strings here.)
-const PLAIN_NON_STRING =
-  /^(true|false|True|False|TRUE|FALSE|[-+]?\d[\d_]*|[-+]?0b[01_]+|0x[\dA-Fa-f_]+|0o[0-7_]+|[-+]?\d[\d_]*(:[0-5]?\d)+(\.[\d_]*)?|[-+]?(\.\d+|\d[\d_]*(\.[\d_]*)?)([eE][-+]?\d+)?|[-+]?\.(inf|Inf|INF)|\.(nan|NaN|NAN))$/;
+// id the record does not hold. The int and float checks below are ports of
+// js-yaml 3.14's own resolveYamlInteger / resolveYamlFloat (an approximating
+// regex here once refused `089` - a STRING to js-yaml, which its dumper
+// re-emits unquoted - and dropped the whole conversation after one brain
+// cycle). js-yaml's octal is the 1.1 leading-zero form, `0o` is a string,
+// trailing underscores make a string, and `yes`/`no`/`on`/`off` are strings.
+const DEC_DIGIT = /[0-9]/;
+
+function isJsYamlInteger(data) {
+  const max = data.length;
+  let index = 0;
+  let hasDigits = false;
+  if (max === 0) return false;
+  let ch = data[index];
+  if (ch === '-' || ch === '+') ch = data[(index += 1)];
+  if (ch === '0') {
+    if (index + 1 === max) return true;
+    ch = data[(index += 1)];
+    if (ch === 'b') {
+      for (index += 1; index < max; index += 1) {
+        ch = data[index];
+        if (ch === '_') continue;
+        if (ch !== '0' && ch !== '1') return false;
+        hasDigits = true;
+      }
+      return hasDigits && ch !== '_';
+    }
+    if (ch === 'x') {
+      for (index += 1; index < max; index += 1) {
+        ch = data[index];
+        if (ch === '_') continue;
+        if (!/[0-9a-fA-F]/.test(ch)) return false;
+        hasDigits = true;
+      }
+      return hasDigits && ch !== '_';
+    }
+    for (; index < max; index += 1) {
+      ch = data[index];
+      if (ch === '_') continue;
+      if (!/[0-7]/.test(ch)) return false;
+      hasDigits = true;
+    }
+    return hasDigits && ch !== '_';
+  }
+  if (ch === '_') return false;
+  for (; index < max; index += 1) {
+    ch = data[index];
+    if (ch === '_') continue;
+    if (ch === ':') break;
+    if (!DEC_DIGIT.test(ch)) return false;
+    hasDigits = true;
+  }
+  if (!hasDigits || ch === '_') return false;
+  if (ch !== ':') return true;
+  return /^(:[0-5]?[0-9])+$/.test(data.slice(index));
+}
+
+const JS_YAML_FLOAT = new RegExp(
+  '^(?:[-+]?(?:0|[1-9][0-9_]*)(?:\\.[0-9_]*)?(?:[eE][-+]?[0-9]+)?' +
+  '|\\.[0-9_]+(?:[eE][-+]?[0-9]+)?' +
+  '|[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\\.[0-9_]*' +
+  '|[-+]?\\.(?:inf|Inf|INF)' +
+  '|\\.(?:nan|NaN|NAN))$',
+);
+
+function isPlainNonString(data) {
+  if (data === 'true' || data === 'True' || data === 'TRUE') return true;
+  if (data === 'false' || data === 'False' || data === 'FALSE') return true;
+  if (isJsYamlInteger(data)) return true;
+  return JS_YAML_FLOAT.test(data) && data[data.length - 1] !== '_';
+}
 
 // A YAML comment starts at a `#` that opens the value or follows whitespace,
 // outside any quoted run. js-yaml strips comments on read, so a reader that
@@ -547,18 +615,25 @@ function stripTrailingComment(raw) {
   if (raw.startsWith('#')) return '';
   let quote = null;
   let escaped = false;
+  let closedQuoted = false;
   for (let i = 0; i < raw.length; i += 1) {
     const ch = raw[i];
     if (quote === '"') {
       if (escaped) escaped = false;
       else if (ch === '\\') escaped = true;
-      else if (ch === '"') quote = null;
+      else if (ch === '"') {
+        quote = null;
+        closedQuoted = true;
+      }
       continue;
     }
     if (quote === "'") {
       if (ch === "'") {
         if (raw[i + 1] === "'") i += 1;
-        else quote = null;
+        else {
+          quote = null;
+          closedQuoted = true;
+        }
       }
       continue;
     }
@@ -568,7 +643,10 @@ function stripTrailingComment(raw) {
       quote = ch;
       continue;
     }
-    if (ch === '#' && (raw[i - 1] === ' ' || raw[i - 1] === '\t')) {
+    // In a plain scalar a comment needs whitespace before the '#'; after a
+    // closed quoted scalar YAML ends the value at a '#' with or without one
+    // ('"a"# c' reads as "a" to js-yaml).
+    if (ch === '#' && (closedQuoted || raw[i - 1] === ' ' || raw[i - 1] === '\t')) {
       return raw.slice(0, i).trim();
     }
   }
@@ -591,7 +669,7 @@ function decodeMemberScalar(raw) {
   if (raw.startsWith('[') || raw.startsWith('{') || raw.startsWith('&') || raw.startsWith('*') || raw.startsWith('!')) {
     return { error: `a value this script does not read (${JSON.stringify(raw)})` };
   }
-  if (PLAIN_NON_STRING.test(raw)) return { value: { nonString: raw } };
+  if (isPlainNonString(raw)) return { value: { nonString: raw } };
   return { value: raw };
 }
 
@@ -881,6 +959,7 @@ function scanRecordedPass(lines, expected, disabled, demoteOnClock) {
   const boundaries = [];
   const proseHeaders = [];
   const quotedHeaders = [];
+  const openers = [];
   let open = null;
   for (let i = 0; i < lines.length; i += 1) {
     const fence = FENCE_LINE.exec(lines[i]);
@@ -895,7 +974,8 @@ function scanRecordedPass(lines, expected, disabled, demoteOnClock) {
         continue;
       }
       if (fence && !disabled.has(i) && !(fence[1][0] === '`' && fence[2].includes('`'))) {
-        open = { char: fence[1][0], len: fence[1].length, at: i };
+        open = { char: fence[1][0], len: fence[1].length, at: i, entry: { at: i, closedAt: -1 } };
+        openers.push(open.entry);
         fenced[i] = true;
       }
       continue;
@@ -906,23 +986,34 @@ function scanRecordedPass(lines, expected, disabled, demoteOnClock) {
     }
     if (header) quotedHeaders.push(i);
     fenced[i] = true;
-    if (fence && fence[1][0] === open.char && fence[1].length >= open.len && fence[2].trim() === '') open = null;
+    if (fence && fence[1][0] === open.char && fence[1].length >= open.len && fence[2].trim() === '') {
+      open.entry.closedAt = i;
+      open = null;
+    }
   }
   if (open !== null) return { reopen: { at: open.at, spanningAt: -1 } };
-  return { reopen: null, fenced, boundaries, proseHeaders, quotedHeaders };
+  return { reopen: null, fenced, boundaries, proseHeaders, quotedHeaders, openers };
 }
 
-// Two phases, so that balanced fences genuinely win. Phase 1 honors every
-// fence that closes: even a quoted line carrying the next expected clock
-// stays sample text inside one - a pasted transcript quoting this very
-// conversation must not steal a boundary from outside its fence. Only when
-// phase 1 anchors fewer turns than the record holds is a fence plausibly
-// swallowing a real boundary, and phase 2 reruns the scan with the
-// clock-demotion rule armed. Warnings are buffered per phase and only the
-// phase whose result is used speaks.
+// Balanced fences genuinely win, in two stages. Stage 1 honors every fence
+// that closes: even a quoted line carrying the next expected clock stays
+// sample text inside one - a pasted transcript quoting this very
+// conversation must not steal a boundary from outside its fence. (Fences
+// still open at the end of the body are demoted in every stage.) Only when
+// stage 1 anchors fewer turns than the record holds is some fence plausibly
+// swallowing a real boundary - and then each fence is tried ALONE: the fence
+// to lose is the one whose demotion by itself anchors every recorded turn.
+// Trying them one at a time is what keeps a balanced fence that merely
+// QUOTES a boundary from being demoted when a different fence caused the
+// shortfall: demoting the quoting fence cannot recover the turn the other
+// fence swallowed, so its trial fails and the right fence is found. Only if
+// no single demotion suffices (two swallowing fences, or a genuinely
+// mismatched body) does the greedy clock-armed demotion run as a last
+// resort. Warnings are buffered per attempt and only the attempt whose
+// result is used speaks.
 function scanRecordedFences(lines, expected, warn) {
-  const runPhase = (demoteOnClock) => {
-    const disabled = new Set();
+  const runToCompletion = (seed, demoteOnClock) => {
+    const disabled = new Set(seed);
     const buffered = [];
     for (;;) {
       const pass = scanRecordedPass(lines, expected, disabled, demoteOnClock);
@@ -933,12 +1024,26 @@ function scanRecordedFences(lines, expected, warn) {
         : `the code fence opened at body line ${pass.reopen.at + 1} is still open at the turn header on body line ${pass.reopen.spanningAt + 1}; a fence does not span a turn, so it was read as ordinary text and that turn was kept.`);
     }
   };
-  const first = runPhase(false);
+  const first = runToCompletion([], false);
   if (first.pass.boundaries.length === expected.length) {
     for (const message of first.buffered) warn(message);
     return first.pass;
   }
-  const second = runPhase(true);
+  for (const opener of first.pass.openers) {
+    // The opener and its closer are disabled TOGETHER: dropping only the
+    // opener re-pairs every later fence line (the old closer becomes a new
+    // opener), which let a wrong trial anchor the right COUNT of turns on
+    // the wrong lines. Removing the pair leaves every other fence exactly
+    // where the first stage saw it, so a wrong trial genuinely fails.
+    const seed = opener.closedAt === -1 ? [opener.at] : [opener.at, opener.closedAt];
+    const trial = runToCompletion(seed, false);
+    if (trial.pass.boundaries.length === expected.length) {
+      warn(`the code fence opened at body line ${opener.at + 1} hides the header of a recorded turn; a fence does not span a turn, so it was read as ordinary text and that turn was kept.`);
+      for (const message of trial.buffered) warn(message);
+      return trial.pass;
+    }
+  }
+  const second = runToCompletion([], true);
   for (const message of second.buffered) warn(message);
   return second.pass;
 }
@@ -1118,6 +1223,7 @@ const seenIds = new Set();
 let skippedNotConversation = 0;
 let skippedNoFrontmatter = 0;
 let skippedNoMessages = 0;
+let sawSourceKey = false;
 let skippedUnreadableRecord = 0;
 let skippedJoinMismatch = 0;
 let droppedEmptyMessages = 0;
@@ -1144,6 +1250,9 @@ for (const file of files) {
     skippedNotConversation += 1;
     continue;
   }
+  // Noted before any skip below, so the no-provider warning can tell "no page
+  // carries a source: key" apart from "the pages that carry one were skipped".
+  if (typeof front.source === 'string' && front.source.trim() !== '') sawSourceKey = true;
   const warn = (message) => console.warn(`warning: ${file} - ${message}`);
 
   let read;
@@ -1235,7 +1344,13 @@ if (distinctProviders.length > 1) {
 // meta.source_export_date is. Minting a token no registry defines is a guess,
 // and a guess gets reported like every other lossy edge in this script.
 if (distinctProviders.length === 0) {
-  console.warn(`warning: no page carries a \`source:\` key, and envelope-v0 requires meta.source_provider; wrote the placeholder ${JSON.stringify(FALLBACK_PROVIDER)}, which is not a registered provider token. Set \`source:\` on the pages to name the real provider.`);
+  // Two different situations, two true statements: pages with no source: key
+  // at all, versus sourced pages that were all skipped before they could
+  // contribute one - telling the second audience to "set source:" would be
+  // advice about a key they already set.
+  console.warn(sawSourceKey
+    ? `warning: every page carrying a \`source:\` key was skipped before it could contribute one, and envelope-v0 requires meta.source_provider; wrote the placeholder ${JSON.stringify(FALLBACK_PROVIDER)}, which is not a registered provider token. Fix the skipped pages to name the real provider.`
+    : `warning: no page carries a \`source:\` key, and envelope-v0 requires meta.source_provider; wrote the placeholder ${JSON.stringify(FALLBACK_PROVIDER)}, which is not a registered provider token. Set \`source:\` on the pages to name the real provider.`);
 }
 const envelope = {
   memvelope: 'envelope-v0',
