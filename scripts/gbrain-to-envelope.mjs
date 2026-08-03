@@ -17,56 +17,115 @@
  *     directories are skipped.
  *   - Takes only pages whose frontmatter `type` is `conversation`. Everything
  *     else is skipped and counted on stderr.
- *   - Reads turns out of the body in the shape envelope-to-gbrain.mjs writes:
- *     `**Me** (<ts> · <message id>):` and `**Assistant** (...)`. A page whose
- *     body no longer carries those headers yields no messages and is skipped:
- *     envelope-v0 requires at least one message per conversation.
- *   - Fenced code blocks (``` or ~~~, up to three leading spaces) are not
- *     scanned for turn headers, timeline sentinels or the H1 - but a fence
- *     reaches only to the end of the turn it opened in. A fence still open at
- *     the next turn header, or at the end of the page, is read as ordinary text
- *     instead, with a warning naming the line it opened on. Both are the same
- *     trade: a fence must never be allowed to swallow the turns after it, and a
- *     spurious extra message is a far smaller failure than a turn deleted in
- *     silence. `**Me** (…):` written at column 0 inside a still-open fence is
- *     taken as the next turn only when the blank / `---` / blank separator this
- *     script's own importer writes between turns sits directly above it; that
- *     separator is the one signal on the page that tells a real boundary from a
- *     transcript pasted into a code block.
- *   - The body is cut at a gbrain timeline sentinel - a line that is exactly
- *     `<!-- timeline -->`, `<!--timeline-->` or `--- timeline ---` after
- *     trimming - so a page's timeline never becomes message text. Only a
- *     sentinel with no speaker turn after it is treated as a boundary; a line
- *     that merely quotes one, mid-sentence or above a later turn, is message
- *     text and is reported rather than cut at. The fourth form gbrain's own
- *     parser accepts (a bare `---` followed by `## Timeline`) is deliberately
- *     NOT recognized here, because `---` is also the separator this script's
- *     own importer writes between two turns.
- *   - Frontmatter is read line by line: top-level scalars only, in the plain,
- *     single-quoted, double-quoted (escapes decoded, including `\U` beyond the
- *     BMP), folded (`>`) and literal (`|`) block forms. Block chomping is
- *     honored: `-` strips the trailing newline, the default clips to one, `+`
- *     keeps them. Sequences, nested mappings and comments are ignored - none of
- *     the four keys this script reads (`type`, `title`, `source`,
- *     `memvelope_conversation_id`) is ever written as one - which is what keeps
- *     it free of a YAML dependency.
- *   - `title` falls back to the body's first H1 when frontmatter carries none,
- *     the same precedence gbrain's own parser uses (src/core/markdown.ts,
- *     inferTitleFromBody), and only then to `Untitled conversation`.
- *   - `title`, `source` and `memvelope_conversation_id` are trimmed, which
- *     matters only for a block scalar: its chomping indicator can leave a
- *     trailing newline on a value that never carried one.
  *
- * What survives the round trip envelope -> envelope-to-gbrain.mjs -> here. On
- * test/fixtures/memvelope/sample.mve.json the output is deep-equal to the
- * input, which covers:
- *   - conversation id and title
- *   - message id, role, timestamp and text, verbatim
+ * TWO PAGE SHAPES, TOLD APART BY THE `messages:` FRONTMATTER KEY.
+ *
+ * The importer writes per-message identity into frontmatter:
+ *
+ *   messages:
+ *     - id: "m1"
+ *       ts: "2025-11-02T14:22:51.000Z"
+ *
+ * and a body whose turn headers carry a speaker and a minute-resolution UTC
+ * wall clock, nothing else:
+ *
+ *   **Me** (2025-11-02 14:22):
+ *
+ * A page CARRYING the `messages:` key is read that way: `messages[i]` is the
+ * i-th turn of the body, so the id and the full RFC 3339 `ts` come from the
+ * array, and the body header supplies only the speaker and the text. A page
+ * WITHOUT the key is read the legacy way the pre-2026-08-02 importer wrote:
+ * `**Me** (<ts> · <message id>):`, identity parsed out of the header
+ * parenthetical. The legacy path is unchanged; everything it got right it
+ * still gets right, and everything prose could do to it - break a header with
+ * a newline id, miss a match over one trailing space, forge a boundary with a
+ * header-shaped line - it can still do. Those defects are CLOSED only on the
+ * recorded path, because identity moved somewhere message text cannot reach.
+ *
+ * HOW A RECORDED PAGE'S TURNS ARE FOUND. The positional join is only sound if
+ * the body anchors exactly as many turns as the array records, so boundaries
+ * are not taken on shape alone. For each recorded message the expected header
+ * clock is recomputed from its `ts` - the same derivation the importer used to
+ * write it (headerClock below is copied verbatim from envelope-to-gbrain.mjs;
+ * keep them in lockstep) - and a header-shaped line is a boundary ONLY when
+ * its clock equals the clock expected for the next unfilled position. A
+ * header-shaped line carrying any other clock is message text, reported on
+ * stderr and kept in place. So forging a boundary from prose requires
+ * predicting the next message's minute, not merely producing the shape - and
+ * a page whose body still does not anchor one turn per recorded message is
+ * SKIPPED, loudly, naming both numbers, rather than joined wrong.
+ *
+ * The recorded-path header is matched strictly - `**Me** (YYYY-MM-DD HH:MM):`
+ * or `**Assistant** (...)`, two-digit fields, one space, no text after the
+ * colon - with one tolerance: trailing spaces or tabs after the colon.
+ * gbrain's own `imessage-slack` pattern (the one these headers are written
+ * for) tolerates them too, and one trailing space added by an editor used to
+ * absorb the whole turn into its neighbour in silence.
+ *
+ * What a recorded page REFUSES loudly (skipped, counted, named on stderr)
+ * rather than guesses about:
+ *   - a `messages:` value this script cannot read back as an array of
+ *     `{id, ts}` items (anything but `[]`, or block items carrying both keys);
+ *   - a recorded id that is not a string under YAML core-schema reading
+ *     (`id: null`, an unquoted number or boolean, a flow collection).
+ *     envelope-v0 requires a string message id, and inventing one is exactly
+ *     the synthesis the spec forbids;
+ *   - `messages: []` - envelope-v0 requires at least one message;
+ *   - a body anchoring more or fewer turns than the array records.
+ *
+ * Fenced code blocks (``` or ~~~, up to three leading spaces) are not scanned
+ * for turn headers, timeline sentinels or the H1 - but a fence reaches only to
+ * the end of the turn it opened in. On the recorded path the signal that ends
+ * one is the same clock rule as everywhere else: a fence still open at a line
+ * whose header clock matches the next expected turn has provably swallowed a
+ * real boundary, so the fence loses - it is read as ordinary text, with a
+ * warning naming the line it opened on. The same demotion applies to a fence
+ * still open at the end of the page. Both are the same trade: a fence must
+ * never be allowed to swallow the turns after it, and a spurious stretch of
+ * ordinary text is a far smaller failure than a turn deleted in silence. On
+ * the legacy path the fence-versus-boundary signal is the blank / `---` /
+ * blank separator the old importer wrote between turns, as before.
+ *
+ * The body is cut at a gbrain timeline sentinel - a line that is exactly
+ * `<!-- timeline -->`, `<!--timeline-->` or `--- timeline ---` after
+ * trimming - so a page's timeline never becomes message text. Only a sentinel
+ * with no accepted turn after it is treated as a boundary; one with turns
+ * below it is message text and is reported rather than cut at. A sentinel
+ * standing alone on its line INSIDE the final message still cuts - from this
+ * side of the page it is indistinguishable from gbrain's real delimiter - and
+ * the cut is what the timeline note on stderr is counting. The fourth form
+ * gbrain's own parser accepts (a bare `---` followed by `## Timeline`) is
+ * deliberately NOT recognized here, because `---` is also the legacy
+ * turn separator.
+ *
+ * Frontmatter is read line by line: top-level scalars only, in the plain,
+ * single-quoted, double-quoted (escapes decoded, including `\U` beyond the
+ * BMP), folded (`>`) and literal (`|`) block forms - plus, alone among
+ * nested structures, the `messages:` block sequence described above. Items
+ * accept the importer's JSON-quoted scalars, the single-quoted / plain forms
+ * gbrain's js-yaml rewrite produces, `null`, and block scalars; member keys
+ * beyond `id` and `ts` are ignored so a future third field does not break the
+ * read; a quoted scalar that does not close on its own line is refused (js-yaml
+ * folds long values into block scalars rather than wrapping quotes, so that
+ * shape indicates a page this script does not understand).
+ *
+ * `title` falls back to the body's first H1 when frontmatter carries none,
+ * the same precedence gbrain's own parser uses (src/core/markdown.ts,
+ * inferTitleFromBody), and only then to `Untitled conversation`.
+ * `title`, `source` and `memvelope_conversation_id` are trimmed, which
+ * matters only for a block scalar: its chomping indicator can leave a
+ * trailing newline on a value that never carried one. Recorded ids and
+ * timestamps are NOT trimmed - they are the record, and the record is
+ * verbatim.
+ *
+ * What survives the round trip envelope -> envelope-to-gbrain.mjs -> here,
+ * measured on the recorded format (see STATUS for the corpus):
+ *   - conversation id and title, including a null id
+ *   - message id, role, timestamp and text, verbatim - including ids carrying
+ *     newlines, YAML syntax, or a whole frontmatter block, and timestamps at
+ *     full sub-second resolution with their original offsets
  *   - meta.source_provider
  *   - meta.conversation_count and meta.message_count, recomputed and equal
- * A probe envelope built to carry the cases the fixture does not adds:
- *   - a null conversation id, which stays null
- *   - a `---` rule inside a message, and a message that ends on one
  *
  * What does not survive. Each of these was measured on a probe envelope or a
  * probe page built to carry it, not assumed:
@@ -85,27 +144,29 @@
  *     listed first but dated last moves to the end.
  *   - Leading and trailing whitespace in message text, trimmed.
  *   - A message that is only whitespace. Dropped, with a warning, because
- *     envelope-v0 requires text of at least one character. meta.message_count
- *     follows what was written, so it drops too.
- *   - Anything before the first turn header except the `# Title` heading, which
- *     is read as the title fallback described above.
+ *     envelope-v0 requires text of at least one character. On the recorded
+ *     path its `{id, ts}` entry is dropped with it, so the join stays aligned.
+ *     meta.message_count follows what was written, so it drops too.
+ *   - Anything before the first turn header except the `# Title` heading,
+ *     which is read as the title fallback described above.
  *   - A gbrain timeline section. envelope-v0 has no field for it. Every page
  *     that carried one is counted on stderr.
- *   - Text that itself contains a line shaped like a turn header, OUTSIDE a
- *     fenced block. It still splits into two messages, and the second one's id
- *     comes from that line. Inside a fenced block that opens and closes within
- *     one turn it does not split, and the line is reported on stderr as having
- *     been read as sample text. The remaining ambiguity is a fenced block whose
- *     content itself carries the blank / `---` / blank turn separator: that
- *     does split, and is reported.
- *   - A turn timestamp that is not a strict RFC 3339 `date-time` - which is
- *     what the schema's `format: date-time` names, and what a header-shaped
- *     line lifted out of prose produces. Emitted as null, with a warning,
- *     rather than as a value that fails validation. That includes a second of
- *     60 anywhere but the instant a leap second is inserted; see
- *     asRfc3339DateTime below. The literal `no timestamp` the importer writes
- *     for an absent timestamp becomes null silently: that is the agreed
- *     spelling, not a loss.
+ *   - A recorded `ts` that is not a strict RFC 3339 `date-time` - which is
+ *     what the schema's `format: date-time` names. Emitted as null, with a
+ *     warning, rather than as a value that fails validation. That includes a
+ *     second of 60 anywhere but the instant a leap second is inserted; see
+ *     asRfc3339DateTime below. A recorded `ts: null` stays null, silently -
+ *     that is the agreed spelling of "the export had no timestamp", not a
+ *     loss. On the legacy path the same rule judges the header parenthetical,
+ *     and the literal `no timestamp` is the agreed null there.
+ *   - A message whose text contains a line that matches the next expected
+ *     header exactly - speaker shape and the very minute the following
+ *     message is recorded at. That line still splits the message, the real
+ *     header below it is then read as prose, and both halves land in the
+ *     wrong turn's text; ids and timestamps stay correct, nothing is deleted,
+ *     and the misread header is reported on stderr. This is the residue of
+ *     defect D2: the boundary signal is the recorded clock, so only text that
+ *     forges the right clock at the right position can still confuse it.
  *   - CRLF line endings, normalized to LF on read.
  *   - One source_provider per file. An envelope names a single provider, so a
  *     page set spanning several keeps the first in sorted path order and warns.
@@ -128,8 +189,7 @@
  *     -> expect "wrote 1 conversation(s), 4 message(s)"
  *   bun test test/gbrain-to-envelope.test.ts
  *
- * STATUS: verified against gbrain v0.42.72.1 on 2026-08-02. The sample fixture
- * round-trips through the importer and back deep-equal. Conformance in CI is
+ * STATUS: see the test file and findings for 2026-08-02. Conformance in CI is
  * checked by test/gbrain-to-envelope.test.ts, which validates against the
  * published envelope-v0 JSON Schema vendored byte-for-byte at
  * test/fixtures/memvelope/envelope-v0.schema.json (sha256
@@ -138,23 +198,7 @@
  * the memvelope package). The test walks those bytes with a draft-07 subset it
  * implements in full and refuses any keyword it does not, so a constraint added
  * upstream turns the suite red instead of going unchecked. No validator
- * dependency is added; the D4 and R4 regression tests guard both halves.
- *
- * The long path was re-run on 2026-08-02 after this file's turn parser was
- * rewritten a second time (the fence-per-turn fix below), against a throwaway
- * PGLite brain under a redirected HOME: envelope -> envelope-to-gbrain.mjs ->
- * `gbrain import` -> `gbrain export --dir` -> here. A two-conversation probe
- * carrying a 94-character title, an 85-character id, a message quoting
- * `<!-- timeline -->` mid-sentence, a 23:59:60Z leap second, three fences that
- * span a turn boundary and one balanced 4-backtick nest came back with all 8
- * messages, and every id, role, timestamp and message text identical to the
- * envelope it started from. The only field that moved is the documented one:
- * `updated_at`, which is taken from the last message. That path is what
- * produced three of the bugs this parser handles: `gbrain export --dir`
- * serializes frontmatter through js-yaml at the default lineWidth of 80, so a
- * title or id of 80-odd characters arrives as a folded block scalar (measured:
- * the first fold is at 80 characters of `key: value`), and the body is handed
- * back verbatim, quoted sentinel and all.
+ * dependency is added.
  */
 
 import { readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
@@ -271,6 +315,26 @@ function decodeDoubleQuoted(raw) {
   return out;
 }
 
+// A single-quoted scalar is complete when its closing quote is the last
+// character and every interior quote is one half of an escaped `''` pair.
+function isCompleteSingleQuoted(raw) {
+  if (raw.length < 2 || !raw.startsWith("'") || !raw.endsWith("'")) return false;
+  let i = 1;
+  while (i < raw.length) {
+    if (raw[i] !== "'") {
+      i += 1;
+      continue;
+    }
+    if (i === raw.length - 1) return true;
+    if (raw[i + 1] === "'") {
+      i += 2;
+      continue;
+    }
+    return false;
+  }
+  return false;
+}
+
 // A block scalar's content, given its already-dedented lines. Folded (`>`)
 // joins a paragraph's lines with a space and turns a blank line into a
 // newline; a more-indented line keeps its breaks. Literal (`|`) keeps every
@@ -300,12 +364,54 @@ function joinBlockScalar(contentLines, style, chomping, trailingBlanks) {
   return value === '' ? '' : `${value}\n`;
 }
 
+/** A block scalar header (`>-`, `|`, `>2-`, ...) or null. */
+function blockScalarHeader(raw) {
+  const block = /^([|>])([+-]?[0-9]?|[0-9][+-]?)$/.exec(raw);
+  if (!block) return null;
+  return {
+    style: block[1],
+    chomping: raw.includes('+') ? 'keep' : raw.includes('-') ? 'strip' : 'clip',
+    explicit: /[0-9]/.exec(raw),
+  };
+}
+
+/** Reads the indented block below `lines[headerIdx]` as a block scalar whose
+ *  owner key sits at indentation `ownerLead`. Returns the value and the index
+ *  of the first line after the block. */
+function readBlockScalar(lines, headerIdx, header, ownerLead) {
+  // A YAML indentation indicator is relative to the owner node; at the top
+  // level (ownerLead 0) that is the absolute column, matching the previous
+  // behavior of this parser exactly.
+  let indent = header.explicit ? ownerLead + Number(header.explicit[0]) : -1;
+  const collected = [];
+  let j = headerIdx + 1;
+  for (; j < lines.length; j += 1) {
+    if (lines[j].trim() === '') {
+      collected.push('');
+      continue;
+    }
+    const lead = lines[j].length - lines[j].trimStart().length;
+    if (lead <= ownerLead) break;
+    if (indent === -1) indent = lead;
+    if (lead < indent) break;
+    collected.push(lines[j].slice(indent));
+  }
+  let trailingBlanks = 0;
+  while (collected.length > 0 && collected[collected.length - 1] === '') {
+    collected.pop();
+    trailingBlanks += 1;
+  }
+  return { value: joinBlockScalar(collected, header.style, header.chomping, trailingBlanks), next: j };
+}
+
 // Top-level scalars only. gbrain writes these through js-yaml, which quotes
 // with single quotes, escapes with double quotes, and folds anything long into
 // a block scalar; the importer writes them through JSON.stringify, which quotes
 // with double quotes. All of those are read here, along with the unquoted form.
 // A line that is indented belongs to a nested value or to a block scalar's
-// content and is never read as a key.
+// content and is never read as a key. The one nested structure this script
+// understands - the `messages:` sequence - is read by parseMessagesRecord,
+// separately, over the same lines.
 function parseFrontmatter(lines) {
   const out = {};
   for (let i = 0; i < lines.length; i += 1) {
@@ -315,32 +421,11 @@ function parseFrontmatter(lines) {
     const raw = m[2].trim();
 
     // `key: >-`, `key: |`, `key: >2-`: the value is the indented block below.
-    const block = /^([|>])([+-]?[0-9]?|[0-9][+-]?)$/.exec(raw);
+    const block = blockScalarHeader(raw);
     if (block) {
-      const style = block[1];
-      const chomping = raw.includes('+') ? 'keep' : raw.includes('-') ? 'strip' : 'clip';
-      const explicit = /[0-9]/.exec(raw);
-      let indent = explicit ? Number(explicit[0]) : -1;
-      const collected = [];
-      let j = i + 1;
-      for (; j < lines.length; j += 1) {
-        if (lines[j].trim() === '') {
-          collected.push('');
-          continue;
-        }
-        const lead = lines[j].length - lines[j].trimStart().length;
-        if (lead === 0) break;
-        if (indent === -1) indent = lead;
-        if (lead < indent) break;
-        collected.push(lines[j].slice(indent));
-      }
-      let trailingBlanks = 0;
-      while (collected.length > 0 && collected[collected.length - 1] === '') {
-        collected.pop();
-        trailingBlanks += 1;
-      }
-      out[key] = joinBlockScalar(collected, style, chomping, trailingBlanks);
-      i = j - 1;
+      const scalar = readBlockScalar(lines, i, block, 0);
+      out[key] = scalar.value;
+      i = scalar.next - 1;
       continue;
     }
 
@@ -362,10 +447,183 @@ function parseFrontmatter(lines) {
   return out;
 }
 
-// The turn header the importer writes, matched one line at a time so a fenced
-// block can be excluded. The timestamp group is lazy so the first middle dot
-// separates it from the message id, which leaves an id free to contain one.
+// What a plain (unquoted) YAML scalar means under the core schema js-yaml
+// reads and writes: null, boolean and number forms are not strings. The
+// importer JSON-quotes every string it takes from an envelope and js-yaml
+// re-quotes any string that LOOKS like one of these on the way back out, so an
+// unquoted `id: 123` really is a number and refusing it is correct - reading
+// it as the string "123" would fabricate an id the record does not hold.
+// (`yes`, `no`, `on`, `off` are strings under the core schema, and stay
+// strings here.)
+const PLAIN_NON_STRING =
+  /^(true|false|True|False|TRUE|FALSE|[-+]?\d[\d_]*|0x[\dA-Fa-f]+|0o[0-7]+|[-+]?(\.\d+|\d[\d_]*(\.[\d_]*)?)([eE][-+]?\d+)?|[-+]?\.(inf|Inf|INF)|\.(nan|NaN|NAN))$/;
+
+/** Decodes one scalar value from a `messages:` item member line. Returns
+ *  `{ value }` (string or null) or `{ error }` when the raw text is not a
+ *  scalar this script can stand behind. */
+function decodeMemberScalar(raw) {
+  if (raw === '' || raw === 'null' || raw === '~' || raw === 'Null' || raw === 'NULL') return { value: null };
+  if (raw.startsWith('"')) {
+    if (isCompleteDoubleQuoted(raw)) return { value: decodeDoubleQuoted(raw) };
+    return { error: 'a double-quoted scalar that does not close on its own line' };
+  }
+  if (raw.startsWith("'")) {
+    if (isCompleteSingleQuoted(raw)) return { value: raw.slice(1, -1).replace(/''/g, "'") };
+    return { error: 'a single-quoted scalar that does not close on its own line' };
+  }
+  if (raw.startsWith('[') || raw.startsWith('{') || raw.startsWith('&') || raw.startsWith('*') || raw.startsWith('!')) {
+    return { error: `a value this script does not read (${JSON.stringify(raw)})` };
+  }
+  if (PLAIN_NON_STRING.test(raw)) return { value: { nonString: raw } };
+  return { value: raw };
+}
+
+/**
+ * The `messages:` record, read out of the frontmatter lines: the per-message
+ * identity the importer writes and gbrain's serializer rewrites (values and
+ * order intact, quoting style not - so this parser accepts both quotings and
+ * the block-scalar form js-yaml folds long values into).
+ *
+ * Returns `{ present: false }` when the page carries no `messages:` key - a
+ * page written before this format existed - `{ present: true, items }` when
+ * the record reads cleanly, and `{ present: true, error }` when the key is
+ * there but this script cannot stand behind what it read. The error case must
+ * never fall back to the legacy path: a page that declares a record it cannot
+ * deliver is not a legacy page, it is an unreadable one.
+ */
+function parseMessagesRecord(lines) {
+  let at = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (/^messages: ?/.test(lines[i]) || lines[i] === 'messages:') {
+      if (at !== -1) return { present: true, error: 'the messages key appears twice' };
+      at = i;
+    }
+  }
+  if (at === -1) return { present: false };
+
+  const inline = (/^messages: ?(.*)$/.exec(lines[at]))[1].trim();
+  if (inline === '[]') return { present: true, items: [] };
+  if (inline !== '') return { present: true, error: `an inline value this script does not read (${JSON.stringify(inline)})` };
+
+  const items = [];
+  let itemLead = -1;
+  let current = null;
+  let i = at + 1;
+  for (; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (line.trim() === '') continue;
+    const lead = line.length - line.trimStart().length;
+    // A new top-level key ends the sequence.
+    if (lead === 0) break;
+
+    const item = /^(\s+)- (.*)$/.exec(line);
+    if (item && (itemLead === -1 || item[1].length === itemLead)) {
+      if (itemLead === -1) itemLead = item[1].length;
+      current = {};
+      items.push(current);
+      const first = readMember(item[2].trim(), itemLead + 2);
+      if (first.error) return { present: true, error: first.error };
+      continue;
+    }
+    if (current === null) return { present: true, error: `a line before the first item (${JSON.stringify(line)})` };
+    if (lead <= itemLead) return { present: true, error: `an indentation this script does not read (${JSON.stringify(line)})` };
+    const member = readMember(line.trim(), lead);
+    if (member.error) return { present: true, error: member.error };
+  }
+
+  // One member line, already trimmed, belonging to `current`. `memberLead` is
+  // the column its key starts at, needed when its value is a block scalar.
+  function readMember(text, memberLead) {
+    const m = /^([A-Za-z_][A-Za-z0-9_-]*): ?(.*)$/.exec(text);
+    if (!m) return { error: `an item line that is not a key: value pair (${JSON.stringify(text)})` };
+    const key = m[1];
+    const raw = m[2].trim();
+    if (key !== 'id' && key !== 'ts') {
+      // A future third field. Skip its value, block scalar and all.
+      const block = blockScalarHeader(raw);
+      if (block) i = readBlockScalar(lines, i, block, memberLead).next - 1;
+      return {};
+    }
+    if (key in current) return { error: `the ${key} key appears twice in one item` };
+    const block = blockScalarHeader(raw);
+    if (block) {
+      const scalar = readBlockScalar(lines, i, block, memberLead);
+      current[key] = scalar.value;
+      i = scalar.next - 1;
+      return {};
+    }
+    const decoded = decodeMemberScalar(raw);
+    if (decoded.error) return { error: `${key}: ${decoded.error}` };
+    current[key] = decoded.value;
+    return {};
+  }
+
+  for (const [n, item] of items.entries()) {
+    if (!('id' in item) || !('ts' in item)) {
+      return { present: true, error: `item ${n + 1} does not carry both id and ts` };
+    }
+  }
+  return { present: true, items };
+}
+
+// ---------------------------------------------------------------------------
+// The header-clock derivation, copied VERBATIM from envelope-to-gbrain.mjs so
+// the expected clock recomputed here is the clock the importer wrote. If one
+// of these functions changes, change both files - the round-trip tests fail
+// loudly (a clock mismatch skips the page) if they drift.
+// ---------------------------------------------------------------------------
+
+/** The date a turn header is allowed to carry: exactly `YYYY-MM-DD`. */
+const HEADER_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** What `deriveDateContext()` in gbrain's conversation parser falls back to when
+ *  a page carries no date at all. */
+const EPOCH_DATE = '1970-01-01';
+
+/** The RFC 3339 shapes the importer will read a wall clock out of.
+ *  Groups: 1=Y 2=M 3=D 4=hh 5=mm, then an optional offset 6=sign 7=hh 8=mm. */
+const TS_SHAPE =
+  /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?(?:[Zz]|([+-])(\d{2}):?(\d{2}))?$/;
+
+/**
+ * The `YYYY-MM-DD HH:MM` a turn header carries, or null when the message's `ts`
+ * cannot supply one. 24-hour, and UTC - see envelope-to-gbrain.mjs for the
+ * full reasoning; this copy exists so the expected boundary clock is derived
+ * from the recorded `ts` by the exact function that wrote it.
+ */
+function headerClock(ts) {
+  if (typeof ts !== 'string') return null;
+  const m = TS_SHAPE.exec(ts.trim());
+  if (m === null) return null;
+  const [, year, month, day, hour, minute, sign, offsetHour, offsetMinute] = m;
+  const [y, mo, d, h, mi] = [year, month, day, hour, minute].map(Number);
+  if (h > 23 || mi > 59) return null;
+  const utc = new Date(0);
+  utc.setUTCFullYear(y, mo - 1, d);
+  utc.setUTCHours(h, mi, 0, 0);
+  if (utc.getUTCFullYear() !== y || utc.getUTCMonth() !== mo - 1 || utc.getUTCDate() !== d) {
+    return null;
+  }
+  if (sign === undefined) return `${year}-${month}-${day} ${hour}:${minute}`;
+  const [oh, om] = [offsetHour, offsetMinute].map(Number);
+  if (oh > 23 || om > 59) return null;
+  utc.setUTCMinutes(utc.getUTCMinutes() - (oh * 60 + om) * (sign === '-' ? -1 : 1));
+  const pad = (n, width = 2) => String(n).padStart(width, '0');
+  return `${pad(utc.getUTCFullYear(), 4)}-${pad(utc.getUTCMonth() + 1)}-${pad(utc.getUTCDate())} ${pad(utc.getUTCHours())}:${pad(utc.getUTCMinutes())}`;
+}
+
+// ---------------------------------------------------------------------------
+// Body reading - shared pieces.
+// ---------------------------------------------------------------------------
+
+// The legacy turn header, matched one line at a time so a fenced block can be
+// excluded. The timestamp group is lazy so the first middle dot separates it
+// from the message id, which leaves an id free to contain one.
 const TURN_HEADER = /^\*\*(Me|Assistant)\*\* \((.*?) · (.*)\):$/;
+// The recorded-format turn header: speaker and minute-resolution clock, no
+// identity. Strict except for trailing whitespace, which gbrain's own
+// `imessage-slack` pattern also tolerates - and which used to absorb a turn.
+const RECORDED_HEADER = /^\*\*(Me|Assistant)\*\* \((\d{4}-\d{2}-\d{2} \d{2}:\d{2})\):[ \t]*$/;
 // A whole line, after trimming - never a substring. A message that quotes the
 // sentinel mid-sentence is prose, and cutting there destroys every later turn.
 const TIMELINE_SENTINELS = new Set(['<!-- timeline -->', '<!--timeline-->', '--- timeline ---']);
@@ -417,11 +675,11 @@ function asRfc3339DateTime(value) {
 
 const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 
-// The separator envelope-to-gbrain.mjs writes between two turns: a blank line,
-// a `---` rule, a blank line. It is the one structural signal on the page that
-// separates a real turn boundary from a transcript pasted into a code block,
-// and it decides the only case fence state cannot decide on its own - a
-// header-shaped line reached while a fence is open.
+// The separator the LEGACY importer wrote between two turns: a blank line, a
+// `---` rule, a blank line. On the legacy path it is the one structural signal
+// on the page that separates a real turn boundary from a transcript pasted
+// into a code block, and it decides the only case fence state cannot decide on
+// its own - a header-shaped line reached while a fence is open.
 function precededByTurnSeparator(lines, i) {
   return i >= 3
     && lines[i - 1].trim() === ''
@@ -488,6 +746,59 @@ function scanFencesAndHeaders(lines, warn) {
   }
 }
 
+// The recorded-path twin of scanPass. Boundaries are accepted by position:
+// a header-shaped line is boundary k only when its clock is the one expected
+// for position k. The same rule is the fence-demotion signal - a fence still
+// open at a line carrying the next expected clock has swallowed a real
+// boundary, so the fence loses.
+function scanRecordedPass(lines, expected, disabled) {
+  const fenced = new Array(lines.length).fill(false);
+  const boundaries = [];
+  const proseHeaders = [];
+  const quotedHeaders = [];
+  let open = null;
+  for (let i = 0; i < lines.length; i += 1) {
+    const fence = FENCE_LINE.exec(lines[i]);
+    if (open === null) {
+      const header = RECORDED_HEADER.exec(lines[i]);
+      if (header) {
+        if (boundaries.length < expected.length && header[2] === expected[boundaries.length]) {
+          boundaries.push({ line: i, speaker: header[1] });
+        } else {
+          proseHeaders.push(i);
+        }
+        continue;
+      }
+      if (fence && !disabled.has(i) && !(fence[1][0] === '`' && fence[2].includes('`'))) {
+        open = { char: fence[1][0], len: fence[1].length, at: i };
+        fenced[i] = true;
+      }
+      continue;
+    }
+    const header = RECORDED_HEADER.exec(lines[i]);
+    if (header && boundaries.length < expected.length && header[2] === expected[boundaries.length]) {
+      return { reopen: { at: open.at, spanningAt: i } };
+    }
+    if (header) quotedHeaders.push(i);
+    fenced[i] = true;
+    if (fence && fence[1][0] === open.char && fence[1].length >= open.len && fence[2].trim() === '') open = null;
+  }
+  if (open !== null) return { reopen: { at: open.at, spanningAt: -1 } };
+  return { reopen: null, fenced, boundaries, proseHeaders, quotedHeaders };
+}
+
+function scanRecordedFences(lines, expected, warn) {
+  const disabled = new Set();
+  for (;;) {
+    const pass = scanRecordedPass(lines, expected, disabled);
+    if (pass.reopen === null) return pass;
+    disabled.add(pass.reopen.at);
+    warn(pass.reopen.spanningAt === -1
+      ? `an unclosed code fence opens at body line ${pass.reopen.at + 1}; read as ordinary text so the turns after it are not lost.`
+      : `the code fence opened at body line ${pass.reopen.at + 1} is still open at the turn header on body line ${pass.reopen.spanningAt + 1}; a fence does not span a turn, so it was read as ordinary text and that turn was kept.`);
+  }
+}
+
 // gbrain's own title precedence, minus the filename fallback this script must
 // not use: frontmatter `title:` first, then the body's first H1.
 function titleFromBody(lines, fenced) {
@@ -497,6 +808,49 @@ function titleFromBody(lines, fenced) {
     if (m) return m[1].replace(/\s+#+\s*$/, '').trim();
   }
   return '';
+}
+
+// The timeline cut and the slice-into-messages step, shared by both paths.
+// `anchors` carries each accepted boundary's line; `build` turns a boundary and
+// its raw text into a message or null (null = dropped, already warned).
+function cutAndSlice(lines, anchors, fenced, warn, stripLegacySeparator, build) {
+  const sentinels = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    if (fenced[i]) continue;
+    if (TIMELINE_SENTINELS.has(lines[i].trim())) sentinels.push(i);
+  }
+
+  // Cut only at a sentinel that no accepted turn follows. gbrain writes the
+  // timeline after the whole body, so a sentinel with turns below it is a
+  // message quoting the marker - the case that used to destroy every later
+  // turn in silence.
+  const lastAnchor = anchors.length > 0 ? anchors[anchors.length - 1].line : -1;
+  let cut = lines.length;
+  let hasTimeline = false;
+  for (const at of sentinels) {
+    if (at > lastAnchor) {
+      cut = at;
+      hasTimeline = true;
+      break;
+    }
+    warn(`the line \`${lines[at].trim()}\` at body line ${at + 1} has speaker turns after it, so it is message text and not a timeline boundary; the body was not cut there.`);
+  }
+
+  const messages = [];
+  for (const [i, anchor] of anchors.entries()) {
+    const hasNext = i + 1 < anchors.length;
+    const end = hasNext ? anchors[i + 1].line : cut;
+    let raw = lines.slice(anchor.line + 1, end).join('\n');
+    if (hasNext && stripLegacySeparator) {
+      // Between two turns the legacy importer wrote exactly one `---`
+      // separator line. Strip that one occurrence, never a `---` the message
+      // itself ended with after the last turn.
+      raw = `${raw}\n`.replace(/\n\n---\n\n$/, '');
+    }
+    const message = build(anchor, i, raw.trim());
+    if (message !== null) messages.push(message);
+  }
+  return { messages, hasTimeline };
 }
 
 function readPageBody(body, warn) {
@@ -509,52 +863,17 @@ function readPageBody(body, warn) {
     warn(`the line \`${lines[at].trim()}\` at body line ${at + 1} sits inside a fenced code block, so it was read as sample text and not as a turn.`);
   }
 
-  const sentinels = [];
-  for (let i = 0; i < lines.length; i += 1) {
-    if (fenced[i]) continue;
-    if (TIMELINE_SENTINELS.has(lines[i].trim())) sentinels.push(i);
-  }
-
-  // Cut only at a sentinel that no speaker turn follows. gbrain writes the
-  // timeline after the whole body, so a sentinel with turns below it is a
-  // message quoting the marker - the case that used to destroy every later
-  // turn in silence.
-  const lastHeader = headers.length > 0 ? headers[headers.length - 1].line : -1;
-  let cut = lines.length;
-  let hasTimeline = false;
-  for (const at of sentinels) {
-    if (at > lastHeader) {
-      cut = at;
-      hasTimeline = true;
-      break;
-    }
-    warn(`the line \`${lines[at].trim()}\` at body line ${at + 1} has speaker turns after it, so it is message text and not a timeline boundary; the body was not cut there.`);
-  }
-
-  const messages = [];
   let droppedEmpty = 0;
   let nulledTimestamps = 0;
-  for (const [i, header] of headers.entries()) {
-    const hasNext = i + 1 < headers.length;
-    const end = hasNext ? headers[i + 1].line : cut;
-    // Rebuild the exact slice between two headers, trailing newline included,
-    // so the separator strip below sees what the importer wrote.
-    let raw = lines.slice(header.line + 1, end).join('\n');
-    if (hasNext) {
-      // Between two turns the importer writes exactly one `---` separator line.
-      // Strip that one occurrence, never a `---` the message itself ended with
-      // after the last turn.
-      raw = `${raw}\n`.replace(/\n\n---\n\n$/, '');
-    }
+  const { messages, hasTimeline } = cutAndSlice(lines, headers, fenced, warn, true, (header, _i, text) => {
     const id = header.match[3];
-    const text = raw.trim();
     if (text === '') {
       droppedEmpty += 1;
       warn(`message ${JSON.stringify(id)} has no text; dropped (envelope-v0 requires at least one character).`);
-      continue;
+      return null;
     }
-    // The importer writes the literal `no timestamp` when the envelope had
-    // none. Read it back as the null the schema asks for, not as prose.
+    // The legacy importer wrote the literal `no timestamp` when the envelope
+    // had none. Read it back as the null the schema asks for, not as prose.
     let ts = null;
     if (header.match[2] !== NO_TIMESTAMP) {
       ts = asRfc3339DateTime(header.match[2]);
@@ -563,10 +882,63 @@ function readPageBody(body, warn) {
         warn(`message ${JSON.stringify(id)} carries ${JSON.stringify(header.match[2])} where a turn header's timestamp goes; it is not an RFC 3339 date-time, so ts was written as null.`);
       }
     }
-    messages.push({ id, role: header.match[1] === 'Me' ? 'user' : 'assistant', ts, text });
-  }
+    return { id, role: header.match[1] === 'Me' ? 'user' : 'assistant', ts, text };
+  });
 
   return { messages, title: titleFromBody(lines, fenced), hasTimeline, droppedEmpty, nulledTimestamps };
+}
+
+/**
+ * The recorded path: identity from the frontmatter record, speaker and text
+ * from the body. Returns `{ mismatch, anchored }` when the body does not
+ * anchor exactly one turn per recorded message - the caller skips the page
+ * loudly; a positional join over the wrong count assigns real ids to the
+ * wrong text, which is worse than refusing.
+ */
+function readRecordedBody(body, record, pageDate, warn) {
+  const lines = body.split('\n');
+  // The clock the importer wrote for each recorded message: derived from its
+  // `ts` where one is usable, else the page-date fallback the importer used.
+  const expected = record.map((r) => {
+    const clock = headerClock(r.ts);
+    return clock === null ? `${pageDate} 00:00` : clock;
+  });
+  const { fenced, boundaries, proseHeaders, quotedHeaders } = scanRecordedFences(lines, expected, warn);
+
+  for (const at of quotedHeaders) {
+    warn(`the line \`${lines[at].trim()}\` at body line ${at + 1} sits inside a fenced code block, so it was read as sample text and not as a turn.`);
+  }
+  for (const at of proseHeaders) {
+    warn(`the line \`${lines[at].trim()}\` at body line ${at + 1} is shaped like a turn header but does not carry the clock the messages record expects next, so it was read as prose.`);
+  }
+
+  if (boundaries.length !== record.length) {
+    return { mismatch: true, anchored: boundaries.length };
+  }
+
+  let droppedEmpty = 0;
+  let nulledTimestamps = 0;
+  const { messages, hasTimeline } = cutAndSlice(lines, boundaries, fenced, warn, false, (anchor, i, text) => {
+    const { id, ts } = record[i];
+    if (text === '') {
+      // The `{id, ts}` entry is dropped with its turn, so the join between the
+      // remaining turns and their entries stays aligned.
+      droppedEmpty += 1;
+      warn(`message ${JSON.stringify(id)} has no text; dropped (envelope-v0 requires at least one character).`);
+      return null;
+    }
+    let outTs = null;
+    if (ts !== null) {
+      outTs = asRfc3339DateTime(ts);
+      if (outTs === null) {
+        nulledTimestamps += 1;
+        warn(`message ${JSON.stringify(id)} records ${JSON.stringify(ts)} as its timestamp; it is not an RFC 3339 date-time, so ts was written as null.`);
+      }
+    }
+    return { id, role: anchor.speaker === 'Me' ? 'user' : 'assistant', ts: outTs, text };
+  });
+
+  return { mismatch: false, messages, title: titleFromBody(lines, fenced), hasTimeline, droppedEmpty, nulledTimestamps };
 }
 
 const files = markdownFiles(pagesDir);
@@ -576,6 +948,8 @@ const seenIds = new Set();
 let skippedNotConversation = 0;
 let skippedNoFrontmatter = 0;
 let skippedNoMessages = 0;
+let skippedUnreadableRecord = 0;
+let skippedJoinMismatch = 0;
 let droppedEmptyMessages = 0;
 let droppedTimelines = 0;
 let nulledTimestamps = 0;
@@ -597,7 +971,46 @@ for (const file of files) {
     continue;
   }
   const warn = (message) => console.warn(`warning: ${file} - ${message}`);
-  const read = readPageBody(page.body, warn);
+
+  let read;
+  const record = parseMessagesRecord(page.front);
+  if (record.present) {
+    if (record.error) {
+      skippedUnreadableRecord += 1;
+      warn(`the messages record could not be read (${record.error}); skipped rather than joined wrong.`);
+      continue;
+    }
+    if (record.items.length === 0) {
+      skippedNoMessages += 1;
+      warn('the messages record is empty; skipped (envelope-v0 requires at least one message per conversation).');
+      continue;
+    }
+    const badId = record.items.findIndex((item) => typeof item.id !== 'string');
+    if (badId !== -1) {
+      skippedUnreadableRecord += 1;
+      const shown = record.items[badId].id === null ? 'null' : JSON.stringify(record.items[badId].id.nonString);
+      warn(`messages[${badId}] records ${shown} where its id goes; envelope-v0 requires a string message id and inventing one is the synthesis the spec forbids, so the page was skipped.`);
+      continue;
+    }
+    // A non-string `ts` (an unquoted number, say) is what the importer writes
+    // for a non-conforming envelope; it is not a clock the header could have
+    // been derived from, so it takes the fallback-clock path and comes back
+    // null like every other unusable timestamp.
+    const items = record.items.map((item) => ({
+      id: item.id,
+      ts: typeof item.ts === 'string' || item.ts === null ? item.ts : item.ts.nonString,
+    }));
+    const pageDate = typeof front.date === 'string' && HEADER_DATE.test(front.date) ? front.date : EPOCH_DATE;
+    read = readRecordedBody(page.body, items, pageDate, warn);
+    if (read.mismatch) {
+      skippedJoinMismatch += 1;
+      warn(`the frontmatter records ${record.items.length} message(s) but the body anchors ${read.anchored} turn(s); a positional join over unequal counts would assign identity to the wrong text, so the page was skipped.`);
+      continue;
+    }
+  } else {
+    read = readPageBody(page.body, warn);
+  }
+
   droppedEmptyMessages += read.droppedEmpty;
   nulledTimestamps += read.nulledTimestamps;
   if (read.hasTimeline) droppedTimelines += 1;
@@ -662,8 +1075,8 @@ writeFileSync(outPath, JSON.stringify(envelope, null, 2) + '\n');
 console.log(`wrote ${conversations.length} conversation(s), ${messageCount} message(s) to ${outPath}`);
 // Every page that did not become a conversation is accounted for on stderr, so
 // a mistargeted directory reads as a diagnosis rather than an empty file.
-if (skippedNoFrontmatter || skippedNotConversation || skippedNoMessages || droppedEmptyMessages) {
-  console.warn(`scanned ${files.length} markdown file(s): ${skippedNoFrontmatter} without frontmatter, ${skippedNotConversation} not type conversation, ${skippedNoMessages} without speaker turns, ${droppedEmptyMessages} empty message(s) dropped.`);
+if (skippedNoFrontmatter || skippedNotConversation || skippedNoMessages || skippedUnreadableRecord || skippedJoinMismatch || droppedEmptyMessages) {
+  console.warn(`scanned ${files.length} markdown file(s): ${skippedNoFrontmatter} without frontmatter, ${skippedNotConversation} not type conversation, ${skippedNoMessages} without speaker turns, ${skippedUnreadableRecord} with a messages record that could not be read, ${skippedJoinMismatch} whose body does not match their messages record, ${droppedEmptyMessages} empty message(s) dropped.`);
 }
 // Two losses that leave the output conforming and would otherwise be invisible.
 if (droppedTimelines) {

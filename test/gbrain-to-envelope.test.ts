@@ -1137,6 +1137,481 @@ describe('gbrain-to-envelope exporter', () => {
     expect(isRfc3339DateTime('2026-12-31T23:59:60+05:30')).toBe(false);
   });
 
+  // --- Red-first regression tests for J, C and D2 on the frontmatter-identity
+  // format. Each was run against the exporter as of the importer-f5 merge
+  // (ccaed050) and FAILED there - the old exporter reads identity out of
+  // `**Me** (<ts> · <id>):` headers, a shape the new importer no longer writes -
+  // so each pins that the rebuild actually closed its defect rather than
+  // documenting it as non-survival.
+  //
+  // J, C and D2 all existed because identity lived in prose, where message text
+  // could break or forge it. Identity now lives in the frontmatter `messages:`
+  // array, which measured hostile-id probing (17 values, including an embedded
+  // newline and a whole `---`/`type:`/`---` block) shows message content cannot
+  // reach.
+
+  /** Writes an envelope to a temp file and round-trips it through the real
+   *  in-tree importer, then the exporter - the actual producer, not a
+   *  hand-transcription of its output. */
+  async function roundTripEnvelope(envelope: unknown) {
+    const envelopePath = join(tempDir(), 'probe.mve.json');
+    writeFileSync(envelopePath, JSON.stringify(envelope, null, 2) + '\n');
+    return roundTrip(envelopePath);
+  }
+
+  test('J: hostile message ids - embedded newline included - survive the round trip verbatim', async () => {
+    // Pre-rebuild: an id containing a newline broke the header line the old
+    // importer wrote it into, the header no longer matched, and the turn was
+    // silently absorbed into the previous one - the last silent loss reachable
+    // from a well-formed envelope. Ids now ride in frontmatter as JSON-quoted
+    // scalars, so no id value can break the line that carries it.
+    const HOSTILE_IDS = [
+      'm\n1',
+      '---\ntype: hacked\n---',
+      'a: b',
+      '- leading dash',
+      'id with trailing space ',
+      'mid · dot',
+      '"quoted" \\ and emoji \u{1F680}',
+    ];
+    const messages = HOSTILE_IDS.map((id, i) => ({
+      id,
+      role: i % 2 === 0 ? 'user' : 'assistant',
+      ts: `2026-02-01T09:0${i}:1${i}.000Z`,
+      text: `turn ${i + 1} text`,
+    }));
+    const result = await roundTripEnvelope({
+      memvelope: 'envelope-v0',
+      meta: { source_provider: 'chatgpt', conversation_count: 1, message_count: messages.length },
+      conversations: [
+        {
+          id: 'c-hostile-ids',
+          title: 'Hostile ids',
+          created_at: '2026-02-01T09:00:10.000Z',
+          updated_at: '2026-02-01T09:06:16.000Z',
+          messages,
+        },
+      ],
+    });
+
+    expect(result.imported.exitCode).toBe(0);
+    expect(result.exported.exitCode).toBe(0);
+    assertEnvelopeV0(result.envelope, { conversations: 1, messages: messages.length });
+    const out = result.envelope.conversations[0].messages as Array<{ id: string; ts: string; text: string }>;
+    // Verbatim, every one - not trimmed, not truncated at the newline, not
+    // reassigned to a neighbouring turn.
+    expect(out.map((m) => m.id)).toEqual(HOSTILE_IDS);
+    expect(out.map((m) => m.text)).toEqual(messages.map((m) => m.text));
+    expect(out.map((m) => m.ts)).toEqual(messages.map((m) => m.ts));
+  });
+
+  test('C: a turn header mangled with one trailing space still anchors its turn', async () => {
+    // Pre-rebuild: the old header regex was `$`-anchored with no trailing-space
+    // tolerance, so one space added by an editor or a sync absorbed the whole
+    // turn into its neighbour, silently. gbrain's own `imessage-slack` pattern
+    // (src/core/conversation-parser/builtins.ts) tolerates trailing whitespace
+    // after the colon, so the exporter now does too - and if a header is
+    // mangled past recognition entirely, the frontmatter count no longer
+    // matches the body and the page is refused loudly instead of joined wrong.
+    const result = await exportPages({
+      'a.md': [
+        '---',
+        'type: conversation',
+        'title: "Trailing space"',
+        'date: "2026-02-01"',
+        'source: "chatgpt"',
+        'memvelope_conversation_id: "c-trailing"',
+        'origin: memvelope/envelope-v0',
+        'messages:',
+        '  - id: "m1"',
+        '    ts: "2026-02-01T09:00:00.000Z"',
+        '  - id: "m2"',
+        '    ts: "2026-02-01T09:05:00.000Z"',
+        '---',
+        '# Trailing space',
+        '',
+        '**Me** (2026-02-01 09:00):',
+        '',
+        'first turn',
+        '',
+        '**Assistant** (2026-02-01 09:05): ', // <- the one trailing space
+        '',
+        'second turn',
+        '',
+      ].join('\n'),
+    });
+
+    expect(result.exitCode).toBe(0);
+    assertEnvelopeV0(result.envelope, { conversations: 1, messages: 2 });
+    const out = result.envelope.conversations[0].messages as Array<{ id: string; role: string; text: string }>;
+    expect(out.map((m) => m.id)).toEqual(['m1', 'm2']);
+    expect(out.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(out[1].text).toBe('second turn');
+    expect(out[0].text).not.toContain('second turn');
+  });
+
+  test('D2: a header-shaped line in unfenced prose no longer splits the message', async () => {
+    // Pre-rebuild: any line shaped like a turn header split the message in two
+    // and the second half's identity was lifted straight out of prose. A
+    // boundary now has to carry the clock derived from the NEXT frontmatter
+    // `ts` - a value message text would have to predict to forge - so this
+    // line, whose clock matches no expected turn, stays prose. Driven through
+    // the real importer: the forged line arrives in the body exactly the way a
+    // real conversation about page formats would put it there.
+    const FORGED = '**Assistant** (2099-12-31 23:59):';
+    const messages = [
+      {
+        id: 'm1',
+        role: 'user' as const,
+        ts: '2026-02-01T09:00:00.000Z',
+        text: `Here is the header shape I keep seeing:\n\n${FORGED}\n\nCan you parse it?`,
+      },
+      { id: 'm2', role: 'assistant' as const, ts: '2026-02-01T09:05:00.000Z', text: 'Yes - and it must stay prose.' },
+    ];
+    const result = await roundTripEnvelope({
+      memvelope: 'envelope-v0',
+      meta: { source_provider: 'chatgpt', conversation_count: 1, message_count: 2 },
+      conversations: [
+        {
+          id: 'c-forged-header',
+          title: 'Forged header',
+          created_at: '2026-02-01T09:00:00.000Z',
+          updated_at: '2026-02-01T09:05:00.000Z',
+          messages,
+        },
+      ],
+    });
+
+    expect(result.imported.exitCode).toBe(0);
+    expect(result.exported.exitCode).toBe(0);
+    assertEnvelopeV0(result.envelope, { conversations: 1, messages: 2 });
+    const out = result.envelope.conversations[0].messages as Array<{ id: string; ts: string | null; text: string }>;
+    expect(out.map((m) => m.id)).toEqual(['m1', 'm2']);
+    // The forged line is still IN the text - not a boundary, and not deleted.
+    expect(out[0].text).toContain(FORGED);
+    expect(out[0].text).toContain('Can you parse it?');
+    // No identity was forged from it: the line survives as text, but no
+    // timestamp field anywhere in the document carries its clock.
+    expect(out.map((m) => m.ts)).toEqual(['2026-02-01T09:00:00.000Z', '2026-02-01T09:05:00.000Z']);
+    for (const { value } of timestampsIn(result.envelope)) {
+      expect(String(value)).not.toContain('2099');
+    }
+    // And the operator is told a header-shaped line was read as prose.
+    expect(result.exported.stderr).toContain('read as prose');
+  });
+
+  // --- The recorded (frontmatter-identity) path's own contract. -------------
+
+  /** A recorded-format page in the exact shape the importer writes. */
+  function recordedPage(opts: {
+    title?: string;
+    id?: string;
+    record: string[];
+    body: string;
+    date?: string;
+  }): string {
+    return [
+      '---',
+      'type: conversation',
+      `title: ${JSON.stringify(opts.title ?? 'Recorded')}`,
+      `date: ${JSON.stringify(opts.date ?? '2026-02-01')}`,
+      'source: "chatgpt"',
+      ...(opts.id ? [`memvelope_conversation_id: ${JSON.stringify(opts.id)}`] : []),
+      'origin: memvelope/envelope-v0',
+      ...opts.record,
+      '---',
+      `# ${opts.title ?? 'Recorded'}`,
+      '',
+      opts.body,
+      '',
+    ].join('\n');
+  }
+
+  const RECORD_2 = [
+    'messages:',
+    '  - id: "m1"',
+    '    ts: "2026-02-01T09:00:00.000Z"',
+    '  - id: "m2"',
+    '    ts: "2026-02-01T09:05:00.000Z"',
+  ];
+  const BODY_2 = [
+    '**Me** (2026-02-01 09:00):',
+    '',
+    'first turn',
+    '',
+    '**Assistant** (2026-02-01 09:05):',
+    '',
+    'second turn',
+  ].join('\n');
+
+  test('recorded path: the quoting styles gbrain re-serializes to still read', async () => {
+    // gbrain's serializeMarkdown re-emits the array semantically, not
+    // textually: plain unquoted ids, single-quoted timestamps. Both must read
+    // identically to the importer's JSON-quoted originals.
+    const result = await exportPages({
+      'a.md': recordedPage({
+        id: 'c-requoted',
+        record: [
+          'messages:',
+          '  - id: m1',
+          "    ts: '2026-02-01T09:00:00.000Z'",
+          '  - id: m2',
+          "    ts: '2026-02-01T09:05:00.000Z'",
+        ],
+        body: BODY_2,
+      }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    assertEnvelopeV0(result.envelope, { conversations: 1, messages: 2 });
+    const out = result.envelope.conversations[0].messages as Array<{ id: string; ts: string }>;
+    expect(out.map((m) => m.id)).toEqual(['m1', 'm2']);
+    expect(out.map((m) => m.ts)).toEqual(['2026-02-01T09:00:00.000Z', '2026-02-01T09:05:00.000Z']);
+  });
+
+  test('recorded path: a body anchoring fewer turns than the record is refused loudly', async () => {
+    // A positional join over unequal counts assigns real ids to the wrong
+    // text. Refusing is the only honest option, and it has to say both
+    // numbers so the operator can find the missing turn.
+    const result = await exportPages({
+      'a.md': recordedPage({
+        id: 'c-short',
+        record: RECORD_2,
+        body: '**Me** (2026-02-01 09:00):\n\nonly turn',
+      }),
+      'b.md': recordedPage({ id: 'c-ok', record: RECORD_2, body: BODY_2 }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    // The sound page still exports; the unsound one is skipped, not guessed.
+    assertEnvelopeV0(result.envelope, { conversations: 1, messages: 2 });
+    expect(result.envelope.conversations[0].id).toBe('c-ok');
+    expect(result.stderr).toContain('records 2 message(s)');
+    expect(result.stderr).toContain('anchors 1 turn(s)');
+    expect(result.stderr).toContain('1 whose body does not match their messages record');
+  });
+
+  test('recorded path: a null or non-string recorded id is refused loudly, never invented', async () => {
+    const nullId = recordedPage({
+      id: 'c-nullid',
+      record: ['messages:', '  - id: null', '    ts: "2026-02-01T09:00:00.000Z"'],
+      body: '**Me** (2026-02-01 09:00):\n\na turn',
+    });
+    // An unquoted number is a YAML number, not a string - reading it as the
+    // string "123" would fabricate an id the record does not hold.
+    const numericId = recordedPage({
+      id: 'c-numid',
+      record: ['messages:', '  - id: 123', '    ts: "2026-02-01T09:00:00.000Z"'],
+      body: '**Me** (2026-02-01 09:00):\n\na turn',
+    });
+    const result = await exportPages({ 'a.md': nullId, 'b.md': numericId });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.envelope.conversations).toHaveLength(0);
+    expect(result.stderr).toContain('messages[0] records null');
+    expect(result.stderr).toContain('messages[0] records "123"');
+    expect(result.stderr).toContain('2 with a messages record that could not be read');
+  });
+
+  test('recorded path: an empty or unreadable messages record is refused loudly', async () => {
+    const empty = recordedPage({
+      id: 'c-empty',
+      record: ['messages: []'],
+      body: 'No turns at all.',
+    });
+    const unreadable = recordedPage({
+      id: 'c-unreadable',
+      record: ['messages: not an array'],
+      body: '**Me** (2026-02-01 09:00):\n\na turn',
+    });
+    const missingTs = recordedPage({
+      id: 'c-missing-ts',
+      record: ['messages:', '  - id: "m1"'],
+      body: '**Me** (2026-02-01 09:00):\n\na turn',
+    });
+    const result = await exportPages({ 'a.md': empty, 'b.md': unreadable, 'c.md': missingTs });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.envelope.conversations).toHaveLength(0);
+    expect(result.stderr).toContain('the messages record is empty');
+    expect(result.stderr).toContain('could not be read');
+    expect(result.stderr).toContain('does not carry both id and ts');
+  });
+
+  test('recorded path: ts null takes the page-date fallback clock and stays null', async () => {
+    // The importer writes `<date> 00:00` in the header when a message's ts is
+    // null or unusable; the exporter expects the same clock, joins on it, and
+    // the recorded null comes back as the null the schema permits.
+    const result = await exportPages({
+      'a.md': recordedPage({
+        id: 'c-nullts',
+        record: [
+          'messages:',
+          '  - id: "m1"',
+          '    ts: null',
+          '  - id: "m2"',
+          '    ts: "2026-02-01T09:05:00.000Z"',
+        ],
+        body: [
+          '**Me** (2026-02-01 00:00):',
+          '',
+          'no timestamp on this one',
+          '',
+          '**Assistant** (2026-02-01 09:05):',
+          '',
+          'this one has one',
+        ].join('\n'),
+      }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    assertEnvelopeV0(result.envelope, { conversations: 1, messages: 2 });
+    const out = result.envelope.conversations[0].messages as Array<{ ts: string | null }>;
+    expect(out[0].ts).toBeNull();
+    expect(out[1].ts).toBe('2026-02-01T09:05:00.000Z');
+    expect(result.envelope.conversations[0].created_at).toBeNull();
+  });
+
+  test('recorded path: a recorded ts that is not RFC 3339 is emitted as null, loudly', async () => {
+    // TS_SHAPE reads a wall clock out of `2026-02-01T09:00` (no seconds), so
+    // the header join works - but the schema's date-time requires seconds, so
+    // the value itself cannot ship. Null plus a warning, like every other
+    // non-conforming timestamp.
+    const result = await exportPages({
+      'a.md': recordedPage({
+        id: 'c-badts',
+        record: ['messages:', '  - id: "m1"', '    ts: "2026-02-01T09:00"'],
+        body: '**Me** (2026-02-01 09:00):\n\na turn',
+      }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    assertEnvelopeV0(result.envelope, { conversations: 1, messages: 1 });
+    expect(result.envelope.conversations[0].messages[0].ts).toBeNull();
+    expect(result.stderr).toContain('"2026-02-01T09:00"');
+    expect(result.stderr).toContain('not an RFC 3339 date-time');
+  });
+
+  test('recorded path: a fence spanning a turn boundary loses to the recorded clock', async () => {
+    // The R1 rule, re-anchored: the legacy separator is gone from this format,
+    // so the signal that a fence has swallowed a boundary is the next expected
+    // clock appearing inside it. The fence is demoted, the turn is kept, and
+    // the operator is told.
+    const FENCE = '```';
+    const result = await exportPages({
+      'a.md': recordedPage({
+        id: 'c-fencespan',
+        record: RECORD_2,
+        body: [
+          '**Me** (2026-02-01 09:00):',
+          '',
+          'I pasted half a block by mistake:',
+          '',
+          `${FENCE}js`,
+          "const widget = 'acme-example';",
+          '',
+          '**Assistant** (2026-02-01 09:05):',
+          '',
+          'The block above me never closed.',
+        ].join('\n'),
+      }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    assertEnvelopeV0(result.envelope, { conversations: 1, messages: 2 });
+    const out = result.envelope.conversations[0].messages as Array<{ id: string; text: string }>;
+    expect(out.map((m) => m.id)).toEqual(['m1', 'm2']);
+    expect(out[1].text).toBe('The block above me never closed.');
+    expect(out[0].text).not.toContain('never closed');
+    expect(result.stderr).toContain('is still open at the turn header');
+  });
+
+  test('recorded path: a header quoted in a closed fence is sample text, not a turn', async () => {
+    // The quoted-transcript case: the fence opens and closes inside one turn,
+    // so even a line carrying a REAL upcoming clock stays sample text - the
+    // fence is balanced, and balanced fences win.
+    const FENCE = '```';
+    const result = await exportPages({
+      'a.md': recordedPage({
+        id: 'c-quotedfence',
+        record: RECORD_2,
+        body: [
+          '**Me** (2026-02-01 09:00):',
+          '',
+          'The page format looks like this:',
+          '',
+          FENCE,
+          '**Assistant** (2027-01-01 12:00):',
+          FENCE,
+          '',
+          'Right?',
+          '',
+          '**Assistant** (2026-02-01 09:05):',
+          '',
+          'Right.',
+        ].join('\n'),
+      }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    assertEnvelopeV0(result.envelope, { conversations: 1, messages: 2 });
+    const out = result.envelope.conversations[0].messages as Array<{ text: string }>;
+    expect(out[0].text).toContain('(2027-01-01 12:00)');
+    expect(out[0].text).toContain('Right?');
+    expect(out[1].text).toBe('Right.');
+    expect(result.stderr).toContain('read as sample text');
+  });
+
+  test('recorded path: an empty turn drops its record entry too, keeping the join aligned', async () => {
+    const result = await exportPages({
+      'a.md': recordedPage({
+        id: 'c-emptyturn',
+        record: [
+          'messages:',
+          '  - id: "m1"',
+          '    ts: "2026-02-01T09:00:00.000Z"',
+          '  - id: "m2"',
+          '    ts: "2026-02-01T09:05:00.000Z"',
+          '  - id: "m3"',
+          '    ts: "2026-02-01T09:10:00.000Z"',
+        ],
+        body: [
+          '**Me** (2026-02-01 09:00):',
+          '',
+          'first turn',
+          '',
+          '**Assistant** (2026-02-01 09:05):',
+          '',
+          '**Me** (2026-02-01 09:10):',
+          '',
+          'third turn',
+        ].join('\n'),
+      }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    assertEnvelopeV0(result.envelope, { conversations: 1, messages: 2 });
+    const out = result.envelope.conversations[0].messages as Array<{ id: string; text: string }>;
+    // m2 dropped WITH its entry: m3 keeps its own id and text, not m2's.
+    expect(out.map((m) => m.id)).toEqual(['m1', 'm3']);
+    expect(out[1].text).toBe('third turn');
+    expect(result.stderr).toContain('"m2" has no text; dropped');
+  });
+
+  test('recorded path: a new-format body without its record is skipped loudly, not guessed', async () => {
+    // A page carrying clock-only headers but NO messages key has no identity
+    // source at all - the legacy parser cannot read these headers, and there
+    // is no record to join. It lands in the legacy path and is skipped as
+    // turnless, which is loud and honest.
+    const result = await exportPages({
+      'a.md': recordedPage({ id: 'c-recordless', record: [], body: BODY_2 }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.envelope.conversations).toHaveLength(0);
+    expect(result.stderr).toContain('no speaker turns found');
+  });
+
   test('a missing directory argument or unreadable path exits 1', async () => {
     const noArgs = await run(EXPORTER_PATH, []);
     expect(noArgs.exitCode).toBe(1);
