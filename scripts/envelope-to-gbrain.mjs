@@ -83,10 +83,23 @@
  * the envelope verbatim — `id` is the message id, `ts` the original RFC 3339
  * timestamp (or `null`, which envelope-v0 permits). The body header is derived
  * FROM `ts` and is lossier than it by construction: minute resolution, UTC, and
- * a fallback when `ts` is null. `ts` is the record; the header is the anchor.
+ * a fallback whenever `ts` is null OR is a string this script will not read a
+ * clock out of — a date with no time, a basic-format `20251102T142251Z`, an
+ * impossible `2025-02-30`, anything non-string. `ts` is the record; the header
+ * is the anchor, and only the record is lossless.
  *
- * Every emitted value is JSON-encoded, so every timestamp envelope-v0 can carry
- * — `string | null` — is QUOTED or the bare `null`. Unquoted, an RFC 3339
+ * Worth being plain about how much the array rescues: for a CONFORMING envelope
+ * `id` is positional by spec (`m1`, `m2`, … restarting per conversation), so it
+ * is derivable from the index and carries no information the position does not.
+ * `ts` is the genuinely new value here. The `id` is recorded anyway because the
+ * spec is what makes it derivable, and a non-conforming or future producer is
+ * not bound by it.
+ *
+ * Every value TAKEN FROM THE ENVELOPE is JSON-encoded, so every timestamp
+ * envelope-v0 can carry — `string | null` — is QUOTED or the bare `null`. (The
+ * handful of fixed keys this script writes itself — `type: conversation`,
+ * `origin:`, an absent `date: null`, an empty `messages: []` — are literals
+ * under its own control, not envelope data.) Unquoted, an RFC 3339
  * scalar is read by js-yaml as a JS `Date`: microseconds truncate, a `+05:30`
  * offset is normalised away, the lexical form changes — and gbrain's own
  * `coerceFrontmatterString` (src/core/markdown.ts) slices a Date to its first
@@ -115,9 +128,11 @@
  * 24-hour is a substring of the envelope's own `ts` (no hour arithmetic, so the
  * 12/0 boundary cannot be got wrong), it sorts chronologically within a day
  * where 12-hour does not, and it needs no AM/PM marker to disambiguate. The
- * pattern's `time_format: '12h_ampm'` declaration is not a constraint here: the
- * field is read nowhere outside builtins.ts, and parse.ts converts off the
- * CAPTURED AM/PM group, which is optional and absent for a 24-hour clock.
+ * pattern's `time_format: '12h_ampm'` declaration is not a constraint here.
+ * Outside builtins.ts it is read in exactly one place — `list-builtins` prints
+ * it (src/commands/conversation-parser.ts) — and never by the parser: parse.ts
+ * converts off the CAPTURED AM/PM group, which is optional and absent for a
+ * 24-hour clock, so `to24h(hour, undefined)` returns the hour unchanged.
  *
  * The stdout receipt reports MESSAGES as well as pages. Counting only pages hid
  * every message-level loss by construction: a conversation that arrives with
@@ -156,8 +171,10 @@
  *     lands on `no_match` and still extracts nothing. Measured 2026-08-02 on
  *     envelopes built by the reference converter, two turns per side: 25
  *     paragraphs per assistant turn parses (density 0.070, 4 of 4 messages), 40
- *     paragraphs does not (0.046, 0 messages). Roughly: turns averaging more
- *     than ~19 non-blank lines of prose fall below the floor. That threshold
+ *     paragraphs does not (0.046, 0 messages). The exact crossover, measured
+ *     line by line: 18 non-blank lines per turn parses (0.0526), 19 does not
+ *     (0.0499) — the H1 counts in the denominator too. So turns averaging more
+ *     than ~18 non-blank lines of prose fall below the floor. That threshold
  *     lives in gbrain's parser, not here — this script cannot raise it, and
  *     long-form assistant answers sit close to it.
  *   - ★ A PASTED TRANSCRIPT CAN REPLACE THE WHOLE CONVERSATION, and nothing
@@ -232,7 +249,9 @@
  *   - 2026-08-02, the parser-legible format above. Measured on two throwaway
  *     HOME-redirected PGLite brains fed the SAME 13 conversations, one written
  *     the old way and one the new:
- *       `gbrain conversation-parser scan`  13/13 pages `no_match`, 0 messages
+ *       `gbrain conversation-parser scan <slug>`, run once per page (it takes
+ *       one slug; there is no aggregate form):
+ *                                          13/13 pages `no_match`, 0 messages
  *                                       -> 13/13 `imessage-slack`, 33 messages
  *       `gbrain extract-conversation-facts --dry-run`
  *                                          "Skipped 13 page(s)" (pages_skipped)
@@ -307,7 +326,8 @@ const TS_SHAPE =
  * clock AS UTC. So a `+05:30` timestamp must be shifted before it is written;
  * emitting the local wall clock would record every fact 5.5 hours off. A `Z`
  * timestamp, or one with no designator at all, is already taken as UTC and its
- * digits are copied straight across — no arithmetic, so no way to be wrong.
+ * digits are copied straight across, after the calendar check below — no
+ * arithmetic on the common path, so no hour can be shifted by a conversion.
  */
 function headerClock(ts) {
   if (typeof ts !== 'string') return null;
@@ -537,10 +557,12 @@ for (const [i, c] of conversations.entries()) {
     // so a message id and a full RFC 3339 timestamp have to live here or be
     // thrown away. Order is the body's order, so `messages[i]` is the i-th turn.
     //
-    // An array of maps, deliberately — not a map keyed by id, which discards
-    // order and collapses the duplicate ids the spec permits; and not one packed
-    // string per message, which asks a consumer to split on a space and breaks
-    // the moment an id contains one.
+    // An array of maps, deliberately. Not a map keyed by id: order IS the
+    // join — `messages[i]` is body turn i — and a mapping discards it. (The
+    // duplicate-id argument belongs to CONVERSATION ids, which the spec says
+    // consumers must tolerate; message ids are positional per spec and unique
+    // within their conversation.) And not one packed string per message, which
+    // asks a consumer to split on a space and breaks the moment an id has one.
     //
     // An explicit `[]` rather than an omitted key: omission is
     // indistinguishable from a page written before this format existed, and a

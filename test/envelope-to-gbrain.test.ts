@@ -327,8 +327,10 @@ describe('envelope-to-gbrain importer', () => {
 
     const result = await runImporter(envelopePath);
     const page = readOnlyMarkdown(result.outDir);
-    const frontmatter = page.split('---')[1] ?? '';
-    const parsed = yamlSafeLoad(frontmatter) as Record<string, unknown>;
+    // Via frontmatterOf, not `page.split('---')[1]`: the split idiom cuts on
+    // the substring anywhere, including inside a quoted value, so a hostile id
+    // truncates the block and the assertion passes for the wrong reason.
+    const parsed = frontmatterOf(page);
 
     expect(result.exitCode).toBe(0);
     // The newline is escaped inside a quoted scalar, so the hostile text stays
@@ -377,8 +379,10 @@ describe('envelope-to-gbrain importer', () => {
 
     const result = await runImporter(envelopePath);
     const page = readOnlyMarkdown(result.outDir);
-    const frontmatter = page.split('---')[1] ?? '';
-    const parsed = yamlSafeLoad(frontmatter) as Record<string, unknown>;
+    // Via frontmatterOf, not `page.split('---')[1]`: the split idiom cuts on
+    // the substring anywhere, including inside a quoted value, so a hostile id
+    // truncates the block and the assertion passes for the wrong reason.
+    const parsed = frontmatterOf(page);
 
     expect(result.exitCode).toBe(0);
     expect(Object.keys(parsed).sort()).toEqual([
