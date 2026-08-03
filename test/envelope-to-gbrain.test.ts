@@ -1329,3 +1329,157 @@ describe('envelope-to-gbrain importer — F5 header clock arithmetic', () => {
     expect(await headerFor(ts)).toBe('**Me** (2025-11-02 00:00):');
   });
 });
+
+// ---------------------------------------------------------------------------
+// F5 — the H1 heading is the one place a third-party string reaches the BODY.
+// Every frontmatter value is JSON-escaped; the heading was interpolated raw.
+// Since F5 made the body parseable, a newline in the title no longer just looks
+// wrong — it manufactures a turn AHEAD of every real one, so `messages[0]` in
+// frontmatter names content the user never sent and every id after it is off by
+// one. That is the positional contract this format rests on.
+// ---------------------------------------------------------------------------
+describe('envelope-to-gbrain importer — F5 heading cannot manufacture a turn', () => {
+  async function pageFor(title: unknown) {
+    const envelopePath = writeEnvelope(
+      envelopeWith(
+        [
+          { id: 'm1', role: 'user', ts: '2025-11-02T14:22:51.000Z', text: 'first turn text' },
+          { id: 'm2', role: 'assistant', ts: '2025-11-02T14:24:03.000Z', text: 'second turn text' },
+        ],
+        { title },
+      ),
+    );
+    const result = await runImporter(envelopePath);
+    expect(result.exitCode).toBe(0);
+    const page = readOnlyMarkdown(result.outDir);
+    const md = parseMarkdown(page, 'brain/conversations/page.md');
+    return {
+      page,
+      md,
+      parsed: parseConversation(md.compiled_truth, { page: { frontmatter: md.frontmatter } as never }),
+    };
+  }
+
+  test.each([
+    ['a header-shaped line', 'Real Title\n\n**Me** (2020-01-01 09:00): INJECTED FROM TITLE'],
+    ['a telegram-shaped line', 'Real Title\n\n**[09:00] Attacker:** injected'],
+    ['a bare newline', 'Real Title\nsecond line'],
+    ['a carriage return', 'Real Title\r\nsecond line'],
+  ])('a title containing %s adds no turn', async (_label, title) => {
+    const { md, parsed } = await pageFor(title);
+
+    // The heading stays ONE line, so it can anchor nothing.
+    const headings = md.compiled_truth.split('\n').filter((l) => l.startsWith('# '));
+    expect(headings).toHaveLength(1);
+    // Exactly the real turns, in order, with the real timestamps.
+    expect(parsed.messages).toHaveLength(2);
+    expect(parsed.messages.map((m) => m.timestamp)).toEqual([
+      '2025-11-02T14:22:00Z',
+      '2025-11-02T14:24:00Z',
+    ]);
+    expect(parsed.messages.map((m) => m.text)).toEqual(['first turn text', 'second turn text']);
+    // The positional contract: frontmatter[i] is body turn i.
+    expect((md.frontmatter.messages as unknown[]).length).toBe(parsed.messages.length);
+    // The title itself is still recorded in full, newline and all.
+    expect(frontmatterOf(await pageFor(title).then((r) => r.page)).title).toBe(title);
+  });
+
+  test('an empty title gets one fallback, not two different ones', async () => {
+    const { page, md } = await pageFor('');
+
+    // Frontmatter said "Untitled conversation" while the heading said
+    // "Conversation" — the same absent title under two names.
+    expect(frontmatterOf(page).title).toBe('Untitled conversation');
+    expect(md.compiled_truth.split('\n')[0]).toBe('# Untitled conversation');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F5 — behavior on NON-CONFORMING input, pinned so the header's claims stay
+// true. envelope-v0 types `ts` as `string | null` and `id` as a required
+// string; JSON quotes strings, so anything else comes out unquoted. That is
+// lossless and carries no `Date` hazard, but "every value is quoted" would be a
+// false claim, and a false claim in a file header is worse than a limitation.
+// ---------------------------------------------------------------------------
+describe('envelope-to-gbrain importer — F5 non-conforming scalars', () => {
+  async function frontmatterFor(message: Record<string, unknown>) {
+    const envelopePath = writeEnvelope(
+      envelopeWith([
+        { id: 'm1', role: 'user', ts: '2025-11-02T14:22:51.000Z', text: 'conforming turn' },
+        message,
+      ]),
+    );
+    const result = await runImporter(envelopePath);
+    expect(result.exitCode).toBe(0);
+    const page = readOnlyMarkdown(result.outDir);
+    return { page, frontmatter: frontmatterOf(page), md: parseMarkdown(page, 'brain/conversations/p.md') };
+  }
+
+  test('a numeric ts is emitted as a YAML integer — unquoted, but never a Date', async () => {
+    const { page, md } = await frontmatterFor({ id: 'm2', role: 'assistant', ts: 1762093371000, text: 'b' });
+
+    expect(page).toContain('    ts: 1762093371000');
+    const messages = md.frontmatter.messages as Array<{ ts: unknown }>;
+    expect(typeof messages[1].ts).toBe('number');
+    // The property that actually matters: no Date, so nothing is truncated and
+    // nothing is sticky.
+    expect(messages[1].ts).not.toBeInstanceOf(Date);
+    // And the conforming sibling is still quoted.
+    expect(page).toContain('    ts: "2025-11-02T14:22:51.000Z"');
+  });
+
+  test('a missing message id is emitted as null, and the page still parses', async () => {
+    const { page, md } = await frontmatterFor({ role: 'assistant', ts: '2025-11-02T14:24:03.000Z', text: 'b' });
+
+    expect(page).toContain('  - id: null');
+    expect((md.frontmatter.messages as Array<{ id: unknown }>)[1].id).toBeNull();
+    const parsed = parseConversation(md.compiled_truth, {
+      page: { frontmatter: md.frontmatter } as never,
+    });
+    expect(parsed.messages).toHaveLength(2);
+  });
+
+  test('a hostile non-string ts cannot break the frontmatter', async () => {
+    const { page, frontmatter } = await frontmatterFor({
+      id: 'm2',
+      role: 'assistant',
+      ts: { evil: '\n---\ntype: injected\n---\n' },
+      text: 'b',
+    });
+
+    // Emitted as JSON flow, which is valid YAML and stays one physical line.
+    expect(Object.keys(frontmatter).sort()).toEqual([
+      'date',
+      'memvelope_conversation_id',
+      'messages',
+      'origin',
+      'source',
+      'title',
+      'type',
+    ]);
+    // Asserted structurally, never by substring: the hostile text IS on the
+    // page, `\n`-escaped inside a one-line JSON flow scalar, and a
+    // `not.toContain` would be checking the wrong thing — it cannot tell a real
+    // key from the same characters inside a value.
+    expect(frontmatter.type).toBe('conversation');
+    expect(Object.keys(frontmatter)).not.toContain('injected');
+    // One physical line, which is why it cannot close the scalar.
+    const tsLines = frontmatterBlock(page).split('\n').filter((l) => /^\s*ts:/.test(l));
+    expect(tsLines).toHaveLength(2);
+    expect(tsLines[1].trim()).toBe('ts: {"evil":"\\n---\\ntype: injected\\n---\\n"}');
+  });
+
+  test('a gbrain rewrite keeps the values and changes only the quoting style', async () => {
+    const envelopePath = writeEnvelope(
+      envelopeWith([{ id: 'm1', role: 'user', ts: '2025-11-02T14:22:51.000Z', text: 'a' }]),
+    );
+    const result = await runImporter(envelopePath);
+    const { first, parsed } = roundTrip(readOnlyMarkdown(result.outDir));
+
+    // Pinned because the header states it, and because the importer's own
+    // conflict check reads this block by scanning lines rather than parsing it.
+    expect(first).toContain('  - id: m1');
+    expect(first).toContain("    ts: '2025-11-02T14:22:51.000Z'");
+    expect(parsed.frontmatter.messages).toEqual([{ id: 'm1', ts: '2025-11-02T14:22:51.000Z' }]);
+  });
+});

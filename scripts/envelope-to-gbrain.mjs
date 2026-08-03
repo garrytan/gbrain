@@ -85,14 +85,30 @@
  * FROM `ts` and is lossier than it by construction: minute resolution, UTC, and
  * a fallback when `ts` is null. `ts` is the record; the header is the anchor.
  *
- * Every emitted scalar is JSON-encoded, so every timestamp is QUOTED. Unquoted,
- * an RFC 3339 scalar is read by js-yaml as a JS `Date`: microseconds truncate,
- * a `+05:30` offset is normalised away, the lexical form changes — and gbrain's
- * own `coerceFrontmatterString` (src/core/markdown.ts) slices a Date to its
- * first 10 characters, losing the time of day entirely. It is sticky, too: a
- * Date re-serializes unquoted and stays a Date on every later round trip.
+ * Every emitted value is JSON-encoded, so every timestamp envelope-v0 can carry
+ * — `string | null` — is QUOTED or the bare `null`. Unquoted, an RFC 3339
+ * scalar is read by js-yaml as a JS `Date`: microseconds truncate, a `+05:30`
+ * offset is normalised away, the lexical form changes — and gbrain's own
+ * `coerceFrontmatterString` (src/core/markdown.ts) slices a Date to its first
+ * 10 characters, losing the time of day entirely. It is sticky, too: a Date
+ * re-serializes unquoted and stays a Date on every later round trip.
  * `test/envelope-to-gbrain.test.ts` fails if a timestamp is ever emitted
  * unquoted, and carries a sentinel proving that guard fires.
+ *
+ * The precise claim, because "everything is quoted" would be false: JSON
+ * quotes STRINGS. A non-conforming envelope whose `ts` is a number emits
+ * `ts: 1762093371000` — unquoted, and a YAML integer rather than a Date, so it
+ * is lossless and carries no `Date` hazard, but it is not a quoted scalar
+ * either. Same for a non-string `id`, and a missing `id` (the schema requires
+ * one) emits `id: null`, which is indistinguishable from a legitimate
+ * `ts: null`. Coercing non-conforming types is deliberately not attempted here;
+ * the behavior is pinned by test so it cannot drift unnoticed.
+ *
+ * The array survives a gbrain rewrite SEMANTICALLY, not textually.
+ * `serializeMarkdown` re-emits `id: "m1"` as `id: m1` and `ts: "…"` as
+ * `ts: '…'` — values and order identical, quoting style not. Anything that
+ * reads this page by parsing YAML is fine; anything that reads it by scanning
+ * lines must not assume double quotes.
  *
  * 24-hour, not 12-hour-with-AM/PM. Both match `imessage-slack`, and both were
  * measured to reconstruct all 24 hours exactly, so the tie is broken elsewhere:
@@ -144,16 +160,52 @@
  *     than ~19 non-blank lines of prose fall below the floor. That threshold
  *     lives in gbrain's parser, not here — this script cannot raise it, and
  *     long-form assistant answers sit close to it.
- *   - A message whose own text contains a line shaped like a turn header —
- *     someone pasting a transcript into a chat — is split into an extra turn by
- *     the parser, attributed to whatever speaker that line names. Measured: a
- *     2-message conversation quoting `**Me** (2020-01-01 09:00):` parses to 3
- *     messages, the middle one timestamped 2020. Inherent to any plain-text
- *     transcript format; the frontmatter `messages` array still holds exactly
- *     the real turns, so the two can be reconciled by count.
+ *   - ★ A PASTED TRANSCRIPT CAN REPLACE THE WHOLE CONVERSATION, and nothing
+ *     reports it. This is the sharpest limit here and it is not fixable from
+ *     this script.
+ *
+ *     A message whose own text contains lines shaped like SOME OTHER export
+ *     format — anyone who has pasted a Slack, Discord, Telegram or IRC snippet
+ *     into a chat — puts those lines in the body too. parse.ts picks ONE
+ *     pattern per page, scored on the first 10 body lines
+ *     (SCORING_HEAD_LINES), and only re-scores against the full body when that
+ *     head score falls under 0.3. So the pasted block only has to win the head
+ *     window; the length of the real conversation is irrelevant. Measured, with
+ *     four `**[09:0N] Colleague N:**` lines quoted inside message 1:
+ *
+ *       real turns  pasted lines  winner            frontmatter / body turns
+ *                2             2  imessage-slack        2 / 2
+ *                2             3  telegram-bracket      2 / 3
+ *                4             4  telegram-bracket      4 / 4   <- counts AGREE
+ *               40             4  telegram-bracket     40 / 4
+ *
+ *     In the last row all forty real turns are gone and four fabricated
+ *     speakers at fabricated times reach the fact extractor in their place —
+ *     at exit 0, with `phase: regex_match`, so `pages_skipped` stays 0 and
+ *     `gbrain doctor` reports `conversation_format_coverage` OK.
+ *
+ *     Comparing `frontmatter.messages.length` against the parsed turn count
+ *     catches three of those four rows and NOT the 4/4 one, where the counts
+ *     agree while every speaker and timestamp is fabricated. Count is a
+ *     smoke alarm, not a proof. Closing this needs a change in parse.ts —
+ *     fenced-code awareness, or per-pattern scoring that does not let a
+ *     ten-line window speak for the page.
+ *   - Neither does the parser respect fenced code blocks: a turn header inside
+ *     ``` ``` ``` still anchors a turn. `inferTitleFromBody` in markdown.ts
+ *     tracks fences; parse.ts does not.
  *   - `messages[i]` is positional. The body carries no id to join on, so an
  *     edit that inserts or removes a turn in the body without editing the
- *     frontmatter silently re-points every id after it.
+ *     frontmatter silently re-points every id after it — and so does any of the
+ *     parser behavior above.
+ *   - MINUTE RESOLUTION IS THE CEILING, and it is the parser's, not this
+ *     format's. Every branch of `buildIso` in parse.ts hardcodes `:00` seconds,
+ *     and no built-in pattern captures a seconds group — `signal-export`
+ *     matches seconds in its regex and still discards them. So two turns in the
+ *     same minute come back with identical timestamps: `claude-basic` m1
+ *     (15:02:00) and m2 (15:02:31) both parse to `2026-06-14T15:02:00Z`.
+ *     Anything downstream that orders or windows on the PARSED timestamp sees a
+ *     tie. The frontmatter `ts` keeps full resolution and is the only place on
+ *     the page that has it.
  *
  * Memory: the whole envelope is held in memory (no streaming); envelopes are
  * far smaller than the vendor exports they serialize.
@@ -427,6 +479,11 @@ for (const [i, c] of conversations.entries()) {
   // characters that include a newline, and interpolating that into a header
   // would break the turn it is supposed to anchor.
   const pageDate = HEADER_DATE.test(date) ? date : EPOCH_DATE;
+  // ONE fallback for an absent title, shared by the frontmatter and the H1.
+  // They used to disagree — "Untitled conversation" above, "Conversation" in
+  // the body — which is two different names for the same missing thing, and
+  // `parseMarkdown` prefers the body's H1 when frontmatter has no title.
+  const title = c.title || 'Untitled conversation';
   // gbrain reads YAML frontmatter + markdown body; keep provenance in frontmatter.
   // Emit `type: conversation` so gbrain stores these as conversation pages rather
   // than defaulting to the generic `concept`. gbrain is open-typed — it takes an
@@ -441,7 +498,7 @@ for (const [i, c] of conversations.entries()) {
     // and inject arbitrary frontmatter keys into the page gbrain ingests — or
     // duplicate an existing key, which makes the parse throw and silently
     // strips every provenance field from the page.
-    `title: ${JSON.stringify(c.title || 'Untitled conversation')}`,
+    `title: ${JSON.stringify(title)}`,
     // `date` is the first 10 chars of the envelope's `created_at`; 10 is plenty
     // to smuggle a newline plus a short key. Absent stays an unquoted YAML null.
     `date: ${date ? JSON.stringify(date) : 'null'}`,
@@ -502,7 +559,14 @@ for (const [i, c] of conversations.entries()) {
     console.warn(`warning: filename collision on "${name}" — conversation id ${JSON.stringify(c.id)} is not unique; overwriting the earlier page.`);
   }
   pages.set(name, {
-    content: front + `# ${c.title || 'Conversation'}\n\n` + body + '\n',
+    // The H1 is the ONLY place a third-party string reaches the body, and the
+    // body is now parsed. A title carrying a newline used to look merely
+    // untidy; since the turn headers became legible it manufactures a TURN, and
+    // one that lands ahead of every real one — so `messages[0]` in frontmatter
+    // names content the user never sent and every id after it is off by one.
+    // The heading is flattened to a single line for that reason; the verbatim
+    // title, newlines and all, is still recorded in the frontmatter above.
+    content: front + `# ${title.replace(/\s*[\r\n]+\s*/g, ' ')}\n\n` + body + '\n',
     messageCount: messages.length,
     // The conversation's OWN id, verbatim, or null. Never the positional
     // fallback: that is a filename, not an identity, and treating it as one is
