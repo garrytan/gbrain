@@ -22,7 +22,7 @@
  */
 
 import { existsSync, statSync, mkdirSync, writeFileSync, renameSync, unlinkSync, readdirSync } from 'fs';
-import { basename, dirname, join } from 'path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import { serializePageToMarkdown, resolvePageFilePath } from './markdown.ts';
@@ -74,6 +74,58 @@ export interface WritePageThroughOpts {
 }
 
 /**
+ * Vet a `pages.source_path` before it is trusted as a write target.
+ *
+ * The column is populated from the scanner's relative path at import time, so
+ * the normal value is a clean repo-relative `.md` path. This rejects the shapes
+ * that would make `join(root, value)` unsafe or nonsensical — absolute paths,
+ * `..` traversal, NUL bytes, non-markdown artifacts, and blanks. Containment is
+ * still re-checked by `isWriteTargetContained` after the join; this is the
+ * cheap structural filter in front of it.
+ */
+function sanitizeRecordedSourcePath(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const value = raw.trim();
+  if (!value || value.includes('\0')) return null;
+  if (!value.toLowerCase().endsWith('.md')) return null;
+  if (isAbsolute(value)) return null;
+  if (value.split(/[\\/]/).some((segment) => segment === '..')) return null;
+  return value;
+}
+
+/**
+ * Recover a page-root-relative write target from a `file://` `source_uri`.
+ *
+ * `gbrain capture --file` records the absolute input path as `source_uri` but
+ * does NOT set `source_path` (that column is the file-scanner's). So a file the
+ * user authored INSIDE the brain repo and then captured has no file of record,
+ * and the slug-derived fallback would mint a twin beside the very file that was
+ * just read. When the recorded URI points at a path under `pageRoot`, that path
+ * IS the file of record — use it.
+ *
+ * Returns null for anything not a contained `.md` file so the caller falls back
+ * to the slug path.
+ */
+function recordedPathFromFileUri(sourceUri: string | null | undefined, pageRoot: string): string | null {
+  if (!sourceUri || !sourceUri.startsWith('file://')) return null;
+  let abs = sourceUri.slice('file://'.length);
+  if (!abs) return null;
+  // Percent-decode only when it looks encoded — the CLI stores raw paths, so a
+  // literal '%' in a filename must not be mangled.
+  if (/%[0-9A-Fa-f]{2}/.test(abs)) {
+    try {
+      abs = decodeURIComponent(abs);
+    } catch {
+      return null;
+    }
+  }
+  if (abs.includes('\0') || !abs.toLowerCase().endsWith('.md')) return null;
+  const rel = relative(resolve(pageRoot), resolve(abs));
+  if (!rel || isAbsolute(rel) || rel.split(/[\\/]/).some((segment) => segment === '..')) return null;
+  return rel;
+}
+
+/**
  * Render the DB row for `slug` to markdown and atomically write it under
  * `sync.repo_path`. Never throws — failures are reported via the result's
  * `skipped` / `error` fields (the DB write is the durable sink; the file is
@@ -104,11 +156,37 @@ export async function writePageThrough(
       [sourceId],
     );
     const sourceLocalPath = srcRows[0]?.local_path ?? null;
+
+    // Prefer the page's recorded `source_path` — the ACTUAL file this row was
+    // imported from — over a slug-derived name. Deriving `<slug>.md` mints a
+    // SECOND file beside the original whenever the on-disk name isn't the slug,
+    // which is the common case for a human-authored vault: `Library/People/
+    // Steve Jobs.md` has slug `library/people/steve-jobs`, so a later put_page
+    // dropped a lowercase `steve-jobs.md` twin next to it. Two artifacts, one
+    // row, and the newer content in whichever the caller didn't expect.
+    //
+    // It also desyncs `gbrain sync`, which keys delete-reconcile on
+    // `source_path` (see collectMissingSourcePaths): the twin is invisible to
+    // reconcile, so deleting the ORIGINAL file deletes the page even though a
+    // file for it is still on disk.
+    //
+    // A NULL `source_path` means the page was born via put/capture and has no
+    // file of record yet — the slug-derived path stays correct for those.
+    const pathRows = await engine.executeRaw<{ source_path: string | null; source_uri: string | null }>(
+      `SELECT source_path, source_uri FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL LIMIT 1`,
+      [sourceId, slug],
+    );
+    const recordedPath = sanitizeRecordedSourcePath(pathRows[0]?.source_path);
+    const recordedUri = pathRows[0]?.source_uri ?? null;
+
     if (sourceLocalPath) {
       if (!existsSync(sourceLocalPath) || !statSync(sourceLocalPath).isDirectory()) {
         return { written: false, skipped: 'repo_not_found' };
       }
-      filePath = join(sourceLocalPath, `${slug}.md`);
+      filePath = join(
+        sourceLocalPath,
+        recordedPath ?? recordedPathFromFileUri(recordedUri, sourceLocalPath) ?? `${slug}.md`,
+      );
       writeRoot = sourceLocalPath;
     } else {
       const repoPath = await engine.getConfig('sync.repo_path');
@@ -127,7 +205,9 @@ export async function writePageThrough(
       if (collide.length > 0) {
         return { written: false, skipped: 'source_repo_belongs_to_other_source' };
       }
-      filePath = resolvePageFilePath(repoPath, slug, sourceId);
+      const pageRoot = sourceId === 'default' ? repoPath : join(repoPath, '.sources', sourceId);
+      const knownPath = recordedPath ?? recordedPathFromFileUri(recordedUri, pageRoot);
+      filePath = knownPath ? join(pageRoot, knownPath) : resolvePageFilePath(repoPath, slug, sourceId);
       writeRoot = repoPath;
     }
 
