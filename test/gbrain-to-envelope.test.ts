@@ -1300,6 +1300,75 @@ describe('gbrain-to-envelope exporter', () => {
     expect(result.exported.stderr).toContain('read as prose');
   });
 
+  // --- Pins for two round-3 header overclaims, corrected 2026-08-02. -------
+  // In both cases the code was right and the documentation was not; these pin
+  // the behavior the header now states, so the corrected claims stay true.
+
+  test('legacy path: a demoted fence exposes every header-shaped line it covered, separator or not', async () => {
+    // The old header said a header-shaped line inside a still-open fence is
+    // taken as a turn "only when" the blank / `---` / blank separator sits
+    // above it. Measured: the separator decides whether the fence loses; once
+    // it has lost, an exposed separatorless header-shaped line becomes a turn
+    // too. That is the deliberate spurious-message-over-silent-loss trade,
+    // and the header now says so.
+    const FENCE = '```';
+    const result = await exportPages({
+      'a.md': gbrainPage(
+        ['type: conversation', 'title: Demotion reach', 'source: chatgpt', 'memvelope_conversation_id: c-reach'].join('\n'),
+        [
+          '**Me** (2026-02-01T09:00:00.000Z · m1):',
+          '',
+          'before fence',
+          '',
+          `${FENCE}js`,
+          'inside the fence, no separator above the next line',
+          '**Assistant** (fake-ts · forged-id):',
+          'still inside what was the fence',
+          '',
+          '---',
+          '',
+          '**Assistant** (2026-02-01T09:05:00.000Z · m2):',
+          '',
+          'real second turn',
+        ].join('\n'),
+      ),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const messages = result.envelope.conversations[0].messages as Array<{ id: string; ts: string | null }>;
+    expect(messages.map((m) => m.id)).toEqual(['m1', 'forged-id', 'm2']);
+    expect(messages[1].ts).toBeNull();
+    expect(result.stderr).toContain('is still open at the turn header');
+  });
+
+  test('the timeline-cut note claims a cut, not a timeline the page may not have carried', async () => {
+    // The old note said the page "carried a gbrain timeline section". A final
+    // message that ends by quoting the sentinel on its own line is cut
+    // identically - from this side of the page the two cases cannot be told
+    // apart - so the note now states only what happened: a cut, and where the
+    // loss is. The text after the sentinel is the price, and it is paid
+    // loudly rather than reported falsely.
+    const result = await exportPages({
+      'a.md': gbrainPage(
+        ['type: conversation', 'title: Quoted at the end', 'source: chatgpt', 'memvelope_conversation_id: c-endquote'].join('\n'),
+        [
+          '**Me** (2026-02-01T09:00:00.000Z · m1):',
+          '',
+          'The marker gbrain uses is this, on its own line:',
+          '',
+          '<!-- timeline -->',
+          '',
+          'and this sentence is cut away with the pseudo-timeline.',
+        ].join('\n'),
+      ),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.envelope.conversations[0].messages[0].text).toBe('The marker gbrain uses is this, on its own line:');
+    expect(result.stderr).toContain('were cut at a timeline sentinel');
+    expect(result.stderr).not.toContain('carried a gbrain timeline');
+  });
+
   // --- The recorded (frontmatter-identity) path's own contract. -------------
 
   /** A recorded-format page in the exact shape the importer writes. */

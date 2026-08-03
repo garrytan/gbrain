@@ -84,7 +84,17 @@
  * never be allowed to swallow the turns after it, and a spurious stretch of
  * ordinary text is a far smaller failure than a turn deleted in silence. On
  * the legacy path the fence-versus-boundary signal is the blank / `---` /
- * blank separator the old importer wrote between turns, as before.
+ * blank separator the old importer wrote between turns, as before - and note
+ * the demotion's reach, which an earlier revision of this header overstated:
+ * the separator decides only WHETHER a spanning fence loses. Once it has
+ * lost, every header-shaped line it had covered is read as an ordinary turn
+ * header, separator above it or not, so a header-shaped line quoted inside
+ * the demoted stretch does become a turn. (Measured: a fence spanning one
+ * separator-preceded header with a separatorless header-shaped line above it
+ * yields three messages, the middle one lifted from the quoted line, with the
+ * demotion warned on stderr.) On the recorded path the same demotion is
+ * narrower: an exposed line still becomes a boundary only by carrying the
+ * next expected clock.
  *
  * The body is cut at a gbrain timeline sentinel - a line that is exactly
  * `<!-- timeline -->`, `<!--timeline-->` or `--- timeline ---` after
@@ -189,16 +199,36 @@
  *     -> expect "wrote 1 conversation(s), 4 message(s)"
  *   bun test test/gbrain-to-envelope.test.ts
  *
- * STATUS: see the test file and findings for 2026-08-02. Conformance in CI is
- * checked by test/gbrain-to-envelope.test.ts, which validates against the
- * published envelope-v0 JSON Schema vendored byte-for-byte at
- * test/fixtures/memvelope/envelope-v0.schema.json (sha256
+ * STATUS: measured 2026-08-02 against gbrain v0.42.72.1, on two paths - the
+ * short one (envelope -> envelope-to-gbrain.mjs -> here) and the long one
+ * through a throwaway HOME-redirected PGLite brain (envelope -> importer ->
+ * `gbrain import` -> `gbrain export --dir` -> here), so the pages read are
+ * the ones gbrain's own parseMarkdown / serializeMarkdown pair really
+ * produces. The repo's sample fixture round-trips deep-equal on both paths
+ * with zero stderr bytes. A 3-conversation / 17-message probe - ids carrying
+ * an embedded newline, a whole `---`/`type:`/`---` block, a middle dot,
+ * trailing space, emoji, and a folding-length 79-character value; timestamps
+ * with microseconds, a +05:30 offset, and null; two messages sharing one
+ * minute; a whole-line quoted sentinel mid-conversation; fences spanning
+ * turns - comes back with 17/17 messages and every id, role, ts and text
+ * verbatim on both paths. gbrain's serializer hands the array back as
+ * literal (`|-`) block-scalar ids, a folded (`>-`) long id, single-quoted
+ * timestamps and reordered top-level keys; all of it reads. The only fields
+ * that moved are the documented ones: created_at / updated_at (replaced by
+ * the first and last message timestamps) and one message's trailing newline
+ * (trimmed).
+ *
+ * Conformance in CI is checked by test/gbrain-to-envelope.test.ts, which
+ * validates against the published envelope-v0 JSON Schema vendored
+ * byte-for-byte at test/fixtures/memvelope/envelope-v0.schema.json (sha256
  * 423813d563de394cde2798848e90fdadc85ba52458f5c18b1da897e6c8ae52b9, identical
  * across memvelope.com, raw.githubusercontent.com/memvelope/memvelope@main and
  * the memvelope package). The test walks those bytes with a draft-07 subset it
  * implements in full and refuses any keyword it does not, so a constraint added
  * upstream turns the suite red instead of going unchecked. No validator
- * dependency is added.
+ * dependency is added. Both round-trip outputs above additionally validate
+ * under ajv + ajv-formats in full mode, with the validator first proven
+ * non-trivial on a known-bad document.
  */
 
 import { readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
@@ -641,9 +671,11 @@ const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 // long as it names that instant: the RFC's own example set has
 // `1990-12-31T15:59:60-08:00`. So the check normalizes the offset away and asks
 // whether the UTC time-of-day is 23:59. `2026-02-01T09:00:60Z` and
-// `2026-12-31T23:59:60+01:00` both fail it, and both are rejected by ajv 8.20.0
-// + ajv-formats 3.0.1 in strict/full mode - which is what a consumer validating
-// the published schema runs, and what this bound was measured against.
+// `2026-12-31T23:59:60+01:00` both fail it, and both are rejected by ajv +
+// ajv-formats 3.0.1 in strict/full mode - which is what a consumer validating
+// the published schema runs. The whole 11-value boundary set was measured
+// against ajv 8.20.0 on 2026-08-02 and re-measured against 8.18.0 the same
+// day; both agree with this function value for value.
 function asRfc3339DateTime(value) {
   if (typeof value !== 'string') return null;
   const m = /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/.exec(value);
@@ -1079,8 +1111,12 @@ if (skippedNoFrontmatter || skippedNotConversation || skippedNoMessages || skipp
   console.warn(`scanned ${files.length} markdown file(s): ${skippedNoFrontmatter} without frontmatter, ${skippedNotConversation} not type conversation, ${skippedNoMessages} without speaker turns, ${skippedUnreadableRecord} with a messages record that could not be read, ${skippedJoinMismatch} whose body does not match their messages record, ${droppedEmptyMessages} empty message(s) dropped.`);
 }
 // Two losses that leave the output conforming and would otherwise be invisible.
+// Worded as what happened - a cut at a sentinel - not as an assertion that a
+// timeline was really there: a message that ends by quoting the sentinel on
+// its own line is cut identically, and a note claiming it "carried a timeline"
+// would be false about that page.
 if (droppedTimelines) {
-  console.warn(`note: ${droppedTimelines} page(s) carried a gbrain timeline section; envelope-v0 has no field for it, so it was not exported.`);
+  console.warn(`note: ${droppedTimelines} page(s) were cut at a timeline sentinel; envelope-v0 has no field for a timeline, so nothing after the sentinel was exported.`);
 }
 if (nulledTimestamps) {
   console.warn(`note: ${nulledTimestamps} turn timestamp(s) were not RFC 3339 date-times and were written as null.`);
