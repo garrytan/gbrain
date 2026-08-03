@@ -263,15 +263,18 @@ function headerClock(ts) {
   const [, year, month, day, hour, minute, sign, offsetHour, offsetMinute] = m;
   if (sign === undefined) return `${year}-${month}-${day} ${hour}:${minute}`;
   const offset = (Number(offsetHour) * 60 + Number(offsetMinute)) * (sign === '-' ? -1 : 1);
-  // Date.UTC over numbers only — no string parsing, so no engine-dependent
-  // interpretation of the input.
-  const utc = new Date(
-    Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute)) -
-      offset * 60_000,
-  );
+  // Numbers only — no string parsing, so no engine-dependent interpretation of
+  // the input. Built with the UTC setters rather than `Date.UTC`, which applies
+  // MakeFullYear and would silently read a four-digit year of `0050` as 1950.
+  const utc = new Date(0);
+  utc.setUTCFullYear(Number(year), Number(month) - 1, Number(day));
+  utc.setUTCHours(Number(hour), Number(minute) - offset, 0, 0);
   if (!Number.isFinite(utc.getTime())) return null;
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${utc.getUTCFullYear()}-${pad(utc.getUTCMonth() + 1)}-${pad(utc.getUTCDate())} ${pad(utc.getUTCHours())}:${pad(utc.getUTCMinutes())}`;
+  const pad = (n, width = 2) => String(n).padStart(width, '0');
+  // The year is padded to four digits like every other field: the pattern's
+  // regex requires `\d{4}`, so an unpadded `49` would emit a header that does
+  // not parse at all — a turn silently merged into its neighbour.
+  return `${pad(utc.getUTCFullYear(), 4)}-${pad(utc.getUTCMonth() + 1)}-${pad(utc.getUTCDate())} ${pad(utc.getUTCHours())}:${pad(utc.getUTCMinutes())}`;
 }
 
 /** The file's contents, or null if it does not exist. Any other error is the

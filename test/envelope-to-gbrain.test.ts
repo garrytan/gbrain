@@ -1056,6 +1056,13 @@ describe('envelope-to-gbrain importer — F5 parser-legible format', () => {
       '',
       'title: injected',
       'x\ninjected: true',
+      // YAML 1.1 counts U+2028, U+2029 and U+0085 as line breaks, and
+      // JSON.stringify passes all three through RAW rather than escaping them.
+      // If js-yaml honored that, each would close the quoted scalar and inject a
+      // key — the exact failure the quoting exists to prevent.
+      'x\u2028injected: true',
+      'x\u2029injected: true',
+      'x\u0085injected: true',
     ];
     const envelopePath = writeEnvelope(
       envelopeWith(
@@ -1252,5 +1259,73 @@ describe('envelope-to-gbrain importer — F5 parser-legible format', () => {
         ts: m.ts,
       })),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F5 — the offset branch of the header clock, pinned separately. It is the only
+// place in this script that does arithmetic on a timestamp, so it is the only
+// place an hour can come out wrong.
+// ---------------------------------------------------------------------------
+describe('envelope-to-gbrain importer — F5 header clock arithmetic', () => {
+  /** Import a one-message envelope with the given `ts` and return its header. */
+  async function headerFor(ts: unknown): Promise<string> {
+    const envelopePath = join(tempDir(), 'clock.mve.json');
+    writeFileSync(envelopePath, JSON.stringify({
+      memvelope: 'envelope-v0',
+      meta: { source_provider: 'chatgpt', conversation_count: 1, message_count: 1 },
+      conversations: [{
+        id: 'c-clock',
+        title: 'Clock',
+        created_at: '2025-11-02T00:00:00.000Z',
+        updated_at: '2025-11-02T00:00:00.000Z',
+        messages: [{ id: 'm1', role: 'user', ts, text: 'turn' }],
+      }],
+    }));
+    const result = await runImporter(envelopePath);
+    expect(result.exitCode).toBe(0);
+    const line = bodyOf(readOnlyMarkdown(result.outDir))
+      .split('\n')
+      .find((l) => l.startsWith('**Me**'));
+    return line ?? '';
+  }
+
+  test.each([
+    // A Z or designator-less timestamp is copied across digit for digit — no
+    // arithmetic at all, which is the point of choosing a 24-hour clock.
+    ['2025-11-02T14:22:51.000Z', '2025-11-02 14:22'],
+    ['2025-11-02T14:22:51Z', '2025-11-02 14:22'],
+    ['2025-11-02T14:22:51.123456Z', '2025-11-02 14:22'],
+    ['2025-11-02T00:00:00Z', '2025-11-02 00:00'],
+    ['2025-11-02T23:59:00Z', '2025-11-02 23:59'],
+    ['2025-11-02 14:22:51', '2025-11-02 14:22'],
+    // Offsets shift to UTC, because imessage-slack reads the inline clock AS
+    // UTC. Including the two that cross a day boundary in each direction.
+    ['2025-11-02T14:22:51+05:30', '2025-11-02 08:52'],
+    ['2025-11-02T14:22:51-05:00', '2025-11-02 19:22'],
+    ['2025-11-02T14:22:51+0530', '2025-11-02 08:52'],
+    ['2025-11-02T00:30:00+05:30', '2025-11-01 19:00'],
+    ['2025-11-02T23:30:00-05:00', '2025-11-03 04:30'],
+    ['2025-11-02T14:22:51+00:00', '2025-11-02 14:22'],
+    // A four-digit year below 100. `Date.UTC` would read this as 1949 —
+    // MakeFullYear maps 0..99 onto 1900+y — and quietly move the page by 1900
+    // years. Reachable: the shape regex accepts any four digits.
+    ['0050-01-01T00:30:00+05:30', '0049-12-31 19:00'],
+    ['0050-01-01T00:30:00Z', '0050-01-01 00:30'],
+  ])('ts %s renders header clock %s', async (ts, expected) => {
+    expect(await headerFor(ts)).toBe(`**Me** (${expected}):`);
+  });
+
+  test.each([
+    ['null', null],
+    ['absent', undefined],
+    ['not a timestamp', 'yesterday afternoon'],
+    ['date only', '2025-11-02'],
+    ['a number', 1762093371000],
+    ['an object', { iso: '2025-11-02T14:22:51.000Z' }],
+  ])('an unusable ts (%s) falls back to the conversation date at midnight', async (_label, ts) => {
+    // Never a fabricated clock and never a dropped turn: the conversation's own
+    // date, at 00:00, which is the convention parse.ts uses for no-time formats.
+    expect(await headerFor(ts)).toBe('**Me** (2025-11-02 00:00):');
   });
 });
