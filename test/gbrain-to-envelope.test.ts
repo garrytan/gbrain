@@ -1643,7 +1643,7 @@ describe('gbrain-to-envelope exporter', () => {
     const out2 = closesLater.envelope.conversations[0].messages as Array<{ id: string; text: string }>;
     expect(out2.map((m) => m.id)).toEqual(['m1', 'm2', 'm3']);
     expect(out2[1].text).toBe('The fence above is still open here.');
-    expect(closesLater.stderr).toContain('is still open at the turn header');
+    expect(closesLater.stderr).toContain('hides the header of a recorded turn');
   });
 
   test('recorded path: a header quoted in a closed fence is sample text, not a turn', async () => {
@@ -2004,6 +2004,148 @@ describe('gbrain-to-envelope exporter', () => {
     expect(isRfc3339Date('0000-02-30')).toBe(false);
     // The 1900-mapping would also have accepted 1900's non-leap February.
     expect(isRfc3339DateTime('1900-02-29T00:00:00Z')).toBe(false);
+  });
+
+  // --- Round-2 gate pins: the fixes' own fixes. -----------------------------
+
+  test('G12: plain-scalar typing is js-yaml 3.14\'s, exactly - "089" is a string, "017" is a number', async () => {
+    // An approximating regex refused "089" - a STRING to js-yaml, which its
+    // dumper re-emits unquoted - so a conversation with that id survived the
+    // importer and died at the exporter after one brain cycle. The typing is
+    // now a port of js-yaml's own resolvers. Strings export; numbers refuse.
+    const page = (name: string, idLine: string) => recordedPage({
+      id: name,
+      record: ['messages:', `  - id: ${idLine}`, '    ts: "2026-02-01T09:00:00.000Z"'],
+      body: '**Me** (2026-02-01 09:00):\n\na turn',
+    });
+    const result = await exportPages({
+      'a.md': page('c-089', '089'), // not octal (8), not decimal (leading 0): a string
+      'b.md': page('c-0o17', '0o17'), // js-yaml 3 has no 0o form: a string
+      'c.md': page('c-underscore', '123_'), // trailing underscore: a string
+      'd.md': page('c-octal', '017'), // 1.1 leading-zero octal: a NUMBER
+      'e.md': page('c-signedhex', '-0x1F'), // signed hex: a NUMBER
+      'f.md': page('c-dotfloat', '._5'), // dot-float with underscore: a NUMBER
+    });
+
+    expect(result.exitCode).toBe(0);
+    assertEnvelopeV0(result.envelope, { conversations: 3, messages: 3 });
+    const byConv = Object.fromEntries(
+      (result.envelope.conversations as Array<{ id: string; messages: Array<{ id: string }> }>).map((c) => [c.id, c.messages[0].id]),
+    );
+    expect(byConv['c-089']).toBe('089');
+    expect(byConv['c-0o17']).toBe('0o17');
+    expect(byConv['c-underscore']).toBe('123_');
+    expect(result.stderr).toContain('"017"');
+    expect(result.stderr).toContain('"-0x1F"');
+    expect(result.stderr).toContain('"._5"');
+  });
+
+  test('G13: the fence that loses is the fence that swallowed the turn, not a balanced one quoting it', async () => {
+    // With greedy demotion, a balanced fence quoting the next expected clock
+    // was demoted first when a LATER fence caused the shortfall - the quote
+    // stole the boundary and flipped the stolen turn's role. Each fence is
+    // now tried alone, and only the one whose demotion recovers every
+    // recorded turn loses.
+    const FENCE = '```';
+    const result = await exportPages({
+      'a.md': recordedPage({
+        id: 'c-rightfence',
+        record: [
+          'messages:',
+          '  - id: "m1"',
+          '    ts: "2026-02-01T09:00:00.000Z"',
+          '  - id: "m2"',
+          '    ts: "2026-02-01T09:05:00.000Z"',
+          '  - id: "m3"',
+          '    ts: "2026-02-01T09:10:00.000Z"',
+        ],
+        body: [
+          '**Me** (2026-02-01 09:00):',
+          '',
+          'a quoted transcript:',
+          '',
+          FENCE,
+          '**Assistant** (2026-02-01 09:05):',
+          'quoted, inside a BALANCED fence',
+          FENCE,
+          '',
+          'end of quote',
+          '',
+          '**Assistant** (2026-02-01 09:05):',
+          '',
+          'real second turn, and half a paste:',
+          '',
+          FENCE,
+          'const half = true;',
+          '',
+          '**Me** (2026-02-01 09:10):',
+          '',
+          'real third turn, closing the paste:',
+          '',
+          FENCE,
+        ].join('\n'),
+      }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    assertEnvelopeV0(result.envelope, { conversations: 1, messages: 3 });
+    const out = result.envelope.conversations[0].messages as Array<{ id: string; role: string; text: string }>;
+    expect(out.map((m) => m.id)).toEqual(['m1', 'm2', 'm3']);
+    expect(out.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
+    // The balanced fence kept its quote; the spanning fence lost.
+    expect(out[0].text).toContain('quoted, inside a BALANCED fence');
+    expect(out[1].text).toContain('real second turn');
+    expect(out[2].text).toContain('real third turn');
+    expect(result.stderr).toContain('hides the header of a recorded turn');
+  });
+
+  test('G14: a comment straight after a closing quote ends the value', async () => {
+    // YAML ends a quoted scalar's value at a '#' with or without whitespace
+    // after the closing quote. Keeping it made `"a"# c` a silent garbage
+    // conversation id at top level and a falsely-refused member below.
+    const result = await exportPages({
+      'a.md': [
+        '---',
+        'type: conversation',
+        'title: "Quote comment"',
+        'date: "2026-02-01"',
+        'source: "chatgpt"',
+        'memvelope_conversation_id: "a"# c',
+        'messages:',
+        '  - id: "m1"# first',
+        '    ts: "2026-02-01T09:00:00.000Z"',
+        '---',
+        '# Quote comment',
+        '',
+        '**Me** (2026-02-01 09:00):',
+        '',
+        'a turn',
+        '',
+      ].join('\n'),
+    });
+
+    expect(result.exitCode).toBe(0);
+    assertEnvelopeV0(result.envelope, { conversations: 1, messages: 1 });
+    expect(result.envelope.conversations[0].id).toBe('a');
+    expect(result.envelope.conversations[0].messages[0].id).toBe('m1');
+  });
+
+  test('G15: the no-provider warning does not claim pages lack a source: key they carry', async () => {
+    // A sourced page skipped for an unreadable record contributed no
+    // provider; the warning then asserted "no page carries a source: key" -
+    // false, with advice about a key that was already set.
+    const result = await exportPages({
+      'a.md': recordedPage({
+        id: 'c-sourced-skipped',
+        record: ['messages: not an array'],
+        body: '**Me** (2026-02-01 09:00):\n\na turn',
+      }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.envelope.conversations).toHaveLength(0);
+    expect(result.stderr).toContain('was skipped before it could contribute one');
+    expect(result.stderr).not.toContain('no page carries');
   });
 
   test('a missing directory argument or unreadable path exits 1', async () => {
