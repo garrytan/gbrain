@@ -5,6 +5,7 @@
  * by running the importer on its own fixture, so the round trip is the test.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +13,19 @@ import { join } from 'node:path';
 const IMPORTER_PATH = join(import.meta.dir, '..', 'scripts', 'envelope-to-gbrain.mjs');
 const EXPORTER_PATH = join(import.meta.dir, '..', 'scripts', 'gbrain-to-envelope.mjs');
 const FIXTURE_PATH = join(import.meta.dir, 'fixtures', 'memvelope', 'sample.mve.json');
+/**
+ * envelope-v0 as published, vendored byte-for-byte. Fetched 2026-08-02 from
+ * memvelope.com/schema/envelope-v0.schema.json and checked identical, by sha256,
+ * to raw.githubusercontent.com/memvelope/memvelope/main/public/schema/envelope-v0.schema.json
+ * and to the copy in the memvelope package - all three
+ * 423813d563de394cde2798848e90fdadc85ba52458f5c18b1da897e6c8ae52b9. The checker
+ * below reads these bytes, so a constraint is enforced because the schema states
+ * it and not because someone transcribed it.
+ */
+const SCHEMA_PATH = join(import.meta.dir, 'fixtures', 'memvelope', 'envelope-v0.schema.json');
+const SCHEMA_BYTES = readFileSync(SCHEMA_PATH);
+const SCHEMA_SHA256 = '423813d563de394cde2798848e90fdadc85ba52458f5c18b1da897e6c8ae52b9';
+const ENVELOPE_V0_SCHEMA = JSON.parse(SCHEMA_BYTES.toString('utf8')) as Record<string, unknown>;
 const TEMP_DIRS: string[] = [];
 
 afterAll(() => {
@@ -70,57 +84,239 @@ async function exportPages(pages: Record<string, string>) {
 }
 
 /**
- * Structural conformance against envelope-v0 as published (JSON Schema draft-07
- * at memvelope.com/schema/envelope-v0.schema.json). Every constraint the schema
- * states is asserted here rather than paraphrased: required keys, types, the
- * role enum, `minItems: 1` on messages, `minLength: 1` on text, and the integer
- * minimums on the meta counts. Written out longhand so the test needs no
- * validator dependency, matching the scripts' own zero-dependency posture.
+ * The draft-07 keywords the checker below implements, split into the ones that
+ * constrain a document and the ones that only annotate it. Anything else in the
+ * vendored schema is a constraint this checker would silently ignore, so
+ * `assertSchemaFullyImplemented` fails on it rather than letting it through -
+ * which is the whole point of validating against the bytes instead of a
+ * transcription.
  */
-function assertEnvelopeV0(doc: unknown): void {
-  expect(doc).toBeObject();
-  const env = doc as Record<string, unknown>;
-  expect(env.memvelope).toBe('envelope-v0');
+const ANNOTATION_KEYWORDS = new Set(['$schema', '$id', 'title', 'description', 'examples', 'default']);
+const CONSTRAINT_KEYWORDS = new Set([
+  'type', 'const', 'enum', 'required', 'properties', 'additionalProperties',
+  'items', 'minItems', 'minLength', 'minimum', 'anyOf', 'format',
+]);
+const IMPLEMENTED_FORMATS = new Set(['date', 'date-time']);
 
-  expect(env.meta).toBeObject();
-  const meta = env.meta as Record<string, unknown>;
-  expect(typeof meta.source_provider).toBe('string');
-  expect(Number.isInteger(meta.conversation_count)).toBe(true);
-  expect(meta.conversation_count as number).toBeGreaterThanOrEqual(0);
-  expect(Number.isInteger(meta.message_count)).toBe(true);
-  expect(meta.message_count as number).toBeGreaterThanOrEqual(0);
-  // Optional, and the spec says omitted rather than null when unknown.
-  if ('source_export_date' in meta) expect(typeof meta.source_export_date).toBe('string');
-
-  expect(Array.isArray(env.conversations)).toBe(true);
-  const conversations = env.conversations as Array<Record<string, unknown>>;
-  for (const c of conversations) {
-    for (const key of ['id', 'title', 'created_at', 'updated_at', 'messages']) {
-      expect(c).toHaveProperty(key);
-    }
-    expect(c.id === null || typeof c.id === 'string').toBe(true);
-    expect(typeof c.title).toBe('string');
-    expect(c.created_at === null || typeof c.created_at === 'string').toBe(true);
-    expect(c.updated_at === null || typeof c.updated_at === 'string').toBe(true);
-    expect(Array.isArray(c.messages)).toBe(true);
-    const messages = c.messages as Array<Record<string, unknown>>;
-    expect(messages.length).toBeGreaterThanOrEqual(1);
-    for (const m of messages) {
-      for (const key of ['id', 'role', 'ts', 'text']) {
-        expect(m).toHaveProperty(key);
-      }
-      expect(typeof m.id).toBe('string');
-      expect(['user', 'assistant']).toContain(m.role as string);
-      expect(m.ts === null || typeof m.ts === 'string').toBe(true);
-      expect(typeof m.text).toBe('string');
-      expect((m.text as string).length).toBeGreaterThanOrEqual(1);
+/** Recursively asserts the vendored schema states nothing the checker cannot enforce. */
+function assertSchemaFullyImplemented(schema: unknown, path = '#'): void {
+  expect(schema).toBeObject();
+  const node = schema as Record<string, unknown>;
+  for (const key of Object.keys(node)) {
+    if (ANNOTATION_KEYWORDS.has(key) || CONSTRAINT_KEYWORDS.has(key)) continue;
+    throw new Error(`${SCHEMA_PATH} states \`${key}\` at ${path}, which this checker does not implement`);
+  }
+  if (typeof node.format === 'string' && !IMPLEMENTED_FORMATS.has(node.format)) {
+    throw new Error(`${SCHEMA_PATH} names format \`${node.format}\` at ${path}, which this checker does not implement`);
+  }
+  // `additionalProperties: true` is the only form here; a subschema there would
+  // need walking too, so anything else is refused.
+  if ('additionalProperties' in node && node.additionalProperties !== true) {
+    throw new Error(`${SCHEMA_PATH} sets a non-\`true\` additionalProperties at ${path}, which this checker does not implement`);
+  }
+  if (node.properties) {
+    for (const [name, sub] of Object.entries(node.properties as Record<string, unknown>)) {
+      assertSchemaFullyImplemented(sub, `${path}/properties/${name}`);
     }
   }
-  // The counts are part of the document, so they get checked against it.
-  expect(meta.conversation_count).toBe(conversations.length);
-  expect(meta.message_count).toBe(
-    conversations.reduce((n, c) => n + (c.messages as unknown[]).length, 0),
+  if (node.items) assertSchemaFullyImplemented(node.items, `${path}/items`);
+  if (node.anyOf) {
+    for (const [i, sub] of (node.anyOf as unknown[]).entries()) {
+      assertSchemaFullyImplemented(sub, `${path}/anyOf/${i}`);
+    }
+  }
+}
+
+function jsonTypeMatches(type: string, value: unknown): boolean {
+  switch (type) {
+    case 'object': return typeof value === 'object' && value !== null && !Array.isArray(value);
+    case 'array': return Array.isArray(value);
+    case 'string': return typeof value === 'string';
+    case 'integer': return Number.isInteger(value);
+    case 'number': return typeof value === 'number';
+    case 'boolean': return typeof value === 'boolean';
+    case 'null': return value === null;
+    default: throw new Error(`unsupported JSON Schema type \`${type}\``);
+  }
+}
+
+/** Collects every way `value` violates `schema`, as human-readable paths. */
+function schemaErrors(schema: Record<string, unknown>, value: unknown, path: string, errors: string[]): void {
+  if (schema.type !== undefined) {
+    const types = Array.isArray(schema.type) ? (schema.type as string[]) : [schema.type as string];
+    if (!types.some((t) => jsonTypeMatches(t, value))) {
+      errors.push(`${path}: expected type ${types.join('|')}`);
+      return;
+    }
+  }
+  if ('const' in schema && value !== schema.const) {
+    errors.push(`${path}: expected const ${JSON.stringify(schema.const)}`);
+  }
+  if (schema.enum && !(schema.enum as unknown[]).includes(value)) {
+    errors.push(`${path}: expected one of ${JSON.stringify(schema.enum)}`);
+  }
+  if (typeof schema.format === 'string' && typeof value === 'string') {
+    const ok = schema.format === 'date' ? isRfc3339Date(value) : isRfc3339DateTime(value);
+    if (!ok) errors.push(`${path}: ${JSON.stringify(value)} is not a ${schema.format}`);
+  }
+  if (typeof schema.minLength === 'number' && typeof value === 'string' && value.length < schema.minLength) {
+    errors.push(`${path}: shorter than minLength ${schema.minLength}`);
+  }
+  if (typeof schema.minimum === 'number' && typeof value === 'number' && value < schema.minimum) {
+    errors.push(`${path}: below minimum ${schema.minimum}`);
+  }
+  if (schema.anyOf) {
+    const branches = schema.anyOf as Array<Record<string, unknown>>;
+    if (!branches.some((sub) => {
+      const local: string[] = [];
+      schemaErrors(sub, value, path, local);
+      return local.length === 0;
+    })) {
+      errors.push(`${path}: matched none of the anyOf branches`);
+    }
+  }
+  if (Array.isArray(value)) {
+    if (typeof schema.minItems === 'number' && value.length < schema.minItems) {
+      errors.push(`${path}: fewer than minItems ${schema.minItems}`);
+    }
+    if (schema.items) {
+      for (const [i, item] of value.entries()) {
+        schemaErrors(schema.items as Record<string, unknown>, item, `${path}[${i}]`, errors);
+      }
+    }
+  }
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    const obj = value as Record<string, unknown>;
+    for (const key of (schema.required as string[] | undefined) ?? []) {
+      if (!(key in obj)) errors.push(`${path}: missing required \`${key}\``);
+    }
+    for (const [name, sub] of Object.entries((schema.properties as Record<string, unknown> | undefined) ?? {})) {
+      // Absent optional properties are the `source_export_date` case: omitted,
+      // not null, is what the spec asks for, so absence is never an error here.
+      if (name in obj) schemaErrors(sub as Record<string, unknown>, obj[name], `${path}/${name}`, errors);
+    }
+  }
+}
+
+/**
+ * Structural conformance against envelope-v0 as published, by validating the
+ * document against the vendored schema bytes rather than against a list of
+ * constraints someone read off it. The walker above implements the draft-07
+ * subset the schema uses and refuses to run against any keyword it does not,
+ * so a constraint added upstream turns this suite red instead of going
+ * unchecked. Zero dependencies, matching the scripts' own posture.
+ *
+ * Nothing is asserted about extra keys, because envelope-v0 sets
+ * `additionalProperties: true` at every level.
+ *
+ * `expected` carries what the caller knows about the INPUT, independently of
+ * the document in hand. The meta counts are not a schema constraint - the
+ * schema only says they are non-negative integers - so they are cross-checked
+ * here: against the arrays they were computed from, and, when the caller passes
+ * it, against a number from outside the document. Without that second number
+ * the count check is self-consistency only, which an envelope that quietly lost
+ * half its turns satisfies perfectly.
+ */
+function assertEnvelopeV0(
+  doc: unknown,
+  expected?: { conversations: number; messages: number },
+): void {
+  const errors: string[] = [];
+  schemaErrors(ENVELOPE_V0_SCHEMA, doc, 'envelope', errors);
+  expect(errors).toEqual([]);
+
+  const env = doc as Record<string, unknown>;
+  const meta = env.meta as Record<string, unknown>;
+  const conversations = env.conversations as Array<Record<string, unknown>>;
+  const totalMessages = conversations.reduce(
+    (n, c) => n + (c.messages as unknown[]).length,
+    0,
   );
+  // The counts are part of the document, so they get checked against it...
+  expect(meta.conversation_count).toBe(conversations.length);
+  expect(meta.message_count).toBe(totalMessages);
+  // ...and, when the caller knows the input, against a number from outside it.
+  if (expected) {
+    expect(conversations.length).toBe(expected.conversations);
+    expect(meta.conversation_count).toBe(expected.conversations);
+    expect(totalMessages).toBe(expected.messages);
+    expect(meta.message_count).toBe(expected.messages);
+  }
+}
+
+/**
+ * The checker's public shape. assertEnvelopeV0 takes the second argument now,
+ * so this alias is a plain rename, kept for readability at the call sites that
+ * pass counts the test knows from its own input.
+ */
+type EnvelopeChecker = (
+  doc: unknown,
+  expected?: { conversations: number; messages: number },
+) => void;
+const checkEnvelope: EnvelopeChecker = assertEnvelopeV0;
+
+/**
+ * Strict RFC 3339 `date-time`, the profile JSON Schema's `format: date-time`
+ * names. Regex for shape, then real calendar and clock bounds - a loose
+ * `\d{4}-\d{2}-\d{2}T...` regex would accept 2026-02-30T25:61:00Z.
+ *
+ * Second 60 is a leap second, and a leap second is inserted at midnight UTC, so
+ * the local clock may read anything that names that instant - RFC 3339's own
+ * examples include `1990-12-31T15:59:60-08:00`. The offset is normalized away
+ * and the UTC time-of-day has to be 23:59. This matches ajv 8.20.0 +
+ * ajv-formats 3.0.1 in strict/full mode value for value, including
+ * `2026-02-01T09:00:60Z` and `2026-12-31T23:59:60+01:00`, which both fail.
+ */
+function isRfc3339DateTime(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  const m = /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(\.\d+)?([Zz]|([+-])(\d{2}):(\d{2}))$/.exec(value);
+  if (!m) return false;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  if (month < 1 || month > 12) return false;
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  if (day < 1 || day > daysInMonth) return false;
+  const hour = Number(m[4]);
+  const minute = Number(m[5]);
+  const second = Number(m[6]);
+  if (hour > 23 || minute > 59 || second > 60) return false;
+  let offsetMinutes = 0;
+  if (m[8] !== 'Z' && m[8] !== 'z') {
+    const offsetHour = Number(m[10]);
+    const offsetMinute = Number(m[11]);
+    if (offsetHour > 23 || offsetMinute > 59) return false;
+    offsetMinutes = (m[9] === '-' ? -1 : 1) * (offsetHour * 60 + offsetMinute);
+  }
+  if (second === 60) {
+    const utcMinuteOfDay = (((hour * 60 + minute - offsetMinutes) % 1440) + 1440) % 1440;
+    if (utcMinuteOfDay !== 23 * 60 + 59) return false;
+  }
+  return true;
+}
+
+/** Strict RFC 3339 full-date, the `format: date` half of meta.source_export_date's anyOf. */
+function isRfc3339Date(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!m) return false;
+  const month = Number(m[2]);
+  if (month < 1 || month > 12) return false;
+  const day = Number(m[3]);
+  return day >= 1 && day <= new Date(Date.UTC(Number(m[1]), month, 0)).getUTCDate();
+}
+
+/** Every timestamp the document emits, labelled by where it came from. */
+function timestampsIn(doc: any): Array<{ where: string; value: unknown }> {
+  const found: Array<{ where: string; value: unknown }> = [];
+  for (const [i, c] of (doc.conversations as any[]).entries()) {
+    found.push({ where: `conversations[${i}].created_at`, value: c.created_at });
+    found.push({ where: `conversations[${i}].updated_at`, value: c.updated_at });
+    for (const [j, m] of (c.messages as any[]).entries()) {
+      found.push({ where: `conversations[${i}].messages[${j}].ts`, value: m.ts });
+    }
+  }
+  return found;
 }
 
 /** The page shape gbrain itself writes: js-yaml frontmatter, unquoted scalars. */
@@ -147,7 +343,7 @@ describe('gbrain-to-envelope exporter', () => {
     expect(result.imported.exitCode).toBe(0);
     expect(result.exported.exitCode).toBe(0);
     expect(result.exported.stdout).toContain('wrote 1 conversation(s), 4 message(s)');
-    assertEnvelopeV0(result.envelope);
+    assertEnvelopeV0(result.envelope, { conversations: 1, messages: 4 });
   });
 
   test('round trip preserves ids, titles, roles, text, timestamps and provider', async () => {
@@ -198,7 +394,7 @@ describe('gbrain-to-envelope exporter', () => {
     });
 
     expect(result.exitCode).toBe(0);
-    assertEnvelopeV0(result.envelope);
+    assertEnvelopeV0(result.envelope, { conversations: 1, messages: 2 });
     expect(result.envelope.meta.source_provider).toBe('chatgpt');
     expect(result.envelope.conversations[0].id).toBe('c-nested');
     expect(result.envelope.conversations[0].title).toBe('Rollout notes');
@@ -230,7 +426,7 @@ describe('gbrain-to-envelope exporter', () => {
     });
 
     expect(result.exitCode).toBe(0);
-    assertEnvelopeV0(result.envelope);
+    assertEnvelopeV0(result.envelope, { conversations: 1, messages: 1 });
     expect(result.envelope.conversations[0].messages[0].ts).toBeNull();
     expect(result.envelope.conversations[0].created_at).toBeNull();
   });
@@ -246,7 +442,7 @@ describe('gbrain-to-envelope exporter', () => {
     });
 
     expect(result.exitCode).toBe(0);
-    assertEnvelopeV0(result.envelope);
+    assertEnvelopeV0(result.envelope, { conversations: 1, messages: 2 });
     expect(result.envelope.conversations[0].id).toBeNull();
     expect(JSON.stringify(result.envelope)).not.toContain('conv-1');
   });
@@ -304,7 +500,7 @@ describe('gbrain-to-envelope exporter', () => {
     });
 
     expect(result.exitCode).toBe(0);
-    assertEnvelopeV0(result.envelope);
+    assertEnvelopeV0(result.envelope, { conversations: 1, messages: 1 });
     expect(result.envelope.conversations[0].messages).toHaveLength(1);
     expect(result.envelope.meta.message_count).toBe(1);
     expect(result.stderr).toContain('has no text; dropped');
@@ -387,7 +583,7 @@ describe('gbrain-to-envelope exporter', () => {
     });
 
     expect(result.exitCode).toBe(0);
-    assertEnvelopeV0(result.envelope);
+    assertEnvelopeV0(result.envelope, { conversations: 1, messages: 2 });
     expect(result.envelope.conversations[0].id).toBe('c-crlf');
     expect(result.envelope.conversations[0].messages).toHaveLength(2);
     expect(JSON.stringify(result.envelope)).not.toContain('\\r');
@@ -405,7 +601,7 @@ describe('gbrain-to-envelope exporter', () => {
     const result = await exportPages({ 'a.md': page('First'), 'b.md': page('Second') });
 
     expect(result.exitCode).toBe(0);
-    assertEnvelopeV0(result.envelope);
+    assertEnvelopeV0(result.envelope, { conversations: 2, messages: 4 });
     expect(result.envelope.conversations).toHaveLength(2);
     expect(result.stderr).toContain('already used by another page');
   });
@@ -427,6 +623,518 @@ describe('gbrain-to-envelope exporter', () => {
     expect(result.envelope.meta.source_provider).toBe('chatgpt');
     expect(result.stderr).toContain('source providers');
     expect(result.envelope.conversations).toHaveLength(2);
+  });
+
+  // --- Regression tests for six verified defects. -------------------------
+  // Each was reproduced against the script before the fix, and each guards the
+  // fixed behavior here.
+
+  test('D1: a message that quotes the timeline sentinel does not destroy the turns after it', async () => {
+    // Guards the rule that only a sentinel with no speaker turn after it is a
+    // timeline boundary. Cutting at the FIRST literal `<!-- timeline -->`
+    // instead, without asking whether that occurrence is gbrain's delimiter or
+    // ordinary prose, truncated a conversation ABOUT gbrain's page format -
+    // exactly the kind this brain holds - mid-sentence and lost every later
+    // turn, at exit 0 with an empty stderr and a meta.message_count that agreed
+    // with the reduced array. The loss was invisible from the output alone,
+    // which is why the assertion below is on the ids and not on the count.
+    const result = await exportPages({
+      'a.md': gbrainPage(
+        ['type: conversation', 'title: Sentinel in prose', 'source: chatgpt', 'memvelope_conversation_id: c-sentinel'].join('\n'),
+        [
+          '**Me** (2026-02-01T09:00:00.000Z · m1):',
+          '',
+          'How does gbrain mark the timeline section inside a page?',
+          '',
+          '---',
+          '',
+          '**Assistant** (2026-02-01T09:05:00.000Z · m2):',
+          '',
+          'It writes the literal comment <!-- timeline --> on its own line, then the entries below it.',
+          '',
+          '---',
+          '',
+          '**Me** (2026-02-01T09:10:00.000Z · m3):',
+          '',
+          'So anything after that marker is timeline rather than prose.',
+          '',
+          '---',
+          '',
+          '**Assistant** (2026-02-01T09:15:00.000Z · m4):',
+          '',
+          'Right, and a message that merely quotes the marker must not be cut short.',
+        ].join('\n'),
+      ),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.envelope.conversations).toHaveLength(1);
+    const messages = result.envelope.conversations[0].messages as Array<{ id: string; text: string }>;
+    expect(messages.map((m) => m.id)).toEqual(['m1', 'm2', 'm3', 'm4']);
+    expect(messages[1].text).toContain('then the entries below it');
+    expect(messages[3].text).toContain('must not be cut short');
+    expect(result.envelope.meta.message_count).toBe(4);
+  });
+
+  test('D2: a turn header quoted inside a fenced block yields no non-conforming timestamp', async () => {
+    // Guards the fence mask over TURN_HEADER. With a line-anchored but not
+    // block-aware match, a header-shaped line inside a fenced sample split the
+    // message in two and the split half's timestamp was lifted straight out of
+    // prose, so conforming input produced output that violated
+    // `format: date-time`. The fence here opens and closes inside one turn,
+    // which is the case where a fence legitimately hides a header - the R1
+    // tests below pin the case where it must not.
+    const FENCE = '```';
+    const result = await exportPages({
+      'a.md': gbrainPage(
+        ['type: conversation', 'title: Quoted transcript', 'source: chatgpt', 'memvelope_conversation_id: c-quoted'].join('\n'),
+        [
+          '**Me** (2026-02-01T09:00:00.000Z · m1):',
+          '',
+          'The export I am pasting has header lines shaped like this:',
+          '',
+          FENCE,
+          '**Assistant** (yesterday afternoon · m-quoted):',
+          '',
+          'sample data inside a fenced block, not a real turn',
+          FENCE,
+          '',
+          'Can you parse that shape?',
+        ].join('\n'),
+      ),
+    });
+
+    expect(result.exitCode).toBe(0);
+    // The schema violation first: every emitted timestamp is null or a strict
+    // RFC 3339 date-time, with no exceptions.
+    const nonConforming = timestampsIn(result.envelope).filter(
+      (t) => t.value !== null && !isRfc3339DateTime(t.value),
+    );
+    expect(nonConforming).toEqual([]);
+    // And the fenced sample line is sample text, not a second turn.
+    expect(result.envelope.conversations[0].messages).toHaveLength(1);
+    expect(result.envelope.conversations[0].messages[0].text).toContain('Can you parse that shape?');
+  });
+
+  test('D3: a folded frontmatter title and id survive the documented gbrain export path', async () => {
+    // Guards block-scalar frontmatter. This is byte-for-byte what gbrain's own
+    // serializeMarkdown produces (matter.stringify -> js-yaml at the default
+    // lineWidth of 80): any string of 80+ characters becomes a folded block
+    // scalar. A parseFrontmatter that dropped `>-` outright turned the title
+    // silently into 'Untitled conversation' and an 80+ character id silently
+    // into null - on the input path the script header advertises. The
+    // untruncated title is also one line below in the body's H1, which gbrain's
+    // own parser falls back to (inferTitleFromBody), so both routes are pinned.
+    const FOLDED_TITLE =
+      'Onboarding checklist for the acme-example widget-co rollout and the fund-a reporting questions';
+    const FOLDED_ID =
+      'c-3f9a2b-onboarding-checklist-acme-example-widget-co-rollout-fund-a-reporting-question';
+    const result = await exportPages({
+      'conversations/2026-02-01-folded.md': [
+        '---',
+        'type: conversation',
+        'title: >-',
+        '  Onboarding checklist for the acme-example widget-co rollout and the fund-a',
+        '  reporting questions',
+        "date: '2026-02-01'",
+        'source: chatgpt',
+        'memvelope_conversation_id: >-',
+        `  ${FOLDED_ID}`,
+        'origin: memvelope/envelope-v0',
+        '---',
+        '',
+        `# ${FOLDED_TITLE}`,
+        '',
+        TURNS,
+        '',
+      ].join('\n'),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.envelope.conversations).toHaveLength(1);
+    expect(result.envelope.conversations[0].title).toBe(FOLDED_TITLE);
+    expect(result.envelope.conversations[0].id).toBe(FOLDED_ID);
+  });
+
+  test('D4: the envelope checker rejects every document the published schema rejects', async () => {
+    // Guards the checker itself. It once paraphrased the schema and left
+    // `format: date-time` and the source_export_date anyOf out entirely, which
+    // is how D2 stayed green through seventeen tests; it now walks the vendored
+    // schema bytes (see R4). A checker is only worth as much as the documents it
+    // refuses, so each constraint the exporter could plausibly break gets a
+    // document that breaks it.
+    const conforming = () => ({
+      memvelope: 'envelope-v0',
+      meta: { source_provider: 'chatgpt', conversation_count: 1, message_count: 1 },
+      conversations: [
+        {
+          id: 'c-1',
+          title: 'Conforming',
+          created_at: '2026-02-01T09:00:00.000Z',
+          updated_at: '2026-02-01T09:00:00.000Z',
+          messages: [{ id: 'm1', role: 'user', ts: '2026-02-01T09:00:00.000Z', text: 'hi' }],
+        },
+      ],
+    });
+    // Guard against a checker that rejects everything.
+    expect(() => assertEnvelopeV0(conforming())).not.toThrow();
+    // Sanity on the checkers this test leans on, so a bug there cannot be
+    // mistaken for a bug in the exporter.
+    expect(isRfc3339DateTime('2026-02-30T09:00:00Z')).toBe(false);
+    expect(isRfc3339DateTime('2026-02-01T25:00:00Z')).toBe(false);
+    expect(isRfc3339DateTime('2026-02-01')).toBe(false);
+    expect(isRfc3339DateTime('2026-02-01T09:00:00+05:30')).toBe(true);
+    expect(isRfc3339Date('2026-02-01')).toBe(true);
+    expect(isRfc3339Date('2026-13-01')).toBe(false);
+
+    const cases: Array<{ label: string; mutate: (d: any) => void }> = [
+      { label: 'conversation.created_at lifted from prose', mutate: (d) => { d.conversations[0].created_at = 'yesterday afternoon'; } },
+      { label: 'conversation.created_at is a date, not a date-time', mutate: (d) => { d.conversations[0].created_at = '2026-02-01'; } },
+      { label: 'conversation.updated_at lifted from prose', mutate: (d) => { d.conversations[0].updated_at = 'no timestamp'; } },
+      { label: 'conversation.updated_at names a day that does not exist', mutate: (d) => { d.conversations[0].updated_at = '2026-02-30T09:00:00.000Z'; } },
+      { label: 'message.ts lifted from prose', mutate: (d) => { d.conversations[0].messages[0].ts = 'no timestamp'; } },
+      { label: 'meta.source_export_date is neither a date nor a date-time', mutate: (d) => { d.meta.source_export_date = 'sometime last week'; } },
+      { label: 'conversations[] item is not an object', mutate: (d) => { d.conversations[0] = 'c-1'; } },
+      { label: 'messages[] item is not an object', mutate: (d) => { d.conversations[0].messages[0] = 'm1'; } },
+      { label: 'memvelope const is wrong', mutate: (d) => { d.memvelope = 'envelope-v1'; } },
+      { label: 'meta is missing', mutate: (d) => { delete d.meta; } },
+      { label: 'meta.source_provider is missing', mutate: (d) => { delete d.meta.source_provider; } },
+      { label: 'meta.message_count is negative', mutate: (d) => { d.meta.message_count = -1; } },
+      { label: 'meta.conversation_count is not an integer', mutate: (d) => { d.meta.conversation_count = 1.5; } },
+      { label: 'conversation.id is neither a string nor null', mutate: (d) => { d.conversations[0].id = 7; } },
+      { label: 'conversation.title is missing', mutate: (d) => { delete d.conversations[0].title; } },
+      { label: 'conversation.messages is empty', mutate: (d) => { d.conversations[0].messages = []; d.meta.message_count = 0; } },
+      { label: 'message.role is outside the enum', mutate: (d) => { d.conversations[0].messages[0].role = 'system'; } },
+      { label: 'message.ts key is absent rather than null', mutate: (d) => { delete d.conversations[0].messages[0].ts; } },
+      { label: 'message.text is empty', mutate: (d) => { d.conversations[0].messages[0].text = ''; } },
+      { label: 'message.id is null', mutate: (d) => { d.conversations[0].messages[0].id = null; } },
+      { label: 'conversations is not an array', mutate: (d) => { d.conversations = {}; } },
+    ];
+    const wronglyAccepted = cases
+      .filter(({ mutate }) => {
+        const doc = conforming();
+        mutate(doc);
+        try {
+          assertEnvelopeV0(doc);
+          return true;
+        } catch {
+          return false;
+        }
+      })
+      .map((c) => c.label);
+    expect(wronglyAccepted).toEqual([]);
+  });
+
+  test('D5: a page set with no source frontmatter reports the provider token it invents', async () => {
+    // meta.source_provider is REQUIRED by the published schema and its
+    // description names a registry ("chatgpt", "claude"); 'unknown' is not a
+    // registered token. It cannot be omitted, so minting it silently is the
+    // wrong trade - the guess has to be reported the way every other lossy edge
+    // in this script is.
+    const result = await exportPages({
+      'a.md': gbrainPage(
+        ['type: conversation', 'title: No provider', 'memvelope_conversation_id: c-noprov'].join('\n'),
+        TURNS,
+      ),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.envelope.conversations).toHaveLength(1);
+    expect(result.stderr).toContain('source_provider');
+    // Whatever token it settles on, the warning has to name it so the operator
+    // can find it in the output.
+    expect(result.stderr).toContain(result.envelope.meta.source_provider);
+  });
+
+  test('D6: the checker verifies meta counts against independently known numbers', async () => {
+    // Guards the count check against collapsing back into a tautology.
+    // meta.conversation_count against conversations.length is one object
+    // agreeing with itself, and an envelope that lost half its turns satisfies
+    // it perfectly - which is how D1 stayed invisible. The counts have to be
+    // checked against a number the test knows from its own input as well.
+    const result = await roundTrip();
+    expect(result.exported.exitCode).toBe(0);
+
+    // The fixture states 1 conversation and 4 messages, and holds 4 messages.
+    expect(() => checkEnvelope(result.envelope, { conversations: 1, messages: 4 })).not.toThrow();
+    expect(() => checkEnvelope(result.envelope, { conversations: 1, messages: 2 })).toThrow();
+    expect(() => checkEnvelope(result.envelope, { conversations: 2, messages: 4 })).toThrow();
+  });
+
+  test('R4: the checker runs against the vendored schema bytes, and implements all of them', async () => {
+    // The checker used to be a hand transcription of the published schema, with
+    // the gap that let D2 through. It now reads
+    // test/fixtures/memvelope/envelope-v0.schema.json, which is the published
+    // file byte-for-byte: fetched 2026-08-02 from memvelope.com and confirmed
+    // identical, by sha256, to the raw.githubusercontent.com copy on
+    // memvelope/memvelope@main and to the copy shipped in the memvelope
+    // package. Pinning the digest here is what makes "vendored, not
+    // transcribed" checkable rather than asserted.
+    expect(createHash('sha256').update(SCHEMA_BYTES).digest('hex')).toBe(SCHEMA_SHA256);
+    expect(ENVELOPE_V0_SCHEMA.$id).toBe('https://memvelope.com/schema/envelope-v0.schema.json');
+    expect(ENVELOPE_V0_SCHEMA.$schema).toBe('http://json-schema.org/draft-07/schema#');
+
+    // And the checker enforces every keyword the file states. A constraint
+    // added upstream lands in these bytes and fails here, instead of sitting
+    // unchecked until someone notices it needs transcribing.
+    expect(() => assertSchemaFullyImplemented(ENVELOPE_V0_SCHEMA)).not.toThrow();
+    // The guard is real: a keyword the walker does not implement is refused.
+    expect(() => assertSchemaFullyImplemented({ type: 'string', pattern: '^x$' })).toThrow('pattern');
+    expect(() => assertSchemaFullyImplemented({ type: 'string', format: 'uri' })).toThrow('uri');
+    expect(() =>
+      assertSchemaFullyImplemented({ type: 'object', properties: { a: { maxLength: 3 } } }),
+    ).toThrow('maxLength');
+  });
+
+  // --- Regression tests for the round-3 defects. --------------------------
+  // R1 guards the rule that a code fence never reaches past the turn it opened
+  // in. The round-2 fence fix masked lines between an opening fence and its
+  // close across the WHOLE body, with no notion of turn boundaries, and the
+  // header scan then skipped masked lines - so a fence that opened in one turn
+  // and closed in a later one hid every turn header in between. Those turns'
+  // ids, roles and timestamps were destroyed and their text swallowed into the
+  // preceding message, at exit 0, with zero stderr, and with meta.message_count
+  // agreeing with the reduced array: nothing in the output showed a message had
+  // ever existed. Each case below was measured against the pre-fix script, and
+  // the measured pre-fix result is recorded on each so the test cannot be
+  // weakened into passing by accident.
+  //
+  // The trigger was a turn holding an ODD number of fence lines. Balanced
+  // nesting was never affected and D2 pins that a fence opening and closing
+  // inside one turn still hides a header; these three cases are the odd-count
+  // shapes an ordinary conversation produces.
+
+  test('R1: a fence that opens in one turn and closes in a later turn loses no turn', async () => {
+    // Pre-fix: 4 turns in, ids ["m1","m4"] out, stderr empty - m2 and m3
+    // annihilated and their text swallowed into m1.
+    const FENCE = '```';
+    const result = await exportPages({
+      'a.md': gbrainPage(
+        ['type: conversation', 'title: Half a paste', 'source: chatgpt', 'memvelope_conversation_id: c-spanning'].join('\n'),
+        [
+          '**Me** (2026-02-01T09:00:00.000Z · m1):',
+          '',
+          'I pasted half a block by mistake:',
+          '',
+          `${FENCE}js`,
+          "const widget = 'acme-example';",
+          '',
+          '---',
+          '',
+          '**Assistant** (2026-02-01T09:05:00.000Z · m2):',
+          '',
+          'The block is still open - nothing closed it.',
+          '',
+          '---',
+          '',
+          '**Me** (2026-02-01T09:10:00.000Z · m3):',
+          '',
+          'Here is the rest of what I meant to paste:',
+          '',
+          FENCE,
+          '',
+          '---',
+          '',
+          '**Assistant** (2026-02-01T09:15:00.000Z · m4):',
+          '',
+          'Now the block is balanced again.',
+        ].join('\n'),
+      ),
+    });
+
+    expect(result.exitCode).toBe(0);
+    assertEnvelopeV0(result.envelope, { conversations: 1, messages: 4 });
+    const messages = result.envelope.conversations[0].messages as Array<{ id: string; role: string; ts: string | null; text: string }>;
+    expect(messages.map((m) => m.id)).toEqual(['m1', 'm2', 'm3', 'm4']);
+    expect(messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant']);
+    // The destroyed turns' own timestamps, which vanish with their headers.
+    expect(messages[1].ts).toBe('2026-02-01T09:05:00.000Z');
+    expect(messages[2].ts).toBe('2026-02-01T09:10:00.000Z');
+    // ...and their text belongs to them, not to the turn above.
+    expect(messages[1].text).toContain('nothing closed it');
+    expect(messages[0].text).not.toContain('nothing closed it');
+    expect(messages[0].text).not.toContain('**Assistant**');
+    // The fence lost, and the operator is told which one and where, because the
+    // script read something as prose that its author may have meant as code.
+    expect(result.stderr).toContain('is still open at the turn header');
+  });
+
+  test('R1: a fence opened inside a bullet does not swallow the turns after it', async () => {
+    // The same annihilation, reached the way a conversation about markdown
+    // reaches it: a bullet whose continuation line is a bare fence, indented two
+    // spaces, which the fence scanner still treats as a fence (it allows up to
+    // three). One fence line in m1, one in m3. Pre-fix: ids ["m1","m4"], stderr
+    // empty - nothing between them survived.
+    const FENCE = '```';
+    const result = await exportPages({
+      'a.md': gbrainPage(
+        ['type: conversation', 'title: Fence in a bullet', 'source: chatgpt', 'memvelope_conversation_id: c-bullet'].join('\n'),
+        [
+          '**Me** (2026-02-01T09:00:00.000Z · m1):',
+          '',
+          'Two things about the page format:',
+          '',
+          '- a code block starts with a line like',
+          `  ${FENCE}`,
+          '- and it runs until the same characters appear again',
+          '',
+          '---',
+          '',
+          '**Assistant** (2026-02-01T09:05:00.000Z · m2):',
+          '',
+          'That is right for gbrain pages too.',
+          '',
+          '---',
+          '',
+          '**Me** (2026-02-01T09:10:00.000Z · m3):',
+          '',
+          'So the closing line is also:',
+          '',
+          '- the same three characters, like',
+          `  ${FENCE}`,
+          '',
+          '---',
+          '',
+          '**Assistant** (2026-02-01T09:15:00.000Z · m4):',
+          '',
+          'Exactly.',
+        ].join('\n'),
+      ),
+    });
+
+    expect(result.exitCode).toBe(0);
+    assertEnvelopeV0(result.envelope, { conversations: 1, messages: 4 });
+    const messages = result.envelope.conversations[0].messages as Array<{ id: string; text: string }>;
+    expect(messages.map((m) => m.id)).toEqual(['m1', 'm2', 'm3', 'm4']);
+    expect(messages[1].text).toContain('right for gbrain pages too');
+    expect(messages[2].text).toContain('the closing line is also');
+    expect(messages[0].text).not.toContain('right for gbrain pages too');
+    expect(result.stderr).toContain('is still open at the turn header');
+  });
+
+  test('R1: a turn asking how to close a fence does not annihilate the reply', async () => {
+    // The plainest trigger there is, and one this brain will actually hold: a
+    // user asks how to close a triple-backtick block, writing the opening line
+    // on its own; the assistant answers by writing the same line. Two turns,
+    // one fence line each, and the reply's header sits between them. Pre-fix:
+    // ids ["m1","m3"] - the assistant's whole turn gone, at exit 0 with an
+    // empty stderr.
+    const FENCE = '```';
+    const result = await exportPages({
+      'a.md': gbrainPage(
+        ['type: conversation', 'title: Closing a fence', 'source: chatgpt', 'memvelope_conversation_id: c-howto'].join('\n'),
+        [
+          '**Me** (2026-02-01T09:00:00.000Z · m1):',
+          '',
+          'How do I close a block that starts with this line?',
+          '',
+          FENCE,
+          '',
+          '---',
+          '',
+          '**Assistant** (2026-02-01T09:05:00.000Z · m2):',
+          '',
+          'You end it with the same three characters on their own line:',
+          '',
+          FENCE,
+          '',
+          '---',
+          '',
+          '**Me** (2026-02-01T09:10:00.000Z · m3):',
+          '',
+          'Thanks, that is clear.',
+        ].join('\n'),
+      ),
+    });
+
+    expect(result.exitCode).toBe(0);
+    assertEnvelopeV0(result.envelope, { conversations: 1, messages: 3 });
+    const messages = result.envelope.conversations[0].messages as Array<{ id: string; role: string; text: string }>;
+    expect(messages.map((m) => m.id)).toEqual(['m1', 'm2', 'm3']);
+    // The only assistant turn in the page. Losing it turns a Q-and-A into a
+    // monologue, which no count in the document contradicts.
+    expect(messages.filter((m) => m.role === 'assistant')).toHaveLength(1);
+    expect(messages[1].text).toContain('on their own line');
+    expect(messages[0].text).not.toContain('on their own line');
+    expect(result.stderr).toContain('is still open at the turn header');
+  });
+
+  test('R2: second 60 is accepted only at 23:59:60 UTC, the one leap second RFC 3339 allows', async () => {
+    // Guards the leap-second bound. An unconditional `second > 60` let ANY
+    // `:60` timestamp through; RFC 3339 permits second 60 only at the instant a
+    // leap second is inserted, midnight UTC, so the offset has to be normalized
+    // away before the hour and minute are judged. Measured against ajv 8.20.0 +
+    // ajv-formats 3.0.1 in strict/full mode, which is what a consumer
+    // validating the published schema runs:
+    //   2026-02-01T09:00:60.000Z   -> rejected (UTC 09:00, not 23:59)
+    //   2026-12-31T23:59:60Z       -> accepted
+    //   2026-12-31T23:59:60+00:00  -> accepted
+    //   2026-12-31T23:59:60+01:00  -> rejected (UTC 22:59, not 23:59)
+    //   1990-12-31T15:59:60-08:00  -> accepted (UTC 23:59; RFC 3339's own example)
+    // A non-conforming value takes the route every other unparseable timestamp
+    // takes - null, and a warning - rather than shipping a document that fails
+    // validation. A conforming one is kept, offset and all.
+    const turn = (ts: string) => `**Me** (${ts} · m1):\n\nA turn stamped ${ts}.`;
+    const page = (title: string, id: string, ts: string) =>
+      gbrainPage(
+        ['type: conversation', `title: ${title}`, 'source: chatgpt', `memvelope_conversation_id: ${id}`].join('\n'),
+        turn(ts),
+      );
+    const result = await exportPages({
+      'a-not-leap.md': page('Not a leap second', 'c-notleap', '2026-02-01T09:00:60.000Z'),
+      'b-leap-z.md': page('Leap second Z', 'c-leapz', '2026-12-31T23:59:60Z'),
+      'c-leap-offset.md': page('Leap second +00:00', 'c-leapoffset', '2026-12-31T23:59:60+00:00'),
+      'd-leap-nonutc.md': page('Second 60 at +01:00', 'c-nonutc', '2026-12-31T23:59:60+01:00'),
+      'e-leap-pacific.md': page('Leap second at -08:00', 'c-pacific', '1990-12-31T15:59:60-08:00'),
+    });
+
+    expect(result.exitCode).toBe(0);
+    assertEnvelopeV0(result.envelope, { conversations: 5, messages: 5 });
+    const byId = Object.fromEntries(
+      (result.envelope.conversations as Array<{ id: string; created_at: string | null; messages: Array<{ ts: string | null }> }>)
+        .map((c) => [c.id, c]),
+    );
+
+    // Rejected: emitted as null, and said out loud, exactly as a turn header
+    // carrying prose where a timestamp goes already is.
+    expect(byId['c-notleap'].messages[0].ts).toBeNull();
+    expect(byId['c-notleap'].created_at).toBeNull();
+    expect(byId['c-nonutc'].messages[0].ts).toBeNull();
+    expect(result.stderr).toContain('2026-02-01T09:00:60.000Z');
+    expect(result.stderr).toContain('2026-12-31T23:59:60+01:00');
+    expect(result.stderr).toContain('not an RFC 3339 date-time');
+
+    // Accepted: a genuine leap second is a valid date-time and must not be
+    // thrown away by a fix that simply bans `:60`.
+    expect(byId['c-leapz'].messages[0].ts).toBe('2026-12-31T23:59:60Z');
+    expect(byId['c-leapoffset'].messages[0].ts).toBe('2026-12-31T23:59:60+00:00');
+    // The same instant on a Pacific clock. Banning `:60` outside hour 23 would
+    // throw this away, and it is RFC 3339's own worked example.
+    expect(byId['c-pacific'].messages[0].ts).toBe('1990-12-31T15:59:60-08:00');
+
+    // Nothing non-conforming reached the document by any route.
+    const nonConforming = timestampsIn(result.envelope).filter(
+      (t) => t.value !== null && !isRfc3339DateTime(t.value),
+    );
+    expect(nonConforming).toEqual([]);
+
+    // The checker carried the same unconditional `> 60` bound, so it would have
+    // waved the bad document through and the assertion above would have proved
+    // nothing. D4 claims this checker rejects everything the published schema
+    // rejects; that claim covers this too.
+    expect(isRfc3339DateTime('2026-02-01T09:00:60.000Z')).toBe(false);
+    expect(isRfc3339DateTime('2026-12-31T23:59:60+01:00')).toBe(false);
+    expect(isRfc3339DateTime('2026-12-31T23:59:60Z')).toBe(true);
+    expect(isRfc3339DateTime('2026-12-31T23:59:60+00:00')).toBe(true);
+    // Every value the ajv probe covered, so the two implementations agree on
+    // the whole boundary and not only on the four the exporter emitted above.
+    expect(isRfc3339DateTime('1990-12-31T15:59:60-08:00')).toBe(true);
+    expect(isRfc3339DateTime('2026-12-31T00:29:60+00:30')).toBe(true);
+    expect(isRfc3339DateTime('2026-01-01T05:29:60+05:30')).toBe(true);
+    expect(isRfc3339DateTime('2026-06-30T23:59:60Z')).toBe(true);
+    expect(isRfc3339DateTime('2026-12-31T23:58:60Z')).toBe(false);
+    expect(isRfc3339DateTime('2026-12-31T22:59:60Z')).toBe(false);
+    expect(isRfc3339DateTime('2026-12-31T23:59:60+05:30')).toBe(false);
   });
 
   test('a missing directory argument or unreadable path exits 1', async () => {
