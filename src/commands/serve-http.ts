@@ -2283,7 +2283,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const content = body.toString('utf8');
       const contentHash = computeContentHash(content);
       const sourceUri = (req.header('x-gbrain-source-uri') || `mcp-webhook:${authInfo.clientId}:${Date.now()}`).slice(0, 1024);
-      const sourceId = (req.header('x-gbrain-source-id') || `webhook-${authInfo.clientId}`).slice(0, 256);
+      const sourceId = `webhook-${authInfo.clientId}`.slice(0, 256);
       const callerSlug = req.header('x-gbrain-slug');
 
       // Slug-bound clients cannot use /ingest at all. The route hands its
@@ -2339,18 +2339,23 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       }
 
       try {
+        const writeSourceId = authInfo.sourceId ?? 'default';
         const job = await ingestQueue.add(
           'ingest_capture',
           {
             event,
             ...(callerSlug ? { slug: callerSlug } : {}),
+            sourceId: writeSourceId,
           },
           {
             // Idempotency: same content from the same client within the
             // queue's lifetime is a single job. Different content gets
             // different jobs. Daemon-side dedup catches the 24h window;
             // the queue-level idempotency catches simultaneous retries.
-            idempotency_key: `ingest:webhook:${authInfo.clientId}:${contentHash}`,
+            // The effective write source is part of the key: a client rescoped
+            // from source X to Y must land a NEW capture in Y rather than being
+            // deduped against its old X-bound job.
+            idempotency_key: `ingest:webhook:${authInfo.clientId}:${writeSourceId}:${contentHash}`,
             // Cap waiting jobs from a single client so a runaway integration
             // can't fill the queue.
             maxWaiting: 50,
@@ -2379,7 +2384,15 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         res.status(202).json({
           job_id: job.id,
           content_hash: contentHash,
+          // Emitter identity (`webhook-<clientId>`), kept for back-compat.
           source_id: sourceId,
+          // The brain source this capture is routed to, resolved server-side
+          // from the client's OAuth scope. This is the routing decision the
+          // caller actually cares about; `source_id` above is NOT a partition.
+          // Enqueue-time intent: the write runs asynchronously after this 202,
+          // so a later source_fallback (see the ingest_capture job result) can
+          // still redirect it.
+          write_source_id: writeSourceId,
           message: 'Accepted. Event queued for ingestion.',
         });
       } catch (err) {

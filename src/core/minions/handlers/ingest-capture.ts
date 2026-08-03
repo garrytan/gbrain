@@ -42,6 +42,11 @@ export interface IngestCaptureResult {
   untrusted_payload: boolean;
   source_kind: string;
   source_uri: string;
+  source_fallback?: {
+    requested: string;
+    effective: 'default';
+    reason: 'not_registered' | 'archived' | 'fk_violation';
+  };
 }
 
 /** Builds the default slug for an event when the caller didn't provide one. */
@@ -55,7 +60,7 @@ export function defaultSlugForEvent(event: IngestionEvent, now: Date = new Date(
 
 export function makeIngestCaptureHandler(engine: BrainEngine) {
   return async function ingestCaptureHandler(job: MinionJobContext): Promise<IngestCaptureResult> {
-    const data = job.data as { event?: unknown; slug?: unknown };
+    const data = job.data as { event?: unknown; slug?: unknown; sourceId?: unknown };
     const event = data.event as IngestionEvent | undefined;
     if (!event) {
       throw new Error('ingest_capture: job.data.event is required');
@@ -113,22 +118,42 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
     // by passing { noEmbed: false } in job.data.
     const noEmbed = (data as { noEmbed?: unknown }).noEmbed !== false;
 
-    // #1522: thread the validated event's provenance into the page write
-    // instead of dropping it on the floor. source_kind / source_uri are
-    // pure provenance strings (no scoping power) and persist
-    // unconditionally via importFromContent's putPage write-through.
+    // Write-source resolution — two distinct paths, kept separate on purpose.
     //
-    // event.source_id is the emitter's IngestionSource instance id, NOT
-    // necessarily a registered brain source (the webhook path fabricates
-    // `webhook-<clientId>`, which pages.source_id's FK would reject). It
-    // routes the page write only when BOTH hold:
-    //   - the event is trusted (fail-closed: an untrusted webhook payload
-    //     carries a caller-controlled x-gbrain-source-id header and must
-    //     not get to choose its write source), AND
-    //   - the id names a registered source row.
-    // Otherwise the write keeps the pre-fix default-source routing.
+    //   1. job.data.sourceId — the webhook's server-resolved source (from
+    //      authInfo.sourceId, a trusted channel). NEW in the source-attribution
+    //      change: validated against a LIVE (non-archived) sources row; on a
+    //      miss we fall back to the default source AND report it via
+    //      source_fallback (+ a stderr warning) so the miss is observable.
+    //   2. event.source_id — the daemon / non-webhook emitter path. UNCHANGED
+    //      from #1522: used iff it names a registered source row, silent
+    //      fallback to default otherwise. Deliberately NOT archived-filtered and
+    //      NOT reported, so daemon steady-state behavior stays byte-identical
+    //      (an unregistered emitter id is normal there, not worth a per-capture
+    //      warning). A source that vanishes mid-write is still caught by the
+    //      FK-violation retry below (never-lose) regardless of path.
     let sourceId: string | undefined;
-    if (!untrustedPayload) {
+    let sourceFallback: IngestCaptureResult['source_fallback'];
+    const trustedSourceId =
+      typeof data.sourceId === 'string' && data.sourceId.length > 0
+        ? data.sourceId
+        : undefined;
+    if (trustedSourceId && trustedSourceId !== 'default') {
+      // `archived` reads as a real JS boolean on both engines; match the
+      // established idiom at sources-ops.ts:784 (`?.archived === true`).
+      const rows = await engine.executeRaw<{ id: string; archived: boolean | null }>(
+        `SELECT id, archived FROM sources WHERE id = $1`,
+        [trustedSourceId],
+      );
+      if (rows.length === 0) {
+        sourceFallback = { requested: trustedSourceId, effective: 'default', reason: 'not_registered' };
+      } else if (rows[0]?.archived === true) {
+        sourceFallback = { requested: trustedSourceId, effective: 'default', reason: 'archived' };
+      } else {
+        sourceId = trustedSourceId;
+      }
+    } else if (!untrustedPayload && event.source_id && event.source_id !== 'default') {
+      // #1522 daemon path, unchanged: register-and-use, silent default fallback.
       const rows = await engine.executeRaw<{ id: string }>(
         `SELECT id FROM sources WHERE id = $1`,
         [event.source_id],
@@ -136,13 +161,44 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       if (rows.length > 0) sourceId = event.source_id;
     }
 
-    const result = await importFromContent(engine, slug, event.content, {
+    // Shared across the write and its FK-violation retry so provenance can't
+    // drift between the two call sites.
+    const importOpts = {
       noEmbed,
-      sourceId,
       source_kind: event.source_kind,
       source_uri: event.source_uri,
       ingested_via: 'ingest_capture',
-    });
+    };
+
+    let result;
+    try {
+      result = await importFromContent(engine, slug, event.content, { ...importOpts, sourceId });
+    } catch (err) {
+      // The sources row can vanish (ON DELETE CASCADE) between the pre-check and
+      // this write. 23503 = foreign_key_violation (cf. oauth-provider.ts:1053),
+      // but SQLSTATE alone is too broad: a violation from chunks/tags/versions
+      // would be misread as "source unavailable" and silently rewritten to the
+      // default partition, masking a real integrity failure. Also require the
+      // error to name the source FK, matching the discrimination already used by
+      // maybeRewriteSourceFkError (commands/capture.ts). Anything else propagates.
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const isSourceFk =
+        (err as { code?: string })?.code === '23503' &&
+        (errMsg.includes('pages_source_id_fk') ||
+          (errMsg.includes('foreign key constraint') && errMsg.includes('source')));
+      if (sourceId !== undefined && isSourceFk) {
+        sourceFallback = { requested: sourceId, effective: 'default', reason: 'fk_violation' };
+        result = await importFromContent(engine, slug, event.content, { ...importOpts, sourceId: undefined });
+      } else {
+        throw err;
+      }
+    }
+    if (sourceFallback) {
+      console.error(
+        `[WARN] ingest_capture: requested source '${sourceFallback.requested}' unavailable ` +
+        `(${sourceFallback.reason}); wrote under default`,
+      );
+    }
 
     return {
       slug,
@@ -151,6 +207,7 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       untrusted_payload: untrustedPayload,
       source_kind: event.source_kind,
       source_uri: event.source_uri,
+      ...(sourceFallback ? { source_fallback: sourceFallback } : {}),
     };
   };
 }

@@ -5,6 +5,7 @@
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import type { BrainEngine } from '../../src/core/engine.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import {
@@ -224,6 +225,334 @@ describe('ingest_capture handler — provenance write-through (#1522)', () => {
     expect(row?.source_id).toBe('default');
     // Provenance strings (no scoping power) still persist.
     expect(row?.source_kind).toBe('webhook');
+  });
+});
+
+describe('ingest_capture handler — write-source attribution', () => {
+  async function sourceForSlug(slug: string): Promise<string | undefined> {
+    const rows = await engine.executeRaw<{ source_id: string }>(
+      `SELECT source_id FROM pages WHERE slug = $1`,
+      [slug],
+    );
+    return rows[0]?.source_id;
+  }
+
+  async function provenanceForSlug(slug: string): Promise<{
+    source_id: string;
+    source_kind: string | null;
+    source_uri: string | null;
+    ingested_via: string | null;
+  } | undefined> {
+    const rows = await engine.executeRaw<{
+      source_id: string;
+      source_kind: string | null;
+      source_uri: string | null;
+      ingested_via: string | null;
+    }>(
+      `SELECT source_id, source_kind, source_uri, ingested_via FROM pages WHERE slug = $1`,
+      [slug],
+    );
+    return rows[0];
+  }
+
+  /** Engine proxy that throws `err` from the first transaction, then delegates. */
+  function engineThrowingOnce(err: unknown): BrainEngine {
+    let attempts = 0;
+    return new Proxy(engine as BrainEngine, {
+      get(target, prop) {
+        if (prop === 'transaction') {
+          return async <T>(fn: (tx: BrainEngine) => Promise<T>): Promise<T> => {
+            attempts++;
+            if (attempts === 1) throw err;
+            return target.transaction(fn);
+          };
+        }
+        const value = Reflect.get(target, prop, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+  }
+
+  test('job.data.sourceId naming a live source routes the write there without fallback', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('oauth-source', 'oauth-source')`,
+    );
+    const handler = makeIngestCaptureHandler(engine);
+    const ev = makeEvent({
+      content: '# scoped webhook capture',
+      source_id: 'webhook-client-x',
+      untrusted_payload: true,
+    });
+
+    const result = await handler(makeJob({
+      event: ev,
+      slug: 'inbox/scoped-webhook',
+      sourceId: 'oauth-source',
+    }));
+
+    expect(await sourceForSlug('inbox/scoped-webhook')).toBe('oauth-source');
+    expect(result.source_fallback).toBeUndefined();
+  });
+
+  test('job.data.sourceId naming a missing source falls back to default', async () => {
+    const handler = makeIngestCaptureHandler(engine);
+    const ev = makeEvent({
+      content: '# missing scoped source',
+      source_id: 'webhook-client-x',
+      untrusted_payload: true,
+    });
+
+    const result = await handler(makeJob({
+      event: ev,
+      slug: 'inbox/missing-scoped-source',
+      sourceId: 'missing-source',
+    }));
+
+    expect(await sourceForSlug('inbox/missing-scoped-source')).toBe('default');
+    expect(result.source_fallback).toEqual({
+      requested: 'missing-source',
+      effective: 'default',
+      reason: 'not_registered',
+    });
+  });
+
+  test('job.data.sourceId naming an archived source falls back to default', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, archived) VALUES ('archived-source', 'archived-source', true)`,
+    );
+    const handler = makeIngestCaptureHandler(engine);
+    const ev = makeEvent({
+      content: '# archived scoped source',
+      source_id: 'webhook-client-x',
+      untrusted_payload: true,
+    });
+
+    const result = await handler(makeJob({
+      event: ev,
+      slug: 'inbox/archived-scoped-source',
+      sourceId: 'archived-source',
+    }));
+
+    expect(await sourceForSlug('inbox/archived-scoped-source')).toBe('default');
+    expect(result.source_fallback).toEqual({
+      requested: 'archived-source',
+      effective: 'default',
+      reason: 'archived',
+    });
+  });
+
+  test('foreign-key violation retries once under default', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('racing-source', 'racing-source')`,
+    );
+    let transactionAttempts = 0;
+    const racingEngine = new Proxy(engine as BrainEngine, {
+      get(target, prop) {
+        if (prop === 'transaction') {
+          return async <T>(fn: (tx: BrainEngine) => Promise<T>): Promise<T> => {
+            transactionAttempts++;
+            if (transactionAttempts === 1) {
+              throw Object.assign(new Error('insert or update on table "pages" violates foreign key constraint "pages_source_id_fk"'), { code: '23503' });
+            }
+            return target.transaction(fn);
+          };
+        }
+        const value = Reflect.get(target, prop, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const handler = makeIngestCaptureHandler(racingEngine);
+    const ev = makeEvent({
+      content: '# source deleted during write',
+      source_id: 'webhook-client-x',
+      untrusted_payload: true,
+    });
+
+    const result = await handler(makeJob({
+      event: ev,
+      slug: 'inbox/source-fk-race',
+      sourceId: 'racing-source',
+    }));
+
+    expect(transactionAttempts).toBe(2);
+    expect(await sourceForSlug('inbox/source-fk-race')).toBe('default');
+    expect(result.source_fallback).toEqual({
+      requested: 'racing-source',
+      effective: 'default',
+      reason: 'fk_violation',
+    });
+  });
+
+  test('untrusted event without job.data.sourceId stays under default', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('caller-source', 'caller-source')`,
+    );
+    const handler = makeIngestCaptureHandler(engine);
+    const ev = makeEvent({
+      content: '# caller-selected source',
+      source_id: 'caller-source',
+      untrusted_payload: true,
+    });
+
+    const result = await handler(makeJob({ event: ev, slug: 'inbox/untrusted-default' }));
+
+    expect(await sourceForSlug('inbox/untrusted-default')).toBe('default');
+    expect(result.source_fallback).toBeUndefined();
+  });
+
+  test('trusted event without job.data.sourceId uses its live event.source_id', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('daemon-source', 'daemon-source')`,
+    );
+    const handler = makeIngestCaptureHandler(engine);
+    const ev = makeEvent({
+      content: '# daemon-routed source',
+      source_id: 'daemon-source',
+      untrusted_payload: false,
+    });
+
+    const result = await handler(makeJob({ event: ev, slug: 'inbox/daemon-source' }));
+
+    expect(await sourceForSlug('inbox/daemon-source')).toBe('daemon-source');
+    expect(result.source_fallback).toBeUndefined();
+  });
+
+  test("job.data.sourceId === 'default' (the unscoped-client production shape) writes under default", async () => {
+    // serve-http.ts sends `authInfo.sourceId ?? 'default'`, so an unscoped or
+    // legacy OAuth client posts the literal string 'default' — a different
+    // branch than omitting the key entirely. No fallback: default IS the
+    // intended destination, not a miss.
+    const handler = makeIngestCaptureHandler(engine);
+    const ev = makeEvent({
+      content: '# unscoped client capture',
+      source_id: 'webhook-client-x',
+      untrusted_payload: true,
+    });
+
+    const result = await handler(makeJob({
+      event: ev,
+      slug: 'inbox/unscoped-default',
+      sourceId: 'default',
+    }));
+
+    expect(await sourceForSlug('inbox/unscoped-default')).toBe('default');
+    expect(result.source_fallback).toBeUndefined();
+  });
+
+  test('provenance survives the FK-violation retry', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('racing-source-2', 'racing-source-2')`,
+    );
+    const handler = makeIngestCaptureHandler(
+      engineThrowingOnce(Object.assign(new Error('insert or update on table "pages" violates foreign key constraint "pages_source_id_fk"'), { code: '23503' })),
+    );
+    const ev = makeEvent({
+      content: '# provenance across retry',
+      source_id: 'webhook-client-x',
+      source_uri: 'https://example.com/retry-provenance',
+      untrusted_payload: true,
+    });
+
+    const result = await handler(makeJob({
+      event: ev,
+      slug: 'inbox/retry-provenance',
+      sourceId: 'racing-source-2',
+    }));
+
+    expect(result.source_fallback?.reason).toBe('fk_violation');
+    // The retry rebuilds the importFromContent options; provenance must not be
+    // dropped on that second path (acceptance criterion 6).
+    const page = await provenanceForSlug('inbox/retry-provenance');
+    expect(page?.source_id).toBe('default');
+    expect(page?.source_kind).toBe(ev.source_kind);
+    expect(page?.source_uri).toBe('https://example.com/retry-provenance');
+    expect(page?.ingested_via).toBe('ingest_capture');
+  });
+
+  test('a non-FK error propagates instead of being retried as a source fallback', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('unrelated-failure-source', 'unrelated-failure-source')`,
+    );
+    const handler = makeIngestCaptureHandler(
+      engineThrowingOnce(Object.assign(new Error('disk on fire'), { code: '53100' })),
+    );
+    const ev = makeEvent({
+      content: '# unrelated failure',
+      source_id: 'webhook-client-x',
+      untrusted_payload: true,
+    });
+
+    // Must reject — silently rewriting this as "source unavailable, wrote under
+    // default" would mask a real failure and report success for a lost capture.
+    await expect(handler(makeJob({
+      event: ev,
+      slug: 'inbox/unrelated-failure',
+      sourceId: 'unrelated-failure-source',
+    }))).rejects.toThrow('disk on fire');
+    expect(await sourceForSlug('inbox/unrelated-failure')).toBeUndefined();
+  });
+
+  test('a 23503 from an UNRELATED constraint propagates instead of falling back to default', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('unrelated-fk-source', 'unrelated-fk-source')`,
+    );
+    // SQLSTATE 23503 alone is too broad: an FK violation from chunks/tags/
+    // versions must NOT be reinterpreted as "source unavailable" and silently
+    // rewritten into the default partition — that would mask a real integrity
+    // failure and report success for a page that landed in the wrong place.
+    const handler = makeIngestCaptureHandler(
+      engineThrowingOnce(Object.assign(
+        new Error('insert or update on table "content_chunks" violates foreign key constraint "content_chunks_page_id_fkey"'),
+        { code: '23503' },
+      )),
+    );
+    const ev = makeEvent({
+      content: '# unrelated fk constraint',
+      source_id: 'webhook-client-x',
+      untrusted_payload: true,
+    });
+
+    await expect(handler(makeJob({
+      event: ev,
+      slug: 'inbox/unrelated-fk-constraint',
+      sourceId: 'unrelated-fk-source',
+    }))).rejects.toThrow('content_chunks_page_id_fkey');
+    expect(await sourceForSlug('inbox/unrelated-fk-constraint')).toBeUndefined();
+  });
+
+  test('an FK violation with no requested source propagates (nothing to fall back from)', async () => {
+    const handler = makeIngestCaptureHandler(
+      engineThrowingOnce(Object.assign(new Error('unrelated fk'), { code: '23503' })),
+    );
+    const ev = makeEvent({
+      content: '# fk without requested source',
+      source_id: 'webhook-client-x',
+      untrusted_payload: true,
+    });
+
+    await expect(handler(makeJob({
+      event: ev,
+      slug: 'inbox/fk-no-source',
+    }))).rejects.toThrow('unrelated fk');
+  });
+
+  test('trusted event with an UNREGISTERED source_id stays under default SILENTLY (no fallback report — #1522 daemon path unchanged)', async () => {
+    // Daemon emitters (inbox-folder / file-watcher) send untrusted_payload:false
+    // with source_id = their emitter id, which is often not a registered brain
+    // source. That path must keep #1522's silent default fallback: no
+    // source_fallback, no per-capture warning. The attribution reporting is
+    // scoped to the trusted job.data.sourceId (webhook) path only.
+    const handler = makeIngestCaptureHandler(engine);
+    const ev = makeEvent({
+      content: '# daemon unregistered emitter',
+      source_id: 'daemon-emitter-unregistered',
+      untrusted_payload: false,
+    });
+
+    const result = await handler(makeJob({ event: ev, slug: 'inbox/daemon-unregistered' }));
+
+    expect(await sourceForSlug('inbox/daemon-unregistered')).toBe('default');
+    expect(result.source_fallback).toBeUndefined();
   });
 });
 

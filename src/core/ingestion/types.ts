@@ -103,8 +103,8 @@ export interface IngestionEvent {
    * watcher reading the user's own brain repo) MUST leave this false.
    */
   untrusted_payload?: boolean;
-  /** Optional source-specific metadata. Free-form. Persisted into the page's
-   *  frontmatter under `ingestion_metadata` when present. */
+  /** Optional source-specific metadata. Free-form. Reserved for future
+   *  persistence under `ingestion_metadata`; not yet implemented (issue #5). */
   metadata?: Record<string, unknown>;
 }
 
