@@ -1688,13 +1688,65 @@ describe('envelope-to-gbrain importer — R1 duplicate-id tiebreak', () => {
   // Ordering is by INSTANT, not by string. A lexical compare gets this exactly
   // backwards: "2026-06-09T02:00…" sorts above "2026-06-08T23:00Z", but with
   // the `+05:30` offset applied it is 20:30Z — two and a half hours EARLIER.
-  test('an offset-bearing updated_at is compared as an instant, not lexically', async () => {
-    const { kept } = await survivor(collidingPair(
-      { updated_at: '2026-06-09T02:00:00.000+05:30' },
-      { updated_at: '2026-06-08T23:00:00.000Z' },
+  //
+  // WHICH COPY SURVIVED IS NOT ENOUGH TO ASSERT, and that is the whole reason
+  // this reads stderr. Array order also keeps the second copy, so a build that
+  // stopped RECOGNIZING offsets — falling back to array order rather than
+  // comparing wrongly — produces the same survivor as a correct one. Measured:
+  // dropping the offset alternation from `UPDATED_AT_SHAPE` leaves this file
+  // green when only the survivor is read. So each case pins the verdict string,
+  // which names the branch that decided; and the second case makes the
+  // offset-bearing copy WIN from array position 0, an outcome the fallback
+  // cannot produce at all.
+  test.each([
+    // `+05:30` sorts ABOVE the other copy and is 2.5 hours EARLIER as an
+    // instant — 02:00+05:30 is 2026-06-08T20:30Z. It must lose.
+    ['a positive offset loses despite sorting higher', '2026-06-09T02:00:00.000+05:30', '2026-06-08T23:00:00.000Z', 'second'],
+    // `-05:30` sorts BELOW and is 5.5 hours LATER — 02:00-05:30 is
+    // 2026-06-09T07:30Z. It must win, from the position array order discards.
+    ['a negative offset wins despite sorting lower', '2026-06-09T02:00:00.000-05:30', '2026-06-09T05:00:00.000Z', 'first'],
+  ])('an offset-bearing updated_at is compared as an instant, not lexically: %s', async (_label, first, second, expected) => {
+    const { kept, stderr } = await survivor(collidingPair(
+      { updated_at: first },
+      { updated_at: second },
     ));
 
-    expect(kept).toBe('second');
+    expect(kept).toBe(expected);
+    expect(stderr).toContain('keeping the copy whose updated_at is later');
+  });
+
+  // The seconds field's ceiling is 60, not 59: RFC 3339 permits a leap second,
+  // `23:59:60Z` names a real instant, and it ROLLS THE DATE. The seconds value
+  // is therefore added after the calendar round trip rather than before it, so
+  // that legitimate roll is never read back as an impossible date. (The `s > 60`
+  // ceiling itself is a cheap pre-check ahead of all that.) Above 60 is not a
+  // time at all, so the value is unorderable and the documented fallback takes
+  // over. The ceiling had no test whatever: deleting `s > 60` left this file
+  // green.
+  //
+  // THE ROLL HAS TO BE PINNED ACROSS THE MINUTE BOUNDARY, not inside it.
+  // Comparing 23:59:60Z against 23:59:59Z asserts only that f(60) > f(59),
+  // which ANY monotonic scaling of the seconds field satisfies — measured:
+  // making `s` contribute milliseconds instead of seconds (`s * 1000` -> `s`)
+  // destroys the roll entirely and still passes such a test. So the first row
+  // pins the identity itself: 2026-12-31T23:59:60Z IS 2027-01-01T00:00:00.000Z,
+  // which makes the two copies EQUAL instants and hands the pair to the
+  // documented fallback. The second row pins the ordering one millisecond below
+  // the boundary. Both fail under that mutant.
+  test.each([
+    ['60 rolls the date: 23:59:60Z IS the next midnight, so these tie', '2026-12-31T23:59:60.000Z', '2027-01-01T00:00:00.000Z', 'second', 'array order'],
+    ['a leap second outranks the millisecond before it', '2026-12-31T23:59:60.000Z', '2026-12-31T23:59:59.999Z', 'first', 'keeping the copy whose updated_at is later'],
+    // 61 is not a second. Unorderable on one side means array order decides —
+    // and this is the only value in the file rejected solely by the ceiling.
+    ['61 is not a time, so array order decides', '2026-12-31T23:59:61.000Z', '2026-12-31T23:59:59.000Z', 'second', 'array order'],
+  ])('%s', async (_label, first, second, expected, verdict) => {
+    const { kept, stderr } = await survivor(collidingPair(
+      { updated_at: first },
+      { updated_at: second },
+    ));
+
+    expect(kept).toBe(expected);
+    expect(stderr).toContain(verdict);
   });
 
   // The documented fallback. Nothing distinguishes the two copies, so the rule

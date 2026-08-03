@@ -33,13 +33,36 @@
  *   - One page per conversation, filename = date + conversation id, so shared
  *     titles cannot collide. The filename is that PAIR: a duplicated id whose
  *     two copies carry different `created_at` DATES lands on two files and
- *     nothing collides. When two conversations do map to one filename, the copy
- *     with the later `updated_at` is kept and the other is discarded. That rule
- *     needs an orderable `updated_at` on BOTH copies with two different values;
- *     equal values, or one that is missing or unreadable on EITHER side, fall
- *     back to array order — the later copy in `conversations[]` wins, as it
- *     always did. Either way stderr names both values and which copy went, and
- *     stdout reports DISTINCT files written, not write calls.
+ *     nothing collides. A DUPLICATE ID IS NOT THE ONLY WAY TO REACH ONE
+ *     FILENAME, though: both halves are slugged — lowercased, every
+ *     non-alphanumeric run collapsed to a single `-`, leading and trailing `-`
+ *     stripped, and only THEN truncated at 60 characters — so two DISTINCT ids
+ *     can map to one name whenever their SLUGS agree on the first 60
+ *     characters. Say it on the slug and not on the id, because the raw ids
+ *     predict nothing in either direction: `AbC-123` and `abc-123` differ at
+ *     character 1 and collide, `x_y` and `x-y` differ at character 2 and
+ *     collide, while sixty `-` followed by `a` and sixty `-` followed by `b`
+ *     agree on all of their first 60 characters and do NOT collide (the strip
+ *     leaves `a` and `b`). This is the same class check 2 already names below —
+ *     "truncation at 60 chars, or characters that slug away" — except that
+ *     check 2 REFUSES it at exit 2 while the tiebreak below resolves it,
+ *     discarding one of two UNRELATED conversations while stderr calls the id
+ *     "not unique" and asks for a deduplication that cannot be performed. Real
+ *     ChatGPT and Claude exports carry lowercase UUIDs, which `slug` passes
+ *     through unchanged, so this is hand-authored-envelope territory rather
+ *     than producer output — but that is an observation about vendor data, not
+ *     a guarantee: the converter copies `raw.uuid` / `raw.conversation_id`
+ *     verbatim and validates nothing, and nothing here distinguishes the two
+ *     while resolving a collision.
+ *     When two conversations do map to one filename, the copy with the later
+ *     `updated_at` is kept and the other is discarded. That rule needs an
+ *     orderable `updated_at` on BOTH copies naming two different INSTANTS;
+ *     equal instants — which includes two different STRINGS that name one
+ *     instant, such as `09:00:00Z` and `14:30:00+05:30` — or a value that is
+ *     missing or unreadable on EITHER side, fall back to array order — the
+ *     later copy in `conversations[]` wins, as it always did. Either way
+ *     stderr names both values and which copy went, and stdout reports
+ *     DISTINCT files written, not write calls.
  *   - `id` is `string | null` in envelope-v0 and a converter must not synthesize
  *     one, so null is a conforming shape, not malformed input. Such a
  *     conversation falls back to a POSITIONAL filename (`conv-N`) — a function
@@ -47,6 +70,22 @@
  *     to overwrite an id-less page: two unrelated exports both put their first
  *     conversation at `conv-1`, and nothing in either file can distinguish
  *     "this conversation, updated" from "a different conversation entirely".
+ *     BE PLAIN THAT THE TWO CHECKS DISAGREE HERE: within ONE envelope that name
+ *     is not refused but resolved — a positional `conv-1` and any real id that
+ *     SLUGS to `conv-1` share a filename, the `updated_at` tiebreak above picks
+ *     between them, and stderr reports a duplicate id where one of the two
+ *     conversations has no id at all (with the id-less copy second, it prints
+ *     `conversation id null is not unique`). It is the same conflation check 2
+ *     exists to forbid — two unrelated conversations resolved against one
+ *     positional name — though here it is loud and evidence-bearing, with
+ *     `updated_at` present on both copies and three stderr lines, rather than
+ *     the evidence-free overwrite check 2 refuses at exit 2. Note also that
+ *     `id: null` is not the only way INTO the positional namespace: `slug`
+ *     falls back to `conv-N` for any id that slugs to empty (`"___"`), and such
+ *     a page records that non-null id in frontmatter, so check 2 sees it as an
+ *     identity mismatch rather than as an id-less page. None of these are
+ *     producer-reachable — a vendor id of `conv-1` or `___` is not — but
+ *     `id: null` is.
  *   - Frontmatter: `type: conversation` (keeps pages eligible for
  *     conversation-facts extraction and chronicle behavior after sync), the
  *     source provider, the conversation id, `origin: memvelope/envelope-v0`,
@@ -817,9 +856,11 @@ for (const [i, c] of conversations.entries()) {
   }
   // Never lose a page silently: two conversations mapping to the same filename
   // (an envelope carrying duplicate ids — which the spec permits, since merging
-  // never deduplicates) means one of them is discarded. Warn loudly rather than
-  // overwrite in silence, and report the count of DISTINCT files written — not
-  // the number of write calls, which is what hid the old title-collision bug.
+  // never deduplicates — or DISTINCT ids that slug alike, which the header
+  // describes and which this warning's wording does not cover) means one of
+  // them is discarded. Warn loudly rather than overwrite in silence, and report
+  // the count of DISTINCT files written — not the number of write calls, which
+  // is what hid the old title-collision bug.
   collisions += 1;
   const { keepLater, byUpdatedAt } = keepsLaterInArray(earlier.updatedAt, rendered.updatedAt);
   // Name the decision AND its inputs. "Overwriting the earlier page" was the
