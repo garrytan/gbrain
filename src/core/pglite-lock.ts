@@ -16,6 +16,7 @@
 
 import { mkdirSync, existsSync, readFileSync, writeFileSync, rmSync, statSync } from 'fs';
 import { join } from 'path';
+import { execSync } from 'child_process';
 import { parseGlobalFlags } from './cli-options.ts';
 
 const LOCK_DIR_NAME = '.gbrain-lock';
@@ -114,9 +115,43 @@ function getLockDir(dataDir: string | undefined): string {
   return join(dataDir, LOCK_DIR_NAME);
 }
 
+// Windows recycles PIDs aggressively: a force-killed gbrain's PID can be
+// reassigned to an unrelated live process within seconds. On win32,
+// `process.kill(pid, 0)` then returns true (the PID *is* alive, just owned by
+// someone else), so the stale-lock reaper below would never fire and the next
+// gbrain run would hang until its acquire timeout (see the "or its PID was
+// reused" note on the live-holder branch). To distinguish a genuine gbrain
+// holder from a recycled PID, on win32 we additionally require the live
+// process's image name to be a known gbrain host. (Incident 2026-08-03.)
+const LOCK_OWNER_IMAGES = new Set(['bun.exe', 'node.exe', 'bun', 'node']);
+
 function isProcessAlive(pid: number): boolean {
+  if (!pid || pid <= 0) return false;
+
+  if (process.platform === 'win32') {
+    try {
+      const out = execSync(`tasklist /FO CSV /NH /FI "PID eq ${pid}"`, {
+        windowsHide: true,
+        timeout: 5000,
+      }).toString('utf8');
+      for (const line of out.split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        const cols = line.split(',').map((c) => c.replace(/^"|"$/g, ''));
+        if (cols[1] === String(pid)) {
+          const img = (cols[0] || '').toLowerCase();
+          // Only trust a live PID if it's actually a gbrain host process.
+          // A recycled PID owned by an unrelated process is treated as stale.
+          return LOCK_OWNER_IMAGES.has(img);
+        }
+      }
+      return false; // PID not found at all → stale
+    } catch {
+      return false; // can't verify → safe side: treat as stale
+    }
+  }
+
+  // POSIX: signal 0 reliably reports process existence without sending a signal.
   try {
-    // Sending signal 0 checks existence without actually sending a signal
     process.kill(pid, 0);
     return true;
   } catch {
