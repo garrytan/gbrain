@@ -43,9 +43,64 @@
  *     "this conversation, updated" from "a different conversation entirely".
  *   - Frontmatter: `type: conversation` (keeps pages eligible for
  *     conversation-facts extraction and chronicle behavior after sync), the
- *     source provider, the conversation id, and `origin: memvelope/envelope-v0`.
+ *     source provider, the conversation id, `origin: memvelope/envelope-v0`,
+ *     and the `messages:` array described below.
  *   - Page `date` is the first 10 chars of the conversation's ISO-8601
- *     `created_at`. Body keeps message-id citations beside each speaker turn.
+ *     `created_at`.
+ *
+ * THE BODY IS WRITTEN FOR GBRAIN'S OWN CONVERSATION PARSER.
+ *
+ * Every page here declares `type: conversation`, which is what opens the gate to
+ * conversation-facts extraction, chronicle eligibility, and the
+ * conversation_format_coverage check. Until 2026-08-02 the body then presented a
+ * turn header — `**Assistant** (2025-11-02T14:22:51.000Z · m2):` — matching NONE
+ * of the built-in patterns in `src/core/conversation-parser/builtins.ts`. The
+ * extractor parsed zero messages, incremented `pages_skipped`, and said nothing:
+ * pages stored and searchable, no facts ever extracted from any of them.
+ *
+ * The header is now the one shape that parser reads:
+ *
+ *   **Me** (2025-11-02 14:22):
+ *
+ *   message text, on the following lines
+ *
+ * matching the `imessage-slack` built-in. That pattern's regex accepts
+ * `YYYY-MM-DD` plus `H:MM` and an OPTIONAL AM/PM — a full RFC 3339 timestamp
+ * does not match it (the `T` alone is enough to miss), and neither does anything
+ * appended after the time. So the header can carry a wall clock and nothing
+ * else, and per-message identity has to live in frontmatter:
+ *
+ *   messages:
+ *     - id: "m1"
+ *       ts: "2025-11-02T14:22:51.000Z"
+ *     - id: "m2"
+ *       ts: "2025-11-02T14:24:03.000Z"
+ *
+ * TO READ IDENTITY BACK, a consumer parses the page's YAML frontmatter and
+ * indexes `messages` BY POSITION: `messages[i]` is the i-th turn of the body, in
+ * body order. There is no id in the body to join on. Both fields are copied from
+ * the envelope verbatim — `id` is the message id, `ts` the original RFC 3339
+ * timestamp (or `null`, which envelope-v0 permits). The body header is derived
+ * FROM `ts` and is lossier than it by construction: minute resolution, UTC, and
+ * a fallback when `ts` is null. `ts` is the record; the header is the anchor.
+ *
+ * Every emitted scalar is JSON-encoded, so every timestamp is QUOTED. Unquoted,
+ * an RFC 3339 scalar is read by js-yaml as a JS `Date`: microseconds truncate,
+ * a `+05:30` offset is normalised away, the lexical form changes — and gbrain's
+ * own `coerceFrontmatterString` (src/core/markdown.ts) slices a Date to its
+ * first 10 characters, losing the time of day entirely. It is sticky, too: a
+ * Date re-serializes unquoted and stays a Date on every later round trip.
+ * `test/envelope-to-gbrain.test.ts` fails if a timestamp is ever emitted
+ * unquoted, and carries a sentinel proving that guard fires.
+ *
+ * 24-hour, not 12-hour-with-AM/PM. Both match `imessage-slack`, and both were
+ * measured to reconstruct all 24 hours exactly, so the tie is broken elsewhere:
+ * 24-hour is a substring of the envelope's own `ts` (no hour arithmetic, so the
+ * 12/0 boundary cannot be got wrong), it sorts chronologically within a day
+ * where 12-hour does not, and it needs no AM/PM marker to disambiguate. The
+ * pattern's `time_format: '12h_ampm'` declaration is not a constraint here: the
+ * field is read nowhere outside builtins.ts, and parse.ts converts off the
+ * CAPTURED AM/PM group, which is optional and absent for a 24-hour clock.
  *
  * The stdout receipt reports MESSAGES as well as pages. Counting only pages hid
  * every message-level loss by construction: a conversation that arrives with
@@ -78,6 +133,26 @@
  *   - A file carrying this importer's own frontmatter shape is treated as this
  *     importer's page. There is no signature, so a hand-written lookalike is
  *     indistinguishable from the real thing.
+ *   - A PARSER-LEGIBLE PAGE IS NOT THE SAME AS AN EXTRACTED ONE. parse.ts
+ *     accepts a page only when at least 5% of its non-blank lines anchor a turn
+ *     (SCORING_MIN_ACCEPTANCE), so a conversation of very long turns still
+ *     lands on `no_match` and still extracts nothing. Measured 2026-08-02 on
+ *     envelopes built by the reference converter, two turns per side: 25
+ *     paragraphs per assistant turn parses (density 0.070, 4 of 4 messages), 40
+ *     paragraphs does not (0.046, 0 messages). Roughly: turns averaging more
+ *     than ~19 non-blank lines of prose fall below the floor. That threshold
+ *     lives in gbrain's parser, not here — this script cannot raise it, and
+ *     long-form assistant answers sit close to it.
+ *   - A message whose own text contains a line shaped like a turn header —
+ *     someone pasting a transcript into a chat — is split into an extra turn by
+ *     the parser, attributed to whatever speaker that line names. Measured: a
+ *     2-message conversation quoting `**Me** (2020-01-01 09:00):` parses to 3
+ *     messages, the middle one timestamped 2020. Inherent to any plain-text
+ *     transcript format; the frontmatter `messages` array still holds exactly
+ *     the real turns, so the two can be reconciled by count.
+ *   - `messages[i]` is positional. The body carries no id to join on, so an
+ *     edit that inserts or removes a turn in the body without editing the
+ *     frontmatter silently re-points every id after it.
  *
  * Memory: the whole envelope is held in memory (no streaming); envelopes are
  * far smaller than the vendor exports they serialize.
@@ -101,6 +176,27 @@
  *     `U+FFFD` on UTF-8 write — behavior of `writeFileSync`, unchanged by these
  *     guards and identical on the previous script. Neither guard has been run
  *     against a full-size real export.
+ *   - 2026-08-02, the parser-legible format above. Measured on two throwaway
+ *     HOME-redirected PGLite brains fed the SAME 13 conversations, one written
+ *     the old way and one the new:
+ *       `gbrain conversation-parser scan`  13/13 pages `no_match`, 0 messages
+ *                                       -> 13/13 `imessage-slack`, 33 messages
+ *       `gbrain extract-conversation-facts --dry-run`
+ *                                          "Skipped 13 page(s)" (pages_skipped)
+ *                                       -> 0 skipped; every page segments and
+ *                                          reaches the extractor
+ *       `gbrain doctor` conversation_format_coverage
+ *                                          warn: "13/13 ... match NO built-in
+ *                                          pattern"
+ *                                       -> ok: "13 pages: imessage-slack=13"
+ *     Over all 12 golden fixtures from the reference converter: exit 0, zero
+ *     stderr bytes, 33/33 messages parsed, and every `id`/`ts` recovered from
+ *     frontmatter byte-identical to the envelope. Every message text is on disk
+ *     verbatim except the lone-surrogate fixture noted above; the parser's own
+ *     output additionally collapses blank lines WITHIN a message, so a
+ *     multi-paragraph turn comes back joined by single newlines.
+ *     Not verified: any full-size real export, and any brain with a chat model
+ *     configured — the extractor was reached but its LLM call could not run.
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -122,6 +218,61 @@ if (env.memvelope !== 'envelope-v0') {
 
 const slug = (s, fallback) =>
   (String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || fallback).slice(0, 60);
+
+/** A frontmatter value, emitted as JSON.
+ *
+ *  JSON is valid YAML flow syntax, so this is total for any JSON-serializable
+ *  value — and, for the thing that matters here, a string always comes out
+ *  QUOTED. An unquoted RFC 3339 scalar is read back as a JS `Date`, which is
+ *  lossy (microseconds truncated, offset normalised away) and sticky (it
+ *  re-serializes unquoted, so it stays a Date on every later round trip). */
+const yamlJson = (v) => JSON.stringify(v === undefined ? null : v);
+
+/** The date a turn header is allowed to carry: exactly `YYYY-MM-DD`. */
+const HEADER_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** What `deriveDateContext()` in gbrain's conversation parser falls back to when
+ *  a page carries no date at all. Reusing it means a dateless conversation's
+ *  headers introduce no value gbrain would not have chosen for itself. */
+const EPOCH_DATE = '1970-01-01';
+
+/** The RFC 3339 shapes this script will read a wall clock out of.
+ *
+ *  Deliberately NOT `new Date(string)`: for a date-time with no zone
+ *  designator, ECMAScript parses local time, so the same envelope would import
+ *  differently on two machines and this script claims to be deterministic.
+ *  Groups: 1=Y 2=M 3=D 4=hh 5=mm, then an optional offset 6=sign 7=hh 8=mm. */
+const TS_SHAPE =
+  /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?(?:[Zz]|([+-])(\d{2}):?(\d{2}))?$/;
+
+/**
+ * The `YYYY-MM-DD HH:MM` a turn header carries, or null when the message's `ts`
+ * cannot supply one.
+ *
+ * 24-hour, and UTC. `imessage-slack` — the pattern these headers are written
+ * for — declares `timezone_policy: 'inline_utc'`, i.e. gbrain reads the inline
+ * clock AS UTC. So a `+05:30` timestamp must be shifted before it is written;
+ * emitting the local wall clock would record every fact 5.5 hours off. A `Z`
+ * timestamp, or one with no designator at all, is already taken as UTC and its
+ * digits are copied straight across — no arithmetic, so no way to be wrong.
+ */
+function headerClock(ts) {
+  if (typeof ts !== 'string') return null;
+  const m = TS_SHAPE.exec(ts.trim());
+  if (m === null) return null;
+  const [, year, month, day, hour, minute, sign, offsetHour, offsetMinute] = m;
+  if (sign === undefined) return `${year}-${month}-${day} ${hour}:${minute}`;
+  const offset = (Number(offsetHour) * 60 + Number(offsetMinute)) * (sign === '-' ? -1 : 1);
+  // Date.UTC over numbers only — no string parsing, so no engine-dependent
+  // interpretation of the input.
+  const utc = new Date(
+    Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute)) -
+      offset * 60_000,
+  );
+  if (!Number.isFinite(utc.getTime())) return null;
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${utc.getUTCFullYear()}-${pad(utc.getUTCMonth() + 1)}-${pad(utc.getUTCDate())} ${pad(utc.getUTCHours())}:${pad(utc.getUTCMinutes())}`;
+}
 
 /** The file's contents, or null if it does not exist. Any other error is the
  *  caller's problem to fail on — an unreadable target must never be silently
@@ -265,6 +416,13 @@ for (const [i, c] of conversations.entries()) {
   // treatment. Interpolating it raw let a `created_at` of `../…` resolve the
   // join below outside outDir and write there.
   const name = `${slug(date, '0000-00-00')}-${slug(convId, `conv-${i + 1}`)}.md`;
+  const messages = c.messages || [];
+  // The date a turn header falls back to when its own message carries no usable
+  // `ts`. `date` is third-party and only length-limited, so it is validated
+  // rather than trusted: a `created_at` of "1\nowner: z" slices to ten
+  // characters that include a newline, and interpolating that into a header
+  // would break the turn it is supposed to anchor.
+  const pageDate = HEADER_DATE.test(date) ? date : EPOCH_DATE;
   // gbrain reads YAML frontmatter + markdown body; keep provenance in frontmatter.
   // Emit `type: conversation` so gbrain stores these as conversation pages rather
   // than defaulting to the generic `concept`. gbrain is open-typed — it takes an
@@ -295,13 +453,41 @@ for (const [i, c] of conversations.entries()) {
     // import destroy the first.
     ...(hasId ? [`memvelope_conversation_id: ${JSON.stringify(c.id)}`] : []),
     'origin: memvelope/envelope-v0',
+    // Per-message identity. It cannot ride in the turn header: the only header
+    // shape gbrain's parser reads carries `YYYY-MM-DD HH:MM` and nothing else,
+    // so a message id and a full RFC 3339 timestamp have to live here or be
+    // thrown away. Order is the body's order, so `messages[i]` is the i-th turn.
+    //
+    // An array of maps, deliberately — not a map keyed by id, which discards
+    // order and collapses the duplicate ids the spec permits; and not one packed
+    // string per message, which asks a consumer to split on a space and breaks
+    // the moment an id contains one.
+    //
+    // An explicit `[]` rather than an omitted key: omission is
+    // indistinguishable from a page written before this format existed, and a
+    // consumer reading identity back needs to tell those apart.
+    ...(messages.length === 0
+      ? ['messages: []']
+      : [
+          'messages:',
+          ...messages.flatMap((m) => [`  - id: ${yamlJson(m.id)}`, `    ts: ${yamlJson(m.ts)}`]),
+        ]),
     '---',
     '',
   ].join('\n');
-  const messages = c.messages || [];
   const body = messages
-    .map((m) => `**${m.role === 'user' ? 'Me' : 'Assistant'}** (${m.ts || 'no timestamp'} · ${m.id}):\n\n${m.text}`)
-    .join('\n\n---\n\n');
+    .map((m) => {
+      // The message's OWN date, not the conversation's: `imessage-slack` is an
+      // inline-date pattern precisely so a conversation spanning midnight lands
+      // its turns on the right days.
+      const clock = headerClock(m.ts) || `${pageDate} 00:00`;
+      return `**${m.role === 'user' ? 'Me' : 'Assistant'}** (${clock}):\n\n${m.text}`;
+    })
+    // No `---` rule between turns. A horizontal rule is a non-blank line that
+    // matches no pattern, so the parser appends it to the preceding message:
+    // every extracted message text ended `...\n---`. It also diluted the
+    // match-density score the parser's acceptance floor is computed from.
+    .join('\n\n');
   // Never lose a page silently: if two conversations still map to the same
   // filename (e.g. an envelope carrying duplicate ids — which the spec permits,
   // since merging never deduplicates), warn loudly instead of overwriting in

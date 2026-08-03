@@ -9,6 +9,12 @@ import { join } from 'node:path';
 // The same parser gbrain uses to ingest frontmatter (src/core/markdown.ts), so
 // the injection test asserts against the real consumer rather than a substring.
 import { safeLoad as yamlSafeLoad } from 'js-yaml';
+// F5 asserts against gbrain's REAL consumers, not against a copy of their
+// regexes: `parseConversation` is what decides whether an imported page yields
+// any conversation-facts at all, and `parseMarkdown`/`serializeMarkdown` are
+// what every sync and rewrite of the page runs through.
+import { parseConversation } from '../src/core/conversation-parser/parse.ts';
+import { parseMarkdown, serializeMarkdown } from '../src/core/markdown.ts';
 
 const SCRIPT_PATH = join(import.meta.dir, '..', 'scripts', 'envelope-to-gbrain.mjs');
 const FIXTURE_PATH = join(import.meta.dir, 'fixtures', 'memvelope', 'sample.mve.json');
@@ -49,6 +55,107 @@ function readOnlyMarkdown(dir: string): string {
   return readFileSync(join(dir, files[0]), 'utf8');
 }
 
+/**
+ * The frontmatter block, delimited the way gray-matter delimits it: the opening
+ * `---` line and the next line that is EXACTLY `---`.
+ *
+ * `page.split('---')[1]` is not equivalent — it splits on the substring
+ * anywhere, including inside a quoted value, so a message id containing `---`
+ * silently truncates the block and the assertion passes for the wrong reason.
+ */
+function frontmatterBlock(page: string): string {
+  const lines = page.split('\n');
+  expect(lines[0]).toBe('---');
+  const end = lines.indexOf('---', 1);
+  expect(end).toBeGreaterThan(0);
+  return lines.slice(1, end).join('\n');
+}
+
+function frontmatterOf(page: string): Record<string, unknown> {
+  return (yamlSafeLoad(frontmatterBlock(page)) ?? {}) as Record<string, unknown>;
+}
+
+function bodyOf(page: string): string {
+  const lines = page.split('\n');
+  return lines.slice(lines.indexOf('---', 1) + 1).join('\n');
+}
+
+/**
+ * F5's one way to get it wrong. An UNQUOTED RFC 3339 scalar is read by js-yaml
+ * as a JS `Date`: microseconds truncate, a `+05:30` offset is normalised away,
+ * the lexical form changes — and gbrain's own `coerceFrontmatterString`
+ * (src/core/markdown.ts) slices a Date to its first 10 chars, so the entire
+ * time of day is gone. It is also sticky: a Date re-serializes unquoted, so
+ * every later round trip keeps it a Date.
+ *
+ * Both halves are asserted. The lexical half catches the emitter; the
+ * structural half catches the consumer actually seeing a string.
+ */
+function assertEveryTimestampQuoted(page: string): void {
+  const tsLines = frontmatterBlock(page)
+    .split('\n')
+    .filter((line) => /^\s*ts:/.test(line));
+  expect(tsLines.length).toBeGreaterThan(0);
+  for (const line of tsLines) {
+    const value = line.slice(line.indexOf('ts:') + 'ts:'.length).trim();
+    // A quoted scalar, or the bare YAML null that a `ts: null` message gets.
+    const quoted = value === 'null' || value.startsWith('"');
+    // Compared as a string so a failure names the offending line.
+    expect(`${line.trim()} => quoted:${quoted}`).toBe(`${line.trim()} => quoted:true`);
+  }
+  const messages = frontmatterOf(page).messages as Array<Record<string, unknown>>;
+  expect(Array.isArray(messages)).toBe(true);
+  for (const m of messages) {
+    expect(m.ts instanceof Date).toBe(false);
+    expect(m.ts === null || typeof m.ts === 'string').toBe(true);
+  }
+}
+
+/** Round-trip a page through the two functions every gbrain rewrite uses. */
+function roundTrip(page: string): { first: string; second: string; parsed: ReturnType<typeof parseMarkdown> } {
+  const p1 = parseMarkdown(page, 'brain/conversations/page.md');
+  const first = serializeMarkdown(p1.frontmatter, p1.compiled_truth, p1.timeline, {
+    type: p1.type,
+    title: p1.title,
+    tags: p1.tags,
+  });
+  const p2 = parseMarkdown(first, 'brain/conversations/page.md');
+  const second = serializeMarkdown(p2.frontmatter, p2.compiled_truth, p2.timeline, {
+    type: p2.type,
+    title: p2.title,
+    tags: p2.tags,
+  });
+  return { first, second, parsed: p2 };
+}
+
+/** Write an envelope to a temp file and return its path. */
+function writeEnvelope(envelope: unknown): string {
+  const path = join(tempDir(), 'envelope.mve.json');
+  writeFileSync(path, JSON.stringify(envelope));
+  return path;
+}
+
+/** A one-conversation envelope with the given messages. */
+function envelopeWith(
+  messages: Array<Record<string, unknown>>,
+  conversation: Record<string, unknown> = {},
+): unknown {
+  return {
+    memvelope: 'envelope-v0',
+    meta: { source_provider: 'chatgpt', conversation_count: 1, message_count: messages.length },
+    conversations: [
+      {
+        id: 'c-f5',
+        title: 'F5 fixture',
+        created_at: '2025-11-02T14:22:51.000Z',
+        updated_at: '2025-11-02T14:31:12.000Z',
+        messages,
+        ...conversation,
+      },
+    ],
+  };
+}
+
 describe('envelope-to-gbrain importer', () => {
   test('sample envelope writes exactly one markdown page and reports count', async () => {
     const result = await runImporter(FIXTURE_PATH);
@@ -78,15 +185,23 @@ describe('envelope-to-gbrain importer', () => {
     expect(page).toContain('origin: memvelope/envelope-v0');
   });
 
-  test('body carries role labels and message-id citations', async () => {
+  // F5: message identity moved OUT of the body and into frontmatter, because
+  // no parser-legible turn header can carry it (see the `messages:` array tests
+  // below). The body keeps role labels; the ids are still pinned, at their new
+  // address. Same claim, stronger assertion — structural, not a substring.
+  test('body carries role labels, and message ids are recoverable from frontmatter', async () => {
     const result = await runImporter(FIXTURE_PATH);
     const page = readOnlyMarkdown(result.outDir);
 
     expect(result.exitCode).toBe(0);
-    expect(page).toContain('· m1');
-    expect(page).toContain('· m4');
     expect(page).toContain('**Me**');
     expect(page).toContain('**Assistant**');
+    expect(frontmatterOf(page).messages).toEqual([
+      { id: 'm1', ts: '2025-11-02T14:22:51.000Z' },
+      { id: 'm2', ts: '2025-11-02T14:24:03.000Z' },
+      { id: 'm3', ts: '2025-11-02T14:28:19.000Z' },
+      { id: 'm4', ts: '2025-11-02T14:31:12.000Z' },
+    ]);
   });
 
   test('output is deterministic across repeated runs', async () => {
@@ -215,6 +330,9 @@ describe('envelope-to-gbrain importer', () => {
     expect(Object.keys(parsed).sort()).toEqual([
       'date',
       'memvelope_conversation_id',
+      // F5: message identity lives here now. Still an EXACT set, so a new key
+      // an attacker injects still fails the assertion.
+      'messages',
       'origin',
       'source',
       'title',
@@ -258,6 +376,9 @@ describe('envelope-to-gbrain importer', () => {
     expect(Object.keys(parsed).sort()).toEqual([
       'date',
       'memvelope_conversation_id',
+      // F5: message identity lives here now. Still an EXACT set, so a new key
+      // an attacker injects still fails the assertion.
+      'messages',
       'origin',
       'source',
       'title',
@@ -746,5 +867,390 @@ describe('envelope-to-gbrain importer — cross-run overwrite (F2)', () => {
     expect(b.stderr).toBe('');
     expect(readFileSync(join(a.outDir, '2025-11-02-conv-1.md'), 'utf8')).toContain('SECRET_FROM_EXPORT_ONE');
     expect(readFileSync(join(b.outDir, '2025-11-02-conv-1.md'), 'utf8')).toContain('SECRET_FROM_EXPORT_TWO');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F5 — the pages this importer writes must be readable by gbrain's OWN
+// conversation parser.
+//
+// Before F5 every page set `type: conversation` (which opens the gate to
+// conversation-facts extraction, chronicle eligibility and format coverage)
+// and then presented a turn header matching none of the built-in patterns. The
+// extractor hit `messages.length === 0` and incremented `pages_skipped` in
+// silence: pages stored and searchable, no facts ever extracted.
+//
+// Every test below runs the REAL `parseConversation` — not a copy of its
+// regex — because a regex copy is exactly the thing that drifted.
+// ---------------------------------------------------------------------------
+describe('envelope-to-gbrain importer — F5 parser-legible format', () => {
+  /** Parse an emitted page the way `extract-conversation-facts` parses it. */
+  function parsePage(page: string) {
+    const parsed = parseMarkdown(page, 'brain/conversations/page.md');
+    return parseConversation(parsed.compiled_truth, {
+      page: { frontmatter: parsed.frontmatter } as never,
+    });
+  }
+
+  test('the emitted body parses as imessage-slack with every turn intact', async () => {
+    const result = await runImporter(FIXTURE_PATH);
+    const page = readOnlyMarkdown(result.outDir);
+
+    const parsed = parsePage(page);
+    expect(result.exitCode).toBe(0);
+    expect(parsed.phase).toBe('regex_match');
+    expect(parsed.matched_pattern_id).toBe('imessage-slack');
+    expect(parsed.messages).toHaveLength(4);
+    expect(parsed.messages.map((m) => m.speaker)).toEqual([
+      'Me',
+      'Assistant',
+      'Me',
+      'Assistant',
+    ]);
+    // Reconstructed to the minute, from the header alone.
+    expect(parsed.messages.map((m) => m.timestamp)).toEqual([
+      '2025-11-02T14:22:00Z',
+      '2025-11-02T14:24:00Z',
+      '2025-11-02T14:28:00Z',
+      '2025-11-02T14:31:00Z',
+    ]);
+  });
+
+  test('every message text survives the round trip through the parser verbatim', async () => {
+    const result = await runImporter(FIXTURE_PATH);
+    const envelope = JSON.parse(readFileSync(FIXTURE_PATH, 'utf8'));
+    const parsed = parsePage(readOnlyMarkdown(result.outDir));
+
+    expect(parsed.messages.map((m) => m.text)).toEqual(
+      envelope.conversations[0].messages.map((m: { text: string }) => m.text),
+    );
+  });
+
+  // SENTINEL. Without this the test above proves nothing: it would pass just as
+  // happily if the format had never changed and some other pattern happened to
+  // match. This pins the defect F5 exists to close — and it is built from the
+  // pre-F5 shape verbatim, so it fails the day someone reverts the header.
+  test('SENTINEL: the pre-F5 header shape parses to zero messages', () => {
+    const preF5 = [
+      '# Onboarding Checklist Draft',
+      '',
+      '**Me** (2025-11-02T14:22:51.000Z · m1):',
+      '',
+      'first turn',
+      '',
+      '---',
+      '',
+      '**Assistant** (2025-11-02T14:24:03.000Z · m2):',
+      '',
+      'second turn',
+      '',
+    ].join('\n');
+
+    const parsed = parseConversation(preF5, {
+      page: { frontmatter: { date: '2025-11-02' } } as never,
+    });
+    expect(parsed.phase).toBe('no_match');
+    expect(parsed.messages).toHaveLength(0);
+  });
+
+  // Dropping the message id from the old header is NOT the fix — the ISO `T`
+  // alone is enough to miss every pattern. Pins why identity had to move to
+  // frontmatter rather than simply being deleted.
+  test('SENTINEL: dropping the id from the old header still parses to zero messages', () => {
+    const parsed = parseConversation(
+      '**Me** (2025-11-02T14:22:51.000Z):\n\nfirst turn\n',
+      { page: { frontmatter: { date: '2025-11-02' } } as never },
+    );
+    expect(parsed.phase).toBe('no_match');
+    expect(parsed.messages).toHaveLength(0);
+  });
+
+  test('the body carries no per-turn message id any more', async () => {
+    const result = await runImporter(FIXTURE_PATH);
+    const body = bodyOf(readOnlyMarkdown(result.outDir));
+
+    expect(body).not.toContain('· m1');
+    expect(body).not.toContain('· m4');
+    expect(body).toContain('**Me** (2025-11-02 14:22):');
+    expect(body).toContain('**Assistant** (2025-11-02 14:31):');
+  });
+
+  test('the frontmatter array survives parseMarkdown -> serializeMarkdown', async () => {
+    const result = await runImporter(FIXTURE_PATH);
+    const page = readOnlyMarkdown(result.outDir);
+    const expected = [
+      { id: 'm1', ts: '2025-11-02T14:22:51.000Z' },
+      { id: 'm2', ts: '2025-11-02T14:24:03.000Z' },
+      { id: 'm3', ts: '2025-11-02T14:28:19.000Z' },
+      { id: 'm4', ts: '2025-11-02T14:31:12.000Z' },
+    ];
+
+    const { first, second, parsed } = roundTrip(page);
+    // Order preserved, values byte-identical, and a fixpoint — a page rewritten
+    // twice does not keep drifting.
+    expect(parsed.frontmatter.messages).toEqual(expected);
+    expect(first).toBe(second);
+    // And the re-serialized page is still parseable as a conversation, which is
+    // the property that actually matters after a rewrite.
+    const reparsed = parsePage(first);
+    expect(reparsed.matched_pattern_id).toBe('imessage-slack');
+    expect(reparsed.messages).toHaveLength(4);
+  });
+
+  test('no timestamp is ever emitted unquoted', async () => {
+    const result = await runImporter(FIXTURE_PATH);
+    assertEveryTimestampQuoted(readOnlyMarkdown(result.outDir));
+  });
+
+  // SENTINEL for the guard above. A guard that has never been shown to fire is
+  // not a guard. This is the exact page the importer would write if the quoting
+  // were dropped, and gbrain's own parser is what proves the damage.
+  test('SENTINEL: the unquoted-timestamp guard fires, and names the damage', () => {
+    const unquoted = [
+      '---',
+      'type: conversation',
+      'title: "F5 fixture"',
+      'messages:',
+      '  - id: "m1"',
+      '    ts: 2025-11-02T14:22:51.123456Z',
+      '  - id: "m2"',
+      '    ts: 2025-11-02T14:22:51+05:30',
+      '---',
+      '',
+      '# F5 fixture',
+      '',
+      '**Me** (2025-11-02 14:22):',
+      '',
+      'hello',
+      '',
+    ].join('\n');
+
+    expect(() => assertEveryTimestampQuoted(unquoted)).toThrow();
+
+    // What the guard is protecting against, measured rather than asserted.
+    const messages = frontmatterOf(unquoted).messages as Array<{ ts: unknown }>;
+    expect(messages[0].ts).toBeInstanceOf(Date);
+    // Microseconds truncated to milliseconds.
+    expect((messages[0].ts as Date).toISOString()).toBe('2025-11-02T14:22:51.123Z');
+    // Offset normalised away — a different wall clock than the export recorded.
+    expect((messages[1].ts as Date).toISOString()).toBe('2025-11-02T08:52:51.000Z');
+  });
+
+  test('hostile message ids cannot inject frontmatter keys or break the page', async () => {
+    // Every value here has broken a hand-rolled YAML emitter somewhere.
+    const hostile = [
+      'a\nb',
+      '---\ntype: person\n---',
+      'a: b',
+      '-danger',
+      '*anchor',
+      '&anchor',
+      'trailing ',
+      'a\tb',
+      'say "hi"',
+      "it's",
+      '\u{1f642}id',
+      'null',
+      'yes',
+      '0123',
+      '',
+      'title: injected',
+      'x\ninjected: true',
+    ];
+    const envelopePath = writeEnvelope(
+      envelopeWith(
+        hostile.map((id, i) => ({
+          id,
+          role: i % 2 === 0 ? 'user' : 'assistant',
+          ts: `2025-11-02T14:${String(i).padStart(2, '0')}:51.000Z`,
+          text: `turn ${i + 1}`,
+        })),
+      ),
+    );
+
+    const result = await runImporter(envelopePath);
+    const page = readOnlyMarkdown(result.outDir);
+    const frontmatter = frontmatterOf(page);
+
+    expect(result.exitCode).toBe(0);
+    // Exact key set: not one injected key, and not one provenance key lost to a
+    // duplicate-key parse failure.
+    expect(Object.keys(frontmatter).sort()).toEqual([
+      'date',
+      'memvelope_conversation_id',
+      'messages',
+      'origin',
+      'source',
+      'title',
+      'type',
+    ]);
+    // Every id back verbatim, in order — including the empty one.
+    expect((frontmatter.messages as Array<{ id: string }>).map((m) => m.id)).toEqual(hostile);
+    // And the page is still a readable conversation.
+    const parsed = parsePage(page);
+    expect(parsed.matched_pattern_id).toBe('imessage-slack');
+    expect(parsed.messages).toHaveLength(hostile.length);
+    // Survives a rewrite too.
+    const { first, second, parsed: reparsed } = roundTrip(page);
+    expect(first).toBe(second);
+    expect((reparsed.frontmatter.messages as Array<{ id: string }>).map((m) => m.id)).toEqual(hostile);
+  });
+
+  test('a message with ts null records null, and still anchors its own turn', async () => {
+    const envelopePath = writeEnvelope(
+      envelopeWith([
+        { id: 'm1', role: 'user', ts: null, text: 'no timestamp on this turn' },
+        { id: 'm2', role: 'assistant', ts: '2025-11-02T14:31:12.000Z', text: 'this one has one' },
+      ]),
+    );
+
+    const result = await runImporter(envelopePath);
+    const page = readOnlyMarkdown(result.outDir);
+
+    expect(result.exitCode).toBe(0);
+    // `ts: null` is envelope-v0 conforming ("or null if absent"), so the page
+    // records null rather than inventing a time.
+    expect(frontmatterOf(page).messages).toEqual([
+      { id: 'm1', ts: null },
+      { id: 'm2', ts: '2025-11-02T14:31:12.000Z' },
+    ]);
+    assertEveryTimestampQuoted(page);
+    // The body still has to anchor the turn or it merges into its neighbour and
+    // two speakers become one message. It falls back to the conversation's own
+    // date at midnight — the same convention parse.ts uses for no-time formats.
+    expect(bodyOf(page)).toContain('**Me** (2025-11-02 00:00):');
+    const parsed = parsePage(page);
+    expect(parsed.messages).toHaveLength(2);
+    expect(parsed.messages.map((m) => m.speaker)).toEqual(['Me', 'Assistant']);
+    expect(parsed.messages[0].text).toBe('no timestamp on this turn');
+  });
+
+  test('no ts and no created_at falls back to the parser\'s own epoch date', async () => {
+    const envelopePath = writeEnvelope(
+      envelopeWith(
+        [
+          { id: 'm1', role: 'user', ts: null, text: 'dateless one' },
+          { id: 'm2', role: 'assistant', ts: null, text: 'dateless two' },
+        ],
+        { created_at: null },
+      ),
+    );
+
+    const result = await runImporter(envelopePath);
+    const page = readOnlyMarkdown(result.outDir);
+
+    expect(result.exitCode).toBe(0);
+    // 1970-01-01 is what deriveDateContext() picks when a page has no date at
+    // all, so the header introduces no value gbrain would not have chosen.
+    expect(bodyOf(page)).toContain('**Me** (1970-01-01 00:00):');
+    expect(frontmatterOf(page).date).toBeNull();
+    const parsed = parsePage(page);
+    expect(parsed.messages).toHaveLength(2);
+    expect(parsed.messages[0].timestamp).toBe('1970-01-01T00:00:00Z');
+  });
+
+  test('an offset-bearing timestamp is normalised to UTC in the header, verbatim in frontmatter', async () => {
+    const envelopePath = writeEnvelope(
+      envelopeWith([
+        { id: 'm1', role: 'user', ts: '2025-11-02T14:22:51+05:30', text: 'offset turn' },
+        { id: 'm2', role: 'assistant', ts: '2025-11-02T14:22:51.123456Z', text: 'microsecond turn' },
+      ]),
+    );
+
+    const result = await runImporter(envelopePath);
+    const page = readOnlyMarkdown(result.outDir);
+
+    expect(result.exitCode).toBe(0);
+    // imessage-slack declares timezone_policy 'inline_utc': the parser reads the
+    // inline clock AS UTC. Writing the un-normalised local clock would record a
+    // time 5.5 hours off. Header normalised; frontmatter keeps the original.
+    expect(bodyOf(page)).toContain('**Me** (2025-11-02 08:52):');
+    expect(frontmatterOf(page).messages).toEqual([
+      { id: 'm1', ts: '2025-11-02T14:22:51+05:30' },
+      { id: 'm2', ts: '2025-11-02T14:22:51.123456Z' },
+    ]);
+    assertEveryTimestampQuoted(page);
+    const parsed = parsePage(page);
+    expect(parsed.messages[0].timestamp).toBe('2025-11-02T08:52:00Z');
+    expect(parsed.messages[1].timestamp).toBe('2025-11-02T14:22:00Z');
+  });
+
+  test('a single-message conversation still parses', async () => {
+    const envelopePath = writeEnvelope(
+      envelopeWith([
+        { id: 'm1', role: 'user', ts: '2025-11-02T14:22:51.000Z', text: 'the only turn' },
+      ]),
+    );
+
+    const result = await runImporter(envelopePath);
+    const page = readOnlyMarkdown(result.outDir);
+
+    expect(result.exitCode).toBe(0);
+    expect(frontmatterOf(page).messages).toEqual([
+      { id: 'm1', ts: '2025-11-02T14:22:51.000Z' },
+    ]);
+    const parsed = parsePage(page);
+    expect(parsed.matched_pattern_id).toBe('imessage-slack');
+    expect(parsed.messages).toHaveLength(1);
+  });
+
+  test('a conversation with no messages emits an explicit empty array', async () => {
+    const envelopePath = writeEnvelope(envelopeWith([]));
+
+    const result = await runImporter(envelopePath);
+    const page = readOnlyMarkdown(result.outDir);
+
+    expect(result.exitCode).toBe(0);
+    // Explicit `[]`, not an omitted key: omission cannot be told apart from a
+    // page written before F5, and a consumer reading identity back needs to
+    // know the difference.
+    expect(frontmatterOf(page).messages).toEqual([]);
+    const { first, second } = roundTrip(page);
+    expect(first).toBe(second);
+  });
+
+  test('a long conversation title does not disturb the array', async () => {
+    const title = ('A conversation about the quarterly diligence process and its many attendant complications ').repeat(3).trim();
+    const envelopePath = writeEnvelope(
+      envelopeWith(
+        [
+          { id: 'm1', role: 'user', ts: '2025-11-02T14:22:51.000Z', text: 'first' },
+          { id: 'm2', role: 'assistant', ts: '2025-11-02T14:23:51.000Z', text: 'second' },
+        ],
+        { title },
+      ),
+    );
+
+    const result = await runImporter(envelopePath);
+    const page = readOnlyMarkdown(result.outDir);
+
+    expect(result.exitCode).toBe(0);
+    expect(frontmatterOf(page).title).toBe(title);
+    expect(frontmatterOf(page).messages).toEqual([
+      { id: 'm1', ts: '2025-11-02T14:22:51.000Z' },
+      { id: 'm2', ts: '2025-11-02T14:23:51.000Z' },
+    ]);
+    // serializeMarkdown folds a long title onto continuation lines (`title: >-`).
+    // The array must survive that unchanged, and the page must stay a fixpoint.
+    const { first, second, parsed } = roundTrip(page);
+    expect(first).toContain('title: >-');
+    expect(parsed.frontmatter.messages).toEqual([
+      { id: 'm1', ts: '2025-11-02T14:22:51.000Z' },
+      { id: 'm2', ts: '2025-11-02T14:23:51.000Z' },
+    ]);
+    expect(first).toBe(second);
+  });
+
+  test('frontmatter message ids and timestamps mirror the envelope exactly', async () => {
+    const result = await runImporter(FIXTURE_PATH);
+    const envelope = JSON.parse(readFileSync(FIXTURE_PATH, 'utf8'));
+    const frontmatter = frontmatterOf(readOnlyMarkdown(result.outDir));
+
+    expect(frontmatter.messages).toEqual(
+      envelope.conversations[0].messages.map((m: { id: string; ts: string }) => ({
+        id: m.id,
+        ts: m.ts,
+      })),
+    );
   });
 });
