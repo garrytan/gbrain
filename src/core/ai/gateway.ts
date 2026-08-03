@@ -2043,7 +2043,12 @@ export async function embedMultimodal(
     ?? DEFAULT_EMBEDDING_MODEL;
   const { parsed, recipe } = resolveRecipe(modelStr);
   const touchpoint = recipe.touchpoints.embedding;
-  if (!touchpoint?.supports_multimodal) {
+  // Local-patch (2026-08-03, BGE-VL): openai-compatible recipes (ollama,
+  // llama-server, litellm, ...) reach the standard /embeddings multimodal
+  // path (embedMultimodalOpenAICompat, v0.34.1) even when their recipe does
+  // not declare supports_multimodal — local multimodal servers like BGE-VL
+  // are valid targets. Native providers (anthropic etc.) still throw.
+  if (!touchpoint?.supports_multimodal && recipe.implementation !== 'openai-compatible') {
     throw new AIConfigError(
       `Recipe ${recipe.id} (${parsed.modelId}) does not support multimodal embedding.`,
       `Set embedding_multimodal_model to route multimodal separately from text embeddings.\n` +
@@ -2239,10 +2244,12 @@ async function embedMultimodalOpenAICompat(
   // we skip the dim check rather than fabricate an expected value — the
   // engine's vector(N) column will reject mismatched rows at INSERT time
   // with a clearer error than anything we could throw here.
-  const recipeDims = recipe.touchpoints.embedding?.default_dims ?? 0;
-  const expectedDims = recipeDims > 0
-    ? recipeDims
-    : (cfg.embedding_dimensions ?? 0);
+  // Local-patch (2026-08-03, BGE-VL): expectedDims forced to 0 on
+  // the multimodal openai-compat path — local servers (BGE-VL 512d) legitimately
+  // differ from the recipe's text-embedding default_dims (ollama 768d). The
+  // engine's vector(N) column rejects mismatched rows at INSERT time (D12
+  // design intent), so dropping the pre-check loses no safety.
+  const expectedDims = 0;
 
   // Send each input as one /embeddings request. Most providers cap the
   // number of inputs per call at the text-embedding batch limit, but the
