@@ -768,6 +768,73 @@ describe('envelope-to-gbrain importer — cross-run overwrite (F2)', () => {
     expect(page).toContain('SECOND_TURN');
   });
 
+  test('a page gbrain has re-serialized is still recognized as ours', async () => {
+    // gbrain rewrites pages it holds - `export --dir`, the DB-only restore
+    // path, and put_page write-through all re-emit frontmatter through
+    // gray-matter, which writes plain or single-quoted scalars where this
+    // importer wrote JSON. A refresh after any of those must still be a
+    // refresh, not a refusal telling the user to delete gbrain's own work.
+    const outDir = tempDir();
+    const uuid = '68a1e7f4-9c2b-4d3e-8f01-2a3b4c5d6e7f';
+    const before = writeEnvelope({
+      fileName: 'before.mve.json',
+      conversations: [conversation({ id: uuid, messages: [message('m1', 'FIRST_TURN')] })],
+    });
+    expect((await runImporter(before, outDir)).exitCode).toBe(0);
+
+    // Simulate the gray-matter round trip: a UUID comes back as a plain
+    // unquoted scalar. (Verified against gbrain's own serializeMarkdown.)
+    const file = join(outDir, markdownFiles(outDir)[0]);
+    const rewritten = readFileSync(file, 'utf8').replace(
+      `memvelope_conversation_id: ${JSON.stringify(uuid)}`,
+      `memvelope_conversation_id: ${uuid}`,
+    );
+    expect(rewritten).not.toContain(JSON.stringify(uuid));
+    writeFileSync(file, rewritten);
+
+    const after = writeEnvelope({
+      fileName: 'after.mve.json',
+      conversations: [conversation({
+        id: uuid,
+        messages: [message('m1', 'FIRST_TURN'), message('m2', 'SECOND_TURN', 'assistant')],
+      })],
+    });
+    const result = await runImporter(after, outDir);
+    expect(result.stderr).not.toContain('could not be recognized');
+    expect(result.exitCode).toBe(0);
+    const page = readFileSync(join(outDir, markdownFiles(outDir)[0]), 'utf8');
+    expect(page).toContain('SECOND_TURN');
+  });
+
+  test('a single-quoted id from a YAML round trip is still recognized', async () => {
+    // js-yaml single-quotes strings that look like other types - an all-digit
+    // id comes back as '123', which JSON.parse rejects. 16 of 17 id shapes
+    // round-trip into a form the old JSON-only reader called foreign.
+    const outDir = tempDir();
+    const before = writeEnvelope({
+      fileName: 'before.mve.json',
+      conversations: [conversation({ id: '12345', messages: [message('m1', 'FIRST_TURN')] })],
+    });
+    expect((await runImporter(before, outDir)).exitCode).toBe(0);
+
+    const file = join(outDir, markdownFiles(outDir)[0]);
+    writeFileSync(file, readFileSync(file, 'utf8').replace(
+      'memvelope_conversation_id: "12345"',
+      "memvelope_conversation_id: '12345'",
+    ));
+
+    const after = writeEnvelope({
+      fileName: 'after.mve.json',
+      conversations: [conversation({
+        id: '12345',
+        messages: [message('m1', 'FIRST_TURN'), message('m2', 'SECOND_TURN', 'assistant')],
+      })],
+    });
+    const result = await runImporter(after, outDir);
+    expect(result.stderr).not.toContain('could not be recognized');
+    expect(result.exitCode).toBe(0);
+  });
+
   test('CONTROL: unrelated markdown already in the directory is not a conflict', async () => {
     const outDir = tempDir();
     writeFileSync(join(outDir, 'my-own-note.md'), 'UNRELATED_NOTE\n');

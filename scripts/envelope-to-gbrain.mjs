@@ -623,12 +623,46 @@ function readIfPresent(path) {
 /** The conversation identity recorded in a page this importer previously wrote,
  *  or null if the file is not recognizably one of ours.
  *
- *  A deliberate line scan of our own emitted shape rather than a YAML parse:
- *  this script has no dependencies, and anything it cannot confidently
- *  recognize must fall through to "foreign" — the answer that refuses the
- *  overwrite. `{ id: null }` means "ours, but written from a conversation that
- *  carried no id", which is a different thing from "not ours" and must not be
- *  collapsed into it. */
+ *  A deliberate line scan rather than a YAML parse: this script has no
+ *  dependencies, and anything it cannot confidently recognize must fall
+ *  through to "foreign" — the answer that refuses the overwrite. `{ id: null }`
+ *  means "ours, but written from a conversation that carried no id", which is
+ *  a different thing from "not ours" and must not be collapsed into it.
+ *
+ *  The id scalar is accepted in every shape a YAML round trip produces, not
+ *  only the JSON this importer writes. gbrain rewrites pages it holds —
+ *  `export --dir`, the DB-only restore path, and put_page write-through all
+ *  re-emit frontmatter through gray-matter, which writes a UUID as a plain
+ *  unquoted scalar and an all-digit or boolean-looking id single-quoted.
+ *  Recognizing only our own JSON meant every one of those rewrites turned the
+ *  page "foreign" and a later refresh refused the whole envelope, advising
+ *  the user to delete gbrain's own copy. */
+function idScalar(rawValue) {
+  if (rawValue.startsWith('"')) {
+    // Our own emitted shape (JSON is valid YAML flow syntax).
+    try {
+      const value = JSON.parse(rawValue);
+      return typeof value === 'string' ? value : null;
+    } catch {
+      return null;
+    }
+  }
+  if (rawValue.startsWith("'")) {
+    // YAML single-quoted: the only escape is a doubled quote.
+    if (rawValue.length < 2 || !rawValue.endsWith("'")) return null;
+    const body = rawValue.slice(1, -1).replace(/''/g, '\u0000');
+    if (body.includes("'")) return null;
+    const value = body.replace(/\u0000/g, "'");
+    // An empty id is not a shape this importer ever writes; stay foreign,
+    // exactly as the JSON-only reader did.
+    return value === '' ? null : value;
+  }
+  // Plain scalar. `null`/`~`/empty are YAML null, not a string id — and this
+  // importer never writes the key for a null id, so that shape stays foreign.
+  if (rawValue === '' || rawValue === 'null' || rawValue === '~') return null;
+  return rawValue;
+}
+
 function existingPageIdentity(raw) {
   // A page we wrote can pick up cosmetic byte changes without ceasing to be
   // ours: a git checkout with core.autocrlf, a cross-platform sync, an editor
@@ -645,13 +679,9 @@ function existingPageIdentity(raw) {
     if (line === 'origin: memvelope/envelope-v0') {
       ours = true;
     } else if (line.startsWith(ID_KEY)) {
-      try {
-        const value = JSON.parse(line.slice(ID_KEY.length));
-        if (typeof value !== 'string') return null;
-        id = value;
-      } catch {
-        return null;
-      }
+      const value = idScalar(line.slice(ID_KEY.length));
+      if (value === null) return null;
+      id = value;
     }
   }
   return ours ? { id } : null;
