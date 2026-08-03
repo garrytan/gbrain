@@ -886,6 +886,11 @@ export async function embedQueryBounded(
   }
 }
 
+function vectorFailureReason(err: unknown): HybridSearchMeta['vector_fallback_reason'] {
+  const message = err instanceof Error ? err.message : String(err);
+  return /deadline|timeout|aborted/i.test(message) ? 'embed_timeout' : 'embed_error';
+}
+
 export async function hybridSearch(
   engine: BrainEngine,
   query: string,
@@ -1158,6 +1163,8 @@ export async function hybridSearch(
   // provider (Voyage, ZE) works fine.
   const { isAvailable } = await import('../ai/gateway.ts');
   const providerProbe = resolvedCol.embeddingModel || undefined;
+  let vectorFallbackReason: HybridSearchMeta['vector_fallback_reason'] =
+    isAvailable('embedding', providerProbe) ? 'ok' : 'provider_unavailable';
   // Image/both/unified routing embeds via the MULTIMODAL provider, not the
   // text provider — so a multimodal-only install (text provider absent) must
   // still reach the multimodal branch below. Probe the multimodal provider
@@ -1203,12 +1210,13 @@ export async function hybridSearch(
     }
     // T3/T4 — alias hop + evidence stamp even without an embedding provider
     // (the named-thing fix is most valuable exactly when vector is unavailable).
-    const noEmbedHopped = await applyAliasHop(engine, dedupResults(noEmbedResults), query, {
+    const noEmbedHopped = await applyAliasHop(engine, noEmbedResults, query, {
       sourceId: opts?.sourceId,
       sourceIds: opts?.sourceIds,
     });
-    stampEvidence(noEmbedHopped);
-    const noEmbedSliced = noEmbedHopped.slice(offset, offset + limit);
+    const noEmbedPresentation = dedupResults(noEmbedHopped, { maxPerPage: 1 });
+    stampEvidence(noEmbedPresentation);
+    const noEmbedSliced = noEmbedPresentation.slice(offset, offset + limit);
     // v0.32.3 search-lite: budget enforcement on the no-embedding-provider path.
     const { results: noEmbedBudgeted, meta: noEmbedBudgetMeta } = enforceTokenBudget(noEmbedSliced, resolvedMode.tokenBudget);
     await stampContentFlags(engine, noEmbedBudgeted);
@@ -1216,6 +1224,7 @@ export async function hybridSearch(
     lastRank1Score = noEmbedBudgeted[0] ? (noEmbedBudgeted[0].base_score ?? noEmbedBudgeted[0].score) : undefined;
     emitMeta({
       vector_enabled: false,
+      vector_fallback_reason: vectorFallbackReason,
       detail_resolved: detailResolved,
       expansion_applied: false,
       intent: suggestions.intent,
@@ -1417,9 +1426,20 @@ export async function hybridSearch(
       if (effectiveModality === 'both' && imageVectorList !== null) {
         vectorLists = [...vectorLists, imageVectorList];
       }
-    } catch {
-      // Embedding failure is non-fatal, fall back to keyword-only
+    } catch (err) {
+      // Embedding failure is non-fatal, but must remain observable.
+      vectorFallbackReason = vectorFailureReason(err);
+      console.error(`[hybrid] vector retrieval fallback: reason=${vectorFallbackReason}`);
     }
+  }
+
+  // A provider can accept the query embedding while returning no candidates.
+  // Treat that as a fallback rather than a successful empty vector arm.
+  if (vectorLists.length > 0 && vectorLists.every((list) => list.length === 0)) {
+    vectorLists = [];
+    vectorFallbackReason = 'empty_vector_results';
+  } else if (vectorLists.some((list) => list.length > 0)) {
+    vectorFallbackReason = 'ok';
   }
 
   if (vectorLists.length === 0) {
@@ -1445,12 +1465,13 @@ export async function hybridSearch(
       await runPostFusionStages(engine, fallbackResults, postFusionOpts);
       fallbackResults.sort((a, b) => b.score - a.score);
     }
-    const kwHopped = await applyAliasHop(engine, dedupResults(fallbackResults), query, {
+    const kwHopped = await applyAliasHop(engine, fallbackResults, query, {
       sourceId: opts?.sourceId,
       sourceIds: opts?.sourceIds,
     });
-    stampEvidence(kwHopped);
-    const kwSliced = kwHopped.slice(offset, offset + limit);
+    const kwPresentation = dedupResults(kwHopped, { maxPerPage: 1 });
+    stampEvidence(kwPresentation);
+    const kwSliced = kwPresentation.slice(offset, offset + limit);
     // v0.32.3 search-lite: budget enforcement on the keyword-fallback path too.
     const { results: kwBudgeted, meta: kwBudgetMeta } = enforceTokenBudget(kwSliced, resolvedMode.tokenBudget);
     await stampContentFlags(engine, kwBudgeted);
@@ -1458,6 +1479,7 @@ export async function hybridSearch(
     lastRank1Score = kwBudgeted[0] ? (kwBudgeted[0].base_score ?? kwBudgeted[0].score) : undefined;
     emitMeta({
       vector_enabled: false,
+      vector_fallback_reason: vectorFallbackReason,
       detail_resolved: detailResolved,
       expansion_applied: expansionApplied,
       intent: suggestions.intent,
@@ -1686,7 +1708,11 @@ export async function hybridSearch(
     autocutDecision = r.decision;
   }
 
-  const sliced = returnPool.slice(offset, offset + limit);
+  const presentationPool = dedupResults(returnPool, {
+    ...(dedupOpts ?? {}),
+    maxPerPage: 1,
+  });
+  const sliced = presentationPool.slice(offset, offset + limit);
   // v0.32.3 search-lite: budget enforcement at the main return path.
   // hybridSearchCached used to be the only place this fired; now bare
   // hybridSearch enforces it too so eval-replay + eval-longmemeval see
@@ -1697,6 +1723,7 @@ export async function hybridSearch(
   lastRank1Score = budgeted[0] ? (budgeted[0].base_score ?? budgeted[0].score) : undefined;
   emitMeta({
     vector_enabled: true,
+    vector_fallback_reason: 'ok',
     detail_resolved: detailResolved,
     expansion_applied: expansionApplied,
     intent: suggestions.intent,
@@ -1894,6 +1921,7 @@ export async function hybridSearchCached(
       // Emit meta describing the cache path.
       const cachedMeta: HybridSearchMeta = {
         vector_enabled: hit.meta?.vector_enabled ?? true,
+        vector_fallback_reason: hit.meta?.vector_fallback_reason ?? 'ok',
         detail_resolved: hit.meta?.detail_resolved ?? null,
         expansion_applied: hit.meta?.expansion_applied ?? false,
         intent: hit.meta?.intent,
@@ -1979,6 +2007,7 @@ export async function hybridSearchCached(
   // too (same drop class).
   const finalMeta: HybridSearchMeta = {
     vector_enabled: innerMeta?.vector_enabled ?? false,
+    vector_fallback_reason: innerMeta?.vector_fallback_reason ?? 'provider_unavailable',
     detail_resolved: innerMeta?.detail_resolved ?? null,
     expansion_applied: innerMeta?.expansion_applied ?? false,
     intent: innerMeta?.intent,

@@ -153,6 +153,17 @@ describe('edge cases', () => {
     const deduped = dedupResults(results, { maxPerPage: 3 });
     expect(deduped.filter(r => r.slug === 'a').length).toBeLessThanOrEqual(3);
   });
+
+  test('presentation policy can enforce one result per composite page key', () => {
+    const results = [
+      makeResult({ slug: 'a', source_id: 'wiki', chunk_id: 1, score: 0.9, chunk_text: 'a first distinct chunk' }),
+      makeResult({ slug: 'a', source_id: 'wiki', chunk_id: 2, score: 0.8, chunk_text: 'a second distinct chunk' }),
+      makeResult({ slug: 'a', source_id: 'other', type: 'person', chunk_id: 3, score: 0.7, chunk_text: 'a other source chunk' }),
+    ];
+    const presented = dedupResults(results, { maxPerPage: 1 });
+    expect(presented.filter(r => r.source_id === 'wiki' && r.slug === 'a')).toHaveLength(1);
+    expect(presented.filter(r => r.source_id === 'other' && r.slug === 'a')).toHaveLength(1);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────

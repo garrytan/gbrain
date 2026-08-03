@@ -1613,6 +1613,13 @@ export interface EvalCaptureFailure {
 export interface HybridSearchMeta {
   /** True iff vector search actually ran. False when OPENAI_API_KEY missing or embed failed. */
   vector_enabled: boolean;
+  /** Why the vector arm was or was not usable for this call. */
+  vector_fallback_reason?:
+    | 'ok'
+    | 'provider_unavailable'
+    | 'embed_error'
+    | 'embed_timeout'
+    | 'empty_vector_results';
   /** Post-auto-detect detail level. */
   detail_resolved: 'low' | 'medium' | 'high' | null;
   /** True iff multi-query expansion (Haiku) actually fired and produced variants. */
