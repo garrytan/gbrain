@@ -140,3 +140,37 @@ describe('#1175 — main `gbrain --help` SOURCES block matches the real subcomma
     expect(stdout).toMatch(/^\s*sources --help\s/m);
   });
 });
+
+describe('`gbrain takes --help` reaches the detailed subcommand block', () => {
+  test('every mutate + read subcommand is listed', () => {
+    const { stdout, status } = runCli(['takes', '--help']);
+    expect(status).toBe(0);
+    // Pre-fix these were undiscoverable from the CLI: `takes` was in CLI_ONLY
+    // but not CLI_ONLY_SELF_HELP, so the generic stub fired before runTakes.
+    expect(stdout).toContain('takes add');
+    expect(stdout).toContain('takes update');
+    expect(stdout).toContain('takes supersede');
+    expect(stdout).toContain('takes resolve');
+    expect(stdout).toContain('takes scorecard');
+    expect(stdout).toContain('takes calibration');
+    expect(stdout).toContain('takes search');
+  });
+
+  test('output is NOT the generic short-circuit fallback', () => {
+    const { stdout } = runCli(['takes', '--help']);
+    // Pre-fix output was exactly: "Usage: gbrain takes\n\ngbrain takes - run
+    // gbrain --help for the full command list."
+    expect(stdout).not.toContain('run gbrain --help for the full command list');
+    expect(stdout).not.toMatch(/^Usage: gbrain takes\s*$/m);
+    expect(stdout.split('\n').length).toBeGreaterThan(10);
+  });
+
+  test('help works with no brain configured (pre-engine-bind branch)', () => {
+    // runCli points GBRAIN_HOME at a nonexistent dir. Without the pre-engine
+    // branch this printed "No brain configured. Run: gbrain init".
+    const { stdout, status } = runCli(['takes', '--help']);
+    expect(status).toBe(0);
+    expect(stdout).not.toContain('No brain configured');
+    expect(stdout).toContain('--dir <path>');
+  });
+});
