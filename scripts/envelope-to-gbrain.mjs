@@ -30,10 +30,12 @@
  *      conflict, and the import is refused (exit 2).
  *
  * Output layout:
- *   - One page per conversation, filename = date + conversation id (shared
- *     titles cannot collide; the id is the natural key). A duplicate id
- *     overwrites its own filename and warns on stderr; stdout reports DISTINCT
- *     files written, not write calls.
+ *   - One page per conversation, filename = date + conversation id, so shared
+ *     titles cannot collide. Two conversations carrying the SAME id land on one
+ *     filename; the copy with the later `updated_at` is kept and the other is
+ *     discarded, with array order as the documented fallback when neither
+ *     carries an orderable one. Either way stderr says which copy went and why,
+ *     and stdout reports DISTINCT files written, not write calls.
  *   - `id` is `string | null` in envelope-v0 and a converter must not synthesize
  *     one, so null is a conforming shape, not malformed input. Such a
  *     conversation falls back to a POSITIONAL filename (`conv-N`) — a function
@@ -52,7 +54,21 @@
  *
  * Every page here declares `type: conversation`, which is what opens the gate to
  * conversation-facts extraction, chronicle eligibility, and the
- * conversation_format_coverage check. Until 2026-08-02 the body then presented a
+ * conversation_format_coverage check.
+ *
+ * ELIGIBLE IS NOT AUTOMATIC, and the difference is the whole reason to say this
+ * out loud. The path that accepts these pages is `gbrain
+ * extract-conversation-facts` (src/commands/extract-conversation-facts.ts),
+ * which is run by hand, and its autopilot wrapper is the
+ * `conversation_facts_backfill` cycle phase — opt-in and OFF by default
+ * (`cycle.conversation_facts_backfill.enabled`, default false;
+ * src/core/cycle/conversation-facts-backfill.ts). Importing and syncing these
+ * pages therefore extracts no facts from any of them until one of those two is
+ * invoked. What the type buys is admission: `ALLOWED_TYPES` in that command
+ * requires it, so a page typed anything else is not merely un-run, it is
+ * ineligible.
+ *
+ * Until 2026-08-02 the body then presented a
  * turn header — `**Assistant** (2025-11-02T14:22:51.000Z · m2):` — matching NONE
  * of the 17 built-in patterns in `src/core/conversation-parser/builtins.ts`
  * (`gbrain conversation-parser list-builtins` counts them). The
@@ -214,6 +230,36 @@
  *     edit that inserts or removes a turn in the body without editing the
  *     frontmatter silently re-points every id after it — and so does any of the
  *     parser behavior above.
+ *   - THE DATE IS THE UTC CALENDAR DAY, NOT THE USER'S. The page `date` and
+ *     every turn header are read off a timestamp already normalised to UTC, so
+ *     a conversation held in the evening west of Greenwich files on the
+ *     FOLLOWING day, and one held in the early morning east of it files on the
+ *     PREVIOUS day. Measured here, importing under TZ=America/Los_Angeles a
+ *     conversation that happened at 19:30 on Sunday 2 November 2025 in
+ *     California:
+ *
+ *       created_at "2025-11-03T03:30:00.000Z"
+ *         -> date: "2025-11-03"   (a Monday)
+ *         -> **Me** (2025-11-03 03:30):
+ *
+ *     Anything that groups, windows or reports these pages by day inherits that
+ *     shift. The importing machine's own zone changes nothing — the output
+ *     above is identical under every TZ, deliberately.
+ *
+ *     This is not fixable, here or upstream, and the reason is not neglect: the
+ *     offset is not in the file. envelope-v0 renders every timestamp as
+ *     `YYYY-MM-DDTHH:mm:ss.sssZ` — "always UTC, always the `Z` designator" — and
+ *     SPEC.md rule 3 states the reasoning outright: "The source's true offset is
+ *     unknowable, and UTC is the only machine-independent choice." An offset
+ *     present in a source export is therefore normalised away by the format
+ *     before this script ever opens the file. Nor do the vendor fields the
+ *     reference converter reads carry one to preserve: across its 22 conversation
+ *     -level source timestamps, 16 are bare unix-epoch numbers (ChatGPT
+ *     `create_time`/`update_time`, which cannot express a zone), 4 end in `Z`,
+ *     2 carry no designator at all, and NONE carries a numeric offset. Guessing
+ *     from the importing machine's zone is the one available "fix" and it is
+ *     worse than the bug: it would make one envelope produce different pages on
+ *     two laptops, which is the determinism this script is built on.
  *   - MINUTE RESOLUTION IS THE CEILING, and it is the parser's, not this
  *     format's. Every branch of `buildIso` in parse.ts hardcodes `:00` seconds,
  *     and no built-in pattern captures a seconds group — `signal-export`
@@ -595,11 +641,13 @@ const pages = new Map();
 let collisions = 0;
 for (const [i, c] of conversations.entries()) {
   const date = (c.created_at || '').slice(0, 10);
-  // Name the file by the conversation's own id — the natural unique key — so two
-  // conversations that share a date and title can never silently overwrite each
-  // other. The date only leads as a human/chronological sort prefix; the id
-  // carries uniqueness. Positional fallback keeps names unique and deterministic
-  // when an envelope omits an id.
+  // Name the file by the conversation's own id, so two conversations that share
+  // a date and title can never silently overwrite each other. The KEY IS THE
+  // PAIR: date and id together name the file, and the date is not merely a
+  // human/chronological prefix — a conversation whose `created_at` changes
+  // between exports lands on a new filename, which is the "orphans its earlier
+  // page" limit in the header. Positional fallback keeps names unique and
+  // deterministic when an envelope omits an id.
   // One predicate for "this conversation carries its own id", shared by the
   // filename, the frontmatter below, and the conflict check further down.
   // Keeping it in a single place is what stops them disagreeing about whether
