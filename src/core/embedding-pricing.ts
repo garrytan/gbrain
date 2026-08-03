@@ -58,6 +58,8 @@ export const EMBEDDING_PRICING: Record<string, EmbeddingPricing> = {
   // Perplexity (https://docs.perplexity.ai/getting-started/pricing, verified 2026-07-28)
   'perplexity:pplx-embed-v1-0.6b': { pricePerMTok: 0.004 },
   'perplexity:pplx-embed-v1-4b':   { pricePerMTok: 0.03 },
+  // Novita AI (https://novita.ai/models-console/model-detail/baai-bge-m3, verified 2026-08-03)
+  'novita:baai/bge-m3':            { pricePerMTok: 0.01 },
 };
 
 export type PriceLookupResult =
