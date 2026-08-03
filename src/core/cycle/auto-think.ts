@@ -17,6 +17,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { runThink, persistSynthesis, type ThinkLLMClient } from '../think/index.ts';
 import { resolveModel } from '../model-config.ts';
+import { embedQuery } from '../embedding.ts';
 import { BudgetMeter } from './budget-meter.ts';
 
 /**
@@ -160,6 +161,8 @@ export async function runPhaseAutoThink(
     try {
       const result = await runThink(engine, {
         question: q,
+        // #3734: auto-think uses same vector takes retrieval as interactive think.
+        embedQuestion: (text) => embedQuery(text),
         save: config.autoCommit,
         client: opts.client,
         model: modelId,

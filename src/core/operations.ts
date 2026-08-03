@@ -13,6 +13,7 @@ import { importFromContent } from './import-file.ts';
 import { writePageThrough } from './write-through.ts';
 import { hybridSearch, hybridSearchCached, stampContentFlags, stampUnverifiedExtractions } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
+import { embedQuery } from './embedding.ts';
 import { dedupResults } from './search/dedup.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from './eval-capture.ts';
 import type { HybridSearchMeta } from './types.ts';
@@ -2256,6 +2257,8 @@ const think: Operation = {
     const { runThink, persistSynthesis } = await import('./think/index.ts');
     const result = await runThink(ctx.engine, {
       question: String(p.question),
+      // #3734: MCP think must populate the question vector for takes retrieval.
+      embedQuestion: (q) => embedQuery(q),
       anchor: p.anchor ? String(p.anchor) : undefined,
       rounds: typeof p.rounds === 'number' ? (p.rounds as number) : undefined,
       save: safeSave,

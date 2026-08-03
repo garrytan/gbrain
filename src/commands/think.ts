@@ -10,6 +10,7 @@ import { runThink, persistSynthesis, stripGapsSection } from '../core/think/inde
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 import { canonicalLookup } from '../core/model-pricing.ts';
+import { embedQuery } from '../core/embedding.ts';
 
 function flagValue(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -133,6 +134,8 @@ prints what would have been the input (exit 0).
     try {
       result = await runThink(engine, {
         question, anchor, rounds, save, take, model, since, until,
+        // #3734: activate takes' vector retrieval arm for CLI think.
+        embedQuestion: (q) => embedQuery(q),
         // #1698: explicit --model → hard error on an unresolvable model (no silent
         // degrade to the no-LLM stub). Omitting --model keeps the graceful default path.
         modelExplicit: !!model,
