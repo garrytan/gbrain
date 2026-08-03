@@ -54,7 +54,8 @@
  * conversation-facts extraction, chronicle eligibility, and the
  * conversation_format_coverage check. Until 2026-08-02 the body then presented a
  * turn header — `**Assistant** (2025-11-02T14:22:51.000Z · m2):` — matching NONE
- * of the built-in patterns in `src/core/conversation-parser/builtins.ts`. The
+ * of the 17 built-in patterns in `src/core/conversation-parser/builtins.ts`
+ * (`gbrain conversation-parser list-builtins` counts them). The
  * extractor parsed zero messages, incremented `pages_skipped`, and said nothing:
  * pages stored and searchable, no facts ever extracted from any of them.
  *
