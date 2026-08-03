@@ -31,11 +31,15 @@
  *
  * Output layout:
  *   - One page per conversation, filename = date + conversation id, so shared
- *     titles cannot collide. Two conversations carrying the SAME id land on one
- *     filename; the copy with the later `updated_at` is kept and the other is
- *     discarded, with array order as the documented fallback when neither
- *     carries an orderable one. Either way stderr says which copy went and why,
- *     and stdout reports DISTINCT files written, not write calls.
+ *     titles cannot collide. The filename is that PAIR: a duplicated id whose
+ *     two copies carry different `created_at` DATES lands on two files and
+ *     nothing collides. When two conversations do map to one filename, the copy
+ *     with the later `updated_at` is kept and the other is discarded. That rule
+ *     needs an orderable `updated_at` on BOTH copies with two different values;
+ *     equal values, or one that is missing or unreadable on EITHER side, fall
+ *     back to array order — the later copy in `conversations[]` wins, as it
+ *     always did. Either way stderr names both values and which copy went, and
+ *     stdout reports DISTINCT files written, not write calls.
  *   - `id` is `string | null` in envelope-v0 and a converter must not synthesize
  *     one, so null is a conforming shape, not malformed input. Such a
  *     conversation falls back to a POSITIONAL filename (`conv-N`) — a function
@@ -58,15 +62,30 @@
  *
  * ELIGIBLE IS NOT AUTOMATIC, and the difference is the whole reason to say this
  * out loud. The path that accepts these pages is `gbrain
- * extract-conversation-facts` (src/commands/extract-conversation-facts.ts),
- * which is run by hand, and its autopilot wrapper is the
- * `conversation_facts_backfill` cycle phase — opt-in and OFF by default
- * (`cycle.conversation_facts_backfill.enabled`, default false;
- * src/core/cycle/conversation-facts-backfill.ts). Importing and syncing these
- * pages therefore extracts no facts from any of them until one of those two is
- * invoked. What the type buys is admission: `ALLOWED_TYPES` in that command
- * requires it, so a page typed anything else is not merely un-run, it is
- * ineligible.
+ * extract-conversation-facts` (src/commands/extract-conversation-facts.ts) — a
+ * command somebody starts, whether by hand, as a background job, or through a
+ * `doctor` remediation. Its autopilot wrapper is the
+ * `conversation_facts_backfill` cycle phase, and that phase is opt-in and OFF
+ * by default (`cycle.conversation_facts_backfill.enabled`, default false —
+ * src/core/cycle/conversation-facts-backfill.ts). A plain `gbrain sync` does
+ * not start either one.
+ *
+ * What the type buys is ADMISSION to that command, not a trigger for it, and it
+ * is one admission among several: `ALLOWED_TYPES` there is `conversation`,
+ * `meeting`, `slack`, `email`, `imessage`, `imessage-daily`, and the command
+ * defaults to the whole list. A page typed outside that set is ineligible
+ * rather than merely un-run — which is the reason to declare `conversation`
+ * here — but `conversation` is not privileged within it.
+ *
+ * Sync's own generic facts backstop is a SEPARATE gate and it does not accept
+ * these pages on the type at all: `conversation` is absent from `ELIGIBLE_TYPES`
+ * in src/core/facts/eligibility.ts. It has a slug escape hatch ORed with the
+ * type test — `RESCUE_SLUG_PREFIXES = ['meetings/', 'personal/', 'daily/']` —
+ * so a page written into an outDir that syncs under one of those prefixes IS
+ * picked up by a plain sync, provided its body clears the 80-character
+ * `MIN_BODY_CHARS` floor. The default outDir (`./brain/conversations`) is not
+ * one of them, so on the default path nothing extracts facts from these pages
+ * until the command above runs.
  *
  * Until 2026-08-02 the body then presented a
  * turn header — `**Assistant** (2025-11-02T14:22:51.000Z · m2):` — matching NONE
@@ -178,6 +197,15 @@
  *     therefore lands on a NEW filename and orphans its earlier page rather
  *     than updating it — duplication, not loss, and true of this script before
  *     these guards existed too.
+ *   - THE `updated_at` TIEBREAK IS WITHIN ONE ENVELOPE. It decides which of two
+ *     copies in the SAME file survives, and it has no effect across runs: check
+ *     2 treats any existing page carrying this conversation's id as this
+ *     export's own page to refresh, so importing an OLDER export after a newer
+ *     one replaces the newer page at exit 0 with no warning at all. The
+ *     identical stale/fresh pair is decided one way inside an envelope and the
+ *     other way across two of them. Both rules are deliberate — the cross-run
+ *     one is what makes a re-import able to update its own page — but the
+ *     asymmetry is real and the cross-run direction is the silent one.
  *   - A file carrying this importer's own frontmatter shape is treated as this
  *     importer's page. There is no signature, so a hand-written lookalike is
  *     indistinguishable from the real thing.
@@ -246,20 +274,25 @@
  *     shift. The importing machine's own zone changes nothing — the output
  *     above is identical under every TZ, deliberately.
  *
- *     This is not fixable, here or upstream, and the reason is not neglect: the
- *     offset is not in the file. envelope-v0 renders every timestamp as
- *     `YYYY-MM-DDTHH:mm:ss.sssZ` — "always UTC, always the `Z` designator" — and
- *     SPEC.md rule 3 states the reasoning outright: "The source's true offset is
- *     unknowable, and UTC is the only machine-independent choice." An offset
- *     present in a source export is therefore normalised away by the format
- *     before this script ever opens the file. Nor do the vendor fields the
- *     reference converter reads carry one to preserve: across its 22 conversation
- *     -level source timestamps, 16 are bare unix-epoch numbers (ChatGPT
- *     `create_time`/`update_time`, which cannot express a zone), 4 end in `Z`,
- *     2 carry no designator at all, and NONE carries a numeric offset. Guessing
- *     from the importing machine's zone is the one available "fix" and it is
- *     worse than the bug: it would make one envelope produce different pages on
- *     two laptops, which is the determinism this script is built on.
+ *     NOT FIXABLE HERE, and the reason is not neglect: the offset is not in the
+ *     file this script reads. envelope-v0 renders every timestamp as
+ *     `YYYY-MM-DDTHH:mm:ss.sssZ` — "always UTC, always the `Z` designator"
+ *     (SPEC.md rule 3) — so an offset a source export DID carry is normalised
+ *     away before the envelope reaches this script. Where a source carries no
+ *     designator at all, that same rule explains why it is read as UTC rather
+ *     than guessed: "The source's true offset is unknowable, and UTC is the
+ *     only machine-independent choice."
+ *
+ *     Recovering the user's own day would therefore take a FORMAT change — a
+ *     conversation-level offset envelope-v0 does not have — and on the evidence
+ *     available there would usually be nothing to put in it. Across the
+ *     reference converter's own input corpus, 13 conversations carry 26
+ *     conversation-level timestamps: 20 are bare unix-epoch numbers (ChatGPT
+ *     `create_time`/`update_time`, which cannot express a zone at all), 4 end
+ *     in `Z`, 2 carry no designator, and NONE carries a numeric offset. What is
+ *     NOT available is guessing from the IMPORTING machine's zone: that would
+ *     make one envelope produce different pages on two laptops, which is the
+ *     determinism this script is built on.
  *   - MINUTE RESOLUTION IS THE CEILING, and it is the parser's, not this
  *     format's. Every branch of `buildIso` in parse.ts hardcodes `:00` seconds,
  *     and no built-in pattern captures a seconds group — `signal-export`
@@ -461,8 +494,11 @@ function updatedAtInstant(value) {
   if (utc.getUTCFullYear() !== y || utc.getUTCMonth() !== mo - 1 || utc.getUTCDate() !== d) {
     return null;
   }
-  // Kept as a number rather than pushed back through `Date`, so a fraction
-  // finer than a millisecond still participates in the comparison.
+  // Kept as a number rather than pushed back through `Date`, so a
+  // sub-millisecond fraction still participates in the comparison — down to
+  // whatever a double has left at epoch scale, which is roughly a microsecond
+  // in this century. The reference producer emits exactly three fractional
+  // digits (SPEC.md rule 3), so nothing it can write reaches that floor.
   let ms = utc.getTime() + s * 1000 + (fraction === undefined ? 0 : Number(fraction) * 1000);
   if (sign !== undefined) {
     const [oh, om] = [offsetHour, offsetMinute].map(Number);
@@ -495,14 +531,32 @@ function updatedAtInstant(value) {
  *     was there before decides. Changing it would only trade one arbitrary
  *     answer for another, and this one is already pinned by test.
  *   - Comparable on only ONE side — absent (the spec allows `null` with no
- *     fallback), non-string, or a string this script will not order by. A
- *     missing timestamp is not evidence of being older; preferring the copy
- *     that HAS one would be a guess dressed as a rule, and it is wrong exactly
- *     when an older converter produced the fresher file. So the tiebreak is
- *     applied only when BOTH copies carry an orderable `updated_at`.
+ *     fallback), non-string, or a string this script will not order by. Both
+ *     copies came out of ONE converter run, so the asymmetry is the vendor's:
+ *     one source export carried the field for this conversation and the other
+ *     did not. Nothing in that fact says which export is newer — a vendor may
+ *     have started emitting the field or stopped — so preferring the copy that
+ *     HAS a timestamp is a guess dressed as a rule. The tiebreak is applied
+ *     only when BOTH copies carry an orderable `updated_at`.
+ *
+ *     BE PLAIN ABOUT WHAT THAT COSTS. On that slice this rule changes nothing:
+ *     array order decides, and array order is the same deterministically-wrong
+ *     answer described above, so the stale copy still wins. `updated_at: null`
+ *     is producer-reachable — `converter.js` ends both normalizers'
+ *     `updated_at` with `|| null` — though it occurs in 0 of the 13
+ *     conversations in the reference corpus. What this rule buys on that slice
+ *     is only that the outcome is LOUD: stderr prints both values and says
+ *     array order decided.
  *   - `created_at` is deliberately not a secondary key. It is when the
  *     conversation began, which is identical in both copies of a re-export and
  *     says nothing about which export is newer.
+ *   - THE REDUCTION IS PAIRWISE, folded over `conversations[]` in order. With
+ *     every copy orderable that is a true maximum. With three or more copies
+ *     where one is NOT orderable, the fold loses transitivity and the freshest
+ *     copy overall can still be discarded: `[later, absent, earlier]` keeps
+ *     `earlier`, because neither comparison had evidence on both sides. That is
+ *     the fallback above doing exactly what it says rather than a separate
+ *     defect, and it is what the previous script did too.
  *
  * Either way a collision is a collision: one copy is discarded, and stderr says
  * which, why, and with what values.
@@ -839,14 +893,18 @@ if (collisions) {
   console.warn(`warning: ${collisions} filename collision(s) — ${collisions} page(s) discarded. Deduplicate conversation ids in the envelope to avoid data loss.`);
 }
 if (messagesWritten !== actualMessages) {
-  // The page count alone cannot show this: an overwritten page still leaves one
+  // The page count alone cannot show this: a discarded copy leaves the same one
   // file on disk, so only the message tally reveals the turns that went with it.
   //
-  // Worded as a fact about the overwritten pages, not as an announcement of
+  // "Discarded", not "overwritten", for the same reason as the summary line
+  // above: since the tiebreak can keep the EARLIER copy, the losing copy is
+  // sometimes never written at any point.
+  //
+  // Worded as a fact about the discarded copies, not as an announcement of
   // loss. Duplicate ids are conforming input — the spec has merging never
   // deduplicate — so converting an old export together with a newer one, which
   // is what the memvelope CLI tells users to do, lands here routinely with the
   // surviving page already holding every unique turn. An alarm that cries wolf
   // on the mainstream path teaches its reader to ignore the one that matters.
-  console.warn(`warning: the overwritten page(s) carried ${actualMessages - messagesWritten} message(s) that are not on disk (${actualMessages} read, ${messagesWritten} written). If they were earlier copies of the same conversation, the surviving page may already contain those turns; if not, this is real loss.`);
+  console.warn(`warning: the discarded page(s) carried ${actualMessages - messagesWritten} message(s) that are not on disk (${actualMessages} read, ${messagesWritten} written). If they were earlier copies of the same conversation, the surviving page may already contain those turns; if not, this is real loss.`);
 }

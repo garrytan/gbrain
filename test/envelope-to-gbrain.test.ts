@@ -533,7 +533,12 @@ describe('envelope-to-gbrain importer — declared-count integrity (F1)', () => 
   // not on disk" on exactly that flow, while every unique turn WAS on disk. A
   // data-loss alarm that fires on the mainstream path trains its reader to
   // ignore the one that matters.
-  test('the message-delta warning ties itself to the overwritten pages rather than claiming loss', async () => {
+  // R1 renamed "overwritten" to "discarded" throughout: once the duplicate-id
+  // tiebreak can keep the EARLIER copy, the losing copy is sometimes never
+  // written at all, so "overwritten" became false. This test's claim is
+  // unchanged — the warning must tie itself to the pages that lost, and must
+  // not announce loss — only the word it looks for moved.
+  test('the message-delta warning ties itself to the discarded pages rather than claiming loss', async () => {
     const envelopePath = writeEnvelope({
       conversations: [
         conversation({ id: 'c-same', messages: [message('m1', 'TURN_ONE')] }),
@@ -547,7 +552,7 @@ describe('envelope-to-gbrain importer — declared-count integrity (F1)', () => 
     const result = await runImporter(envelopePath);
 
     expect(result.exitCode).toBe(0);
-    expect(result.stderr).toContain('overwritten page(s) carried');
+    expect(result.stderr).toContain('discarded page(s) carried');
     // The raw tally still has to be there — hiding it is what made every
     // message-level loss invisible in the first place.
     expect(result.stderr).toContain('3 read, 2 written');
@@ -1727,6 +1732,42 @@ describe('envelope-to-gbrain importer — R1 duplicate-id tiebreak', () => {
     expect(stderr).toContain('2026-03-09T23:46:40.000Z');
     // The summary line must not claim the LATER page was the one written.
     expect(stderr).toContain('filename collision(s)');
+  });
+
+  // The reduction is PAIRWISE, folded over `conversations[]` in order, and that
+  // has a consequence worth pinning rather than leaving for a reviewer to find.
+  // With every copy orderable it is a true maximum, order-independently. With
+  // an UNORDERABLE copy in the middle the fold loses transitivity and the
+  // freshest copy overall can still lose: `[later, absent, earlier]` keeps
+  // `earlier`, because neither comparison had evidence on both sides. That is
+  // the documented fallback doing what it says — and it is what the pre-R1
+  // script did too, so nothing regresses.
+  test.each([
+    ['mid, LATEST, early', ['2026-05-01', '2026-09-01', '2026-01-01'], 1],
+    ['LATEST, early, mid', ['2026-09-01', '2026-01-01', '2026-05-01'], 0],
+    ['early, mid, LATEST', ['2026-01-01', '2026-05-01', '2026-09-01'], 2],
+    ['all three equal', ['2026-05-01', '2026-05-01', '2026-05-01'], 2],
+    ['LATEST, absent, early', ['2026-09-01', null, '2026-01-01'], 2],
+    ['early, absent, LATEST', ['2026-01-01', null, '2026-09-01'], 2],
+    ['absent, LATEST, absent', [null, '2026-09-01', null], 2],
+  ] as const)('three copies (%s) fold to one page, deterministically', async (_label, days, expected) => {
+    const envelopePath = writeEnvelope({
+      conversations: days.map((day, i) => ({
+        id: 'c-tri',
+        title: 'Three copies',
+        created_at: '2025-11-02T14:22:51.000Z',
+        ...(day === null ? {} : { updated_at: `${day}T00:00:00.000Z` }),
+        messages: [{ id: 'm1', role: 'user', ts: '2025-11-02T14:22:51.000Z', text: `COPY_${i}` }],
+      })),
+    });
+
+    const result = await runImporter(envelopePath);
+
+    expect(result.exitCode).toBe(0);
+    expect(readOnlyMarkdown(result.outDir)).toContain(`COPY_${expected}`);
+    // Two copies lost, so two collisions were announced — the tiebreak never
+    // makes a discard quieter, whichever way it goes.
+    expect(result.stderr).toContain('2 filename collision(s)');
   });
 
   // ★ THE BOUNDARY TEST. Every envelope above is hand-authored. This one is
