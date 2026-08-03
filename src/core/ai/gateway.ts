@@ -1687,6 +1687,64 @@ export interface EmbedOpts {
   dimensions?: number;
 }
 
+/**
+ * EmbeddingGemma asymmetric task prefixes.
+ *
+ * WHY. EmbeddingGemma is trained with asymmetric task prompts. Queries are
+ * meant to arrive as `task: search result | query: {text}` and documents as
+ * `title: {title|none} | text: {text}`. gbrain already distinguishes the two
+ * (`embedQuery()` threads inputType:'query', `embed()` threads 'document'),
+ * but that signal is only consumed by `dimsProviderOptions` as a wire FIELD
+ * for hosted asymmetric providers (NVIDIA NIM, ZE zembed-1). Ollama models
+ * need it as TEXT, and nothing applied it — `grep -rn "task: search result"
+ * src/` returned zero hits.
+ *
+ * Measured on this brain (61.5k chunks) before the patch:
+ *   "my dog Ladybird is old and sick"        -> llama-cpp docs      0.3585
+ *   same query, prefixed                     -> people/ladybird     0.8081
+ * Unprefixed, the correct page did not appear at all. Long document-shaped
+ * queries were fine, which is why a title->body bench and an end-to-end
+ * smoke test both passed while short questions silently returned garbage.
+ *
+ * QUERY SIDE ONLY, deliberately. The corpus was embedded RAW on 2026-08-01.
+ * Prefixing documents now would put queries and stored vectors in different
+ * spaces — strictly worse than the current asymmetry, which measures 0.8081.
+ * Turning DOC_PREFIX on requires a full re-embed of every chunk; the map
+ * below carries the string so that migration is a one-line change, not a
+ * rediscovery.
+ */
+const EMBEDDING_TASK_PREFIXES: Array<{
+  match: RegExp;
+  query: (t: string) => string;
+  /** Enabling this REQUIRES re-embedding the whole corpus. See note above. */
+  document?: (t: string) => string;
+}> = [
+  {
+    match: /embeddinggemma/i,
+    query: t => `task: search result | query: ${t}`,
+    // document: t => `title: none | text: ${t}`,  // needs full re-embed
+  },
+];
+
+/**
+ * Apply a model's task prefix to each input. No-op for every model without an
+ * entry, and for document-side calls (no `document` fn is enabled today), so
+ * the default path is byte-identical to upstream.
+ *
+ * @internal exported for tests.
+ */
+export function applyEmbeddingTaskPrefix(
+  modelId: string,
+  inputType: 'query' | 'document' | undefined,
+  texts: string[],
+): string[] {
+  const rule = EMBEDDING_TASK_PREFIXES.find(r => r.match.test(modelId));
+  if (!rule) return texts;
+  const fn = inputType === 'query' ? rule.query : rule.document;
+  if (!fn) return texts;
+  return texts.map(t => fn(t));
+}
+
 export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32Array[]> {
   if (!texts || texts.length === 0) return [];
 
@@ -1698,7 +1756,14 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   const resolveTarget = opts?.embeddingModel ?? getEmbeddingModel();
   const tracker = __budgetStore.getStore() ?? null;
   const { model, recipe, modelId } = await resolveEmbeddingProvider(resolveTarget);
-  const truncated = texts.map(t => (t ?? '').slice(0, MAX_CHARS));
+  // LOCAL PATCH: task prefix is applied BEFORE truncation-to-MAX_CHARS is
+  // measured downstream, so the added tokens are counted in the batch budget
+  // rather than silently overflowing it.
+  const truncated = applyEmbeddingTaskPrefix(
+    modelId,
+    opts?.inputType,
+    texts.map(t => (t ?? '').slice(0, MAX_CHARS)),
+  );
 
   // Reserve up front for the worst-case batch token count. Embeddings have
   // no output rate, so maxOutputTokens=0. record() at the end uses the
