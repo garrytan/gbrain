@@ -368,6 +368,106 @@ function headerClock(ts) {
   return `${pad(utc.getUTCFullYear(), 4)}-${pad(utc.getUTCMonth() + 1)}-${pad(utc.getUTCDate())} ${pad(utc.getUTCHours())}:${pad(utc.getUTCMinutes())}`;
 }
 
+/** The RFC 3339 shapes a CONVERSATION-level `updated_at` is ordered by.
+ *
+ *  Deliberately a second regex rather than `TS_SHAPE`: that one exists to build
+ *  a turn header, whose resolution is the minute, so it discards seconds. Two
+ *  exports of one conversation are routinely closer together than that, and the
+ *  reference converter emits milliseconds always (SPEC.md rule 3 renders every
+ *  timestamp as `YYYY-MM-DDTHH:mm:ss.sssZ`), so seconds and fraction are
+ *  captured here.
+ *  Groups: 1=Y 2=M 3=D 4=hh 5=mm 6=ss 7=.fff, then an offset 8=sign 9=hh 10=mm. */
+const UPDATED_AT_SHAPE =
+  /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2})(?::(\d{2})(\.\d+)?)?(?:[Zz]|([+-])(\d{2}):?(\d{2}))?$/;
+
+/**
+ * The instant `updated_at` names, in epoch milliseconds, or null when the value
+ * is not one this script will order by.
+ *
+ * A NUMBER, not a string comparison: `2026-06-09T02:00+05:30` sorts above
+ * `2026-06-08T23:00Z` lexically and is two and a half hours EARLIER as an
+ * instant. And not `new Date(string)`: a date-time with no zone designator is
+ * parsed as LOCAL time by ECMAScript, so the same pair of envelopes would
+ * resolve differently on two machines, which this script promises not to do. No
+ * designator means UTC here, matching both `headerClock` and the spec, whose
+ * reasoning is that the source's true offset is unknowable.
+ *
+ * Same calendar discipline as `headerClock`: the regex counts digits, so
+ * `2026-02-30` reaches it as a well-formed string that `Date` silently rolls to
+ * March 2. A value that does not survive its own round trip is not a date, and
+ * an envelope is third-party input.
+ */
+function updatedAtInstant(value) {
+  if (typeof value !== 'string') return null;
+  const m = UPDATED_AT_SHAPE.exec(value.trim());
+  if (m === null) return null;
+  const [, year, month, day, hour, minute, second, fraction, sign, offsetHour, offsetMinute] = m;
+  const [y, mo, d, h, mi] = [year, month, day, hour, minute].map(Number);
+  if (h > 23 || mi > 59) return null;
+  // 60 is a leap second, which RFC 3339 permits and which names a real instant.
+  // It is added AFTER the calendar check below, since `23:59:60` legitimately
+  // rolls the date and that roll must not be read as an impossible date.
+  const s = second === undefined ? 0 : Number(second);
+  if (s > 60) return null;
+  const utc = new Date(0);
+  utc.setUTCFullYear(y, mo - 1, d);
+  utc.setUTCHours(h, mi, 0, 0);
+  if (utc.getUTCFullYear() !== y || utc.getUTCMonth() !== mo - 1 || utc.getUTCDate() !== d) {
+    return null;
+  }
+  // Kept as a number rather than pushed back through `Date`, so a fraction
+  // finer than a millisecond still participates in the comparison.
+  let ms = utc.getTime() + s * 1000 + (fraction === undefined ? 0 : Number(fraction) * 1000);
+  if (sign !== undefined) {
+    const [oh, om] = [offsetHour, offsetMinute].map(Number);
+    if (oh > 23 || om > 59) return null;
+    ms -= (oh * 60 + om) * 60000 * (sign === '-' ? -1 : 1);
+  }
+  return ms;
+}
+
+/**
+ * Which of two conversations sharing one target filename is kept.
+ *
+ * `later` is the one further along `conversations[]`; before this existed it
+ * simply won, and that is the defect. A merged re-export is the mainstream
+ * path — the memvelope CLI's own USAGE tells users to pass every downloaded
+ * file at once, the spec forbids the converter from re-sorting them, and folder
+ * expansion sorts by FILENAME. Every automatic duplicate-namer a browser or OS
+ * applies to a second download of `conversations.json` inserts a character that
+ * sorts below `.` (` (1)`, `(1)`, `-1`, ` 2`), so the RE-EXPORT sorts first and
+ * the ORIGINAL sorts last. Array order was therefore not arbitrary: it was
+ * deterministically wrong, and it kept the stale copy every time.
+ *
+ * `updated_at` is what decides instead. It is a required conversation key in
+ * envelope-v0, both vendor paths of the reference converter populate it
+ * (ChatGPT `update_time`, Claude `updated_at`), and nothing here read it.
+ *
+ * THE FALLBACK, and why it is array order rather than a cleverer guess:
+ *
+ *   - Equal instants. Nothing distinguishes the two copies, so the rule that
+ *     was there before decides. Changing it would only trade one arbitrary
+ *     answer for another, and this one is already pinned by test.
+ *   - Comparable on only ONE side — absent (the spec allows `null` with no
+ *     fallback), non-string, or a string this script will not order by. A
+ *     missing timestamp is not evidence of being older; preferring the copy
+ *     that HAS one would be a guess dressed as a rule, and it is wrong exactly
+ *     when an older converter produced the fresher file. So the tiebreak is
+ *     applied only when BOTH copies carry an orderable `updated_at`.
+ *   - `created_at` is deliberately not a secondary key. It is when the
+ *     conversation began, which is identical in both copies of a re-export and
+ *     says nothing about which export is newer.
+ *
+ * Either way a collision is a collision: one copy is discarded, and stderr says
+ * which, why, and with what values.
+ */
+function keepsLaterInArray(earlier, later) {
+  const a = updatedAtInstant(earlier);
+  const b = updatedAtInstant(later);
+  if (a === null || b === null || a === b) return { keepLater: true, byUpdatedAt: false };
+  return { keepLater: b > a, byUpdatedAt: true };
+}
+
 /** The file's contents, or null if it does not exist. Any other error is the
  *  caller's problem to fail on — an unreadable target must never be silently
  *  treated as an absent one, because "absent" is the answer that permits a
@@ -589,16 +689,7 @@ for (const [i, c] of conversations.entries()) {
     // every extracted message text ended `...\n---`. It also diluted the
     // match-density score the parser's acceptance floor is computed from.
     .join('\n\n');
-  // Never lose a page silently: if two conversations still map to the same
-  // filename (e.g. an envelope carrying duplicate ids — which the spec permits,
-  // since merging never deduplicates), warn loudly instead of overwriting in
-  // silence, and report the count of DISTINCT files written — not the number of
-  // write calls, which is what hid the old title-collision bug.
-  if (pages.has(name)) {
-    collisions += 1;
-    console.warn(`warning: filename collision on "${name}" — conversation id ${JSON.stringify(c.id)} is not unique; overwriting the earlier page.`);
-  }
-  pages.set(name, {
+  const rendered = {
     // The H1 is the ONLY place a third-party string reaches the body, and the
     // body is now parsed. A title carrying a newline used to look merely
     // untidy; since the turn headers became legible it manufactures a TURN, and
@@ -613,7 +704,31 @@ for (const [i, c] of conversations.entries()) {
     // the whole bug. Verbatim rather than trimmed for the same reason — see the
     // frontmatter note above.
     conversationId: hasId ? c.id : null,
-  });
+    // Carried only to break a filename collision. It is NOT written to the
+    // page — no frontmatter key holds it, by design and separately tracked.
+    updatedAt: c.updated_at,
+  };
+  const earlier = pages.get(name);
+  if (earlier === undefined) {
+    pages.set(name, rendered);
+    continue;
+  }
+  // Never lose a page silently: two conversations mapping to the same filename
+  // (an envelope carrying duplicate ids — which the spec permits, since merging
+  // never deduplicates) means one of them is discarded. Warn loudly rather than
+  // overwrite in silence, and report the count of DISTINCT files written — not
+  // the number of write calls, which is what hid the old title-collision bug.
+  collisions += 1;
+  const { keepLater, byUpdatedAt } = keepsLaterInArray(earlier.updatedAt, rendered.updatedAt);
+  // Name the decision AND its inputs. "Overwriting the earlier page" was the
+  // whole message before, and it would now be false half the time — the reader
+  // has to be able to check which copy survived rather than assume the old
+  // rule still applies.
+  const verdict = byUpdatedAt
+    ? `keeping the copy whose updated_at is later (${JSON.stringify(keepLater ? rendered.updatedAt : earlier.updatedAt)}) over ${JSON.stringify(keepLater ? earlier.updatedAt : rendered.updatedAt)}`
+    : `updated_at cannot order these two copies (${JSON.stringify(earlier.updatedAt ?? null)} and ${JSON.stringify(rendered.updatedAt ?? null)}), so array order decides — overwriting the earlier page`;
+  console.warn(`warning: filename collision on "${name}" — conversation id ${JSON.stringify(c.id)} is not unique; ${verdict}.`);
+  if (keepLater) pages.set(name, rendered);
 }
 
 // ---------------------------------------------------------------------------
@@ -669,7 +784,11 @@ for (const [name, page] of pages) {
 
 console.log(`wrote ${pages.size} markdown page(s) (${messagesWritten} message(s)) to ${outDir} — point gbrain's sync at this directory.`);
 if (collisions) {
-  console.warn(`warning: ${collisions} filename collision(s) — ${collisions} page(s) overwritten. Deduplicate conversation ids in the envelope to avoid data loss.`);
+  // "Overwritten" would now be false whenever the tiebreak kept the earlier
+  // copy: that copy is never rewritten and the later one is never written at
+  // all. "Discarded" is true in both directions, and the per-collision lines
+  // above already say which copy went.
+  console.warn(`warning: ${collisions} filename collision(s) — ${collisions} page(s) discarded. Deduplicate conversation ids in the envelope to avoid data loss.`);
 }
 if (messagesWritten !== actualMessages) {
   // The page count alone cannot show this: an overwritten page still leaves one

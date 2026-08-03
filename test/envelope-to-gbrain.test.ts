@@ -1595,3 +1595,165 @@ describe('envelope-to-gbrain importer — F5 guards that must stay armed', () =>
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// R1 — a duplicate id was resolved by ARRAY INDEX, so the copy later in
+// `conversations[]` survived whatever it said.
+//
+// That is not a coin flip on the path users are told to take. The memvelope
+// CLI's own USAGE says to pass every downloaded export at once, and folder
+// expansion sorts by filename before conversion (`cli/convert.mjs`
+// `expandInputs`) while the spec forbids re-sorting conversations afterwards
+// (SPEC.md rule 8). Every automatic duplicate-namer a browser or OS applies to
+// a second download of `conversations.json` inserts a character that sorts
+// BELOW `.` — ` (1)`, `(1)`, `-1`, ` 2` — so the RE-EXPORT goes first and the
+// ORIGINAL goes last. Last-write-wins therefore kept the stale copy, every
+// time.
+//
+// `updated_at` is a required conversation key in envelope-v0
+// (`schema/envelope-v0.schema.json`), is populated by both vendor paths of the
+// reference converter, and was read by nothing here.
+// ---------------------------------------------------------------------------
+describe('envelope-to-gbrain importer — R1 duplicate-id tiebreak', () => {
+  /** Two copies of ONE conversation, colliding on filename, in array order. */
+  function collidingPair(
+    first: Record<string, unknown>,
+    second: Record<string, unknown>,
+  ): string {
+    const copy = (fields: Record<string, unknown>, marker: string) => ({
+      id: 'c-dup',
+      title: 'Duplicated conversation',
+      created_at: '2025-11-02T14:22:51.000Z',
+      messages: [{ id: 'm1', role: 'user', ts: '2025-11-02T14:22:51.000Z', text: marker }],
+      ...fields,
+    });
+    return writeEnvelope({
+      conversations: [copy(first, 'FIRST_IN_ARRAY'), copy(second, 'SECOND_IN_ARRAY')],
+    });
+  }
+
+  /** Which copy's body reached disk. */
+  async function survivor(envelopePath: string) {
+    const result = await runImporter(envelopePath);
+    expect(result.exitCode).toBe(0);
+    const page = readOnlyMarkdown(result.outDir);
+    return {
+      kept: page.includes('FIRST_IN_ARRAY') ? 'first' : page.includes('SECOND_IN_ARRAY') ? 'second' : 'neither',
+      stderr: result.stderr,
+      page,
+    };
+  }
+
+  // THE DEFECT. The fresher copy sits FIRST, exactly as the duplicate-namer
+  // sort delivers it, and array order threw it away.
+  test('the copy with the later updated_at wins, even when it is first in the array', async () => {
+    const { kept } = await survivor(collidingPair(
+      { updated_at: '2026-06-09T10:13:20.000Z' },
+      { updated_at: '2026-03-09T23:46:40.000Z' },
+    ));
+
+    expect(kept).toBe('first');
+  });
+
+  // CONTROL, required by the packet: a merged re-export whose fresher copy is
+  // ALREADY last must be untouched by this change.
+  test('CONTROL: a fresher copy already last is unaffected', async () => {
+    const { kept } = await survivor(collidingPair(
+      { updated_at: '2026-03-09T23:46:40.000Z' },
+      { updated_at: '2026-06-09T10:13:20.000Z' },
+    ));
+
+    expect(kept).toBe('second');
+  });
+
+  // The reference converter truncates to milliseconds and emits three
+  // fractional digits always (SPEC.md rule 3), so sub-second is a resolution a
+  // real envelope reaches — `chatgpt-fractional-epoch` in the converter's own
+  // fixtures carries `...T22:13:21.987Z`. A comparison that stopped at minutes
+  // would call these two a tie and hand the decision back to array order.
+  test('sub-second precision decides, because the producer emits it', async () => {
+    const { kept } = await survivor(collidingPair(
+      { updated_at: '2026-06-09T10:13:20.987Z' },
+      { updated_at: '2026-06-09T10:13:20.123Z' },
+    ));
+
+    expect(kept).toBe('first');
+  });
+
+  // Ordering is by INSTANT, not by string. A lexical compare gets this exactly
+  // backwards: "2026-06-09T02:00…" sorts above "2026-06-08T23:00Z", but with
+  // the `+05:30` offset applied it is 20:30Z — two and a half hours EARLIER.
+  test('an offset-bearing updated_at is compared as an instant, not lexically', async () => {
+    const { kept } = await survivor(collidingPair(
+      { updated_at: '2026-06-09T02:00:00.000+05:30' },
+      { updated_at: '2026-06-08T23:00:00.000Z' },
+    ));
+
+    expect(kept).toBe('second');
+  });
+
+  // The documented fallback. Nothing distinguishes the two copies, so the rule
+  // that was there before decides — and says so on stderr.
+  test.each([
+    ['equal', '2026-06-09T10:13:20.000Z', '2026-06-09T10:13:20.000Z'],
+    ['absent on the later copy', '2026-06-09T10:13:20.000Z', null],
+    ['absent on the earlier copy', null, '2026-06-09T10:13:20.000Z'],
+    ['absent on both', null, null],
+    ['unparseable on one', '2026-06-09T10:13:20.000Z', 'last Tuesday'],
+    ['non-string on one', '2026-06-09T10:13:20.000Z', 1781000000000],
+    ['an impossible calendar date on one', '2026-06-09T10:13:20.000Z', '2026-02-30T10:00:00.000Z'],
+  ])('%s: array order still decides, and stderr says so', async (_label, first, second) => {
+    const { kept, stderr } = await survivor(collidingPair(
+      first === null ? {} : { updated_at: first },
+      second === null ? {} : { updated_at: second },
+    ));
+
+    expect(kept).toBe('second');
+    expect(stderr).toContain('array order');
+  });
+
+  // "The existing collision warning must still fire; do not make this quieter."
+  test('the collision warning still fires and names which copy survived', async () => {
+    const { stderr } = await survivor(collidingPair(
+      { updated_at: '2026-06-09T10:13:20.000Z' },
+      { updated_at: '2026-03-09T23:46:40.000Z' },
+    ));
+
+    expect(stderr).toContain('warning: filename collision on "2025-11-02-c-dup.md"');
+    expect(stderr).toContain('"c-dup" is not unique');
+    // Both timestamps, so the operator can check the decision rather than
+    // trust it — and the surviving one named as such.
+    expect(stderr).toContain('2026-06-09T10:13:20.000Z');
+    expect(stderr).toContain('2026-03-09T23:46:40.000Z');
+    // The summary line must not claim the LATER page was the one written.
+    expect(stderr).toContain('filename collision(s)');
+  });
+
+  // ★ THE BOUNDARY TEST. Every envelope above is hand-authored. This one is
+  // not: it is the byte output of the reference converter run over two real
+  // ChatGPT-shaped downloads named the way a browser names them.
+  //
+  //   $ ls downloads/
+  //   'conversations (1).json'   conversations.json
+  //   $ node ~/indistinct/memvelope-pkg/cli/convert.mjs downloads \
+  //       -o test/fixtures/memvelope/merged-re-export.mve.json
+  //   2 conversations read · 2 kept · 0 skipped · 6 messages → … (2KB) in 0.0s
+  //
+  // The re-export (4 turns, updated 2026-06-09) lands at index 0 and the
+  // original (2 turns, updated 2026-03-09) at index 1, because ' ' sorts below
+  // '.'. On the pre-R1 script this wrote the 2-turn page.
+  test('REAL PRODUCER: a merged re-export keeps the re-export, not the original', async () => {
+    const result = await runImporter(join(import.meta.dir, 'fixtures', 'memvelope', 'merged-re-export.mve.json'));
+    const page = readOnlyMarkdown(result.outDir);
+
+    expect(result.exitCode).toBe(0);
+    expect(page).toContain('FRESH_COPY_MARKER');
+    expect((frontmatterOf(page).messages as unknown[])).toHaveLength(4);
+    // The receipt now tallies the turns that actually reached disk.
+    expect(result.stdout).toContain('wrote 1 markdown page(s) (4 message(s))');
+    // Still loud: two turns of the superseded copy are genuinely not on disk,
+    // and this is still a duplicate-id envelope.
+    expect(result.stderr).toContain('filename collision');
+    expect(result.stderr).toContain('6 read, 4 written');
+  });
+});
