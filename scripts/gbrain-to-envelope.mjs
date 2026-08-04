@@ -8,6 +8,11 @@
  * Usage:
  *   node scripts/gbrain-to-envelope.mjs <pagesDir> [out.mve.json]
  *
+ *   A single-provider page set writes [out.mve.json] itself. A set spanning
+ *   several providers writes one envelope per provider beside it
+ *   (out.chatgpt.mve.json, out.claude.mve.json, ...), each named on stdout
+ *   with its own counts; see the source_provider notes below.
+ *
  * Zero dependencies. Deterministic. No network. It does NOT call gbrain - it
  * only reads Markdown files. Point it at a `gbrain export --dir` output tree, at
  * a brain repo, or at the directory envelope-to-gbrain.mjs wrote.
@@ -163,7 +168,8 @@
  *   - message id, role, timestamp and text, verbatim - including ids carrying
  *     newlines, YAML syntax, or a whole frontmatter block, and timestamps at
  *     full sub-second resolution with their original offsets
- *   - meta.source_provider
+ *   - meta.source_provider, per envelope: every conversation travels in the
+ *     envelope of its own page's `source:`
  *   - meta.conversation_count and meta.message_count, recomputed and equal
  *
  * What does not survive. Each of these was measured on a probe envelope or a
@@ -222,17 +228,39 @@
  *     current header's own clock, and a null-or-unusable `ts` makes it the
  *     page date at 00:00 - visible on the page itself.
  *   - CRLF line endings, normalized to LF on read.
- *   - One source_provider per file. An envelope names a single provider, so a
- *     page set spanning several keeps the first in sorted path order and warns.
  *
  * A page with no `memvelope_conversation_id` emits `id: null` rather than a
  * synthesized id. envelope-v0 permits null there and tells converters not to
  * invent one.
  *
- * `meta.source_provider` is required by envelope-v0 and cannot be omitted, so a
- * page set where no page carries a `source:` key falls back to the literal
- * `unknown` - which no provider registry defines - and says so on stderr,
- * naming the token it wrote.
+ * `meta.source_provider` names ONE provider for a whole envelope, so a page
+ * set spanning several is written as one envelope per provider - a mixed
+ * directory cannot be described by one file without falsifying someone's
+ * `source:`. (This script used to keep the first provider in sorted path
+ * order for everyone; re-importing that envelope stamped the winner onto
+ * every losing page's `source:` at exit 0, and envelope-v0 carries no
+ * per-conversation provider field that could keep the truth.) The filename
+ * token is the provider with everything outside [A-Za-z0-9._-] replaced by
+ * `-`, deduplicated case-insensitively, so a hostile `source:` cannot steer
+ * the write and case-only twins still get two files. A single-provider set is
+ * unchanged: one file, at the path asked for.
+ *
+ * Pages carrying no `source:` key are their own group, never folded into a
+ * named provider's envelope - absence of evidence is not membership, and the
+ * fold would stamp the neighbour's provider onto them at re-import, the same
+ * falsification through absence rather than collision. They ride under the
+ * literal `unknown` - required because meta.source_provider cannot be
+ * omitted, defined by no provider registry - warned on stderr naming the
+ * token, in `out.unknown.mve.json` when named providers are present or at
+ * the asked-for path when nothing in the set names one. The round trip back
+ * through envelope-to-gbrain.mjs is clean in both directions: each envelope
+ * re-imports into the very directory it came from, because check 2 matches
+ * per-conversation ids and refreshes each page in place, byte-identical. The
+ * one residue sits on the placeholder: re-importing the `unknown` envelope
+ * stamps the literal `source: "unknown"` onto pages that had no key - the
+ * importer writes `source:` unconditionally on every page - which is the
+ * placeholder saying exactly what is known, not a named provider claiming
+ * pages that never claimed it.
  *
  * Memory: the whole page set is held in memory (no streaming), same posture as
  * the importer.
@@ -1258,8 +1286,11 @@ function readRecordedBody(body, record, pageDate, warn) {
 }
 
 const files = markdownFiles(pagesDir);
-const conversations = [];
-const providers = [];
+// provider (the page's trimmed `source:`, or null when it carries none) ->
+// { conversations, messageCount }. Insertion order is first appearance in
+// sorted path order - what the old "first provider" collapse meant by first;
+// the difference is that nobody wins anymore.
+const groups = new Map();
 const seenIds = new Set();
 let skippedNotConversation = 0;
 let skippedNoFrontmatter = 0;
@@ -1270,7 +1301,6 @@ let skippedJoinMismatch = 0;
 let droppedEmptyMessages = 0;
 let droppedTimelines = 0;
 let nulledTimestamps = 0;
-let messageCount = 0;
 
 for (const file of files) {
   // Normalize to LF up front. Every match below is line-anchored, so a page
@@ -1343,7 +1373,7 @@ for (const file of files) {
     warn('no speaker turns found; skipped (envelope-v0 requires at least one message per conversation).');
     continue;
   }
-  if (typeof front.source === 'string' && front.source.trim() !== '') providers.push(front.source.trim());
+  const provider = typeof front.source === 'string' && front.source.trim() !== '' ? front.source.trim() : null;
   // Never synthesize. An absent id is null, which the schema permits and the
   // spec requires of converters.
   // VERBATIM, not trimmed. The importer records the id verbatim precisely so
@@ -1365,7 +1395,12 @@ for (const file of files) {
   // title that js-yaml folded into a block scalar has a second way home.
   const title = (typeof front.title === 'string' && front.title.trim() !== '' ? front.title.trim() : read.title)
     || 'Untitled conversation';
-  conversations.push({
+  let group = groups.get(provider);
+  if (group === undefined) {
+    group = { conversations: [], messageCount: 0 };
+    groups.set(provider, group);
+  }
+  group.conversations.push({
     id,
     title,
     // The page's `date` is a day, not a date-time, so it cannot fill these.
@@ -1374,37 +1409,86 @@ for (const file of files) {
     updated_at: read.messages[read.messages.length - 1].ts,
     messages: read.messages,
   });
-  messageCount += read.messages.length;
+  group.messageCount += read.messages.length;
 }
 
-const distinctProviders = [...new Set(providers)];
-if (distinctProviders.length > 1) {
-  console.warn(`warning: pages name ${distinctProviders.length} source providers (${distinctProviders.join(', ')}); an envelope carries one. Using ${JSON.stringify(distinctProviders[0])}.`);
-}
-// envelope-v0 requires meta.source_provider, so it cannot be omitted the way
-// meta.source_export_date is. Minting a token no registry defines is a guess,
-// and a guess gets reported like every other lossy edge in this script.
-if (distinctProviders.length === 0) {
-  // Two different situations, two true statements: pages with no source: key
-  // at all, versus sourced pages that were all skipped before they could
-  // contribute one - telling the second audience to "set source:" would be
-  // advice about a key they already set.
-  console.warn(sawSourceKey
-    ? `warning: every page carrying a \`source:\` key was skipped before it could contribute one, and envelope-v0 requires meta.source_provider; wrote the placeholder ${JSON.stringify(FALLBACK_PROVIDER)}, which is not a registered provider token. Fix the skipped pages to name the real provider.`
-    : `warning: no page carries a \`source:\` key, and envelope-v0 requires meta.source_provider; wrote the placeholder ${JSON.stringify(FALLBACK_PROVIDER)}, which is not a registered provider token. Set \`source:\` on the pages to name the real provider.`);
-}
-const envelope = {
-  memvelope: 'envelope-v0',
-  meta: {
-    source_provider: distinctProviders[0] || FALLBACK_PROVIDER,
-    conversation_count: conversations.length,
-    message_count: messageCount,
-  },
-  conversations,
-};
+// One envelope per provider. meta.source_provider names ONE provider for a
+// whole envelope, so a mixed directory cannot be described by one file without
+// falsifying someone's `source:` - the old collapse-to-first did exactly that,
+// and re-importing the collapsed envelope stamped the winner onto every losing
+// page at exit 0, with nothing on disk retaining the truth. Pages with no
+// `source:` at all are their own group under the placeholder: absence of
+// evidence is not membership in whichever provider the directory also holds,
+// and folding them in would be the same falsification arriving through
+// absence rather than collision.
+const named = [...groups.keys()].filter((p) => p !== null);
 
-writeFileSync(outPath, JSON.stringify(envelope, null, 2) + '\n');
-console.log(`wrote ${conversations.length} conversation(s), ${messageCount} message(s) to ${outPath}`);
+function envelopeFor(provider, group) {
+  return {
+    memvelope: 'envelope-v0',
+    meta: {
+      source_provider: provider ?? FALLBACK_PROVIDER,
+      conversation_count: group.conversations.length,
+      message_count: group.messageCount,
+    },
+    conversations: group.conversations,
+  };
+}
+
+// `out.mve.json` -> `out.<token>.mve.json`, keeping whichever json suffix the
+// operator chose. The token is the provider with everything outside
+// [A-Za-z0-9._-] replaced by `-`, so a hostile `source:` cannot steer the
+// write out of the output directory, then deduplicated case-insensitively so
+// providers differing only by case still get two files on the
+// case-insensitive filesystems macOS ships - and the same two names
+// everywhere else.
+function providerOutPath(basePath, token) {
+  const mve = /^(.*)\.mve\.json$/.exec(basePath);
+  if (mve) return `${mve[1]}.${token}.mve.json`;
+  const json = /^(.*)\.json$/.exec(basePath);
+  if (json) return `${json[1]}.${token}.json`;
+  return `${basePath}.${token}`;
+}
+
+if (groups.size <= 1) {
+  // A single-provider page set (or an empty one): one file, the same name and
+  // the same words as before the fan-out existed.
+  const provider = named[0] ?? null;
+  const group = groups.get(provider) ?? { conversations: [], messageCount: 0 };
+  // envelope-v0 requires meta.source_provider, so it cannot be omitted the way
+  // meta.source_export_date is. Minting a token no registry defines is a
+  // guess, and a guess gets reported like every other lossy edge here.
+  if (provider === null) {
+    // Two different situations, two true statements: pages with no source: key
+    // at all, versus sourced pages that were all skipped before they could
+    // contribute one - telling the second audience to "set source:" would be
+    // advice about a key they already set.
+    console.warn(sawSourceKey
+      ? `warning: every page carrying a \`source:\` key was skipped before it could contribute one, and envelope-v0 requires meta.source_provider; wrote the placeholder ${JSON.stringify(FALLBACK_PROVIDER)}, which is not a registered provider token. Fix the skipped pages to name the real provider.`
+      : `warning: no page carries a \`source:\` key, and envelope-v0 requires meta.source_provider; wrote the placeholder ${JSON.stringify(FALLBACK_PROVIDER)}, which is not a registered provider token. Set \`source:\` on the pages to name the real provider.`);
+  }
+  writeFileSync(outPath, JSON.stringify(envelopeFor(provider, group), null, 2) + '\n');
+  console.log(`wrote ${group.conversations.length} conversation(s), ${group.messageCount} message(s) to ${outPath}`);
+} else {
+  if (named.length > 1) {
+    console.warn(`note: pages name ${named.length} source providers (${named.join(', ')}); wrote one envelope per provider.`);
+  }
+  const usedTokens = new Set();
+  const ordered = groups.has(null) ? [...named, null] : named;
+  for (const provider of ordered) {
+    const group = groups.get(provider);
+    const base = (provider ?? FALLBACK_PROVIDER).replace(/[^A-Za-z0-9._-]/g, '-');
+    let token = base;
+    for (let n = 2; usedTokens.has(token.toLowerCase()); n += 1) token = `${base}-${n}`;
+    usedTokens.add(token.toLowerCase());
+    const file = providerOutPath(outPath, token);
+    if (provider === null) {
+      console.warn(`warning: ${group.conversations.length} page(s) carry no \`source:\` key; their conversation(s) were written to ${file} with the placeholder ${JSON.stringify(FALLBACK_PROVIDER)}, which is not a registered provider token. Set \`source:\` on the pages to name the real provider.`);
+    }
+    writeFileSync(file, JSON.stringify(envelopeFor(provider, group), null, 2) + '\n');
+    console.log(`wrote ${group.conversations.length} conversation(s), ${group.messageCount} message(s) to ${file} (provider ${JSON.stringify(provider ?? FALLBACK_PROVIDER)})`);
+  }
+}
 // Every page that did not become a conversation is accounted for on stderr, so
 // a mistargeted directory reads as a diagnosis rather than an empty file.
 if (skippedNoFrontmatter || skippedNotConversation || skippedNoMessages || skippedUnreadableRecord || skippedJoinMismatch || droppedEmptyMessages) {
