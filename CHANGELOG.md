@@ -6,7 +6,7 @@ All notable changes to GBrain will be documented in this file.
 
 **Each source can now remember whether it should sync as Markdown, code, or automatic detection, so scheduled and manual syncs stop depending on whichever flags happened to be present in one invocation.**
 
-Set the policy when registering a source with `gbrain sources add <path> --strategy <markdown|code|auto>`, or change an existing source with `gbrain sources set-sync-strategy <id> <markdown|code|auto|default>`. `gbrain sources list` and its JSON output show both the resolved strategy and whether it came from stored configuration, an invocation override, the default, or a safe fallback.
+Set the policy when registering a source with `gbrain sources add <id> --path <path> --strategy <markdown|code|auto>`, or change an existing source with `gbrain sources set-sync-strategy <id> <markdown|code|auto|default>`. Source listings show the resolved strategy with stored, default, or safe-fallback provenance; sync JSON also reports invocation overrides.
 
 The stored value is now the source-level authority used by direct syncs, scheduled syncs, watch mode, cost previews, and other sync callers. A one-off `gbrain sync --strategy ...` still wins for that invocation without rewriting the source. Removing the stored value with `default` restores the historical Markdown default. Invalid legacy configuration fails safely to Markdown, emits a bounded repair warning, and can be repaired by setting or clearing the strategy; no migration is required.
 
