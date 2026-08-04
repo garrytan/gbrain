@@ -252,15 +252,17 @@
  * literal `unknown` - required because meta.source_provider cannot be
  * omitted, defined by no provider registry - warned on stderr naming the
  * token, in `out.unknown.mve.json` when named providers are present or at
- * the asked-for path when nothing in the set names one. The round trip back
- * through envelope-to-gbrain.mjs is clean in both directions: each envelope
- * re-imports into the very directory it came from, because check 2 matches
- * per-conversation ids and refreshes each page in place, byte-identical. The
- * one residue sits on the placeholder: re-importing the `unknown` envelope
- * stamps the literal `source: "unknown"` onto pages that had no key - the
- * importer writes `source:` unconditionally on every page - which is the
- * placeholder saying exactly what is known, not a named provider claiming
- * pages that never claimed it.
+ * the asked-for path when nothing in the set names one. Round trip,
+ * measured: every conversation carrying a `memvelope_conversation_id`
+ * re-imports into the very directory it came from and refreshes its page in
+ * place, byte-identical - check 2 matches per-conversation ids - so no
+ * page's `source:` changes hands. The residue sits on id-less pages: a
+ * native gbrain page has no memvelope id, its conversation travels as
+ * `id: null`, and re-importing the `unknown` envelope cannot find the
+ * original page to refresh - it writes a NEW positional page
+ * (`<date>-conv-N.md`) carrying `source: "unknown"` and leaves the original
+ * untouched. A duplicate page, never a falsified one - the importer's
+ * standing behavior for a null id, not new here.
  *
  * Memory: the whole page set is held in memory (no streaming), same posture as
  * the importer.
@@ -295,6 +297,19 @@
  * real timeline - the probe's quoted sentinel was blank-padded, the one
  * spacing gbrain preserves, so those movements do not show above; they are
  * gbrain's, not this reader's.
+ *
+ * STATUS ADDENDUM, 2026-08-04, after the rebase onto the master that merged
+ * the importer (#3788): the short path above re-verified against the merged
+ * importer - the sample fixture round-trips deep-equal, zero stderr. The
+ * per-provider fan-out measured on a mixed directory (chatgpt + claude
+ * imports plus a native source-less page): three envelopes, every one
+ * schema-conforming; re-importing all three into the same directory left
+ * both id-carrying pages byte-identical and the native page untouched, plus
+ * the one documented duplicate a null id mints. The sentinel closure is
+ * canonical-path-invisible by construction: gbrain's serializer emits only
+ * `<!-- timeline -->` (measured 2026-08-03 against a real brain), so the
+ * decorated and bare-rule forms arrive only on hand-edited or legacy pages -
+ * which is where they were exporting a timeline as message text.
  *
  * Conformance in CI is checked by test/gbrain-to-envelope.test.ts, which
  * validates against the published envelope-v0 JSON Schema vendored
