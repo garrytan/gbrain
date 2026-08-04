@@ -1,4 +1,9 @@
 [test]
+# Every Bun test process receives an isolated GBRAIN_HOME and audit directory
+# before test modules load. This prevents fixtures from polluting the operator's
+# real ~/.gbrain even when a test exercises a production audit writer directly.
+preload = ["./test/preload.ts"]
+
 # PGLite WASM cold start + initSchema() runs ~5–20s on loaded machines.
 # Default 5s is too short for those tests' beforeAll hooks. 60s is the
 # empirical ceiling we observed for the slowest cold-init paths.

@@ -28,6 +28,9 @@ function run(args: string[]): { exitCode: number; stdout: string; stderr: string
   // Strip DATABASE_URL so doctor runs filesystem-only for these tests.
   // Half-migrated checks run in the filesystem section; no DB needed.
   const env = { ...process.env, HOME: tmp } as Record<string, string | undefined>;
+  // The fixture intentionally exercises the legacy HOME-based filesystem
+  // check. Do not inherit the process-wide Bun test GBRAIN_HOME preload.
+  delete env.GBRAIN_HOME;
   delete env.DATABASE_URL;
   delete env.GBRAIN_DATABASE_URL;
   try {

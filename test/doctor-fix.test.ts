@@ -54,7 +54,14 @@ function runDoctor(cwd: string, args: string[]): { stdout: string; stderr: strin
   const res = spawnSync("bun", [CLI, "doctor", "--fast", ...args], {
     cwd,
     encoding: "utf-8",
-    env: { ...process.env, NO_COLOR: "1" },
+    env: {
+      ...process.env,
+      HOME: cwd,
+      GBRAIN_HOME: cwd,
+      OPENCLAW_WORKSPACE: "",
+      GBRAIN_SKILLS_DIR: "",
+      NO_COLOR: "1",
+    },
   });
   return { stdout: res.stdout, stderr: res.stderr, status: res.status ?? -1 };
 }

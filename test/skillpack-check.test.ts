@@ -27,6 +27,9 @@ let origHome: string | undefined;
 
 function run(args: string[]): { exitCode: number; stdout: string; stderr: string } {
   const env = { ...process.env, HOME: tmp } as Record<string, string | undefined>;
+  // These subprocess fixtures intentionally exercise <HOME>/.gbrain.
+  // Do not inherit the process-wide Bun test GBRAIN_HOME preload.
+  delete env.GBRAIN_HOME;
   delete env.DATABASE_URL;
   delete env.GBRAIN_DATABASE_URL;
   try {

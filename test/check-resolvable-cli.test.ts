@@ -17,6 +17,21 @@ import {
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
 const REPO_ROOT = resolve(import.meta.dir, '..');
 
+function withoutSkillsAutodetectEnv<T>(fn: () => T): T {
+  const keys = ['GBRAIN_SKILLS_DIR', 'OPENCLAW_WORKSPACE', 'HOME'] as const;
+  const previous = new Map(keys.map(key => [key, process.env[key]]));
+  for (const key of keys) delete process.env[key];
+  try {
+    return fn();
+  } finally {
+    for (const key of keys) {
+      const value = previous.get(key);
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Fixture builders
 // ---------------------------------------------------------------------------
@@ -152,7 +167,7 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
     const original = process.cwd();
     try {
       process.chdir(empty);
-      const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: null });
+      const r = withoutSkillsAutodetectEnv(() => resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: null }));
       // Install-path fallback succeeds when test runs inside the gbrain repo.
       expect(r.error).toBeNull();
       expect(r.dir).toMatch(/\/skills$/);
@@ -165,7 +180,7 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
 
   it('finds skills via findRepoRoot when cwd is inside a repo (no --skills-dir)', () => {
     // Running from this test file — we're inside the real gbrain repo.
-    const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: null });
+    const r = withoutSkillsAutodetectEnv(() => resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: null }));
     expect(r.error).toBeNull();
     expect(r.dir).toMatch(/\/skills$/);
     expect(r.source).toBe('repo_root');
@@ -378,7 +393,7 @@ describe('gbrain check-resolvable CLI — integration', () => {
       // Pass --fix; expect refusal exit + clear error message.
       const r = spawnSync('bun', ['run', CLI, 'check-resolvable', '--fix'], {
         cwd: empty,
-        env: { ...process.env, OPENCLAW_WORKSPACE: '', GBRAIN_SKILLS_DIR: '' },
+        env: { ...process.env, HOME: empty, OPENCLAW_WORKSPACE: '', GBRAIN_SKILLS_DIR: '' },
         encoding: 'utf-8',
       });
       expect(r.status).toBe(1);
