@@ -17,6 +17,7 @@
  * A shared helper hits the bar at lower cost.
  */
 import type { BrainEngine } from './engine.ts';
+import { isSyncStrategy, type SyncStrategy } from './sync.ts';
 
 export interface SourceRow {
   id: string;
@@ -146,6 +147,69 @@ export function parseSourceConfig(config: unknown): Record<string, unknown> {
     );
   }
   return value ?? {};
+}
+
+export type SyncStrategyOrigin = 'override' | 'stored' | 'default' | 'invalid_fallback';
+
+export interface ResolvedSourceSyncStrategy {
+  strategy: SyncStrategy;
+  origin: SyncStrategyOrigin;
+  invalidStoredValue?: unknown;
+}
+
+/**
+ * Resolve the source's effective sync strategy from the same recovered config
+ * shape every caller uses. Explicit invocation options win but are never
+ * persisted. Missing config stays backward-compatible (`markdown`); malformed
+ * stored values fail narrow and return warning metadata for the caller to
+ * render on its own output channel.
+ */
+export function resolveSourceSyncStrategy(
+  config: unknown,
+  override?: unknown,
+): ResolvedSourceSyncStrategy {
+  if (override !== undefined) {
+    if (!isSyncStrategy(override)) {
+      throw new Error(
+        `Invalid sync strategy override ${describeSyncStrategyValue(override)}. ` +
+        `Valid options: markdown | code | auto.`,
+      );
+    }
+    return { strategy: override, origin: 'override' };
+  }
+
+  const parsed = parseSourceConfig(config);
+  const stored = parsed.strategy;
+  if (stored === undefined) return { strategy: 'markdown', origin: 'default' };
+  if (isSyncStrategy(stored)) return { strategy: stored, origin: 'stored' };
+  return {
+    strategy: 'markdown',
+    origin: 'invalid_fallback',
+    invalidStoredValue: stored,
+  };
+}
+
+/** Bounded rendering for diagnostics; never dumps the complete source config. */
+export function describeSyncStrategyValue(value: unknown): string {
+  let rendered: string;
+  try {
+    rendered = JSON.stringify(value);
+  } catch {
+    rendered = String(value);
+  }
+  if (rendered === undefined) rendered = String(value);
+  return rendered.length > 120 ? `${rendered.slice(0, 117)}...` : rendered;
+}
+
+export function formatInvalidSourceSyncStrategyWarning(
+  sourceId: string,
+  invalidValue: unknown,
+): string {
+  return (
+    `[gbrain sync] Source "${sourceId}" has invalid config.strategy=` +
+    `${describeSyncStrategyValue(invalidValue)}; using markdown (safe fallback). ` +
+    `Repair: gbrain sources set-sync-strategy ${sourceId} markdown`
+  );
 }
 
 /** True iff the source's config.federated field is the literal boolean true. */

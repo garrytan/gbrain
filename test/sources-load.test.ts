@@ -13,6 +13,9 @@ import {
   parseSourceConfig,
   normalizeSourceConfig,
   isSourceFederated,
+  resolveSourceSyncStrategy,
+  describeSyncStrategyValue,
+  formatInvalidSourceSyncStrategyWarning,
 } from '../src/core/sources-load.ts';
 
 let engine: PGLiteEngine;
@@ -194,5 +197,65 @@ describe('isSourceFederated', () => {
     expect(isSourceFederated({})).toBe(false);
     expect(isSourceFederated(null)).toBe(false);
     expect(isSourceFederated(['{"remote_url":"x"}', { federated: true }])).toBe(true);
+  });
+});
+
+describe('resolveSourceSyncStrategy', () => {
+  test('uses markdown as the backward-compatible default', () => {
+    expect(resolveSourceSyncStrategy({})).toEqual({
+      strategy: 'markdown',
+      origin: 'default',
+    });
+  });
+
+  test('uses each valid stored strategy', () => {
+    for (const strategy of ['markdown', 'code', 'auto'] as const) {
+      expect(resolveSourceSyncStrategy({ strategy })).toEqual({
+        strategy,
+        origin: 'stored',
+      });
+    }
+  });
+
+  test('invocation override wins without mutating stored policy', () => {
+    const config = { strategy: 'auto', federated: true };
+    expect(resolveSourceSyncStrategy(config, 'code')).toEqual({
+      strategy: 'code',
+      origin: 'override',
+    });
+    expect(config).toEqual({ strategy: 'auto', federated: true });
+  });
+
+  test('invalid stored value falls back narrowly with repair metadata', () => {
+    const resolved = resolveSourceSyncStrategy({ strategy: 'everything' });
+    expect(resolved).toEqual({
+      strategy: 'markdown',
+      origin: 'invalid_fallback',
+      invalidStoredValue: 'everything',
+    });
+    expect(formatInvalidSourceSyncStrategyWarning('wiki', resolved.invalidStoredValue))
+      .toContain('gbrain sources set-sync-strategy wiki markdown');
+  });
+
+  test('recovers historical string and fragment-array config shapes', () => {
+    expect(resolveSourceSyncStrategy('{"strategy":"code"}')).toEqual({
+      strategy: 'code',
+      origin: 'stored',
+    });
+    expect(resolveSourceSyncStrategy([
+      '{"federated":true}',
+      { strategy: 'auto' },
+    ])).toEqual({ strategy: 'auto', origin: 'stored' });
+  });
+
+  test('invalid invocation override is rejected instead of falling back', () => {
+    expect(() => resolveSourceSyncStrategy({ strategy: 'auto' }, 'invalid'))
+      .toThrow(/Invalid sync strategy override/);
+  });
+
+  test('diagnostic rendering is bounded', () => {
+    const rendered = describeSyncStrategyValue('x'.repeat(500));
+    expect(rendered.length).toBe(120);
+    expect(rendered.endsWith('...')).toBe(true);
   });
 });

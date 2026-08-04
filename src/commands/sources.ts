@@ -7,7 +7,7 @@
  * full story.
  *
  * Subcommands:
- *   gbrain sources add <id> --path <path> [--name <display>] [--federated|--no-federated] [--force]
+ *   gbrain sources add <id> --path <path> [--name <display>] [--strategy <markdown|code|auto>] [--federated|--no-federated] [--force]
  *                               --path must be a git-initialized repo (files committed,
  *                               not just present) — #2707. --force skips the check.
  *   gbrain sources list [--json]
@@ -18,6 +18,7 @@
  *   gbrain sources detach        — remove .gbrain-source from CWD
  *   gbrain sources federate <id>   — sources.config.federated = true
  *   gbrain sources unfederate <id> — sources.config.federated = false
+ *   gbrain sources set-sync-strategy <id> <markdown|code|auto|default>
  *
  * NOT in scope for Step 6 (deferred per plan):
  *   - import-from-github (needs SSRF + clone integration)
@@ -43,6 +44,7 @@ import {
 import {
   addSource as opsAddSource,
   recloneIfMissing,
+  setSourceSyncStrategy,
   SourceOpError,
   type SourceRow as OpsSourceRow,
 } from '../core/sources-ops.ts';
@@ -55,8 +57,12 @@ import {
   parseSourceConfig,
   normalizeSourceConfig,
   isSourceFederated,
+  resolveSourceSyncStrategy,
+  formatInvalidSourceSyncStrategyWarning,
+  type SyncStrategyOrigin,
   type SourceRow as LoadedSourceRow,
 } from '../core/sources-load.ts';
+import { isSyncStrategy, type SyncStrategy } from '../core/sync.ts';
 
 // ── Validation ──────────────────────────────────────────────
 
@@ -90,6 +96,8 @@ interface SourceListEntry {
   federated: boolean;
   page_count: number;
   last_sync_at: string | null;
+  sync_strategy: SyncStrategy;
+  sync_strategy_origin: SyncStrategyOrigin;
 }
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -123,7 +131,8 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   if (!id) {
     console.error(
       'Usage: gbrain sources add <id> [--path <path> | --url <https-url>] ' +
-        '[--name <display>] [--federated|--no-federated] [--clone-dir <path>] [--force]',
+        '[--name <display>] [--strategy <markdown|code|auto>] ' +
+        '[--federated|--no-federated] [--clone-dir <path>] [--force]',
     );
     process.exit(2);
   }
@@ -131,6 +140,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   let localPath: string | null = null;
   let remoteUrl: string | undefined;
   let displayName: string | undefined;
+  let strategy: SyncStrategy | undefined;
   let federated: boolean | null = null;
   let cloneDir: string | undefined;
   let patFile: string | undefined;
@@ -142,6 +152,16 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     if (a === '--path') { localPath = args[++i]; continue; }
     if (a === '--url') { remoteUrl = args[++i]; continue; }
     if (a === '--name') { displayName = args[++i]; continue; }
+    if (a === '--strategy') {
+      const value = args[++i];
+      if (!isSyncStrategy(value)) {
+        console.error(`Error: invalid sync strategy "${value ?? ''}".`);
+        console.error('Valid options: markdown | code | auto');
+        process.exit(2);
+      }
+      strategy = value;
+      continue;
+    }
     if (a === '--federated') { federated = true; continue; }
     if (a === '--no-federated') { federated = false; continue; }
     if (a === '--clone-dir') { cloneDir = args[++i]; continue; }
@@ -166,6 +186,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     localPath,
     remoteUrl,
     federated,
+    strategy,
     cloneDir,
     force,
   });
@@ -191,6 +212,8 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   console.log(
     `  federated: ${fed}${fed ? ' — appears in cross-source default search' : ' — only searched when explicitly named via --source'}`,
   );
+  const syncPolicy = resolveSourceSyncStrategy(created.config);
+  console.log(`  sync strategy: ${syncPolicy.strategy} (${syncPolicy.origin})`);
 
   // v0.42.44 — auto-harden managed clones for git durability the moment a brain
   // repo is added with a PAT. Best-effort: NEVER fail `add` if hardening fails.
@@ -330,6 +353,10 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
   const entries: SourceListEntry[] = [];
   for (const r of rows) {
     const pageCount = await countPages(engine, r.id);
+    const syncPolicy = resolveSourceSyncStrategy(r.config);
+    if (syncPolicy.origin === 'invalid_fallback') {
+      console.error(formatInvalidSourceSyncStrategyWarning(r.id, syncPolicy.invalidStoredValue));
+    }
     entries.push({
       id: r.id,
       name: r.name,
@@ -337,11 +364,13 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
       federated: isFederated(r.config),
       page_count: pageCount,
       last_sync_at: r.last_sync_at ? new Date(r.last_sync_at).toISOString() : null,
+      sync_strategy: syncPolicy.strategy,
+      sync_strategy_origin: syncPolicy.origin,
     });
   }
 
   if (json) {
-    console.log(JSON.stringify({ sources: entries }, null, 2));
+    console.log(JSON.stringify({ schema_version: 1, sources: entries }, null, 2));
     return;
   }
 
@@ -352,7 +381,10 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
     const fedMark = e.federated ? 'federated' : (e as any).archived ? '⚠ archived' : 'isolated';
     const pathStr = e.local_path ?? '(no local path)';
     const sync = e.last_sync_at ? `last sync ${e.last_sync_at}` : 'never synced';
-    console.log(`  ${e.id.padEnd(20)}  ${fedMark.padEnd(12)}  ${String(e.page_count).padStart(6)} pages  ${sync}`);
+    console.log(
+      `  ${e.id.padEnd(20)}  ${fedMark.padEnd(12)}  ${String(e.page_count).padStart(6)} pages  ` +
+      `${sync}  strategy=${e.sync_strategy} (${e.sync_strategy_origin})`,
+    );
     if (e.local_path) console.log(`  ${' '.repeat(22)}${pathStr}`);
   }
   if (entries.length === 0) console.log('  (no sources registered)');
@@ -440,6 +472,48 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
 // because per-field validation actually matters (CRMode validation must
 // run; future fields may need bespoke prompts). The generic mutator is
 // filed as a v0.41+ TODO when 3+ writable fields exist.
+
+async function runSetSyncStrategy(engine: BrainEngine, args: string[]): Promise<void> {
+  const id = args[0];
+  const value = args[1];
+  if (!id || !value) {
+    console.error(
+      'Usage: gbrain sources set-sync-strategy <id> <markdown|code|auto|default>',
+    );
+    console.error('  Pass "default" or "unset" to remove the stored override.');
+    process.exit(2);
+  }
+
+  const clearing = value === 'default' || value === 'unset';
+  if (!clearing && !isSyncStrategy(value)) {
+    console.error(`Error: invalid sync strategy "${value}".`);
+    console.error('Valid options: markdown | code | auto | default');
+    process.exit(2);
+  }
+
+  const updated = await setSourceSyncStrategy(
+    engine,
+    id,
+    clearing ? undefined : value as SyncStrategy,
+  );
+  if (!updated) {
+    console.error(`Error: source "${id}" not found.`);
+    console.error(`  Run 'gbrain sources list' to see registered sources.`);
+    process.exit(4);
+  }
+
+  if (clearing) {
+    console.log(
+      `Source "${id}" stored sync strategy removed. ` +
+      `Future syncs use markdown (default); existing indexed content was not reprocessed.`,
+    );
+  } else {
+    console.log(
+      `Source "${id}" sync strategy saved: ${value}. ` +
+      `Future syncs use this policy; existing indexed content was not reprocessed.`,
+    );
+  }
+}
 
 async function runSetCrMode(engine: BrainEngine, args: string[]): Promise<void> {
   const { isCRMode, CR_MODES } = await import('../core/types.ts');
@@ -1358,6 +1432,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'status':     return runStatus(engine, rest);
     case 'webhook':    return runWebhook(engine, rest);
     case 'tracked-branch': return runTrackedBranch(engine, rest);
+    case 'set-sync-strategy': return runSetSyncStrategy(engine, rest);
     // v0.40.3.0 contextual retrieval (from master)
     case 'set-cr-mode': return runSetCrMode(engine, rest);
     case 'audit':      return runAudit(engine, rest);
@@ -1381,10 +1456,17 @@ function printHelp(): void {
   console.log(`gbrain sources — manage multi-source brain configuration (v0.26.5)
 
 Subcommands:
-  add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force]
+  add <id> --path <p> [--name <n>] [--strategy <markdown|code|auto>]
+                  [--federated|--no-federated] [--force]
                                     Register a new source. --path must be a git repo
                                     with committed files; --force skips that check.
-  list [--json]                     List registered sources with page counts.
+  list [--json]                     List sources with page counts and effective sync strategy.
+  set-sync-strategy <id> <markdown|code|auto|default>
+                                    Save future sync policy. default/unset removes
+                                    the stored override; existing content is unchanged.
+                                    markdown selects Markdown; code selects supported
+                                    code/config files; auto combines both. Images still
+                                    require GBRAIN_EMBEDDING_MULTIMODAL=true separately.
   remove <id> [--confirm-destructive] [--dry-run]
                                     Permanently delete a source and all its data.
                                     Shows impact preview. Requires --confirm-destructive

@@ -244,4 +244,40 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
     // #2139) and proceeds to import rather than blocking.
     expect(stdout.toLowerCase()).toContain('imported');
   }, 60_000);
+
+  test('single-source preview honors explicit --repo and --strategy precedence', async () => {
+    await runSources(engine, ['add', 'vault', '--path', repoPath, '--no-federated']);
+    await engine.setConfig('sync.cost_gate_min_usd', '0');
+
+    const overridePath = mkdtempSync(join(tmpdir(), 'gbrain-costgate-override-'));
+    try {
+      execSync('git init', { cwd: overridePath, stdio: 'pipe' });
+      execSync('git config user.email "t@t.com"', { cwd: overridePath, stdio: 'pipe' });
+      execSync('git config user.name "T"', { cwd: overridePath, stdio: 'pipe' });
+      mkdirSync(join(overridePath, 'src'), { recursive: true });
+      writeFileSync(
+        join(overridePath, 'src/value.ts'),
+        'export const value = '.repeat(300),
+      );
+      execSync('git add -A && git commit -m code-only', { cwd: overridePath, stdio: 'pipe' });
+
+      // The registered path contains markdown only and the stored policy is
+      // markdown/default. A non-zero code estimate therefore proves BOTH
+      // invocation inputs reached the preview: explicit path + strategy.
+      const { exitCode, stdout } = await runSyncCaptured([
+        '--source', 'vault',
+        '--repo', overridePath,
+        '--strategy', 'code',
+        '--json',
+        '--no-pull',
+      ]);
+
+      expect(exitCode).not.toBe(2);
+      expect(stdout).toContain('"gate":"auto_deferred_embeds"');
+      expect(stdout).toContain('"sync_strategy":"code"');
+      expect(stdout).toContain('"sync_strategy_origin":"override"');
+    } finally {
+      rmSync(overridePath, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

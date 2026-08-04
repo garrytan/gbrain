@@ -11,7 +11,8 @@
  * 4. Strategy filter (code/markdown/auto) admits the right files.
  * 5. Dot-prefixed dirs (.git/.claude/.raw) and node_modules still skipped.
  * 6. Multimodal preservation under markdown-strategy (codex C5).
- * 7. Deterministic ordering — runImport's index-based resume depends on it
+ * 7. Auto strategy keeps image admission behind the independent multimodal gate.
+ * 8. Deterministic ordering — runImport's index-based resume depends on it
  *    (codex C8).
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -158,7 +159,23 @@ describe('collectSyncableFiles symlink + cycle hardening', () => {
     });
   });
 
-  test('7. deterministic ordering — two walks return identical arrays (codex C8)', async () => {
+  test('7. auto strategy admits images only when multimodal is enabled', async () => {
+    writeFileSync(join(tmp, 'r.md'), 'r\n');
+    writeFileSync(join(tmp, 'c.ts'), 'export const ready = true;\n');
+    writeFileSync(join(tmp, 'p.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+
+    await withEnv({ GBRAIN_EMBEDDING_MULTIMODAL: undefined }, () => {
+      const off = collectSyncableFiles(tmp, { strategy: 'auto' });
+      expect(off.map(f => basename(f)).sort()).toEqual(['c.ts', 'r.md']);
+    });
+
+    await withEnv({ GBRAIN_EMBEDDING_MULTIMODAL: 'true' }, () => {
+      const on = collectSyncableFiles(tmp, { strategy: 'auto' });
+      expect(on.map(f => basename(f)).sort()).toEqual(['c.ts', 'p.png', 'r.md']);
+    });
+  });
+
+  test('8. deterministic ordering — two walks return identical arrays (codex C8)', async () => {
     await withEnv({ GBRAIN_EMBEDDING_MULTIMODAL: undefined }, () => {
       // runImport's checkpoint resume at import.ts:68-74 is index-based
       // against a sorted file list. Unstable order skips the wrong files

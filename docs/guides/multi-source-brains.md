@@ -114,12 +114,17 @@ Flip later with `gbrain sources federate <id>` / `unfederate <id>`.
 Full subcommand reference:
 
 ```
-gbrain sources add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force]
+gbrain sources add <id> --path <p> [--name <n>] [--strategy <markdown|code|auto>]
+                               [--federated|--no-federated] [--force]
                                Register a source. id: [a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?
                                --path must be a git repo (or a subdirectory of one) — see
                                "The git requirement for --path sources" below. --force
                                skips that check to register before git-init exists.
-gbrain sources list [--json]   List all sources with page counts + federation state.
+gbrain sources list [--json]   List sources with page counts, federation state, and
+                               effective sync strategy + provenance.
+gbrain sources set-sync-strategy <id> <markdown|code|auto|default>
+                               Save the policy for future syncs. default/unset removes
+                               the stored override; existing indexed content is unchanged.
 gbrain sources remove <id> [--yes] [--dry-run] [--keep-storage]
                                Cascade-delete a source (pages, chunks, timeline).
 gbrain sources rename <id> <new-name>
@@ -130,6 +135,39 @@ gbrain sources detach          Remove .gbrain-source from CWD.
 gbrain sources federate <id>
 gbrain sources unfederate <id>
 ```
+
+## Per-source sync strategy
+
+Each registered source can persist the file-selection policy used by every
+future sync entry point, including `sync --all`, scheduled jobs, the cycle,
+autopilot, and local MCP callers:
+
+```bash
+# Choose at registration time.
+gbrain sources add app --path ~/src/app --strategy code
+
+# Change only future runs; this does not reindex existing pages.
+gbrain sources set-sync-strategy app auto
+
+# Return to the backward-compatible markdown default.
+gbrain sources set-sync-strategy app default
+```
+
+Resolution is deterministic: an explicit single-run
+`gbrain sync --strategy <mode>` override wins, then the stored source policy,
+then `markdown`. The override is never persisted; with `--watch` it stays
+pinned only for that process. `--all --strategy` is rejected because each
+source must keep its own policy.
+
+`markdown` selects Markdown content, `code` selects supported code and config
+files, and `auto` combines both sets. Strategy selection never enables image
+ingestion by itself: supported images are admitted only when the independent
+multimodal setting is enabled (`GBRAIN_EMBEDDING_MULTIMODAL=true`).
+
+Use `gbrain sources list --json` to inspect `sync_strategy` and
+`sync_strategy_origin` (`stored`, `default`, or `invalid_fallback`). A malformed
+stored value never widens the file set: gbrain falls back to `markdown`, emits
+a paste-ready repair command, and reports the fallback provenance.
 
 ## The git requirement for --path sources
 

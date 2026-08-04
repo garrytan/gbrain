@@ -784,11 +784,12 @@ describe('sources restore — unowned source (CV3)', () => {
 });
 
 describe('addSource --url — writes ownership marker', () => {
-  test('config carries managed_clone:true', async () => {
+  test('config carries managed_clone:true and the requested sync strategy', async () => {
     await withEnv2(async () => {
       await addSource(engine, {
         id: 'marked',
         remoteUrl: 'https://github.com/example/repo',
+        strategy: 'code',
       });
       const rows = await engine.executeRaw<{ config: unknown }>(
         `SELECT config FROM sources WHERE id = 'marked'`,
@@ -798,6 +799,7 @@ describe('addSource --url — writes ownership marker', () => {
           ? JSON.parse(rows[0].config as string)
           : (rows[0].config as Record<string, unknown>);
       expect(cfg.managed_clone).toBe(true);
+      expect(cfg.strategy).toBe('code');
     });
   });
 
