@@ -569,7 +569,16 @@ export async function importFromContent(
   // #1035: fetch the existing page BEFORE the hash compute so (a) the type
   // preservation below participates in the hash (a no-op re-put stays a
   // hash-match skip) and (b) the hash short-circuit below reuses this row.
-  const existing = await engine.getPage(slug, sourceId ? { sourceId } : undefined);
+  //
+  // Scoped to the SAME source this import will write to. `getPage` applies no
+  // source filter when sourceId is omitted, but every write below resolves to
+  // `sourceId ?? 'default'` (putPage, createVersion, findDuplicatePage), so an
+  // unscoped read against a composite (source_id, slug) key matches another
+  // source's page and then writes elsewhere: a hash match short-circuits to
+  // `skipped` and the page is never written, and a hash mismatch throws in
+  // createVersion ("page not found" in the write source). Reachable whenever a
+  // default-bound write shares a slug with a page in another source.
+  const existing = await engine.getPage(slug, { sourceId: sourceId ?? 'default' });
 
   // #2044: remote get_page intentionally strips private facts rows. A
   // documented get_page -> edit -> put_page round-trip can therefore arrive
@@ -674,8 +683,10 @@ export async function importFromContent(
       );
     }
     if (dup && dup.slug !== slug) {
-      // Look up the duplicate page so we can compare frontmatter.id.
-      const dupPage = await engine.getPage(dup.slug, sourceId ? { sourceId } : undefined);
+      // Look up the duplicate page so we can compare frontmatter.id. Scoped to
+      // the write source for the same reason as `existing` above — findDuplicatePage
+      // already searched `sourceId ?? 'default'`, so the row it named lives there.
+      const dupPage = await engine.getPage(dup.slug, { sourceId: sourceId ?? 'default' });
       const dupFmId = (dupPage?.frontmatter as Record<string, unknown> | undefined)?.id;
       const dupFmIdStr = typeof dupFmId === 'string' && dupFmId.length > 0 ? dupFmId : null;
       const sameExternalId = fmIdStr !== null && dupFmIdStr === fmIdStr;

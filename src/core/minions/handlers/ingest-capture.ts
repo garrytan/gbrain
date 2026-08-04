@@ -120,18 +120,22 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
 
     // Write-source resolution — two distinct paths, kept separate on purpose.
     //
-    //   1. job.data.sourceId — the webhook's server-resolved source (from
-    //      authInfo.sourceId, a trusted channel). NEW in the source-attribution
-    //      change: validated against a LIVE (non-archived) sources row; on a
-    //      miss we fall back to the default source AND report it via
-    //      source_fallback (+ a stderr warning) so the miss is observable.
-    //   2. event.source_id — the daemon / non-webhook emitter path. UNCHANGED
-    //      from #1522: used iff it names a registered source row, silent
-    //      fallback to default otherwise. Deliberately NOT archived-filtered and
-    //      NOT reported, so daemon steady-state behavior stays byte-identical
-    //      (an unregistered emitter id is normal there, not worth a per-capture
-    //      warning). A source that vanishes mid-write is still caught by the
-    //      FK-violation retry below (never-lose) regardless of path.
+    //   1. job.data.sourceId — the server-resolved write source. The webhook
+    //      route sets it from authInfo.sourceId (never from a request header),
+    //      so it is not caller-chosen on that path. NOTE it is not structurally
+    //      confined to that producer: `ingest_capture` is absent from
+    //      PROTECTED_JOB_NAMES, so an admin-scoped `submit_job` can also set it
+    //      (as it can already forge event.source_id on path 2). Validated here
+    //      against a LIVE (non-archived) sources row; on a miss we fall back to
+    //      the default source AND report it via source_fallback (+ a stderr
+    //      warning) so the miss is observable.
+    //   2. event.source_id — the daemon / non-webhook emitter path (#1522):
+    //      used iff it names a registered source row, silent fallback to default
+    //      otherwise. Deliberately NOT archived-filtered and NOT reported, so
+    //      daemon steady-state behavior stays byte-identical (an unregistered
+    //      emitter id is normal there, not worth a per-capture warning). A source
+    //      that vanishes mid-write is still caught by the FK-violation retry
+    //      below (never-lose) regardless of path.
     let sourceId: string | undefined;
     let sourceFallback: IngestCaptureResult['source_fallback'];
     const trustedSourceId =
@@ -141,6 +145,14 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
     if (trustedSourceId && trustedSourceId !== 'default') {
       // `archived` reads as a real JS boolean on both engines; match the
       // established idiom at sources-ops.ts:784 (`?.archived === true`).
+      //
+      // This read is outside the write transaction, so a source archived in the
+      // gap still has its row and the write's FK succeeds: the capture lands in
+      // a just-archived source (search hides archived sources) and reports no
+      // fallback. Deliberately not locked — archiving is an operator action with
+      // a recovery window, the page is recoverable by un-archiving, and taking a
+      // row lock on `sources` for every capture would serialize ingestion behind
+      // it. Deletion, the destructive case, IS covered by the FK retry below.
       const rows = await engine.executeRaw<{ id: string; archived: boolean | null }>(
         `SELECT id, archived FROM sources WHERE id = $1`,
         [trustedSourceId],
@@ -168,6 +180,13 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       source_kind: event.source_kind,
       source_uri: event.source_uri,
       ingested_via: 'ingest_capture',
+      // #1699 trust boundary. This handler bypasses the put_page op layer, so
+      // the marker-stripping put_page performs for remote callers never ran on
+      // this path. Untrusted content (every POST /ingest body) must not be able
+      // to carry gate-owned frontmatter: `quarantine` hides a page from search,
+      // and `content_flag.detail` injects text into the agent-trusted warning
+      // channel. Trusted daemon emitters leave it false and keep their markers.
+      remote: untrustedPayload,
     };
 
     let result;
@@ -178,14 +197,26 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       // this write. 23503 = foreign_key_violation (cf. oauth-provider.ts:1053),
       // but SQLSTATE alone is too broad: a violation from chunks/tags/versions
       // would be misread as "source unavailable" and silently rewritten to the
-      // default partition, masking a real integrity failure. Also require the
-      // error to name the source FK, matching the discrimination already used by
-      // maybeRewriteSourceFkError (commands/capture.ts). Anything else propagates.
+      // default partition, masking a real integrity failure.
+      //
+      // Match the PAGES source FK specifically. Matching any message mentioning
+      // "source" is not tight enough to carry a routing decision: many tables
+      // reference sources(id) (files_source_id_fkey, facts_source_id_fkey,
+      // code_edges, calibration_profiles, …), so a genuine integrity failure on
+      // one of those would be rewritten as reason:'fk_violation' — exactly the
+      // masking this check exists to prevent. maybeRewriteSourceFkError
+      // (commands/capture.ts) can afford the looser match because it only
+      // formats a human hint; here the verdict moves data. Prefer the driver's
+      // structured constraint/table fields (postgres.js and PGLite both expose
+      // them) and fall back to the message for wrapped errors.
       const errMsg = err instanceof Error ? err.message : String(err);
-      const isSourceFk =
-        (err as { code?: string })?.code === '23503' &&
-        (errMsg.includes('pages_source_id_fk') ||
-          (errMsg.includes('foreign key constraint') && errMsg.includes('source')));
+      const fkErr = err as { code?: string; constraint?: string; table?: string };
+      const namesPagesSourceFk =
+        (typeof fkErr.constraint === 'string' && /^pages_source_id_fk/.test(fkErr.constraint)) ||
+        (fkErr.table === 'pages' && typeof fkErr.constraint === 'string' && fkErr.constraint.includes('source')) ||
+        /pages_source_id_fk/.test(errMsg) ||
+        (errMsg.includes('foreign key constraint') && errMsg.includes('"pages"'));
+      const isSourceFk = fkErr?.code === '23503' && namesPagesSourceFk;
       if (sourceId !== undefined && isSourceFk) {
         sourceFallback = { requested: sourceId, effective: 'default', reason: 'fk_violation' };
         result = await importFromContent(engine, slug, event.content, { ...importOpts, sourceId: undefined });

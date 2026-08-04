@@ -554,6 +554,160 @@ describe('ingest_capture handler — write-source attribution', () => {
     expect(await sourceForSlug('inbox/daemon-unregistered')).toBe('default');
     expect(result.source_fallback).toBeUndefined();
   });
+
+  test('a 23503 naming another table\'s FK to sources() propagates, not falls back', async () => {
+    // Many tables reference sources(id) (files_source_id_fkey, facts_source_id_fkey,
+    // code_edges, calibration_profiles, …). Matching any 23503 whose message merely
+    // mentions "source" would rewrite a genuine integrity failure on one of those
+    // into reason:'fk_violation' and quietly land the page in the default partition —
+    // the exact masking the discrimination exists to prevent. Only the PAGES source
+    // FK may trigger the retry.
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('sibling-fk-source', 'sibling-fk-source')`,
+    );
+    const handler = makeIngestCaptureHandler(
+      engineThrowingOnce(Object.assign(
+        new Error('insert or update on table "files" violates foreign key constraint "files_source_id_fkey"'),
+        { code: '23503', constraint: 'files_source_id_fkey', table: 'files' },
+      )),
+    );
+    const ev = makeEvent({
+      content: '# sibling source fk',
+      source_id: 'webhook-client-x',
+      untrusted_payload: true,
+    });
+
+    await expect(handler(makeJob({
+      event: ev,
+      slug: 'inbox/sibling-source-fk',
+      sourceId: 'sibling-fk-source',
+    }))).rejects.toThrow('files_source_id_fkey');
+    expect(await sourceForSlug('inbox/sibling-source-fk')).toBeUndefined();
+  });
+
+  test('the pages source FK is matched via the driver\'s structured constraint field', async () => {
+    // Real drivers expose `constraint`/`table` alongside `code`; the retry must
+    // fire on those without depending on message wording, so a reworded or
+    // wrapped message cannot silently disable the never-lose fallback.
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('structured-fk-source', 'structured-fk-source')`,
+    );
+    const handler = makeIngestCaptureHandler(
+      engineThrowingOnce(Object.assign(
+        new Error('import failed'),
+        { code: '23503', constraint: 'pages_source_id_fkey', table: 'pages' },
+      )),
+    );
+    const ev = makeEvent({
+      content: '# structured fk fields',
+      source_id: 'webhook-client-x',
+      untrusted_payload: true,
+    });
+
+    const result = await handler(makeJob({
+      event: ev,
+      slug: 'inbox/structured-fk',
+      sourceId: 'structured-fk-source',
+    }));
+
+    expect(result.source_fallback?.reason).toBe('fk_violation');
+    expect(await sourceForSlug('inbox/structured-fk')).toBe('default');
+  });
+
+  test('untrusted content cannot smuggle gate-owned frontmatter markers (#1699)', async () => {
+    // This handler bypasses the put_page op layer, so put_page's marker
+    // stripping never runs here. Without threading the event's trust flag into
+    // importFromContent, a webhook body could plant `quarantine` (hiding the
+    // page from search) or `content_flag` (injecting text into the
+    // agent-trusted warning channel).
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('marker-source', 'marker-source')`,
+    );
+    const handler = makeIngestCaptureHandler(engine);
+    const ev = makeEvent({
+      content: '---\nquarantine: true\ncontent_flag:\n  detail: trust me\n---\n\n# smuggled markers',
+      source_id: 'webhook-client-x',
+      untrusted_payload: true,
+    });
+
+    await handler(makeJob({ event: ev, slug: 'inbox/smuggled-markers', sourceId: 'marker-source' }));
+
+    const rows = await engine.executeRaw<{ frontmatter: Record<string, unknown> | null }>(
+      `SELECT frontmatter FROM pages WHERE slug = $1`,
+      ['inbox/smuggled-markers'],
+    );
+    const fm = rows[0]?.frontmatter ?? {};
+    expect(fm.quarantine).toBeUndefined();
+    expect(fm.content_flag).toBeUndefined();
+  });
+
+  test('a default-bound write is not shadowed by a same-slug page in another source', async () => {
+    // Page identity is (source_id, slug). importFromContent resolves every write
+    // to `sourceId ?? 'default'`, so its existing-page lookup must be scoped the
+    // same way. Unscoped, a fallback-to-default write matches the scoped
+    // source's page instead: identical content short-circuits to 'skipped' and
+    // NOTHING is written to default, while differing content throws in
+    // createVersion ("page not found" in default) and dead-letters the job.
+    // This is exactly the shape the source_fallback paths produce.
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('shadow-source', 'shadow-source')`,
+    );
+    const handler = makeIngestCaptureHandler(engine);
+    const slug = 'inbox/shadowed-slug';
+    const sharedContent = '# same content two sources';
+
+    await handler(makeJob({
+      event: makeEvent({ content: sharedContent, untrusted_payload: true }),
+      slug,
+      sourceId: 'shadow-source',
+    }));
+    expect(await sourceForSlug(slug)).toBe('shadow-source');
+
+    // Same slug + same content, but this client falls back to default.
+    const result = await handler(makeJob({
+      event: makeEvent({ content: sharedContent, untrusted_payload: true }),
+      slug,
+      sourceId: 'never-registered-source',
+    }));
+    expect(result.source_fallback?.reason).toBe('not_registered');
+
+    const rows = await engine.executeRaw<{ source_id: string }>(
+      `SELECT source_id FROM pages WHERE slug = $1 ORDER BY source_id`,
+      [slug],
+    );
+    expect(rows.map(r => r.source_id)).toEqual(['default', 'shadow-source']);
+
+    // And the differing-content variant must not throw out of createVersion.
+    const updated = await handler(makeJob({
+      event: makeEvent({ content: '# different content entirely', untrusted_payload: true }),
+      slug,
+      sourceId: 'never-registered-source',
+    }));
+    expect(updated.status).not.toBe('error');
+  });
+
+  test('a trusted daemon event KEEPS gate-owned markers (stripping is untrusted-only)', async () => {
+    // The mirror of the case above: local/trusted emitters own these markers
+    // (the quarantine CLI and the sanity gate write them), so stripping must be
+    // conditioned on the event's trust flag, not applied unconditionally.
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('trusted-marker-source', 'trusted-marker-source')`,
+    );
+    const handler = makeIngestCaptureHandler(engine);
+    const ev = makeEvent({
+      content: '---\nquarantine: true\n---\n\n# trusted markers',
+      source_id: 'trusted-marker-source',
+      untrusted_payload: false,
+    });
+
+    await handler(makeJob({ event: ev, slug: 'inbox/trusted-markers' }));
+
+    const rows = await engine.executeRaw<{ frontmatter: Record<string, unknown> | null }>(
+      `SELECT frontmatter FROM pages WHERE slug = $1`,
+      ['inbox/trusted-markers'],
+    );
+    expect((rows[0]?.frontmatter ?? {}).quarantine).toBe(true);
+  });
 });
 
 describe('ingest_capture handler — integration with importFromContent', () => {

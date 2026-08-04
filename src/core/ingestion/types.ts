@@ -104,7 +104,8 @@ export interface IngestionEvent {
    */
   untrusted_payload?: boolean;
   /** Optional source-specific metadata. Free-form. Reserved for future
-   *  persistence under `ingestion_metadata`; not yet implemented (issue #5). */
+   *  persistence into page frontmatter under `ingestion_metadata`; not yet
+   *  implemented — nothing reads this field today. */
   metadata?: Record<string, unknown>;
 }
 
