@@ -6,7 +6,7 @@
  */
 import { afterAll, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -79,7 +79,11 @@ async function exportPages(pages: Record<string, string>) {
   const result = await run(EXPORTER_PATH, [pagesDir, outPath]);
   return {
     ...result,
-    envelope: result.exitCode === 0 ? JSON.parse(readFileSync(outPath, 'utf8')) : null,
+    pagesDir,
+    outPath,
+    // A multi-provider directory writes per-provider files instead of outPath;
+    // those tests read their own files, so a missing outPath is null here.
+    envelope: result.exitCode === 0 && existsSync(outPath) ? JSON.parse(readFileSync(outPath, 'utf8')) : null,
   };
 }
 
@@ -615,9 +619,13 @@ describe('gbrain-to-envelope exporter', () => {
     expect(result.stderr).toContain('already used by another page');
   });
 
-  test('pages naming different providers warn and keep the first', async () => {
-    // An envelope carries one source_provider. A page set spanning two is a
-    // real structural loss, so it is reported instead of resolved silently.
+  test('pages naming different providers write one envelope per provider', async () => {
+    // An envelope carries one source_provider. This script used to collapse a
+    // mixed set to the first provider in sorted path order, and re-importing
+    // that envelope stamped the winner onto every losing page - check 2 saw a
+    // legitimate refresh and overwrote `source:` at exit 0, with nothing on
+    // disk retaining the truth. A mixed set now fans out, one conforming
+    // envelope per provider, each file named for the provider it carries.
     const page = (id: string, source: string) =>
       gbrainPage(
         ['type: conversation', `title: ${id}`, `source: ${source}`, `memvelope_conversation_id: ${id}`].join('\n'),
@@ -629,9 +637,21 @@ describe('gbrain-to-envelope exporter', () => {
     });
 
     expect(result.exitCode).toBe(0);
-    expect(result.envelope.meta.source_provider).toBe('chatgpt');
+    // outPath itself is NOT written: there is no single envelope that could
+    // describe this directory without falsifying someone's provider.
+    expect(existsSync(result.outPath)).toBe(false);
+    const dir = join(result.outPath, '..');
+    const cg = JSON.parse(readFileSync(join(dir, 'out.chatgpt.mve.json'), 'utf8'));
+    const cl = JSON.parse(readFileSync(join(dir, 'out.claude.mve.json'), 'utf8'));
+    assertEnvelopeV0(cg, { conversations: 1, messages: 2 });
+    assertEnvelopeV0(cl, { conversations: 1, messages: 2 });
+    expect(cg.meta.source_provider).toBe('chatgpt');
+    expect(cg.conversations.map((c: any) => c.id)).toEqual(['c-a']);
+    expect(cl.meta.source_provider).toBe('claude');
+    expect(cl.conversations.map((c: any) => c.id)).toEqual(['c-b']);
     expect(result.stderr).toContain('source providers');
-    expect(result.envelope.conversations).toHaveLength(2);
+    expect(result.stdout).toContain(`wrote 1 conversation(s), 2 message(s) to ${join(dir, 'out.chatgpt.mve.json')}`);
+    expect(result.stdout).toContain(`wrote 1 conversation(s), 2 message(s) to ${join(dir, 'out.claude.mve.json')}`);
   });
 
   // --- Regression tests for six verified defects. -------------------------
@@ -2146,6 +2166,158 @@ describe('gbrain-to-envelope exporter', () => {
     expect(result.envelope.conversations).toHaveLength(0);
     expect(result.stderr).toContain('was skipped before it could contribute one');
     expect(result.stderr).not.toContain('no page carries');
+  });
+
+  // --- Sweep 2.2: one envelope per provider. --------------------------------
+  // The mainstream memvelope pitch is merging several vendors' history into
+  // one directory. These tests pin the per-provider fan-out end to end: the
+  // full circle back through the importer, the sourceless residue, the
+  // untouched single-provider path, and the filename token rules.
+
+  const providerEnvelope = (provider: string, id: string, text: string) => ({
+    memvelope: 'envelope-v0',
+    meta: { source_provider: provider, conversation_count: 1, message_count: 1 },
+    conversations: [
+      {
+        id,
+        title: `From ${provider}`,
+        created_at: '2026-02-01T09:00:00.000Z',
+        updated_at: '2026-02-01T09:00:00.000Z',
+        messages: [{ id: 'm1', role: 'user', ts: '2026-02-01T09:00:00.000Z', text }],
+      },
+    ],
+  });
+
+  test('a mixed-provider directory round-trips with no page\'s source falsified', async () => {
+    // The full circle the defect lived on: two providers' envelopes imported
+    // into ONE directory, exported, and re-imported into the same directory.
+    // Byte-identical pages after the circle is the strongest form of "no
+    // page's `source:` changed hands" - check 2 matches per-conversation ids,
+    // sees a refresh carrying the same truth, and rewrites the same bytes.
+    const dir = tempDir();
+    const pagesDir = join(dir, 'pages');
+    const cgIn = join(dir, 'cg.mve.json');
+    const clIn = join(dir, 'cl.mve.json');
+    writeFileSync(cgIn, JSON.stringify(providerEnvelope('chatgpt', 'c-cg', 'hello from chatgpt')));
+    writeFileSync(clIn, JSON.stringify(providerEnvelope('claude', 'c-cl', 'hello from claude')));
+    expect((await run(IMPORTER_PATH, [cgIn, pagesDir])).exitCode).toBe(0);
+    expect((await run(IMPORTER_PATH, [clIn, pagesDir])).exitCode).toBe(0);
+
+    const snapshot = new Map<string, string>();
+    for (const name of readdirSync(pagesDir)) {
+      if (name.endsWith('.md')) snapshot.set(name, readFileSync(join(pagesDir, name), 'utf8'));
+    }
+    expect(snapshot.size).toBe(2);
+
+    const outPath = join(dir, 'out.mve.json');
+    const exported = await run(EXPORTER_PATH, [pagesDir, outPath]);
+    expect(exported.exitCode).toBe(0);
+    expect(existsSync(outPath)).toBe(false);
+
+    const cgOut = join(dir, 'out.chatgpt.mve.json');
+    const clOut = join(dir, 'out.claude.mve.json');
+    const cgEnv = JSON.parse(readFileSync(cgOut, 'utf8'));
+    const clEnv = JSON.parse(readFileSync(clOut, 'utf8'));
+    assertEnvelopeV0(cgEnv, { conversations: 1, messages: 1 });
+    assertEnvelopeV0(clEnv, { conversations: 1, messages: 1 });
+    // Field for field, each per-provider envelope is the one that went in.
+    expect(cgEnv).toEqual(providerEnvelope('chatgpt', 'c-cg', 'hello from chatgpt'));
+    expect(clEnv).toEqual(providerEnvelope('claude', 'c-cl', 'hello from claude'));
+
+    expect((await run(IMPORTER_PATH, [cgOut, pagesDir])).exitCode).toBe(0);
+    expect((await run(IMPORTER_PATH, [clOut, pagesDir])).exitCode).toBe(0);
+    expect(readdirSync(pagesDir).filter((n) => n.endsWith('.md'))).toHaveLength(2);
+    for (const [name, bytes] of snapshot) {
+      expect(readFileSync(join(pagesDir, name), 'utf8')).toBe(bytes);
+    }
+  });
+
+  test('pages with no source: land in their own unknown envelope, never a named provider\'s', async () => {
+    // Absence of a `source:` key is not membership in whichever provider the
+    // directory also holds: folding these pages into the chatgpt envelope
+    // would stamp `source: "chatgpt"` onto them at re-import - the same
+    // falsification the per-provider split exists to stop, arriving through
+    // absence instead of collision. They travel under the documented
+    // placeholder instead, loudly.
+    const result = await exportPages({
+      'a.md': gbrainPage(
+        ['type: conversation', 'title: Sourced', 'source: chatgpt', 'memvelope_conversation_id: c-a'].join('\n'),
+        TURNS,
+      ),
+      'b.md': gbrainPage(
+        ['type: conversation', 'title: Sourceless', 'memvelope_conversation_id: c-b'].join('\n'),
+        TURNS,
+      ),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(result.outPath)).toBe(false);
+    const dir = join(result.outPath, '..');
+    const cg = JSON.parse(readFileSync(join(dir, 'out.chatgpt.mve.json'), 'utf8'));
+    const unk = JSON.parse(readFileSync(join(dir, 'out.unknown.mve.json'), 'utf8'));
+    assertEnvelopeV0(cg, { conversations: 1, messages: 2 });
+    assertEnvelopeV0(unk, { conversations: 1, messages: 2 });
+    expect(cg.meta.source_provider).toBe('chatgpt');
+    expect(cg.conversations.map((c: any) => c.id)).toEqual(['c-a']);
+    expect(unk.meta.source_provider).toBe('unknown');
+    expect(unk.conversations.map((c: any) => c.id)).toEqual(['c-b']);
+    expect(result.stderr).toContain('carry no `source:` key');
+    expect(result.stderr).toContain('"unknown"');
+  });
+
+  test('a single-provider directory is unchanged: one file, the same name and words as before', async () => {
+    // The compatibility half of the fan-out. One provider - however many
+    // pages - keeps today's behavior byte for byte: outPath itself, the same
+    // stdout line, and a silent stderr.
+    const page = (id: string) =>
+      gbrainPage(
+        ['type: conversation', `title: ${id}`, 'source: chatgpt', `memvelope_conversation_id: ${id}`].join('\n'),
+        TURNS,
+      );
+    const result = await exportPages({
+      'a.md': page('c-a'),
+      'b.md': page('c-b'),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(result.outPath)).toBe(true);
+    assertEnvelopeV0(result.envelope, { conversations: 2, messages: 4 });
+    expect(result.envelope.meta.source_provider).toBe('chatgpt');
+    expect(existsSync(join(result.outPath, '..', 'out.chatgpt.mve.json'))).toBe(false);
+    expect(result.stdout).toContain(`wrote 2 conversation(s), 4 message(s) to ${result.outPath}`);
+    expect(result.stdout).not.toContain('provider "');
+    expect(result.stderr).toBe('');
+  });
+
+  test('filename tokens are sanitized and case-colliding providers get distinct files', async () => {
+    // meta.source_provider stays verbatim; only the FILENAME token is
+    // sanitized (anything outside [A-Za-z0-9._-] becomes '-', so a provider
+    // cannot steer the write outside the output directory) and deduplicated
+    // case-insensitively, so 'ChatGPT' and 'chatgpt' pages survive as two
+    // files even on the case-insensitive filesystems macOS ships - and the
+    // names come out the same on every platform.
+    const page = (id: string, source: string) =>
+      gbrainPage(
+        ['type: conversation', `title: ${id}`, `source: ${source}`, `memvelope_conversation_id: ${id}`].join('\n'),
+        TURNS,
+      );
+    const result = await exportPages({
+      'a.md': page('c-a', 'ChatGPT'),
+      'b.md': page('c-b', 'chatgpt'),
+      'c.md': page('c-c', 'open ai/gpt'),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const dir = join(result.outPath, '..');
+    const first = JSON.parse(readFileSync(join(dir, 'out.ChatGPT.mve.json'), 'utf8'));
+    const second = JSON.parse(readFileSync(join(dir, 'out.chatgpt-2.mve.json'), 'utf8'));
+    const third = JSON.parse(readFileSync(join(dir, 'out.open-ai-gpt.mve.json'), 'utf8'));
+    expect(first.meta.source_provider).toBe('ChatGPT');
+    expect(first.conversations.map((c: any) => c.id)).toEqual(['c-a']);
+    expect(second.meta.source_provider).toBe('chatgpt');
+    expect(second.conversations.map((c: any) => c.id)).toEqual(['c-b']);
+    expect(third.meta.source_provider).toBe('open ai/gpt');
+    expect(third.conversations.map((c: any) => c.id)).toEqual(['c-c']);
   });
 
   // --- Sweep 2.9: all four gbrain timeline-sentinel forms. ------------------
