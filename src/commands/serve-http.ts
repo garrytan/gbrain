@@ -2283,19 +2283,21 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const content = body.toString('utf8');
       const contentHash = computeContentHash(content);
       const sourceUri = (req.header('x-gbrain-source-uri') || `mcp-webhook:${authInfo.clientId}:${Date.now()}`).slice(0, 1024);
-      const sourceId = (req.header('x-gbrain-source-id') || `webhook-${authInfo.clientId}`).slice(0, 256);
+      const sourceId = `webhook-${authInfo.clientId}`.slice(0, 256);
       const callerSlug = req.header('x-gbrain-slug');
 
       // Slug-bound clients cannot use /ingest at all. The route hands its
       // payload to the ingest_capture minion handler, which deliberately
       // bypasses the put_page op layer — so no OperationContext exists and
-      // enforceClientSlugFence never runs, and because the payload is marked
-      // untrusted the handler also refuses to honor any source id, landing
-      // every write in the DEFAULT source. Fencing just the slug here would
-      // still write the right slug into the WRONG source, outside the
-      // client's grant. These clients have put_page over MCP, which enforces
-      // both the prefix fence and the source scope; webhook integrations use
-      // unbound clients.
+      // enforceClientSlugFence never runs. The caller-supplied
+      // X-Gbrain-Source-Id is still never honored, but the write source is now
+      // resolved server-side from the client's own OAuth scope, so the write
+      // does land inside the client's granted source. The fence gap is
+      // therefore the SLUG axis alone: without this 403 a bound client could
+      // write any slug within its source, which is exactly the binding it was
+      // given. These clients have put_page over MCP, which enforces both the
+      // prefix fence and the source scope; webhook integrations use unbound
+      // clients.
       const boundPrefixes = authInfo.boundSlugPrefixes;
       if (boundPrefixes || authInfo.fenceProjectionDegraded) {
         res.status(403).json({
@@ -2339,18 +2341,23 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       }
 
       try {
+        const writeSourceId = authInfo.sourceId ?? 'default';
         const job = await ingestQueue.add(
           'ingest_capture',
           {
             event,
             ...(callerSlug ? { slug: callerSlug } : {}),
+            sourceId: writeSourceId,
           },
           {
             // Idempotency: same content from the same client within the
             // queue's lifetime is a single job. Different content gets
             // different jobs. Daemon-side dedup catches the 24h window;
             // the queue-level idempotency catches simultaneous retries.
-            idempotency_key: `ingest:webhook:${authInfo.clientId}:${contentHash}`,
+            // The effective write source is part of the key: a client rescoped
+            // from source X to Y must land a NEW capture in Y rather than being
+            // deduped against its old X-bound job.
+            idempotency_key: `ingest:webhook:${authInfo.clientId}:${writeSourceId}:${contentHash}`,
             // Cap waiting jobs from a single client so a runaway integration
             // can't fill the queue.
             maxWaiting: 50,
@@ -2364,7 +2371,10 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
             `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
              VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
             [authInfo.clientId, agentName, 'webhook_ingest', latency, 'success'],
-            [{ content_type: contentType, content_hash: contentHash, bytes: body.length, job_id: job.id }],
+            // write_source_id is the security-relevant part of this request:
+            // which partition the capture was routed to. Without it the audit
+            // trail cannot answer "where did this client's writes land".
+            [{ content_type: contentType, content_hash: contentHash, bytes: body.length, job_id: job.id, write_source_id: writeSourceId }],
           );
         } catch { /* best effort */ }
         broadcastEvent({
@@ -2379,7 +2389,15 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         res.status(202).json({
           job_id: job.id,
           content_hash: contentHash,
+          // Emitter identity (`webhook-<clientId>`), kept for back-compat.
           source_id: sourceId,
+          // The brain source this capture is routed to, resolved server-side
+          // from the client's OAuth scope. This is the routing decision the
+          // caller actually cares about; `source_id` above is NOT a partition.
+          // Enqueue-time intent: the write runs asynchronously after this 202,
+          // so a later source_fallback (see the ingest_capture job result) can
+          // still redirect it.
+          write_source_id: writeSourceId,
           message: 'Accepted. Event queued for ingestion.',
         });
       } catch (err) {
