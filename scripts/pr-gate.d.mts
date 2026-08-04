@@ -92,3 +92,6 @@ export declare function runGate(
   env?: Record<string, string | undefined>,
   fetchImpl?: typeof fetch,
 ): Promise<number>;
+
+export declare function isPermissionFailure(err: unknown): boolean;
+export declare const PERMISSION_HELP: (msg: string) => string;

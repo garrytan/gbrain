@@ -1171,6 +1171,28 @@ export async function runGate(dir, env = process.env, fetchImpl = fetch) {
   return lane === 'close-lane' ? 1 : 0;
 }
 
+/**
+ * A missing WRITE permission (or a token that cannot see the resource) is an
+ * operator condition, never a statement about the PR under review.
+ *
+ * Observed on this gate's first live run: the repository's GITHUB_TOKEN was
+ * read-only, so every comment and label call returned 403, the throw reached
+ * the top-level handler as exit 2, and the gate put a red X on every open PR —
+ * including an outside contributor's — with no comment saying why. The gate is
+ * advisory. It must never fail a contributor's check because it could not talk
+ * to the API. 401/403/404 from the GitHub side warn loudly and exit 0; a real
+ * outage or a bug in here still fails visibly.
+ */
+export function isPermissionFailure(err) {
+  return /\b(401|403|404)\b/.test(String(err?.message ?? err));
+}
+
+export const PERMISSION_HELP = (msg) =>
+  `PR gate could not post its verdict: ${msg}. This is a repository permission ` +
+  'problem, not a finding about this PR. Operator: Settings → Actions → General → ' +
+  'Workflow permissions must allow read and write, and ANTHROPIC_API_KEY must be ' +
+  'set for the usefulness verdict to run.';
+
 // Import side-effect guard: only run when executed directly (node/bun),
 // never when the exports are imported by tests.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -1182,7 +1204,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   runGate(dir).then(
     (code) => process.exit(code),
     (err) => {
-      // Infrastructure failure (GitHub API down, bad inputs): fail visibly.
+      if (isPermissionFailure(err)) {
+        console.log(`::warning::${PERMISSION_HELP(String(err?.message ?? err))}`);
+        process.exit(0);
+      }
+      // Anything else (GitHub down, malformed inputs, a bug here): fail visibly.
       console.error(`::error::PR gate crashed: ${err?.stack ?? err}`);
       process.exit(2);
     },

@@ -12,6 +12,42 @@ The stored value is now the source-level authority used by direct syncs, schedul
 
 `sync --all --strategy` is rejected because a single override would erase the point of per-source policy. Multimodal enrichment remains a separate opt-in gate and is never enabled merely by choosing `auto`.
 
+## [0.42.73.0] - 2026-08-04
+
+**Every incoming pull request now gets a verdict before anyone reads it — and five contributed fixes for silent wrong answers.**
+
+**The PR gate.** Open a pull request against gbrain and an automated check now posts a single verdict comment within a minute: **merge-lane**, **close-lane**, or **needs-maintainer**, with its reasons and a checklist of what a human reviewer should verify for that specific diff. It also checks mechanically that the description carries the human-written intent paragraph and the screenshot of gbrain in use that `CONTRIBUTING.md` requires, and that the title leads with its version.
+
+It is deliberately **advisory** — a triage signal and a reviewer checklist, not an authorization boundary. A green verdict is not permission to merge; a maintainer still decides. Pull-request code is never checked out or executed: the verdict comes from the description and the diff read through the API. Maintainer, bot, and draft pull requests are exempt from the intent-and-screenshot floor only (release automation cannot screenshot itself); they still receive the full verdict. Where the rubric can be argued with, the decision is taken away from it: a merge-lane recommendation is downgraded automatically when a diff adds a dependency, a new provider recipe, or new config keys, edits workflows, deletes a test, exceeds 40 files or 400 net source lines, or changes `src/` without touching a single test.
+
+**Your import output parses again.** `gbrain import <dir> --json` printed five informational lines to stdout ahead of the JSON payload, so anything parsing that output read zero imports while its own bookkeeping recorded the files as ingested — and the next run skipped them permanently. Those lines now go to stderr under `--json`; human output is byte-for-byte unchanged.
+
+**`sources harden --dry-run` no longer changes anything.** It reset the helper's executable bit before reaching the dry-run check, so a documented preview quietly mutated permissions.
+
+**Telemetry records the model that actually ran.** Two nightly-cycle phases wrote a hardcoded or unrelated model name into their verdict cache, evidence signature, and spend metering while the gateway ran whatever chat model you configured. On any brain with a non-default model, the recorded history was fiction.
+
+**`gbrain integrity` stops contradicting itself.** Dead-link findings were counted in the "Review queue" total but written to a different file, so `integrity review` disagreed with `integrity auto`'s own summary. They now get their own line.
+
+**Retype rules can address API-ingested pages.** Mapping rules could only filter on a file path, which is empty for every page written through `put_page` — so no rule could target that whole class. A new `slug_filter` filters on the slug instead, and combines with the path filter when both are given.
+
+Also: the `integrity` source comment no longer documents a `--dry-run` subcommand form that exits with an error.
+
+### To take advantage of v0.42.73.0
+
+```bash
+gbrain upgrade
+gbrain import <dir> --json | jq .    # now parses
+gbrain integrity auto                # dead links reported separately
+```
+
+Nothing to configure for the gate — it runs on pull requests to this repository. If you maintain a fork and want it, the workflow needs an `ANTHROPIC_API_KEY` secret; without one it skips loudly rather than blocking anyone.
+
+### For contributors
+
+The gate went through six rounds against two independent blind reviewers, each judging cold. The findings that changed the design most were not exploits but false positives: a code fence that swallowed the rest of a description, an explanation written as bullet points scoring zero words, a word floor stricter than the published policy, and a comment telling contributors to reopen a pull request that was never closed. Those four descriptions are now permanent regression fixtures — a gate that insults a first-time contributor is worse than no gate. Two properties are deliberate and documented rather than fixed: the mechanical floor is a floor (a determined author clears it in seconds), and a bare URL in a cited reason still autolinks.
+
+Contributed by @YiconZiwei (#2655), @time-attack (#3764, #3759, #3726, #3751, #3739, and the gate groundwork in #3573/#3698).
+
 ## [0.42.72.1] - 2026-08-02
 
 **Every issue and pull request now needs a human-written paragraph and a screenshot of gbrain actually being used.**

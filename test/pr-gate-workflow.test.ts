@@ -39,6 +39,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   checkTitle,
+  isPermissionFailure,
+  PERMISSION_HELP,
   detectRedFlags,
   detectPolicyMisses,
   hasScreenshot,
@@ -321,6 +323,39 @@ describe('pr-gate script rubric pins', () => {
     // The safety rails that keep a false positive from closing a real PR.
     expect(SCRIPT).toContain('It NEVER closes a PR on its own');
     expect(SCRIPT).toContain('are evidence of a HUMAN');
+  });
+});
+
+describe('permission failures never red-X a PR (live incident, 2026-08-04)', () => {
+  // The gate's first live run: the repo's GITHUB_TOKEN was read-only, every
+  // comment/label call 403'd, the throw became exit 2, and an outside
+  // contributor's PR got a red X with no comment explaining it. The gate is
+  // advisory — it must degrade, not accuse.
+  test('GitHub permission/visibility failures are not the PR\'s fault', () => {
+    expect(isPermissionFailure(new Error('comment upsert failed: 403'))).toBe(true);
+    expect(isPermissionFailure(new Error('label add failed: 403'))).toBe(true);
+    expect(isPermissionFailure(new Error('label remove failed: 401'))).toBe(true);
+    expect(isPermissionFailure(new Error('pr fetch failed: 404'))).toBe(true);
+  });
+
+  test('real outages and bugs still fail visibly', () => {
+    expect(isPermissionFailure(new Error('comment upsert failed: 500'))).toBe(false);
+    expect(isPermissionFailure(new Error('comment upsert failed: 502'))).toBe(false);
+    expect(isPermissionFailure(new TypeError('x is not a function'))).toBe(false);
+    expect(isPermissionFailure(undefined)).toBe(false);
+  });
+
+  test('the operator, not the contributor, is told what to fix', () => {
+    const help = PERMISSION_HELP('comment upsert failed: 403');
+    expect(help).toContain('not a finding about this PR');
+    expect(help).toContain('Workflow permissions');
+    expect(help).toContain('ANTHROPIC_API_KEY');
+  });
+
+  test('the entry handler routes permission failures to exit 0', () => {
+    const handler = SCRIPT.slice(SCRIPT.indexOf('runGate(dir).then'));
+    expect(handler).toMatch(/isPermissionFailure\(err\)[\s\S]*process\.exit\(0\)/);
+    expect(handler).toMatch(/process\.exit\(2\)/);
   });
 });
 
