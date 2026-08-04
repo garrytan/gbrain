@@ -153,6 +153,33 @@ describe('put_page: dedup-resolved slug is fenced by the caller\'s own confineme
     expect(r.slug).toBe('wiki/agents/7/first');
   });
 
+  test('feature preserved: a bound client\'s in-fence redirect still dedups', async () => {
+    // The OAuth mirror of the case above — the fence must not break the happy
+    // path it was already allowing before this change.
+    const inFence = await importFromContent(engine, 'emp-bob/first', page('bob-id', 'Body.'), {
+      noEmbed: true,
+      sourceId: 'default',
+    });
+    expect(inFence.status).toBe('imported');
+
+    const ctx = makeCtx({ auth: boundAuth(['emp-bob/']) });
+    const r = await putEchoingVictimId(ctx, 'emp-bob/second', 'bob-id') as {
+      slug: string; status: string;
+    };
+    expect(r.status).toBe('skipped');
+    expect(r.slug).toBe('emp-bob/first');
+  });
+
+  test('fail-closed: viaSubagent without a subagentId is denied before any write', async () => {
+    // enforceSubagentSlugFence refuses rather than trusting a dispatcher that
+    // set viaSubagent but forgot the id — the branch slugUnderSubagentFence
+    // would otherwise evaluate against 'wiki/agents/undefined/'.
+    const ctx = makeCtx({ viaSubagent: true });
+    const p = putEchoingVictimId(ctx, 'wiki/agents/7/notes');
+    await expect(p).rejects.toBeInstanceOf(OperationError);
+    await expect(p).rejects.toThrow(/requires ctx\.subagentId/);
+  });
+
   test('regression: an unconfined caller keeps the dedup redirect', async () => {
     const r = await putEchoingVictimId(makeCtx(), 'anywhere/notes') as { slug: string; status: string };
     expect(r.status).toBe('skipped');
