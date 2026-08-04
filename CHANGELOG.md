@@ -2,6 +2,24 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.73.1] - 2026-08-05
+
+**Removes the PR gate that v0.42.73.0 added.** It cannot function on this repository, and it caused a real incident before that was understood.
+
+The gate needed two things this repository does not grant it: an `ANTHROPIC_API_KEY` Actions secret for its verdict, and read-write workflow permissions to post a comment or set a label. Without them it can only skip. Worse, on its first live runs a read-only token turned every API call into a 403, the code treated that as a crash, and the check went red on an outside contributor's pull request four times with no comment explaining why. That was fixed in v0.42.73.0, but a check that runs on every pull request and can never reach a verdict does not earn its place in the repository.
+
+Nothing that reviewed pull requests before v0.42.73.0 has changed. `CONTRIBUTING.md`'s requirement for a human-written intent paragraph and a screenshot still stands as written — it is enforced by maintainers reading pull requests, which is how it was enforced before.
+
+The code is preserved in git history at v0.42.73.0 and can be restored if the repository ever grants those permissions. If it is restored, the mechanical half — the intent and screenshot check, the version-first title rule, the red flags — should render to the Actions job summary instead of a comment, because that needs no token permission and no API key.
+
+### To take advantage of v0.42.73.1
+
+```bash
+gbrain upgrade
+```
+
+Nothing to change. Everything else v0.42.73.0 shipped — the five contributed correctness fixes, `slug_filter`, and the four dependency pins that cleared six CVEs — is unaffected and stays.
+
 ## [0.42.73.0] - 2026-08-04
 
 **Every incoming pull request now gets a verdict before anyone reads it — and five contributed fixes for silent wrong answers.**
