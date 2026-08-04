@@ -2148,6 +2148,161 @@ describe('gbrain-to-envelope exporter', () => {
     expect(result.stderr).not.toContain('no page carries');
   });
 
+  // --- Sweep 2.9: all four gbrain timeline-sentinel forms. ------------------
+  // gbrain's findTimelineSplitIndex (src/core/markdown.ts) accepts four forms:
+  // the two comment spellings, `--- timeline ---` under /^---\s+timeline\s+---$/i,
+  // and a bare `---` whose next non-blank line is a `## Timeline`/`## History`
+  // heading. The exporter knew three exact strings, so the case/space-tolerant
+  // decorated variants and the bare-`---` fallback cut in gbrain but exported
+  // as message text here. Each closed form joins the discipline the known forms
+  // already had: fence-masked candidates, a cut only past the last accepted
+  // turn, and a stderr line for the cut and for the refusal alike.
+
+  test('form 3 variants gbrain accepts (case, spacing) cut like the exact string', async () => {
+    const timelineTail = (sentinel: string) => `${TURNS}\n\n${sentinel}\n\n- 2026-02-02: gbrain added a timeline entry.`;
+    const result = await exportPages({
+      'a.md': gbrainPage(
+        ['type: conversation', 'title: Uppercase sentinel', 'source: chatgpt', 'memvelope_conversation_id: c-upper'].join('\n'),
+        timelineTail('--- TIMELINE ---'),
+      ),
+      'b.md': gbrainPage(
+        ['type: conversation', 'title: Wide sentinel', 'source: chatgpt', 'memvelope_conversation_id: c-wide'].join('\n'),
+        timelineTail('---   timeline   ---'),
+      ),
+    });
+
+    expect(result.exitCode).toBe(0);
+    assertEnvelopeV0(result.envelope, { conversations: 2, messages: 4 });
+    expect(JSON.stringify(result.envelope)).not.toContain('added a timeline entry');
+    expect(JSON.stringify(result.envelope)).not.toContain('TIMELINE');
+    expect(result.stderr).toContain('cut at the timeline sentinel');
+  });
+
+  test('form 4 - a bare --- above a Timeline or History heading cuts, as gbrain reads it', async () => {
+    const result = await exportPages({
+      'a.md': gbrainPage(
+        ['type: conversation', 'title: Bare rule form', 'source: chatgpt', 'memvelope_conversation_id: c-t4'].join('\n'),
+        `${TURNS}\n\n---\n\n## Timeline\n\n- 2026-02-02: gbrain added a timeline entry.`,
+      ),
+      'b.md': gbrainPage(
+        ['type: conversation', 'title: History heading', 'source: chatgpt', 'memvelope_conversation_id: c-hist'].join('\n'),
+        `${TURNS}\n\n---\n\n## History of the rollout\n\n- 2026-02-02: gbrain added a timeline entry.`,
+      ),
+    });
+
+    expect(result.exitCode).toBe(0);
+    assertEnvelopeV0(result.envelope, { conversations: 2, messages: 4 });
+    expect(JSON.stringify(result.envelope)).not.toContain('added a timeline entry');
+    expect(JSON.stringify(result.envelope)).not.toContain('## Timeline');
+    expect(JSON.stringify(result.envelope)).not.toContain('## History');
+    const texts = result.envelope.conversations.flatMap((c: any) => c.messages.map((m: any) => m.text));
+    for (const text of texts) expect(text).not.toContain('---');
+    expect(result.stderr).toContain('cut at the timeline sentinel');
+  });
+
+  test('form 4 does not fire without its heading: a trailing --- stays message text', async () => {
+    // The old header called bare `---` unrecognizable because it is also the
+    // legacy turn separator. The heading lookahead is what makes it safe: a
+    // rule with anything else below it - prose, or a heading the \b rejects -
+    // is still message text, byte for byte.
+    const result = await exportPages({
+      'a.md': gbrainPage(
+        ['type: conversation', 'title: Rule then prose', 'source: chatgpt', 'memvelope_conversation_id: c-rule'].join('\n'),
+        `${TURNS}\n\n---\n\nNot a heading, only prose after a rule.`,
+      ),
+      'b.md': gbrainPage(
+        ['type: conversation', 'title: Rule then near-heading', 'source: chatgpt', 'memvelope_conversation_id: c-near'].join('\n'),
+        `${TURNS}\n\n---\n\n## Timelines are lists, not the Timeline heading`,
+      ),
+    });
+
+    expect(result.exitCode).toBe(0);
+    assertEnvelopeV0(result.envelope, { conversations: 2, messages: 4 });
+    const [a, b] = result.envelope.conversations as Array<{ messages: Array<{ text: string }> }>;
+    expect(a.messages[1].text).toContain('---');
+    expect(a.messages[1].text).toContain('Not a heading, only prose after a rule.');
+    expect(b.messages[1].text).toContain('## Timelines are lists');
+    expect(result.stderr).not.toContain('cut at the timeline sentinel');
+  });
+
+  test('new sentinel forms follow the only-terminal rule: quoted mid-conversation they warn and do not cut', async () => {
+    // The mirror of D1 for the closed forms. gbrain's own parser cuts at the
+    // FIRST hit and truncates every turn below it - the upstream defect this
+    // exporter deliberately does not copy. A decorated or bare-rule sentinel
+    // with accepted turns after it is prose, kept, and reported.
+    const result = await exportPages({
+      'a.md': gbrainPage(
+        ['type: conversation', 'title: Quoted decorated', 'source: chatgpt', 'memvelope_conversation_id: c-q3'].join('\n'),
+        [
+          '**Me** (2026-02-01T09:00:00.000Z · m1):',
+          '',
+          'gbrain also accepts this spelling:',
+          '',
+          '--- TIMELINE ---',
+          '',
+          '---',
+          '',
+          '**Assistant** (2026-02-01T09:05:00.000Z · m2):',
+          '',
+          'And turns after it must survive.',
+        ].join('\n'),
+      ),
+      'b.md': gbrainPage(
+        ['type: conversation', 'title: Quoted bare rule', 'source: chatgpt', 'memvelope_conversation_id: c-q4'].join('\n'),
+        [
+          '**Me** (2026-02-01T09:00:00.000Z · m1):',
+          '',
+          'The fallback form looks like this:',
+          '',
+          '---',
+          '',
+          '## Timeline',
+          '',
+          'and gbrain reads a real one only after the last turn.',
+          '',
+          '---',
+          '',
+          '**Assistant** (2026-02-01T09:05:00.000Z · m2):',
+          '',
+          'And turns after it must survive.',
+        ].join('\n'),
+      ),
+    });
+
+    expect(result.exitCode).toBe(0);
+    assertEnvelopeV0(result.envelope, { conversations: 2, messages: 4 });
+    const [a, b] = result.envelope.conversations as Array<{ messages: Array<{ text: string }> }>;
+    expect(a.messages[0].text).toContain('--- TIMELINE ---');
+    expect(a.messages[1].text).toContain('must survive');
+    expect(b.messages[0].text).toContain('## Timeline');
+    expect(b.messages[0].text).toContain('---');
+    expect(b.messages[1].text).toContain('must survive');
+    expect(result.stderr).toContain('is not a timeline boundary');
+    expect(result.stderr).not.toContain('cut at the timeline sentinel');
+  });
+
+  test('the tight comment and exact decorated forms cut too (all four forms covered)', async () => {
+    // Forms 1 and 2 plus the exact decorated string predate this sweep; pinned
+    // here so the "all four forms" claim has a receipt per form, not a set
+    // membership nobody exercises.
+    const timelineTail = (sentinel: string) => `${TURNS}\n\n${sentinel}\n\n- 2026-02-02: gbrain added a timeline entry.`;
+    const result = await exportPages({
+      'a.md': gbrainPage(
+        ['type: conversation', 'title: Tight comment', 'source: chatgpt', 'memvelope_conversation_id: c-tight'].join('\n'),
+        timelineTail('<!--timeline-->'),
+      ),
+      'b.md': gbrainPage(
+        ['type: conversation', 'title: Exact decorated', 'source: chatgpt', 'memvelope_conversation_id: c-exact'].join('\n'),
+        timelineTail('--- timeline ---'),
+      ),
+    });
+
+    expect(result.exitCode).toBe(0);
+    assertEnvelopeV0(result.envelope, { conversations: 2, messages: 4 });
+    expect(JSON.stringify(result.envelope)).not.toContain('added a timeline entry');
+    expect(result.stderr).toContain('cut at the timeline sentinel');
+  });
+
   test('a missing directory argument or unreadable path exits 1', async () => {
     const noArgs = await run(EXPORTER_PATH, []);
     expect(noArgs.exitCode).toBe(1);

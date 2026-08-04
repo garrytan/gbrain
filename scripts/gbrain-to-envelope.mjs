@@ -105,17 +105,25 @@
  * narrower: an exposed line still becomes a boundary only by carrying the
  * next expected clock.
  *
- * The body is cut at a gbrain timeline sentinel - a line that is exactly
- * `<!-- timeline -->`, `<!--timeline-->` or `--- timeline ---` after
- * trimming - so a page's timeline never becomes message text. Only a sentinel
- * with no accepted turn after it is treated as a boundary; one with turns
- * below it is message text and is reported rather than cut at. A sentinel
- * standing alone on its line INSIDE the final message still cuts - from this
- * side of the page it is indistinguishable from gbrain's real delimiter - and
- * the cut is what the timeline note on stderr is counting. The fourth form
- * gbrain's own parser accepts (a bare `---` followed by `## Timeline`) is
- * deliberately NOT recognized here, because `---` is also the legacy
- * turn separator.
+ * The body is cut at a gbrain timeline sentinel, in all four forms gbrain's
+ * own findTimelineSplitIndex accepts (src/core/markdown.ts, mirrored in
+ * timelineSentinelAt below): `<!-- timeline -->`, `<!--timeline-->`, the
+ * decorated rule under /^---\s+timeline\s+---$/i in any case and spacing, and
+ * a bare `---` with content above it whose next non-blank line is a
+ * `## Timeline` or `## History` heading. So a page's timeline never becomes
+ * message text under any spelling gbrain itself would split on. Only a
+ * sentinel with no accepted turn after it is treated as a boundary; one with
+ * turns below it is message text and is reported rather than cut at - where
+ * gbrain's parser cuts at the FIRST hit and truncates every turn below, the
+ * one deliberate divergence, made because a quoted sentinel must not delete
+ * the turns after it. A sentinel standing alone on its line INSIDE the final
+ * message still cuts - from this side of the page it is indistinguishable
+ * from gbrain's real delimiter, and gbrain's own parser reads that page the
+ * same way - and the cut is what the timeline note on stderr is counting.
+ * The bare-`---` form is safe against the legacy turn separator because of
+ * its heading lookahead: a separator's next non-blank line is a turn header,
+ * never the Timeline/History heading, and a final message ending in a plain
+ * `---` with prose (or nothing) below keeps its bytes.
  *
  * Frontmatter is read line by line: top-level scalars only, in the plain,
  * single-quoted, double-quoted (escapes decoded, including `\U` beyond the
@@ -183,8 +191,11 @@
  *     stderr when non-blank content is dropped this way.
  *   - Everything after a timeline sentinel that no accepted turn follows -
  *     a real gbrain timeline, or the tail of a final message that quoted
- *     the sentinel. envelope-v0 has no field for a timeline. Each cut is
- *     warned per page, naming the body line, and tallied in the closing
+ *     the sentinel - in any of the four forms above, the bare-`---` form
+ *     included: a final message that legitimately ends with `---` and a
+ *     `## Timeline` heading is cut, because gbrain's own parser reads that
+ *     page the same way. envelope-v0 has no field for a timeline. Each cut
+ *     is warned per page, naming the body line, and tallied in the closing
  *     note.
  *   - A recorded `ts` that is not a strict RFC 3339 `date-time` - which is
  *     what the schema's `format: date-time` names. Emitted as null, with a
@@ -825,7 +836,37 @@ const TURN_HEADER = /^\*\*(Me|Assistant)\*\* \((.*?) · (.*)\):$/;
 const RECORDED_HEADER = /^\*\*(Me|Assistant)\*\* \((\d{4}-\d{2}-\d{2} \d{2}:\d{2})\):[ \t]*$/;
 // A whole line, after trimming - never a substring. A message that quotes the
 // sentinel mid-sentence is prose, and cutting there destroys every later turn.
+// gbrain's findTimelineSplitIndex (src/core/markdown.ts) accepts four forms;
+// the set holds the exact spellings, DECORATED_SENTINEL the case/space-tolerant
+// `--- timeline ---` family, and timelineSentinelAt adds the fourth - a bare
+// `---` whose next non-blank line is a `## Timeline`/`## History` heading.
 const TIMELINE_SENTINELS = new Set(['<!-- timeline -->', '<!--timeline-->', '--- timeline ---']);
+const DECORATED_SENTINEL = /^---\s+timeline\s+---$/i;
+const TIMELINE_HEADING = /^##\s+(timeline|history)\b/i;
+
+// Decision-identical to gbrain's own reading (findTimelineSplitIndex; keep in
+// lockstep like headerClock): a bare `---` is a sentinel only when something
+// stands above it and the next non-blank line is the Timeline/History heading.
+// The two conditions are checked heading-first here because a legacy body puts
+// a `---` separator between every pair of turns, and the lookahead ends at the
+// very next non-blank line where the leading-content scan walks the whole
+// prefix. The caller keeps its fence mask: a fenced line is sample text, never
+// a candidate - the one deliberate divergence from gbrain's fence-blind parser,
+// and it predates this predicate.
+function timelineSentinelAt(lines, i) {
+  const trimmed = lines[i].trim();
+  if (TIMELINE_SENTINELS.has(trimmed) || DECORATED_SENTINEL.test(trimmed)) return true;
+  if (trimmed !== '---') return false;
+  for (let j = i + 1; j < lines.length; j += 1) {
+    const next = lines[j].trim();
+    if (next.length === 0) continue;
+    if (!TIMELINE_HEADING.test(next)) return false;
+    // gbrain skips a rule with nothing above it, so a body OPENING on
+    // `---` + `## Timeline` is content there and stays content here.
+    return lines.slice(0, i).join('\n').trim().length > 0;
+  }
+  return false;
+}
 const NO_TIMESTAMP = 'no timestamp';
 const FALLBACK_PROVIDER = 'unknown';
 const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
@@ -1085,7 +1126,7 @@ function cutAndSlice(lines, anchors, fenced, warn, stripLegacySeparator, build) 
   const sentinels = [];
   for (let i = 0; i < lines.length; i += 1) {
     if (fenced[i]) continue;
-    if (TIMELINE_SENTINELS.has(lines[i].trim())) sentinels.push(i);
+    if (timelineSentinelAt(lines, i)) sentinels.push(i);
   }
 
   // Cut only at a sentinel that no accepted turn follows. gbrain writes the
