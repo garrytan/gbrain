@@ -1746,6 +1746,18 @@ const list_pages: Operation = {
       type: 'string',
       description: 'ISO date (YYYY-MM-DD) or full timestamp. Returns pages with updated_at > value.',
     },
+    // Surface PageFilters.slugPrefix the same way — engines have implemented
+    // it all along (LIKE range scan on the (source_id, slug) btree, meta-
+    // characters escaped), but the op never passed it, so slug-path-organized
+    // collections (sources/youtube/<channel>/…) could not be enumerated over
+    // MCP: slugs are not searchable text, and no other list filter reaches them.
+    slug_prefix: {
+      type: 'string',
+      description:
+        "Filter to slugs starting with this literal prefix (e.g. 'sources/youtube/'). " +
+        "Plain string-prefix semantics — include the trailing '/' to stay inside a " +
+        "path segment ('media/x' also matches 'media/xerox').",
+    },
     sort: {
       type: 'string',
       enum: [...LIST_PAGES_SORT_VALUES],
@@ -1807,6 +1819,7 @@ const list_pages: Operation = {
       offset,
       includeDeleted: (p.include_deleted as boolean) === true,
       updated_after: typeof p.updated_after === 'string' ? p.updated_after : undefined,
+      slugPrefix: typeof p.slug_prefix === 'string' && p.slug_prefix.length > 0 ? p.slug_prefix : undefined,
       sort,
       ...scope,
     });
@@ -1824,7 +1837,7 @@ const list_pages: Operation = {
       console.error(
         `[list_pages] output truncated at ${limit} rows (default 50). ` +
         `Pass an explicit limit, page through with sort=updated_asc + ` +
-        `updated_after=<last row's updated_at>, or narrow with type/tag.`,
+        `updated_after=<last row's updated_at>, or narrow with type/tag/slug_prefix.`,
       );
     }
     return pages.map(pg => ({
