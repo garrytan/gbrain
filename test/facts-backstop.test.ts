@@ -35,6 +35,7 @@ afterAll(async () => {
 });
 
 afterEach(() => {
+  embeddedTexts = [];
   __setChatTransportForTests(null);
   resetGateway();
   __resetFactsQueueForTests();

@@ -43,4 +43,3 @@ historical tiers leave a page retryable, and high-only sync does not embed or
 store medium/low/invalid candidates. Existing CLI and cycle result aggregation
 remain covered by their typed result paths; add focused behavioral coverage
 where a direct public output can be exercised without new mocking seams.
-

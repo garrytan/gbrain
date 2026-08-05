@@ -16,6 +16,7 @@
  */
 
 import { describe, test, expect, afterEach } from 'bun:test';
+import { withEnv } from './helpers/with-env.ts';
 import {
   __setChatTransportForTests,
   __setEmbedTransportForTests,
@@ -147,7 +148,7 @@ describe('extractFactsFromTurn — B1 end-to-end smoke', () => {
   });
 
   test('admission: high and medium embed, low is rejected', async () => {
-    process.env.OPENAI_API_KEY = 'test';
+    await withEnv({ OPENAI_API_KEY: 'test' }, async () => {
     const embeddedTexts: string[] = [];
     configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536, chat_model: 'openai:gpt-4o-mini', env: { OPENAI_API_KEY: 'test' } } as any);
     __setEmbedTransportForTests(async ({ values }: { values: string[] }) => {
@@ -170,10 +171,23 @@ describe('extractFactsFromTurn — B1 end-to-end smoke', () => {
     expect(outcome).toEqual(expect.objectContaining({ ok: true, notability_rejected: 1 }));
     if (outcome.ok) expect(outcome.facts.map((fact) => fact.fact)).toEqual(['H', 'M']);
     expect(embeddedTexts).toEqual(['H', 'M']);
+    });
+  });
+
+  test('admission: valid first then invalid later embeds nothing in strict mode', async () => {
+    await withEnv({ OPENAI_API_KEY: 'test' }, async () => {
+      const embeddedTexts: string[] = [];
+      configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536, chat_model: 'openai:gpt-4o-mini', env: { OPENAI_API_KEY: 'test' } } as any);
+      __setEmbedTransportForTests(async ({ values }: { values: string[] }) => { embeddedTexts.push(...values); return { embeddings: values.map(() => Array(1536).fill(0.1)), usage: { tokens: 1 }, values, warnings: [] } as any; });
+      __setChatTransportForTests(async (): Promise<ChatResult> => ({ text: JSON.stringify({ facts: [{ fact: 'H', kind: 'fact', notability: 'high' }, { fact: 'bad', kind: 'fact', notability: 'urgent' }] }), blocks: [], stopReason: 'end', usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 }, model: 'test:stub', providerId: 'test' }));
+      const outcome = await extractFactsFromTurnWithOutcome({ turnText: 'content', source: 'test', notabilityAdmission: { allowed: ['high', 'medium'], invalid: 'fail' } });
+      expect(outcome).toEqual({ ok: false, reason: 'malformed_output' });
+      expect(embeddedTexts).toEqual([]);
+    });
   });
 
   test('admission: missing tier fails strictly before embedding', async () => {
-    process.env.OPENAI_API_KEY = 'test';
+    await withEnv({ OPENAI_API_KEY: 'test' }, async () => {
     const embeddedTexts: string[] = [];
     configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536, chat_model: 'openai:gpt-4o-mini', env: { OPENAI_API_KEY: 'test' } } as any);
     __setEmbedTransportForTests(async ({ values }: { values: string[] }) => {
@@ -188,10 +202,11 @@ describe('extractFactsFromTurn — B1 end-to-end smoke', () => {
     const outcome = await extractFactsFromTurnWithOutcome({ turnText: 'content', source: 'test', notabilityAdmission: { allowed: ['high', 'medium'], invalid: 'fail' } });
     expect(outcome).toEqual({ ok: false, reason: 'malformed_output' });
     expect(embeddedTexts).toEqual([]);
+    });
   });
 
   test('admission: unknown tier fails strictly before embedding', async () => {
-    process.env.OPENAI_API_KEY = 'test';
+    await withEnv({ OPENAI_API_KEY: 'test' }, async () => {
     const embeddedTexts: string[] = [];
     configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536, chat_model: 'openai:gpt-4o-mini', env: { OPENAI_API_KEY: 'test' } } as any);
     __setEmbedTransportForTests(async ({ values }: { values: string[] }) => {
@@ -206,10 +221,11 @@ describe('extractFactsFromTurn — B1 end-to-end smoke', () => {
     const outcome = await extractFactsFromTurnWithOutcome({ turnText: 'content', source: 'test', notabilityAdmission: { allowed: ['high', 'medium'], invalid: 'fail' } });
     expect(outcome).toEqual({ ok: false, reason: 'malformed_output' });
     expect(embeddedTexts).toEqual([]);
+    });
   });
 
   test('admission: high-only drop keeps high and skips invalid/lower tiers', async () => {
-    process.env.OPENAI_API_KEY = 'test';
+    await withEnv({ OPENAI_API_KEY: 'test' }, async () => {
     const embeddedTexts: string[] = [];
     configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536, chat_model: 'openai:gpt-4o-mini', env: { OPENAI_API_KEY: 'test' } } as any);
     __setEmbedTransportForTests(async ({ values }: { values: string[] }) => {
@@ -229,5 +245,6 @@ describe('extractFactsFromTurn — B1 end-to-end smoke', () => {
     expect(outcome).toEqual(expect.objectContaining({ ok: true, notability_rejected: 2 }));
     if (outcome.ok) expect(outcome.facts.map((fact) => fact.fact)).toEqual(['H']);
     expect(embeddedTexts).toEqual(['H']);
+    });
   });
 });

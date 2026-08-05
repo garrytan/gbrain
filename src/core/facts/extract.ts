@@ -321,6 +321,16 @@ export async function extractFactsFromTurnWithOutcome(
   }
   const parsedRaw = parsedShape.facts;
 
+  // Strict admission is batch-atomic at the embedding boundary: validate the
+  // entire bounded candidate batch before allowing any candidate to embed.
+  if (input.notabilityAdmission?.invalid === 'fail') {
+    for (const candidate of parsedRaw.slice(0, cap)) {
+      if (!['high', 'medium', 'low'].includes(candidate.notability || '')) {
+        return { ok: false, reason: 'malformed_output' };
+      }
+    }
+  }
+
   const facts: ExtractedFact[] = [];
   let notability_rejected = 0;
   for (const candidate of parsedRaw.slice(0, cap)) {
