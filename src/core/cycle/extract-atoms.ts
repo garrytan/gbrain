@@ -57,6 +57,7 @@ import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
+import { resolveModel } from '../model-config.ts';
 
 const DEFAULT_BUDGET_USD = 0.3;
 const DEFAULT_EXTRACT_ATOMS_MODEL = 'anthropic:claude-haiku-4-5';
@@ -419,6 +420,11 @@ export async function runPhaseExtractAtoms(
 ): Promise<PhaseResult> {
   const sourceId = opts.sourceId ?? 'default';
   const chat = opts._chat ?? gatewayChat;
+  const extractionModel = await resolveModel(engine, {
+    configKey: 'models.cycle.extract_atoms',
+    tier: 'utility',
+    fallback: DEFAULT_EXTRACT_ATOMS_MODEL,
+  });
 
   // 1a. Get transcripts (test seam OR production discovery).
   //     v0.41.2.1: config loader switched to loadConfigWithEngine() so the
@@ -564,18 +570,15 @@ export async function runPhaseExtractAtoms(
   const failures: Array<{ source: string; error: string }> = [];
   let estimatedSpendUsd = 0;
   let budgetExhausted = false;
-  let extractModel = DEFAULT_EXTRACT_ATOMS_MODEL;
   let budgetCap = DEFAULT_BUDGET_USD;
   try {
-    const configuredModel = await engine.getConfig('models.dream.extract_atoms');
-    if (configuredModel) extractModel = configuredModel;
     const configuredBudget = await engine.getConfig('cycle.extract_atoms.budget_usd');
     if (configuredBudget) {
       const n = Number(configuredBudget);
       if (Number.isFinite(n) && n > 0) budgetCap = n;
     }
   } catch {
-    // Keep safe defaults: Haiku + $0.30.
+    // Keep safe default budget.
   }
   // A cost cap is only meaningful for a model the tracker can price.
   // BudgetTracker.reserve() hard-fails with BudgetExhausted(reason:'no_pricing')
@@ -583,10 +586,10 @@ export async function runPhaseExtractAtoms(
   // it warns once and proceeds. Because this phase always set a cap, every
   // non-Anthropic model tripped that hard-fail on the first item, latched
   // `budgetExhausted`, and skipped the entire workload while reporting ok.
-  const priceable = isModelPriceable(extractModel, 'chat');
+  const priceable = isModelPriceable(extractionModel, 'chat');
   if (!priceable) {
     console.error(
-      `[extract_atoms] model "${extractModel}" is not in the pricing maps; ` +
+      `[extract_atoms] model "${extractionModel}" is not in the pricing maps; ` +
         `running without a cost gate (a cap cannot be enforced on an unpriced model).`,
     );
   }
@@ -630,7 +633,7 @@ export async function runPhaseExtractAtoms(
     const originLabel = item.kind === 'transcript' ? item.filePath : item.slug;
     try {
       const result = await chat({
-        model: extractModel,
+        model: extractionModel,
         system: EXTRACT_PROMPT,
         messages: [
           {
@@ -798,7 +801,7 @@ export async function runPhaseExtractAtoms(
       failures,
       estimated_spend_usd: estimatedSpendUsd,
       budget_usd: budgetCap,
-      model: extractModel,
+      model: extractionModel,
       budget_exhausted: budgetExhausted,
       source_id: sourceId,
       dry_run: opts.dryRun ?? false,

@@ -246,6 +246,31 @@ describe('v0.41.2.1: discoverExtractablePages SQL contract', () => {
 });
 
 describe('v0.41.2.1: runPhaseExtractAtoms — dual-source merge + idempotency', () => {
+  test('uses the Haiku utility tier for extraction by default', async () => {
+    let seenModel: string | undefined;
+    const chat = async (o: ChatOpts): Promise<ChatResult> => {
+      seenModel = o.model;
+      const text = `[{"title":"x","atom_type":"insight","body":"b"}]`;
+      return {
+        text,
+        blocks: [{ type: 'text', text }],
+        stopReason: 'end',
+        usage: { input_tokens: 100, output_tokens: 50, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: o.model ?? 'anthropic:claude-haiku-4-5-20251001',
+        providerId: 'anthropic',
+      };
+    };
+
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [{ filePath: '/T.txt', content: 'tc', contentHash: 'tchash1234567890ab' }],
+      _pages: [],
+      _chat: chat,
+    });
+
+    expect(seenModel).toBe('anthropic:claude-haiku-4-5-20251001');
+    expect(result.details?.model).toBe('anthropic:claude-haiku-4-5-20251001');
+  });
+
   test('dual-source merge: transcripts win on contentHash collision', async () => {
     const chat = stubChat(`[{"title":"x","atom_type":"insight","body":"b"}]`);
     const result = await runPhaseExtractAtoms(engine, {
