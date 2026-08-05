@@ -25,7 +25,8 @@ import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
 import { MinionQueue } from '../minions/queue.ts';
 import { waitForCompletion, TimeoutError } from '../minions/wait-for-completion.ts';
-import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
+import { isSubagentStopReason } from '../minions/types.ts';
+import type { MinionJobInput, MinionJobStatus, SubagentHandlerData, SubagentStopReason } from '../minions/types.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
 // #2415: allow-list + output-root resolution shared with the synthesize
@@ -214,13 +215,17 @@ export async function runPhasePatterns(
     // Postgres (a real worker process claims the job there).
     await runPgliteSubagentsInline(engine, queue, childQueueName, opts.yieldDuringPhase);
 
-    let outcome: string;
+    let outcome: MinionJobStatus | 'timeout';
+    let childStopReason: SubagentStopReason | 'unknown' | null = null;
     try {
       const final = await waitForCompletion(queue, job.id, {
         timeoutMs: budgets.waitTimeoutMs,
         pollMs: 5 * 1000,
       });
       outcome = final.status;
+      if (outcome === 'completed') {
+        childStopReason = parseSubagentStopReason(final.result);
+      }
     } catch (e) {
       if (e instanceof TimeoutError) {
         outcome = 'timeout';
@@ -253,6 +258,7 @@ export async function runPhasePatterns(
       patterns_written: writtenRefs.length,
       reverse_write_count: reverseWriteCount,
       child_outcome: outcome,
+      child_stop_reason: childStopReason,
       job_id: job.id,
     };
 
@@ -260,19 +266,21 @@ export async function runPhasePatterns(
     // returned status:ok even when the subagent timed out (e.g. no
     // subagent-capable worker slot free for the whole wait window) and zero
     // pattern pages were written — a silent no-op for days.
-    if (outcome !== 'complete') {
+    const childSucceeded = outcome === 'completed' && childStopReason === 'end_turn';
+    const effectiveOutcome = outcome === 'completed' ? (childStopReason ?? 'unknown') : outcome;
+    if (!childSucceeded) {
       if (writtenRefs.length === 0) {
         return {
           phase: 'patterns',
           status: 'fail',
           duration_ms: 0,
-          summary: `pattern-detection subagent job ${job.id} ended '${outcome}'; nothing was written`,
+          summary: `pattern-detection subagent job ${job.id} ended '${effectiveOutcome}'; nothing was written`,
           details,
           error: makeError(
-            outcome === 'timeout' ? 'Timeout' : 'InternalError',
-            `PATTERNS_CHILD_${outcome.toUpperCase()}`,
-            `subagent job ${job.id} outcome '${outcome}' with zero pattern pages written`,
-            outcome === 'timeout'
+            effectiveOutcome === 'timeout' ? 'Timeout' : 'InternalError',
+            `PATTERNS_CHILD_${effectiveOutcome.toUpperCase()}`,
+            `subagent job ${job.id} outcome '${effectiveOutcome}' with zero pattern pages written`,
+            effectiveOutcome === 'timeout'
               ? 'A timeout with zero writes usually means no subagent-capable worker claimed the job. Check `gbrain jobs list` and worker capacity.'
               : undefined,
           ),
@@ -283,18 +291,23 @@ export async function runPhasePatterns(
         phase: 'patterns',
         status: 'warn',
         duration_ms: 0,
-        summary: `${writtenRefs.length} pattern page(s) written but subagent job ${job.id} ended '${outcome}'`,
+        summary: `${writtenRefs.length} pattern page(s) written but subagent job ${job.id} ended '${effectiveOutcome}'`,
         details,
       };
     }
 
-    return ok(`${writtenRefs.length} pattern page(s) written/updated (${outcome})`, details);
+    return ok(`${writtenRefs.length} pattern page(s) written/updated (${outcome}/${childStopReason})`, details);
   } catch (e) {
     return failed(makeError('InternalError', 'PATTERNS_PHASE_FAIL',
       e instanceof Error ? (e.message || 'patterns phase threw') : String(e)));
   } finally {
     void start;
   }
+}
+
+function parseSubagentStopReason(result: Record<string, unknown> | null): SubagentStopReason | 'unknown' {
+  const value = result?.stop_reason;
+  return isSubagentStopReason(value) ? value : 'unknown';
 }
 
 // ── Config ────────────────────────────────────────────────────────────
