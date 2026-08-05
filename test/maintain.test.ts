@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   extractCycleFreshnessSourceIds,
+  maintainExitCode,
   parseMaintainArgs,
 } from '../src/commands/maintain.ts';
 import type { Check } from '../src/commands/doctor.ts';
@@ -58,5 +59,23 @@ describe('cycle freshness source extraction', () => {
     ];
 
     expect(extractCycleFreshnessSourceIds(checks)).toEqual([]);
+  });
+});
+
+describe('maintain process verdict', () => {
+  const report = (status: 'ok' | 'applied' | 'blocked') => ({
+    mode: 'safe' as const,
+    before: { health: {} as any, doctor: {} as any },
+    actions: [{ name: 'cycle_freshness', status, message: status }],
+    after: { health: {} as any, doctor: {} as any },
+  });
+
+  test('returns non-zero when any requested action is blocked', () => {
+    expect(maintainExitCode(report('blocked'))).toBe(1);
+  });
+
+  test('keeps successful and help-only runs green', () => {
+    expect(maintainExitCode(report('applied'))).toBe(0);
+    expect(maintainExitCode()).toBe(0);
   });
 });
