@@ -122,6 +122,22 @@ vector spaces in one index, degrading retrieval with nothing in the logs.
   pages behind, and `gbrain embed --stale --include-null-signature` re-embeds
   them.
 
+Remote MCP operators use the same opt-in through the Minions queue:
+
+```json
+{
+  "name": "embed",
+  "data": {
+    "stale": true,
+    "sourceId": "default",
+    "includeNullSignature": true
+  }
+}
+```
+
+The flag is strict-boolean and remains off when omitted, so routine stale jobs
+keep the grandfathering behavior.
+
 ## Reranker
 
 Migrating embeddings does not touch the reranker. If

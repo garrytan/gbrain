@@ -15,6 +15,7 @@ import {
   resolvePaceMode,
   loadPaceModeConfig,
   readPaceEnv,
+  isPaceMode,
   type PaceKeyOverrides,
 } from '../core/pace-mode.ts';
 import { tryAcquireDbLock, type DbLockHandle } from '../core/db-lock.ts';
@@ -550,6 +551,20 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
 export function parsePaceArgs(
   args: string[],
 ): { perCallMode?: string; perCall?: PaceKeyOverrides } | undefined {
+  const parseMode = (raw: string): string => {
+    const normalized = raw.trim().toLowerCase();
+    if (!isPaceMode(normalized)) {
+      throw new Error('--pace must be one of off, gentle, balanced, aggressive');
+    }
+    return normalized;
+  };
+  const parseMaxConcurrency = (raw: string): number => {
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < 1 || value > 256) {
+      throw new Error('--pace-max-concurrency must be an integer in [1, 256]');
+    }
+    return value;
+  };
   let perCallMode: string | undefined;
   let perCall: PaceKeyOverrides | undefined;
   for (let i = 0; i < args.length; i++) {
@@ -557,18 +572,76 @@ export function parsePaceArgs(
     if (a === '--pace') {
       perCallMode = 'balanced';
     } else if (a.startsWith('--pace=')) {
-      perCallMode = a.slice('--pace='.length) || 'balanced';
+      perCallMode = parseMode(a.slice('--pace='.length) || 'balanced');
     } else if (a.startsWith('--pace-max-concurrency=')) {
-      const n = parseInt(a.slice('--pace-max-concurrency='.length), 10);
-      if (Number.isFinite(n) && n >= 1) (perCall ??= {}).maxConcurrency = n;
+      (perCall ??= {}).maxConcurrency = parseMaxConcurrency(a.slice('--pace-max-concurrency='.length));
     } else if (a === '--pace-max-concurrency') {
-      const n = parseInt(args[i + 1] ?? '', 10);
-      if (Number.isFinite(n) && n >= 1) (perCall ??= {}).maxConcurrency = n;
+      (perCall ??= {}).maxConcurrency = parseMaxConcurrency(args[i + 1] ?? '');
       i++; // consume the value token so positional parsing can't read it as a slug (Codex P2)
     }
   }
   if (perCallMode === undefined && perCall === undefined) return undefined;
   return { ...(perCallMode !== undefined && { perCallMode }), ...(perCall && { perCall }) };
+}
+
+function embedFlagValue(args: string[], flag: string): string | undefined {
+  const idx = args.indexOf(flag);
+  if (idx < 0) return undefined;
+  const value = args[idx + 1];
+  return value && !value.startsWith('--') ? value : undefined;
+}
+
+function parseEmbedBatchSize(args: string[]): number | undefined {
+  const raw = embedFlagValue(args, '--batch-size');
+  if (!raw) return undefined;
+  return Math.max(1, Math.min(10_000, parseInt(raw, 10) || 0));
+}
+
+function parseEmbedSlugs(args: string[]): string[] | undefined {
+  const idx = args.indexOf('--slugs');
+  if (idx < 0) return undefined;
+  const slugs: string[] = [];
+  for (let i = idx + 1; i < args.length && !args[i].startsWith('--'); i++) {
+    slugs.push(args[i]);
+  }
+  return slugs;
+}
+
+function parseEmbedPositionalSlug(args: string[]): string | undefined {
+  if (args.includes('--slugs')) return undefined;
+  const valueFlags = new Set(['--source', '--batch-size', '--priority', '--pace-max-concurrency']);
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (valueFlags.has(arg)) {
+      i++;
+      continue;
+    }
+    if (!arg.startsWith('--')) return arg;
+  }
+  return undefined;
+}
+
+export function buildEmbedBackgroundJobData(cleanArgs: string[]): Record<string, unknown> {
+  const slugs = parseEmbedSlugs(cleanArgs);
+  const slug = parseEmbedPositionalSlug(cleanArgs);
+  const sourceId = embedFlagValue(cleanArgs, '--source');
+  const batchSize = parseEmbedBatchSize(cleanArgs);
+  const priority = embedFlagValue(cleanArgs, '--priority') === 'recent' ? 'recent' as const : undefined;
+  const pace = parsePaceArgs(cleanArgs);
+
+  return {
+    all: cleanArgs.includes('--all'),
+    stale: cleanArgs.includes('--stale'),
+    dryRun: cleanArgs.includes('--dry-run'),
+    ...(slug !== undefined && { slug }),
+    ...(slugs !== undefined && { slugs }),
+    ...(sourceId !== undefined && { sourceId }),
+    ...(batchSize !== undefined && { batchSize }),
+    ...(priority !== undefined && { priority }),
+    catchUp: cleanArgs.includes('--catch-up'),
+    includeNullSignature: cleanArgs.includes('--include-null-signature'),
+    ...(pace && { pace }),
+  };
 }
 
 export async function runEmbed(engine: BrainEngine, args: string[]): Promise<EmbedResult | undefined> {
@@ -580,40 +653,24 @@ export async function runEmbed(engine: BrainEngine, args: string[]): Promise<Emb
       engine,
       args,
       jobName: 'embed',
-      paramBuilder: (cleanArgs) => {
-        const slugsI = cleanArgs.indexOf('--slugs');
-        const srcI = cleanArgs.indexOf('--source');
-        return {
-          all: cleanArgs.includes('--all'),
-          stale: cleanArgs.includes('--stale'),
-          dryRun: cleanArgs.includes('--dry-run'),
-          slugs: slugsI >= 0 ? cleanArgs.slice(slugsI + 1).filter(a => !a.startsWith('--')) : undefined,
-          sourceId: srcI >= 0 ? cleanArgs[srcI + 1] : undefined,
-          // CX1+CX5: carry explicit pace overrides into the `embed` job payload
-          // (the job name CLI --background actually submits). The handler
-          // re-resolves env > config > bundle at execution.
-          ...(parsePaceArgs(cleanArgs) && { pace: parsePaceArgs(cleanArgs) }),
-        };
-      },
+      // Carry the complete foreground option set into the durable job. The
+      // worker validates this untrusted JSON again before calling runEmbedCore.
+      paramBuilder: buildEmbedBackgroundJobData,
       source: 'cli',
     });
     if (backgrounded) return;
     // PGLite degraded to inline — fall through.
   }
 
-  const slugsIdx = args.indexOf('--slugs');
+  const slugs = parseEmbedSlugs(args);
   const all = args.includes('--all');
   const stale = args.includes('--stale');
   const dryRun = args.includes('--dry-run');
   // v0.31.12: --source <id> scopes to a single source.
-  const sourceIdx = args.indexOf('--source');
-  const sourceId = sourceIdx >= 0 ? args[sourceIdx + 1] : undefined;
+  const sourceId = embedFlagValue(args, '--source');
   // v0.41.18.0 (A13): --batch-size N, --priority recent, --catch-up flags.
-  const batchSizeIdx = args.indexOf('--batch-size');
-  const batchSizeRaw = batchSizeIdx >= 0 ? args[batchSizeIdx + 1] : undefined;
-  const batchSize = batchSizeRaw ? Math.max(1, Math.min(10_000, parseInt(batchSizeRaw, 10) || 0)) : undefined;
-  const priorityIdx = args.indexOf('--priority');
-  const priorityRaw = priorityIdx >= 0 ? args[priorityIdx + 1] : undefined;
+  const batchSize = parseEmbedBatchSize(args);
+  const priorityRaw = embedFlagValue(args, '--priority');
   const priority = priorityRaw === 'recent' ? 'recent' as const : undefined;
   const catchUp = args.includes('--catch-up');
   // #3391: re-embed pages that predate the embedding_signature stamp too.
@@ -621,13 +678,13 @@ export async function runEmbed(engine: BrainEngine, args: string[]): Promise<Emb
   const pace = parsePaceArgs(args);
 
   let opts: EmbedOpts;
-  if (slugsIdx >= 0) {
-    opts = { slugs: args.slice(slugsIdx + 1).filter(a => !a.startsWith('--')), dryRun, sourceId, batchSize, priority, catchUp };
+  if (slugs !== undefined) {
+    opts = { slugs, dryRun, sourceId, batchSize, priority, catchUp };
   } else if (all || stale) {
     // E-2: CLI-only single-flight for stale runs (the minion path locks itself).
     opts = { all, stale, dryRun, sourceId, batchSize, priority, catchUp, ...(pace && { pace }), ...(stale && { singleFlight: true }), ...(includeNullSignature && { includeNullSignature: true }) };
   } else {
-    const slug = args.find(a => !a.startsWith('--'));
+    const slug = parseEmbedPositionalSlug(args);
     if (!slug) {
       serr('Usage: gbrain embed [<slug>|--all|--stale|--slugs s1 s2 ...] [--dry-run] [--batch-size N] [--priority recent] [--catch-up] [--include-null-signature]');
       process.exit(1);
