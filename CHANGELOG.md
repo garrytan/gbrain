@@ -2,6 +2,33 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.74.0] - 2026-08-05
+
+**Memory created by nightly extraction now enters the same searchable pipeline as every other page.** Atom pages and extraction receipts were being written straight into the page table. They existed, but they had no chunks, so normal search and retrieval could not see them. Both writers now use the canonical import path: the page, chunks, metadata, and embeddings are committed through one path, with the original source boundary preserved.
+
+Deferred embeddings are safer too. If a page was created while no embedding provider was available, a later full re-embed now resolves the live contextual-retrieval policy in the normal order: page override, source setting, then global mode. The page is stamped with the mode its vectors actually use. A partial re-embed deliberately stays raw and unstamped, because mixing two vector shapes on one page would make the stored mode lie.
+
+Scheduled maintenance also reports failure honestly. `gbrain maintain --safe` now exits non-zero when a requested source cycle is blocked, so cron and LaunchAgent wrappers do not refresh their last-success timestamp for work that did not complete.
+
+### To take advantage of v0.42.74.0
+
+```bash
+gbrain upgrade
+gbrain reindex --markdown --dry-run  # preview older unstamped pages
+gbrain reindex --markdown            # repair their chunks and CR stamps
+gbrain embed --stale                 # fill any deferred vectors
+```
+
+There is no schema migration. New extraction output is correct immediately after upgrade; the reindex commands repair older markdown pages that still have a NULL contextual-retrieval stamp.
+
+### Itemized changes
+
+- Atom extraction and extraction receipts now write through `importFromContent`, including chunks and source-scoped metadata.
+- Every plain re-embed entry point shares one live contextual-retrieval resolver and only restamps after a complete successful pass.
+- Blocked maintenance actions now propagate a failing CLI exit verdict for schedulers and health monitors.
+
+Contributed by @herove.
+
 ## [0.42.73.2] - 2026-08-05
 
 **A write that deduplication redirects onto an existing page is now checked against the write scope of whoever asked for it.** When the same content arrives under a new slug, gbrain recognises it and points the write at the page that already holds it. That redirected target is now tested against the caller's own scope — under whichever mechanism confines that caller. One of the two mechanisms was consulted at that point; both are now.
