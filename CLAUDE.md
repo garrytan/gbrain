@@ -130,7 +130,7 @@ detail on demand.)
 The per-file index (`## Key files`), the thin-client routing seam, and the testing
 discipline used to live inline here. They moved to the docs above so this file
 stays small enough to load every session. Nothing was lost — the pre-move content
-is in git, and the docs carry every load-bearing invariant (compressed to
+is in Git, and the docs carry every essential invariant (compressed to
 current-state).
 
 ## Maintaining CLAUDE.md and the reference docs
@@ -210,12 +210,11 @@ matrix dominate — mode + model choice matters more there.
     per-call SearchOpts → per-key config (search.cache.enabled, …) →
       MODE_BUNDLES[search.mode] → MODE_BUNDLES.balanced (fallback)
 
-Mode resolution lives in **bare `hybridSearch`** (NOT just the cached wrapper)
-per `[CDX-5+6]` in `~/.claude/plans/lets-take-a-look-validated-parrot.md` — so
-`gbrain eval replay` and `gbrain eval longmemeval` test the same mode-affected
-behavior as the production `query` op.
+Mode resolution lives in **bare `hybridSearch`**, not only in the cached wrapper.
+Therefore, `gbrain eval replay` and `gbrain eval longmemeval` test the same
+mode-affected behavior as the production `query` operation.
 
-**Cache-key contamination hotfix `[CDX-4]`:** migration v56 added a
+**Cache-key contamination hotfix:** migration v56 added a
 `knobs_hash` column to `query_cache`. The lookup filter is now
 `WHERE source_id = $ AND knobs_hash = $ AND embedding similarity < $` so a
 tokenmax write (expansion=on, limit=50) can't be served to a conservative
@@ -257,41 +256,33 @@ in `src/commands/upgrade.ts`, gated by `search.mode_upgrade_notice_shown`.
 Every metric printed by any `gbrain eval *` or `gbrain search stats` command
 resolves through `src/core/eval/metric-glossary.ts` so industry terms
 (`P@k`, `nDCG@k`, `MRR`, `Jaccard@k`) carry a plain-English line in human
-output and a `_meta.metric_glossary` block in JSON output (one block per
-response per `[CDX-25]`, NOT sibling `_gloss` fields).
+output and a `_meta.metric_glossary` block in JSON output. Each response gets
+one block, not sibling `_gloss` fields.
 
-The full methodology — datasets, sample selection, pre-registered
-expectations, threats to validity, paired-bootstrap + Bonferroni p-value
-discipline `[CDX-14]` — lives in `docs/eval/SEARCH_MODE_METHODOLOGY.md`.
+The full methodology lives in `docs/eval/SEARCH_MODE_METHODOLOGY.md`. It covers
+datasets, sample selection, pre-registered expectations, threats to validity,
+paired bootstrap tests, and Bonferroni p-value correction.
 Auto-regenerated `docs/eval/METRIC_GLOSSARY.md` is CI-guarded against
 drift (`scripts/check-eval-glossary-fresh.sh`).
 
-Per-run records land at `<repo>/.gbrain-evals/eval-results.jsonl` per
-`[CDX-23]`. The user's personal `~/.gbrain` brain is NEVER touched —
-audit trail lives in the source repo's git history.
+Write per-run records to `<repo>/.gbrain-evals/eval-results.jsonl`. Never touch
+the user's personal `~/.gbrain` brain. Keep the audit trail in the source
+repository's Git history.
 
 ## Skills
 
-Read the skill files in `skills/` before doing brain operations. GBrain ships 30 skills
-organized by `skills/RESOLVER.md` (`AGENTS.md` is also accepted as of v0.19):
+Read the skill files in `skills/` before doing brain operations. Route skills through
+`skills/RESOLVER.md`. `AGENTS.md` is also accepted as of v0.19.
 
-**Original 8 (conformance-migrated):** ingest (thin router), query, maintain, enrich,
-briefing, migrate, setup, publish.
+Do not maintain a skill catalog in this file. Catalogs drift when skills are added or
+renamed. Use `skills/RESOLVER.md` to route a task. List the current skill entrypoints
+with `find skills -name SKILL.md -print | sort` when you need an inventory.
 
-**Brain skills (ported from an upstream agent fork):** signal-detector, brain-ops, idea-ingest, media-ingest,
-meeting-ingestion, citation-fixer, repo-architecture, skill-creator, daily-task-manager.
+Since v0.20.4, `minion-orchestrator` handles shell jobs and language-model
+subagents. It replaces the former `gbrain-jobs` skill.
 
-**Operational + identity:** daily-task-prep, cross-modal-review, cron-scheduler, reports,
-testing, soul-audit, webhook-transforms, data-research, minion-orchestrator. As of
-v0.20.4, `minion-orchestrator` is the single unified skill for both lanes of background
-work (shell jobs via `gbrain jobs submit shell`, LLM subagents via `gbrain agent run`) ...
-the prior `gbrain-jobs` skill was merged in, Preconditions are shared, and trigger
-routing is narrowed to what the skill actually covers.
-
-**Skillify loop (v0.19):** skillify (the markdown orchestration), skillpack-check
-(agent-readable health report).
-
-**Brain-resident skillpacks + advisor (v0.42.47.0, #2180):** A brain repo can carry its
+**Brain-resident skillpacks and advisor (v0.42.47.0):** garrytan/gbrain#2180
+(brain-resident skillpacks and setup advisor) lets a brain repository carry its
 own publishable skillpack (`brain_resident: true` in `skillpack.json` + `schema_pack`);
 `gbrain skillpack init-brain-pack` scaffolds one with a 5-section machine-parseable README.
 Connecting harnesses discover it on `gbrain sources add` (Topology A advisory, bounded nag
@@ -300,7 +291,8 @@ via `nag-state.ts`) and over MCP via the source-scoped `list_brain_skillpack` op
 + `gbrain advisor` op compute a ranked, read-only list of high-leverage actions from brain
 state (8 collectors in `src/core/advisor/`); `--json`+exit codes for CI/cron, local-only
 `--apply <id>` behind confirm, exposed over MCP behind `mcp.publish_advisor` (default off,
-read-only on remote). Thin-client binary install stays deferred to PR2 `build_skillpack`.
+read-only on remote). Thin-client binary installation stays deferred to the planned
+`build_skillpack` follow-up.
 
 **Routing-table compression (v0.32.3.0):** `skills/functional-area-resolver/` —
 two-layer dispatch pattern for shrinking large AGENTS.md / RESOLVER.md files
@@ -311,8 +303,8 @@ routing (AnyTool [arXiv:2402.04253](https://arxiv.org/abs/2402.04253), RAG-MCP
 [arXiv:2505.03275](https://arxiv.org/html/2505.03275v1), Anthropic Agent Skills
 progressive disclosure). Empirically validated across Opus 4.7 / Sonnet 4.6 /
 Haiku 4.5: +13 to +17pp over the verbose baseline at 48% the size (25KB → 13KB
-on a real fork). The `(dispatcher for: ...)` clause is the load-bearing signal
-— strip it and lenient accuracy collapses to 41.7% on Sonnet (the
+on a real fork). The `(dispatcher for: ...)` clause is essential. Remove it and
+lenient accuracy collapses to 41.7% on Sonnet (the
 `resolver-of-resolvers` ablation case). A/B eval surface lives at
 `evals/functional-area-resolver/` (outside `skills/` deliberately so the
 skillpack bundler doesn't ship eval infrastructure to downstream installs):
