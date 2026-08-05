@@ -341,7 +341,7 @@ describe('contextual-retrieval wrapping on re-embed (#3507)', () => {
     expect(rows[0].contextual_retrieval_mode).toBe('title');
   });
 
-  test('unstamped page (NULL mode) embeds raw chunk_text — convention preserved', async () => {
+  test('unstamped page (NULL mode) resolves the live mode and stamps it', async () => {
     await seedWrappablePage('plain-page', 'Plain Notes');
     // No updatePageContextualRetrievalState call: pre-CR page.
 
@@ -349,7 +349,10 @@ describe('contextual-retrieval wrapping on re-embed (#3507)', () => {
     const result = await embedStaleForSource(engine, 'default', { embedFn: capturingEmbedFn(seen) });
     expect(result.embedded).toBe(2);
 
-    expect(seen).toContain('prose chunk about widgets');
-    expect(seen.some((t) => t.startsWith('<context>'))).toBe(false);
+    expect(seen).toContain('<context>Plain Notes\n</context>\nprose chunk about widgets');
+    const rows = await engine.executeRaw<{ contextual_retrieval_mode: string }>(
+      `SELECT contextual_retrieval_mode FROM pages WHERE slug = 'plain-page'`,
+    );
+    expect(rows[0].contextual_retrieval_mode).toBe('title');
   });
 });

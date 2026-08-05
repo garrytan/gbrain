@@ -132,6 +132,13 @@ describe('v0.41 T5: runPhaseExtractAtoms via stubbed chat', () => {
       `SELECT slug, type FROM pages WHERE type = 'atom'`,
     );
     expect(rows.length).toBe(2);
+    const chunkRows = await engine.executeRaw<{ count: number }>(
+      `SELECT COUNT(*)::int AS count
+         FROM content_chunks c
+         JOIN pages p ON p.id = c.page_id
+        WHERE p.type = 'atom'`,
+    );
+    expect(chunkRows[0].count).toBeGreaterThanOrEqual(2);
   });
 
   test('dry-run counts but does NOT write', async () => {

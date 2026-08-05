@@ -2001,8 +2001,9 @@ async function handleCliOnly(command: string, args: string[]) {
         break;
       }
       case 'maintain': {
-        const { runMaintain } = await import('./commands/maintain.ts');
-        await runMaintain(engine, args);
+        const { runMaintain, maintainExitCode } = await import('./commands/maintain.ts');
+        const report = await runMaintain(engine, args);
+        setCliExitVerdict(maintainExitCode(report));
         break;
       }
       // v0.32.7 CJK wave — post-upgrade markdown re-chunk sweep.

@@ -8,7 +8,7 @@
  *
  * Two structural protections against extraction loops (D-EXTRACT-19,
  * belt + suspenders):
- *   1. `type: extract_receipt` — eligibility predicate's type filter
+ *   1. page `type: extract_receipt` — eligibility predicate's type filter
  *      rejects this type because it's not in ELIGIBLE_TYPES.
  *   2. `dream_generated: true` — the anti-loop guard at
  *      `src/core/facts/eligibility.ts:62` rejects this flag.
@@ -37,6 +37,9 @@
 
 import type { BrainEngine } from '../engine.ts';
 import type { Page } from '../types.ts';
+import { isAvailable } from '../ai/gateway.ts';
+import { importFromContent } from '../import-file.ts';
+import { serializeMarkdown } from '../markdown.ts';
 
 /**
  * Round identifier. Matches the progressive-batch primitive's Stage
@@ -159,13 +162,12 @@ function buildReceiptBody(input: ExtractReceiptInput): string {
 }
 
 /**
- * Build the receipt frontmatter. Two anti-loop flags
- * (type:extract_receipt + dream_generated:true) are stamped by every
- * writeReceipt call regardless of caller. Per D-EXTRACT-19.
+ * Build the receipt frontmatter. `dream_generated:true` is the frontmatter
+ * half of the anti-loop guard; the structural page type is supplied to
+ * serializeMarkdown separately. Per D-EXTRACT-19.
  */
 function buildReceiptFrontmatter(input: ExtractReceiptInput): Record<string, unknown> {
   const fm: Record<string, unknown> = {
-    type: 'extract_receipt',
     dream_generated: true,
     // #1978: receipts record an operation, not a source document — the
     // run_id/round fields ARE the provenance. Explicit exemption keeps the
@@ -190,9 +192,9 @@ function buildReceiptFrontmatter(input: ExtractReceiptInput): Record<string, unk
  * Write an extract receipt page. Returns the slug of the written page
  * for the caller's audit/logging needs.
  *
- * Side-effects: calls engine.putPage with the receipt's compiled body +
- * frontmatter. Threads sourceId so federated brains route the receipt
- * to the same source the extraction targeted.
+ * Side-effects: routes the receipt through the canonical import pipeline so
+ * it is chunked and searchable. Threads sourceId so federated brains route
+ * the receipt to the same source the extraction targeted.
  *
  * Re-running with the same run_id + round overwrites the prior receipt
  * (idempotent on resume). The op-checkpoint id is stable across
@@ -208,16 +210,20 @@ export async function writeReceipt(
   const frontmatter = buildReceiptFrontmatter(input);
   const compiled_truth = buildReceiptBody(input);
 
-  const page = await engine.putPage(
-    slug,
-    {
-      type: 'extract_receipt',
-      title,
-      compiled_truth,
-      frontmatter,
-    },
-    { sourceId: input.source_id },
+  const markdown = serializeMarkdown(
+    frontmatter,
+    compiled_truth,
+    '',
+    { type: 'extract_receipt', title, tags: [] },
   );
+  await importFromContent(engine, slug, markdown, {
+    sourceId: input.source_id,
+    noEmbed: !isAvailable('embedding'),
+  });
+  const page = await engine.getPage(slug, { sourceId: input.source_id });
+  if (!page) {
+    throw new Error(`Receipt import completed without a page row: ${input.source_id}:${slug}`);
+  }
 
   return { slug, page };
 }

@@ -46,6 +46,15 @@ export interface MaintainReport {
   };
 }
 
+/**
+ * Scheduled callers must not record a successful maintenance run when a
+ * requested action was blocked. Doctor warnings may legitimately remain after
+ * a bounded safe pass, so only the action verdict controls the process exit.
+ */
+export function maintainExitCode(report: MaintainReport | void): number {
+  return report?.actions.some((action) => action.status === 'blocked') ? 1 : 0;
+}
+
 export function parseMaintainArgs(args: string[]): MaintainOptions {
   const safe = args.includes('--safe');
   return {

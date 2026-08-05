@@ -15,6 +15,7 @@ import {
   resolvePaceMode,
   loadPaceModeConfig,
   readPaceEnv,
+  isPaceMode,
   type PaceKeyOverrides,
 } from '../core/pace-mode.ts';
 import { tryAcquireDbLock, type DbLockHandle } from '../core/db-lock.ts';
@@ -22,7 +23,9 @@ import { embedBackfillLockId } from '../core/embed-backfill-lock.ts';
 import { AITransientError } from '../core/ai/errors.ts';
 import { wrapChunkTextsForStoredMode } from '../core/embedding-context.ts';
 import { titleTierCorpusGeneration } from '../core/contextual-retrieval-service.ts';
-import type { Page } from '../core/types.ts';
+import { resolveContextualRetrievalMode } from '../core/contextual-retrieval-resolver.ts';
+import { loadSearchModeConfig, resolveSearchMode } from '../core/search/mode.ts';
+import type { CRMode, Page } from '../core/types.ts';
 
 /** #3037: cap failure samples so a corpus-wide outage doesn't bloat --json. */
 const FAILURE_SAMPLE_CAP = 10;
@@ -54,6 +57,83 @@ export async function restampIfDemotedToTitleTier(
 ): Promise<void> {
   if (page?.contextual_retrieval_mode !== 'per_chunk_synopsis') return;
   await engine.updatePageContextualRetrievalState(slug, sourceId, 'title', titleTierCorpusGeneration());
+}
+
+export interface PlainReembedInputs {
+  texts: string[];
+  appliedMode: CRMode;
+  restampAfterFullSuccess: boolean;
+}
+
+/**
+ * Resolve the embedding shape for a plain re-embed.
+ *
+ * Pages written with `noEmbed` intentionally have a NULL stored CR mode. When
+ * the first embed pass covers the WHOLE page, resolve the live page > source >
+ * global policy and apply the same free-tier convention as importFromContent
+ * (`per_chunk_synopsis` demotes to `title`). A partial pass preserves the old
+ * raw convention: changing only some vectors would create a mixed-shape page.
+ */
+export async function preparePlainReembedInputs(
+  engine: BrainEngine,
+  page: Pick<Page, 'title' | 'frontmatter' | 'contextual_retrieval_mode'> | null | undefined,
+  chunks: ReadonlyArray<{ chunk_text: string; chunk_source?: string | null }>,
+  sourceId: string,
+  fullyReembedding: boolean,
+): Promise<PlainReembedInputs> {
+  const storedMode = page?.contextual_retrieval_mode;
+  let appliedMode: CRMode = storedMode === 'per_chunk_synopsis' ? 'title' : storedMode ?? 'none';
+  let restampAfterFullSuccess = storedMode === 'per_chunk_synopsis';
+
+  if (page && storedMode == null && fullyReembedding) {
+    const searchInput = await loadSearchModeConfig(engine);
+    const knobs = resolveSearchMode(searchInput);
+    const rows = await engine.executeRaw<{
+      id: string;
+      contextual_retrieval_mode?: string | null;
+      trust_frontmatter_overrides?: boolean;
+    }>(
+      `SELECT id, contextual_retrieval_mode, trust_frontmatter_overrides
+         FROM sources
+        WHERE id = $1`,
+      [sourceId],
+    );
+    const source = Array.isArray(rows) && rows[0]
+      ? rows[0]
+      : { id: sourceId, contextual_retrieval_mode: null, trust_frontmatter_overrides: false };
+    const resolution = resolveContextualRetrievalMode({
+      pageFrontmatter: page.frontmatter ?? {},
+      source,
+      globalMode: knobs.contextual_retrieval,
+      killSwitchDisabled: knobs.contextual_retrieval_disabled,
+    });
+    appliedMode = resolution.mode === 'per_chunk_synopsis' ? 'title' : resolution.mode;
+    restampAfterFullSuccess = true;
+  }
+
+  return {
+    texts: wrapChunkTextsForStoredMode(
+      page ? { ...page, contextual_retrieval_mode: appliedMode } : page,
+      chunks,
+    ),
+    appliedMode,
+    restampAfterFullSuccess,
+  };
+}
+
+export async function restampPlainReembedState(
+  engine: BrainEngine,
+  context: PlainReembedInputs,
+  slug: string,
+  sourceId: string,
+): Promise<void> {
+  if (!context.restampAfterFullSuccess) return;
+  await engine.updatePageContextualRetrievalState(
+    slug,
+    sourceId,
+    context.appliedMode,
+    context.appliedMode === 'title' ? titleTierCorpusGeneration() : null,
+  );
 }
 
 export interface EmbedOpts {
@@ -471,6 +551,20 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
 export function parsePaceArgs(
   args: string[],
 ): { perCallMode?: string; perCall?: PaceKeyOverrides } | undefined {
+  const parseMode = (raw: string): string => {
+    const normalized = raw.trim().toLowerCase();
+    if (!isPaceMode(normalized)) {
+      throw new Error('--pace must be one of off, gentle, balanced, aggressive');
+    }
+    return normalized;
+  };
+  const parseMaxConcurrency = (raw: string): number => {
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < 1 || value > 256) {
+      throw new Error('--pace-max-concurrency must be an integer in [1, 256]');
+    }
+    return value;
+  };
   let perCallMode: string | undefined;
   let perCall: PaceKeyOverrides | undefined;
   for (let i = 0; i < args.length; i++) {
@@ -478,18 +572,76 @@ export function parsePaceArgs(
     if (a === '--pace') {
       perCallMode = 'balanced';
     } else if (a.startsWith('--pace=')) {
-      perCallMode = a.slice('--pace='.length) || 'balanced';
+      perCallMode = parseMode(a.slice('--pace='.length) || 'balanced');
     } else if (a.startsWith('--pace-max-concurrency=')) {
-      const n = parseInt(a.slice('--pace-max-concurrency='.length), 10);
-      if (Number.isFinite(n) && n >= 1) (perCall ??= {}).maxConcurrency = n;
+      (perCall ??= {}).maxConcurrency = parseMaxConcurrency(a.slice('--pace-max-concurrency='.length));
     } else if (a === '--pace-max-concurrency') {
-      const n = parseInt(args[i + 1] ?? '', 10);
-      if (Number.isFinite(n) && n >= 1) (perCall ??= {}).maxConcurrency = n;
+      (perCall ??= {}).maxConcurrency = parseMaxConcurrency(args[i + 1] ?? '');
       i++; // consume the value token so positional parsing can't read it as a slug (Codex P2)
     }
   }
   if (perCallMode === undefined && perCall === undefined) return undefined;
   return { ...(perCallMode !== undefined && { perCallMode }), ...(perCall && { perCall }) };
+}
+
+function embedFlagValue(args: string[], flag: string): string | undefined {
+  const idx = args.indexOf(flag);
+  if (idx < 0) return undefined;
+  const value = args[idx + 1];
+  return value && !value.startsWith('--') ? value : undefined;
+}
+
+function parseEmbedBatchSize(args: string[]): number | undefined {
+  const raw = embedFlagValue(args, '--batch-size');
+  if (!raw) return undefined;
+  return Math.max(1, Math.min(10_000, parseInt(raw, 10) || 0));
+}
+
+function parseEmbedSlugs(args: string[]): string[] | undefined {
+  const idx = args.indexOf('--slugs');
+  if (idx < 0) return undefined;
+  const slugs: string[] = [];
+  for (let i = idx + 1; i < args.length && !args[i].startsWith('--'); i++) {
+    slugs.push(args[i]);
+  }
+  return slugs;
+}
+
+function parseEmbedPositionalSlug(args: string[]): string | undefined {
+  if (args.includes('--slugs')) return undefined;
+  const valueFlags = new Set(['--source', '--batch-size', '--priority', '--pace-max-concurrency']);
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (valueFlags.has(arg)) {
+      i++;
+      continue;
+    }
+    if (!arg.startsWith('--')) return arg;
+  }
+  return undefined;
+}
+
+export function buildEmbedBackgroundJobData(cleanArgs: string[]): Record<string, unknown> {
+  const slugs = parseEmbedSlugs(cleanArgs);
+  const slug = parseEmbedPositionalSlug(cleanArgs);
+  const sourceId = embedFlagValue(cleanArgs, '--source');
+  const batchSize = parseEmbedBatchSize(cleanArgs);
+  const priority = embedFlagValue(cleanArgs, '--priority') === 'recent' ? 'recent' as const : undefined;
+  const pace = parsePaceArgs(cleanArgs);
+
+  return {
+    all: cleanArgs.includes('--all'),
+    stale: cleanArgs.includes('--stale'),
+    dryRun: cleanArgs.includes('--dry-run'),
+    ...(slug !== undefined && { slug }),
+    ...(slugs !== undefined && { slugs }),
+    ...(sourceId !== undefined && { sourceId }),
+    ...(batchSize !== undefined && { batchSize }),
+    ...(priority !== undefined && { priority }),
+    catchUp: cleanArgs.includes('--catch-up'),
+    includeNullSignature: cleanArgs.includes('--include-null-signature'),
+    ...(pace && { pace }),
+  };
 }
 
 export async function runEmbed(engine: BrainEngine, args: string[]): Promise<EmbedResult | undefined> {
@@ -501,40 +653,24 @@ export async function runEmbed(engine: BrainEngine, args: string[]): Promise<Emb
       engine,
       args,
       jobName: 'embed',
-      paramBuilder: (cleanArgs) => {
-        const slugsI = cleanArgs.indexOf('--slugs');
-        const srcI = cleanArgs.indexOf('--source');
-        return {
-          all: cleanArgs.includes('--all'),
-          stale: cleanArgs.includes('--stale'),
-          dryRun: cleanArgs.includes('--dry-run'),
-          slugs: slugsI >= 0 ? cleanArgs.slice(slugsI + 1).filter(a => !a.startsWith('--')) : undefined,
-          sourceId: srcI >= 0 ? cleanArgs[srcI + 1] : undefined,
-          // CX1+CX5: carry explicit pace overrides into the `embed` job payload
-          // (the job name CLI --background actually submits). The handler
-          // re-resolves env > config > bundle at execution.
-          ...(parsePaceArgs(cleanArgs) && { pace: parsePaceArgs(cleanArgs) }),
-        };
-      },
+      // Carry the complete foreground option set into the durable job. The
+      // worker validates this untrusted JSON again before calling runEmbedCore.
+      paramBuilder: buildEmbedBackgroundJobData,
       source: 'cli',
     });
     if (backgrounded) return;
     // PGLite degraded to inline — fall through.
   }
 
-  const slugsIdx = args.indexOf('--slugs');
+  const slugs = parseEmbedSlugs(args);
   const all = args.includes('--all');
   const stale = args.includes('--stale');
   const dryRun = args.includes('--dry-run');
   // v0.31.12: --source <id> scopes to a single source.
-  const sourceIdx = args.indexOf('--source');
-  const sourceId = sourceIdx >= 0 ? args[sourceIdx + 1] : undefined;
+  const sourceId = embedFlagValue(args, '--source');
   // v0.41.18.0 (A13): --batch-size N, --priority recent, --catch-up flags.
-  const batchSizeIdx = args.indexOf('--batch-size');
-  const batchSizeRaw = batchSizeIdx >= 0 ? args[batchSizeIdx + 1] : undefined;
-  const batchSize = batchSizeRaw ? Math.max(1, Math.min(10_000, parseInt(batchSizeRaw, 10) || 0)) : undefined;
-  const priorityIdx = args.indexOf('--priority');
-  const priorityRaw = priorityIdx >= 0 ? args[priorityIdx + 1] : undefined;
+  const batchSize = parseEmbedBatchSize(args);
+  const priorityRaw = embedFlagValue(args, '--priority');
   const priority = priorityRaw === 'recent' ? 'recent' as const : undefined;
   const catchUp = args.includes('--catch-up');
   // #3391: re-embed pages that predate the embedding_signature stamp too.
@@ -542,13 +678,13 @@ export async function runEmbed(engine: BrainEngine, args: string[]): Promise<Emb
   const pace = parsePaceArgs(args);
 
   let opts: EmbedOpts;
-  if (slugsIdx >= 0) {
-    opts = { slugs: args.slice(slugsIdx + 1).filter(a => !a.startsWith('--')), dryRun, sourceId, batchSize, priority, catchUp };
+  if (slugs !== undefined) {
+    opts = { slugs, dryRun, sourceId, batchSize, priority, catchUp };
   } else if (all || stale) {
     // E-2: CLI-only single-flight for stale runs (the minion path locks itself).
     opts = { all, stale, dryRun, sourceId, batchSize, priority, catchUp, ...(pace && { pace }), ...(stale && { singleFlight: true }), ...(includeNullSignature && { includeNullSignature: true }) };
   } else {
-    const slug = args.find(a => !a.startsWith('--'));
+    const slug = parseEmbedPositionalSlug(args);
     if (!slug) {
       serr('Usage: gbrain embed [<slug>|--all|--stale|--slugs s1 s2 ...] [--dry-run] [--batch-size N] [--priority recent] [--catch-up] [--include-null-signature]');
       process.exit(1);
@@ -676,9 +812,16 @@ async function embedPage(
   let embeddings: (Float32Array | null)[];
   let failed = 0;
   let firstError: unknown;
+  const reembedInputs = await preparePlainReembedInputs(
+    engine,
+    page,
+    toEmbed,
+    page.source_id ?? sourceId ?? 'default',
+    toEmbed.length === chunks.length,
+  );
   try {
     ({ embeddings, failed, firstError } = await embedPageTexts(
-      wrapChunkTextsForStoredMode(page, toEmbed),
+      reembedInputs.texts,
       signal ? { abortSignal: signal } : {},
     ));
   } catch (e: unknown) {
@@ -714,7 +857,12 @@ async function embedPage(
     await engine.setPageEmbeddingSignature(slug, { sourceId, signature: currentEmbeddingSignature() });
     // #3507: a fully re-embedded per_chunk_synopsis page landed at the
     // title tier — keep the stamped mode honest.
-    await restampIfDemotedToTitleTier(engine, page, slug, page.source_id);
+    await restampPlainReembedState(
+      engine,
+      reembedInputs,
+      slug,
+      page.source_id ?? sourceId ?? 'default',
+    );
   }
   result.embedded += toEmbed.length - failed;
   if (failed > 0) {
@@ -864,8 +1012,15 @@ async function embedAll(
       // #3037: per-chunk failure isolation — one bad chunk costs one chunk,
       // not the whole page's siblings. The wrapped texts feed the fan-out
       // too, so an isolation retry never strips the contextual prefixes.
+      const reembedInputs = await preparePlainReembedInputs(
+        engine,
+        page,
+        toEmbed,
+        pageSourceId,
+        true,
+      );
       const { embeddings, failed, firstError } = await embedPageTexts(
-        wrapChunkTextsForStoredMode(page, toEmbed),
+        reembedInputs.texts,
         signal ? { abortSignal: signal } : {},
       );
       // Build a map of new embeddings by chunk_index
@@ -898,7 +1053,7 @@ async function embedAll(
         // so restamping would make contextual_retrieval_mode lie again
         // (the exact #3461 bug).
         await observed(pacer, () =>
-          restampIfDemotedToTitleTier(engine, page, page.slug, pageSourceId),
+          restampPlainReembedState(engine, reembedInputs, page.slug, pageSourceId),
         );
       }
       result.embedded += toEmbed.length - failed;
@@ -1228,12 +1383,21 @@ async function embedAllStale(
           // #3037: per-chunk failure isolation — one bad chunk costs one
           // chunk, not the whole page's siblings. The wrapped texts feed the
           // fan-out too, so an isolation retry never strips the prefixes.
+          const existing = await observed(pacer, () =>
+            engine.getChunks(slug, { sourceId: keySourceId }),
+          );
+          const reembedInputs = await preparePlainReembedInputs(
+            engine,
+            pageRow,
+            stale,
+            keySourceId,
+            stale.length === existing.length,
+          );
           const { embeddings, failed, firstError } = await embedPageTexts(
-            wrapChunkTextsForStoredMode(pageRow, stale),
+            reembedInputs.texts,
             { abortSignal: effectiveSignal },
           );
           // Re-fetch existing chunks and merge to avoid deleting non-stale chunks.
-          const existing = await observed(pacer, () => engine.getChunks(slug, { sourceId: keySourceId }));
           const staleIdxToEmbedding = new Map<number, Float32Array>();
           for (let j = 0; j < stale.length; j++) {
             const emb = embeddings[j];
@@ -1269,7 +1433,7 @@ async function embedAllStale(
           // contextual_retrieval_mode lie again (the exact #3461 bug).
           if (failed === 0 && stale.length === existing.length) {
             await observed(pacer, () =>
-              restampIfDemotedToTitleTier(engine, pageRow, slug, keySourceId),
+              restampPlainReembedState(engine, reembedInputs, slug, keySourceId),
             );
           }
           result.embedded += stale.length - failed;

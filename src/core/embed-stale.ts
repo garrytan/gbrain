@@ -19,8 +19,11 @@
 
 import type { BrainEngine } from './engine.ts';
 import type { ChunkInput } from './types.ts';
-import { embedBatchWithBackoff, restampIfDemotedToTitleTier } from '../commands/embed.ts';
-import { wrapChunkTextsForStoredMode } from './embedding-context.ts';
+import {
+  embedBatchWithBackoff,
+  preparePlainReembedInputs,
+  restampPlainReembedState,
+} from '../commands/embed.ts';
 import { type DbPacer, createNoopPacer, observed } from './db-pacer.ts';
 import { AbortError } from './abort-check.ts';
 
@@ -197,12 +200,19 @@ export async function embedStaleForSource(
         const pageRow = await observed(pacer, () =>
           engine.getPage(slug, { sourceId: keySourceId }),
         );
-        const embeddings = await embedFn(
-          wrapChunkTextsForStoredMode(pageRow, stale),
-          { abortSignal: signal },
-        );
         const existing = await observed(pacer, () =>
           engine.getChunks(slug, { sourceId: keySourceId }),
+        );
+        const reembedInputs = await preparePlainReembedInputs(
+          engine,
+          pageRow,
+          stale,
+          keySourceId,
+          stale.length === existing.length,
+        );
+        const embeddings = await embedFn(
+          reembedInputs.texts,
+          { abortSignal: signal },
         );
         const staleIdxToEmbedding = new Map<number, Float32Array>();
         for (let j = 0; j < stale.length; j++) {
@@ -245,7 +255,7 @@ export async function embedStaleForSource(
         // title tier — keep the stamped mode honest (mixed pages stay as-is).
         if (stale.length === existing.length) {
           await observed(pacer, () =>
-            restampIfDemotedToTitleTier(engine, pageRow, slug, keySourceId),
+            restampPlainReembedState(engine, reembedInputs, slug, keySourceId),
           );
         }
         result.embedded += stale.length;
