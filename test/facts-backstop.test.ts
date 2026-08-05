@@ -15,6 +15,8 @@ import { runFactsBackstop } from '../src/core/facts/backstop.ts';
 import type { FactsBackstopCtx } from '../src/core/facts/backstop.ts';
 import {
   __setChatTransportForTests,
+  __setEmbedTransportForTests,
+  configureGateway,
   resetGateway,
   type ChatResult,
 } from '../src/core/ai/gateway.ts';
@@ -40,7 +42,8 @@ afterEach(() => {
 
 const LONG_BODY = 'this is a real meeting note longer than 80 chars '.repeat(3);
 
-function chatStub(facts: Array<{ fact: string; kind: string; notability: 'high' | 'medium' | 'low'; entity?: string | null }>) {
+let embeddedTexts: string[] = [];
+function chatStub(facts: Array<{ fact: string; kind: string; notability: string; entity?: string | null }>) {
   __setChatTransportForTests(async (): Promise<ChatResult> => ({
     text: JSON.stringify({
       facts: facts.map(f => ({
@@ -57,6 +60,14 @@ function chatStub(facts: Array<{ fact: string; kind: string; notability: 'high' 
     model: 'test:stub',
     providerId: 'test',
   }));
+}
+
+function embedStub() {
+  configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536, chat_model: 'openai:gpt-4o-mini', env: { OPENAI_API_KEY: 'test' } });
+  __setEmbedTransportForTests((async (input: { values?: string[] }) => {
+    embeddedTexts.push(...(input.values ?? []));
+    return { embeddings: [Array.from({ length: 1536 }, () => 0.1)] };
+  }) as never);
 }
 
 function makeCtx(overrides: Partial<FactsBackstopCtx> = {}): FactsBackstopCtx {
@@ -121,20 +132,26 @@ describe('runFactsBackstop — mode: inline', () => {
   });
 
   test('notabilityFilter=high-only drops MEDIUM + LOW from the insert path', async () => {
+    embedStub();
+    const sessionId = 'notability-high-only-test';
     chatStub([
       { fact: 'high-only-1', kind: 'event', notability: 'high', entity: 'people/bob-test' },
+      { fact: 'high-only-unknown-skip', kind: 'event', notability: 'unknown', entity: 'people/bob-test' },
       { fact: 'high-only-2-skip', kind: 'event', notability: 'medium', entity: 'people/bob-test' },
       { fact: 'high-only-3-skip', kind: 'event', notability: 'low', entity: 'people/bob-test' },
     ]);
     const r = await runFactsBackstop(
       meetingPage(),
-      makeCtx({ mode: 'inline', notabilityFilter: 'high-only' }),
+      makeCtx({ mode: 'inline', notabilityFilter: 'high-only', sessionId }),
     );
     expect(r.mode).toBe('inline');
     if (r.mode === 'inline') {
       expect(r.inserted).toBe(1);
       expect(r.fact_ids.length).toBe(1);
     }
+    expect(embeddedTexts).toEqual(['high-only-1']);
+    const stored = await engine.listFactsBySession('default', sessionId);
+    expect(stored.map((f) => f.fact)).not.toContain('high-only-unknown-skip');
   });
 
   test('source string lands on the inserted row', async () => {

@@ -20,6 +20,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
   __setChatTransportForTests,
   __setEmbedTransportForTests,
+  configureGateway,
   resetGateway,
   type ChatResult,
 } from '../src/core/ai/gateway.ts';
@@ -307,6 +308,7 @@ describe('runExtractConversationFactsCore', () => {
   let chatHook: (() => Promise<void>) | null = null;
   let chatStopReason: ChatResult['stopReason'] = 'end';
   let chatTextOverride: string | null = null;
+  let embeddingInputs: string[] = [];
   let fallbackCalls = 0;
   let fallbackContents: string[] = [];
   let fallbackControlError: Error | null = null;
@@ -315,6 +317,7 @@ describe('runExtractConversationFactsCore', () => {
   let fallbackUsage = { input_tokens: 100, output_tokens: 50 };
 
   beforeAll(async () => {
+    configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536, chat_model: 'openai:gpt-4o-mini', env: { OPENAI_API_KEY: 'test' } });
     engine = new PGLiteEngine();
     await engine.connect({});
     await engine.initSchema();
@@ -390,9 +393,12 @@ describe('runExtractConversationFactsCore', () => {
 
     // Deterministic embedding stub.
     __setEmbedTransportForTests(
-      (async () => ({
-        embeddings: [Array.from({ length: 1536 }, () => 0.1)],
-      })) as never,
+      (async (input: { values?: string[] } | string[]) => {
+        embeddingInputs.push(...(Array.isArray(input) ? input : (input.values ?? [])));
+        return {
+          embeddings: [Array.from({ length: 1536 }, () => 0.1)],
+        };
+      }) as never,
     );
   });
 
@@ -409,6 +415,7 @@ describe('runExtractConversationFactsCore', () => {
     chatHook = null;
     chatStopReason = 'end';
     chatTextOverride = null;
+    embeddingInputs = [];
     fallbackCalls = 0;
     fallbackContents = [];
     fallbackControlError = null;
@@ -807,6 +814,28 @@ describe('runExtractConversationFactsCore', () => {
     expect(rows.map((row) => row.fact)).not.toContain('low candidate');
     expect(rows.map((row) => Number(row.row_num))).toEqual([0, 1, 2, 3, 4]);
     expect(rows.some((row) => row.source === TERMINAL_AUDIT_SOURCE)).toBe(true);
+    expect(embeddingInputs).toEqual(['high candidate', 'medium candidate', 'high candidate', 'medium candidate']);
+  });
+
+  test('invalid notability tier is retryable before terminal completion', async () => {
+    chatTextOverride = JSON.stringify({ facts: [
+      { fact: 'urgent candidate', kind: 'event', entity: 'travel', confidence: 1, notability: 'urgent' },
+    ] });
+    await expect(runExtractConversationFactsCore(engine, {
+      sourceId: 'default', slug: 'conversations/imessage/alice-example', sleepMs: 0,
+    })).rejects.toThrow('malformed_output');
+    const terminalsAfterFailure = await engine.executeRaw<{ count: string | number }>(
+      `SELECT COUNT(*) AS count FROM facts WHERE source = $1`, [TERMINAL_AUDIT_SOURCE],
+    );
+    expect(Number(terminalsAfterFailure[0]?.count ?? 0)).toBe(0);
+
+    chatTextOverride = JSON.stringify({ facts: [
+      { fact: 'replayed candidate', kind: 'event', entity: 'travel', confidence: 1, notability: 'high' },
+    ] });
+    const replay = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default', slug: 'conversations/imessage/alice-example', sleepMs: 0,
+    });
+    expect(replay.facts_inserted).toBeGreaterThan(0);
   });
 
   test('terminal outcome skips a completed page after checkpoint GC', async () => {

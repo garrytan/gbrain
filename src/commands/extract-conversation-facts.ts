@@ -986,6 +986,7 @@ async function processPage(
       source: PER_SEGMENT_SOURCE_PREFIX,
       engine: state.engine,
       abortSignal: state.signal,
+      notabilityAdmission: { allowed: ['high', 'medium'], invalid: 'fail' },
     });
     if (!extraction.ok) {
       const detail = extraction.error instanceof Error
@@ -995,8 +996,8 @@ async function processPage(
         `segment ${seg.startIso}..${seg.endIso} extraction failed (${extraction.reason})${detail}`,
       );
     }
-    const extracted = extraction.facts.filter((fact) => fact.notability !== 'low');
-    state.result.facts_low_notability_rejected += extraction.facts.length - extracted.length;
+    const extracted = extraction.facts;
+    state.result.facts_low_notability_rejected += extraction.notability_rejected;
 
     state.result.segments_processed++;
     segmentsThisPage++;
