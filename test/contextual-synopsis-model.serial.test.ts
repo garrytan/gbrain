@@ -86,7 +86,6 @@ describe('contextual synopsis model resolution', () => {
     engine.set('models.contextual_synopsis', 'codex-proxy:new-key');
     engine.set('contextual_retrieval.haiku_model', 'codex-proxy:deprecated-key');
     engine.set('models.default', 'codex-proxy:global-default');
-    engine.set('models.tier.utility', 'codex-proxy:utility-tier');
 
     await withEnv({ GBRAIN_CONTEXTUAL_SYNOPSIS_MODEL: 'codex-proxy:env-model' }, async () => {
       expect(await resolveContextualSynopsisModel(engine as never, 'codex-proxy:explicit')).toBe(
@@ -107,16 +106,11 @@ describe('contextual synopsis model resolution', () => {
 
       engine.unset('models.default');
       expect(await resolveContextualSynopsisModel(engine as never)).toBe(
-        'codex-proxy:utility-tier',
-      );
-
-      engine.unset('models.tier.utility');
-      expect(await resolveContextualSynopsisModel(engine as never)).toBe(
         'codex-proxy:env-model',
       );
     });
 
-    expect(await resolveContextualSynopsisModel(engine as never)).toBe(TIER_DEFAULTS.utility);
+    expect(await resolveContextualSynopsisModel(engine as never)).toBe('anthropic:claude-sonnet-4-6');
 
     expect(
       await resolveModel(engine as never, {

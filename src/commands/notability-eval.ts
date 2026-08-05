@@ -237,7 +237,7 @@ export async function mineNotabilityCandidates(
 async function classifyBatch(paragraphs: string[]): Promise<Array<'high' | 'medium' | 'low'>> {
   if (paragraphs.length === 0) return [];
 
-  const { chat } = await import('../core/ai/gateway.ts');
+  const { chat, getChatModel } = await import('../core/ai/gateway.ts');
 
   const system = [
     'Classify each paragraph into HIGH, MEDIUM, or LOW notability for personal-knowledge memory:',
@@ -256,7 +256,7 @@ async function classifyBatch(paragraphs: string[]): Promise<Array<'high' | 'medi
 
   try {
     const result = await chat({
-      model: 'anthropic:claude-haiku-4-5-20251001',
+      model: getChatModel(),
       system,
       messages: [{ role: 'user', content: userMsg }],
       maxTokens: 200,

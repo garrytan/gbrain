@@ -16,7 +16,7 @@
  * The LLM uses Haiku via the AI gateway (cheap; the per-turn hot path).
  */
 
-import { chat, isAvailable } from '../ai/gateway.ts';
+import { chat, getChatModel, isAvailable } from '../ai/gateway.ts';
 import type { ChatResult } from '../ai/gateway.ts';
 import type { FactRow, FactKind } from '../engine.ts';
 
@@ -105,7 +105,7 @@ export async function classifyAgainstCandidates(
   let classifierResult: ChatResult | null = null;
   try {
     classifierResult = await chat({
-      model: opts.model ?? 'anthropic:claude-haiku-4-5-20251001',
+      model: opts.model ?? getChatModel(),
       system: CLASSIFIER_SYSTEM,
       messages: [
         {

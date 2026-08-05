@@ -30,7 +30,7 @@
  * loop and handles page-level fall-back.
  */
 
-import { chat, type ChatOpts, type ChatResult } from './ai/gateway.ts';
+import { chat, getChatModel, type ChatOpts, type ChatResult } from './ai/gateway.ts';
 import { logSynopsisFailure, type SynopsisFailureKind } from './audit-synopsis.ts';
 import { sanitizeSynopsis } from './embedding-context.ts';
 
@@ -146,7 +146,7 @@ export async function generatePerChunkSynopsis(
   const userPrompt = buildUserPrompt(args.pageTitle, args.documentText, args.chunkText);
 
   const chatOpts: ChatOpts = {
-    model: args.model ?? DEFAULT_SYNOPSIS_MODEL,
+    model: args.model ?? getChatModel(),
     system: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: userPrompt }],
     maxTokens: SYNOPSIS_MAX_TOKENS,

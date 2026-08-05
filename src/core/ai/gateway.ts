@@ -502,7 +502,7 @@ export function configureGateway(config: AIGatewayConfig): void {
     // fail with a cryptic wrong-width error at embed time. Keep it honest.
     embedding_dimensions: config.embedding_dimensions,
     embedding_multimodal_model: config.embedding_multimodal_model,
-    expansion_model: config.expansion_model ?? DEFAULT_EXPANSION_MODEL,
+    expansion_model: config.expansion_model ?? config.chat_model ?? DEFAULT_EXPANSION_MODEL,
     chat_model: config.chat_model ?? DEFAULT_CHAT_MODEL,
     chat_fallback_chain: config.chat_fallback_chain,
     // v0.35.0.0+: reranker_model stays undefined when unset — reranker is
@@ -556,12 +556,10 @@ export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise
   // the vector index. Out of scope per v0.31.12 plan ("Embedding tier knob").
   const newExpansion = await resolveModel(engine, {
     configKey: 'models.expansion',
-    tier: 'utility',
     fallback: cfg.expansion_model ?? DEFAULT_EXPANSION_MODEL,
   });
   const newChat = await resolveModel(engine, {
     configKey: 'models.chat',
-    tier: 'reasoning',
     fallback: cfg.chat_model ?? DEFAULT_CHAT_MODEL,
   });
 

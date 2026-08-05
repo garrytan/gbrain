@@ -49,8 +49,7 @@ import {
 } from '../rate-leases.ts';
 import { resolveSearchMode, loadSearchModeConfig } from '../../search/mode.ts';
 import { resolveModel } from '../../model-config.ts';
-import { DEFAULT_SYNOPSIS_MODEL } from '../../page-summary.ts';
-import { registerConfigSelectedChatModel } from '../../ai/gateway.ts';
+import { getChatModel, registerConfigSelectedChatModel } from '../../ai/gateway.ts';
 
 /**
  * Default global concurrency cap for contextual synopsis calls. The public
@@ -113,8 +112,7 @@ export async function resolveContextualSynopsisModel(
     configKey: 'models.contextual_synopsis',
     deprecatedConfigKey: 'contextual_retrieval.haiku_model',
     envVar: 'GBRAIN_CONTEXTUAL_SYNOPSIS_MODEL',
-    tier: 'utility',
-    fallback: DEFAULT_SYNOPSIS_MODEL,
+    fallback: getChatModel(),
   });
 }
 
