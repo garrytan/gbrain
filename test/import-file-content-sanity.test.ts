@@ -164,6 +164,52 @@ describe('importFromContent — junk reject (opt-in disposition)', () => {
   });
 });
 
+describe('importFromContent — oversize quarantine (opt-in disposition)', () => {
+  test('oversize_disposition=quarantine hides a 66KB clean page and writes no chunks', async () => {
+    await withIsolatedHome(async () => {
+      await engine.setConfig('content_sanity.oversize_disposition', 'quarantine');
+      try {
+        const content = FRONTMATTER + 'a'.repeat(66_413);
+        const result = await importFromContent(engine, 'test/warn-size-quarantine', content, { noEmbed: true });
+        expect(result.status).toBe('imported');
+        expect(result.quarantined).toBe(true);
+        expect(result.flagged).toBeUndefined();
+
+        const page = await engine.getPage('test/warn-size-quarantine');
+        expect(page).not.toBeNull();
+        const fm = page!.frontmatter as Record<string, unknown>;
+        expect(isQuarantined(fm)).toBe(true);
+        expect((fm.quarantine as Record<string, unknown>).reason).toBe('oversized');
+        expect(isEmbedSkipped(fm)).toBe(false);
+        expect(getContentFlag(fm)).toBeNull();
+        expect((await engine.getChunks('test/warn-size-quarantine')).length).toBe(0);
+      } finally {
+        await engine.unsetConfig('content_sanity.oversize_disposition');
+      }
+    });
+  });
+
+  test('junk_disposition=reject does not reject a size-only quarantine', async () => {
+    await withIsolatedHome(async () => {
+      await engine.setConfig('content_sanity.oversize_disposition', 'quarantine');
+      await engine.setConfig('content_sanity.junk_disposition', 'reject');
+      try {
+        const result = await importFromContent(
+          engine,
+          'test/warn-size-with-junk-reject',
+          FRONTMATTER + 'a'.repeat(66_413),
+          { noEmbed: true },
+        );
+        expect(result.status).toBe('imported');
+        expect(result.quarantined).toBe(true);
+      } finally {
+        await engine.unsetConfig('content_sanity.oversize_disposition');
+        await engine.unsetConfig('content_sanity.junk_disposition');
+      }
+    });
+  });
+});
+
 describe('importFromContent — markup-heavy FLAG (Q1=A: warn, stay searchable)', () => {
   test('markup-heavy page lands, KEEPS chunks, carries content_flag (not quarantined)', async () => {
     await withIsolatedHome(async () => {

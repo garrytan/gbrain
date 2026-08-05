@@ -389,8 +389,10 @@ export async function importFromContent(
   //   - kill-switch active (`content_sanity.disabled === true` /
   //     `GBRAIN_NO_SANITY=1`) → assess + audit with bypass flag, emit
   //     loud stderr per offending ingest, but let everything through.
-  //   - hard-block (junk pattern OR operator literal) → THROW
-  //     ContentSanityBlockError. Existing exception flow at every
+  //   - quarantine (junk pattern, operator literal, or opt-in size policy)
+  //     → hide from retrieval; junk/literal may instead THROW when
+  //     `junk_disposition=reject`, while size-only never rejects.
+  //     A reject throws ContentSanityBlockError. Existing exception flow at every
   //     wrapper site (import.ts errors counter, put_page MCP envelope,
   //     sync.ts:929 failure record) fires correctly through this single
   //     throw point. classifyErrorCode picks up the PAGE_JUNK_PATTERN
@@ -446,6 +448,7 @@ export async function importFromContent(
       title: parsed.title,
       bytes_warn: cs.bytes_warn,
       bytes_block: cs.bytes_block,
+      oversize_disposition: cs.oversize_disposition,
       max_markup_ratio: cs.max_markup_ratio,
       prose_check_enabled: cs.prose_check_enabled,
       page_kind: parsed.type,
@@ -466,16 +469,16 @@ export async function importFromContent(
         );
       }
     } else if (sanityResult.shouldQuarantine) {
-      // High-confidence junk (Cloudflare/CAPTCHA pattern or operator
-      // literal). The detail names which fired.
-      const detail = [
-        ...sanityResult.junk_pattern_matches,
-        ...sanityResult.literal_substring_matches,
-      ].join(', ');
-      const reason = sanityResult.junk_pattern_matches.length > 0
-        ? 'junk_pattern'
-        : 'literal_substring';
-      if (junkDisposition === 'reject') {
+      const reason = sanityResult.quarantine_reason!;
+      const detail = reason === 'oversized'
+        ? `${sanityResult.bytes} bytes exceeds configured warn threshold`
+        : [
+            ...sanityResult.junk_pattern_matches,
+            ...sanityResult.literal_substring_matches,
+          ].join(', ');
+      // junk_disposition controls only junk/literal findings. A size-only
+      // quarantine is a retrieval policy, never an ingest rejection.
+      if (junkDisposition === 'reject' && reason !== 'oversized') {
         // Operator opted into hard-block. Throw with PAGE_QUARANTINE so
         // classifyErrorCode bins it. Existing exception flow at every
         // wrapper site (import errors counter, put_page MCP envelope,
@@ -492,6 +495,10 @@ export async function importFromContent(
       parsed.frontmatter[QUARANTINE_KEY] = buildQuarantineMarker(reason, detail, {
         bytes: sanityResult.bytes,
       });
+      // Quarantine is the highest-precedence disposition. Do not retain
+      // lower-tier markers from trusted input or a previous assessment.
+      delete parsed.frontmatter[CONTENT_FLAG_KEY];
+      delete parsed.frontmatter[EMBED_SKIP_KEY];
       pageQuarantined = true;
       logContentSanityAssessment(slug, sourceId ?? 'default', sanityResult, {
         disposition: 'quarantine',

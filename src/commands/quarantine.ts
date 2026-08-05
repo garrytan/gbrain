@@ -197,28 +197,44 @@ async function runScan(engine: BrainEngine, args: string[]): Promise<void> {
     scanned++;
     const page = await engine.getPage(ref.slug, { sourceId: ref.source_id });
     if (!page) continue;
-    // Skip pages already marked (idempotent re-runs) — quarantined OR flagged,
-    // so --apply doesn't re-chunk/re-embed already-flagged pages every run.
+    // Quarantined pages are already at the highest-precedence disposition.
+    // Flagged pages still need assessment: a new policy can promote a legacy
+    // content_flag to quarantine (the historical-oversize cleanup path).
     const pfm = page.frontmatter as Record<string, unknown> | null;
-    if (isQuarantined(pfm) || getContentFlag(pfm)) continue;
+    if (isQuarantined(pfm)) continue;
+
+    const res = assessContentSanity({
+      compiled_truth: page.compiled_truth ?? '',
+      timeline: page.timeline ?? '',
+      title: page.title ?? '',
+      bytes_warn: effCs.bytes_warn,
+      bytes_block: effCs.bytes_block,
+      oversize_disposition: effCs.oversize_disposition,
+      max_markup_ratio: effCs.max_markup_ratio,
+      prose_check_enabled: effCs.prose_check_enabled,
+      page_kind: page.type,
+      extra_literals: scanLiterals,
+    });
+    const outcome: 'quarantine' | 'flag' | null = res.shouldQuarantine
+      ? 'quarantine'
+      : res.shouldFlag
+        ? 'flag'
+        : null;
+    if (!outcome) continue;
+
+    // An equivalent flag is already applied. Preserve scan idempotence and
+    // avoid needless re-chunk/re-embed work; only changed/higher dispositions
+    // should pass through importFromContent again.
+    const existingFlag = getContentFlag(pfm);
+    if (outcome === 'flag' && existingFlag?.reason === res.flag_reason) continue;
 
     if (!apply) {
-      // Dry-run: assess read-only (re-import would mutate). Same thresholds as --apply.
-      const res = assessContentSanity({
-        compiled_truth: page.compiled_truth ?? '',
-        timeline: page.timeline ?? '',
-        title: page.title ?? '',
-        bytes_warn: effCs.bytes_warn,
-        bytes_block: effCs.bytes_block,
-        max_markup_ratio: effCs.max_markup_ratio,
-        prose_check_enabled: effCs.prose_check_enabled,
-        page_kind: page.type,
-        extra_literals: scanLiterals,
-      });
-      if (res.shouldQuarantine) {
+      // Dry-run is read-only; the assessment above uses the same effective
+      // thresholds and disposition policy as --apply.
+      if (outcome === 'quarantine') {
         quarantined++;
         touched.push({ slug: ref.slug, outcome: 'quarantine' });
-      } else if (res.shouldFlag) {
+      } else {
         flagged++;
         touched.push({ slug: ref.slug, outcome: 'flag' });
       }

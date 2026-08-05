@@ -3,9 +3,10 @@
  * content-quality gate writes (issue #1699).
  *
  * Why two markers, not one (Q1=A confidence split):
- *   - `quarantine` HIDES. Set ONLY for high-confidence junk (Cloudflare /
- *     CAPTCHA interstitial patterns + operator literals). The page lands
- *     (reviewable via get_page / quarantine list) but writes zero chunks
+ *   - `quarantine` HIDES. Set for high-confidence junk (Cloudflare /
+ *     CAPTCHA interstitial patterns + operator literals), or for pages above
+ *     `bytes_warn` when the operator opts into the oversize policy. The page
+ *     lands (reviewable via get_page / quarantine list) but writes zero chunks
  *     and is excluded from search via `QUARANTINE_FILTER_FRAGMENT`.
  *   - `content_flag` WARNS, does NOT hide. Set for the fuzzy markup-ratio
  *     signal and for oversize. The page stays fully searchable; the marker
@@ -13,7 +14,7 @@
  *     looks like boilerplate / is unusually large — examine it." There is
  *     NO SQL filter fragment for content_flag, by design.
  *
- * Three distinct markers, three reasons (Codex #6 — never overload one to
+ * Three distinct markers, three semantics (Codex #6 — never overload one to
  * mean another):
  *   - `embed_skip`   (src/core/embed-skip.ts) = "oversized-but-clean, not embedded"
  *   - `quarantine`   (here)                   = "junk, hidden from search"
@@ -54,8 +55,8 @@ export function quarantineFilterFragment(pageAlias: string): string {
 export const QUARANTINE_FILTER_FRAGMENT = quarantineFilterFragment('p');
 
 export interface QuarantineMarker {
-  /** Why the page was quarantined. The high-confidence junk reasons. */
-  reason: 'junk_pattern' | 'literal_substring';
+  /** Why the page was quarantined. */
+  reason: 'junk_pattern' | 'literal_substring' | 'oversized';
   /** Human-readable detail (which pattern/literal names fired). */
   detail: string;
   /** ISO 8601 timestamp at assessment time. */

@@ -138,9 +138,13 @@ export interface ContentSanityResult {
   reason_messages: string[];
   /** True when high-confidence junk fired (built-in pattern OR operator
    *  literal). The caller chooses quarantine (hide) vs reject (throw) via
-   *  `junk_disposition`. Does NOT fire on `high_markup` (that's a flag, not
-   *  a hide) or on oversize alone (that's a soft-block). */
+   *  `junk_disposition`. May also fire on bytes above `bytes_warn` when the
+   *  opt-in `oversize_disposition` is `quarantine`. Does NOT fire on
+   *  `high_markup` (that's a flag, not a hide). */
   shouldQuarantine: boolean;
+  /** The signal that selected quarantine. Stable precedence is built-in
+   *  junk pattern, then operator literal, then the opt-in oversize policy. */
+  quarantine_reason: 'junk_pattern' | 'literal_substring' | 'oversized' | null;
   /** Back-compat alias for `shouldQuarantine`. The 5 pre-v0.42 consumers
    *  read `shouldHardBlock`; keep it identical so they compile unchanged. */
   shouldHardBlock: boolean;
@@ -345,6 +349,9 @@ export function assessContentSanity(opts: {
   bytes_warn?: number;
   /** Effective block threshold; defaults to DEFAULT_BYTES_BLOCK. */
   bytes_block?: number;
+  /** How to handle content above `bytes_warn`. Default `warn` preserves the
+   *  historical warn/flag behavior; `quarantine` hides it from retrieval. */
+  oversize_disposition?: 'warn' | 'quarantine';
   /** Effective max markup ratio; defaults to DEFAULT_MAX_MARKUP_RATIO. */
   max_markup_ratio?: number;
   /** Master switch for the prose/markup pass. Default true (caller may
@@ -360,6 +367,7 @@ export function assessContentSanity(opts: {
 }): ContentSanityResult {
   const bytes_warn = opts.bytes_warn ?? DEFAULT_BYTES_WARN;
   const bytes_block = opts.bytes_block ?? DEFAULT_BYTES_BLOCK;
+  const oversize_disposition = opts.oversize_disposition ?? 'warn';
   const max_markup_ratio = opts.max_markup_ratio ?? DEFAULT_MAX_MARKUP_RATIO;
   const prose_check_enabled = opts.prose_check_enabled !== false;
 
@@ -431,10 +439,18 @@ export function assessContentSanity(opts: {
 
   const reasons: SanityTripReason[] = [];
   const reason_messages: string[] = [];
-  // High-confidence junk → quarantine (hide) or reject. The fuzzy markup
-  // signal does NOT contribute here (Q1=A — it flags, it doesn't hide).
-  const shouldQuarantine =
-    junk_pattern_matches.length > 0 || literal_substring_matches.length > 0;
+  // High-confidence junk → quarantine (hide) or reject. Operators may also
+  // opt into quarantining warn-tier size outliers. The fuzzy markup signal
+  // does NOT contribute here (Q1=A — it flags, it doesn't hide).
+  const quarantine_reason: ContentSanityResult['quarantine_reason'] =
+    junk_pattern_matches.length > 0
+      ? 'junk_pattern'
+      : literal_substring_matches.length > 0
+        ? 'literal_substring'
+        : oversize_disposition === 'quarantine' && bytes > bytes_warn
+          ? 'oversized'
+          : null;
+  const shouldQuarantine = quarantine_reason !== null;
   // Oversize-without-quarantine → soft-block (don't embed). When BOTH
   // oversize and junk fire (the 890K Cloudflare dump), quarantine wins.
   const shouldSkipEmbed = oversize && !shouldQuarantine;
@@ -492,6 +508,7 @@ export function assessContentSanity(opts: {
     reasons,
     reason_messages,
     shouldQuarantine,
+    quarantine_reason,
     // Back-compat alias: the 5 pre-v0.42 consumers read shouldHardBlock.
     shouldHardBlock: shouldQuarantine,
     shouldFlag,

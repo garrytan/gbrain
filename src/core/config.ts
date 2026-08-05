@@ -300,6 +300,10 @@ export interface GBrainConfig {
      *  reviewable; `reject` = hard-block (throw → sync-failure). Issue #1699.
      *  No env override (a destructive flip belongs in explicit config). */
     junk_disposition?: 'quarantine' | 'reject';
+    /** Disposition for pages above `bytes_warn`. `warn` (default) preserves
+     *  the historical searchable/flagged behavior; `quarantine` hides the
+     *  page from retrieval. No env override: this is an explicit policy. */
+    oversize_disposition?: 'warn' | 'quarantine';
     /** Max markup:total ratio before the fuzzy markup-heavy FLAG fires
      *  (page stays searchable, agent warned). Default: 0.85. Env override:
      *  `GBRAIN_MAX_MARKUP_RATIO`. */
@@ -815,6 +819,7 @@ export async function loadConfigWithEngine(
   const dbJunkEnabled = await dbBool('content_sanity.junk_patterns_enabled');
   const dbSanityDisabled = await dbBool('content_sanity.disabled');
   const dbJunkDisposition = await dbStr('content_sanity.junk_disposition');
+  const dbOversizeDisposition = await dbStr('content_sanity.oversize_disposition');
   const dbMaxMarkupRatioStr = await dbStr('content_sanity.max_markup_ratio');
   const dbProseCheckEnabled = await dbBool('content_sanity.prose_check_enabled');
 
@@ -837,6 +842,12 @@ export async function loadConfigWithEngine(
     (dbJunkDisposition === 'quarantine' || dbJunkDisposition === 'reject')
   ) {
     mergedCS.junk_disposition = dbJunkDisposition;
+  }
+  if (
+    mergedCS.oversize_disposition === undefined &&
+    (dbOversizeDisposition === 'warn' || dbOversizeDisposition === 'quarantine')
+  ) {
+    mergedCS.oversize_disposition = dbOversizeDisposition;
   }
   if (mergedCS.max_markup_ratio === undefined && dbMaxMarkupRatioStr !== undefined) {
     const n = parseFloat(dbMaxMarkupRatioStr);
@@ -1043,6 +1054,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'content_sanity.disabled',
   // Content-quality gate (v0.42, issue #1699)
   'content_sanity.junk_disposition',
+  'content_sanity.oversize_disposition',
   'content_sanity.max_markup_ratio',
   'content_sanity.prose_check_enabled',
   // MCP skill-catalog publishing (PR1)

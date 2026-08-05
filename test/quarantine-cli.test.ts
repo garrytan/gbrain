@@ -175,4 +175,66 @@ describe('gbrain quarantine scan', () => {
       expect(j.scanned).toBe(2);
     });
   });
+
+  test('opt-in oversize policy retroactively quarantines a pre-gate 66KB page', async () => {
+    await withHome(async () => {
+      await engine.setConfig('content_sanity.oversize_disposition', 'quarantine');
+      try {
+        await engine.putPage('notes/pre-oversize', {
+          type: 'note',
+          title: 'Pre-gate oversize',
+          compiled_truth: 'a'.repeat(66_413),
+          timeline: '',
+        });
+
+        const dry = JSON.parse(await capture(() => runQuarantine(engine, ['scan', '--json'])));
+        expect(dry.quarantined).toBe(1);
+        expect(dry.touched).toEqual([{ slug: 'notes/pre-oversize', outcome: 'quarantine' }]);
+        let page = await engine.getPage('notes/pre-oversize');
+        expect(isQuarantined(page!.frontmatter as Record<string, unknown>)).toBe(false);
+
+        const applied = JSON.parse(await capture(() => runQuarantine(engine, ['scan', '--apply', '--no-embed', '--json'])));
+        expect(applied.quarantined).toBe(1);
+        page = await engine.getPage('notes/pre-oversize');
+        const fm = page!.frontmatter as Record<string, unknown>;
+        expect(isQuarantined(fm)).toBe(true);
+        expect((fm.quarantine as Record<string, unknown>).reason).toBe('oversized');
+      } finally {
+        await engine.unsetConfig('content_sanity.oversize_disposition');
+      }
+    });
+  });
+
+  test('scan promotes an existing oversize content_flag to quarantine', async () => {
+    await withHome(async () => {
+      await engine.setConfig('content_sanity.oversize_disposition', 'quarantine');
+      try {
+        await engine.putPage('notes/pre-flagged-oversize', {
+          type: 'note',
+          title: 'Previously flagged oversize',
+          compiled_truth: 'a'.repeat(600_000),
+          timeline: '',
+          frontmatter: {
+            content_flag: {
+              reason: 'oversized',
+              detail: 'legacy soft block',
+              assessed_at: '2026-05-01T00:00:00.000Z',
+            },
+          },
+        });
+
+        const dry = JSON.parse(await capture(() => runQuarantine(engine, ['scan', '--json'])));
+        expect(dry.quarantined).toBe(1);
+
+        const applied = JSON.parse(await capture(() => runQuarantine(engine, ['scan', '--apply', '--no-embed', '--json'])));
+        expect(applied.quarantined).toBe(1);
+        const page = await engine.getPage('notes/pre-flagged-oversize');
+        const fm = page!.frontmatter as Record<string, unknown>;
+        expect(isQuarantined(fm)).toBe(true);
+        expect(getContentFlag(fm)).toBeNull();
+      } finally {
+        await engine.unsetConfig('content_sanity.oversize_disposition');
+      }
+    });
+  });
 });
