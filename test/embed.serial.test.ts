@@ -40,7 +40,7 @@ mock.module('../src/core/embedding.ts', () => ({
 }));
 
 // Import AFTER mocking.
-const { runEmbed, runEmbedCore } = await import('../src/commands/embed.ts');
+const { runEmbed, runEmbedCore, preparePlainReembedInputs } = await import('../src/commands/embed.ts');
 
 // v0.41.6.0 D1: runEmbedCore now preflights embedding credentials. This
 // test stack uses the LEGACY embedBatch mock path, not the gateway,
@@ -938,17 +938,19 @@ describe('embed --stale contextual-retrieval wrapping (#3507)', () => {
       seen.push(...texts);
       return texts.map(() => new Float32Array(1536));
     };
+    const page = {
+      slug: 'wrapped',
+      title: 'Widget Notes',
+      source_id: 'default',
+      compiled_truth: 'x',
+      timeline: '',
+      contextual_retrieval_mode: mode,
+    };
     const engine = mockEngine({
       countStaleChunks: async () => 2,
       listStaleChunks: async () => wrapStale,
-      getPage: async () => ({
-        slug: 'wrapped',
-        title: 'Widget Notes',
-        source_id: 'default',
-        compiled_truth: 'x',
-        timeline: '',
-        contextual_retrieval_mode: mode,
-      }),
+      listPages: async () => [page],
+      getPage: async () => page,
       getChunks: async () => existingChunks,
       upsertChunks: async () => {},
       updatePageContextualRetrievalState: async (...args: any[]) => { restamps.push(args); },
@@ -997,5 +999,51 @@ describe('embed --stale contextual-retrieval wrapping (#3507)', () => {
     expect(seen).toContain('prose chunk');
     expect(seen.some((t) => t.startsWith('<context>'))).toBe(false);
     expect(restamps).toHaveLength(0);
+  });
+
+  test('--all resolves and stamps the live mode for an unstamped page', async () => {
+    const { engine, seen, restamps } = wrappingHarness(null);
+    const result = await runEmbedCore(engine, { all: true });
+    expect(result.embedded).toBe(2);
+    expect(seen).toContain('<context>Widget Notes\n</context>\nprose chunk');
+    expect(restamps).toHaveLength(1);
+    expect(restamps[0].slice(0, 3)).toEqual(['wrapped', 'default', 'title']);
+  });
+
+  test('--slugs resolves and stamps the live mode for an unstamped page', async () => {
+    const { engine, seen, restamps } = wrappingHarness(null);
+    const result = await runEmbedCore(engine, { slugs: ['wrapped'] });
+    expect(result.embedded).toBe(2);
+    expect(seen).toContain('<context>Widget Notes\n</context>\nprose chunk');
+    expect(restamps).toHaveLength(1);
+    expect(restamps[0].slice(0, 3)).toEqual(['wrapped', 'default', 'title']);
+  });
+
+  test('live source policy overrides the global contextual-retrieval mode', async () => {
+    const engine = mockEngine({
+      getConfig: async (key: string) => key === 'search.mode' ? 'tokenmax' : null,
+      executeRaw: async (sql: string) => sql.includes('FROM sources')
+        ? [{
+            id: 'media',
+            contextual_retrieval_mode: 'none',
+            trust_frontmatter_overrides: false,
+          }]
+        : [],
+    });
+    const prepared = await preparePlainReembedInputs(
+      engine,
+      {
+        title: 'Media Notes',
+        frontmatter: { contextual_retrieval: 'title' },
+        contextual_retrieval_mode: null,
+      },
+      [{ chunk_text: 'plain prose', chunk_source: 'compiled_truth' }],
+      'media',
+      true,
+    );
+
+    expect(prepared.appliedMode).toBe('none');
+    expect(prepared.texts).toEqual(['plain prose']);
+    expect(prepared.restampAfterFullSuccess).toBe(true);
   });
 });
