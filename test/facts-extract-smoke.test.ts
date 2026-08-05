@@ -18,13 +18,16 @@
 import { describe, test, expect, afterEach } from 'bun:test';
 import {
   __setChatTransportForTests,
+  __setEmbedTransportForTests,
+  configureGateway,
   resetGateway,
   type ChatResult,
 } from '../src/core/ai/gateway.ts';
-import { extractFactsFromTurn } from '../src/core/facts/extract.ts';
+import { extractFactsFromTurn, extractFactsFromTurnWithOutcome } from '../src/core/facts/extract.ts';
 
 afterEach(() => {
   __setChatTransportForTests(null);
+  __setEmbedTransportForTests(null);
   resetGateway();
 });
 
@@ -141,5 +144,90 @@ describe('extractFactsFromTurn — B1 end-to-end smoke', () => {
 
     expect(facts).toHaveLength(3);
     expect(facts.map(f => f.notability)).toEqual(['high', 'medium', 'low']);
+  });
+
+  test('admission: high and medium embed, low is rejected', async () => {
+    process.env.OPENAI_API_KEY = 'test';
+    const embeddedTexts: string[] = [];
+    configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536, chat_model: 'openai:gpt-4o-mini', env: { OPENAI_API_KEY: 'test' } } as any);
+    __setEmbedTransportForTests(async ({ values }: { values: string[] }) => {
+      embeddedTexts.push(...values);
+      return { embeddings: values.map(() => Array(1536).fill(0.1)), usage: { tokens: 1 }, values, warnings: [] } as any;
+    });
+    __setChatTransportForTests(async (): Promise<ChatResult> => ({
+      text: JSON.stringify({ facts: [
+        { fact: 'H', kind: 'fact', notability: 'high' },
+        { fact: 'M', kind: 'fact', notability: 'medium' },
+        { fact: 'L', kind: 'fact', notability: 'low' },
+      ] }), blocks: [], stopReason: 'end',
+      usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'test:stub', providerId: 'test',
+    }));
+    const outcome = await extractFactsFromTurnWithOutcome({
+      turnText: 'content', source: 'test',
+      notabilityAdmission: { allowed: ['high', 'medium'], invalid: 'fail' },
+    });
+    expect(outcome).toEqual(expect.objectContaining({ ok: true, notability_rejected: 1 }));
+    if (outcome.ok) expect(outcome.facts.map((fact) => fact.fact)).toEqual(['H', 'M']);
+    expect(embeddedTexts).toEqual(['H', 'M']);
+  });
+
+  test('admission: missing tier fails strictly before embedding', async () => {
+    process.env.OPENAI_API_KEY = 'test';
+    const embeddedTexts: string[] = [];
+    configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536, chat_model: 'openai:gpt-4o-mini', env: { OPENAI_API_KEY: 'test' } } as any);
+    __setEmbedTransportForTests(async ({ values }: { values: string[] }) => {
+      embeddedTexts.push(...values);
+      return { embeddings: values.map(() => Array(1536).fill(0.1)), usage: { tokens: 1 }, values, warnings: [] } as any;
+    });
+    __setChatTransportForTests(async (): Promise<ChatResult> => ({
+      text: JSON.stringify({ facts: [{ fact: 'missing', kind: 'fact' }] }), blocks: [], stopReason: 'end',
+      usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'test:stub', providerId: 'test',
+    }));
+    const outcome = await extractFactsFromTurnWithOutcome({ turnText: 'content', source: 'test', notabilityAdmission: { allowed: ['high', 'medium'], invalid: 'fail' } });
+    expect(outcome).toEqual({ ok: false, reason: 'malformed_output' });
+    expect(embeddedTexts).toEqual([]);
+  });
+
+  test('admission: unknown tier fails strictly before embedding', async () => {
+    process.env.OPENAI_API_KEY = 'test';
+    const embeddedTexts: string[] = [];
+    configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536, chat_model: 'openai:gpt-4o-mini', env: { OPENAI_API_KEY: 'test' } } as any);
+    __setEmbedTransportForTests(async ({ values }: { values: string[] }) => {
+      embeddedTexts.push(...values);
+      return { embeddings: values.map(() => Array(1536).fill(0.1)), usage: { tokens: 1 }, values, warnings: [] } as any;
+    });
+    __setChatTransportForTests(async (): Promise<ChatResult> => ({
+      text: JSON.stringify({ facts: [{ fact: 'unknown', kind: 'fact', notability: 'urgent' }] }), blocks: [], stopReason: 'end',
+      usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'test:stub', providerId: 'test',
+    }));
+    const outcome = await extractFactsFromTurnWithOutcome({ turnText: 'content', source: 'test', notabilityAdmission: { allowed: ['high', 'medium'], invalid: 'fail' } });
+    expect(outcome).toEqual({ ok: false, reason: 'malformed_output' });
+    expect(embeddedTexts).toEqual([]);
+  });
+
+  test('admission: high-only drop keeps high and skips invalid/lower tiers', async () => {
+    process.env.OPENAI_API_KEY = 'test';
+    const embeddedTexts: string[] = [];
+    configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536, chat_model: 'openai:gpt-4o-mini', env: { OPENAI_API_KEY: 'test' } } as any);
+    __setEmbedTransportForTests(async ({ values }: { values: string[] }) => {
+      embeddedTexts.push(...values);
+      return { embeddings: values.map(() => Array(1536).fill(0.1)), usage: { tokens: 1 }, values, warnings: [] } as any;
+    });
+    __setChatTransportForTests(async (): Promise<ChatResult> => ({
+      text: JSON.stringify({ facts: [
+        { fact: 'H', kind: 'fact', notability: 'high' },
+        { fact: 'missing', kind: 'fact' }, { fact: 'unknown', kind: 'fact', notability: 'urgent' },
+        { fact: 'M', kind: 'fact', notability: 'medium' }, { fact: 'L', kind: 'fact', notability: 'low' },
+      ] }), blocks: [], stopReason: 'end',
+      usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'test:stub', providerId: 'test',
+    }));
+    const outcome = await extractFactsFromTurnWithOutcome({ turnText: 'content', source: 'test', notabilityAdmission: { allowed: ['high'], invalid: 'drop' } });
+    expect(outcome).toEqual(expect.objectContaining({ ok: true, notability_rejected: 2 }));
+    if (outcome.ok) expect(outcome.facts.map((fact) => fact.fact)).toEqual(['H']);
+    expect(embeddedTexts).toEqual(['H']);
   });
 });

@@ -110,6 +110,14 @@ export interface ExtractInput {
   abortSignal?: AbortSignal;
   /** Cap on number of facts returned per turn. Defaults to 10. */
   maxFactsPerTurn?: number;
+  /** Optional pre-embedding notability admission policy. */
+  notabilityAdmission?: FactNotabilityAdmission;
+}
+
+export type FactNotability = 'high' | 'medium' | 'low';
+export interface FactNotabilityAdmission {
+  allowed: readonly FactNotability[];
+  invalid: 'fail' | 'drop';
 }
 
 /** A pre-INSERT fact ready for the engine.insertFact path. */
@@ -216,7 +224,7 @@ const EXTRACTOR_SYSTEM = [
 const MAX_TURN_TEXT_CHARS = 8000;
 
 export type ExtractFactsOutcome =
-  | { ok: true; facts: ExtractedFact[] }
+  | { ok: true; facts: ExtractedFact[]; notability_rejected: number }
   | {
       ok: false;
       reason:
@@ -234,14 +242,14 @@ export type ExtractFactsOutcome =
 export async function extractFactsFromTurnWithOutcome(
   input: ExtractInput,
 ): Promise<ExtractFactsOutcome> {
-  if (input.isDreamGenerated) return { ok: true, facts: [] };
-  if (!input.turnText) return { ok: true, facts: [] };
+  if (input.isDreamGenerated) return { ok: true, facts: [], notability_rejected: 0 };
+  if (!input.turnText) return { ok: true, facts: [], notability_rejected: 0 };
 
   // Anti-loop + sanitization.
   let cleaned = input.turnText.slice(0, MAX_TURN_TEXT_CHARS);
   for (const p of INJECTION_PATTERNS) cleaned = cleaned.replace(p.rx, p.replacement);
   cleaned = cleaned.trim();
-  if (!cleaned) return { ok: true, facts: [] };
+  if (!cleaned) return { ok: true, facts: [], notability_rejected: 0 };
 
   if (!isAvailable('chat')) {
     // No chat gateway → no extraction. Caller still inserts facts via direct
@@ -314,6 +322,7 @@ export async function extractFactsFromTurnWithOutcome(
   const parsedRaw = parsedShape.facts;
 
   const facts: ExtractedFact[] = [];
+  let notability_rejected = 0;
   for (const candidate of parsedRaw.slice(0, cap)) {
     if (input.abortSignal?.aborted) {
       const e = new Error('aborted');
@@ -330,8 +339,22 @@ export async function extractFactsFromTurnWithOutcome(
       ? (candidate.kind as FactKind)
       : 'fact';
     const confidence = clampConfidence(candidate.confidence);
-    const notability = ['high', 'medium', 'low'].includes(candidate.notability || '')
-      ? (candidate.notability as 'high' | 'medium' | 'low')
+    const isValidNotability = ['high', 'medium', 'low'].includes(candidate.notability || '');
+    if (input.notabilityAdmission) {
+      if (!isValidNotability) {
+        if (input.notabilityAdmission.invalid === 'fail') {
+          return { ok: false, reason: 'malformed_output' };
+        }
+        continue;
+      }
+      const tier = candidate.notability as FactNotability;
+      if (!input.notabilityAdmission.allowed.includes(tier)) {
+        notability_rejected++;
+        continue;
+      }
+    }
+    const notability: FactNotability = isValidNotability
+      ? (candidate.notability as FactNotability)
       : 'medium';
 
     let embedding: Float32Array | null = null;
@@ -373,7 +396,7 @@ export async function extractFactsFromTurnWithOutcome(
     });
   }
 
-  return { ok: true, facts };
+  return { ok: true, facts, notability_rejected };
 }
 
 /** Historical best-effort API retained for interactive callers. */
