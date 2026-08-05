@@ -2,6 +2,26 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.73.3] - 2026-08-05
+
+**A Minion purge marked as a dry run can no longer delete pages, expired sources, or old checkpoints.** The queued purge handler accepted `dryRun`, but still ran every destructive branch. It now stops before the first write.
+
+This handler cannot build a trustworthy preview of what a real purge would remove, so the result says `previewSupported: false` and `skipped: true` with zero counts instead of pretending that a preview ran. Runs without `dryRun` keep the existing scope and age filters.
+
+### To take advantage of v0.42.73.3
+
+```bash
+gbrain upgrade
+```
+
+Nothing to configure. Existing real purge jobs keep their current behavior; dry runs now fail closed and preserve all data.
+
+### For contributors
+
+The regression test drives the registered Minion handler itself against PGLite. It pins zero writes across all three purge targets and the existing one-page, one-source, one-checkpoint deletion behavior for a real run.
+
+Contributed by @mamedov.
+
 ## [0.42.73.2] - 2026-08-05
 
 **A write that deduplication redirects onto an existing page is now checked against the write scope of whoever asked for it.** When the same content arrives under a new slug, gbrain recognises it and points the write at the page that already holds it. That redirected target is now tested against the caller's own scope — under whichever mechanism confines that caller. One of the two mechanisms was consulted at that point; both are now.
