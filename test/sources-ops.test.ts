@@ -17,6 +17,8 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { execFileSync } from 'child_process';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
+import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import {
   addSource,
   listSources,
@@ -449,6 +451,68 @@ describe('removeSource — clone-cleanup', () => {
         expect(e).toBeInstanceOf(SourceOpError);
         expect((e as SourceOpError).code).toBe('protected_id');
       }
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// removeSource — OAuth client cascade (PEU-528)
+// ---------------------------------------------------------------------------
+
+describe('removeSource — OAuth client cascade', () => {
+  // Register a source-scoped client the same way provision_source does.
+  async function provisionClient(source: string): Promise<void> {
+    await addSource(engine, { id: source, localPath: `/tmp/${source}-fixture` });
+    const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine) });
+    await provider.registerClientManual(
+      source,
+      ['client_credentials'],
+      'read write',
+      [],
+      source, // sourceId
+      [source], // federatedRead allowlist = own source
+      'client_secret_post',
+    );
+  }
+
+  const clientCount = async (source: string): Promise<number> =>
+    (
+      await engine.executeRaw<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM oauth_clients WHERE source_id = $1`,
+        [source],
+      )
+    )[0]?.n ?? 0;
+
+  test('confirmDestructive cascades the source-scoped OAuth client(s)', async () => {
+    await withEnv2(async () => {
+      await provisionClient('with-client');
+      expect(await clientCount('with-client')).toBe(1);
+
+      const res = await removeSource(engine, { id: 'with-client', confirmDestructive: true });
+      expect(res.clients_deleted).toBe(1);
+
+      // Source row gone AND no orphaned client — the whole point (PEU-528).
+      expect((await listSources(engine)).find((s) => s.id === 'with-client')).toBeUndefined();
+      expect(await clientCount('with-client')).toBe(0);
+    });
+  });
+
+  test('without confirm: refuses with a clear message, leaves the client intact', async () => {
+    await withEnv2(async () => {
+      await provisionClient('needs-confirm');
+
+      try {
+        await removeSource(engine, { id: 'needs-confirm' });
+        throw new Error('expected throw');
+      } catch (e) {
+        expect(e).toBeInstanceOf(SourceOpError);
+        // Names the client count, not a raw FK violation from ON DELETE RESTRICT.
+        expect((e as SourceOpError).message).toContain('1 OAuth clients');
+      }
+
+      // Nothing removed on the refusal path.
+      expect(await clientCount('needs-confirm')).toBe(1);
+      expect((await listSources(engine)).find((s) => s.id === 'needs-confirm')).toBeDefined();
     });
   });
 });

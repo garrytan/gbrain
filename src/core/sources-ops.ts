@@ -662,6 +662,9 @@ export async function listSources(
 export interface RemoveResult {
   id: string;
   pages_deleted: number;
+  /** Source-scoped OAuth clients removed to satisfy the ON DELETE RESTRICT FK
+   *  (oauth_clients.source_id, migrate v64) before the source row is deleted. */
+  clients_deleted: number;
   clone_removed: boolean;
   clone_path: string | null;
   dryRun: boolean;
@@ -697,11 +700,23 @@ export async function removeSource(
   }
 
   const pageCount = await countAllPages(engine, opts.id);
+  // Source-scoped OAuth clients (provision_source registers one per tenant brain).
+  // Their FK is ON DELETE RESTRICT (migrate v64), so `DELETE FROM sources` below
+  // fails outright unless we drop them first — the "revoke the clients first" path
+  // v64's comment describes.
+  const clientCount =
+    (
+      await engine.executeRaw<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM oauth_clients WHERE source_id = $1`,
+        [opts.id],
+      )
+    )[0]?.n ?? 0;
 
   if (opts.dryRun) {
     return {
       id: opts.id,
       pages_deleted: pageCount,
+      clients_deleted: clientCount,
       clone_removed: false,
       clone_path: src.local_path,
       dryRun: true,
@@ -709,11 +724,13 @@ export async function removeSource(
   }
 
   // Confirmation gate (caller should usually have already shown the impact
-  // preview from destructive-guard.ts).
-  if (pageCount > 0 && !opts.confirmDestructive && !opts.yes) {
+  // preview from destructive-guard.ts). Clients count as destructive too — a
+  // clear "needs confirm" message beats the raw FK violation the RESTRICT FK
+  // would otherwise throw.
+  if ((pageCount > 0 || clientCount > 0) && !opts.confirmDestructive && !opts.yes) {
     throw new SourceOpError(
       'protected_id', // closest existing code; caller can frame as "needs confirm"
-      `Refusing to remove source "${opts.id}" with ${pageCount} pages without --confirm-destructive or --yes.`,
+      `Refusing to remove source "${opts.id}" with ${pageCount} pages and ${clientCount} OAuth clients without --confirm-destructive or --yes.`,
     );
   }
 
@@ -750,11 +767,19 @@ export async function removeSource(
     }
   }
 
+  // Drop the source-scoped OAuth clients first (their oauth_tokens cascade via
+  // oauth_tokens.client_id ON DELETE CASCADE), so the ON DELETE RESTRICT FK on
+  // oauth_clients.source_id doesn't block the source delete below.
+  if (clientCount > 0) {
+    await engine.executeRaw(`DELETE FROM oauth_clients WHERE source_id = $1`, [opts.id]);
+  }
+
   await engine.executeRaw(`DELETE FROM sources WHERE id = $1`, [opts.id]);
 
   return {
     id: opts.id,
     pages_deleted: pageCount,
+    clients_deleted: clientCount,
     clone_removed: cloneRemoved,
     clone_path: src.local_path,
     dryRun: false,
