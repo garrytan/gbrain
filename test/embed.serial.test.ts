@@ -916,7 +916,13 @@ describe('runEmbed preserves code-chunk metadata across re-embed (regression for
 // ────────────────────────────────────────────────────────────────
 
 describe('embed --stale contextual-retrieval wrapping (#3507)', () => {
-  const wrapChunks = [
+  const wrapChunks: Array<{
+    chunk_index: number;
+    chunk_text: string;
+    chunk_source: string;
+    embedded_at: Date | null;
+    token_count: number;
+  }> = [
     { chunk_index: 0, chunk_text: 'prose chunk', chunk_source: 'compiled_truth', embedded_at: null, token_count: 1 },
     { chunk_index: 1, chunk_text: 'const x = 1;', chunk_source: 'fenced_code', embedded_at: null, token_count: 1 },
   ];
@@ -925,7 +931,7 @@ describe('embed --stale contextual-retrieval wrapping (#3507)', () => {
     { slug: 'wrapped', chunk_index: 1, chunk_text: 'const x = 1;', chunk_source: 'fenced_code' as any, model: null, token_count: 1, source_id: 'default', page_id: 1 },
   ];
 
-  function wrappingHarness(mode: string | null) {
+  function wrappingHarness(mode: string | null, existingChunks = wrapChunks) {
     const seen: string[] = [];
     const restamps: any[][] = [];
     embedBatchBehavior = async (texts: string[]) => {
@@ -943,7 +949,7 @@ describe('embed --stale contextual-retrieval wrapping (#3507)', () => {
         timeline: '',
         contextual_retrieval_mode: mode,
       }),
-      getChunks: async () => wrapChunks,
+      getChunks: async () => existingChunks,
       upsertChunks: async () => {},
       updatePageContextualRetrievalState: async (...args: any[]) => { restamps.push(args); },
     });
@@ -971,8 +977,21 @@ describe('embed --stale contextual-retrieval wrapping (#3507)', () => {
     expect(newMode).toBe('title');
   });
 
-  test('page with no stored CR mode embeds raw chunk_text (convention preserved)', async () => {
+  test('fully stale page with no stored CR mode resolves the live mode and stamps it', async () => {
     const { engine, seen, restamps } = wrappingHarness(null);
+    const result = await runEmbedCore(engine, { stale: true });
+    expect(result.embedded).toBe(2);
+    expect(seen).toContain('<context>Widget Notes\n</context>\nprose chunk');
+    expect(restamps).toHaveLength(1);
+    expect(restamps[0].slice(0, 3)).toEqual(['wrapped', 'default', 'title']);
+  });
+
+  test('partially stale page with no stored CR mode stays raw and unstamped', async () => {
+    const existingChunks = [
+      ...wrapChunks,
+      { chunk_index: 2, chunk_text: 'already embedded', chunk_source: 'compiled_truth', embedded_at: new Date(), token_count: 2 },
+    ];
+    const { engine, seen, restamps } = wrappingHarness(null, existingChunks);
     const result = await runEmbedCore(engine, { stale: true });
     expect(result.embedded).toBe(2);
     expect(seen).toContain('prose chunk');

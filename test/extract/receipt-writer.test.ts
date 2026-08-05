@@ -138,14 +138,17 @@ describe('writeReceipt — frontmatter D-EXTRACT-19 belt+suspenders', () => {
     const { slug, page } = await writeReceipt(engine, BASE_INPUT);
     expect(slug).toBe('extracts/2026-05-27/facts.conversation/default/a1b2c3d4/round-full');
     expect(page.type).toBe('extract_receipt');
-    // belt + suspenders: both anti-loop flags are present
-    expect(page.frontmatter?.type).toBe('extract_receipt');
+    // belt + suspenders: structural page type + frontmatter flag are present
     expect(page.frontmatter?.dream_generated).toBe(true);
     // #1978: receipts are operation records, not derived documents —
     // explicit raw-trace exemption so the doctor raw_provenance check
     // (warn-only v1) stays quiet.
     expect(page.frontmatter?.raw_trace_exempt).toBe(true);
     expect(typeof page.frontmatter?.raw_trace_exempt_reason).toBe('string');
+    // Receipts are documented as first-class searchable memory, so the write
+    // must pass through the canonical chunking pipeline (not bare putPage).
+    const chunks = await engine.getChunks(slug, { sourceId: 'default' });
+    expect(chunks.length).toBeGreaterThan(0);
   });
 
   test('stamps optional model_id + eval_pass + eval_score when supplied', async () => {
@@ -172,7 +175,7 @@ describe('writeReceipt — frontmatter D-EXTRACT-19 belt+suspenders', () => {
     expect(page.frontmatter?.eval_pass).toBeUndefined();
     expect(page.frontmatter?.eval_score).toBeUndefined();
     // Anti-loop flags STILL present even on deterministic extractors
-    expect(page.frontmatter?.type).toBe('extract_receipt');
+    expect(page.type).toBe('extract_receipt');
     expect(page.frontmatter?.dream_generated).toBe(true);
   });
 

@@ -22,7 +22,9 @@ import { embedBackfillLockId } from '../core/embed-backfill-lock.ts';
 import { AITransientError } from '../core/ai/errors.ts';
 import { wrapChunkTextsForStoredMode } from '../core/embedding-context.ts';
 import { titleTierCorpusGeneration } from '../core/contextual-retrieval-service.ts';
-import type { Page } from '../core/types.ts';
+import { resolveContextualRetrievalMode } from '../core/contextual-retrieval-resolver.ts';
+import { loadSearchModeConfig, resolveSearchMode } from '../core/search/mode.ts';
+import type { CRMode, Page } from '../core/types.ts';
 
 /** #3037: cap failure samples so a corpus-wide outage doesn't bloat --json. */
 const FAILURE_SAMPLE_CAP = 10;
@@ -54,6 +56,83 @@ export async function restampIfDemotedToTitleTier(
 ): Promise<void> {
   if (page?.contextual_retrieval_mode !== 'per_chunk_synopsis') return;
   await engine.updatePageContextualRetrievalState(slug, sourceId, 'title', titleTierCorpusGeneration());
+}
+
+export interface PlainReembedInputs {
+  texts: string[];
+  appliedMode: CRMode;
+  restampAfterFullSuccess: boolean;
+}
+
+/**
+ * Resolve the embedding shape for a plain re-embed.
+ *
+ * Pages written with `noEmbed` intentionally have a NULL stored CR mode. When
+ * the first embed pass covers the WHOLE page, resolve the live page > source >
+ * global policy and apply the same free-tier convention as importFromContent
+ * (`per_chunk_synopsis` demotes to `title`). A partial pass preserves the old
+ * raw convention: changing only some vectors would create a mixed-shape page.
+ */
+export async function preparePlainReembedInputs(
+  engine: BrainEngine,
+  page: Pick<Page, 'title' | 'frontmatter' | 'contextual_retrieval_mode'> | null | undefined,
+  chunks: ReadonlyArray<{ chunk_text: string; chunk_source?: string | null }>,
+  sourceId: string,
+  fullyReembedding: boolean,
+): Promise<PlainReembedInputs> {
+  const storedMode = page?.contextual_retrieval_mode;
+  let appliedMode: CRMode = storedMode === 'per_chunk_synopsis' ? 'title' : storedMode ?? 'none';
+  let restampAfterFullSuccess = storedMode === 'per_chunk_synopsis';
+
+  if (page && storedMode == null && fullyReembedding) {
+    const searchInput = await loadSearchModeConfig(engine);
+    const knobs = resolveSearchMode(searchInput);
+    const rows = await engine.executeRaw<{
+      id: string;
+      contextual_retrieval_mode?: string | null;
+      trust_frontmatter_overrides?: boolean;
+    }>(
+      `SELECT id, contextual_retrieval_mode, trust_frontmatter_overrides
+         FROM sources
+        WHERE id = $1`,
+      [sourceId],
+    );
+    const source = Array.isArray(rows) && rows[0]
+      ? rows[0]
+      : { id: sourceId, contextual_retrieval_mode: null, trust_frontmatter_overrides: false };
+    const resolution = resolveContextualRetrievalMode({
+      pageFrontmatter: page.frontmatter ?? {},
+      source,
+      globalMode: knobs.contextual_retrieval,
+      killSwitchDisabled: knobs.contextual_retrieval_disabled,
+    });
+    appliedMode = resolution.mode === 'per_chunk_synopsis' ? 'title' : resolution.mode;
+    restampAfterFullSuccess = true;
+  }
+
+  return {
+    texts: wrapChunkTextsForStoredMode(
+      page ? { ...page, contextual_retrieval_mode: appliedMode } : page,
+      chunks,
+    ),
+    appliedMode,
+    restampAfterFullSuccess,
+  };
+}
+
+export async function restampPlainReembedState(
+  engine: BrainEngine,
+  context: PlainReembedInputs,
+  slug: string,
+  sourceId: string,
+): Promise<void> {
+  if (!context.restampAfterFullSuccess) return;
+  await engine.updatePageContextualRetrievalState(
+    slug,
+    sourceId,
+    context.appliedMode,
+    context.appliedMode === 'title' ? titleTierCorpusGeneration() : null,
+  );
 }
 
 export interface EmbedOpts {
@@ -676,9 +755,16 @@ async function embedPage(
   let embeddings: (Float32Array | null)[];
   let failed = 0;
   let firstError: unknown;
+  const reembedInputs = await preparePlainReembedInputs(
+    engine,
+    page,
+    toEmbed,
+    page.source_id ?? sourceId ?? 'default',
+    toEmbed.length === chunks.length,
+  );
   try {
     ({ embeddings, failed, firstError } = await embedPageTexts(
-      wrapChunkTextsForStoredMode(page, toEmbed),
+      reembedInputs.texts,
       signal ? { abortSignal: signal } : {},
     ));
   } catch (e: unknown) {
@@ -714,7 +800,12 @@ async function embedPage(
     await engine.setPageEmbeddingSignature(slug, { sourceId, signature: currentEmbeddingSignature() });
     // #3507: a fully re-embedded per_chunk_synopsis page landed at the
     // title tier — keep the stamped mode honest.
-    await restampIfDemotedToTitleTier(engine, page, slug, page.source_id);
+    await restampPlainReembedState(
+      engine,
+      reembedInputs,
+      slug,
+      page.source_id ?? sourceId ?? 'default',
+    );
   }
   result.embedded += toEmbed.length - failed;
   if (failed > 0) {
@@ -864,8 +955,15 @@ async function embedAll(
       // #3037: per-chunk failure isolation — one bad chunk costs one chunk,
       // not the whole page's siblings. The wrapped texts feed the fan-out
       // too, so an isolation retry never strips the contextual prefixes.
+      const reembedInputs = await preparePlainReembedInputs(
+        engine,
+        page,
+        toEmbed,
+        pageSourceId,
+        true,
+      );
       const { embeddings, failed, firstError } = await embedPageTexts(
-        wrapChunkTextsForStoredMode(page, toEmbed),
+        reembedInputs.texts,
         signal ? { abortSignal: signal } : {},
       );
       // Build a map of new embeddings by chunk_index
@@ -898,7 +996,7 @@ async function embedAll(
         // so restamping would make contextual_retrieval_mode lie again
         // (the exact #3461 bug).
         await observed(pacer, () =>
-          restampIfDemotedToTitleTier(engine, page, page.slug, pageSourceId),
+          restampPlainReembedState(engine, reembedInputs, page.slug, pageSourceId),
         );
       }
       result.embedded += toEmbed.length - failed;
@@ -1228,12 +1326,21 @@ async function embedAllStale(
           // #3037: per-chunk failure isolation — one bad chunk costs one
           // chunk, not the whole page's siblings. The wrapped texts feed the
           // fan-out too, so an isolation retry never strips the prefixes.
+          const existing = await observed(pacer, () =>
+            engine.getChunks(slug, { sourceId: keySourceId }),
+          );
+          const reembedInputs = await preparePlainReembedInputs(
+            engine,
+            pageRow,
+            stale,
+            keySourceId,
+            stale.length === existing.length,
+          );
           const { embeddings, failed, firstError } = await embedPageTexts(
-            wrapChunkTextsForStoredMode(pageRow, stale),
+            reembedInputs.texts,
             { abortSignal: effectiveSignal },
           );
           // Re-fetch existing chunks and merge to avoid deleting non-stale chunks.
-          const existing = await observed(pacer, () => engine.getChunks(slug, { sourceId: keySourceId }));
           const staleIdxToEmbedding = new Map<number, Float32Array>();
           for (let j = 0; j < stale.length; j++) {
             const emb = embeddings[j];
@@ -1269,7 +1376,7 @@ async function embedAllStale(
           // contextual_retrieval_mode lie again (the exact #3461 bug).
           if (failed === 0 && stale.length === existing.length) {
             await observed(pacer, () =>
-              restampIfDemotedToTitleTier(engine, pageRow, slug, keySourceId),
+              restampPlainReembedState(engine, reembedInputs, slug, keySourceId),
             );
           }
           result.embedded += stale.length - failed;
