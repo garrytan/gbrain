@@ -2028,6 +2028,17 @@ export async function registerBuiltinHandlers(
       : 'all';
     const olderThanHours = typeof job.data.olderThanHours === 'number' ? job.data.olderThanHours : 72;
     const dryRun = !!job.data.dryRun;
+    if (dryRun) {
+      return {
+        pagesPurged: 0,
+        sourcesPurged: [],
+        checkpointsPurged: 0,
+        dryRun: true,
+        previewSupported: false,
+        skipped: true,
+        reason: 'Safe purge preview is not supported; no data was deleted.',
+      };
+    }
     let pagesPurged = 0;
     let sourcesPurged: string[] = [];
     if (scope === 'pages' || scope === 'all') {
