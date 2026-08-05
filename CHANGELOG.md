@@ -2,6 +2,35 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.73.3] - 2026-08-05
+
+### release-summary
+DCR (Dynamic Client Registration) no longer returns opaque HTTP 500s for
+client metadata that native MCP clients commonly send. Unknown OIDC-style
+scopes are filtered, custom-scheme redirect URIs are accepted, and every
+validation failure surfaces as RFC 7591 `invalid_client_metadata` (HTTP 400).
+
+### Fixed
+- **DCR HTTP 500 on validation failure.** `registerClient` validators used to
+  throw plain `Error`s; the MCP TypeScript SDK maps non-OAuthError throws to
+  generic `{"error":"server_error"}` 500s. Warp (rmcp 1.6.0) and other native
+  clients hit this and could not complete OAuth. Validation failures now throw
+  `InvalidClientMetadataError` so the SDK returns HTTP 400 with the real reason,
+  and rejects are warn-logged server-side.
+- **Unknown scopes hard-rejected on DCR.** Clients that append `offline_access`
+  / `openid` (OIDC-flavored stacks) failed registration entirely. DCR now keeps
+  the intersection with `ALLOWED_SCOPES` (RFC 7591 value replacement) and only
+  400s when every requested scope is unknown. CLI / admin registration still
+  hard-rejects typos via `assertAllowedScopes`.
+- **Custom-scheme `redirect_uri` rejected.** Native apps (e.g. `warp://oauth/callback`)
+  are valid per RFC 8252 §7.1. DCR now allows non-http(s) schemes alongside
+  `https://` and loopback `http://`. Non-loopback plaintext `http://` stays rejected.
+
+### Upgrade note
+No config or migration. Restart `gbrain serve` (or let autodeploy recycle the
+LaunchAgent) after upgrading. Existing `oauth_clients` rows are unchanged.
+Re-authenticate any client that previously failed DCR (Warp: MCP settings → reconnect).
+
 ## [0.42.73.2] - 2026-08-05
 
 **A write that deduplication redirects onto an existing page is now checked against the write scope of whoever asked for it.** When the same content arrives under a new slug, gbrain recognises it and points the write at the page that already holds it. That redirected target is now tested against the caller's own scope — under whichever mechanism confines that caller. One of the two mechanisms was consulted at that point; both are now.

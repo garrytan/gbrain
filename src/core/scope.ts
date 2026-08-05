@@ -109,6 +109,33 @@ export function assertAllowedScopes(scopes: readonly string[]): void {
 }
 
 /**
+ * Split a requested scope list into allowed vs unknown entries.
+ *
+ * Used by the unauthenticated DCR path so clients that send OIDC-style
+ * extras (e.g. `offline_access`, `openid`) still register successfully
+ * with the intersection of known scopes. RFC 7591 §2 lets the AS replace
+ * client metadata values; dropping unknowns is that replacement.
+ *
+ * Operator-trusted paths (CLI / admin) keep using `assertAllowedScopes`
+ * so typos surface loudly instead of silently shrinking the grant.
+ */
+export function filterAllowedScopes(scopes: readonly string[]): {
+  allowed: Scope[];
+  dropped: string[];
+} {
+  const allowed: Scope[] = [];
+  const dropped: string[] = [];
+  const seen = new Set<string>();
+  for (const s of scopes) {
+    if (seen.has(s)) continue;
+    seen.add(s);
+    if (isScope(s)) allowed.push(s);
+    else dropped.push(s);
+  }
+  return { allowed, dropped };
+}
+
+/**
  * Parse a space-separated scope string (OAuth wire format) into an array,
  * dropping empty fragments. Does NOT validate against ALLOWED_SCOPES — call
  * assertAllowedScopes afterward at registration time.
