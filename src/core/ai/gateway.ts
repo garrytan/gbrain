@@ -3617,6 +3617,8 @@ export interface ToolLoopOpts {
    *   4. onToolCallComplete / onToolCallFailed (D11 step 4)
    */
   onAssistantTurn?: (turnIdx: number, messageIdx: number, blocks: ChatBlock[], usage: ChatResult['usage'], model: string) => Promise<void>;
+  /** Record usage exactly once for every completed provider response. */
+  onTurnUsage?: (turnIdx: number, usage: ChatResult['usage'], model: string) => Promise<void>;
   /**
    * Persist a pending tool execution. The caller assigns ordinal + uuid v7 and
    * returns them so the loop can key replay by gbrainToolUseId. The provider
@@ -3645,14 +3647,18 @@ export interface ToolLoopOpts {
   onHeartbeat?: (event: string, data: Record<string, unknown>) => void;
 }
 
-export type ToolLoopStopReason = 'end' | 'max_turns' | 'refusal' | 'content_filter' | 'aborted' | 'unrecoverable';
+export type ToolLoopStopReason = 'end' | 'max_turns' | 'max_tokens' | 'refusal' | 'content_filter' | 'aborted' | 'unrecoverable';
 
 export interface ToolLoopResult {
   finalText: string;
   totalTurns: number;
   totalUsage: ChatResult['usage'];
   stopReason: ToolLoopStopReason;
-  /** Final messages array including all assistant + tool results. Caller persists if desired. */
+  /**
+   * In-memory conversation including the final assistant response. Unsafe
+   * terminal turns appear here for inspection but are deliberately excluded
+   * from `onAssistantTurn`, because replay cannot recover their disposition.
+   */
   messages: ChatMessage[];
 }
 
@@ -3727,27 +3733,44 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
     totalUsage.cache_read_tokens += chatResult.usage.cache_read_tokens;
     totalUsage.cache_creation_tokens += chatResult.usage.cache_creation_tokens;
 
-    // D11 step 1: persist assistant turn BEFORE any tool dispatch.
-    const assistantMessageIdx = messageIdx++;
-    await opts.onAssistantTurn?.(turnIdx, assistantMessageIdx, chatResult.blocks, chatResult.usage, chatResult.model);
-    messages.push({ role: 'assistant', content: chatResult.blocks });
-
-    // Check stop reason BEFORE tool dispatch. The loop only continues on tool_calls.
-    if (chatResult.stopReason === 'refusal') {
-      stopReason = 'refusal';
-      finalText = chatResult.text;
-      break;
-    }
-    if (chatResult.stopReason === 'content_filter') {
-      stopReason = 'content_filter';
-      finalText = chatResult.text;
-      break;
-    }
-
     const toolCalls = chatResult.blocks.filter(
       (b): b is { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown } =>
         b.type === 'tool-call',
     );
+
+    let unsafeTerminalReason: ToolLoopStopReason | null = null;
+    switch (chatResult.stopReason) {
+      case 'refusal': unsafeTerminalReason = 'refusal'; break;
+      case 'content_filter': unsafeTerminalReason = 'content_filter'; break;
+      case 'length': unsafeTerminalReason = 'max_tokens'; break;
+      case 'other': unsafeTerminalReason = 'unrecoverable'; break;
+      case 'tool_calls':
+        if (toolCalls.length === 0) unsafeTerminalReason = 'unrecoverable';
+        break;
+      case 'end':
+        if (toolCalls.length > 0) unsafeTerminalReason = 'unrecoverable';
+        break;
+      default: {
+        const exhaustiveStopReason: never = chatResult.stopReason;
+        void exhaustiveStopReason;
+        unsafeTerminalReason = 'unrecoverable';
+      }
+    }
+    if (unsafeTerminalReason !== null) {
+      await opts.onTurnUsage?.(turnIdx, chatResult.usage, chatResult.model);
+      messages.push({ role: 'assistant', content: chatResult.blocks });
+      stopReason = unsafeTerminalReason;
+      finalText = chatResult.text;
+      break;
+    }
+
+    // D11 step 1: persist only replay-safe assistant turns, before any tool
+    // dispatch. A persisted text-only turn is interpreted as end_turn on
+    // resume, while a persisted tool turn may be reconciled and executed.
+    const assistantMessageIdx = messageIdx++;
+    await opts.onAssistantTurn?.(turnIdx, assistantMessageIdx, chatResult.blocks, chatResult.usage, chatResult.model);
+    await opts.onTurnUsage?.(turnIdx, chatResult.usage, chatResult.model);
+    messages.push({ role: 'assistant', content: chatResult.blocks });
 
     if (toolCalls.length === 0) {
       stopReason = 'end';

@@ -350,6 +350,56 @@ describe('runSubagentViaGateway (v0.38 Slice 1 — full handler path through gat
     expect(result.result).toBe('I cannot help with that');
   });
 
+  it('length stop reason: handler preserves partial text and reports max_tokens', async () => {
+    __setChatTransportForTests(async () => ({
+      text: 'partial answer',
+      blocks: [{ type: 'text', text: 'partial answer' }] as ChatBlock[],
+      stopReason: 'length',
+      usage: { input_tokens: 5, output_tokens: 8, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'anthropic:claude-sonnet-4-6',
+      providerId: 'anthropic',
+    } satisfies ChatResult));
+
+    const tools = makeStubTools([]);
+    const handler = buildHandler(tools);
+    const { jobId, ctx, tokenSink } = await makeFakeJob({ prompt: 'write a long answer', model: 'anthropic:claude-sonnet-4-6' });
+
+    const result = await handler(ctx);
+    expect(result.stop_reason).toBe('max_tokens');
+    expect(result.result).toBe('partial answer');
+    expect(tokenSink).toEqual([{ input: 5, output: 8, cache_read: 0 }]);
+    const persisted = await engine.executeRaw<{ role: string }>(
+      `SELECT role FROM subagent_messages WHERE job_id = $1 ORDER BY message_idx`,
+      [jobId],
+    );
+    expect(persisted.map(row => row.role)).toEqual(['user']);
+  });
+
+  it('unknown stop reason: handler fails closed with error', async () => {
+    __setChatTransportForTests(async () => ({
+      text: 'ambiguous partial answer',
+      blocks: [{ type: 'text', text: 'ambiguous partial answer' }] as ChatBlock[],
+      stopReason: 'other',
+      usage: { input_tokens: 5, output_tokens: 4, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'anthropic:claude-sonnet-4-6',
+      providerId: 'anthropic',
+    } satisfies ChatResult));
+
+    const tools = makeStubTools([]);
+    const handler = buildHandler(tools);
+    const { jobId, ctx, tokenSink } = await makeFakeJob({ prompt: 'answer this', model: 'anthropic:claude-sonnet-4-6' });
+
+    const result = await handler(ctx);
+    expect(result.stop_reason).toBe('error');
+    expect(result.result).toBe('ambiguous partial answer');
+    expect(tokenSink).toEqual([{ input: 5, output: 4, cache_read: 0 }]);
+    const persisted = await engine.executeRaw<{ role: string }>(
+      `SELECT role FROM subagent_messages WHERE job_id = $1 ORDER BY message_idx`,
+      [jobId],
+    );
+    expect(persisted.map(row => row.role)).toEqual(['user']);
+  });
+
   it('non-Anthropic model routes through gateway path (the load-bearing v0.38 unlock)', async () => {
     // This is the headline scenario: openai:gpt-5.2 (no caching) works.
     // Pre-v0.38, this would have refused at queue.ts. With the gateway path

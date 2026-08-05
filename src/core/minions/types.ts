@@ -581,13 +581,20 @@ export type ContentBlock =
   | { type: 'tool_result'; tool_use_id: string; content: unknown; is_error?: boolean; [k: string]: unknown }
   | { type: string; [k: string]: unknown };
 
-/** Stop reason reported to the caller when the subagent loop terminates. */
-export type SubagentStopReason =
-  | 'end_turn'    // Anthropic says end_turn and last message has no tool_use
-  | 'max_turns'   // hit max_turns budget before end_turn
-  | 'max_tokens'  // final turn hit the output-token cap — result text is TRUNCATED (#2778)
-  | 'refusal'     // detected via stop_reason + content shape
-  | 'error';      // unrecoverable (empty response retry exhausted, etc.)
+/** Stop reasons reported to the caller when the subagent loop terminates. */
+export const SUBAGENT_STOP_REASONS = [
+  'end_turn',   // Anthropic says end_turn and last message has no tool_use
+  'max_turns',  // hit max_turns budget before end_turn
+  'max_tokens', // final turn hit the output-token cap — result text is TRUNCATED (#2778)
+  'refusal',    // detected via stop_reason + content shape
+  'error',      // unrecoverable (empty response retry exhausted, etc.)
+] as const;
+
+export type SubagentStopReason = typeof SUBAGENT_STOP_REASONS[number];
+
+export function isSubagentStopReason(value: unknown): value is SubagentStopReason {
+  return typeof value === 'string' && (SUBAGENT_STOP_REASONS as readonly string[]).includes(value);
+}
 
 /** Terminal result payload emitted by the subagent handler. */
 export interface SubagentResult {

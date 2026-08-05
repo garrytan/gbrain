@@ -17,11 +17,11 @@
  *   - Anthropic prompt cache markers on system + tools blocks.
  *   - token rollup via ctx.updateTokens per turn.
  *
- * NOT in v0.15: refusal detection, stop_reason=max_tokens partial
- * recovery, parallel tool-use dispatch (runs tools sequentially; the
- * Messages API allows parallel tool_use blocks and the replay tolerates
- * them, but v1 dispatches serially for simplicity). All three are tracked
- * as P2 items in the plan file.
+ * Both the direct Anthropic loop and the provider-neutral gateway path preserve
+ * non-clean terminal outcomes without committing them as replay-safe turns.
+ * Parallel tool-use dispatch remains deferred:
+ * the Messages API allows parallel tool_use blocks and replay tolerates them,
+ * but v1 dispatches serially for simplicity.
  */
 
 import Anthropic from '@anthropic-ai/sdk';
@@ -51,7 +51,7 @@ import { resolveModel, isAnthropicProvider, TIER_DEFAULTS } from '../../model-co
 import { resolveAnthropicKey } from '../../ai/anthropic-key.ts';
 import { buildSystemPrompt, DEFAULT_SUBAGENT_SYSTEM } from '../system-prompt.ts';
 import { toolLoop as gatewayToolLoop } from '../../ai/gateway.ts';
-import type { ChatToolDef, ChatMessage, ChatBlock, ChatResult, ToolHandler } from '../../ai/gateway.ts';
+import type { ChatToolDef, ChatMessage, ChatBlock, ChatResult, ToolHandler, ToolLoopStopReason } from '../../ai/gateway.ts';
 import { classifyCapabilities } from '../../ai/capabilities.ts';
 import { randomUUIDv7 } from 'bun';
 
@@ -170,6 +170,43 @@ interface PersistedToolExec {
   status: 'pending' | 'complete' | 'failed';
   output: unknown;
   error: string | null;
+}
+
+type DirectTurnDisposition =
+  | { kind: 'tool_use'; persist: true }
+  | { kind: 'terminal'; persist: boolean; stopReason: SubagentStopReason };
+
+/**
+ * Classify a direct Anthropic response before it becomes durable.
+ *
+ * Only structurally consistent success/tool-use turns are replay-safe. A
+ * truncated, refused, paused, unknown, or mismatched response stays in memory
+ * for the current result but is not persisted: after a crash, the worker must
+ * ask the provider again instead of mistaking that response for `end_turn`.
+ */
+function classifyDirectTurn(
+  providerStopReason: unknown,
+  toolUseCount: number,
+): DirectTurnDisposition {
+  switch (providerStopReason) {
+    case 'end_turn':
+    case 'stop_sequence':
+      return toolUseCount === 0
+        ? { kind: 'terminal', persist: true, stopReason: 'end_turn' }
+        : { kind: 'terminal', persist: false, stopReason: 'error' };
+    case 'tool_use':
+      return toolUseCount > 0
+        ? { kind: 'tool_use', persist: true }
+        : { kind: 'terminal', persist: false, stopReason: 'error' };
+    case 'max_tokens':
+      return { kind: 'terminal', persist: false, stopReason: 'max_tokens' };
+    case 'refusal':
+      return { kind: 'terminal', persist: false, stopReason: 'refusal' };
+    case 'pause_turn':
+    case null:
+    default:
+      return { kind: 'terminal', persist: false, stopReason: 'error' };
+  }
 }
 
 // ── Public handler factory ──────────────────────────────────
@@ -640,8 +677,26 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       });
 
       const blocks = assistantMsg.content as ContentBlock[];
+      const toolUses = blocks.filter(
+        (b): b is { type: 'tool_use'; id: string; name: string; input: unknown } & Record<string, unknown> =>
+          b.type === 'tool_use',
+      );
+      const disposition = classifyDirectTurn(assistantMsg.stop_reason, toolUses.length);
+      assistantTurns++;
 
-      // 3. Persist the assistant message BEFORE tool dispatch so replay
+      // Non-clean or structurally inconsistent terminal turns are deliberately
+      // not durable. Persisting them would let crash replay reinterpret a text-
+      // only max_tokens/refusal response as a successful end_turn.
+      if (!disposition.persist) {
+        stopReason = disposition.stopReason;
+        finalText = blocks
+          .filter(b => b.type === 'text' && typeof b.text === 'string')
+          .map(b => b.text as string)
+          .join('\n');
+        break;
+      }
+
+      // 3. Persist replay-safe assistant turns BEFORE tool dispatch so replay
       //    sees a consistent state.
       const assistantIdx = nextMessageIdx++;
       await persistMessage(engine, ctx.id, {
@@ -655,19 +710,10 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         model,
       });
       anthroMessages.push({ role: 'assistant', content: blocks as any });
-      assistantTurns++;
 
-      // 4. Collect tool_use blocks. If none, we're done.
-      const toolUses = blocks.filter(
-        (b): b is { type: 'tool_use'; id: string; name: string; input: unknown } & Record<string, unknown> =>
-          b.type === 'tool_use',
-      );
-      if (toolUses.length === 0) {
-        // #2778: an output-cap hit is NOT end_turn — the text (and possibly a
-        // dropped trailing tool_use block) is truncated. Surface it as its own
-        // stop_reason instead of silently reporting a clean end_turn.
-        stopReason = assistantMsg.stop_reason === 'max_tokens' ? 'max_tokens' : 'end_turn';
-        // Concatenate text blocks as the final answer.
+      // 4. A replay-safe terminal response is complete.
+      if (disposition.kind === 'terminal') {
+        stopReason = disposition.stopReason;
         finalText = blocks
           .filter(b => b.type === 'text' && typeof b.text === 'string')
           .map(b => b.text as string)
@@ -777,24 +823,6 @@ export function makeSubagentHandler(deps: SubagentDeps) {
             is_error: true,
           } as ContentBlock);
         }
-      }
-
-      // #2778: a max_tokens stop with tool_use blocks means the API dropped an
-      // incomplete trailing block (e.g. a large put_page body that overflowed
-      // the cap). Tell the model so it re-issues the cut-off call (split, or
-      // smaller pages) instead of assuming the write happened.
-      if (assistantMsg.stop_reason === 'max_tokens') {
-        toolResults.push({
-          type: 'text',
-          text: `[system] Your previous response hit the ${maxOutputTokens}-token output cap and was truncated; ` +
-            `any tool call cut off by the cap was DROPPED and did not execute. Re-issue it, splitting large content if needed.`,
-        } as ContentBlock);
-        logSubagentHeartbeat({
-          job_id: ctx.id,
-          event: 'llm_call_completed',
-          turn_idx: turnIdx,
-          error: `stop_reason=max_tokens at cap ${maxOutputTokens}; truncation note injected`,
-        });
       }
 
       // 6. Append the synthesized user turn (tool_result wrappers) to the
@@ -968,6 +996,15 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
   };
 
   // Run the loop.
+  const recordTurnUsage = async (turnIdx: number, usage: ChatResult['usage']): Promise<void> => {
+    await ctx.updateTokens({
+      input: usage.input_tokens,
+      output: usage.output_tokens,
+      cache_read: usage.cache_read_tokens,
+    });
+    heartbeat('llm_call_completed', { turn_idx: turnIdx, tokens: usage });
+  };
+
   const result = await gatewayToolLoop({
     model,
     system: systemPrompt,
@@ -1006,12 +1043,9 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
         tokens_cache_create: usage.cache_creation_tokens,
         model: modelStr,
       });
-      await ctx.updateTokens({
-        input: usage.input_tokens,
-        output: usage.output_tokens,
-        cache_read: usage.cache_read_tokens,
-      });
-      heartbeat('llm_call_completed', { turn_idx: turnIdx, tokens: usage });
+    },
+    onTurnUsage: async (turnIdx, usage) => {
+      await recordTurnUsage(turnIdx, usage);
     },
     onToolCallStart: async (turnIdx, messageIdx, ordinal, toolName, input, providerToolCallId) => {
       // CRITICAL — read back the canonical gbrain_tool_use_id from RETURNING,
@@ -1072,19 +1106,7 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     onHeartbeat: heartbeat,
   });
 
-  // Map gateway stop reason to SubagentStopReason. SubagentStopReason has
-  // {end_turn, max_turns, refusal, error}; aborted maps to error.
-  const stopReason: SubagentStopReason = result.stopReason === 'end'
-    ? 'end_turn'
-    : result.stopReason === 'max_turns'
-      ? 'max_turns'
-      : result.stopReason === 'refusal'
-        ? 'refusal'
-        : result.stopReason === 'content_filter'
-          ? 'refusal'
-          : result.stopReason === 'aborted'
-            ? 'error'
-            : 'end_turn';
+  const stopReason = mapGatewayStopReason(result.stopReason);
 
   return {
     result: result.finalText,
@@ -1097,6 +1119,18 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
       cache_create: result.totalUsage.cache_creation_tokens,
     },
   };
+}
+
+function mapGatewayStopReason(stopReason: ToolLoopStopReason): SubagentStopReason {
+  switch (stopReason) {
+    case 'end': return 'end_turn';
+    case 'max_turns': return 'max_turns';
+    case 'max_tokens': return 'max_tokens';
+    case 'refusal':
+    case 'content_filter': return 'refusal';
+    case 'aborted':
+    case 'unrecoverable': return 'error';
+  }
 }
 
 interface ReconcileArgs {

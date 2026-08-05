@@ -670,42 +670,78 @@ describe('subagent handler output-token cap (#2778)', () => {
     const result = await handler(ctx);
     expect(result.stop_reason).toBe('max_tokens');
     expect(result.result).toBe('truncated tex');
+
+    const assistantRows = await engine.executeRaw<{ count: string }>(
+      `SELECT count(*)::text AS count FROM subagent_messages
+        WHERE job_id = $1 AND role = 'assistant'`,
+      [ctx.id],
+    );
+    expect(assistantRows[0]!.count).toBe('0');
   });
 
-  test('max_tokens stop with tool_use: truncation note injected so the model re-issues the dropped call', async () => {
+  test('max_tokens with a partial tool call fails closed without executing or persisting it', async () => {
     const tool = makeEchoTool();
     const client = new FakeMessagesClient([
       {
-        // A complete tool_use survived, but the turn stopped on max_tokens —
-        // the API dropped whatever came after (e.g. a big put_page call).
+        // A complete-looking tool_use survived, but the turn stopped on
+        // max_tokens, so a trailing call may have been dropped.
         content: [{ type: 'tool_use', id: 'tu_1', name: 'echo', input: { value: 'v1' } } as any],
         stop_reason: 'max_tokens' as any,
       },
-      { content: [{ type: 'text', text: 'recovered' }] as any, stop_reason: 'end_turn' },
     ]);
     const handler = makeSubagentHandler({ engine, client, toolRegistry: [tool] });
     const ctx = await makeCtx({ prompt: 'go' });
 
     const result = await handler(ctx);
-    expect(result.stop_reason).toBe('end_turn');
-    expect(result.result).toBe('recovered');
+    expect(result.stop_reason).toBe('max_tokens');
 
-    // The synthesized user turn (persisted + fed to the second call) must
-    // carry the truncation note alongside the tool_result. Assert on the
-    // persisted row — client.calls[].messages is the live array the loop
-    // keeps mutating, so positional checks there are unreliable.
-    const rows = await engine.executeRaw<{ content_blocks: unknown }>(
-      `SELECT content_blocks FROM subagent_messages
-        WHERE job_id = $1 AND role = 'user' AND message_idx > 0
-        ORDER BY message_idx ASC`,
+    const rows = await engine.executeRaw<{ assistants: string; tools: string }>(
+      `SELECT
+         (SELECT count(*)::text FROM subagent_messages
+           WHERE job_id = $1 AND role = 'assistant') AS assistants,
+         (SELECT count(*)::text FROM subagent_tool_executions
+           WHERE job_id = $1) AS tools`,
       [ctx.id],
     );
     expect(rows.length).toBe(1);
-    const blocks = (typeof rows[0]!.content_blocks === 'string'
-      ? JSON.parse(rows[0]!.content_blocks as string)
-      : rows[0]!.content_blocks) as Array<{ type: string; text?: string }>;
-    expect(blocks.some(b => b.type === 'tool_result')).toBe(true);
-    const texts = blocks.filter(b => b.type === 'text').map(b => b.text ?? '');
-    expect(texts.some(t => t.includes('truncated') && t.includes('DROPPED'))).toBe(true);
+    expect(rows[0]!.assistants).toBe('0');
+    expect(rows[0]!.tools).toBe('0');
+  });
+
+  test('crash replay asks the provider again instead of converting max_tokens to end_turn', async () => {
+    const firstClient = new FakeMessagesClient([
+      { content: [{ type: 'text', text: 'truncated' }] as any, stop_reason: 'max_tokens' },
+    ]);
+    const ctx = await makeCtx({ prompt: 'hi' });
+    const first = await makeSubagentHandler({ engine, client: firstClient, toolRegistry: [] })(ctx);
+    expect(first.stop_reason).toBe('max_tokens');
+
+    // Simulate a worker crash after the handler returned but before the queue
+    // committed the result. Only the seed user turn should be durable.
+    const replayClient = new FakeMessagesClient([
+      { content: [{ type: 'text', text: 'complete on replay' }] as any, stop_reason: 'end_turn' },
+    ]);
+    const replay = await makeSubagentHandler({ engine, client: replayClient, toolRegistry: [] })(ctx);
+
+    expect(replayClient.calls.length).toBe(1);
+    expect(replay.stop_reason).toBe('end_turn');
+    expect(replay.result).toBe('complete on replay');
+  });
+
+  test('refusal is surfaced and never committed as a replay-safe assistant turn', async () => {
+    const client = new FakeMessagesClient([
+      { content: [{ type: 'text', text: 'cannot comply' }] as any, stop_reason: 'refusal' as any },
+    ]);
+    const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+    const ctx = await makeCtx({ prompt: 'hi' });
+
+    const result = await handler(ctx);
+    expect(result.stop_reason).toBe('refusal');
+    const assistantRows = await engine.executeRaw<{ count: string }>(
+      `SELECT count(*)::text AS count FROM subagent_messages
+        WHERE job_id = $1 AND role = 'assistant'`,
+      [ctx.id],
+    );
+    expect(assistantRows[0]!.count).toBe('0');
   });
 });

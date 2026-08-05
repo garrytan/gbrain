@@ -45,6 +45,114 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
     expect(result.totalUsage.input_tokens).toBe(5);
   });
 
+  it('preserves partial text and reports max_tokens on length stop_reason', async () => {
+    __setChatTransportForTests(async () => ({
+      text: 'partial answer',
+      blocks: [
+        { type: 'text', text: 'partial answer' },
+        { type: 'tool-call', toolCallId: 'tc-truncated', toolName: 'work', input: { partial: true } },
+      ] as ChatBlock[],
+      stopReason: 'length',
+      usage: { input_tokens: 5, output_tokens: 8, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'anthropic:claude-sonnet-4-6',
+      providerId: 'anthropic',
+    }));
+
+    let toolWasCalled = false;
+    let toolStartWasPersisted = false;
+    let assistantTurnWasPersisted = false;
+    let usageCallbacks = 0;
+    const result = await toolLoop({
+      initialMessages: [{ role: 'user', content: 'write a long answer' }],
+      tools: [{ name: 'work', description: 'work', inputSchema: { type: 'object' } }],
+      toolHandlers: new Map([['work', { idempotent: true, async execute() { toolWasCalled = true; } }]]),
+      onToolCallStart: async () => {
+        toolStartWasPersisted = true;
+        return { gbrainToolUseId: 'should-not-be-used' };
+      },
+      onAssistantTurn: async () => { assistantTurnWasPersisted = true; },
+      onTurnUsage: async () => { usageCallbacks++; },
+    });
+
+    expect(toolWasCalled).toBe(false);
+    expect(toolStartWasPersisted).toBe(false);
+    expect(assistantTurnWasPersisted).toBe(false);
+    expect(usageCallbacks).toBe(1);
+    expect(result.stopReason).toBe('max_tokens');
+    expect(result.finalText).toBe('partial answer');
+    expect(result.totalUsage.output_tokens).toBe(8);
+  });
+
+  it('fails closed on an unknown provider stop reason', async () => {
+    __setChatTransportForTests(async () => ({
+      text: 'ambiguous partial answer',
+      blocks: [{ type: 'text', text: 'ambiguous partial answer' }] as ChatBlock[],
+      stopReason: 'other',
+      usage: { input_tokens: 5, output_tokens: 4, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'anthropic:claude-sonnet-4-6',
+      providerId: 'anthropic',
+    }));
+
+    let assistantTurnWasPersisted = false;
+    const result = await toolLoop({
+      initialMessages: [{ role: 'user', content: 'answer this' }],
+      tools: [],
+      toolHandlers: new Map(),
+      onAssistantTurn: async () => { assistantTurnWasPersisted = true; },
+    });
+
+    expect(assistantTurnWasPersisted).toBe(false);
+    expect(result.stopReason).toBe('unrecoverable');
+    expect(result.finalText).toBe('ambiguous partial answer');
+  });
+
+  it('fails closed when tool_calls has no normalized tool-call block', async () => {
+    __setChatTransportForTests(async () => ({
+      text: 'missing tool payload',
+      blocks: [{ type: 'text', text: 'missing tool payload' }] as ChatBlock[],
+      stopReason: 'tool_calls',
+      usage: { input_tokens: 5, output_tokens: 4, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'anthropic:claude-sonnet-4-6',
+      providerId: 'anthropic',
+    }));
+
+    let assistantTurnWasPersisted = false;
+    const result = await toolLoop({
+      initialMessages: [{ role: 'user', content: 'use a tool' }],
+      tools: [],
+      toolHandlers: new Map(),
+      onAssistantTurn: async () => { assistantTurnWasPersisted = true; },
+    });
+
+    expect(assistantTurnWasPersisted).toBe(false);
+    expect(result.stopReason).toBe('unrecoverable');
+    expect(result.finalText).toBe('missing tool payload');
+  });
+
+  it('fails closed when end includes a normalized tool-call block', async () => {
+    __setChatTransportForTests(async () => ({
+      text: '',
+      blocks: [{ type: 'tool-call', toolCallId: 'tc-mismatch', toolName: 'work', input: {} }] as ChatBlock[],
+      stopReason: 'end',
+      usage: { input_tokens: 5, output_tokens: 4, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'anthropic:claude-sonnet-4-6',
+      providerId: 'anthropic',
+    }));
+
+    let toolWasCalled = false;
+    let assistantTurnWasPersisted = false;
+    const result = await toolLoop({
+      initialMessages: [{ role: 'user', content: 'use a tool' }],
+      tools: [{ name: 'work', description: 'work', inputSchema: { type: 'object' } }],
+      toolHandlers: new Map([['work', { idempotent: true, async execute() { toolWasCalled = true; } }]]),
+      onAssistantTurn: async () => { assistantTurnWasPersisted = true; },
+    });
+
+    expect(toolWasCalled).toBe(false);
+    expect(assistantTurnWasPersisted).toBe(false);
+    expect(result.stopReason).toBe('unrecoverable');
+  });
+
   it('dispatches a single tool call and feeds the result back to the next turn', async () => {
     let turn = 0;
     __setChatTransportForTests(async () => {
