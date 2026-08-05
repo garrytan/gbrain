@@ -10,6 +10,8 @@ Deferred embeddings are safer too. If a page was created while no embedding prov
 
 Scheduled maintenance also reports failure honestly. `gbrain maintain --safe` now exits non-zero when a requested source cycle is blocked, so cron and LaunchAgent wrappers do not refresh their last-success timestamp for work that did not complete.
 
+Remote operators can repair pre-signature embeddings without refreshing an entire source. Minion `embed` jobs now preserve the complete CLI option set across the queue boundary, validate untrusted JSON without truthy coercion, honor cancellation, and fail visibly when any chunks remain unembedded. The strict-boolean `includeNullSignature` opt-in reaches the same stale-embedding path used by the CLI, while routine stale jobs stay grandfathered by default.
+
 ### To take advantage of v0.42.74.0
 
 ```bash
@@ -25,6 +27,7 @@ There is no schema migration. New extraction output is correct immediately after
 
 - Atom extraction and extraction receipts now write through `importFromContent`, including chunks and source-scoped metadata.
 - Every plain re-embed entry point shares one live contextual-retrieval resolver and only restamps after a complete successful pass.
+- Remote Minion embed jobs preserve dry-run, targeting, batching, catch-up, cancellation, and precise NULL-signature repair semantics, and no longer report partial failures as success.
 - Blocked maintenance actions now propagate a failing CLI exit verdict for schedulers and health monitors.
 
 Contributed by @herove.
