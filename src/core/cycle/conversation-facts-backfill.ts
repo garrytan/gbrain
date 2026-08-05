@@ -271,6 +271,7 @@ export async function runPhaseConversationFactsBackfill(
             orphan_facts_cleaned: 0,
             segments_processed: 0,
             facts_extracted: 0,
+            facts_low_notability_rejected: 0,
             facts_inserted: 0,
             error: (err as Error).message,
           };
@@ -306,6 +307,7 @@ export async function runPhaseConversationFactsBackfill(
     pages_marked_non_extractable: 0,
     pages_failed: 0,
     facts_inserted: 0,
+    facts_low_notability_rejected: 0,
     sources_processed: 0,
   };
   for (const r of Object.values(perSourceResults)) {
@@ -317,6 +319,7 @@ export async function runPhaseConversationFactsBackfill(
     totals.pages_marked_non_extractable += r.pages_marked_non_extractable;
     totals.pages_failed += r.pages_failed;
     totals.facts_inserted += r.facts_inserted;
+    totals.facts_low_notability_rejected += r.facts_low_notability_rejected;
   }
 
   const anyError = Object.values(perSourceResults).some(
@@ -340,6 +343,7 @@ export async function runPhaseConversationFactsBackfill(
       pages_marked_non_extractable: totals.pages_marked_non_extractable,
       pages_failed: totals.pages_failed,
       facts_inserted: totals.facts_inserted,
+      facts_low_notability_rejected: totals.facts_low_notability_rejected,
       spent_usd: totalSpent,
       skipped_by_brain_wide_cap: skippedByBrainWideCap,
       skipped_by_brain_wide_walltime: skippedByBrainWideWalltime,

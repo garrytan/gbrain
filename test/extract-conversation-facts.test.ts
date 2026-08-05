@@ -788,6 +788,27 @@ describe('runExtractConversationFactsCore', () => {
     expect(Number(terminalRows[0]?.count ?? 0)).toBe(1);
   });
 
+  test('rejects low-notability candidates while retaining audit outcome', async () => {
+    chatTextOverride = JSON.stringify({ facts: [
+      { fact: 'high candidate', kind: 'event', entity: 'travel', confidence: 1, notability: 'high' },
+      { fact: 'medium candidate', kind: 'preference', entity: 'travel', confidence: 1, notability: 'medium' },
+      { fact: 'low candidate', kind: 'fact', entity: 'travel', confidence: 1, notability: 'low' },
+    ] });
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default', slug: 'conversations/imessage/alice-example', sleepMs: 0,
+    });
+    expect(result.facts_low_notability_rejected).toBe(2);
+    expect(result.facts_extracted).toBe(4);
+    const rows = await engine.executeRaw<{ fact: string; source: string; row_num: number }>(
+      `SELECT fact, source, row_num FROM facts WHERE source_markdown_slug = $1 ORDER BY row_num`,
+      ['conversations/imessage/alice-example'],
+    );
+    expect(rows.filter((row) => row.source === PER_SEGMENT_SOURCE_PREFIX).map((row) => row.fact)).toEqual(['high candidate', 'medium candidate', 'high candidate', 'medium candidate']);
+    expect(rows.map((row) => row.fact)).not.toContain('low candidate');
+    expect(rows.map((row) => Number(row.row_num))).toEqual([0, 1, 2, 3, 4]);
+    expect(rows.some((row) => row.source === TERMINAL_AUDIT_SOURCE)).toBe(true);
+  });
+
   test('terminal outcome skips a completed page after checkpoint GC', async () => {
     await runExtractConversationFactsCore(engine, {
       sourceId: 'default',
