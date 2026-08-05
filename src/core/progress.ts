@@ -50,9 +50,10 @@ export interface ProgressReporter {
 // every live reporter. Per-instance handlers would leak listeners and interfere
 // with command-level handlers (e.g. shell-handler abort in jobs.ts).
 //
-// We never call process.exit() or swallow the signal — we just emit abort
-// events for live phases, then remove ourselves so the user's own handlers
-// (or the default Node behavior) run as usual.
+// We never call process.exit() — we just emit abort events for live phases.
+// Installing a SIGINT listener suppresses the runtime's default terminate
+// behavior, so when no command-level handler remains we re-raise SIGINT after
+// the abort event has had a tick to flush.
 
 interface LivePhase {
   reporter: PhaseState;
@@ -75,6 +76,11 @@ function installSignalHandler(): void {
       } catch {
         /* best-effort */
       }
+    }
+    if (reason === 'SIGINT' && process.listenerCount('SIGINT') === 0) {
+      setTimeout(() => {
+        process.kill(process.pid, 'SIGINT');
+      }, 0);
     }
   };
 
