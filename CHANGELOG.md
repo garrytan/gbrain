@@ -2,6 +2,16 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.43.0.0] - 2026-08-04
+
+**Each source can now remember whether it should sync as Markdown, code, or automatic detection, so scheduled and manual syncs stop depending on whichever flags happened to be present in one invocation.**
+
+Set the policy when registering a source with `gbrain sources add <id> --path <path> --strategy <markdown|code|auto>`, or change an existing source with `gbrain sources set-sync-strategy <id> <markdown|code|auto|default>`. Source listings show the resolved strategy with stored, default, or safe-fallback provenance; sync JSON also reports invocation overrides.
+
+The stored value is now the source-level authority used by direct syncs, scheduled syncs, watch mode, cost previews, and other sync callers. A one-off `gbrain sync --strategy ...` still wins for that invocation without rewriting the source. Removing the stored value with `default` restores the historical Markdown default. Invalid legacy configuration fails safely to Markdown, emits a bounded repair warning, and can be repaired by setting or clearing the strategy; no migration is required.
+
+`sync --all --strategy` is rejected because a single override would erase the point of per-source policy. Multimodal enrichment remains a separate opt-in gate and is never enabled merely by choosing `auto`.
+
 ## [0.42.73.2] - 2026-08-05
 
 **A write that deduplication redirects onto an existing page is now checked against the write scope of whoever asked for it.** When the same content arrives under a new slug, gbrain recognises it and points the write at the page that already holds it. That redirected target is now tested against the caller's own scope — under whichever mechanism confines that caller. One of the two mechanisms was consulted at that point; both are now.

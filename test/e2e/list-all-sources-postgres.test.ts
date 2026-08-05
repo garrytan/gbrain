@@ -14,6 +14,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { setupDB, teardownDB, hasDatabase } from './helpers.ts';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
+import { setSourceSyncStrategy } from '../../src/core/sources-ops.ts';
 
 const skip = !hasDatabase();
 const describeIfDB = skip ? describe.skip : describe;
@@ -159,5 +160,47 @@ describeIfDB('Postgres parity — updateSourceConfig', () => {
     );
     expect(rows[0]?.typeof).toBe('object');
     expect(rows[0]?.value).toBe('2026-05-22T12:00:00.000Z');
+  });
+
+  test('sync strategy set/unset repairs malformed config and preserves unrelated keys', async () => {
+    await seedSource('strategy-source');
+    await engine.executeRaw(
+      `UPDATE sources
+          SET config = $2::text::jsonb
+        WHERE id = $1`,
+      [
+        'strategy-source',
+        JSON.stringify(JSON.stringify({ federated: true, ttl_days: 90 })),
+      ],
+    );
+
+    expect(await setSourceSyncStrategy(engine, 'strategy-source', 'code')).toBe(true);
+    let rows = await engine.executeRaw<{
+      kind: string;
+      config: Record<string, unknown>;
+    }>(
+      `SELECT jsonb_typeof(config) AS kind, config
+         FROM sources WHERE id = $1`,
+      ['strategy-source'],
+    );
+    expect(rows[0].kind).toBe('object');
+    expect(rows[0].config).toEqual({
+      federated: true,
+      ttl_days: 90,
+      strategy: 'code',
+    });
+
+    expect(await setSourceSyncStrategy(engine, 'strategy-source', undefined)).toBe(true);
+    rows = await engine.executeRaw<{
+      kind: string;
+      config: Record<string, unknown>;
+    }>(
+      `SELECT jsonb_typeof(config) AS kind, config
+         FROM sources WHERE id = $1`,
+      ['strategy-source'],
+    );
+    expect(rows[0].kind).toBe('object');
+    expect(rows[0].config).toEqual({ federated: true, ttl_days: 90 });
+    expect(await setSourceSyncStrategy(engine, 'missing-strategy-source', 'auto')).toBe(false);
   });
 });

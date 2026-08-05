@@ -31,7 +31,13 @@ export interface RawManifestEntry {
   oldPath?: string;
 }
 
-export type SyncStrategy = 'markdown' | 'code' | 'auto';
+export const SYNC_STRATEGIES = ['markdown', 'code', 'auto'] as const;
+export type SyncStrategy = (typeof SYNC_STRATEGIES)[number];
+
+/** Runtime guard for CLI args and untyped source config. */
+export function isSyncStrategy(value: unknown): value is SyncStrategy {
+  return typeof value === 'string' && (SYNC_STRATEGIES as readonly string[]).includes(value);
+}
 
 interface SyncableOptions {
   strategy?: SyncStrategy;

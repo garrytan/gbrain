@@ -19,6 +19,8 @@ import {
   isSkippablePath,
   resolveAutoSkipThreshold,
   DEFAULT_SOURCE_ID,
+  isSyncStrategy,
+  type SyncStrategy,
 } from '../core/sync.ts';
 import {
   computeSyncDelta,
@@ -91,6 +93,12 @@ import { registerCleanup } from '../core/process-cleanup.ts';
 import { type DbPacer, createDbPacer, createNoopPacer, observed } from '../core/db-pacer.ts';
 import { resolvePaceMode, loadPaceModeConfig, readPaceEnv } from '../core/pace-mode.ts';
 import { AbortError } from '../core/abort-check.ts';
+import {
+  formatInvalidSourceSyncStrategyWarning,
+  parseSourceConfig,
+  resolveSourceSyncStrategy,
+  type SyncStrategyOrigin,
+} from '../core/sources-load.ts';
 
 /**
  * v0.42.x (#1794) -- resumable incremental sync checkpoint.
@@ -201,6 +209,10 @@ export interface SyncResult {
   /** Pages re-embedded during this sync's auto-embed step. 0 if --no-embed or skipped. */
   embedded: number;
   pagesAffected: string[];
+  /** Effective file-selection policy resolved by performSync. */
+  syncStrategy?: SyncStrategy;
+  /** Why that policy won: explicit invocation, stored source config, or fallback. */
+  syncStrategyOrigin?: SyncStrategyOrigin;
   failedFiles?: number; // count of parse failures (Bug 9)
   /**
    * v0.41.13.0 partial-sync fields (only set when status === 'partial').
@@ -399,9 +411,9 @@ export function estimateInlineNewTokens(
 
   for (const src of sources) {
     if (!src.local_path) continue;
-    const cfg = (src.config || {}) as { syncEnabled?: boolean; strategy?: 'markdown' | 'code' | 'auto' };
+    const cfg = parseSourceConfig(src.config);
     if (cfg.syncEnabled === false) continue;
-    const strategy = cfg.strategy ?? 'markdown';
+    const strategy = resolveSourceSyncStrategy(cfg).strategy;
     const localPath = src.local_path;
 
     if (opts.forceFullTree) {
@@ -759,7 +771,7 @@ export interface SyncOpts {
    */
   sourceId?: string;
   /** Multi-repo: sync strategy override (markdown, code, auto). */
-  strategy?: 'markdown' | 'code' | 'auto';
+  strategy?: SyncStrategy;
   /**
    * #753/#774 — sync only files under this subdirectory of the git repo.
    * Git operations (pull, diff, rev-parse) still run against the repo root
@@ -799,10 +811,9 @@ export interface SyncOpts {
    */
   concurrency?: number;
   /**
-   * Internal: skip acquiring the gbrain-sync DB lock. Set by the cycle
-   * handler (cycle.ts) which already holds gbrain-cycle and therefore
-   * already serializes against other cycle runs. CLI sync, jobs handler,
-   * and any external caller leave this undefined so they take the lock.
+   * Internal: skip acquiring the gbrain-sync DB lock. Reserved for a caller
+   * that proves equivalent serialization. Current cycle, CLI, jobs, and MCP
+   * paths leave this undefined and take the normal per-source sync lock.
    *
    * v0.22.13 (PR #490 CODEX-2). Not part of the public CLI surface.
    */
@@ -1488,6 +1499,45 @@ export class SyncLockBusyError extends Error {
   }
 }
 
+async function performSyncWithResolvedStrategy(
+  engine: BrainEngine,
+  opts: SyncOpts,
+): Promise<SyncResult> {
+  let config: unknown = {};
+  if (opts.sourceId) {
+    const rows = await engine.executeRaw<{ config: unknown }>(
+      `SELECT config FROM sources WHERE id = $1 LIMIT 1`,
+      [opts.sourceId],
+    );
+    if (rows.length === 0) {
+      throw new Error(
+        `Source "${opts.sourceId}" not found. ` +
+        `Run 'gbrain sources list' to see registered sources.`,
+      );
+    }
+    config = rows[0].config;
+  }
+
+  const policy = resolveSourceSyncStrategy(config, opts.strategy);
+  if (policy.origin === 'invalid_fallback') {
+    serr(formatInvalidSourceSyncStrategyWarning(
+      opts.sourceId ?? 'default',
+      policy.invalidStoredValue,
+    ));
+  }
+  serr(
+    `[gbrain sync] source=${opts.sourceId ?? 'legacy'} ` +
+    `strategy=${policy.strategy} origin=${policy.origin}`,
+  );
+
+  const result = await performSyncInner(engine, { ...opts, strategy: policy.strategy });
+  return {
+    ...result,
+    syncStrategy: policy.strategy,
+    syncStrategyOrigin: policy.origin,
+  };
+}
+
 export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {
   // v0.22.13 CODEX-2: cross-process writer lock prevents two concurrent
   // syncs from racing on the same last_commit anchor (last writer wins,
@@ -1503,10 +1553,10 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   // the bug class where a >30min sync could let a parallel acquire steal
   // the lock and race on the final commit + bookmark write.
   //
-  // skipLock is reserved for callers that already serialize via another
-  // mechanism (e.g. cycle.ts holds gbrain-cycle for the broader scope).
+  // skipLock is reserved for callers that independently prove equivalent
+  // serialization. Current cycle/jobs/CLI/MCP paths all take this sync lock.
   if (opts.skipLock) {
-    return await performSyncInner(engine, opts);
+    return await performSyncWithResolvedStrategy(engine, opts);
   }
 
   const lockKey = opts.lockId ?? syncLockId(opts.sourceId ?? 'default');
@@ -1519,7 +1569,11 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   // alive (the import loop's event-loop yields ensure the timer fires), and the
   // heartbeat-aware takeover refuses to steal a live, refreshing holder.
   try {
-    return await withRefreshingLock(engine, lockKey, () => performSyncInner(engine, opts));
+    return await withRefreshingLock(
+      engine,
+      lockKey,
+      () => performSyncWithResolvedStrategy(engine, opts),
+    );
   } catch (err) {
     if (err instanceof LockUnavailableError) {
       throw new SyncLockBusyError(await formatLockBusyMessage(engine, lockKey), lockKey);
@@ -1874,10 +1928,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       `SELECT local_path, config FROM sources WHERE id = $1`,
       [opts.sourceId],
     );
-    const cfg =
-      typeof cfgRows[0]?.config === 'string'
-        ? (JSON.parse(cfgRows[0].config as string) as Record<string, unknown>)
-        : ((cfgRows[0]?.config ?? {}) as Record<string, unknown>);
+    const cfg = parseSourceConfig(cfgRows[0]?.config);
     const remoteUrl = typeof cfg.remote_url === 'string' ? cfg.remote_url : null;
     if (remoteUrl) {
       const ownSrc = {
@@ -4217,6 +4268,15 @@ Options:
   --repo <path>        Path to the brain repo. Defaults to the path
                        saved by 'gbrain init'.
   --full               Force a full re-sync (rare; usually incremental).
+  --strategy <mode>    Invocation-only file policy: markdown, code, or auto.
+                       markdown selects Markdown content; code selects supported
+                       code/config files; auto combines both. Images still
+                       require GBRAIN_EMBEDDING_MULTIMODAL=true independently.
+                       Overrides this source for one run (or pins one --watch
+                       process) without changing stored config. Inspect/save
+                       with 'gbrain sources list --json' and
+                       'gbrain sources set-sync-strategy <id> <mode>'.
+                       Not valid with --all; each source then uses its policy.
   --src-subpath <dir>  Sync only this subdirectory of the git repo (monorepo
                        pattern: N logical sources in one repo). Git pull/diff
                        run at the repo root; imports are scoped to the subdir
@@ -4258,14 +4318,16 @@ Options:
                        brains whose sources were registered from more
                        than one machine.
   --json               Emit a structured JSON envelope on stdout
-                       ({schema_version: 1, sources, parallel,
-                       ok_count, error_count, skipped_count}). Sources
+                       including effective sync_strategy and provenance.
+                       --all uses {schema_version: 1, sources, parallel,
+                       ok_count, error_count, skipped_count}. Sources
                        skipped by --missing-path skip appear with
                        status 'skipped_missing_path' and their
                        local_path. Human banners route to stderr so
                        '--json | jq' parses cleanly.
                        Exit codes: 0 = all sources ok or skipped,
-                       1 = any error, 2 = cost-prompt-not-confirmed.
+                       1 = any error, 2 = invalid CLI input or an unconfirmed
+                       cost prompt.
   --yes                Accept any interactive prompts (CI / non-TTY).
 
 See also:
@@ -4289,6 +4351,28 @@ See also:
   const noSchemaPack = args.includes('--no-schema-pack'); // v0.41.37.0 #1569
   const includeGitignored = args.includes('--include-gitignored');
   const syncAll = args.includes('--all');
+  const strategyFlagIndex = args.indexOf('--strategy');
+  let strategyArg: SyncStrategy | undefined;
+  if (strategyFlagIndex >= 0) {
+    const raw = args[strategyFlagIndex + 1];
+    if (!isSyncStrategy(raw)) {
+      console.error(`Invalid --strategy value: "${raw ?? ''}".`);
+      console.error('Valid options: markdown | code | auto');
+      process.exit(2);
+    }
+    strategyArg = raw;
+  }
+  if (syncAll && strategyArg !== undefined) {
+    console.error(
+      '--strategy is invocation-scoped and cannot be combined with --all; ' +
+      'all-source sync honors each source\'s stored policy.',
+    );
+    console.error(
+      'Set one source: gbrain sources set-sync-strategy <source-id> <markdown|code|auto|default>',
+    );
+    console.error('Inspect policies: gbrain sources list --json');
+    process.exit(2);
+  }
   let missingPathMode: MissingPathMode = 'fail';
   try {
     missingPathMode = parseMissingPathMode(args);
@@ -4409,7 +4493,6 @@ See also:
     console.error(`Invalid --max-sources value: "${maxSourcesStr}". Must be a positive integer.`);
     process.exit(1);
   }
-  const strategyArg = args.find((a, i) => args[i - 1] === '--strategy') as SyncOpts['strategy'] | undefined;
   // #753/#774: monorepo subdir-source flags. --exclude is repeatable.
   const srcSubpath = args.find((a, i) => args[i - 1] === '--src-subpath') || undefined;
   const excludePatterns: string[] = [];
@@ -4577,7 +4660,7 @@ See also:
     //   - stable JSON envelope {schema_version:1, sources, ...} when --json
     // v0.41.31: v2Enabled resolved once above (cost gate). Reused here.
     const activeSources = sources.filter((s) => {
-      const cfg = (s.config || {}) as { syncEnabled?: boolean };
+      const cfg = parseSourceConfig(s.config);
       return cfg.syncEnabled !== false;
     });
     const disabledCount = sources.length - activeSources.length;
@@ -4654,7 +4737,6 @@ See also:
     const onAllSigint = () => { try { allInterrupt.abort(new Error('SIGINT')); } catch { /* */ } };
 
     const runOne = async (src: typeof sources[number]): Promise<SyncResult> => {
-      const cfg = (src.config || {}) as { strategy?: 'markdown' | 'code' | 'auto' };
       // D18: parallel path defers embed; auto-enqueue embed-backfill after.
       // v0.42.42.0 (#2139): `autoDeferEmbeds` (the inline gate tripped in a
       // non-TTY session) ALSO forces deferral — global by design (the gate's
@@ -4692,7 +4774,6 @@ See also:
         skipFailed, retryFailed, noSchemaPack,
         includeGitignored,
         sourceId: src.id,
-        strategy: cfg.strategy,
         concurrency,
         signal: composeAbortSignals(allInterrupt.signal, controller?.signal),
       };
@@ -4865,6 +4946,8 @@ See also:
           ...(r.localPath ? { local_path: r.localPath } : {}),
           ...(r.result ? {
             sync_status: r.result.status,
+            sync_strategy: r.result.syncStrategy,
+            sync_strategy_origin: r.result.syncStrategyOrigin,
             // #3068: surface the partial reason (e.g. pull_failed) so JSON
             // consumers can distinguish a self-healing timeout from a wedge.
             ...(r.result.reason ? { reason: r.result.reason } : {}),
@@ -4923,6 +5006,13 @@ See also:
     exclude: excludePatterns.length > 0 ? excludePatterns : undefined,
     signal: composeAbortSignals(singleSourceInterrupt.signal, singleSourceController?.signal),
   };
+  if (strategyArg !== undefined) {
+    serr(
+      watch
+        ? `[gbrain sync] --strategy ${strategyArg} pins this watch process; source setting unchanged.`
+        : `[gbrain sync] --strategy ${strategyArg} is an invocation override; source setting unchanged.`,
+    );
+  }
 
   // v0.42.42.0 (#2139, Step 4b): single-source `gbrain sync` gets the SAME
   // inline cost gate as `--all`. Previously single-source embedded inline with
@@ -4939,9 +5029,11 @@ See also:
       [sourceId],
     );
     if (gateRows.length > 0) {
+      const gateConfig = parseSourceConfig(gateRows[0].config);
+      if (strategyArg !== undefined) gateConfig.strategy = strategyArg;
       const gateSources = [{
-        local_path: gateRows[0].local_path ?? repoPath ?? null,
-        config: gateRows[0].config ?? {},
+        local_path: repoPath ?? gateRows[0].local_path ?? null,
+        config: gateConfig,
         last_commit: gateRows[0].last_commit,
         chunker_version: gateRows[0].chunker_version,
       }];
@@ -4984,7 +5076,8 @@ See also:
       if (singleSourceTimer !== undefined) clearTimeout(singleSourceTimer);
       process.off('SIGINT', onSingleSourceSigint);
     }
-    printSyncResult(result);
+    if (jsonOut) console.log(JSON.stringify(formatSyncResultJson(result)));
+    else printSyncResult(result);
     // #3068: a pull_failed partial is NOT a success — unlike timeout-class
     // partials (which converge on retry), a failing pull will not self-heal.
     // Exit non-zero so cron/monitoring sees the wedge instead of a green run.
@@ -5216,7 +5309,6 @@ export async function syncOneSource(
     includeGitignored?: boolean;
   },
 ): Promise<{ result: SyncResult; log: string }> {
-  const cfg = (src.config || {}) as { strategy?: 'markdown' | 'code' | 'auto' };
   const log = `\n--- Syncing source: ${src.name} ---\n`;
   const repoOpts: SyncOpts = {
     repoPath: src.local_path!,
@@ -5230,7 +5322,6 @@ export async function syncOneSource(
     noSchemaPack: shared.noSchemaPack,
     includeGitignored: shared.includeGitignored,
     sourceId: src.id,
-    strategy: cfg.strategy,
     concurrency: shared.concurrency,
     // lockId defaults to `gbrain-sync:${src.id}` via the invariant in
     // performSync (no explicit override needed — sourceId triggers it).
@@ -5427,7 +5518,7 @@ export async function buildSyncStatusReport(
 
   const now = Date.now();
   const out: SyncStatusReportSource[] = sources.map((src) => {
-    const cfgEntry = (src.config || {}) as { syncEnabled?: boolean };
+    const cfgEntry = parseSourceConfig(src.config);
     const row = sourceMap.get(src.id) || { id: src.id, last_commit: null, last_sync_at: null, newest_content_at: null };
     const counts = countMap.get(src.id) || { pages: 0, chunks_total: 0, chunks_unembedded: 0 };
     const lastSyncMs = row.last_sync_at
@@ -5754,6 +5845,28 @@ async function maybeExtractionNudge(engine: BrainEngine, sourceId?: string): Pro
  * when `--json` is set, so banners stay off stdout and the JSON envelope
  * pipes cleanly through `jq` (D4).
  */
+export function formatSyncResultJson(result: SyncResult): Record<string, unknown> {
+  return {
+    schema_version: 1,
+    status: result.status,
+    from_commit: result.fromCommit,
+    to_commit: result.toCommit,
+    added: result.added,
+    modified: result.modified,
+    deleted: result.deleted,
+    renamed: result.renamed,
+    chunks_created: result.chunksCreated,
+    embedded: result.embedded,
+    pages_affected: result.pagesAffected,
+    sync_strategy: result.syncStrategy,
+    sync_strategy_origin: result.syncStrategyOrigin,
+    ...(result.failedFiles !== undefined ? { failed_files: result.failedFiles } : {}),
+    ...(result.filesImported !== undefined ? { files_imported: result.filesImported } : {}),
+    ...(result.reason !== undefined ? { reason: result.reason } : {}),
+    ...(result.bankedFiles !== undefined ? { banked_files: result.bankedFiles } : {}),
+  };
+}
+
 function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = process.stdout) {
   const write = (line: string) => sink.write(line + '\n');
   switch (result.status) {

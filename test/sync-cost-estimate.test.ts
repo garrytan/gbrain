@@ -104,6 +104,43 @@ describe('estimateInlineNewTokens — ladder', () => {
     expect(r.estimateKind).toBe('delta');
   });
 
+  test('stored code policy prices the same code files execution will import', () => {
+    writeFileSync(join(repo, 'topics/a.ts'), 'export const value = '.repeat(200));
+    commitAll('code only');
+
+    const markdownDefault = estimateInlineNewTokens(
+      [src({ last_commit: null, chunker_version: CURRENT })],
+      CURRENT,
+    );
+    const storedCode = estimateInlineNewTokens(
+      [src({
+        last_commit: null,
+        chunker_version: CURRENT,
+        config: { strategy: 'code' },
+      })],
+      CURRENT,
+    );
+
+    expect(markdownDefault.tokens).toBe(0);
+    expect(storedCode.tokens).toBeGreaterThan(0);
+    expect(storedCode.ceilingReasons).toContain('first_sync');
+  });
+
+  test('invalid stored policy uses the markdown fallback in cost preview too', () => {
+    writeFileSync(join(repo, 'topics/a.ts'), 'export const value = '.repeat(200));
+    commitAll('code only');
+    const estimate = estimateInlineNewTokens(
+      [src({
+        last_commit: null,
+        chunker_version: CURRENT,
+        config: { strategy: 'everything' },
+      })],
+      CURRENT,
+    );
+    expect(estimate.tokens).toBe(0);
+    expect(estimate.estimateKind).toBe('ceiling');
+  });
+
   test('syncEnabled:false sources are skipped (neither changed nor unchanged)', () => {
     writeFileSync(join(repo, 'topics/a.md'), 'body');
     commitAll('base');

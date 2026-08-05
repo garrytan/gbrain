@@ -54,11 +54,14 @@ import {
 import { gbrainPath } from './config.ts';
 import { isValidSourceId } from './source-id.ts';
 import { resolveSourceWithTier, type SourceTier } from './source-resolver.ts';
+import { SOURCE_CONFIG_OBJECT_SQL } from './source-config-sql.ts';
+import { isSyncStrategy, type SyncStrategy } from './sync.ts';
 
 // ── Errors ──────────────────────────────────────────────────────────────────
 
 export type SourceOpErrorCode =
   | 'invalid_id'
+  | 'invalid_sync_strategy'
   | 'source_id_taken'
   | 'overlapping_path'
   | 'invalid_remote_url'
@@ -143,6 +146,8 @@ export interface AddSourceOpts {
   localPath?: string | null;
   remoteUrl?: string;
   federated?: boolean | null;
+  /** Persistent file-selection policy for future syncs. Omitted → markdown/default. */
+  strategy?: SyncStrategy;
   /**
    * Override clone destination. Defaults to $GBRAIN_HOME/clones/<id>/.
    * Only honored when remoteUrl is set.
@@ -351,6 +356,12 @@ export async function addSource(
   opts: AddSourceOpts,
 ): Promise<SourceRow> {
   validateSourceId(opts.id);
+  if (opts.strategy !== undefined && !isSyncStrategy(opts.strategy)) {
+    throw new SourceOpError(
+      'invalid_sync_strategy',
+      `Invalid sync strategy "${String(opts.strategy)}". Valid options: markdown | code | auto.`,
+    );
+  }
 
   // Q4: pre-flight collision check before any clone work.
   const existing = await engine.executeRaw<{ id: string }>(
@@ -429,6 +440,7 @@ export async function addSource(
     if (opts.federated !== null && opts.federated !== undefined) {
       config.federated = opts.federated;
     }
+    if (opts.strategy !== undefined) config.strategy = opts.strategy;
     const displayName = opts.name ?? opts.id;
 
     try {
@@ -508,6 +520,7 @@ export async function addSource(
     if (opts.federated !== null && opts.federated !== undefined) {
       config.federated = opts.federated;
     }
+    if (opts.strategy !== undefined) config.strategy = opts.strategy;
     const displayName = opts.name ?? opts.id;
     await engine.executeRaw(
       `INSERT INTO sources (id, name, local_path, config)
@@ -524,6 +537,36 @@ export async function addSource(
     );
   }
   return created;
+}
+
+/**
+ * Narrow local-CLI mutation for persistent sync policy. A value atomically
+ * patches the normalized config object; undefined removes only the strategy
+ * key so the source returns to markdown/default provenance. Returns false for
+ * an unknown source and never performs a detached read-modify-write.
+ */
+export async function setSourceSyncStrategy(
+  engine: BrainEngine,
+  sourceId: string,
+  strategy: SyncStrategy | undefined,
+): Promise<boolean> {
+  if (strategy !== undefined && !isSyncStrategy(strategy)) {
+    throw new SourceOpError(
+      'invalid_sync_strategy',
+      `Invalid sync strategy "${String(strategy)}". Valid options: markdown | code | auto.`,
+    );
+  }
+  if (strategy !== undefined) {
+    return engine.updateSourceConfig(sourceId, { strategy });
+  }
+  const rows = await engine.executeRaw<{ id: string }>(
+    `UPDATE sources
+        SET config = ${SOURCE_CONFIG_OBJECT_SQL} - 'strategy'
+      WHERE id = $1
+      RETURNING id`,
+    [sourceId],
+  );
+  return rows.length > 0;
 }
 
 // ── resolveDefaultSource ────────────────────────────────────────────────────
