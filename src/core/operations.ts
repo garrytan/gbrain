@@ -213,20 +213,49 @@ function enforceSubagentSlugFence(ctx: OperationContext, slug: string, opName: s
   if (typeof ctx.subagentId !== 'number' || Number.isNaN(ctx.subagentId)) {
     throw new OperationError('permission_denied', `${opName} via subagent requires ctx.subagentId`);
   }
+  if (slugUnderSubagentFence(ctx, slug)) return;
   const allowList = ctx.allowedSlugPrefixes;
-  if (allowList && allowList.length > 0) {
-    if (!matchesSlugAllowList(slug, allowList)) {
-      throw new OperationError(
-        'permission_denied',
-        `${opName} slug '${slug}' is not within the trusted-workspace allow-list (${allowList.join(', ')})`
-      );
-    }
-  } else {
-    const prefix = `wiki/agents/${ctx.subagentId}/`;
-    if (!slug.startsWith(prefix) || slug.length === prefix.length) {
-      throw new OperationError('permission_denied', `${opName} via subagent must write under '${prefix}...'`);
-    }
-  }
+  throw new OperationError(
+    'permission_denied',
+    allowList && allowList.length > 0
+      ? `${opName} slug '${slug}' is not within the trusted-workspace allow-list (${allowList.join(', ')})`
+      : `${opName} via subagent must write under 'wiki/agents/${ctx.subagentId}/...'`,
+  );
+}
+
+/**
+ * The subagent fence's MATCH RULE, without the throwing. Split out so the
+ * resolved-slug re-check in put_page can ask the same question the entry
+ * fence asks, instead of re-deriving the namespace literal and drifting.
+ * Callers must have already established `ctx.viaSubagent === true`.
+ */
+function slugUnderSubagentFence(ctx: OperationContext, slug: string): boolean {
+  const allowList = ctx.allowedSlugPrefixes;
+  if (allowList && allowList.length > 0) return matchesSlugAllowList(slug, allowList);
+  const prefix = `wiki/agents/${ctx.subagentId}/`;
+  return slug.startsWith(prefix) && slug.length > prefix.length;
+}
+
+/**
+ * Is `slug` outside whatever slug confinement THIS caller is under?
+ *
+ * A caller can be confined by EITHER mechanism, and the two arrive on
+ * different context fields: an OAuth binding lands on `ctx.auth
+ * .boundSlugPrefixes` (plain-prefix grammar), while a delegated subagent
+ * lands on `ctx.viaSubagent` + `ctx.allowedSlugPrefixes` (glob grammar) and
+ * carries NO `ctx.auth` at all. Testing only the OAuth field therefore lets
+ * a bound client that also holds `agent` scope re-open the path it is fenced
+ * out of simply by delegating the write through submit_agent — the same
+ * bypass shape the facts-backstop gate below is keyed against.
+ *
+ * Unconfined callers (local CLI, unbound client) match neither arm and are
+ * never fenced.
+ */
+function slugOutsideCallerFence(ctx: OperationContext, slug: string): boolean {
+  const bound = ctx.auth?.boundSlugPrefixes;
+  if (bound && !slugUnderBoundPrefixes(bound, slug)) return true;
+  if (ctx.viaSubagent === true && !slugUnderSubagentFence(ctx, slug)) return true;
+  return false;
 }
 
 /**
@@ -1156,14 +1185,13 @@ const put_page: Operation = {
     // touching the DB, so throwing here leaves nothing to roll back.
     if (result.slug && result.slug !== slug) {
       // Deliberately does NOT name the resolved slug: it belongs to a page
-      // outside the binding, and echoing it would turn frontmatter-id guessing
+      // outside the fence, and echoing it would turn frontmatter-id guessing
       // into a slug-enumeration oracle.
-      if (!slugUnderBoundPrefixes(ctx.auth?.boundSlugPrefixes ?? [], result.slug)
-          && ctx.auth?.boundSlugPrefixes) {
-        ctx.logger.warn(`[put_page] dedup resolved '${slug}' to an out-of-fence page; refusing (client ${ctx.auth.clientId ?? 'unknown'})`);
+      if (slugOutsideCallerFence(ctx, result.slug)) {
+        ctx.logger.warn(`[put_page] dedup resolved '${slug}' to an out-of-fence page; refusing (client ${ctx.auth?.clientId ?? 'unknown'}, subagent ${ctx.subagentId ?? 'none'})`);
         throw new OperationError(
           'permission_denied',
-          `put_page: this content already exists on a page outside your bound_slug_prefixes, so the write would have modified that page instead.`,
+          `put_page: this content already exists on a page outside your write scope, so the write would have modified that page instead.`,
           'Remove the `id:` frontmatter field (or change the content) to write a new page under your own prefix.',
         );
       }
