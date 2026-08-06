@@ -4,13 +4,27 @@
  * and the D2 clean-restart-budget gate so future refactors can't silently
  * regress the supervisor crash-count incident this wave fixes.
  *
- * Strategy: each test writes a small shell script to disk that exits with
- * a chosen code after an optional sleep. The class spawns the script as
- * the "worker" and we assert on the event stream the class emits.
+ * Strategy: each test runs a tiny "worker" process that exits with a chosen
+ * code after an optional sleep, and asserts on the event stream the class
+ * emits as it respawns that worker.
+ *
+ * Workers come in two flavours, both portable:
+ *   - `makeConstantExitHarness(code)` — a platform shell one-liner
+ *     (`cmd /c exit N` / `sh -c 'exit N'`). Used wherever the worker only has
+ *     to exit with a code, which is most tests. No temp file, no exec bit.
+ *   - `makeHarness(name, body)` — a `.mjs` script executed by
+ *     `process.execPath`. Used only where the worker needs real logic (an
+ *     invocation counter, a signal handler).
+ *
+ * Neither is a `#!/bin/sh` script, which is what these tests used to write.
+ * That was not portable: on Windows `chmodSync` is a no-op and the OS refuses
+ * to execute a `.sh`, so every spawn failed instantly — and that used to HANG
+ * the entire `bun test` process rather than fail it. See the "spawn failure"
+ * describe block at the bottom for the supervisor bug it exposed.
  */
 
 import { describe, it, expect, afterEach } from 'bun:test';
-import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
@@ -18,19 +32,64 @@ import {
   type ChildSupervisorEvent,
 } from '../src/core/minions/child-worker-supervisor.ts';
 
+/**
+ * Per-test bun timeout for the spawn-driving tests. Generous because each test
+ * drives several real process spawns and Windows process creation is slow; it
+ * must stay ABOVE the harness's own wall-clock net (RUN_DEADLINE_MS +
+ * RUN_ABANDON_GRACE_MS) so a wedge surfaces as that net's descriptive error
+ * rather than bun's bare "timed out" — which is what made the original hang so
+ * hard to read.
+ */
+const TEST_TIMEOUT_MS = 60_000;
+/**
+ * Soft stop: ask the supervisor to wind down after this long. Deliberately
+ * generous — this is a net for an UNBOUNDED loop, not a performance budget.
+ * A crash-loop test drives several real process spawns, and spawn latency on a
+ * contended machine is easily seconds; too tight a deadline turns contention
+ * into a spurious "gave up too early" failure.
+ */
+const RUN_DEADLINE_MS = 30_000;
+/** Hard abandon: if run() STILL hasn't settled this long after the soft stop. */
+const RUN_ABANDON_GRACE_MS = 5_000;
+
 interface Harness {
-  workerScript: string;
+  /** What the supervisor spawns (the bun binary for script workers). */
+  cliPath: string;
+  /** argv after cliPath (the worker script path for script workers). */
+  args: string[];
   cleanup: () => void;
+}
+
+/**
+ * Harness for a worker whose only job is to exit with a fixed code — which is
+ * most of them. Uses the platform's own shell one-liner rather than a script
+ * file, so no temp dir, no exec bit, and no JS-runtime startup per spawn.
+ *
+ * This matters: these tests drive real respawn loops, so a heavyweight worker
+ * multiplies across every crash cycle and, on a loaded machine, is what pushes
+ * a test into its own safety-net deadline. Only workers that need actual logic
+ * (an invocation counter, a signal handler) pay for `makeHarness`.
+ */
+function makeConstantExitHarness(code: number): Harness {
+  return process.platform === 'win32'
+    ? {
+        cliPath: process.env.COMSPEC ?? 'cmd.exe',
+        args: ['/c', `exit ${code}`],
+        cleanup: () => {},
+      }
+    : { cliPath: '/bin/sh', args: ['-c', `exit ${code}`], cleanup: () => {} };
 }
 
 function makeHarness(name: string, body: string): Harness {
   const root = join(tmpdir(), `gbrain-cws-test-${name}-${process.pid}-${Date.now()}`);
   mkdirSync(root, { recursive: true });
-  const workerScript = join(root, 'worker.sh');
-  writeFileSync(workerScript, `#!/bin/sh\n${body}\n`, 'utf8');
-  chmodSync(workerScript, 0o755);
+  // `.mjs` so both bun and node parse it as ESM regardless of any ambient
+  // package.json `type` field (the temp dir has none).
+  const workerScript = join(root, 'worker.mjs');
+  writeFileSync(workerScript, `${body}\n`, 'utf8');
   return {
-    workerScript,
+    cliPath: process.execPath,
+    args: [workerScript],
     cleanup: () => {
       try {
         rmSync(root, { recursive: true, force: true });
@@ -39,6 +98,28 @@ function makeHarness(name: string, body: string): Harness {
       }
     },
   };
+}
+
+/**
+ * Worker whose exit code is driven by an on-disk invocation counter, so a
+ * respawn loop can walk a fixed exit-code sequence. `pick` is JS source for
+ * an expression over `next` (the 1-based invocation number) yielding the exit
+ * code. Replaces the old `$(dirname "$0")/counter` shell idiom.
+ *
+ * `fileURLToPath(new URL(...))` — never `new URL(...).pathname`, which yields
+ * `/C:/...` on Windows (see the filesystem-paths invariant in CLAUDE.md).
+ */
+function counterWorkerBody(pick: string): string {
+  return `
+import { readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+const COUNTER = fileURLToPath(new URL('./counter', import.meta.url));
+let count = 0;
+try { count = parseInt(readFileSync(COUNTER, 'utf8'), 10) || 0; } catch {}
+const next = count + 1;
+writeFileSync(COUNTER, String(next), 'utf8');
+process.exit(${pick});
+`;
 }
 
 interface RunResult {
@@ -61,16 +142,18 @@ async function runUntilTerminal(
     watchdogBackoffMs: number;
     _now: () => number;
     stopAfterEvents: number; // safety net so a buggy test can't hang
+    deadlineMs: number; // wall-clock safety net (see below)
   }>,
 ): Promise<RunResult> {
   const events: ChildSupervisorEvent[] = [];
   let stopping = false;
   let maxCrashesFired: { count: number; max: number } | null = null;
   const stopAfter = overrides.stopAfterEvents ?? 200;
+  const deadlineMs = overrides.deadlineMs ?? RUN_DEADLINE_MS;
 
   const sup = new ChildWorkerSupervisor({
-    cliPath: h.workerScript,
-    args: [],
+    cliPath: h.cliPath,
+    args: h.args,
     maxCrashes: overrides.maxCrashes ?? 3,
     hardStopMaxCrashes: overrides.hardStopMaxCrashes,
     _backoffFloorMs: overrides._backoffFloorMs ?? 5,
@@ -95,7 +178,51 @@ async function runUntilTerminal(
     },
   });
 
-  await sup.run();
+  // WALL-CLOCK SAFETY NET.
+  //
+  // `stopAfterEvents` alone is not a safety net: it only advances when the
+  // supervisor EMITS, and `stopping` is only observed between loop iterations.
+  // Any failure mode that stops producing events — a spawn that never settles,
+  // a wedged child, a future refactor that awaits something unresolvable —
+  // leaves the counter frozen and the loop pinned forever. That is not
+  // hypothetical: a `.sh` worker on Windows wedged `spawnOnce()` on its FIRST
+  // spawn, and because the process kept running after bun's per-test timeout
+  // fired, the whole `bun test` invocation never terminated and never printed
+  // a totals line.
+  //
+  // Two-stage, so a hang is a fast FAILING test rather than a hung process:
+  //   1. soft — flip `stopping` and SIGKILL any live child, which is enough to
+  //      unwind a loop that is still making progress.
+  //   2. hard — if run() STILL hasn't settled, abandon it and throw. The test
+  //      fails with a diagnostic instead of taking the runner down with it.
+  let hardTimer: ReturnType<typeof setTimeout> | undefined;
+  const softTimer = setTimeout(() => {
+    stopping = true;
+    sup.killChild('SIGKILL');
+  }, deadlineMs);
+
+  const ABANDONED = Symbol('run-abandoned');
+  const abandon = new Promise<typeof ABANDONED>((resolve) => {
+    hardTimer = setTimeout(() => resolve(ABANDONED), deadlineMs + RUN_ABANDON_GRACE_MS);
+  });
+
+  let outcome: 'ok' | typeof ABANDONED;
+  try {
+    outcome = await Promise.race([sup.run().then(() => 'ok' as const), abandon]);
+  } finally {
+    clearTimeout(softTimer);
+    if (hardTimer) clearTimeout(hardTimer);
+  }
+
+  if (outcome === ABANDONED) {
+    throw new Error(
+      `ChildWorkerSupervisor.run() did not settle within ` +
+        `${deadlineMs + RUN_ABANDON_GRACE_MS}ms (events emitted: ${events.length}; ` +
+        `last: ${JSON.stringify(events[events.length - 1] ?? null)}). ` +
+        `The loop is wedged — it is NOT merely slow.`,
+    );
+  }
+
   return { events, maxCrashesFired };
 }
 
@@ -106,7 +233,7 @@ afterEach(() => {
 describe('ChildWorkerSupervisor', () => {
   describe('D1 — code=0 exit classifier', () => {
     it('code=0 worker exit does not count as crash; restarts immediately', async () => {
-      const h = makeHarness('clean-exits', 'exit 0');
+      const h = makeConstantExitHarness(0);
       try {
         const res = await runUntilTerminal(h, {
           maxCrashes: 3,
@@ -141,22 +268,14 @@ describe('ChildWorkerSupervisor', () => {
       } finally {
         h.cleanup();
       }
-    });
+    }, TEST_TIMEOUT_MS);
 
     it('interleaved code=0 and code!=0 exits still trip max_crashes', async () => {
       // Worker alternates: each invocation increments a counter file and
       // exits 1 on odd hits, 0 on even hits (so exit-sequence is 1,0,1,0,1).
       const h = makeHarness(
         'interleaved',
-        `
-COUNTER_FILE="$(dirname "$0")/counter"
-[ -f "$COUNTER_FILE" ] || echo 0 > "$COUNTER_FILE"
-COUNT=$(cat "$COUNTER_FILE")
-NEXT=$((COUNT + 1))
-echo "$NEXT" > "$COUNTER_FILE"
-# Odd-indexed runs (#1, #3, #5...) exit 1; even-indexed exit 0.
-if [ $((NEXT % 2)) -eq 1 ]; then exit 1; else exit 0; fi
-`,
+        counterWorkerBody('next % 2 === 1 ? 1 : 0'),
       );
       try {
         const res = await runUntilTerminal(h, {
@@ -190,7 +309,7 @@ if [ $((NEXT % 2)) -eq 1 ]; then exit 1; else exit 0; fi
       } finally {
         h.cleanup();
       }
-    });
+    }, TEST_TIMEOUT_MS);
 
     it('code=0 after stable 5min+ run does not reset crashCount', async () => {
       // Sequence (4 runs total): exit 1 → exit 0 (6 min, "stable") → exit 1 →
@@ -198,20 +317,7 @@ if [ $((NEXT % 2)) -eq 1 ]; then exit 1; else exit 0; fi
       // clean exit), 2, 3 — last one trips max_crashes=3.
       const h = makeHarness(
         'stable-clean-no-reset',
-        `
-COUNTER_FILE="$(dirname "$0")/counter"
-[ -f "$COUNTER_FILE" ] || echo 0 > "$COUNTER_FILE"
-COUNT=$(cat "$COUNTER_FILE")
-NEXT=$((COUNT + 1))
-echo "$NEXT" > "$COUNTER_FILE"
-case $NEXT in
-  1) exit 1 ;;
-  2) exit 0 ;;
-  3) exit 1 ;;
-  4) exit 1 ;;
-  *) exit 0 ;;
-esac
-`,
+        counterWorkerBody('[1, 0, 1, 1][next - 1] ?? 0'),
       );
       try {
         // Fake clock — each spawnOnce reads now() twice (start + exit) and
@@ -265,13 +371,13 @@ esac
       } finally {
         h.cleanup();
       }
-    });
+    }, TEST_TIMEOUT_MS);
   });
 
   describe('D2 — clean-restart budget', () => {
     it('budget exceeded triggers health_warn + budget_exceeded backoff', async () => {
       // Tight budget of 2 so we trip it on the 3rd clean exit.
-      const h = makeHarness('budget-trip', 'exit 0');
+      const h = makeConstantExitHarness(0);
       try {
         const res = await runUntilTerminal(h, {
           maxCrashes: 3, // never trips because code=0 doesn't increment
@@ -304,13 +410,13 @@ esac
       } finally {
         h.cleanup();
       }
-    });
+    }, TEST_TIMEOUT_MS);
 
     it('budget config is per-instance (no module-level state leakage)', async () => {
       // Run instance A with budget=2 and instance B with budget=5. Each
       // tracks its own sliding window; A trips faster than B.
-      const hA = makeHarness('budget-a', 'exit 0');
-      const hB = makeHarness('budget-b', 'exit 0');
+      const hA = makeConstantExitHarness(0);
+      const hB = makeConstantExitHarness(0);
       try {
         const resA = await runUntilTerminal(hA, {
           maxCrashes: 99,
@@ -343,7 +449,7 @@ esac
         hA.cleanup();
         hB.cleanup();
       }
-    });
+    }, TEST_TIMEOUT_MS);
   });
 
   describe('awaitChildExit short-circuit (P2 review fix)', () => {
@@ -353,14 +459,14 @@ esac
     // and the caller waited out the full timeout. Fix probes exitCode +
     // signalCode first and short-circuits.
     it('resolves immediately when the child has already exited', async () => {
-      const h = makeHarness('await-already-exited', 'exit 0');
+      const h = makeConstantExitHarness(0);
       try {
         // Spin up a supervisor; drive it for ONE spawn cycle and then stop.
         const events: ChildSupervisorEvent[] = [];
         let stopping = false;
         const sup = new ChildWorkerSupervisor({
-          cliPath: h.workerScript,
-          args: [],
+          cliPath: h.cliPath,
+          args: h.args,
           maxCrashes: 1,
           _backoffFloorMs: 1,
           isStopping: () => stopping,
@@ -380,12 +486,12 @@ esac
       } finally {
         h.cleanup();
       }
-    });
+    }, TEST_TIMEOUT_MS);
   });
 
   describe('event shape', () => {
     it('worker_spawned + worker_exited fire on every cycle with consistent shape', async () => {
-      const h = makeHarness('shape', 'exit 0');
+      const h = makeConstantExitHarness(0);
       try {
         const res = await runUntilTerminal(h, {
           maxCrashes: 3,
@@ -417,7 +523,7 @@ esac
       } finally {
         h.cleanup();
       }
-    });
+    }, TEST_TIMEOUT_MS);
   });
 
   // issue #1678: RSS-watchdog exits (code 12) are cause-keyed and must NOT
@@ -425,7 +531,7 @@ esac
   // defeat max_crashes and the 400×/24h loop would never stop being silent.
   describe('rss_watchdog breaker (issue #1678)', () => {
     it('code=12 is labeled rss_watchdog and never increments crashCount', async () => {
-      const h = makeHarness('wd-nocrash', 'exit 12');
+      const h = makeConstantExitHarness(12);
       try {
         const { events, maxCrashesFired } = await runUntilTerminal(h, {
           maxCrashes: 3,
@@ -447,10 +553,10 @@ esac
       } finally {
         h.cleanup();
       }
-    });
+    }, TEST_TIMEOUT_MS);
 
     it('emits rss_watchdog_loop health_warn once the window budget is exceeded', async () => {
-      const h = makeHarness('wd-loop', 'exit 12');
+      const h = makeConstantExitHarness(12);
       try {
         const { events } = await runUntilTerminal(h, {
           maxCrashes: 99,
@@ -474,7 +580,7 @@ esac
       } finally {
         h.cleanup();
       }
-    });
+    }, TEST_TIMEOUT_MS);
   });
 
   // issue #1994 (#2227 tail): crossing the SOFT crash budget no longer
@@ -483,7 +589,7 @@ esac
   // at the much-higher hard ceiling.
   describe('degraded-mode crash backoff (issue #1994)', () => {
     it('crossing the soft budget does NOT give up; it warns and keeps retrying to the hard ceiling', async () => {
-      const h = makeHarness('degraded-softbudget', 'exit 1');
+      const h = makeConstantExitHarness(1);
       try {
         const { events, maxCrashesFired } = await runUntilTerminal(h, {
           maxCrashes: 3,        // soft budget
@@ -514,10 +620,10 @@ esac
       } finally {
         h.cleanup();
       }
-    });
+    }, TEST_TIMEOUT_MS);
 
     it('hardStopMaxCrashes=0 disables permanent give-up (retry-forever-with-backoff)', async () => {
-      const h = makeHarness('degraded-noforever', 'exit 1');
+      const h = makeConstantExitHarness(1);
       try {
         const { events, maxCrashesFired } = await runUntilTerminal(h, {
           maxCrashes: 3,
@@ -534,7 +640,7 @@ esac
       } finally {
         h.cleanup();
       }
-    });
+    }, TEST_TIMEOUT_MS);
   });
 
   describe('issue #1801 — restartCurrentChild + killChild liveness fix', () => {
@@ -548,8 +654,15 @@ esac
     };
 
     // Worker that IGNORES SIGTERM and sleeps, so only SIGKILL can stop it.
+    // (On Windows there is no signal delivery — `child.kill('SIGTERM')` maps to
+    // TerminateProcess — so the handler is inert there and the child simply
+    // dies. These tests assert the captured child ends up dead and a fresh one
+    // is spawned, which holds under both semantics.)
     function makeSigtermIgnorer(name: string): Harness {
-      return makeHarness(name, "trap '' TERM\nsleep 30");
+      return makeHarness(
+        name,
+        "process.on('SIGTERM', () => {});\nsetTimeout(() => {}, 30_000);",
+      );
     }
 
     async function startInBackground(h: Harness): Promise<{
@@ -563,8 +676,8 @@ esac
       let resolveSpawn: (pid: number) => void;
       const firstSpawn = new Promise<number>((r) => { resolveSpawn = r; });
       const sup = new ChildWorkerSupervisor({
-        cliPath: h.workerScript,
-        args: [],
+        cliPath: h.cliPath,
+        args: h.args,
         maxCrashes: 100,
         _backoffFloorMs: 5,
         isStopping: () => stopping,
@@ -658,7 +771,7 @@ esac
         await ctx.stop();
         h.cleanup();
       }
-    });
+    }, TEST_TIMEOUT_MS);
 
     it('repeated wedge restarts never trip max_crashes (crashCount stays 0)', async () => {
       const h = makeSigtermIgnorer('restart-no-crash');
@@ -673,6 +786,88 @@ esac
         await ctx.stop();
         h.cleanup();
       }
-    });
+    }, TEST_TIMEOUT_MS);
+  });
+
+  // A worker that can NEVER launch (bad cliPath, missing binary, a target the
+  // OS refuses to execute) is the one failure mode with no exit code to
+  // classify. Node and Bun signal it with 'error' + 'close' and NEVER 'exit',
+  // so a supervisor that only settles on 'exit' hangs on its FIRST spawn:
+  // no respawn, no crash count, no give-up, and — because the loop keeps the
+  // process alive past bun's per-test timeout — a `bun test` run that never
+  // terminates and never prints a totals line.
+  //
+  // Platform-independent: `spawn()` of a nonexistent path is ENOENT everywhere,
+  // so this guards the fix on Linux CI too, not just on the Windows box where
+  // it surfaced (a `.sh` worker, since chmod is a no-op and there is no
+  // shebang handling).
+  describe('spawn failure that never launches a process', () => {
+    /** Harness for a cliPath guaranteed not to exist. Nothing to clean up. */
+    function makeUnlaunchableHarness(name: string): Harness {
+      return {
+        cliPath: join(
+          tmpdir(),
+          `gbrain-cws-missing-${name}-${process.pid}-${Date.now()}`,
+          'definitely-not-a-binary',
+        ),
+        args: [],
+        cleanup: () => {},
+      };
+    }
+
+    it('settles the run loop instead of hanging, and counts each failure as a crash', async () => {
+      const h = makeUnlaunchableHarness('enoent');
+      const { events, maxCrashesFired } = await runUntilTerminal(h, {
+        maxCrashes: 2,
+        hardStopMaxCrashes: 3,
+        _backoffFloorMs: 1,
+        stopAfterEvents: 200,
+      });
+
+      // The load-bearing assertion is simply that we got here: pre-fix,
+      // runUntilTerminal's wall-clock net threw because run() never settled.
+      expect(maxCrashesFired).not.toBeNull();
+      expect(maxCrashesFired!.count).toBe(3);
+      expect(maxCrashesFired!.max).toBe(3);
+
+      // Each failed spawn is reported…
+      const failures = events.filter((e) => e.kind === 'worker_spawn_failed');
+      expect(failures.length).toBeGreaterThanOrEqual(3);
+
+      // …and accounted as a crash, so the hard ceiling can bound a permanent
+      // misconfig. `spawn_failed` is not in supervisor-audit's
+      // CLEAN_EXIT_CAUSES, so the audit summary counts it as a crash too.
+      const exits = events.filter(
+        (e): e is Extract<ChildSupervisorEvent, { kind: 'worker_exited' }> =>
+          e.kind === 'worker_exited',
+      );
+      expect(exits.length).toBe(3);
+      expect(exits.map((e) => e.crashCount)).toEqual([1, 2, 3]);
+      for (const e of exits) {
+        expect(e.code).toBeNull();
+        expect(e.likelyCause).toBe('spawn_failed');
+      }
+
+      // It paid the crash backoff between attempts rather than hot-looping.
+      const backoffs = events.filter(
+        (e): e is Extract<ChildSupervisorEvent, { kind: 'backoff' }> => e.kind === 'backoff',
+      );
+      expect(backoffs.length).toBeGreaterThanOrEqual(1);
+      expect(backoffs.every((b) => b.reason === 'crash')).toBe(true);
+    }, TEST_TIMEOUT_MS);
+
+    it('honours isStopping so a shutdown mid-failure does not keep respawning', async () => {
+      const h = makeUnlaunchableHarness('stop-early');
+      const { events } = await runUntilTerminal(h, {
+        maxCrashes: 99,
+        hardStopMaxCrashes: 0, // never give up on its own
+        _backoffFloorMs: 1,
+        stopAfterEvents: 6, // the composer's stop flag is the only exit
+      });
+      // Terminated via isStopping rather than the wall-clock net (which would
+      // have thrown), and did not run away past the event budget.
+      expect(events.length).toBeGreaterThanOrEqual(6);
+      expect(events.length).toBeLessThan(60);
+    }, TEST_TIMEOUT_MS);
   });
 });

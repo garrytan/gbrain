@@ -49,23 +49,23 @@ on enrich(entity, trigger):
         data["contacts"] = google_contacts(entity.email)   # Contact data
 
     # Step 5: Store raw data (auditable, re-processable)
-    gbrain put_raw_data <entity_slug> \
-        --data '{"sources": {"crustdata": {"fetched_at": "...", "data": {...}}, ...}}'
+    gbrain call put_raw_data \
+        '{"slug": "<entity_slug>", "data": {"sources": {"crustdata": {"fetched_at": "...", "data": {...}}, ...}}}'
     # Overwrite on re-enrichment, don't append
 
     # Step 6: Write to brain page
     if path == "CREATE":
         gbrain put <entity_slug> --content "<compiled_truth_from_all_sources>"
-        gbrain add_timeline_entry <entity_slug> --entry "Page created via enrichment"
+        gbrain timeline-add <entity_slug> {date} "Page created via enrichment"
     elif path == "UPDATE":
         # Append timeline, update compiled truth ONLY if materially new
-        gbrain add_timeline_entry <entity_slug> --entry "Enriched: {new_signal}"
+        gbrain timeline-add <entity_slug> {date} "Enriched: {new_signal}"
         # Flag contradictions -- don't silently resolve them
 
     # Step 7: Cross-reference the graph
-    gbrain add_link <person_slug> <company_slug>       # person -> company
-    gbrain add_link <company_slug> <person_slug>       # company -> person
-    gbrain add_link <person_slug> <deal_slug>          # person -> deal
+    gbrain link <person_slug> <company_slug>       # person -> company
+    gbrain link <company_slug> <person_slug>       # company -> person
+    gbrain link <person_slug> <deal_slug>          # person -> deal
     # Every entity page links to every other entity page that references it
 
 # People page sections (not a LinkedIn profile -- a living portrait):
@@ -94,8 +94,8 @@ on enrich(entity, trigger):
 ## How to Verify
 
 1. Enrich a Tier 1 person. Run `gbrain get <slug>` and confirm the page has Executive Summary, State, What They Believe, Contact, and Timeline sections populated from multiple sources.
-2. Run `gbrain get_raw_data <slug>`. Confirm raw API responses are stored with `sources.{provider}.fetched_at` timestamps.
-3. Run `gbrain get_links <slug>`. Confirm cross-reference links exist to the person's company page, deal pages, and related entities.
+2. Run `gbrain call get_raw_data '{"slug": "<slug>"}'`. Confirm raw API responses are stored with `sources.{provider}.fetched_at` timestamps.
+3. Run `gbrain call get_links '{"slug": "<slug>"}'`. Confirm cross-reference links exist to the person's company page, deal pages, and related entities.
 4. Check a page that was enriched AND has a user-written Assessment. Confirm the Assessment section was preserved, not overwritten by API data.
 5. Try to re-enrich the same person. Confirm the system checks the `fetched_at` timestamp and skips if less than a week old.
 

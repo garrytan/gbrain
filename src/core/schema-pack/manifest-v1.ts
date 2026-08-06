@@ -258,6 +258,7 @@ const RetypeMappingRuleSchema = z.object({
   subtype: z.string().optional(),
   subtype_field: z.enum(ALLOWED_SUBTYPE_FIELDS).default('subtype'),
   path_filter: z.string().optional(),
+  slug_filter: z.string().optional(),
 }).strict();
 
 const ResolverSchema = z.union([

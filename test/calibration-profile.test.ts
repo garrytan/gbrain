@@ -355,3 +355,33 @@ describe('runPhaseCalibrationProfile — phase integration', () => {
     expect(result.summary).toContain('holder=people/charlie-example');
   });
 });
+
+describe('generator model follows the gateway chat model', () => {
+  test('configured chat_model drives the generator hint and the persisted model_id', async () => {
+    // Regression: the generator previously stayed pinned to the
+    // TIER_DEFAULTS.reasoning constant, ignoring a configured chat_model —
+    // unlike propose_takes (v0.42.62 convention). Stock behavior is
+    // unchanged (the gateway default equals the old constant).
+    const { configureGateway, resetGateway } = await import('../src/core/ai/gateway.ts');
+    configureGateway({ chat_model: 'openai:gpt-5', env: { OPENAI_API_KEY: 'test-key' } });
+    try {
+      const { engine, captured } = buildMockEngine({ scorecard: ENOUGH_RESOLVED_SCORECARD });
+      const hints: Array<string | undefined> = [];
+      const patternsGenerator: PatternStatementsGenerator = async ({ modelHint }) => {
+        hints.push(modelHint);
+        return ['You call early-stage tactics well — 8 of 10 held up.'];
+      };
+      await runPhaseCalibrationProfile(buildCtx(engine), {
+        patternsGenerator,
+        biasTagsGenerator: async () => [],
+        voiceGateJudge: passJudge,
+      });
+      expect(hints).toEqual(['openai:gpt-5']);
+      const insert = captured.find(c => c.sql.includes('INSERT INTO calibration_profiles'));
+      expect(insert).toBeDefined();
+      expect(insert!.params).toContain('openai:gpt-5'); // persisted model_id = full configured string
+    } finally {
+      resetGateway();
+    }
+  });
+});

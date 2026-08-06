@@ -56,7 +56,8 @@ that tuple lights up the `pack_upgrade_available` onboard check.
 │  gbrain onboard --check --explain shows per-cluster narrative  │
 │  User reviews; if OK, runs:                                    │
 │    gbrain jobs submit unify-types --allow-protected \          │
-│      --params '{"target_pack":"gbrain-base-v2"}'               │
+│      --params '{"target_pack":"gbrain-base-v2","apply":true}'  │
+│  (omit "apply":true for a dry-run; that is the default)        │
 │  (Autopilot never auto-fires this; manual_only)                │
 └──────────────────────────┬─────────────────────────────────────┘
                            ↓
@@ -229,7 +230,7 @@ add `GBRAIN_AUDIT_FULL=1` (v0.43+ TODO; not yet wired).
 - Per-source pack-upgrade (the handler accepts `sourceId` but
   `findPackSuccessors` doesn't yet pass it through)
 - Cross-brain federated mounts that disagree on canonical packs
-- Automatic rollback (today: manual SQL or `gbrain pages restore`)
+- Automatic rollback (today: manual SQL or `gbrain restore`)
 - LLM-assisted mapping_rules codegen from production data (`gbrain
   schema detect-mappings`; deferred to v0.43+)
 

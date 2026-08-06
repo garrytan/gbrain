@@ -3,6 +3,7 @@ import { GBrainError, type EngineConfig } from './types.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import type { BrainEngine } from './engine.ts';
 import { verifySchema } from './schema-verify.ts';
+import { isRetryableConnError } from './retry-matcher.ts';
 
 let sql: ReturnType<typeof postgres> | null = null;
 let connectedUrl: string | null = null;
@@ -322,19 +323,14 @@ export async function withTransaction<T>(fn: (tx: ReturnType<typeof postgres>) =
   }) as Promise<T>;
 }
 
-const RETRYABLE_DB_CONNECT_PATTERNS = [
-  /password authentication failed/i,
-  /connection refused/i,
-  /the database system is starting up/i,
-  /Connection terminated unexpectedly/i,
-  /ECONNRESET/i,
-];
-
-export function isRetryableDbConnectError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  if (!msg) return false;
-  return RETRYABLE_DB_CONNECT_PATTERNS.some(p => p.test(msg));
-}
+// issue #1720 (proposal 4): the startup connect matcher and the runtime
+// matcher drifted — this used to be a private 5-pattern list that predated
+// /connection.*closed/i and the CONNECTION_ENDED/CONNECTION_CLOSED codes, so
+// a pooler close hitting connectWithRetry was treated as permanent. One
+// canonical source now: retry-matcher.ts's isRetryableConnError (a strict
+// superset of the old list). Do NOT reintroduce a local pattern list here;
+// the agreement guard in test/worker-conn-resilience-1720.test.ts pins it.
+export const isRetryableDbConnectError = isRetryableConnError;
 
 export interface ConnectWithRetryOpts {
   attempts?: number;

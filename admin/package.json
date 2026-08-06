@@ -20,6 +20,6 @@
   },
   "overrides": {
     "@babel/core": "^7.29.6",
-    "postcss": "^8.5.10"
+    "postcss": "^8.5.23"
   }
 }

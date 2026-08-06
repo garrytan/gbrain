@@ -84,6 +84,59 @@ export interface ServeOptions {
   bootTimeoutMs?: number;
 }
 
+/**
+ * Teardown for the HTTP serve path, reached once the server lifecycle resolves.
+ *
+ * `serve` deliberately skips both `finishCliTeardown` and the force-exit seam,
+ * so simply returning here leaves the never-disconnected engine's handles
+ * keeping an orphaned process alive — port released, but the PID still owning
+ * the PGLite write lock, which blocks every later CLI write. Disconnect first
+ * (checkpoint / pool drain) so the store is not left needing recovery, raced
+ * against the same deadline the stdio path uses in case a wedged WASM close
+ * would otherwise trap us.
+ *
+ * Extracted and seam-injected because this — not the socket severing in
+ * serve-http.ts — is the half that actually closes the orphan, and it was
+ * previously unreachable from a test.
+ *
+ * ponytail: on SIGTERM this races process-cleanup's own exit(143) and loses,
+ * because that path does not await a disconnect. That is the outcome we want.
+ * Plumb a settle-reason through `runServeHttp` if it ever needs to be
+ * guaranteed rather than merely reliable.
+ */
+export async function finishHttpServe(
+  engine: Pick<BrainEngine, 'disconnect'>,
+  opts: Pick<ServeOptions, 'exit' | 'log'> & { deadlineMs?: number } = {},
+): Promise<void> {
+  const exit = opts.exit ?? ((code?: number) => process.exit(code));
+  const log = opts.log ?? ((msg: string) => console.error(msg));
+  const deadlineMs = opts.deadlineMs ?? CLEANUP_DEADLINE_MS;
+
+  let exited = false;
+  const exitOnce = (code: number) => {
+    if (exited) return;
+    exited = true;
+    exit(code);
+  };
+
+  const deadline = setTimeout(() => {
+    log(`GBrain MCP server: cleanup deadline (${deadlineMs}ms) exceeded — forcing exit`);
+    exitOnce(0);
+  }, deadlineMs);
+  deadline.unref?.();
+
+  try {
+    await engine.disconnect();
+  } catch (err: unknown) {
+    log(`GBrain MCP server: cleanup error: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  clearTimeout(deadline);
+  // `process.exit` never returns, so the guard is inert in production. It
+  // matters for the injected seam: a disconnect that outlives the deadline
+  // must not exit a second time.
+  exitOnce(0);
+}
+
 export async function runServe(
   engine: BrainEngine,
   args: string[] = [],
@@ -144,6 +197,8 @@ export async function runServe(
 
     const { runServeHttp } = await import('./serve-http.ts');
     await runServeHttp(engine, { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams, bind, suppressBootstrapToken, printAdminToken });
+
+    await finishHttpServe(engine, opts);
     return;
   }
 

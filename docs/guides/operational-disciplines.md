@@ -20,8 +20,8 @@ on every_inbound_message(message):
     for entity in entities:
         existing = gbrain search "{entity.name}"
         if existing:
-            gbrain add_timeline_entry <entity_slug> \
-                --entry "{what_was_said}" \
+            gbrain timeline-add <entity_slug> {date} \
+                "{what_was_said}" \
                 --source "User, direct message, {timestamp}"
         # else: flag for enrichment if important enough
 
@@ -64,13 +64,13 @@ on nightly_schedule("02:00"):
     # The brain COMPOUNDS overnight.
 
     # 5a: Entity sweep -- find unlinked mentions
-    pages = gbrain list_pages
+    pages = gbrain list
     for page in pages:
         mentions = extract_entity_mentions(page.content)
-        existing_links = gbrain get_links <page.slug>
+        existing_links = gbrain call get_links '{"slug": "<page.slug>"}'
         for mention in mentions:
             if mention not in existing_links:
-                gbrain add_link <page.slug> <mention_slug>  # fix broken graph
+                gbrain link <page.slug> <mention_slug>  # fix broken graph
 
     # 5b: Citation audit -- find facts without sources
     for page in pages:
@@ -80,7 +80,7 @@ on nightly_schedule("02:00"):
 
     # 5c: Memory consolidation -- update compiled truth from timeline
     for page in stale_pages(older_than="7d"):
-        timeline = gbrain get_timeline <page.slug>
+        timeline = gbrain timeline <page.slug>
         if timeline.has_new_entries_since_last_consolidation:
             # Re-synthesize compiled truth from accumulated timeline
             updated_truth = consolidate(page.compiled_truth, timeline.new_entries)
@@ -110,11 +110,11 @@ on nightly_schedule("02:00"):
 
 ## How to Verify
 
-1. Send a message mentioning a person with a brain page. Confirm the agent detects the entity and adds a timeline entry to their page (`gbrain get_timeline <slug>`).
+1. Send a message mentioning a person with a brain page. Confirm the agent detects the entity and adds a timeline entry to their page (`gbrain timeline <slug>`).
 2. Ask the agent about someone in the brain. Confirm it runs `gbrain search` or `gbrain get` BEFORE reaching for external APIs (check the tool call order).
 3. Write a new page with `gbrain put`, then immediately run `gbrain search` for it. Confirm it appears in results (verifies sync ran).
 4. Run `gbrain doctor`. Confirm it returns a health report with database status, page count, and any flagged issues.
-5. After a dream cycle runs, check a page that had unlinked entity mentions. Confirm new links were added (`gbrain get_links <slug>`).
+5. After a dream cycle runs, check a page that had unlinked entity mentions. Confirm new links were added (`gbrain call get_links '{"slug": "<slug>"}'`).
 
 ---
 *Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*

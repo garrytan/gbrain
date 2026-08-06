@@ -19,14 +19,20 @@ The root `.gitattributes` pins `*.sh text eol=lf`, which overrides the
 `core.autocrlf=true` that Git for Windows installs by default. A fresh clone is
 correct with no extra steps.
 
-If you cloned before that pin existed, your working copy still has the old
-Windows line endings and bash will fail with `$'\r': command not found`. Refresh
-it once, from the repository root:
+`.gitattributes` pins `*.md text eol=lf` for the same reason. The frontmatter
+readers anchor on a `---` fence followed by a Unix line ending, so a CRLF
+checkout makes a well-formed document parse as having no frontmatter. That
+failure is silent: no error, the field just comes back empty.
+
+If you cloned before either pin existed, your working copy still has the old
+Windows line endings. Bash will fail with `$'\r': command not found`, and
+frontmatter will read as absent. Refresh it once, from the repository root:
 
 ```bash
 git rm --cached -r . -q
 git reset --hard
-bash -n scripts/run-unit-parallel.sh   # silence means bash can read the scripts
+bash -n scripts/run-unit-parallel.sh          # silence means bash can read the scripts
+git ls-files --eol -- '*.md' | grep -c w/crlf # 0 means Markdown is clean
 ```
 
 Every `check:*` entry in `package.json` invokes its script as `bash scripts/<name>.sh`

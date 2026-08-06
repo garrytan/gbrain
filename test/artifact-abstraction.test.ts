@@ -3,11 +3,20 @@
 // so the cross-discriminator surface stays MECE.
 
 import { describe, test, expect } from 'bun:test';
+import { sep } from 'path';
 import {
   detectArtifactKind,
   targetDirForKind,
   validateManifestByKind,
 } from '../src/core/artifact/index.ts';
+
+// targetDirForKind builds its result with path.join(), which is correct:
+// it emits native separators on every platform. The fixture below is
+// therefore platform-selected rather than a shared POSIX literal — on
+// Windows, join('/home/u/.gbrain', 'skillpacks') is '\home\u\.gbrain\
+// skillpacks', which is right, not a bug. Only the separator comes from
+// `path`; the subdirectory names being asserted are still hand-written.
+const GBRAIN_HOME = process.platform === 'win32' ? 'C:\\gb' : '/home/u/.gbrain';
 
 describe('v0.39 T14 — artifact abstraction', () => {
   test('detectArtifactKind by extension', () => {
@@ -17,8 +26,8 @@ describe('v0.39 T14 — artifact abstraction', () => {
   });
 
   test('targetDirForKind routes to distinct subdirectories', () => {
-    expect(targetDirForKind('schemapack', '/home/u/.gbrain')).toBe('/home/u/.gbrain/schema-packs');
-    expect(targetDirForKind('skillpack', '/home/u/.gbrain')).toBe('/home/u/.gbrain/skillpacks');
+    expect(targetDirForKind('schemapack', GBRAIN_HOME)).toBe(`${GBRAIN_HOME}${sep}schema-packs`);
+    expect(targetDirForKind('skillpack', GBRAIN_HOME)).toBe(`${GBRAIN_HOME}${sep}skillpacks`);
   });
 
   test('validateManifestByKind: schemapack happy path', () => {

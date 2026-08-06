@@ -295,18 +295,32 @@ export class MinionWorker extends EventEmitter {
     // so a stalled job (lock_until expired) gets requeued before handleTimeouts'
     // `lock_until > now()` guard would skip it. Stall → retry, timeout → dead.
     const stalledTimer = setInterval(async () => {
+      // issue #1720: a dead pool used to spray "Stall detection error: write
+      // CONNECTION_CLOSED ..." every tick forever — this interval was the only
+      // background loop without the #1491-style reconnect. Rebuild the
+      // worker-owned pool AT MOST ONCE per tick, shared across the three
+      // sweeps: a dead pool fails all three, and one rebuild is enough (three
+      // back-to-back connect attempts would just add pooler pressure).
+      let reconnectedThisTick = false;
+      const recoverConnection = async (site: string, e: unknown): Promise<void> => {
+        if (reconnectedThisTick || !isRetryableConnError(e)) return;
+        reconnectedThisTick = true;
+        await this.reconnectAfterConnectionError(site, e);
+      };
       try {
         const { requeued, dead } = await this.queue.handleStalled();
         if (requeued.length > 0) console.log(`Stall detector: requeued ${requeued.length} jobs`);
         if (dead.length > 0) console.log(`Stall detector: dead-lettered ${dead.length} jobs`);
       } catch (e) {
         console.error('Stall detection error:', e instanceof Error ? e.message : String(e));
+        await recoverConnection('handleStalled', e);
       }
       try {
         const timedOut = await this.queue.handleTimeouts();
         if (timedOut.length > 0) console.log(`Timeout detector: dead-lettered ${timedOut.length} jobs (timeout exceeded)`);
       } catch (e) {
         console.error('Timeout detection error:', e instanceof Error ? e.message : String(e));
+        await recoverConnection('handleTimeouts', e);
       }
       try {
         const wallClockTimedOut = await this.queue.handleWallClockTimeouts(this.opts.lockDuration);
@@ -315,6 +329,7 @@ export class MinionWorker extends EventEmitter {
         }
       } catch (e) {
         console.error('Wall-clock timeout detection error:', e instanceof Error ? e.message : String(e));
+        await recoverConnection('handleWallClockTimeouts', e);
       }
     }, this.opts.stalledInterval);
 
@@ -1125,7 +1140,34 @@ export class MinionWorker extends EventEmitter {
         attempts_made: job.attempts_made + 1,
       }) : 0;
 
-      const failed = await this.queue.failJob(job.id, lockToken, errorText, newStatus, backoffMs);
+      // issue #1720: failJob can itself throw during the same DB outage that
+      // failed the job. Pre-fix the rejection escaped to launchJob's .catch
+      // and the ORIGINAL job error was never logged anywhere — the recording
+      // error masked it. Log the original FIRST (it must survive no matter
+      // what), then reconnect + retry the recording once. If it still fails,
+      // leave the row to the stall detector: the lock has stopped renewing,
+      // so handleStalled requeues it cleanly on a live pool (the D8a path).
+      let failed: MinionJob | null;
+      try {
+        failed = await this.queue.failJob(job.id, lockToken, errorText, newStatus, backoffMs);
+      } catch (recordErr) {
+        const recordMsg = recordErr instanceof Error ? recordErr.message : String(recordErr);
+        console.error(
+          `Job ${job.id} (${job.name}) failed with: ${errorText} — and recording the failure threw: ${recordMsg}`,
+        );
+        if (!isRetryableConnError(recordErr)) throw recordErr;
+        await this.reconnectAfterConnectionError('failJob', recordErr);
+        try {
+          failed = await this.queue.failJob(job.id, lockToken, errorText, newStatus, backoffMs);
+        } catch (retryErr) {
+          console.error(
+            `Job ${job.id} (${job.name}) failure-recording retry also failed ` +
+            `(${retryErr instanceof Error ? retryErr.message : String(retryErr)}); ` +
+            `leaving the row for the stall detector to requeue after lock expiry`,
+          );
+          return;
+        }
+      }
       if (!failed) {
         console.warn(`Job ${job.id} failure dropped (lock token mismatch)`);
         return;

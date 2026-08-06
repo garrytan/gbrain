@@ -1,18 +1,25 @@
 /**
- * E2E regression for #1178: migration v66 (`embed_stale_partial_index`)
- * pre-drops an invalid CONCURRENTLY-build remnant using
- * `DO $$ BEGIN ... EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS <name>'; END IF;
- * END $$;`. Postgres rejects CONCURRENTLY from any function/EXECUTE context,
- * so the guard's EXISTS check passed but the EXECUTE inside it always threw
- * "DROP INDEX CONCURRENTLY cannot be executed from a function" — the
- * migration only failed on brains carrying an invalid-index leftover from a
- * prior interrupted CREATE INDEX CONCURRENTLY.
+ * E2E regression for #1178: 11 historical migrations (v14, v34, v38, v66, v71,
+ * v91, v96, v97, v103, v104, v112) pre-drop an invalid CONCURRENTLY-build
+ * remnant using `DO $$ BEGIN ... EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS
+ * <name>'; END IF; END $$;`. Postgres rejects CONCURRENTLY from any
+ * function/EXECUTE context, so the guard's EXISTS check passed but the
+ * EXECUTE inside it always threw "DROP INDEX CONCURRENTLY cannot be executed
+ * from a function" — each migration only failed on brains carrying an
+ * invalid-index leftover from a prior interrupted CREATE INDEX CONCURRENTLY.
  *
- * The fix replaces the DO block with dropInvalidConcurrentIndex(): the
- * validity probe runs as a plain application-level SELECT, and the DROP (when
- * needed) runs as its own top-level statement. This test reproduces the
- * issue's exact repro steps against real Postgres and confirms the migration
- * now recovers instead of throwing.
+ * The fix (introduced for the issue-reported migration, v66, in a prior PR)
+ * replaces the DO block with dropInvalidConcurrentIndex(): the validity probe
+ * runs as a plain application-level SELECT, and the DROP (when needed) runs
+ * as its own top-level statement. This PR applies the same helper to the
+ * remaining 10 historical sites the issue's own re-scan found — the
+ * "recurrence" half of #1178 (5 new copies had shipped since the bug was
+ * first reported, via copy-paste of the nearest similar migration).
+ *
+ * This test reproduces the issue's exact repro steps against real Postgres
+ * for the two most structurally distinct sites (v66, already covered by the
+ * prior PR, kept here for full-suite context; v112, a second independent
+ * site) and confirms both migrations now recover instead of throwing.
  *
  * Real Postgres only — gated by DATABASE_URL, skips otherwise.
  *
@@ -95,5 +102,20 @@ describeE2E('migration invalid-remnant recovery (#1178)', () => {
     // Same OID proves the valid index survived untouched — validity alone
     // wouldn't catch a spurious drop+recreate (codex review, #1178).
     expect(await indexOid('idx_chunks_embedding_null')).toBe(oidBefore);
+  });
+
+  test('v112 (pages_links_extracted_at_idx, a second independent site from this batch): same recovery', async () => {
+    await plantInvalidIndex(
+      'pages_links_extracted_at_idx',
+      `CREATE INDEX pages_links_extracted_at_idx ON pages (source_id, links_extracted_at)`,
+    );
+    expect(await isIndexValid('pages_links_extracted_at_idx')).toBe(false);
+
+    const v112 = MIGRATIONS.find(m => m.version === 112);
+    expect(v112?.handler).toBeDefined();
+
+    await expect(v112!.handler!(getEngine())).resolves.toBeUndefined();
+
+    expect(await isIndexValid('pages_links_extracted_at_idx')).toBe(true);
   });
 });

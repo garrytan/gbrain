@@ -11,6 +11,7 @@
  */
 
 import express from 'express';
+import type { Socket } from 'net';
 import type { Request, Response, NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
@@ -46,6 +47,7 @@ import {
   type IngestionEvent,
 } from '../core/ingestion/types.ts';
 import { resolveOwnerHolder } from '../core/owner-holder.ts';
+import { registerCleanup } from '../core/process-cleanup.ts';
 
 /**
  * /health endpoint timeout. 3s rather than 5s: Fly.io's default
@@ -54,6 +56,110 @@ import { resolveOwnerHolder } from '../core/owner-holder.ts';
  * 3s leaves 2s of headroom for TCP, response framing, and clock skew.
  */
 export const HEALTH_TIMEOUT_MS = 3000;
+
+/**
+ * The narrowest contract this module actually consumes: subscribe, unsubscribe.
+ * Every return value is discarded, so it is `unknown` rather than `this` — a
+ * `Pick<>` of the full Node types would demand a fidelity no caller needs and
+ * no test double can honestly provide.
+ */
+type EventSubscriber = {
+  once(event: string, listener: (...args: any[]) => void): unknown;
+  off(event: string, listener: (...args: any[]) => void): unknown;
+};
+/**
+ * Only what socket teardown needs. This one IS a `Pick` of the real type, on
+ * purpose: no typechecked test double has to satisfy it (fakes reach it through
+ * `emit`, which is untyped), so binding it to `net.Socket` costs nothing and
+ * buys drift detection. A hand-written structural shape here would be an
+ * unchecked assertion — method parameters are bivariant, so annotating the
+ * listener param would match our own declaration whatever a real socket does.
+ */
+type TrackedSocket = Pick<Socket, 'destroy' | 'once'>;
+type HttpServerLifecycle = EventSubscriber & {
+  readonly listening: boolean;
+  close(callback?: (error?: Error) => void): unknown;
+  // Narrowed to the one event this module subscribes with `on`, so the listener
+  // parameter is genuinely checked against TrackedSocket. A `(...args: any[])`
+  // signature here would make the annotation at the call site an unchecked
+  // assertion — the same defect this file was just cleaned of.
+  on(event: 'connection', listener: (socket: TrackedSocket) => void): unknown;
+};
+type SignalSource = EventSubscriber;
+type CleanupRegistrar = typeof registerCleanup;
+
+/**
+ * Keep the HTTP server strongly referenced and make the daemon lifetime
+ * explicit instead of relying on runtime-specific event-loop behavior for an
+ * unobserved `app.listen()` return value. The shared abnormal-termination
+ * cleanup pass closes it before process exit.
+ */
+export function waitForHttpServerLifecycle(
+  server: HttpServerLifecycle,
+  options: {
+    signals?: SignalSource;
+    register?: CleanupRegistrar;
+  } = {},
+): Promise<void> {
+  const signals = options.signals ?? process;
+  const register = options.register ?? registerCleanup;
+
+  // `close()` stops the listener and then waits for every open connection to
+  // drain. One attached admin-SSE EventSource — or any keep-alive socket —
+  // holds it open forever, so shutdown has to sever them itself. Bun 1.3.x
+  // ships `closeAllConnections()`/`closeIdleConnections()` as no-op stubs, so
+  // tracking is the only portable teardown.
+  const sockets = new Set<TrackedSocket>();
+  server.on('connection', (socket: TrackedSocket) => {
+    sockets.add(socket);
+    socket.once('close', () => sockets.delete(socket));
+  });
+
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let closePromise: Promise<void> | null = null;
+
+    const closeServer = (): Promise<void> => {
+      if (closePromise) return closePromise;
+      closePromise = new Promise<void>((closeResolve, closeReject) => {
+        if (!server.listening) {
+          closeResolve();
+          return;
+        }
+        server.close((error?: Error) => {
+          if (error) closeReject(error);
+          else closeResolve();
+        });
+        // After close() so the listener stops accepting first, then in-flight
+        // connections are severed rather than waited on.
+        for (const socket of sockets) socket.destroy();
+      });
+      return closePromise;
+    };
+
+    const deregister = register('http-server', closeServer);
+
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      server.off('close', onClose);
+      server.off('error', onError);
+      signals.off('SIGINT', onSigint);
+      deregister();
+      if (error) reject(error);
+      else resolve();
+    };
+    const onClose = () => finish();
+    const onError = (error: Error) => finish(error);
+    const onSigint = () => {
+      void closeServer().catch(onError);
+    };
+
+    server.once('close', onClose);
+    server.once('error', onError);
+    signals.once('SIGINT', onSigint);
+  });
+}
 
 /**
  * v0.36.1.x #1024: bootstrap token resolution.
@@ -134,6 +240,29 @@ export function resolveOAuthTokenRateLimit(env: NodeJS.ProcessEnv = process.env)
 export type ProbeHealthResult =
   | { ok: true; status: 200; body: { status: 'ok'; version: string; engine: string; [k: string]: unknown } }
   | { ok: false; status: 503; body: { error: 'service_unavailable'; error_description: string } };
+
+/** Narrowest contract the handshake consumes; see {@link EventSubscriber}. */
+type AdminSseResponse = {
+  setHeader(name: string, value: string): unknown;
+  flushHeaders(): void;
+  write(chunk: string): unknown;
+};
+
+/**
+ * Complete the admin EventSource handshake immediately.
+ *
+ * `flushHeaders()` alone can leave reverse proxies and browsers waiting for
+ * the first response body bytes. An SSE comment is protocol-valid, ignored by
+ * EventSource consumers, and makes the stream observable end-to-end without
+ * fabricating an application event.
+ */
+export function openAdminSseStream(res: AdminSseResponse): void {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  res.write(': connected\n\n');
+}
 
 /**
  * Pure async health probe. Races `engine.getStats()` against a timeout,
@@ -1588,7 +1717,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // validator inside rescopeClient.
   app.post('/admin/api/rescope-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
     try {
-      const { clientId, sourceId, federatedRead } = req.body ?? {};
+      const { clientId, sourceId, federatedRead, boundSlugPrefixes } = req.body ?? {};
       if (!clientId || typeof clientId !== 'string') {
         res.status(400).json({ error: 'clientId required' });
         return;
@@ -1602,12 +1731,20 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         res.status(400).json({ error: 'sourceId must be a string' });
         return;
       }
-      const result = await oauthProvider.rescopeClient(clientId, { sourceId, federatedRead });
+      // v0.42.72.0: tri-state write-fence rescope — omitted = untouched,
+      // null = clear, array of strings = replace (mirrors the CLI's
+      // --bound-slug-prefixes p1,p2|none).
+      if (boundSlugPrefixes !== undefined && boundSlugPrefixes !== null &&
+          !(Array.isArray(boundSlugPrefixes) && boundSlugPrefixes.every((s: unknown) => typeof s === 'string'))) {
+        res.status(400).json({ error: 'boundSlugPrefixes must be null or an array of slug-prefix strings' });
+        return;
+      }
+      const result = await oauthProvider.rescopeClient(clientId, { sourceId, federatedRead, boundSlugPrefixes });
       res.json(result);
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Rescope failed';
       const status = /No OAuth client found/.test(message) ? 404
-        : /Invalid source_id|requires --source|cannot be empty|does not exist/.test(message) ? 400
+        : /Invalid source_id|requires --source|cannot be empty|does not exist|cannot be an empty list|bound_slug_prefixes entr/.test(message) ? 400
         : 500;
       res.status(status).json({ error: message });
     }
@@ -1632,10 +1769,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // SSE live activity feed
   // ---------------------------------------------------------------------------
   app.get('/admin/events', requireAdmin, (req: Request, res: Response) => {
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
+    openAdminSseStream(res);
 
     sseClients.add(res);
     req.on('close', () => sseClients.delete(res));
@@ -2152,6 +2286,31 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const sourceId = (req.header('x-gbrain-source-id') || `webhook-${authInfo.clientId}`).slice(0, 256);
       const callerSlug = req.header('x-gbrain-slug');
 
+      // Slug-bound clients cannot use /ingest at all. The route hands its
+      // payload to the ingest_capture minion handler, which deliberately
+      // bypasses the put_page op layer — so no OperationContext exists and
+      // enforceClientSlugFence never runs, and because the payload is marked
+      // untrusted the handler also refuses to honor any source id, landing
+      // every write in the DEFAULT source. Fencing just the slug here would
+      // still write the right slug into the WRONG source, outside the
+      // client's grant. These clients have put_page over MCP, which enforces
+      // both the prefix fence and the source scope; webhook integrations use
+      // unbound clients.
+      const boundPrefixes = authInfo.boundSlugPrefixes;
+      if (boundPrefixes || authInfo.fenceProjectionDegraded) {
+        res.status(403).json({
+          error: 'permission_denied',
+          message: authInfo.fenceProjectionDegraded
+            ? 'POST /ingest is unavailable: this brain\'s oauth_clients projection is missing ' +
+              'bound_slug_prefixes, so client write bindings cannot be evaluated. ' +
+              'Run `gbrain apply-migrations --yes` on the brain host.'
+            : 'POST /ingest is not available to clients restricted to slug prefixes ' +
+              `(bound_slug_prefixes: ${boundPrefixes!.join(', ')}). Write through the MCP put_page op, ` +
+              'which enforces the prefix fence and your source scope.',
+        });
+        return;
+      }
+
       const event: IngestionEvent = {
         source_id: sourceId,
         source_kind: 'webhook',
@@ -2410,7 +2569,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   const clientCount = await sql`SELECT count(*)::int as count FROM oauth_clients`;
 
-  app.listen(port, bind, () => {
+  const httpServer = app.listen(port, bind, () => {
     console.error(`
 ╔══════════════════════════════════════════════════════╗
 ║  GBrain MCP Server v${VERSION.padEnd(37)}║
@@ -2435,4 +2594,6 @@ ${bootstrapFromEnv
     : `║  Admin Token (paste into /admin login):              ║\n║  ${bootstrapToken.substring(0, 50)}  ║\n║  ${bootstrapToken.substring(50).padEnd(50)}  ║\n╚══════════════════════════════════════════════════════╝`}
 `);
   });
+
+  await waitForHttpServerLifecycle(httpServer);
 }

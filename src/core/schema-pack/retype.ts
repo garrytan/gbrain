@@ -50,6 +50,12 @@ export interface RetypeRule {
   subtype_field?: AllowedSubtypeField;
   /** Optional source_path LIKE filter for disambiguation. */
   path_filter?: string;
+  /** Optional slug LIKE filter for disambiguation. Independent of
+   *  path_filter (both may be given; combined with AND). Useful when
+   *  pages were ingested without a populated source_path (e.g. written
+   *  via the put_page MCP tool rather than synced from a git repo), where
+   *  path_filter can never match. */
+  slug_filter?: string;
 }
 
 export interface RetypeOpts {
@@ -114,6 +120,7 @@ async function probeRule(
   engine: BrainEngine,
   fromType: string,
   pathFilter: string | undefined,
+  slugFilter: string | undefined,
   sourceId: string | undefined,
 ): Promise<{ count: number; sample: string[] }> {
   // The catch-all sentinel uses a special "not in pack types" probe; for now
@@ -128,6 +135,10 @@ async function probeRule(
   if (pathFilter) {
     where += ` AND source_path LIKE $${params.length + 1}`;
     params.push(pathFilter);
+  }
+  if (slugFilter) {
+    where += ` AND slug LIKE $${params.length + 1}`;
+    params.push(slugFilter);
   }
   if (sourceId) {
     where += ` AND source_id = $${params.length + 1}`;
@@ -177,6 +188,10 @@ async function applyRetypeRule(
     if (rule.path_filter) {
       winWhereParts.push(`source_path LIKE $${winParams.length + 1}`);
       winParams.push(rule.path_filter);
+    }
+    if (rule.slug_filter) {
+      winWhereParts.push(`slug LIKE $${winParams.length + 1}`);
+      winParams.push(rule.slug_filter);
     }
     if (sourceId) {
       winWhereParts.push(`source_id = $${winParams.length + 1}`);
@@ -313,6 +328,7 @@ export async function runRetypeCore(
       ctx.engine,
       rule.from_type,
       rule.path_filter,
+      rule.slug_filter,
       sourceId,
     );
     let applied = 0;

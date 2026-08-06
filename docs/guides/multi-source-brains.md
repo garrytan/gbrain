@@ -91,7 +91,7 @@ first):
 6. The seeded `default` source.
 
 So inside `~/.gstack/plans/` on a brain that pinned `gstack` to
-`~/.gstack` via `.gbrain-source`, `gbrain put-page` implicitly writes to
+`~/.gstack` via `.gbrain-source`, `gbrain put` implicitly writes to
 the `gstack` source. Outside any registered directory with no env/dotfile
 set, it writes to the default.
 
@@ -188,10 +188,10 @@ citations keep working.
 
 ```bash
 # Pass --source explicitly
-gbrain put-page topics/ai ... --source wiki
+gbrain put topics/ai ... --source wiki
 
 # Or rely on the dotfile / env / CWD match
-cd ~/.gstack && gbrain put-page plans/multi-repo ...
+cd ~/.gstack && gbrain put plans/multi-repo ...
 # → source auto-resolves to gstack
 ```
 

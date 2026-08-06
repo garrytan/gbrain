@@ -15,7 +15,7 @@
  * gets a chance to copy, or nothing does.
  */
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'fs';
-import { dirname, join, relative } from 'path';
+import { dirname, join, relative, sep } from 'path';
 
 export interface CopyItem {
   /** Absolute source path. */
@@ -153,7 +153,10 @@ export function copyArtifacts(items: CopyItem[], opts: CopyArtifactsOpts = {}): 
       const real = realpathSync(item.source);
       // realpathSync returns paths without trailing slash; add path
       // separator to the prefix check so /a/b doesn't match /a/bb.
-      const prefix = confineRoot.endsWith('/') ? confineRoot : confineRoot + '/';
+      // Both sides are realpathSync() output, so the separator must be the
+      // NATIVE one — a hardcoded '/' never matches a win32 path and rejected
+      // every source as path_traversal.
+      const prefix = confineRoot.endsWith(sep) ? confineRoot : confineRoot + sep;
       if (real !== confineRoot && !real.startsWith(prefix)) {
         throw new CopyError(
           `${item.source}: path traversal rejected. Source canonicalizes outside the confinement root (${confineRoot}).`,

@@ -115,21 +115,21 @@ You can use the same keys across multiple agents.
 
 ## Step 6: Install GBrain
 
-Once OpenClaw is running:
+Once OpenClaw is running, installation is two commands — one in the brain repo, one in the agent workspace:
 
 ```bash
-gbrain install
+# In the BRAIN repo (the git repo that holds your markdown pages):
+gbrain init --supabase
+
+# In the AGENT WORKSPACE repo (where OpenClaw runs):
+gbrain skillpack scaffold --all
 ```
 
-This installs:
+`gbrain init --supabase` walks a short wizard that asks for your Supabase connection string and creates the schema. You'll get that connection string in Step 7 — read 7a and 7b first so you paste the right one (the transaction pooler, not the direct connection). If you'd rather try things locally before paying for a database, `gbrain init --pglite` gives you a zero-config embedded engine instead; you can migrate to Supabase later with `gbrain migrate --to supabase`.
 
-- About 60 skills
-- About 9 skill packs
-- Default brain structure
-- MCP server configuration
-- Supabase connection (for embeddings and search)
+`gbrain skillpack scaffold --all` copies the ~43 bundled skills into your agent workspace as first-class files you can edit freely. (The old managed-install model was retired in v0.36.0.0; see `docs/INSTALL.md` if you're upgrading from an older release.)
 
-GBrain populates the brain repo with its default directory structure, skill files, and configuration. From this point, the agent has working memory and access to every skill.
+From this point, the agent has working memory and access to every skill.
 
 ---
 

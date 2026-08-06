@@ -112,7 +112,7 @@ gbrain query "<topic keywords>"
 #      -d '{"model": "sonar-pro", "messages": [{"role":"user","content":"..."}]}'
 
 # 4. Write the structured research page via put_page:
-gbrain put_page research/<slug>      # via the put_page operation
+gbrain put research/<slug>      # via the put_page operation
 
 # 5. Cross-link entities mentioned (people, companies) per Iron Law.
 ```

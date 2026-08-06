@@ -14,10 +14,9 @@
  * containing one passing and one failing test, override the discovery
  * roots via env-vars, and run with --shards=2.
  *
- * NOT covered here: the heartbeat (timing-sensitive, not load-bearing
- * for correctness) and timeout / WEDGED markers (require synthesizing a
- * hung test which is fragile across machines). Those rely on the live
- * smoke tests captured in CHANGELOG measurements.
+ * NOT covered behaviorally here: the heartbeat and a real hung Bun process
+ * (both timing-sensitive). The timeout escalation wiring is covered as a
+ * source contract below and exercised separately by a process-leak smoke.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
@@ -152,6 +151,20 @@ describe('failing-on-purpose', () => {
     // Format: `shard 1/2: pass=N fail=N skip=N rc=N`
     expect(summary).toMatch(/shard 1\/2: pass=\d+ fail=\d+ skip=\d+ rc=\d+/);
     expect(summary).toMatch(/shard 2\/2: pass=\d+ fail=\d+ skip=\d+ rc=\d+/);
+  });
+});
+
+describe('run-unit-parallel.sh timeout escalation contract', () => {
+  it('gives a timed-out shard 30 seconds after TERM, then forces KILL', () => {
+    const source = readFileSync(PARALLEL_SH_SRC, 'utf-8');
+    expect(source).toContain('SHARD_KILL_AFTER="${GBRAIN_TEST_SHARD_KILL_AFTER:-30}"');
+    expect(source).toContain('--signal=TERM --kill-after="${SHARD_KILL_AFTER}s"');
+    expect(source).toContain('sleep "$SHARD_KILL_AFTER" && kill -KILL "$pid"');
+  });
+
+  it('marks both ordinary timeout and forced-KILL timeout exits as wedged', () => {
+    const source = readFileSync(PARALLEL_SH_SRC, 'utf-8');
+    expect(source).toContain('[ "$rc" = "124" ] || [ "$rc" = "137" ]');
   });
 });
 

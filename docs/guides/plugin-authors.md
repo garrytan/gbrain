@@ -87,7 +87,7 @@ expect it.
 | `version`        | string | yes      | Your plugin's semver. Informational.                               |
 | `plugin_version` | string | yes      | Contract lock. Must equal `"gbrain-plugin-v1"` for v0.15.          |
 | `subagents`      | string | no       | Subdir name (default `subagents`). Escape-attempts are rejected.   |
-| `description`    | string | no       | Shown in future `gbrain plugin list`.                              |
+| `description`    | string | no       | Shown in a future plugin-listing command.                          |
 
 ## Subagent definition files
 

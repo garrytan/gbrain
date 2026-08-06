@@ -362,6 +362,39 @@ done
 
 If any SHA differs from what's in the workflow files, update the pin and version comment.
 
+## GitHub releases (binary assets + self-update) — #3521
+
+`.github/workflows/release.yml` publishes a GitHub release automatically for
+**every VERSION bump that lands on master** (trigger: push to master touching
+`VERSION`, plus `workflow_dispatch` for a manual first run or repair). No
+manual tag push is part of the ship flow — the workflow reads `VERSION` (the
+single source of truth), mints tag `v<VERSION>` at the pushed commit, titles
+the release the same, uses that version's `CHANGELOG.md` entry as the notes
+(`scripts/changelog-entry.sh`; falls back to a CHANGELOG link if the entry is
+missing), and attaches the compiled binaries.
+
+Why every bump, not selective: `gbrain check-update` resolves the latest
+version from `VERSION` on master, while binary self-update
+(`src/core/binary-self-update.ts`) downloads assets from `releases/latest`.
+Any release that lags `VERSION` tells binary installs an upgrade exists that
+self-update cannot apply. `releases/latest` must track `VERSION`.
+
+Invariants:
+
+- **Asset names are a contract.** The build matrix's `artifact:` names must
+  equal what `expectedAssetName()` in `src/core/binary-self-update.ts`
+  returns (`gbrain-darwin-arm64`, `gbrain-linux-x64` today). Adding a
+  platform means updating BOTH plus the version job's completeness check;
+  `test/release-workflow.test.ts` pins all of it.
+- **Idempotent + self-repairing.** The version job skips when a release for
+  `v<VERSION>` already exists with all expected assets; a partial release
+  (tag but no release, or missing assets) is completed on re-run. Racing
+  master pushes queue via the `release` concurrency group — a skipped
+  intermediate version is fine, latest is what matters.
+- **Historical tags are never rewritten.** Old 3-segment versions keep their
+  history; every new 4-segment `VERSION` mints a fresh tag.
+- **Permissions stay scoped.** `contents: write` lives on the release job
+  only; everything else runs read-only.
 
 ## PR descriptions cover the whole branch
 

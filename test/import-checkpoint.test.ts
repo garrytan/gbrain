@@ -262,7 +262,9 @@ describe('resumeFilter', () => {
       '/tmp/example-brain/meetings/2026-05-13.md',
       '/tmp/example-brain/concepts/a.md',
     ];
-    const completed = new Set(['meetings/2026-05-13.md']);
+    // resumeFilter keys on relative(dir, p), which carries native separators —
+    // build the completed key with join() so it matches on Windows too.
+    const completed = new Set([join('meetings', '2026-05-13.md')]);
     expect(resumeFilter(all, '/tmp/example-brain', completed)).toEqual([
       '/tmp/example-brain/concepts/a.md',
     ]);

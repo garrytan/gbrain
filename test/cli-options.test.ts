@@ -65,7 +65,7 @@ describe('parseGlobalFlags', () => {
 
   test('all global flags combined', () => {
     const r = parseGlobalFlags(['--quiet', '--progress-json', '--progress-interval=250', 'sync']);
-    expect(r.cliOpts).toEqual({ quiet: true, progressJson: true, progressInterval: 250, timeoutMs: null, explain: false });
+    expect(r.cliOpts).toEqual({ quiet: true, progressJson: true, progressInterval: 250, timeoutMs: null, explain: false, brain: null });
     expect(r.rest).toEqual(['sync']);
   });
 
@@ -96,7 +96,7 @@ describe('getCliOptions / setCliOptions singleton', () => {
 
   test('setCliOptions applies + getCliOptions returns a copy', () => {
     _resetCliOptionsForTest();
-    setCliOptions({ quiet: false, progressJson: true, progressInterval: 250, timeoutMs: null, explain: false });
+    setCliOptions({ quiet: false, progressJson: true, progressInterval: 250, timeoutMs: null, explain: false, brain: null });
     expect(getCliOptions().progressJson).toBe(true);
     expect(getCliOptions().progressInterval).toBe(250);
   });
@@ -156,12 +156,12 @@ describe('CLI integration: progress streams to the right channel', () => {
 
 describe('cliOptsToProgressOptions', () => {
   test('--quiet → quiet mode', () => {
-    const opts = cliOptsToProgressOptions({ quiet: true, progressJson: false, progressInterval: 1000, timeoutMs: null, explain: false });
+    const opts = cliOptsToProgressOptions({ quiet: true, progressJson: false, progressInterval: 1000, timeoutMs: null, explain: false, brain: null });
     expect(opts.mode).toBe('quiet');
   });
 
   test('--progress-json → json mode with interval', () => {
-    const opts = cliOptsToProgressOptions({ quiet: false, progressJson: true, progressInterval: 500, timeoutMs: null, explain: false });
+    const opts = cliOptsToProgressOptions({ quiet: false, progressJson: true, progressInterval: 500, timeoutMs: null, explain: false, brain: null });
     expect(opts.mode).toBe('json');
     expect(opts.minIntervalMs).toBe(500);
   });
@@ -173,7 +173,7 @@ describe('cliOptsToProgressOptions', () => {
   });
 
   test('quiet takes priority over progressJson', () => {
-    const opts = cliOptsToProgressOptions({ quiet: true, progressJson: true, progressInterval: 1000, timeoutMs: null, explain: false });
+    const opts = cliOptsToProgressOptions({ quiet: true, progressJson: true, progressInterval: 1000, timeoutMs: null, explain: false, brain: null });
     expect(opts.mode).toBe('quiet');
   });
 });
@@ -222,5 +222,56 @@ describe('--timeout flag', () => {
   test('default timeoutMs is null (per-command default applies)', () => {
     const r = parseGlobalFlags(['search', 'X']);
     expect(r.cliOpts.timeoutMs).toBe(null);
+  });
+});
+
+describe('--brain flag (brain axis routing)', () => {
+  test('--brain <id> space form: parsed + stripped from rest', () => {
+    const r = parseGlobalFlags(['query', 'X', '--brain', 'media-team']);
+    expect(r.cliOpts.brain).toBe('media-team');
+    expect(r.rest).toEqual(['query', 'X']);
+  });
+
+  test('--brain=<id> equals form: parsed + stripped from rest', () => {
+    const r = parseGlobalFlags(['--brain=media-team', 'query', 'X']);
+    expect(r.cliOpts.brain).toBe('media-team');
+    expect(r.rest).toEqual(['query', 'X']);
+  });
+
+  test('--brain host is a valid explicit value', () => {
+    const r = parseGlobalFlags(['stats', '--brain', 'host']);
+    expect(r.cliOpts.brain).toBe('host');
+  });
+
+  test('missing value throws (loud, never a silent host fallback)', () => {
+    expect(() => parseGlobalFlags(['query', 'X', '--brain'])).toThrow(/--brain requires a value/);
+    expect(() => parseGlobalFlags(['--brain=', 'query'])).toThrow(/--brain requires a value/);
+    // A following flag is not a value.
+    expect(() => parseGlobalFlags(['--brain', '--quiet'])).toThrow(/--brain requires a value/);
+  });
+
+  test('malformed id throws (validated at parse time)', () => {
+    expect(() => parseGlobalFlags(['--brain', 'Bad_Id!'])).toThrow(/Invalid --brain value/);
+    expect(() => parseGlobalFlags(['--brain=$(rm -rf /)'])).toThrow(/Invalid --brain value/);
+  });
+
+  test('--brain-* per-command flags pass through untouched (skillopt collision guard)', () => {
+    const r = parseGlobalFlags(['skillopt', '--brain-wide-max-cost-usd', '5']);
+    expect(r.cliOpts.brain).toBe(null);
+    expect(r.rest).toEqual(['skillopt', '--brain-wide-max-cost-usd', '5']);
+  });
+
+  test('default brain is null (ambient resolution applies)', () => {
+    const r = parseGlobalFlags(['query', 'X']);
+    expect(r.cliOpts.brain).toBe(null);
+  });
+});
+
+describe('childGlobalFlags propagates --brain', () => {
+  test('explicit brain rides into child gbrain subprocess commands', async () => {
+    const { childGlobalFlags } = await import('../src/core/cli-options.ts');
+    expect(childGlobalFlags({ ...DEFAULT_CLI_OPTIONS, brain: 'media-team' }))
+      .toContain('--brain=media-team');
+    expect(childGlobalFlags({ ...DEFAULT_CLI_OPTIONS })).not.toContain('--brain');
   });
 });

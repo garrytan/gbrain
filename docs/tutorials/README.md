@@ -13,7 +13,7 @@ Step-by-step walkthroughs that take you from zero to a working outcome. Concrete
 
 These are the next tutorials on the roadmap. Open an issue if one of them is the one you need most; that's how we'll prioritize.
 
-- **Set up GBrain for VC dealflow** — the operator's recipe. People pages for founders, companies with typed Facts fence carrying ARR / team-size / runway across dates, meetings auto-ingested, deal pages linking everything. Shows `gbrain whoknows`, `gbrain find_trajectory`, and `gbrain founder scorecard` on real workflows.
+- **Set up GBrain for VC dealflow** — the operator's recipe. People pages for founders, companies with typed Facts fence carrying ARR / team-size / runway across dates, meetings auto-ingested, deal pages linking everything. Shows `gbrain whoknows`, `gbrain find-trajectory`, and `gbrain founder scorecard` on real workflows.
 
 - **Migrate your existing vault into GBrain** — for Notion / Obsidian / Roam users with a vault that doesn't match GBrain's default layout. Walks through `gbrain schema detect` → `suggest` → `review-candidates` so the brain learns your shape instead of forcing you to learn its.
 

@@ -397,11 +397,12 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
   }
 
   // v0.28.5 (X1): explicitly apply pending schema migrations.
-  // apply-migrations runs orchestrator migrations and only WARNs about
-  // schema-version drift (apply-migrations.ts:296-302). Without this hook,
-  // `gbrain upgrade` leaves wedged brains wedged — the user has to read
-  // the WARN and run `gbrain init --migrate-only` themselves. We've shipped
-  // 11 wedge incidents asking users to read warnings; close the loop here.
+  // Since #3085, apply-migrations --yes applies schema-version drift itself
+  // (it previously only WARNed), so the in-process call above may have
+  // already run these — runMigrations is idempotent, making this hook a
+  // harmless second pass. It stays because it also covers paths where the
+  // preflight was skipped. We've shipped 11 wedge incidents asking users to
+  // read warnings; keep the loop closed here.
   // A1's hasPendingMigrations probe in connectEngine is belt-and-suspenders
   // for any path that bypasses upgrade (autopilot, direct CLI on stale brain).
   try {

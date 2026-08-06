@@ -7,7 +7,7 @@
  */
 
 import type { BrainEngine } from '../core/engine.ts';
-import { operations, OperationError } from '../core/operations.ts';
+import { operations, OperationError, enforceBoundClientOpAllowList } from '../core/operations.ts';
 import type { Operation, OperationContext, AuthInfo } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
 
@@ -280,6 +280,11 @@ export async function dispatchToolCall(
   const ctx = buildOperationContext(engine, safeParams, opts);
 
   try {
+    // Fail-closed gate for slug-bound OAuth clients, applied here because
+    // this is the one path both MCP transports share. Per-op fences still
+    // run inside the handlers; this stops an unfenced write op from being
+    // a silent hole. See CLIENT_FENCED_WRITE_OPS in operations.ts.
+    enforceBoundClientOpAllowList(ctx.auth, op);
     const result = await op.handler(ctx, safeParams);
     const out: ToolResult = { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     // v0.31 (eD3 + eE4): best-effort _meta.brain_hot_memory injection.

@@ -201,7 +201,7 @@ Use the brain page template. MUST include:
 
 ### 4b. Entity pages (people, companies)
 For each entity mentioned:
-- Check if a brain page exists (`gbrain search "<name>"` or `gbrain get_page people/<slug>`).
+- Check if a brain page exists (`gbrain search "<name>"` or `gbrain get people/<slug>`).
 - If exists: update State, append Timeline entry citing this research.
 - If not: create with enrichment.
 

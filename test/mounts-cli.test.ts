@@ -1,6 +1,6 @@
 import { describe, test, expect, afterEach, beforeEach } from 'bun:test';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from 'fs';
-import { join } from 'path';
+import { join, isAbsolute } from 'path';
 import { tmpdir, homedir } from 'os';
 import { __testing } from '../src/commands/mounts.ts';
 
@@ -52,7 +52,9 @@ describe('parseAddArgs', () => {
     expect(parsed.id).toBe('yc-media');
     expect(parsed.engine).toBe('pglite');
     expect(parsed.database_path).toBe('/tmp/yc-media/.pg');
-    expect(parsed.path.startsWith('/')).toBe(true);
+    // parsed.path is resolve()-built: 'C:\…' on win32, so a leading-'/'
+    // check is the wrong absoluteness test.
+    expect(isAbsolute(parsed.path)).toBe(true);
   });
 
   test('minimal postgres add', () => {

@@ -251,7 +251,7 @@ async function renderPackUpgradeExplain(
       `  Page-to-link:        ${result.per_phase.page_to_link.would_convert} edges across ${result.per_phase.page_to_link.rules} rules\n` +
       `  Page-to-alias:       ${result.per_phase.page_to_alias.would_alias} aliases across ${result.per_phase.page_to_alias.rules} rules\n` +
       `\nRun the migration with:\n` +
-      `  gbrain jobs submit unify-types --allow-protected --params '${JSON.stringify({ target_pack: targetPack })}'\n`,
+      `  gbrain jobs submit unify-types --allow-protected --params '${JSON.stringify({ target_pack: targetPack, apply: true })}'\n`,
     );
     if (result.warnings.length > 0) {
       process.stdout.write(`\nWarnings:\n`);

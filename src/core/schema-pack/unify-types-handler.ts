@@ -152,6 +152,7 @@ export async function runUnifyTypes(
             subtype: rule.subtype,
             subtype_field: rule.subtype_field,
             path_filter: rule.path_filter,
+            slug_filter: rule.slug_filter,
           });
         }
       } else if (rule.kind === 'page_to_link') {

@@ -188,6 +188,64 @@ describe('runRetypeCore', () => {
       );
       expect(rows[0].type).toBe('tweet-single');
     });
+
+    it('skips pages outside the slug_filter', async () => {
+      await seed('tweets/a', 'tweet-single');
+      await seed('other/b', 'tweet-single');
+      const result = await runRetypeCore(ctxOf(), {
+        rules: [{ from_type: 'tweet-single', to_type: 'tweet', slug_filter: 'tweets/%' }],
+        apply: true,
+      });
+      expect(result.total_applied).toBe(1);
+      const rows = await engine.executeRaw<{ slug: string; type: string }>(
+        `SELECT slug, type FROM pages WHERE slug LIKE '%/%' ORDER BY slug`,
+      );
+      expect(rows.find((r) => r.slug === 'tweets/a')?.type).toBe('tweet');
+      expect(rows.find((r) => r.slug === 'other/b')?.type).toBe('tweet-single');
+    });
+
+    it('matches slug_filter even when source_path is NULL (put_page-ingested pages)', async () => {
+      // Pages written via the put_page MCP tool (vs. synced from a git repo)
+      // never get a source_path — this is the exact gap slug_filter closes.
+      await engine.putPage('tweets/a', {
+        title: 'tweets/a',
+        type: 'tweet-single' as never,
+        compiled_truth: 'body that exceeds minimum length to pass any backstop guards we may have around content here',
+        timeline: '',
+        frontmatter: {},
+        source_path: null as never,
+      });
+      const dryRun = await runRetypeCore(ctxOf(), {
+        rules: [{ from_type: 'tweet-single', to_type: 'tweet', path_filter: 'tweets/%' }],
+        apply: false,
+      });
+      expect(dryRun.per_rule[0].would_apply).toBe(0); // path_filter can't match: source_path is NULL
+      const result = await runRetypeCore(ctxOf(), {
+        rules: [{ from_type: 'tweet-single', to_type: 'tweet', slug_filter: 'tweets/%' }],
+        apply: true,
+      });
+      expect(result.total_applied).toBe(1); // slug_filter matches regardless of source_path
+    });
+
+    it('combines path_filter AND slug_filter when both given', async () => {
+      await seed('tweets/a', 'tweet-single', { sourcePath: 'tweets/a.md' });
+      await seed('tweets/b', 'tweet-single', { sourcePath: 'archive/tweets-b.md' });
+      const result = await runRetypeCore(ctxOf(), {
+        rules: [{
+          from_type: 'tweet-single',
+          to_type: 'tweet',
+          path_filter: 'tweets/%',
+          slug_filter: 'tweets/%',
+        }],
+        apply: true,
+      });
+      // Only tweets/a matches BOTH filters (tweets/b's source_path is under archive/).
+      expect(result.total_applied).toBe(1);
+      const rows = await engine.executeRaw<{ type: string }>(
+        `SELECT type FROM pages WHERE slug = 'tweets/b'`,
+      );
+      expect(rows[0].type).toBe('tweet-single');
+    });
   });
 
   describe('subtype_field allowlist (D9)', () => {

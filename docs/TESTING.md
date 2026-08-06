@@ -32,9 +32,12 @@ CI, macOS) rejects CRLF and dies on the script's first meaningful line; the Cygw
 bash that ships with Git for Windows tolerates it, so a green local run is not by
 itself evidence that a script is CRLF-clean.
 The root `.gitattributes` pins `*.sh text eol=lf`, which overrides the
-`core.autocrlf=true` default that Git for Windows installs. Working copies cloned
-before that pin need a one-time `git rm --cached -r . -q && git reset --hard` to
-pick it up; see the Windows section of `CONTRIBUTING.md`.
+`core.autocrlf=true` default that Git for Windows installs. It pins `*.md` the
+same way, because the frontmatter readers anchor on a `---` fence followed by a
+Unix line ending and a CRLF checkout makes a document parse as having no
+frontmatter, silently. Working copies cloned
+before those pins need a one-time `git rm --cached -r . -q && git reset --hard` to
+pick them up; see the Windows section of `CONTRIBUTING.md`.
 
 Wallclock figures in the table above are from a Mac dev box. Windows is
 substantially slower because each check pays full process-creation cost, and three
@@ -68,6 +71,15 @@ If a shard wedges (per-shard `GBRAIN_TEST_SHARD_TIMEOUT` cap, default 600s), the
 - `test/e2e/*.test.ts` → real-Postgres E2E. Skipped when `DATABASE_URL` is unset.
 - `tests/heavy/*.sh` → ops-shape shell scripts. Cost minutes per run; NOT in default `bun test`. Run via `bun run test:heavy` or scheduled nightly via `.github/workflows/heavy-tests.yml`. Examples: pg_upgrade matrix (boot legacy brain → walk to head), RSS budget gate (measure peak worker RSS vs committed baseline), read-latency-under-sync (p50/p95/p99 under concurrent writer load), sync lock regression (N concurrent syncs assert 1 winner + N-1 lock-busy + zero leaked `gbrain_cycle_locks` rows). See `tests/heavy/README.md` for when to add a script here vs `*.slow.test.ts`. Files prefixed with `_` (e.g. `tests/heavy/_build_legacy_fixtures.sh`) are helpers/libs invoked by sibling tests — the runner skips them.
 - `test/fuzz/*.test.ts` → property-based fuzz harness. Pure-validator targets in `pure-validators.test.ts` are guarded by `scripts/check-fuzz-purity.sh` (in `bun run verify`), which `bun build --target=bun` bundles each target and greps the resulting bundle for banned transitive imports (`node:fs`, `node:child_process`, engine modules). Anything that fails the guard moves to `mixed-validators.test.ts` (still property-tested, but no purity guarantee) or `filesystem-validators.test.ts` (fs-backed, uses temp dirs). Fuzz tests run in the default `bun test` loop because they're fast (~3s for ~12 properties × 1000 runs each).
+
+### Skills-manifest freshness guard
+
+`skills/skills.lock.json` is a committed sha256 inventory of every bundled file under
+`skills/` (tamper evidence, not signatures — see `src/core/skills-integrity.ts`).
+Any change under `skills/` must regenerate it: `bun run scripts/generate-skills-manifest.ts`.
+`scripts/check-skills-manifest-fresh.sh` (`bun run check:skills-manifest`, wired into
+`bun run verify`) regenerates to a tmp file and diffs, failing CI on drift; at runtime
+`gbrain doctor` reports the same drift as a warn-only `skills_manifest_integrity` check.
 
 ### Test-isolation lint and helpers
 

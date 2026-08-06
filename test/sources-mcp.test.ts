@@ -274,7 +274,8 @@ describe('sources_add — remote callers ignore path/clone_dir overrides', () =>
       })) as any;
       // Clone landed at the SAFE default, not /etc/gbrain-pwned.
       expect(row.local_path).not.toBe('/etc/gbrain-pwned');
-      expect(row.local_path).toContain('clones/attack-clone-dir');
+      // defaultCloneDir → gbrainPath('clones', id) → join, so '\' on win32.
+      expect(row.local_path).toContain(join('clones', 'attack-clone-dir'));
       // /etc/gbrain-pwned was never written.
       expect(existsSync('/etc/gbrain-pwned')).toBe(false);
     });

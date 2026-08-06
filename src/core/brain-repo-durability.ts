@@ -394,8 +394,9 @@ function installHelper(repoPath: string, dryRun: boolean): { status: StepStatus;
   const helperPath = join(repoPath, HELPER_REL);
   const script = renderCommitPushHelper();
   if (existsSync(helperPath) && readFileSync(helperPath, 'utf-8') === script) {
-    // Ensure exec bit even when content is current.
-    try { chmodSync(helperPath, 0o755); } catch { /* */ }
+    // Ensure exec bit even when content is current — but not in dry-run: a
+    // preview must not mutate permissions (#3736).
+    if (!dryRun) { try { chmodSync(helperPath, 0o755); } catch { /* */ } }
     return { status: 'ok', detail: `${HELPER_REL} already current` };
   }
   if (dryRun) return { status: 'fixed', detail: `would write ${HELPER_REL} (dry-run)` };

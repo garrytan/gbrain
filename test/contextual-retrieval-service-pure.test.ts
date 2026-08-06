@@ -7,6 +7,7 @@
  */
 
 import { afterEach, describe, test, expect } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import {
   computeCorpusGeneration,
   computeSourceTextHash,
@@ -35,6 +36,25 @@ afterEach(() => {
 });
 
 describe('computeCorpusGeneration', () => {
+  test('uses synopsisModel canonically while retaining the deprecated alias', () => {
+    const canonical = computeCorpusGeneration({
+      crMode: 'title',
+      synopsisModel: 'codex-proxy:gpt-5.6-luna',
+    });
+    const deprecatedAlias = computeCorpusGeneration({
+      crMode: 'title',
+      haikuModel: 'codex-proxy:gpt-5.6-luna',
+    });
+    const canonicalWins = computeCorpusGeneration({
+      crMode: 'title',
+      synopsisModel: 'codex-proxy:gpt-5.6-luna',
+      haikuModel: 'anthropic:legacy-ignored',
+    });
+
+    expect(canonical).toBe(deprecatedAlias);
+    expect(canonicalWins).toBe(canonical);
+  });
+
   test('returns 16-char hex hash', () => {
     const h = computeCorpusGeneration({
       crMode: 'title',
@@ -65,16 +85,29 @@ describe('computeCorpusGeneration', () => {
     expect(b).not.toBe(c);
   });
 
-  test('different model → different hash', () => {
+  test('different synopsis model changes per-chunk generation', () => {
     const a = computeCorpusGeneration({
-      crMode: 'title',
+      crMode: 'per_chunk_synopsis',
       haikuModel: 'anthropic:claude-haiku-4-5-20251001',
     });
     const b = computeCorpusGeneration({
-      crMode: 'title',
+      crMode: 'per_chunk_synopsis',
       haikuModel: 'anthropic:claude-haiku-future-model',
     });
     expect(a).not.toBe(b);
+  });
+
+  test('title generation ignores the unused synopsis model', () => {
+    const configured = computeCorpusGeneration({
+      crMode: 'title',
+      synopsisModel: 'codex-proxy:gpt-5.6-luna',
+    });
+    const fallback = computeCorpusGeneration({
+      crMode: 'title',
+      synopsisModel: 'anthropic:claude-haiku-4-5-20251001',
+    });
+
+    expect(configured).toBe(fallback);
   });
 
   test('TITLE_WRAPPER_VERSION is stable across reads', () => {
@@ -82,6 +115,24 @@ describe('computeCorpusGeneration', () => {
     // The hash composition includes it so a future change invalidates
     // prior cache entries.
     expect(TITLE_WRAPPER_VERSION).toBe(1);
+  });
+});
+
+describe('inline import contextual synopsis containment', () => {
+  test('uses the shared default without starting paid synopsis generation', () => {
+    const importSource = readFileSync(
+      new URL('../src/core/import-file.ts', import.meta.url),
+      'utf8',
+    );
+
+    expect(importSource).toContain(
+      "import { DEFAULT_SYNOPSIS_MODEL } from './page-summary.ts';",
+    );
+    expect(importSource).toContain('synopsisModel: DEFAULT_SYNOPSIS_MODEL');
+    expect(importSource).toContain(
+      "effectiveCRMode = resolution.mode === 'per_chunk_synopsis' ? 'title' : resolution.mode;",
+    );
+    expect(importSource).not.toContain('generatePerChunkSynopsis');
   });
 });
 
@@ -187,6 +238,22 @@ describe('resolveContextualChunkConcurrency', () => {
 });
 
 describe('per-chunk synopsis concurrency', () => {
+  test('threads a provider-neutral synopsis model to gateway chat byte-for-byte', async () => {
+    const chatModels: string[] = [];
+    const out = await runWithChatStub({
+      chunks: makeChunks(['alpha']),
+      concurrency: 1,
+      synopsisModel: 'codex-proxy:gpt-5.6-luna',
+      chat: async (opts) => {
+        chatModels.push(opts.model ?? '');
+        return chatSuccess('Synopsis for alpha');
+      },
+    });
+
+    expect(out.result.kind).toBe('success');
+    expect(chatModels).toEqual(['codex-proxy:gpt-5.6-luna']);
+  });
+
   test('concurrency > 1 preserves chunk-order embed input', async () => {
     const chunks = makeChunks(['alpha', 'beta', 'gamma', 'delta']);
     const delays: Record<string, number> = { alpha: 30, beta: 5, gamma: 20, delta: 1 };
@@ -335,6 +402,7 @@ function makeChunks(texts: string[]): ChunkInput[] {
 async function runWithChatStub(opts: {
   chunks: ChunkInput[];
   concurrency: number;
+  synopsisModel?: string;
   abortSignal?: AbortSignal;
   delayForChunk?: (chunk: string) => number;
   chat?: (opts: ChatOpts) => Promise<ChatResult>;
@@ -371,6 +439,7 @@ async function runWithChatStub(opts: {
     sourceId: 'default',
     globalMode: 'per_chunk_synopsis',
     chunkConcurrency: opts.concurrency,
+    synopsisModel: opts.synopsisModel,
     abortSignal: opts.abortSignal,
     ...(opts.acquireSynopsisLease && { acquireSynopsisLease: opts.acquireSynopsisLease }),
     ...(opts.releaseSynopsisLease && { releaseSynopsisLease: opts.releaseSynopsisLease }),

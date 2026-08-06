@@ -169,6 +169,22 @@ describe('hardenBrainRepo', () => {
     expect(commitCount(work)).toBe(before);
     expect(existsSync(join(work, 'scripts', 'brain-commit-push.sh'))).toBe(false);
   });
+
+  test('dry-run does not chmod an already-current helper (#3736)', async () => {
+    await harden(); // real run installs scripts/brain-commit-push.sh at 0o755
+    const helperPath = join(work, 'scripts', 'brain-commit-push.sh');
+    chmodSync(helperPath, 0o644); // simulate perms drifting away from +x, content unchanged
+    await harden({ dryRun: true });
+    expect(statSync(helperPath).mode & 0o777).toBe(0o644); // untouched — preview must not mutate
+  });
+
+  test('non-dry-run restores the exec bit on an already-current helper', async () => {
+    await harden();
+    const helperPath = join(work, 'scripts', 'brain-commit-push.sh');
+    chmodSync(helperPath, 0o644);
+    await harden();
+    expect(statSync(helperPath).mode & 0o111).toBeTruthy(); // exec bit restored
+  });
 });
 
 describe('unhardenBrainRepo', () => {

@@ -183,6 +183,6 @@ This also means the best AI agent setups will be open source by default. Closed,
 
 Software distribution reimagined: the package is a markdown file, the runtime is a sufficiently smart model, the package manager is your AI agent, and the app store is a git repo.
 
-`gbrain install voice-agent`
+`gbrain skillpack scaffold voice-agent`
 
 That's it.

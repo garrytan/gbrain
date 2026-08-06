@@ -154,10 +154,11 @@ these are the densest source of real bugs in the whole backlog.
   `aliases:`), first-H1-title, and basename fallback resolution (path-equality-only gives
   ~5.5% edge recall on real vaults). Master shipped global-basename (#1388); the alias/
   title fallbacks are the still-novel part.
-- **Schema-pack-aware link extraction** (#1547, @billy-armstrong) — **OPEN, high.** The
-  link extractor's `DIR_PATTERN` is a frozen 16-prefix const that ignores pack-declared
-  `path_prefixes`, so default-pack installs silently lose wikilinks to `person/`,
-  `writing/`, `wiki/*`. Resolve prefixes from the active pack.
+- **Schema-pack-aware link extraction** (#1547, @billy-armstrong) — **RESOLVED via #2576.**
+  The extractor no longer gates on the frozen `DIR_PATTERN` whitelist: any dir-shaped
+  path produces a candidate and the persist paths' page-existence checks decide, so
+  pack-declared directories (`person/`, `writing/`, `wiki/*`, `ops/`) link without a
+  prefix registry.
 - **DB-source extraction** (#1539, @afshaker) — **OPEN, high.** The cycle's extract phase
   only walks the filesystem, so DB-resident pages (imported transcripts, remote-DB brains)
   never get links/timeline and `brain_score` is capped. Thread `source:'db'`.

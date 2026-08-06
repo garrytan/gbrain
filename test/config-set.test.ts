@@ -38,6 +38,10 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('models.tier.subagent');
   });
 
+  test('allows the contextual synopsis model key', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain('models.contextual_synopsis');
+  });
+
   test('contains the dream synthesize timeout keys (#1594)', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('dream.synthesize.subagent_timeout_ms');
     expect(KNOWN_CONFIG_KEYS).toContain('dream.synthesize.subagent_wait_timeout_ms');

@@ -194,8 +194,11 @@ describe('issue #972 — DB-source (gbrain extract links --source db)', () => {
     const outLinks = await engine.getLinks('concepts/knowledge-graph');
     const strk = outLinks.find(l => l.to_slug === 'notes/struktura');
     expect(strk).toBeDefined();
-    expect(strk!.link_type).toBe('wikilink_basename');
-    expect(strk!.link_source).toBe('wikilink-resolved');
+    // #2576: an exact-path wikilink to an existing page now produces the
+    // direct verb-typed edge (parity with whitelisted dirs), no longer a
+    // wikilink_basename demotion.
+    expect(strk!.link_type).toBe('mentions');
+    expect(strk!.link_source).toBe('markdown');
   });
 
   test('path-qualified wikilink never attaches to a basename-only sibling', async () => {
@@ -219,10 +222,11 @@ describe('issue #972 — DB-source (gbrain extract links --source db)', () => {
     await runExtract(engine, ['links', '--source', 'db']);
 
     const outLinks = await engine.getLinks('concepts/x');
-    const basenameLinks = outLinks
-      .filter(l => l.link_type === 'wikilink_basename')
-      .map(l => l.to_slug);
-    expect(basenameLinks).toEqual(['notes/struktura']);
+    // #2576: the exact-path edge is now direct + verb-typed. The invariant
+    // under test is unchanged: the written path binds to notes/struktura and
+    // NEVER to the basename-only sibling wiki/struktura.
+    expect(outLinks.map(l => l.to_slug)).toContain('notes/struktura');
+    expect(outLinks.map(l => l.to_slug)).not.toContain('wiki/struktura');
   });
 
   test('flag OFF → no basename edges via DB path (back-compat)', async () => {

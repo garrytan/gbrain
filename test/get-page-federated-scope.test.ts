@@ -32,6 +32,9 @@ const get_tags = operations.find(o => o.name === 'get_tags')!;
 const get_links = operations.find(o => o.name === 'get_links')!;
 const get_backlinks = operations.find(o => o.name === 'get_backlinks')!;
 const get_timeline = operations.find(o => o.name === 'get_timeline')!;
+const get_chunks = operations.find(o => o.name === 'get_chunks')!;
+const get_raw_data = operations.find(o => o.name === 'get_raw_data')!;
+const get_versions = operations.find(o => o.name === 'get_versions')!;
 
 function ctxOf(overrides: Partial<OperationContext> = {}): OperationContext {
   return {
@@ -77,6 +80,16 @@ beforeEach(async () => {
     type: 'note', title: 'Default decoy', compiled_truth: 'default content', frontmatter: {},
   }, { sourceId: 'default' });
   await engine.addTag('secret/beta-doc', 'default-secret-tag', { sourceId: 'default' });
+  await engine.upsertChunks('secret/beta-doc', [{
+    chunk_index: 0, chunk_text: 'beta chunk', chunk_source: 'compiled_truth', token_count: 2,
+  }], { sourceId: 'beta' });
+  await engine.upsertChunks('secret/beta-doc', [{
+    chunk_index: 0, chunk_text: 'default chunk', chunk_source: 'compiled_truth', token_count: 2,
+  }], { sourceId: 'default' });
+  await engine.putRawData('secret/beta-doc', 'crm', { owner: 'beta' }, { sourceId: 'beta' });
+  await engine.putRawData('secret/beta-doc', 'crm', { owner: 'default' }, { sourceId: 'default' });
+  await engine.createVersion('secret/beta-doc', { sourceId: 'beta' });
+  await engine.createVersion('secret/beta-doc', { sourceId: 'default' });
   // Link endpoints. NOTE (Codex #7): addLink defaults BOTH endpoints to 'default'
   // unless given {fromSourceId,toSourceId} — pass them or the beta edges won't seed.
   await engine.putPage('secret/beta-target', {
@@ -185,9 +198,16 @@ describe('#2200 get_tags honors the federated grant', () => {
 });
 
 describe('#2200 get_links honors the grant and scopes BOTH endpoints (D4A)', () => {
-  test('[alpha,beta] returns the in-grant beta→beta link', async () => {
+  test('[alpha,beta] returns the in-grant beta→beta link with exact endpoint identity', async () => {
     const links = (await get_links.handler(remoteCtx(['alpha', 'beta']), { slug: 'secret/beta-doc' })) as any[];
-    expect(links.map(l => l.to_slug)).toContain('secret/beta-target');
+    const target = links.find(l => l.to_slug === 'secret/beta-target');
+    expect(target).toBeDefined();
+    expect(target).toMatchObject({
+      from_source_id: 'beta',
+      from_slug: 'secret/beta-doc',
+      to_source_id: 'beta',
+      to_slug: 'secret/beta-target',
+    });
   });
 
   test('[alpha,beta] does NOT leak the beta→default far-endpoint link', async () => {
@@ -205,8 +225,9 @@ describe('#2200 get_links honors the grant and scopes BOTH endpoints (D4A)', () 
     const links = (await get_links.handler(remoteCtx(['alpha', 'beta']), { slug: 'secret/beta-doc' })) as any[];
     const originLeakLink = links.find(l => l.link_type === 'mentions' && l.to_slug === 'secret/beta-target');
     expect(originLeakLink).toBeDefined();
-    // origin page 'default/only-doc' is out of the [alpha,beta] grant → origin_slug nulled.
+    // origin page 'default/only-doc' is out of the [alpha,beta] grant → origin identity nulled.
     expect(originLeakLink.origin_slug ?? null).toBeNull();
+    expect(originLeakLink.origin_source_id ?? null).toBeNull();
     expect(links.map(l => l.origin_slug)).not.toContain('default/only-doc');
   });
 
@@ -219,18 +240,30 @@ describe('#2200 get_links honors the grant and scopes BOTH endpoints (D4A)', () 
     expect(links.map(l => l.origin_slug)).not.toContain('default/only-doc'); // origin too
   });
 
-  test('D1: TRUSTED local CLI (remote=false) with a scalar scope keeps the cross-source view', async () => {
+  test('D1: TRUSTED local CLI scalar scope keeps cross-source view and identifies both endpoints', async () => {
     // reconcileLinks / validators depend on this — local CLI sees cross-source links.
     const ctx = ctxOf({ remote: false, sourceId: 'beta', auth: undefined });
     const links = (await get_links.handler(ctx, { slug: 'secret/beta-doc' })) as any[];
-    expect(links.map(l => l.to_slug)).toContain('default/only-doc'); // cross-source visible for trusted local
+    const crossSource = links.find(l => l.to_slug === 'default/only-doc');
+    expect(crossSource).toMatchObject({
+      from_source_id: 'beta',
+      from_slug: 'secret/beta-doc',
+      to_source_id: 'default',
+      to_slug: 'default/only-doc',
+    });
   });
 });
 
 describe('#2200 get_backlinks honors the grant and scopes BOTH endpoints (D4A)', () => {
-  test('[alpha,beta] returns the in-grant beta→beta backlink', async () => {
+  test('[alpha,beta] returns the in-grant beta→beta backlink with exact endpoint identity', async () => {
     const back = (await get_backlinks.handler(remoteCtx(['alpha', 'beta']), { slug: 'secret/beta-doc' })) as any[];
-    expect(back.map(l => l.from_slug)).toContain('secret/beta-target');
+    const referrer = back.find(l => l.from_slug === 'secret/beta-target');
+    expect(referrer).toMatchObject({
+      from_source_id: 'beta',
+      from_slug: 'secret/beta-target',
+      to_source_id: 'beta',
+      to_slug: 'secret/beta-doc',
+    });
   });
 
   test('[alpha,beta] does NOT leak the default→beta far-referrer backlink', async () => {
@@ -254,6 +287,26 @@ describe('#2200 get_timeline honors the federated grant', () => {
   test('[alpha] only → empty (isolation)', async () => {
     const tl = (await get_timeline.handler(remoteCtx(['alpha']), { slug: 'secret/beta-doc' })) as any[];
     expect(tl).toEqual([]);
+  });
+});
+
+describe('#2200 residual by-slug reads honor the federated grant', () => {
+  test('get_chunks returns only in-grant chunks', async () => {
+    const hit = await get_chunks.handler(remoteCtx(['alpha', 'beta']), { slug: 'secret/beta-doc' }) as any[];
+    expect(hit.map(c => c.chunk_text)).toEqual(['beta chunk']);
+    expect(await get_chunks.handler(remoteCtx(['alpha']), { slug: 'secret/beta-doc' })).toEqual([]);
+  });
+
+  test('get_raw_data returns only in-grant rows', async () => {
+    const hit = await get_raw_data.handler(remoteCtx(['alpha', 'beta']), { slug: 'secret/beta-doc', source: 'crm' }) as any[];
+    expect(hit.map(r => r.data.owner)).toEqual(['beta']);
+    expect(await get_raw_data.handler(remoteCtx(['alpha']), { slug: 'secret/beta-doc', source: 'crm' })).toEqual([]);
+  });
+
+  test('get_versions returns only in-grant snapshots', async () => {
+    const hit = await get_versions.handler(remoteCtx(['alpha', 'beta']), { slug: 'secret/beta-doc' }) as any[];
+    expect(hit.map(v => v.compiled_truth)).toEqual(['beta-only content']);
+    expect(await get_versions.handler(remoteCtx(['alpha']), { slug: 'secret/beta-doc' })).toEqual([]);
   });
 });
 

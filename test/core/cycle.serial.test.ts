@@ -22,6 +22,7 @@ let extractCalls: Array<{ mode: string; dir: string; slugs: string[] | undefined
 let embedCalls: Array<{ stale: boolean | undefined; dryRun: boolean | undefined }> = [];
 let orphansCalls: number = 0;
 let orphansOpts: Array<{ sourceId?: string } | undefined> = [];
+let schemaSuggestOpts: Array<{ sourceId?: string; dryRun?: boolean } | undefined> = [];
 
 // Mock lint
 mock.module('../../src/commands/lint.ts', () => ({
@@ -116,6 +117,14 @@ mock.module('../../src/commands/orphans.ts', () => ({
   formatOrphansText: () => '',
 }));
 
+// Mock schema-suggest
+mock.module('../../src/core/cycle/schema-suggest.ts', () => ({
+  runSchemaSuggestPhase: async (_engine: any, opts?: { sourceId?: string; dryRun?: boolean }) => {
+    schemaSuggestOpts.push(opts);
+    return { suggestions_emitted: 0, source_id: opts?.sourceId ?? 'default', skipped: false };
+  },
+}));
+
 // Import after mocks.
 const { runCycle, ALL_PHASES } = await import('../../src/core/cycle.ts');
 const { PGLiteEngine } = await import('../../src/core/pglite-engine.ts');
@@ -151,6 +160,7 @@ beforeEach(() => {
   embedCalls = [];
   orphansCalls = 0;
   orphansOpts = [];
+  schemaSuggestOpts = [];
 });
 
 // ─── dryRun propagation (regression guards) ────────────────────────
@@ -517,6 +527,20 @@ describe('runCycle — sourceId resolution (regression #475)', () => {
     );
     await runCycle(sharedEngine, { brainDir: '/tmp/brain-2349-alpha', phases: ['orphans'] });
     expect(orphansOpts.at(-1)).toEqual({ sourceId: 'alpha' });
+  });
+
+  // schema-suggest (T12 cathedral phase) was never threaded through
+  // cycleSourceId — it silently fell back to 'default' for every source,
+  // the same bug class as #1586 (synthesize) and #2666 (patterns), just
+  // undiscovered for this phase. Pins the fix: the resolved per-source id
+  // must reach runSchemaSuggestPhase the same way it reaches orphans/sync.
+  test('seeded sources row → schema-suggest phase receives matching sourceId (not "default")', async () => {
+    await (sharedEngine as any).db.query(
+      `INSERT INTO sources (id, name, local_path) VALUES ($1, $2, $3)`,
+      ['bravo', 'bravo', '/tmp/brain-schema-suggest-bravo'],
+    );
+    await runCycle(sharedEngine, { brainDir: '/tmp/brain-schema-suggest-bravo', phases: ['schema-suggest'] });
+    expect(schemaSuggestOpts.at(-1)?.sourceId).toBe('bravo');
   });
 
   test('forceGlobalOrphans keeps orphans brain-wide even when brainDir maps to a source', async () => {
