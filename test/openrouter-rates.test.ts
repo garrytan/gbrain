@@ -27,6 +27,7 @@ import {
 } from '../src/core/openrouter-rates.ts';
 import { estimateMaxCostUsd } from '../src/core/anthropic-pricing.ts';
 import { lookupEmbeddingPrice } from '../src/core/embedding-pricing.ts';
+import { isModelPriceable, BudgetTracker } from '../src/core/budget/budget-tracker.ts';
 
 let home: string;
 const realFetch = globalThis.fetch;
@@ -248,5 +249,60 @@ describe('integration with the pricing lookups', () => {
     const r = lookupEmbeddingPrice('openai:text-embedding-3-small');
     expect(r.kind).toBe('known');
     if (r.kind === 'known') expect(r.pricePerMTok).toBe(0.02);
+  });
+});
+
+/**
+ * BudgetTracker resolves chat pricing through its OWN `lookupPricing`, not
+ * through `estimateMaxCostUsd`. Wiring only the latter left capped runs still
+ * failing on router ids — the embedding half worked purely because
+ * `lookupPricing` delegates to `lookupEmbeddingPrice`. These pin the gate
+ * itself so the two paths can't drift apart again.
+ */
+describe('budget gate (isModelPriceable) — the path that actually gates spend', () => {
+  test('router chat id is priceable once cached', () => {
+    seedCache({
+      schema_version: RATES_SCHEMA_VERSION,
+      fetched_at: new Date().toISOString(),
+      chat: { 'deepseek/deepseek-v4-flash-0731': { input: 0.09, output: 0.18 } },
+      embedding: {},
+    });
+    expect(isModelPriceable('openrouter:deepseek/deepseek-v4-flash-0731', 'chat')).toBe(true);
+  });
+
+  test('uncached router chat id is NOT priceable — TX2 refusal preserved', () => {
+    expect(isModelPriceable('openrouter:deepseek/deepseek-v4-flash-0731', 'chat')).toBe(false);
+  });
+
+  test('a cached router id never resolves to the vendor rate', () => {
+    seedCache({
+      schema_version: RATES_SCHEMA_VERSION,
+      fetched_at: new Date().toISOString(),
+      chat: { 'anthropic/claude-sonnet-4-6': { input: 9, output: 45 } },
+      embedding: {},
+    });
+    // Direct Sonnet is $3/MTok; the router entry is $9. Anything but 9 means
+    // the id leaked into a vendor-priced path.
+    const tracker = new BudgetTracker({ maxCostUsd: 100, label: 'test' });
+    tracker.reserve({
+      modelId: 'openrouter:anthropic/claude-sonnet-4-6',
+      estimatedInputTokens: 1_000_000,
+      maxOutputTokens: 0,
+      kind: 'chat',
+    });
+    tracker.record({
+      modelId: 'openrouter:anthropic/claude-sonnet-4-6',
+      inputTokens: 1_000_000,
+      outputTokens: 0,
+    }, 'chat');
+    expect(tracker.totalSpent).toBeCloseTo(9, 6);
+  });
+
+  test('non-Anthropic canonical ids were already priceable (regression guard)', () => {
+    // These resolve via canonicalLookup inside lookupPricing and must keep
+    // working with no cache present.
+    for (const id of ['openai:gpt-5.2', 'deepseek:deepseek-chat', 'google:gemini-2.0-flash']) {
+      expect(isModelPriceable(id, 'chat')).toBe(true);
+    }
   });
 });

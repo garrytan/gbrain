@@ -35,6 +35,7 @@ import { ANTHROPIC_PRICING, type ModelPricing } from '../anthropic-pricing.ts';
 import { canonicalLookup } from '../model-pricing.ts';
 import { EMBEDDING_PRICING, lookupEmbeddingPrice } from '../embedding-pricing.ts';
 import { splitProviderModelId } from '../model-id.ts';
+import { lookupOpenRouterChatPrice, routerTail } from '../openrouter-rates.ts';
 import { isoWeekFilename, resolveAuditDir } from '../audit-week-file.ts';
 
 export type BudgetKind = 'chat' | 'embed' | 'rerank';
@@ -234,6 +235,21 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
   // their own provider-specific pricing surfaces.
   if (kind === 'rerank' && providerId && FREE_LOCAL_RERANK_PROVIDERS.has(providerId)) {
     return { input: 0, output: 0 };
+  }
+  // Router-prefixed ids price from OpenRouter's own cached catalogue. Checked
+  // BEFORE canonicalLookup so a router id can never resolve to the vendor's
+  // direct rate: a router bills its own spread, and under-estimating spend
+  // hands back a silently wrong cap. Returns null when uncached, preserving
+  // the TX2 refusal.
+  //
+  // Note this is a SEPARATE resolution path from anthropic-pricing.ts's
+  // estimateMaxCostUsd — that one serves budget-meter / batch-projection /
+  // skillopt preflight, this one gates BudgetTracker. Wiring only the former
+  // leaves capped runs failing here, which is exactly what happened.
+  if (kind === 'chat' || kind === 'rerank') {
+    const routed = lookupOpenRouterChatPrice(modelId);
+    if (routed) return routed;
+    if (routerTail(modelId) !== null) return null;
   }
   // Fall back to the full canonical pricing table so non-Anthropic chat
   // models with a known price (openai:*, google:*, deepseek:*) resolve under
