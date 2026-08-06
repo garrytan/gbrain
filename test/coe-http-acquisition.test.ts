@@ -173,6 +173,35 @@ describe("CoE bounded HTTP acquisition", () => {
     expect(outcome).toBe("timeout");
   });
 
+  test("observes a resolver rejection when the deadline expires before racing it", async () => {
+    const sentinel = new Error("late resolver rejection");
+    let leaked = false;
+    const onUnhandled = (reason: unknown) => {
+      if (reason === sentinel) leaked = true;
+    };
+    process.on("unhandledRejection", onUnhandled);
+
+    try {
+      const bounded = client(
+        async () => new Response("unused"),
+        { timeout_ms: 5 },
+        async () => {
+          const blockedUntil = performance.now() + 15;
+          while (performance.now() < blockedUntil) {
+            // Force the deadline to expire before beforeDeadline() receives the rejected Promise.
+          }
+          throw sentinel;
+        },
+      );
+
+      await expect(bounded.fetch("https://example.com/file")).rejects.toMatchObject({ code: "timeout" });
+      await Bun.sleep(10);
+      expect(leaked).toBe(false);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
   test("uses one timeout budget across every redirect hop", async () => {
     let calls = 0;
     const redirectStall = client(
@@ -216,6 +245,163 @@ describe("CoE bounded HTTP acquisition", () => {
     ]);
 
     expect(outcome).toBe("timeout");
+    expect(transportAborted).toBe(true);
+  });
+
+  test("cleans up response bodies rejected before streaming", async () => {
+    const cases: Array<{
+      name: string;
+      response: () => Response;
+      expectedCode: string;
+      config?: { max_bytes?: number; max_redirects?: number };
+    }> = [
+      {
+        name: "HTTP status",
+        response: () => new Response(stream(), {
+          status: 500,
+          headers: { "content-type": "text/plain" },
+        }),
+        expectedCode: "http_status_500",
+      },
+      {
+        name: "missing content type",
+        response: () => new Response(stream()),
+        expectedCode: "missing_or_invalid_content_type",
+      },
+      {
+        name: "advertised byte limit",
+        response: () => new Response(stream(), {
+          headers: { "content-type": "text/plain", "content-length": "33" },
+        }),
+        expectedCode: "response_too_large",
+        config: { max_bytes: 32 },
+      },
+      {
+        name: "redirect limit",
+        response: () => new Response(stream(), {
+          status: 302,
+          headers: { location: "https://example.com/next" },
+        }),
+        expectedCode: "too_many_redirects",
+        config: { max_redirects: 0 },
+      },
+    ];
+
+    let cancelled = false;
+    function stream(): ReadableStream<Uint8Array> {
+      return new ReadableStream<Uint8Array>({
+        start() {},
+        cancel() {
+          cancelled = true;
+        },
+      });
+    }
+
+    for (const testCase of cases) {
+      cancelled = false;
+      let transportAborted = false;
+      const rejected = client(
+        async (_input, init) => {
+          init?.signal?.addEventListener("abort", () => {
+            transportAborted = true;
+          });
+          return testCase.response();
+        },
+        testCase.config,
+      );
+
+      await expect(rejected.fetch("https://example.com/file")).rejects.toMatchObject({
+        code: testCase.expectedCode,
+      });
+      expect({
+        name: testCase.name,
+        transportAborted,
+        cancelled,
+      }).toEqual({
+        name: testCase.name,
+        transportAborted: true,
+        cancelled: true,
+      });
+    }
+  });
+
+  test("aborts terminal network failures", async () => {
+    let fetchAborted = false;
+    const fetchFailure = client(async (_input, init) => {
+      init?.signal?.addEventListener("abort", () => {
+        fetchAborted = true;
+      });
+      throw new Error("transport failure");
+    });
+    await expect(fetchFailure.fetch("https://example.com/file")).rejects.toMatchObject({ code: "network_error" });
+    expect(fetchAborted).toBe(true);
+
+    let readAborted = false;
+    let readerCancelCalls = 0;
+    const readFailure = client(async (_input, init) => {
+      init?.signal?.addEventListener("abort", () => {
+        readAborted = true;
+      });
+      return {
+        status: 200,
+        headers: new Headers({ "content-type": "text/plain" }),
+        body: {
+          getReader: () => ({
+            read: async () => {
+              throw new Error("body read failure");
+            },
+            cancel: async () => {
+              readerCancelCalls += 1;
+            },
+          }),
+        },
+      } as unknown as Response;
+    });
+    await expect(readFailure.fetch("https://example.com/file")).rejects.toMatchObject({ code: "network_error" });
+    expect({ readAborted, readerCancelCalls }).toEqual({ readAborted: true, readerCancelCalls: 1 });
+
+    let redirectAborted = false;
+    let redirectCancelCalls = 0;
+    const redirectCancelFailure = client(async (_input, init) => {
+      init?.signal?.addEventListener("abort", () => {
+        redirectAborted = true;
+      });
+      return {
+        status: 302,
+        headers: new Headers({ location: "https://example.com/next" }),
+        body: {
+          cancel: async () => {
+            redirectCancelCalls += 1;
+            throw new Error("redirect cancellation failure");
+          },
+        },
+      } as unknown as Response;
+    });
+    await expect(redirectCancelFailure.fetch("https://example.com/file")).rejects.toMatchObject({
+      code: "network_error",
+    });
+    expect({ redirectAborted, redirectCancelCalls }).toEqual({ redirectAborted: true, redirectCancelCalls: 1 });
+  });
+
+  test("classifies a transport rejection after the deadline as timeout", async () => {
+    let transportAborted = false;
+    const lateRejection = client(
+      async (_input, init) => await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          transportAborted = true;
+        });
+        setTimeout(() => {
+          const blockedUntil = Date.now() + 15;
+          while (Date.now() < blockedUntil) {
+            // Hold the event loop past the deadline before rejecting.
+          }
+          reject(new Error("late transport failure"));
+        }, 1);
+      }),
+      { timeout_ms: 5 },
+    );
+
+    await expect(lateRejection.fetch("https://example.com/file")).rejects.toMatchObject({ code: "timeout" });
     expect(transportAborted).toBe(true);
   });
 
