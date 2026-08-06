@@ -138,7 +138,7 @@ export class CoeSnapshotLedger {
   constructor(private readonly options: SnapshotLedgerOptions) {
     this.clock = options.clock ?? (() => new Date());
     this.nonce = options.nonce ?? randomUUID;
-    this.store = new ContentAddressedStore(options.root, this.nonce);
+    this.store = new ContentAddressedStore(options.root, this.nonce, options.lock);
     this.retention = {
       ...DEFAULT_RETENTION,
       ...options.retention,

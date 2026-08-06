@@ -12,6 +12,7 @@ import {
   type SourceSnapshotContract,
 } from "../contracts/index.ts";
 import type { ArtifactStatus } from "../contracts/transitions.ts";
+import type { RegistryLockOptions } from "./content-addressed-store.ts";
 
 export const ACQUISITION_OUTCOMES = [
   "promoted",
@@ -148,6 +149,7 @@ export interface SnapshotLedgerOptions {
   projection: CoeSnapshotProjection;
   clock?: () => Date;
   nonce?: () => string;
+  lock?: RegistryLockOptions;
   hooks?: SnapshotLedgerHooks;
   retention?: Partial<SnapshotRetentionPolicy>;
 }

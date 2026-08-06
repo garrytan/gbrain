@@ -457,12 +457,7 @@ describe("CoE immutable snapshot ledger", () => {
   });
 
   test("an old lock is never stolen automatically", async () => {
-    const StoreWithTestTimeout = ContentAddressedStore as unknown as new (
-      root: string,
-      nonce: () => string,
-      options: { lock_timeout_ms: number },
-    ) => ContentAddressedStore;
-    const store = new StoreWithTestTimeout(root, () => crypto.randomUUID(), { lock_timeout_ms: 20 });
+    const store = new ContentAddressedStore(root, () => crypto.randomUUID(), { lock_timeout_ms: 20 });
     await store.listKeys("locks");
     const lockName = "a".repeat(64);
     const lockPath = join(root, "locks", `${lockName}.lock`);

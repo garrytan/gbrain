@@ -1,22 +1,33 @@
+import { Database } from "bun:sqlite";
+import { randomUUID } from "node:crypto";
 import {
+  chmod,
   constants,
   link,
   lstat,
   mkdir,
   open,
+  readFile,
+  readlink,
   readdir,
   realpath,
   stat,
   unlink,
 } from "node:fs/promises";
+import { hostname } from "node:os";
 import { dirname, relative, resolve, sep } from "node:path";
 
 import { CoeContractError, canonicalizeJson, sha256Bytes } from "../contracts/index.ts";
 
 const SAFE_KEY = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._/-]+$/;
+const SQLITE_LEASE_SENTINEL = "gbrain-coe-sqlite-lease-v1\n";
 
 function isAlreadyExists(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST";
+}
+
+function isDatabaseBusy(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "SQLITE_BUSY";
 }
 
 function isMissing(error: unknown): boolean {
@@ -30,13 +41,60 @@ export interface StoredObject {
   created: boolean;
 }
 
-export interface ContentAddressedStoreOptions {
+export interface RegistryLockOptions {
+  /** Maximum time spent waiting to acquire a lock. */
   lock_timeout_ms?: number;
+  /** Heartbeat lease duration. Expiration permits a liveness check, never takeover by itself. */
+  lock_lease_ms?: number;
+  /** Delay between acquisition attempts. */
+  lock_retry_ms?: number;
+}
+
+export type ContentAddressedStoreOptions = RegistryLockOptions;
+
+interface RegistryLockProcessIdentity {
+  hostname: string;
+  machine_id: string;
+  boot_id: string;
+  pid_namespace: string;
+  pid: number;
+  process_start_ticks: string;
+}
+
+type RegistryLockOwnerLiveness = "alive" | "dead" | "unknown";
+
+export interface RegistryLockLease {
+  readonly owner_id: string;
+  readonly signal: AbortSignal;
+  assertOwned(): Promise<void>;
+}
+
+interface RegistryLockRow extends RegistryLockProcessIdentity {
+  name: string;
+  owner_id: string;
+  lease_expires_at_ms: number;
+  updated_at_ms: number;
+}
+
+interface RegistryLockConfig {
+  timeout_ms: number;
+  lease_ms: number;
+  retry_ms: number;
+}
+
+function parseProcessStat(statLine: string): { state: string; start_ticks: string } | null {
+  const commandEnd = statLine.lastIndexOf(")");
+  if (commandEnd < 0) return null;
+  const fieldsFromState = statLine.slice(commandEnd + 2).trim().split(/\s+/);
+  const state = fieldsFromState[0];
+  const startTicks = fieldsFromState[19];
+  return state && startTicks ? { state, start_ticks: startTicks } : null;
 }
 
 export class ContentAddressedStore {
   private ready: Promise<void> | undefined;
   private canonicalRoot = "";
+  private leaseDatabasePath = "";
 
   constructor(
     readonly root: string,
@@ -63,6 +121,45 @@ export class ContentAddressedStore {
     for (const directory of ["objects", "records/sources", "records/snapshots", "records/events", "journal", "staging", "locks"]) {
       await this.ensureDirectoryChain(directory, true, `registry directory ${directory}`);
     }
+    this.leaseDatabasePath = resolve(this.canonicalRoot, "locks", "leases.sqlite");
+    const existingLeaseDatabase = await lstat(this.leaseDatabasePath).catch((error) => {
+      if (isMissing(error)) return null;
+      throw error;
+    });
+    if (existingLeaseDatabase && (existingLeaseDatabase.isSymbolicLink() || !existingLeaseDatabase.isFile())) {
+      throw new CoeContractError("policy_violation", "Registry lease database must be a regular non-symlink file");
+    }
+    const database = new Database(this.leaseDatabasePath, { create: true, strict: true });
+    try {
+      database.exec("PRAGMA busy_timeout = 1000");
+      database.exec("PRAGMA journal_mode = DELETE");
+      database.exec("PRAGMA synchronous = FULL");
+      const schemaVersion = database.query("PRAGMA user_version").get() as { user_version: number };
+      if (schemaVersion.user_version !== 0 && schemaVersion.user_version !== 1) {
+        throw new CoeContractError(
+          "policy_violation",
+          `Unsupported registry lease database version ${schemaVersion.user_version}`,
+        );
+      }
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS registry_lock_leases (
+          name TEXT PRIMARY KEY NOT NULL CHECK (length(name) = 64),
+          owner_id TEXT NOT NULL,
+          hostname TEXT NOT NULL,
+          machine_id TEXT NOT NULL,
+          boot_id TEXT NOT NULL,
+          pid_namespace TEXT NOT NULL,
+          pid INTEGER NOT NULL CHECK (pid > 0),
+          process_start_ticks TEXT NOT NULL,
+          lease_expires_at_ms INTEGER NOT NULL,
+          updated_at_ms INTEGER NOT NULL
+        ) STRICT
+      `);
+      if (schemaVersion.user_version === 0) database.exec("PRAGMA user_version = 1");
+    } finally {
+      database.close();
+    }
+    await chmod(this.leaseDatabasePath, 0o600);
   }
 
   private async assertPrivateDirectory(path: string, label: string): Promise<void> {
@@ -277,46 +374,360 @@ export class ContentAddressedStore {
     return removed;
   }
 
-  async withLock<T>(name: string, operation: () => Promise<T>): Promise<T> {
+  private lockConfig(): RegistryLockConfig {
+    const timeoutMs = this.options.lock_timeout_ms ?? 10_000;
+    const leaseMs = this.options.lock_lease_ms ?? 30_000;
+    const retryMs = this.options.lock_retry_ms ?? 10;
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 60_000) {
+      throw new CoeContractError("invalid_contract", "Registry lock timeout must be between 1 and 60000 ms");
+    }
+    if (!Number.isSafeInteger(leaseMs) || leaseMs < 30 || leaseMs > 3_600_000) {
+      throw new CoeContractError("invalid_contract", "Registry lock lease must be between 30 and 3600000 ms");
+    }
+    if (!Number.isSafeInteger(retryMs) || retryMs <= 0 || retryMs > 1_000 || retryMs >= leaseMs) {
+      throw new CoeContractError("invalid_contract", "Registry lock retry must be positive, at most 1000 ms, and shorter than the lease");
+    }
+    return { timeout_ms: timeoutMs, lease_ms: leaseMs, retry_ms: retryMs };
+  }
+
+  private lockNow(): number {
+    const now = Date.now();
+    if (!Number.isSafeInteger(now) || now < 0) {
+      throw new CoeContractError("policy_violation", "System clock cannot represent registry lock milliseconds safely");
+    }
+    return now;
+  }
+
+  private leaseExpiresAt(now: number, leaseMs: number): number {
+    const expiresAt = now + leaseMs;
+    if (!Number.isSafeInteger(expiresAt)) {
+      throw new CoeContractError("invalid_contract", "Registry lock lease expiration exceeds safe integer milliseconds");
+    }
+    return expiresAt;
+  }
+
+  private validateProcessIdentity(identity: RegistryLockProcessIdentity): RegistryLockProcessIdentity {
+    if (
+      !identity.hostname
+      || !identity.machine_id
+      || !identity.boot_id
+      || !identity.pid_namespace
+      || !Number.isSafeInteger(identity.pid)
+      || identity.pid <= 0
+      || !identity.process_start_ticks
+    ) {
+      throw new CoeContractError("invalid_contract", "Registry lock process identity is incomplete");
+    }
+    return identity;
+  }
+
+  private withLeaseDatabase<T>(operation: (database: Database) => T): T {
+    const database = new Database(this.leaseDatabasePath, { create: false, strict: true });
+    try {
+      database.exec("PRAGMA busy_timeout = 10");
+      return operation(database);
+    } finally {
+      database.close();
+    }
+  }
+
+  private readLease(name: string): RegistryLockRow | null {
+    return this.withLeaseDatabase((database) =>
+      database.query(`
+        SELECT name, owner_id, hostname, machine_id, boot_id, pid_namespace, pid, process_start_ticks,
+               lease_expires_at_ms, updated_at_ms
+        FROM registry_lock_leases
+        WHERE name = ?
+      `).get(name) as RegistryLockRow | null,
+    );
+  }
+
+  private async currentProcessIdentity(): Promise<RegistryLockProcessIdentity> {
+    try {
+      const [machineId, bootId, pidNamespace, processStat] = await Promise.all([
+        readFile("/etc/machine-id", "utf8"),
+        readFile("/proc/sys/kernel/random/boot_id", "utf8"),
+        readlink("/proc/self/ns/pid"),
+        readFile(`/proc/${process.pid}/stat`, "utf8"),
+      ]);
+      const parsedProcess = parseProcessStat(processStat);
+      if (!parsedProcess) {
+        throw new CoeContractError("policy_violation", "Cannot determine registry lock process start identity");
+      }
+      return {
+        hostname: hostname(),
+        machine_id: machineId.trim(),
+        boot_id: bootId.trim(),
+        pid_namespace: pidNamespace,
+        pid: process.pid,
+        process_start_ticks: parsedProcess.start_ticks,
+      };
+    } catch (error) {
+      if (!isMissing(error)) throw error;
+      return {
+        hostname: hostname(),
+        machine_id: "unknown",
+        boot_id: "portable-pid-only",
+        pid_namespace: "unknown",
+        pid: process.pid,
+        process_start_ticks: "unknown",
+      };
+    }
+  }
+
+  private async ownerLiveness(owner: RegistryLockProcessIdentity): Promise<RegistryLockOwnerLiveness> {
+    if (owner.boot_id === "portable-pid-only") {
+      if (owner.hostname !== hostname()) return "unknown";
+      try {
+        process.kill(owner.pid, 0);
+        return "alive";
+      } catch (error) {
+        if (typeof error === "object" && error !== null && "code" in error) {
+          if (error.code === "ESRCH") return "dead";
+          if (error.code === "EPERM") return "unknown";
+        }
+        return "unknown";
+      }
+    }
+    let machineId: string;
+    let bootId: string;
+    let pidNamespace: string;
+    try {
+      [machineId, bootId, pidNamespace] = await Promise.all([
+        readFile("/etc/machine-id", "utf8").then((value) => value.trim()),
+        readFile("/proc/sys/kernel/random/boot_id", "utf8").then((value) => value.trim()),
+        readlink("/proc/self/ns/pid"),
+      ]);
+    } catch {
+      return "unknown";
+    }
+    if (owner.machine_id !== machineId || owner.pid_namespace !== pidNamespace) return "unknown";
+    if (owner.boot_id !== bootId) return "dead";
+    try {
+      const processStat = await readFile(`/proc/${owner.pid}/stat`, "utf8");
+      const parsedProcess = parseProcessStat(processStat);
+      if (!parsedProcess) return "unknown";
+      if (parsedProcess.start_ticks !== owner.process_start_ticks) return "dead";
+      return parsedProcess.state === "Z" || parsedProcess.state === "X" ? "dead" : "alive";
+    } catch (error) {
+      return isMissing(error) ? "dead" : "unknown";
+    }
+  }
+
+  private insertLease(
+    name: string,
+    ownerId: string,
+    identity: RegistryLockProcessIdentity,
+    expiresAt: number,
+    now: number,
+  ): boolean {
+    const result = this.withLeaseDatabase((database) => database.run(
+      `INSERT OR IGNORE INTO registry_lock_leases (
+        name, owner_id, hostname, machine_id, boot_id, pid_namespace, pid, process_start_ticks,
+        lease_expires_at_ms, updated_at_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        name,
+        ownerId,
+        identity.hostname,
+        identity.machine_id,
+        identity.boot_id,
+        identity.pid_namespace,
+        identity.pid,
+        identity.process_start_ticks,
+        expiresAt,
+        now,
+      ],
+    ));
+    return result.changes === 1;
+  }
+
+  private replaceExpiredLease(
+    previous: RegistryLockRow,
+    ownerId: string,
+    identity: RegistryLockProcessIdentity,
+    expiresAt: number,
+    now: number,
+  ): boolean {
+    const result = this.withLeaseDatabase((database) => database.run(
+      `UPDATE registry_lock_leases
+       SET owner_id = ?, hostname = ?, machine_id = ?, boot_id = ?, pid_namespace = ?, pid = ?, process_start_ticks = ?,
+           lease_expires_at_ms = ?, updated_at_ms = ?
+       WHERE name = ? AND owner_id = ? AND lease_expires_at_ms = ?`,
+      [
+        ownerId,
+        identity.hostname,
+        identity.machine_id,
+        identity.boot_id,
+        identity.pid_namespace,
+        identity.pid,
+        identity.process_start_ticks,
+        expiresAt,
+        now,
+        previous.name,
+        previous.owner_id,
+        previous.lease_expires_at_ms,
+      ],
+    ));
+    return result.changes === 1;
+  }
+
+  private renewLease(name: string, ownerId: string, expiresAt: number, now: number): boolean {
+    const result = this.withLeaseDatabase((database) => database.run(
+      `UPDATE registry_lock_leases
+       SET lease_expires_at_ms = ?, updated_at_ms = ?
+       WHERE name = ? AND owner_id = ?`,
+      [expiresAt, now, name, ownerId],
+    ));
+    return result.changes === 1;
+  }
+
+  private releaseLease(name: string, ownerId: string): void {
+    this.withLeaseDatabase((database) => {
+      database.run("DELETE FROM registry_lock_leases WHERE name = ? AND owner_id = ?", [name, ownerId]);
+    });
+  }
+
+  private async legacyLockBlocks(name: string): Promise<boolean> {
+    const path = await this.containedPath(`locks/${name}.lock`, true);
+    const readExisting = async (): Promise<boolean> => {
+      try {
+        const contents = await this.readFileNoFollow(path, `registry lock compatibility sentinel ${name}`);
+        return contents.toString("utf8") !== SQLITE_LEASE_SENTINEL;
+      } catch (error) {
+        if (isMissing(error)) return false;
+        throw error;
+      }
+    };
+
+    if (await readExisting()) return true;
+    try {
+      await lstat(path);
+      return readExisting();
+    } catch (error) {
+      if (!isMissing(error)) throw error;
+    }
+
+    const tempPath = await this.containedPath(`staging/lock-sentinel-${randomUUID()}.part`, true);
+    let handle: Awaited<ReturnType<typeof open>> | undefined;
+    try {
+      handle = await open(tempPath, "wx", 0o600);
+      await handle.writeFile(SQLITE_LEASE_SENTINEL, "utf8");
+      await handle.sync();
+      await handle.close();
+      handle = undefined;
+      try {
+        await link(tempPath, path);
+        return false;
+      } catch (error) {
+        if (!isAlreadyExists(error)) throw error;
+        return readExisting();
+      }
+    } finally {
+      await handle?.close().catch(() => undefined);
+      await unlink(tempPath).catch(() => undefined);
+    }
+  }
+
+  async withLock<T>(name: string, operation: (lease: RegistryLockLease) => Promise<T>): Promise<T> {
     if (!/^[0-9a-f]{64}$/.test(name)) {
       throw new CoeContractError("invalid_contract", "Registry lock names must be SHA-256 hex values");
     }
-    const key = `locks/${name}.lock`;
-    const path = await this.containedPath(key, true);
-    const token = this.nonce();
-    const lockTimeoutMs = this.options.lock_timeout_ms ?? 10_000;
-    if (!Number.isSafeInteger(lockTimeoutMs) || lockTimeoutMs <= 0 || lockTimeoutMs > 60_000) {
-      throw new CoeContractError("invalid_contract", "Registry lock timeout must be between 1 and 60000 ms");
+    await this.ensureReady();
+    const config = this.lockConfig();
+    const identity = this.validateProcessIdentity(await this.currentProcessIdentity());
+    const ownerId = randomUUID();
+    if (!ownerId || ownerId.length > 256) {
+      throw new CoeContractError("invalid_contract", "Registry lock owner IDs must contain between 1 and 256 characters");
     }
-    const deadline = Date.now() + lockTimeoutMs;
+    const deadline = performance.now() + config.timeout_ms;
     let acquired = false;
 
     while (!acquired) {
       try {
-        const handle = await open(path, "wx", 0o600);
-        try {
-          await handle.writeFile(token, "utf8");
-          await handle.sync();
-        } finally {
-          await handle.close();
+        if (!(await this.legacyLockBlocks(name))) {
+          const now = this.lockNow();
+          const expiresAt = this.leaseExpiresAt(now, config.lease_ms);
+          const current = this.readLease(name);
+          if (!current) {
+            acquired = this.insertLease(name, ownerId, identity, expiresAt, now);
+          } else if (current.lease_expires_at_ms <= now) {
+            const liveness = await this.ownerLiveness(current);
+            if (liveness === "dead") {
+              acquired = this.replaceExpiredLease(current, ownerId, identity, expiresAt, now);
+            }
+          }
         }
-        acquired = true;
       } catch (error) {
-        if (!isAlreadyExists(error)) throw error;
-        if (Date.now() >= deadline) {
-          throw new CoeContractError("policy_violation", `Timed out acquiring registry lock ${name}`);
-        }
-        await new Promise((resolveDelay) => setTimeout(resolveDelay, 10));
+        if (!isDatabaseBusy(error)) throw error;
       }
+      if (acquired) break;
+      if (performance.now() >= deadline) {
+        throw new CoeContractError("policy_violation", `Timed out acquiring registry lock ${name}`);
+      }
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, config.retry_ms));
     }
 
+    const controller = new AbortController();
+    let leaseError: CoeContractError | null = null;
+    const loseLease = (message: string) => {
+      leaseError ??= new CoeContractError("policy_violation", message);
+      if (!controller.signal.aborted) controller.abort(leaseError);
+    };
+    const assertOwned = async (): Promise<void> => {
+      const current = this.readLease(name);
+      if (current?.owner_id !== ownerId) {
+        loseLease(`Lost registry lock lease ${name}`);
+      }
+      if (leaseError) throw leaseError;
+    };
+    const lease: RegistryLockLease = {
+      owner_id: ownerId,
+      signal: controller.signal,
+      assertOwned,
+    };
+    let heartbeatChain = Promise.resolve();
+    const heartbeat = () => {
+      heartbeatChain = heartbeatChain.then(() => {
+        if (leaseError) return;
+        try {
+          const now = this.lockNow();
+          if (!this.renewLease(name, ownerId, this.leaseExpiresAt(now, config.lease_ms), now)) {
+            loseLease(`Lost registry lock lease ${name} during renewal`);
+          }
+        } catch (error) {
+          if (isDatabaseBusy(error)) return;
+          loseLease(`Failed to renew registry lock lease ${name}`);
+        }
+      });
+    };
+    const heartbeatTimer = setInterval(heartbeat, Math.max(10, Math.floor(config.lease_ms / 3)));
+    heartbeatTimer.unref?.();
+
+    let result: T | undefined;
+    let operationError: unknown;
     try {
-      return await operation();
+      result = await operation(lease);
+    } catch (error) {
+      operationError = error;
     } finally {
-      const owner = await this.readFileNoFollow(path, `registry lock ${name}`)
-        .then((bytes) => bytes.toString("utf8"))
-        .catch(() => null);
-      if (owner === token) await unlink(path).catch(() => undefined);
+      clearInterval(heartbeatTimer);
+      await heartbeatChain;
     }
+
+    if (!operationError) {
+      try {
+        await assertOwned();
+      } catch (error) {
+        operationError = error;
+      }
+    }
+    try {
+      this.releaseLease(name, ownerId);
+    } catch (error) {
+      if (!operationError) operationError = error;
+    }
+    if (operationError) throw operationError;
+    return result as T;
   }
 }

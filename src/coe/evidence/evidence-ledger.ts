@@ -42,7 +42,7 @@ export class CoeEvidenceLedger {
   constructor(private readonly options: EvidenceLedgerOptions) {
     const nonce = options.nonce ?? (() => crypto.randomUUID());
     this.clock = options.clock ?? (() => new Date());
-    this.store = new ContentAddressedStore(options.root, nonce);
+    this.store = new ContentAddressedStore(options.root, nonce, options.lock);
   }
 
   async normalizeSnapshot(snapshotId: string, normalizer: DocumentNormalizer): Promise<NormalizeSnapshotResult> {

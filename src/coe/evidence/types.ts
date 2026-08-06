@@ -10,6 +10,7 @@ import {
   type SourceSnapshotContract,
 } from "../contracts/index.ts";
 import type { CoeSnapshotLedger } from "../registry/index.ts";
+import type { RegistryLockOptions } from "../registry/content-addressed-store.ts";
 
 export const EVIDENCE_BUNDLE_VERSION = "1.0.0" as const;
 
@@ -142,6 +143,7 @@ export interface EvidenceLedgerOptions {
   projection: CoeEvidenceProjection;
   clock?: () => Date;
   nonce?: () => string;
+  lock?: RegistryLockOptions;
 }
 
 export interface NormalizeSnapshotResult {
