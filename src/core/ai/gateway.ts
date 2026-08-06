@@ -2731,7 +2731,7 @@ export type ChatRole = 'system' | 'user' | 'assistant' | 'tool';
 
 export type ChatBlock =
   | { type: 'text'; text: string }
-  | { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown }
+  | { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown; invalid?: boolean }
   | { type: 'tool-result'; toolCallId: string; toolName: string; output: unknown; isError?: boolean };
 
 export interface ChatMessage {
@@ -3498,6 +3498,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
             toolCallId: part.toolCallId,
             toolName: part.toolName,
             input: part.input ?? part.args,
+            ...(part.invalid === true ? { invalid: true } : {}),
           });
         }
       }
@@ -3512,6 +3513,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
           toolCallId: tc.toolCallId,
           toolName: tc.toolName,
           input: tc.input ?? tc.args,
+          ...(tc.invalid === true ? { invalid: true } : {}),
         });
       }
     }
@@ -3734,26 +3736,46 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
     totalUsage.cache_creation_tokens += chatResult.usage.cache_creation_tokens;
 
     const toolCalls = chatResult.blocks.filter(
-      (b): b is { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown } =>
+      (b): b is Extract<ChatBlock, { type: 'tool-call' }> =>
         b.type === 'tool-call',
     );
 
+    // AI SDK v6 retains schema-invalid or unknown tool calls as dynamic
+    // `tool-call` parts with `invalid: true`. Preserve that marker at the
+    // chat boundary and reject the whole assistant turn before persistence or
+    // dispatch. The shape checks also protect test/custom transports that do
+    // not pass through the SDK parser.
+    const seenToolCallIds = new Set<string>();
+    const hasMalformedToolCall = toolCalls.some((call) => {
+      if (call.invalid === true) return true;
+      if (typeof call.toolCallId !== 'string' || call.toolCallId.trim() === '') return true;
+      if (typeof call.toolName !== 'string' || call.toolName.trim() === '') return true;
+      if (call.input === undefined) return true;
+      if (seenToolCallIds.has(call.toolCallId)) return true;
+      seenToolCallIds.add(call.toolCallId);
+      return false;
+    });
+
     let unsafeTerminalReason: ToolLoopStopReason | null = null;
-    switch (chatResult.stopReason) {
-      case 'refusal': unsafeTerminalReason = 'refusal'; break;
-      case 'content_filter': unsafeTerminalReason = 'content_filter'; break;
-      case 'length': unsafeTerminalReason = 'max_tokens'; break;
-      case 'other': unsafeTerminalReason = 'unrecoverable'; break;
-      case 'tool_calls':
-        if (toolCalls.length === 0) unsafeTerminalReason = 'unrecoverable';
-        break;
-      case 'end':
-        if (toolCalls.length > 0) unsafeTerminalReason = 'unrecoverable';
-        break;
-      default: {
-        const exhaustiveStopReason: never = chatResult.stopReason;
-        void exhaustiveStopReason;
-        unsafeTerminalReason = 'unrecoverable';
+    if (hasMalformedToolCall) {
+      unsafeTerminalReason = 'unrecoverable';
+    } else {
+      switch (chatResult.stopReason) {
+        case 'refusal': unsafeTerminalReason = 'refusal'; break;
+        case 'content_filter': unsafeTerminalReason = 'content_filter'; break;
+        case 'length': unsafeTerminalReason = 'max_tokens'; break;
+        case 'other': unsafeTerminalReason = 'unrecoverable'; break;
+        case 'tool_calls':
+          if (toolCalls.length === 0) unsafeTerminalReason = 'unrecoverable';
+          break;
+        case 'end':
+          if (toolCalls.length > 0) unsafeTerminalReason = 'unrecoverable';
+          break;
+        default: {
+          const exhaustiveStopReason: never = chatResult.stopReason;
+          void exhaustiveStopReason;
+          unsafeTerminalReason = 'unrecoverable';
+        }
       }
     }
     if (unsafeTerminalReason !== null) {

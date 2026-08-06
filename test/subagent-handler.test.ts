@@ -744,4 +744,85 @@ describe('subagent handler output-token cap (#2778)', () => {
     );
     expect(assistantRows[0]!.count).toBe('0');
   });
+
+  for (const terminal of [
+    {
+      label: 'stop_sequence without tools is a clean terminal turn',
+      providerStop: 'stop_sequence',
+      content: [{ type: 'text', text: 'stopped at sequence' }],
+      expectedStop: 'end_turn',
+      expectedAssistantRows: '1',
+    },
+    {
+      label: 'end_turn with a tool block fails closed',
+      providerStop: 'end_turn',
+      content: [{ type: 'tool_use', id: 'tu-mismatch', name: 'echo', input: { value: 'x' } }],
+      expectedStop: 'error',
+      expectedAssistantRows: '0',
+    },
+    {
+      label: 'tool_use without a tool block fails closed',
+      providerStop: 'tool_use',
+      content: [{ type: 'text', text: 'missing tool block' }],
+      expectedStop: 'error',
+      expectedAssistantRows: '0',
+    },
+    {
+      label: 'pause_turn fails closed',
+      providerStop: 'pause_turn',
+      content: [{ type: 'text', text: 'paused' }],
+      expectedStop: 'error',
+      expectedAssistantRows: '0',
+    },
+    {
+      label: 'null stop reason fails closed',
+      providerStop: null,
+      content: [{ type: 'text', text: 'no stop reason' }],
+      expectedStop: 'error',
+      expectedAssistantRows: '0',
+    },
+    {
+      label: 'unknown stop reason fails closed',
+      providerStop: 'unexpected_stop',
+      content: [{ type: 'text', text: 'unknown stop reason' }],
+      expectedStop: 'error',
+      expectedAssistantRows: '0',
+    },
+  ] as const) {
+    test(terminal.label, async () => {
+      let toolCalls = 0;
+      const tool: ToolDef = {
+        ...makeEchoTool(),
+        async execute(input) {
+          toolCalls++;
+          return { echoed: input };
+        },
+      };
+      const client = new FakeMessagesClient([{
+        content: terminal.content as any,
+        stop_reason: terminal.providerStop as any,
+      }]);
+      const handler = makeSubagentHandler({ engine, client, toolRegistry: [tool] });
+      const ctx = await makeCtx({ prompt: 'classify this turn' });
+      let tokenUpdates = 0;
+      ctx.updateTokens = async () => { tokenUpdates++; };
+
+      const result = await handler(ctx);
+      const rows = await engine.executeRaw<{ assistants: string; tools: string }>(
+        `SELECT
+           (SELECT count(*)::text FROM subagent_messages
+             WHERE job_id = $1 AND role = 'assistant') AS assistants,
+           (SELECT count(*)::text FROM subagent_tool_executions
+             WHERE job_id = $1) AS tools`,
+        [ctx.id],
+      );
+
+      expect(result.stop_reason).toBe(terminal.expectedStop);
+      expect(result.turns_count).toBe(1);
+      expect(rows[0]!.assistants).toBe(terminal.expectedAssistantRows);
+      expect(rows[0]!.tools).toBe('0');
+      expect(toolCalls).toBe(0);
+      expect(tokenUpdates).toBe(1);
+    });
+  }
 });

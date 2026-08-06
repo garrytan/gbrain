@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import {
   toolLoop,
   __setChatTransportForTests,
+  __setGenerateTextTransportForTests,
   configureGateway,
   resetGateway,
   type ChatBlock,
@@ -20,6 +21,7 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
   });
   afterEach(() => {
     __setChatTransportForTests(null);
+    __setGenerateTextTransportForTests(null);
     resetGateway();
   });
 
@@ -33,16 +35,25 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
       providerId: 'anthropic',
     }));
 
+    const usageCalls: Array<{ turnIdx: number; input: number; output: number }> = [];
     const result = await toolLoop({
       initialMessages: [{ role: 'user', content: 'hi' }],
       tools: [],
       toolHandlers: new Map(),
+      onTurnUsage: async (turnIdx, usage) => {
+        usageCalls.push({
+          turnIdx,
+          input: usage.input_tokens,
+          output: usage.output_tokens,
+        });
+      },
     });
 
     expect(result.stopReason).toBe('end');
     expect(result.finalText).toBe('hello world');
     expect(result.totalTurns).toBe(0); // First turn ended cleanly without tool dispatch
     expect(result.totalUsage.input_tokens).toBe(5);
+    expect(usageCalls).toEqual([{ turnIdx: 0, input: 5, output: 2 }]);
   });
 
   it('preserves partial text and reports max_tokens on length stop_reason', async () => {
@@ -153,6 +164,164 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
     expect(result.stopReason).toBe('unrecoverable');
   });
 
+  it('rejects a mixed SDK tool-call batch when one call is schema-invalid', async () => {
+    __setGenerateTextTransportForTests((async () => ({
+      content: [
+        { type: 'tool-call', toolCallId: 'tc-valid', toolName: 'work', input: { value: 1 } },
+        {
+          type: 'tool-call',
+          toolCallId: 'tc-invalid',
+          toolName: 'work',
+          input: { value: 'wrong shape' },
+          dynamic: true,
+          invalid: true,
+          error: new Error('tool input did not match its schema'),
+        },
+      ],
+      text: '',
+      toolCalls: [],
+      finishReason: 'tool-calls',
+      usage: { inputTokens: 7, outputTokens: 5 },
+      providerMetadata: {},
+    })) as any);
+
+    let toolWasCalled = false;
+    let toolStartWasPersisted = false;
+    let assistantTurnWasPersisted = false;
+    let usageCallbacks = 0;
+    const result = await toolLoop({
+      model: 'anthropic:claude-sonnet-4-6',
+      initialMessages: [{ role: 'user', content: 'use the work tool' }],
+      tools: [{
+        name: 'work',
+        description: 'work',
+        inputSchema: {
+          type: 'object',
+          properties: { value: { type: 'number' } },
+          required: ['value'],
+        },
+      }],
+      toolHandlers: new Map([['work', {
+        idempotent: true,
+        async execute() { toolWasCalled = true; },
+      }]]),
+      onToolCallStart: async () => {
+        toolStartWasPersisted = true;
+        return { gbrainToolUseId: 'should-not-be-used' };
+      },
+      onAssistantTurn: async () => { assistantTurnWasPersisted = true; },
+      onTurnUsage: async () => { usageCallbacks++; },
+    });
+
+    expect(toolWasCalled).toBe(false);
+    expect(toolStartWasPersisted).toBe(false);
+    expect(assistantTurnWasPersisted).toBe(false);
+    expect(usageCallbacks).toBe(1);
+    expect(result.stopReason).toBe('unrecoverable');
+    expect(result.messages.at(-1)?.content).toEqual([
+      { type: 'tool-call', toolCallId: 'tc-valid', toolName: 'work', input: { value: 1 } },
+      { type: 'tool-call', toolCallId: 'tc-invalid', toolName: 'work', input: { value: 'wrong shape' }, invalid: true },
+    ]);
+  });
+
+  it('preserves the invalid marker from the SDK toolCalls fallback shape', async () => {
+    __setGenerateTextTransportForTests((async () => ({
+      content: [],
+      text: '',
+      toolCalls: [
+        { type: 'tool-call', toolCallId: 'tc-valid', toolName: 'work', input: { value: 1 } },
+        {
+          type: 'tool-call',
+          toolCallId: 'tc-invalid',
+          toolName: 'work',
+          input: { value: 'wrong shape' },
+          dynamic: true,
+          invalid: true,
+          error: new Error('tool input did not match its schema'),
+        },
+      ],
+      finishReason: 'tool-calls',
+      usage: { inputTokens: 7, outputTokens: 5 },
+      providerMetadata: {},
+    })) as any);
+
+    let toolWasCalled = false;
+    let assistantTurnWasPersisted = false;
+    const result = await toolLoop({
+      model: 'anthropic:claude-sonnet-4-6',
+      initialMessages: [{ role: 'user', content: 'use the work tool' }],
+      tools: [{ name: 'work', description: 'work', inputSchema: { type: 'object' } }],
+      toolHandlers: new Map([['work', {
+        idempotent: true,
+        async execute() { toolWasCalled = true; },
+      }]]),
+      onAssistantTurn: async () => { assistantTurnWasPersisted = true; },
+    });
+
+    expect(toolWasCalled).toBe(false);
+    expect(assistantTurnWasPersisted).toBe(false);
+    expect(result.stopReason).toBe('unrecoverable');
+    expect(result.messages.at(-1)?.content).toEqual([
+      { type: 'tool-call', toolCallId: 'tc-valid', toolName: 'work', input: { value: 1 } },
+      { type: 'tool-call', toolCallId: 'tc-invalid', toolName: 'work', input: { value: 'wrong shape' }, invalid: true },
+    ]);
+  });
+
+  for (const malformed of [
+    {
+      label: 'empty tool-call id',
+      blocks: [{ type: 'tool-call', toolCallId: '', toolName: 'work', input: {} }],
+    },
+    {
+      label: 'blank tool name',
+      blocks: [{ type: 'tool-call', toolCallId: 'tc-blank-name', toolName: '   ', input: {} }],
+    },
+    {
+      label: 'missing tool input',
+      blocks: [{ type: 'tool-call', toolCallId: 'tc-no-input', toolName: 'work', input: undefined }],
+    },
+    {
+      label: 'duplicate tool-call ids',
+      blocks: [
+        { type: 'tool-call', toolCallId: 'tc-duplicate', toolName: 'work', input: { value: 1 } },
+        { type: 'tool-call', toolCallId: 'tc-duplicate', toolName: 'work', input: { value: 2 } },
+      ],
+    },
+  ] as const) {
+    it(`rejects ${malformed.label} before persistence or dispatch`, async () => {
+      __setChatTransportForTests(async () => ({
+        text: '',
+        blocks: malformed.blocks as unknown as ChatBlock[],
+        stopReason: 'tool_calls',
+        usage: { input_tokens: 2, output_tokens: 2, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'anthropic:claude-sonnet-4-6',
+        providerId: 'anthropic',
+      }));
+
+      let toolWasCalled = false;
+      let toolStartWasPersisted = false;
+      let assistantTurnWasPersisted = false;
+      const result = await toolLoop({
+        initialMessages: [{ role: 'user', content: 'use the work tool' }],
+        tools: [{ name: 'work', description: 'work', inputSchema: { type: 'object' } }],
+        toolHandlers: new Map([['work', {
+          idempotent: true,
+          async execute() { toolWasCalled = true; },
+        }]]),
+        onToolCallStart: async () => {
+          toolStartWasPersisted = true;
+          return { gbrainToolUseId: 'should-not-be-used' };
+        },
+        onAssistantTurn: async () => { assistantTurnWasPersisted = true; },
+      });
+
+      expect(toolWasCalled).toBe(false);
+      expect(toolStartWasPersisted).toBe(false);
+      expect(assistantTurnWasPersisted).toBe(false);
+      expect(result.stopReason).toBe('unrecoverable');
+    });
+  }
+
   it('dispatches a single tool call and feeds the result back to the next turn', async () => {
     let turn = 0;
     __setChatTransportForTests(async () => {
@@ -189,10 +358,18 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
       },
     };
 
+    const usageCalls: Array<{ turnIdx: number; input: number; output: number }> = [];
     const result = await toolLoop({
       initialMessages: [{ role: 'user', content: 'find foo' }],
       tools: [{ name: 'search', description: 'search the brain', inputSchema: { type: 'object' } }],
       toolHandlers: new Map([['search', handler]]),
+      onTurnUsage: async (turnIdx, usage) => {
+        usageCalls.push({
+          turnIdx,
+          input: usage.input_tokens,
+          output: usage.output_tokens,
+        });
+      },
     });
 
     expect(toolWasCalled).toBe(true);
@@ -200,6 +377,10 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
     expect(result.finalText).toBe('final answer');
     expect(result.totalUsage.input_tokens).toBe(25); // 10 + 15
     expect(result.totalUsage.output_tokens).toBe(9); // 4 + 5
+    expect(usageCalls).toEqual([
+      { turnIdx: 0, input: 10, output: 4 },
+      { turnIdx: 1, input: 15, output: 5 },
+    ]);
   });
 
   it('captures persistence callbacks in order: assistant → tool start → tool complete', async () => {
@@ -426,25 +607,36 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
     expect(result.totalTurns).toBeGreaterThanOrEqual(3);
   });
 
-  it('returns refusal reason without dispatching tools when stopReason=refusal', async () => {
-    __setChatTransportForTests(async () => ({
-      text: 'I cannot help with that',
-      blocks: [{ type: 'text', text: 'I cannot help with that' }] as ChatBlock[],
-      stopReason: 'refusal',
-      usage: { input_tokens: 1, output_tokens: 5, cache_read_tokens: 0, cache_creation_tokens: 0 },
-      model: 'anthropic:claude-sonnet-4-6',
-      providerId: 'anthropic',
-    }));
+  for (const terminal of [
+    { provider: 'refusal', expected: 'refusal', text: 'I cannot help with that' },
+    { provider: 'content_filter', expected: 'content_filter', text: 'Response filtered' },
+  ] as const) {
+    it(`keeps ${terminal.provider} turns out of persistence and dispatch`, async () => {
+      __setChatTransportForTests(async () => ({
+        text: terminal.text,
+        blocks: [{ type: 'text', text: terminal.text }] as ChatBlock[],
+        stopReason: terminal.provider,
+        usage: { input_tokens: 1, output_tokens: 5, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'anthropic:claude-sonnet-4-6',
+        providerId: 'anthropic',
+      }));
 
-    let toolWasCalled = false;
-    const result = await toolLoop({
-      initialMessages: [{ role: 'user', content: 'bad request' }],
-      tools: [{ name: 'work', description: 'w', inputSchema: { type: 'object' } }],
-      toolHandlers: new Map([['work', { idempotent: true, async execute() { toolWasCalled = true; return null; } }]]),
+      let toolWasCalled = false;
+      let assistantTurnWasPersisted = false;
+      let usageCallbacks = 0;
+      const result = await toolLoop({
+        initialMessages: [{ role: 'user', content: 'bad request' }],
+        tools: [{ name: 'work', description: 'w', inputSchema: { type: 'object' } }],
+        toolHandlers: new Map([['work', { idempotent: true, async execute() { toolWasCalled = true; return null; } }]]),
+        onAssistantTurn: async () => { assistantTurnWasPersisted = true; },
+        onTurnUsage: async () => { usageCallbacks++; },
+      });
+
+      expect(toolWasCalled).toBe(false);
+      expect(assistantTurnWasPersisted).toBe(false);
+      expect(usageCallbacks).toBe(1);
+      expect(result.stopReason).toBe(terminal.expected);
+      expect(result.finalText).toBe(terminal.text);
     });
-
-    expect(toolWasCalled).toBe(false);
-    expect(result.stopReason).toBe('refusal');
-    expect(result.finalText).toBe('I cannot help with that');
-  });
+  }
 });
