@@ -20,6 +20,7 @@ import {
 const HELPER_PATH = fileURLToPath(new URL("./parse_document.py", import.meta.url));
 const MAX_INPUT_BYTES = 32 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
+const MAX_DIAGNOSTIC_OUTPUT_BYTES = 64 * 1024;
 const PARSER_TIMEOUT_MS = 60_000;
 
 const PreflightSchema = z.strictObject({
@@ -56,6 +57,37 @@ const ParserOutputSchema = z.strictObject({
 
 export type DocumentParserPreflight = z.output<typeof PreflightSchema>;
 
+async function readBoundedStream(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes: number,
+  onOverflow: () => void,
+): Promise<Buffer> {
+  const reader = stream.getReader();
+  const chunks: Buffer[] = [];
+  let bufferedBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const remaining = maxBytes - bufferedBytes;
+      if (value.byteLength > remaining) {
+        if (remaining > 0) {
+          chunks.push(Buffer.from(value.subarray(0, remaining)));
+          bufferedBytes += remaining;
+        }
+        onOverflow();
+        await reader.cancel().catch(() => undefined);
+        break;
+      }
+      chunks.push(Buffer.from(value));
+      bufferedBytes += value.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, bufferedBytes);
+}
+
 async function runProcess(argv: string[], timeoutMs: number): Promise<Buffer> {
   const processHandle = Bun.spawn(argv, {
     stdin: "ignore",
@@ -67,30 +99,39 @@ async function runProcess(argv: string[], timeoutMs: number): Promise<Buffer> {
       PYTHONUTF8: "1",
     },
   });
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    processHandle.kill();
-  }, timeoutMs);
+  let terminationError: CoeContractError | undefined;
+  const terminate = (error: CoeContractError) => {
+    if (terminationError) return;
+    terminationError = error;
+    processHandle.kill("SIGKILL");
+  };
+  const timer = setTimeout(() => terminate(
+    new CoeContractError("policy_violation", "Document parser exceeded its time limit"),
+  ), timeoutMs);
   try {
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(processHandle.stdout).arrayBuffer(),
-      new Response(processHandle.stderr).arrayBuffer(),
+    const results = await Promise.allSettled([
+      readBoundedStream(processHandle.stdout, MAX_OUTPUT_BYTES, () => terminate(
+        new CoeContractError("policy_violation", "Document parser output exceeds the configured byte limit"),
+      )),
+      readBoundedStream(processHandle.stderr, MAX_DIAGNOSTIC_OUTPUT_BYTES, () => terminate(
+        new CoeContractError("policy_violation", "Document parser diagnostic output exceeds the configured byte limit"),
+      )),
       processHandle.exited,
     ]);
-    if (timedOut) throw new CoeContractError("policy_violation", "Document parser exceeded its time limit");
+    if (terminationError) throw terminationError;
+    const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (rejected) throw rejected.reason;
+    const stdout = (results[0] as PromiseFulfilledResult<Buffer>).value;
+    const stderr = (results[1] as PromiseFulfilledResult<Buffer>).value;
+    const exitCode = (results[2] as PromiseFulfilledResult<number>).value;
     if (exitCode !== 0) {
-      const diagnostic = Buffer.from(stderr).toString("utf8", 0, 300).replace(/\s+/g, " ").trim();
+      const diagnostic = stderr.toString("utf8", 0, 300).replace(/\s+/g, " ").trim();
       throw new CoeContractError(
         "invalid_contract",
         diagnostic ? `Document parser failed: ${diagnostic}` : `Document parser exited with status ${exitCode}`,
       );
     }
-    const output = Buffer.from(stdout);
-    if (output.byteLength > MAX_OUTPUT_BYTES) {
-      throw new CoeContractError("policy_violation", "Document parser output exceeds the configured byte limit");
-    }
-    return output;
+    return stdout;
   } finally {
     clearTimeout(timer);
   }
@@ -129,6 +170,7 @@ export class PythonDocumentNormalizer implements DocumentNormalizer {
         offsets: "utf8-bytes",
         max_input_bytes: MAX_INPUT_BYTES,
         max_output_bytes: MAX_OUTPUT_BYTES,
+        max_diagnostic_output_bytes: MAX_DIAGNOSTIC_OUTPUT_BYTES,
         timeout_ms: PARSER_TIMEOUT_MS,
       })),
     };
