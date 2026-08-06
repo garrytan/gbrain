@@ -15,7 +15,11 @@ import { computeEffectiveDate } from './effective-date.ts';
 import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
 import { logSlugFallback } from './audit-slug-fallback.ts';
 import { resolveContextualRetrievalMode } from './contextual-retrieval-resolver.ts';
-import { assessContentSanity, ContentSanityBlockError } from './content-sanity.ts';
+import {
+  assessContentSanity,
+  ContentSanityBlockError,
+  resolveContentSanityDisposition,
+} from './content-sanity.ts';
 import { loadOperatorLiterals } from './content-sanity-literals.ts';
 import { logContentSanityAssessment } from './audit/content-sanity-audit.ts';
 import { isEmbedSkipped, buildEmbedSkipMarker, EMBED_SKIP_KEY } from './embed-skip.ts';
@@ -438,10 +442,6 @@ export async function importFromContent(
       cs.disabled === true || process.env.GBRAIN_NO_SANITY === '1';
     const extra_literals =
       cs.junk_patterns_enabled !== false && !sanityDisabled ? loadOperatorLiterals() : [];
-    // Disposition for the high-confidence junk path: quarantine (hide) by
-    // default, or reject (throw → sync-failure) when the operator opts in.
-    const junkDisposition: 'quarantine' | 'reject' =
-      cs.junk_disposition === 'reject' ? 'reject' : 'quarantine';
     const sanityResult = assessContentSanity({
       compiled_truth: parsed.compiled_truth,
       timeline: parsed.timeline ?? '',
@@ -454,8 +454,12 @@ export async function importFromContent(
       page_kind: parsed.type,
       extra_literals,
     });
+    const sanityDisposition = resolveContentSanityDisposition(sanityResult, {
+      disabled: sanityDisabled,
+      junk_disposition: cs.junk_disposition,
+    });
 
-    if (sanityDisabled) {
+    if (sanityDisposition === 'bypass') {
       // Kill-switch active: loud stderr per offending ingest. Operator
       // explicitly opted into the bypass and gets noisy feedback every
       // time it fires so they remember the gate is off. Audit as a
@@ -468,7 +472,16 @@ export async function importFromContent(
           `[gbrain] content-sanity bypass (GBRAIN_NO_SANITY=1): ${slug} — ${sanityResult.reason_messages.join('; ')}\n`,
         );
       }
-    } else if (sanityResult.shouldQuarantine) {
+    } else if (sanityDisposition === 'reject') {
+      // Operator opted into hard-block. Throw with PAGE_QUARANTINE so
+      // classifyErrorCode bins it. Existing exception flow at every wrapper
+      // site (import errors counter, put_page MCP envelope, sync failure
+      // record) fires through this single throw point.
+      logContentSanityAssessment(slug, sourceId ?? 'default', sanityResult, {
+        disposition: 'reject',
+      });
+      throw new ContentSanityBlockError(sanityResult);
+    } else if (sanityDisposition === 'quarantine') {
       const reason = sanityResult.quarantine_reason!;
       const detail = reason === 'oversized'
         ? `${sanityResult.bytes} bytes exceeds configured warn threshold`
@@ -476,18 +489,6 @@ export async function importFromContent(
             ...sanityResult.junk_pattern_matches,
             ...sanityResult.literal_substring_matches,
           ].join(', ');
-      // junk_disposition controls only junk/literal findings. A size-only
-      // quarantine is a retrieval policy, never an ingest rejection.
-      if (junkDisposition === 'reject' && reason !== 'oversized') {
-        // Operator opted into hard-block. Throw with PAGE_QUARANTINE so
-        // classifyErrorCode bins it. Existing exception flow at every
-        // wrapper site (import errors counter, put_page MCP envelope,
-        // sync failure record) fires through this single throw point.
-        logContentSanityAssessment(slug, sourceId ?? 'default', sanityResult, {
-          disposition: 'reject',
-        });
-        throw new ContentSanityBlockError(sanityResult);
-      }
       // Default: quarantine (hide). Page lands with the marker, writes
       // zero chunks (chunking guard below widens to isQuarantined), is
       // excluded from search via QUARANTINE_FILTER_FRAGMENT, reviewable
@@ -506,7 +507,7 @@ export async function importFromContent(
       process.stderr.write(
         `[gbrain] content-sanity quarantine: ${slug} — ${detail} (hidden from search, reviewable via 'gbrain quarantine list')\n`,
       );
-    } else if (sanityResult.shouldFlag) {
+    } else if (sanityDisposition === 'flag') {
       // Fuzzy markup-heavy OR oversize. The page stays usable; the agent
       // gets warned (Garry's paradigm — "this is odd, you decide").
       const flagReason = sanityResult.flag_reason!; // non-null when shouldFlag

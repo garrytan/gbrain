@@ -270,6 +270,35 @@ export class ContentSanityBlockError extends Error {
   }
 }
 
+/** Effective action after applying the operator policy to a pure assessment.
+ * Keep this resolver shared by ingest and operator preview surfaces so a
+ * dry-run cannot promise a mutation that the real import path will bypass or
+ * reject. Size-only quarantine is intentionally never converted to reject. */
+export type ContentSanityDisposition =
+  | 'allow'
+  | 'bypass'
+  | 'flag'
+  | 'quarantine'
+  | 'reject';
+
+export function resolveContentSanityDisposition(
+  result: ContentSanityResult,
+  opts: {
+    disabled?: boolean;
+    junk_disposition?: 'quarantine' | 'reject';
+  } = {},
+): ContentSanityDisposition {
+  if (opts.disabled === true) return 'bypass';
+  if (result.shouldQuarantine) {
+    if (opts.junk_disposition === 'reject' && result.quarantine_reason !== 'oversized') {
+      return 'reject';
+    }
+    return 'quarantine';
+  }
+  if (result.shouldFlag) return 'flag';
+  return 'allow';
+}
+
 /** Result of the prose-vs-markup pass. `markup_ratio` is the fraction of
  *  the body (with code excluded from BOTH numerator and denominator) that
  *  is markup syntax rather than prose. High ratio = nav/boilerplate shape. */

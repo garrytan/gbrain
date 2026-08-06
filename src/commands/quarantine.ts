@@ -177,14 +177,20 @@ async function runScan(engine: BrainEngine, args: string[]): Promise<void> {
   // uses the SAME thresholds importFromContent will use on --apply — otherwise
   // a brain with custom bytes_warn / max_markup_ratio / prose_check_enabled
   // sees a dry-run count that doesn't match what --apply actually does.
-  const { assessContentSanity } = await import('../core/content-sanity.ts');
+  const {
+    assessContentSanity,
+    ContentSanityBlockError,
+    resolveContentSanityDisposition,
+  } = await import('../core/content-sanity.ts');
   const { loadOperatorLiterals } = await import('../core/content-sanity-literals.ts');
   const { loadConfig, loadConfigWithEngine } = await import('../core/config.ts');
   let effCs: NonNullable<import('../core/config.ts').GBrainConfig['content_sanity']> = {};
   try {
     effCs = (await loadConfigWithEngine(engine, loadConfig()))?.content_sanity ?? {};
   } catch { /* fall back to defaults if DB-config lift fails */ }
-  const scanLiterals = effCs.junk_patterns_enabled !== false ? loadOperatorLiterals() : [];
+  const sanityDisabled = effCs.disabled === true || process.env.GBRAIN_NO_SANITY === '1';
+  const scanLiterals =
+    effCs.junk_patterns_enabled !== false && !sanityDisabled ? loadOperatorLiterals() : [];
 
   const refs = await engine.listAllPageRefs();
   let scanned = 0;
@@ -215,11 +221,13 @@ async function runScan(engine: BrainEngine, args: string[]): Promise<void> {
       page_kind: page.type,
       extra_literals: scanLiterals,
     });
-    const outcome: 'quarantine' | 'flag' | null = res.shouldQuarantine
-      ? 'quarantine'
-      : res.shouldFlag
-        ? 'flag'
-        : null;
+    const disposition = resolveContentSanityDisposition(res, {
+      disabled: sanityDisabled,
+      junk_disposition: effCs.junk_disposition,
+    });
+    if (disposition === 'reject') throw new ContentSanityBlockError(res);
+    const outcome: 'quarantine' | 'flag' | null =
+      disposition === 'quarantine' || disposition === 'flag' ? disposition : null;
     if (!outcome) continue;
 
     // An equivalent flag is already applied. Preserve scan idempotence and
