@@ -216,6 +216,11 @@ export interface PageInput {
   frontmatter?: Record<string, unknown>;
   content_hash?: string;
   /**
+   * v0.42.67: tags are now included in content_hash computation.
+   * When omitted, defaults to [] for backward compatibility.
+   */
+  tags?: string[];
+  /**
    * v0.19.0: distinguishes markdown vs code pages at the DB level. Defaults
    * to 'markdown' when omitted so existing callers work unchanged. Set to
    * 'code' by importCodeFile; drives orphans filter, auto-link bypass, and

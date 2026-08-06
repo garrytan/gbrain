@@ -84,7 +84,7 @@ import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import * as db from './db.ts';
 import { ConnectionManager } from './connection-manager.ts';
 import { logConnectionEvent } from './connection-audit.ts';
-import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, takeRowToTake, takeHitRowToHit, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
+import { validateSlug, contentHash, contentHashLegacy, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, takeRowToTake, takeHitRowToHit, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery } from './search/sql-ranking.ts';
 import { unverifiedExtractionFragment } from './extraction-review.ts';

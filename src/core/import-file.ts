@@ -36,7 +36,7 @@ import {
 } from './embedding-context.ts';
 import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
 import { normalizeAliasList } from './search/alias-normalize.ts';
-import { isUndefinedTableError, warnOncePerProcess, validateSlug } from './utils.ts';
+import { isUndefinedTableError, warnOncePerProcess, validateSlug, contentHashLegacy } from './utils.ts';
 import { computeCorpusGeneration } from './contextual-retrieval-service.ts';
 import { DEFAULT_SYNOPSIS_MODEL } from './page-summary.ts';
 import { runGuardrails } from './guardrails.ts';
@@ -634,6 +634,16 @@ export async function importFromContent(
 
   if (existing?.content_hash === hash && !opts.forceRechunk) {
     return { slug, status: 'skipped', chunks: 0, parsedPage };
+  }
+
+  // v0.42.68 backward-compat: old hash formula (without tags). If the DB
+  // still holds the legacy hash we skip the page — it will be rehashed
+  // on the next full reindex, avoiding an unnecessary re-embed cycle.
+  if (existing?.content_hash && !opts.forceRechunk) {
+    const legacyHash = contentHashLegacy(parsedPage);
+    if (existing.content_hash === legacyHash) {
+      return { slug, status: 'skipped', chunks: 0, parsedPage };
+    }
   }
 
   // v0.41.13 (#1309) — identity-based cross-slug dedup pre-check.
