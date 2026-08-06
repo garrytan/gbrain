@@ -1,0 +1,339 @@
+[
+  {
+    "schema_name": "source",
+    "value": {
+      "schema_version": "1.0.0",
+      "source_id": "src_1111111111111111111111111111111111111111111111111111111111111111",
+      "source_kind": "report",
+      "title": "Example source",
+      "canonical_uri": "https://example.invalid/source",
+      "authors": [{ "display_name": "Example Author", "identifier": "author-example" }],
+      "publisher": "Example Publisher",
+      "published_at": "2026-08-01",
+      "language": "en",
+      "license": "Example-License",
+      "external_identifiers": [{ "scheme": "custom", "value": "example-source" }],
+      "scope": {
+        "brain_id": "brain-example",
+        "visibility": "private",
+        "owner_principal": "principal-owner",
+        "reader_principals": ["principal-reader"],
+        "source_ids": ["src_1111111111111111111111111111111111111111111111111111111111111111"]
+      },
+      "created_at": "2026-08-04T10:00:00Z",
+      "created_by": { "actor_type": "system", "actor_id": "service-example" }
+    }
+  },
+  {
+    "schema_name": "source_snapshot",
+    "value": {
+      "schema_version": "1.0.0",
+      "snapshot_id": "snp_2222222222222222222222222222222222222222222222222222222222222222",
+      "source_id": "src_1111111111111111111111111111111111111111111111111111111111111111",
+      "acquired_at": "2026-08-04T10:01:00Z",
+      "acquisition_method": "filesystem",
+      "content_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "byte_size": 128,
+      "media_type": "text/plain",
+      "object_key": "objects/sha256/aa/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "active",
+      "scope": {
+        "brain_id": "brain-example",
+        "visibility": "private",
+        "owner_principal": "principal-owner",
+        "reader_principals": ["principal-reader"],
+        "source_ids": ["src_1111111111111111111111111111111111111111111111111111111111111111"]
+      },
+      "created_by": { "actor_type": "system", "actor_id": "service-example" }
+    }
+  },
+  {
+    "schema_name": "normalized_document",
+    "value": {
+      "schema_version": "1.0.0",
+      "normalized_document_id": "ndoc_3333333333333333333333333333333333333333333333333333333333333333",
+      "snapshot_id": "snp_2222222222222222222222222222222222222222222222222222222222222222",
+      "content_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "byte_size": 13,
+      "object_key": "objects/sha256/bb/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "normalizer": {
+        "name": "normalizer-example",
+        "version": "1.0.0",
+        "config_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "sections": [
+        {
+          "section_id": "section-1",
+          "ordinal": 0,
+          "level": 0,
+          "title": "Example section",
+          "normalized_span": {
+            "start": 0,
+            "end": 13
+          },
+          "text_hash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ],
+      "mappings": [
+        {
+          "section_id": "section-1",
+          "normalized_start": 0,
+          "normalized_end": 13,
+          "raw_locator": { "kind": "line_range", "start_line": 1, "end_line": 1 }
+        }
+      ],
+      "warnings": [],
+      "scope": {
+        "brain_id": "brain-example",
+        "visibility": "private",
+        "owner_principal": "principal-owner",
+        "reader_principals": ["principal-reader"],
+        "source_ids": ["src_1111111111111111111111111111111111111111111111111111111111111111"]
+      },
+      "created_at": "2026-08-04T10:02:00Z"
+    }
+  },
+  {
+    "schema_name": "evidence_item",
+    "value": {
+      "schema_version": "1.0.0",
+      "evidence_id": "evd_4444444444444444444444444444444444444444444444444444444444444444",
+      "snapshot_id": "snp_2222222222222222222222222222222222222222222222222222222222222222",
+      "normalized_document_id": "ndoc_3333333333333333333333333333333333333333333333333333333333333333",
+      "section_id": "section-1",
+      "evidence_type": "quote",
+      "normalized_text": "Example fact.",
+      "text_hash": "sha256:f963851716cda80f04b136b37a68b83cd548804f3839aeba671f1a7def62d2bf",
+      "normalized_span": { "start": 0, "end": 13 },
+      "raw_locator": { "kind": "line_range", "start_line": 1, "end_line": 1 },
+      "status": "active",
+      "scope": {
+        "brain_id": "brain-example",
+        "visibility": "private",
+        "owner_principal": "principal-owner",
+        "reader_principals": ["principal-reader"],
+        "source_ids": ["src_1111111111111111111111111111111111111111111111111111111111111111"]
+      },
+      "created_at": "2026-08-04T10:03:00Z"
+    }
+  },
+  {
+    "schema_name": "claim",
+    "value": {
+      "schema_version": "1.0.0",
+      "claim_id": "clm_5555555555555555555555555555555555555555555555555555555555555555",
+      "claim_type": "numeric",
+      "origin": "direct_source",
+      "subject": "example metric",
+      "predicate": "equals",
+      "value": { "kind": "decimal", "value": "42.0" },
+      "statement": "The example metric equals 42.0.",
+      "status": "needs_review",
+      "scope": {
+        "brain_id": "brain-example",
+        "visibility": "private",
+        "owner_principal": "principal-owner",
+        "reader_principals": ["principal-reader"],
+        "source_ids": ["src_1111111111111111111111111111111111111111111111111111111111111111"]
+      },
+      "created_at": "2026-08-04T10:04:00Z",
+      "updated_at": "2026-08-04T10:04:00Z",
+      "created_by": { "actor_type": "system", "actor_id": "service-example" }
+    }
+  },
+  {
+    "schema_name": "claim_evidence_edge",
+    "value": {
+      "schema_version": "1.0.0",
+      "edge_id": "cedge_6666666666666666666666666666666666666666666666666666666666666666",
+      "claim_id": "clm_5555555555555555555555555555555555555555555555555555555555555555",
+      "evidence_id": "evd_4444444444444444444444444444444444444444444444444444444444444444",
+      "relation": "supports",
+      "support_level": "direct",
+      "evidence_span": { "start": 0, "end": 13 },
+      "scope": {
+        "brain_id": "brain-example",
+        "visibility": "private",
+        "owner_principal": "principal-owner",
+        "reader_principals": ["principal-reader"],
+        "source_ids": ["src_1111111111111111111111111111111111111111111111111111111111111111"]
+      },
+      "created_at": "2026-08-04T10:05:00Z",
+      "created_by": { "actor_type": "system", "actor_id": "service-example" }
+    }
+  },
+  {
+    "schema_name": "verification_run",
+    "value": {
+      "schema_version": "1.0.0",
+      "verification_run_id": "vrf_7777777777777777777777777777777777777777777777777777777777777777",
+      "claim_id": "clm_5555555555555555555555555555555555555555555555555555555555555555",
+      "verifier_type": "numeric_recompute",
+      "method": "deterministic",
+      "policy_id": "pol_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "policy_version": "1.0.0",
+      "status": "pass",
+      "input_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "output_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "command": "verify-example --fixture numeric",
+      "metrics": [{ "name": "absolute_error", "value": "0.0", "unit": "count" }],
+      "findings": [],
+      "scope": {
+        "brain_id": "brain-example",
+        "visibility": "private",
+        "owner_principal": "principal-owner",
+        "reader_principals": ["principal-reader"],
+        "source_ids": ["src_1111111111111111111111111111111111111111111111111111111111111111"]
+      },
+      "started_at": "2026-08-04T10:06:00Z",
+      "finished_at": "2026-08-04T10:06:01Z"
+    }
+  },
+  {
+    "schema_name": "retrieval_run",
+    "value": {
+      "schema_version": "1.0.0",
+      "retrieval_run_id": "ret_8888888888888888888888888888888888888888888888888888888888888888",
+      "query_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "policy_id": "pol_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "policy_version": "1.0.0",
+      "filters": {
+        "brain_ids": ["brain-example"],
+        "source_ids": ["src_1111111111111111111111111111111111111111111111111111111111111111"],
+        "claim_types": ["numeric"],
+        "snapshot_statuses": ["active"]
+      },
+      "candidates": [
+        {
+          "evidence_id": "evd_4444444444444444444444444444444444444444444444444444444444444444",
+          "rank": 1,
+          "lexical_score": "0.8",
+          "semantic_score": "0.9",
+          "rerank_score": "0.95",
+          "selected": true
+        }
+      ],
+      "selected_evidence_ids": ["evd_4444444444444444444444444444444444444444444444444444444444444444"],
+      "request_scope": {
+        "brain_id": "brain-example",
+        "visibility": "private",
+        "owner_principal": "principal-owner",
+        "reader_principals": ["principal-reader"],
+        "source_ids": ["src_1111111111111111111111111111111111111111111111111111111111111111"]
+      },
+      "started_at": "2026-08-04T10:07:00Z",
+      "finished_at": "2026-08-04T10:07:01Z"
+    }
+  },
+  {
+    "schema_name": "answer",
+    "value": {
+      "schema_version": "1.0.0",
+      "answer_id": "ans_9999999999999999999999999999999999999999999999999999999999999999",
+      "retrieval_run_id": "ret_8888888888888888888888888888888888888888888888888888888888888888",
+      "query_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "text": "The example metric equals 42.0 [E1].",
+      "answer_claims": [
+        {
+          "answer_claim_id": "acm_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "claim_id": "clm_5555555555555555555555555555555555555555555555555555555555555555",
+          "claim_text": "The example metric equals 42.0.",
+          "support_status": "supported",
+          "evidence_ids": ["evd_4444444444444444444444444444444444444444444444444444444444444444"],
+          "citation_markers": [
+            {
+              "marker": "E1",
+              "evidence_id": "evd_4444444444444444444444444444444444444444444444444444444444444444"
+            }
+          ]
+        }
+      ],
+      "lifecycle_status": "released",
+      "release_decision": "pass",
+      "policy_id": "pol_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "policy_version": "1.0.0",
+      "scope": {
+        "brain_id": "brain-example",
+        "visibility": "private",
+        "owner_principal": "principal-owner",
+        "reader_principals": ["principal-reader"],
+        "source_ids": ["src_1111111111111111111111111111111111111111111111111111111111111111"]
+      },
+      "created_at": "2026-08-04T10:08:00Z",
+      "released_at": "2026-08-04T10:08:01Z"
+    }
+  },
+  {
+    "schema_name": "contradiction",
+    "value": {
+      "schema_version": "1.0.0",
+      "contradiction_id": "ctr_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "left_claim_id": "clm_5555555555555555555555555555555555555555555555555555555555555555",
+      "right_claim_id": "clm_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "status": "open",
+      "resolution": "unresolved",
+      "verification_run_ids": [],
+      "scope": {
+        "brain_id": "brain-example",
+        "visibility": "private",
+        "owner_principal": "principal-owner",
+        "reader_principals": ["principal-reader"],
+        "source_ids": ["src_1111111111111111111111111111111111111111111111111111111111111111"]
+      },
+      "created_at": "2026-08-04T10:09:00Z",
+      "updated_at": "2026-08-04T10:09:00Z"
+    }
+  },
+  {
+    "schema_name": "lifecycle_event",
+    "value": {
+      "schema_version": "1.0.0",
+      "event_id": "evt_dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "aggregate_type": "claim",
+      "aggregate_id": "clm_5555555555555555555555555555555555555555555555555555555555555555",
+      "event_type": "status_changed",
+      "from_status": "needs_review",
+      "to_status": "verified",
+      "reason_code": "verification_passed",
+      "payload_hash": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "actor": { "actor_type": "system", "actor_id": "service-example" },
+      "scope": {
+        "brain_id": "brain-example",
+        "visibility": "private",
+        "owner_principal": "principal-owner",
+        "reader_principals": ["principal-reader"],
+        "source_ids": ["src_1111111111111111111111111111111111111111111111111111111111111111"]
+      },
+      "occurred_at": "2026-08-04T10:10:00Z"
+    }
+  },
+  {
+    "schema_name": "policy",
+    "value": {
+      "schema_version": "1.0.0",
+      "policy_id": "pol_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "policy_version": "1.0.0",
+      "name": "fixture-policy",
+      "fail_closed": true,
+      "unknown_fields": "reject",
+      "release": {
+        "require_verified_claims": true,
+        "block_on_contradiction": true,
+        "block_on_retracted_evidence": true,
+        "require_complete_citations": true
+      },
+      "llm_judge": { "enabled": true, "can_release": false },
+      "claim_policies": [
+        {
+          "claim_type": "numeric",
+          "required_verifiers": ["numeric_recompute", "source_alignment"],
+          "minimum_direct_support": 1,
+          "human_review_required": false
+        }
+      ],
+      "retention": { "preserve_tombstones": true, "preserve_verification_runs": true },
+      "compatibility": { "readable_versions": ["1.0.0"], "writable_version": "1.0.0" },
+      "created_at": "2026-08-04T10:11:00Z"
+    }
+  }
+]

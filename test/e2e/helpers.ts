@@ -35,6 +35,17 @@ const FIXTURES_DIR = resolve(import.meta.dir, 'fixtures');
 let engine: PostgresEngine | null = null;
 
 const ALL_TABLES = [
+  // CoE Lite v1: projections only. Delete dependency leaves before roots.
+  'coe_evidence_items',
+  'coe_normalized_mappings',
+  'coe_document_sections',
+  'coe_normalized_documents',
+  'coe_acquisition_redirects',
+  'coe_snapshot_events',
+  'coe_acquisitions',
+  'coe_snapshots',
+  'coe_raw_objects',
+  'coe_sources',
   // v0.31: facts must come BEFORE pages too (FK to sources, but tests
   // seed via direct SQL so the row stays referenced until truncated).
   'facts',

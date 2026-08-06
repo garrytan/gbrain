@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0.0",
+  "policy_id": "pol_b4d3c6caaeecb3f2582bf370177644bfd5ffae4594611a86e79e2e9f1464b1ea",
+  "policy_version": "1.0.0",
+  "name": "coe-snapshot-retention",
+  "system_of_record": "content_addressed_filesystem",
+  "projection_disposition": "rebuildable",
+  "raw_objects": {
+    "hash_algorithm": "sha256",
+    "immutable": true,
+    "preserve_active": true,
+    "preserve_superseded": true,
+    "preserve_retracted": true,
+    "preserve_quarantined": true
+  },
+  "canonical_records": {
+    "write_once": true,
+    "preserve_sources": true,
+    "preserve_snapshots": true,
+    "preserve_lifecycle_events": true,
+    "preserve_acquisition_journal": true
+  },
+  "temporary_files": {
+    "staging_max_age_ms": 86400000,
+    "cleanup_scope": "staging_only"
+  },
+  "logical_deletion": {
+    "physical_delete_allowed": false,
+    "required_mechanism": "lifecycle_event",
+    "retain_raw_provenance": true
+  },
+  "created_at": "2026-08-04T12:00:00.000Z"
+}

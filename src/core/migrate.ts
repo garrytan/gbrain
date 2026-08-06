@@ -523,6 +523,7 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+
   {
     version: 23,
     name: 'files_source_id_page_id_ledger',
@@ -3231,6 +3232,299 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 67,
+    name: 'coe_snapshot_ledger',
+    // CoE Lite Phase 2: additive, rebuildable projections only. Canonical raw
+    // bytes and immutable records remain in the content-addressed registry.
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS coe_sources (
+        source_id TEXT PRIMARY KEY,
+        schema_version TEXT NOT NULL,
+        record_hash TEXT NOT NULL,
+        record_json JSONB NOT NULL,
+        scope_json JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        projected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CHECK (record_hash LIKE 'sha256:%' AND length(record_hash) = 71)
+      );
+      CREATE TABLE IF NOT EXISTS coe_raw_objects (
+        content_hash TEXT PRIMARY KEY,
+        object_key TEXT NOT NULL UNIQUE,
+        byte_size BIGINT NOT NULL CHECK (byte_size >= 0),
+        created_at TIMESTAMPTZ NOT NULL,
+        verified_at TIMESTAMPTZ NOT NULL,
+        CHECK (content_hash LIKE 'sha256:%' AND length(content_hash) = 71),
+        CHECK (object_key = 'objects/sha256/' || substr(content_hash, 8, 2) || '/' || substr(content_hash, 8))
+      );
+      CREATE TABLE IF NOT EXISTS coe_snapshots (
+        snapshot_id TEXT PRIMARY KEY,
+        source_id TEXT NOT NULL REFERENCES coe_sources(source_id) ON DELETE RESTRICT,
+        schema_version TEXT NOT NULL,
+        content_hash TEXT NOT NULL REFERENCES coe_raw_objects(content_hash) ON DELETE RESTRICT,
+        media_type TEXT NOT NULL,
+        byte_size BIGINT NOT NULL CHECK (byte_size >= 0),
+        object_key TEXT NOT NULL,
+        supersedes_snapshot_id TEXT REFERENCES coe_snapshots(snapshot_id) ON DELETE RESTRICT,
+        initial_status TEXT NOT NULL CHECK (initial_status IN ('active', 'quarantined')),
+        status TEXT NOT NULL CHECK (status IN ('active', 'quarantined', 'superseded', 'retracted')),
+        record_hash TEXT NOT NULL,
+        record_json JSONB NOT NULL,
+        scope_json JSONB NOT NULL,
+        acquired_at TIMESTAMPTZ NOT NULL,
+        projected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        retracted_at TIMESTAMPTZ,
+        retraction_reason TEXT,
+        retraction_event_id TEXT,
+        UNIQUE (source_id, content_hash, media_type),
+        UNIQUE (snapshot_id, source_id),
+        CHECK (record_hash LIKE 'sha256:%' AND length(record_hash) = 71),
+        CHECK (object_key = 'objects/sha256/' || substr(content_hash, 8, 2) || '/' || substr(content_hash, 8))
+      );
+      CREATE INDEX IF NOT EXISTS idx_coe_snapshots_source_media_time
+        ON coe_snapshots(source_id, media_type, acquired_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_coe_snapshots_status ON coe_snapshots(status);
+      CREATE TABLE IF NOT EXISTS coe_acquisitions (
+        event_id TEXT PRIMARY KEY,
+        source_id TEXT NOT NULL REFERENCES coe_sources(source_id) ON DELETE RESTRICT,
+        snapshot_id TEXT,
+        requested_uri TEXT NOT NULL,
+        final_uri TEXT NOT NULL,
+        acquisition_method TEXT NOT NULL CHECK (acquisition_method IN ('upload', 'http', 'filesystem', 'api', 'legacy_import')),
+        outcome TEXT NOT NULL CHECK (outcome IN ('promoted', 'duplicate', 'quarantined', 'rejected', 'failed', 'restored')),
+        expected_hash TEXT,
+        actual_hash TEXT,
+        error_code TEXT,
+        quarantine_reasons JSONB NOT NULL,
+        record_hash TEXT NOT NULL,
+        record_json JSONB NOT NULL,
+        started_at TIMESTAMPTZ NOT NULL,
+        finished_at TIMESTAMPTZ NOT NULL,
+        CHECK (actual_hash IS NULL OR (actual_hash LIKE 'sha256:%' AND length(actual_hash) = 71)),
+        CHECK ((outcome = 'failed' AND error_code IS NOT NULL AND snapshot_id IS NULL)
+            OR (outcome <> 'failed' AND actual_hash IS NOT NULL)),
+        CHECK (record_hash LIKE 'sha256:%' AND length(record_hash) = 71),
+        FOREIGN KEY (snapshot_id, source_id)
+          REFERENCES coe_snapshots(snapshot_id, source_id) ON DELETE RESTRICT
+      );
+      CREATE INDEX IF NOT EXISTS idx_coe_acquisitions_source_time
+        ON coe_acquisitions(source_id, started_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_coe_acquisitions_snapshot
+        ON coe_acquisitions(snapshot_id) WHERE snapshot_id IS NOT NULL;
+      CREATE TABLE IF NOT EXISTS coe_acquisition_redirects (
+        event_id TEXT NOT NULL REFERENCES coe_acquisitions(event_id) ON DELETE RESTRICT,
+        hop INTEGER NOT NULL CHECK (hop >= 0),
+        from_uri TEXT NOT NULL,
+        to_uri TEXT NOT NULL,
+        status_code INTEGER NOT NULL CHECK (status_code BETWEEN 300 AND 399),
+        PRIMARY KEY (event_id, hop)
+      );
+      CREATE TABLE IF NOT EXISTS coe_snapshot_events (
+        event_id TEXT PRIMARY KEY,
+        snapshot_id TEXT NOT NULL REFERENCES coe_snapshots(snapshot_id) ON DELETE RESTRICT,
+        event_type TEXT NOT NULL,
+        from_status TEXT,
+        to_status TEXT,
+        reason_code TEXT NOT NULL,
+        payload_hash TEXT NOT NULL,
+        event_json JSONB NOT NULL,
+        occurred_at TIMESTAMPTZ NOT NULL,
+        CHECK (payload_hash LIKE 'sha256:%' AND length(payload_hash) = 71)
+      );
+      CREATE INDEX IF NOT EXISTS idx_coe_snapshot_events_snapshot_time
+        ON coe_snapshot_events(snapshot_id, occurred_at);
+    `,
+    handler: async (engine) => {
+      if (engine.kind !== 'postgres') return;
+      await engine.runMigration(
+        67,
+        `ALTER TABLE coe_sources ENABLE ROW LEVEL SECURITY;
+         ALTER TABLE coe_raw_objects ENABLE ROW LEVEL SECURITY;
+         ALTER TABLE coe_snapshots ENABLE ROW LEVEL SECURITY;
+         ALTER TABLE coe_acquisitions ENABLE ROW LEVEL SECURITY;
+         ALTER TABLE coe_acquisition_redirects ENABLE ROW LEVEL SECURITY;
+         ALTER TABLE coe_snapshot_events ENABLE ROW LEVEL SECURITY;`,
+      );
+    },
+    verify: async (engine) => {
+      if (engine.kind === 'postgres') {
+        const rows = await engine.executeRaw<{ count: number | string }>(
+          `SELECT COUNT(*) AS count
+             FROM pg_class c
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public'
+              AND c.relkind = 'r'
+              AND c.relrowsecurity
+              AND c.relname IN (
+                'coe_sources',
+                'coe_raw_objects',
+                'coe_snapshots',
+                'coe_acquisitions',
+                'coe_acquisition_redirects',
+                'coe_snapshot_events'
+              )`,
+        );
+        return Number(rows[0]?.count ?? 0) === 6;
+      }
+      const rows = await engine.executeRaw<{ count: number | string }>(
+        `SELECT COUNT(*) AS count
+           FROM information_schema.tables
+          WHERE table_schema = 'public'
+            AND table_name IN (
+              'coe_sources',
+              'coe_raw_objects',
+              'coe_snapshots',
+              'coe_acquisitions',
+              'coe_acquisition_redirects',
+              'coe_snapshot_events'
+            )`,
+      );
+      return Number(rows[0]?.count ?? 0) === 6;
+    },
+  },
+  {
+    version: 68,
+    name: 'coe_evidence_ledger',
+    // CoE Lite Phase 3: normalized documents, raw mappings, section containers,
+    // and EvidenceItems are rebuildable SQL projections of immutable bundles.
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS coe_normalized_documents (
+        normalized_document_id TEXT PRIMARY KEY,
+        snapshot_id TEXT NOT NULL REFERENCES coe_snapshots(snapshot_id) ON DELETE RESTRICT,
+        schema_version TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        byte_size BIGINT NOT NULL CHECK (byte_size > 0),
+        object_key TEXT NOT NULL,
+        normalizer_name TEXT NOT NULL,
+        normalizer_version TEXT NOT NULL,
+        normalizer_config_hash TEXT NOT NULL,
+        record_hash TEXT NOT NULL,
+        record_json JSONB NOT NULL,
+        scope_json JSONB NOT NULL,
+        warnings_json JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        projected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (snapshot_id, normalizer_name, normalizer_version, normalizer_config_hash),
+        UNIQUE (normalized_document_id, snapshot_id),
+        CHECK (content_hash LIKE 'sha256:%' AND length(content_hash) = 71),
+        CHECK (object_key = 'objects/sha256/' || substr(content_hash, 8, 2) || '/' || substr(content_hash, 8)),
+        CHECK (normalizer_config_hash LIKE 'sha256:%' AND length(normalizer_config_hash) = 71),
+        CHECK (record_hash LIKE 'sha256:%' AND length(record_hash) = 71)
+      );
+      CREATE INDEX IF NOT EXISTS idx_coe_normalized_documents_snapshot
+        ON coe_normalized_documents(snapshot_id, created_at);
+      CREATE TABLE IF NOT EXISTS coe_document_sections (
+        normalized_document_id TEXT NOT NULL REFERENCES coe_normalized_documents(normalized_document_id) ON DELETE RESTRICT,
+        section_id TEXT NOT NULL,
+        parent_section_id TEXT,
+        ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+        level INTEGER NOT NULL CHECK (level >= 0),
+        title TEXT,
+        normalized_start BIGINT NOT NULL CHECK (normalized_start >= 0),
+        normalized_end BIGINT NOT NULL CHECK (normalized_end > normalized_start),
+        text_hash TEXT NOT NULL,
+        record_hash TEXT NOT NULL,
+        record_json JSONB NOT NULL,
+        PRIMARY KEY (normalized_document_id, section_id),
+        UNIQUE (normalized_document_id, ordinal),
+        FOREIGN KEY (normalized_document_id, parent_section_id)
+          REFERENCES coe_document_sections(normalized_document_id, section_id) ON DELETE RESTRICT,
+        CHECK (text_hash LIKE 'sha256:%' AND length(text_hash) = 71),
+        CHECK (record_hash LIKE 'sha256:%' AND length(record_hash) = 71)
+      );
+      CREATE TABLE IF NOT EXISTS coe_normalized_mappings (
+        normalized_document_id TEXT NOT NULL,
+        ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+        section_id TEXT NOT NULL,
+        normalized_start BIGINT NOT NULL CHECK (normalized_start >= 0),
+        normalized_end BIGINT NOT NULL CHECK (normalized_end > normalized_start),
+        raw_locator_json JSONB NOT NULL,
+        record_hash TEXT NOT NULL,
+        record_json JSONB NOT NULL,
+        PRIMARY KEY (normalized_document_id, ordinal),
+        FOREIGN KEY (normalized_document_id, section_id)
+          REFERENCES coe_document_sections(normalized_document_id, section_id) ON DELETE RESTRICT,
+        CHECK (record_hash LIKE 'sha256:%' AND length(record_hash) = 71)
+      );
+      CREATE TABLE IF NOT EXISTS coe_evidence_items (
+        evidence_id TEXT PRIMARY KEY,
+        snapshot_id TEXT NOT NULL,
+        normalized_document_id TEXT NOT NULL,
+        section_id TEXT NOT NULL,
+        schema_version TEXT NOT NULL,
+        evidence_type TEXT NOT NULL CHECK (evidence_type IN ('quote', 'table_cell', 'figure', 'code_block', 'metadata')),
+        normalized_text TEXT NOT NULL CHECK (length(normalized_text) > 0),
+        text_hash TEXT NOT NULL,
+        normalized_start BIGINT NOT NULL CHECK (normalized_start >= 0),
+        normalized_end BIGINT NOT NULL CHECK (normalized_end > normalized_start),
+        raw_locator_json JSONB NOT NULL,
+        initial_status TEXT NOT NULL CHECK (initial_status IN ('active', 'quarantined', 'superseded', 'retracted')),
+        status TEXT NOT NULL CHECK (status IN ('active', 'quarantined', 'superseded', 'retracted')),
+        supersedes_evidence_id TEXT REFERENCES coe_evidence_items(evidence_id) ON DELETE RESTRICT,
+        retraction_reason TEXT,
+        record_hash TEXT NOT NULL,
+        record_json JSONB NOT NULL,
+        scope_json JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        projected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        FOREIGN KEY (normalized_document_id, snapshot_id)
+          REFERENCES coe_normalized_documents(normalized_document_id, snapshot_id) ON DELETE RESTRICT,
+        FOREIGN KEY (normalized_document_id, section_id)
+          REFERENCES coe_document_sections(normalized_document_id, section_id) ON DELETE RESTRICT,
+        CHECK (text_hash LIKE 'sha256:%' AND length(text_hash) = 71),
+        CHECK (record_hash LIKE 'sha256:%' AND length(record_hash) = 71),
+        CHECK ((status = 'retracted' AND retraction_reason IS NOT NULL)
+            OR (status <> 'retracted' AND retraction_reason IS NULL))
+      );
+      CREATE INDEX IF NOT EXISTS idx_coe_evidence_document_span
+        ON coe_evidence_items(normalized_document_id, normalized_start, normalized_end);
+      CREATE INDEX IF NOT EXISTS idx_coe_evidence_snapshot_status
+        ON coe_evidence_items(snapshot_id, status);
+    `,
+    handler: async (engine) => {
+      if (engine.kind !== 'postgres') return;
+      await engine.runMigration(
+        68,
+        `ALTER TABLE coe_normalized_documents ENABLE ROW LEVEL SECURITY;
+         ALTER TABLE coe_document_sections ENABLE ROW LEVEL SECURITY;
+         ALTER TABLE coe_normalized_mappings ENABLE ROW LEVEL SECURITY;
+         ALTER TABLE coe_evidence_items ENABLE ROW LEVEL SECURITY;`,
+      );
+    },
+    verify: async (engine) => {
+      if (engine.kind === 'postgres') {
+        const rows = await engine.executeRaw<{ count: number | string }>(
+          `SELECT COUNT(*) AS count
+             FROM pg_class c
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public'
+              AND c.relkind = 'r'
+              AND c.relrowsecurity
+              AND c.relname IN (
+                'coe_normalized_documents',
+                'coe_document_sections',
+                'coe_normalized_mappings',
+                'coe_evidence_items'
+              )`,
+        );
+        return Number(rows[0]?.count ?? 0) === 4;
+      }
+      const rows = await engine.executeRaw<{ count: number | string }>(
+        `SELECT COUNT(*) AS count
+           FROM information_schema.tables
+          WHERE table_schema = 'public'
+            AND table_name IN (
+              'coe_normalized_documents',
+              'coe_document_sections',
+              'coe_normalized_mappings',
+              'coe_evidence_items'
+            )`,
+      );
+      return Number(rows[0]?.count ?? 0) === 4;
+    },
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
@@ -3515,8 +3809,14 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
           console.warn(`  [${m.version}] ⚠️  verify failed; re-running idempotent migration once`);
           if (sql) await runMigrationSQLWithRetry(engine, m, sql);
           if (m.handler) await m.handler(engine);
-          // Best-effort: don't double-throw if second run still fails verify.
-          // Operator's next run of doctor will re-detect drift.
+          const retryVerifyOk = await m.verify(engine).catch(() => false);
+          if (!retryVerifyOk) {
+            throw new MigrationDriftError(
+              m.version,
+              m.name,
+              `Schema still does not match expected post-condition after idempotent retry.`,
+            );
+          }
         } else {
           throw new MigrationDriftError(
             m.version,

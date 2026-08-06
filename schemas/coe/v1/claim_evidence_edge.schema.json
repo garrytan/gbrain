@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gbrain.example/schemas/coe/v1/claim_evidence_edge.schema.json",
+  "title": "CoE Lite v1 claim_evidence_edge",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "edge_id": {
+      "type": "string",
+      "pattern": "^cedge_[0-9a-f]{64}$"
+    },
+    "claim_id": {
+      "type": "string",
+      "pattern": "^clm_[0-9a-f]{64}$"
+    },
+    "evidence_id": {
+      "type": "string",
+      "pattern": "^evd_[0-9a-f]{64}$"
+    },
+    "relation": {
+      "type": "string",
+      "enum": [
+        "supports",
+        "refutes",
+        "contextualizes",
+        "mentions"
+      ]
+    },
+    "support_level": {
+      "type": "string",
+      "enum": [
+        "direct",
+        "partial",
+        "indirect",
+        "insufficient"
+      ]
+    },
+    "evidence_span": {
+      "type": "object",
+      "properties": {
+        "start": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "end": {
+          "$ref": "#/$defs/__schema1"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "additionalProperties": false
+    },
+    "verification_run_id": {
+      "type": "string",
+      "pattern": "^vrf_[0-9a-f]{64}$"
+    },
+    "scope": {
+      "type": "object",
+      "properties": {
+        "brain_id": {
+          "$ref": "#/$defs/__schema2"
+        },
+        "visibility": {
+          "$ref": "#/$defs/__schema3"
+        },
+        "owner_principal": {
+          "$ref": "#/$defs/__schema2"
+        },
+        "reader_principals": {
+          "$ref": "#/$defs/__schema4"
+        },
+        "source_ids": {
+          "$ref": "#/$defs/__schema5"
+        }
+      },
+      "required": [
+        "brain_id",
+        "visibility",
+        "owner_principal",
+        "reader_principals",
+        "source_ids"
+      ],
+      "additionalProperties": false
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+    },
+    "created_by": {
+      "type": "object",
+      "properties": {
+        "actor_type": {
+          "type": "string",
+          "enum": [
+            "human",
+            "service",
+            "system",
+            "llm"
+          ]
+        },
+        "actor_id": {
+          "$ref": "#/$defs/__schema2"
+        }
+      },
+      "required": [
+        "actor_type",
+        "actor_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "edge_id",
+    "claim_id",
+    "evidence_id",
+    "relation",
+    "support_level",
+    "scope",
+    "created_at",
+    "created_by"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "__schema1": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "__schema2": {
+      "type": "string",
+      "minLength": 1
+    },
+    "__schema3": {
+      "type": "string",
+      "enum": [
+        "private",
+        "workspace",
+        "public"
+      ]
+    },
+    "__schema4": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema2"
+      }
+    },
+    "__schema5": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema6"
+      }
+    },
+    "__schema6": {
+      "type": "string",
+      "pattern": "^src_[0-9a-f]{64}$"
+    }
+  }
+}

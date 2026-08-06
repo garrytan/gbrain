@@ -1,0 +1,215 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gbrain.example/schemas/coe/v1/policy.schema.json",
+  "title": "CoE Lite v1 policy",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "policy_id": {
+      "$ref": "#/$defs/__schema1"
+    },
+    "policy_version": {
+      "$ref": "#/$defs/__schema2"
+    },
+    "name": {
+      "$ref": "#/$defs/__schema2"
+    },
+    "fail_closed": {
+      "$ref": "#/$defs/__schema3"
+    },
+    "unknown_fields": {
+      "$ref": "#/$defs/__schema4"
+    },
+    "release": {
+      "$ref": "#/$defs/__schema5"
+    },
+    "llm_judge": {
+      "$ref": "#/$defs/__schema6"
+    },
+    "claim_policies": {
+      "$ref": "#/$defs/__schema7"
+    },
+    "retention": {
+      "$ref": "#/$defs/__schema8"
+    },
+    "compatibility": {
+      "$ref": "#/$defs/__schema9"
+    },
+    "created_at": {
+      "$ref": "#/$defs/__schema10"
+    }
+  },
+  "required": [
+    "schema_version",
+    "policy_id",
+    "policy_version",
+    "name",
+    "fail_closed",
+    "unknown_fields",
+    "release",
+    "llm_judge",
+    "claim_policies",
+    "retention",
+    "compatibility",
+    "created_at"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "__schema1": {
+      "type": "string",
+      "pattern": "^pol_[0-9a-f]{64}$"
+    },
+    "__schema2": {
+      "type": "string",
+      "minLength": 1
+    },
+    "__schema3": {
+      "type": "boolean"
+    },
+    "__schema4": {
+      "type": "string",
+      "const": "reject"
+    },
+    "__schema5": {
+      "type": "object",
+      "properties": {
+        "require_verified_claims": {
+          "type": "boolean"
+        },
+        "block_on_contradiction": {
+          "type": "boolean"
+        },
+        "block_on_retracted_evidence": {
+          "type": "boolean"
+        },
+        "require_complete_citations": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "require_verified_claims",
+        "block_on_contradiction",
+        "block_on_retracted_evidence",
+        "require_complete_citations"
+      ],
+      "additionalProperties": false
+    },
+    "__schema6": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "can_release": {
+          "type": "boolean",
+          "const": false
+        }
+      },
+      "required": [
+        "enabled",
+        "can_release"
+      ],
+      "additionalProperties": false
+    },
+    "__schema7": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "claim_type": {
+            "type": "string",
+            "enum": [
+              "bibliographic",
+              "numeric",
+              "methodological",
+              "process",
+              "descriptive",
+              "conclusion",
+              "recommendation",
+              "inference",
+              "contradiction",
+              "software_artifact"
+            ]
+          },
+          "required_verifiers": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "numeric_recompute",
+                "bibliographic",
+                "source_alignment",
+                "table",
+                "code",
+                "consistency",
+                "human_review"
+              ]
+            }
+          },
+          "minimum_direct_support": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "human_review_required": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "claim_type",
+          "required_verifiers",
+          "minimum_direct_support",
+          "human_review_required"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "__schema8": {
+      "type": "object",
+      "properties": {
+        "preserve_tombstones": {
+          "type": "boolean"
+        },
+        "preserve_verification_runs": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "preserve_tombstones",
+        "preserve_verification_runs"
+      ],
+      "additionalProperties": false
+    },
+    "__schema9": {
+      "type": "object",
+      "properties": {
+        "readable_versions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema2"
+          }
+        },
+        "writable_version": {
+          "type": "string",
+          "const": "1.0.0"
+        }
+      },
+      "required": [
+        "readable_versions",
+        "writable_version"
+      ],
+      "additionalProperties": false
+    },
+    "__schema10": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+    }
+  }
+}

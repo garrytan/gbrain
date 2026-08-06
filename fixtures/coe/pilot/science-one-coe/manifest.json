@@ -1,0 +1,204 @@
+{
+  "schema_version": "1.0.0",
+  "corpus_id": "science-one-coe",
+  "http_policy": {
+    "allowed_hosts": ["arxiv.org", "scientist-one.github.io", "api.github.com"],
+    "max_bytes": 10485760,
+    "timeout_ms": 30000,
+    "max_redirects": 3,
+    "user_agent": "gbrain-coe-snapshot/1.0 (+local-research-archive)"
+  },
+  "entries": [
+    {
+      "entry_id": "scientistone-arxiv-html-v1",
+      "transport": "http",
+      "required": true,
+      "evidence_class": "official_primary",
+      "source": {
+        "schema_version": "1.0.0",
+        "source_id": "src_2a0310f09bee05ba14179f88e290aa29b38af55957861e8baf42e63d68bcdadf",
+        "source_kind": "paper",
+        "title": "ScientistOne: Towards Human-Level Autonomous Research via Chain-of-Evidence",
+        "canonical_uri": "https://arxiv.org/abs/2605.26340v1",
+        "authors": [
+          { "display_name": "Rui Meng" },
+          { "display_name": "Bhavana Dalvi Mishra" },
+          { "display_name": "Jiefeng Chen" },
+          { "display_name": "Chun-Liang Li" },
+          { "display_name": "Palash Goyal" },
+          { "display_name": "Mihir Parmar" },
+          { "display_name": "Yiwen Song" },
+          { "display_name": "Yale Song" },
+          { "display_name": "Rajarishi Sinha" },
+          { "display_name": "Parthasarathy Ranganathan" },
+          { "display_name": "Burak Gokturk" },
+          { "display_name": "Jinsung Yoon" },
+          { "display_name": "Tomas Pfister" }
+        ],
+        "publisher": "arXiv",
+        "published_at": "2026-05-25",
+        "language": "en",
+        "license": "CC-BY-4.0",
+        "external_identifiers": [
+          { "scheme": "arxiv", "value": "2605.26340v1" },
+          { "scheme": "doi", "value": "10.48550/arXiv.2605.26340" }
+        ],
+        "scope": {
+          "brain_id": "science-one-coe",
+          "visibility": "private",
+          "owner_principal": "service-coe-lite",
+          "reader_principals": [],
+          "source_ids": ["src_2a0310f09bee05ba14179f88e290aa29b38af55957861e8baf42e63d68bcdadf"]
+        },
+        "created_at": "2026-08-04T12:00:00.000Z",
+        "created_by": { "actor_type": "system", "actor_id": "coe-lite-bootstrap" }
+      },
+      "uri": "https://arxiv.org/html/2605.26340v1",
+      "expected_media_types": ["text/html"],
+      "max_bytes": 10485760
+    },
+    {
+      "entry_id": "scientistone-arxiv-pdf-v1",
+      "transport": "http",
+      "required": true,
+      "evidence_class": "official_primary",
+      "source": {
+        "schema_version": "1.0.0",
+        "source_id": "src_2a0310f09bee05ba14179f88e290aa29b38af55957861e8baf42e63d68bcdadf",
+        "source_kind": "paper",
+        "title": "ScientistOne: Towards Human-Level Autonomous Research via Chain-of-Evidence",
+        "canonical_uri": "https://arxiv.org/abs/2605.26340v1",
+        "authors": [
+          { "display_name": "Rui Meng" },
+          { "display_name": "Bhavana Dalvi Mishra" },
+          { "display_name": "Jiefeng Chen" },
+          { "display_name": "Chun-Liang Li" },
+          { "display_name": "Palash Goyal" },
+          { "display_name": "Mihir Parmar" },
+          { "display_name": "Yiwen Song" },
+          { "display_name": "Yale Song" },
+          { "display_name": "Rajarishi Sinha" },
+          { "display_name": "Parthasarathy Ranganathan" },
+          { "display_name": "Burak Gokturk" },
+          { "display_name": "Jinsung Yoon" },
+          { "display_name": "Tomas Pfister" }
+        ],
+        "publisher": "arXiv",
+        "published_at": "2026-05-25",
+        "language": "en",
+        "license": "CC-BY-4.0",
+        "external_identifiers": [
+          { "scheme": "arxiv", "value": "2605.26340v1" },
+          { "scheme": "doi", "value": "10.48550/arXiv.2605.26340" }
+        ],
+        "scope": {
+          "brain_id": "science-one-coe",
+          "visibility": "private",
+          "owner_principal": "service-coe-lite",
+          "reader_principals": [],
+          "source_ids": ["src_2a0310f09bee05ba14179f88e290aa29b38af55957861e8baf42e63d68bcdadf"]
+        },
+        "created_at": "2026-08-04T12:00:00.000Z",
+        "created_by": { "actor_type": "system", "actor_id": "coe-lite-bootstrap" }
+      },
+      "uri": "https://arxiv.org/pdf/2605.26340v1",
+      "expected_media_types": ["application/pdf"],
+      "max_bytes": 8388608
+    },
+    {
+      "entry_id": "scientistone-project-page",
+      "transport": "http",
+      "required": true,
+      "evidence_class": "official_primary",
+      "source": {
+        "schema_version": "1.0.0",
+        "source_id": "src_88ddfcc337876839451336da431f26d76658aa19dae85b8e7a45f723f45676ae",
+        "source_kind": "web_page",
+        "title": "ScientistOne project page",
+        "canonical_uri": "https://scientist-one.github.io/",
+        "authors": [{ "display_name": "ScientistOne authors" }],
+        "publisher": "Google Cloud AI Research",
+        "published_at": "2026-05-25",
+        "language": "en",
+        "external_identifiers": [{ "scheme": "url", "value": "https://scientist-one.github.io/" }],
+        "scope": {
+          "brain_id": "science-one-coe",
+          "visibility": "private",
+          "owner_principal": "service-coe-lite",
+          "reader_principals": [],
+          "source_ids": ["src_88ddfcc337876839451336da431f26d76658aa19dae85b8e7a45f723f45676ae"]
+        },
+        "created_at": "2026-08-04T12:00:00.000Z",
+        "created_by": { "actor_type": "system", "actor_id": "coe-lite-bootstrap" }
+      },
+      "uri": "https://scientist-one.github.io/",
+      "expected_media_types": ["text/html"],
+      "max_bytes": 2097152
+    },
+    {
+      "entry_id": "scientistone-generated-artifacts-tree",
+      "transport": "http",
+      "required": true,
+      "evidence_class": "official_artifact",
+      "source": {
+        "schema_version": "1.0.0",
+        "source_id": "src_f3669403aa12e81c2f3f6d1994302937c8b3f8577bfa85a22e67e72c0808dd68",
+        "source_kind": "code",
+        "title": "ScientistOne generated papers and solver code",
+        "canonical_uri": "https://github.com/scientist-one/generated-artifacts",
+        "authors": [{ "display_name": "ScientistOne authors" }],
+        "publisher": "GitHub",
+        "published_at": "2026-05-25",
+        "language": "en",
+        "license": "Apache-2.0",
+        "external_identifiers": [
+          { "scheme": "url", "value": "https://github.com/scientist-one/generated-artifacts" },
+          { "scheme": "custom", "value": "git-commit:721f1fbe3b39a558dff13386c50621a357e6f9a7" }
+        ],
+        "scope": {
+          "brain_id": "science-one-coe",
+          "visibility": "private",
+          "owner_principal": "service-coe-lite",
+          "reader_principals": [],
+          "source_ids": ["src_f3669403aa12e81c2f3f6d1994302937c8b3f8577bfa85a22e67e72c0808dd68"]
+        },
+        "created_at": "2026-08-04T12:00:00.000Z",
+        "created_by": { "actor_type": "system", "actor_id": "coe-lite-bootstrap" }
+      },
+      "uri": "https://api.github.com/repos/scientist-one/generated-artifacts/git/trees/721f1fbe3b39a558dff13386c50621a357e6f9a7?recursive=1",
+      "expected_media_types": ["application/json"],
+      "max_bytes": 2097152
+    },
+    {
+      "entry_id": "coe-lite-internal-architecture-note",
+      "transport": "filesystem",
+      "required": true,
+      "evidence_class": "derived_internal",
+      "source": {
+        "schema_version": "1.0.0",
+        "source_id": "src_b194539a9fc09df158566f3e77941ca0f799cb5ef24677b82de2c298820fad63",
+        "source_kind": "note",
+        "title": "ScienceOne CoE Lite internal architecture note",
+        "canonical_uri": "file:///coe-pilot/science-one-coe/architecture-notes.md",
+        "authors": [{ "display_name": "CoE Lite implementation team" }],
+        "publisher": "gbrain local workspace",
+        "published_at": "2026-08-04",
+        "language": "en",
+        "external_identifiers": [{ "scheme": "custom", "value": "science-one-coe-architecture-note-v1" }],
+        "scope": {
+          "brain_id": "science-one-coe",
+          "visibility": "private",
+          "owner_principal": "service-coe-lite",
+          "reader_principals": [],
+          "source_ids": ["src_b194539a9fc09df158566f3e77941ca0f799cb5ef24677b82de2c298820fad63"]
+        },
+        "created_at": "2026-08-04T12:00:00.000Z",
+        "created_by": { "actor_type": "system", "actor_id": "coe-lite-bootstrap" }
+      },
+      "local_path": "architecture-notes.md",
+      "stored_uri": "file:///coe-pilot/science-one-coe/architecture-notes.md",
+      "media_type": "text/markdown",
+      "max_bytes": 65536
+    }
+  ]
+}
