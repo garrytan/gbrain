@@ -49,16 +49,47 @@ export const ANTHROPIC_PRICING: Record<string, ModelPricing> = Object.fromEntrie
  * `:`-only split missed slash form → BudgetTracker no_pricing hard-fail with
  * `--max-cost N` (closes #1540).
  */
+/**
+ * Resolve a chat model id to its canonical pricing entry.
+ *
+ * Looks at the FULL canonical table, not just the bare-keyed Anthropic view.
+ * Previously this resolved against `ANTHROPIC_PRICING` alone, which is
+ * `CANONICAL_PRICING` filtered to `anthropic:` keys — so every non-Anthropic
+ * model priced a `null` even though canonical carried its rate (14 of the 25
+ * canonical entries were unreachable). Because `BudgetTracker.reserve()`
+ * hard-throws `BudgetExhausted{reason:'no_pricing'}` when a cap is set and
+ * pricing is missing, that made every cost-capped path — `gbrain enrich`,
+ * `cycle.enrich_thin`, `extract_atoms`, skillopt — fail outright on OpenAI,
+ * Gemini, and DeepSeek models. See garrytan/gbrain#2504.
+ *
+ * Resolution order, most-specific first:
+ *   1. bare Anthropic id (`claude-haiku-4-5`) — the form most callers pass
+ *   2. fully-qualified canonical id (`openai:gpt-5.2`)
+ *   3. bare id behind any provider prefix (`bedrock:claude-haiku-4-5`)
+ *
+ * Routing-provider ids (`openrouter:openai/gpt-5.2`) deliberately stay
+ * unpriced. A router bills its OWN rates, so resolving it to the vendor's
+ * direct price would under-estimate real spend — a silently wrong cap is worse
+ * than a refused one under the TX2 contract. Pricing routers needs their rate
+ * table, which is out of scope here (existing TODO #2, pinned by the
+ * "OpenRouter nested form returns null" test).
+ */
+function resolveChatPricing(modelId: string): ModelPricing | undefined {
+  const direct = ANTHROPIC_PRICING[modelId] ?? CANONICAL_PRICING[modelId];
+  if (direct) return direct;
+
+  const { model: tail } = splitProviderModelId(modelId);
+  if (!tail) return undefined;
+
+  return ANTHROPIC_PRICING[tail] ?? CANONICAL_PRICING[tail];
+}
+
 export function estimateMaxCostUsd(
   modelId: string,
   estimatedInputTokens: number,
   maxOutputTokens: number,
 ): number | null {
-  let p: ModelPricing | undefined = ANTHROPIC_PRICING[modelId];
-  if (!p) {
-    const { model: tail } = splitProviderModelId(modelId);
-    if (tail) p = ANTHROPIC_PRICING[tail];
-  }
+  const p = resolveChatPricing(modelId);
   if (!p) return null;
   return (
     (estimatedInputTokens / 1_000_000) * p.input +

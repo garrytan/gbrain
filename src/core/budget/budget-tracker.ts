@@ -332,7 +332,24 @@ export class BudgetTracker {
         // pricing we can't enforce the cap, and silently ignoring it would
         // void the contract.
         const msg = `${this.opts.label}: no pricing entry for model "${estimate.modelId}" (kind=${estimate.kind}). ` +
-          `Add it to src/core/${estimate.kind === 'embed' ? 'embedding-pricing.ts' : 'anthropic-pricing.ts'} or drop --max-cost.`;
+          `Add it to src/core/${estimate.kind === 'embed' ? 'embedding-pricing.ts' : 'model-pricing.ts'} or drop --max-cost.`;
+        // Audit the refusal. The `reserve_denied` path below writes a line, but
+        // this one did not — so a run that aborted here left an audit log
+        // containing ONLY successful reserve/record pairs, which reads as
+        // "the budget was fine" while the command reports budget_exhausted.
+        // That combination is actively misleading during diagnosis.
+        appendAuditLine(this.auditPath, {
+          schema_version: 1,
+          ts: new Date().toISOString(),
+          event: 'reserve_no_pricing',
+          label: this.opts.label,
+          kind: estimate.kind,
+          model: estimate.modelId,
+          sub_label: estimate.label,
+          estimated_input_tokens: estimate.estimatedInputTokens,
+          max_output_tokens: estimate.maxOutputTokens,
+          max_cost_usd: this.opts.maxCostUsd,
+        });
         this.fireExhausted();
         throw new BudgetExhausted(msg, {
           reason: 'no_pricing',
