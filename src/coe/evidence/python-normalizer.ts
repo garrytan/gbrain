@@ -63,7 +63,7 @@ async function readBoundedStream(
   onOverflow: () => void,
 ): Promise<Buffer> {
   const reader = stream.getReader();
-  const chunks: Buffer[] = [];
+  const output = Buffer.allocUnsafe(maxBytes);
   let bufferedBytes = 0;
   try {
     while (true) {
@@ -72,24 +72,43 @@ async function readBoundedStream(
       const remaining = maxBytes - bufferedBytes;
       if (value.byteLength > remaining) {
         if (remaining > 0) {
-          chunks.push(Buffer.from(value.subarray(0, remaining)));
+          output.set(value.subarray(0, remaining), bufferedBytes);
           bufferedBytes += remaining;
         }
         onOverflow();
         await reader.cancel().catch(() => undefined);
         break;
       }
-      chunks.push(Buffer.from(value));
+      output.set(value, bufferedBytes);
       bufferedBytes += value.byteLength;
     }
   } finally {
     reader.releaseLock();
   }
-  return Buffer.concat(chunks, bufferedBytes);
+  return output.subarray(0, bufferedBytes);
+}
+
+function killProcessTree(processHandle: Bun.Subprocess): void {
+  if (process.platform === "win32") {
+    const result = Bun.spawnSync(
+      ["taskkill", "/pid", String(processHandle.pid), "/T", "/F"],
+      { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
+    );
+    if (result.exitCode === 0) return;
+  } else {
+    try {
+      process.kill(-processHandle.pid, "SIGKILL");
+      return;
+    } catch {
+      // Fall back to the direct child if process-group termination is unavailable.
+    }
+  }
+  processHandle.kill("SIGKILL");
 }
 
 async function runProcess(argv: string[], timeoutMs: number): Promise<Buffer> {
   const processHandle = Bun.spawn(argv, {
+    detached: true,
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
@@ -103,7 +122,7 @@ async function runProcess(argv: string[], timeoutMs: number): Promise<Buffer> {
   const terminate = (error: CoeContractError) => {
     if (terminationError) return;
     terminationError = error;
-    processHandle.kill("SIGKILL");
+    killProcessTree(processHandle);
   };
   const timer = setTimeout(() => terminate(
     new CoeContractError("policy_violation", "Document parser exceeded its time limit"),
