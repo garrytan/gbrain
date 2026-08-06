@@ -1010,6 +1010,12 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'facts.extraction_model',
   // #2113: output-token cap for the per-turn facts extractor (default 4000).
   'facts.extraction_max_tokens',
+  // Operator-set system-prompt appendix for the facts extractor (e.g. a
+  // durable-vs-ephemeral rubric for agent work-session transcripts).
+  'facts.extraction_prompt_appendix',
+  // Kill-switch for the deterministic junk gate on extracted fact text
+  // (plan narration / provider error strings / meta-chatter). Default on.
+  'facts.extraction_junk_filter',
   // Conversation parser LLM fallback. Deliberately register the exact key,
   // not a conversation_parser.* prefix: fallback is the only live opt-in
   // consumer, while the polish scaffold remains unwired.

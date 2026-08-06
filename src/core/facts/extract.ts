@@ -84,6 +84,58 @@ export async function getFactsExtractionMaxTokens(engine?: BrainEngine): Promise
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_EXTRACTION_MAX_TOKENS;
 }
 
+/**
+ * Operator-set system-prompt appendix for fact extraction. When the config key
+ * `facts.extraction_prompt_appendix` is non-empty, its text is appended to
+ * EXTRACTOR_SYSTEM. Lets a deployment whose corpus diverges from personal
+ * conversations (e.g. agent work-session transcripts, which are operational
+ * work-logs) sharpen the durable-vs-ephemeral rubric without patching code.
+ * Trusted-operator input (local config), so it is appended verbatim.
+ */
+export async function getFactsExtractionPromptAppendix(
+  engine?: BrainEngine,
+): Promise<string | null> {
+  if (!engine) return null;
+  const raw = await engine.getConfig('facts.extraction_prompt_appendix').catch(() => null);
+  if (raw == null || raw.trim() === '') return null;
+  return raw.trim();
+}
+
+/**
+ * Deterministic junk gate for extracted fact text. The LLM extractor —
+ * especially over agent-session transcripts — sometimes emits non-knowledge:
+ * assistant plan narration ("Now let me write an oracle that…"), provider
+ * error strings stored as facts ("You've hit your org's monthly spend
+ * limit."), or transient concurrency state ("Another agent is concurrently
+ * rewriting src/…"). These classes were documented in the 2026-08-02
+ * extraction-quality audit. The patterns are deliberately NARROW — the prompt
+ * rubric is the primary lever; this gate only kills the unambiguous classes.
+ * Kill-switch: `gbrain config set facts.extraction_junk_filter false`.
+ *
+ * @internal Exported for tests.
+ */
+export const JUNK_FACT_PATTERNS: readonly RegExp[] = [
+  // Assistant plan/offer narration masquerading as a claim.
+  /^["'«]?(now,?\s+)?(let me\b|let's\b|i('| wi)ll\b|i am going to\b|i'm going to\b|next,? i\b|about to\b|proceeding to\b|offered to\b)/i,
+  // Meta-narration about the conversation itself.
+  /^["'«]?(the user is asking|the user wants me to|another agent is\b)/i,
+  // Provider billing/rate-limit error text captured verbatim as a "fact".
+  /\b(you'?ve hit your|monthly spend limit|spend cap reached|rate limit (hit|exceeded|reached))\b/i,
+];
+
+export function isJunkFact(text: string): boolean {
+  const t = text.trim();
+  if (!t) return true;
+  return JUNK_FACT_PATTERNS.some((rx) => rx.test(t));
+}
+
+export async function isJunkFilterEnabled(engine?: BrainEngine): Promise<boolean> {
+  if (!engine) return true;
+  const raw = await engine.getConfig('facts.extraction_junk_filter').catch(() => null);
+  if (raw == null) return true;
+  return !['false', '0', 'no', 'off'].includes(raw.trim().toLowerCase());
+}
+
 export const ALL_EXTRACT_KINDS: readonly FactKind[] = [
   'event', 'preference', 'commitment', 'belief', 'fact',
 ] as const;
@@ -252,6 +304,11 @@ export async function extractFactsFromTurnWithOutcome(
   const cap = Math.max(1, Math.min(input.maxFactsPerTurn ?? 10, 25));
   const defaultModel = await getFactsExtractionModel(input.engine);
   const maxTokens = await getFactsExtractionMaxTokens(input.engine);
+  const promptAppendix = await getFactsExtractionPromptAppendix(input.engine);
+  const systemPrompt = promptAppendix
+    ? `${EXTRACTOR_SYSTEM}\n\n${promptAppendix}`
+    : EXTRACTOR_SYSTEM;
+  const junkFilterOn = await isJunkFilterEnabled(input.engine);
   const model = input.model ?? defaultModel;
   const userContent = `<turn>\n${cleaned}\n</turn>\n\nExtract up to ${cap} facts.${
     input.entityHints && input.entityHints.length
@@ -262,7 +319,7 @@ export async function extractFactsFromTurnWithOutcome(
   try {
     result = await chat({
       model,
-      system: EXTRACTOR_SYSTEM,
+      system: systemPrompt,
       messages: [{ role: 'user', content: userContent }],
       maxTokens,
       abortSignal: input.abortSignal,
@@ -278,7 +335,7 @@ export async function extractFactsFromTurnWithOutcome(
       );
       result = await chat({
         model,
-        system: EXTRACTOR_SYSTEM,
+        system: systemPrompt,
         messages: [{ role: 'user', content: userContent }],
         maxTokens: maxTokens * 2,
         abortSignal: input.abortSignal,
@@ -314,6 +371,7 @@ export async function extractFactsFromTurnWithOutcome(
   const parsedRaw = parsedShape.facts;
 
   const facts: ExtractedFact[] = [];
+  let junkSkipped = 0;
   for (const candidate of parsedRaw.slice(0, cap)) {
     if (input.abortSignal?.aborted) {
       const e = new Error('aborted');
@@ -325,6 +383,11 @@ export async function extractFactsFromTurnWithOutcome(
     // Sanitize on the way OUT too.
     for (const p of INJECTION_PATTERNS) factText = factText.replace(p.rx, p.replacement);
     if (factText.length > 500) factText = factText.slice(0, 497) + '...';
+    // Deterministic junk gate (plan narration / error strings / meta-chatter).
+    if (junkFilterOn && isJunkFact(factText)) {
+      junkSkipped++;
+      continue;
+    }
 
     const kind = ALL_EXTRACT_KINDS.includes(candidate.kind as FactKind)
       ? (candidate.kind as FactKind)
@@ -371,6 +434,12 @@ export async function extractFactsFromTurnWithOutcome(
       claim_unit:   claimUnit,
       claim_period: claimPeriod,
     });
+  }
+
+  if (junkSkipped > 0) {
+    process.stderr.write(
+      `[facts-extract] junk filter dropped ${junkSkipped} candidate(s) (source=${input.source})\n`,
+    );
   }
 
   return { ok: true, facts };
