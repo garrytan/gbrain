@@ -185,6 +185,39 @@ describe('runThink (with stub client)', () => {
     expect(result.usage).toEqual({ input_tokens: 10, output_tokens: 10 });
   });
 
+  test('--take persists the synthesized answer to the anchor page', async () => {
+    const [{ max_row }] = await engine.executeRaw<{ max_row: number }>(
+      `SELECT COALESCE(MAX(row_num), 0)::int AS max_row FROM takes WHERE page_id = $1`,
+      [alicePageId],
+    );
+    const claim = 'Alice has durable founder judgment.';
+
+    const result = await runThink(engine, {
+      question: 'capture this as a take',
+      anchor: 'people/alice-example',
+      take: true,
+      withTrajectory: false,
+      stubResponse: { answer: claim, citations: [], gaps: [] },
+    });
+
+    expect(result.takeSaved).toEqual({
+      page_slug: 'people/alice-example',
+      source_id: 'default',
+      row_num: Number(max_row) + 1,
+    });
+
+    const rows = await engine.listTakes({ page_id: alicePageId });
+    const saved = rows.find(row => row.row_num === result.takeSaved?.row_num);
+    expect(saved).toMatchObject({
+      claim,
+      kind: 'take',
+      holder: 'self',
+      weight: 0.5,
+      source: 'think',
+      active: true,
+    });
+  });
+
   test('passes the question into page excerpt selection', async () => {
     const prefix = [
       '# Widget Co',
