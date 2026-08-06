@@ -44,7 +44,7 @@ function baseKnobs(): ResolvedSearchKnobs {
 }
 
 describe('KNOBS_HASH_VERSION + version invariants', () => {
-  test('version is 15 (…; 11→12 hard-excludes #2825; 12→13 embedding-provider migration #3390; 14→15 FTS language)', () => {
+  test('version is 16 (…; 14→15 FTS language; 15→16 page type filter)', () => {
     // v0.35.0.0: 1→2 to fold reranker fields. v0.35.6.0: 2→3 to fold
     // floor_ratio. v0.36 wave: piggybacks on v=3 with 7 cross-modal knobs
     // (D2) PLUS column + provider context (D8/CDX-2 cross-column isolation).
@@ -71,7 +71,8 @@ describe('KNOBS_HASH_VERSION + version invariants', () => {
     // name (fts=). It retokenizes both the trigger-built search_vector and
     // the query-side tsquery, so rows written under the previous language
     // must not survive a `reindex-search-vector` language switch.
-    expect(KNOBS_HASH_VERSION).toBe(15);
+    // Page type filter: 15→16 to fold SearchOpts.type into the cache key.
+    expect(KNOBS_HASH_VERSION).toBe(16);
   });
 
   test('hash is 16 hex chars regardless of reranker config', () => {
@@ -249,5 +250,17 @@ describe('v=12 hard-exclude participation (#2825)', () => {
     expect(knobsHash(k)).not.toBe(
       knobsHash(k, { hardExcludes: resolveHardExcludes(undefined, undefined, undefined) }),
     );
+  });
+});
+
+describe('v=16 page-type participation (#3503)', () => {
+  test('type-filtered and unfiltered cache rows do not collide', () => {
+    const k = baseKnobs();
+    const unfiltered = knobsHash(k);
+    const person = knobsHash(k, { pageType: 'person' });
+    const company = knobsHash(k, { pageType: 'company' });
+
+    expect(person).not.toBe(unfiltered);
+    expect(person).not.toBe(company);
   });
 });

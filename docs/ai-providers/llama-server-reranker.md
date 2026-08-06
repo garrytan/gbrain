@@ -146,7 +146,8 @@ hard-fail when configured for local rerank. Local rerank costs
 electricity, not API tokens.
 
 ```bash
-GBRAIN_MAX_USD=0.01 gbrain search "..." --reranker llama-server-reranker:qwen3-reranker-4b
+gbrain config set search.reranker.model llama-server-reranker:qwen3-reranker-4b
+GBRAIN_MAX_USD=0.01 gbrain search "..."
 # Works: rerank fires, recorded at $0, cumulative cap untouched.
 ```
 

@@ -810,6 +810,15 @@ export function resolveQueryImage(
   return { path: imagePath, base64, mime };
 }
 
+function parseOlderThanHoursFlag(raw: string, flag: string): number {
+  const trimmed = raw.trim();
+  const dayMatch = trimmed.match(/^(\d+)d$/);
+  if (dayMatch) return Math.max(0, parseInt(dayMatch[1], 10) * 24);
+  const hourMatch = trimmed.match(/^(\d+)h?$/);
+  if (hourMatch) return Math.max(0, parseInt(hourMatch[1], 10));
+  throw new Error(`Invalid value for flag: ${flag}. Expected hours (e.g. 72 or 72h) or days (e.g. 3d).`);
+}
+
 export function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
   const params: Record<string, unknown> = {};
   const positional = op.cliHints?.positional || [];
@@ -839,6 +848,24 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
       }
       if (!paramDef && key === 'raw' && op.name === 'get_page') {
         params[CLI_RENDER_RAW_PARAM] = true;
+        continue;
+      }
+      if (!paramDef && key === 'dry_run') {
+        params.dry_run = true;
+        continue;
+      }
+      if (!paramDef && key === 'older_than' && op.name === 'purge_deleted_pages') {
+        if (i + 1 >= args.length) {
+          throw new Error(`Missing value for flag: ${arg}`);
+        }
+        params.older_than_hours = parseOlderThanHoursFlag(args[++i], arg);
+        continue;
+      }
+      if (!paramDef && key === 'type' && op.name === 'traverse_graph') {
+        if (i + 1 >= args.length) {
+          throw new Error(`Missing value for flag: ${arg}`);
+        }
+        params.link_type = args[++i];
         continue;
       }
       if (!paramDef) {
@@ -1211,9 +1238,15 @@ export function formatResult(opName: string, result: unknown): string {
   }
 }
 
-function renderCliResult(opName: string, result: unknown, opts: CliRenderOptions): string {
+function renderRawGetPage(result: unknown): string {
+  const page = result as { compiled_truth?: unknown };
+  const body = typeof page?.compiled_truth === 'string' ? page.compiled_truth : '';
+  return body.endsWith('\n') ? body : `${body}\n`;
+}
+
+export function renderCliResult(opName: string, result: unknown, opts: CliRenderOptions): string {
   if (opts.json) return JSON.stringify(result, null, 2) + '\n';
-  if (opts.raw && opName === 'get_page') return formatResult(opName, result);
+  if (opts.raw && opName === 'get_page') return renderRawGetPage(result);
   return formatResult(opName, result);
 }
 

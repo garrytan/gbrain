@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseOpArgs } from '../src/cli.ts';
+import { parseOpArgs, renderCliResult } from '../src/cli.ts';
 import { operationsByName } from '../src/core/operations.ts';
 
 describe('parseOpArgs', () => {
@@ -47,6 +47,18 @@ describe('parseOpArgs', () => {
     });
   });
 
+  test('renders get --raw as body-only markdown', () => {
+    const output = renderCliResult('get_page', {
+      title: 'Example',
+      type: 'note',
+      tags: ['demo'],
+      frontmatter: { owner: 'test' },
+      compiled_truth: 'Only the body\n',
+    }, { json: false, raw: true });
+
+    expect(output).toBe('Only the body\n');
+  });
+
   test('honors -- as end-of-options for dash-leading positional text', () => {
     const params = parseOpArgs(operationsByName.query, [
       '--',
@@ -81,6 +93,49 @@ describe('parseOpArgs', () => {
       type: 'atom',
       __cli_render_json: true,
     });
+  });
+
+  test('accepts shared --dry-run for mutating operations without declared params', () => {
+    expect(parseOpArgs(operationsByName.put_page, [
+      'notes/example',
+      '--content',
+      'body',
+      '--dry-run',
+    ])).toMatchObject({ slug: 'notes/example', dry_run: true });
+
+    expect(parseOpArgs(operationsByName.delete_page, [
+      'notes/example',
+      '--dry-run',
+    ])).toEqual({ slug: 'notes/example', dry_run: true });
+
+    expect(parseOpArgs(operationsByName.add_tag, [
+      'notes/example',
+      'review',
+      '--dry-run',
+    ])).toEqual({ slug: 'notes/example', tag: 'review', dry_run: true });
+
+    expect(parseOpArgs(operationsByName.add_link, [
+      'people/a',
+      'people/b',
+      '--link-type',
+      'works_at',
+      '--dry-run',
+    ])).toEqual({ from: 'people/a', to: 'people/b', link_type: 'works_at', dry_run: true });
+  });
+
+  test('accepts documented aliases for purge-deleted and graph', () => {
+    expect(parseOpArgs(operationsByName.purge_deleted_pages, [
+      '--older-than',
+      '3d',
+    ])).toEqual({ older_than_hours: 72 });
+
+    expect(parseOpArgs(operationsByName.traverse_graph, [
+      'people/founder',
+      '--depth',
+      '2',
+      '--type',
+      'yc_partner',
+    ])).toEqual({ slug: 'people/founder', depth: 2, link_type: 'yc_partner' });
   });
 
   test('keeps dash-leading positional text for commands that accept it', () => {

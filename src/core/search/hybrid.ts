@@ -1842,6 +1842,10 @@ export async function hybridSearchCached(
     // resolves) into the cache key so a row written under one exclude
     // policy can't be served to a lookup under another.
     hardExcludes: resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes),
+    // #3503 review hardening: page type is a per-call SQL filter for both
+    // search and query. Fold it into the query-cache key to prevent
+    // type-filtered rows from serving unfiltered lookups and vice versa.
+    pageType: opts?.type,
   });
 
   // Cache decision: opts.useCache (explicit) wins over global config; global
