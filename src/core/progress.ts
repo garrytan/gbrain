@@ -62,10 +62,15 @@ interface LivePhase {
 
 const liveReporters = new Set<LivePhase>();
 let signalHandlerInstalled = false;
+let hadSigintHandlersAtInstall = false;
 
 function installSignalHandler(): void {
   if (signalHandlerInstalled) return;
   signalHandlerInstalled = true;
+  // Capture command-level SIGINT ownership before our once-wrapper can be
+  // consumed by the same signal emission. A preceding once('SIGINT') listener
+  // is already gone by the time our handler runs.
+  hadSigintHandlersAtInstall = process.listenerCount('SIGINT') > 0;
 
   const onSignal = (reason: 'SIGINT' | 'SIGTERM') => {
     // Copy to array so abort() can mutate liveReporters during iteration.
@@ -77,7 +82,7 @@ function installSignalHandler(): void {
         /* best-effort */
       }
     }
-    if (reason === 'SIGINT' && process.listenerCount('SIGINT') === 0) {
+    if (reason === 'SIGINT' && !hadSigintHandlersAtInstall && process.listenerCount('SIGINT') === 0) {
       setTimeout(() => {
         process.kill(process.pid, 'SIGINT');
       }, 0);

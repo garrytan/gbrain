@@ -336,12 +336,12 @@ describe('progress reporter', () => {
   test('SIGINT still defers to another process handler when one is installed', async () => {
     const result = await runSigintHarness(`
       const { createProgress } = await import('./src/core/progress.ts');
-      const progress = createProgress({ mode: 'quiet' });
-      progress.start('sigint_repro', 1);
       process.once('SIGINT', () => {
         process.stdout.write('HANDLED\\n');
-        process.exit(0);
+        setTimeout(() => process.exit(0), 50);
       });
+      const progress = createProgress({ mode: 'json' });
+      progress.start('sigint_repro', 1);
       process.stdout.write('READY\\n');
       setInterval(() => {}, 1000);
     `);
@@ -350,6 +350,8 @@ describe('progress reporter', () => {
     expect(result.code).toBe(0);
     expect(result.signal).toBeNull();
     expect(result.stdout).toContain('HANDLED');
+    expect(result.stderr).toContain('"event":"abort"');
+    expect(result.stderr).toContain('"reason":"SIGINT"');
   });
 
   test('startHeartbeat() fires heartbeats and stop() clears', async () => {
