@@ -3742,7 +3742,9 @@ function collectMarkdownSlugs(root: string): Set<string> {
       continue;
     }
     for (const e of entries) {
-      if (e.name.startsWith('.') || e.name === 'node_modules') continue;
+      // Hidden directories can contain canonical, tracked knowledge (for
+      // example `.archive/`). Only implementation metadata is never a page.
+      if (e.name === '.git' || e.name === 'node_modules') continue;
       const childRel = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory()) stack.push(childRel);
       else if (/\.mdx?$/i.test(e.name)) out.add(slugifyPath(childRel).toLowerCase());

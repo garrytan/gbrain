@@ -71,6 +71,11 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).not.toContain('conversation_parser.llm_polish_enabled');
   });
 
+  test('contains orphan-reporting override keys', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain('orphans.exclude_prefixes');
+    expect(KNOWN_CONFIG_KEYS).toContain('orphans.exclude_slugs');
+  });
+
   test('no duplicate entries', () => {
     const set = new Set(KNOWN_CONFIG_KEYS);
     expect(set.size).toBe(KNOWN_CONFIG_KEYS.length);

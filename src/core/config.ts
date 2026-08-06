@@ -1087,6 +1087,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // consent reads this key, and enabling it is the documented path to
   // `gbrain takes extract --from-pages` — same unregistered-key class.
   'takes.bootstrap_enabled',
+  // Orphan reporting scope. These are consumed by core/orphan-policy.ts and
+  // documented there as the per-brain override path.
+  'orphans.exclude_prefixes',
+  'orphans.exclude_slugs',
   'sync.cost_gate_min_usd',
   'sync.federated_v2',
   'embed.backfill_cooldown_min',
