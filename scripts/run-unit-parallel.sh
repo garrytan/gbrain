@@ -9,13 +9,18 @@
 # prefixes, prints loud stderr banner if any failures, exit non-zero.
 #
 # Usage:
-#   bash scripts/run-unit-parallel.sh [--shards N] [--max-concurrency N] [--dry-run]
+#   bash scripts/run-unit-parallel.sh [--shards N] [--max-concurrency N]
+#     [--batch-size N] [--timeout N] [--dry-run]
 #
 # Env overrides:
 #   SHARDS=N                     same as --shards
-#   GBRAIN_TEST_SHARD_TIMEOUT    per-shard wallclock cap, seconds (default 600)
-#   GBRAIN_TEST_MAX_CONCURRENCY  passed through to bun test (default chosen
-#                               so shards × intra-shard concurrency <= 2)
+#   GBRAIN_TEST_SHARD_TIMEOUT    per-shard wallclock cap, seconds
+#   GBRAIN_TEST_MAX_CONCURRENCY  passed through to bun test
+#   GBRAIN_TEST_BATCH_SIZE       files per fresh Bun process (0 disables batches)
+#
+# Automatic profile inputs (sampled once, before workers start): CPU count,
+# available memory, Linux memory PSI, swap headroom, and 1-minute load per CPU.
+# Explicit CLI/env settings above override the selected profile per setting.
 #
 # Output files (workspace-local; falls back to /tmp if .context/ unwritable):
 #   .context/test-failures.log   failure blocks (cleared at start)
@@ -96,10 +101,20 @@ terminate_pid_tree() {
 }
 
 release_run_lock() {
-  if [ "$RUN_LOCK_HELD" = "1" ] && [ -f "$RUN_LOCK_DIR/pid" ] && \
-     [ "$(cat "$RUN_LOCK_DIR/pid" 2>/dev/null)" = "$$" ]; then
-    rm -f "$RUN_LOCK_DIR/pid"
-    rmdir "$RUN_LOCK_DIR" 2>/dev/null || true
+  local release_dir
+  release_dir="${RUN_LOCK_DIR}.release.$$"
+  if [ "$RUN_LOCK_HELD" = "1" ] && [ ! -L "$RUN_LOCK_DIR" ] && \
+     [ -d "$RUN_LOCK_DIR" ] && [ ! -L "$RUN_LOCK_DIR/pid" ] && \
+     [ -f "$RUN_LOCK_DIR/pid" ] && \
+     [ "$(cat "$RUN_LOCK_DIR/pid" 2>/dev/null)" = "$$" ] && \
+     [ ! -e "$release_dir" ] && [ ! -L "$release_dir" ] && \
+     mv "$RUN_LOCK_DIR" "$release_dir" 2>/dev/null; then
+    if [ ! -L "$release_dir" ] && [ -d "$release_dir" ] && \
+       [ ! -L "$release_dir/pid" ] && [ -f "$release_dir/pid" ] && \
+       [ "$(cat "$release_dir/pid" 2>/dev/null)" = "$$" ]; then
+      rm -f "$release_dir/pid"
+      rmdir "$release_dir" 2>/dev/null || true
+    fi
   fi
   RUN_LOCK_HELD=0
 }
@@ -138,29 +153,367 @@ trap on_signal HUP INT TERM
 trap on_exit EXIT
 
 # ──────────────────────────────────────────────────────────────────────────
-# CPU detection: Apple Silicon perf cores → Mac total physical → nproc → 4.
-# Returns a single positive integer.
+# Launch-time resource probes. The GBRAIN_TEST_RESOURCE_* seams make profile
+# selection deterministic in regression tests; production callers should not
+# set them. Unknown optional signals use conservative sentinels.
 # ──────────────────────────────────────────────────────────────────────────
-detect_cpus() {
-  local n=""
-  n=$(sysctl -n hw.perflevel0.physicalcpu 2>/dev/null) && [ -n "$n" ] && [ "$n" -gt 0 ] && echo "$n" && return
-  n=$(sysctl -n hw.physicalcpu 2>/dev/null) && [ -n "$n" ] && [ "$n" -gt 0 ] && echo "$n" && return
-  n=$(nproc 2>/dev/null) && [ -n "$n" ] && [ "$n" -gt 0 ] && echo "$n" && return
-  echo 4
+CGROUP_ROOT="${GBRAIN_TEST_CGROUP_ROOT:-/sys/fs/cgroup}"
+PROC_SELF_CGROUP="${GBRAIN_TEST_PROC_SELF_CGROUP:-/proc/self/cgroup}"
+
+cgroup_v2_dir() {
+  [ -r "$PROC_SELF_CGROUP" ] || return 1
+  local relative
+  relative=$(awk -F: '$1 == "0" && $2 == "" { print $3; exit }' \
+    "$PROC_SELF_CGROUP" 2>/dev/null)
+  case "$relative" in
+    /*) ;;
+    *) return 1 ;;
+  esac
+  case "/$relative/" in
+    */../*) return 1 ;;
+  esac
+  printf '%s%s\n' "${CGROUP_ROOT%/}" "$relative"
 }
+
+cgroup_v2_cpu_limit() {
+  local dir root quota period limit best=-1
+  dir=$(cgroup_v2_dir) || { echo -1; return; }
+  root="${CGROUP_ROOT%/}"
+  while [ "$dir" = "$root" ] || [ "${dir#"$root"/}" != "$dir" ]; do
+    if [ -r "$dir/cpu.max" ]; then
+      read -r quota period < "$dir/cpu.max" || true
+      if printf '%s' "$quota" | grep -qE '^[0-9]+$' && \
+         printf '%s' "$period" | grep -qE '^[0-9]+$' && [ "$period" -gt 0 ]; then
+        limit=$((quota / period))
+        [ "$limit" -lt 1 ] && limit=1
+        [ "$best" -lt 0 ] || [ "$limit" -lt "$best" ] || limit="$best"
+        best="$limit"
+      fi
+    fi
+    [ "$dir" = "$root" ] && break
+    dir="${dir%/*}"
+  done
+  echo "$best"
+}
+
+cgroup_v2_mem_available_mb() {
+  local dir root maximum current available best=-1
+  dir=$(cgroup_v2_dir) || { echo -1; return; }
+  root="${CGROUP_ROOT%/}"
+  while [ "$dir" = "$root" ] || [ "${dir#"$root"/}" != "$dir" ]; do
+    if [ -r "$dir/memory.max" ] && [ -r "$dir/memory.current" ]; then
+      maximum=$(tr -d '[:space:]' < "$dir/memory.max" 2>/dev/null)
+      current=$(tr -d '[:space:]' < "$dir/memory.current" 2>/dev/null)
+      if printf '%s' "$maximum" | grep -qE '^[0-9]+$' && \
+         printf '%s' "$current" | grep -qE '^[0-9]+$'; then
+        if [ "$maximum" -gt "$current" ]; then
+          available=$(((maximum - current) / 1048576))
+        else
+          available=0
+        fi
+        [ "$best" -lt 0 ] || [ "$available" -lt "$best" ] || available="$best"
+        best="$available"
+      fi
+    fi
+    [ "$dir" = "$root" ] && break
+    dir="${dir%/*}"
+  done
+  echo "$best"
+}
+
+cgroup_v1_controller_dir() {
+  local controller="$1" relative mount_name candidate controllers item
+  [ -r "$PROC_SELF_CGROUP" ] || return 1
+  relative=$(awk -F: -v wanted="$controller" '
+    {
+      count=split($2, controllers, ",")
+      for (i=1; i<=count; i++) if (controllers[i] == wanted) { print $3; exit }
+    }' "$PROC_SELF_CGROUP" 2>/dev/null)
+  case "$relative" in
+    /*) ;;
+    *) return 1 ;;
+  esac
+  case "/$relative/" in
+    */../*) return 1 ;;
+  esac
+  if [ "$controller" = "cpu" ]; then
+    controllers="cpu,cpuacct cpu cpuacct"
+  else
+    controllers="$controller"
+  fi
+  for mount_name in $controllers; do
+    candidate="${CGROUP_ROOT%/}/$mount_name$relative"
+    [ -d "$candidate" ] && { echo "$candidate"; return; }
+  done
+  return 1
+}
+
+cgroup_v1_cpu_limit() {
+  local dir root quota period limit best=-1
+  dir=$(cgroup_v1_controller_dir cpu) || { echo -1; return; }
+  root="$dir"
+  while [ "${root%/*}" != "${CGROUP_ROOT%/}" ] && [ "${root%/*}" != "$root" ]; do
+    root="${root%/*}"
+  done
+  while [ "$dir" = "$root" ] || [ "${dir#"$root"/}" != "$dir" ]; do
+    if [ -r "$dir/cpu.cfs_quota_us" ] && [ -r "$dir/cpu.cfs_period_us" ]; then
+      quota=$(tr -d '[:space:]' < "$dir/cpu.cfs_quota_us" 2>/dev/null)
+      period=$(tr -d '[:space:]' < "$dir/cpu.cfs_period_us" 2>/dev/null)
+      if printf '%s' "$quota" | grep -qE '^[0-9]+$' && \
+         printf '%s' "$period" | grep -qE '^[0-9]+$' && [ "$period" -gt 0 ]; then
+        limit=$((quota / period))
+        [ "$limit" -lt 1 ] && limit=1
+        [ "$best" -lt 0 ] || [ "$limit" -lt "$best" ] || limit="$best"
+        best="$limit"
+      fi
+    fi
+    [ "$dir" = "$root" ] && break
+    dir="${dir%/*}"
+  done
+  echo "$best"
+}
+
+cgroup_v1_mem_available_mb() {
+  local dir root maximum current available best=-1
+  dir=$(cgroup_v1_controller_dir memory) || { echo -1; return; }
+  root="${CGROUP_ROOT%/}/memory"
+  while [ "$dir" = "$root" ] || [ "${dir#"$root"/}" != "$dir" ]; do
+    if [ -r "$dir/memory.limit_in_bytes" ] && [ -r "$dir/memory.usage_in_bytes" ]; then
+      maximum=$(tr -d '[:space:]' < "$dir/memory.limit_in_bytes" 2>/dev/null)
+      current=$(tr -d '[:space:]' < "$dir/memory.usage_in_bytes" 2>/dev/null)
+      if printf '%s' "$maximum" | grep -qE '^[0-9]+$' && \
+         printf '%s' "$current" | grep -qE '^[0-9]+$' && \
+         [ "$maximum" -lt 1152921504606846976 ]; then
+        if [ "$maximum" -gt "$current" ]; then
+          available=$(((maximum - current) / 1048576))
+        else
+          available=0
+        fi
+        [ "$best" -lt 0 ] || [ "$available" -lt "$best" ] || available="$best"
+        best="$available"
+      fi
+    fi
+    [ "$dir" = "$root" ] && break
+    dir="${dir%/*}"
+  done
+  echo "$best"
+}
+
+probe_cpus() {
+  if [ -n "${GBRAIN_TEST_RESOURCE_CPUS:-}" ]; then
+    echo "$GBRAIN_TEST_RESOURCE_CPUS"; return
+  fi
+  local n="" cgroup_limit candidate_limit
+  n=$(nproc 2>/dev/null) && [ -n "$n" ] || n=$(sysctl -n hw.logicalcpu 2>/dev/null)
+  [ -n "$n" ] || n=1
+  cgroup_limit=$(cgroup_v2_cpu_limit)
+  candidate_limit=$(cgroup_v1_cpu_limit)
+  if [ "$candidate_limit" -ge 1 ] && \
+     { [ "$cgroup_limit" -lt 1 ] || [ "$candidate_limit" -lt "$cgroup_limit" ]; }; then
+    cgroup_limit="$candidate_limit"
+  fi
+  if [ "$cgroup_limit" -ge 1 ] && [ "$cgroup_limit" -lt "$n" ]; then
+    n="$cgroup_limit"
+  fi
+  echo "$n"
+}
+
+probe_mem_available_mb() {
+  if [ -n "${GBRAIN_TEST_RESOURCE_MEM_AVAILABLE_MB:-}" ]; then
+    echo "$GBRAIN_TEST_RESOURCE_MEM_AVAILABLE_MB"; return
+  fi
+  local available=-1 cgroup_available candidate_available
+  if [ -r /proc/meminfo ]; then
+    available=$(awk '/^MemAvailable:/ { print int($2 / 1024); found=1; exit }
+         END { if (!found) print -1 }' /proc/meminfo)
+  elif command -v vm_stat >/dev/null 2>&1; then
+    available=$(vm_stat 2>/dev/null | awk '
+      /page size of/ { page_size=$8 }
+      /Pages free:|Pages inactive:|Pages speculative:/ {
+        gsub(/\./, "", $3); pages += $3
+      }
+      END { if (page_size > 0) print int(pages * page_size / 1048576); else print -1 }
+    ')
+  fi
+  cgroup_available=$(cgroup_v2_mem_available_mb)
+  candidate_available=$(cgroup_v1_mem_available_mb)
+  if [ "$candidate_available" -ge 0 ] && \
+     { [ "$cgroup_available" -lt 0 ] || [ "$candidate_available" -lt "$cgroup_available" ]; }; then
+    cgroup_available="$candidate_available"
+  fi
+  if [ "$cgroup_available" -ge 0 ] && \
+     { [ "$available" -lt 0 ] || [ "$cgroup_available" -lt "$available" ]; }; then
+    available="$cgroup_available"
+  fi
+  echo "$available"
+}
+
+probe_psi_full_x100() {
+  if [ -n "${GBRAIN_TEST_RESOURCE_PSI_FULL_X100:-}" ]; then
+    echo "$GBRAIN_TEST_RESOURCE_PSI_FULL_X100"; return
+  fi
+  if [ -r /proc/pressure/memory ]; then
+    awk '$1 == "full" {
+      for (i=2; i<=NF; i++) if ($i ~ /^avg10=/) {
+        split($i, part, "="); printf "%.0f\n", part[2] * 100; found=1; exit
+      }
+    } END { if (!found) print -1 }' /proc/pressure/memory
+    return
+  fi
+  echo -1
+}
+
+probe_swap_free_pct() {
+  if [ -n "${GBRAIN_TEST_RESOURCE_SWAP_FREE_PCT:-}" ]; then
+    echo "$GBRAIN_TEST_RESOURCE_SWAP_FREE_PCT"; return
+  fi
+  if [ -r /proc/meminfo ]; then
+    awk '
+      /^SwapTotal:/ { total=$2 }
+      /^SwapFree:/ { free=$2 }
+      END {
+        if (total > 0) print int(free * 100 / total)
+        else print -1
+      }
+    ' /proc/meminfo
+    return
+  fi
+  if command -v sysctl >/dev/null 2>&1; then
+    LC_ALL=C sysctl -n vm.swapusage 2>/dev/null | awk '
+      function to_mib(value, unit, number) {
+        unit=substr(value, length(value), 1); number=value + 0
+        if (unit == "T") return number * 1048576
+        if (unit == "G") return number * 1024
+        if (unit == "M") return number
+        if (unit == "K") return number / 1024
+        return number / 1048576
+      }
+      {
+        for (i=1; i<=NF; i++) {
+          if ($i == "total" && $(i+1) == "=") total=to_mib($(i+2))
+          if ($i == "free" && $(i+1) == "=") free=to_mib($(i+2))
+        }
+      }
+      END { if (total > 0 && free >= 0) print int(free * 100 / total); else print -1 }
+    '
+    return
+  fi
+  echo -1
+}
+
+probe_load_per_cpu_x100() {
+  if [ -n "${GBRAIN_TEST_RESOURCE_LOAD_PER_CPU_X100:-}" ]; then
+    echo "$GBRAIN_TEST_RESOURCE_LOAD_PER_CPU_X100"; return
+  fi
+  local load1=""
+  if [ -r /proc/loadavg ]; then
+    read -r load1 _ < /proc/loadavg
+  else
+    load1=$(sysctl -n vm.loadavg 2>/dev/null | tr -d '{},' | awk '{ print $1 }')
+  fi
+  if [ -n "$load1" ]; then
+    awk -v load_value="$load1" -v cpus="$RESOURCE_CPUS" \
+      'BEGIN { if (cpus > 0) printf "%.0f\n", load_value * 100 / cpus; else print -1 }'
+  else
+    echo -1
+  fi
+}
+
+RESOURCE_CPUS=$(probe_cpus)
+RESOURCE_MEM_AVAILABLE_MB=$(probe_mem_available_mb)
+RESOURCE_PSI_FULL_X100=$(probe_psi_full_x100)
+RESOURCE_SWAP_FREE_PCT=$(probe_swap_free_pct)
+RESOURCE_LOAD_PER_CPU_X100=$(probe_load_per_cpu_x100)
+
+for resource_value in "$RESOURCE_CPUS"; do
+  if ! printf '%s' "$resource_value" | grep -qE '^[0-9]+$'; then
+    echo "ERROR: invalid non-negative resource probe: $resource_value" >&2; exit 2
+  fi
+done
+for resource_value in "$RESOURCE_MEM_AVAILABLE_MB" "$RESOURCE_PSI_FULL_X100" \
+  "$RESOURCE_SWAP_FREE_PCT" "$RESOURCE_LOAD_PER_CPU_X100"; do
+  if ! printf '%s' "$resource_value" | grep -qE '^-?[0-9]+$'; then
+    echo "ERROR: invalid signed resource probe: $resource_value" >&2; exit 2
+  fi
+done
+if [ "$RESOURCE_CPUS" -lt 1 ]; then
+  echo "ERROR: CPU resource probe must be positive" >&2; exit 2
+fi
+
+# Profiles are intentionally conservative. Two 2-GiB Bun shards previously
+# saturated swap and starved Hermes; only abundant, idle headroom unlocks 2×2.
+if { [ "$RESOURCE_MEM_AVAILABLE_MB" -ge 0 ] && \
+     [ "$RESOURCE_MEM_AVAILABLE_MB" -lt 4096 ]; } || \
+   [ "$RESOURCE_PSI_FULL_X100" -ge 500 ] || \
+   [ "$RESOURCE_LOAD_PER_CPU_X100" -ge 150 ] || \
+   { [ "$RESOURCE_SWAP_FREE_PCT" -ge 0 ] && \
+     [ "$RESOURCE_SWAP_FREE_PCT" -lt 5 ] && \
+     { [ "$RESOURCE_MEM_AVAILABLE_MB" -lt 0 ] || \
+       [ "$RESOURCE_MEM_AVAILABLE_MB" -lt 8192 ]; }; }; then
+  RESOURCE_PROFILE="critical"
+  # A single PGLite-heavy file can exceed 1 GiB RSS. Start a fresh Bun process
+  # for every file so retained heaps cannot accumulate and starve Hermes.
+  AUTO_N=1; AUTO_INTRA_CONC=1; AUTO_BATCH_SIZE=1; AUTO_SHARD_TIMEOUT=1800
+elif [ "$RESOURCE_CPUS" -lt 4 ] || \
+     [ "$RESOURCE_MEM_AVAILABLE_MB" -lt 0 ] || \
+     [ "$RESOURCE_PSI_FULL_X100" -lt 0 ] || \
+     [ "$RESOURCE_SWAP_FREE_PCT" -lt 0 ] || \
+     [ "$RESOURCE_LOAD_PER_CPU_X100" -lt 0 ] || \
+     [ "$RESOURCE_MEM_AVAILABLE_MB" -lt 8192 ] || \
+     [ "$RESOURCE_PSI_FULL_X100" -ge 100 ] || \
+     { [ "$RESOURCE_SWAP_FREE_PCT" -ge 0 ] && \
+       [ "$RESOURCE_SWAP_FREE_PCT" -lt 15 ] && \
+       [ "$RESOURCE_MEM_AVAILABLE_MB" -lt 16384 ]; } || \
+     [ "$RESOURCE_LOAD_PER_CPU_X100" -ge 90 ]; then
+  RESOURCE_PROFILE="busy"
+  AUTO_N=1; AUTO_INTRA_CONC=1; AUTO_BATCH_SIZE=10; AUTO_SHARD_TIMEOUT=1200
+elif [ "$RESOURCE_CPUS" -ge 12 ] && \
+     [ "$RESOURCE_MEM_AVAILABLE_MB" -ge 24576 ] && \
+     [ "$RESOURCE_PSI_FULL_X100" -le 25 ] && \
+     [ "$RESOURCE_SWAP_FREE_PCT" -ge 50 ] && \
+     [ "$RESOURCE_LOAD_PER_CPU_X100" -le 50 ]; then
+  RESOURCE_PROFILE="high-headroom"
+  AUTO_N=2; AUTO_INTRA_CONC=2; AUTO_BATCH_SIZE=20; AUTO_SHARD_TIMEOUT=900
+else
+  RESOURCE_PROFILE="balanced"
+  AUTO_N=2; AUTO_INTRA_CONC=1; AUTO_BATCH_SIZE=10; AUTO_SHARD_TIMEOUT=900
+fi
 
 # ──────────────────────────────────────────────────────────────────────────
 # Argument parsing. --shards N override wins over $SHARDS; both are clamped.
 # ──────────────────────────────────────────────────────────────────────────
 SHARDS_OVERRIDE=""
 MAX_CONCURRENCY_OVERRIDE=""
+BATCH_SIZE_OVERRIDE=""
+SHARD_TIMEOUT_OVERRIDE=""
 DRY_RUN=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --shards) SHARDS_OVERRIDE="$2"; shift 2 ;;
-    --shards=*) SHARDS_OVERRIDE="${1#*=}"; shift ;;
-    --max-concurrency) MAX_CONCURRENCY_OVERRIDE="$2"; shift 2 ;;
-    --max-concurrency=*) MAX_CONCURRENCY_OVERRIDE="${1#*=}"; shift ;;
+    --shards)
+      [ $# -ge 2 ] && [ -n "$2" ] || { echo "ERROR: missing value for --shards" >&2; exit 2; }
+      SHARDS_OVERRIDE="$2"; shift 2 ;;
+    --shards=*)
+      [ -n "${1#*=}" ] || { echo "ERROR: missing value for --shards" >&2; exit 2; }
+      SHARDS_OVERRIDE="${1#*=}"; shift ;;
+    --max-concurrency)
+      [ $# -ge 2 ] && [ -n "$2" ] || { echo "ERROR: missing value for --max-concurrency" >&2; exit 2; }
+      MAX_CONCURRENCY_OVERRIDE="$2"; shift 2 ;;
+    --max-concurrency=*)
+      [ -n "${1#*=}" ] || { echo "ERROR: missing value for --max-concurrency" >&2; exit 2; }
+      MAX_CONCURRENCY_OVERRIDE="${1#*=}"; shift ;;
+    --batch-size)
+      [ $# -ge 2 ] && [ -n "$2" ] || { echo "ERROR: missing value for --batch-size" >&2; exit 2; }
+      BATCH_SIZE_OVERRIDE="$2"; shift 2 ;;
+    --batch-size=*)
+      [ -n "${1#*=}" ] || { echo "ERROR: missing value for --batch-size" >&2; exit 2; }
+      BATCH_SIZE_OVERRIDE="${1#*=}"; shift ;;
+    --timeout|--shard-timeout)
+      [ $# -ge 2 ] && [ -n "$2" ] || { echo "ERROR: missing value for $1" >&2; exit 2; }
+      SHARD_TIMEOUT_OVERRIDE="$2"; shift 2 ;;
+    --timeout=*|--shard-timeout=*)
+      option_name="${1%%=*}"
+      [ -n "${1#*=}" ] || { echo "ERROR: missing value for $option_name" >&2; exit 2; }
+      SHARD_TIMEOUT_OVERRIDE="${1#*=}"; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     *) echo "ERROR: unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -171,11 +524,7 @@ if [ -n "$SHARDS_OVERRIDE" ]; then
 elif [ -n "${SHARDS:-}" ]; then
   N="$SHARDS"
 else
-  N="$(detect_cpus)"
-  # Cap the default fan-out to keep PGLite WASM cold starts within practical
-  # memory/CPU limits on constrained CI and VPS hosts. Four simultaneous
-  # processes can still push otherwise-fast hooks beyond their 60s timeout.
-  [ "$N" -gt 2 ] && N=2
+  N="$AUTO_N"
 fi
 if ! printf '%s' "$N" | grep -qE '^[0-9]+$' || [ "$N" -lt 1 ]; then
   echo "ERROR: invalid shard count: $N" >&2; exit 2
@@ -187,14 +536,33 @@ if [ -n "$MAX_CONCURRENCY_OVERRIDE" ]; then
 elif [ -n "${GBRAIN_TEST_MAX_CONCURRENCY:-}" ]; then
   INTRA_CONC="$GBRAIN_TEST_MAX_CONCURRENCY"
 else
-  # PGLite's WASM cold-start is memory/CPU heavy. Using the historical
-  # default of four tests inside each of eight shards created up to 32
-  # concurrent runtimes and made otherwise-passing tests hit their 60s
-  # timeout on constrained CI/VPS hosts.
-  INTRA_CONC=$((2 / N))
-  [ "$INTRA_CONC" -lt 1 ] && INTRA_CONC=1
+  INTRA_CONC="$AUTO_INTRA_CONC"
 fi
-SHARD_TIMEOUT="${GBRAIN_TEST_SHARD_TIMEOUT:-600}"
+if ! printf '%s' "$INTRA_CONC" | grep -qE '^[0-9]+$' || [ "$INTRA_CONC" -lt 1 ]; then
+  echo "ERROR: invalid max concurrency: $INTRA_CONC" >&2; exit 2
+fi
+
+if [ -n "$BATCH_SIZE_OVERRIDE" ]; then
+  BATCH_SIZE="$BATCH_SIZE_OVERRIDE"
+elif [ -n "${GBRAIN_TEST_BATCH_SIZE:-}" ]; then
+  BATCH_SIZE="$GBRAIN_TEST_BATCH_SIZE"
+else
+  BATCH_SIZE="$AUTO_BATCH_SIZE"
+fi
+if ! printf '%s' "$BATCH_SIZE" | grep -qE '^[0-9]+$'; then
+  echo "ERROR: invalid batch size: $BATCH_SIZE" >&2; exit 2
+fi
+
+if [ -n "$SHARD_TIMEOUT_OVERRIDE" ]; then
+  SHARD_TIMEOUT="$SHARD_TIMEOUT_OVERRIDE"
+elif [ -n "${GBRAIN_TEST_SHARD_TIMEOUT:-}" ]; then
+  SHARD_TIMEOUT="$GBRAIN_TEST_SHARD_TIMEOUT"
+else
+  SHARD_TIMEOUT="$AUTO_SHARD_TIMEOUT"
+fi
+if ! printf '%s' "$SHARD_TIMEOUT" | grep -qE '^[0-9]+$' || [ "$SHARD_TIMEOUT" -lt 1 ]; then
+  echo "ERROR: invalid shard timeout: $SHARD_TIMEOUT" >&2; exit 2
+fi
 
 # ──────────────────────────────────────────────────────────────────────────
 # Output directories. Prefer workspace-local .context/, fall back to /tmp.
@@ -215,12 +583,21 @@ fi
 # to bg-pid + sleep cap. For now, prefer gtimeout (brew coreutils) → timeout.
 # ──────────────────────────────────────────────────────────────────────────
 TIMEOUT_BIN=""
-if command -v gtimeout >/dev/null 2>&1; then TIMEOUT_BIN="gtimeout"
+if [ "${GBRAIN_TEST_DISABLE_TIMEOUT_BIN:-0}" = "1" ]; then TIMEOUT_BIN=""
+elif command -v gtimeout >/dev/null 2>&1; then TIMEOUT_BIN="gtimeout"
 elif command -v timeout >/dev/null 2>&1; then TIMEOUT_BIN="timeout"
 fi
 
 START_TS=$(date +%s)
-echo "[unit-parallel] N=$N shards | --max-concurrency=$INTRA_CONC | timeout=${SHARD_TIMEOUT}s | logs=$LOG_DIR" >&2
+if [ "$RESOURCE_PSI_FULL_X100" -lt 0 ]; then RESOURCE_PSI_DISPLAY="unknown"
+else RESOURCE_PSI_DISPLAY=$(printf '%d.%02d%%' \
+  "$((RESOURCE_PSI_FULL_X100 / 100))" "$((RESOURCE_PSI_FULL_X100 % 100))"); fi
+if [ "$RESOURCE_LOAD_PER_CPU_X100" -lt 0 ]; then RESOURCE_LOAD_DISPLAY="unknown"
+else RESOURCE_LOAD_DISPLAY=$(printf '%d.%02d' \
+  "$((RESOURCE_LOAD_PER_CPU_X100 / 100))" "$((RESOURCE_LOAD_PER_CPU_X100 % 100))"); fi
+if [ "$RESOURCE_SWAP_FREE_PCT" -lt 0 ]; then RESOURCE_SWAP_DISPLAY="unknown"
+else RESOURCE_SWAP_DISPLAY="${RESOURCE_SWAP_FREE_PCT}%"; fi
+echo "[unit-parallel] profile=$RESOURCE_PROFILE | resources=cpus:$RESOURCE_CPUS,mem:${RESOURCE_MEM_AVAILABLE_MB}MiB,psi_full:$RESOURCE_PSI_DISPLAY,swap_free:$RESOURCE_SWAP_DISPLAY,load_per_cpu:$RESOURCE_LOAD_DISPLAY | N=$N shards | --max-concurrency=$INTRA_CONC | batch-size=$BATCH_SIZE | timeout=${SHARD_TIMEOUT}s | logs=$LOG_DIR" >&2
 
 if [ "$DRY_RUN" = "1" ]; then
   echo "[unit-parallel] dry-run: would spawn $N shards with the above settings."
@@ -232,32 +609,65 @@ if [ "$DRY_RUN" = "1" ]; then
 fi
 
 # Refuse overlapping full-suite runs in the same worktree. A stale lock is
-# recovered only when its recorded PID is no longer alive.
+# recovered only when its recorded PID is no longer alive. Incomplete or
+# symbolic locks fail closed; stale recovery first renames the directory
+# atomically so concurrent contenders cannot delete a newly acquired lock.
 if mkdir "$RUN_LOCK_DIR" 2>/dev/null; then
   RUN_LOCK_HELD=1
 else
-  lock_pid=""
-  [ -f "$RUN_LOCK_DIR/pid" ] && lock_pid=$(cat "$RUN_LOCK_DIR/pid" 2>/dev/null)
-  if printf '%s' "$lock_pid" | grep -qE '^[0-9]+$' && kill -0 "$lock_pid" 2>/dev/null; then
+  if [ -L "$RUN_LOCK_DIR" ]; then
+    echo "ERROR: unsafe symbolic test lock: $RUN_LOCK_DIR" >&2
+    exit 2
+  fi
+  if [ ! -d "$RUN_LOCK_DIR" ]; then
+    echo "ERROR: invalid test lock: $RUN_LOCK_DIR" >&2
+    exit 2
+  fi
+  if [ -L "$RUN_LOCK_DIR/pid" ]; then
+    echo "ERROR: unsafe symbolic test lock pid: $RUN_LOCK_DIR/pid" >&2
+    exit 2
+  fi
+  if [ ! -f "$RUN_LOCK_DIR/pid" ]; then
+    echo "ERROR: test lock is initializing or invalid: $RUN_LOCK_DIR" >&2
+    exit 2
+  fi
+  lock_pid=$(cat "$RUN_LOCK_DIR/pid" 2>/dev/null)
+  if ! printf '%s' "$lock_pid" | grep -qE '^[0-9]+$'; then
+    echo "ERROR: test lock is initializing or invalid: $RUN_LOCK_DIR" >&2
+    exit 2
+  fi
+  if kill -0 "$lock_pid" 2>/dev/null; then
     echo "ERROR: unit test suite already running (pid=$lock_pid)" >&2
     exit 2
   fi
-  rm -f "$RUN_LOCK_DIR/pid" 2>/dev/null
-  rmdir "$RUN_LOCK_DIR" 2>/dev/null || {
-    echo "ERROR: cannot recover stale test lock: $RUN_LOCK_DIR" >&2
+
+  stale_lock_dir="${RUN_LOCK_DIR}.stale.$$"
+  if [ -e "$stale_lock_dir" ] || [ -L "$stale_lock_dir" ] || \
+     ! mv "$RUN_LOCK_DIR" "$stale_lock_dir" 2>/dev/null; then
+    echo "ERROR: stale test lock changed during recovery: $RUN_LOCK_DIR" >&2
     exit 2
-  }
-  mkdir "$RUN_LOCK_DIR" || {
-    echo "ERROR: cannot acquire test lock: $RUN_LOCK_DIR" >&2
+  fi
+  if ! mkdir "$RUN_LOCK_DIR" 2>/dev/null; then
+    echo "ERROR: cannot acquire test lock after stale recovery: $RUN_LOCK_DIR" >&2
     exit 2
-  }
+  fi
   RUN_LOCK_HELD=1
+  if [ ! -L "$stale_lock_dir" ] && [ -d "$stale_lock_dir" ] && \
+     [ ! -L "$stale_lock_dir/pid" ] && [ -f "$stale_lock_dir/pid" ]; then
+    rm -f "$stale_lock_dir/pid"
+    rmdir "$stale_lock_dir" 2>/dev/null || true
+  fi
 fi
-echo "$$" > "$RUN_LOCK_DIR/pid"
+if ! (umask 077; set -C; printf '%s\n' "$$" > "$RUN_LOCK_DIR/pid") 2>/dev/null; then
+  release_run_lock
+  echo "ERROR: cannot initialize test lock: $RUN_LOCK_DIR" >&2
+  exit 2
+fi
 
 # Clear prior artifacts only after acquiring the single-run lock, so a second
 # invocation can never truncate the active suite's logs before being refused.
-rm -f "$LOG_DIR"/shard-*.log "$LOG_DIR"/shard-*.exit "$LOG_DIR"/shard-*.wedged 2>/dev/null
+rm -f "$LOG_DIR"/shard-*.log "$LOG_DIR"/shard-*.exit \
+  "$LOG_DIR"/shard-*.wedged "$LOG_DIR"/shard-*.completed 2>/dev/null
 : > "$FAILURES_LOG"
 : > "$SUMMARY_FILE"
 
@@ -268,26 +678,58 @@ rm -f "$LOG_DIR"/shard-*.log "$LOG_DIR"/shard-*.exit "$LOG_DIR"/shard-*.wedged 2
 for i in $(seq 1 "$N"); do
   (
     SHARD_LOG="$LOG_DIR/shard-$i.log"
+    timed_out=0
     if [ -n "$TIMEOUT_BIN" ]; then
+      completion_marker="$LOG_DIR/shard-$i.completed"
+      rm -f "$completion_marker"
       "$TIMEOUT_BIN" --kill-after=5s "${SHARD_TIMEOUT}s" \
-        env SHARD="$i/$N" \
-        bash scripts/run-unit-shard.sh --max-concurrency="$INTRA_CONC" \
-        > "$SHARD_LOG" 2>&1
+        bash -c '
+          shard="$1"; concurrency="$2"; batch_size="$3"
+          shard_log="$4"; completion_marker="$5"
+          env SHARD="$shard" bash scripts/run-unit-shard.sh \
+            --max-concurrency="$concurrency" --batch-size="$batch_size" \
+            > "$shard_log" 2>&1
+          child_rc=$?
+          (umask 077; printf "%s\n" "$child_rc" > "$completion_marker") || exit 125
+          exit "$child_rc"
+        ' _ "$i/$N" "$INTRA_CONC" "$BATCH_SIZE" "$SHARD_LOG" "$completion_marker"
+      rc=$?
+      if [ -f "$completion_marker" ]; then
+        completed_rc=$(cat "$completion_marker" 2>/dev/null)
+        if printf '%s' "$completed_rc" | grep -qE '^[0-9]+$'; then
+          rc="$completed_rc"
+        fi
+        rm -f "$completion_marker"
+      elif [ "$rc" = "124" ]; then
+        timed_out=1
+      fi
     else
+      timeout_marker="$LOG_DIR/shard-$i.wedged"
+      rm -f "$timeout_marker"
       env SHARD="$i/$N" \
         bash scripts/run-unit-shard.sh --max-concurrency="$INTRA_CONC" \
+        --batch-size="$BATCH_SIZE" \
         > "$SHARD_LOG" 2>&1 &
       pid=$!
-      ( sleep "$SHARD_TIMEOUT" && kill -TERM "$pid" 2>/dev/null && \
-        sleep 5 && kill -KILL "$pid" 2>/dev/null ) &
+      (
+        sleep "$SHARD_TIMEOUT"
+        echo "WEDGED" > "$timeout_marker"
+        terminate_pid_tree "$pid"
+      ) &
       cap_pid=$!
       wait "$pid" 2>/dev/null
-      kill "$cap_pid" 2>/dev/null
-      wait "$cap_pid" 2>/dev/null
+      rc=$?
+      if [ -f "$timeout_marker" ]; then
+        wait "$cap_pid" 2>/dev/null || true
+        rc=124
+        timed_out=1
+      else
+        kill "$cap_pid" 2>/dev/null
+        wait "$cap_pid" 2>/dev/null || true
+      fi
     fi
-    rc=$?
     echo "$rc" > "$LOG_DIR/shard-$i.exit"
-    [ "$rc" = "124" ] && echo "WEDGED" > "$LOG_DIR/shard-$i.wedged"
+    [ "$timed_out" = "1" ] && echo "WEDGED" > "$LOG_DIR/shard-$i.wedged"
   ) &
   SHARD_PIDS+=($!)
 done
