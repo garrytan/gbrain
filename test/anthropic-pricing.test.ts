@@ -8,7 +8,29 @@
  * drop slash-form support.
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { _resetRatesMemo } from '../src/core/openrouter-rates.ts';
+
+// Router ids now resolve through the on-disk OpenRouter rate cache
+// (openrouter-rates.ts). Without this isolation these assertions would depend
+// on whether the machine running them happens to have a populated
+// ~/.gbrain/openrouter-rates.json — green on CI, red on a dev box that had
+// refreshed rates. Pin an empty GBRAIN_HOME so "no cached router rate" is a
+// stated precondition rather than an accident of the environment.
+let _ratesHome: string;
+beforeEach(() => {
+  _ratesHome = mkdtempSync(join(tmpdir(), 'gbrain-pricing-'));
+  process.env.GBRAIN_HOME = _ratesHome;
+  _resetRatesMemo();
+});
+afterEach(() => {
+  delete process.env.GBRAIN_HOME;
+  rmSync(_ratesHome, { recursive: true, force: true });
+  _resetRatesMemo();
+});
 import { ANTHROPIC_PRICING, estimateMaxCostUsd } from '../src/core/anthropic-pricing.ts';
 import { CANONICAL_PRICING } from '../src/core/model-pricing.ts';
 
@@ -56,10 +78,11 @@ describe('estimateMaxCostUsd', () => {
   });
 
   test('OpenRouter nested form returns null — tail is `anthropic/claude-...` which is not a pricing key', () => {
-    // Per D2 architecture: parseModelId returns {provider:'openrouter',
-    // model:'anthropic/claude-sonnet-4-6'}; lookup on the tail
-    // 'anthropic/claude-sonnet-4-6' misses (table has bare 'claude-sonnet-4-6').
-    // OpenRouter pricing is intentionally out of scope (TODO #2).
+    // Routers are priced ONLY from OpenRouter's own catalogue (cached by
+    // openrouter-rates.ts); with no cached rate the id stays unpriced and the
+    // TX2 refusal stands. Critically it must NOT fall through to the tail
+    // fallback and price at Anthropic's DIRECT rate — a router bills its own
+    // rates, so that alias would under-estimate spend.
     expect(estimateMaxCostUsd('openrouter:anthropic/claude-sonnet-4-6', 1_000, 1_000)).toBeNull();
   });
 

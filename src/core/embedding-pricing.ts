@@ -19,6 +19,8 @@
  * fabricate numbers.
  */
 
+import { lookupOpenRouterEmbeddingPrice } from './openrouter-rates.ts';
+
 export interface EmbeddingPricing {
   /** USD per 1M tokens (embedding cost; embeddings have no separate output rate). */
   pricePerMTok: number;
@@ -75,6 +77,13 @@ export function lookupEmbeddingPrice(modelString: string): PriceLookupResult {
   const provider = providerRaw.trim().toLowerCase();
   const model = (modelRaw ?? '').trim();
   const key = `${provider}:${model}`;
+
+  // OpenRouter's own published rate wins over the bundled constant below: it is
+  // authoritative and current, whereas the constant is a snapshot. Only ever
+  // consulted for `openrouter:` ids — never to alias a router to vendor rates.
+  const routed = lookupOpenRouterEmbeddingPrice(modelString);
+  if (routed !== undefined) return { kind: 'known', pricePerMTok: routed, key };
+
   const hit = EMBEDDING_PRICING[key];
   if (hit) return { kind: 'known', pricePerMTok: hit.pricePerMTok, key };
   return { kind: 'unknown', provider, model };
