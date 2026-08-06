@@ -73,7 +73,7 @@ describeE2E('E2E: Check-Update', () => {
     expect(stdout).toContain('--json');
   });
 
-  test('handles no-releases gracefully (current repo state)', async () => {
+  test('reports a coherent release or no-release result', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'check-update', '--json'], {
       cwd: new URL('../..', import.meta.url).pathname,
       stdout: 'pipe',
@@ -84,8 +84,16 @@ describeE2E('E2E: Check-Update', () => {
 
     expect(exitCode).toBe(0);
     const output = JSON.parse(stdout);
-    // With no releases, should return false and an error
-    expect(output.update_available).toBe(false);
+    if (output.error === 'no_releases') {
+      expect(output.update_available).toBe(false);
+      expect(output.latest_version).toBe('');
+      expect(output.release_url).toBe('');
+    } else {
+      expect(output.error).toBeUndefined();
+      expect(output.latest_version).toMatch(/^\d+\.\d+\.\d+(?:\.\d+)?$/);
+      expect(output.release_url).toStartWith('https://github.com/garrytan/gbrain/releases/');
+      expect(output.update_available).toBe(isMinorOrMajorBump(VERSION, output.latest_version));
+    }
   });
 
   test('version comparison wiring works end-to-end', () => {
