@@ -4674,6 +4674,13 @@ export class PGLiteEngine implements BrainEngine {
       whereParts.push(`visibility = ANY($visibility)`);
       params.visibility = opts.visibility;
     }
+    if (opts.grep && opts.grep.trim()) {
+      // SQL-side substring filter (before limit) — a client-side post-limit
+      // grep silently misses matches outside the newest-N window on
+      // high-cardinality entities. Parity with the postgres engine.
+      whereParts.push(`fact ILIKE $grepPat ESCAPE '\\'`);
+      params.grepPat = '%' + escapeLikePattern(opts.grep.trim()) + '%';
+    }
     for (const c of opts.whereClauses ?? []) whereParts.push(c);
     Object.assign(params, opts.whereParams ?? {});
 
