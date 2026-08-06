@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import type { BrainEngine } from '../core/engine.ts';
 import { startMcpServer } from '../mcp/server.ts';
+import { redirectStdoutLoggingToStderr } from '../core/console-prefix.ts';
 
 // Maximum time the stdio path will wait for engine.disconnect() (PGLite
 // close + advisory lock release) before forcing exit. Keeps a wedged
@@ -124,6 +125,12 @@ export async function runServe(
   // The HTTP / OAuth path above has its own lifecycle in serve-http.ts
   // and is intentionally NOT wired into this stdio plumbing.
   console.error('Starting GBrain MCP server (stdio)...');
+
+  // stdout is reserved for JSON-RPC frames from here on. Ops that run
+  // in-process (sync_brain -> performSync -> embed --stale) emit progress
+  // via slog/console.log, which would otherwise land on stdout and make
+  // the MCP client log "Failed to parse JSONRPC message" for every line.
+  redirectStdoutLoggingToStderr();
 
   installStdioLifecycle(engine, args, opts);
 

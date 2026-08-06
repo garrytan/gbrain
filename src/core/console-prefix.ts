@@ -51,6 +51,54 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 const __prefixStore = new AsyncLocalStorage<string>();
 
+// MCP stdio mode: stdout is reserved for JSON-RPC frames. When the stdio
+// serve path activates this guard, every logging surface this module owns
+// (slog's console.log fallthrough, slog's prefixed process.stdout.write)
+// routes to stderr instead, and the global console.log/info/debug are
+// rebound to console.error so library code reached from op handlers
+// (performSync, runEmbedCore, importFromFile, ...) can't emit plain text
+// onto the JSON-RPC channel. One direction only — never unset at runtime
+// (the serve process is stdio-MCP for its whole lifetime).
+let __stdoutLoggingRedirected = false;
+
+/**
+ * Route ALL stdout-bound logging to stderr for the lifetime of this
+ * process. Called once by the stdio MCP serve path before the transport
+ * starts. Idempotent.
+ *
+ * Rationale: any non-JSON-RPC line on stdout makes the MCP client's
+ * parser throw ("Failed to parse JSONRPC message"). Progress output from
+ * ops that run in-process (sync_brain -> performSync -> embed) previously
+ * leaked to stdout via slog / console.log.
+ */
+export function redirectStdoutLoggingToStderr(): void {
+  if (__stdoutLoggingRedirected) return;
+  __stdoutLoggingRedirected = true;
+  // eslint-disable-next-line no-console
+  const toStderr = (...args: unknown[]): void => console.error(...args);
+  // eslint-disable-next-line no-console
+  console.log = toStderr;
+  // eslint-disable-next-line no-console
+  console.info = toStderr;
+  // eslint-disable-next-line no-console
+  console.debug = toStderr;
+}
+
+/**
+ * Read-only accessor (test seam): is the stdio stderr redirect active?
+ */
+export function isStdoutLoggingRedirected(): boolean {
+  return __stdoutLoggingRedirected;
+}
+
+/**
+ * Test-only reset. Does NOT restore the original console bindings (tests
+ * that need those should snapshot them before calling the redirect).
+ */
+export function _resetStdoutRedirectForTests(): void {
+  __stdoutLoggingRedirected = false;
+}
+
 /**
  * Run `fn` with an active per-source prefix `id`. Within the closure,
  * `slog` and `serr` will prepend `[id] ` to every line they emit. The
@@ -84,12 +132,15 @@ export function getSourcePrefix(): string | null {
 export function slog(...args: unknown[]): void {
   const prefix = getSourcePrefix();
   if (prefix === null) {
-    // Back-compat fast path: bare console.log semantics.
+    // Back-compat fast path: bare console.log semantics. (Under the stdio
+    // MCP redirect, console.log is rebound to stderr — see
+    // redirectStdoutLoggingToStderr.)
     // eslint-disable-next-line no-console
     console.log(...args);
     return;
   }
-  process.stdout.write(prefixLines(formatArgs(args), prefix) + '\n');
+  const out = __stdoutLoggingRedirected ? process.stderr : process.stdout;
+  out.write(prefixLines(formatArgs(args), prefix) + '\n');
 }
 
 /**
