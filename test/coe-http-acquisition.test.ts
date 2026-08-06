@@ -154,6 +154,94 @@ describe("CoE bounded HTTP acquisition", () => {
     await expect(timedOut.fetch("https://example.com/file")).rejects.toMatchObject({ code: "timeout" });
   });
 
+  test("applies timeout_ms to DNS resolution", async () => {
+    const dnsStall = client(
+      async () => {
+        throw new Error("fetch must not run while DNS is unresolved");
+      },
+      { timeout_ms: 5 },
+      async () => await new Promise<string[]>(() => {}),
+    );
+
+    const outcome = await Promise.race([
+      dnsStall.fetch("https://example.com/file")
+        .then(() => "resolved")
+        .catch((error: HttpAcquisitionError) => error.code),
+      new Promise<string>((resolve) => setTimeout(() => resolve("still_pending"), 50)),
+    ]);
+
+    expect(outcome).toBe("timeout");
+  });
+
+  test("uses one timeout budget across every redirect hop", async () => {
+    let calls = 0;
+    const redirectStall = client(
+      async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        calls += 1;
+        return calls <= 10
+          ? new Response(null, {
+            status: 302,
+            headers: { location: `https://example.com/hop-${calls}` },
+          })
+          : new Response("ok", { headers: { "content-type": "text/plain" } });
+      },
+      { timeout_ms: 60, max_redirects: 10 },
+    );
+
+    await expect(redirectStall.fetch("https://example.com/start")).rejects.toMatchObject({ code: "timeout" });
+  });
+
+  test("applies timeout_ms while streaming the response body", async () => {
+    let transportAborted = false;
+    const bodyStall = client(
+      async (_input, init) => {
+        init?.signal?.addEventListener("abort", () => {
+          transportAborted = true;
+        });
+        return new Response(new ReadableStream<Uint8Array>({
+          start() {},
+        }), {
+          headers: { "content-type": "text/plain" },
+        });
+      },
+      { timeout_ms: 5 },
+    );
+
+    const outcome = await Promise.race([
+      bodyStall.fetch("https://example.com/file")
+        .then(() => "resolved")
+        .catch((error: HttpAcquisitionError) => error.code),
+      new Promise<string>((resolve) => setTimeout(() => resolve("still_pending"), 50)),
+    ]);
+
+    expect(outcome).toBe("timeout");
+    expect(transportAborted).toBe(true);
+  });
+
+  test("does not let stalled body cancellation hide a byte-limit failure", async () => {
+    const cancellationStall = client(
+      async () => new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2]));
+        },
+        cancel: async () => await new Promise<void>(() => {}),
+      }), {
+        headers: { "content-type": "application/octet-stream" },
+      }),
+      { max_bytes: 1, timeout_ms: 5 },
+    );
+
+    const outcome = await Promise.race([
+      cancellationStall.fetch("https://example.com/file")
+        .then(() => "resolved")
+        .catch((error: HttpAcquisitionError) => error.code),
+      new Promise<string>((resolve) => setTimeout(() => resolve("still_pending"), 50)),
+    ]);
+
+    expect(outcome).toBe("response_too_large");
+  });
+
   test("error objects retain only bounded redirect context", () => {
     const error = new HttpAcquisitionError({
       code: "network_error",
