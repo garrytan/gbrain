@@ -4,6 +4,7 @@ import { BlockList, isIP, type LookupFunction } from "node:net";
 import { performance } from "node:perf_hooks";
 
 import type { RedirectHop } from "./types.ts";
+import { canonicalizeUriForPersistence } from "./uri-persistence.ts";
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const SENSITIVE_QUERY_NAMES = new Set([
@@ -107,9 +108,13 @@ export class HttpAcquisitionError extends Error {
     super(`HTTP acquisition failed: ${input.code}`);
     this.name = "HttpAcquisitionError";
     this.code = input.code;
-    this.requested_uri = input.requested_uri;
-    this.final_uri = input.final_uri;
-    this.redirects = input.redirects.map((redirect) => ({ ...redirect }));
+    this.requested_uri = journalSafeUri(input.requested_uri);
+    this.final_uri = journalSafeUri(input.final_uri);
+    this.redirects = input.redirects.map((redirect) => ({
+      ...redirect,
+      from_uri: journalSafeUri(redirect.from_uri),
+      to_uri: journalSafeUri(redirect.to_uri),
+    }));
   }
 }
 
@@ -127,14 +132,9 @@ function isSensitiveQueryParameter(value: string): boolean {
   return SENSITIVE_QUERY_NAMES.has(normalized) || /(?:token|secret|signature|password|credential)$/.test(normalized);
 }
 
-function redactUriForJournal(value: string): string {
+function journalSafeUri(value: string | URL): string {
   try {
-    const uri = new URL(value);
-    uri.username = "";
-    uri.password = "";
-    uri.search = "";
-    uri.hash = "";
-    return uri.toString();
+    return canonicalizeUriForPersistence(value);
   } catch {
     return "https://invalid.invalid/";
   }
@@ -402,13 +402,13 @@ export class BoundedHttpClient {
       ? this.maxBytes
       : positiveInteger(options.max_bytes, "max_bytes", this.maxBytes);
     const redirects: RedirectHop[] = [];
-    const journalSafeInitialUri = redactUriForJournal(uri);
+    const journalSafeInitialUri = journalSafeUri(uri);
     const initial = this.normalizeUri(uri, journalSafeInitialUri, journalSafeInitialUri, redirects);
-    const requestedUri = initial.toString();
+    const requestedUri = journalSafeUri(initial);
     let current = initial;
 
     while (true) {
-      const currentUri = current.toString();
+      const currentUri = journalSafeUri(current);
       const controller = new AbortController();
       try {
         const pinnedAddress = await this.resolvePublicAddress(current, requestedUri, redirects, deadline);
@@ -445,7 +445,7 @@ export class BoundedHttpClient {
             this.discardResponse(response, () => controller.abort());
             throw error;
           }
-          redirects.push({ from_uri: currentUri, to_uri: next.toString(), status_code: response.status });
+          redirects.push({ from_uri: currentUri, to_uri: journalSafeUri(next), status_code: response.status });
           if (response.body) {
             await this.beforeDeadline(response.body.cancel(), deadline, () => controller.abort());
           }

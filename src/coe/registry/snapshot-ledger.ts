@@ -23,14 +23,13 @@ import {
   type SnapshotLedgerOptions,
   type SnapshotRetentionPolicy,
 } from "./types.ts";
+import { canonicalizeUriForPersistence } from "./uri-persistence.ts";
 
 const DEFAULT_RETENTION: SnapshotRetentionPolicy = {
   staging_max_age_ms: 24 * 60 * 60 * 1000,
   preserve_retracted_objects: true,
   preserve_acquisition_journal: true,
 };
-
-const SENSITIVE_QUERY_PARAMETER = /(?:token|key|secret|signature|credential|password|auth)/i;
 
 function normalizeMediaType(value: string): string {
   const mediaType = value.split(";", 1)[0]!.trim().toLowerCase();
@@ -54,7 +53,7 @@ function normalizeStoredUri(value: string): string {
   try {
     parsed = new URL(value);
   } catch {
-    throw new CoeContractError("invalid_contract", `Invalid acquisition URI: ${value}`);
+    throw new CoeContractError("invalid_contract", "Invalid acquisition URI");
   }
   if (!["https:", "http:", "file:"].includes(parsed.protocol)) {
     throw new CoeContractError("invalid_contract", `Unsupported acquisition URI scheme: ${parsed.protocol}`);
@@ -62,13 +61,7 @@ function normalizeStoredUri(value: string): string {
   if (parsed.username || parsed.password) {
     throw new CoeContractError("policy_violation", "Acquisition URIs must not contain credentials");
   }
-  for (const key of parsed.searchParams.keys()) {
-    if (SENSITIVE_QUERY_PARAMETER.test(key)) {
-      throw new CoeContractError("policy_violation", `Sensitive query parameter is forbidden in acquisition URI: ${key}`);
-    }
-  }
-  parsed.hash = "";
-  return parsed.toString();
+  return canonicalizeUriForPersistence(parsed);
 }
 
 function normalizeRedirects(

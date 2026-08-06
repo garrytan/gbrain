@@ -15,7 +15,7 @@ function client(
 ): BoundedHttpClient {
   return new BoundedHttpClient(
     {
-      allowed_hosts: ["example.com", "cdn.example.com"],
+      allowed_hosts: ["example.com", "cdn.example.com", "api.github.com"],
       max_bytes: 32,
       timeout_ms: 1_000,
       max_redirects: 2,
@@ -90,6 +90,96 @@ describe("CoE bounded HTTP acquisition", () => {
     });
     expect(JSON.stringify(sensitive)).not.toContain("do-not-store");
     expect(called).toBe(false);
+  });
+
+  test("keeps transport queries but exposes only allowlisted query parameters for journaling", async () => {
+    const calls: string[] = [];
+    const bounded = client(async (input) => {
+      const uri = String(input);
+      calls.push(uri);
+      if (calls.length === 1) {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            location: "https://api.github.com/repos/acme/example/git/trees/final?recursive=0&opaque_redirect=redirect-secret",
+          },
+        });
+      }
+      return new Response("ok", { headers: { "content-type": "text/plain" } });
+    });
+
+    const result = await bounded.fetch(
+      "https://api.github.com/repos/acme/example/git/trees/start?recursive=1&opaque_request=request-secret",
+    );
+
+    expect(calls).toEqual([
+      "https://api.github.com/repos/acme/example/git/trees/start?recursive=1&opaque_request=request-secret",
+      "https://api.github.com/repos/acme/example/git/trees/final?recursive=0&opaque_redirect=redirect-secret",
+    ]);
+    expect(result).toMatchObject({
+      requested_uri: "https://api.github.com/repos/acme/example/git/trees/start?recursive=1",
+      final_uri: "https://api.github.com/repos/acme/example/git/trees/final?recursive=0",
+      redirects: [{
+        from_uri: "https://api.github.com/repos/acme/example/git/trees/start?recursive=1",
+        to_uri: "https://api.github.com/repos/acme/example/git/trees/final?recursive=0",
+        status_code: 302,
+      }],
+    });
+    expect(JSON.stringify(result)).not.toContain("request-secret");
+    expect(JSON.stringify(result)).not.toContain("redirect-secret");
+  });
+
+  test("unknown query parameter values never appear in HTTP errors", async () => {
+    let calls = 0;
+    const failure = await client(async () => {
+      calls += 1;
+      if (calls === 1) {
+        return new Response(null, {
+          status: 302,
+          headers: { location: "https://cdn.example.com/final?opaque_redirect=redirect-error-secret" },
+        });
+      }
+      return new Response("maintenance", {
+        status: 503,
+        headers: { "content-type": "text/plain" },
+      });
+    }).fetch("https://example.com/file?opaque_error=error-secret").catch((error) => error);
+
+    expect(failure).toMatchObject({
+      code: "http_status_503",
+      requested_uri: "https://example.com/file",
+      final_uri: "https://cdn.example.com/final",
+      redirects: [{
+        from_uri: "https://example.com/file",
+        to_uri: "https://cdn.example.com/final",
+        status_code: 302,
+      }],
+    });
+    expect(JSON.stringify(failure)).not.toContain("error-secret");
+    expect(JSON.stringify(failure)).not.toContain("redirect-error-secret");
+  });
+
+  test("drops repeated allowlisted parameters from journal-safe URIs", async () => {
+    const calls: string[] = [];
+    const result = await client(async (input) => {
+      calls.push(String(input));
+      return new Response("ok", { headers: { "content-type": "text/plain" } });
+    }).fetch("https://api.github.com/repos/acme/example/git/trees/main?recursive=1&recursive=0");
+
+    expect(calls).toEqual([
+      "https://api.github.com/repos/acme/example/git/trees/main?recursive=1&recursive=0",
+    ]);
+    expect(result.requested_uri).toBe("https://api.github.com/repos/acme/example/git/trees/main");
+    expect(result.final_uri).toBe("https://api.github.com/repos/acme/example/git/trees/main");
+  });
+
+  test("does not apply the recursive allowlist outside the GitHub tree endpoint", async () => {
+    const result = await client(async () => new Response("ok", {
+      headers: { "content-type": "text/plain" },
+    })).fetch("https://example.com/file?recursive=1");
+
+    expect(result.requested_uri).toBe("https://example.com/file");
+    expect(result.final_uri).toBe("https://example.com/file");
   });
 
   test("rejects private or reserved DNS answers", async () => {
