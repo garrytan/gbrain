@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 
 import {
   BoundedHttpClient,
@@ -338,81 +340,256 @@ describe("CoE bounded HTTP acquisition", () => {
     expect(transportAborted).toBe(true);
   });
 
-  test("cleans up response bodies rejected before streaming", async () => {
+  test("cancels a timed-out body reader exactly once", async () => {
+    let cancelCalls = 0;
+    const bodyStall = client(async () => ({
+      status: 200,
+      headers: new Headers({ "content-type": "text/plain" }),
+      body: {
+        getReader: () => ({
+          read: async () => await new Promise<never>(() => {}),
+          cancel: async () => {
+            cancelCalls += 1;
+            await new Promise<void>(() => {});
+          },
+        }),
+      },
+    }) as unknown as Response, { timeout_ms: 5 });
+
+    await expect(bodyStall.fetch("https://example.com/file")).rejects.toMatchObject({ code: "timeout" });
+    expect(cancelCalls).toBe(1);
+  });
+
+  test("terminates every response rejected before body consumption even when cancellation blocks", async () => {
     const cases: Array<{
       name: string;
-      response: () => Response;
+      response: (body: ReadableStream<Uint8Array> | null) => Response;
       expectedCode: string;
       config?: { max_bytes?: number; max_redirects?: number };
+      expectsBody?: boolean;
     }> = [
       {
-        name: "HTTP status",
-        response: () => new Response(stream(), {
-          status: 500,
+        name: "non-2xx status",
+        response: (body) => new Response(body, {
+          status: 503,
           headers: { "content-type": "text/plain" },
         }),
-        expectedCode: "http_status_500",
+        expectedCode: "http_status_503",
       },
       {
-        name: "missing content type",
-        response: () => new Response(stream()),
+        name: "refused content type",
+        response: (body) => new Response(body, {
+          headers: { "content-type": "not-a-media-type" },
+        }),
         expectedCode: "missing_or_invalid_content_type",
       },
       {
-        name: "advertised byte limit",
-        response: () => new Response(stream(), {
+        name: "excessive Content-Length",
+        response: (body) => new Response(body, {
           headers: { "content-type": "text/plain", "content-length": "33" },
         }),
         expectedCode: "response_too_large",
         config: { max_bytes: 32 },
       },
       {
-        name: "redirect limit",
-        response: () => new Response(stream(), {
+        name: "missing body",
+        response: () => ({
+          status: 200,
+          headers: new Headers({ "content-type": "text/plain" }),
+          body: null,
+        }) as unknown as Response,
+        expectedCode: "missing_response_body",
+        expectsBody: false,
+      },
+      {
+        name: "redirect limit exceeded",
+        response: (body) => new Response(body, {
           status: 302,
           headers: { location: "https://example.com/next" },
         }),
         expectedCode: "too_many_redirects",
         config: { max_redirects: 0 },
       },
+      {
+        name: "redirect validation before body consumption",
+        response: (body) => new Response(body, {
+          status: 302,
+          headers: { location: "http://example.com/not-https" },
+        }),
+        expectedCode: "scheme_not_allowed",
+      },
     ];
 
-    let cancelled = false;
-    function stream(): ReadableStream<Uint8Array> {
-      return new ReadableStream<Uint8Array>({
-        start() {},
-        cancel() {
-          cancelled = true;
-        },
-      });
-    }
-
     for (const testCase of cases) {
-      cancelled = false;
-      let transportAborted = false;
+      let activeRequests = 0;
+      let openStreams = 0;
+      let cancelCalls = 0;
+      const body = testCase.expectsBody === false
+        ? null
+        : new ReadableStream<Uint8Array>({
+            start() {
+              openStreams += 1;
+            },
+            async cancel() {
+              cancelCalls += 1;
+              openStreams -= 1;
+              await new Promise<void>(() => {});
+            },
+          });
       const rejected = client(
         async (_input, init) => {
+          activeRequests += 1;
           init?.signal?.addEventListener("abort", () => {
-            transportAborted = true;
-          });
-          return testCase.response();
+            activeRequests -= 1;
+          }, { once: true });
+          return testCase.response(body);
         },
-        testCase.config,
+        { timeout_ms: 20, ...testCase.config },
       );
 
-      await expect(rejected.fetch("https://example.com/file")).rejects.toMatchObject({
-        code: testCase.expectedCode,
-      });
+      const started = performance.now();
+      const outcome = await Promise.race([
+        rejected.fetch("https://example.com/file")
+          .then(() => "resolved")
+          .catch((error: HttpAcquisitionError) => error.code),
+        Bun.sleep(100).then(() => "still_pending"),
+      ]);
+
       expect({
         name: testCase.name,
-        transportAborted,
-        cancelled,
+        outcome,
+        activeRequests,
+        openStreams,
+        cancelCalls,
       }).toEqual({
         name: testCase.name,
-        transportAborted: true,
-        cancelled: true,
+        outcome: testCase.expectedCode,
+        activeRequests: 0,
+        openStreams: 0,
+        cancelCalls: testCase.expectsBody === false ? 0 : 1,
       });
+      expect(performance.now() - started).toBeLessThan(100);
     }
+  });
+
+  test("preserves terminal error codes when response cancellation throws synchronously", async () => {
+    let transportAborted = false;
+    const rejected = client(async (_input, init) => {
+      init?.signal?.addEventListener("abort", () => {
+        transportAborted = true;
+      });
+      return {
+        status: 503,
+        headers: new Headers({ "content-type": "text/plain" }),
+        body: {
+          cancel() {
+            throw new Error("synchronous cancellation failure");
+          },
+        },
+      } as unknown as Response;
+    });
+
+    await expect(rejected.fetch("https://example.com/file")).rejects.toMatchObject({ code: "http_status_503" });
+    expect(transportAborted).toBe(true);
+  });
+
+  test("closes a real transport socket after a terminal response rejection", async () => {
+    const sockets = new Set<import("node:net").Socket>();
+    const server = createServer((_request, response) => {
+      response.writeHead(503, { "content-type": "text/plain" });
+      response.write("maintenance");
+    });
+    server.on("connection", (socket) => {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+
+    try {
+      const { port } = server.address() as AddressInfo;
+      const rejected = client(async (_input, init) => await fetch(`http://127.0.0.1:${port}/stall`, {
+        signal: init?.signal,
+      }));
+
+      await expect(rejected.fetch("https://example.com/file")).rejects.toMatchObject({ code: "http_status_503" });
+      const closed = await Promise.race([
+        new Promise<boolean>((resolve) => {
+          const check = () => {
+            if (sockets.size === 0) {
+              resolve(true);
+            } else {
+              setTimeout(check, 5);
+            }
+          };
+          check();
+        }),
+        Bun.sleep(500).then(() => false),
+      ]);
+
+      expect({ closed, sockets: sockets.size }).toEqual({
+        closed: true,
+        sockets: 0,
+      });
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  test("preserves streamed byte-limit errors when reader cancellation throws synchronously", async () => {
+    let transportAborted = false;
+    let reads = 0;
+    const rejected = client(async (_input, init) => {
+      init?.signal?.addEventListener("abort", () => {
+        transportAborted = true;
+      });
+      return {
+        status: 200,
+        headers: new Headers({ "content-type": "application/octet-stream" }),
+        body: {
+          getReader: () => ({
+            read: async () => {
+              reads += 1;
+              return { done: false, value: new Uint8Array([1, 2]) };
+            },
+            cancel() {
+              throw new Error("synchronous reader cancellation failure");
+            },
+          }),
+        },
+      } as unknown as Response;
+    }, { max_bytes: 1 });
+
+    await expect(rejected.fetch("https://example.com/file")).rejects.toMatchObject({ code: "response_too_large" });
+    expect({ reads, transportAborted }).toEqual({ reads: 1, transportAborted: true });
+  });
+
+  test("cancels a received body when acquiring its reader fails", async () => {
+    let transportAborted = false;
+    let cancelCalls = 0;
+    const rejected = client(async (_input, init) => {
+      init?.signal?.addEventListener("abort", () => {
+        transportAborted = true;
+      });
+      return {
+        status: 200,
+        headers: new Headers({ "content-type": "text/plain" }),
+        body: {
+          getReader() {
+            throw new Error("reader acquisition failure");
+          },
+          cancel: async () => {
+            cancelCalls += 1;
+          },
+        },
+      } as unknown as Response;
+    });
+
+    await expect(rejected.fetch("https://example.com/file")).rejects.toMatchObject({ code: "network_error" });
+    expect({ cancelCalls, transportAborted }).toEqual({ cancelCalls: 1, transportAborted: true });
   });
 
   test("aborts terminal network failures", async () => {

@@ -290,8 +290,34 @@ export class BoundedHttpClient {
   }
 
   private discardResponse(response: Response, abortTransport: () => void): void {
-    abortTransport();
-    void response.body?.cancel().catch(() => undefined);
+    // Transport abort is the resource-closure primitive. Body cancellation is
+    // best-effort and must never delay or replace the terminal acquisition error.
+    try {
+      abortTransport();
+    } catch {
+      // Continue with body cancellation even if a custom transport abort hook fails.
+    }
+    try {
+      void response.body?.cancel().catch(() => undefined);
+    } catch {
+      // A non-conforming Response may throw synchronously from cancel().
+    }
+  }
+
+  private discardReader(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    abortTransport: () => void,
+  ): void {
+    try {
+      abortTransport();
+    } catch {
+      // Continue with reader cancellation even if a custom transport abort hook fails.
+    }
+    try {
+      void reader.cancel().catch(() => undefined);
+    } catch {
+      // A non-conforming reader may throw synchronously from cancel().
+    }
   }
 
   private normalizeUri(
@@ -364,19 +390,28 @@ export class BoundedHttpClient {
       }
     }
     if (!response.body) {
-      abortTransport();
+      this.discardResponse(response, abortTransport);
       throw this.error("missing_response_body", requestedUri, currentUri, redirects);
     }
 
     const chunks: Uint8Array[] = [];
     let size = 0;
-    const reader = response.body.getReader();
+    let reader: ReadableStreamDefaultReader<Uint8Array>;
+    try {
+      reader = response.body.getReader();
+    } catch (error) {
+      this.discardResponse(response, abortTransport);
+      throw error;
+    }
+    let discarded = false;
+    const discardReader = () => {
+      if (discarded) return;
+      discarded = true;
+      this.discardReader(reader, abortTransport);
+    };
     try {
       while (true) {
-        const readResult = await this.beforeDeadline(reader.read(), deadline, () => {
-          abortTransport();
-          void reader.cancel().catch(() => undefined);
-        });
+        const readResult = await this.beforeDeadline(reader.read(), deadline, discardReader);
         const { done, value } = readResult;
         if (done) break;
         size += value.byteLength;
@@ -387,10 +422,7 @@ export class BoundedHttpClient {
       }
       return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), size);
     } catch (error) {
-      if (response.body) {
-        abortTransport();
-        void reader.cancel().catch(() => undefined);
-      }
+      discardReader();
       throw error;
     }
   }
