@@ -35,6 +35,14 @@ import { callRemoteTool, RemoteMcpError, unpackToolResult } from './core/mcp-cli
 import { maybePromptForUpgrade } from './core/thin-client-upgrade-prompt.ts';
 import { VERSION } from './version.ts';
 
+const CLI_RENDER_JSON_PARAM = '__cli_render_json';
+const CLI_RENDER_RAW_PARAM = '__cli_render_raw';
+
+interface CliRenderOptions {
+  json: boolean;
+  raw: boolean;
+}
+
 // Build CLI name -> operation lookup
 const cliOps = new Map<string, Operation>();
 for (const op of operations) {
@@ -353,6 +361,7 @@ async function main() {
   // transform, and required-param check are all engine-free; refactoring
   // them out of the engine try/catch is safe and unlocks routing.
   const params = parseOpArgs(op, subArgs);
+  const renderOptions = consumeCliRenderOptions(params);
 
   // #3513: stdin fill moved out of parseOpArgs so a non-TTY stdin with no
   // piped input can't block the parse forever — the bounded read leaves the
@@ -425,7 +434,7 @@ async function main() {
       console.error(e instanceof Error ? e.message : String(e));
       process.exit(1);
     }
-    await runThinClientRouted(op, params, cfgPre!, cliOpts);
+    await runThinClientRouted(op, params, cfgPre!, cliOpts, renderOptions);
     return;
   }
 
@@ -507,7 +516,7 @@ async function main() {
     // routed path. Date → ISO string; bigint → string (postgres.js shape);
     // Buffer → object. Microsecond-cost; eliminates a whole drift bug class.
     const result = JSON.parse(JSON.stringify(rawResult, bigintToStringReplacer));
-    const output = formatResult(op.name, result);
+    const output = renderCliResult(op.name, result, renderOptions);
     if (output) process.stdout.write(output);
   } catch (e: unknown) {
     // v0.42.20.0 (codex D4): on error, set exitCode + return so the `finally`
@@ -565,6 +574,7 @@ async function runThinClientRouted(
   params: Record<string, unknown>,
   cfg: GBrainConfig,
   cliOpts: CliOptions,
+  renderOptions: CliRenderOptions,
 ): Promise<void> {
   // ENG-4: per-op timeout default; user override wins.
   const defaultTimeoutMs = op.name === 'think' ? 180_000 : 30_000;
@@ -590,7 +600,7 @@ async function runThinClientRouted(
       signal: sigintController.signal,
     });
     const result = unpackToolResult(raw);
-    const output = formatResult(op.name, result);
+    const output = renderCliResult(op.name, result, renderOptions);
     if (output) process.stdout.write(output);
   } catch (e: unknown) {
     if (e instanceof RemoteMcpError) {
@@ -800,14 +810,28 @@ export function resolveQueryImage(
   return { path: imagePath, base64, mime };
 }
 
+function parseOlderThanHoursFlag(raw: string, flag: string): number {
+  const trimmed = raw.trim();
+  const dayMatch = trimmed.match(/^(\d+)d$/);
+  if (dayMatch) return Math.max(0, parseInt(dayMatch[1], 10) * 24);
+  const hourMatch = trimmed.match(/^(\d+)h?$/);
+  if (hourMatch) return Math.max(0, parseInt(hourMatch[1], 10));
+  throw new Error(`Invalid value for flag: ${flag}. Expected hours (e.g. 72 or 72h) or days (e.g. 3d).`);
+}
+
 export function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
   const params: Record<string, unknown> = {};
   const positional = op.cliHints?.positional || [];
   let posIdx = 0;
+  let parseOptions = true;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (arg.startsWith('--')) {
+    if (parseOptions && arg === '--') {
+      parseOptions = false;
+      continue;
+    }
+    if (parseOptions && arg.startsWith('--')) {
       if (arg.startsWith('--no-')) {
         const positiveKey = arg.slice(5).replace(/-/g, '_');
         const positiveDef = op.params[positiveKey];
@@ -818,16 +842,56 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
       }
       const key = arg.slice(2).replace(/-/g, '_');
       const paramDef = op.params[key];
+      if (!paramDef && key === 'json') {
+        params[CLI_RENDER_JSON_PARAM] = true;
+        continue;
+      }
+      if (!paramDef && key === 'raw' && op.name === 'get_page') {
+        params[CLI_RENDER_RAW_PARAM] = true;
+        continue;
+      }
+      if (!paramDef && key === 'dry_run') {
+        params.dry_run = true;
+        continue;
+      }
+      if (!paramDef && key === 'older_than' && op.name === 'purge_deleted_pages') {
+        if (i + 1 >= args.length) {
+          throw new Error(`Missing value for flag: ${arg}`);
+        }
+        params.older_than_hours = parseOlderThanHoursFlag(args[++i], arg);
+        continue;
+      }
+      if (!paramDef && key === 'type' && op.name === 'traverse_graph') {
+        if (i + 1 >= args.length) {
+          throw new Error(`Missing value for flag: ${arg}`);
+        }
+        params.link_type = args[++i];
+        continue;
+      }
+      if (!paramDef) {
+        if (key !== 'source') {
+          throw new Error(`Unknown flag: ${arg}. Run \`gbrain ${op.cliHints?.name || op.name} --help\` for options.`);
+        }
+        if (i + 1 >= args.length) {
+          throw new Error(`Missing value for flag: ${arg}`);
+        }
+        params[key] = args[++i];
+        continue;
+      }
       if (paramDef?.type === 'boolean') {
         params[key] = true;
       } else if (i + 1 < args.length) {
         params[key] = args[++i];
         if (paramDef?.type === 'number') params[key] = Number(params[key]);
+      } else {
+        throw new Error(`Missing value for flag: ${arg}`);
       }
     } else if (posIdx < positional.length) {
       const key = positional[posIdx++];
       const paramDef = op.params[key];
       params[key] = paramDef?.type === 'number' ? Number(arg) : arg;
+    } else if (parseOptions && arg.startsWith('-') && arg !== '-') {
+      throw new Error(`Unknown flag: ${arg}. Run \`gbrain ${op.cliHints?.name || op.name} --help\` for options.`);
     }
   }
 
@@ -924,6 +988,16 @@ export async function readStdinBounded(): Promise<string | null> {
     process.stdin.once('end', finish);
     process.stdin.once('error', finish);
   });
+}
+
+function consumeCliRenderOptions(params: Record<string, unknown>): CliRenderOptions {
+  const opts = {
+    json: params[CLI_RENDER_JSON_PARAM] === true,
+    raw: params[CLI_RENDER_RAW_PARAM] === true,
+  };
+  delete params[CLI_RENDER_JSON_PARAM];
+  delete params[CLI_RENDER_RAW_PARAM];
+  return opts;
 }
 
 /**
@@ -1162,6 +1236,18 @@ export function formatResult(opName: string, result: unknown): string {
     default:
       return JSON.stringify(result, null, 2) + '\n';
   }
+}
+
+function renderRawGetPage(result: unknown): string {
+  const page = result as { compiled_truth?: unknown };
+  const body = typeof page?.compiled_truth === 'string' ? page.compiled_truth : '';
+  return body.endsWith('\n') ? body : `${body}\n`;
+}
+
+export function renderCliResult(opName: string, result: unknown, opts: CliRenderOptions): string {
+  if (opts.json) return JSON.stringify(result, null, 2) + '\n';
+  if (opts.raw && opName === 'get_page') return renderRawGetPage(result);
+  return formatResult(opName, result);
 }
 
 /**

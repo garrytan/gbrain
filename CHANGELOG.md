@@ -2,6 +2,12 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- BREAKING CHANGE: shared-operation CLI commands now reject unknown flags instead of silently swallowing them and, for valued flags, the next token. This turns typoed or unsupported invocations into explicit errors; use `gbrain <cmd> --help` to check supported flags. Documented `query`/`search --json`, `query`/`search --type`, `get --raw`, and POSIX `--` invocations are preserved or corrected so shipped docs and skills do not hard-fail on upgrade.
+
 ## [0.42.73.2] - 2026-08-05
 
 **A write that deduplication redirects onto an existing page is now checked against the write scope of whoever asked for it.** When the same content arrives under a new slug, gbrain recognises it and points the write at the page that already holds it. That redirected target is now tested against the caller's own scope — under whichever mechanism confines that caller. One of the two mechanisms was consulted at that point; both are now.

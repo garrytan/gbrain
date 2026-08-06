@@ -80,7 +80,7 @@ if [ -n "$BRAIN_DIR" ] && [ -f "$BRAIN_DIR/$SLUG.md" ]; then
   RAW="$BRAIN_DIR/$SLUG.md"
 else
   RAW=$(mktemp /tmp/brain-page-XXXXXX.md)
-  gbrain get "$SLUG" --raw > "$RAW"   # whatever flag exposes raw body
+  gbrain get "$SLUG" > "$RAW"
 fi
 
 # 3. Strip YAML frontmatter — sed: skip the opening '---' through the

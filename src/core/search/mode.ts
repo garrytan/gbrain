@@ -779,7 +779,12 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // to cache.ttl_seconds, with no warning and no way for an operator to tell.
 // Same one-time global cold-miss pattern as the bumps above; refills within
 // cache.ttl_seconds (3600s default).
-export const KNOBS_HASH_VERSION = 15;
+//
+// bump 15->16: the per-call page type filter (`SearchOpts.type`) folds into
+// the key via `type=`. It changes the SQL WHERE clause for both search and
+// query operations, so a type-filtered write must never be served to an
+// unfiltered lookup or to another type. Same one-time global cold-miss pattern.
+export const KNOBS_HASH_VERSION = 16;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -818,6 +823,12 @@ export interface KnobsHashContext {
    * 'none' for legacy callers that don't thread excludes.
    */
   hardExcludes?: string[];
+  /**
+   * v=16 (#3503 review hardening): per-call page type filter. Undefined
+   * falls back to 'none' so unfiltered and type-filtered cache rows never
+   * collide.
+   */
+  pageType?: string;
 }
 
 export function knobsHash(
@@ -921,6 +932,10 @@ export function knobsHash(
     // memoizes and validates against /^[a-z][a-z0-9_]*$/, so this stays a
     // cheap, bounded string.
     `fts=${getFtsLanguage()}`,
+    // v=16 addition (append-only): page type filter. A search/query scoped to
+    // `type=person` changes the candidate set and must not share cache rows
+    // with an unfiltered lookup or with `type=company`.
+    `type=${ctx?.pageType?.trim() || 'none'}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));
@@ -1192,4 +1207,3 @@ export async function loadSearchModeConfig(
     overrides: loadOverridesFromConfig(configMap),
   };
 }
-

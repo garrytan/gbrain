@@ -129,7 +129,9 @@ as-is; you mount the team brain alongside it.
 `gbrain query "X"` (no flags) → runs against host (your personal brain).
 `gbrain query "X" --brain media-team` → runs against the team's DB.
 Inside `~/team-brains/media/` a `.gbrain-mount` dotfile pins brain to
-`media-team` automatically.
+`media-team` automatically. For scripts launched outside the mounted tree, pass
+`--brain media-team` or set `GBRAIN_BRAIN_ID=media-team` before invoking
+`gbrain`.
 
 Use this topology when:
 - You're on a team and someone publishes a brain the team subscribes to.
