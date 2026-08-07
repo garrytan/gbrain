@@ -163,6 +163,9 @@ export async function runPhaseAutoThink(
         save: config.autoCommit,
         client: opts.client,
         model: modelId,
+        // Fail-closed trust: the local dream cycle must say so explicitly, or
+        // trajectory injection degrades to visibility='world' rows.
+        remote: false,
       });
       // #1698: an empty synthesis (no LLM available / malformed output / empty-JSON answer)
       // must NOT count as complete or advance the cooldown — that is the same silent-success
