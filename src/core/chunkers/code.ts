@@ -119,7 +119,7 @@ import G_ZIG from '../../assets/wasm/grammars/tree-sitter-zig.wasm' with { type:
 // chunks get the new columns populated. Without this, the v28 backfill
 // gives every existing chunk a search_vector but subsequent Layer 5 AST
 // work would silently no-op.
-export const CHUNKER_VERSION = 4;
+export const CHUNKER_VERSION = 5;
 
 // Lazy-loaded tree-sitter module (v0.22.x API: Parser is default export)
 let Parser: typeof import('web-tree-sitter') | null = null;
@@ -304,7 +304,7 @@ const TOP_LEVEL_TYPES: Partial<Record<SupportedCodeLanguage, Set<string>>> = {
     'variable_declaration', 'export_statement',
   ]),
   python: new Set([
-    'function_definition', 'class_definition',
+    'decorated_definition', 'function_definition', 'class_definition',
     'import_statement', 'import_from_statement', 'assignment',
   ]),
   ruby: new Set(['class', 'module', 'method', 'singleton_method', 'assignment']),
@@ -394,7 +394,7 @@ const NESTED_EMIT_CONFIG: Partial<Record<SupportedCodeLanguage, NestedEmitConfig
   },
   python: {
     parentTypes: new Set(['class_definition']),
-    childTypes: new Set(['function_definition']),
+    childTypes: new Set(['decorated_definition', 'function_definition']),
   },
   ruby: {
     parentTypes: new Set(['class', 'module']),
@@ -653,10 +653,12 @@ export async function chunkCodeTextFull(
       // so the header shows the `export` keyword for completeness.
       const nestableNode = findNestableParent(node, nestedConfig);
       const symbolName = extractSymbolName(nestableNode ?? node);
+      // Wrapper nodes keep their full source range, while symbol metadata
+      // comes from the wrapped definition (for example Python decorators).
+      const typeNode = unwrapDefinitionNode(nestableNode ?? node);
       // For SQL `statement` wrappers, the meaningful type lives on the inner
       // child. extractSymbolName already dives in for the name; mirror that
       // here so chunk headers say "table users" not "statement users".
-      const typeNode = (nestableNode ?? node);
       const symbolType = (typeNode.type === 'statement' && typeNode.namedChildCount === 1)
         ? normalizeSymbolType(typeNode.namedChild(0).type)
         : normalizeSymbolType(typeNode.type);
@@ -1119,7 +1121,7 @@ function emitNestedScoped(
   // Leaf children: methods / functions / fields.
   for (const leaf of leaves) {
     const leafName = extractSymbolName(leaf);
-    const leafType = normalizeSymbolType(leaf.type);
+    const leafType = normalizeSymbolType(unwrapDefinitionNode(leaf).type);
     const leafText = source.slice(leaf.startIndex, leaf.endIndex).trim();
     if (!leafText) continue;
     chunks.push(buildChunk({
@@ -1208,6 +1210,12 @@ function extractSymbolName(node: any): string | null {
   const directName = node.childForFieldName('name');
   if (directName?.text?.trim()) return sanitize(directName.text);
 
+  const definition = node.childForFieldName('definition');
+  if (definition) {
+    const nested = extractSymbolName(definition);
+    if (nested) return nested;
+  }
+
   const declaration = node.childForFieldName('declaration');
   if (declaration) {
     const nested = extractSymbolName(declaration);
@@ -1221,6 +1229,10 @@ function extractSymbolName(node: any): string | null {
     }
   }
   return null;
+}
+
+function unwrapDefinitionNode(node: any): any {
+  return node.childForFieldName('definition') ?? node;
 }
 
 // SQL-specific symbol extractor. Returns:

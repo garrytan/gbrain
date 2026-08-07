@@ -10,8 +10,8 @@ import { describe, test, expect } from 'bun:test';
 import { chunkCodeText, detectCodeLanguage, CHUNKER_VERSION } from '../../src/core/chunkers/code.ts';
 
 describe('CHUNKER_VERSION', () => {
-  test('v0.20.0 Cathedral II Layer 12 bumped to 4', () => {
-    expect(CHUNKER_VERSION).toBe(4);
+  test('decorated Python definition support bumped to 5', () => {
+    expect(CHUNKER_VERSION).toBe(5);
   });
 });
 
@@ -271,6 +271,43 @@ def pet_the_dog():
     expect(result.length).toBeGreaterThanOrEqual(1);
     const allLanguages = result.map(c => c.metadata.language);
     for (const lang of allLanguages) expect(lang).toBe('python');
+  });
+
+  test('extracts decorated top-level functions', async () => {
+    const src = `@route("/health")
+def decorated_health_check(request):
+    if request is None:
+        raise ValueError("request required")
+    status = {"ok": True, "service": "gbrain"}
+    status["request_id"] = request.get("request_id", "unknown")
+    status["timestamp"] = request.get("timestamp", 0)
+    return status
+`;
+    const result = await chunkCodeText(src, 'health.py');
+    const chunk = result.find(c => c.metadata.symbolName === 'decorated_health_check');
+    expect(chunk).toBeDefined();
+    expect(chunk!.metadata.symbolType).toBe('function');
+    expect(chunk!.text).toContain('@route("/health")');
+  });
+
+  test('extracts decorated methods with class scope', async () => {
+    const src = `class UserService:
+    @staticmethod
+    def normalize_user_record(record):
+        if not isinstance(record, dict):
+            raise TypeError("record must be a dict")
+        normalized = dict(record)
+        normalized["name"] = normalized.get("name", "").strip()
+        normalized["email"] = normalized.get("email", "").lower()
+        normalized["active"] = bool(normalized.get("active", True))
+        return normalized
+`;
+    const result = await chunkCodeText(src, 'service.py');
+    const method = result.find(c => c.metadata.symbolName === 'normalize_user_record');
+    expect(method).toBeDefined();
+    expect(method!.metadata.symbolType).toBe('function');
+    expect(method!.metadata.parentSymbolPath).toEqual(['UserService']);
+    expect(method!.text).toContain('@staticmethod');
   });
 });
 
