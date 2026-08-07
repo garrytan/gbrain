@@ -3837,11 +3837,18 @@ const get_recent_salience: Operation = {
   },
   handler: async (ctx, p) => {
     const recencyBias = p.recency_bias === 'on' ? 'on' : 'flat';
+    // Scope by the caller's source (canonical sourceScopeOpts ladder: federated
+    // array > scalar > nothing), matching find_orphans/find_experts. Pre-fix
+    // this op returned brain-wide salience regardless of a source-bound OAuth
+    // client's grant — a read leak in the v0.34.1 (#861) source-isolation class
+    // that the v0.29 salience/anomaly batch missed. Trusted local callers
+    // (ctx.remote === false) still get the empty scope = full brain.
     return ctx.engine.getRecentSalience({
       days: typeof p.days === 'number' ? p.days : undefined,
       limit: typeof p.limit === 'number' ? p.limit : undefined,
       slugPrefix: typeof p.slugPrefix === 'string' ? p.slugPrefix : undefined,
       recency_bias: recencyBias,
+      ...sourceScopeOpts(ctx),
     });
   },
   cliHints: { name: 'salience' },
@@ -3959,10 +3966,16 @@ const find_anomalies: Operation = {
     },
   },
   handler: async (ctx, p) => {
+    // Scope by the caller's source (same v0.34.1 #861 source-isolation class as
+    // get_recent_salience above — the v0.29 batch missed both). Applied to the
+    // baseline AND today windows inside the engine so the anomaly math stays
+    // self-consistent. Trusted local callers (ctx.remote === false) get the
+    // empty scope = full brain.
     return ctx.engine.findAnomalies({
       since: typeof p.since === 'string' ? p.since : undefined,
       lookback_days: typeof p.lookback_days === 'number' ? p.lookback_days : undefined,
       sigma: typeof p.sigma === 'number' ? p.sigma : undefined,
+      ...sourceScopeOpts(ctx),
     });
   },
   cliHints: { name: 'anomalies' },
