@@ -2,6 +2,22 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.74.0] - 2026-08-07
+
+**You can now use Atlas Cloud for gbrain's chat and query-expansion workloads without maintaining a custom provider definition.** Set `ATLASCLOUD_API_KEY` and select `atlascloud:deepseek-ai/deepseek-v4-pro`; the built-in recipe supplies the official OpenAI-compatible endpoint, keeps the Atlas credential separate from `OPENAI_API_KEY`, and exposes the model's catalog-backed tool and structured-output capabilities.
+
+The recipe uses the model's 1,048,576-token context window and handles DeepSeek-style `reasoning_content`. Autonomous subagent replay remains disabled until that path is proven stable. Pricing is intentionally not estimated because account terms can vary. Existing providers and configuration remain unchanged.
+
+### To take advantage of v0.42.74.0
+
+```bash
+gbrain upgrade
+export ATLASCLOUD_API_KEY=...
+gbrain providers list
+```
+
+Set a chat or expansion model to `atlascloud:deepseek-ai/deepseek-v4-pro` using your existing gbrain configuration workflow.
+
 ## [0.42.73.2] - 2026-08-05
 
 **A write that deduplication redirects onto an existing page is now checked against the write scope of whoever asked for it.** When the same content arrives under a new slug, gbrain recognises it and points the write at the page that already holds it. That redirected target is now tested against the caller's own scope — under whichever mechanism confines that caller. One of the two mechanisms was consulted at that point; both are now.
