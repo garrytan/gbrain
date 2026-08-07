@@ -120,6 +120,57 @@ describe('writePageThrough', () => {
     expect(res).toEqual({ written: false, skipped: 'page_not_found_after_write' });
   });
 
+  test('sync.write_through=false → skipped disabled_by_config, nothing touches disk', async () => {
+    // Everything else is configured for a successful write — the flag alone
+    // must stop it, proving the gate runs before any FS work.
+    await engine.setConfig('sync.repo_path', brainDir);
+    await engine.setConfig('sync.write_through', 'false');
+    const slug = 'wiki/ideas/db-only-note';
+    await seedPage(slug);
+
+    const res = await writePageThrough(engine, slug, { sourceId: 'default' });
+
+    expect(res).toEqual({ written: false, skipped: 'disabled_by_config' });
+    expect(walkFiles(brainDir).some((f) => f.endsWith('.md'))).toBe(false);
+    // The DB row stays the durable sink.
+    expect(await engine.getPage(slug, { sourceId: 'default' })).not.toBeNull();
+  });
+
+  test('sync.write_through=false also gates the per-source local_path branch', async () => {
+    const alphaDir = path.join(tmpRoot, 'alpha-flag-repo');
+    fs.mkdirSync(alphaDir, { recursive: true });
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config) VALUES ('alpha', 'Alpha', $1, '{}'::jsonb)`,
+      [alphaDir],
+    );
+    await engine.setConfig('sync.write_through', 'false');
+
+    const slug = 'notes/alpha-db-only';
+    await importFromContent(engine, slug, `---\ntitle: T\ntype: note\n---\n\n# Body\n`, {
+      noEmbed: true,
+      sourceId: 'alpha',
+      sourcePath: `${slug}.md`,
+    });
+
+    const res = await writePageThrough(engine, slug, { sourceId: 'alpha' });
+
+    expect(res).toEqual({ written: false, skipped: 'disabled_by_config' });
+    expect(walkFiles(alphaDir).some((f) => f.endsWith('.md'))).toBe(false);
+  });
+
+  test('sync.write_through unset or any non-"false" value keeps the default write-through behavior', async () => {
+    await engine.setConfig('sync.repo_path', brainDir);
+    // Explicit 'true' — same as unset (the flag is an opt-out).
+    await engine.setConfig('sync.write_through', 'true');
+    const slug = 'wiki/ideas/still-written';
+    await seedPage(slug);
+
+    const res = await writePageThrough(engine, slug, { sourceId: 'default' });
+
+    expect(res.written).toBe(true);
+    expect(fs.existsSync(res.path!)).toBe(true);
+  });
+
   test('[REGRESSION #2018] default page (null local_path) in a multi-source brain → skipped, no leak into a sibling source repo', async () => {
     // A sibling federated source with its OWN working tree.
     const siblingDir = path.join(tmpRoot, 'housefax');
