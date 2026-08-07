@@ -112,6 +112,53 @@ describe('classifyGbrainBinary', () => {
   test('script with no gbrain package.json above → unknown', () => {
     expect(classifyGbrainBinary(orphanScript).kind).toBe('unknown');
   });
+
+  test('Windows/MSYS drive path resolves the executable with an .exe suffix', () => {
+    const seen: string[] = [];
+    const c = classifyGbrainBinary('/c/Users/chris/.bun/bin/gbrain', {
+      platform: 'win32',
+      realpath: (candidate) => {
+        seen.push(candidate);
+        if (candidate === 'C:/Users/chris/.bun/bin/gbrain.exe') return nativeBin;
+        throw new Error('ENOENT');
+      },
+    });
+    expect(seen).toEqual([
+      'C:/Users/chris/.bun/bin/gbrain',
+      'C:/Users/chris/.bun/bin/gbrain.exe',
+    ]);
+    expect(c.kind).toBe('real');
+  });
+
+  test('Windows native drive path also tries the .exe suffix', () => {
+    const seen: string[] = [];
+    const c = classifyGbrainBinary('C:\\Users\\chris\\.bun\\bin\\gbrain', {
+      platform: 'win32',
+      realpath: (candidate) => {
+        seen.push(candidate);
+        if (candidate.endsWith('gbrain.exe')) return nativeBin;
+        throw new Error('ENOENT');
+      },
+    });
+    expect(seen).toEqual([
+      'C:\\Users\\chris\\.bun\\bin\\gbrain',
+      'C:\\Users\\chris\\.bun\\bin\\gbrain.exe',
+    ]);
+    expect(c.kind).toBe('real');
+  });
+
+  test('non-Windows classification does not synthesize executable suffixes', () => {
+    const seen: string[] = [];
+    const c = classifyGbrainBinary('/opt/homebrew/bin/gbrain', {
+      platform: 'darwin',
+      realpath: (candidate) => {
+        seen.push(candidate);
+        throw new Error('ENOENT');
+      },
+    });
+    expect(seen).toEqual(['/opt/homebrew/bin/gbrain']);
+    expect(c.kind).toBe('broken');
+  });
 });
 
 describe('assessGbrainBinaries', () => {

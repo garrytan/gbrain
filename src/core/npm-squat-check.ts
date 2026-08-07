@@ -29,6 +29,11 @@ export interface NpmSquatAssessment {
   binaries: ClassifiedGbrainBinary[];
 }
 
+export interface ClassifyGbrainBinaryOptions {
+  platform?: typeof process.platform;
+  realpath?: (path: string) => string;
+}
+
 /** Repository marker identifying this project's package.json. */
 const REAL_REPO_MARKER = 'garrytan/gbrain';
 
@@ -95,6 +100,25 @@ function isRealGbrainPackage(pkg: Record<string, any>): boolean {
 }
 
 /**
+ * Candidate paths Node can resolve on the current platform. Git Bash emits
+ * `/c/.../gbrain` while the Windows filesystem exposes
+ * `C:/.../gbrain.exe`, so normalize the drive prefix and honor the native
+ * executable suffix before declaring the PATH entry broken.
+ */
+function executableCandidates(path: string, platform: typeof process.platform): string[] {
+  if (platform !== 'win32') return [path];
+
+  const normalized = path.replace(
+    /^\/([a-zA-Z])(?=\/)/,
+    (_match, drive: string) => `${drive.toUpperCase()}:`,
+  );
+  const candidates = [normalized];
+  const basename = normalized.split(/[\\/]/).at(-1) ?? '';
+  if (!basename.includes('.')) candidates.push(`${normalized}.exe`);
+  return candidates;
+}
+
+/**
  * Classify one candidate `gbrain` path:
  *  - 'broken'  : symlink that doesn't resolve / unreadable path.
  *  - 'real'    : compiled gbrain binary, or a script whose nearest
@@ -104,11 +128,22 @@ function isRealGbrainPackage(pkg: Record<string, any>): boolean {
  *                project — an unrelated registry install.
  *  - 'unknown' : can't tell (no gbrain package.json above the resolved file).
  */
-export function classifyGbrainBinary(path: string): ClassifiedGbrainBinary {
-  let resolved: string;
-  try {
-    resolved = realpathSync(path);
-  } catch {
+export function classifyGbrainBinary(
+  path: string,
+  opts: ClassifyGbrainBinaryOptions = {},
+): ClassifiedGbrainBinary {
+  const platform = opts.platform ?? process.platform;
+  const resolve = opts.realpath ?? realpathSync;
+  let resolved: string | undefined;
+  for (const candidate of executableCandidates(path, platform)) {
+    try {
+      resolved = resolve(candidate);
+      break;
+    } catch {
+      // Try the next platform-specific candidate.
+    }
+  }
+  if (resolved === undefined) {
     return { path, kind: 'broken', detail: 'broken symlink or unreadable path' };
   }
   if (isNativeExecutable(resolved)) {
@@ -144,7 +179,7 @@ export function assessGbrainBinaries(candidates: string[]): NpmSquatAssessment {
   if (unique.length === 0) {
     return { status: 'skip', message: 'gbrain not found on PATH', binaries: [] };
   }
-  const binaries = unique.map(classifyGbrainBinary);
+  const binaries = unique.map((candidate) => classifyGbrainBinary(candidate));
   const first = binaries[0]!;
   const realIdx = binaries.findIndex((b) => b.kind === 'real');
   const foreignIdx = binaries.findIndex((b) => b.kind === 'foreign');
