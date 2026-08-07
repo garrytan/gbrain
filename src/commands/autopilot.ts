@@ -739,7 +739,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         try {
           const { isFederatedV2Enabled } = await import('../core/feature-flags.ts');
           if (await isFederatedV2Enabled(engine)) {
-            const { loadAllSources } = await import('../core/sources-load.ts');
+            const { loadAllSources, sourceConfigHasRemoteUrl } = await import('../core/sources-load.ts');
             const sources = await loadAllSources(engine);
             const intervalMs = baseInterval * 1000;
             const now = Date.now();
@@ -754,6 +754,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
                   {
                     sourceId: src.id,
                     repoPath: src.local_path,
+                    pull: sourceConfigHasRemoteUrl(src.config),
                     auto_embed_backfill: true,
                     embed_reason: 'autopilot_freshness',
                   },

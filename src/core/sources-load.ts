@@ -148,6 +148,12 @@ export function parseSourceConfig(config: unknown): Record<string, unknown> {
   return value ?? {};
 }
 
+/** True iff config declares a non-empty remote URL. */
+export function sourceConfigHasRemoteUrl(config: unknown): boolean {
+  const remoteUrl = parseSourceConfig(config).remote_url;
+  return typeof remoteUrl === 'string' && remoteUrl.trim().length > 0;
+}
+
 /** True iff the source's config.federated field is the literal boolean true. */
 export function isSourceFederated(config: unknown): boolean {
   const parsed = parseSourceConfig(config);

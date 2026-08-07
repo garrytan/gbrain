@@ -234,6 +234,14 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     expect((byId.get('local')!.data as Record<string, unknown>).pull).toBe(false);
   });
 
+  test('pull: true when PGLite returns source.config as a JSON string', async () => {
+    const remote = src('remote');
+    remote.config = '{"remote_url":"https://github.com/x/y"}' as unknown as SourceRow['config'];
+    const { engine, queue, added, fanoutOpts } = makeStubs([remote]);
+    await dispatchPerSource(engine, queue, fanoutOpts);
+    expect((added[0].data as Record<string, unknown>).pull).toBe(true);
+  });
+
   test('fanoutMax cap: 3 sources, fanoutMax=1, 1 dispatched + 2 in skippedCap', async () => {
     const { engine, queue, added, fanoutOpts } = makeStubs([src('a'), src('b'), src('c')]);
     fanoutOpts.fanoutMax = 1;

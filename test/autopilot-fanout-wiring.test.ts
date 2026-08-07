@@ -73,6 +73,13 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     );
   });
 
+  test('freshness sync dispatch uses the parsed source config for pull policy', () => {
+    const freshnessIdx = AUTOPILOT_SRC.indexOf('idempotency_key: `autopilot-sync:');
+    expect(freshnessIdx).toBeGreaterThan(-1);
+    const freshnessBlock = AUTOPILOT_SRC.slice(Math.max(0, freshnessIdx - 700), freshnessIdx + 200);
+    expect(freshnessBlock).toContain('pull: sourceConfigHasRemoteUrl(src.config)');
+  });
+
   test('#2781: dispatchGlobalMaintenance gets the full-cycle floor, not the outer (non-full-cycle) timeoutMs', () => {
     // Live #2781 regression, found in review: dispatchGlobalMaintenance's
     // call used the object-shorthand `timeoutMs`, which resolved to the

@@ -33,6 +33,7 @@
 import type { BrainEngine, SourceRow } from '../core/engine.ts';
 import type { MinionQueue } from '../core/minions/queue.ts';
 import { NON_GLOBAL_PHASES, GLOBAL_PHASES, LAST_GLOBAL_AT_KEY } from '../core/cycle.ts';
+import { sourceConfigHasRemoteUrl } from '../core/sources-load.ts';
 
 const FULL_CYCLE_FLOOR_MIN = 60;
 
@@ -430,13 +431,13 @@ export async function dispatchPerSource(
   const dispatched: string[] = [];
   for (const src of dispatch) {
     try {
-      const remoteUrl = typeof src.config?.remote_url === 'string' ? src.config.remote_url : null;
+      const shouldPull = sourceConfigHasRemoteUrl(src.config);
       const job = await queue.add(
         'autopilot-cycle',
         {
           repoPath: opts.repoPath,
           source_id: src.id,
-          pull: !!remoteUrl,
+          pull: shouldPull,
           // #2194 fix #3 (cycle split): per-source cycles run ONLY source-scoped
           // (+ mixed) phases. The brain-wide global phases (embed, orphans,
           // purge, …) run once in autopilot-global-maintenance, not N times
@@ -465,11 +466,11 @@ export async function dispatchPerSource(
           job_id: job.id,
           mode: 'per_source',
           source_id: src.id,
-          pull: !!remoteUrl,
+          pull: shouldPull,
           slot: opts.slot,
         }));
       } else {
-        log(`[dispatch] job #${job.id} autopilot-cycle source=${src.id}${remoteUrl ? ' pull=yes' : ''}`);
+        log(`[dispatch] job #${job.id} autopilot-cycle source=${src.id}${shouldPull ? ' pull=yes' : ''}`);
       }
     } catch (e) {
       // Per-source submit failure does NOT abort the tick (codex E1 F1
