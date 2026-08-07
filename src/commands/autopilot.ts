@@ -25,6 +25,11 @@ import { execSync } from 'child_process';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadPreferences } from '../core/preferences.ts';
 import { loadConfig, loadConfigFileOnly, saveConfig, gbrainPath as gbrainHomePath } from '../core/config.ts';
+import {
+  classifyAutopilotLockHolder,
+  type AutopilotLockProbeDeps,
+  isPidAlive,
+} from '../core/autopilot-lock.ts';
 import { ChildWorkerSupervisor } from '../core/minions/child-worker-supervisor.ts';
 import { VERSION } from '../version.ts';
 import {
@@ -244,19 +249,12 @@ export function shouldSpawnAutopilotWorker(args: string[]): boolean {
   return !args.includes('--no-worker');
 }
 
-export function isPidAlive(pid: number): boolean {
-  if (!Number.isFinite(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error: unknown) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
+export { isPidAlive };
 
 export function decideLockAcquisition(
   lockPath: string,
   currentPid: number,
+  deps: AutopilotLockProbeDeps = {},
 ): { action: 'acquire' } | { action: 'exit'; holderPid: number } | { action: 'takeover'; reason: string } {
   if (!existsSync(lockPath)) return { action: 'acquire' };
 
@@ -268,10 +266,17 @@ export function decideLockAcquisition(
   }
 
   const holderPid = Number.parseInt(raw, 10);
-  const sameProcess = Number.isFinite(holderPid) && holderPid === currentPid;
-  const alive = !sameProcess && isPidAlive(holderPid);
+  const holder = classifyAutopilotLockHolder(holderPid, currentPid, deps);
 
-  if (alive) return { action: 'exit', holderPid };
+  if (holder.state === 'alive-autopilot' || holder.state === 'alive-unknown') {
+    return { action: 'exit', holderPid };
+  }
+  if (holder.state === 'alive-foreign') {
+    return { action: 'takeover', reason: `foreign pid ${raw || '<empty>'}` };
+  }
+  if (holder.state === 'self') {
+    return { action: 'takeover', reason: `own pid ${raw || '<empty>'}` };
+  }
   return { action: 'takeover', reason: `dead pid ${raw || '<empty>'}` };
 }
 
