@@ -672,7 +672,43 @@ export async function runExtractCore(engine: BrainEngine, opts: ExtractOpts): Pr
   return result;
 }
 
+const EXTRACT_HELP = `Usage: gbrain extract <subcommand> [flags]
+
+Extraction:
+  gbrain extract links    [--source fs|db] [--source-id <id>] [--dir <brain-dir>]
+                          [--type T] [--since DATE] [--include-frontmatter]
+                          [--workers N|--concurrency N] [--dry-run] [--json]
+  gbrain extract timeline [--source fs|db] [--source-id <id>] [--dir <brain-dir>]
+                          [--type T] [--since DATE] [--include-frontmatter]
+                          [--infer-dates] [--workers N|--concurrency N]
+                          [--dry-run] [--json]
+  gbrain extract all      [--source fs|db] [--source-id <id>] [--dir <brain-dir>]
+                          [--type T] [--since DATE] [--include-frontmatter]
+                          [--infer-dates] [--workers N|--concurrency N]
+                          [--dry-run] [--json]
+  gbrain extract <links|timeline> --by-mention --source db
+  gbrain extract <links|timeline|all> --ner --source db
+  gbrain extract <timeline|all> --from-meetings --source db
+
+Incremental sweep:
+  gbrain extract --stale [--source-id <id>] [--include-frontmatter]
+                         [--catch-up] [--dry-run] [--json]
+      Re-extract links + timeline only for stale pages. DB-source; safe to
+      cron. --catch-up loops past the 30-minute budget until none remain.
+
+Inspection:
+  gbrain extract --explain <kind> [--json]
+  gbrain extract benchmark --pack <name> --kind <type> [--json]
+
+Status:
+  gbrain extract status [--source-id ID] [--kind X] [--verbose] [--json]`;
+
 export async function runExtract(engine: BrainEngine, args: string[]) {
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(EXTRACT_HELP);
+    return;
+  }
+
   const subcommand = args[0];
 
   // v0.42 Wave C+D dispatch — new operator surfaces. These intercept
@@ -800,32 +836,7 @@ export async function runExtract(engine: BrainEngine, args: string[]) {
   }
 
   if (!subcommand || !['links', 'timeline', 'all'].includes(subcommand)) {
-    console.error(`Usage: gbrain extract <subcommand> [flags]
-
-Extraction (existing):
-  gbrain extract links    [--source fs|db] [--source-id <id>] [--dir <brain-dir>] [--dry-run] [--json] [--type T] [--since DATE] [--workers N]
-  gbrain extract timeline [--source fs|db] [--source-id <id>] [--dir <brain-dir>] [--dry-run] [--json] [--type T] [--since DATE] [--workers N]
-  gbrain extract all      [--source fs|db] [--source-id <id>] [--dir <brain-dir>] [--dry-run] [--json] [--type T] [--since DATE] [--workers N]
-  gbrain extract <links|timeline> --by-mention --source db
-  gbrain extract <links|timeline|all> --ner --source db
-  gbrain extract <timeline|all> --from-meetings
-
-Incremental sweep (v0.42.7):
-  gbrain extract --stale [--source-id <id>] [--catch-up] [--dry-run] [--json]
-      Re-extract links + timeline ONLY for pages whose extraction is stale
-      (never extracted, edited since, or extractor bumped). DB-source; safe to
-      cron. --catch-up loops past the 30-min wall-clock budget until 0 remain.
-
-Inspection (v0.42):
-  gbrain extract --explain <kind> [--json]
-      Print resolution chain for one pack-declared extractable kind.
-  gbrain extract benchmark --pack <name> --kind <type> [--json]
-      Run a pack's fixture corpus through the extractor (v0.42 reports
-      fixture shape; LLM dispatch comes in v0.43+).
-
-Status (v0.42):
-  gbrain extract status [--source-id ID] [--kind X] [--verbose] [--json]
-      Per-kind 7-day rollup: cost, halt rate, eval pass/fail counts.`);
+    console.error(EXTRACT_HELP);
     process.exit(1);
   }
 

@@ -93,6 +93,9 @@ const CLI_ONLY_SELF_HELP = new Set([
   // short-circuit fired before runSync could print its own usage block.
   // Adding `sync` here routes `gbrain sync --help` into runSync.
   'sync',
+  // #3834: extract ships detailed help for its mode-specific flags. Keep the
+  // generic CLI-only stub from hiding that contract.
+  'extract',
   // v0.37 fix wave (deferred TODO, shipped): reinit-pglite has its
   // own --help in runReinitPglite. Routing through SELF_HELP avoids
   // the generic short-circuit so the destructive-action warning text
@@ -1717,6 +1720,14 @@ async function handleCliOnly(command: string, args: string[]) {
     return;
   }
 
+  // #3834: extract help is engine-independent and must work on a fresh
+  // install before a brain has been configured.
+  if (command === 'extract' && (args.includes('--help') || args.includes('-h'))) {
+    const { runExtract } = await import('./commands/extract.ts');
+    await runExtract(null as never, args);
+    return;
+  }
+
   // v0.39.3.0 WARN-5: same pattern for `capture --help`. CLI_ONLY_SELF_HELP
   // now includes 'capture' so the generic short-circuit at :101 stays out
   // of the way, but the dispatch case at :1229 still needs an engine. The
@@ -2653,10 +2664,13 @@ TIMELINE
 
 TOOLS
   extract <links|timeline|all>       Extract links/timeline (idempotent)
-        [--source fs|db]             fs (default) walks .md files; db iterates engine pages
-        [--dir <brain>]              brain dir for fs source
-        [--type T] [--since DATE]    filters (db source)
-        [--dry-run] [--json]
+        [--source fs|db] [--source-id ID] [--dir <brain>]
+        [--type T] [--since DATE] [--include-frontmatter]
+        [--workers N|--concurrency N] [--dry-run] [--json]
+  extract links --by-mention [--ner] --source db
+  extract timeline --from-meetings [--infer-dates] --source db
+  extract --stale [--source-id ID] [--catch-up] [--dry-run] [--json]
+  extract --explain <kind> [--json] Full details: gbrain extract --help
   publish <page.md> [--password]     Shareable HTML (strips private data, optional AES-256)
   check-backlinks <check|fix> [dir]  Find/fix missing back-links across brain
   lint <dir|file> [--fix]            Catch LLM artifacts, placeholder dates, bad frontmatter
