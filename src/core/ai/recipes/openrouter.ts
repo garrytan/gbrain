@@ -119,13 +119,14 @@ export const openrouterCompatFetch = (async (
  * envelope, not every individual model's capability. When in doubt about a
  * specific model, check https://openrouter.ai/models.
  *
- * Reranker: `/api/v1/rerank` proxies cross-encoder rerankers (Cohere v3.5/4-fast/4-pro
- * and NVIDIA Nemotron VL). Wire shape matches `gateway.rerank()`:
+ * Reranker: `/api/v1/rerank` proxies cross-encoder rerankers (Cohere,
+ * NVIDIA Nemotron VL, and Voyage 2.5). Wire shape matches `gateway.rerank()`:
  * `{ query, documents, model }` → `{ results: [{ index, relevance_score }] }`.
  * Unlike embedding/chat, the reranker path strictly enforces the `models`
  * allowlist (no openai-compat bypass) — adding new rerank models requires a
- * recipe edit. Cohere bills per-search; the `cost_per_1m_tokens_usd` value
- * is a pseudo-rate for the budget tracker's `chars/4` heuristic.
+ * recipe edit. Cohere bills per search while Voyage bills per token, so the mixed catalog
+ * has no touchpoint-wide fallback price. Token-priced Voyage and free NVIDIA
+ * routes use exact per-model overrides.
  *
  * Attribution: OpenRouter recommends `HTTP-Referer` (required for app
  * attribution) + `X-OpenRouter-Title` (preferred; `X-Title` kept as
@@ -222,15 +223,21 @@ export const openrouter: Recipe = {
         'cohere/rerank-4-fast',
         'cohere/rerank-4-pro',
         'nvidia/llama-nemotron-rerank-vl-1b-v2:free',
+        'voyageai/rerank-2.5-lite',
+        'voyageai/rerank-2.5',
       ],
       default_model: 'cohere/rerank-v3.5',
-      // Cohere bills per-search, not per-token. This is a pseudo-per-1M rate
-      // for the budget tracker's heuristic (estimates tokens as chars/4).
-      // At ~4K chars/search the tracker estimates ~$0.00025 — in the right
-      // ballpark for the per-search bill. Patch budget-tracker.ts to honour a
-      // `cost_per_search_usd` field for exact accounting.
-      cost_per_1m_tokens_usd: 0.001,
-      price_last_verified: '2026-06-13',
+      // A mixed billing catalog must not expose a pseudo token rate: Cohere
+      // bills per search, Voyage per token, and NVIDIA is free.
+      billing_unit: 'mixed',
+      model_cost_per_1m_tokens_usd: {
+        // OpenRouter/Voyage token pricing. Voyage counts the query once per
+        // document; gateway.estimateRerankInputTokens mirrors that formula.
+        'voyageai/rerank-2.5-lite': 0.02,
+        'voyageai/rerank-2.5': 0.05,
+        'nvidia/llama-nemotron-rerank-vl-1b-v2:free': 0,
+      },
+      price_last_verified: '2026-08-07',
       // OpenRouter doesn't publish an explicit payload cap; 5MB matches
       // ZeroEntropy's upstream limit and the gateway's pre-flight ceiling.
       max_payload_bytes: 5_000_000,

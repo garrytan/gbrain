@@ -28,13 +28,28 @@ import {
   resetGateway,
   rerank,
   RerankError,
+  estimateRerankInputTokens,
+  withBudgetTracker,
   __setRerankTransportForTests,
 } from '../../src/core/ai/gateway.ts';
+import { BudgetTracker } from '../../src/core/budget/budget-tracker.ts';
+import { rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const AUDIT_PATH = join(tmpdir(), `gbrain-rerank-test-audit-${process.pid}.jsonl`);
 
 function configureZE(model: string = 'zeroentropyai:zerank-2'): void {
   configureGateway({
     reranker_model: model,
     env: { ZEROENTROPY_API_KEY: 'sk-test-zerokey' },
+  });
+}
+
+function configureOpenRouter(model: string): void {
+  configureGateway({
+    reranker_model: `openrouter:${model}`,
+    env: { OPENROUTER_API_KEY: 'sk-test-openrouter' },
   });
 }
 
@@ -48,6 +63,7 @@ function mockResp(json: unknown, status = 200): Response {
 afterEach(() => {
   __setRerankTransportForTests(null);
   resetGateway();
+  rmSync(AUDIT_PATH, { force: true });
 });
 
 describe('gateway.rerank() — happy path', () => {
@@ -429,5 +445,138 @@ describe('gateway.rerank() — v0.40.6.1 path regression: zerank-1-small unaffec
     });
     await rerank({ query: 'q', documents: ['d'] });
     expect(capturedUrl.endsWith('/models/rerank')).toBe(true);
+  });
+});
+
+describe('gateway.rerank() — OpenRouter Voyage routes', () => {
+  test.each(['voyageai/rerank-2.5-lite', 'voyageai/rerank-2.5'])(
+    '%s uses the existing OpenRouter wire contract',
+    async (model) => {
+      configureOpenRouter(model);
+      let capturedUrl = '';
+      let capturedBody: Record<string, unknown> = {};
+      let capturedHeaders = new Headers();
+      __setRerankTransportForTests(async (url, init) => {
+        capturedUrl = url;
+        capturedBody = JSON.parse(init.body as string);
+        capturedHeaders = new Headers(init.headers as HeadersInit);
+        return mockResp({ results: [{ index: 1, relevance_score: 0.92 }] });
+      });
+
+      const out = await rerank({ query: 'best invoice', documents: ['memo', 'invoice'], topN: 1 });
+
+      expect(capturedUrl).toBe('https://openrouter.ai/api/v1/rerank');
+      expect(capturedBody).toEqual({
+        model,
+        query: 'best invoice',
+        documents: ['memo', 'invoice'],
+        top_n: 1,
+      });
+      expect(capturedHeaders.get('authorization')).toBe('Bearer sk-test-openrouter');
+      expect(capturedHeaders.get('http-referer')).toBe('https://gbrain.ai');
+      expect(capturedHeaders.get('x-openrouter-title')).toBe('gbrain');
+      expect(out).toEqual([{ index: 1, relevanceScore: 0.92 }]);
+    },
+  );
+
+  test('Voyage token estimate counts the query once per document', () => {
+    expect(estimateRerankInputTokens({
+      query: '12345678',
+      documents: ['1234', '12345678'],
+      model: 'openrouter:voyageai/rerank-2.5-lite',
+    })).toBe(28); // Conservative dense-input estimate: 28 chars / 1 char per token.
+  });
+
+  test.each([
+    'openrouter/voyageai/rerank-2.5-lite',
+    '  openrouter /voyageai/rerank-2.5-lite  ',
+  ])('Voyage token estimate handles supported slash form: %s', (model) => {
+    expect(estimateRerankInputTokens({
+      query: '12345678',
+      documents: ['1234', '12345678'],
+      model,
+    })).toBe(28);
+  });
+
+  test('non-Voyage token estimate keeps the query-once convention', () => {
+    expect(estimateRerankInputTokens({
+      query: '12345678',
+      documents: ['1234', '12345678'],
+      model: 'zeroentropyai:zerank-2',
+    })).toBe(5);
+  });
+
+  test('provider-reported usage overrides the character estimate', async () => {
+    configureOpenRouter('voyageai/rerank-2.5-lite');
+    __setRerankTransportForTests(async () => mockResp({
+      results: [{ index: 0, relevance_score: 0.9 }],
+      usage: { total_tokens: 2_000 },
+    }));
+    const tracker = new BudgetTracker({ maxCostUsd: 1, label: 'test', auditPath: AUDIT_PATH });
+
+    await withBudgetTracker(tracker, () => rerank({ query: 'q', documents: ['d'] }));
+
+    expect(tracker.totalSpent).toBeCloseTo(0.00004, 9);
+  });
+
+  test.each([
+    ['missing', undefined],
+    ['malformed', { total_tokens: '2000' }],
+  ])('%s usage falls back to the deterministic estimate', async (_label, usage) => {
+    configureOpenRouter('voyageai/rerank-2.5-lite');
+    __setRerankTransportForTests(async () => mockResp({
+      results: [{ index: 0, relevance_score: 0.9 }],
+      ...(usage === undefined ? {} : { usage }),
+    }));
+    const tracker = new BudgetTracker({ maxCostUsd: 1, label: 'test', auditPath: AUDIT_PATH });
+
+    await withBudgetTracker(tracker, () => rerank({ query: '1234', documents: ['1234'] }));
+
+    // Conservative Voyage fallback: 8 chars / 1 char per token = 8 tokens.
+    expect(tracker.totalSpent).toBeCloseTo(0.00000016, 12);
+  });
+
+  const malformedProviderResults: Array<[unknown[]]> = [
+    [[{ relevance_score: 0.9 }]],
+    [[{ index: -1, relevance_score: 0.9 }]],
+    [[{ index: 2, relevance_score: 0.9 }]],
+    [[{ index: 0, relevance_score: Number.NaN }]],
+    [[{ index: 0, relevance_score: 0.9 }, { index: 0, relevance_score: 0.8 }]],
+  ];
+  test.each(malformedProviderResults)('rejects malformed provider results instead of coercing them', async (results) => {
+    configureOpenRouter('voyageai/rerank-2.5-lite');
+    __setRerankTransportForTests(async () => mockResp({ results }));
+
+    await expect(rerank({ query: 'q', documents: ['a', 'b'] })).rejects.toBeInstanceOf(RerankError);
+  });
+
+  test('records valid provider usage even when result validation fails', async () => {
+    configureOpenRouter('voyageai/rerank-2.5-lite');
+    __setRerankTransportForTests(async () => mockResp({
+      results: [{ index: 2, relevance_score: 0.9 }],
+      usage: { total_tokens: 2_000 },
+    }));
+    const tracker = new BudgetTracker({ maxCostUsd: 1, label: 'test', auditPath: AUDIT_PATH });
+
+    await expect(withBudgetTracker(tracker, () =>
+      rerank({ query: 'q', documents: ['a', 'b'] }),
+    )).rejects.toBeInstanceOf(RerankError);
+
+    expect(tracker.totalSpent).toBeCloseTo(0.00004, 9);
+  });
+
+  test('sorts provider results by relevance score before returning', async () => {
+    configureOpenRouter('voyageai/rerank-2.5-lite');
+    __setRerankTransportForTests(async () => mockResp({
+      results: [
+        { index: 0, relevance_score: 0.1 },
+        { index: 1, relevance_score: 0.9 },
+      ],
+    }));
+
+    expect(await rerank({ query: 'q', documents: ['a', 'b'] })).toEqual([
+      { index: 1, relevanceScore: 0.9 },
+      { index: 0, relevanceScore: 0.1 },
+    ]);
   });
 });

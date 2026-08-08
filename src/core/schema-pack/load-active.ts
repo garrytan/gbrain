@@ -2,8 +2,8 @@
 //
 // Composes:
 //   1. Resolution chain (registry.resolveActivePackName) — 7 tiers per D13
-//   2. Pack manifest loading from disk:
-//      - Built-in 'gbrain-base' lives at src/core/schema-pack/base/gbrain-base.yaml
+//   2. Pack manifest loading from disk with compiled-in bundled fallback:
+//      - Built-in packs live at src/core/schema-pack/base/*.yaml
 //      - User packs live at ~/.gbrain/schema-packs/<name>/pack.yaml
 //      - Custom paths supported via `__setPackLocatorForTests` (test seam)
 //   3. `extends` chain resolution (registry.resolvePack)
@@ -27,7 +27,8 @@ import { fileURLToPath } from 'node:url';
 import type { GBrainConfig } from '../config.ts';
 import { gbrainPath } from '../config.ts';
 import type { SchemaPackManifest } from './manifest-v1.ts';
-import { loadPackFromFile } from './loader.ts';
+import { loadPackFromFile, loadPackFromString } from './loader.ts';
+import { embeddedBundledPack } from './embedded.ts';
 import {
   resolveActivePackName,
   resolvePack,
@@ -64,7 +65,8 @@ export interface LoadActivePackInput {
 /**
  * Test seam — a function that maps a pack name to the file path on disk.
  * Production wires this to the built-in + ~/.gbrain/schema-packs lookup.
- * Tests inject a Map-backed locator.
+ * Tests inject a Map-backed locator. Bundled names still fall back to the
+ * immutable compiled-in manifests when an injected locator returns null.
  */
 export type PackLocator = (name: string) => string | null;
 
@@ -94,8 +96,8 @@ export function _resetPackLocatorForTests(): void {
  */
 function defaultPackLocator(name: string): string | null {
   if (isBundledPackName(name)) {
-    // Resolve bundled YAML relative to this source file. Works in both
-    // direct-bun execution and bun --compile binaries.
+    // Resolve bundled YAML relative to this source file for direct execution.
+    // Compiled binaries fall back to static text imports below.
     const here = dirname(fileURLToPath(import.meta.url));
     const bundledPath = join(here, 'base', `${name}.yaml`);
     if (existsSync(bundledPath)) return bundledPath;
@@ -119,12 +121,17 @@ function defaultPackLocator(name: string): string | null {
  * Load + parse + validate a pack by name. Used by `resolvePack` to walk
  * the extends chain. Throws UnknownPackError when the pack isn't on disk.
  */
-async function loadPackManifestByName(name: string): Promise<SchemaPackManifest> {
+export async function loadPackManifestByName(name: string): Promise<SchemaPackManifest> {
   const path = _packLocator(name);
-  if (!path) {
-    throw new UnknownPackError(name);
-  }
-  return loadPackFromFile(path);
+  if (path) return loadPackFromFile(path);
+
+  // `bun build --compile` does not preserve dynamically constructed
+  // filesystem paths under import.meta.url. Fall back to statically imported
+  // manifest text for the seven immutable packs that ship with GBrain.
+  const embedded = embeddedBundledPack(name);
+  if (embedded !== null) return loadPackFromString(embedded, `bundled:${name}`);
+
+  throw new UnknownPackError(name);
 }
 
 /**

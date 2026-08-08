@@ -13,6 +13,7 @@ import {
   _resetPackCacheForTests,
 } from '../src/core/schema-pack/index.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { BUNDLED_PACK_NAMES } from '../src/core/schema-pack/bundled.ts';
 
 describe('loadActivePack boundary helper', () => {
   beforeAll(() => {
@@ -30,6 +31,25 @@ describe('loadActivePack boundary helper', () => {
     expect(pack.manifest.name).toBe('gbrain-base');
     expect(pack.manifest.extends).toBeNull();
     expect(pack.manifest.page_types.length).toBeGreaterThan(0);
+  });
+
+  test('all bundled packs load from embedded fallback when disk paths are unavailable', async () => {
+    __setPackLocatorForTests(() => null);
+    try {
+      for (const name of BUNDLED_PACK_NAMES) {
+        _resetPackCacheForTests();
+        const pack = await loadActivePack({
+          cfg: null,
+          remote: false,
+          perCall: name,
+        });
+        expect(pack.manifest.name).toBe(name);
+        expect(pack.manifest.page_types.length).toBeGreaterThan(0);
+      }
+    } finally {
+      _resetPackLocatorForTests();
+      _resetPackCacheForTests();
+    }
   });
 
   test('tier-1 per-call wins when remote=false', async () => {

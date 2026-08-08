@@ -220,7 +220,12 @@ export interface ExpansionTouchpoint {
 export interface RerankerTouchpoint {
   models: string[];
   default_model: string;
+  /** Billing contract for the catalog; mixed catalogs require model overrides. */
+  billing_unit?: 'token' | 'search' | 'mixed';
+  /** Token-price fallback, honored only when billing_unit is 'token'. */
   cost_per_1m_tokens_usd?: number;
+  /** Exact per-model overrides for mixed-price reranker catalogs. */
+  model_cost_per_1m_tokens_usd?: Record<string, number>;
   price_last_verified?: string;
   max_payload_bytes: number;
   /**
