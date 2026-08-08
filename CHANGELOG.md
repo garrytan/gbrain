@@ -10,6 +10,8 @@ Both models run through GBrain's established OpenRouter connection, so operators
 
 Cost controls understand Voyage's exact per-token prices and billing formula, reserve conservatively for dense text, and replace estimates with OpenRouter's reported usage when available. GBrain now rejects malformed or duplicate ranking rows instead of silently promoting the wrong memory result. Mixed catalogs distinguish token-, search-, and free-billed models so a per-search Cohere rate is never misrepresented as token pricing; legacy ZeroEntropy rerankers also receive their declared token-price fallback consistently.
 
+Standalone binaries produced by `bun build --compile` now retain every bundled schema pack. Pack inspection, validation, activation, inheritance, and the runtime enrichment gates use the same manifests as direct source execution, including when the binary or its checkout path contains spaces.
+
 ### To take advantage of v0.42.75.0
 
 With `OPENROUTER_API_KEY` already configured, select the lower-cost Lite model:
