@@ -665,7 +665,16 @@ export async function chunkCodeTextFull(
 
       if (nestableNode && symbolName && nestedConfig) {
         const before = chunks.length;
-        emitNestedScoped(nestableNode, [], source, filePath, language, nestedConfig, chunks);
+        emitNestedScoped(
+          nestableNode,
+          [],
+          source,
+          filePath,
+          language,
+          nestedConfig,
+          chunks,
+          node,
+        );
         if (chunks.length > before) continue;
       }
 
@@ -1039,11 +1048,14 @@ function buildChunk(input: {
 function findNestableParent(node: any, config: NestedEmitConfig | undefined): any | null {
   if (!config) return null;
   if (config.parentTypes.has(node.type)) return node;
+  const definition = unwrapDefinitionNode(node);
+  if (definition !== node && config.parentTypes.has(definition.type)) return definition;
   // One-level unwrap — TS export_statement wraps a class_declaration.
   // We don't go deeper because that would accidentally treat a method
   // inside a class as a top-level parent.
   for (const child of node.namedChildren) {
-    if (config.parentTypes.has(child.type)) return child;
+    const candidate = unwrapDefinitionNode(child);
+    if (config.parentTypes.has(candidate.type)) return candidate;
   }
   return null;
 }
@@ -1062,8 +1074,9 @@ function collectImmediateNestedChildren(node: any, config: NestedEmitConfig): {
   const leaves: any[] = [];
   const scan = (n: any) => {
     for (const child of n.namedChildren) {
-      if (config.parentTypes.has(child.type)) parents.push(child);
-      else if (config.childTypes.has(child.type)) leaves.push(child);
+      const definition = unwrapDefinitionNode(child);
+      if (config.parentTypes.has(definition.type)) parents.push(child);
+      else if (config.childTypes.has(definition.type)) leaves.push(child);
       if (BODY_NODE_TYPES.has(child.type) || child.type.endsWith('_body')) {
         scan(child);
       }
@@ -1091,10 +1104,11 @@ function emitNestedScoped(
   language: SupportedCodeLanguage,
   config: NestedEmitConfig,
   chunks: CodeChunk[],
+  rangeNode: any = node,
 ): void {
   const name = extractSymbolName(node);
   if (!name) return;
-  const symbolType = normalizeSymbolType(node.type);
+  const symbolType = normalizeSymbolType(unwrapDefinitionNode(node).type);
   const { parents, leaves } = collectImmediateNestedChildren(node, config);
 
   // Parent scope-header chunk: declaration + member digest.
@@ -1103,10 +1117,10 @@ function emitNestedScoped(
     ...leaves.map(l => extractSymbolName(l)).filter((n): n is string => Boolean(n)),
   ];
   chunks.push(buildChunk({
-    body: buildScopeHeaderBody(node, source, digestNames),
+    body: buildScopeHeaderBody(rangeNode, source, digestNames),
     filePath, language, symbolName: name, symbolType,
-    startLine: node.startPosition.row + 1,
-    endLine: node.endPosition.row + 1,
+    startLine: rangeNode.startPosition.row + 1,
+    endLine: rangeNode.endPosition.row + 1,
     index: chunks.length,
     parentSymbolPath: [...parentPath],
   }));
@@ -1115,7 +1129,16 @@ function emitNestedScoped(
 
   // Recursively expand nested parents (e.g. module Admin → class Users).
   for (const p of parents) {
-    emitNestedScoped(p, newParentPath, source, filePath, language, config, chunks);
+    emitNestedScoped(
+      unwrapDefinitionNode(p),
+      newParentPath,
+      source,
+      filePath,
+      language,
+      config,
+      chunks,
+      p,
+    );
   }
 
   // Leaf children: methods / functions / fields.
@@ -1157,9 +1180,10 @@ interface SplitRange {
 }
 
 function splitLargeNode(node: any, source: string, chunkTarget: number): SplitRange[] {
+  const definition = unwrapDefinitionNode(node);
   const body =
-    node.childForFieldName('body') ||
-    node.namedChildren.find((c: any) => BODY_NODE_TYPES.has(c.type)) ||
+    definition.childForFieldName('body') ||
+    definition.namedChildren.find((c: any) => BODY_NODE_TYPES.has(c.type)) ||
     null;
 
   if (!body || body.namedChildren.length < 2) return [];
@@ -1168,8 +1192,11 @@ function splitLargeNode(node: any, source: string, chunkTarget: number): SplitRa
   if (children.length < 2) return [];
 
   const ranges: SplitRange[] = [];
-  let curStart = children[0].startIndex;
-  let curStartLine = children[0].startPosition.row + 1;
+  const preserveWrapperPrefix = definition !== node && node.type === 'decorated_definition';
+  let curStart = preserveWrapperPrefix ? node.startIndex : children[0].startIndex;
+  let curStartLine = preserveWrapperPrefix
+    ? node.startPosition.row + 1
+    : children[0].startPosition.row + 1;
   let curEnd = children[0].endIndex;
   let curEndLine = children[0].endPosition.row + 1;
   let curTokens = estimateTokens(source.slice(curStart, curEnd));

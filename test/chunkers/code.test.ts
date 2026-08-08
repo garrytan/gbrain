@@ -309,6 +309,58 @@ def decorated_health_check(request):
     expect(method!.metadata.parentSymbolPath).toEqual(['UserService']);
     expect(method!.text).toContain('@staticmethod');
   });
+
+  test('retains decorators on decorated class scope headers', async () => {
+    const src = `@dataclass
+class UserRecord:
+    name: str
+
+    def display_name(self):
+        return self.name.strip()
+`;
+    const result = await chunkCodeText(src, 'models.py');
+    const classChunk = result.find(c => c.metadata.symbolName === 'UserRecord');
+    expect(classChunk).toBeDefined();
+    expect(classChunk!.metadata.symbolType).toBe('class');
+    expect(classChunk!.text).toContain('@dataclass');
+  });
+
+  test('recurses through nested decorated classes', async () => {
+    const src = `class Outer:
+    @dataclass
+    class Inner:
+        value: str
+
+        def normalized_value(self):
+            return self.value.strip().lower()
+`;
+    const result = await chunkCodeText(src, 'nested.py');
+    const method = result.find(c => c.metadata.symbolName === 'normalized_value');
+    expect(method).toBeDefined();
+    expect(method!.metadata.parentSymbolPath).toEqual(['Outer', 'Inner']);
+    const inner = result.find(c => c.metadata.symbolName === 'Inner');
+    expect(inner).toBeDefined();
+    expect(inner!.text).toContain('@dataclass');
+  });
+
+  test('splits large decorated functions without dropping the decorator', async () => {
+    const statements = Array.from(
+      { length: 12 },
+      (_, i) => `    value_${i} = payload.get("field_${i}", "")`,
+    ).join('\n');
+    const src = `@trace_calls
+def normalize_payload(payload):
+${statements}
+    return payload
+`;
+    const result = await chunkCodeText(src, 'large.py', {
+      largeChunkThresholdTokens: 20,
+      chunkSizeTokens: 20,
+    });
+    const chunks = result.filter(c => c.metadata.symbolName === 'normalize_payload');
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks[0]!.text).toContain('@trace_calls');
+  });
 });
 
 describe('chunkCodeText — Rust', () => {
