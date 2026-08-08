@@ -251,6 +251,16 @@ export function shouldSpawnAutopilotWorker(args: string[]): boolean {
 
 export { isPidAlive };
 
+export const AUTOPILOT_FOREIGN_PID_TAKEOVER_GRACE_MS = 10 * 60 * 1000;
+
+function autopilotLockAgeMs(lockPath: string): number | null {
+  try {
+    return Date.now() - statSync(lockPath).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
 export function decideLockAcquisition(
   lockPath: string,
   currentPid: number,
@@ -272,7 +282,11 @@ export function decideLockAcquisition(
     return { action: 'exit', holderPid };
   }
   if (holder.state === 'alive-foreign') {
-    return { action: 'takeover', reason: `foreign pid ${raw || '<empty>'}` };
+    const lockAgeMs = autopilotLockAgeMs(lockPath);
+    if (lockAgeMs !== null && lockAgeMs >= AUTOPILOT_FOREIGN_PID_TAKEOVER_GRACE_MS) {
+      return { action: 'takeover', reason: `foreign pid ${raw || '<empty>'} with stale lock` };
+    }
+    return { action: 'exit', holderPid };
   }
   if (holder.state === 'self') {
     return { action: 'takeover', reason: `own pid ${raw || '<empty>'}` };
