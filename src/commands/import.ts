@@ -545,8 +545,9 @@ export async function runImport(
 
   // Import → sync continuity: write sync checkpoint if this is a git repo.
   // Bug 9 — gate last_commit on "no failures" so import doesn't silently
-  // stomp on the sync bookmark when parsing broke. We still write
-  // last_run + repo_path either way (those are progress indicators).
+  // stomp on the sync bookmark when parsing broke. last_run + repo_path are
+  // written alongside it, but ONLY when this import owns the globals (#2114
+  // guard below) — a foreign directory must not repoint the brain repo.
   let gitHead: string | null = null;
   try {
     if (existsSync(join(dir, '.git'))) {
@@ -568,17 +569,37 @@ export async function runImport(
       const { recordFailures } = await import('../core/sync.ts');
       recordFailures(opts.sourceId ?? 'default', failures, gitHead);
     }
-    if (failures.length === 0) {
-      await engine.setConfig('sync.last_commit', gitHead);
-    } else {
+
+    // #2114 guard: the global sync.* keys describe THE brain repo (the
+    // default source's working tree). Pre-fix this block rewrote them on
+    // every git-repo import, silently repointing put_page write-through
+    // and poisoning the incremental sync anchor. Ownership + the bootstrap
+    // rule live in ownsGlobalSyncAnchor (shared with writeSyncAnchor's
+    // legacy branch in sync.ts, so the two layers cannot drift).
+    const { ownsGlobalSyncAnchor } = await import('../core/sync.ts');
+    const { owns, configured } = await ownsGlobalSyncAnchor(engine, sourceId, dir);
+
+    if (owns) {
+      if (failures.length === 0) {
+        await engine.setConfig('sync.last_commit', gitHead);
+      } else {
+        console.error(
+          `\nImport completed with ${failures.length} failure(s). ` +
+          `sync.last_commit NOT advanced — re-run 'gbrain sync' to retry, or ` +
+          `'gbrain sync --skip-failed' to acknowledge and move past them.`,
+        );
+      }
+      await engine.setConfig('sync.last_run', new Date().toISOString());
+      await engine.setConfig('sync.repo_path', dir);
+    } else if ((sourceId ?? 'default') === 'default') {
       console.error(
-        `\nImport completed with ${failures.length} failure(s). ` +
-        `sync.last_commit NOT advanced — re-run 'gbrain sync' to retry, or ` +
-        `'gbrain sync --skip-failed' to acknowledge and move past them.`,
+        `\n[import] sync.repo_path stays at ${configured ?? '(unset)'} — NOT repointing to "${dir}". ` +
+        `Sync bookmarks were not advanced. If this directory IS your brain repo, run: ` +
+        `gbrain config set sync.repo_path "${dir}"`,
       );
     }
-    await engine.setConfig('sync.last_run', new Date().toISOString());
-    await engine.setConfig('sync.repo_path', dir);
+    // Non-default sources: deliberately silent no-op — the globals are not
+    // this import's to move (its sync anchors live on the `sources` row).
   }
 
   return { imported, skipped, errors, chunksCreated, failures };
