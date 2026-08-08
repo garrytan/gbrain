@@ -50,9 +50,10 @@ export interface ProgressReporter {
 // every live reporter. Per-instance handlers would leak listeners and interfere
 // with command-level handlers (e.g. shell-handler abort in jobs.ts).
 //
-// We never call process.exit() or swallow the signal — we just emit abort
-// events for live phases, then remove ourselves so the user's own handlers
-// (or the default Node behavior) run as usual.
+// We never call process.exit() — we just emit abort events for live phases.
+// Installing a SIGINT listener suppresses the runtime's default terminate
+// behavior, so when no command-level handler remains we re-raise SIGINT after
+// the abort event has had a tick to flush.
 
 interface LivePhase {
   reporter: PhaseState;
@@ -61,10 +62,15 @@ interface LivePhase {
 
 const liveReporters = new Set<LivePhase>();
 let signalHandlerInstalled = false;
+let hadSigintHandlersAtInstall = false;
 
 function installSignalHandler(): void {
   if (signalHandlerInstalled) return;
   signalHandlerInstalled = true;
+  // Capture command-level SIGINT ownership before our once-wrapper can be
+  // consumed by the same signal emission. A preceding once('SIGINT') listener
+  // is already gone by the time our handler runs.
+  hadSigintHandlersAtInstall = process.listenerCount('SIGINT') > 0;
 
   const onSignal = (reason: 'SIGINT' | 'SIGTERM') => {
     // Copy to array so abort() can mutate liveReporters during iteration.
@@ -75,6 +81,11 @@ function installSignalHandler(): void {
       } catch {
         /* best-effort */
       }
+    }
+    if (reason === 'SIGINT' && !hadSigintHandlersAtInstall && process.listenerCount('SIGINT') === 0) {
+      setTimeout(() => {
+        process.kill(process.pid, 'SIGINT');
+      }, 0);
     }
   };
 
