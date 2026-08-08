@@ -51,7 +51,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { ProgressReporter } from '../progress.ts';
-import { chat as gatewayChat, withBudgetTracker } from '../ai/gateway.ts';
+import { chat as gatewayChat, getChatModel, withBudgetTracker } from '../ai/gateway.ts';
 import { BudgetExhausted, BudgetTracker, isModelPriceable } from '../budget/budget-tracker.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
@@ -568,14 +568,22 @@ export async function runPhaseExtractAtoms(
   let budgetCap = DEFAULT_BUDGET_USD;
   try {
     const configuredModel = await engine.getConfig('models.dream.extract_atoms');
-    if (configuredModel) extractModel = configuredModel;
+    if (configuredModel) {
+      extractModel = configuredModel;
+    } else {
+      // #hardcoded-haiku: fall back to the configured chat model so
+      // non-Anthropic installs don't hard-fail on the Haiku default.
+      // The constant stays as the last resort when the gateway is
+      // unconfigured (getChatModel() throws → caught below).
+      extractModel = getChatModel();
+    }
     const configuredBudget = await engine.getConfig('cycle.extract_atoms.budget_usd');
     if (configuredBudget) {
       const n = Number(configuredBudget);
       if (Number.isFinite(n) && n > 0) budgetCap = n;
     }
   } catch {
-    // Keep safe defaults: Haiku + $0.30.
+    // Keep safe defaults: configured chat model (or Haiku as last resort) + $0.30.
   }
   // A cost cap is only meaningful for a model the tracker can price.
   // BudgetTracker.reserve() hard-fails with BudgetExhausted(reason:'no_pricing')

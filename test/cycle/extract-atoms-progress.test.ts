@@ -12,6 +12,7 @@ import { runPhaseExtractAtoms } from '../../src/core/cycle/extract-atoms.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import type { ProgressReporter } from '../../src/core/progress.ts';
 import type { ChatResult, ChatOpts } from '../../src/core/ai/gateway.ts';
+import { getChatModel } from '../../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
 
@@ -117,7 +118,7 @@ describe('extract_atoms progress wiring (T4)', () => {
     expect(ticks[0].note).toMatch(/atoms.*skipped/);
   });
 
-  test('passes an explicit Haiku model to chat calls', async () => {
+  test('falls back to the configured chat model when no extract_atoms model is set', async () => {
     const seenModels: Array<string | undefined> = [];
     const validAtomJson = JSON.stringify([
       { title: 'A', atom_type: 'insight', body: 'body a' },
@@ -133,7 +134,7 @@ describe('extract_atoms progress wiring (T4)', () => {
         return stubChat(validAtomJson)(o);
       },
     });
-    expect(seenModels).toEqual(['anthropic:claude-haiku-4-5']);
+    expect(seenModels).toEqual([getChatModel()]);
   });
 
   test('DB config can override the extract_atoms budget and model', async () => {

@@ -70,7 +70,7 @@ import {
   extractFactsFromTurnWithOutcome,
   isFactsExtractionEnabled,
 } from '../core/facts/extract.ts';
-import { configureGatewayIfUninitialized, isAvailable, withBudgetTracker } from '../core/ai/gateway.ts';
+import { configureGatewayIfUninitialized, getChatModel, isAvailable, withBudgetTracker } from '../core/ai/gateway.ts';
 import { BudgetTracker, BudgetExhausted } from '../core/budget/budget-tracker.ts';
 import { listSources } from '../core/sources-ops.ts';
 import {
@@ -1209,8 +1209,7 @@ export async function runExtractConversationFactsCore(
     (await engine.getConfig('conversation_parser.llm_fallback_enabled')) === 'true';
   const llmFallbackModel = llmFallbackEnabled
     ? await resolveModel(engine, {
-        tier: 'utility',
-        fallback: 'anthropic:claude-haiku-4-5-20251001',
+        fallback: getChatModel(),
       })
     : null;
 
