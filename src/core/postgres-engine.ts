@@ -86,7 +86,7 @@ import { ConnectionManager } from './connection-manager.ts';
 import { logConnectionEvent } from './connection-audit.ts';
 import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, takeRowToTake, takeHitRowToHit, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery } from './search/sql-ranking.ts';
+import { buildSourceFactorCase, buildHardExcludeClause, buildRestrictClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery } from './search/sql-ranking.ts';
 import { unverifiedExtractionFragment } from './extraction-review.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
@@ -2153,9 +2153,21 @@ export class PostgresEngine implements BrainEngine {
     const sourceFactorCaseOnSlug = buildSourceFactorCase('slug', boostMap, opts?.detail, 'unverified_stub');
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
     const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
+    // Governed-authority lane: positive PRE-HNSW prefix inclusion. Injected
+    // into the hnsw_candidates CTE WHERE (before ORDER BY/LIMIT) so restricted
+    // chunks enter/leave the candidate pool by prefix, not by cosine rank.
+    // Empty ⇒ '' ⇒ no-op ⇒ byte-identical legacy SQL.
+    const restrictClause = buildRestrictClause('p.slug', opts?.restrict_slug_prefixes);
     const innerLimit = offset + Math.max(limit * 5, 100);
 
     const params: unknown[] = [vecStr];
+    // min_raw_score: raw-cosine floor applied in the scored CTE (pre-sourceFactor,
+    // both engines) so it is a true raw-cosine gate independent of source boosts.
+    let rawScoreFloorCte = '';
+    if (opts?.min_raw_score != null && Number.isFinite(opts.min_raw_score)) {
+      params.push(opts.min_raw_score);
+      rawScoreFloorCte = `WHERE raw_score >= $${params.length}`;
+    }
     let typeClause = '';
     if (type) {
       params.push(type);
@@ -2266,6 +2278,7 @@ export class PostgresEngine implements BrainEngine {
           ${beforeDateClause}
           ${sourceClause}
           ${hardExcludeClause}
+          ${restrictClause}
           ${visibilityClause}
         ORDER BY cc.${col} <=> ${castSql}
         LIMIT ${innerLimitParam}
@@ -2274,7 +2287,7 @@ export class PostgresEngine implements BrainEngine {
       -- must stay pure-distance so the HNSW index is usable).
       scored AS (
         SELECT *, raw_score * ${sourceFactorCaseOnSlug} AS score
-        FROM hnsw_candidates
+        FROM hnsw_candidates ${rawScoreFloorCte}
       ),
       -- T1 (retrieval-maxpool incident): collapse to the best chunk PER PAGE
       -- over the full candidate set before the user LIMIT, so a page's strong

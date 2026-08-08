@@ -77,7 +77,7 @@ import { GBrainError, PAGE_SORT_SQL, ENRICH_ORDER_SQL } from './types.ts';
 import { finalizeLastSeen } from './chronicle/last-seen.ts';
 import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery } from './search/sql-ranking.ts';
+import { buildSourceFactorCase, buildHardExcludeClause, buildRestrictClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery } from './search/sql-ranking.ts';
 import { unverifiedExtractionFragment } from './extraction-review.ts';
 import { shouldExcludeFromOrphanReporting, loadOrphanPolicyOverrides } from './orphan-policy.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from './link-extraction.ts';
@@ -2109,9 +2109,19 @@ export class PGLiteEngine implements BrainEngine {
     const sourceFactorCaseOnSlug = buildSourceFactorCase('slug', boostMap, opts?.detail, 'unverified_stub');
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
     const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
+    // Governed-authority lane: positive PRE-HNSW prefix inclusion (mirror of
+    // postgres-engine). Empty ⇒ '' ⇒ no-op ⇒ byte-identical legacy SQL.
+    const restrictClause = buildRestrictClause('p.slug', opts?.restrict_slug_prefixes);
     const innerLimit = offset + Math.max(limit * 5, 100);
 
     const params: unknown[] = [vecStr, innerLimit, limit, offset];
+    // min_raw_score: raw-cosine floor in the scored CTE (pre-sourceFactor, both
+    // engines) — true raw-cosine gate, independent of source boosts. Mirror of postgres.
+    let rawScoreFloorCte = '';
+    if (opts?.min_raw_score != null && Number.isFinite(opts.min_raw_score)) {
+      params.push(opts.min_raw_score);
+      rawScoreFloorCte = `WHERE raw_score >= $${params.length}`;
+    }
     let extraFilter = '';
     if (opts?.language) {
       params.push(opts.language);
@@ -2193,7 +2203,7 @@ export class PGLiteEngine implements BrainEngine {
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
          JOIN sources s ON s.id = p.source_id
-         WHERE cc.${col} IS NOT NULL ${modalityFilter} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
+         WHERE cc.${col} IS NOT NULL ${modalityFilter} ${detailFilter}${extraFilter} ${hardExcludeClause} ${restrictClause} ${visibilityClause}
          ORDER BY cc.${col} <=> ${castSql}
          LIMIT $2
        ),
@@ -2201,7 +2211,7 @@ export class PGLiteEngine implements BrainEngine {
        -- the HNSW index is usable.
        scored AS (
          SELECT *, raw_score * ${sourceFactorCaseOnSlug} AS score
-         FROM hnsw_candidates
+         FROM hnsw_candidates ${rawScoreFloorCte}
        ),
        -- T1 (retrieval-maxpool incident): collapse to the best chunk PER PAGE
        -- over the full candidate set before the user LIMIT. Shared builder with

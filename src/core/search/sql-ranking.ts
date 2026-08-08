@@ -132,6 +132,35 @@ export function buildHardExcludeClause(slugColumn: string, prefixes: string[]): 
 }
 
 /**
+ * Build a positive `(col LIKE 'p1%' OR col LIKE 'p2%' OR …)` inclusion clause
+ * — the reserved-lane's PRE-HNSW restriction. The mirror image of
+ * `buildHardExcludeClause`: same OR-chain shape, same escaping (reuses
+ * `buildLikePrefixLiteral`), but WITHOUT the wrapping `NOT`, so it keeps rows
+ * whose slug starts-with any listed prefix rather than excluding them.
+ *
+ * Returns a fragment with a leading `AND` (empty string when prefixes is
+ * empty) so callers splice it into a CTE WHERE unconditionally — empty ⇒
+ * no-op ⇒ byte-identical legacy SQL. Sorted by length descending for stable,
+ * order-independent output (matches the longest-prefix conventions elsewhere
+ * in this module).
+ *
+ * @param slugColumn — qualified column reference (engine-supplied, trusted)
+ * @param prefixes   — list of slug prefixes to include (caller-supplied; escaped)
+ *
+ * @returns raw SQL fragment (with leading `AND`) or empty string
+ */
+export function buildRestrictClause(slugColumn: string, prefixes?: string[]): string {
+  if (!prefixes || !prefixes.length) return '';
+  const likes = prefixes
+    .filter(p => p.length > 0)
+    .sort((a, b) => b.length - a.length)
+    .map(p => `${slugColumn} LIKE ${buildLikePrefixLiteral(p)}`)
+    .join(' OR ');
+  if (!likes) return '';
+  return `AND (${likes})`;
+}
+
+/**
  * v0.26.5 — Build the soft-delete + archived-source visibility filter.
  *
  * Two filters in one fragment:

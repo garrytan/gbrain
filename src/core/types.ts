@@ -956,6 +956,29 @@ export interface SearchOpts {
    * though they're hard-excluded by default.
    */
   include_slug_prefixes?: string[];
+  /**
+   * POSITIVE slug-prefix inclusion (reserved-lane retrieval). When set,
+   * results are restricted to pages whose slug starts-with ANY listed
+   * prefix, applied PRE-HNSW inside the `hnsw_candidates` CTE on both
+   * engines. Orthogonal to `exclude_slug_prefixes` (subtractive) and
+   * `include_slug_prefixes` (opt-back-in from hard-exclude): this is a
+   * positive `AND (slug LIKE p1% OR slug LIKE p2% …)` filter, so restricted
+   * chunks enter/leave the HNSW candidate pool by prefix, not by rank.
+   * Empty/undefined = no restriction (default; zero behavior change).
+   * Consumed by the reserved-lane dual-search composition in hybridSearch
+   * (Lane B) and usable directly on searchVector.
+   */
+  restrict_slug_prefixes?: string[];
+  /**
+   * Minimum RAW cosine similarity (`1 - (embedding <=> query)`, pre-sourceFactor)
+   * for a vector result to be retained. Applied in the `scored` CTE on `raw_score`
+   * BEFORE the source-factor multiplier, both engines — so it is a true
+   * raw-cosine floor, independent of any `GBRAIN_SOURCE_BOOST`. Empty/undefined =
+   * no floor (default; byte-identical legacy SQL). Used by the reserved-lane
+   * Lane-B admission to exclude irrelevant reserved-lane candidates; the production
+   * default is pilot-derived + configurable (see hybrid.ts RESERVED_LANE_FLOOR_DEFAULT).
+   */
+  min_raw_score?: number;
   detail?: 'low' | 'medium' | 'high';
   /**
    * v0.20.0 Cathedral II: filter by content_chunks.language (e.g., 'typescript',

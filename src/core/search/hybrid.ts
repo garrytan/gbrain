@@ -192,6 +192,56 @@ const BACKLINK_BOOST_COEF = 0.05;
 const DEBUG = process.env.GBRAIN_SEARCH_DEBUG === '1';
 
 /**
+ * Reserved-lane (generic, caller/config-supplied). When the resolved prefix set
+ * is non-empty, hybridSearch composes a second searchVector call (Lane B)
+ * restricted to those slug prefixes, using the SAME query embedding computed
+ * once for Lane A (one-embed invariant). Lane B is additive: at most ONE
+ * deduplicated relevant candidate is admitted into a reserved TAIL slot.
+ * Default OFF — empty/unset prefixes ⇒ no Lane B ⇒ byte-identical legacy.
+ * NO application-specific literal; the prefix set is resolved from
+ * opts.reservedLanePrefixes or GBRAIN_RESERVED_LANE_PREFIXES env.
+ */
+
+// Production default for the Lane-B RAW-COSINE floor. CONSERVATIVE + CONFIGURABLE:
+// override per-call via opts.reservedLaneMinRawScore, or process-wide via
+// GBRAIN_RESERVED_LANE_FLOOR. Placeholder pending pilot measurement (NOT a
+// cross-encoder ce_threshold; different layer). 0.5 admits moderately+ relevant
+// candidates and excludes the irrelevant.
+const RESERVED_LANE_FLOOR_DEFAULT = Number(process.env.GBRAIN_RESERVED_LANE_FLOOR ?? 0.5);
+
+/** Parse a comma-separated env var into a trimmed, filtered string list (mirrors source-boost parseHardExcludesEnv). */
+function parsePrefixEnvList(env: string | undefined): string[] {
+  if (!env) return [];
+  return env.split(',').map(s => s.trim()).filter(s => s.length > 0);
+}
+
+/** Validate a single prefix: reject absolute, traversal, glob, empty. */
+function isValidLanePrefix(prefix: string): boolean {
+  if (!prefix || prefix.length === 0) return false;
+  if (prefix.startsWith('/')) return false;        // absolute path
+  if (prefix.includes('..')) return false;          // traversal
+  if (/[*?]/.test(prefix)) return false;            // glob wildcard
+  return true;
+}
+
+/** Resolve + normalize the reserved-lane prefixes from opts (caller) or env (deployment).
+ *  Returns a deduplicated, validated, trimmed list. Empty ⇒ lane inactive. */
+function resolveReservedLanePrefixes(opts?: { reservedLanePrefixes?: string[] }): string[] {
+  const raw = opts?.reservedLanePrefixes ?? parsePrefixEnvList(process.env.GBRAIN_RESERVED_LANE_PREFIXES);
+  if (!raw || raw.length === 0) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const p of raw) {
+    const t = typeof p === 'string' ? p.trim() : '';
+    if (isValidLanePrefix(t) && !seen.has(t)) {
+      seen.add(t);
+      out.push(t);
+    }
+  }
+  return out;
+}
+
+/**
  * Apply backlink boost to a result list in place. Mutates each result's score
  * by (1 + BACKLINK_BOOST_COEF * log(1 + count)). Pure data transform; no DB call.
  * Caller fetches counts via engine.getBacklinkCounts.
@@ -767,6 +817,24 @@ export async function applyAliasHop(
 
 export interface HybridSearchOpts extends SearchOpts {
   expansion?: boolean;
+  /**
+   * Reserved-lane prefixes (default OFF). When non-empty, hybridSearch composes
+   * a second searchVector (Lane B) restricted to pages whose slug starts-with
+   * ANY listed prefix, using the SAME query embedding (one-embed invariant).
+   * At most ONE deduplicated relevant candidate is admitted into a reserved
+   * TAIL slot (never rank-0, limit>=2, replaces Lane-A tail if full), with a
+   * raw-cosine floor (reservedLaneMinRawScore). Lane-B failure degrades to
+   * exact Lane-A. Reserved-lane-on skips the query cache (Option B;
+   * KNOBS_HASH_VERSION unchanged). Empty/undefined = exact legacy behavior.
+   * Also configurable via GBRAIN_RESERVED_LANE_PREFIXES env (comma-separated).
+   */
+  reservedLanePrefixes?: string[];
+  /**
+   * Per-call raw-cosine floor for the reserved lane (Lane-B admission).
+   * Defaults to GBRAIN_RESERVED_LANE_FLOOR env (or 0.5 conservative placeholder).
+   * Applied in the scored CTE on raw_score (pre-sourceFactor) both engines.
+   */
+  reservedLaneMinRawScore?: number;
   /** v0.43 — observability sink for the relational recall arm (fired/no-op,
    *  kind, seeds resolved, candidates, errored). Best-effort. */
   onRelationalMeta?: (meta: import('./relational-recall.ts').RelationalArmMeta) => void;
@@ -1746,6 +1814,52 @@ export async function hybridSearch(
     ...(adaptiveDecision ? { adaptive_return: adaptiveDecision } : {}),
     ...(autocutDecision ? { autocut: autocutDecision } : {}),
   });
+  // Governed-authority lane (Slice-2). Compose Lane B on the SAME query
+  // embedding computed once for Lane A above (one-embed invariant —
+  // searchVector takes a precomputed vector, so this adds NO embed call).
+  // Additive merge with a reserved-lane floor so authority pages surface even
+  // when their cosine rank excludes them from the HNSW candidate pool. On
+  // ANY Lane-B error, degrade to the exact Lane-A result: zero broadened
+  // reserved-lane contribution, legacy search still succeeds (mirrors the
+  // multimodal/image searchVector try/catch earlier in this function).
+  // Default OFF (empty/unset prefixes) ⇒ block skipped ⇒ byte-identical legacy return.
+  const lanePrefixes = resolveReservedLanePrefixes(opts);
+  if (lanePrefixes.length > 0 && queryEmbedding && limit >= 2) {
+    // Bounded-context augmentation: at most ONE deduplicated relevant candidate
+    // into a reserved TAIL slot — never rank-0, only when limit>=2, replacing
+    // ONLY the Lane-A tail if the list is full. Lane-A top + relative order are
+    // preserved by construction. Lane-B admission uses min_raw_score (raw-cosine,
+    // applied pre-sourceFactor in both engines' scored CTE) so irrelevant
+    // candidates are excluded.
+    try {
+      const laneB = await engine.searchVector(queryEmbedding, {
+        ...searchOpts,
+        restrict_slug_prefixes: lanePrefixes,
+        min_raw_score: opts?.reservedLaneMinRawScore ?? RESERVED_LANE_FLOOR_DEFAULT,
+      });
+      const seen = new Set(budgeted.map(r => r.page_id ?? r.slug));
+      // At most ONE deduplicated relevant candidate (highest raw cosine —
+      // Lane-B is distance-ordered and the floor already excluded the irrelevant).
+      const candidate = laneB.find(
+        r => lanePrefixes.some(p => r.slug.startsWith(p))
+          && !seen.has(r.page_id ?? r.slug),
+      );
+      if (candidate) {
+        const tail = { ...candidate, modality: candidate.modality ?? 'text' };
+        // Reserved TAIL slot, never rank-0: candidate only ever occupies the last
+        // position. If Lane-A fills the limit, replace ONLY the tail; Lane-A top
+        // and relative order are untouched.
+        const merged = budgeted.length >= limit
+          ? [...budgeted.slice(0, limit - 1), tail]
+          : [...budgeted, tail];
+        lastResultsCount = merged.length;
+        lastRank1Score = merged[0] ? (merged[0].base_score ?? merged[0].score) : lastRank1Score;
+        return merged;
+      }
+    } catch {
+      // Lane-B fault ⇒ fall through to `return budgeted` (Lane-A verbatim).
+    }
+  }
   return budgeted;
 }
 
@@ -1879,7 +1993,8 @@ export async function hybridSearchCached(
     Boolean(opts?.nearSymbol) ||
     isNonDefaultColumn ||
     adaptiveReturnOn ||
-    dateFiltered;
+    dateFiltered ||
+    resolveReservedLanePrefixes(opts).length > 0; // reserved-lane merge can't be safely cache-keyed without a KNOBS_HASH_VERSION bump (Option B: skip)
 
   let cacheStatus: 'hit' | 'miss' | 'disabled' = skipCache ? 'disabled' : 'miss';
   let cacheSimilarity: number | undefined;
