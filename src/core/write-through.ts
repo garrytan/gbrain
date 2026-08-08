@@ -46,6 +46,10 @@ export interface WriteThroughResult {
   committed?: boolean;
   /**
    * Non-error reasons the file was not written:
+   *   - disabled_by_config: `sync.write_through` is set to 'false' — the brain
+   *     is DB-only by operator choice (e.g. the host repo is a shared working
+   *     tree where stray root-level `.md` artifacts are unwanted). Checked
+   *     before any FS or DB work.
    *   - no_repo_configured: the resolved target (source `local_path` or, for a
    *     sole-source brain, `sync.repo_path`) is unset (DB-only by design).
    *   - repo_not_found: target set but missing / not a directory.
@@ -61,7 +65,7 @@ export interface WriteThroughResult {
    *     differently-cased entry that the FS folds onto this page's file, so
    *     writing would silently clobber the OTHER slug's file (#2831) — refused.
    */
-  skipped?: 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root' | 'case_insensitive_collision';
+  skipped?: 'disabled_by_config' | 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root' | 'case_insensitive_collision';
   /** Set when the render/write/rename itself threw (EACCES, ENOTDIR, disk full). */
   error?: string;
 }
@@ -86,6 +90,14 @@ export async function writePageThrough(
 ): Promise<WriteThroughResult> {
   const sourceId = opts.sourceId ?? 'default';
   try {
+    // Opt-out flag: `sync.write_through=false` makes every page write DB-only,
+    // for brains whose host repo is a shared working tree where per-page `.md`
+    // artifacts are unwanted. Mirrors the `=== 'true'` opt-in convention used
+    // elsewhere (search.mcp_keyword_only, autopilot.*): only the explicit
+    // string 'false' disables; unset or any other value keeps the default.
+    if ((await engine.getConfig('sync.write_through')) === 'false') {
+      return { written: false, skipped: 'disabled_by_config' };
+    }
     // #2018: pick the disk target so a page is NEVER written into a different
     // source's working tree. Two legitimate topologies, plus the leak guard:
     //   1. The assigned source has its OWN `local_path` (a separate working
