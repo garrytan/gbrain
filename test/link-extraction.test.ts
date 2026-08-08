@@ -1583,6 +1583,17 @@ describe('parseTimelineEntries — Format 3: inline [Source: ..., YYYY-MM-DD] ci
     expect(entries[0].detail).toBe('Source: email re: offer, signed');
   });
 
+  test('uses the full paragraph for a wrapped inline citation summary', () => {
+    const entries = parseTimelineEntries(`The imported app showed product fit for commercial use
+after the prototype demo. [Source: user interview, 2026-07-30]`);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].date).toBe('2026-07-30');
+    expect(entries[0].summary).toBe(
+      'The imported app showed product fit for commercial use after the prototype demo.',
+    );
+    expect(entries[0].detail).toBe('Source: user interview');
+  });
+
   test('does not double-extract a timeline bullet carrying its own citation', () => {
     const entries = parseTimelineEntries('- **2025-03-18** | Meeting notes [Source: notes, 2025-03-18]');
     expect(entries).toHaveLength(1); // bullet pass only

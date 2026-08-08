@@ -178,6 +178,17 @@ describe('extractTimelineFromContent', () => {
     expect(entries[0].source).toBe('email from alice-example re: offer, signed');
   });
 
+  it('uses the full paragraph for a wrapped inline citation summary', () => {
+    const content = `The imported app showed product fit for commercial use
+after the prototype demo. [Source: user interview, 2026-07-30]`;
+    const entries = extractTimelineFromContent(content, 'projects/imported-app');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].date).toBe('2026-07-30');
+    expect(entries[0].summary).toBe(
+      'The imported app showed product fit for commercial use after the prototype demo.',
+    );
+  });
+
   it('extracts one entry per citation when a line carries several', () => {
     const content = `Both sides confirmed the partnership. [Source: call with widget-co, 2025-06-01] [Source: follow-up email, 2025-06-03]`;
     const entries = extractTimelineFromContent(content, 'companies/widget-co');

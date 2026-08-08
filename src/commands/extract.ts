@@ -39,6 +39,7 @@ import {
   extractFrontmatterLinks, isGlobalBasenameEnabled, LINK_EXTRACTOR_VERSION_TS,
   WIKILINK_BASENAME_LINK_TYPE,
   buildBasenameIndex, queryBasenameIndex, stripCodeBlocks,
+  parseInlineCitationTimelineEntries,
   type UnresolvedFrontmatterRef, type LinkCandidate,
 } from '../core/link-extraction.ts';
 import { createProgress } from '../core/progress.ts';
@@ -526,23 +527,11 @@ export function extractTimelineFromContent(content: string, slug: string): Extra
   // carries its own [Source: ...] citation, and re-extracting it would file
   // a duplicate entry under a different (source, summary) shape that the
   // DB-level uniqueness cannot collapse.
-  const citationPattern = /\[Source:\s*([^\]]+?),\s*(\d{4}-\d{2}-\d{2})\s*\]/g;
   const bulletLinePattern = /^-\s+\*\*\d{4}-\d{2}-\d{2}\*\*\s*\|/;
-  for (const line of content.split(/\r?\n/)) {
-    if (bulletLinePattern.test(line)) continue;
-    const lineMatches = [...line.matchAll(citationPattern)];
-    if (lineMatches.length === 0) continue;
-    // Strip every citation marker from the line to leave the annotated text.
-    const summary = line
-      .replace(/\[Source:[^\]]*\]/g, '')
-      .replace(/^[-*>#\s]+/, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 300);
-    if (!summary) continue; // a bare citation with no surrounding text is not an event
-    for (const m of lineMatches) {
-      entries.push({ slug, date: m[2], source: m[1].trim().slice(0, 200), summary });
-    }
+  for (const entry of parseInlineCitationTimelineEntries(content, {
+    skipLine: (line) => bulletLinePattern.test(line),
+  })) {
+    entries.push({ slug, date: entry.date, source: entry.source, summary: entry.summary });
   }
 
   return entries;
