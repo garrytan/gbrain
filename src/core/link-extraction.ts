@@ -1260,6 +1260,76 @@ const TIMELINE_LINE_RE = /^\s*-?\s*\*\*(\d{4}-\d{2}-\d{2})\*\*\s*[|\-–—]+\s*
 // 年/月 markers so plain ASCII `- 2020-01-02 - text` does NOT match — non-bold
 // ASCII dates were never timeline entries and must stay that way.
 const TIMELINE_LINE_RE_CN = /^\s*-?\s*(?:\*\*)?(\d{4})年(\d{1,2})月(\d{1,2})日?(?:\*\*)?\s*[|\-–—]+\s*(.+?)\s*$/;
+const CITATION_TIMELINE_RE = /\[Source:\s*([^\]]+?),\s*(\d{4}-\d{2}-\d{2})\s*\]/g;
+
+export interface InlineCitationTimelineCandidate {
+  date: string;
+  source: string;
+  summary: string;
+}
+
+interface CitationParagraph {
+  lines: string[];
+  text: string;
+}
+
+function startsMarkdownBlock(line: string): boolean {
+  return /^#{1,6}\s/.test(line) || /^\s*(?:[-*+]|\d+\.)\s+/.test(line);
+}
+
+function citationParagraphs(content: string): CitationParagraph[] {
+  const paragraphs: CitationParagraph[] = [];
+  let lines: string[] = [];
+
+  const flush = () => {
+    if (lines.length === 0) return;
+    paragraphs.push({
+      lines,
+      text: lines.map((line) => line.trim()).join(' '),
+    });
+    lines = [];
+  };
+
+  for (const line of content.split(/\r?\n/)) {
+    if (line.trim().length === 0) {
+      flush();
+      continue;
+    }
+    if (lines.length > 0 && startsMarkdownBlock(line)) flush();
+    lines.push(line);
+  }
+  flush();
+
+  return paragraphs;
+}
+
+export function parseInlineCitationTimelineEntries(
+  content: string,
+  opts: { skipLine?: (line: string) => boolean } = {},
+): InlineCitationTimelineCandidate[] {
+  const result: InlineCitationTimelineCandidate[] = [];
+  for (const paragraph of citationParagraphs(content)) {
+    if (opts.skipLine && paragraph.lines.some(opts.skipLine)) continue;
+    const matches = [...paragraph.text.matchAll(CITATION_TIMELINE_RE)];
+    if (matches.length === 0) continue;
+    const summary = paragraph.text
+      .replace(/\[Source:[^\]]*\]/g, '')
+      .replace(/^[-*>#\s]+/, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 300);
+    if (!summary) continue;
+    for (const m of matches) {
+      if (!isValidDate(m[2])) continue;
+      result.push({
+        date: m[2],
+        source: m[1].trim().slice(0, 200),
+        summary,
+      });
+    }
+  }
+  return result;
+}
 
 /**
  * Parse timeline entries from content. Looks at:
@@ -1322,24 +1392,12 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
   // until now this parser (the db-source extract + ingest path) could not
   // see it, so a page whose dates all live in citations scored zero
   // timeline coverage. Kept in sync with extractTimelineFromContent's
-  // Format 3 (the fs-source path). Lines already captured by the timeline
+  // Format 3 (the fs-source path). Blocks already captured by the timeline
   // bullet pass are skipped (a bullet often carries its own citation).
-  const citationRe = /\[Source:\s*([^\]]+?),\s*(\d{4}-\d{2}-\d{2})\s*\]/g;
-  for (const line of lines) {
-    if (TIMELINE_LINE_RE.test(line)) continue;
-    const matches = [...line.matchAll(citationRe)];
-    if (matches.length === 0) continue;
-    const summary = line
-      .replace(/\[Source:[^\]]*\]/g, '')
-      .replace(/^[-*>#\s]+/, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 300);
-    if (!summary) continue;
-    for (const m of matches) {
-      if (!isValidDate(m[2])) continue;
-      result.push({ date: m[2], summary, detail: `Source: ${m[1].trim().slice(0, 200)}` });
-    }
+  for (const entry of parseInlineCitationTimelineEntries(content, {
+    skipLine: (line) => TIMELINE_LINE_RE.test(line) || TIMELINE_LINE_RE_CN.test(line),
+  })) {
+    result.push({ date: entry.date, summary: entry.summary, detail: `Source: ${entry.source}` });
   }
   return result;
 }
