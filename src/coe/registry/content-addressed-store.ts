@@ -662,10 +662,11 @@ export class ContentAddressedStore {
         if (!isDatabaseBusy(error)) throw error;
       }
       if (acquired) break;
-      if (performance.now() >= deadline) {
+      const remainingMs = deadline - performance.now();
+      if (remainingMs <= 0) {
         throw new CoeContractError("policy_violation", `Timed out acquiring registry lock ${name}`);
       }
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, config.retry_ms));
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, Math.min(config.retry_ms, remainingMs)));
     }
 
     const controller = new AbortController();

@@ -207,6 +207,39 @@ describe("CoE registry owner leases", () => {
     await expect(owning).resolves.toBe("owner-finished");
   });
 
+  test("bounds contender retry sleep by the lock acquisition deadline", async () => {
+    const root = await mkdtemp(join(tmpdir(), "gbrain-coe-lock-deadline-"));
+    roots.push(root);
+    let entered!: () => void;
+    let release!: () => void;
+    const operationEntered = new Promise<void>((resolve) => { entered = resolve; });
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const owner = new ContentAddressedStore(root, () => "deadline-owner", options());
+    const contender = new ContentAddressedStore(root, () => "deadline-contender", options({
+      lock_timeout_ms: 20,
+      lock_retry_ms: 250,
+      lock_lease_ms: 500,
+    }));
+
+    const owning = owner.withLock(LOCK_NAME, async () => {
+      entered();
+      await hold;
+      return "owner-finished";
+    });
+    await operationEntered;
+    await contender.listKeys("locks");
+
+    const startedAt = performance.now();
+    await expect(contender.withLock(LOCK_NAME, async () => "stolen")).rejects.toMatchObject({
+      code: "policy_violation",
+    });
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(elapsedMs).toBeLessThan(100);
+    release();
+    await expect(owning).resolves.toBe("owner-finished");
+  });
+
   test("never steals an expired lease whose exact process owner is still alive", async () => {
     if (process.platform !== "linux") return;
     const root = await mkdtemp(join(tmpdir(), "gbrain-coe-lock-expired-live-"));
