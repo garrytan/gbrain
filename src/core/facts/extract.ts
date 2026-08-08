@@ -308,8 +308,15 @@ export async function extractFactsFromTurnWithOutcome(
   }
 
   const parsedShape = parseExtractorJsonDetailed(result.text);
-  if (!parsedShape || parsedShape.invalidCandidates > 0) {
+  if (!parsedShape ||
+      (parsedShape.invalidCandidates > 0 && parsedShape.facts.length === 0)) {
     return { ok: false, reason: 'malformed_output' };
+  }
+  if (parsedShape.invalidCandidates > 0) {
+    process.stderr.write(
+      `[facts-extract] WARN: dropped ${parsedShape.invalidCandidates} malformed candidate(s); ` +
+      `kept ${parsedShape.facts.length}\n`,
+    );
   }
   const parsedRaw = parsedShape.facts;
 
