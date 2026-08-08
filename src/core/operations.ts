@@ -2314,7 +2314,8 @@ const think: Operation = {
       until: p.until ? String(p.until) : undefined,
       takesHoldersAllowList: ctx.takesHoldersAllowList,
       ...thinkScope,
-      remote: ctx.remote === true,
+      // Fail-closed: only a context that explicitly says local gets local.
+      remote: ctx.remote !== false,
     });
 
     // Persist if --save was passed locally
@@ -4151,7 +4152,8 @@ const find_trajectory: Operation = {
     const points = await ctx.engine.findTrajectory({
       entitySlug: p.entity_slug,
       ...scope,
-      remote: ctx.remote === true,
+      // Fail-closed: only a context that explicitly says local gets local.
+      remote: ctx.remote !== false,
       metric,
       kind,
       since,

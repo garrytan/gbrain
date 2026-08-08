@@ -51,7 +51,7 @@ describe('PGLite — facts.event_type round-trip', () => {
     `);
 
     // kind: 'all' (default) returns all three
-    const all = await engine.findTrajectory({ entitySlug: 'people/alice' });
+    const all = await engine.findTrajectory({ entitySlug: 'people/alice', remote: false });
     expect(all.length).toBe(3);
 
     // Find the event row and assert event_type round-trips
@@ -78,6 +78,7 @@ describe('PGLite — facts.event_type round-trip', () => {
     const points = await engine.findTrajectory({
       entitySlug: 'people/alice',
       kind: 'metric',
+      remote: false,
     });
     expect(points.length).toBe(1);
     expect(points[0].metric).toBe('mrr');
@@ -88,6 +89,7 @@ describe('PGLite — facts.event_type round-trip', () => {
     const points = await engine.findTrajectory({
       entitySlug: 'people/alice',
       kind: 'event',
+      remote: false,
     });
     expect(points.length).toBe(1);
     expect(points[0].metric).toBeNull();
@@ -98,14 +100,15 @@ describe('PGLite — facts.event_type round-trip', () => {
     const explicit = await engine.findTrajectory({
       entitySlug: 'people/alice',
       kind: 'all',
+      remote: false,
     });
-    const implicit = await engine.findTrajectory({ entitySlug: 'people/alice' });
+    const implicit = await engine.findTrajectory({ entitySlug: 'people/alice', remote: false });
     expect(explicit.length).toBe(implicit.length);
     expect(explicit.length).toBe(3);
   });
 
   test('chronological ordering preserved when mixed metric + event rows', async () => {
-    const points = await engine.findTrajectory({ entitySlug: 'people/alice' });
+    const points = await engine.findTrajectory({ entitySlug: 'people/alice', remote: false });
     expect(points.length).toBe(3);
     // 2026-01-01 → 2026-02-15 → 2026-03-01
     expect(points[0].valid_from.toISOString().slice(0, 10)).toBe('2026-01-01');
@@ -119,6 +122,7 @@ describe('PGLite — facts.event_type round-trip', () => {
     const points = await engine.findTrajectory({
       entitySlug: 'people/alice',
       metric: 'mrr',
+      remote: false,
     });
     expect(points.length).toBe(1);
     expect(points[0].metric).toBe('mrr');

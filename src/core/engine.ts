@@ -589,7 +589,11 @@ export interface TrajectoryOpts {
   sourceId?: string;
   /** Federated array scope (mutually exclusive with sourceId; the array wins when set). */
   sourceIds?: string[];
-  /** When true, filters to visibility='world' only. Set by MCP layer from ctx.remote. */
+  /**
+   * Filters to visibility='world' unless strictly `false`. FAIL-CLOSED: an
+   * omitted flag means world-only, so trusted local callers must pass
+   * `remote: false` explicitly.
+   */
   remote?: boolean;
   /** Metric filter. When set, only facts with this canonical metric label participate. */
   metric?: string;

@@ -133,6 +133,9 @@ prints what would have been the input (exit 0).
     try {
       result = await runThink(engine, {
         question, anchor, rounds, save, take, model, since, until,
+        // Fail-closed trust: local CLI must say so explicitly, or trajectory
+        // injection degrades to visibility='world' rows.
+        remote: false,
         // #1698: explicit --model → hard error on an unresolvable model (no silent
         // degrade to the no-LLM stub). Omitting --model keeps the graceful default path.
         modelExplicit: !!model,

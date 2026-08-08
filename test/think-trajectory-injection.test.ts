@@ -87,6 +87,7 @@ describe('runThink — trajectory injection happy path', () => {
   test('temporal intent → trajectory block appears in user message', async () => {
     const { client, captured } = captureClient();
     await runThink(engine, {
+      remote: false,
       question: 'When did Marco last switch jobs?',
       client,
     });
@@ -99,6 +100,7 @@ describe('runThink — trajectory injection happy path', () => {
   test('"other" intent → no trajectory block', async () => {
     const { client, captured } = captureClient();
     await runThink(engine, {
+      remote: false,
       question: 'Summarize the deal pipeline',
       client,
     });
@@ -112,6 +114,7 @@ describe('runThink — kill switches', () => {
   test('withTrajectory: false bypasses injection even for temporal intent', async () => {
     const { client, captured } = captureClient();
     await runThink(engine, {
+      remote: false,
       question: 'When did Marco last switch jobs?',
       client,
       withTrajectory: false,
@@ -126,6 +129,7 @@ describe('runThink — kill switches', () => {
     );
     const { client, captured } = captureClient();
     await runThink(engine, {
+      remote: false,
       question: 'When did Marco last switch jobs?',
       client,
     });
@@ -145,6 +149,7 @@ describe('runThink — empty trajectory short-circuits', () => {
     });
     const { client, captured } = captureClient();
     await runThink(engine, {
+      remote: false,
       question: 'When did empty last visit?',
       client,
     });
@@ -168,6 +173,7 @@ describe('runThink — graceful degradation', () => {
     try {
       const { client, captured } = captureClient();
       const result = await runThink(engine, {
+        remote: false,
         question: 'When did Marco last switch jobs?',
         client,
       });
@@ -189,6 +195,7 @@ describe('runThink — trajectory points count exposed via warnings', () => {
   test('successful injection records TRAJECTORY_INJECTED_*_POINTS warning', async () => {
     const { client } = captureClient();
     const result = await runThink(engine, {
+      remote: false,
       question: 'When did Marco last switch jobs?',
       client,
     });
@@ -218,6 +225,7 @@ describe('runThink — calibration-mode trajectory placement', () => {
   test('default mode: trajectory block lands AFTER retrieved blocks, BEFORE instruction', async () => {
     const { client, captured } = captureClient();
     await runThink(engine, {
+      remote: false,
       question: 'When did Marco last switch jobs?',
       client,
       // No withCalibration → default-mode prompt assembly.
@@ -266,6 +274,7 @@ describe('runThink — calibration-mode trajectory placement', () => {
 
     const { client, captured } = captureClient();
     await runThink(engine, {
+      remote: false,
       question: 'When did Marco last switch jobs?',
       client,
       withCalibration: true,
@@ -303,6 +312,7 @@ describe('runThink — calibration-mode trajectory placement', () => {
     // shape is unchanged from the v0.36 baseline.
     const { client, captured } = captureClient();
     await runThink(engine, {
+      remote: false,
       question: 'Summarize the deal pipeline',
       client,
       withCalibration: true,
@@ -351,6 +361,7 @@ describe('runThink — resolution_source != fallback_slugify gate', () => {
 
     const { client, captured } = captureClient();
     await runThink(engine, {
+      remote: false,
       question: 'When did I last meet zelda?',
       client,
     });
