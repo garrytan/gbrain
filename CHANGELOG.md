@@ -2,6 +2,26 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.75.0] - 2026-08-07
+
+**GBrain can now use Voyage Rerank 2.5 Lite or Full through an existing OpenRouter account.**
+
+Both models run through GBrain's established OpenRouter connection, so operators do not need a separate Voyage account or API key. The integration is opt-in and leaves the default reranker unchanged. It also keeps the free NVIDIA and existing Cohere routes available through the same provider.
+
+Cost controls understand Voyage's exact per-token prices and billing formula, reserve conservatively for dense text, and replace estimates with OpenRouter's reported usage when available. GBrain now rejects malformed or duplicate ranking rows instead of silently promoting the wrong memory result. Mixed catalogs distinguish token-, search-, and free-billed models so a per-search Cohere rate is never misrepresented as token pricing; legacy ZeroEntropy rerankers also receive their declared token-price fallback consistently.
+
+### To take advantage of v0.42.75.0
+
+With `OPENROUTER_API_KEY` already configured, select the lower-cost Lite model:
+
+```bash
+gbrain config set search.reranker.model openrouter:voyageai/rerank-2.5-lite
+gbrain config set search.reranker.enabled true
+gbrain models doctor --json
+```
+
+Use `openrouter:voyageai/rerank-2.5` instead when you want the Full model. Voyage Lite costs $0.02 per million input tokens; Full costs $0.05 per million input tokens.
+
 ## [0.42.74.0] - 2026-08-07
 
 **Two fixes for agents that reach a brain over the network: takes-holder visibility now works the way you set it, and the voice recipe is safe by default.**
