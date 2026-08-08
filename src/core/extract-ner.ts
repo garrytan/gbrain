@@ -19,7 +19,7 @@ import type { BrainEngine } from './engine.ts';
 import type { LinkBatchInput } from './engine.ts';
 import { buildGazetteer, findMentionedEntities, type Gazetteer } from './by-mention.ts';
 import { inferLinkTypeFromPack } from './schema-pack/link-inference.ts';
-import { loadActivePackBestEffort } from './schema-pack/best-effort.ts';
+import { loadActivePackBestEffort, packSupportsNerInference } from './schema-pack/best-effort.ts';
 
 export interface ExtractNerOpts {
   /** When true: enumerate but don't write. */
@@ -103,17 +103,14 @@ export async function extractNerLinks(
 ): Promise<ExtractNerResult> {
   const dryRun = opts.dryRun ?? false;
 
-  // Pack best-effort: no pack → no inference → nothing to do.
+  // Pack best-effort: no pack, or no link_type with an inference.regex → NER
+  // has no patterns to match and we'd waste a full walk. `!pack` first so TS
+  // narrows pack to non-null for the rest of the function; packSupportsNerInference
+  // (shared with the onboard recommender) covers the no-link-types / no-regex cases.
   const pack = await loadActivePackBestEffort({ engine } as never);
-  if (!pack || !pack.manifest?.link_types || pack.manifest.link_types.length === 0) {
+  if (!pack || !packSupportsNerInference(pack)) {
     return { pages: 0, created: 0, pack_unavailable: true };
   }
-  // Require at least one link_type with an inference.regex; otherwise NER
-  // has no patterns to match and we'd waste a full walk.
-  const hasRegex = pack.manifest.link_types.some(
-    (lt) => lt.inference && typeof lt.inference === 'object' && 'regex' in lt.inference,
-  );
-  if (!hasRegex) return { pages: 0, created: 0, pack_unavailable: true };
 
   const gazetteer = opts.gazetteer ?? await buildGazetteer(engine);
   if (gazetteer.size === 0) {

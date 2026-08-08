@@ -18,6 +18,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { RemediationStep } from '../remediation-step.ts';
 import { makeRemediationStep } from '../remediation-step.ts';
+import { loadActivePackBestEffort, packSupportsNerInference } from '../schema-pack/best-effort.ts';
 
 /** Shared shape returned by all four checks. */
 export interface OnboardCheckResult {
@@ -170,32 +171,29 @@ export async function checkEntityLinkCoverage(
   // surfaces the same fix via the onboard plan either way.
   if (coverage >= 0.7) {
     message = `Coverage ${pct}% ± ${ciPct}%${sampleNote}`;
-  } else if (coverage >= 0.4) {
-    status = 'warn';
-    message = `Coverage ${pct}% ± ${ciPct}% (target 70%)${sampleNote}`;
-    remediations.push(makeRemediationStep({
-      id: 'onboard.extract_ner_links',
-      job: 'extract-ner',
-      params: {},
-      severity: 'medium',
-      est_seconds: 300,
-      est_usd_cost: 0,
-      rationale: `Entity link coverage at ${pct}%; NER extraction lifts typed-link density`,
-      status: 'remediable',
-    }));
   } else {
     status = 'warn';
     message = `Coverage ${pct}% ± ${ciPct}% (target 70%)${sampleNote}`;
-    remediations.push(makeRemediationStep({
-      id: 'onboard.extract_ner_links',
-      job: 'extract-ner',
-      params: {},
-      severity: 'high',
-      est_seconds: 600,
-      est_usd_cost: 0,
-      rationale: `Entity link coverage at ${pct}%; NER extraction lifts typed-link density`,
-      status: 'remediable',
-    }));
+    // Only recommend NER extraction if the active pack actually declares
+    // inference.regex rules — otherwise `extract-ner` is a structural no-op
+    // (pack_unavailable, 0 links) and the recommendation could never clear.
+    // Gate on the SAME predicate the handler uses so the two can't drift.
+    const pack = await loadActivePackBestEffort({ engine } as never);
+    if (packSupportsNerInference(pack)) {
+      remediations.push(makeRemediationStep({
+        id: 'onboard.extract_ner_links',
+        job: 'extract-ner',
+        params: {},
+        severity: coverage >= 0.4 ? 'medium' : 'high',
+        est_seconds: coverage >= 0.4 ? 300 : 600,
+        est_usd_cost: 0,
+        rationale: `Entity link coverage at ${pct}%; NER extraction lifts typed-link density`,
+        status: 'remediable',
+      }));
+    } else {
+      message += ' — no auto-fix: the active schema pack declares no NER inference rules'
+        + ' (add link_types[].inference.regex, or upgrade the pack)';
+    }
   }
   return {
     check: { name: 'entity_link_coverage', status, message },
@@ -259,32 +257,31 @@ export async function checkTimelineCoverage(
   // code doesn't flip on a fresh brain.
   if (coverage >= 0.9) {
     message = `Coverage ${pct}% ± ${ciPct}%${sampleNote}`;
-  } else if (coverage >= 0.7) {
-    status = 'warn';
-    message = `Coverage ${pct}% ± ${ciPct}% (target 90%)${sampleNote}`;
-    remediations.push(makeRemediationStep({
-      id: 'onboard.extract_timeline_from_meetings',
-      job: 'extract-timeline-from-meetings',
-      params: {},
-      severity: 'medium',
-      est_seconds: 240,
-      est_usd_cost: 0,
-      rationale: `Timeline coverage at ${pct}%; meeting-derived entries lift it`,
-      status: 'remediable',
-    }));
   } else {
     status = 'warn';
     message = `Coverage ${pct}% ± ${ciPct}% (target 90%)${sampleNote}`;
-    remediations.push(makeRemediationStep({
-      id: 'onboard.extract_timeline_from_meetings',
-      job: 'extract-timeline-from-meetings',
-      params: {},
-      severity: 'high',
-      est_seconds: 480,
-      est_usd_cost: 0,
-      rationale: `Timeline coverage at ${pct}%; meeting-derived entries lift it`,
-      status: 'remediable',
-    }));
+    // Only recommend meeting-derived timeline extraction if there are dated
+    // meeting pages to extract FROM — otherwise the job creates 0 entries
+    // (it skips meetings without effective_date) and the rec never clears.
+    const datableMeetings = await safeCount(
+      engine,
+      `SELECT COUNT(*) AS count FROM pages
+         WHERE type = 'meeting' AND effective_date IS NOT NULL AND deleted_at IS NULL`,
+    );
+    if (datableMeetings > 0) {
+      remediations.push(makeRemediationStep({
+        id: 'onboard.extract_timeline_from_meetings',
+        job: 'extract-timeline-from-meetings',
+        params: {},
+        severity: coverage >= 0.7 ? 'medium' : 'high',
+        est_seconds: coverage >= 0.7 ? 240 : 480,
+        est_usd_cost: 0,
+        rationale: `Timeline coverage at ${pct}%; meeting-derived entries lift it`,
+        status: 'remediable',
+      }));
+    } else {
+      message += ' — no auto-fix: no dated meeting pages to extract timeline entries from';
+    }
   }
   return {
     check: { name: 'timeline_coverage', status, message },
