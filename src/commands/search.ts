@@ -45,6 +45,7 @@ const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   cache_similarity_threshold: 'Cosine-similarity floor for cache hits (0..1)',
   cache_ttl_seconds: 'Per-row cache TTL',
   intentWeighting: 'Zero-LLM intent classifier weight adjustments',
+  keywordOrFallback: 'Keyword-arm AND→OR zero-recall fallback',
   tokenBudget: 'Per-call token-budget cap (undefined = no cap)',
   expansion: 'LLM multi-query expansion (Haiku call per search)',
   searchLimit: 'Default `limit` for the operation layer',
@@ -97,6 +98,7 @@ async function buildModesReport(engine: BrainEngine): Promise<SearchModesReport>
     'cache_similarity_threshold',
     'cache_ttl_seconds',
     'intentWeighting',
+    'keywordOrFallback',
     'tokenBudget',
     'expansion',
     'searchLimit',
@@ -146,7 +148,7 @@ function formatModesText(report: SearchModesReport): string {
     const b = report.bundles[mode];
     const active = mode === report.active_mode ? '  ← active' : '';
     lines.push(`  ${mode.padEnd(13)}${active}`);
-    lines.push(`    cache=${b.cache_enabled} intentWeighting=${b.intentWeighting}`);
+    lines.push(`    cache=${b.cache_enabled} intentWeighting=${b.intentWeighting} keywordOrFallback=${b.keywordOrFallback}`);
     lines.push(`    tokenBudget=${b.tokenBudget ?? 'none'} searchLimit=${b.searchLimit} expansion=${b.expansion}`);
   }
   lines.push('');
