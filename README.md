@@ -439,6 +439,23 @@ entirely. The v0.13.1 grandfather migration that hung 70+ minutes on an
 pass (keyed on the page PK, soft-delete-filtered, source-safe) that
 completes in ~1-2 seconds. (Closes #1605, #1581.)
 
+## Fix Wave 2026-08-08
+
+Security and reliability hardening applied to the v0.42.72.1 codebase:
+
+- **Watchdog backoff** (`gb-watchdog.ps1`): Exponential backoff (1s→32s) on BGE-M3 port conflicts; abandons after 6 consecutive failures with alert output.
+- **ZeroEntropy key warning** (`gateway.ts`): `configureGateway` now prints a clear warning when `ZEROENTROPY_API_KEY` is missing and the reranker is configured — no more silent 373-auth-fail degradation.
+- **PGLite WAL checkpoint** (`pglite-engine.ts`): `CHECKPOINT` query before `disconnect()` to flush WAL data to disk, reducing data loss risk on WASM crash.
+- **BGE binding** (`server.py` × 2): BGE-M3 and BGE-VL services now bind `127.0.0.1` instead of `0.0.0.0`, closing the LAN exposure surface.
+- **soft_block visibility** (`import-file.ts`): Replaced silent `stderr.write` with `console.warn` so operators see oversized-page blocks in terminal output.
+- **CI shard timeout** (`docker-compose.ci.yml`): Added `stop_grace_period: 600s` to prevent WEDGED runner containers.
+- **LRU cache** (`lru-cache.ts`): New in-process LRU cache (default 100 entries, `GBRAIN_LRU_CAPACITY` override) to reduce PGLite single-connection pressure.
+- **.env loading** (`config.ts`): `loadGbrainEnv()` reads `~/.gbrain/.env` at startup so secrets can live outside `config.json`.
+- **Metrics endpoint** (`serve-http.ts`): Prometheus-compatible `/metrics` endpoint exposes request count, error ratio, latency p50/p99, and uptime.
+- **README record**: This section.
+
+Full report: `output/GB记忆_修复报告.md` in the audit workspace.
+
 ## Docs
 
 - [`docs/INSTALL.md`](docs/INSTALL.md) — every install path, end to end

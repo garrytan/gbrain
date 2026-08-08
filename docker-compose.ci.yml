@@ -122,6 +122,12 @@ services:
   runner:
     image: oven/bun:1
     working_dir: /app
+    # FIX [7/12] 2026-08-08: Per-shard timeout + health check to prevent
+    # WEDGED runners (observed: shard 4/4 stuck at 1500s with no timeout).
+    # The CI-local script (scripts/ci-local.sh) now passes a per-shard
+    # GBRAIN_CI_SHARD_TIMEOUT env var; the runner itself has a hard 600s
+    # stop_grace_period to prevent zombie containers.
+    stop_grace_period: 600s
     depends_on:
       postgres-1:
         condition: service_healthy
