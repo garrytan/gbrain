@@ -18,6 +18,7 @@
 
 import { CANONICAL_PRICING, type ModelPricing } from './model-pricing.ts';
 import { splitProviderModelId } from './model-id.ts';
+import { lookupOpenRouterChatPrice, routerTail } from './openrouter-rates.ts';
 
 export type { ModelPricing };
 
@@ -32,6 +33,54 @@ export const ANTHROPIC_PRICING: Record<string, ModelPricing> = Object.fromEntrie
     .filter(([key]) => key.startsWith('anthropic:'))
     .map(([key, pricing]) => [key.slice('anthropic:'.length), pricing]),
 );
+
+/**
+ * Resolve a chat model id to its canonical pricing entry.
+ *
+ * Looks at the FULL canonical table, not just the bare-keyed Anthropic view.
+ * Previously this resolved against `ANTHROPIC_PRICING` alone, which is
+ * `CANONICAL_PRICING` filtered to `anthropic:` keys — so every non-Anthropic
+ * model priced a `null` even though canonical carried its rate (14 of the 25
+ * canonical entries were unreachable). Because `BudgetTracker.reserve()`
+ * hard-throws `BudgetExhausted{reason:'no_pricing'}` when a cap is set and
+ * pricing is missing, that made every cost-capped path — `gbrain enrich`,
+ * `cycle.enrich_thin`, `extract_atoms`, skillopt — fail outright on OpenAI,
+ * Gemini, and DeepSeek models. See garrytan/gbrain#2504.
+ *
+ * Resolution order, most-specific first:
+ *   1. bare Anthropic id (`claude-haiku-4-5`) — the form most callers pass
+ *   2. fully-qualified canonical id (`openai:gpt-5.2`)
+ *   3. bare id behind any provider prefix (`bedrock:claude-haiku-4-5`)
+ *
+ * Routing-provider ids (`openrouter:openai/gpt-5.2`) resolve ONLY from
+ * OpenRouter's own published catalogue, cached on disk by
+ * `openrouter-rates.ts`. They are never aliased to the vendor's direct price:
+ * a router bills its OWN rates, so an alias would under-estimate real spend and
+ * hand back a silently wrong cap — worse than a refused one under the TX2
+ * contract. With no cached rate the id stays unpriced and that refusal stands,
+ * exactly as it did before this lookup existed.
+ */
+function resolveChatPricing(modelId: string): ModelPricing | undefined {
+  const direct = ANTHROPIC_PRICING[modelId] ?? CANONICAL_PRICING[modelId];
+  if (direct) return direct;
+
+  // Checked BEFORE the tail fallback below: the tail of
+  // `openrouter:anthropic/claude-sonnet-4-6` must never be allowed to match a
+  // bare canonical key and quietly price at Anthropic's direct rate.
+  const routed = lookupOpenRouterChatPrice(modelId);
+  if (routed) return routed;
+
+  // A router id whose rate is not cached must stay unpriced. Falling through
+  // to the tail fallback would let `openrouter:anthropic/claude-sonnet-4-6`
+  // match a bare canonical key and price at Anthropic's DIRECT rate — the
+  // vendor-alias mistake this whole path exists to avoid.
+  if (routerTail(modelId) !== null) return undefined;
+
+  const { model: tail } = splitProviderModelId(modelId);
+  if (!tail) return undefined;
+
+  return ANTHROPIC_PRICING[tail] ?? CANONICAL_PRICING[tail];
+}
 
 /**
  * Estimate the upper-bound USD cost of a single submit.
@@ -54,11 +103,7 @@ export function estimateMaxCostUsd(
   estimatedInputTokens: number,
   maxOutputTokens: number,
 ): number | null {
-  let p: ModelPricing | undefined = ANTHROPIC_PRICING[modelId];
-  if (!p) {
-    const { model: tail } = splitProviderModelId(modelId);
-    if (tail) p = ANTHROPIC_PRICING[tail];
-  }
+  const p = resolveChatPricing(modelId);
   if (!p) return null;
   return (
     (estimatedInputTokens / 1_000_000) * p.input +

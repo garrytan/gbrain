@@ -8,8 +8,31 @@
  * drop slash-form support.
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { _resetRatesMemo } from '../src/core/openrouter-rates.ts';
+
+// Router ids now resolve through the on-disk OpenRouter rate cache
+// (openrouter-rates.ts). Without this isolation these assertions would depend
+// on whether the machine running them happens to have a populated
+// ~/.gbrain/openrouter-rates.json — green on CI, red on a dev box that had
+// refreshed rates. Pin an empty GBRAIN_HOME so "no cached router rate" is a
+// stated precondition rather than an accident of the environment.
+let _ratesHome: string;
+beforeEach(() => {
+  _ratesHome = mkdtempSync(join(tmpdir(), 'gbrain-pricing-'));
+  process.env.GBRAIN_HOME = _ratesHome;
+  _resetRatesMemo();
+});
+afterEach(() => {
+  delete process.env.GBRAIN_HOME;
+  rmSync(_ratesHome, { recursive: true, force: true });
+  _resetRatesMemo();
+});
 import { ANTHROPIC_PRICING, estimateMaxCostUsd } from '../src/core/anthropic-pricing.ts';
+import { CANONICAL_PRICING } from '../src/core/model-pricing.ts';
 
 describe('estimateMaxCostUsd', () => {
   // Sonnet 4.6 = $3 input / $15 output per MTok.
@@ -55,10 +78,11 @@ describe('estimateMaxCostUsd', () => {
   });
 
   test('OpenRouter nested form returns null — tail is `anthropic/claude-...` which is not a pricing key', () => {
-    // Per D2 architecture: parseModelId returns {provider:'openrouter',
-    // model:'anthropic/claude-sonnet-4-6'}; lookup on the tail
-    // 'anthropic/claude-sonnet-4-6' misses (table has bare 'claude-sonnet-4-6').
-    // OpenRouter pricing is intentionally out of scope (TODO #2).
+    // Routers are priced ONLY from OpenRouter's own catalogue (cached by
+    // openrouter-rates.ts); with no cached rate the id stays unpriced and the
+    // TX2 refusal stands. Critically it must NOT fall through to the tail
+    // fallback and price at Anthropic's DIRECT rate — a router bills its own
+    // rates, so that alias would under-estimate spend.
     expect(estimateMaxCostUsd('openrouter:anthropic/claude-sonnet-4-6', 1_000, 1_000)).toBeNull();
   });
 
@@ -71,5 +95,46 @@ describe('estimateMaxCostUsd', () => {
       expect(estimateMaxCostUsd(`anthropic:${key}`, 1_000_000, 0)).not.toBeNull();
       expect(estimateMaxCostUsd(`anthropic/${key}`, 1_000_000, 0)).not.toBeNull();
     }
+  });
+});
+
+/**
+ * garrytan/gbrain#2504 — non-Anthropic canonical models must be priceable.
+ *
+ * `ANTHROPIC_PRICING` is `CANONICAL_PRICING` filtered to `anthropic:` keys, and
+ * `estimateMaxCostUsd` used to resolve against that view alone — so every
+ * non-Anthropic model returned null despite canonical carrying its rate.
+ * `BudgetTracker.reserve()` hard-throws on a null estimate when a cap is set,
+ * which took out every cost-capped path (enrich, enrich_thin, extract_atoms,
+ * skillopt) on OpenAI / Gemini / DeepSeek models.
+ */
+describe('estimateMaxCostUsd — canonical (non-Anthropic) coverage (#2504)', () => {
+  test.each([
+    ['openai:gpt-5.2'],
+    ['openai:gpt-4o'],
+    ['deepseek:deepseek-chat'],
+    ['deepseek:deepseek-v4-flash'],
+    ['google:gemini-2.0-flash'],
+  ])('%s prices from canonical instead of null', (modelId) => {
+    const cost = estimateMaxCostUsd(modelId, 1_000_000, 0);
+    expect(cost).not.toBeNull();
+    expect(cost!).toBeGreaterThan(0);
+  });
+
+  test('every canonical entry is priceable by its fully-qualified id', () => {
+    for (const key of Object.keys(CANONICAL_PRICING)) {
+      expect(estimateMaxCostUsd(key, 1_000, 1_000)).not.toBeNull();
+    }
+  });
+
+  test('genuinely unknown models still return null (TX2 contract intact)', () => {
+    expect(estimateMaxCostUsd('acme:not-a-real-model', 1_000, 1_000)).toBeNull();
+  });
+
+  test('routing-provider ids stay unpriced — a router bills its own rates', () => {
+    // Resolving these to the vendor's direct price would UNDER-estimate spend.
+    // Refusing is the correct posture until a router rate table exists (TODO #2).
+    expect(estimateMaxCostUsd('openrouter:openai/gpt-5.2', 1_000, 1_000)).toBeNull();
+    expect(estimateMaxCostUsd('openrouter:acme/nope', 1_000, 1_000)).toBeNull();
   });
 });

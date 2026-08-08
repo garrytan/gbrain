@@ -1427,6 +1427,13 @@ async function purgeOrphanClones(staleHours: number): Promise<{ count: number; b
   return { count: removed.length, bytes, names: removed };
 }
 
+/**
+ * Age at which the cached OpenRouter rate table is refreshed by the purge
+ * sweep. Published rates move on the order of months, so a weekly refresh is
+ * ample; the cache is never invalidated by age, only refreshed opportunistically.
+ */
+const RATES_MAX_AGE_DAYS = 7;
+
 async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<PhaseResult> {
   try {
     if (dryRun) {
@@ -1483,6 +1490,23 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
     } catch {
       // Non-fatal.
     }
+    // Refresh the cached OpenRouter rate table when it goes stale. Lives here,
+    // in the housekeeping sweep, because pricing lookups are SYNCHRONOUS and
+    // sit on the budget hot path — `BudgetTracker.reserve()` can never await a
+    // fetch. Out-of-band refresh keeps every lookup a local read.
+    //
+    // Best-effort in the strongest sense: a failed refresh keeps serving the
+    // previous cache and is not reported as a cycle failure. Refusing to spend
+    // because a rate fetch timed out is exactly the bug class this removes.
+    let ratesRefreshed = false;
+    try {
+      const { ratesNeedRefresh, refreshOpenRouterRates } = await import('./openrouter-rates.ts');
+      if (ratesNeedRefresh(RATES_MAX_AGE_DAYS)) {
+        ratesRefreshed = (await refreshOpenRouterRates()).ok;
+      }
+    } catch {
+      // Non-fatal.
+    }
     return {
       phase: 'purge',
       status: 'ok',
@@ -1492,7 +1516,8 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
         `${purgedClones.count} orphan clone temp dir(s), ${purgedCheckpoints} stale op_checkpoint(s), ` +
         `${purgedBrainstormCheckpoints} stale brainstorm checkpoint(s), ` +
         `${purgedBatchRetryAuditFiles} stale batch-retry audit file(s), ` +
-        `and ${purgedVolunteerEvents} stale volunteer event(s)`,
+        `and ${purgedVolunteerEvents} stale volunteer event(s)` +
+        (ratesRefreshed ? '; refreshed OpenRouter rates' : ''),
       details: {
         purged_sources_count: purgedSources.length,
         purged_pages_count: purgedPages.count,
