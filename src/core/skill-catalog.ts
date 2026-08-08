@@ -295,6 +295,7 @@ export function confineManifestPath(skillsDir: string, entry: ManifestEntry): st
 function opCallableByCaller(op: Operation, ctx: OperationContext): boolean {
   if (ctx.remote === false) return true; // local CLI — OS is the trust boundary
   if (op.localOnly) return false; // not reachable over a remote transport
+  if (ctx.transport === 'stdio') return true; // auth-less local pipe — dispatch enforces no scopes
   return hasScope(ctx.auth?.scopes ?? [], op.scope ?? 'read');
 }
 
