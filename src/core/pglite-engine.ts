@@ -1874,18 +1874,48 @@ export class PGLiteEngine implements BrainEngine {
     },
   ): Promise<SearchResult[]> {
     const { limit, offset, innerLimit, sourceFactorCase, hardExcludeClause, visibilityClause, detailFilter, opts, dedup } = ctx;
-    const qRaw = query;
-    if (qRaw.length === 0) return [];
-    const qLike = escapeLikePattern(qRaw);
+    // Whitespace tokenization. The original matched the ENTIRE query as one
+    // indivisible ILIKE substring, so any multi-token query containing CJK
+    // returned empty unless the corpus held that exact string verbatim —
+    // spaces included. "记忆 系统" demanded a literal "记忆 系统"; Chinese
+    // prose writes "记忆系统". The failure was silent: an empty array reads
+    // as "nothing in the brain", not "the tokenizer can't express this".
+    //
+    // Mixed queries route here too (hasCJK is true for "cron 定时"), so the
+    // ASCII half was collateral damage on the same code path.
+    //
+    // Each token becomes its own ILIKE conjunct; scores sum across tokens.
+    // Single-token queries produce arithmetic identical to pre-fix.
+    const tokens = query.split(/\s+/).filter(t => t.length > 0);
+    if (tokens.length === 0) return [];
 
-    // $1 = qLike (escaped for ILIKE)
-    // $2 = qRaw  (raw for position()/replace() ranking arithmetic)
-    // $3 = inner limit (dedup path) OR final limit (chunk-grain path)
-    // $4 = final limit (dedup path only) — see callers
-    // $5 = offset (dedup path)  /  $4 = offset (chunk-grain path)
-    const params: unknown[] = dedup
-      ? [qLike, qRaw, innerLimit, limit, offset]
-      : [qLike, qRaw, limit, offset];
+    // Two bindings per token: LIKE-escaped for the ILIKE conjunct, raw for the
+    // position()/replace() ranking arithmetic. Escaped chars would corrupt the
+    // occurrence count, so they cannot be shared (codex C8).
+    const params: unknown[] = [];
+    const likeIdx: number[] = [];
+    const rawIdx: number[] = [];
+    for (const t of tokens) {
+      params.push(escapeLikePattern(t));
+      likeIdx.push(params.length);
+      params.push(t);
+      rawIdx.push(params.length);
+    }
+    let pInner = 0;
+    if (dedup) {
+      params.push(innerLimit);
+      pInner = params.length;
+    }
+    params.push(limit);
+    const pLimit = params.length;
+    params.push(offset);
+    const pOffset = params.length;
+
+    // All tokens must be present. OR would make a two-token query strictly
+    // noisier than each token alone, which is the wrong direction.
+    const ilikeClause = likeIdx
+      .map(i => `cc.chunk_text ILIKE '%' || $${i} || '%' ESCAPE '\\'`)
+      .join(' AND ');
 
     let extraFilter = '';
     if (opts?.language) {
@@ -1913,13 +1943,17 @@ export class PGLiteEngine implements BrainEngine {
       extraFilter += ` AND p.source_id = $${params.length}`;
     }
 
-    // Bigram-frequency count: count occurrences of $qRaw in chunk_text via
-    // (length(chunk) - length(replace(chunk, q, ''))) / length(q). Acts as
+    // Bigram-frequency count per token: occurrences via
+    // (length(chunk) - length(replace(chunk, tok, ''))) / length(tok). Acts as
     // a ts_rank substitute. position()-tiebreaker so earlier-in-chunk hits
-    // outrank later ones at the same occurrence count.
+    // outrank later ones at the same occurrence count. Summed across tokens so
+    // a chunk matching both tokens densely outranks one that barely matches.
+    const perTokenScore = rawIdx
+      .map(i => `((LENGTH(cc.chunk_text) - LENGTH(REPLACE(cc.chunk_text, $${i}, ''))) / NULLIF(LENGTH($${i}), 0)::real
+        + 1.0 / NULLIF(POSITION($${i} IN cc.chunk_text), 0)::real)`)
+      .join(' + ');
     const scoreExpr = `
-      ((LENGTH(cc.chunk_text) - LENGTH(REPLACE(cc.chunk_text, $2, ''))) / NULLIF(LENGTH($2), 0)::real
-        + 1.0 / NULLIF(POSITION($2 IN cc.chunk_text), 0)::real)
+      (${perTokenScore})
       * ${sourceFactorCase}
     `;
 
@@ -1941,15 +1975,15 @@ export class PGLiteEngine implements BrainEngine {
            FROM content_chunks cc
            JOIN pages p ON p.id = cc.page_id
            JOIN sources s ON s.id = p.source_id
-           WHERE cc.chunk_text ILIKE '%' || $1 || '%' ESCAPE '\\' ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
+           WHERE ${ilikeClause} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
              AND cc.modality = 'text'
            ORDER BY score DESC
-           LIMIT $3
+           LIMIT $${pInner}
          ),
          ${buildBestPerPagePoolCte('ranked')}
          SELECT * FROM best_per_page
          ORDER BY score DESC, page_id ASC, chunk_id ASC
-         LIMIT $4 OFFSET $5`,
+         LIMIT $${pLimit} OFFSET $${pOffset}`,
         params,
       );
       return (rows as Record<string, unknown>[]).map(rowToSearchResult);
@@ -1970,9 +2004,9 @@ export class PGLiteEngine implements BrainEngine {
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
          JOIN sources s ON s.id = p.source_id
-         WHERE cc.chunk_text ILIKE '%' || $1 || '%' ESCAPE '\\' ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
+         WHERE ${ilikeClause} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
          ORDER BY score DESC
-         LIMIT $3 OFFSET $4`,
+         LIMIT $${pLimit} OFFSET $${pOffset}`,
         params,
       );
       return (rows as Record<string, unknown>[]).map(rowToSearchResult);
