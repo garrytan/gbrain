@@ -23,6 +23,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { registerBuiltinHandlers } from '../src/commands/jobs.ts';
+import { NON_DEFAULT_FANOUT_PHASES } from '../src/commands/autopilot-fanout.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 
 let engine: PGLiteEngine;
@@ -61,10 +62,10 @@ describe('autopilot-cycle handler — per-source checkout binding (#2227/#2194)'
 
     const handlers = await captureHandlers();
     const handler = handlers.get('autopilot-cycle')!;
-    // DB-only phase keeps the test cheap; brain_dir is stamped from opts.brainDir
+    // A cheap allowed phase keeps the test focused; brain_dir is stamped from opts.brainDir
     // regardless of which phases run, so it still proves the binding.
     const result = await handler({
-      data: { source_id: 'repo-a', phases: ['resolve_symbol_edges'] },
+      data: { source_id: 'repo-a', phases: ['lint'] },
       signal: undefined,
     });
 
@@ -84,12 +85,186 @@ describe('autopilot-cycle handler — per-source checkout binding (#2227/#2194)'
     const handlers = await captureHandlers();
     const handler = handlers.get('autopilot-cycle')!;
     const result = await handler({
-      data: { source_id: 'db-only', phases: ['resolve_symbol_edges'] },
+      // Even a replayed/spoofed fallback flag is ignored for non-default.
+      data: {
+        source_id: 'db-only',
+        use_default_repo_path: true,
+        phases: ['lint'],
+      },
       signal: undefined,
     });
 
     expect(result.report.brain_dir).toBeNull();
     expect(result.report.brain_dir).not.toBe('/some/global/brain/checkout');
+  });
+
+  test('default source with NULL local_path uses only configured legacy global repo', async () => {
+    const globalDir = mkdtempSync(join(tmpdir(), 'gbrain-default-global-'));
+    const spoofedPayloadDir = mkdtempSync(join(tmpdir(), 'gbrain-default-spoof-'));
+    await engine.setConfig('sync.repo_path', globalDir);
+    await engine.executeRaw(
+      `UPDATE sources SET local_path = NULL WHERE id = 'default'`,
+    );
+
+    const handlers = await captureHandlers();
+    const handler = handlers.get('autopilot-cycle')!;
+    const result = await handler({
+      data: {
+        source_id: 'default',
+        // Claim-time fallback must ignore this queue-controlled path and read
+        // sync.repo_path from the engine config plane.
+        repoPath: spoofedPayloadDir,
+        phases: ['lint'],
+      },
+      signal: undefined,
+    });
+
+    expect(result.report.brain_dir).toBe(globalDir);
+    expect(result.report.brain_dir).not.toBe(spoofedPayloadDir);
+  });
+
+  test('non-default replay with only unsafe phases is rejected before runCycle', async () => {
+    const sourceDir = mkdtempSync(join(tmpdir(), 'gbrain-replay-source-'));
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config, archived, created_at)
+       VALUES ('replay-src', 'Replay', $1, '{}'::jsonb, false, now())`,
+      [sourceDir],
+    );
+
+    const handlers = await captureHandlers();
+    const handler = handlers.get('autopilot-cycle')!;
+    const result = await handler({
+      data: {
+        source_id: 'replay-src',
+        phases: ['consolidate', 'conversation_facts_backfill'],
+      },
+      signal: undefined,
+    });
+
+    expect(result.status).toBe('skipped');
+    expect(result.report.reason).toBe('no_allowed_phases');
+    expect(result.report.source_id).toBe('replay-src');
+  });
+
+  test('source replay with an explicit empty phase list skips instead of defaulting to ALL_PHASES', async () => {
+    const sourceDir = mkdtempSync(join(tmpdir(), 'gbrain-empty-source-'));
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config, archived, created_at)
+       VALUES ('empty-src', 'Empty', $1, '{}'::jsonb, false, now())`,
+      [sourceDir],
+    );
+
+    const handlers = await captureHandlers();
+    const handler = handlers.get('autopilot-cycle')!;
+    const result = await handler({
+      data: { source_id: 'empty-src', phases: [] },
+      signal: undefined,
+    });
+
+    expect(result.status).toBe('skipped');
+    expect(result.report).toEqual({
+      reason: 'no_allowed_phases',
+      source_id: 'empty-src',
+    });
+  });
+
+  test('source replay with only invalid phase names skips instead of defaulting to ALL_PHASES', async () => {
+    const sourceDir = mkdtempSync(join(tmpdir(), 'gbrain-invalid-source-'));
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config, archived, created_at)
+       VALUES ('invalid-src', 'Invalid', $1, '{}'::jsonb, false, now())`,
+      [sourceDir],
+    );
+
+    const handlers = await captureHandlers();
+    const handler = handlers.get('autopilot-cycle')!;
+    const result = await handler({
+      data: { source_id: 'invalid-src', phases: ['NOT_A_PHASE'] },
+      signal: undefined,
+    });
+
+    expect(result.status).toBe('skipped');
+    expect(result.report.reason).toBe('no_allowed_phases');
+    expect(result.report.source_id).toBe('invalid-src');
+  });
+
+  test('source replay with omitted phases defaults only to the audited allowlist', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config, archived, created_at)
+       VALUES ('missing-phases-src', 'Missing phases', NULL, '{}'::jsonb, false, now())`,
+      [],
+    );
+
+    const handlers = await captureHandlers();
+    const handler = handlers.get('autopilot-cycle')!;
+    const result = await handler({
+      data: { source_id: 'missing-phases-src' },
+      signal: undefined,
+    });
+
+    expect(result.report.phases.map((phase: { phase: string }) => phase.phase))
+      .toEqual(NON_DEFAULT_FANOUT_PHASES);
+  });
+
+  test('source replay with a non-array phases payload is rejected', async () => {
+    const sourceDir = mkdtempSync(join(tmpdir(), 'gbrain-malformed-source-'));
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config, archived, created_at)
+       VALUES ('malformed-src', 'Malformed', $1, '{}'::jsonb, false, now())`,
+      [sourceDir],
+    );
+
+    const handlers = await captureHandlers();
+    const handler = handlers.get('autopilot-cycle')!;
+    const result = await handler({
+      data: { source_id: 'malformed-src', phases: 'lint' },
+      signal: undefined,
+    });
+
+    expect(result.status).toBe('skipped');
+    expect(result.report.reason).toBe('no_allowed_phases');
+    expect(result.report.source_id).toBe('malformed-src');
+  });
+
+  test('non-default replay clamps mixed safe+unsafe payload to the audited allowlist', async () => {
+    const sourceDir = mkdtempSync(join(tmpdir(), 'gbrain-clamp-source-'));
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config, archived, created_at)
+       VALUES ('clamp-src', 'Clamp', $1, '{}'::jsonb, false, now())`,
+      [sourceDir],
+    );
+
+    const handlers = await captureHandlers();
+    const handler = handlers.get('autopilot-cycle')!;
+    const result = await handler({
+      data: {
+        source_id: 'clamp-src',
+        phases: ['lint', 'consolidate', 'schema-suggest'],
+      },
+      signal: undefined,
+    });
+
+    expect(result.report.phases.map((phase: { phase: string }) => phase.phase)).toEqual(['lint']);
+  });
+
+  test('default replay rejects global phases while retaining allowed non-global work', async () => {
+    const sourceDir = mkdtempSync(join(tmpdir(), 'gbrain-default-clamp-'));
+    await engine.executeRaw(
+      `UPDATE sources SET local_path = $1 WHERE id = 'default'`,
+      [sourceDir],
+    );
+
+    const handlers = await captureHandlers();
+    const handler = handlers.get('autopilot-cycle')!;
+    const result = await handler({
+      data: {
+        source_id: 'default',
+        phases: ['lint', 'resolve_symbol_edges'],
+      },
+      signal: undefined,
+    });
+
+    expect(result.report.phases.map((phase: { phase: string }) => phase.phase)).toEqual(['lint']);
   });
 
   test('legacy (no source_id) keeps the global repoPath — back-compat', async () => {

@@ -44,6 +44,9 @@ afterAll(async () => {
 beforeEach(async () => {
   if (skip) return;
   await engine.executeRaw(`DELETE FROM sources WHERE id <> 'default'`);
+  await engine.executeRaw(
+    `UPDATE sources SET local_path = NULL, config = '{}'::jsonb WHERE id = 'default'`,
+  );
   await engine.executeRaw(`DELETE FROM minion_jobs`);
   await engine.executeRaw(`DELETE FROM gbrain_cycle_locks`);
 });
@@ -66,7 +69,8 @@ describeIfDB('autopilot fan-out — Postgres E2E', () => {
     await seedSource('alpha');
     await seedSource('beta');
     await seedSource('gamma');
-    // Default source has no local_path by default — filtered by localPathOnly
+    // Default has no local_path, but the dispatcher must retain its one-per-
+    // brain/default phase lane via the explicit sync.repo_path fallback.
     await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
 
     const queue = new MinionQueue(engine);
@@ -82,17 +86,18 @@ describeIfDB('autopilot fan-out — Postgres E2E', () => {
     });
 
     expect(result.legacy_fallback).toBe(false);
-    expect(result.dispatched.sort()).toEqual(['alpha', 'beta', 'gamma']);
+    expect(result.dispatched.sort()).toEqual(['alpha', 'beta', 'default', 'gamma']);
 
-    // Verify the 3 jobs land in minion_jobs with distinct idempotency keys
+    // Verify the 4 jobs land in minion_jobs with distinct idempotency keys.
     const jobs = await engine.executeRaw<{ name: string; data: any; idempotency_key: string }>(
       `SELECT name, data, idempotency_key FROM minion_jobs
         WHERE name = 'autopilot-cycle' ORDER BY id`,
     );
-    expect(jobs.length).toBe(3);
+    expect(jobs.length).toBe(4);
     expect(jobs.map(j => j.idempotency_key).sort()).toEqual([
       'autopilot-cycle:alpha:2026-05-22T12:00:00.000Z',
       'autopilot-cycle:beta:2026-05-22T12:00:00.000Z',
+      'autopilot-cycle:default:2026-05-22T12:00:00.000Z',
       'autopilot-cycle:gamma:2026-05-22T12:00:00.000Z',
     ]);
     // source_id threaded into job.data
@@ -100,7 +105,7 @@ describeIfDB('autopilot fan-out — Postgres E2E', () => {
       const data = typeof j.data === 'string' ? JSON.parse(j.data) : j.data;
       return data.source_id;
     }).sort();
-    expect(sources).toEqual(['alpha', 'beta', 'gamma']);
+    expect(sources).toEqual(['alpha', 'beta', 'default', 'gamma']);
   });
 
   test('re-dispatch within same slot dedupes via idempotency key', async () => {
@@ -119,13 +124,13 @@ describeIfDB('autopilot fan-out — Postgres E2E', () => {
     };
     const r1 = await dispatchPerSource(engine, queue, opts);
     const r2 = await dispatchPerSource(engine, queue, opts);
-    expect(r1.dispatched).toEqual(['alpha']);
-    expect(r2.dispatched).toEqual(['alpha']);
-    // Only ONE row in minion_jobs (idempotency-key coalesce)
+    expect(r1.dispatched.sort()).toEqual(['alpha', 'default']);
+    expect(r2.dispatched.sort()).toEqual(['alpha', 'default']);
+    // One row per source; second dispatch coalesces both by idempotency key.
     const jobs = await engine.executeRaw<{ id: number }>(
       `SELECT id FROM minion_jobs WHERE name = 'autopilot-cycle'`,
     );
-    expect(jobs.length).toBe(1);
+    expect(jobs.length).toBe(2);
   });
 
   test('source with last_full_cycle_at < 60min ago is skipped by gate', async () => {
@@ -182,7 +187,7 @@ describeIfDB('autopilot fan-out — Postgres E2E', () => {
       log: () => {},
     });
     expect(result.dispatched.length).toBe(2);
-    expect(result.skipped_cap.length).toBe(3);
+    expect(result.skipped_cap.length).toBe(4);
   });
 
   test('empty federated brain (no local_path sources) falls back to legacy single-job dispatch', async () => {

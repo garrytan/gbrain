@@ -18,6 +18,7 @@ import {
   resolveFanoutMax,
   dispatchPerSource,
 } from '../src/commands/autopilot-fanout.ts';
+import { NON_GLOBAL_PHASES, PHASE_SCOPE } from '../src/core/cycle.ts';
 import type { SourceRow, BrainEngine } from '../src/core/engine.ts';
 
 function src(id: string, last_full_cycle_at?: string | null, extra: Record<string, unknown> = {}): SourceRow {
@@ -220,6 +221,85 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     // source_id threaded through job data
     const sourceIds = added.map(j => (j.data as Record<string, unknown>).source_id).sort();
     expect(sourceIds).toEqual(['alpha', 'beta']);
+  });
+
+  test('default keeps the full non-global lane while non-default uses an audited safe allowlist', async () => {
+    const { engine, queue, added, fanoutOpts } = makeStubs([src('default'), src('dept-x')]);
+    await dispatchPerSource(engine, queue, fanoutOpts);
+
+    const phasesBySource = new Map(
+      added.map((job) => {
+        const data = job.data as { source_id: string; phases: string[] };
+        return [data.source_id, data.phases] as const;
+      }),
+    );
+    const mixed = NON_GLOBAL_PHASES.filter((phase) => PHASE_SCOPE[phase] === 'mixed');
+    const auditedNonDefault = [
+      'lint',
+      'backlinks',
+      'sync',
+      'extract',
+      'extract_facts',
+      'extract_atoms',
+      'propose_takes',
+    ];
+    const defaultOnlyUntilSourceScoped = [
+      'recompute_emotional_weight',
+      'consolidate',
+      'conversation_facts_backfill',
+      'enrich_thin',
+      'schema-suggest',
+    ];
+
+    expect(mixed.length).toBeGreaterThan(0);
+    expect(phasesBySource.get('default')).toEqual(NON_GLOBAL_PHASES);
+    expect(phasesBySource.get('dept-x')).toEqual(auditedNonDefault);
+    for (const phase of mixed) {
+      expect(phasesBySource.get('dept-x')).not.toContain(phase);
+    }
+    for (const phase of defaultOnlyUntilSourceScoped) {
+      expect(phasesBySource.get('dept-x')).not.toContain(phase);
+    }
+  });
+
+  test('default with NULL local_path still gets the default lane when local sources exist', async () => {
+    const allSources = [
+      { ...src('default'), local_path: null },
+      src('dept-x'),
+    ];
+    const added: AddedJob[] = [];
+    const engine = {
+      kind: 'postgres' as const,
+      listAllSources: async (opts?: { localPathOnly?: boolean }) =>
+        opts?.localPathOnly
+          ? allSources.filter((source) => source.local_path !== null)
+          : allSources,
+    } as unknown as BrainEngine;
+    const queue = {
+      add: async (name: string, data: unknown, opts: Record<string, unknown>) => {
+        added.push({ name, data, opts });
+        return { id: added.length };
+      },
+    } as unknown as Parameters<typeof dispatchPerSource>[1];
+
+    const result = await dispatchPerSource(engine, queue, {
+      repoPath: '/tmp/default-brain',
+      slot: 'null-default',
+      timeoutMs: 60_000,
+      fanoutMax: 4,
+      jsonMode: true,
+      emit: () => {},
+      log: () => {},
+    });
+
+    expect(result.dispatched.sort()).toEqual(['default', 'dept-x']);
+    const defaultJob = added.find(
+      (job) => (job.data as Record<string, unknown>).source_id === 'default',
+    );
+    expect(defaultJob).toBeDefined();
+    expect((defaultJob!.data as Record<string, unknown>).phases).toEqual(NON_GLOBAL_PHASES);
+    expect((defaultJob!.data as Record<string, unknown>).use_default_repo_path).toBeUndefined();
+    expect((defaultJob!.data as Record<string, unknown>).pull).toBe(true);
   });
 
   test('pull: true only when source.config.remote_url is set', async () => {

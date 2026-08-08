@@ -1,9 +1,10 @@
 // v0.41.2.1 — extract_atoms cycle phase, post-fix-wave rebuild.
 //
 // Sequencing per cycle:
-//   1. Discover transcripts via discoverTranscripts() AND brain pages
-//      via a single raw SQL query (NOT EXISTS subquery filters out
-//      pages already extracted by content hash — see "Idempotency" below).
+//   1. For the default source only, discover the configured transcript corpus
+//      via discoverTranscripts(). For every source, discover brain pages via a
+//      single raw SQL query (NOT EXISTS subquery filters out pages already
+//      extracted by content hash — see "Idempotency" below).
 //   2. Dedup by content_hash; transcripts win on collision.
 //   3. Per work-item, ask Haiku for 1-3 atoms.
 //   4. Write each atom via engine.putPage(slug, page, {sourceId})
@@ -35,16 +36,18 @@
 //   Reads dream.synthesize.session_corpus_dir + meeting_transcripts_dir
 //   via loadConfigWithEngine() (D9 #10: precedence is file > DB > defaults;
 //   no GBRAIN_DREAM_* env vars exist). Closes PR #1416's silent-config bug
-//   for this caller.
+//   for this caller. These are brain-global corpus paths, so production
+//   auto-discovery consumes them only while processing source `default`.
 //
 // Budget: $0.30/source/run, key `cycle.extract_atoms.budget_usd`.
 // Exceeded budget halts with PhaseStatus='warn' + partial result.
 //
-// Source-scoped: opts.sourceId routes the per-source corpus dir lookup,
-// the discovery SQL (source_id = $1), the NOT EXISTS idempotency
-// subquery (atom.source_id = $1), AND every putPage write
-// ({sourceId} third arg). Pre-fix the putPage call was missing the
-// sourceId arg — atoms always wrote to 'default' regardless of source,
+// Source-scoped: opts.sourceId routes the discovery SQL (source_id = $1),
+// the NOT EXISTS idempotency subquery (atom.source_id = $1), AND every
+// putPage write ({sourceId} third arg). Explicit `_transcripts` injection is
+// also honored for every source; only production auto-discovery of the
+// brain-global corpus is default-only. Pre-fix the putPage call was missing
+// the sourceId arg — atoms always wrote to 'default' regardless of source,
 // which made the NOT EXISTS guard ineffective on federated brains.
 
 import type { BrainEngine } from '../engine.ts';
@@ -420,11 +423,19 @@ export async function runPhaseExtractAtoms(
   const sourceId = opts.sourceId ?? 'default';
   const chat = opts._chat ?? gatewayChat;
 
-  // 1a. Get transcripts (test seam OR production discovery).
+  // 1a. Get transcripts (explicit injection OR default-source production
+  //     discovery). The configured corpus dirs are brain-global, not
+  //     source-scoped. Walking them for every federated source would copy the
+  //     same transcript-derived atoms into each source.
   //     v0.41.2.1: config loader switched to loadConfigWithEngine() so the
   //     dream.* DB-plane merge from Phase 1 reaches this phase.
   let transcripts: Array<{ filePath: string; content: string; contentHash: string }> = opts._transcripts ?? [];
-  if (transcripts.length === 0 && opts.brainDir !== undefined && opts._transcripts === undefined) {
+  if (
+    sourceId === 'default'
+    && transcripts.length === 0
+    && opts.brainDir !== undefined
+    && opts._transcripts === undefined
+  ) {
     try {
       const { discoverTranscripts } = await import('./transcript-discovery.ts');
       const { loadConfigWithEngine } = await import('../config.ts');

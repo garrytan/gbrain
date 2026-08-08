@@ -248,9 +248,9 @@ describe('autopilot-cycle handler — phase passthrough', () => {
     }
   }, 30_000);
 
-  test('empty phases array falls back to all phases (same as no phases)', async () => {
+  test('legacy empty phases array falls back to all phases (same as no phases)', async () => {
     const handler = (worker as any).handlers.get('autopilot-cycle');
-    // Empty array should fall through to ALL_PHASES (same as omitting phases)
+    // Legacy jobs without source_id retain the v0.22.10 compatibility contract.
     const result = await handler({
       data: { repoPath: '/definitely-does-not-exist-for-phase-test', phases: [] },
       signal: { aborted: false } as any,
@@ -258,7 +258,6 @@ describe('autopilot-cycle handler — phase passthrough', () => {
     });
 
     const report = (result as any).report;
-    // With all phases, filesystem phases fail on missing dir
     const phaseNames = report.phases.map((p: any) => p.phase);
     expect(phaseNames).toContain('lint');
     expect(phaseNames).toContain('backlinks');

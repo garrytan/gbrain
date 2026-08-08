@@ -8,8 +8,9 @@
  *
  * Architecture mirrors `conversation-facts-backfill.ts` (the precedent):
  *
- *   - Per-source iteration HERE. PHASE_SCOPE='source' is taxonomy-only (no
- *     runtime fan-out exists yet); the wrapper loops `listSources(engine)`.
+ *   - Per-source iteration HERE, inside one brain-wide wrapper invocation.
+ *     PHASE_SCOPE='mixed' keeps autopilot from fanning the wrapper out; the
+ *     wrapper loops `listSources(engine)`.
  *   - ONE brain-wide BudgetTracker per tick, passed into every per-source
  *     `runEnrichCore` via `opts.budgetTracker` so the core uses it as-is (no
  *     nested `withBudgetTracker`, which would REPLACE the brain-wide cap).

@@ -7,10 +7,10 @@
  *
  * Architecture (per CEO + eng review + Codex outside voice):
  *
- *   - Per-source iteration HERE. PHASE_SCOPE='source' is taxonomy-only
- *     (cycle.ts:131 documents this); no runtime fanout exists yet. The
- *     wrapper enumerates `listSources(engine)` and loops over per-source
- *     core invocations directly.
+ *   - Per-source iteration HERE, inside one brain-wide wrapper invocation.
+ *     PHASE_SCOPE='mixed' keeps autopilot from fanning the wrapper out; it
+ *     enumerates `listSources(engine)` and loops over per-source core
+ *     invocations directly.
  *
  *   - Brain-wide BudgetTracker created ONCE per phase tick and passed
  *     into every per-source invocation via `opts.budgetTracker`. The

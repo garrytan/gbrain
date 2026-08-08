@@ -75,8 +75,9 @@ export type CyclePhase =
   // Wraps runSuggest() — same library the CLI verb + EIIRP call.
   | 'schema-suggest'
   // v0.41 T9 lens packs:
-  //  - extract_atoms: per-source Haiku extraction of atoms from
-  //    transcripts/articles/meetings into atom-typed pages. Gated on the
+  //  - extract_atoms: per-source Haiku extraction of articles/meetings and
+  //    other eligible DB pages into atom-typed pages. Source `default` also
+  //    consumes the configured brain-global transcript corpus. Gated on the
   //    active pack's `phases:` declaration (gbrain-creator or gbrain-
   //    everything declare this); other packs are no-op.
   //  - synthesize_concepts: global aggregation of atoms into tier-promoted
@@ -196,8 +197,11 @@ export const ALL_PHASES: CyclePhase[] = [
 /**
  * v0.38 (CEO + eng review): phase-scope taxonomy. Each entry in
  * `ALL_PHASES` declares whether its work is naturally per-source,
- * brain-global, or mixed. Static documentation only — no runtime
- * enforcement yet (filed as follow-up TODO in the plan).
+ * brain-global, or mixed. Autopilot uses this map for the global/default
+ * partition, but non-default fan-out is an explicit implementation-audited
+ * allowlist: taxonomy alone is not proof that every legacy wrapper threads
+ * sourceId. `runCycle` itself still executes the explicit phase list its
+ * caller provides.
  *
  * Load-bearing for any future fan-out wave:
  *   - `source`: safe to parallelize per source. Sync reads/writes the
@@ -207,14 +211,10 @@ export const ALL_PHASES: CyclePhase[] = [
  *     resolved source but still belongs in the serialized global lane;
  *     grade_takes + calibration aggregate across sources;
  *     resolve_symbol_edges walks every chunk.
- *   - `mixed`: per-phase decomposition needed before parallelizing.
- *     Synthesize reads the brain-global transcripts dir but writes to
- *     per-source slugs (via subagent allowlist). Patterns reads
- *     cross-source reflections but writes pattern pages.
- *
- * Per-source cycle locks (codex r2 fix) let two cycles RUN concurrently,
- * but `global` phases inside each cycle will still touch the same rows.
- * Genuine per-source autopilot fan-out requires the deferred TODOs.
+ *   - `mixed`: not safe to fan out across non-default sources without
+ *     per-phase decomposition. Synthesize reads the brain-global transcripts
+ *     dir but writes to per-source slugs (via subagent allowlist). Patterns
+ *     reads cross-source reflections but writes pattern pages.
  */
 export type PhaseScope = 'source' | 'global' | 'mixed';
 export const PHASE_SCOPE: Record<CyclePhase, PhaseScope> = {
@@ -226,8 +226,10 @@ export const PHASE_SCOPE: Record<CyclePhase, PhaseScope> = {
   extract_facts: 'source',
   resolve_symbol_edges: 'global',
   patterns: 'mixed',
-  recompute_emotional_weight: 'source',
-  consolidate: 'source',
+  // Both can operate incrementally, but their cycle call paths have an
+  // unscoped/full-brain fallback. Keep them in the one-per-brain default lane.
+  recompute_emotional_weight: 'mixed',
+  consolidate: 'mixed',
   propose_takes: 'source',
   grade_takes: 'global',
   calibration_profile: 'global',
@@ -237,19 +239,19 @@ export const PHASE_SCOPE: Record<CyclePhase, PhaseScope> = {
   embed: 'global',
   orphans: 'global',
   purge: 'global',
-  'schema-suggest': 'source',
-  // v0.41 T9 — extract_atoms is naturally per-source (each source's
-  // transcript dir gets walked independently). synthesize_concepts is
-  // global because concept clusters cross sources by nature.
+  // The library supports sourceId, but the cycle caller currently omits it.
+  'schema-suggest': 'mixed',
+  // v0.41 T9 — extract_atoms is source-scoped for DB page discovery and
+  // writes. Its configured transcript corpus is brain-global and is consumed
+  // only by source `default`; explicit transcript injection stays available
+  // for targeted calls. synthesize_concepts is global because concept
+  // clusters cross sources by nature.
   extract_atoms: 'source',
   synthesize_concepts: 'global',
-  // v0.41.11.0 — declared 'source' for taxonomy alignment with
-  // extract_facts (per-source semantics). PHASE_SCOPE has no runtime
-  // fanout enforcement today (per the comment above); the phase
-  // wrapper does its own multi-source loop via listSources().
-  conversation_facts_backfill: 'source',
-  // v0.41.39 (#1700) — per-source (wrapper loops listSources, same as above).
-  enrich_thin: 'source',
+  // These wrappers each loop listSources() internally, so one invocation is
+  // brain-wide even though the inner core is source-scoped.
+  conversation_facts_backfill: 'mixed',
+  enrich_thin: 'mixed',
   // v0.41.20.0 SkillOpt — global (walks the skills/ directory; per-skill
   // DB lock inside D14 handles cross-source coordination).
   skillopt: 'global',
@@ -258,8 +260,10 @@ export const PHASE_SCOPE: Record<CyclePhase, PhaseScope> = {
 /**
  * #2194 fix #3 / #2227 bug #3 — the cycle split.
  *
- * Per-source autopilot cycles run ONLY the source-scoped (and mixed) phases;
- * the brain-wide `global` phases (embed, orphans, purge, resolve_symbol_edges,
+ * The canonical `default` autopilot cycle runs NON_GLOBAL_PHASES (source +
+ * mixed). Non-default cycles use the smaller implementation-audited allowlist
+ * exported by autopilot-fanout.ts; PHASE_SCOPE is taxonomy, not authorization.
+ * The brain-wide `global` phases (embed, orphans, purge, resolve_symbol_edges,
  * grade_takes, calibration_profile, synthesize_concepts, skillopt) run ONCE in
  * a separate `autopilot-global-maintenance` job instead of N times concurrently
  * across per-source cycles (the 4→10GB RSS blowout). Single-flight is

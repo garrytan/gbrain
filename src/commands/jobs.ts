@@ -9,6 +9,7 @@ import { MinionWorker } from '../core/minions/worker.ts';
 import { WORKER_EXIT_RSS_WATCHDOG } from '../core/minions/worker-exit-codes.ts';
 import type { MinionHandler, MinionJob, MinionJobStatus } from '../core/minions/types.ts';
 import type { PaceKeyOverrides } from '../core/pace-mode.ts';
+import type { CyclePhase } from '../core/cycle.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 import { parseNiceValue, applyNiceness, getEffectiveNiceness, formatNice } from '../core/minions/niceness.ts';
@@ -1779,9 +1780,10 @@ export async function registerBuiltinHandlers(
     // postgres brain should skip filesystem phases (no_brain_dir) and run the
     // DB-only phases (resolve_symbol_edges, embed, ...) — not silently lint/sync
     // against whatever directory the worker happens to be running in.
+    const configuredRepoPath = (await engine.getConfig('sync.repo_path')) ?? null;
     const repoPath: string | null = typeof job.data.repoPath === 'string'
       ? job.data.repoPath
-      : (await engine.getConfig('sync.repo_path')) ?? null;
+      : configuredRepoPath;
 
     // v0.38 (codex r1 P1-2 + P1-5): per-source dispatch threading.
     //   - source_id: when set, runCycle uses the per-source lock ID and
@@ -1841,19 +1843,66 @@ export async function registerBuiltinHandlers(
         : null;
     }
 
-    // Effective checkout for FS phases. For a per-source cycle, bind to the
-    // SOURCE's local_path (or null → skip FS phases for a pure-DB source);
-    // NEVER fall through to the global repoPath, which would run sync/lint
-    // against the wrong tree. Legacy (no source_id) keeps the global repoPath.
-    const effectiveBrainDir: string | null = sourceId ? sourceLocalPath : repoPath;
+    // Effective checkout for FS phases. A per-source cycle binds to the
+    // SOURCE's local_path (or null → skip FS phases for a pure-DB source).
+    // The seeded `default` source is the sole exception: a NULL local_path
+    // automatically falls back to the trusted sync.repo_path config anchor.
+    // Queue-controlled repoPath/use_default_repo_path fields never select a
+    // checkout for a source-scoped job.
+    const effectiveBrainDir: string | null = sourceId
+      ? (sourceId === 'default' && sourceLocalPath === null
+          ? configuredRepoPath
+          : sourceLocalPath)
+      : repoPath;
 
-    // Allow callers to select phases via job data (e.g. skip embed for
-    // fast cycles). Validates against ALL_PHASES to prevent injection.
-    const { ALL_PHASES } = await import('../core/cycle.ts');
-    const validPhases = new Set(ALL_PHASES);
-    const requestedPhases = Array.isArray(job.data.phases)
-      ? (job.data.phases as string[]).filter(p => validPhases.has(p as any))
+    // Claim-time phase authorization. Dispatch-time filtering is not a
+    // security boundary: old queued jobs, retries, and admin-submitted payloads
+    // all reach this primitive directly. The default source may run only the
+    // canonical non-global lane; every other source is clamped to the smaller
+    // implementation-audited fan-out allowlist.
+    const { ALL_PHASES, NON_GLOBAL_PHASES } = await import('../core/cycle.ts');
+    const { NON_DEFAULT_FANOUT_PHASES } = await import('./autopilot-fanout.ts');
+    const validPhases = new Set<string>(ALL_PHASES);
+    const phaseFieldPresent = Object.prototype.hasOwnProperty.call(job.data, 'phases');
+    const rawRequestedPhases: unknown[] | undefined = Array.isArray(job.data.phases)
+      ? job.data.phases
       : undefined;
+    let requestedPhases: CyclePhase[] | undefined;
+
+    if (sourceId) {
+      const allowedPhases = sourceId === 'default'
+        ? NON_GLOBAL_PHASES
+        : NON_DEFAULT_FANOUT_PHASES;
+      const allowedSet = new Set<string>(allowedPhases);
+      // Missing phases means "the allowed lane"; an explicit malformed/empty
+      // selection means "nothing". This distinction prevents runCycle's
+      // `opts.phases ?? ALL_PHASES` default from turning an empty clamp into a
+      // full-brain cycle.
+      const candidates: unknown[] = rawRequestedPhases
+        ?? (phaseFieldPresent ? [] : allowedPhases);
+      requestedPhases = candidates.filter(
+        (phase): phase is CyclePhase =>
+          typeof phase === 'string'
+          && validPhases.has(phase)
+          && allowedSet.has(phase),
+      );
+    } else if (rawRequestedPhases !== undefined) {
+      requestedPhases = rawRequestedPhases.filter(
+        (phase): phase is CyclePhase =>
+          typeof phase === 'string' && validPhases.has(phase),
+      );
+    }
+
+    if (sourceId && requestedPhases !== undefined && requestedPhases.length === 0) {
+      return {
+        partial: false,
+        status: 'skipped',
+        report: {
+          reason: 'no_allowed_phases',
+          ...(sourceId ? { source_id: sourceId } : {}),
+        },
+      };
+    }
 
     // Pull default: legacy `true` for back-compat; explicit boolean wins.
     const pull = typeof job.data.pull === 'boolean' ? job.data.pull : true;
@@ -1879,7 +1928,7 @@ export async function registerBuiltinHandlers(
       signal: job.signal, // propagate abort so cycle bails on timeout/cancel
       deadlineAtMs: job.deadlineAtMs, // #2781: phases budget sub-work from remaining time
       ...(sourceId ? { sourceId } : {}),
-      ...(requestedPhases && requestedPhases.length > 0 ? { phases: requestedPhases as any } : {}),
+      ...(requestedPhases && requestedPhases.length > 0 ? { phases: requestedPhases } : {}),
       yieldBetweenPhases: async () => {
         // Yield to the event loop so worker lock-renewal can fire.
         await new Promise<void>(r => setImmediate(r));

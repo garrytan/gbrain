@@ -968,13 +968,12 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           }
         } else if (shouldFullCycle) {
           // v0.38: per-source fan-out replaces the single-job dispatch.
-          // dispatchPerSource enumerates sources via listAllSources
-          // ({ localPathOnly: true }), gates each on per-source
-          // `last_full_cycle_at` from sources.config JSONB, and fans out
-          // up to `fanoutMax` per tick (default 4 Postgres, 1 PGLite per
-          // codex P1-3). Fresh-install brains with no sources rows fall
-          // back to the legacy single autopilot-cycle so existing
-          // behavior is preserved.
+          // dispatchPerSource enumerates all sources, excludes pure-DB
+          // non-default rows, gates each candidate on per-source
+          // `last_full_cycle_at`, and fans out up to `fanoutMax` per tick.
+          // A NULL-path default row can explicitly reuse sync.repo_path so
+          // the one-per-brain/default phase lane is not lost. Brains with no
+          // local-path sources still fall back to the legacy single cycle.
           const { dispatchPerSource, dispatchGlobalMaintenance, resolveEffectiveFanoutMax } = await import('./autopilot-fanout.ts');
           // #2194 fix #1: clamp fan-out to the worker's effective concurrency
           // (reserve ≥1 slot), gated on a LIVE supervisor so a stale audit row

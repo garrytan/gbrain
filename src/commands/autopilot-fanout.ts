@@ -14,27 +14,54 @@
  *     local-only sources don't try to git-pull.
  *   - P1-3: PGLite engines default `fanoutMax=1` (PGLite is single-writer;
  *     parallel fan-out would queue uselessly behind the file lock).
- *   - P1-4: enumeration filters `local_path IS NOT NULL` so pure-DB
- *     sources don't get dispatched (handler would fall back to global
- *     sync.repo_path, which is wrong for them).
+ *   - P1-4: enumeration excludes non-default sources whose `local_path` is
+ *     NULL, so a pure-DB source never runs filesystem phases against another
+ *     checkout. The seeded `default` row is the one exception: when its
+ *     local_path is NULL but other local sources exist, the claim-time handler
+ *     resolves the trusted sync.repo_path config anchor so the one-per-brain
+ *     default lane is not lost.
  *   - P1-5: archive recheck happens in the handler (jobs.ts:1146), not
  *     here, so a source archived between fan-out and worker claim still
  *     skips cleanly.
  *
- * Phase-scope caveat (codex r1 P0-1): per-source cycle LOCKS let two cycles
- * RUN concurrently, but several phases (embed, orphans, purge,
- * resolve_symbol_edges, grade_takes, calibration_profile) still walk the
- * brain globally inside each cycle. Genuine per-phase per-source isolation
- * is the deferred Phase 2 follow-up; THIS wave intentionally accepts that
- * two concurrent cycles share embed/orphans work (idempotent at the
- * row layer; cost duplication is the visible tradeoff).
+ * Phase-scope posture: only a small, implementation-audited allowlist fans
+ * out across non-default sources. The canonical `default` cycle retains the
+ * full non-global lane; global phases run once through
+ * `autopilot-global-maintenance`. This deliberately does NOT derive the
+ * non-default lane from PHASE_SCOPE: several legacy phases historically
+ * carried `source` taxonomy while their wrappers still scanned every source.
  */
 
 import type { BrainEngine, SourceRow } from '../core/engine.ts';
 import type { MinionQueue } from '../core/minions/queue.ts';
-import { NON_GLOBAL_PHASES, GLOBAL_PHASES, LAST_GLOBAL_AT_KEY } from '../core/cycle.ts';
+import {
+  NON_GLOBAL_PHASES,
+  GLOBAL_PHASES,
+  LAST_GLOBAL_AT_KEY,
+  type CyclePhase,
+} from '../core/cycle.ts';
 
 const FULL_CYCLE_FLOOR_MIN = 60;
+
+/**
+ * Phases whose current implementations have been audited end-to-end for a
+ * non-default source_id. Keep explicit: adding a PHASE_SCOPE='source' label is
+ * documentation, not authorization to fan out.
+ *
+ * Intentionally excluded until their call paths are truly source-scoped:
+ * recompute_emotional_weight (unscoped/full-brain fallback), consolidate
+ * (all fact buckets), conversation_facts_backfill + enrich_thin (each loops
+ * all sources internally), and schema-suggest (cycle caller omits sourceId).
+ */
+export const NON_DEFAULT_FANOUT_PHASES: CyclePhase[] = [
+  'lint',
+  'backlinks',
+  'sync',
+  'extract',
+  'extract_facts',
+  'extract_atoms',
+  'propose_takes',
+];
 
 // #2194 fix #2: failure cooldown. A source whose autopilot-cycle keeps
 // failing/timing-out re-dispatches every tick today (only SUCCESS gates
@@ -78,7 +105,7 @@ export interface FanoutResult {
   /** Source ids skipped because they're in failure cooldown (#2194 fix #2). */
   skipped_cooldown: string[];
   /** True when this tick fell back to the legacy single-job path
-   *  (no sources rows / engine empty). */
+   *  (no source has a local checkout / engine empty). */
   legacy_fallback: boolean;
 }
 
@@ -360,10 +387,10 @@ export function selectSourcesForDispatch(
  * Per-tick autopilot fan-out. Replaces the v0.36+ single autopilot-cycle
  * dispatch when `shouldFullCycle` is true.
  *
- * Fallback path: if `listAllSources` returns 0 rows (fresh install before
- * `gbrain sources add`, or `sources` table not migrated yet), submit ONE
- * legacy autopilot-cycle with no source_id so the existing single-source
- * brain keeps working.
+ * Fallback path: if no source has a local checkout (fresh install before
+ * `gbrain sources add`, checkout-less DB, or pre-migration sources table),
+ * submit ONE legacy autopilot-cycle with no source_id so existing
+ * single-source behavior remains intact.
  */
 export async function dispatchPerSource(
   engine: BrainEngine,
@@ -373,9 +400,9 @@ export async function dispatchPerSource(
   const emit = opts.emit ?? ((line) => process.stderr.write(line + '\n'));
   const log = opts.log ?? ((line) => console.log(line));
 
-  let sources: SourceRow[];
+  let allSources: SourceRow[];
   try {
-    sources = await engine.listAllSources({ localPathOnly: true });
+    allSources = await engine.listAllSources();
   } catch (e) {
     // Brand-new brain without sources table (pre-v0.18) — fall through
     // to the legacy single-job path. The error path here also covers
@@ -383,10 +410,14 @@ export async function dispatchPerSource(
     if (opts.jsonMode) {
       emit(JSON.stringify({ event: 'fanout_unavailable', error: e instanceof Error ? e.message : String(e) }));
     }
-    sources = [];
+    allSources = [];
   }
 
-  if (sources.length === 0) {
+  const localSources = allSources.filter(
+    (source) => typeof source.local_path === 'string' && source.local_path.length > 0,
+  );
+
+  if (localSources.length === 0) {
     // Legacy path — preserves today's behavior for single-source brains
     // (default source) and pre-v0.18 brains without the sources table.
     const job = await queue.add(
@@ -407,6 +438,15 @@ export async function dispatchPerSource(
     }
     return { dispatched: [], skipped_fresh: [], skipped_cap: [], skipped_cooldown: [], legacy_fallback: true };
   }
+
+  // Keep pure-DB non-default sources out of filesystem fan-out. The default
+  // row is special: sync.repo_path is its legacy checkout anchor, and omitting
+  // it when sibling sources have local paths drops every mixed/default-only
+  // phase. The handler resolves that trusted config itself at claim time.
+  const sources = allSources.filter(
+    (source) => source.id === 'default'
+      || (typeof source.local_path === 'string' && source.local_path.length > 0),
+  );
 
   // #2194 fix #2: load recent per-source failures + cooldown knobs so a
   // chronically-failing source is backed off instead of re-dispatched every
@@ -431,17 +471,21 @@ export async function dispatchPerSource(
   for (const src of dispatch) {
     try {
       const remoteUrl = typeof src.config?.remote_url === 'string' ? src.config.remote_url : null;
+      const useDefaultRepoPath = src.id === 'default'
+        && (typeof src.local_path !== 'string' || src.local_path.length === 0);
       const job = await queue.add(
         'autopilot-cycle',
         {
           repoPath: opts.repoPath,
           source_id: src.id,
-          pull: !!remoteUrl,
-          // #2194 fix #3 (cycle split): per-source cycles run ONLY source-scoped
-          // (+ mixed) phases. The brain-wide global phases (embed, orphans,
-          // purge, …) run once in autopilot-global-maintenance, not N times
-          // concurrently here — the fix for the 4→10GB RSS blowout.
-          phases: NON_GLOBAL_PHASES,
+          // A NULL-path default row is the legacy single-brain shape: preserve
+          // the old pull posture when it uses sync.repo_path.
+          pull: useDefaultRepoPath ? true : !!remoteUrl,
+          // #2194 fix #3 (cycle split): default keeps the complete non-global
+          // lane exactly once. Non-default sources receive only the explicit
+          // implementation-audited allowlist above — never a taxonomy-derived
+          // set. Global phases run once in autopilot-global-maintenance.
+          phases: src.id === 'default' ? NON_GLOBAL_PHASES : NON_DEFAULT_FANOUT_PHASES,
         },
         {
           queue: 'default',

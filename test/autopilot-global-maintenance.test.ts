@@ -1,7 +1,8 @@
 /**
  * #2194 fix #3 / #2227 bug #3 — the cycle split.
  *
- * Per-source autopilot cycles run ONLY source-scoped (+ mixed) phases; the
+ * Per-source autopilot cycles never run global phases. The default source
+ * retains mixed phases; non-default sources run source-only phases. The
  * brain-wide `global` phases run ONCE in a separate autopilot-global-maintenance
  * job. This replaces the rejected skip-and-stamp-fresh design (codex #1/#2): the
  * split makes single-flight structural (one global job, not N concurrent embeds)
@@ -28,6 +29,7 @@ import {
   dispatchGlobalMaintenance,
   isGlobalMaintenanceStale,
   dispatchPerSource,
+  NON_DEFAULT_FANOUT_PHASES,
 } from '../src/commands/autopilot-fanout.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
@@ -49,6 +51,23 @@ describe('cycle phase partition (#2194 fix #3)', () => {
     expect(NON_GLOBAL_PHASES).toContain('lint');
     expect(NON_GLOBAL_PHASES).toContain('sync');
     expect(NON_GLOBAL_PHASES).not.toContain('embed');
+  });
+
+  test('non-default allowlist is source-scoped; whole-brain wrappers stay mixed/default-only', () => {
+    for (const phase of NON_DEFAULT_FANOUT_PHASES) {
+      expect(PHASE_SCOPE[phase]).toBe('source');
+      expect(NON_GLOBAL_PHASES).toContain(phase);
+    }
+    for (const phase of [
+      'recompute_emotional_weight',
+      'consolidate',
+      'conversation_facts_backfill',
+      'enrich_thin',
+      'schema-suggest',
+    ] as const) {
+      expect(PHASE_SCOPE[phase]).toBe('mixed');
+      expect(NON_DEFAULT_FANOUT_PHASES).not.toContain(phase);
+    }
   });
 });
 
@@ -98,9 +117,12 @@ describe('dispatchGlobalMaintenance — single-flight gate', () => {
   });
 });
 
-describe('dispatchPerSource — per-source jobs carry NON_GLOBAL phases (no embed)', () => {
-  test('each per-source job sets phases = NON_GLOBAL_PHASES', async () => {
-    const sources = [{ id: 'repo-a', name: 'a', config: {} }, { id: 'repo-b', name: 'b', config: {} }];
+describe('dispatchPerSource — default keeps mixed phases; non-default is source-only', () => {
+  test('all per-source jobs exclude globals and only default carries mixed phases', async () => {
+    const sources = [
+      { id: 'default', name: 'default', local_path: '/tmp/default', last_sync_at: null, config: {} },
+      { id: 'repo-b', name: 'b', local_path: '/tmp/repo-b', last_sync_at: null, config: {} },
+    ];
     const added: any[] = [];
     const engine = {
       kind: 'postgres' as const,
@@ -112,9 +134,11 @@ describe('dispatchPerSource — per-source jobs carry NON_GLOBAL phases (no embe
     await dispatchPerSource(engine, queue, { repoPath: '/tmp', slot: 's', timeoutMs: 1, fanoutMax: 4, jsonMode: true, emit: () => {}, log: () => {} });
     expect(added.length).toBe(2);
     for (const j of added) {
-      expect(j.data.phases).toEqual(NON_GLOBAL_PHASES);
       expect(j.data.phases).not.toContain('embed');
     }
+    const bySource = new Map(added.map((job) => [job.data.source_id, job.data.phases]));
+    expect(bySource.get('default')).toEqual(NON_GLOBAL_PHASES);
+    expect(bySource.get('repo-b')).toEqual(NON_DEFAULT_FANOUT_PHASES);
   });
 });
 
