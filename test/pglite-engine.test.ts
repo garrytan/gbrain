@@ -503,6 +503,100 @@ describe('PGLiteEngine: CJK keyword fallback (v0.32.7)', () => {
     // to the ASCII FTS path which also returns nothing for empty.
     expect(results).toEqual([]);
   });
+
+  // ── Multi-token CJK tokenization ──────────────────────────────────────
+  // Pre-fix the CJK branch matched the WHOLE query as one ILIKE substring, so
+  // "记忆 系统" demanded a literal "记忆 系统" (space included) in the corpus.
+  // Chinese prose writes "记忆系统". Every multi-token query containing CJK
+  // returned [] — silently, which reads as "nothing in the brain" rather than
+  // "the tokenizer cannot express this query".
+
+  test('FIX: multi-token CJK query matches spaceless prose', async () => {
+    await engine.putPage('originals/memory-gc', {
+      type: 'concept', title: 'Memory GC',
+      compiled_truth: '记忆系统需要定期回收，否则索引会持续膨胀',
+    });
+    await engine.upsertChunks('originals/memory-gc', [
+      { chunk_index: 0, chunk_text: '记忆系统需要定期回收，否则索引会持续膨胀', chunk_source: 'compiled_truth' },
+    ]);
+    const results = await engine.searchKeyword('记忆 系统');
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].slug).toBe('originals/memory-gc');
+  });
+
+  test('FIX: mixed CJK+ASCII query tokenizes both halves', async () => {
+    // hasCJK is true for "cron 定时", so mixed queries route here too — the
+    // ASCII half was collateral damage on the same code path.
+    await engine.putPage('originals/cron-doc', {
+      type: 'concept', title: 'Cron doc',
+      compiled_truth: '定时任务用 cron 表达式配置，daemon 每 30 秒轮询一次',
+    });
+    await engine.upsertChunks('originals/cron-doc', [
+      { chunk_index: 0, chunk_text: '定时任务用 cron 表达式配置，daemon 每 30 秒轮询一次', chunk_source: 'compiled_truth' },
+    ]);
+    const results = await engine.searchKeyword('cron 定时');
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].slug).toBe('originals/cron-doc');
+  });
+
+  test('AND semantics: a chunk matching only one token is excluded', async () => {
+    await engine.putPage('originals/both-tokens', {
+      type: 'concept', title: 'Both',
+      compiled_truth: '记忆系统的清理策略',
+    });
+    await engine.upsertChunks('originals/both-tokens', [
+      { chunk_index: 0, chunk_text: '记忆系统的清理策略', chunk_source: 'compiled_truth' },
+    ]);
+    await engine.putPage('originals/one-token', {
+      type: 'concept', title: 'One',
+      compiled_truth: '记忆的容量限制',
+    });
+    await engine.upsertChunks('originals/one-token', [
+      { chunk_index: 0, chunk_text: '记忆的容量限制', chunk_source: 'compiled_truth' },
+    ]);
+    const results = await engine.searchKeyword('记忆 系统');
+    const slugs = results.map(r => r.slug);
+    expect(slugs).toContain('originals/both-tokens');
+    expect(slugs).not.toContain('originals/one-token');
+  });
+
+  test('multi-token scores sum: denser match outranks sparser', async () => {
+    await engine.putPage('originals/dense', {
+      type: 'concept', title: 'Dense',
+      compiled_truth: '记忆系统 记忆系统 记忆系统 三次重复',
+    });
+    await engine.upsertChunks('originals/dense', [
+      { chunk_index: 0, chunk_text: '记忆系统 记忆系统 记忆系统 三次重复', chunk_source: 'compiled_truth' },
+    ]);
+    await engine.putPage('originals/sparse', {
+      type: 'concept', title: 'Sparse',
+      compiled_truth: '这里只提到记忆和系统各一次而已',
+    });
+    await engine.upsertChunks('originals/sparse', [
+      { chunk_index: 0, chunk_text: '这里只提到记忆和系统各一次而已', chunk_source: 'compiled_truth' },
+    ]);
+    const results = await engine.searchKeyword('记忆 系统');
+    const idxDense = results.findIndex(r => r.slug === 'originals/dense');
+    const idxSparse = results.findIndex(r => r.slug === 'originals/sparse');
+    expect(idxDense).toBeGreaterThanOrEqual(0);
+    expect(idxSparse).toBeGreaterThanOrEqual(0);
+    expect(idxDense).toBeLessThan(idxSparse);
+  });
+
+  test('three-token CJK query binds params correctly', async () => {
+    // Guards the dynamic $N numbering: token count drives how many params
+    // precede limit/offset, so an off-by-one here throws or mis-binds.
+    await engine.putPage('originals/three-tok', {
+      type: 'concept', title: 'Three',
+      compiled_truth: '定时任务的记忆系统需要轮询守护进程',
+    });
+    await engine.upsertChunks('originals/three-tok', [
+      { chunk_index: 0, chunk_text: '定时任务的记忆系统需要轮询守护进程', chunk_source: 'compiled_truth' },
+    ]);
+    const results = await engine.searchKeyword('定时 记忆 轮询');
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].slug).toBe('originals/three-tok');
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────
