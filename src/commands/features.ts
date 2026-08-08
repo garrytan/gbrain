@@ -39,13 +39,17 @@ interface FeatureScanResult {
 
 // --- Embedded recipe metadata (binary-safe, no disk reads) ---
 
-const RECIPE_META = [
-  { id: 'email-to-brain', name: 'Email to Brain', secrets: ['GMAIL_APP_PASSWORD'] },
-  { id: 'calendar-to-brain', name: 'Calendar Sync', secrets: ['GOOGLE_CALENDAR_API_KEY'] },
+// Secret names MUST match the corresponding recipes/<id>.md frontmatter, and are
+// treated as ANY-of, not all-of: a recipe whose auth is an `any_of` health check
+// (ClawVisor OR direct OAuth) is configured as soon as one path is present.
+// Pinned by test/features-recipe-secrets.test.ts.
+export const RECIPE_META = [
+  { id: 'email-to-brain', name: 'Email to Brain', secrets: ['CLAWVISOR_AGENT_TOKEN', 'GOOGLE_CLIENT_ID'] },
+  { id: 'calendar-to-brain', name: 'Calendar Sync', secrets: ['CLAWVISOR_AGENT_TOKEN', 'GOOGLE_CLIENT_ID'] },
   { id: 'x-to-brain', name: 'X/Twitter to Brain', secrets: ['X_API_BEARER_TOKEN'] },
   { id: 'twilio-voice-brain', name: 'Voice to Brain', secrets: ['TWILIO_AUTH_TOKEN'] },
-  { id: 'meeting-sync', name: 'Meeting Sync', secrets: ['CIRCLEBACK_API_KEY'] },
-  { id: 'credential-gateway', name: 'Credential Gateway', secrets: ['OAUTH_CLIENT_SECRET'] },
+  { id: 'meeting-sync', name: 'Meeting Sync', secrets: ['CIRCLEBACK_TOKEN'] },
+  { id: 'credential-gateway', name: 'Credential Gateway', secrets: ['CLAWVISOR_AGENT_TOKEN', 'GOOGLE_CLIENT_ID'] },
   { id: 'ngrok-tunnel', name: 'Ngrok Tunnel', secrets: ['NGROK_AUTHTOKEN'] },
 ] as const;
 
@@ -82,7 +86,7 @@ function shouldPitch(rec: FeatureRecommendation, offers: FeatureOffersFile, curr
 
 // --- Scanners ---
 
-async function scanFeatures(engine: BrainEngine): Promise<FeatureScanResult> {
+export async function scanFeatures(engine: BrainEngine): Promise<FeatureScanResult> {
   const stats = await engine.getStats();
   const health = await engine.getHealth();
   const recommendations: FeatureRecommendation[] = [];
@@ -146,8 +150,12 @@ async function scanFeatures(engine: BrainEngine): Promise<FeatureScanResult> {
     }
 
     // Unconfigured integrations
+    // ANY-of: a recipe is configured once one of its declared secrets is present.
+    // `every` made any recipe with alternative auth paths permanently
+    // "unconfigured", since a ClawVisor user never sets GOOGLE_CLIENT_ID and
+    // vice versa.
     const unconfigured = RECIPE_META.filter(r =>
-      !r.secrets.every(s => process.env[s])
+      !r.secrets.some(s => process.env[s])
     );
     if (unconfigured.length > 0) {
       recommendations.push({
