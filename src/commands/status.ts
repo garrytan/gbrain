@@ -15,7 +15,7 @@
  *   - Workers    — supervisor health from the audit JSONL
  *   - Queue      — live minion_jobs counts BY status (NO time window —
  *                  old stuck jobs are exactly what status surfaces)
- *   - Autopilot  — daemon PID liveness via kill -0 probe
+ *   - Autopilot  — daemon PID liveness plus gbrain-autopilot identity probe
  *
  * Exit codes (kubectl-style):
  *   0  snapshot produced successfully (even if it carries warnings)
@@ -40,6 +40,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import { gbrainPath, loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 import { VERSION } from '../version.ts';
+import {
+  classifyAutopilotLockHolder,
+  type AutopilotLockProbeDeps,
+} from '../core/autopilot-lock.ts';
 import {
   buildSyncStatusReport,
   type SyncStatusReport,
@@ -297,8 +301,10 @@ function buildWorkerSummary(): WorkerSummary {
   return { crashes_24h, clean_exits_24h, by_cause, last_event_ts };
 }
 
-function buildAutopilotStatus(): AutopilotStatus {
-  const lockPath = gbrainPath('autopilot.lock');
+export function buildAutopilotStatus(
+  lockPath: string = gbrainPath('autopilot.lock'),
+  deps: AutopilotLockProbeDeps = {},
+): AutopilotStatus {
   const lockfile_present = existsSync(lockPath);
   let pid: number | null = null;
   let running = false;
@@ -308,16 +314,8 @@ function buildAutopilotStatus(): AutopilotStatus {
       const parsed = parseInt(raw, 10);
       if (Number.isFinite(parsed) && parsed > 0) {
         pid = parsed;
-        try {
-          // kill -0 probes liveness without sending a real signal. Throws ESRCH
-          // if the PID is gone, EPERM if alive but owned by another user (which
-          // still tells us "something with that PID exists").
-          process.kill(parsed, 0);
-          running = true;
-        } catch (err) {
-          const code = (err as NodeJS.ErrnoException).code;
-          running = code === 'EPERM';
-        }
+        const holder = classifyAutopilotLockHolder(parsed, process.pid, deps);
+        running = holder.state === 'alive-autopilot' || holder.state === 'alive-unknown';
       }
     } catch {
       /* unreadable lockfile, leave pid=null/running=false */
@@ -592,7 +590,7 @@ function renderHuman(report: StatusReport): string {
       if (a.running) {
         lines.push(`  running (PID ${a.pid})`);
       } else if (a.lockfile_present) {
-        lines.push(`  stale lockfile (PID ${a.pid ?? '?'} not alive). Run \`gbrain autopilot --install\` to restart.`);
+        lines.push(`  stale lockfile (PID ${a.pid ?? '?'} is not a live autopilot process). Run \`gbrain autopilot --install\` to restart.`);
       } else {
         lines.push('  not running. Install with `gbrain autopilot --install`.');
       }
