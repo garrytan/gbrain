@@ -184,7 +184,17 @@ export function computeSnapshotSchemaHash(
  * errors). Match the literal `$$bunfs` marker OR ENOENT+pglite.data
  * co-occurrence.
  */
-export type PgliteInitFailure = 'bunfs' | 'macos-26-3' | 'corrupt' | 'unknown';
+export type PgliteInitFailure =
+  | 'bunfs'
+  | 'macos-26-3'
+  | 'corrupt'
+  // #2674: Postgres PANICked during WAL recovery — a damaged store, not a
+  // broken runtime. Recoverable diagnosis; distinct from `corrupt` (catalog).
+  | 'wal-corrupt'
+  // #2674: a bare `Aborted()` with no further signal. Deliberately NOT guessed
+  // at — the hint teaches the 5-second isolation test instead.
+  | 'abort-ambiguous'
+  | 'unknown';
 
 // #2674: non-Error rejections (Emscripten aborts can throw plain objects)
 // used to stringify as "[object Object]" — prefer .message when present.
@@ -202,9 +212,33 @@ export function classifyPgliteInitError(message: string): PgliteInitFailure {
   if (/58P01|internal_load_library|type "?vector"? does not exist|relation "?content_chunks"? does not exist/i.test(message)) {
     return 'corrupt';
   }
-  if (/abort.*runtime|macos.*26\.3|wasm.*runtime/i.test(message)) {
+  // #2674: WAL / checkpoint damage is a DIFFERENT corruption shape from #2348's
+  // catalog damage, and it is what the reporters in #223 actually hit. Postgres
+  // PANICs during recovery rather than failing a catalog lookup:
+  //
+  //   LOG:  database system was interrupted; last known up at <ts>
+  //   LOG:  invalid resource manager ID in checkpoint record
+  //   PANIC: could not locate a valid checkpoint record at 0/37ADDF8
+  //
+  // Matched here so that any caller which DOES surface PGLite's stderr gets a
+  // precise verdict. Note the default path does not: PGLite reports only
+  // `Aborted()` to JS and prints the PANIC to its own stderr, which is exactly
+  // why `abort-ambiguous` below exists.
+  if (
+    /could not locate a valid checkpoint record|invalid resource manager ID|database system was interrupted|could not access status of transaction|dead heap-only tuple|invalid checkpoint record/i.test(
+      message,
+    )
+  ) {
+    return 'wal-corrupt';
+  }
+  if (/macos.*26\.3|wasm.*runtime/i.test(message)) {
     return 'macos-26-3';
   }
+  // A bare Emscripten abort with nothing else to go on. Do NOT guess a cause:
+  // measured on macOS 26.4 / Bun 1.3.14 / PGLite 0.4.3, a store with WAL damage
+  // and a healthy runtime produce the SAME string here. Blaming the OS sent
+  // #223, #1954, #1955 and #2674 chasing a phantom platform bug for weeks.
+  if (/^(RuntimeError:\s*)?Aborted\(\)/i.test(message.trim())) return 'abort-ambiguous';
   return 'unknown';
 }
 
@@ -215,7 +249,14 @@ export function buildPgliteInitErrorMessage(
   // monkey-patching process.platform.
   platform: NodeJS.Platform = process.platform,
 ): string {
-  const header = 'PGLite failed to initialize its WASM runtime.';
+  // #2674: only assert "WASM runtime" when we actually believe the runtime is
+  // at fault. For a damaged store the runtime started fine and then PANICked
+  // during recovery, so the old unconditional header was itself part of the
+  // misdiagnosis.
+  const header =
+    verdict === 'wal-corrupt' || verdict === 'corrupt' || verdict === 'abort-ambiguous'
+      ? 'PGLite could not open your brain.'
+      : 'PGLite failed to initialize its WASM runtime.';
   let hint: string;
   switch (verdict) {
     case 'bunfs':
@@ -242,6 +283,37 @@ export function buildPgliteInitErrorMessage(
         '       gbrain reinit-pglite --embedding-model <id> --embedding-dimensions <N>\n' +
         '       (wipes + re-inits + re-syncs; DB-only state is re-derived).\n' +
         '  Deleting .gbrain-lock/ or postmaster.pid does NOT fix this.';
+      break;
+    case 'wal-corrupt':
+      hint =
+        '  Postgres started but PANICked replaying the write-ahead log, so the\n' +
+        '  store is damaged — this is NOT the macOS WASM bug and NOT a lock.\n' +
+        '  The "last known up at" timestamp above is when the brain was last\n' +
+        '  healthy; anything written after it is not recoverable in place.\n' +
+        '  Your markdown is unaffected — the DB holds derived data (chunks,\n' +
+        '  embeddings, links, facts), all of which a re-sync rebuilds. Recover:\n' +
+        '    1. Restore a backup of the brain.pglite directory if you have one, OR\n' +
+        '    2. gbrain reinit-pglite --embedding-model <id> --embedding-dimensions <N>\n' +
+        '       (wipes + re-inits + re-syncs from your sources).\n' +
+        '  Deleting postmaster.pid does NOT fix this; neither does re-running\n' +
+        '  migrations. pg_resetwal would, but PGLite does not ship it.';
+      break;
+    case 'abort-ambiguous':
+      hint =
+        '  PGLite aborted without saying why. Two causes produce this exact\n' +
+        '  message, so run the 5-second test that tells them apart:\n' +
+        '\n' +
+        '      GBRAIN_HOME=$(mktemp -d) gbrain init --pglite --no-embedding\n' +
+        '\n' +
+        '  - That SUCCEEDS  -> the runtime is fine and YOUR STORE is damaged.\n' +
+        '    Recover with `gbrain reinit-pglite` (your markdown is untouched;\n' +
+        '    the DB holds derived data a re-sync rebuilds), or restore a backup.\n' +
+        '  - That FAILS TOO -> the runtime itself cannot start here. Report it\n' +
+        '    with your OS + Bun version; see #223 for prior reports.\n' +
+        '\n' +
+        '  `gbrain doctor` runs the same check. Note a damaged store and a\n' +
+        '  broken runtime are indistinguishable from this string alone, so\n' +
+        '  do not assume the macOS 26.3 bug without running the test above.';
       break;
     case 'unknown':
     default:

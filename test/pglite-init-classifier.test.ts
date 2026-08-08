@@ -119,11 +119,100 @@ describe('buildPgliteInitErrorMessage — hint routing', () => {
     expect(msg).not.toContain('issues/223');
   });
 
-  test('all verdicts produce the canonical header line', () => {
-    for (const v of ['bunfs', 'macos-26-3', 'corrupt', 'unknown'] as const) {
-      const msg = buildPgliteInitErrorMessage(v, original);
-      expect(msg.startsWith('PGLite failed to initialize its WASM runtime.')).toBe(true);
+  test('runtime-fault verdicts claim the WASM runtime; store-fault verdicts do not', () => {
+    // #2674: the header used to assert "failed to initialize its WASM runtime"
+    // for EVERY verdict — including a damaged store, where the runtime started
+    // fine and then PANICked during recovery. That header was itself part of
+    // the misdiagnosis, so it is now verdict-dependent.
+    for (const v of ['bunfs', 'macos-26-3', 'unknown'] as const) {
+      expect(buildPgliteInitErrorMessage(v, original).startsWith(
+        'PGLite failed to initialize its WASM runtime.',
+      )).toBe(true);
     }
+    for (const v of ['corrupt', 'wal-corrupt', 'abort-ambiguous'] as const) {
+      const msg = buildPgliteInitErrorMessage(v, original);
+      expect(msg.startsWith('PGLite could not open your brain.')).toBe(true);
+      expect(msg).not.toContain('failed to initialize its WASM runtime');
+    }
+  });
+
+  test('every verdict still carries a hint and the original error', () => {
+    for (const v of [
+      'bunfs', 'macos-26-3', 'corrupt', 'wal-corrupt', 'abort-ambiguous', 'unknown',
+    ] as const) {
+      const msg = buildPgliteInitErrorMessage(v, original);
+      expect(msg).toContain(`Original error: ${original}`);
+      expect(msg.split('\n').length).toBeGreaterThan(2);
+    }
+  });
+});
+
+describe('#2674: a bare Aborted() must not be blamed on macOS', () => {
+  // Measured on macOS 26.4 / Bun 1.3.14 / PGLite 0.4.3: a store with WAL
+  // damage and a healthy runtime yield this identical string, so the OS
+  // cannot be inferred from it. #223/#1954/#1955/#2674 all lost time to that.
+  const BARE = 'Aborted(). Build with -sASSERTIONS for more info.';
+
+  test('classifies as abort-ambiguous, not macos-26-3 and not unknown', () => {
+    expect(classifyPgliteInitError(BARE)).toBe('abort-ambiguous');
+    expect(classifyPgliteInitError('RuntimeError: Aborted()')).toBe('abort-ambiguous');
+  });
+
+  test('the hint leads with the isolation test and does not assert the OS bug', () => {
+    const msg = buildPgliteInitErrorMessage('abort-ambiguous', BARE, 'darwin');
+    expect(msg).toContain('GBRAIN_HOME=$(mktemp -d) gbrain init --pglite');
+    // It may *mention* not assuming the macOS bug, but must not present it as
+    // the cause the way the old darwin `unknown` branch did.
+    expect(msg).not.toContain('Possible cause: the macOS 26.3 WASM bug');
+    expect(msg).toContain('YOUR STORE is damaged');
+  });
+
+  test('the same message is given on darwin and non-darwin', () => {
+    // The old code branched on platform here. The string carries no platform
+    // signal, so branching on it was guessing.
+    expect(buildPgliteInitErrorMessage('abort-ambiguous', BARE, 'darwin')).toBe(
+      buildPgliteInitErrorMessage('abort-ambiguous', BARE, 'linux'),
+    );
+  });
+
+  test('an explicit macOS 26.3 mention still routes to macos-26-3', () => {
+    expect(classifyPgliteInitError('known macOS 26.3 issue')).toBe('macos-26-3');
+    expect(classifyPgliteInitError('wasm runtime could not start')).toBe('macos-26-3');
+  });
+});
+
+describe('#2674: WAL / checkpoint damage is its own verdict', () => {
+  // Reproduced end to end: garbling pg_wal on a healthy PGLite 0.4.3 store and
+  // reopening produces exactly these log lines before the abort. PGLite prints
+  // them to its own stderr, so the default path sees only `Aborted()` — these
+  // matches exist for any caller that does surface stderr.
+  const CASES = [
+    'PANIC: could not locate a valid checkpoint record at 0/37ADDF8',
+    'LOG: invalid resource manager ID in checkpoint record',
+    'LOG: database system was interrupted; last known up at 2026-07-11 00:12:20',
+    'could not access status of transaction 0',
+    'dead heap-only tuple (0, 136) is not linked to from any HOT',
+  ];
+
+  test('each recovery-PANIC signature classifies as wal-corrupt', () => {
+    for (const c of CASES) {
+      expect(classifyPgliteInitError(c), c).toBe('wal-corrupt');
+    }
+  });
+
+  test('the hint rules out the OS bug and locks, and points at reinit', () => {
+    const msg = buildPgliteInitErrorMessage('wal-corrupt', CASES[0], 'darwin');
+    expect(msg).toContain('NOT the macOS WASM bug');
+    expect(msg).toContain('gbrain reinit-pglite');
+    // The single most useful fact for a panicking user.
+    expect(msg).toContain('Your markdown is unaffected');
+    // Steer away from the two things people try that cannot work.
+    expect(msg).toContain('postmaster.pid does NOT fix this');
+  });
+
+  test('catalog corruption (#2348) still routes to corrupt, not wal-corrupt', () => {
+    expect(classifyPgliteInitError('58P01 internal_load_library failed')).toBe('corrupt');
+    expect(classifyPgliteInitError('type "vector" does not exist')).toBe('corrupt');
   });
 });
 
