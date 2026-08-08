@@ -4576,6 +4576,47 @@ export interface RerankResult {
 }
 
 /**
+ * Estimate provider-billed reranker input tokens from the request payload.
+ * Voyage bills the query once per document; the other currently supported
+ * routes use the gateway's historical query-once estimate.
+ *
+ * @internal exported for deterministic budget tests.
+ */
+export function estimateRerankInputTokens(
+  input: Pick<RerankInput, 'query' | 'documents'> & { model: string },
+): number {
+  let voyageThroughOpenRouter = false;
+  try {
+    const parsed = parseModelId(input.model);
+    voyageThroughOpenRouter = parsed.providerId === 'openrouter'
+      && parsed.modelId.startsWith('voyageai/');
+  } catch {
+    // Keep estimation side-effect free for invalid ids; resolveRecipe below
+    // owns the actionable model-validation error.
+  }
+  const queryCopies = voyageThroughOpenRouter ? input.documents.length : 1;
+  // Voyage's established dense-input guard uses one char/token so reserves
+  // stay conservative for CJK, JSON, and base64. Provider usage replaces this
+  // estimate after a successful response.
+  const charsPerToken = voyageThroughOpenRouter ? 1 : 4;
+  const documentChars = input.documents.reduce((sum, document) => sum + document.length, 0);
+  return Math.ceil(((input.query.length * queryCopies) + documentChars) / charsPerToken);
+}
+
+/** Read authoritative reranker input usage when the provider reports it. */
+function rerankUsageTokens(payload: unknown): number | undefined {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
+  const usage = (payload as Record<string, unknown>).usage;
+  if (!usage || typeof usage !== 'object' || Array.isArray(usage)) return undefined;
+  const row = usage as Record<string, unknown>;
+  for (const key of ['total_tokens', 'prompt_tokens', 'input_tokens'] as const) {
+    const value = row[key];
+    if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return value;
+  }
+  return undefined;
+}
+
+/**
  * Test seam — same pattern as `_embedTransport` / `_chatTransport`. Tests
  * install a stub via `__setRerankTransportForTests` to exercise the call-site
  * pipeline without hitting the network. Production never reads the override.
@@ -4677,7 +4718,8 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   const compat = applyOpenAICompatConfig(recipe, cfg);
   // v0.40.6.1: rerank URL path is recipe-pluggable. Defaults to ZeroEntropy's
   // legacy `/models/rerank`; openai-style providers like llama.cpp's
-  // llama-server set `/v1/rerank`; Voyage sets `/rerank`. Response shape is
+  // llama-server set `/v1/rerank`; direct Voyage and OpenRouter set `/rerank`.
+  // Response shape is
   // shared across all current dialects ({results: [{index, relevance_score}]});
   // the only request-side difference is the top-N key, declared per recipe via
   // `top_param` (v0.46.3).
@@ -4730,12 +4772,13 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   // model is priced); an unpriced custom reranker still hits the warn-once
   // (no cap) / TX2 hard-fail (cap set) path. record() below settles it.
   if (tracker) {
-    const totalChars = input.query.length + input.documents.reduce((s, d) => s + d.length, 0);
+    // estimateRerankInputTokens applies Voyage's dense-input guard (~1
+    // char/token) and its query-once-per-document billing for the OpenRouter
+    // Voyage routes, so a cap cannot be under-reserved on those payloads. It
+    // mirrors the estimate record() settles with below.
     tracker.reserve({
       modelId: modelStr,
-      // Honor the recipe's tokenizer density (Voyage declares ~1 char/token on
-      // dense payloads) so a cap cannot be under-reserved ~4× by CJK/JSON docs.
-      estimatedInputTokens: Math.ceil(totalChars / (recipe.touchpoints.embedding?.chars_per_token ?? 4)),
+      estimatedInputTokens: estimateRerankInputTokens({ ...input, model: modelStr }),
       maxOutputTokens: 0,
       kind: 'rerank',
       label: 'gateway.rerank',
@@ -4752,14 +4795,14 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   }
 
   let _rerankRecorded = false;
-  const _rerankRecord = (): void => {
+  const _rerankRecord = (actualInputTokens?: number): void => {
     if (!tracker || _rerankRecorded) return;
     _rerankRecorded = true;
     try {
-      const totalChars = input.query.length + input.documents.reduce((s, d) => s + d.length, 0);
       tracker.record({
         modelId: modelStr,
-        inputTokens: Math.ceil(totalChars / 4),
+        inputTokens: actualInputTokens
+          ?? estimateRerankInputTokens({ ...input, model: modelStr }),
         outputTokens: 0,
         kind: 'rerank',
         label: 'gateway.rerank',
@@ -4812,7 +4855,9 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
       index: typeof r.index === 'number' ? r.index : 0,
       relevanceScore: typeof r.relevance_score === 'number' ? r.relevance_score : 0,
     }));
-    _rerankRecord();
+    // Provider-reported usage (OpenRouter returns `usage.total_tokens`) is
+    // authoritative for the budget; fall back to the estimate when absent.
+    _rerankRecord(rerankUsageTokens(json));
     return mapped;
   } catch (err) {
     if (isAIInvocationPolicyError(err)) throw err;

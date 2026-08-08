@@ -60,6 +60,7 @@ export const zeroentropyai: Recipe = {
     reranker: {
       models: ['zerank-2', 'zerank-1', 'zerank-1-small'],
       default_model: 'zerank-2',
+      billing_unit: 'token',
       cost_per_1m_tokens_usd: 0.025,
       price_last_verified: '2026-05-14',
       // ZE enforces 5MB per /v1/models/rerank request. gateway.rerank()
