@@ -324,6 +324,7 @@ export interface ExtractConversationFactsResult {
   orphan_facts_cleaned: number;
   segments_processed: number;
   facts_extracted: number;
+  facts_low_notability_rejected: number;
   facts_inserted: number;
   budget_exhausted?: boolean;
   spent_usd?: number;
@@ -985,6 +986,7 @@ async function processPage(
       source: PER_SEGMENT_SOURCE_PREFIX,
       engine: state.engine,
       abortSignal: state.signal,
+      notabilityAdmission: { allowed: ['high', 'medium'], invalid: 'fail' },
     });
     if (!extraction.ok) {
       const detail = extraction.error instanceof Error
@@ -995,6 +997,7 @@ async function processPage(
       );
     }
     const extracted = extraction.facts;
+    state.result.facts_low_notability_rejected += extraction.notability_rejected;
 
     state.result.segments_processed++;
     segmentsThisPage++;
@@ -1161,6 +1164,7 @@ export async function runExtractConversationFactsCore(
     orphan_facts_cleaned: 0,
     segments_processed: 0,
     facts_extracted: 0,
+    facts_low_notability_rejected: 0,
     facts_inserted: 0,
   };
 
@@ -1773,6 +1777,7 @@ export async function runExtractConversationFacts(
     orphan_facts_cleaned: 0,
     segments_processed: 0,
     facts_extracted: 0,
+    facts_low_notability_rejected: 0,
     facts_inserted: 0,
   };
   let totalSpent = 0;
@@ -1818,6 +1823,7 @@ export async function runExtractConversationFacts(
       aggregate.orphan_facts_cleaned += perSource.orphan_facts_cleaned;
       aggregate.segments_processed += perSource.segments_processed;
       aggregate.facts_extracted += perSource.facts_extracted;
+      aggregate.facts_low_notability_rejected += perSource.facts_low_notability_rejected;
       aggregate.facts_inserted += perSource.facts_inserted;
       if (perSource.budget_exhausted) anyBudgetExhausted = true;
       if (perSource.spent_usd) totalSpent += perSource.spent_usd;
@@ -1838,6 +1844,9 @@ export async function runExtractConversationFacts(
   );
   if (aggregate.pages_skipped > 0) {
     console.log(`  Skipped ${aggregate.pages_skipped} page(s) with no new segments since last checkpoint.`);
+  }
+  if (aggregate.facts_low_notability_rejected > 0) {
+    console.log(`  Rejected ${aggregate.facts_low_notability_rejected} low-notability candidate(s) before storage.`);
   }
   if (aggregate.pages_skipped_too_large > 0) {
     console.log(`  Skipped ${aggregate.pages_skipped_too_large} page(s) exceeding ${MAX_PAGE_BODY_BYTES / 1024 / 1024}MB body cap.`);

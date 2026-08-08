@@ -346,6 +346,9 @@ async function runPipelineWithBody(
     engine: ctx.engine,
     abortSignal,
     model: ctx.model,
+    ...(ctx.notabilityFilter === 'high-only'
+      ? { notabilityAdmission: { allowed: ['high'] as const, invalid: 'drop' as const } }
+      : {}),
   });
 
   const filter = ctx.notabilityFilter ?? 'all';
@@ -366,9 +369,6 @@ async function runPipelineWithBody(
 
   for (const f of facts) {
     if (abortSignal?.aborted) break;
-
-    // D4: notability filter applied post-extraction, pre-insert.
-    if (filter === 'high-only' && f.notability !== 'high') continue;
 
     const resolvedSlug = f.entity_slug
       ? await resolveEntitySlug(ctx.engine, ctx.sourceId, f.entity_slug)
