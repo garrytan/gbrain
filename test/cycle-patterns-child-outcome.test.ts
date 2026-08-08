@@ -12,10 +12,9 @@
  * the real Anthropic call fails immediately, exhausting max_attempts and
  * landing the job in 'dead' (not 'timeout' — nothing ever times out, the
  * failure is immediate). The #2782 status-reflects-outcome contract this
- * test exists to pin is unchanged: any non-'complete' outcome with zero
- * writes must still surface as status 'fail', just under the outcome that
- * actually occurs now that the job is drained instead of left stuck in
- * 'waiting' for the full wait window.
+ * test exists to pin is now two-layered: a non-'completed' queue status or a
+ * completed child with a non-'end_turn' semantic stop must not become a clean
+ * pattern phase. With zero writes it fails; with partial writes it warns.
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
@@ -25,6 +24,7 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { runPhasePatterns } from '../src/core/cycle/patterns.ts';
+import { __setChatTransportForTests, type ChatResult } from '../src/core/ai/gateway.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
@@ -64,6 +64,115 @@ async function seedReflections(): Promise<void> {
 }
 
 describe('runPhasePatterns child-outcome status (#2782)', () => {
+  test('child completed with zero writes → status ok', async () => {
+    const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-patterns-success-'));
+    try {
+      await seedReflections();
+      await engine.setConfig('agent.use_gateway_loop', 'true');
+      __setChatTransportForTests(async () => ({
+        text: 'No recurring patterns met the evidence threshold.',
+        blocks: [{ type: 'text', text: 'No recurring patterns met the evidence threshold.' }],
+        stopReason: 'end',
+        usage: { input_tokens: 12, output_tokens: 8, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'anthropic:claude-sonnet-4-6',
+        providerId: 'anthropic',
+      } satisfies ChatResult));
+
+      const result = await withEnv({ ANTHROPIC_API_KEY: 'sk-ant-test' }, () =>
+        runPhasePatterns(engine, { brainDir, dryRun: false }),
+      );
+
+      expect(result.status).toBe('ok');
+      expect(result.details.child_outcome).toBe('completed');
+      expect(result.details.child_stop_reason).toBe('end_turn');
+      expect(result.details.patterns_written).toBe(0);
+      expect(result.error).toBeUndefined();
+    } finally {
+      __setChatTransportForTests(null);
+      rmSync(brainDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  test('child completed after exhausting output tokens with zero writes → status fail', async () => {
+    const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-patterns-max-tokens-'));
+    try {
+      await seedReflections();
+      await engine.setConfig('agent.use_gateway_loop', 'true');
+      __setChatTransportForTests(async () => ({
+        text: 'Partial pattern analysis',
+        blocks: [{ type: 'text', text: 'Partial pattern analysis' }],
+        stopReason: 'length',
+        usage: { input_tokens: 12, output_tokens: 8, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'anthropic:claude-sonnet-4-6',
+        providerId: 'anthropic',
+      } satisfies ChatResult));
+
+      const result = await withEnv({ ANTHROPIC_API_KEY: 'sk-ant-test' }, () =>
+        runPhasePatterns(engine, { brainDir, dryRun: false }),
+      );
+
+      expect(result.status).toBe('fail');
+      expect(result.details.child_outcome).toBe('completed');
+      expect(result.details.child_stop_reason).toBe('max_tokens');
+      expect(result.details.patterns_written).toBe(0);
+      expect(result.error?.code).toBe('PATTERNS_CHILD_MAX_TOKENS');
+    } finally {
+      __setChatTransportForTests(null);
+      rmSync(brainDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  test('child writes a pattern then exhausts output tokens → status warn', async () => {
+    const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-patterns-partial-write-'));
+    try {
+      await seedReflections();
+      await engine.setConfig('agent.use_gateway_loop', 'true');
+      let turn = 0;
+      __setChatTransportForTests(async () => {
+        turn++;
+        if (turn === 1) {
+          return {
+            text: '',
+            blocks: [{
+              type: 'tool-call',
+              toolCallId: 'tc-pattern-write',
+              toolName: 'brain_put_page',
+              input: {
+                slug: 'wiki/personal/patterns/partial-pattern',
+                content: '---\ntitle: Partial Pattern\ntype: pattern\n---\n\nEvidence-backed pattern.',
+              },
+            }],
+            stopReason: 'tool_calls',
+            usage: { input_tokens: 12, output_tokens: 8, cache_read_tokens: 0, cache_creation_tokens: 0 },
+            model: 'anthropic:claude-sonnet-4-6',
+            providerId: 'anthropic',
+          } satisfies ChatResult;
+        }
+        return {
+          text: 'Partial follow-up analysis',
+          blocks: [{ type: 'text', text: 'Partial follow-up analysis' }],
+          stopReason: 'length',
+          usage: { input_tokens: 16, output_tokens: 8, cache_read_tokens: 0, cache_creation_tokens: 0 },
+          model: 'anthropic:claude-sonnet-4-6',
+          providerId: 'anthropic',
+        } satisfies ChatResult;
+      });
+
+      const result = await withEnv({ ANTHROPIC_API_KEY: 'sk-ant-test' }, () =>
+        runPhasePatterns(engine, { brainDir, dryRun: false }),
+      );
+
+      expect(result.status).toBe('warn');
+      expect(result.details.child_outcome).toBe('completed');
+      expect(result.details.child_stop_reason).toBe('max_tokens');
+      expect(result.details.patterns_written).toBe(1);
+      expect(result.error).toBeUndefined();
+    } finally {
+      __setChatTransportForTests(null);
+      rmSync(brainDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   test('child dead with zero writes → status fail (was silent ok)', async () => {
     const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-patterns-outcome-'));
     try {
