@@ -162,6 +162,12 @@ export const SECTIONS: DocSection[] = [
         description: "MCP server deployment.",
         path: "docs/mcp/DEPLOY.md",
       },
+      {
+        title: "docs/protocol/MEMORY_VERBS_v1.md",
+        description:
+          "The frozen five-verb memory protocol (recall/remember/entity/synthesize/forget): response envelopes, error contract, additive-forever versioning, surface modes, conformance certification, per-harness installs.",
+        path: "docs/protocol/MEMORY_VERBS_v1.md",
+      },
     ],
   },
   {

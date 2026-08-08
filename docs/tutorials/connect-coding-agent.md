@@ -142,14 +142,22 @@ generate while working, and is genuinely useful by day two.
 
 ```bash
 # Claude Code
-claude mcp add gbrain -- gbrain serve
+claude mcp add gbrain -- gbrain serve --surface verbs
 
 # Codex
-codex mcp add gbrain -- gbrain serve
+codex mcp add gbrain -- gbrain serve --surface verbs
 ```
 
 That's the whole wire-up. No token, no URL, no tunnel. The agent spawns
 `gbrain serve` as a stdio subprocess and talks to your local brain directly.
+
+`--surface verbs` exposes exactly the five-verb memory protocol
+(`recall`, `remember`, `entity`, `synthesize`, `forget` —
+[MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md), frozen + additive-forever)
+instead of the full operation catalog, so the agent sees a tight, stable surface
+instead of a 110-tool wall. Drop the flag (or pass `--surface full`) for every
+operation. The default when the flag is omitted is `full`, so existing wire-ups
+are unchanged.
 
 ### B4. Verify
 
@@ -175,14 +183,19 @@ on the patterns.
 You have a knowledge brain connected over MCP. Before answering any question
 about people, companies, decisions, projects, or past context:
 
-1. **Search first.** Call `search` (or `query` for a synthesized answer) against
-   the brain BEFORE answering from memory or asking me. If the brain has the
-   answer, use it. Never ask "who is X?" or "what did we decide about Y?" before
-   searching — the brain probably already knows.
+1. **Brain first — route by the shape of the question.** Exact names or known
+   tokens → `search` (cheap hybrid, no expansion). Concept, landscape, or
+   "all the X that do Y" questions → `query` FIRST — it recovers synonym
+   phrasings `search` misses, and a populated `search` result set is not proof
+   of coverage. On the five-verb surface the same split is `recall` (retrieve)
+   vs `synthesize` (reasoned answer). Check the brain BEFORE answering from
+   memory or asking me. Never ask "who is X?" or "what did we decide about Y?"
+   before checking — the brain probably already knows.
 2. **Write back.** When I make a decision, mention a new person/company, or land
-   on an idea worth keeping, write it to the brain with `put_page` (entity pages
-   under people/, companies/; decisions under decisions/ or notes/). One insight,
-   one page, linked.
+   on an idea worth keeping, write it to the brain: `remember` on the five-verb
+   surface (one fact, with provenance), or `put_page` on the full surface
+   (entity pages under people/, companies/; decisions under decisions/ or
+   notes/). One insight, one page, linked.
 3. **Cite.** When you answer from the brain, name the page you used.
 ```
 
@@ -204,13 +217,14 @@ hundreds of linked pages and patterns you didn't know were there.
 **3. Briefing from your brain (not from the internet).** *"What do I need to know
 before my 2pm with the Acme team?"* pulls your meeting history, the people,
 what's still open, what the brain doesn't know yet. The agent does your prep
-because it read your context. (`query` gives you the synthesized answer with
-citations; this is the example on the [README](../../README.md).)
+because it read your context. (`query` — `synthesize` on the five-verb surface —
+gives you the synthesized answer with citations; this is the example on the
+[README](../../README.md).)
 
 **4. whoknows (expertise routing).** *"Who do I know who's shipped a rate
-limiter in Postgres?"* The `find_experts` tool ranks people in your brain by
-relevance + recency. Useful the moment your brain has more than a handful of
-people in it.
+limiter in Postgres?"* The `find_experts` tool (full surface) ranks people in
+your brain by relevance + recency. Useful the moment your brain has more than a
+handful of people in it.
 
 That's the spine of it. Two commands to connect, one protocol to paste, four
 habits to build. Your agent stops being amnesiac.

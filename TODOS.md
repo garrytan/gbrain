@@ -1,5 +1,60 @@
 # TODOS
 
+## #2416 follow-ups (query-steering wave)
+
+- [ ] **P2 — MCP-envelope `hint` field for concept-shaped `search` calls.**
+  **What:** surface the concept→query nudge to remote/MCP agent callers, not
+  just the CLI. **Why:** MCP agents are the primary misrouting class the
+  #2416 issue describes; the shipped CLI stderr nudge covers the caller class
+  *least* at risk. **Context:** the `search` op returns a bare
+  `SearchResult[]` (`src/core/operations.ts` — both return sites), so a hint
+  needs an envelope change that ripples into `formatResult`, MCP
+  serialization, and array-shape tests — deliberately kept out of the atomic
+  #2416 commit. The pure classifier already exists
+  (`looksConceptShaped`/`conceptNudge` in `src/core/search/query-intent.ts`);
+  only the transport is missing. Consider a sibling metadata channel (like
+  `_meta.metric_glossary`) rather than changing the array shape.
+  **Depends on:** agreeing an envelope pattern that doesn't break existing
+  MCP consumers.
+
+## MEMORY_VERBS v1 follow-ups (filed v0.43.0.0 — Cathedral 1)
+
+Deferred from the Cathedral 1 ship (CEO review, EXPANSION mode). Both are
+additive to the frozen v1 contract — neither breaks it. See plan + GSTACK
+REVIEW REPORT at `~/.claude/plans/system-instruction-you-are-working-agile-iverson.md`
+and the scope record at `~/.gstack/projects/garrytan-gbrain/ceo-plans/2026-06-12-memory-verbs-protocol.md`.
+
+- [ ] **P3 — external-implementation certification PROGRAM.** The conformance
+  TOOLING shipped (`gbrain protocol conformance --target <endpoint>`); the
+  PROGRAM around it (badges, a registry of conformant implementations, listed
+  third-party servers) waits for a second implementation to exist. **Why:** the
+  protocol-not-product thesis only pays off once someone else implements
+  MEMORY_VERBS; until then a certification program certifies an empty set.
+  **Where:** new — would build on `src/commands/protocol.ts` conformance output.
+- [ ] **P3 — persistent open-threads model for the entity card.** v1 derives
+  `entity.open_threads` from active commitment-kind facts + recent timeline
+  entries (best-effort, possibly empty). A richer model (a real threads table:
+  conversation id, opened/closed state, last activity) would make open-threads
+  authoritative. **Why:** the card's open-threads field is the weakest signal
+  in v1; a first-class threads store would make it load-bearing. **Where:**
+  `src/core/verbs/entity-card.ts` open-threads assembly + a new schema table
+  (additive — the card field already exists, so this is a quality upgrade, not
+  a contract change).
+- [ ] **P2 — `recall` filter composition vs the spec (found by the v0.43.0.0
+  cross-model doc review).** The handler dispatch is first-match
+  (`supersessions` > `entity` > `session_id` > `since`), so `since` is
+  silently ignored when `entity`/`session_id` is supplied, and `limit` has no
+  server-side cap. Either compose the filters (additive — the spec's "filters
+  the FACTS arm" wording already reads that way) or spell the precedence out
+  in `docs/protocol/MEMORY_VERBS_v1.md`. **Where:** the `recall` handler in
+  `src/core/operations.ts`.
+- [ ] **P3 — widen `synthesize`'s `unavailable` mapping.** Only the
+  missing-key gateway warning maps to the `unavailable` error today; other
+  no-usable-model failures can surface as `internal` (contract-legal but less
+  actionable) or, worst case, a stubbed success. Audit the gateway failure
+  modes and map every model-unusable path to `unavailable` with a fix
+  suggestion. **Where:** the `synthesize` handler in `src/core/verbs.ts`.
+
 ## serve --http takes-holders + agent-voice hardening follow-ups (filed v0.42.74.0)
 
 Deferred from the #2529/#2477 security-fix wave (plan-eng-review + codex outside
@@ -29,6 +84,7 @@ voice CLEARED). None block the wave.
   clause (`src/mcp/http-transport.ts` validateToken). Apply the same pattern —
   one fewer write per request on the `serve --http` hot path.
   Where: `src/core/oauth-provider.ts`.
+
 ## v0.42.67.0 follow-ups (Windows build tooling)
 
 Filed as follow-ups from v0.42.67.0 (`.gitattributes` LF pin for `*.sh` +

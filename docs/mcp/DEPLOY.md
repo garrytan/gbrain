@@ -5,8 +5,8 @@
 > dashboard at `/admin`, scoped operations, and a live SSE activity feed.
 > Pre-v0.26 legacy bearer tokens still work — `verifyAccessToken` falls back
 > to the `access_tokens` table and grandfathers tokens to `read+write+admin`.
-> Postgres-only for the legacy fallback (the `access_tokens` table is Postgres-only);
-> OAuth tables work on both PGLite and Postgres. See [SECURITY.md](../../SECURITY.md)
+> Both the legacy fallback and the OAuth tables work on PGLite and Postgres
+> (both engine schemas carry `access_tokens`). See [SECURITY.md](../../SECURITY.md)
 > for env vars and tunable defaults.
 
 Access your brain from any device, any AI client. GBrain ships two transports:
@@ -18,11 +18,16 @@ for remote clients over OAuth 2.1.
 ### Local stdio (zero setup)
 
 ```bash
-gbrain serve
+gbrain serve                  # full operation catalog (default)
+gbrain serve --surface verbs  # just the 5 memory verbs (quickstart surface)
 ```
 
 Works with Claude Code, Cursor, Windsurf, and any MCP client that supports stdio.
 No server, no tunnel, no token needed. Works on both PGLite and Postgres engines.
+`--surface verbs` exposes exactly the five-verb memory protocol (`recall`,
+`remember`, `entity`, `synthesize`, `forget` —
+[MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)) instead of the full catalog;
+omit the flag (default `full`) for every operation.
 
 ### Remote over OAuth 2.1 (recommended, v0.26.0+)
 

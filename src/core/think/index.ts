@@ -140,6 +140,13 @@ export interface ThinkResult {
    * pre-existing/test `ThinkResult` literals → treated as persistable (back-compat).
    */
   synthesisOk?: boolean;
+  /**
+   * MEMORY_VERBS v1 [E2] — gateway token usage for the synthesis call(s),
+   * summed across rounds. Best-effort: null when no LLM ran (graceful stub),
+   * when a test client returns no usage, or when a provider omits accounting.
+   * The synthesize verb maps this to its frozen `cost` block.
+   */
+  usage?: { input_tokens: number; output_tokens: number } | null;
   /** Only set when --save was true and the caller persisted a synthesis page. */
   savedSlug?: string;
   /** Diagnostics for `--explain` callers (CLI surface for v0.29). */
@@ -149,15 +156,6 @@ export interface ThinkResult {
     takesFromVector: number;
     graphHits: number;
   };
-  /**
-   * Token usage from the real LLM call, when one happened. Undefined on the
-   * no-client/stub paths (no Anthropic key, model not usable) — same
-   * distinction `synthesisOk` already makes. `think`'s cost was previously
-   * unsurfaced anywhere: not in this CLI's own output, not in
-   * `budget_ledger`, and invisible to a wrapping caller's own token
-   * accounting (the LLM call `think` makes is its own separate API call).
-   */
-  usage?: { input_tokens: number; output_tokens: number };
   /** USD cost computed from `usage` + `canonicalLookup(modelUsed)`, when both are available. */
   cost_usd?: number;
 }
@@ -451,8 +449,10 @@ export async function runThink(
   // sentinel, which is non-JSON) and on the no-client early return below; the final
   // return ANDs it with a non-empty-answer check (catches valid-but-empty JSON).
   let synthesisOk = true;
+  // [E2] best-effort usage aggregation across synthesis calls (single-pass in
+  // v0.28+, but summed so the round loop inherits it when gap-fill lands).
+  let usage: { input_tokens: number; output_tokens: number } | null = null;
   let response: ThinkResponse;
-  let usage: { input_tokens: number; output_tokens: number } | undefined;
   if (opts.stubResponse) {
     response = opts.stubResponse;
   } else {
@@ -502,6 +502,7 @@ export async function runThink(
         rounds: 0,
         warnings,
         synthesisOk: false,  // #1698: no LLM ran — never persist this
+        usage: null,         // [E2] no LLM ran — no accounting
         diagnostics: {
           pagesFromHybrid: gather.diagnostics.pagesFromHybrid,
           takesFromKeyword: gather.diagnostics.takesFromKeyword,
@@ -516,7 +517,17 @@ export async function runThink(
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
     });
-    usage = { input_tokens: result.usage.input_tokens, output_tokens: result.usage.output_tokens };
+    // [E2] capture usage when the message carries it (test-injected clients
+    // and providers without accounting leave it null).
+    const u = (result as { usage?: { input_tokens?: number; output_tokens?: number } }).usage;
+    if (u && typeof u.input_tokens === 'number' && typeof u.output_tokens === 'number') {
+      // Single synthesis call in v0.28+; when gap-driven rounds land, sum here.
+      const prev = usage as { input_tokens: number; output_tokens: number } | null;
+      usage = {
+        input_tokens: (prev?.input_tokens ?? 0) + u.input_tokens,
+        output_tokens: (prev?.output_tokens ?? 0) + u.output_tokens,
+      };
+    }
     const block = result.content.find(b => b.type === 'text');
     const text = block && 'text' in block ? block.text : '';
     const parsed = tryParseJSON(text);
@@ -561,13 +572,13 @@ export async function runThink(
     // #1698: persistable only when a real synthesis produced a non-empty answer.
     // ANDs the not-JSON/sentinel flag with a content check (catches valid-but-empty JSON).
     synthesisOk: synthesisOk && response.answer.trim().length > 0,
+    usage,
     diagnostics: {
       pagesFromHybrid: gather.diagnostics.pagesFromHybrid,
       takesFromKeyword: gather.diagnostics.takesFromKeyword,
       takesFromVector: gather.diagnostics.takesFromVector,
       graphHits: gather.diagnostics.graphHits,
     },
-    usage,
   };
 }
 

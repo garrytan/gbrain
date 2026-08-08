@@ -106,7 +106,7 @@ export interface ResolvePointersOpts {
   sourceIds?: string[];
 }
 
-interface PageRow {
+export interface PageRow {
   slug: string;
   source_id: string;
   title: string;
@@ -290,8 +290,11 @@ function displayForRow(row: PageRow, displayByNorm: Map<string, string>): string
  * otherwise strip takes/private-fact fences from the body (the same boundary
  * get_page applies to untrusted readers) and take the first sentence. Never
  * returns raw compiled_truth.
+ *
+ * Exported for the MEMORY_VERBS v1 entity card (verbs/entity-card.ts) — the
+ * card's `summary` field runs through THIS boundary, not a parallel one.
  */
-function safeSynopsis(row: PageRow): string {
+export function safeSynopsis(row: PageRow): string {
   const fmSummary = row.frontmatter?.summary;
   if (typeof fmSummary === 'string' && fmSummary.trim()) {
     return clip(collapse(fmSummary), SYNOPSIS_MAX);

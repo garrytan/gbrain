@@ -34,6 +34,17 @@ flows through in both directions.
 > **Convention:** See `skills/conventions/brain-first.md` for the 5-step lookup protocol.
 > **Convention:** See `skills/conventions/quality.md` for citation and back-link rules.
 
+> **Memory verbs (MEMORY_VERBS v1, gbrain ≥ 0.43).** Over MCP, prefer the five
+> frozen memory verbs for the read/write cycle: **`remember(fact, provenance,
+> ttl?)`** to save a single durable fact (mandatory provenance; dedupes +
+> supersedes), **`recall(query | entity, budget_tokens)`** to read it back
+> budget-packed, **`entity(name)`** for a zero-LLM card, **`synthesize(question)`**
+> for the expensive cross-page answer, **`forget(id)`** to expire a fact. Use
+> `remember` instead of `extract_facts` when you already have ONE formed fact;
+> `put_page` / `add_link` / `add_timeline_entry` stay the page/graph write path.
+> Fall back to the classic ops when the verbs aren't on the surface. Contract:
+> `docs/protocol/MEMORY_VERBS_v1.md`.
+
 ## Contract
 
 This skill guarantees:
@@ -56,8 +67,8 @@ broken brain. See `skills/conventions/quality.md` for format.
 
 Before using ANY external API to research a person, company, or topic:
 
-1. `gbrain search "name"` — keyword search for existing pages
-2. `gbrain query "natural question about name"` — hybrid search for context
+1. `gbrain search "name"` — exact-token lookup for existing pages (cheap hybrid, no expansion)
+2. `gbrain query "natural question about name"` — concept/landscape questions go here FIRST (expansion recovers synonym phrasings; a nonzero `search` count is not proof of completeness)
 3. `gbrain get <slug>` — if you know the slug, read the full page
 4. Check backlinks: who references this entity?
 5. Check timeline: recent events involving this entity
@@ -153,8 +164,8 @@ the citation is `[gstack:plans/foo]`. That's the whole rule.
 
 ## Tools Used
 
-- `search` — keyword search
-- `query` — hybrid vector+keyword search
+- `search` — cheap hybrid search (vector + keyword, no expansion)
+- `query` — hybrid search + LLM multi-query expansion (concept/landscape questions)
 - `get_page` — read a brain page
 - `put_page` — create/update brain pages
 - `add_link` — cross-reference entities

@@ -44,7 +44,7 @@ export interface ServeOptions {
   // (which unconditionally attaches a 'data' listener to real
   // process.stdin and would pollute the test runner's stdin handle).
   // Defaults to the real implementation when omitted.
-  startMcpServer?: (engine: BrainEngine) => Promise<void>;
+  startMcpServer?: (engine: BrainEngine, opts?: { surface?: 'verbs' | 'full' }) => Promise<void>;
   // Test seam for the parent-process watchdog. The default
   // (`readLiveParentPid`) reads the live kernel PPID via `ps` on POSIX
   // because `process.ppid` is captured at process creation and does not
@@ -150,6 +150,13 @@ export async function runServe(
   // that used `gbrain auth create` keep working unchanged).
   const isHttp = args.includes('--http');
 
+  // MEMORY_VERBS v1: tool-surface mode. Flag > config `mcp_surface` > 'full'.
+  // 'verbs' exposes exactly the five protocol verbs (the quickstart surface);
+  // 'full' (default) keeps every operation — existing installs see no change.
+  const { parseSurfaceFlag, resolveSurface } = await import('../mcp/surface.ts');
+  const { loadConfig } = await import('../core/config.ts');
+  const surface = resolveSurface(parseSurfaceFlag(args), loadConfig());
+
   if (isHttp) {
     const portIdx = args.indexOf('--port');
     const port = portIdx >= 0 ? parseInt(args[portIdx + 1]) || 3131 : 3131;
@@ -196,7 +203,7 @@ export async function runServe(
     const printAdminToken = args.includes('--print-admin-token');
 
     const { runServeHttp } = await import('./serve-http.ts');
-    await runServeHttp(engine, { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams, bind, suppressBootstrapToken, printAdminToken });
+    await runServeHttp(engine, { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams, bind, suppressBootstrapToken, printAdminToken, surface });
 
     await finishHttpServe(engine, opts);
     return;
@@ -207,7 +214,11 @@ export async function runServe(
   // trigger graceful release of the PGLite write lock held by `engine`.
   // The HTTP / OAuth path above has its own lifecycle in serve-http.ts
   // and is intentionally NOT wired into this stdio plumbing.
-  console.error('Starting GBrain MCP server (stdio)...');
+  console.error(
+    surface === 'verbs'
+      ? 'Starting GBrain MCP server (stdio) — serving 5 memory verbs (MEMORY_VERBS v1)...'
+      : 'Starting GBrain MCP server (stdio)...',
+  );
 
   installStdioLifecycle(engine, args, opts);
 
@@ -245,7 +256,7 @@ export async function runServe(
   }
 
   try {
-    await start(engine);
+    await start(engine, { surface });
   } finally {
     if (bootDeadline) clearTimeout(bootDeadline);
   }

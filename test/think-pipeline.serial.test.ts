@@ -423,15 +423,17 @@ describe('runThink + persistSynthesis — #1698 never persist empty', () => {
     expect(full.synthesisOk).toBe(true);
   });
 
-  test('opts.stubResponse path never made a real LLM call — usage stays undefined', async () => {
+  test('opts.stubResponse path never made a real LLM call — usage stays null', async () => {
     // Same distinction synthesisOk already makes: opts.stubResponse bypasses
     // client.create() entirely, so there is no real usage to report. cost_usd
     // must not be computed (and should render as null in --json) when this
-    // happens, since there is nothing to compute it from.
+    // happens, since there is nothing to compute it from. Since the [E2]
+    // MEMORY_VERBS usage-accounting change, "no LLM ran" is spelled `null`
+    // (the frozen cost-block contract), not `undefined`.
     const result = await runThink(engine, {
       question: 'stub no usage', stubResponse: { answer: 'has content', citations: [], gaps: [] },
     });
-    expect(result.usage).toBeUndefined();
+    expect(result.usage).toBeNull();
   });
 
   test('pre-existing ThinkResult literal without synthesisOk still persists (back-compat)', async () => {

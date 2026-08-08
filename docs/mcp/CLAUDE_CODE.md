@@ -8,11 +8,17 @@
 ## Option 1: Local (recommended, zero server needed)
 
 ```bash
-claude mcp add gbrain -- gbrain serve
+claude mcp add gbrain -- gbrain serve --surface verbs
 ```
 
 That's it. Claude Code spawns `gbrain serve` as a stdio subprocess. No server, no
 tunnel, no token needed. Works with both PGLite and Supabase engines.
+
+`--surface verbs` exposes the five-verb memory protocol (`recall`, `remember`,
+`entity`, `synthesize`, `forget` — [MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)),
+the surface built for agents and quickstarts. Drop the flag for the full
+operation catalog (`get_page`, `put_page`, `search`, graph ops, …) — `full` is
+the default and what existing installs already run.
 
 ## Option 2: Remote, one command (fastest from a bearer token)
 
@@ -79,8 +85,10 @@ You should see results from your GBrain knowledge base.
 > **`list_skills` returns nothing?** Skill discovery is gated by `mcp.publish_skills`
 > on the host. New brains from `gbrain init` default it ON; brains upgraded from an
 > older release stay OFF until you opt in. Enable it on the host with
-> `gbrain config set mcp.publish_skills true`. The core tools (search, query,
-> get_page, put_page, think, find_experts) work regardless. Note: `capture` is a
+> `gbrain config set mcp.publish_skills true`. Skill discovery and the core tools
+> named here (search, query, get_page, put_page, think, find_experts) are
+> full-surface — on `--surface verbs` the agent sees only the five memory verbs,
+> and `list_skills` isn't on the surface at all. Note: `capture` is a
 > CLI-only command, not an MCP tool — the agent writes over MCP with `put_page`.
 
 ## Remove

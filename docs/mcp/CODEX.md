@@ -68,4 +68,6 @@ codex mcp remove gbrain
 - The token is a long-lived, full-access secret. Keep `GBRAIN_REMOTE_TOKEN` out of
   version control and prefer a scoped token if your host supports one.
 - Local stdio also works if you run the brain on the same machine:
-  `codex mcp add gbrain -- gbrain serve`.
+  `codex mcp add gbrain -- gbrain serve --surface verbs` — the five-verb memory
+  protocol ([MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)); drop the flag
+  for the full operation catalog.
