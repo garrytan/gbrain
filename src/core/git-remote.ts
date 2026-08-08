@@ -6,8 +6,9 @@
  * IPv6 loopback, IPv4-mapped IPv6, metadata hostnames, hex/octal bypass,
  * and CGNAT 100.64/10).
  *
- * cloneRepo and pullRepo both spread GIT_SSRF_FLAGS so a future flag added
- * to one path lands on both — single source of truth.
+ * Clone/remote-discovery paths use the strict GIT_SSRF_FLAGS constant.
+ * Existing-checkout operations share a runtime builder that keeps the same
+ * defaults while honoring the explicit local-file transport escape hatch.
  *
  * Tailscale 100.64/10 trips the integrations.ts allowlist (CGNAT line in
  * url-safety.ts isPrivateIpv4). For self-hosted internal git servers
@@ -46,6 +47,19 @@ export const GIT_SSRF_FLAGS = [
   '-c', 'protocol.file.allow=never',
   '-c', 'protocol.ext.allow=never',
 ] as const;
+
+/**
+ * Runtime flags for operations on an existing checkout. File transport stays
+ * denied unless the operator explicitly enables the documented escape hatch.
+ */
+function existingRepoSsrfFlags(): string[] {
+  const fileAllow = process.env.GBRAIN_GIT_ALLOW_FILE_TRANSPORT === '1' ? 'always' : 'never';
+  return [
+    '-c', 'http.followRedirects=false',
+    '-c', `protocol.file.allow=${fileAllow}`,
+    '-c', 'protocol.ext.allow=never',
+  ];
+}
 
 /**
  * Subcommand-level flags. Spread AFTER the subcommand verb (clone/pull).
@@ -214,9 +228,9 @@ export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): v
   }
 }
 
-/** Pull a repo with --ff-only and the same SSRF-defensive flags as cloneRepo. */
+/** Pull an existing repo with --ff-only and SSRF-defensive runtime flags. */
 export function pullRepo(repoPath: string, opts: { timeoutMs?: number } = {}): void {
-  const args: string[] = ['-C', repoPath, ...GIT_SSRF_FLAGS, 'pull', ...GIT_SSRF_SUBCOMMAND_FLAGS, '--ff-only'];
+  const args: string[] = ['-C', repoPath, ...existingRepoSsrfFlags(), 'pull', ...GIT_SSRF_SUBCOMMAND_FLAGS, '--ff-only'];
   try {
     execFileSync('git', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -234,14 +248,14 @@ export function pullRepo(repoPath: string, opts: { timeoutMs?: number } = {}): v
 
 /**
  * Fetch a single remote branch with the SAME SSRF-defensive flags + no-prompt
- * env as cloneRepo/pullRepo (GIT_SSRF_FLAGS, --no-recurse-submodules,
+ * env as cloneRepo/pullRepo (SSRF config flags, --no-recurse-submodules,
  * GIT_TERMINAL_PROMPT=0). Used by the sync cost-estimator's fetch-first path
  * (#2139) so a cost preview / dry-run never hits a remote through a
  * less-protected route than real sync. Throws GitOperationError on failure;
  * the estimator catches and falls back to local HEAD.
  */
 export function fetchRemote(repoPath: string, branch: string, opts: { timeoutMs?: number } = {}): void {
-  const args: string[] = ['-C', repoPath, ...GIT_SSRF_FLAGS, 'fetch', ...GIT_SSRF_SUBCOMMAND_FLAGS, 'origin', branch];
+  const args: string[] = ['-C', repoPath, ...existingRepoSsrfFlags(), 'fetch', ...GIT_SSRF_SUBCOMMAND_FLAGS, 'origin', branch];
   try {
     execFileSync('git', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -383,24 +397,8 @@ export function hasTrackedContent(path: string): boolean {
 // ── Durability helpers (v0.42.44) ───────────────────────────────────────────
 // Used by the brain-repo durability feature (`gbrain sources harden/pull`) and
 // the DB-free pull cron. These are the auth-capable, rebase-aware counterparts
-// to the strict read-only `pullRepo` (which stays `--ff-only` for `sync.ts`).
-
-/**
- * Global SSRF flags for the durability fetch/pull/push paths. Identical to
- * GIT_SSRF_FLAGS except `protocol.file.allow` honors the env escape hatch
- * `GBRAIN_GIT_ALLOW_FILE_TRANSPORT=1` (mirrors GBRAIN_ALLOW_PRIVATE_REMOTES) so
- * self-hosted local-filesystem remotes — and the test suite — can use the file
- * transport. Default stays `never`. These ops act on an ALREADY-validated origin
- * (set + checked at clone time); `http.followRedirects=false` is the live guard.
- */
-function durableSsrfFlags(): string[] {
-  const fileAllow = process.env.GBRAIN_GIT_ALLOW_FILE_TRANSPORT === '1' ? 'always' : 'never';
-  return [
-    '-c', 'http.followRedirects=false',
-    '-c', `protocol.file.allow=${fileAllow}`,
-    '-c', 'protocol.ext.allow=never',
-  ];
-}
+// to the read-only `pullRepo` (which stays `--ff-only` for `sync.ts`). All
+// existing-checkout paths share the explicit local-file transport escape hatch.
 
 /** Run a git subcommand, returning trimmed stdout. Throws GitOperationError. */
 function runGit(
@@ -496,7 +494,7 @@ export function divergenceSafePull(
   if (isWorkingTreeDirty(repoPath)) return { status: 'skipped_dirty' };
 
   const before = runGit(repoPath, [], 'rev-parse', ['HEAD'], 'pull', { timeoutMs: 10_000 });
-  const ssrf = durableSsrfFlags();
+  const ssrf = existingRepoSsrfFlags();
 
   runGit(repoPath, ssrf, 'fetch', [...GIT_SSRF_SUBCOMMAND_FLAGS, 'origin', branch], 'pull', {
     timeoutMs, env: { ...GIT_ENV_AUTH },
@@ -552,7 +550,7 @@ export function pushProbe(
   try {
     execFileSync(
       'git',
-      ['-C', repoPath, ...durableSsrfFlags(), 'push', ...GIT_SSRF_SUBCOMMAND_FLAGS, '--dry-run', 'origin', `HEAD:${branch}`],
+      ['-C', repoPath, ...existingRepoSsrfFlags(), 'push', ...GIT_SSRF_SUBCOMMAND_FLAGS, '--dry-run', 'origin', `HEAD:${branch}`],
       { stdio: ['ignore', 'pipe', 'pipe'], timeout: opts.timeoutMs ?? 60_000, env: { ...process.env, ...GIT_ENV_AUTH } },
     );
     return { ok: true };

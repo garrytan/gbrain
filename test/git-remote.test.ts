@@ -319,10 +319,10 @@ describe('cloneRepo', () => {
 // ---------------------------------------------------------------------------
 
 describe('pullRepo', () => {
-  test('happy path: invokes git -C path with GIT_SSRF_FLAGS + pull --ff-only', async () => {
+  test('default path keeps file transport denied and uses pull --ff-only', async () => {
     const repo = join(FAKE_GIT_DIR, 'pull-target');
     mkdirSync(repo, { recursive: true });
-    await withEnv({ PATH: fakePath() }, async () => {
+    await withEnv({ PATH: fakePath(), GBRAIN_GIT_ALLOW_FILE_TRANSPORT: undefined }, async () => {
       pullRepo(repo);
     });
     const argv = readArgvLog()[0];
@@ -338,6 +338,22 @@ describe('pullRepo', () => {
       const flagIdx = argv.indexOf(subFlag);
       expect(flagIdx).toBeGreaterThan(pullIdx);
     }
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  test('GBRAIN_GIT_ALLOW_FILE_TRANSPORT=1 enables file transport', async () => {
+    const repo = join(FAKE_GIT_DIR, 'pull-file-transport');
+    mkdirSync(repo, { recursive: true });
+    await withEnv({
+      PATH: fakePath(),
+      GBRAIN_GIT_ALLOW_FILE_TRANSPORT: '1',
+    }, async () => {
+      pullRepo(repo);
+    });
+    const argv = readArgvLog()[0];
+    expect(argv).toContain('protocol.file.allow=always');
+    expect(argv).not.toContain('protocol.file.allow=never');
+    expect(argv).toContain('protocol.ext.allow=never');
     rmSync(repo, { recursive: true, force: true });
   });
 
