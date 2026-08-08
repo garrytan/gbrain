@@ -17,6 +17,8 @@ describe('OpenRouter recipe — reranker touchpoint', () => {
     // string matching against the allowlist (no v0.31.12 extended-model bypass
     // on the rerank path), so truncating to `nvidia/.../v2` would 403.
     expect(m).toContain('nvidia/llama-nemotron-rerank-vl-1b-v2:free');
+    expect(m).toContain('voyageai/rerank-2.5-lite');
+    expect(m).toContain('voyageai/rerank-2.5');
   });
 
   test('default_model is cohere/rerank-v3.5', () => {
@@ -36,9 +38,18 @@ describe('OpenRouter recipe — reranker touchpoint', () => {
     expect(tp.default_timeout_ms).toBe(5_000);
   });
 
-  test('cost_per_1m_tokens_usd is set (pseudo-rate for per-search billing)', () => {
+  test('declares mixed billing without a misleading touchpoint token rate', () => {
     const tp = getRecipe('openrouter')!.touchpoints.reranker!;
-    expect(typeof tp.cost_per_1m_tokens_usd).toBe('number');
-    expect(tp.cost_per_1m_tokens_usd).toBeGreaterThan(0);
+    expect(tp.billing_unit).toBe('mixed');
+    expect(tp.cost_per_1m_tokens_usd).toBeUndefined();
+  });
+
+  test('declares exact per-model pricing for Voyage and the free NVIDIA route', () => {
+    const costs = getRecipe('openrouter')!.touchpoints.reranker!.model_cost_per_1m_tokens_usd;
+    expect(costs).toEqual({
+      'voyageai/rerank-2.5-lite': 0.02,
+      'voyageai/rerank-2.5': 0.05,
+      'nvidia/llama-nemotron-rerank-vl-1b-v2:free': 0,
+    });
   });
 });

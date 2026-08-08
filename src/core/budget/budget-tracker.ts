@@ -35,6 +35,7 @@ import { ANTHROPIC_PRICING, type ModelPricing } from '../anthropic-pricing.ts';
 import { canonicalLookup } from '../model-pricing.ts';
 import { EMBEDDING_PRICING, lookupEmbeddingPrice } from '../embedding-pricing.ts';
 import { splitProviderModelId } from '../model-id.ts';
+import { resolveRecipe } from '../ai/model-resolver.ts';
 import { isoWeekFilename, resolveAuditDir } from '../audit-week-file.ts';
 
 export type BudgetKind = 'chat' | 'embed' | 'rerank';
@@ -187,14 +188,10 @@ const FREE_LOCAL_CHAT_PROVIDERS: ReadonlySet<string> = new Set([
  *   - Embed: lookupEmbeddingPrice handles the provider:model form; on a miss,
  *     local-inference providers (FREE_LOCAL_EMBED_PROVIDERS) price at $0 so
  *     `--max-cost` callers don't hard-fail.
- *   - Rerank: try ANTHROPIC_PRICING (legacy path for any Claude-priced
- *     rerank); else try lookupEmbeddingPrice — paid rerank providers (e.g.
- *     ZeroEntropy's zerank-2) share the same provider:model-keyed,
- *     $/1M-token table as their embedding siblings, so it's reused here
- *     rather than duplicated into a third table; else if the provider half
- *     is in FREE_LOCAL_RERANK_PROVIDERS, return zero pricing so `--max-cost`
- *     callers don't TX2 hard-fail on local inference recipes (electricity,
- *     not tokens); else unknown.
+ *   - Rerank: resolve exact per-model pricing from the provider recipe first;
+ *     retain the embedding-table lookup for older paid recipes; local
+ *     inference is $0. A touchpoint-wide pseudo-rate is not treated as token
+ *     pricing because some providers bill per search instead.
  */
 function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
   if (kind === 'embed') {
@@ -208,7 +205,26 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
     }
     return null;
   }
-  // chat or rerank: try bare key first, then provider:model or provider/model.
+  if (kind === 'rerank') {
+    try {
+      const { parsed, recipe } = resolveRecipe(modelId);
+      const tp = recipe.touchpoints.reranker;
+      const price = tp?.model_cost_per_1m_tokens_usd?.[parsed.modelId];
+      if (typeof price === 'number' && Number.isFinite(price) && price >= 0) {
+        return { input: price, output: 0 };
+      }
+      const fallback = tp?.billing_unit === 'token'
+        ? tp.cost_per_1m_tokens_usd
+        : undefined;
+      if (typeof fallback === 'number' && Number.isFinite(fallback) && fallback >= 0) {
+        return { input: fallback, output: 0 };
+      }
+    } catch {
+      // Preserve the legacy pricing fallbacks and unknown-model behavior.
+    }
+  }
+
+  // chat or legacy rerank: try bare key first, then provider:model or provider/model.
   // v0.41.21.0: route through splitProviderModelId so slash-prefixed ids
   // (the form `--judge-model` and OpenRouter recipes emit) hit the pricing
   // table. Pre-fix, slash-form silently no_pricing-failed `--max-cost` on
@@ -220,10 +236,8 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
     const tailHit = ANTHROPIC_PRICING[modelTail];
     if (tailHit) return tailHit;
   }
-  // Paid rerank providers (e.g. ZeroEntropy's zerank-2) aren't Claude-priced,
-  // so they miss the ANTHROPIC_PRICING checks above. Reuse the embedding
-  // pricing table (issue #3223) — same provider:model key shape, same
-  // $/1M-token unit — instead of hand-copying a third pricing surface.
+  // Compatibility fallback for paid rerank models that predate recipe-driven
+  // pricing (issue #3223). New reranker pricing belongs on the recipe.
   if (kind === 'rerank') {
     const hit = lookupEmbeddingPrice(modelId);
     if (hit.kind === 'known') return { input: hit.pricePerMTok, output: 0 };
@@ -331,8 +345,13 @@ export class BudgetTracker {
         // TX2: hard-fail when a cap is set but pricing is missing — without
         // pricing we can't enforce the cap, and silently ignoring it would
         // void the contract.
+        const pricingSurface = estimate.kind === 'embed'
+          ? 'src/core/embedding-pricing.ts'
+          : estimate.kind === 'rerank'
+          ? 'the provider reranker recipe'
+          : 'src/core/anthropic-pricing.ts';
         const msg = `${this.opts.label}: no pricing entry for model "${estimate.modelId}" (kind=${estimate.kind}). ` +
-          `Add it to src/core/${estimate.kind === 'embed' ? 'embedding-pricing.ts' : 'anthropic-pricing.ts'} or drop --max-cost.`;
+          `Add it to ${pricingSurface} or drop --max-cost.`;
         this.fireExhausted();
         throw new BudgetExhausted(msg, {
           reason: 'no_pricing',

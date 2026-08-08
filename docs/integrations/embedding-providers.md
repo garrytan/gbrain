@@ -63,7 +63,7 @@ The doctor distinguishes two repair paths:
 - **Cost-sensitive, English-only**: Ollama (free, local) or Voyage (paid, best quality per dollar).
 - **Quality-first**: Voyage `voyage-4-large` (1024-2048 dims, ~3-4× more dense tokens than OpenAI tiktoken).
 - **Code-heavy brain (gstack per-worktree, source repos)**: Voyage `voyage-code-3` (1024 default; supports 256/512/1024/2048). Tuned on programming languages. Voyage publishes head-to-head numbers showing it outperforms their general flagships on code retrieval ([voyageai.com/blog](https://voyageai.com/blog)). For gstack's per-worktree pglite-backed code brain, this is the right default — see Topology 3 in `docs/architecture/topologies.md`.
-- **Reranking pair**: ZeroEntropy `zerank-2` is the hosted default in `tokenmax` mode (see [`docs/ai-providers/zeroentropy.md`](../ai-providers/zeroentropy.md)). Voyage `rerank-2.5` pairs cleanly with Voyage embeddings.
+- **Reranking pair**: ZeroEntropy `zerank-2` is the bundled hosted default (see [`docs/ai-providers/zeroentropy.md`](../ai-providers/zeroentropy.md)). With an OpenRouter key, choose Voyage `rerank-2.5-lite` for the lower-cost default ($0.02/M input tokens) or `rerank-2.5` for Voyage's quality-first model ($0.05/M input tokens).
 - **Local reranking (no API spend)**: `llama-server-reranker` recipe (v0.40.6.1) — point gbrain at your own `llama-server --reranking` instance running Qwen3-Reranker or self-hosted ZeroEntropy weights. Same `gateway.rerank()` seam, $0 per call. Walkthrough in [`docs/ai-providers/llama-server-reranker.md`](../ai-providers/llama-server-reranker.md).
 - **One key for many hosted models**: OpenRouter. Set `OPENROUTER_API_KEY` and use `openrouter:<provider>/<model>` for chat against GPT-5.2, Claude 4.x, Gemini 3, DeepSeek, and dozens more without juggling per-provider keys. Embedding catalog includes OpenAI, Google, Qwen, BGE-M3.
 - **Enterprise compliance**: Azure OpenAI (data residency + private endpoints) or self-hosted via llama-server / Ollama.
@@ -108,6 +108,16 @@ Single OpenAI-compatible API for fan-out to OpenAI, Anthropic, Google, DeepSeek,
 **Embedding**: `openai/text-embedding-3-small` (1536d default, Matryoshka shrink to 512/768/1024). OR's embedding catalog also includes `text-embedding-3-large`, `google/gemini-embedding-2-preview`, `qwen/qwen3-embedding-8b`, `bge-m3` — opt in via `--embedding-model openrouter:<id>`. Pricing matches the upstream provider (OR adds a small markup).
 
 **Chat**: every chat model OR proxies works through `/v1/chat/completions`. The recipe lists 8 curated entry points (GPT-5.2 family, Claude 4.5/4.6/4.7, Gemini 3 Flash Preview, DeepSeek); any other OR catalog ID also works. Tool-calling envelope is supported by the OR endpoint, but per-model capability varies — check https://openrouter.ai/models before counting on tools for a specific slug.
+
+**Reranking**: GBrain's strict reranker allowlist includes Cohere Rerank 3.5 / 4, NVIDIA Nemotron's free route, and Voyage `rerank-2.5-lite` / `rerank-2.5`. OpenRouter normalizes those models to GBrain's existing `/rerank` request and response contract, so no separate Voyage key is required. To opt into the lower-cost Voyage model:
+
+```bash
+gbrain config set search.reranker.model openrouter:voyageai/rerank-2.5-lite
+gbrain config set search.reranker.enabled true
+gbrain models doctor --json
+```
+
+Use `openrouter:voyageai/rerank-2.5` in the first command for the quality-first model. Pricing is metered from the selected model, and Voyage's query-per-document billing formula is reflected in the budget estimate.
 
 **Optional env**:
 - `OPENROUTER_BASE_URL` — point at a self-hosted OR-compatible proxy.

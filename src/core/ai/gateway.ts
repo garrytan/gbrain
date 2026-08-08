@@ -3914,6 +3914,47 @@ export interface RerankResult {
 }
 
 /**
+ * Estimate provider-billed reranker input tokens from the request payload.
+ * Voyage bills the query once per document; the other currently supported
+ * routes use the gateway's historical query-once estimate.
+ *
+ * @internal exported for deterministic budget tests.
+ */
+export function estimateRerankInputTokens(
+  input: Pick<RerankInput, 'query' | 'documents'> & { model: string },
+): number {
+  let voyageThroughOpenRouter = false;
+  try {
+    const parsed = parseModelId(input.model);
+    voyageThroughOpenRouter = parsed.providerId === 'openrouter'
+      && parsed.modelId.startsWith('voyageai/');
+  } catch {
+    // Keep estimation side-effect free for invalid ids; resolveRecipe below
+    // owns the actionable model-validation error.
+  }
+  const queryCopies = voyageThroughOpenRouter ? input.documents.length : 1;
+  // Voyage's established dense-input guard uses one char/token so reserves
+  // stay conservative for CJK, JSON, and base64. Provider usage replaces this
+  // estimate after a successful response.
+  const charsPerToken = voyageThroughOpenRouter ? 1 : 4;
+  const documentChars = input.documents.reduce((sum, document) => sum + document.length, 0);
+  return Math.ceil(((input.query.length * queryCopies) + documentChars) / charsPerToken);
+}
+
+/** Read authoritative reranker input usage when the provider reports it. */
+function rerankUsageTokens(payload: unknown): number | undefined {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
+  const usage = (payload as Record<string, unknown>).usage;
+  if (!usage || typeof usage !== 'object' || Array.isArray(usage)) return undefined;
+  const row = usage as Record<string, unknown>;
+  for (const key of ['total_tokens', 'prompt_tokens', 'input_tokens'] as const) {
+    const value = row[key];
+    if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return value;
+  }
+  return undefined;
+}
+
+/**
  * Test seam — same pattern as `_embedTransport` / `_chatTransport`. Tests
  * install a stub via `__setRerankTransportForTests` to exercise the call-site
  * pipeline without hitting the network. Production never reads the override.
@@ -3961,13 +4002,9 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
 
   const tracker = __budgetStore.getStore() ?? null;
   if (tracker) {
-    // Reranker pricing isn't in the canonical pricing map today — when no
-    // cap is set this fires the warn-once path; when a cap IS set TX2 hard-
-    // fails. record() below logs the actual size after success.
-    const totalChars = input.query.length + input.documents.reduce((s, d) => s + d.length, 0);
     tracker.reserve({
       modelId: modelStr,
-      estimatedInputTokens: Math.ceil(totalChars / 4),
+      estimatedInputTokens: estimateRerankInputTokens({ ...input, model: modelStr }),
       maxOutputTokens: 0,
       kind: 'rerank',
       label: 'gateway.rerank',
@@ -3993,10 +4030,9 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   const cfg = requireConfig();
   const compat = applyOpenAICompatConfig(recipe, cfg);
   // v0.40.6.1: rerank URL path is recipe-pluggable. Defaults to ZeroEntropy's
-  // legacy `/models/rerank`; openai-style providers like llama.cpp's
-  // llama-server set `/v1/rerank`. Wire shape is unchanged — any provider
-  // whose request/response shape differs from ZE/llama.cpp (e.g. Voyage with
-  // `top_k` / `data[]`) needs separate adapter hooks in a follow-up plan.
+  // legacy `/models/rerank`; openai-style providers like llama.cpp and
+  // OpenRouter set `/rerank`. Direct Voyage uses a different envelope, but
+  // OpenRouter normalizes Voyage to this existing request/response contract.
   const url = `${compat.baseURL.replace(/\/$/, '')}${tp.path ?? '/models/rerank'}`;
   let auth: { apiKey?: string; headers?: Record<string, string> };
   try {
@@ -4050,14 +4086,14 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   }
 
   let _rerankRecorded = false;
-  const _rerankRecord = (): void => {
+  const _rerankRecord = (actualInputTokens?: number): void => {
     if (!tracker || _rerankRecorded) return;
     _rerankRecorded = true;
     try {
-      const totalChars = input.query.length + input.documents.reduce((s, d) => s + d.length, 0);
       tracker.record({
         modelId: modelStr,
-        inputTokens: Math.ceil(totalChars / 4),
+        inputTokens: actualInputTokens
+          ?? estimateRerankInputTokens({ ...input, model: modelStr }),
         outputTokens: 0,
         kind: 'rerank',
         label: 'gateway.rerank',
@@ -4093,14 +4129,32 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
       throw new RerankError(msg, reason, resp.status);
     }
     const json: any = await resp.json();
+    // A successful paid request incurred cost even when its ranking payload is
+    // malformed. Bank authoritative usage before validating result rows.
+    _rerankRecord(rerankUsageTokens(json));
     if (!json || !Array.isArray(json.results)) {
       throw new RerankError('rerank: malformed response (no results array)', 'unknown');
     }
-    const mapped = json.results.map((r: any) => ({
-      index: typeof r.index === 'number' ? r.index : 0,
-      relevanceScore: typeof r.relevance_score === 'number' ? r.relevance_score : 0,
-    }));
-    _rerankRecord();
+    const seen = new Set<number>();
+    const mapped: RerankResult[] = json.results.map((row: unknown, position: number) => {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) {
+        throw new RerankError(`rerank: malformed result at position ${position}`, 'unknown');
+      }
+      const record = row as Record<string, unknown>;
+      const index = record.index;
+      const relevanceScore = record.relevance_score;
+      if (!Number.isInteger(index) || (index as number) < 0 || (index as number) >= input.documents.length) {
+        throw new RerankError(`rerank: invalid result index at position ${position}`, 'unknown');
+      }
+      if (seen.has(index as number)) {
+        throw new RerankError(`rerank: duplicate result index ${index}`, 'unknown');
+      }
+      if (typeof relevanceScore !== 'number' || !Number.isFinite(relevanceScore)) {
+        throw new RerankError(`rerank: invalid relevance score at position ${position}`, 'unknown');
+      }
+      seen.add(index as number);
+      return { index: index as number, relevanceScore };
+    }).sort((a: RerankResult, b: RerankResult) => b.relevanceScore - a.relevanceScore);
     return mapped;
   } catch (err) {
     _rerankRecord();
