@@ -53,6 +53,11 @@ gbrain reindex-search-vector --dry-run    # preview: language + row counts
 gbrain reindex-search-vector --yes        # recreate triggers + backfill
 ```
 
+The stamp survives later schema work: `initSchema()` — including the replay
+behind `gbrain init --migrate-only` on every upgrade — applies the schema
+template under the configured language, so it re-creates the trigger
+functions as they already are instead of reverting them to `english`.
+
 The command recreates both trigger functions under the new language and
 backfills every existing `pages` and `content_chunks` row in batches,
 streaming progress to stderr. It is idempotent: re-running with the same
