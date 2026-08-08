@@ -33,9 +33,12 @@ content-addressed registry as raw snapshots. PostgreSQL and PGLite remain rebuil
 | PDF | ordered text blocks | page and optional bounding box | exact PyMuPDF version plus bridge version |
 
 The HTML/PDF bridge is local-only. It invokes Python with an explicit argument vector, a minimal
-environment, a private temporary input, a 32 MiB input cap, a 64 MiB output cap, a 500-page / 50,000
-block parser cap, and a 60-second timeout. The pilot preflight records the exact Python, HTML parser,
-and PyMuPDF versions. It does not download packages or contact a network.
+environment, a private temporary input, a 32 MiB input cap, a 64 MiB stdout cap, a 64 KiB stderr
+cap, a 500-page / 50,000 block parser cap, and a 60-second timeout. Both output caps are enforced
+while the streams are consumed with fixed-capacity buffers; overflow terminates the parser process
+group and waits for pipe closure and process exit before returning an error. The pilot preflight
+records the exact Python, HTML parser, and PyMuPDF versions. It does not download packages or
+contact a network.
 
 PDF reading order remains parser-derived. Images without verified semantics, OCR-required pages,
 table-detection failures, and detected-but-unstructured tables produce blocking warnings. HTML

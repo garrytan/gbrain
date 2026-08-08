@@ -1,8 +1,10 @@
 import { lookup } from "node:dns/promises";
 import { request as httpsRequest } from "node:https";
 import { BlockList, isIP, type LookupFunction } from "node:net";
+import { performance } from "node:perf_hooks";
 
 import type { RedirectHop } from "./types.ts";
+import { canonicalizeUriForPersistence } from "./uri-persistence.ts";
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const SENSITIVE_QUERY_NAMES = new Set([
@@ -106,11 +108,17 @@ export class HttpAcquisitionError extends Error {
     super(`HTTP acquisition failed: ${input.code}`);
     this.name = "HttpAcquisitionError";
     this.code = input.code;
-    this.requested_uri = input.requested_uri;
-    this.final_uri = input.final_uri;
-    this.redirects = input.redirects.map((redirect) => ({ ...redirect }));
+    this.requested_uri = journalSafeUri(input.requested_uri);
+    this.final_uri = journalSafeUri(input.final_uri);
+    this.redirects = input.redirects.map((redirect) => ({
+      ...redirect,
+      from_uri: journalSafeUri(redirect.from_uri),
+      to_uri: journalSafeUri(redirect.to_uri),
+    }));
   }
 }
+
+class HttpDeadlineExceededError extends Error {}
 
 function normalizeMediaType(value: string | null): string | null {
   if (!value) return null;
@@ -124,14 +132,9 @@ function isSensitiveQueryParameter(value: string): boolean {
   return SENSITIVE_QUERY_NAMES.has(normalized) || /(?:token|secret|signature|password|credential)$/.test(normalized);
 }
 
-function redactUriForJournal(value: string): string {
+function journalSafeUri(value: string | URL): string {
   try {
-    const uri = new URL(value);
-    uri.username = "";
-    uri.password = "";
-    uri.search = "";
-    uri.hash = "";
-    return uri.toString();
+    return canonicalizeUriForPersistence(value);
   } catch {
     return "https://invalid.invalid/";
   }
@@ -246,6 +249,77 @@ export class BoundedHttpClient {
     });
   }
 
+  private async beforeDeadline<T>(
+    operation: Promise<T>,
+    deadline: number,
+    onTimeout?: () => void,
+  ): Promise<T> {
+    const remainingMs = deadline - performance.now();
+    if (remainingMs <= 0) {
+      void operation.catch(() => undefined);
+      onTimeout?.();
+      throw new HttpDeadlineExceededError();
+    }
+
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        reject(new HttpDeadlineExceededError());
+        onTimeout?.();
+      }, remainingMs);
+    });
+
+    try {
+      const result = await Promise.race([operation, expired]);
+      if (performance.now() >= deadline) {
+        onTimeout?.();
+        throw new HttpDeadlineExceededError();
+      }
+      return result;
+    } catch (error) {
+      // Promises expose when their settlement is observed, not when reject()
+      // was called. Enforce the caller-visible deadline at this boundary.
+      if (!(error instanceof HttpDeadlineExceededError) && performance.now() >= deadline) {
+        onTimeout?.();
+        throw new HttpDeadlineExceededError();
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private discardResponse(response: Response, abortTransport: () => void): void {
+    // Transport abort is the resource-closure primitive. Body cancellation is
+    // best-effort and must never delay or replace the terminal acquisition error.
+    try {
+      abortTransport();
+    } catch {
+      // Continue with body cancellation even if a custom transport abort hook fails.
+    }
+    try {
+      void response.body?.cancel().catch(() => undefined);
+    } catch {
+      // A non-conforming Response may throw synchronously from cancel().
+    }
+  }
+
+  private discardReader(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    abortTransport: () => void,
+  ): void {
+    try {
+      abortTransport();
+    } catch {
+      // Continue with reader cancellation even if a custom transport abort hook fails.
+    }
+    try {
+      void reader.cancel().catch(() => undefined);
+    } catch {
+      // A non-conforming reader may throw synchronously from cancel().
+    }
+  }
+
   private normalizeUri(
     value: string | URL,
     requestedUri: string,
@@ -276,12 +350,16 @@ export class BoundedHttpClient {
     uri: URL,
     requestedUri: string,
     redirects: readonly RedirectHop[],
+    deadline: number,
   ): Promise<string> {
     const directFamily = isIP(uri.hostname);
     let addresses: readonly string[];
     try {
-      addresses = directFamily > 0 ? [uri.hostname] : await this.resolveHost(uri.hostname);
-    } catch {
+      addresses = directFamily > 0
+        ? await this.beforeDeadline(Promise.resolve([uri.hostname]), deadline)
+        : await this.beforeDeadline(this.resolveHost(uri.hostname), deadline);
+    } catch (error) {
+      if (error instanceof HttpDeadlineExceededError) throw error;
       throw this.error("dns_resolution_failed", requestedUri, uri.toString(), redirects);
     }
     if (addresses.length === 0) throw this.error("dns_no_addresses", requestedUri, uri.toString(), redirects);
@@ -297,82 +375,134 @@ export class BoundedHttpClient {
     requestedUri: string,
     currentUri: string,
     redirects: readonly RedirectHop[],
+    deadline: number,
+    abortTransport: () => void,
   ): Promise<Buffer> {
     const rawLength = response.headers.get("content-length");
     if (rawLength !== null) {
-      if (!/^\d+$/.test(rawLength)) throw this.error("invalid_content_length", requestedUri, currentUri, redirects);
-      if (Number(rawLength) > maxBytes) throw this.error("response_too_large", requestedUri, currentUri, redirects);
+      if (!/^\d+$/.test(rawLength)) {
+        this.discardResponse(response, abortTransport);
+        throw this.error("invalid_content_length", requestedUri, currentUri, redirects);
+      }
+      if (Number(rawLength) > maxBytes) {
+        this.discardResponse(response, abortTransport);
+        throw this.error("response_too_large", requestedUri, currentUri, redirects);
+      }
     }
-    if (!response.body) throw this.error("missing_response_body", requestedUri, currentUri, redirects);
+    if (!response.body) {
+      this.discardResponse(response, abortTransport);
+      throw this.error("missing_response_body", requestedUri, currentUri, redirects);
+    }
 
     const chunks: Uint8Array[] = [];
     let size = 0;
-    const reader = response.body.getReader();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > maxBytes) {
-        await reader.cancel();
-        throw this.error("response_too_large", requestedUri, currentUri, redirects);
-      }
-      chunks.push(value);
+    let reader: ReadableStreamDefaultReader<Uint8Array>;
+    try {
+      reader = response.body.getReader();
+    } catch (error) {
+      this.discardResponse(response, abortTransport);
+      throw error;
     }
-    return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), size);
+    let discarded = false;
+    const discardReader = () => {
+      if (discarded) return;
+      discarded = true;
+      this.discardReader(reader, abortTransport);
+    };
+    try {
+      while (true) {
+        const readResult = await this.beforeDeadline(reader.read(), deadline, discardReader);
+        const { done, value } = readResult;
+        if (done) break;
+        size += value.byteLength;
+        if (size > maxBytes) {
+          throw this.error("response_too_large", requestedUri, currentUri, redirects);
+        }
+        chunks.push(value);
+      }
+      return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), size);
+    } catch (error) {
+      discardReader();
+      throw error;
+    }
   }
 
   async fetch(uri: string, options: HttpFetchOptions = {}): Promise<HttpAcquisitionResult> {
+    const deadline = performance.now() + this.timeoutMs;
     const startedAt = this.clock().toISOString();
     const maxBytes = options.max_bytes === undefined
       ? this.maxBytes
       : positiveInteger(options.max_bytes, "max_bytes", this.maxBytes);
     const redirects: RedirectHop[] = [];
-    const journalSafeInitialUri = redactUriForJournal(uri);
+    const journalSafeInitialUri = journalSafeUri(uri);
     const initial = this.normalizeUri(uri, journalSafeInitialUri, journalSafeInitialUri, redirects);
-    const requestedUri = initial.toString();
+    const requestedUri = journalSafeUri(initial);
     let current = initial;
 
     while (true) {
-      const pinnedAddress = await this.resolvePublicAddress(current, requestedUri, redirects);
-      const currentUri = current.toString();
+      const currentUri = journalSafeUri(current);
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
       try {
-        const response = await this.fetchImpl(current, {
-          method: "GET",
-          redirect: "manual",
-          signal: controller.signal,
-          headers: {
-            accept: "application/pdf,text/html,application/xhtml+xml,text/plain;q=0.8,*/*;q=0.1",
-            "user-agent": this.userAgent,
-          },
-        }, pinnedAddress);
+        const pinnedAddress = await this.resolvePublicAddress(current, requestedUri, redirects, deadline);
+        const response = await this.beforeDeadline(
+          this.fetchImpl(current, {
+            method: "GET",
+            redirect: "manual",
+            signal: controller.signal,
+            headers: {
+              accept: "application/pdf,text/html,application/xhtml+xml,text/plain;q=0.8,*/*;q=0.1",
+              "user-agent": this.userAgent,
+            },
+          }, pinnedAddress),
+          deadline,
+          () => controller.abort(),
+        );
 
         if (REDIRECT_STATUSES.has(response.status)) {
-          if (redirects.length >= this.maxRedirects) {
-            throw this.error("too_many_redirects", requestedUri, currentUri, redirects);
-          }
-          const location = response.headers.get("location");
-          if (!location) throw this.error("redirect_missing_location", requestedUri, currentUri, redirects);
-          let candidate: URL;
+          let next: URL;
           try {
-            candidate = new URL(location, current);
-          } catch {
-            throw this.error("invalid_redirect_uri", requestedUri, currentUri, redirects);
+            if (redirects.length >= this.maxRedirects) {
+              throw this.error("too_many_redirects", requestedUri, currentUri, redirects);
+            }
+            const location = response.headers.get("location");
+            if (!location) throw this.error("redirect_missing_location", requestedUri, currentUri, redirects);
+            let candidate: URL;
+            try {
+              candidate = new URL(location, current);
+            } catch {
+              throw this.error("invalid_redirect_uri", requestedUri, currentUri, redirects);
+            }
+            next = this.normalizeUri(candidate, requestedUri, currentUri, redirects);
+          } catch (error) {
+            this.discardResponse(response, () => controller.abort());
+            throw error;
           }
-          const next = this.normalizeUri(candidate, requestedUri, currentUri, redirects);
-          redirects.push({ from_uri: currentUri, to_uri: next.toString(), status_code: response.status });
-          await response.body?.cancel();
+          redirects.push({ from_uri: currentUri, to_uri: journalSafeUri(next), status_code: response.status });
+          if (response.body) {
+            await this.beforeDeadline(response.body.cancel(), deadline, () => controller.abort());
+          }
           current = next;
           continue;
         }
 
         if (response.status < 200 || response.status >= 300) {
+          this.discardResponse(response, () => controller.abort());
           throw this.error(`http_status_${response.status}`, requestedUri, currentUri, redirects);
         }
         const mediaType = normalizeMediaType(response.headers.get("content-type"));
-        if (!mediaType) throw this.error("missing_or_invalid_content_type", requestedUri, currentUri, redirects);
-        const content = await this.readBody(response, maxBytes, requestedUri, currentUri, redirects);
+        if (!mediaType) {
+          this.discardResponse(response, () => controller.abort());
+          throw this.error("missing_or_invalid_content_type", requestedUri, currentUri, redirects);
+        }
+        const content = await this.readBody(
+          response,
+          maxBytes,
+          requestedUri,
+          currentUri,
+          redirects,
+          deadline,
+          () => controller.abort(),
+        );
         return {
           content,
           requested_uri: requestedUri,
@@ -384,10 +514,12 @@ export class BoundedHttpClient {
         };
       } catch (error) {
         if (error instanceof HttpAcquisitionError) throw error;
-        if (controller.signal.aborted) throw this.error("timeout", requestedUri, currentUri, redirects);
+        const timedOut = error instanceof HttpDeadlineExceededError;
+        controller.abort();
+        if (timedOut) {
+          throw this.error("timeout", requestedUri, currentUri, redirects);
+        }
         throw this.error("network_error", requestedUri, currentUri, redirects);
-      } finally {
-        clearTimeout(timeout);
       }
     }
   }

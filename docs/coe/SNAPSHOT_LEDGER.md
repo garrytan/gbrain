@@ -60,6 +60,9 @@ store.
 
 - HTTPS and exact host allowlist only;
 - no URI credentials, sensitive query parameters, or non-default ports;
+- transport query parameters are never copied wholesale into errors or acquisition records;
+  persisted URIs retain at most one `recursive=0|1`, and only on the
+  `https://api.github.com/repos/.../.../git/trees/...` endpoint;
 - every redirect is handled manually, revalidated, and capped;
 - DNS answers containing loopback, private, link-local, documentation, multicast, or reserved
   addresses are rejected;

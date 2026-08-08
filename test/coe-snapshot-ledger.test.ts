@@ -183,6 +183,55 @@ describe("CoE immutable snapshot ledger", () => {
     expect(projection.acquisitions.get(result.event_id)?.outcome).toBe("failed");
   });
 
+  test("malformed acquisition URI errors never echo rejected values", async () => {
+    const rejectedValue = "not-a-uri?opaque=malformed-secret";
+    const failure = await ledger.recordFailure({
+      source: exampleSource(),
+      requested_uri: rejectedValue,
+      acquisition_method: "http",
+      error_code: "invalid_uri",
+    }).catch((error) => error);
+
+    expect(failure).toMatchObject({ code: "invalid_contract" });
+    expect(String(failure)).not.toContain(rejectedValue);
+    expect(String(failure)).not.toContain("malformed-secret");
+  });
+
+  test("canonicalizes query parameters before every journal and projection write", async () => {
+    const result = await ledger.recordFailure({
+      source: exampleSource(),
+      requested_uri: "https://api.github.com/repos/acme/example/git/trees/start?recursive=1&access_token=known-secret&opaque=unknown-secret",
+      final_uri: "https://api.github.com/repos/acme/example/git/trees/final?recursive=0&signature=known-redirect-secret&trace=unknown-redirect-secret",
+      acquisition_method: "http",
+      error_code: "http_status_503",
+      redirects: [{
+        from_uri: "https://api.github.com/repos/acme/example/git/trees/start?recursive=1&access_token=known-secret&opaque=unknown-secret",
+        to_uri: "https://api.github.com/repos/acme/example/git/trees/final?recursive=0&signature=known-redirect-secret&trace=unknown-redirect-secret",
+        status_code: 302,
+      }],
+    });
+
+    expect(projection.acquisitions.get(result.event_id)).toMatchObject({
+      requested_uri: "https://api.github.com/repos/acme/example/git/trees/start?recursive=1",
+      final_uri: "https://api.github.com/repos/acme/example/git/trees/final?recursive=0",
+      redirects: [{
+        from_uri: "https://api.github.com/repos/acme/example/git/trees/start?recursive=1",
+        to_uri: "https://api.github.com/repos/acme/example/git/trees/final?recursive=0",
+        status_code: 302,
+      }],
+    });
+
+    const persisted = await Promise.all(
+      (await listFiles(join(root, "journal", result.event_id)))
+        .map((name) => Bun.file(join(root, "journal", result.event_id, name)).text()),
+    );
+    const serialized = persisted.join("\n");
+    expect(serialized).not.toContain("known-secret");
+    expect(serialized).not.toContain("unknown-secret");
+    expect(serialized).not.toContain("known-redirect-secret");
+    expect(serialized).not.toContain("unknown-redirect-secret");
+  });
+
   test("empty or MIME-incoherent bytes are preserved but quarantined", async () => {
     const empty = await ledger.acquire(acquireInput(""));
     const mismatched = await ledger.acquire({
@@ -408,12 +457,7 @@ describe("CoE immutable snapshot ledger", () => {
   });
 
   test("an old lock is never stolen automatically", async () => {
-    const StoreWithTestTimeout = ContentAddressedStore as unknown as new (
-      root: string,
-      nonce: () => string,
-      options: { lock_timeout_ms: number },
-    ) => ContentAddressedStore;
-    const store = new StoreWithTestTimeout(root, () => crypto.randomUUID(), { lock_timeout_ms: 20 });
+    const store = new ContentAddressedStore(root, () => crypto.randomUUID(), { lock_timeout_ms: 20 });
     await store.listKeys("locks");
     const lockName = "a".repeat(64);
     const lockPath = join(root, "locks", `${lockName}.lock`);
@@ -607,5 +651,45 @@ describe("CoE snapshot SQL projection on PGLite", () => {
       ...retraction,
       actor: { actor_type: "human", actor_id: "different-reviewer" },
     })).rejects.toMatchObject({ code: "id_mismatch" });
+  });
+
+  test("projects canonicalized URIs into SQL columns and record_json", async () => {
+    const result = await ledger.recordFailure({
+      source: exampleSource(),
+      requested_uri: "https://api.github.com/repos/acme/example/git/trees/start?recursive=1&opaque=sql-request-secret",
+      final_uri: "https://api.github.com/repos/acme/example/git/trees/final?recursive=0&signature=sql-final-secret",
+      acquisition_method: "http",
+      error_code: "http_status_503",
+      redirects: [{
+        from_uri: "https://api.github.com/repos/acme/example/git/trees/start?recursive=1&opaque=sql-request-secret",
+        to_uri: "https://api.github.com/repos/acme/example/git/trees/final?recursive=0&signature=sql-final-secret",
+        status_code: 302,
+      }],
+    });
+
+    const acquisitions = await engine.executeRaw<{
+      requested_uri: string;
+      final_uri: string;
+      record_json: string;
+    }>(
+      "SELECT requested_uri, final_uri, record_json::text AS record_json FROM coe_acquisitions WHERE event_id = $1",
+      [result.event_id],
+    );
+    expect(acquisitions).toHaveLength(1);
+    expect(acquisitions[0]).toMatchObject({
+      requested_uri: "https://api.github.com/repos/acme/example/git/trees/start?recursive=1",
+      final_uri: "https://api.github.com/repos/acme/example/git/trees/final?recursive=0",
+    });
+    expect(acquisitions[0]!.record_json).not.toContain("sql-request-secret");
+    expect(acquisitions[0]!.record_json).not.toContain("sql-final-secret");
+
+    const redirects = await engine.executeRaw<{ from_uri: string; to_uri: string }>(
+      "SELECT from_uri, to_uri FROM coe_acquisition_redirects WHERE event_id = $1",
+      [result.event_id],
+    );
+    expect(redirects).toEqual([{
+      from_uri: "https://api.github.com/repos/acme/example/git/trees/start?recursive=1",
+      to_uri: "https://api.github.com/repos/acme/example/git/trees/final?recursive=0",
+    }]);
   });
 });
