@@ -334,6 +334,12 @@ export interface StaleTakeRow {
   claim: string;
 }
 
+/** Vector write for an existing take row. */
+export interface TakeEmbeddingInput {
+  take_id: number;
+  embedding: Float32Array;
+}
+
 /** Resolution metadata for resolveTake. */
 export interface TakeResolution {
   /**
@@ -1529,6 +1535,9 @@ export interface BrainEngine {
    * for parser validation upstream.
    */
   addTakesBatch(rows: TakeBatchInput[], opts?: BatchOpts): Promise<number>;
+
+  /** Persist embeddings for active take rows; inactive rows are ignored. */
+  updateTakeEmbeddings(rows: TakeEmbeddingInput[], opts?: BatchOpts): Promise<number>;
 
   /** List takes filtered by holder/kind/active/etc. Resolves page_slug via JOIN. */
   listTakes(opts?: TakesListOpts): Promise<Take[]>;
