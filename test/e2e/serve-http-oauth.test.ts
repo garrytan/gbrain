@@ -676,6 +676,54 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   }, 15_000);
 
   // =========================================================================
+  // #2179: DCR token_ttl_seconds — wire-level clamp + echo
+  // =========================================================================
+  //
+  // The unit tests in test/oauth-dcr-ttl.test.ts prove the store-level clamp;
+  // this is the HTTP seam: the MCP SDK's /register handler STRIPS unknown
+  // body members, so the field only works if serve-http's middleware carries
+  // it through dcrRegistrationContext. A request above the default max (7d)
+  // must come back clamped, not rejected — and the minted token must match.
+
+  test('DCR /register accepts token_ttl_seconds, clamps to policy, echoes effective value (#2179)', async () => {
+    const res = await fetch(`${BASE}/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_name: 'e2e-dcr-ttl',
+        redirect_uris: ['https://example.com/cb'],
+        grant_types: ['authorization_code'],
+        token_endpoint_auth_method: 'client_secret_basic',
+        scope: 'read',
+        token_ttl_seconds: 365 * 24 * 3600, // way above the 7d default max
+      }),
+    });
+    expect(res.ok).toBe(true);
+    const body = await res.json() as any;
+    if (body.client_id) dcrClientIds.push(body.client_id);
+
+    // Echoed effective value = clamped to the default max (7 days).
+    expect(body.token_ttl_seconds).toBe(7 * 24 * 3600);
+
+    // And a client that omits the field gets no echo (backward compatible).
+    const res2 = await fetch(`${BASE}/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_name: 'e2e-dcr-no-ttl',
+        redirect_uris: ['https://example.com/cb'],
+        grant_types: ['authorization_code'],
+        token_endpoint_auth_method: 'client_secret_basic',
+        scope: 'read',
+      }),
+    });
+    expect(res2.ok).toBe(true);
+    const body2 = await res2.json() as any;
+    if (body2.client_id) dcrClientIds.push(body2.client_id);
+    expect(body2.token_ttl_seconds).toBeUndefined();
+  }, 15_000);
+
+  // =========================================================================
   // v0.26.2: revoke-client CLI subprocess test
   // =========================================================================
   //
