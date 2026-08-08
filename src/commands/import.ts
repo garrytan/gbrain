@@ -535,10 +535,15 @@ export async function runImport(
     }
   }
 
-  // Log the ingest
+  // Log the ingest. `sourceId ?? 'default'` mirrors the fallback `processFile`
+  // itself uses when calling importFile/importImageFile below — this must
+  // report the source the pages actually landed in, not the unresolved CLI
+  // arg (see #3838: pre-fix this field always read 'default' regardless of
+  // where resolveSourceWithTier actually routed the run).
   await engine.logIngest({
     source_type: 'directory',
     source_ref: dir,
+    source_id: sourceId ?? 'default',
     pages_updated: importedSlugs,
     summary: `Imported ${imported} pages, ${skipped} skipped, ${chunksCreated} chunks`,
   });
@@ -566,7 +571,13 @@ export async function runImport(
     // state as last time" from "new broken state." Source-scoped (#1939 #2).
     if (failures.length > 0) {
       const { recordFailures } = await import('../core/sync.ts');
-      recordFailures(opts.sourceId ?? 'default', failures, gitHead);
+      // #3838: `opts.sourceId` is the caller-supplied value, which stays
+      // undefined for a bare CLI invocation unless the resolver's
+      // sole_non_default tier explicitly adopted it (see the comment above
+      // this function's sourceId resolution). Use the resolved `sourceId`
+      // — the same value every importFile/importImageFile call in this run
+      // actually wrote to — so the ledger is keyed by the true source.
+      recordFailures(sourceId ?? 'default', failures, gitHead);
     }
     if (failures.length === 0) {
       await engine.setConfig('sync.last_commit', gitHead);
