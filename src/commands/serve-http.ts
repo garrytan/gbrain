@@ -2600,5 +2600,23 @@ ${bootstrapFromEnv
 `);
   });
 
-  await waitForHttpServerLifecycle(httpServer);
+  // SIGTERM/SIGHUP route through process-cleanup's pass and then
+  // `process.exit`, which skips cli.ts's finally-teardown — so on those
+  // signals the PGLite write handle was never closed. An unclosed PGLite
+  // can leave the control file pointing at a checkpoint record whose WAL
+  // page never reached disk; every later start then dies with
+  // `PANIC: could not locate a valid checkpoint record` (surfaced as the
+  // misleading WASM-init hint) and the daemon crash-loops until a human
+  // intervenes. Registering the engine here gives abnormal termination
+  // the same clean close the SIGINT path already gets via the cli
+  // teardown. Deregistered on normal return so the cli finally remains
+  // the single owner of orderly shutdown.
+  const deregisterEngineCleanup = registerCleanup('pglite-engine-disconnect', () =>
+    engine.disconnect(),
+  );
+  try {
+    await waitForHttpServerLifecycle(httpServer);
+  } finally {
+    deregisterEngineCleanup();
+  }
 }
