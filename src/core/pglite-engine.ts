@@ -286,6 +286,95 @@ async function preservingProcessExitCode<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * #2674 — the scratch-store probe, the diagnostic half of the issue.
+ *
+ * PGLite reports only `Aborted()` to JS and prints the real PANIC (e.g.
+ * `could not locate a valid checkpoint record`) to its own stderr, so from
+ * the JS-visible error alone a damaged store is indistinguishable from a
+ * broken WASM runtime. The one thing that CAN tell them apart is opening a
+ * throwaway store on the same machine:
+ *
+ *   - scratch store works → the runtime is healthy; the REAL store is damaged.
+ *   - scratch store fails too → the runtime cannot start here at all.
+ *
+ * Stderr capture: PGLite 0.4.3 exposes no print/printErr hook on
+ * `PGliteOptions` (checked: only `debug`, which still writes to the
+ * process's own stderr), so we deliberately do NOT try to intercept the
+ * PANIC text — monkey-patching process.stderr.write around an async WASM
+ * init is exactly the hack the classifier comments warn against. The
+ * probe's ok/fail outcome carries the diagnosis instead; `verdict` is
+ * populated from the JS-visible error for callers that want it.
+ *
+ * Runs the SAME code path as the real engine (PGlite.create + vector +
+ * pg_trgm) but deliberately NOT PGLiteEngine.connect(): connect wraps
+ * failures in buildPgliteInitErrorMessage, whose hint text would then
+ * pollute re-classification of the probe error.
+ *
+ * Safety: the scratch dir comes from mkdtemp under os.tmpdir() and is
+ * additionally checked against `realStorePath` (refuses any overlap in
+ * either direction) — a bug here must never touch the brain being
+ * diagnosed. The dir is removed in a finally, success or failure.
+ */
+export interface PgliteScratchProbeResult {
+  ok: boolean;
+  duration_ms: number;
+  /** JS-visible error when ok=false (the PANIC itself lands on stderr, not here). */
+  error?: string;
+  verdict?: PgliteInitFailure;
+}
+
+export async function probePgliteScratchStore(
+  realStorePath?: string,
+): Promise<PgliteScratchProbeResult> {
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join, resolve, sep } = await import('node:path');
+
+  const scratchDir = await mkdtemp(join(tmpdir(), 'gbrain-pglite-probe-'));
+  if (realStorePath) {
+    const real = resolve(realStorePath);
+    const scratch = resolve(scratchDir);
+    if (scratch === real || scratch.startsWith(real + sep) || real.startsWith(scratch + sep)) {
+      await rm(scratchDir, { recursive: true, force: true }).catch(() => {});
+      throw new Error(
+        `refusing to probe: scratch dir ${scratch} overlaps the real store ${real}`,
+      );
+    }
+  }
+
+  const started = Date.now();
+  let db: PGlite | null = null;
+  try {
+    db = await preservingProcessExitCode(() =>
+      PGlite.create({
+        dataDir: join(scratchDir, 'store'),
+        extensions: { vector, pg_trgm },
+      }),
+    );
+    await db.query(`CREATE TABLE scratch_probe (id int PRIMARY KEY, note text)`);
+    await db.query(`INSERT INTO scratch_probe VALUES (1, 'ok')`);
+    const res = await db.query<{ note: string }>(`SELECT note FROM scratch_probe WHERE id = 1`);
+    if (res.rows[0]?.note !== 'ok') {
+      throw new Error(`scratch store read-back mismatch: ${JSON.stringify(res.rows)}`);
+    }
+    return { ok: true, duration_ms: Date.now() - started };
+  } catch (err) {
+    const message = stringifyPgliteInitError(err);
+    return {
+      ok: false,
+      duration_ms: Date.now() - started,
+      error: message,
+      verdict: classifyPgliteInitError(message),
+    };
+  } finally {
+    if (db) {
+      try { await db.close(); } catch { /* probe store — nothing to save */ }
+    }
+    await rm(scratchDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 export class PGLiteEngine implements BrainEngine {
   readonly kind = 'pglite' as const;
   private _db: PGLiteDB | null = null;

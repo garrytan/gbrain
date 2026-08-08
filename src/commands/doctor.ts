@@ -639,6 +639,93 @@ export async function checkSourceConfigShape(engine: BrainEngine): Promise<Check
   }
 }
 
+/**
+ * #2674 — pglite_scratch_probe: distinguish a damaged PGLite store from a
+ * broken WASM runtime.
+ *
+ * PGLite reports only `Aborted()` to JS (the PANIC goes to its own stderr),
+ * so when init fails, the error string cannot say WHICH of the two it is.
+ * The probe initializes a throwaway store in a temp dir, round-trips a row,
+ * and reads the outcome:
+ *
+ *   - scratch works, real init failed → the runtime is fine; YOUR STORE is
+ *     damaged. Recovery: restore a backup or `gbrain reinit-pglite` (markdown
+ *     is unaffected — the DB holds derived data a re-sync rebuilds).
+ *   - scratch fails too → the runtime cannot start on this machine; report
+ *     OS + Bun versions on #223.
+ *
+ * COST GATE: a PGLite cold start is 5–20s on loaded machines, so this never
+ * runs on a routine `gbrain doctor`. It runs only when (a) the real PGLite
+ * engine actually failed to open (engine=null, not --fast, configured engine
+ * is pglite), or (b) the operator asks with `--probe-pglite`.
+ *
+ * `probeFn` is a test seam so message routing can be pinned without paying
+ * four real cold starts.
+ */
+export async function checkPgliteScratchProbe(opts: {
+  realInitFailed: boolean;
+  realStorePath?: string;
+  probeFn?: () => Promise<import('../core/pglite-engine.ts').PgliteScratchProbeResult>;
+}): Promise<Check> {
+  const name = 'pglite_scratch_probe';
+  try {
+    const probe =
+      opts.probeFn ??
+      (async () => {
+        const { probePgliteScratchStore } = await import('../core/pglite-engine.ts');
+        return probePgliteScratchStore(opts.realStorePath);
+      });
+    const r = await probe();
+    const secs = (r.duration_ms / 1000).toFixed(1);
+    if (r.ok) {
+      if (opts.realInitFailed) {
+        return {
+          name,
+          status: 'fail',
+          message:
+            `A scratch PGLite store initialized, wrote and read back fine on this machine (${secs}s), ` +
+            `so the runtime is healthy and YOUR STORE is damaged — NOT the macOS WASM bug (#223), not a lock. ` +
+            `Your markdown is unaffected: the DB holds derived data (chunks, embeddings, links, facts) that a re-sync rebuilds. ` +
+            `Recover: restore a backup of the store directory, or run \`gbrain reinit-pglite\` (wipes + re-inits + re-syncs).`,
+          details: { scratch_ok: true, duration_ms: r.duration_ms },
+        };
+      }
+      return {
+        name,
+        status: 'ok',
+        message: `PGLite runtime healthy: scratch store round-trip in ${secs}s.`,
+        details: { scratch_ok: true, duration_ms: r.duration_ms },
+      };
+    }
+    const errLine = (r.error ?? 'unknown error').split('\n')[0];
+    if (opts.realInitFailed) {
+      return {
+        name,
+        status: 'fail',
+        message:
+          `A fresh scratch PGLite store ALSO failed to start (${secs}s), so the WASM runtime cannot run ` +
+          `on this machine — your store is not necessarily damaged. Report your OS and Bun versions on ` +
+          `https://github.com/garrytan/gbrain/issues/223. Scratch error: ${errLine}`,
+        details: { scratch_ok: false, duration_ms: r.duration_ms, error: r.error, verdict: r.verdict },
+      };
+    }
+    return {
+      name,
+      status: 'warn',
+      message:
+        `Your real store opened, but a fresh scratch PGLite store failed to initialize (${secs}s) — ` +
+        `new stores can't be created on this machine. Report your OS and Bun versions on ` +
+        `https://github.com/garrytan/gbrain/issues/223. Scratch error: ${errLine}`,
+      details: { scratch_ok: false, duration_ms: r.duration_ms, error: r.error, verdict: r.verdict },
+    };
+  } catch (e) {
+    // Includes the never-touch-the-real-store guard refusal. The probe not
+    // running is a diagnostic gap, not a diagnosis — warn, don't fail.
+    const msg = e instanceof Error ? e.message : String(e);
+    return { name, status: 'warn', message: `scratch probe could not run: ${msg}` };
+  }
+}
+
 export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorReport> {
   const checks: Check[] = [];
 
@@ -658,6 +745,13 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
       status: 'fail',
       message: e instanceof Error ? e.message : String(e),
     });
+    // #2674: on PGLite, a dead connection is exactly the ambiguous case the
+    // scratch probe exists for — pay its cold start only on this failure path.
+    if (engine.kind === 'pglite') {
+      let realStorePath: string | undefined;
+      try { realStorePath = loadConfig()?.database_path; } catch { /* no config */ }
+      checks.push(await checkPgliteScratchProbe({ realInitFailed: true, realStorePath }));
+    }
     // Without a connection, every other check is meaningless — short-circuit.
     return computeDoctorReport(checks);
   }
@@ -5945,6 +6039,34 @@ export async function buildChecks(
     }
   } catch {
     // Filesystem read failure is non-fatal.
+  }
+
+  // --- PGLite scratch-store probe (#2674) ---
+  //
+  // Gated hard on cost (a PGLite cold start is 5–20s): runs ONLY when the
+  // real PGLite engine failed to open (engine=null while the config says
+  // pglite and the caller didn't choose --fast), or when explicitly asked
+  // for with --probe-pglite. A routine healthy `gbrain doctor` never pays it.
+  {
+    const probeRequested = args.includes('--probe-pglite');
+    let cfgForProbe: ReturnType<typeof loadConfig> = null;
+    try { cfgForProbe = loadConfig(); } catch { /* no config — nothing to probe */ }
+    const pgliteInitFailed = !engine && !fastMode && cfgForProbe?.engine === 'pglite';
+    if (probeRequested || pgliteInitFailed) {
+      progress.start('doctor.pglite_probe');
+      const stopHb = startHeartbeat(progress, 'pglite scratch-store probe (cold start, can take 5–20s)…');
+      try {
+        checks.push(
+          await checkPgliteScratchProbe({
+            realInitFailed: pgliteInitFailed,
+            realStorePath: cfgForProbe?.database_path,
+          }),
+        );
+      } finally {
+        stopHb();
+        progress.finish();
+      }
+    }
   }
 
   // --- DB checks (skip if --fast or no engine) ---
