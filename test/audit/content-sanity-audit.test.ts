@@ -51,6 +51,13 @@ function makeResult(opts: {
     reasons,
     reason_messages,
     shouldQuarantine,
+    quarantine_reason: junk_pattern_matches.length > 0
+      ? 'junk_pattern'
+      : literal_substring_matches.length > 0
+        ? 'literal_substring'
+        : shouldQuarantine
+          ? 'junk_pattern'
+          : null,
     shouldHardBlock: shouldQuarantine,
     shouldFlag: shouldSkipEmbed,
     flag_reason: shouldSkipEmbed ? 'oversized' : null,

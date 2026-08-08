@@ -12,6 +12,7 @@ import { tmpdir } from 'os';
 import { importFromContent } from '../src/core/import-file.ts';
 import { runQuarantine } from '../src/commands/quarantine.ts';
 import { isQuarantined, getContentFlag } from '../src/core/quarantine.ts';
+import { ContentSanityBlockError } from '../src/core/content-sanity.ts';
 
 let engine: PGLiteEngine;
 
@@ -132,6 +133,53 @@ describe('engine.getContentFlagsByPageIds', () => {
 });
 
 describe('gbrain quarantine scan', () => {
+  test('content_sanity.disabled makes dry-run and --apply both bypass the gate', async () => {
+    await withHome(async () => {
+      await engine.setConfig('content_sanity.disabled', 'true');
+      try {
+        await engine.putPage('notes/disabled-junk', {
+          type: 'note',
+          title: 'Pre-gate junk with kill-switch',
+          compiled_truth: 'Cloudflare Ray ID: disabled. This page predates the gate.',
+          timeline: '',
+        });
+
+        const dry = JSON.parse(await capture(() => runQuarantine(engine, ['scan', '--json'])));
+        expect(dry).toMatchObject({ applied: false, quarantined: 0, flagged: 0, touched: [] });
+
+        const applied = JSON.parse(await capture(() => runQuarantine(engine, ['scan', '--apply', '--no-embed', '--json'])));
+        expect(applied).toMatchObject({ applied: true, quarantined: 0, flagged: 0, touched: [] });
+
+        const page = await engine.getPage('notes/disabled-junk');
+        expect(isQuarantined(page!.frontmatter as Record<string, unknown>)).toBe(false);
+      } finally {
+        await engine.unsetConfig('content_sanity.disabled');
+      }
+    });
+  });
+
+  test('junk_disposition=reject makes dry-run and --apply both reject junk', async () => {
+    await withHome(async () => {
+      await engine.setConfig('content_sanity.junk_disposition', 'reject');
+      try {
+        await engine.putPage('notes/rejected-junk', {
+          type: 'note',
+          title: 'Pre-gate rejected junk',
+          compiled_truth: 'Cloudflare Ray ID: reject. This page predates the gate.',
+          timeline: '',
+        });
+
+        await expect(runQuarantine(engine, ['scan', '--json'])).rejects.toBeInstanceOf(ContentSanityBlockError);
+        await expect(runQuarantine(engine, ['scan', '--apply', '--no-embed', '--json'])).rejects.toBeInstanceOf(ContentSanityBlockError);
+
+        const page = await engine.getPage('notes/rejected-junk');
+        expect(isQuarantined(page!.frontmatter as Record<string, unknown>)).toBe(false);
+      } finally {
+        await engine.unsetConfig('content_sanity.junk_disposition');
+      }
+    });
+  });
+
   test('dry-run reports would-quarantine for pre-gate junk; --apply marks it', async () => {
     await withHome(async () => {
       // Seed junk that predates the gate by writing directly via putPage
@@ -173,6 +221,68 @@ describe('gbrain quarantine scan', () => {
       const out = await capture(() => runQuarantine(engine, ['scan', '--limit', '2', '--json']));
       const j = JSON.parse(out);
       expect(j.scanned).toBe(2);
+    });
+  });
+
+  test('opt-in oversize policy retroactively quarantines a pre-gate 66KB page', async () => {
+    await withHome(async () => {
+      await engine.setConfig('content_sanity.oversize_disposition', 'quarantine');
+      try {
+        await engine.putPage('notes/pre-oversize', {
+          type: 'note',
+          title: 'Pre-gate oversize',
+          compiled_truth: 'a'.repeat(66_413),
+          timeline: '',
+        });
+
+        const dry = JSON.parse(await capture(() => runQuarantine(engine, ['scan', '--json'])));
+        expect(dry.quarantined).toBe(1);
+        expect(dry.touched).toEqual([{ slug: 'notes/pre-oversize', outcome: 'quarantine' }]);
+        let page = await engine.getPage('notes/pre-oversize');
+        expect(isQuarantined(page!.frontmatter as Record<string, unknown>)).toBe(false);
+
+        const applied = JSON.parse(await capture(() => runQuarantine(engine, ['scan', '--apply', '--no-embed', '--json'])));
+        expect(applied.quarantined).toBe(1);
+        page = await engine.getPage('notes/pre-oversize');
+        const fm = page!.frontmatter as Record<string, unknown>;
+        expect(isQuarantined(fm)).toBe(true);
+        expect((fm.quarantine as Record<string, unknown>).reason).toBe('oversized');
+      } finally {
+        await engine.unsetConfig('content_sanity.oversize_disposition');
+      }
+    });
+  });
+
+  test('scan promotes an existing oversize content_flag to quarantine', async () => {
+    await withHome(async () => {
+      await engine.setConfig('content_sanity.oversize_disposition', 'quarantine');
+      try {
+        await engine.putPage('notes/pre-flagged-oversize', {
+          type: 'note',
+          title: 'Previously flagged oversize',
+          compiled_truth: 'a'.repeat(600_000),
+          timeline: '',
+          frontmatter: {
+            content_flag: {
+              reason: 'oversized',
+              detail: 'legacy soft block',
+              assessed_at: '2026-05-01T00:00:00.000Z',
+            },
+          },
+        });
+
+        const dry = JSON.parse(await capture(() => runQuarantine(engine, ['scan', '--json'])));
+        expect(dry.quarantined).toBe(1);
+
+        const applied = JSON.parse(await capture(() => runQuarantine(engine, ['scan', '--apply', '--no-embed', '--json'])));
+        expect(applied.quarantined).toBe(1);
+        const page = await engine.getPage('notes/pre-flagged-oversize');
+        const fm = page!.frontmatter as Record<string, unknown>;
+        expect(isQuarantined(fm)).toBe(true);
+        expect(getContentFlag(fm)).toBeNull();
+      } finally {
+        await engine.unsetConfig('content_sanity.oversize_disposition');
+      }
     });
   });
 });

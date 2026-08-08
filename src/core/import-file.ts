@@ -15,7 +15,11 @@ import { computeEffectiveDate } from './effective-date.ts';
 import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
 import { logSlugFallback } from './audit-slug-fallback.ts';
 import { resolveContextualRetrievalMode } from './contextual-retrieval-resolver.ts';
-import { assessContentSanity, ContentSanityBlockError } from './content-sanity.ts';
+import {
+  assessContentSanity,
+  ContentSanityBlockError,
+  resolveContentSanityDisposition,
+} from './content-sanity.ts';
 import { loadOperatorLiterals } from './content-sanity-literals.ts';
 import { logContentSanityAssessment } from './audit/content-sanity-audit.ts';
 import { isEmbedSkipped, buildEmbedSkipMarker, EMBED_SKIP_KEY } from './embed-skip.ts';
@@ -389,8 +393,10 @@ export async function importFromContent(
   //   - kill-switch active (`content_sanity.disabled === true` /
   //     `GBRAIN_NO_SANITY=1`) → assess + audit with bypass flag, emit
   //     loud stderr per offending ingest, but let everything through.
-  //   - hard-block (junk pattern OR operator literal) → THROW
-  //     ContentSanityBlockError. Existing exception flow at every
+  //   - quarantine (junk pattern, operator literal, or opt-in size policy)
+  //     → hide from retrieval; junk/literal may instead THROW when
+  //     `junk_disposition=reject`, while size-only never rejects.
+  //     A reject throws ContentSanityBlockError. Existing exception flow at every
   //     wrapper site (import.ts errors counter, put_page MCP envelope,
   //     sync.ts:929 failure record) fires correctly through this single
   //     throw point. classifyErrorCode picks up the PAGE_JUNK_PATTERN
@@ -436,23 +442,24 @@ export async function importFromContent(
       cs.disabled === true || process.env.GBRAIN_NO_SANITY === '1';
     const extra_literals =
       cs.junk_patterns_enabled !== false && !sanityDisabled ? loadOperatorLiterals() : [];
-    // Disposition for the high-confidence junk path: quarantine (hide) by
-    // default, or reject (throw → sync-failure) when the operator opts in.
-    const junkDisposition: 'quarantine' | 'reject' =
-      cs.junk_disposition === 'reject' ? 'reject' : 'quarantine';
     const sanityResult = assessContentSanity({
       compiled_truth: parsed.compiled_truth,
       timeline: parsed.timeline ?? '',
       title: parsed.title,
       bytes_warn: cs.bytes_warn,
       bytes_block: cs.bytes_block,
+      oversize_disposition: cs.oversize_disposition,
       max_markup_ratio: cs.max_markup_ratio,
       prose_check_enabled: cs.prose_check_enabled,
       page_kind: parsed.type,
       extra_literals,
     });
+    const sanityDisposition = resolveContentSanityDisposition(sanityResult, {
+      disabled: sanityDisabled,
+      junk_disposition: cs.junk_disposition,
+    });
 
-    if (sanityDisabled) {
+    if (sanityDisposition === 'bypass') {
       // Kill-switch active: loud stderr per offending ingest. Operator
       // explicitly opted into the bypass and gets noisy feedback every
       // time it fires so they remember the gate is off. Audit as a
@@ -465,26 +472,23 @@ export async function importFromContent(
           `[gbrain] content-sanity bypass (GBRAIN_NO_SANITY=1): ${slug} — ${sanityResult.reason_messages.join('; ')}\n`,
         );
       }
-    } else if (sanityResult.shouldQuarantine) {
-      // High-confidence junk (Cloudflare/CAPTCHA pattern or operator
-      // literal). The detail names which fired.
-      const detail = [
-        ...sanityResult.junk_pattern_matches,
-        ...sanityResult.literal_substring_matches,
-      ].join(', ');
-      const reason = sanityResult.junk_pattern_matches.length > 0
-        ? 'junk_pattern'
-        : 'literal_substring';
-      if (junkDisposition === 'reject') {
-        // Operator opted into hard-block. Throw with PAGE_QUARANTINE so
-        // classifyErrorCode bins it. Existing exception flow at every
-        // wrapper site (import errors counter, put_page MCP envelope,
-        // sync failure record) fires through this single throw point.
-        logContentSanityAssessment(slug, sourceId ?? 'default', sanityResult, {
-          disposition: 'reject',
-        });
-        throw new ContentSanityBlockError(sanityResult);
-      }
+    } else if (sanityDisposition === 'reject') {
+      // Operator opted into hard-block. Throw with PAGE_QUARANTINE so
+      // classifyErrorCode bins it. Existing exception flow at every wrapper
+      // site (import errors counter, put_page MCP envelope, sync failure
+      // record) fires through this single throw point.
+      logContentSanityAssessment(slug, sourceId ?? 'default', sanityResult, {
+        disposition: 'reject',
+      });
+      throw new ContentSanityBlockError(sanityResult);
+    } else if (sanityDisposition === 'quarantine') {
+      const reason = sanityResult.quarantine_reason!;
+      const detail = reason === 'oversized'
+        ? `${sanityResult.bytes} bytes exceeds configured warn threshold`
+        : [
+            ...sanityResult.junk_pattern_matches,
+            ...sanityResult.literal_substring_matches,
+          ].join(', ');
       // Default: quarantine (hide). Page lands with the marker, writes
       // zero chunks (chunking guard below widens to isQuarantined), is
       // excluded from search via QUARANTINE_FILTER_FRAGMENT, reviewable
@@ -492,6 +496,10 @@ export async function importFromContent(
       parsed.frontmatter[QUARANTINE_KEY] = buildQuarantineMarker(reason, detail, {
         bytes: sanityResult.bytes,
       });
+      // Quarantine is the highest-precedence disposition. Do not retain
+      // lower-tier markers from trusted input or a previous assessment.
+      delete parsed.frontmatter[CONTENT_FLAG_KEY];
+      delete parsed.frontmatter[EMBED_SKIP_KEY];
       pageQuarantined = true;
       logContentSanityAssessment(slug, sourceId ?? 'default', sanityResult, {
         disposition: 'quarantine',
@@ -499,7 +507,7 @@ export async function importFromContent(
       process.stderr.write(
         `[gbrain] content-sanity quarantine: ${slug} — ${detail} (hidden from search, reviewable via 'gbrain quarantine list')\n`,
       );
-    } else if (sanityResult.shouldFlag) {
+    } else if (sanityDisposition === 'flag') {
       // Fuzzy markup-heavy OR oversize. The page stays usable; the agent
       // gets warned (Garry's paradigm — "this is odd, you decide").
       const flagReason = sanityResult.flag_reason!; // non-null when shouldFlag

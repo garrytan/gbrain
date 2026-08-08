@@ -64,6 +64,37 @@ describe('assessContentSanity — size boundaries', () => {
     expect(r.shouldSkipEmbed).toBe(false);
   });
 
+  test('66,413 clean bytes remain warn-only when oversize policy is omitted', () => {
+    const r = assessContentSanity({
+      compiled_truth: 'a'.repeat(66_413),
+      timeline: '',
+      title: '',
+      bytes_warn: 50_000,
+      bytes_block: 500_000,
+    });
+    expect(r.bytes).toBe(66_413);
+    expect(r.reasons).toEqual(['oversize_warn']);
+    expect(r.shouldQuarantine).toBe(false);
+    expect(r.quarantine_reason).toBeNull();
+    expect(r.shouldFlag).toBe(false);
+    expect(r.shouldSkipEmbed).toBe(false);
+  });
+
+  test('quarantine policy quarantines 66,413 clean bytes above warn threshold', () => {
+    const r = assessContentSanity({
+      compiled_truth: 'a'.repeat(66_413),
+      timeline: '',
+      title: '',
+      bytes_warn: 50_000,
+      bytes_block: 500_000,
+      oversize_disposition: 'quarantine',
+    });
+    expect(r.shouldQuarantine).toBe(true);
+    expect(r.quarantine_reason).toBe('oversized');
+    expect(r.shouldFlag).toBe(false);
+    expect(r.shouldSkipEmbed).toBe(false);
+  });
+
   test('above block threshold → oversize_block + shouldSkipEmbed', () => {
     const r = assessContentSanity({
       compiled_truth: 'a'.repeat(600_000),
@@ -377,6 +408,21 @@ describe('assessContentSanity — reason ordering', () => {
     expect(r.reasons).toContain('junk_pattern');
     expect(r.shouldHardBlock).toBe(true);
     // hard-block wins; soft-block doesn't ALSO fire.
+    expect(r.shouldSkipEmbed).toBe(false);
+  });
+
+  test('junk-pattern reason wins when junk and size quarantine both match', () => {
+    const r = assessContentSanity({
+      compiled_truth: 'Cloudflare Ray ID: x\n' + 'a'.repeat(66_413),
+      timeline: '',
+      title: '',
+      bytes_warn: 50_000,
+      bytes_block: 500_000,
+      oversize_disposition: 'quarantine',
+    });
+    expect(r.shouldQuarantine).toBe(true);
+    expect(r.quarantine_reason).toBe('junk_pattern');
+    expect(r.shouldFlag).toBe(false);
     expect(r.shouldSkipEmbed).toBe(false);
   });
 });
