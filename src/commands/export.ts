@@ -5,7 +5,11 @@ import { serializeMarkdown } from '../core/markdown.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { loadStorageConfig, isDbOnly } from '../core/storage-config.ts';
-import { getDefaultSourcePath } from '../core/source-resolver.ts';
+import {
+  ALL_SOURCES,
+  getDefaultSourcePath,
+  resolveSourceWithTier,
+} from '../core/source-resolver.ts';
 import type { PageType } from '../core/types.ts';
 
 export async function runExport(engine: BrainEngine, args: string[]) {
@@ -21,7 +25,25 @@ export async function runExport(engine: BrainEngine, args: string[]) {
   const slugPrefixIdx = args.indexOf('--slug-prefix');
   const slugPrefix = slugPrefixIdx !== -1 ? args[slugPrefixIdx + 1] : undefined;
 
+  const sourceIdx = args.indexOf('--source');
+  const explicitSource = sourceIdx !== -1 ? args[sourceIdx + 1] : undefined;
+
   const restoreOnly = args.includes('--restore-only');
+
+  // EXPLICIT-ONLY, matching `doctor` and `orphans`: the flag is resolved
+  // through the canonical chain but ONLY when it was actually passed. Calling
+  // the resolver unconditionally would let GBRAIN_SOURCE or a `.gbrain-source`
+  // dotfile silently narrow a bare `gbrain export` to one source, which for a
+  // command whose output is a backup means silent data loss at restore time.
+  // Resolving the explicit value still buys the #1712 loud-fail on an unknown
+  // or malformed id, so a typo can't quietly export zero pages.
+  let sourceFilter: string | undefined;
+  if (explicitSource) {
+    const { source_id } = await resolveSourceWithTier(engine, explicitSource);
+    // `__all__` means "span every source" — the no-filter default, not a
+    // source literally named `__all__`.
+    sourceFilter = source_id === ALL_SOURCES ? undefined : source_id;
+  }
 
   // Resolution chain (D5): explicit --repo → typed sources.getDefault() →
   // hard-error for restore-only paths (never fall through to cwd).
@@ -63,6 +85,11 @@ export async function runExport(engine: BrainEngine, args: string[]) {
   const filters: import('../core/types.ts').PageFilters = { limit: 100000 };
   if (typeFilter) filters.type = typeFilter;
   if (slugPrefix) filters.slugPrefix = slugPrefix;
+  // --source scopes the export to a single source. listPages applies
+  // `WHERE p.source_id = $N` via PageFilters.sourceId; omitting the flag keeps
+  // the existing all-sources behavior. Set on `filters` so both the normal and
+  // --restore-only paths (which spread `...filters`) inherit the scope.
+  if (sourceFilter) filters.sourceId = sourceFilter;
 
   let pages: import('../core/types.ts').Page[];
 
@@ -98,7 +125,8 @@ export async function runExport(engine: BrainEngine, args: string[]) {
   if (restoreOnly) {
     console.log(`Restoring ${pages.length} db_only pages to ${outDir}/`);
   } else {
-    console.log(`Exporting ${pages.length} pages to ${outDir}/`);
+    const scope = sourceFilter ? ` from source '${sourceFilter}'` : '';
+    console.log(`Exporting ${pages.length} pages${scope} to ${outDir}/`);
   }
 
   // Progress on stderr so stdout stays clean for scripts parsing counts.
@@ -108,7 +136,11 @@ export async function runExport(engine: BrainEngine, args: string[]) {
   let exported = 0;
 
   for (const page of pages) {
-    const tags = await engine.getTags(page.slug);
+    // Slugs are unique per source, not brain-wide, so both sidecar reads are
+    // pinned to the page's own source. Unscoped, `getTags` falls back to
+    // `source_id = 'default'` and stamps the default source's tags onto a
+    // same-slug page from another source (dropping its real ones).
+    const tags = await engine.getTags(page.slug, { sourceId: page.source_id });
     const md = serializeMarkdown(
       page.frontmatter,
       page.compiled_truth,
@@ -120,8 +152,13 @@ export async function runExport(engine: BrainEngine, args: string[]) {
     mkdirSync(dirname(filePath), { recursive: true });
     writeFileSync(filePath, md);
 
-    // Export raw data as sidecar JSON
-    const rawData = await engine.getRawData(page.slug);
+    // Export raw data as sidecar JSON. Unscoped, this matches the slug in
+    // EVERY source and the loop below merges the rows into one sidecar keyed
+    // by `rd.source`, so another source's raw data silently overwrites this
+    // page's own on a key collision.
+    const rawData = await engine.getRawData(page.slug, undefined, {
+      sourceId: page.source_id,
+    });
     if (rawData.length > 0) {
       const slugParts = page.slug.split('/');
       const rawDir = join(outDir, ...slugParts.slice(0, -1), '.raw');

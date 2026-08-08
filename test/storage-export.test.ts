@@ -7,15 +7,20 @@
  * Tests use PGLite in-memory and a captured-output approach (process.exit
  * is intercepted) to verify the resolution chain produces the right
  * repoPath OR the right error.
+ *
+ * Also covers per-source scoping of the two sidecar reads in the export loop
+ * (tags + raw data), which are keyed by slug and so cross source boundaries
+ * unless pinned to the page's own source.
  */
 
 import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runExport } from '../src/commands/export.ts';
 import { __resetMissingStorageWarning } from '../src/core/storage-config.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
 let tmp: string;
@@ -142,5 +147,144 @@ describe('export --restore-only resolution chain (D5)', () => {
     await tryRunExport(['--dir', outDir]);
     expect(exitCode).toBeNull();
     expect(stdout.some((line) => line.includes('Exporting 0'))).toBe(true);
+  });
+});
+
+describe('export sidecar reads are scoped to the page owning source', () => {
+  // Both fixtures use the SAME slug in two sources — the only shape where a
+  // slug-keyed read can cross a boundary, since slugs are unique per source
+  // rather than brain-wide.
+  const SLUG = 'notes/shared';
+
+  beforeEach(async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('other', 'Other') ON CONFLICT DO NOTHING`,
+    );
+    for (const sourceId of ['default', 'other']) {
+      await engine.putPage(
+        SLUG,
+        { type: 'note', title: `${sourceId} title`, compiled_truth: 'body' },
+        { sourceId },
+      );
+      await engine.addTag(SLUG, `tag-${sourceId}`, { sourceId });
+      await engine.putRawData(SLUG, `feed-${sourceId}`, { owner: sourceId }, { sourceId });
+    }
+
+    // One slug means one output path, so the two pages overwrite each other
+    // and only the last one written survives on disk. Pin the export order
+    // (listPages defaults to updated_desc) so `other` is the survivor and the
+    // assertions below read a NON-default page — the only page whose sidecars
+    // an unscoped, `'default'`-defaulting read would get wrong.
+    await engine.executeRaw(
+      `UPDATE pages SET updated_at = updated_at + interval '1 hour' WHERE source_id = 'default'`,
+    );
+  });
+
+  test("a non-default page exports its own tags, not the default source's", async () => {
+    await tryRunExport(['--dir', outDir]);
+    expect(exitCode).toBeNull();
+
+    const md = readFileSync(join(outDir, SLUG + '.md'), 'utf-8');
+    // Guards the ordering assumption itself: if `default` ever wins the race
+    // the tag assertions stop discriminating, so fail loudly here instead.
+    expect(md).toContain('other title');
+    expect(md).toContain('tag-other');
+    expect(md).not.toContain('tag-default');
+  });
+
+  test('raw-data sidecars carry only the owning source rows', async () => {
+    await tryRunExport(['--dir', outDir]);
+    expect(exitCode).toBeNull();
+
+    // Unscoped, getRawData applies no source predicate at all: both sources'
+    // rows come back and the export loop merges them into a single object
+    // keyed by `rd.source`.
+    const raw = JSON.parse(readFileSync(join(outDir, 'notes', '.raw', 'shared.json'), 'utf-8'));
+    expect(Object.keys(raw)).toEqual(['feed-other']);
+    expect(raw['feed-other']).toEqual({ owner: 'other' });
+  });
+});
+
+describe('export --source (scope to a single source)', () => {
+  async function seedTwoSources(): Promise<void> {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('src-x', 'Source X'), ('src-y', 'Source Y') ON CONFLICT DO NOTHING`,
+    );
+    await engine.putPage(
+      'notes/x-only',
+      { type: 'note', title: 'X only', compiled_truth: 'belongs to src-x', frontmatter: {} },
+      { sourceId: 'src-x' },
+    );
+    await engine.putPage(
+      'notes/y-only',
+      { type: 'note', title: 'Y only', compiled_truth: 'belongs to src-y', frontmatter: {} },
+      { sourceId: 'src-y' },
+    );
+  }
+
+  test('exports only the named source, omitting pages from other sources', async () => {
+    await seedTwoSources();
+
+    await tryRunExport(['--dir', outDir, '--source', 'src-x']);
+
+    expect(exitCode).toBeNull();
+    expect(existsSync(join(outDir, 'notes/x-only.md'))).toBe(true);
+    expect(existsSync(join(outDir, 'notes/y-only.md'))).toBe(false);
+    // The scope is reflected in the count line for operator visibility.
+    expect(stdout.some((line) => line.includes("from source 'src-x'"))).toBe(true);
+  });
+
+  test('without --source, exports pages from every source (backward compatible)', async () => {
+    await seedTwoSources();
+
+    await tryRunExport(['--dir', outDir]);
+
+    expect(exitCode).toBeNull();
+    expect(existsSync(join(outDir, 'notes/x-only.md'))).toBe(true);
+    expect(existsSync(join(outDir, 'notes/y-only.md'))).toBe(true);
+  });
+
+  test('an unknown source id is a hard error, not a silent empty export', async () => {
+    await seedTwoSources();
+
+    // #1712: the failure mode this guards is `--source src-xx` exporting zero
+    // pages and reporting success, which reads as "the brain is empty".
+    await expect(runExport(engine, ['--dir', outDir, '--source', 'src-xx'])).rejects.toThrow(
+      /not found/i,
+    );
+    expect(existsSync(join(outDir, 'notes/x-only.md'))).toBe(false);
+  });
+
+  test('a malformed source id is rejected before any page query', async () => {
+    await seedTwoSources();
+
+    await expect(runExport(engine, ['--dir', outDir, '--source', 'Not A Source'])).rejects.toThrow(
+      /Invalid --source/i,
+    );
+  });
+
+  test('--source __all__ spans every source rather than matching a literal id', async () => {
+    await seedTwoSources();
+
+    // The sentinel resolves to ALL_SOURCES, which must clear the filter -
+    // passing it through as a source id would match nothing.
+    await tryRunExport(['--dir', outDir, '--source', '__all__']);
+
+    expect(exitCode).toBeNull();
+    expect(existsSync(join(outDir, 'notes/x-only.md'))).toBe(true);
+    expect(existsSync(join(outDir, 'notes/y-only.md'))).toBe(true);
+  });
+
+  test('an absent --source does NOT consult GBRAIN_SOURCE (bare export stays brain-wide)', async () => {
+    await seedTwoSources();
+
+    // Export output is a backup; letting the env var or a `.gbrain-source`
+    // dotfile narrow a bare run silently drops pages from the archive.
+    await withEnv({ GBRAIN_SOURCE: 'src-x' }, async () => {
+      await tryRunExport(['--dir', outDir]);
+    });
+
+    expect(exitCode).toBeNull();
+    expect(existsSync(join(outDir, 'notes/y-only.md'))).toBe(true);
   });
 });
