@@ -55,7 +55,7 @@ export function bigintToStringReplacer(_key: string, value: unknown): unknown {
 }
 
 // CLI-only commands that bypass the operation layer
-export const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'maintain', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'reconcile-links', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'retrieval-upgrade', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch', 'reindex-search-vector', 'pages', 'bench', 'backfill']);
+export const CLI_ONLY = new Set(['init', 'reinit-pglite', 'pglite-repair', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'maintain', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'reconcile-links', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'retrieval-upgrade', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch', 'reindex-search-vector', 'pages', 'bench', 'backfill']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -101,6 +101,9 @@ const CLI_ONLY_SELF_HELP = new Set([
   // the generic short-circuit so the destructive-action warning text
   // reaches the user.
   'reinit-pglite',
+  // WAL-repair wave: pglite-repair ships its own --help with the
+  // dry-run/repair semantics + the un-checkpointed-tail caveat.
+  'pglite-repair',
   // v0.40.6.0 Schema Cathedral v3 — `gbrain schema --help` should hit
   // schema.ts printHelp() with the full 22+ verb taxonomy, not the
   // generic short-circuit's one-line stub.
@@ -1313,6 +1316,13 @@ async function handleCliOnly(command: string, args: string[]) {
   if (command === 'reinit-pglite') {
     const { runReinitPglite } = await import('./commands/reinit-pglite.ts');
     await runReinitPglite(args);
+    return;
+  }
+  // WAL-repair wave (#223/#1670/#2575): in-place torn-WAL recovery. Never
+  // connects an engine — the whole point is that the DB won't open.
+  if (command === 'pglite-repair') {
+    const { runPgliteRepair } = await import('./commands/pglite-repair.ts');
+    setCliExitVerdict(await runPgliteRepair(args));
     return;
   }
   if (command === 'auth') {

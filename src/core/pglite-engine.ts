@@ -46,6 +46,9 @@ import { DELETE_BATCH_SIZE } from './engine-constants.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from './source-config-sql.ts';
 import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
+// Engine-live path (#3596): static import, never a lazy `import()` in the
+// connect() catch. No cycle: pglite-repair.ts imports nothing from this file.
+import { attemptWalRepairAndRetry, closeRepairEpisodeIfOpen, type WalRepairReceipt } from './pglite-repair.ts';
 import { getFtsLanguage } from './fts-language.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
@@ -173,23 +176,49 @@ export function computeSnapshotSchemaHash(
  *   payload. Fix: `bun upgrade` (newer Bun versions mount the vfs
  *   writable) or run via Node.
  *
- * `macos-26-3` — the pre-existing #223 hint signature (early macOS
- *   26.3 builds shipped a broken WASM runtime).
+ * `corrupt` — catalog/pgvector corruption (#2348): 58P01 /
+ *   internal_load_library / missing vector type or core relation.
+ *   WAL reset cannot fix this class; routes to `gbrain reinit-pglite`.
+ *   MUST stay matched BEFORE the wasm arm — a `58P01 … Aborted()`
+ *   message is catalog corruption, not a WAL tear.
+ *
+ * `wasm-abort` — the Emscripten runtime abort (`Aborted(). Build with
+ *   -sASSERTIONS…`, `RuntimeError: unreachable`, and the legacy #223
+ *   signatures). Root cause is almost always corrupt WAL/checkpoint
+ *   state after an unclean shutdown (historically misdiagnosed as a
+ *   "macOS 26.3 WASM bug" — see #223); this verdict is the trigger
+ *   for the in-place WAL auto-repair (`pglite-repair.ts`).
  *
  * `unknown` — falls through to a generic hint that names the doctor
- *   command; the macOS 26.3 link is offered only on darwin (#2674).
+ *   command; the #223 pointer is offered only on darwin (#2674).
  *
  * Regex tightened per Codex eng-review finding #9: don't match
  * generic `pglite.data` substring (could fire on unrelated PGLite
  * errors). Match the literal `$$bunfs` marker OR ENOENT+pglite.data
  * co-occurrence.
  */
-export type PgliteInitFailure = 'bunfs' | 'macos-26-3' | 'corrupt' | 'unknown';
+export type PgliteInitFailure = 'bunfs' | 'wasm-abort' | 'corrupt' | 'unknown';
 
 // #2674: non-Error rejections (Emscripten aborts can throw plain objects)
 // used to stringify as "[object Object]" — prefer .message when present.
+// WAL-repair wave: Emscripten's FS layer also throws message-LESS objects
+// (e.g. `ErrnoError { name: 'ErrnoError', errno: 20 }` when the data dir is a
+// symlink NODEFS refuses to mount) — surface name+errno / JSON instead of the
+// useless "[object Object]".
 export function stringifyPgliteInitError(err: unknown): string {
-  return String((err as { message?: unknown })?.message ?? err);
+  const message = (err as { message?: unknown })?.message;
+  if (message != null) return String(message);
+  if (typeof err === 'object' && err !== null) {
+    const name = (err as { name?: unknown }).name;
+    const errno = (err as { errno?: unknown }).errno;
+    if (typeof name === 'string' && errno != null) return `${name} (errno ${errno})`;
+    try {
+      const json = JSON.stringify(err);
+      if (json && json !== '{}') return typeof name === 'string' ? `${name}: ${json}` : json;
+    } catch { /* circular — fall through */ }
+    if (typeof name === 'string') return name;
+  }
+  return String(err);
 }
 
 export function classifyPgliteInitError(message: string): PgliteInitFailure {
@@ -202,10 +231,68 @@ export function classifyPgliteInitError(message: string): PgliteInitFailure {
   if (/58P01|internal_load_library|type "?vector"? does not exist|relation "?content_chunks"? does not exist/i.test(message)) {
     return 'corrupt';
   }
-  if (/abort.*runtime|macos.*26\.3|wasm.*runtime/i.test(message)) {
-    return 'macos-26-3';
+  // Broadened (v0.42.x WAL-repair wave): the REAL production message is
+  // `Aborted(). Build with -sASSERTIONS for more info.` — no "runtime" in it,
+  // so the legacy arms alone let the primary crash fall through to 'unknown'.
+  // Deliberately over-matches (RuntimeError/unreachable are generic WASM
+  // traps); the repair path downstream is bounded by layout validation, the
+  // reaped-lock gate, and restore-on-failure.
+  if (/aborted\s*\(\)|RuntimeError|unreachable|abort.*runtime|macos.*26\.3|wasm.*runtime/i.test(message)) {
+    return 'wasm-abort';
   }
   return 'unknown';
+}
+
+/**
+ * What the auto-repair path did (or why it didn't run) for a `wasm-abort`
+ * failure — folded into the user-facing error so the message never lies about
+ * the state of the data dir. `'failed-not-restored'` is the arm that matters
+ * most: repair ran, PGLite still failed, AND the automatic restore failed —
+ * the dir is in a reset state and the user must restore from the backup.
+ */
+export interface PgliteInitRepairContext {
+  repair:
+    | 'not-attempted'
+    | 'in-memory'
+    | 'disabled'
+    | 'skipped-validation'
+    | 'skipped-live-writer'
+    | 'skipped-cooldown'
+    | 'failed-restored'
+    | 'failed-not-restored';
+  backupPath?: string;
+  detail?: string;
+}
+
+function repairContextLine(ctx: PgliteInitRepairContext): string {
+  switch (ctx.repair) {
+    case 'in-memory':
+      return '  This engine is in-memory (no data dir), so there is no stored state to\n' +
+        '  repair — this is an environment/runtime failure, not data corruption.';
+    case 'disabled':
+      return '  Auto-repair is disabled (GBRAIN_PGLITE_WAL_REPAIR=off). Run\n' +
+        '  `gbrain pglite-repair` to repair manually.';
+    case 'skipped-validation':
+      return `  Auto-repair skipped: ${ctx.detail ?? 'the data dir did not validate as a PG17 pglite layout'}.`;
+    case 'skipped-live-writer':
+      return `  Auto-repair skipped: ${ctx.detail ?? 'the data-dir lock was acquired by reaping a prior holder'}`;
+    case 'skipped-cooldown':
+      return `  Auto-repair skipped: ${ctx.detail ?? 'a recent attempt failed (cooldown active)'}`;
+    case 'failed-restored':
+      return '  Auto-repair ran but PGLite still failed to start. The data dir was\n' +
+        `  RESTORED to its pre-repair state (backup kept at ${ctx.backupPath ?? '<dataDir>.wal-repair-backup-*'}).` +
+        (ctx.detail ? `\n  Detail: ${ctx.detail}` : '');
+    case 'failed-not-restored':
+      return '  Auto-repair ran, PGLite still failed to start, AND the automatic restore\n' +
+        '  itself failed — the data dir is currently in a RESET state. Your\n' +
+        `  pre-repair files are intact in the backup at ${ctx.backupPath ?? '<dataDir>.wal-repair-backup-*'};\n` +
+        '  restore manually: move the backup\'s `pg_wal` dir back to `<dataDir>/pg_wal`\n' +
+        '  and its `pg_control` file back to `<dataDir>/global/pg_control`.' +
+        (ctx.detail ? `\n  Detail: ${ctx.detail}` : '');
+    case 'not-attempted':
+    default:
+      return '  Auto-repair was not attempted.';
+  }
 }
 
 export function buildPgliteInitErrorMessage(
@@ -214,6 +301,9 @@ export function buildPgliteInitErrorMessage(
   // #2674: threaded (defaulted) so tests can exercise both branches without
   // monkey-patching process.platform.
   platform: NodeJS.Platform = process.platform,
+  // WAL-repair wave: what auto-repair did for a wasm-abort, so the hint tells
+  // the truth about the current state of the data dir.
+  ctx?: PgliteInitRepairContext,
 ): string {
   const header = 'PGLite failed to initialize its WASM runtime.';
   let hint: string;
@@ -226,17 +316,31 @@ export function buildPgliteInitErrorMessage(
         '  does not help, run via Node: `node src/cli.ts` or install gbrain\n' +
         '  using the Node-based path. See #1340 for details.';
       break;
-    case 'macos-26-3':
+    case 'wasm-abort':
       hint =
-        '  This is most commonly the macOS 26.3 WASM bug:\n' +
-        '  https://github.com/garrytan/gbrain/issues/223';
+        '  Most common cause: corrupt WAL/checkpoint state after an unclean\n' +
+        '  shutdown (often a macOS-upgrade reboot killing gbrain mid-write) —\n' +
+        '  NOT a macOS WASM bug, despite the historical diagnosis in\n' +
+        '  https://github.com/garrytan/gbrain/issues/223.\n' +
+        repairContextLine(ctx ?? { repair: 'not-attempted' }) + '\n' +
+        '  Recovery ladder:\n' +
+        '    1. gbrain pglite-repair --dry-run   (diagnose, mutates nothing)\n' +
+        '       gbrain pglite-repair --yes       (in-place WAL repair, data preserved)\n' +
+        '    2. Rebuild from your brain repo: `gbrain reinit-pglite` (or manually:\n' +
+        '       back up ~/.gbrain, move brain.pglite aside, `gbrain init --pglite`,\n' +
+        '       re-add sources + `gbrain sync` + `gbrain embed`).\n' +
+        '    3. Switch engines (docs/ENGINES.md): `gbrain init --supabase` or\n' +
+        '       native Postgres.\n' +
+        '  Run `gbrain doctor` for a full diagnosis.';
       break;
     case 'corrupt':
       hint =
         '  Your PGLite store looks corrupted (the catalog or the pgvector\n' +
         '  extension cannot load). This happens when two processes opened the\n' +
         '  same brain at once — now prevented (#2348), but an already-damaged\n' +
-        '  store cannot be repaired in place. Recover:\n' +
+        '  store cannot be repaired in place (WAL repair does not fix catalog\n' +
+        '  corruption; `gbrain pglite-repair --dry-run` can still report the\n' +
+        '  state of the data dir). Recover:\n' +
         '    1. Restore a backup of the brain.pglite directory if you have one, OR\n' +
         '    2. Rebuild from your brain repo:\n' +
         '       gbrain reinit-pglite --embedding-model <id> --embedding-dimensions <N>\n' +
@@ -245,19 +349,40 @@ export function buildPgliteInitErrorMessage(
       break;
     case 'unknown':
     default:
-      // #2674: only blame the macOS 26.3 WASM bug on macOS. On other
-      // platforms, point at the causes that are actually plausible there.
+      // #2674: name the plausible causes per platform. The darwin branch keeps
+      // the #223 pointer (readers arrive from that issue), reframed to the
+      // real root cause behind those reports: torn WAL from unclean shutdown.
       hint = platform === 'darwin'
-        ? '  Possible cause: the macOS 26.3 WASM bug\n' +
-          '  (https://github.com/garrytan/gbrain/issues/223).\n' +
-          '  Run `gbrain doctor` for a full diagnosis.'
+        ? '  Possible cause: corrupt WAL/checkpoint state after an unclean\n' +
+          '  shutdown — the failure class behind\n' +
+          '  https://github.com/garrytan/gbrain/issues/223.\n' +
+          '  Try `gbrain pglite-repair --dry-run` to diagnose the data dir, and\n' +
+          '  run `gbrain doctor` for a full diagnosis.'
         : '  Possible causes: another gbrain process holding the database\n' +
           '  (lock contention), or a damaged PGLite data directory.\n' +
-          '  Run `gbrain doctor` for a full diagnosis; if the data dir is\n' +
+          '  Try `gbrain pglite-repair --dry-run` to diagnose the data dir, and\n' +
+          '  run `gbrain doctor` for a full diagnosis; if the data dir is\n' +
           '  damaged, `gbrain reinit-pglite` rebuilds it from your brain repo.';
       break;
   }
   return `${header}\n${hint}\n  Original error: ${original}`;
+}
+
+/**
+ * The loud stderr notice printed when connect() auto-repaired the data dir in
+ * place. Exported for the serial regression test.
+ */
+export function buildWalRepairNotice(receipt: WalRepairReceipt): string {
+  return [
+    '⚠️  gbrain repaired this brain\'s PGLite WAL in place.',
+    `    Data dir: ${receipt.dataDir}`,
+    `    Cause: torn WAL/checkpoint state from an unclean shutdown (issue #223 class).`,
+    `    Data files were preserved; transactions not checkpointed before the`,
+    `    corruption may be lost (the standard pg_resetwal caveat).`,
+    `    Pre-repair backup: ${receipt.backupPath}`,
+    `    Recommended: run \`gbrain doctor\` to verify brain integrity.`,
+    `    Disable auto-repair with GBRAIN_PGLITE_WAL_REPAIR=off.`,
+  ].join('\n');
 }
 
 /**
@@ -297,6 +422,12 @@ export class PGLiteEngine implements BrainEngine {
   // PGlite.create(loadDataDir), initSchema is a no-op (schema is already
   // present + migrations already applied). Saves ~1-3s per fresh test PGLite.
   private _snapshotLoaded = false;
+  /**
+   * Set when connect() auto-repaired the data dir's WAL in place (mirrors
+   * upstream PR #994's `repairedDataDir`). Null on every non-repaired connect.
+   * Test seam + programmatic callers can surface the receipt.
+   */
+  walRepairReceipt: WalRepairReceipt | null = null;
 
   get db(): PGLiteDB {
     if (!this._db) throw new Error('PGLite not connected. Call connect() first.');
@@ -306,6 +437,7 @@ export class PGLiteEngine implements BrainEngine {
   // Lifecycle
   async connect(config: EngineConfig): Promise<void> {
     this._savedConfig = config; // #2034: remember for reconnect()
+    this.walRepairReceipt = null; // per-connect: stale receipts must not survive reconnect()
     const dataDir = config.database_path || undefined; // undefined = in-memory
 
     // Acquire file lock to prevent concurrent PGLite access (crashes with Aborted())
@@ -343,6 +475,11 @@ export class PGLiteEngine implements BrainEngine {
           extensions: { vector, pg_trgm },
         }),
       );
+      // Healthy open: close any repair episode left open by a prior failed
+      // attempt (red-team: episodes otherwise stayed open forever — doctor
+      // kept reporting corruption-likely and a weeks-stale episode backup
+      // could be reused over much newer data). Cheap no-op without a sidecar.
+      if (dataDir) closeRepairEpisodeIfOpen(dataDir);
     } catch (err) {
       // v0.13.1: any PGLite.create() failure becomes actionable. v0.41.8.0
       // (#1340): the previous error hint hardcoded the macOS 26.3 link, but
@@ -352,7 +489,54 @@ export class PGLiteEngine implements BrainEngine {
       // users get the right next step.
       const original = stringifyPgliteInitError(err); // #2674
       const verdict = classifyPgliteInitError(original);
-      const wrapped = new Error(buildPgliteInitErrorMessage(verdict, original));
+      let ctx: PgliteInitRepairContext = { repair: 'not-attempted' };
+
+      // WAL-repair wave (#223/#1670/#2575): a wasm-abort on a PERSISTENT data
+      // dir is almost always torn WAL/checkpoint state from an unclean
+      // shutdown — repairable in place. The seam NEVER throws (its failure
+      // modes fold into `ctx`), so every non-repaired path still funnels
+      // through the single lock-release-then-throw site below.
+      if (verdict === 'wasm-abort') {
+        if (!dataDir) {
+          ctx = { repair: 'in-memory' };
+        } else {
+          const attempt = await attemptWalRepairAndRetry(
+            dataDir,
+            () => preservingProcessExitCode(() =>
+              // No loadDataDir on the retry: the snapshot path is
+              // in-memory-only (see above), and dataDir is persistent here.
+              PGlite.create({
+                dataDir,
+                extensions: { vector, pg_trgm },
+              }),
+            ),
+            { reaped: this._lock?.reaped },
+          );
+          if (attempt.status === 'repaired') {
+            this._db = attempt.db;
+            this.walRepairReceipt = attempt.receipt;
+            console.warn(buildWalRepairNotice(attempt.receipt));
+            return; // success: lock stays held, normal connect contract
+          }
+          if (attempt.status === 'skipped') {
+            const reasonToCtx = {
+              'disabled': 'disabled',
+              'validation-failed': 'skipped-validation',
+              'possibly-live-writer': 'skipped-live-writer',
+              'recently-failed': 'skipped-cooldown',
+            } as const;
+            ctx = { repair: reasonToCtx[attempt.reason], detail: attempt.detail };
+          } else {
+            ctx = {
+              repair: attempt.restored ? 'failed-restored' : 'failed-not-restored',
+              backupPath: attempt.receipt?.backupPath,
+              detail: attempt.repairError,
+            };
+          }
+        }
+      }
+
+      const wrapped = new Error(buildPgliteInitErrorMessage(verdict, original, process.platform, ctx));
       // Release the lock so a fresh process can try again; leaking the lock
       // here turns a recoverable init error into a stuck-brain state.
       if (this._lock?.acquired) {

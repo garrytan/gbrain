@@ -18,7 +18,7 @@
  * output via `--json` for scripted callers.
  */
 
-import { existsSync, renameSync, statSync } from 'fs';
+import { existsSync, renameSync, statSync, rmSync } from 'fs';
 import { dirname } from 'path';
 import { loadConfig, loadConfigFileOnly, gbrainPath } from '../core/config.ts';
 
@@ -122,6 +122,13 @@ export async function runReinitPglite(args: string[]): Promise<void> {
 
   try {
     renameSync(dbPath, bakPath);
+  // WAL-repair state travels with the OLD brain (red-team: a fresh brain at
+  // the same path must not inherit the old brain's open repair episode,
+  // cooldown, or reap quarantine — a stale episodeBackupPath would be reused
+  // over the NEW brain's WAL).
+  for (const sibling of [`${dbPath}.wal-repair-attempt.json`, `${dbPath}.lock-reap.json`]) {
+    try { rmSync(sibling, { force: true }); } catch { /* best-effort */ }
+  }
   } catch (e: unknown) {
     fail(
       opts.jsonOutput,
@@ -210,21 +217,59 @@ function parseArgs(args: string[]): ReinitOpts {
   const dimsIdx = args.indexOf('--embedding-dimensions');
   const pathIdx = args.indexOf('--path');
 
-  if (modelIdx < 0 || modelIdx === args.length - 1) {
-    fail(jsonOutput, 'missing_model', '--embedding-model <provider:model> is required.');
-  }
-  if (dimsIdx < 0 || dimsIdx === args.length - 1) {
-    fail(jsonOutput, 'missing_dims', '--embedding-dimensions <N> is required.');
+  // Default omitted flags from the config FILE. Deliberately
+  // `loadConfigFileOnly()`, NOT `loadConfig()`: loadConfig merges the
+  // GBRAIN_EMBEDDING_MODEL / GBRAIN_EMBEDDING_DIMENSIONS env overrides,
+  // and a transient outage-shell export must not silently change the
+  // rebuild target. Precedence: explicit flag > config-file value >
+  // hard-fail (the original missing_model/missing_dims errors).
+  const fileCfg = (modelIdx < 0 || dimsIdx < 0) ? loadConfigFileOnly() : null;
+
+  let embeddingModel: string;
+  if (modelIdx >= 0) {
+    if (modelIdx === args.length - 1) {
+      fail(jsonOutput, 'missing_model', '--embedding-model <provider:model> is required.');
+    }
+    embeddingModel = args[modelIdx + 1];
+  } else if (fileCfg?.embedding_model) {
+    embeddingModel = fileCfg.embedding_model;
+    console.error(`--embedding-model defaulted from config: ${embeddingModel}`);
+  } else {
+    fail(
+      jsonOutput,
+      'missing_model',
+      '--embedding-model <provider:model> is required (no embedding_model in the config file to default from).',
+    );
   }
 
-  const dimsStr = args[dimsIdx + 1];
+  let dimsStr: string;
+  let dimsFromConfig = false;
+  if (dimsIdx >= 0) {
+    if (dimsIdx === args.length - 1) {
+      fail(jsonOutput, 'missing_dims', '--embedding-dimensions <N> is required.');
+    }
+    dimsStr = args[dimsIdx + 1];
+  } else if (fileCfg?.embedding_dimensions !== undefined && fileCfg?.embedding_dimensions !== null) {
+    dimsStr = String(fileCfg.embedding_dimensions);
+    dimsFromConfig = true;
+  } else {
+    fail(
+      jsonOutput,
+      'missing_dims',
+      '--embedding-dimensions <N> is required (no embedding_dimensions in the config file to default from).',
+    );
+  }
+
   const dims = parseInt(dimsStr, 10);
   if (!Number.isInteger(dims) || dims <= 0) {
     fail(jsonOutput, 'invalid_dims', `--embedding-dimensions must be a positive integer (got: ${dimsStr}).`);
   }
+  if (dimsFromConfig) {
+    console.error(`--embedding-dimensions defaulted from config: ${dims}`);
+  }
 
   return {
-    embeddingModel: args[modelIdx + 1],
+    embeddingModel,
     embeddingDimensions: dims,
     yes,
     jsonOutput,
@@ -240,9 +285,16 @@ Wipe the PGLite brain and re-init with new embedding model/dimensions.
 This is the canonical path for switching embedding providers on PGLite
 because pgvector (WASM) cannot ALTER vector column types in place.
 
-Required:
+Embedding target (each defaults from the config file when omitted):
   --embedding-model <provider:model>   New embedding model (e.g. openai:text-embedding-3-large).
+                                       Defaults to embedding_model in ~/.gbrain/config.json.
   --embedding-dimensions <N>           New dimension count (e.g. 1280, 1536, 2048).
+                                       Defaults to embedding_dimensions in ~/.gbrain/config.json.
+
+Defaults read the config FILE only; GBRAIN_EMBEDDING_MODEL /
+GBRAIN_EMBEDDING_DIMENSIONS env overrides are deliberately ignored so a
+transient shell export cannot change the rebuild target. If neither the
+flag nor the config file provides a value, the command fails.
 
 Optional:
   --path <path>                        Active brain path (default: ~/.gbrain/brain.pglite).
@@ -257,6 +309,9 @@ Examples:
   # Skip the sync step (do it later):
   gbrain reinit-pglite --embedding-model openai:text-embedding-3-large \\
     --embedding-dimensions 1536 --no-sync
+
+  # Rebuild with the model/dimensions already in the config file:
+  gbrain reinit-pglite --yes
 
 The old brain is preserved as \`<path>.bak\`. To roll back, mv it back.
 

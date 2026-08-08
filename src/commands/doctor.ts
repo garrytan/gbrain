@@ -4651,6 +4651,96 @@ export async function checkCycleFreshness(
  *   - `progress` reporter writes to stderr (heartbeats per check)
  *   - `engine.executeRaw` / handler-leaf calls (the actual probe work)
  */
+// ≥2 failed repair attempts inside 7 days = the corruption keeps regenerating.
+const REPAIR_RECURRENCE_WINDOW_MS = 7 * 24 * 3600 * 1000;
+const REPAIR_RECURRENCE_THRESHOLD = 2;
+
+/**
+ * WAL-repair wave (#223/#1670/#2575): when the DB failed to connect on a
+ * PGLite brain, diagnose the data dir from the FILESYSTEM (the connect error
+ * itself was swallowed by doctor's fs-only fallback — this check re-derives
+ * the state from disk). Pure: interprets an `inspectPgliteDataDir` diagnosis
+ * into a Check; exported so `test/doctor-pglite-datadir.test.ts` drives it
+ * directly (same convention as computeWorkerOomLoopCheck). Returns a Check
+ * always — the call site only runs it when connect already failed, so even a
+ * healthy-looking dir warrants a pointer at the repair tooling.
+ *
+ * Recurrence escalation (eng-review 2A): repeated failed repair attempts on
+ * record mean the corruption keeps regenerating (unclean-shutdown genesis) —
+ * escalate to the engine-switch ladder instead of letting the brain silently
+ * lose a WAL tail per cycle. Backup-dir inventory rides along (same
+ * disk-visibility class as orphan_clones).
+ */
+export function computePgliteDataDirCheck(
+  dataDir: string,
+  diagnosis: import('../core/pglite-repair.ts').PgliteDirDiagnosis,
+): Check {
+  const backupNote = diagnosis.backupDirs.length > 0
+    ? ` ${diagnosis.backupDirs.length} repair backup dir(s) on disk (newest: ${diagnosis.backupDirs[0]}) — delete old ones to reclaim space once the brain is healthy.`
+    : '';
+  // Count BOTH outcomes (adversarial review F12): a >1h-period crash loop where
+  // each repair "succeeds" discards a WAL tail per cycle with zero FAILED
+  // attempts on record — escalation must still fire.
+  const recentAttempts = diagnosis.recentAttempts.filter(
+    (a) => Date.now() - a.ts < REPAIR_RECURRENCE_WINDOW_MS,
+  ).length;
+  const recurrence = recentAttempts >= REPAIR_RECURRENCE_THRESHOLD
+    ? ` Auto-repair has run ${recentAttempts}x this week — the corruption keeps regenerating (likely an unclean-shutdown loop). Consider switching engines (docs/ENGINES.md: \`gbrain init --supabase\` or native Postgres).`
+    : '';
+
+  switch (diagnosis.verdict) {
+    case 'locked':
+      return {
+        name: 'pglite_data_dir',
+        status: 'warn',
+        message:
+          `Could not connect, and the PGLite data-dir lock is held by live PID ${diagnosis.lockHolderPid} — ` +
+          `another gbrain process (often \`gbrain serve\`) has the brain open. Stop it and re-run.${backupNote}`,
+        remediation_status: 'human_only',
+      };
+    case 'missing':
+      return {
+        name: 'pglite_data_dir',
+        status: 'warn',
+        message: `No PGLite data dir at ${dataDir}. Run \`gbrain init --pglite\` to create one.`,
+        remediation_status: 'human_only',
+      };
+    case 'unsupported-layout':
+      return {
+        name: 'pglite_data_dir',
+        status: 'fail',
+        message:
+          `PGLite data dir at ${dataDir} is not repairable in place (${diagnosis.detail}). ` +
+          `Rebuild from your brain repo: \`gbrain reinit-pglite\` (or back up ~/.gbrain, move the dir aside, ` +
+          `\`gbrain init --pglite\`, re-add sources + sync + embed).${backupNote}${recurrence}`,
+        remediation_status: 'human_only',
+      };
+    case 'wal-corruption-likely':
+      return {
+        name: 'pglite_data_dir',
+        status: 'fail',
+        message:
+          `PGLite failed to open and the data dir shows unclean-shutdown state (${diagnosis.detail}). ` +
+          `This is the torn-WAL class behind issue #223 — repairable in place, data preserved: ` +
+          `\`gbrain pglite-repair --dry-run\` to diagnose, \`gbrain pglite-repair --yes\` to repair.${backupNote}${recurrence}`,
+        remediation_status: 'human_only',
+      };
+    case 'looks-healthy':
+    default:
+      return {
+        name: 'pglite_data_dir',
+        status: 'fail',
+        message:
+          `PGLite failed to open but the data dir layout validates (${diagnosis.detail}). ` +
+          `IF the connect error mentions \`Aborted()\` this is likely torn WAL state — ` +
+          `\`gbrain pglite-repair --dry-run\` to diagnose, \`gbrain pglite-repair --yes\` to repair in place ` +
+          `(repair discards the un-checkpointed WAL tail — don't run it for lock-contention or ` +
+          `catalog-corruption errors; 58P01/pgvector load failures need \`gbrain reinit-pglite\` instead).${backupNote}${recurrence}`,
+        remediation_status: 'human_only',
+      };
+  }
+}
+
 /**
  * issue #1685 (GAP A) — the single authoritative "worker is OOM-looping" signal.
  *
@@ -5945,6 +6035,27 @@ export async function buildChecks(
     }
   } catch {
     // Filesystem read failure is non-fatal.
+  }
+
+  // 3d. PGLite data-dir diagnosis (WAL-repair wave). Only meaningful when the
+  // connect already FAILED on a PGLite brain (engine === null): the connect
+  // error was swallowed by the fs-only fallback, so this check re-derives the
+  // dir state from disk and names the repair ladder. Skipped under --fast
+  // (connect wasn't attempted, so "engine === null" proves nothing there).
+  if (!fastMode && !engine) {
+    try {
+      const cfg = loadConfig();
+      if (cfg?.engine === 'pglite') {
+        const { inspectPgliteDataDir } = await import('../core/pglite-repair.ts');
+        const { resolve } = await import('node:path');
+        // Absolutize: a RELATIVE database_path would make the sidecar/backup
+        // lookups resolve against doctor's cwd instead of the engine's.
+        const pgliteDataDir = resolve(cfg.database_path || gbrainPath('brain.pglite'));
+        checks.push(computePgliteDataDirCheck(pgliteDataDir, inspectPgliteDataDir(pgliteDataDir)));
+      }
+    } catch {
+      // Best-effort: an unreadable config or fs failure must not stop doctor.
+    }
   }
 
   // --- DB checks (skip if --fast or no engine) ---

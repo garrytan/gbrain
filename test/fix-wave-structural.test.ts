@@ -247,7 +247,41 @@ describe('v0.41.8.0 #1340 — PGLite WASM init classifier', () => {
   test('pglite-engine.ts connect catch block routes through the classifier', () => {
     const src = readFileSync('src/core/pglite-engine.ts', 'utf8');
     expect(src).toMatch(/classifyPgliteInitError\(original\)/);
-    expect(src).toMatch(/buildPgliteInitErrorMessage\(verdict, original\)/);
+    // WAL-repair wave: the call gained platform + repair-context args, so pin
+    // only the (verdict, original, …) prefix — the routing seam, not the arity.
+    expect(src).toMatch(/buildPgliteInitErrorMessage\(verdict, original/);
+  });
+});
+
+describe('WAL-repair wave structural pins (#223/#2575)', () => {
+  test('connect() catch wires the WAL auto-repair seam', () => {
+    const src = readFileSync('src/core/pglite-engine.ts', 'utf8');
+    expect(src).toMatch(/attemptWalRepairAndRetry\(/);
+  });
+
+  test('the repair-retry lambda stays inside the #2084 exitCode guard', () => {
+    // The retry re-runs PGlite.create; unguarded, Emscripten would hijack
+    // process.exitCode on the retry path exactly as it did on the first
+    // attempt (the #2084 class). Pin the wrap at the seam call-site.
+    const src = readFileSync('src/core/pglite-engine.ts', 'utf8');
+    expect(src).toMatch(/attemptWalRepairAndRetry\([\s\S]{0,300}preservingProcessExitCode/);
+  });
+
+  test('no bare PGlite.create outside the wrapped engine sites', () => {
+    // The repair/resetwal modules take the retry as a callback — if either
+    // grew its own PGlite.create call it would bypass BOTH the exitCode
+    // guard and the single-writer lock.
+    const repair = readFileSync('src/core/pglite-repair.ts', 'utf8');
+    const resetwal = readFileSync('src/core/pglite-resetwal.ts', 'utf8');
+    expect(repair).not.toMatch(/PGlite\.create/);
+    expect(resetwal).not.toMatch(/PGlite\.create/);
+  });
+
+  test('pglite-resetwal.ts carries the upstream attribution', () => {
+    // The reset-WAL sequence mirrors upstream electric-sql/pglite PR #994;
+    // the pointer is the audit trail for future divergence.
+    const resetwal = readFileSync('src/core/pglite-resetwal.ts', 'utf8');
+    expect(resetwal).toContain('electric-sql/pglite/pull/994');
   });
 });
 

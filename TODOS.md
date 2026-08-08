@@ -1,5 +1,54 @@
 # TODOS
 
+## WAL-repair wave follow-ups (#223/#1670/#2575)
+
+- [ ] **P2 — gate auto-repair on an unclean-shutdown marker (adversarial F7).** The classifier
+  deliberately over-matches (`RuntimeError`/`unreachable` → `wasm-abort`). If an unclean
+  shutdown leaves a REPLAYABLE WAL tail (normal crash recovery would restore those committed
+  txns) and the reopen then fails on a transient WASM error (OOM), auto-repair fires, layout
+  validation can't tell torn from replayable, and resetWal discards the tail while the notice
+  says "data preserved." Bounded today (backup always taken + restore + honest failure + repeated
+  attempts capped), but a false-positive-with-successful-retry silently drops committed data.
+  Fix direction (probe-verified): PGLite removes `postmaster.pid` on clean close, so gate AUTO
+  repair (not the manual command) on `postmaster.pid` presence — a clean dir that aborts is not
+  torn-WAL. Requires making the serial regression test stamp a `postmaster.pid` before corrupting
+  (it currently clean-disconnects then corrupts, which the red-team flagged as unfaithful anyway).
+  Needs a recall/precision call before landing.
+- [ ] **P3 — live non-gbrain PGLite consumer not caught by the postmaster.pid liveness guard
+  (adversarial F8).** PGLite writes a sentinel `postmaster.pid` of `-42`; the liveness refusal in
+  `validateWalRepairTarget` requires `pid > 0`, so it protects native Postgres dirs but not a
+  non-gbrain pglite app that has the dir open (such an app writes no `.gbrain-lock`). Deliberate
+  misuse of `pglite-repair --path <foreign pglite dir>` required. Option: refuse when
+  postmaster.pid holds pid ≤ 0 with a very recent mtime, or document the boundary.
+- [ ] **P3 — mixed-version torn-lock read (adversarial F10 residual).** The heartbeat + initial
+  lock writes are atomic (tmp+rename) now, but an OLD gbrain binary writing heartbeats IN PLACE
+  while a NEW binary poll-reads can still catch a torn read → corrupt-lock verdict → a live
+  holder's lock reaped → two writers (the #2348 class, version-skew-triggered). The reap marker
+  quarantines repair, not the concurrent open. Cheap hardening: double-read the lock file (~50ms
+  apart) before declaring it corrupt.
+
+
+- [ ] **P2 — graceful PGLite close on SIGTERM for the remaining long-running paths.**
+  The torn-WAL genesis this wave repairs is an unclean shutdown: `src/core/process-cleanup.ts`
+  releases locks on SIGTERM but never closes the PGlite handle, so `serve` / `jobs work` /
+  `sync` killed mid-write (macOS-upgrade reboot, `systemctl stop`) leave the WAL torn.
+  Autopilot already ships the pattern (d2fd1f29, #3178/#1872: `registerCleanup('autopilot-engine-close', ...)`
+  — abort in-flight work → ≤2s bounded wait inside the 3s cleanup deadline →
+  `engine.disconnect()`, double-call safe; rationale comment at autopilot.ts:438-452).
+  Extend that exact pattern to the remaining long-running PGLite paths (register in
+  connect()/command scope; dedupe so autopilot doesn't double-close), pinned by a serial
+  lifecycle test. Interacts with #2084 exitCode containment + #1337 close ordering — read
+  those comments in pglite-engine.ts first. Auto-repair makes recurrence self-healing
+  meanwhile, so this is prevention, not recovery.
+- [ ] **P3 — pglite upgrade blocker tracker.** Two couplings make a "routine" pglite bump a
+  breaking change: (a) pglite ≥0.5 removes the `@electric-sql/pglite/vector` export that
+  `pglite-engine.ts` imports (verified against npm); (b) the pg_resetwal port
+  (`src/core/pglite-resetwal.ts`) is coupled to the PG17 pg_control layout
+  (`PG_CONTROL_VERSION` 1700 — guarded at runtime by `WalResetUnsupportedError`, so a
+  mismatched bump makes the repair tool refuse every dir rather than corrupt, but it still
+  means the repair feature silently dies). Any future pglite upgrade wave must revisit BOTH
+  together and re-derive the ControlFileData offset table for the new PG major.
+
 ## serve --http takes-holders + agent-voice hardening follow-ups (filed v0.42.74.0)
 
 Deferred from the #2529/#2477 security-fix wave (plan-eng-review + codex outside

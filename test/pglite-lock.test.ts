@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { acquireLock, releaseLock, type LockHandle } from '../src/core/pglite-lock';
@@ -270,4 +270,99 @@ describe('pglite-lock #2058 heartbeat + steal-grace', () => {
     expect(lock.heartbeat).toBeUndefined();
     expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(false);
   });
+});
+
+describe('pglite-lock reap classification (WAL-repair wave)', () => {
+  // Unique per-test tmpdirs: the reap marker lands at `${dataDir}.lock-reap.json`
+  // — a SIBLING of the data dir — so each test gets its own parent to rm.
+  function freshDataDir(): { parent: string; dataDir: string } {
+    const parent = mkdtempSync(join(tmpdir(), 'gbrain-lock-reap-'));
+    return { parent, dataDir: join(parent, 'data') };
+  }
+
+  /**
+   * A PID that provably belongs to no live process: spawn a short-lived child,
+   * wait for it (spawnSync reaps it), then verify kill(pid, 0) throws. Retries
+   * to dodge instant PID reuse.
+   */
+  function deadPid(): number {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const proc = Bun.spawnSync(['bash', '-c', 'exit 0']);
+      const pid = proc.pid;
+      try {
+        process.kill(pid, 0); // still alive/visible → PID reused, try again
+      } catch {
+        return pid;
+      }
+    }
+    throw new Error('could not obtain a provably-dead PID after 5 spawns');
+  }
+
+  test('corrupt lock file: reaped acquisition + persisted .lock-reap.json marker', async () => {
+    const { parent, dataDir } = freshDataDir();
+    try {
+      const lockDir = join(dataDir, '.gbrain-lock');
+      mkdirSync(lockDir, { recursive: true });
+      writeFileSync(join(lockDir, 'lock'), 'not json {{{'); // holder liveness UNKNOWABLE
+
+      const lock = await acquireLock(dataDir, { timeoutMs: 5000 });
+      try {
+        expect(lock.acquired).toBe(true);
+        expect(lock.reaped).toBe(true);
+        // Unknowable-liveness reap is persisted cross-process for the repair gate.
+        expect(existsSync(`${dataDir}.lock-reap.json`)).toBe(true);
+        const marker = JSON.parse(readFileSync(`${dataDir}.lock-reap.json`, 'utf-8'));
+        expect(typeof marker.ts).toBe('number');
+        expect(marker.by).toBe(process.pid);
+      } finally {
+        await releaseLock(lock);
+      }
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  test('clean acquisition: reaped falsy, no .lock-reap.json marker', async () => {
+    const { parent, dataDir } = freshDataDir();
+    try {
+      const lock = await acquireLock(dataDir, { timeoutMs: 5000 });
+      try {
+        expect(lock.acquired).toBe(true);
+        expect(lock.reaped).toBeFalsy();
+        expect(existsSync(`${dataDir}.lock-reap.json`)).toBe(false);
+      } finally {
+        await releaseLock(lock);
+      }
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  test('dead-PID lock: reaped acquisition but NO marker (affirmative ESRCH verdict)', async () => {
+    const { parent, dataDir } = freshDataDir();
+    try {
+      const lockDir = join(dataDir, '.gbrain-lock');
+      mkdirSync(lockDir, { recursive: true });
+      const now = Date.now();
+      writeFileSync(join(lockDir, 'lock'), JSON.stringify({
+        pid: deadPid(),
+        acquired_at: now - 60_000,
+        refreshed_at: now - 60_000,
+        command: 'gbrain embed',
+        subcommand: 'embed',
+      }));
+
+      const lock = await acquireLock(dataDir, { timeoutMs: 5000 });
+      try {
+        expect(lock.acquired).toBe(true);
+        expect(lock.reaped).toBe(true);
+        // Dead-PID reaps deliberately do NOT quarantine the next acquirer.
+        expect(existsSync(`${dataDir}.lock-reap.json`)).toBe(false);
+      } finally {
+        await releaseLock(lock);
+      }
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

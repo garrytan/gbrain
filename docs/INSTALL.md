@@ -117,7 +117,20 @@ If anything's yellow, `gbrain doctor` names the fix command in the message. Most
 
 ### PGLite crashes on macOS 26.x (Tahoe)
 
-PGLite's embedded WASM engine is incompatible with macOS 26.x (Tahoe) on Apple Silicon. If `gbrain init --pglite` crashes during engine initialization, switch to native Homebrew PostgreSQL:
+This crash (`RuntimeError: Aborted()` at engine startup, typically first seen
+after a macOS upgrade) is **not** a macOS/WASM incompatibility. The upgrade
+reboot kills gbrain mid-write and tears the data dir's write-ahead log; every
+subsequent open then fails WAL replay. Recovery ladder:
+
+1. **Auto-repair (default):** just run any gbrain command — gbrain detects the
+   abort, resets the WAL in place (data preserved; a backup of the pre-repair
+   state is kept next to the data dir), and continues. Then run `gbrain doctor`.
+2. **Manual repair:** `gbrain pglite-repair --dry-run` to diagnose,
+   `gbrain pglite-repair --yes` to repair in place.
+3. **Rebuild:** `gbrain reinit-pglite` (wipes and re-creates the brain from
+   your brain repo; embedding settings default from your config).
+4. **Switch engines** — if you prefer a server database anyway, native
+   Homebrew PostgreSQL works great and supports multiple concurrent agents:
 
 ```bash
 # Install PostgreSQL + pgvector
@@ -144,6 +157,4 @@ gbrain apply-migrations --yes
 gbrain doctor
 ```
 
-All 102 migrations run on first try. Once `gbrain doctor` shows green, the brain works identically to PGLite — same commands, same skills, same data model. The only difference is the storage backend.
-
-> **Note:** This workaround is temporary. When the upstream WASM runtime fix ships (likely via a Bun update), `--pglite` will work on Tahoe again.
+Once `gbrain doctor` shows green, the brain works identically to PGLite — same commands, same skills, same data model. The only difference is the storage backend (plus multi-connection support: several agents can share one Postgres brain, which PGLite's single-process lock doesn't allow).

@@ -221,6 +221,66 @@ live in `test/postgres-engine-rls-scope.test.ts`.
 
 **Migration:** `gbrain migrate --to supabase` exports everything (pages, chunks, embeddings, links, tags, timeline) and imports into Supabase. `gbrain migrate --to pglite` goes the other direction. Bidirectional, lossless.
 
+### Troubleshooting: startup abort (`RuntimeError: Aborted()`)
+
+**Symptom:** every PGLite-touching command dies at startup with
+`PGLite failed to initialize its WASM runtime … Aborted(). Build with
+-sASSERTIONS for more info.` — commonly first seen right after a macOS
+upgrade.
+
+**Real root cause:** corrupt WAL/checkpoint state in the data dir after an
+unclean shutdown (the OS-upgrade reboot kills gbrain mid-write and tears the
+write-ahead log; every subsequent open fails WAL replay inside WASM and
+Emscripten surfaces only the opaque abort). It is **not** a macOS/WASM
+incompatibility — the same signature reproduces across macOS versions and on
+Linux, and rebuilding the data dir on the same OS fixes it. No pglite or Bun
+version bump changes it.
+
+**Recovery ladder** (top rung first):
+
+1. **Auto-repair (default).** `PGLiteEngine.connect()` detects the abort,
+   backs up `pg_wal/` + `pg_control` into a sibling
+   `<dataDir>.wal-repair-backup-<ts>/` dir, resets the WAL in place
+   (pg_resetwal semantics — data files preserved; transactions not
+   checkpointed before the corruption may be lost), and retries once. On
+   success it prints a loud stderr notice naming the backup and recommending
+   `gbrain doctor`. Safety bounds: repair only runs under a cleanly-acquired
+   data-dir lock (never after reaping another process's lock), skips for a
+   cooldown window after a failed attempt
+   (`GBRAIN_PGLITE_WAL_REPAIR_COOLDOWN_SECONDS`, default 3600), reuses one
+   backup per corruption episode (newest 3 episodes retained), and restores
+   the original files if the retry still fails. Kill-switch:
+   `GBRAIN_PGLITE_WAL_REPAIR=off`.
+2. **Manual repair.** `gbrain pglite-repair --dry-run` diagnoses the data dir
+   (read-only); `gbrain pglite-repair --yes` runs the same in-place WAL reset
+   deliberately. Refuses when another gbrain process holds the brain (a live
+   `gbrain serve` is named explicitly) and never force-removes `.gbrain-lock`.
+3. **Rebuild.** `gbrain reinit-pglite` (embedding model/dimensions default
+   from your config) wipes and re-creates the brain from your brain repo, or
+   manually: back up `~/.gbrain`, move `brain.pglite` aside,
+   `gbrain init --pglite`, re-add sources, `gbrain sync`, `gbrain embed`.
+   Required for *catalog* corruption (58P01 / pgvector load failure) — WAL
+   repair cannot fix that class.
+4. **Switch engines.** `gbrain init --supabase`, or native Postgres +
+   pgvector (recipe below, contributed by @roysaurav):
+
+   ```bash
+   brew install postgresql@17
+   brew services start postgresql@17
+   createdb gbrain
+   cd /tmp && git clone --branch v0.8.0 https://github.com/pgvector/pgvector.git
+   cd pgvector && make && make install
+   psql gbrain -c "CREATE EXTENSION IF NOT EXISTS vector;"
+   # ~/.gbrain/config.json: { "engine": "postgres",
+   #   "database_url": "postgresql://localhost:5432/gbrain" }
+   gbrain apply-migrations --yes && gbrain doctor
+   ```
+
+`gbrain doctor` runs a `pglite_data_dir` check whenever a PGLite brain fails
+to connect: it diagnoses the dir from disk, names the repair command, reports
+retained repair backups, and escalates when repairs keep recurring (that
+means the unclean-shutdown genesis is still active — see the ladder's rung 4).
+
 ## JSONB writes: never double-encode (the #2339 trap)
 
 Writing a JS value into a `jsonb` column has exactly two correct forms. Get this
