@@ -382,6 +382,13 @@ export class PGLiteEngine implements BrainEngine {
     this._lock = null;
     try {
       if (db) {
+        // FIX [4/12] 2026-08-08: WAL checkpoint before close to reduce
+        // data loss on WASM crash. PGLite WASM has no WAL archiver, so
+        // an un-flushed WAL at crash time loses data permanently.
+        try {
+          await db.query('CHECKPOINT');
+        } catch { /* CHECKPOINT is best-effort; close still runs */ }
+
         // Deliberately NOT wrapped in preservingProcessExitCode: close's
         // status write (0) is long-standing baseline behavior that test-runner
         // processes depend on (wrapping it flipped bun test's own exit code —

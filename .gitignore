@@ -38,6 +38,12 @@ export/
 # .context/test-shards/. Workspace-local by design — never committed.
 .context/
 
+# Local patch backups (e.g. *.ts.bak created before hand-applying local
+# fixes). Kept on disk as a safety net but must never enter a commit —
+# a bare `git add .` would otherwise sweep 14k+ lines of stale backups
+# into the staged set.
+*.bak
+
 # Local agent instruction overrides (CLAUDE.local.md / AGENTS.local.md) — personal,
 # per-clone, loaded after the committed CLAUDE.md/AGENTS.md. Never committed.
 CLAUDE.local.md

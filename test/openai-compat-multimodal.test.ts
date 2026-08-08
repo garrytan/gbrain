@@ -111,22 +111,19 @@ describe('embedMultimodal — openai-compat routing (#875)', () => {
     expect(capturedAuth).toBe('Bearer unauthenticated');
   });
 
-  test('D12 — provider returns wrong-dim vector throws AIConfigError', async () => {
-    // Brain configured for 1024; provider returns 768. D12 catches the
-    // mismatch BEFORE the vector lands in the DB column.
+  test('D12 — openai-compat multimodal skips the dim pre-check (INSERT-time enforcement)', async () => {
+    // Brain configured for 1024; provider returns 768.
+    // Local-patch (2026-08-03, BGE-VL): the multimodal openai-compat path
+    // forces expectedDims=0 — local servers (BGE-VL 512d) legitimately differ
+    // from the recipe's text-embedding default_dims (ollama 768d). D12's
+    // design intent is preserved: the engine's vector(N) column rejects
+    // mismatched rows at INSERT time with a clearer error than any pre-check.
     configureLitellm({}, 1024);
     fetchHandler = async () => okResponse(768, 1);
 
-    let caught: unknown;
-    try {
-      await embedMultimodal([{ kind: 'image_base64', data: 'x', mime: 'image/png' }]);
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(AIConfigError);
-    expect((caught as Error).message).toContain('768-dim vector');
-    expect((caught as Error).message).toContain('expected 1024');
-    expect((caught as Error).message).toContain('gpt-4o-multimodal');
+    const vecs = await embedMultimodal([{ kind: 'image_base64', data: 'x', mime: 'image/png' }]);
+    expect(vecs).toHaveLength(1);
+    expect(vecs[0]).toHaveLength(768);
   });
 
   test('D12 — default embedding_dimensions (1280 as of v0.36.0.0) applies when not explicitly set', async () => {

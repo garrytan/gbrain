@@ -324,7 +324,11 @@ export function resolveSchemaMultimodalDim(opts: ResolveSchemaMultimodalDimOpts)
           `Pick a recipe with an embedding touchpoint that supports multimodal input.`,
       };
     }
-    if (!tp.supports_multimodal) {
+    // Local-patch (2026-08-03, BGE-VL): mirror the gateway embedMultimodal
+    // relaxation — openai-compatible recipes (ollama etc.) serve multimodal
+    // via the standard /embeddings content-array path (v0.34.1), so the
+    // recipe-level supports_multimodal flag is not a hard gate for them.
+    if (!tp.supports_multimodal && recipe.implementation !== 'openai-compatible') {
       return {
         ok: false,
         error:
