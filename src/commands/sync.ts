@@ -3530,10 +3530,47 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // covered regardless.
   const extractOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
   if (!opts.noExtract && totalChanges > 100 && pagesAffected.length > 0) {
+    // #2849: above the size gate the deferred extraction must be DURABLY
+    // QUEUED, not just hinted. The autopilot cycle's extract phase is
+    // slug-scoped (an up_to_date follow-up sync hands it an empty
+    // pagesAffected), so a webhook-driven large sync left
+    // `links_extracted_at` unstamped FOREVER unless an operator ran
+    // `gbrain extract --stale` by hand. Submit a source-scoped stale-sweep
+    // job bound to the consumed commit (idempotency key) so repeated
+    // webhook deliveries / sync retries of the same commit coalesce onto
+    // one job. The sweep itself is the watermark scan — it picks up the
+    // pages this run imported AND any banked across resumed runs.
+    // Best-effort: queue submission failure falls back to the hint-only
+    // behavior (the pages stay stale + visible to doctor, never mis-stamped).
+    let queuedJobId: number | string | null = null;
+    try {
+      const { MinionQueue } = await import('../core/minions/queue.ts');
+      const queue = new MinionQueue(engine);
+      const job = await queue.add(
+        'extract',
+        {
+          stale: true,
+          ...(opts.sourceId ? { sourceId: opts.sourceId } : {}),
+          reason: 'sync_size_gate',
+          deferred_commit: headCommit,
+        },
+        {
+          idempotency_key: `extract-stale:${opts.sourceId ?? 'default'}:${headCommit}`,
+          maxWaiting: 1,
+          // The stale sweep has its own 30-min internal wall-clock budget;
+          // without an explicit timeout_ms the job would inherit the tight
+          // null-default and get wall-clock-killed mid-sweep (#1737 class).
+          timeout_ms: 35 * 60 * 1000,
+        },
+      );
+      queuedJobId = job.id;
+    } catch { /* best-effort — hint below still tells the operator */ }
     slog(
-      `  Large sync: deferring link/timeline extraction. ` +
-      `Run 'gbrain extract --stale${opts.sourceId ? ` --source-id ${opts.sourceId}` : ''}' ` +
-      `(or let the autopilot cycle's extract phase sweep it).`,
+      `  Large sync: deferring link/timeline extraction` +
+      (queuedJobId != null
+        ? ` — queued stale-sweep job #${queuedJobId} (source: ${opts.sourceId ?? 'default'}); a running jobs worker will consume it.`
+        : `.`) +
+      ` Run 'gbrain extract --stale${opts.sourceId ? ` --source-id ${opts.sourceId}` : ''}' to extract now.`,
     );
   }
   if (!opts.noExtract && totalChanges <= 100 && pagesAffected.length > 0) {
