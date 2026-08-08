@@ -253,4 +253,67 @@ describe('PGLiteEngine#applyForwardReferenceBootstrap', () => {
       await engine.disconnect();
     }
   }, 30000);
+
+  test('wedged-brain recovery: a brain that already FAILED the v0.42.56 upgrade converges on retry', async () => {
+    // The loudest #2626-class cohort: operators who upgraded, wedged, and are
+    // retrying with a fixed binary. Simulates the failed attempt (the blob's
+    // CREATE INDEX crashing on the missing column) and asserts the retry
+    // converges to the FULL final shape (column + FK + both partial indexes)
+    // with no residue — the failed attempt must not advance the version ledger.
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema();
+      const db = (engine as any).db;
+
+      // Rewind to the pre-v121 shape: schema AND the version counter.
+      await db.exec(`
+        DROP INDEX IF EXISTS idx_timeline_event_page;
+        DROP INDEX IF EXISTS idx_timeline_event_dedup;
+        ALTER TABLE timeline_entries DROP CONSTRAINT IF EXISTS timeline_entries_event_page_id_fkey;
+        ALTER TABLE timeline_entries DROP COLUMN IF EXISTS event_page_id;
+      `);
+      await engine.setConfig('version', '120');
+
+      // The failed old-binary attempt: without the bootstrap probe, the blob's
+      // CREATE INDEX was the first statement to touch the missing column.
+      let wedgeError: Error | null = null;
+      try {
+        await db.exec(
+          `CREATE INDEX IF NOT EXISTS idx_timeline_event_page
+             ON timeline_entries(event_page_id) WHERE event_page_id IS NOT NULL`,
+        );
+      } catch (e) {
+        wedgeError = e as Error;
+      }
+      expect(wedgeError?.message ?? '').toContain('event_page_id');
+
+      // The failed attempt must not have advanced the ledger.
+      expect(parseInt((await engine.getConfig('version')) || '1', 10)).toBe(120);
+
+      // Retry with the fixed binary: full initSchema converges to LATEST with
+      // the complete final shape.
+      await engine.initSchema();
+      expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
+      const { rows: col } = await db.query(`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'timeline_entries' AND column_name = 'event_page_id'
+      `);
+      expect(col).toHaveLength(1);
+      const { rows: fk } = await db.query(`
+        SELECT conname FROM pg_constraint
+        WHERE conname = 'timeline_entries_event_page_id_fkey'
+      `);
+      expect(fk).toHaveLength(1);
+      const { rows: idx } = await db.query(`
+        SELECT indexname FROM pg_indexes
+        WHERE tablename = 'timeline_entries'
+          AND indexname IN ('idx_timeline_event_page', 'idx_timeline_event_dedup')
+      `);
+      expect(idx).toHaveLength(2);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 30000);
+
 });

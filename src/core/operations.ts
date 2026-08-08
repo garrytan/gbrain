@@ -342,7 +342,8 @@ export function normalizeSlugPrefix(prefix: string): string {
 
 /**
  * Write ops a slug-bound client may call: every op that routes through
- * `enforceClientSlugFence`, plus `think` (scope `write`, but remote callers
+ * `enforceClientSlugFence`, plus `think` (scope `read` for remote callers;
+ * it stays on this list because it is `mutating` locally, but remote callers
  * cannot persist — `save`/`take` are forced false for `remote !== false`).
  *
  * This list is an ALLOW-list on purpose. The fence used to be enforced op
@@ -2274,7 +2275,7 @@ const takes_calibration: Operation = {
 const think: Operation = {
   name: 'think',
   description: 'Multi-hop synthesis across pages + takes + graph. Pulls relevant evidence and produces a cited answer with conflict + gap analysis.',
-  scope: 'write',
+  scope: 'read',
   params: {
     question: { type: 'string', required: true, description: 'The question to think about' },
     anchor: { type: 'string', description: 'Pull the entity subgraph around this slug' },
@@ -2285,6 +2286,8 @@ const think: Operation = {
     since: { type: 'string', description: 'Start of temporal window (YYYY-MM-DD or YYYY-MM)' },
     until: { type: 'string', description: 'End of temporal window' },
   },
+  // Local CLI can persist with save/take; remote/MCP callers are forced
+  // read-only below before runThink/persistSynthesis sees those flags.
   mutating: true,
   handler: async (ctx, p) => {
     const remote = ctx.remote ?? true;
@@ -2314,7 +2317,7 @@ const think: Operation = {
       until: p.until ? String(p.until) : undefined,
       takesHoldersAllowList: ctx.takesHoldersAllowList,
       ...thinkScope,
-      remote: ctx.remote === true,
+      remote: ctx.remote !== false, // fail-closed: anything not strictly false is untrusted (CLAUDE.md invariant)
     });
 
     // Persist if --save was passed locally
@@ -3099,6 +3102,9 @@ const get_chunks: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
+    // #2555: route through the canonical scope ladder (federated array >
+    // scalar floor > nothing) instead of the pre-#2200 scalar-only pattern —
+    // a federated grant could read the page via get_page but got [] here.
     return ctx.engine.getChunks(p.slug as string, sourceScopeOpts(ctx));
   },
   scope: 'read',
@@ -4151,7 +4157,7 @@ const find_trajectory: Operation = {
     const points = await ctx.engine.findTrajectory({
       entitySlug: p.entity_slug,
       ...scope,
-      remote: ctx.remote === true,
+      remote: ctx.remote !== false, // fail-closed: anything not strictly false is untrusted (CLAUDE.md invariant)
       metric,
       kind,
       since,
