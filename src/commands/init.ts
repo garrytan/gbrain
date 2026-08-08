@@ -111,8 +111,24 @@ export async function runInit(args: string[]) {
     nonInteractive: isNonInteractive,
   });
 
+  // D5-for-engine: a --force re-init with NO explicit engine choice preserves
+  // the configured engine, exactly as persisted model config does. Previously
+  // the PGLite default swallowed postgres configs: following the
+  // deferred-setup hint verbatim (`gbrain init --force --embedding-model ...`)
+  // on a postgres brain silently rewrote config.json back to engine=pglite,
+  // orphaning the postgres data behind a config that no longer pointed at it.
+  // Switching engines stays available — by saying so (--pglite / --url).
+  let preservedPostgresUrl: string | null = null;
+  if (isForce && !isPGLite && !isSupabase && !manualUrl) {
+    const existing = loadConfigFileOnly();
+    if (existing?.engine === 'postgres' && existing.database_url) {
+      preservedPostgresUrl = existing.database_url;
+      console.error('[init] Existing postgres engine preserved (pass --pglite to switch engines).');
+    }
+  }
+
   // Explicit PGLite mode
-  if (isPGLite || (!isSupabase && !manualUrl && !isNonInteractive)) {
+  if (!preservedPostgresUrl && (isPGLite || (!isSupabase && !manualUrl && !isNonInteractive))) {
     // Smart detection: scan for .md files unless --pglite flag forces it
     if (!isPGLite && !isSupabase) {
       const fileCount = countMarkdownFiles(process.cwd());
@@ -132,7 +148,9 @@ export async function runInit(args: string[]) {
 
   // Supabase/Postgres mode
   let databaseUrl: string;
-  if (manualUrl) {
+  if (preservedPostgresUrl) {
+    databaseUrl = preservedPostgresUrl;
+  } else if (manualUrl) {
     databaseUrl = manualUrl;
   } else if (isNonInteractive) {
     // effectiveEnvDatabaseUrl applies the #427 guard: a DATABASE_URL that Bun
@@ -312,6 +330,12 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
 
   if (verbose) {
     out.embedding_model = verbose;
+    // An explicit --embedding-model beats the deferred-setup sentinel the
+    // config seed may have set above (docstring Tier 1 vs the D5 seed):
+    // without this, a re-init of a --no-embedding brain ignores the flag and
+    // lands right back in deferred mode — the exact command the deferred-setup
+    // hint tells the user to run.
+    out.noEmbedding = false;
   } else if (shorthand) {
     const { getRecipe } = await import('../core/ai/recipes/index.ts');
     const recipe = getRecipe(shorthand);
@@ -337,9 +361,12 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
       process.exit(1);
     }
     out.embedding_model = `${shorthand}:${firstModel}`;
-    // #2051: width follows the model actually chosen, not the recipe default.
+// #2051: width follows the model actually chosen, not the recipe default.
     const { embeddingDimsForModel } = await import('../core/ai/model-resolver.ts');
     out.embedding_dimensions = embeddingDimsForModel(recipe, firstModel);
+    // Same Tier-1 precedence as the verbose branch: an explicit provider
+    // choice clears the seeded deferred-setup sentinel.
+    out.noEmbedding = false;
   }
 
   if (dimsArg !== null && !Number.isNaN(dimsArg) && dimsArg > 0) {
@@ -1033,7 +1060,11 @@ async function initPGLite(opts: {
       ...(opts.aiOpts?.noEmbedding
         ? { embedding_disabled: true }
         : (resolvedModel && resolvedDim)
-          ? { embedding_model: resolvedModel, embedding_dimensions: resolvedDim }
+          // embedding_disabled: false, not omitted — the ...existingFile
+          // spread above would otherwise carry a stale deferred-setup
+          // sentinel forward, and the seed helper treats that sentinel as
+          // trumping the model fields on the NEXT re-init.
+          ? { embedding_model: resolvedModel, embedding_dimensions: resolvedDim, embedding_disabled: false }
           : {}),
       ...(opts.aiOpts?.expansion_model ? { expansion_model: opts.aiOpts.expansion_model } : {}),
       ...(opts.aiOpts?.chat_model ? { chat_model: opts.aiOpts.chat_model } : {}),
@@ -1283,7 +1314,11 @@ async function initPostgres(opts: {
       ...(opts.aiOpts?.noEmbedding
         ? { embedding_disabled: true }
         : (resolvedModel && resolvedDim)
-          ? { embedding_model: resolvedModel, embedding_dimensions: resolvedDim }
+          // embedding_disabled: false, not omitted — the ...existingFile
+          // spread above would otherwise carry a stale deferred-setup
+          // sentinel forward, and the seed helper treats that sentinel as
+          // trumping the model fields on the NEXT re-init.
+          ? { embedding_model: resolvedModel, embedding_dimensions: resolvedDim, embedding_disabled: false }
           : {}),
       ...(opts.aiOpts?.expansion_model ? { expansion_model: opts.aiOpts.expansion_model } : {}),
       ...(opts.aiOpts?.chat_model ? { chat_model: opts.aiOpts.chat_model } : {}),
