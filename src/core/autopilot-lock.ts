@@ -40,7 +40,8 @@ export function looksLikeGbrainAutopilotCommand(command: string): boolean {
   const normalized = command.replace(/\\/g, '/').trim();
   if (!/(^|\s)autopilot(\s|$)/i.test(normalized)) return false;
   if (/(^|[\/\s])gbrain(?:\.exe)?(\s|$)/i.test(normalized)) return true;
-  return /(^|[\/\s])gbrain[\/\s\S]*[\/\s]cli\.(?:ts|js|mjs)(\s|$)/i.test(normalized);
+  return /(^|\s)(?:\S+\/)?(?:\.{1,2}\/)?(?:src\/)?cli\.(?:ts|js|mjs)(\s|$)/i.test(normalized)
+    || /(^|\s)\S*\/src\/cli\.(?:ts|js|mjs)(\s|$)/i.test(normalized);
 }
 
 export function classifyAutopilotLockHolder(

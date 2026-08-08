@@ -1,8 +1,12 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { decideLockAcquisition, isPidAlive } from '../src/commands/autopilot.ts';
+import {
+  AUTOPILOT_FOREIGN_PID_TAKEOVER_GRACE_MS,
+  decideLockAcquisition,
+  isPidAlive,
+} from '../src/commands/autopilot.ts';
 import { looksLikeGbrainAutopilotCommand } from '../src/core/autopilot-lock.ts';
 
 let tmp: string;
@@ -53,14 +57,27 @@ describe('decideLockAcquisition', () => {
     });
   });
 
-  test('takes over a stale lock when the PID was reused by a foreign process', () => {
+  test('keeps a fresh lock when the live PID command is unrecognized', () => {
     writeFileSync(lockPath, '1234');
     expect(decideLockAcquisition(lockPath, process.pid, {
       isPidAlive: (pid) => pid === 1234,
       readProcessCommand: () => '/sbin/launchd',
     })).toEqual({
+      action: 'exit',
+      holderPid: 1234,
+    });
+  });
+
+  test('takes over a stale lock when the PID was reused by a foreign process', () => {
+    writeFileSync(lockPath, '1234');
+    const stale = new Date(Date.now() - AUTOPILOT_FOREIGN_PID_TAKEOVER_GRACE_MS - 1000);
+    utimesSync(lockPath, stale, stale);
+    expect(decideLockAcquisition(lockPath, process.pid, {
+      isPidAlive: (pid) => pid === 1234,
+      readProcessCommand: () => '/sbin/launchd',
+    })).toEqual({
       action: 'takeover',
-      reason: 'foreign pid 1234',
+      reason: 'foreign pid 1234 with stale lock',
     });
   });
 
@@ -87,6 +104,7 @@ describe('looksLikeGbrainAutopilotCommand', () => {
   test('matches packaged and source-tree autopilot invocations', () => {
     expect(looksLikeGbrainAutopilotCommand('gbrain autopilot --repo repo')).toBe(true);
     expect(looksLikeGbrainAutopilotCommand('./gbrain/src/cli.ts autopilot')).toBe(true);
+    expect(looksLikeGbrainAutopilotCommand('bun src/cli.ts autopilot --repo repo')).toBe(true);
   });
 
   test('rejects unrelated live processes', () => {
