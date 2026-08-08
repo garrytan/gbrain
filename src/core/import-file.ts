@@ -569,7 +569,14 @@ export async function importFromContent(
   // #1035: fetch the existing page BEFORE the hash compute so (a) the type
   // preservation below participates in the hash (a no-op re-put stays a
   // hash-match skip) and (b) the hash short-circuit below reuses this row.
-  const existing = await engine.getPage(slug, sourceId ? { sourceId } : undefined);
+  // Existence check must target the same namespace the writes below target.
+  // putPage/createVersion default sourceId to 'default', but an unscoped
+  // getPage matches a same-slug row from ANY source (LIMIT 1). When another
+  // source owns the slug and no default-source row exists, `existing` is
+  // truthy while tx.createVersion(slug) scoped to default finds 0 rows and
+  // throws, aborting the whole import (crashes synthesize_concepts in every
+  // dream cycle on multi-source brains).
+  const existing = await engine.getPage(slug, { sourceId: sourceId ?? 'default' });
 
   // #2044: remote get_page intentionally strips private facts rows. A
   // documented get_page -> edit -> put_page round-trip can therefore arrive
@@ -1002,7 +1009,10 @@ async function verifyPageReadable(
   sourceId: string | undefined,
   caller: string,
 ): Promise<void> {
-  const readBack = await engine.getPage(slug, sourceId ? { sourceId } : undefined);
+  // Same namespace scoping as the pre-write existence check: an unscoped
+  // read-back can match a same-slug row owned by ANOTHER source and fail
+  // with a false 'stale content_hash' desync error.
+  const readBack = await engine.getPage(slug, { sourceId: sourceId ?? 'default' });
   if (!readBack) {
     // Log to ingest_log before throwing so the failure is durable and
     // agent-inspectable, not just a transient stderr message.
@@ -1236,7 +1246,14 @@ export async function importCodeFile(
     .update(JSON.stringify({ title, type: 'code', content, lang, chunker_version: CHUNKER_VERSION }))
     .digest('hex');
 
-  const existing = await engine.getPage(slug, sourceId ? { sourceId } : undefined);
+  // Existence check must target the same namespace the writes below target.
+  // putPage/createVersion default sourceId to 'default', but an unscoped
+  // getPage matches a same-slug row from ANY source (LIMIT 1). When another
+  // source owns the slug and no default-source row exists, `existing` is
+  // truthy while tx.createVersion(slug) scoped to default finds 0 rows and
+  // throws, aborting the whole import (crashes synthesize_concepts in every
+  // dream cycle on multi-source brains).
+  const existing = await engine.getPage(slug, { sourceId: sourceId ?? 'default' });
   if (!opts.force && existing?.content_hash === hash) {
     return { slug, status: 'skipped', chunks: 0 };
   }
@@ -1735,7 +1752,9 @@ export async function importImageFile(
   const buf = readFileSync(filePath);
   const hash = createHash('sha256').update(buf).digest('hex');
 
-  const existing = await engine.getPage(imageSlug, sourceOpts);
+  // Same namespace-mismatch fix as importParsedFile above: scope the
+  // existence check to the namespace the writes target.
+  const existing = await engine.getPage(imageSlug, sourceOpts ?? { sourceId: 'default' });
   if (existing?.content_hash === hash) {
     return { slug: imageSlug, status: 'skipped', chunks: 0 };
   }
