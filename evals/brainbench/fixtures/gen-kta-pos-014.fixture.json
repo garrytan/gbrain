@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-kta-pos-014",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "kta-pos",
+  "seed_pages": [
+    {
+      "slug": "people/priya-duskfield",
+      "content": "---\ntitle: Priya Duskfield\ntype: person\naliases: [priya]\nsummary: Founder of Lichenloop.\n---\n\nPriya Duskfield is the founder of Lichenloop. Priya pushed back on the proposed valuation during diligence.\n"
+    },
+    {
+      "slug": "companies/lichenloop",
+      "content": "---\ntitle: Lichenloop\ntype: company\nsummary: Seed-stage company. Founded by Priya Duskfield.\n---\n\nLichenloop is a seed-stage company. Founded by Priya Duskfield. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "remind me what priya said about the round"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Great, thanks. That covers it."
+    }
+  ],
+  "holdout": true
+}

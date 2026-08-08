@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "fixture_id": "kta-002-quiet-smalltalk",
+  "suites": ["know-to-ask"],
+  "category": "kta-neg",
+  "seed_pages": [
+    {
+      "slug": "people/alice-example",
+      "content": "---\ntitle: Alice Example\ntype: person\naliases: [alice]\nsummary: Founder of Widget Co.\n---\n\nAlice Example is the founder of Widget Co.\n"
+    },
+    {
+      "slug": "concepts/monday-review",
+      "content": "---\ntitle: Monday Review\ntype: concept\nsummary: Weekly portfolio review ritual.\n---\n\nThe Monday Review is the weekly portfolio review ritual.\n"
+    }
+  ],
+  "turns": [
+    { "turn_id": 1, "role": "user", "text": "Good morning! How are you today?" },
+    { "turn_id": 2, "role": "assistant", "text": "Doing well — ready when you are." },
+    { "turn_id": 3, "role": "user", "text": "Monday again. Let me grab a coffee first and then we can start." },
+    { "turn_id": 4, "role": "user", "text": "Ok let's write some code. Nothing fancy, just cleanup." }
+  ]
+}

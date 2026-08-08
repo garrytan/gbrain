@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-push-007",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "push",
+  "seed_pages": [
+    {
+      "slug": "people/halcyon-quillfeather",
+      "content": "---\ntitle: Halcyon Quillfeather\ntype: person\naliases: [halcyon]\nsummary: Founder of Quartzbloom Systems.\n---\n\nHalcyon Quillfeather is the founder of Quartzbloom Systems. Halcyon is exploring a pivot toward the enterprise segment.\n"
+    },
+    {
+      "slug": "people/zelda-bransome",
+      "content": "---\ntitle: Zelda Bransome\ntype: person\naliases: [zelda]\nsummary: Founder of Russetvane Systems.\n---\n\nZelda Bransome is the founder of Russetvane Systems. Zelda pushed back on the proposed valuation during diligence.\n"
+    },
+    {
+      "slug": "companies/quartzbloom-systems",
+      "content": "---\ntitle: Quartzbloom Systems\ntype: company\nsummary: Seed-stage company. Founded by Halcyon Quillfeather.\n---\n\nQuartzbloom Systems is a seed-stage company. Founded by Halcyon Quillfeather. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "funds/foxglove-capital",
+      "content": "---\ntitle: Foxglove Capital\ntype: org\nsummary: Early-stage fund that co-invests on seed rounds.\n---\n\nFoxglove Capital is an early-stage fund that co-invests on seed rounds.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Draft a memo for the partner meeting: Halcyon Quillfeather and Zelda Bransome both want Foxglove Capital in the Quartzbloom Systems round."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Drafting now."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Make the memo lead with traction, then risks, then the ask."
+    }
+  ]
+}

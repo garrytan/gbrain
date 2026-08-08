@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/garrytan/gbrain/evals/brainbench/schema/fixture.schema.json",
+  "title": "BrainBench fixture (schema_version 1)",
+  "description": "Adapter-visible conversation fixture. Gold annotations are SEALED: they live in a separate <fixture_id>.gold.json (see gold.schema.json definitions here), never inline — a `gold` key inside a turn is a validation error.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "fixture_id", "suites", "turns"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "fixture_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "suites": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "enum": ["know-to-ask", "push", "write-back", "continuity"] }
+    },
+    "category": { "type": "string" },
+    "holdout": { "type": "boolean", "description": "Excluded from the CI gate; scored in published runs only." },
+    "sources": { "type": "array", "items": { "type": "string" } },
+    "active_source": { "type": "string", "default": "default" },
+    "seed_pages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["slug", "content"],
+        "properties": {
+          "slug": { "type": "string" },
+          "content": { "type": "string" },
+          "source_id": { "type": "string" }
+        }
+      }
+    },
+    "seed_facts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["fact"],
+        "properties": {
+          "fact": { "type": "string" },
+          "entity_slug": { "type": ["string", "null"] },
+          "source": { "type": "string" },
+          "source_session": { "type": ["string", "null"] },
+          "source_id": { "type": "string" }
+        }
+      }
+    },
+    "turns": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["turn_id", "role", "text"],
+        "properties": {
+          "turn_id": { "type": "integer" },
+          "role": { "enum": ["user", "assistant"] },
+          "text": { "type": "string", "minLength": 1 },
+          "ts": { "type": "string", "format": "date-time", "description": "Required on every turn of write-back fixtures and continuity writers (segmentation is time-based)." }
+        }
+      }
+    },
+    "continuity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pair_id", "pair_role"],
+      "properties": {
+        "pair_id": { "type": "string" },
+        "pair_role": { "enum": ["writer", "reader"] }
+      }
+    }
+  }
+}

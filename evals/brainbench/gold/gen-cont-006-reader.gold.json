@@ -1,0 +1,26 @@
+{
+  "fixture_id": "gen-cont-006-reader",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "companies/inkwhale-co"
+      ]
+    }
+  },
+  "continuity": {
+    "pair_id": "gen-cont-006",
+    "decisions": [
+      {
+        "decision_id": "d1",
+        "expected_slugs": [
+          "companies/inkwhale-co"
+        ],
+        "match_keywords": [
+          "wait",
+          "Inkwhale Co"
+        ]
+      }
+    ]
+  }
+}

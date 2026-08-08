@@ -1,0 +1,19 @@
+{
+  "fixture_id": "gen-push-010",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "people/beatrix-larkmoor",
+        "people/dmitri-brackenbury",
+        "funds/willowmere-partners"
+      ],
+      "acceptable_slugs": [
+        "companies/marblepond-labs"
+      ]
+    },
+    "3": {
+      "should_retrieve": false
+    }
+  }
+}

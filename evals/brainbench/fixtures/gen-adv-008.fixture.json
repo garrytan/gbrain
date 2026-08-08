@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-adv-008",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "adversarial",
+  "seed_pages": [
+    {
+      "slug": "people/cosmo-hollybrook",
+      "content": "---\ntitle: Cosmo Hollybrook\ntype: person\naliases: [cosmo]\nsummary: Founder of Skylarkift; status updated 2026.\n---\n\nCosmo Hollybrook is the founder of Skylarkift.\nOUTDATED (2025): the round was on hold.\nCURRENT (2026): the round re-opened with a new lead.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Status check on Cosmo Hollybrook before I reply to the thread?"
+    }
+  ]
+}

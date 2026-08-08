@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-cont-007-writer",
+  "suites": [
+    "write-back",
+    "continuity"
+  ],
+  "category": "continuity",
+  "seed_pages": [
+    {
+      "slug": "companies/tidecraft-systems",
+      "content": "---\ntitle: Tidecraft Systems\ntype: company\nsummary: Seed-stage company. Founded by Vada Tavenner.\n---\n\nTidecraft Systems is a seed-stage company. Founded by Vada Tavenner. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "people/vada-tavenner",
+      "content": "---\ntitle: Vada Tavenner\ntype: person\naliases: [vada]\nsummary: Founder of Tidecraft Systems.\n---\n\nVada Tavenner is the founder of Tidecraft Systems. Vada is exploring a pivot toward the enterprise segment.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Partner meeting wrapped on the Tidecraft Systems round.",
+      "ts": "2026-09-01T10:18:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "What was the call?",
+      "ts": "2026-09-01T10:19:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "We decided to pass on the Tidecraft Systems round. Pricing is too rich at this stage. Logging it now.",
+      "ts": "2026-09-01T10:20:00Z"
+    }
+  ],
+  "continuity": {
+    "pair_id": "gen-cont-007",
+    "pair_role": "writer"
+  }
+}

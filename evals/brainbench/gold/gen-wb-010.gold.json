@@ -1,0 +1,49 @@
+{
+  "fixture_id": "gen-wb-010",
+  "turns": {
+    "3": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "pricing / Marblepond Labs",
+          "fact": "Anneke Veldenmere is worried the Marblepond Labs pricing model undercuts gross margin (round concern)",
+          "entity_slug": "people/anneke-veldenmere",
+          "match_keywords": [
+            "pricing",
+            "Marblepond Labs"
+          ],
+          "kind": "belief"
+        }
+      ]
+    },
+    "4": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "growth target / Marblepond Labs",
+          "fact": "Anneke Veldenmere reported Marblepond Labs hit its growth target a month early",
+          "entity_slug": "people/anneke-veldenmere",
+          "match_keywords": [
+            "growth target",
+            "Marblepond Labs"
+          ],
+          "kind": "fact"
+        }
+      ]
+    },
+    "5": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "async updates",
+          "fact": "Anneke Veldenmere prefers async updates over standing calls",
+          "entity_slug": "people/anneke-veldenmere",
+          "match_keywords": [
+            "async updates"
+          ],
+          "kind": "preference"
+        }
+      ]
+    }
+  }
+}

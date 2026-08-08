@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-wb-002",
+  "suites": [
+    "write-back"
+  ],
+  "category": "write-back",
+  "seed_pages": [
+    {
+      "slug": "people/soren-hartwhistle",
+      "content": "---\ntitle: Soren Hartwhistle\ntype: person\naliases: [soren]\nsummary: Founder of Kelpforge.\n---\n\nSoren Hartwhistle is the founder of Kelpforge. Soren is exploring a pivot toward the enterprise segment.\n"
+    },
+    {
+      "slug": "companies/kelpforge",
+      "content": "---\ntitle: Kelpforge\ntype: company\nsummary: Seed-stage company. Founded by Soren Hartwhistle.\n---\n\nKelpforge is a seed-stage company. Founded by Soren Hartwhistle. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Just wrapped the Kelpforge call with Soren Hartwhistle.",
+      "ts": "2025-03-03T09:13:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "How did it go?",
+      "ts": "2025-03-03T09:14:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Soren is worried the Kelpforge pricing model undercuts their gross margin. Real concern for the round.",
+      "ts": "2025-03-03T10:00:00Z"
+    },
+    {
+      "turn_id": 4,
+      "role": "user",
+      "text": "I committed to sending Soren the diligence checklist by Friday.",
+      "ts": "2025-03-03T10:01:00Z"
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Soren prefers async updates over standing calls. Noted for next time.",
+      "ts": "2025-03-03T10:02:00Z"
+    }
+  ]
+}

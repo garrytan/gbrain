@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "fixture_id": "cont-001-widget-pass-reader",
+  "suites": ["continuity"],
+  "category": "continuity",
+  "continuity": { "pair_id": "cont-001", "pair_role": "reader" },
+  "turns": [
+    { "turn_id": 1, "role": "user", "text": "Where did we land on Widget Co?" }
+  ]
+}

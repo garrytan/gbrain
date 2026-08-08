@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-push-018",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "push",
+  "seed_pages": [
+    {
+      "slug": "people/priya-duskfield",
+      "content": "---\ntitle: Priya Duskfield\ntype: person\naliases: [priya]\nsummary: Founder of Lichenloop.\n---\n\nPriya Duskfield is the founder of Lichenloop. Priya raised concerns about gross margin at the last board sync.\n"
+    },
+    {
+      "slug": "people/emrys-galewright",
+      "content": "---\ntitle: Emrys Galewright\ntype: person\naliases: [emrys]\nsummary: Founder of Glintworks Co.\n---\n\nEmrys Galewright is the founder of Glintworks Co. Emrys wants a technical co-founder intro before committing.\n"
+    },
+    {
+      "slug": "companies/lichenloop",
+      "content": "---\ntitle: Lichenloop\ntype: company\nsummary: Seed-stage company. Founded by Priya Duskfield.\n---\n\nLichenloop is a seed-stage company. Founded by Priya Duskfield. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "funds/tidepool-partners",
+      "content": "---\ntitle: Tidepool Partners\ntype: org\nsummary: Early-stage fund that co-invests on seed rounds.\n---\n\nTidepool Partners is an early-stage fund that co-invests on seed rounds.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Draft a memo for the partner meeting: Priya Duskfield and Emrys Galewright both want Tidepool Partners in the Lichenloop round."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Drafting now."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Make the memo lead with traction, then risks, then the ask."
+    }
+  ]
+}

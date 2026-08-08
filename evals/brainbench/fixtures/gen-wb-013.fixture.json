@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-wb-013",
+  "suites": [
+    "write-back"
+  ],
+  "category": "write-back",
+  "seed_pages": [
+    {
+      "slug": "people/zelda-bransome",
+      "content": "---\ntitle: Zelda Bransome\ntype: person\naliases: [zelda]\nsummary: Founder of Russetvane Systems.\n---\n\nZelda Bransome is the founder of Russetvane Systems. Zelda raised concerns about gross margin at the last board sync.\n"
+    },
+    {
+      "slug": "companies/russetvane-systems",
+      "content": "---\ntitle: Russetvane Systems\ntype: company\nsummary: Seed-stage company. Founded by Zelda Bransome.\n---\n\nRussetvane Systems is a seed-stage company. Founded by Zelda Bransome. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Just wrapped the Russetvane Systems call with Zelda Bransome.",
+      "ts": "2025-06-17T15:34:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "How did it go?",
+      "ts": "2025-06-17T15:35:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Zelda is worried the Russetvane Systems pricing model undercuts their gross margin. Real concern for the round.",
+      "ts": "2025-06-17T16:21:00Z"
+    },
+    {
+      "turn_id": 4,
+      "role": "user",
+      "text": "Zelda prefers async updates over standing calls. Noted for next time.",
+      "ts": "2025-06-17T16:22:00Z"
+    }
+  ]
+}

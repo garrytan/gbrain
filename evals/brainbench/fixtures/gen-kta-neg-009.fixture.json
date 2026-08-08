@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-kta-neg-009",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "kta-neg",
+  "seed_pages": [
+    {
+      "slug": "people/mateo-glimmerton",
+      "content": "---\ntitle: Mateo Glimmerton\ntype: person\naliases: [mateo]\nsummary: Founder of Kelpforge.\n---\n\nMateo Glimmerton is the founder of Kelpforge. Mateo is exploring a pivot toward the enterprise segment.\n"
+    },
+    {
+      "slug": "companies/kelpforge",
+      "content": "---\ntitle: Kelpforge\ntype: company\nsummary: Seed-stage company. Founded by Mateo Glimmerton.\n---\n\nKelpforge is a seed-stage company. Founded by Mateo Glimmerton. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "What time is it in Tokyo right now?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "By the way, someone named Wren Cobblewick emailed about partnerships. Never heard of them."
+    }
+  ]
+}

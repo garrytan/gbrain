@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-adv-007",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "adversarial",
+  "seed_pages": [
+    {
+      "slug": "people/freya-emberlyn",
+      "content": "---\ntitle: Freya Emberlyn\ntype: person\naliases: [freya]\nsummary: Founder of Russetvane Systems.\n---\n\nFreya Emberlyn is the founder of Russetvane Systems. Freya raised concerns about gross margin at the last board sync.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Did Freya Emberlyner reach out yet?"
+    }
+  ]
+}

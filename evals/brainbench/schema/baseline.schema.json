@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/garrytan/gbrain/evals/brainbench/schema/baseline.schema.json",
+  "title": "BrainBench committed baseline (schema_version 1)",
+  "description": "The diff-stable committed gate baseline (evals/brainbench/baselines/main.json). Metrics rounded to 4 decimals, keys sorted, receipts excluded — every byte in this file is a reviewable delta. CI compares HEAD's run against MAIN's copy of this file, never the PR's (decision 4).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "fixtures_hash", "config", "cells", "counts"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "fixtures_hash": { "type": "string" },
+    "config": {
+      "type": "object",
+      "description": "Run configuration the numbers were produced under — fixtures_hash covers files only; comparisons require matching config.",
+      "additionalProperties": false,
+      "required": ["include_holdout", "llm", "harnesses", "suites"],
+      "properties": {
+        "include_holdout": { "type": "boolean" },
+        "llm": { "type": "boolean" },
+        "harnesses": { "type": "array", "items": { "type": "string" } },
+        "suites": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "justification": {
+      "type": "string",
+      "description": "REQUIRED (by the gate, not the schema) when this update regresses any metric vs the prior committed baseline — the reviewable reason."
+    },
+    "cells": {
+      "type": "object",
+      "description": "`${harness}/${suite}` → metric name → value (4-decimal rounded).",
+      "additionalProperties": { "type": "object", "additionalProperties": { "type": "number" } }
+    },
+    "counts": {
+      "type": "object",
+      "description": "`${harness}/${suite}` → count-aware gate inputs.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["gold_total", "gold_failed"],
+        "properties": {
+          "gold_total": { "type": "integer", "minimum": 0 },
+          "gold_failed": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  }
+}

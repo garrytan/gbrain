@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-push-005",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "push",
+  "seed_pages": [
+    {
+      "slug": "people/wren-fenwhistle",
+      "content": "---\ntitle: Wren Fenwhistle\ntype: person\naliases: [wren]\nsummary: Founder of Tidecraft Systems.\n---\n\nWren Fenwhistle is the founder of Tidecraft Systems. Wren wants a technical co-founder intro before committing.\n"
+    },
+    {
+      "slug": "people/mateo-glimmerton",
+      "content": "---\ntitle: Mateo Glimmerton\ntype: person\naliases: [mateo]\nsummary: Founder of Kelpforge.\n---\n\nMateo Glimmerton is the founder of Kelpforge. Mateo shipped the v2 launch two weeks ahead of plan.\n"
+    },
+    {
+      "slug": "companies/tidecraft-systems",
+      "content": "---\ntitle: Tidecraft Systems\ntype: company\nsummary: Seed-stage company. Founded by Wren Fenwhistle.\n---\n\nTidecraft Systems is a seed-stage company. Founded by Wren Fenwhistle. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "funds/larchgate-ventures",
+      "content": "---\ntitle: Larchgate Ventures\ntype: org\nsummary: Early-stage fund that co-invests on seed rounds.\n---\n\nLarchgate Ventures is an early-stage fund that co-invests on seed rounds.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Draft a memo for the partner meeting: Wren Fenwhistle and Mateo Glimmerton both want Larchgate Ventures in the Tidecraft Systems round."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Drafting now."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Make the memo lead with traction, then risks, then the ask."
+    }
+  ]
+}

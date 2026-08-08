@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-kta-pos-020",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "kta-pos",
+  "seed_pages": [
+    {
+      "slug": "people/calliope-saltmarsh",
+      "content": "---\ntitle: Calliope Saltmarsh\ntype: person\naliases: [calliope]\nsummary: Founder of Tidecraft Systems.\n---\n\nCalliope Saltmarsh is the founder of Tidecraft Systems. Calliope flagged churn as the top risk in the latest update.\n"
+    },
+    {
+      "slug": "companies/tidecraft-systems",
+      "content": "---\ntitle: Tidecraft Systems\ntype: company\nsummary: Seed-stage company. Founded by Calliope Saltmarsh.\n---\n\nTidecraft Systems is a seed-stage company. Founded by Calliope Saltmarsh. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Did Saltmarsh ever follow up on that intro?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Great, thanks. That covers it."
+    }
+  ]
+}

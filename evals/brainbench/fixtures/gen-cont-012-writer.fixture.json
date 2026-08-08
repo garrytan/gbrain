@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-cont-012-writer",
+  "suites": [
+    "write-back",
+    "continuity"
+  ],
+  "category": "continuity",
+  "seed_pages": [
+    {
+      "slug": "companies/tidecraft-systems",
+      "content": "---\ntitle: Tidecraft Systems\ntype: company\nsummary: Seed-stage company. Founded by Wren Fenwhistle.\n---\n\nTidecraft Systems is a seed-stage company. Founded by Wren Fenwhistle. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "people/wren-fenwhistle",
+      "content": "---\ntitle: Wren Fenwhistle\ntype: person\naliases: [wren]\nsummary: Founder of Tidecraft Systems.\n---\n\nWren Fenwhistle is the founder of Tidecraft Systems. Wren raised concerns about gross margin at the last board sync.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Partner meeting wrapped on the Tidecraft Systems round.",
+      "ts": "2026-08-24T16:48:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "What was the call?",
+      "ts": "2026-08-24T16:49:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "We decided to wait on the Tidecraft Systems round. We want next quarter's numbers first. Logging it now.",
+      "ts": "2026-08-24T16:50:00Z"
+    }
+  ],
+  "continuity": {
+    "pair_id": "gen-cont-012",
+    "pair_role": "writer"
+  }
+}

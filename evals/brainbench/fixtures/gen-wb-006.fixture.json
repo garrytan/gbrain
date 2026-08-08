@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-wb-006",
+  "suites": [
+    "write-back"
+  ],
+  "category": "write-back",
+  "seed_pages": [
+    {
+      "slug": "people/leander-crestfallow",
+      "content": "---\ntitle: Leander Crestfallow\ntype: person\naliases: [leander]\nsummary: Founder of Junipergrid Labs.\n---\n\nLeander Crestfallow is the founder of Junipergrid Labs. Leander pushed back on the proposed valuation during diligence.\n"
+    },
+    {
+      "slug": "companies/junipergrid-labs",
+      "content": "---\ntitle: Junipergrid Labs\ntype: company\nsummary: Seed-stage company. Founded by Leander Crestfallow.\n---\n\nJunipergrid Labs is a seed-stage company. Founded by Leander Crestfallow. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Just wrapped the Junipergrid Labs call with Leander Crestfallow.",
+      "ts": "2026-08-19T12:43:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "How did it go?",
+      "ts": "2026-08-19T12:44:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "I committed to sending Leander the diligence checklist by Friday.",
+      "ts": "2026-08-19T13:30:00Z"
+    },
+    {
+      "turn_id": 4,
+      "role": "user",
+      "text": "Leander is worried the Junipergrid Labs pricing model undercuts their gross margin. Real concern for the round.",
+      "ts": "2026-08-19T13:31:00Z"
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Leander said Junipergrid Labs hit their growth target a month early. Ahead of plan.",
+      "ts": "2026-08-19T13:32:00Z"
+    }
+  ]
+}

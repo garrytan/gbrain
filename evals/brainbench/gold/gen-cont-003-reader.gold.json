@@ -1,0 +1,26 @@
+{
+  "fixture_id": "gen-cont-003-reader",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "companies/umbergale-labs"
+      ]
+    }
+  },
+  "continuity": {
+    "pair_id": "gen-cont-003",
+    "decisions": [
+      {
+        "decision_id": "d1",
+        "expected_slugs": [
+          "companies/umbergale-labs"
+        ],
+        "match_keywords": [
+          "wait",
+          "Umbergale Labs"
+        ]
+      }
+    ]
+  }
+}

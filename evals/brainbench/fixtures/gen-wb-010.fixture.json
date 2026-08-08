@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-wb-010",
+  "suites": [
+    "write-back"
+  ],
+  "category": "write-back",
+  "seed_pages": [
+    {
+      "slug": "people/anneke-veldenmere",
+      "content": "---\ntitle: Anneke Veldenmere\ntype: person\naliases: [anneke]\nsummary: Founder of Marblepond Labs.\n---\n\nAnneke Veldenmere is the founder of Marblepond Labs. Anneke wants a technical co-founder intro before committing.\n"
+    },
+    {
+      "slug": "companies/marblepond-labs",
+      "content": "---\ntitle: Marblepond Labs\ntype: company\nsummary: Seed-stage company. Founded by Anneke Veldenmere.\n---\n\nMarblepond Labs is a seed-stage company. Founded by Anneke Veldenmere. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Just wrapped the Marblepond Labs call with Anneke Veldenmere.",
+      "ts": "2025-07-02T09:06:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "How did it go?",
+      "ts": "2025-07-02T09:07:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Anneke is worried the Marblepond Labs pricing model undercuts their gross margin. Real concern for the round.",
+      "ts": "2025-07-02T09:53:00Z"
+    },
+    {
+      "turn_id": 4,
+      "role": "user",
+      "text": "Anneke said Marblepond Labs hit their growth target a month early. Ahead of plan.",
+      "ts": "2025-07-02T09:54:00Z"
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Anneke prefers async updates over standing calls. Noted for next time.",
+      "ts": "2025-07-02T09:55:00Z"
+    }
+  ],
+  "holdout": true
+}

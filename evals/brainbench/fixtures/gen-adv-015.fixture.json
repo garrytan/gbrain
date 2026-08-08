@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-adv-015",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "adversarial",
+  "seed_pages": [
+    {
+      "slug": "people/imogen-corvalen",
+      "content": "---\ntitle: Imogen Corvalen\ntype: person\naliases: [imogen]\nsummary: Founder of Emberweave Systems.\n---\n\nImogen Corvalen is the founder of Emberweave Systems. Imogen is exploring a pivot toward the enterprise segment.\n"
+    },
+    {
+      "slug": "people/imogen-oakhurst",
+      "content": "---\ntitle: Imogen Oakhurst\ntype: person\naliases: [imogen]\nsummary: Founder of Driftspark Works.\n---\n\nImogen Oakhurst is the founder of Driftspark Works. Imogen wants a technical co-founder intro before committing.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Ping Imogen about the offsite agenda."
+    },
+    {
+      "turn_id": 2,
+      "role": "user",
+      "text": "Sorry — I meant Imogen Corvalen, the Emberweave Systems founder."
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "fixture_id": "gen-kta-pos-017",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "companies/windrose"
+      ],
+      "acceptable_slugs": [
+        "companies/windrose"
+      ]
+    },
+    "3": {
+      "should_retrieve": false
+    }
+  }
+}

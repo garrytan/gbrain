@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "fixtures_hash": "76f201590dd3ad7a929e2e12efc9bf1406627b10ef4edbcfe7caf379aafd4090",
+  "config": {
+    "include_holdout": false,
+    "llm": false,
+    "harnesses": [
+      "claude-code",
+      "codex",
+      "openclaw"
+    ],
+    "suites": [
+      "continuity",
+      "know-to-ask",
+      "push",
+      "write-back"
+    ]
+  },
+  "cells": {
+    "claude-code/continuity": {
+      "avg_injected_tokens": 75.3333,
+      "continuity_rate": 1,
+      "source_isolation_violations": 0
+    },
+    "claude-code/know-to-ask": {
+      "avg_injected_tokens": 30.9247,
+      "false_fire_rate": 0.0233,
+      "know_to_ask_failure_rate": 0.15,
+      "source_isolation_violations": 0
+    },
+    "claude-code/push": {
+      "avg_injected_tokens": 38.8077,
+      "push_precision": 1,
+      "push_recall": 0.6596,
+      "source_isolation_violations": 0
+    },
+    "claude-code/write-back": {
+      "provenance_accuracy": 1,
+      "write_back_fidelity": 1
+    },
+    "codex/continuity": {
+      "avg_injected_tokens": 150.9167,
+      "continuity_rate": 1,
+      "source_isolation_violations": 0
+    },
+    "codex/know-to-ask": {
+      "avg_injected_tokens": 40.7123,
+      "false_fire_rate": 0,
+      "know_to_ask_failure_rate": 0.15,
+      "source_isolation_violations": 0
+    },
+    "codex/push": {
+      "avg_injected_tokens": 48.5865,
+      "push_precision": 1,
+      "push_recall": 0.4468,
+      "source_isolation_violations": 0
+    },
+    "codex/write-back": {
+      "provenance_accuracy": 1,
+      "write_back_fidelity": 1
+    },
+    "openclaw/continuity": {
+      "avg_injected_tokens": 75.3333,
+      "continuity_rate": 1,
+      "source_isolation_violations": 0
+    },
+    "openclaw/know-to-ask": {
+      "avg_injected_tokens": 33.7945,
+      "false_fire_rate": 0,
+      "know_to_ask_failure_rate": 0.15,
+      "source_isolation_violations": 0
+    },
+    "openclaw/push": {
+      "avg_injected_tokens": 44.1346,
+      "push_precision": 1,
+      "push_recall": 0.8085,
+      "source_isolation_violations": 0
+    },
+    "openclaw/write-back": {
+      "provenance_accuracy": 1,
+      "write_back_fidelity": 1
+    }
+  },
+  "counts": {
+    "claude-code/continuity": {
+      "gold_total": 12,
+      "gold_failed": 0
+    },
+    "claude-code/know-to-ask": {
+      "gold_total": 146,
+      "gold_failed": 11
+    },
+    "claude-code/push": {
+      "gold_total": 94,
+      "gold_failed": 32
+    },
+    "claude-code/write-back": {
+      "gold_total": 58,
+      "gold_failed": 0
+    },
+    "codex/continuity": {
+      "gold_total": 12,
+      "gold_failed": 0
+    },
+    "codex/know-to-ask": {
+      "gold_total": 146,
+      "gold_failed": 9
+    },
+    "codex/push": {
+      "gold_total": 94,
+      "gold_failed": 52
+    },
+    "codex/write-back": {
+      "gold_total": 58,
+      "gold_failed": 0
+    },
+    "openclaw/continuity": {
+      "gold_total": 12,
+      "gold_failed": 0
+    },
+    "openclaw/know-to-ask": {
+      "gold_total": 146,
+      "gold_failed": 9
+    },
+    "openclaw/push": {
+      "gold_total": 94,
+      "gold_failed": 18
+    },
+    "openclaw/write-back": {
+      "gold_total": 58,
+      "gold_failed": 0
+    }
+  }
+}

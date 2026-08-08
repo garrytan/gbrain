@@ -1,0 +1,26 @@
+{
+  "name": "brainbench-corpus",
+  "version": 1,
+  "seed": 42,
+  "generated_fixtures": 135,
+  "holdout_fixtures": 23,
+  "gold_turns": 241,
+  "categories": {
+    "kta-pos": 25,
+    "kta-neg": 15,
+    "push": 20,
+    "write-back": 20,
+    "continuity_pairs": 15,
+    "multi-source": 10,
+    "adversarial": 15
+  },
+  "prose": "template-synthesized, PRNG-varied; deliberately no LLM pass (controlled difficulty; see README)",
+  "rebuild": "bun evals/brainbench/generator/gen.ts",
+  "generation_cost_usd": 0,
+  "gold_validation": {
+    "method": "blind double-label, stratified 10% sample (14 fixtures, 28 labeled items)",
+    "date": "2026-06-12",
+    "agreement": 0.964,
+    "findings": "continuity-writer rationale-clause drift (5 gold files) fixed in this corpus version; wb-001 MRR fact added; conventions documented in README"
+  }
+}

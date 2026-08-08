@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-cont-010-writer",
+  "suites": [
+    "write-back",
+    "continuity"
+  ],
+  "category": "continuity",
+  "seed_pages": [
+    {
+      "slug": "companies/quartzbloom-systems",
+      "content": "---\ntitle: Quartzbloom Systems\ntype: company\nsummary: Seed-stage company. Founded by Halcyon Quillfeather.\n---\n\nQuartzbloom Systems is a seed-stage company. Founded by Halcyon Quillfeather. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "people/halcyon-quillfeather",
+      "content": "---\ntitle: Halcyon Quillfeather\ntype: person\naliases: [halcyon]\nsummary: Founder of Quartzbloom Systems.\n---\n\nHalcyon Quillfeather is the founder of Quartzbloom Systems. Halcyon flagged churn as the top risk in the latest update.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Partner meeting wrapped on the Quartzbloom Systems round.",
+      "ts": "2026-09-17T15:23:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "What was the call?",
+      "ts": "2026-09-17T15:24:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "We decided to pass on the Quartzbloom Systems round. Pricing is too rich at this stage. Logging it now.",
+      "ts": "2026-09-17T15:25:00Z"
+    }
+  ],
+  "continuity": {
+    "pair_id": "gen-cont-010",
+    "pair_role": "writer"
+  }
+}

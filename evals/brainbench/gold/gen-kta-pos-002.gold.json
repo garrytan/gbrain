@@ -1,0 +1,17 @@
+{
+  "fixture_id": "gen-kta-pos-002",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "companies/tidecraft-systems"
+      ],
+      "acceptable_slugs": [
+        "companies/tidecraft-systems"
+      ]
+    },
+    "3": {
+      "should_retrieve": false
+    }
+  }
+}
