@@ -115,7 +115,8 @@ prints what would have been the input (exit 0).
   let savedSlug: string | undefined;
   let evidenceInserted = 0;
   const cfg = loadConfig();
-  if (isThinClient(cfg)) {
+  const thinClient = isThinClient(cfg);
+  if (thinClient) {
     if (save || take) {
       console.error(
         '[thin-client] --save and --take are server-gated for remote callers ' +
@@ -168,6 +169,11 @@ prints what would have been the input (exit 0).
     }
   }
 
+  if (take && !thinClient && !result.takeSaved) {
+    console.error('think: --take requested but no take was written.');
+    process.exit(1);
+  }
+
   const costUsd = computeThinkCostUsd(
     (result as { usage?: { input_tokens: number; output_tokens: number } }).usage,
     result.modelUsed,
@@ -178,6 +184,7 @@ prints what would have been the input (exit 0).
       ...result,
       cost_usd: costUsd ?? null,
       saved_slug: savedSlug ?? null,
+      take_saved: result.takeSaved ?? null,
       evidence_inserted: evidenceInserted,
     }, null, 2));
     return;
@@ -197,6 +204,9 @@ prints what would have been the input (exit 0).
   console.log(`Model: ${result.modelUsed} | Pages: ${result.pagesGathered} | Takes: ${result.takesGathered} | Graph: ${result.graphHits} | Citations: ${result.citations.length}${costSuffix}`);
   if (savedSlug) {
     console.log(`Saved: ${savedSlug} (${evidenceInserted} evidence rows)`);
+  }
+  if (result.takeSaved) {
+    console.log(`Take: ${result.takeSaved.page_slug}#${result.takeSaved.row_num}`);
   }
   if (result.warnings.length > 0) {
     console.error(`Warnings: ${result.warnings.join(', ')}`);

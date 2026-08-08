@@ -2332,6 +2332,7 @@ const think: Operation = {
       // #1698 (#10): the persist-skip signal returns slug '' — map it (and any
       // falsy) to null so callers never see an empty-string "slug".
       saved_slug: savedSlug || null,
+      take_saved: result.takeSaved ?? null,
       evidence_inserted: evidenceInserted,
       remote_persisted_blocked: remote && (Boolean(p.save) || Boolean(p.take)),
     };

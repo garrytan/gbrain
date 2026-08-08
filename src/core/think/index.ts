@@ -121,6 +121,12 @@ export interface ThinkResponse {
   gaps: string[];
 }
 
+export interface ThinkSavedTake {
+  page_slug: string;
+  source_id: string;
+  row_num: number;
+}
+
 export interface ThinkResult {
   question: string;
   answer: string;
@@ -142,6 +148,8 @@ export interface ThinkResult {
   synthesisOk?: boolean;
   /** Only set when --save was true and the caller persisted a synthesis page. */
   savedSlug?: string;
+  /** Only set when --take persisted a take row on the anchor page. */
+  takeSaved?: ThinkSavedTake;
   /** Diagnostics for `--explain` callers (CLI surface for v0.29). */
   diagnostics: {
     pagesFromHybrid: number;
@@ -242,6 +250,65 @@ async function persistCitations(
   if (evidenceInputs.length === 0) return { inserted: 0, warnings };
   const inserted = await engine.addSynthesisEvidence(evidenceInputs);
   return { inserted, warnings };
+}
+
+async function persistThinkTake(
+  engine: BrainEngine,
+  opts: {
+    anchor: string | undefined;
+    answer: string;
+    sourceId: string | undefined;
+  },
+): Promise<ThinkSavedTake> {
+  if (!opts.anchor) {
+    throw new Error('--take requires --anchor (the take row needs a target page)');
+  }
+  const anchor = opts.anchor;
+  const claim = stripGapsSection(opts.answer).trim();
+  if (!claim) {
+    throw new Error('think: --take requested but no synthesis was produced — nothing written.');
+  }
+  const sourceId = opts.sourceId ?? 'default';
+  const holder = resolveOwnerHolder({
+    configValue: await engine.getConfig('emotional_weight.user_holder'),
+  });
+
+  return await engine.transaction(async (tx) => {
+    const pageRows = await tx.executeRaw<{ id: number }>(
+      `SELECT id FROM pages
+       WHERE slug = $1 AND source_id = $2 AND deleted_at IS NULL
+       LIMIT 1
+       FOR UPDATE`,
+      [anchor, sourceId],
+    );
+    const pageId = pageRows[0]?.id;
+    if (!pageId) {
+      throw new Error(`think: --take anchor not found: ${anchor} (source_id=${sourceId})`);
+    }
+
+    const rowRows = await tx.executeRaw<{ next: number }>(
+      `SELECT COALESCE(MAX(row_num), 0) + 1 AS next FROM takes WHERE page_id = $1`,
+      [pageId],
+    );
+    const rowNum = Number(rowRows[0]?.next ?? 1);
+    await tx.addTakesBatch([{
+      page_id: pageId,
+      row_num: rowNum,
+      claim,
+      kind: 'take',
+      holder,
+      weight: 0.5,
+      source: 'think',
+      active: true,
+      superseded_by: null,
+    }]);
+
+    return {
+      page_slug: anchor,
+      source_id: sourceId,
+      row_num: rowNum,
+    };
+  });
 }
 
 /**
@@ -481,6 +548,9 @@ export async function runThink(
       warnings.push(
         modelProblem ? `MODEL_NOT_USABLE:${(probe as { reason: string }).reason}` : 'NO_ANTHROPIC_API_KEY',
       );
+      if (opts.take) {
+        warnings.push('TAKE_SYNTHESIS_NOT_PERSISTED');
+      }
       const detail = !probe.ok ? probe.detail : '';
       const fix = !probe.ok && probe.fix ? ` Fix: ${probe.fix}` : '';
       // Degrade gracefully: return the gather without synthesis. Better than throwing.
@@ -547,6 +617,18 @@ export async function runThink(
     break;  // v0.28: single-pass only
   }
 
+  const synthesisOkFinal = synthesisOk && response.answer.trim().length > 0;
+  const takeSaved = opts.take && synthesisOkFinal
+    ? await persistThinkTake(engine, {
+        anchor: opts.anchor,
+        answer: response.answer,
+        sourceId: opts.sourceId,
+      })
+    : undefined;
+  if (opts.take && !synthesisOkFinal) {
+    warnings.push('TAKE_SYNTHESIS_NOT_PERSISTED');
+  }
+
   return {
     question: opts.question,
     answer: response.answer,
@@ -560,7 +642,8 @@ export async function runThink(
     warnings,
     // #1698: persistable only when a real synthesis produced a non-empty answer.
     // ANDs the not-JSON/sentinel flag with a content check (catches valid-but-empty JSON).
-    synthesisOk: synthesisOk && response.answer.trim().length > 0,
+    synthesisOk: synthesisOkFinal,
+    ...(takeSaved ? { takeSaved } : {}),
     diagnostics: {
       pagesFromHybrid: gather.diagnostics.pagesFromHybrid,
       takesFromKeyword: gather.diagnostics.takesFromKeyword,
