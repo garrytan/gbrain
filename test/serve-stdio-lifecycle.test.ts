@@ -1,4 +1,4 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, afterEach } from 'bun:test';
 import { EventEmitter } from 'events';
 import { spawnSync } from 'node:child_process';
 import {
@@ -9,6 +9,24 @@ import {
   type ServeOptions,
 } from '../src/commands/serve';
 import type { BrainEngine } from '../src/core/engine';
+import { _resetStdoutRedirectForTests } from '../src/core/console-prefix';
+
+// runServe's stdio path calls redirectStdoutLoggingToStderr(), which
+// rebinds the process-global console.log/info/debug. Restore the real
+// bindings after every test so files sharing this shard process (e.g.
+// test/console-prefix.test.ts, which asserts bare console.log semantics)
+// don't inherit the redirect.
+/* eslint-disable no-console */
+const __realConsoleLog = console.log;
+const __realConsoleInfo = console.info;
+const __realConsoleDebug = console.debug;
+afterEach(() => {
+  console.log = __realConsoleLog;
+  console.info = __realConsoleInfo;
+  console.debug = __realConsoleDebug;
+  _resetStdoutRedirectForTests();
+});
+/* eslint-enable no-console */
 
 // These tests cover the stdio lifecycle hooks added to runServe so that the
 // PGLite write lock is released when the parent disconnects. We don't spawn
