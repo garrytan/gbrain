@@ -26,6 +26,7 @@ import { resolveCitations, type ParsedCitation } from './cite-render.ts';
 import { resolveOwnerHolder } from '../owner-holder.ts';
 import { resolveModel } from '../model-config.ts';
 import { chat as gatewayChat, probeChatModel, type ChatResult } from '../ai/gateway.ts';
+import { resolveRecipe } from '../ai/model-resolver.ts';
 import { AIConfigError } from '../ai/errors.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
@@ -488,7 +489,7 @@ export async function runThink(
         question: opts.question,
         answer: modelProblem
           ? `(model "${modelUsed}" not usable — ${detail}${fix})`
-          : '(no LLM available — set ANTHROPIC_API_KEY or pass `client`)',
+          : `(no LLM available — ${missingCredentialHint(modelUsed)}, or pass \`client\`)`,
         citations: [],
         gaps: [
           modelProblem
@@ -814,6 +815,34 @@ function mapStopReason(s: ChatResult['stopReason']): 'end_turn' | 'max_tokens' |
 }
 
 /**
+ * Credential advice for the provider the model actually resolves to.
+ *
+ * The sentinel below is surfaced verbatim as the user's answer, so naming a
+ * fixed provider sends operators to the wrong credential whenever think is
+ * configured off Anthropic: a missing Google key produced "set
+ * ANTHROPIC_API_KEY", which is not the fix. Both the env var and the key page
+ * come from the recipe, so a new provider needs no change here.
+ *
+ * Falls back to the Anthropic wording when the id doesn't resolve to a recipe
+ * (`resolveRecipe` throws on an unknown provider) — Anthropic is still the
+ * default provider for a bare model id, so it remains the best guess when
+ * there's nothing better to say.
+ */
+function missingCredentialHint(modelStr: string): string {
+  try {
+    const { recipe } = resolveRecipe(normalizeModelId(modelStr));
+    const envVar = recipe.auth_env?.required?.[0];
+    if (envVar) {
+      const keys = recipe.auth_env?.setup_url ? `; keys: ${recipe.auth_env.setup_url}` : '';
+      return `set ${envVar} for ${recipe.name} via gbrain config or env${keys}`;
+    }
+  } catch {
+    // Unknown provider — nothing better to offer than the default.
+  }
+  return 'set anthropic_api_key via gbrain config or ANTHROPIC_API_KEY env';
+}
+
+/**
  * Sentinel Message returned when gateway.chat throws AIConfigError (typically
  * missing API key for the resolved provider). The caller's JSON parser will
  * fail on this text, fall through to `LLM_OUTPUT_NOT_JSON`, and surface the
@@ -833,7 +862,7 @@ function buildGracefulMessage(modelStr: string): {
     type: 'message',
     role: 'assistant',
     model: modelStr,
-    content: [{ type: 'text', text: '(no LLM available — set anthropic_api_key via gbrain config or ANTHROPIC_API_KEY env)' }],
+    content: [{ type: 'text', text: `(no LLM available — ${missingCredentialHint(modelStr)})` }],
     usage: { input_tokens: 0, output_tokens: 0 },
     stop_reason: 'end_turn',
   };
@@ -848,5 +877,6 @@ export const __thinkAdapter = {
   chatResultToMessage,
   mapStopReason,
   buildGracefulMessage,
+  missingCredentialHint,
   hasAnthropicKey,
 };
