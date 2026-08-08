@@ -999,8 +999,8 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
   // params.source is set when a CLI flag was parsed for the op (rare; most
   // CLI ops don't take --source). Falls through to env/dotfile/path-match.
   const explicit = (params.source as string | undefined) ?? null;
+  const { resolveSourceWithTier, localFederatedSourceIds, SourceTargetError } = await import('./core/source-resolver.ts');
   try {
-    const { resolveSourceWithTier, localFederatedSourceIds } = await import('./core/source-resolver.ts');
     const resolved = await resolveSourceWithTier(engine, explicit);
     sourceId = resolved.source_id;
     localFederated = await localFederatedSourceIds(engine, resolved.source_id, resolved.tier);
@@ -1009,7 +1009,10 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
     // source that doesn't exist) must error loudly — the blanket swallow
     // turned `--source __all__` and typos into a silent `default` scope,
     // which is how three bug reports became debugging sessions.
-    if (explicit) throw err;
+    // Ambient user-selected targets (GBRAIN_SOURCE / .gbrain-source /
+    // sources.default) are just as authoritative as --source. Only structural
+    // pre-init failures retain the legacy default fallback.
+    if (explicit || err instanceof SourceTargetError) throw err;
     // Ambient resolution failed (e.g. sources table doesn't exist on a fresh
     // pre-init brain). Leave sourceId unset; engine read methods fall through
     // to the cross-source view (D16 back-compat path).

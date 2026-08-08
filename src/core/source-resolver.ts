@@ -24,6 +24,14 @@ import { isTrustedDotfile, realpathOrResolve } from './path-confine.ts';
 // either module (#1712).
 export { ALL_SOURCES };
 
+/** A caller-selected source id is invalid, missing, or archived. */
+export class SourceTargetError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SourceTargetError';
+  }
+}
+
 const DOTFILE = '.gbrain-source';
 // Canonical SOURCE_ID_RE imported from `source-id.ts` (single source of truth).
 // Re-exported below as `__testing.SOURCE_ID_RE` for legacy test imports.
@@ -93,7 +101,7 @@ export async function resolveSourceId(
   if (explicit) {
     if (explicit === ALL_SOURCES) return ALL_SOURCES;
     if (!SOURCE_ID_RE.test(explicit)) {
-      throw new Error(`Invalid --source value "${explicit}". Must match [a-z0-9-]{1,32}.`);
+      throw new SourceTargetError(`Invalid --source value "${explicit}". Must match [a-z0-9-]{1,32}.`);
     }
     await assertSourceExists(engine, explicit);
     return explicit;
@@ -104,7 +112,7 @@ export async function resolveSourceId(
   if (env && env.length > 0) {
     if (env === ALL_SOURCES) return ALL_SOURCES;
     if (!SOURCE_ID_RE.test(env)) {
-      throw new Error(`Invalid GBRAIN_SOURCE value "${env}". Must match [a-z0-9-]{1,32}.`);
+      throw new SourceTargetError(`Invalid GBRAIN_SOURCE value "${env}". Must match [a-z0-9-]{1,32}.`);
     }
     await assertSourceExists(engine, env);
     return env;
@@ -138,7 +146,13 @@ export async function resolveSourceId(
       }
     }
   }
-  if (best) return best.id;
+  if (best) {
+    // A local_path registration can outlive source archival. Treat landing in
+    // that tree as an explicit unavailable target, never as permission to
+    // continue writing through an archived source id.
+    await assertSourceExists(engine, best.id);
+    return best.id;
+  }
 
   // 5. Brain-level default.
   // Silent-fallback tier per codex P1-F: an invalid `sources.default` config
@@ -249,14 +263,14 @@ export function formatSoleNonDefaultNudge(sourceId: string): string | null {
 
 async function assertSourceExists(engine: BrainEngine, id: string): Promise<void> {
   const rows = await engine.executeRaw<{ id: string }>(
-    `SELECT id FROM sources WHERE id = $1`,
+    `SELECT id FROM sources WHERE id = $1 AND archived = false`,
     [id],
   );
   if (rows.length === 0) {
-    throw new Error(
-      `Source "${id}" not found. Available sources: ` +
+    throw new SourceTargetError(
+      `Source "${id}" not found or is archived. Available active sources: ` +
       `run \`gbrain sources list\` to see registered sources, ` +
-      `or \`gbrain sources add ${id}\` to create it.`,
+      `or create/restore "${id}" before retrying.`,
     );
   }
 }
@@ -337,7 +351,7 @@ export async function resolveSourceWithTier(
       return { source_id: ALL_SOURCES, tier: 'flag', detail: `--source ${ALL_SOURCES} (spans all sources)` };
     }
     if (!SOURCE_ID_RE.test(explicit)) {
-      throw new Error(`Invalid --source value "${explicit}". Must match [a-z0-9-]{1,32}.`);
+      throw new SourceTargetError(`Invalid --source value "${explicit}". Must match [a-z0-9-]{1,32}.`);
     }
     await assertSourceExists(engine, explicit);
     return { source_id: explicit, tier: 'flag', detail: `--source ${explicit}` };
@@ -350,7 +364,7 @@ export async function resolveSourceWithTier(
       return { source_id: ALL_SOURCES, tier: 'env', detail: `GBRAIN_SOURCE=${ALL_SOURCES} (spans all sources)` };
     }
     if (!SOURCE_ID_RE.test(env)) {
-      throw new Error(`Invalid GBRAIN_SOURCE value "${env}". Must match [a-z0-9-]{1,32}.`);
+      throw new SourceTargetError(`Invalid GBRAIN_SOURCE value "${env}". Must match [a-z0-9-]{1,32}.`);
     }
     await assertSourceExists(engine, env);
     return { source_id: env, tier: 'env', detail: `GBRAIN_SOURCE=${env}` };
@@ -378,7 +392,10 @@ export async function resolveSourceWithTier(
       }
     }
   }
-  if (best) return { source_id: best.id, tier: 'local_path', detail: best.path };
+  if (best) {
+    await assertSourceExists(engine, best.id);
+    return { source_id: best.id, tier: 'local_path', detail: best.path };
+  }
 
   // 5. Brain-level default. Silent-fallback (P1-F) like tier 5 in resolveSourceId.
   const globalDefault = await engine.getConfig('sources.default');
