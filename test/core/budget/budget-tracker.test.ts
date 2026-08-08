@@ -346,36 +346,77 @@ describe('BudgetTracker.reserve', () => {
     expect(t.totalSpent).toBeGreaterThan(0);
   });
 
-  test('#3223: rerank kind for zeroentropyai:zerank-2 prices from the embedding table (no TX2 throw under --max-cost)', () => {
-    // Pre-fix: `search_mode: tokenmax` defaults the zerank-2 reranker ON
-    // (docs/ai-providers/zeroentropy.md), but lookupPricing's rerank branch
-    // never consulted the embedding pricing table (where ZeroEntropy's
-    // provider:model-keyed prices live) — so any --max-cost run that
-    // reranked TX2 hard-failed with "no pricing entry" even after adding
-    // the entry to EMBEDDING_PRICING alone. Fixed by wiring the rerank
-    // branch to fall back to lookupEmbeddingPrice.
-    const t = new BudgetTracker({ maxCostUsd: 0.0001, label: 'test', auditPath });
+  test.each(['zerank-2', 'zerank-1', 'zerank-1-small'])(
+    '#3223: zeroentropyai:%s uses the declared token-price fallback',
+    (model) => {
+      // Reranker prices now resolve from the recipe first. The older embedding-
+      // table entry remains a compatibility fallback for pre-recipe providers.
+      const t = new BudgetTracker({ maxCostUsd: 0.0001, label: 'test', auditPath });
+      expect(() =>
+        t.reserve({
+          modelId: `zeroentropyai:${model}`,
+          estimatedInputTokens: 3000,
+          maxOutputTokens: 0,
+          kind: 'rerank',
+        }),
+      ).not.toThrow();
+      expect(t.totalSpent).toBe(0); // reserve() only projects; record() below banks it.
+      expect(() =>
+        t.record({
+          modelId: `zeroentropyai:${model}`,
+          inputTokens: 3000,
+          outputTokens: 0,
+          kind: 'rerank',
+        }),
+      ).not.toThrow();
+      // $0.025/1M * 3000 tokens = $0.000075, under the $0.0001 cap — proves the
+      // real ZeroEntropy price was used, not a $0 fallback.
+      expect(t.totalSpent).toBeCloseTo(0.000075, 9);
+    },
+  );
+
+  test.each([
+    ['openrouter:voyageai/rerank-2.5-lite', 0.02],
+    ['openrouter:voyageai/rerank-2.5', 0.05],
+  ])('prices %s from the reranker recipe', (modelId, pricePerMTok) => {
+    const t = new BudgetTracker({ maxCostUsd: 1, label: 'test', auditPath });
     expect(() =>
       t.reserve({
-        modelId: 'zeroentropyai:zerank-2',
-        estimatedInputTokens: 3000,
+        modelId,
+        estimatedInputTokens: 1_000_000,
         maxOutputTokens: 0,
         kind: 'rerank',
       }),
     ).not.toThrow();
-    expect(t.totalSpent).toBe(0); // reserve() only projects; record() below banks it.
-    expect(() =>
-      t.record({
-        modelId: 'zeroentropyai:zerank-2',
-        inputTokens: 3000,
-        outputTokens: 0,
-        kind: 'rerank',
-      }),
-    ).not.toThrow();
-    // $0.025/1M * 3000 tokens = $0.000075, under the $0.0001 cap — proves the
-    // real ZeroEntropy price was used, not a $0 fallback.
-    expect(t.totalSpent).toBeCloseTo(0.000075, 9);
+    t.record({ modelId, inputTokens: 1_000_000, outputTokens: 0, kind: 'rerank' });
+    expect(t.totalSpent).toBeCloseTo(pricePerMTok, 9);
   });
+
+  test('prices OpenRouter NVIDIA :free reranking at zero', () => {
+    const modelId = 'openrouter:nvidia/llama-nemotron-rerank-vl-1b-v2:free';
+    const t = new BudgetTracker({ maxCostUsd: 0.000001, label: 'test', auditPath });
+    expect(() =>
+      t.reserve({ modelId, estimatedInputTokens: 1_000_000, maxOutputTokens: 0, kind: 'rerank' }),
+    ).not.toThrow();
+    t.record({ modelId, inputTokens: 1_000_000, outputTokens: 0, kind: 'rerank' });
+    expect(t.totalSpent).toBe(0);
+  });
+
+  test.each(['cohere/rerank-v3.5', 'cohere/rerank-4-fast', 'cohere/rerank-4-pro'])(
+    'openrouter:%s (per-search Cohere) keeps its pre-existing pseudo-rate under --max-cost',
+    (model) => {
+      // The default OpenRouter reranker is Cohere. Moving the catalog to
+      // per-model pricing must not turn the default into a TX2 no-pricing
+      // hard-fail for capped installs: the pseudo-rate is carried over as-is.
+      const modelId = `openrouter:${model}`;
+      const t = new BudgetTracker({ maxCostUsd: 1, label: 'test', auditPath });
+      expect(() =>
+        t.reserve({ modelId, estimatedInputTokens: 1_000_000, maxOutputTokens: 0, kind: 'rerank' }),
+      ).not.toThrow();
+      t.record({ modelId, inputTokens: 1_000_000, outputTokens: 0, kind: 'rerank' });
+      expect(t.totalSpent).toBeCloseTo(0.001, 9);
+    },
+  );
 
   test('v0.40.x: local embed providers price at $0 (no TX2 throw under --max-cost)', () => {
     // FREE_LOCAL_EMBED_PROVIDERS — ollama / llama-server run on local inference
@@ -403,7 +444,10 @@ describe('BudgetTracker.reserve', () => {
     expect((caught as BudgetExhausted).reason).toBe('no_pricing');
   });
 
-  test('#3628: unknown hosted rerank provider points no-pricing guidance at embedding-pricing', () => {
+  test('#3628: unknown hosted rerank provider points no-pricing guidance at the reranker recipe', () => {
+    // Reranker pricing now resolves from the provider recipe first (the
+    // embedding table is a compatibility fallback only), so the no-pricing
+    // guidance directs operators at the recipe rather than embedding-pricing.ts.
     const t = new BudgetTracker({ maxCostUsd: 1.0, label: 'test', auditPath });
     let caught: unknown = null;
     try {
@@ -418,7 +462,7 @@ describe('BudgetTracker.reserve', () => {
     }
     expect(caught).toBeInstanceOf(BudgetExhausted);
     expect((caught as BudgetExhausted).reason).toBe('no_pricing');
-    expect((caught as Error).message).toContain('embedding-pricing.ts');
+    expect((caught as Error).message).toContain('the provider reranker recipe');
     expect((caught as Error).message).not.toContain('anthropic-pricing.ts');
   });
 
