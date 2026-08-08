@@ -237,7 +237,7 @@ export interface ImportResult {
   flag_reason?: 'markup_heavy' | 'oversized';
 }
 
-const MAX_FILE_SIZE = 5_000_000; // 5MB
+export const MAX_FILE_SIZE = 5_000_000; // 5MB
 
 /**
  * Import content from a string. Core pipeline:
