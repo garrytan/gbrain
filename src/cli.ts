@@ -121,6 +121,12 @@ const CLI_ONLY_SELF_HELP = new Set([
   // --help` print the migration flags from runMigrateEmbeddings. `migrate`
   // (engine transfer) keeps its own dispatch too.
   'migrate', 'retrieval-upgrade',
+  // `gbrain takes --help` printed the generic one-line stub, so the nine
+  // subcommands (add/update/supersede/resolve/scorecard/calibration/revisit/
+  // extract/search) were undiscoverable from the CLI — the detailed usage
+  // block in runTakes (src/commands/takes.ts) was unreachable. Same holdout
+  // pattern as `capture`, `sync`, and `schema` above.
+  'takes',
 ]);
 
 // v114 (#1941): alias -> operation lookup, kept separate from `cliOps` so
@@ -1735,6 +1741,16 @@ async function handleCliOnly(command: string, args: string[]) {
   if (command === 'enrich' && (args.includes('--help') || args.includes('-h'))) {
     const { runEnrich } = await import('./commands/enrich.ts');
     await runEnrich(null as never, args);
+    return;
+  }
+
+  // Same pattern for `takes --help`. 'takes' is now in CLI_ONLY_SELF_HELP so
+  // the generic stub stays out of the way; this pre-engine-bind branch exposes
+  // the subcommand usage block without a configured brain. runTakes' help path
+  // returns before touching the engine.
+  if (command === 'takes' && (args.includes('--help') || args.includes('-h'))) {
+    const { runTakes } = await import('./commands/takes.ts');
+    await runTakes(null as never, args);
     return;
   }
 
