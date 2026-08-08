@@ -12,7 +12,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import type { SearchResult, SearchOpts, HybridSearchMeta } from '../types.ts';
-import { embed, embedQuery } from '../embedding.ts';
+import { embed, embedQuery, effectiveQueryInstruct } from '../embedding.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
 import { resolveEmbeddingColumn, isCacheSafe } from './embedding-column.ts';
 import { resolveHardExcludes } from './source-boost.ts';
@@ -1841,6 +1841,10 @@ export async function hybridSearchCached(
     // resolves) into the cache key so a row written under one exclude
     // policy can't be served to a lookup under another.
     hardExcludes: resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes),
+    // v=15 — fold the effective query-side instruction (the gateway's
+    // qwen3-embedding Instruct template) so rows written under different
+    // instruction settings never cross-serve.
+    queryInstruct: effectiveQueryInstruct(resolvedColCached.embeddingModel),
   });
 
   // Cache decision: opts.useCache (explicit) wins over global config; global
