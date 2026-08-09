@@ -222,6 +222,58 @@ describe('doctor command', () => {
     }
   });
 
+  test('jsonb_integrity: flags double-encoded subagent payloads, ignores legitimate string scalars, skips absent tables', async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const { jsonbIntegrityCheck } = await import('../src/commands/doctor.ts');
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    try {
+      // Seed a minion job to satisfy the FK, then two subagent rows:
+      // one DOUBLE-ENCODED (string scalar whose content is a JSON array —
+      // the pre-#2375 damage class) and one LEGITIMATE string scalar
+      // (persistToolExec binds pre-serialized string payloads as-is).
+      await engine.executeRaw(
+        `INSERT INTO minion_jobs (id, name, data, status) VALUES (990001, 'doctor-jsonb-test', '{}'::jsonb, 'completed')`,
+      );
+      await engine.executeRaw(
+        `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks)
+         VALUES (990001, 0, 'assistant', to_jsonb('[{"type":"text"}]'::text))`,
+      );
+      await engine.executeRaw(
+        `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks)
+         VALUES (990001, 1, 'assistant', to_jsonb('plain text payload, not JSON'::text))`,
+      );
+      // Container-LOOKING but invalid JSON — matches the shape probe but
+      // pg_input_is_valid must exclude it (repairing it would throw).
+      await engine.executeRaw(
+        `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks)
+         VALUES (990001, 2, 'assistant', to_jsonb('[INFO] fetch complete'::text))`,
+      );
+
+      const damaged = await jsonbIntegrityCheck(engine);
+      expect(damaged.status).toBe('warn');
+      // Exactly the double-encoded row counts — the legit string scalar doesn't.
+      expect(damaged.message).toContain('subagent_messages.content_blocks=1');
+
+      // Cleanup, then prove the ok path again.
+      await engine.executeRaw(`DELETE FROM subagent_messages WHERE job_id = 990001`);
+      await engine.executeRaw(`DELETE FROM minion_jobs WHERE id = 990001`);
+      expect((await jsonbIntegrityCheck(engine)).status).toBe('ok');
+
+      // Absent-table skip lane: rename a target table; the check must skip
+      // it without throwing (pre-v0.15 brains lack subagent_* entirely).
+      await engine.executeRaw(`ALTER TABLE subagent_tool_executions RENAME TO subagent_tool_executions_bak`);
+      try {
+        expect((await jsonbIntegrityCheck(engine)).status).toBe('ok');
+      } finally {
+        await engine.executeRaw(`ALTER TABLE subagent_tool_executions_bak RENAME TO subagent_tool_executions`);
+      }
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
   test('skill conformance derives a valid host manifest when manifest.json is absent', async () => {
     const { skillConformanceCheck } = await import('../src/commands/doctor.ts');
     const skillsDir = join(tmpdir(), `gbrain-doctor-skills-${crypto.randomUUID()}`);

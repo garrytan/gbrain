@@ -624,7 +624,13 @@ export class PostgresEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.tables
                 WHERE table_schema = current_schema() AND table_name = 'timeline_entries') AS timeline_entries_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema = current_schema() AND table_name = 'timeline_entries' AND column_name = 'event_page_id') AS timeline_event_page_id_exists
+                WHERE table_schema = current_schema() AND table_name = 'timeline_entries' AND column_name = 'event_page_id') AS timeline_event_page_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema = current_schema() AND table_name = 'minion_jobs') AS minion_jobs_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'minion_jobs' AND column_name = 'timeout_at') AS minion_jobs_timeout_at_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'minion_jobs' AND column_name = 'idempotency_key') AS minion_jobs_idempotency_key_exists
     `;
     const probe = probeRows[0]!;
 
@@ -703,6 +709,9 @@ export class PostgresEngine implements BrainEngine {
       pages_links_extracted_at_exists?: boolean;
       timeline_entries_exists?: boolean;
       timeline_event_page_id_exists?: boolean;
+      minion_jobs_exists?: boolean;
+      minion_jobs_timeout_at_exists?: boolean;
+      minion_jobs_idempotency_key_exists?: boolean;
     };
     const needsContextualRetrievalColumns = (probe.pages_exists
         && (!probeCr.pages_cr_mode_exists || !probeCr.pages_corpus_generation_exists))
@@ -725,6 +734,14 @@ export class PostgresEngine implements BrainEngine {
     // v121: schema-blob indexes reference event_page_id before migrations run.
     const needsTimelineEventPageId = probeCr.timeline_entries_exists === true
       && !probeCr.timeline_event_page_id_exists;
+    // v7-era (#2626 class sweep): minion_jobs.timeout_at + idempotency_key are
+    // migration-added AND referenced by blob indexes (idx_minion_jobs_timeout,
+    // uniq_minion_jobs_idempotency) — a pre-v7 minion_jobs wedges blob replay
+    // exactly like the v121 incident.
+    const needsMinionJobsTimeoutAt = probeCr.minion_jobs_exists === true
+      && !probeCr.minion_jobs_timeout_at_exists;
+    const needsMinionJobsIdempotencyKey = probeCr.minion_jobs_exists === true
+      && !probeCr.minion_jobs_idempotency_key_exists;
 
     if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
         && !needsPagesDeletedAt && !needsMcpLogBootstrap && !needsSubagentProviderId
@@ -736,7 +753,8 @@ export class PostgresEngine implements BrainEngine {
         && !needsContextualRetrievalColumns && !needsPagesGeneration
         && !needsPagesEmbeddingSignature
         && !needsPagesLinksExtractedAt
-        && !needsTimelineEventPageId) return;
+        && !needsTimelineEventPageId
+        && !needsMinionJobsTimeoutAt && !needsMinionJobsIdempotencyKey) return;
 
     process.stderr.write('  Pre-v0.21 brain detected, applying forward-reference bootstrap\n');
 
@@ -989,6 +1007,20 @@ export class PostgresEngine implements BrainEngine {
       // source of truth for the FK and indexes and runs idempotently afterward.
       await conn.unsafe(`
         ALTER TABLE timeline_entries ADD COLUMN IF NOT EXISTS event_page_id INTEGER;
+      `);
+    }
+
+    if (needsMinionJobsTimeoutAt) {
+      // v7: blob index idx_minion_jobs_timeout references timeout_at; a
+      // pre-v7 minion_jobs wedges blob replay without it (same class as v121).
+      await conn.unsafe(`
+        ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS timeout_at TIMESTAMPTZ;
+      `);
+    }
+    if (needsMinionJobsIdempotencyKey) {
+      // v7: blob index uniq_minion_jobs_idempotency references idempotency_key.
+      await conn.unsafe(`
+        ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
       `);
     }
   }
@@ -2613,8 +2645,15 @@ export class PostgresEngine implements BrainEngine {
       const scope = sourceIds
         ? tx`p.source_id = ANY(${sourceIds}::text[])`
         : tx`p.source_id = ${scalarSourceId}`;
+      // #2544: explicit non-vector column list — rowToChunk discards
+      // embeddings at this call site (includeEmbedding defaults false), so
+      // `cc.*` shipped every vector over the wire only to be thrown away.
       const rows = await tx`
-        SELECT cc.* FROM content_chunks cc
+        SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+               cc.model, cc.token_count, cc.embedded_at, cc.language,
+               cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line,
+               cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality
+        FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
         WHERE p.slug = ${slug} AND ${scope}
         ORDER BY cc.chunk_index

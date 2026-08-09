@@ -2,6 +2,23 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.76.0] - 2026-08-08
+
+**Mistyped or unsupported flags now fail loudly instead of being silently ignored — including the ones that were supposed to make a command safe.**
+
+**Strict flag validation, CLI-wide.** Every gbrain command now rejects a flag it does not understand, with a clear error naming the flag and the command, before any work runs. Before, commands read their flags ad hoc and ignored the rest — so `gbrain post-upgrade --dry-run` accepted the flag, ignored it, and applied migrations for real. That class is gone: the legal flags for every command are derived from each command's own source into a generated registry, checked before dispatch, and a command may only advertise a safety flag like `--dry-run` if its code actually reads it. On commands routed through the operations contract, a trailing `--dry-run` is now a real rehearsal switch rather than a no-op. `--json` invocations get the same error as a structured payload, so scripts fail cleanly too.
+
+**A word of warning (intentional breaking change):** cron jobs or scripts that pass stray, misspelled, or long-removed flags have been running on luck — the flag did nothing. Those invocations now exit with an error naming the flag. That is the point: fix the invocation once and it means what it says forever. Everything after `--` is passthrough and remains untouched.
+
+**Upgrades can't wedge on forward-referenced columns anymore — as a class.** The v0.42.56.0-era startup wedge (a schema blob referencing a column that pre-existing brains didn't have yet) had two more latent instances waiting in the jobs table. Both are now probed and healed at startup, and the schema coverage guard was rewritten to cross-reference every column referenced by the embedded schema against the set of columns any migration has ever added — so a new forward reference cannot ship without its startup probe. A recovery test walks the exact journey an affected brain takes: failed upgrade, retry on the fixed binary, converge with no leftover state blocking the way.
+
+**Remote agents get more, within the same fences.** The `think` operation is now available to remote MCP callers as a read-only synthesis — the local CLI can still persist results, while remote callers are forced read-only. Chunk reads now resolve through the same source-scope rules as page reads, so a federated grant that can open a page can also read that page's chunks, and a caller without the grant cannot reach chunks outside its own floor. Chunk payloads also stop carrying raw embedding vectors over the wire — noticeably smaller responses with no behavior change, since no consumer ever read them. Two internal call sites that forward caller identity now treat anything ambiguous as untrusted, matching the fail-closed rule the rest of the codebase already follows.
+
+**Source-bound clients can be minted over HTTP.** The `/admin/api/register-client` endpoint now accepts `source` and `federatedRead` bindings, mirroring the CLI's `--source` / `--federated-read` flags — so an admin UI or provisioning proxy can create a client confined to a specific brain source without shelling out to the CLI. Omitting both preserves the historical default, and invalid source ids get a structured 400.
+
+**`gbrain doctor` and `repair-jsonb` see further and misfire less.** The double-encoded-JSON scan now covers the subagent execution columns, and the damage test requires the stored text to actually parse as JSON before flagging it — a legitimate string value that merely starts with `[` or `{` (a log line, a code snippet) is no longer misclassified, and a repair pass can no longer corrupt it. One damaged table no longer aborts the scan of the rest.
+
+### To take advantage of v0.42.76.0
 ## [0.42.75.0] - 2026-08-08
 
 **The "PGLite crashes on macOS 26" era is over: gbrain now repairs a torn brain in place, automatically, with your data preserved.**
@@ -31,6 +48,13 @@ Credit where due: @yang1996202-cpu (#2575), @AndreLYL (#223), and @roysaurav (#1
 gbrain upgrade
 ```
 
+Nothing to configure. If a cron job or script starts failing with `unknown flag`, that invocation was passing a flag that did nothing — remove or fix the flag and it will not regress silently again.
+
+### For contributors
+
+Community fixes absorbed with credit: @colinagent (#2598 think read-scope; the upgrade-rewind e2e pattern from #2623), @guim4dev (#2016 register-client source bindings), @vinsew (#597 repair-jsonb coverage extension), @javieraldape (#2494/#2531 output-correctness class — BigInt-safe local rendering and the search `--json` regression pin land here; parts of both PRs shipped earlier from master). Thank you — superseded PRs are being closed with notes.
+
+The unit-test runner is now memory-safe on machines running multiple workspaces: shard concurrency adapts to actually-available memory, and a serial rescue lane re-runs files that died to OOM or external kills before calling them failures — a red suite now means real failures, not memory pressure. The flag registry regenerates via `bun run build:flag-registry` and is pinned by freshness, drift, and consumption-evidence guards.
 If your brain currently won't open, that's it — the next command repairs it. If you'd rather look first: `gbrain pglite-repair --dry-run`.
 
 ## [0.42.74.0] - 2026-08-07

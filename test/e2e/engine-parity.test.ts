@@ -528,6 +528,38 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     }
   });
 
+  test('#2555 getChunks sourceIds[] parity: federated grant + scalar floor + unset default identical on both engines', async () => {
+    for (const eng of [pgEngine, pgliteEngine]) {
+      await eng.executeRaw(`INSERT INTO sources (id, name, local_path) VALUES ('gcp-beta', 'gcp-beta', '/tmp/gcp-beta') ON CONFLICT (id) DO NOTHING`);
+      await eng.putPage('wiki/gcp-doc', {
+        type: 'note', title: 'beta doc', compiled_truth: 'beta body', timeline: '',
+      }, { sourceId: 'gcp-beta' });
+      await eng.upsertChunks('wiki/gcp-doc', [
+        { chunk_index: 0, chunk_text: 'gcp beta chunk', chunk_source: 'compiled_truth' },
+      ], { sourceId: 'gcp-beta' });
+      await eng.putPage('wiki/gcp-doc', {
+        type: 'note', title: 'default decoy', compiled_truth: 'decoy body', timeline: '',
+      }, { sourceId: 'default' });
+      await eng.upsertChunks('wiki/gcp-doc', [
+        { chunk_index: 0, chunk_text: 'gcp default decoy', chunk_source: 'compiled_truth' },
+      ], { sourceId: 'default' });
+    }
+
+    for (const eng of [pgEngine, pgliteEngine]) {
+      // Federated array wins over scalar and reaches the non-default source.
+      const federated = await eng.getChunks('wiki/gcp-doc', { sourceId: 'default', sourceIds: ['gcp-beta'] });
+      expect(federated.map(c => c.chunk_text)).toEqual(['gcp beta chunk']);
+      // Out-of-grant array → empty, never a fall-through to 'default'.
+      const outOfGrant = await eng.getChunks('wiki/gcp-doc', { sourceIds: ['gcp-nonexistent'] });
+      expect(outOfGrant).toEqual([]);
+      // Unset opts keep the historical 'default' floor.
+      const unset = await eng.getChunks('wiki/gcp-doc');
+      expect(unset.map(c => c.chunk_text)).toEqual(['gcp default decoy']);
+      // #2544 trim keeps the Chunk shape (embedding deliberately unselected → null).
+      expect(federated[0].embedding).toBeNull();
+    }
+  });
+
   test('v114 (#1941) listLinkSources parity: same ordered provenance counts on both engines', async () => {
     const mk = async (eng: BrainEngine) => {
       for (const s of ['lsp-a', 'lsp-b', 'lsp-c']) {
