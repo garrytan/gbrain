@@ -20,7 +20,6 @@ POSIX shells:
 
 ```bash
 git clone https://github.com/veltri-23/hermes-gbrain-memory "$HERMES_HOME/plugins/gbrain"
-hermes plugins enable gbrain
 ```
 
 PowerShell:
@@ -28,8 +27,11 @@ PowerShell:
 ```powershell
 $pluginPath = Join-Path $env:HERMES_HOME 'plugins\gbrain'
 git clone https://github.com/veltri-23/hermes-gbrain-memory $pluginPath
-hermes plugins enable gbrain
 ```
+
+`kind: exclusive` providers use Hermes' memory-provider discovery, not the
+general `hermes plugins enable` path. Run `hermes memory setup` below to select
+this provider.
 
 Keep one active `gbrain` provider installation. A bundled legacy copy can take
 precedence over this user-plugin copy; check the resolved provider path before
