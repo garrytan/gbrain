@@ -58,6 +58,8 @@ import {
   DERIVE_PHASE_DB_ONLY_DEFAULTS,
   findDbOnlyCollisions,
 } from '../core/storage-config.ts';
+import { validateRepoState } from '../core/git-remote.ts';
+import { isDurabilityHardened } from '../core/brain-repo-durability.ts';
 import { slugifyPath } from '../core/sync.ts';
 // issue #1777: hidden_by_search_policy — count chunked pages withheld from
 // default search by the hard-exclude prefix policy. Reuses the canonical
@@ -3834,6 +3836,51 @@ export async function checkUndeclaredDbOnlyPages(engine: BrainEngine): Promise<C
     };
   } catch (e) {
     return { name, status: 'warn', message: `Could not check undeclared db-only pages: ${(e as Error).message}` };
+  }
+}
+
+/**
+ * source_durability_hardening — a source with a pushable git remote that
+ * write-through writes into but that was never hardened via `gbrain sources
+ * harden` has no way for those writes to reach git: `isDurabilityHardened`
+ * gates write-through's best-effort commit (write-through.ts), so on an
+ * un-hardened repo the `.md` artifact lands on disk and stays there —
+ * uncommitted, unpushed, invisible on a fresh clone. The DB row becomes the
+ * only durable copy even though `put_page` reported success.
+ *
+ * Only sources with a configured `origin` remote are in scope
+ * (`validateRepoState(...) === 'healthy'`) — a local-only working tree with
+ * no remote has nothing for hardening to push to, so it's not a gap.
+ */
+export async function checkSourceDurabilityHardening(engine: BrainEngine): Promise<Check> {
+  const name = 'source_durability_hardening';
+  try {
+    const sources = await engine.executeRaw<{ id: string; local_path: string | null }>(
+      `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL`,
+    );
+    const withRemote = sources.filter(
+      s => s.local_path && existsSync(s.local_path) && validateRepoState(s.local_path) === 'healthy',
+    );
+    if (withRemote.length === 0) {
+      return { name, status: 'ok', message: 'Not applicable (no sources with a pushable git remote on this host)' };
+    }
+    const unhardened = withRemote.filter(s => !isDurabilityHardened(s.local_path!));
+    if (unhardened.length === 0) {
+      return {
+        name,
+        status: 'ok',
+        message: `All ${withRemote.length} source(s) with a git remote are durability-hardened`,
+      };
+    }
+    const ids = unhardened.map(s => s.id);
+    return {
+      name,
+      status: 'warn',
+      message: `${unhardened.length}/${withRemote.length} source(s) accept writes but are not durability-hardened — write-through content lands on disk but is never committed/pushed, so the DB row is the only durable copy. Fix: gbrain sources harden --source <id> for: ${ids.join(', ')}`,
+      details: { unhardened: ids },
+    };
+  } catch (e) {
+    return { name, status: 'warn', message: `Could not check source durability hardening: ${(e as Error).message}` };
   }
 }
 
@@ -8035,6 +8082,11 @@ export async function buildChecks(
     checks.push(await checkUndeclaredDbOnlyPages(engine));
     progress.heartbeat('db_only_collector_collision');
     checks.push(await checkDbOnlyCollectorCollision(engine));
+    // Write-path durability: sources with a pushable remote that were never
+    // hardened via `gbrain sources harden` (write-through commits are gated
+    // on isDurabilityHardened — see checkSourceDurabilityHardening).
+    progress.heartbeat('source_durability_hardening');
+    checks.push(await checkSourceDurabilityHardening(engine));
   }
 
   // v0.32.3 search-lite — mode + eval_drift surfaces. Status stays 'ok' per

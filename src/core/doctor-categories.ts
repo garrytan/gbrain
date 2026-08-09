@@ -164,6 +164,7 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'search_mode',
   'pool_reap_health',
   'self_upgrade_health',
+  'source_durability_hardening',
   'stale_locks',
   'subagent_capability',
   'subagent_health',
