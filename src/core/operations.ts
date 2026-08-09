@@ -1253,8 +1253,8 @@ const put_page: Operation = {
     // v0.38 put_page write-through (ingestion cathedral):
     // After importFromContent succeeds, if `sync.repo_path` resolves to a
     // real directory, persist the markdown file to disk alongside the DB
-    // row. Failures non-fatal — DB write is durable; subsequent sync
-    // reconciles drift.
+    // row. A failure here is fatal to the call (see the check right below)
+    // except for the one deliberate DB-only configuration.
     //
     // Trust gating:
     //   - Subagent sandbox (viaSubagent without allowedSlugPrefixes) → DB-only.
@@ -1281,6 +1281,38 @@ const put_page: Operation = {
       writeThrough = { written: false, skipped: 'subagent_sandbox' };
     } else if (ctx.dryRun) {
       writeThrough = { written: false, skipped: 'dry_run' };
+    }
+
+    // The markdown file is the system of record (docs/architecture/
+    // system-of-record.md); the DB row is a derived cache. `no_repo_configured`
+    // is the one deliberate, by-design DB-only outcome (no `sync.repo_path`
+    // set at all). Every other non-written outcome — a thrown write error, or
+    // a guard that REFUSED to write into an existing repo (missing dir,
+    // sibling-source collision, escaped path, case-fold clash, unreadable
+    // row) — means a file was supposed to exist and doesn't, so put_page must
+    // not report success.
+    if (writeThrough && !writeThrough.written
+      && writeThrough.skipped !== 'no_repo_configured'
+      && writeThrough.skipped !== 'subagent_sandbox') {
+      // Roll back rather than leave an index-only orphan, but only when this
+      // call is what created the row: created_at === updated_at is set by
+      // the SAME insert statement (the ON CONFLICT UPDATE branch never
+      // touches created_at), so equality here means "brand new, this call."
+      // An update (or a dedup hit resolved to a pre-existing page) is left
+      // alone — the prior file on disk still matches the prior DB content.
+      try {
+        const row = await ctx.engine.getPage(result.slug, { sourceId: ctx.sourceId ?? 'default' });
+        if (row && row.created_at.getTime() === row.updated_at.getTime()) {
+          await ctx.engine.deletePage(result.slug, { sourceId: ctx.sourceId ?? 'default' });
+        }
+      } catch {
+        // best-effort; the error thrown below still surfaces the failure
+      }
+      throw new OperationError(
+        'storage_error',
+        `put_page: the page content could not be written to disk (${writeThrough.skipped ?? writeThrough.error}).`,
+        'Check that the configured repo path exists and is writable, then retry.',
+      );
     }
 
     // Auto-link post-hook: runs AFTER importFromContent (which is its own
