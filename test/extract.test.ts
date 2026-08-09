@@ -237,6 +237,28 @@ after the prototype demo. [Source: user interview, 2026-07-30]`;
     expect(entries[0].source).toBe('Meeting');
   });
 
+  it('keeps a prose citation directly under a timeline bullet', () => {
+    const content = `- **2025-03-18** | Meeting notes
+Follow-up decision recorded. [Source: memo, 2025-03-20]`;
+    const entries = extractTimelineFromContent(content, 'test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].date).toBe('2025-03-20');
+    expect(entries[0].source).toBe('memo');
+    expect(entries[0].summary).toBe('Follow-up decision recorded.');
+  });
+
+  it('ignores dated citations inside fenced code blocks', () => {
+    const content = `\`\`\`
+Fake claim. [Source: generated fixture, 2025-01-01]
+\`\`\`
+Real claim. [Source: memo, 2025-01-02]`;
+    const entries = extractTimelineFromContent(content, 'test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].date).toBe('2025-01-02');
+    expect(entries[0].source).toBe('memo');
+    expect(entries[0].summary).toBe('Real claim.');
+  });
+
   it('skips a bare citation with no surrounding text', () => {
     const content = `[Source: import batch, 2025-07-01]`;
     expect(extractTimelineFromContent(content, 'test')).toHaveLength(0);

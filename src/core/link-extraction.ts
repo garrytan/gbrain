@@ -1327,7 +1327,10 @@ function startsMarkdownBlock(line: string): boolean {
   return /^#{1,6}\s/.test(line) || /^\s*(?:[-*+]|\d+\.)\s+/.test(line);
 }
 
-function citationParagraphs(content: string): CitationParagraph[] {
+function citationParagraphs(
+  content: string,
+  opts: { skipLine?: (line: string) => boolean } = {},
+): CitationParagraph[] {
   const paragraphs: CitationParagraph[] = [];
   let lines: string[] = [];
 
@@ -1340,8 +1343,12 @@ function citationParagraphs(content: string): CitationParagraph[] {
     lines = [];
   };
 
-  for (const line of content.split(/\r?\n/)) {
+  for (const line of stripCodeBlocks(content).split(/\r?\n/)) {
     if (line.trim().length === 0) {
+      flush();
+      continue;
+    }
+    if (opts.skipLine?.(line)) {
       flush();
       continue;
     }
@@ -1358,8 +1365,7 @@ export function parseInlineCitationTimelineEntries(
   opts: { skipLine?: (line: string) => boolean } = {},
 ): InlineCitationTimelineCandidate[] {
   const result: InlineCitationTimelineCandidate[] = [];
-  for (const paragraph of citationParagraphs(content)) {
-    if (opts.skipLine && paragraph.lines.some(opts.skipLine)) continue;
+  for (const paragraph of citationParagraphs(content, opts)) {
     const matches = [...paragraph.text.matchAll(CITATION_TIMELINE_RE)];
     if (matches.length === 0) continue;
     const summary = paragraph.text
