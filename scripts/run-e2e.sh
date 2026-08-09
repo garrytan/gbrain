@@ -80,6 +80,7 @@ mkdir -p "$E2E_TMP_HOME/.gbrain"
 for _e2e_var in $(env | grep -oE '^(CONDUCTOR_|MCP_|OPENCLAW_|GBRAIN_)[A-Za-z0-9_]*' | sort -u); do
   case "$_e2e_var" in
     GBRAIN_HOME) ;;  # required for HOME isolation (set above) — keep
+    GBRAIN_TEST_DB) ;;  # explicit opt-in; schema-drift still requires a test-shaped DB name
     *) unset "$_e2e_var" || true ;;
   esac
 done

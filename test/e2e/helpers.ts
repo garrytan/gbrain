@@ -52,7 +52,12 @@ const ALL_TABLES = [
   // v0.43 (#2095): volunteered-context feedback log — no FK to pages (slug
   // join), but stale rows poison stats/count assertions across runs.
   'context_volunteer_events',
-  'pages',       // last because of foreign keys
+  'pages',       // before sources because pages.source_id references it
+  // Source registrations change sync routing. Leaving a sole non-default
+  // source behind makes later files silently import into the wrong tenant.
+  // TRUNCATE ... CASCADE also clears any less-common source-scoped tables;
+  // the schema init below re-seeds the canonical `default` source.
+  'sources',
   'config',
   'minion_attachments',
   'minion_inbox',

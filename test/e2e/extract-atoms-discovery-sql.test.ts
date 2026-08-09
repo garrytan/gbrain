@@ -38,7 +38,7 @@ afterAll(async () => {
 beforeEach(async () => {
   if (skip) return;
   // Clean test-source rows + atoms + meeting pages between tests
-  await engine.executeRaw(`DELETE FROM pages WHERE source_id IN ('default', 'dept-x') AND (type = 'atom' OR type IN ('meeting', 'source', 'article', 'video', 'book', 'original'))`);
+  await engine.executeRaw(`DELETE FROM pages WHERE source_id IN ('default', 'dept-x') AND (type = 'atom' OR type IN ('meeting', 'source', 'article', 'video', 'book', 'original', 'person'))`);
   await engine.executeRaw(`DELETE FROM sources WHERE id = 'dept-x'`);
 });
 
@@ -74,13 +74,13 @@ describeIfDB('v0.41.2.1 D10 — discoverExtractablePages on real Postgres', () =
   test('returns extractable rows when seeded', async () => {
     await seedPage({ slug: 'meeting/a', type: 'meeting', content_hash: 'hash-A-1234567890abc' });
     await seedPage({ slug: 'source/b', type: 'source', content_hash: 'hash-B-1234567890abc' });
-    await seedPage({ slug: 'notes/skip', type: 'note', content_hash: 'hash-N-1234567890abc' });
+    await seedPage({ slug: 'people/skip', type: 'person', content_hash: 'hash-N-1234567890abc' });
 
     const discovered = await discoverExtractablePages(engine, 'default');
     const slugs = discovered.map((d) => d.slug).sort();
     expect(slugs).toContain('meeting/a');
     expect(slugs).toContain('source/b');
-    expect(slugs).not.toContain('notes/skip');
+    expect(slugs).not.toContain('people/skip');
   });
 
   test('ANY($::text[]) bind works through postgres.unsafe (PGLite parity proof)', async () => {
@@ -90,7 +90,7 @@ describeIfDB('v0.41.2.1 D10 — discoverExtractablePages on real Postgres', () =
     for (const type of ['meeting', 'source', 'article', 'video', 'book', 'original']) {
       await seedPage({ slug: `${type}/x`, type, content_hash: `hash-${type}-1234567890ab` });
     }
-    await seedPage({ slug: 'note/skip', type: 'note', content_hash: 'hash-note-1234567890' });
+    await seedPage({ slug: 'people/skip', type: 'person', content_hash: 'hash-person-1234567' });
 
     const discovered = await discoverExtractablePages(engine, 'default');
     const slugs = discovered.map((d) => d.slug).sort();

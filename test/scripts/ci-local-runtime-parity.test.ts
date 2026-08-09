@@ -50,4 +50,10 @@ describe('ci:local runtime parity', () => {
     expect(CI_LOCAL).toContain("printf '%s\\\\n' 1 2 3 4 | xargs -P2");
     expect(CI_LOCAL).not.toContain("printf '%s\\\\n' 1 2 3 4 | xargs -P4");
   });
+
+  test('container E2E may reset only the explicitly test-named database', () => {
+    expect(COMPOSE).toContain('GBRAIN_TEST_DB: "1"');
+    expect(readFileSync(resolve(REPO_ROOT, 'scripts/run-e2e.sh'), 'utf8'))
+      .toContain('GBRAIN_TEST_DB)');
+  });
 });

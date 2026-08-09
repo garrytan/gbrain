@@ -122,6 +122,9 @@ services:
   runner:
     image: oven/bun:1.3.13
     working_dir: /app
+    environment:
+      # schema-drift may reset only this explicitly test-named database.
+      GBRAIN_TEST_DB: "1"
     depends_on:
       postgres-1:
         condition: service_healthy
