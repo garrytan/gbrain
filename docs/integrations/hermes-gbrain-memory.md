@@ -82,24 +82,21 @@ is the bridge that translates between Hermes' memory lifecycle and GBrain's MCP
 interface. That bridge lets Python-based Hermes use TypeScript-based GBrain without
 moving the brain, duplicating its data, or rewriting either project.
 
-## Install the provider
+## Install and select the provider
 
-Clone the provider into Hermes' user-plugin directory.
-
-POSIX shells:
+Use Hermes' built-in plugin installer. You do not need to clone files or find
+Hermes' plugin directory yourself.
 
 ```bash
-git clone https://github.com/veltri-23/hermes-gbrain-memory "$HERMES_HOME/plugins/gbrain"
+hermes plugins install veltri-23/hermes-gbrain-memory --no-enable
+hermes memory setup
 ```
 
-PowerShell:
+The first command installs the GBrain adapter through Hermes' normal plugin
+system. The second selects GBrain as the active memory provider and walks through
+connection setup.
 
-```powershell
-$pluginPath = Join-Path $env:HERMES_HOME 'plugins\gbrain'
-git clone https://github.com/veltri-23/hermes-gbrain-memory $pluginPath
-```
-
-Select GBrain as the active memory provider:
+If the provider is already installed, run only:
 
 ```bash
 hermes memory setup
