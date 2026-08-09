@@ -315,11 +315,22 @@ function collectValidationErrors(
     }
   }
 
-  // 6. YAML_PARSE — gray-matter threw.
-  if (ctx.yamlParseError) {
+  // 6. YAML_PARSE — validate the fenced YAML directly. gray-matter normally
+  // throws for malformed frontmatter, but it can also return the whole file as
+  // body with empty data, so the validation surface must not depend only on
+  // gray-matter's parse path.
+  let detectedYamlParseError = ctx.yamlParseError;
+  if (!detectedYamlParseError && fmBody.length > 0) {
+    try {
+      yamlSafeLoad(fmBody);
+    } catch (e) {
+      detectedYamlParseError = e as Error;
+    }
+  }
+  if (detectedYamlParseError) {
     errors.push({
       code: 'YAML_PARSE',
-      message: `YAML parse failed: ${ctx.yamlParseError.message}`,
+      message: `YAML parse failed: ${detectedYamlParseError.message}`,
       line: firstNonEmpty + 1,
     });
   }
