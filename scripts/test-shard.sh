@@ -106,6 +106,24 @@ if [ "$SHARD_COUNT" -eq 0 ]; then
   exit 0
 fi
 
-# Convert newline-separated file list to argv. xargs handles the
-# whitespace correctly without word-splitting on spaces in paths.
-printf '%s\n' "$SHARD_FILES" | xargs bun test --timeout=60000
+# Match ci:local's process isolation: gateway, MCP, and background-work state
+# is process-global, so each file gets a fresh Bun process. Keep running after
+# a failure so one hosted shard reports every failing file in that partition.
+fail_count=0
+failed_files=()
+while IFS= read -r file; do
+  [ -z "$file" ] && continue
+  if ! bun test --max-concurrency=1 --timeout=60000 "$file"; then
+    fail_count=$((fail_count + 1))
+    failed_files+=("$file")
+  fi
+done <<< "$SHARD_FILES"
+
+if [ "$fail_count" -gt 0 ]; then
+  echo "" >&2
+  echo "shard $SHARD_INDEX/$TOTAL_SHARDS: $fail_count file(s) failed:" >&2
+  for file in "${failed_files[@]}"; do
+    echo "  - $file" >&2
+  done
+  exit 1
+fi

@@ -30,17 +30,19 @@ function writeFakeGit(): void {
   writeFileSync(FAKE_GIT_MODE, 'ok');
   // Per-invocation argv goes into argv.log (one JSON array per line).
   writeFileSync(FAKE_GIT_LOG, '');
-  const script = `#!/usr/bin/env bash
-# Fake git for git-remote.test.ts
-{ printf '['; for arg in "$@"; do printf '%s,' "$(printf '%s' "$arg" | jq -Rs .)"; done; printf 'null]\\n'; } >> "${FAKE_GIT_LOG}"
-mode=$(cat "${FAKE_GIT_MODE}" 2>/dev/null || echo ok)
-case "$mode" in
-  fail) exit 1 ;;
-  url-drift) echo "https://github.com/different/url" ;;
-  url-match) echo "https://github.com/expected/url" ;;
-  *) ;;
-esac
-exit 0
+  const script = `#!/usr/bin/env bun
+import { appendFileSync, readFileSync } from 'node:fs';
+
+appendFileSync(${JSON.stringify(FAKE_GIT_LOG)}, JSON.stringify(process.argv.slice(2)) + '\\n');
+let mode = 'ok';
+try {
+  mode = readFileSync(${JSON.stringify(FAKE_GIT_MODE)}, 'utf8').trim() || 'ok';
+} catch {
+  // Missing mode file means the default success behavior.
+}
+if (mode === 'fail') process.exit(1);
+if (mode === 'url-drift') console.log('https://github.com/different/url');
+if (mode === 'url-match') console.log('https://github.com/expected/url');
 `;
   const path = join(FAKE_GIT_DIR, 'git');
   writeFileSync(path, script);

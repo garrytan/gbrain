@@ -124,7 +124,8 @@ fi
 gitleaks dir . --redact --no-banner
 gitleaks git . --redact --no-banner --log-opts="origin/master..HEAD"
 
-# Step 1: pull. Refreshes pgvector + oven/bun:1 (both are `image:` not `build:`).
+# Step 1: pull. Refreshes pgvector + the pinned Bun image (both are `image:`,
+# not `build:`). Keep the Bun pin aligned with .github/workflows/test.yml.
 if [ "$NO_PULL" = "0" ]; then
   echo "[ci-local] Pulling base images (use --no-pull to skip)..."
   docker compose -f "$COMPOSE_FILE" pull 2>&1 | tail -5
@@ -178,9 +179,12 @@ fi
 echo "[ci-local] Smoke OK ($SMOKE_NO_ARGS files no-arg, 1 single-arg, ${SHARD_TOTAL}=4-shard total)."
 
 # Step 4: build the runner-side command.
-# Tier 1: 4-shard parallel UNIT + E2E. Each shard runs ~46 unit files + ~9
-# E2E files against postgres-N. Guards + typecheck run ONCE before fan-out.
-# --no-shard runs the legacy unsharded flow (debug aid).
+# Tier 1: 4-shard UNIT + E2E with at most 2 shard processes at once. Unit files
+# run in separate Bun processes because gateway, MCP, and background-work
+# singletons are process-global. The two-process fan-out also keeps concurrent
+# PGLite heaps below the Docker VM memory limit.
+# Guards + typecheck run ONCE before fan-out. --no-shard runs the legacy
+# unsharded flow (debug aid).
 if [ "$NO_SHARD" = "1" ]; then
   if [ "$DIFF" = "1" ]; then
     RUN_PHASES_CMD='echo "[runner] guards + typecheck"
@@ -190,7 +194,7 @@ bash scripts/check-trailing-newline.sh
 bash scripts/check-wasm-embedded.sh
 bun run typecheck
 echo "[runner] unit (unsharded, DATABASE_URL unset)"
-env -u DATABASE_URL bash scripts/run-unit-shard.sh
+env -u DATABASE_URL -u GBRAIN_PGLITE_SNAPSHOT bash scripts/run-unit-shard.sh --max-concurrency=1 --isolate-files
 echo "[runner] e2e (unsharded, --diff selected)"
 SELECTED=$(bun run scripts/select-e2e.ts)
 if [ -z "$SELECTED" ]; then
@@ -209,7 +213,7 @@ bash scripts/check-trailing-newline.sh
 bash scripts/check-wasm-embedded.sh
 bun run typecheck
 echo "[runner] unit (unsharded, DATABASE_URL unset)"
-env -u DATABASE_URL bash scripts/run-unit-shard.sh
+env -u DATABASE_URL -u GBRAIN_PGLITE_SNAPSHOT bash scripts/run-unit-shard.sh --max-concurrency=1 --isolate-files
 echo "[runner] e2e (unsharded)"
 DATABASE_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \
 GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer \
@@ -218,7 +222,8 @@ bash scripts/run-e2e.sh'
   fi
 else
   # Tier 1 sharded path. Each shard runs unit+E2E sequentially against its
-  # own postgres-N. Shards run in parallel via xargs -P4.
+  # own postgres-N. Two shard processes run at once; four concurrent PGLite
+  # heaps exceed the memory available in common Docker Desktop/Colima VMs.
   if [ "$DIFF" = "1" ]; then
     DIFF_E2E_PREP='SELECTED=$(bun run scripts/select-e2e.ts)
 if [ -z "$SELECTED" ]; then
@@ -236,24 +241,17 @@ bash scripts/check-progress-to-stdout.sh
 bash scripts/check-trailing-newline.sh
 bash scripts/check-wasm-embedded.sh
 bun run typecheck
-echo \"[runner] Tier 3: building PGLite snapshot fixture (cached across reruns)\"
-if [ ! -f test/fixtures/pglite-snapshot.tar ] || [ ! -f test/fixtures/pglite-snapshot.version ]; then
-  bun run build:pglite-snapshot
-else
-  echo \"[runner] snapshot fixture exists; engine will validate hash at load time\"
-fi
-export GBRAIN_PGLITE_SNAPSHOT=test/fixtures/pglite-snapshot.tar
 echo \"[runner] resolving E2E file selection (--diff aware)\"
 ${DIFF_E2E_PREP}
 mkdir -p /tmp/shard-logs
-echo \"[runner] Tier 1: 4-shard parallel unit + E2E (xargs -P4)\"
+echo \"[runner] Tier 1: 4-shard unit + E2E (2 shard processes at once)\"
 set +e
-printf '%s\\n' 1 2 3 4 | xargs -P4 -I{} sh -c '
+printf '%s\\n' 1 2 3 4 | xargs -P2 -I{} sh -c '
   shard=\$1
   log=/tmp/shard-logs/shard-\${shard}.log
   echo \"[shard \${shard}] start\" > \$log
   echo \"[shard \${shard}] unit phase (SHARD=\${shard}/4, DATABASE_URL unset)\" >> \$log
-  env -u DATABASE_URL SHARD=\${shard}/4 bash scripts/run-unit-shard.sh >> \$log 2>&1
+  env -u DATABASE_URL -u GBRAIN_PGLITE_SNAPSHOT SHARD=\${shard}/4 bash scripts/run-unit-shard.sh --max-concurrency=1 --isolate-files >> \$log 2>&1
   unit_exit=\$?
   if [ \$unit_exit -ne 0 ]; then
     echo \"[shard \${shard}] UNIT FAILED (exit=\$unit_exit)\" >> \$log

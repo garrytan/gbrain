@@ -5,12 +5,12 @@
 # by scripts/run-e2e.sh in the E2E phase). When SHARD=N/M is set, keeps every
 # M-th file starting at index N (1-indexed); otherwise runs the full unit set.
 #
-# Used by scripts/ci-local.sh to fan 4 unit-shard workers in parallel inside
-# the runner container, each pinned to its own postgres shard for the
-# downstream E2E phase.
+# Used by scripts/ci-local.sh to fan out 4 logical unit shards inside the
+# runner container, with at most 2 shard workers active at once. Each shard is
+# pinned to its own postgres shard for the downstream E2E phase.
 #
-# Sequential bun processes within a shard (one bun test invocation with the
-# shard's file list); parallel across shards (4 of these run concurrently).
+# By default each shard uses one bun test invocation for its file list. With
+# --isolate-files, each file runs in a separate sequential bun process.
 
 set -euo pipefail
 
@@ -20,10 +20,12 @@ cd "$(dirname "$0")/.."
 # run-unit-parallel.sh; safe to call without (defaults to bun's default cap).
 MAX_CONC=""
 DRY_RUN=0
+ISOLATE_FILES=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --max-concurrency) MAX_CONC="$2"; shift 2 ;;
     --max-concurrency=*) MAX_CONC="${1#*=}"; shift ;;
+    --isolate-files) ISOLATE_FILES=1; shift ;;
     --dry-run-list) DRY_RUN=1; shift ;;
     *) echo "ERROR: unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -68,6 +70,33 @@ fi
 
 if [ "$DRY_RUN" = "1" ]; then
   printf '%s\n' "${files[@]}"
+  exit 0
+fi
+
+if [ "$ISOLATE_FILES" = "1" ]; then
+  echo "[unit-shard ${SHARD:-(unsharded)}] running ${#files[@]} files (one bun process per file)"
+  fail_count=0
+  failed_files=()
+  for f in "${files[@]}"; do
+    if [ -n "$MAX_CONC" ]; then
+      if ! bun test --max-concurrency="$MAX_CONC" --timeout=60000 "$f"; then
+        fail_count=$((fail_count + 1))
+        failed_files+=("$f")
+      fi
+    elif ! bun test --timeout=60000 "$f"; then
+      fail_count=$((fail_count + 1))
+      failed_files+=("$f")
+    fi
+  done
+  if [ "$fail_count" -gt 0 ]; then
+    echo "" >&2
+    echo "[unit-shard ${SHARD:-(unsharded)}] $fail_count file(s) failed:" >&2
+    for f in "${failed_files[@]}"; do
+      echo "  - $f" >&2
+    done
+    exit 1
+  fi
+  echo "[unit-shard ${SHARD:-(unsharded)}] all ${#files[@]} file(s) passed"
   exit 0
 fi
 
