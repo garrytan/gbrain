@@ -99,6 +99,53 @@ describe('gbrain reindex --markdown (v0.32.7)', () => {
     expect(Number(remaining[0].count)).toBe(3);
   });
 
+  test('--slug force-reindexes only the exact selected page', async () => {
+    for (const slug of ['target-page', 'untouched-page']) {
+      await engine.executeRaw(
+        `INSERT INTO pages (slug, type, title, compiled_truth, page_kind, chunker_version, contextual_retrieval_mode)
+         VALUES ($1, 'note', $1, $2, 'markdown', $3, 'title')`,
+        [slug, `${slug} body`, MARKDOWN_CHUNKER_VERSION],
+      );
+    }
+
+    const result = await runReindex(engine, [
+      '--markdown', '--no-embed', '--slug', 'target-page',
+    ]);
+    expect(result).toMatchObject({ pending: 1, reindexed: 1, failed: 0 });
+
+    const rows = await engine.executeRaw<{ slug: string; chunks: string | number }>(
+      `SELECT p.slug, COUNT(c.id)::bigint AS chunks
+         FROM pages p LEFT JOIN content_chunks c ON c.page_id = p.id
+        GROUP BY p.slug ORDER BY p.slug`,
+    );
+    expect(rows).toHaveLength(2);
+    expect(Number(rows.find((row) => row.slug === 'target-page')?.chunks)).toBeGreaterThan(0);
+    expect(Number(rows.find((row) => row.slug === 'untouched-page')?.chunks)).toBe(0);
+  });
+
+  test('--max-chars is exact-slug-only and tightens repaired chunks', async () => {
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, type, title, compiled_truth, page_kind, chunker_version, contextual_retrieval_mode)
+       VALUES ('dense-page', 'note', 'dense-page', $1, 'markdown', $2, 'title')`,
+      ['密'.repeat(900), MARKDOWN_CHUNKER_VERSION],
+    );
+
+    await expect(runReindex(engine, ['--markdown', '--no-embed', '--max-chars', '256']))
+      .rejects.toThrow('--max-chars requires at least one exact --slug');
+
+    const result = await runReindex(engine, [
+      '--markdown', '--no-embed', '--slug', 'dense-page', '--max-chars', '256',
+    ]);
+    expect(result.reindexed).toBe(1);
+    const chunks = await engine.executeRaw<{ max_chars: string | number; count: string | number }>(
+      `SELECT MAX(LENGTH(c.chunk_text))::bigint AS max_chars, COUNT(*)::bigint AS count
+         FROM content_chunks c JOIN pages p ON p.id = c.page_id
+        WHERE p.slug = 'dense-page'`,
+    );
+    expect(Number(chunks[0].max_chars)).toBeLessThanOrEqual(256);
+    expect(Number(chunks[0].count)).toBeGreaterThan(1);
+  });
+
   test('REGRESSION: forceRechunk bypasses content_hash short-circuit (codex F1)', async () => {
     // The bug: importFromContent skips pages whose content_hash matches even
     // when the chunker version is stale. The fix: reindex passes

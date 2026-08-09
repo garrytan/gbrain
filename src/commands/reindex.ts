@@ -35,6 +35,10 @@ import { runSlidingPool } from '../core/worker-pool.ts';
 import { resolveWorkersWithClamp } from '../core/sync-concurrency.ts';
 
 interface ReindexOpts {
+  /** Force-reindex only these exact slugs. Repeat --slug for multiple pages. */
+  slugs?: string[];
+  /** Tighter per-chunk cap, allowed only with explicit exact-slug targets. */
+  maxChars?: number;
   /** Cap total pages reindexed. Useful for triage runs on huge brains. */
   limit?: number;
   /** Report would-do count; don't actually reindex. */
@@ -75,6 +79,14 @@ function parseArgs(args: string[]): ReindexOpts {
     if (a === '--dry-run') out.dryRun = true;
     else if (a === '--json') out.json = true;
     else if (a === '--no-embed') out.noEmbed = true;
+    else if (a === '--slug') {
+      const slug = (args[++i] ?? '').trim();
+      if (slug) (out.slugs ??= []).push(slug);
+    }
+    else if (a === '--max-chars') {
+      const value = Number.parseInt(args[++i] ?? '', 10);
+      if (Number.isFinite(value) && value >= 256 && value <= 6000) out.maxChars = value;
+    }
     else if (a === '--limit') {
       const v = parseInt(args[++i] ?? '', 10);
       if (Number.isFinite(v) && v > 0) out.limit = v;
@@ -110,7 +122,18 @@ function parseArgs(args: string[]): ReindexOpts {
  * hook for post-v81 brains. The simple `chunker_version OR mode IS NULL`
  * predicate covers the headline upgrade case the wave is shipping.
  */
-async function countPending(engine: BrainEngine): Promise<number> {
+async function countPending(engine: BrainEngine, slugs: string[] = []): Promise<number> {
+  if (slugs.length > 0) {
+    const rows = await engine.executeRaw<{ count: string | number }>(
+      `SELECT COUNT(*)::bigint AS count
+         FROM pages
+        WHERE page_kind = 'markdown'
+          AND deleted_at IS NULL
+          AND slug = ANY($1::text[])`,
+      [slugs],
+    );
+    return Number(rows[0]?.count ?? 0);
+  }
   const rows = await engine.executeRaw<{ count: string | number }>(
     `SELECT COUNT(*)::bigint AS count
        FROM pages
@@ -127,7 +150,19 @@ async function countPending(engine: BrainEngine): Promise<number> {
  * partial completion pick up where they left off without re-doing pages
  * whose chunker_version was already bumped.
  */
-async function readBatch(engine: BrainEngine, batchSize: number): Promise<Array<{ slug: string; source_path: string | null; compiled_truth: string; source_id: string }>> {
+async function readBatch(engine: BrainEngine, batchSize: number, slugs: string[] = []): Promise<Array<{ slug: string; source_path: string | null; compiled_truth: string; source_id: string }>> {
+  if (slugs.length > 0) {
+    return engine.executeRaw(
+      `SELECT slug, source_path, compiled_truth, source_id
+         FROM pages
+        WHERE page_kind = 'markdown'
+          AND deleted_at IS NULL
+          AND slug = ANY($1::text[])
+        ORDER BY id ASC
+        LIMIT $2`,
+      [slugs, batchSize],
+    );
+  }
   return engine.executeRaw(
     `SELECT slug, source_path, compiled_truth, source_id
        FROM pages
@@ -143,19 +178,23 @@ async function readBatch(engine: BrainEngine, batchSize: number): Promise<Array<
 export async function runReindex(engine: BrainEngine, args: string[]): Promise<ReindexResult> {
   const opts = parseArgs(args);
 
+  if (opts.maxChars !== undefined && !opts.slugs?.length) {
+    throw new Error('gbrain reindex --max-chars requires at least one exact --slug target');
+  }
+
   // Require `--markdown` explicitly. Future modes (e.g. --code) get their
   // own routing here.
   if (!args.includes('--markdown')) {
     if (opts.json) {
       process.stdout.write(JSON.stringify({ error: 'gbrain reindex requires a target flag, e.g. --markdown' }) + '\n');
     } else {
-      process.stderr.write('Usage: gbrain reindex --markdown [--limit N] [--dry-run] [--json] [--repo PATH]\n');
+      process.stderr.write('Usage: gbrain reindex --markdown [--slug SLUG ...] [--limit N] [--dry-run] [--json] [--repo PATH]\n');
     }
     setCliExitVerdict(2);
     return { pending: 0, reindexed: 0, skipped: 0, failed: 0, dryRun: !!opts.dryRun, chunkerVersion: MARKDOWN_CHUNKER_VERSION };
   }
 
-  const pending = await countPending(engine);
+  const pending = await countPending(engine, opts.slugs);
 
   if (opts.json && pending === 0) {
     process.stdout.write(JSON.stringify({ pending: 0, reindexed: 0, skipped: 0, failed: 0, chunker_version: MARKDOWN_CHUNKER_VERSION }) + '\n');
@@ -190,7 +229,7 @@ export async function runReindex(engine: BrainEngine, args: string[]): Promise<R
   while (reindexed + skipped + failed < target) {
     const remaining = target - (reindexed + skipped + failed);
     const batchSize = Math.min(BATCH, remaining);
-    const batch = await readBatch(engine, batchSize);
+    const batch = await readBatch(engine, batchSize, opts.slugs);
     if (batch.length === 0) break;
 
     // v0.41.15.0 (T10, D9): per-batch sliding pool. Counters are JS-
@@ -217,6 +256,7 @@ export async function runReindex(engine: BrainEngine, args: string[]): Promise<R
                 sourceId: row.source_id,
                 inferFrontmatter: false,
                 forceRechunk: true,
+                chunkMaxChars: opts.maxChars,
               });
               reindexed++;
               return;
@@ -243,6 +283,7 @@ export async function runReindex(engine: BrainEngine, args: string[]): Promise<R
             sourceId: row.source_id,
             noEmbed: !!opts.noEmbed,
             forceRechunk: true,
+            chunkMaxChars: opts.maxChars,
           });
           reindexed++;
         } catch (err) {

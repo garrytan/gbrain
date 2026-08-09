@@ -281,6 +281,8 @@ export async function importFromContent(
      * the version bump.
      */
     forceRechunk?: boolean;
+    /** Operator-only tighter chunk cap for exact-slug embedding repair. */
+    chunkMaxChars?: number;
     /**
      * v0.39.0.0 T1.5: active schema pack for type inference. When set, parseMarkdown
      * uses the pack's path_prefixes instead of the hardcoded gbrain-base table.
@@ -713,12 +715,12 @@ export async function importFromContent(
   const embedSkipped = isEmbedSkipped(parsed.frontmatter) || isQuarantined(parsed.frontmatter);
   if (!embedSkipped) {
     if (parsed.compiled_truth.trim()) {
-      for (const c of chunkText(parsed.compiled_truth)) {
+      for (const c of chunkText(parsed.compiled_truth, { maxChars: opts.chunkMaxChars })) {
         chunks.push({ chunk_index: chunks.length, chunk_text: c.text, chunk_source: 'compiled_truth' });
       }
     }
     if (parsed.timeline?.trim()) {
-      for (const c of chunkText(parsed.timeline)) {
+      for (const c of chunkText(parsed.timeline, { maxChars: opts.chunkMaxChars })) {
         chunks.push({ chunk_index: chunks.length, chunk_text: c.text, chunk_source: 'timeline' });
       }
     }
@@ -1063,6 +1065,7 @@ export async function importFromFile(
     inferFrontmatter?: boolean;
     sourceId?: string;
     forceRechunk?: boolean;
+    chunkMaxChars?: number;
     /**
      * v0.39 T1.5: active schema pack threaded through to importFromContent so
      * `parseMarkdown` uses pack-driven type inference. Load ONCE per command;
