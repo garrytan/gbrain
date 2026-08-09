@@ -2,6 +2,20 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.76.0] - 2026-08-09
+
+**Thin clients can now list an entire remote brain reliably, without exhausting the local server's OAuth token allowance one command at a time.**
+
+Bare `gbrain list` in thin-client mode now walks the server's bounded 100-row pages inside one CLI process, so it reuses the OAuth token cache and returns the complete ordered result instead of stopping at the first 50 rows. Explicit limits above 100 work too. Before anything reaches stdout, gbrain verifies a stable second pass and stages the formatted output privately; a later-page failure, repeated page, concurrent reorder, 30-minute deadline, or one-million-row safety bound fails closed instead of printing a plausible-looking partial list.
+
+### Changed
+- Direct token requests from a kernel-level loopback connection bypass the per-process OAuth token limiter when the server itself is loopback-only and has no public issuer. Forwarded, reverse-proxied, public-deployment, and browser-originated requests remain rate-limited.
+- Page-list ordering now uses stable ID tie-breakers, so equal timestamps cannot move rows across page boundaries while a thin client paginates.
+
+### Fixed
+- Local and hosted unit shards now use the same per-file process isolation under a pinned Bun runtime, with bounded local parallelism and aggregated failure reporting. This removes memory-sensitive differences between `ci:local` and GitHub Actions.
+- Platform-independent test setup replaces shell- and permission-specific assumptions in the Git-remote, import-resume, filesystem-validator, PGLite embedding, and redirect regression suites. Retrieval-reflex delivery logging is also queued synchronously before its sink drains while remaining fail-open.
+
 ## [0.42.75.0] - 2026-08-08
 
 **The "PGLite crashes on macOS 26" era is over: gbrain now repairs a torn brain in place, automatically, with your data preserved.**
