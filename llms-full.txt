@@ -1609,6 +1609,10 @@ The agent installs GBrain, creates the brain, asks for your API keys, loads 43 s
 
 > **Never set up an AI agent platform before?** The [personal-brain tutorial](docs/tutorials/personal-brain.md) walks the whole path end-to-end — picking OpenClaw vs Hermes, deploying it, pointing it at INSTALL_FOR_AGENTS.md, getting the API keys, and verifying the first query. Start there if any of the above is new.
 
+**Using Hermes?** [Use GBrain as Hermes' long-term memory](docs/integrations/hermes-gbrain-memory.md).
+Hermes recalls relevant GBrain knowledge before answering and saves useful
+conversations back afterward.
+
 ### Quick start: Claude Code or Codex
 
 Already running Claude Code or Codex? There are two ways to wire GBrain in, depending on what you want.
