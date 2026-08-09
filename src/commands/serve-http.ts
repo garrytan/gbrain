@@ -11,7 +11,7 @@
  */
 
 import express from 'express';
-import type { Socket } from 'net';
+import { BlockList, isIP, type Socket } from 'net';
 import type { Request, Response, NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
@@ -224,6 +224,41 @@ export type OAuthTokenRateLimitConfig = {
   max: number;
 };
 
+const LOOPBACK_CLIENT_IPS = new BlockList();
+LOOPBACK_CLIENT_IPS.addSubnet('127.0.0.0', 8, 'ipv4');
+LOOPBACK_CLIENT_IPS.addAddress('::1', 'ipv6');
+
+/**
+ * Local thin clients start a new process for each CLI invocation, so their
+ * in-process OAuth token cache cannot prevent repeated token mints.
+ */
+export function isLoopbackClientIp(ip: string | undefined): boolean {
+  if (!ip) return false;
+  const version = isIP(ip);
+  if (version === 0) return false;
+  return LOOPBACK_CLIENT_IPS.check(ip, version === 6 ? 'ipv6' : 'ipv4');
+}
+
+/**
+ * Exempt only a direct kernel-level loopback connection. A forwarded request
+ * remains limited even if its X-Forwarded-For value claims to be loopback;
+ * otherwise a public caller behind a local reverse proxy could spoof the
+ * exemption when that proxy preserves client-supplied forwarding headers.
+ * Browser-originated requests also remain limited so a hostile website cannot
+ * turn the user's loopback server into an unthrottled token endpoint.
+ */
+export function isDirectLoopbackRequest(req: Request): boolean {
+  return req.headers['x-forwarded-for'] === undefined
+    && req.headers.forwarded === undefined
+    && req.headers.via === undefined
+    && req.headers['x-real-ip'] === undefined
+    && req.headers['x-forwarded-host'] === undefined
+    && req.headers['x-forwarded-proto'] === undefined
+    && req.headers.origin === undefined
+    && req.headers['sec-fetch-site'] === undefined
+    && isLoopbackClientIp(req.socket.remoteAddress);
+}
+
 function parsePositiveIntEnv(value: string | undefined, fallback: number): number {
   if (value === undefined) return fallback;
   const parsed = Number.parseInt(value, 10);
@@ -235,6 +270,20 @@ export function resolveOAuthTokenRateLimit(env: NodeJS.ProcessEnv = process.env)
     windowMs: parsePositiveIntEnv(env.GBRAIN_OAUTH_TOKEN_RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000),
     max: parsePositiveIntEnv(env.GBRAIN_OAUTH_TOKEN_RATE_LIMIT_MAX, 50),
   };
+}
+
+export function createOAuthTokenRateLimiter(
+  config: OAuthTokenRateLimitConfig = resolveOAuthTokenRateLimit(),
+  options: { allowLoopbackBypass?: boolean } = {},
+) {
+  return rateLimit({
+    windowMs: config.windowMs,
+    max: config.max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: options.allowLoopbackBypass === false ? () => false : isDirectLoopbackRequest,
+    message: { error: 'too_many_requests', error_description: 'Rate limit exceeded. Try again later.' },
+  });
 }
 
 export type ProbeHealthResult =
@@ -816,14 +865,15 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // Custom client_credentials handler (before mcpAuthRouter)
   // SDK's token handler only supports authorization_code and refresh_token
   // ---------------------------------------------------------------------------
-  const oauthTokenRateLimit = resolveOAuthTokenRateLimit();
-  const ccRateLimiter = rateLimit({
-    windowMs: oauthTokenRateLimit.windowMs,
-    max: oauthTokenRateLimit.max,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { error: 'too_many_requests', error_description: 'Rate limit exceeded. Try again later.' },
-  });
+  // The exemption is only safe for a loopback-only server with no declared
+  // public issuer. Public/non-loopback deployments remain limited even when
+  // their reverse proxy connects over 127.0.0.1.
+  const allowLoopbackTokenBypass = !publicUrl
+    && (bind === 'localhost' || isLoopbackClientIp(bind));
+  const ccRateLimiter = createOAuthTokenRateLimiter(
+    resolveOAuthTokenRateLimit(),
+    { allowLoopbackBypass: allowLoopbackTokenBypass },
+  );
 
   // Magic-link rate limiter: 10 requests/min/IP. The bootstrap token is
   // 64-char hex (unguessable) so brute-forcing is computationally

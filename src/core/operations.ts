@@ -1752,7 +1752,7 @@ const list_pages: Operation = {
   params: {
     type: { type: 'string', description: 'Filter by page type' },
     tag: { type: 'string', description: 'Filter by tag' },
-    limit: { type: 'number', description: 'Max results (default 50; remote callers are capped at 100)' },
+    limit: { type: 'number', description: 'Max results (default 50; remote requests are capped at 100; the thin-client CLI paginates larger lists)' },
     offset: {
       type: 'number',
       description: 'Skip first N rows (pagination). Engine-supported since PageFilters gained offset; previously accepted at the CLI and silently dropped.',

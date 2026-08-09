@@ -348,10 +348,12 @@ export interface GetPageOpts {
 
 /** v0.29: literal ORDER BY fragments for the PageFilters.sort enum. Whitelisted. */
 export const PAGE_SORT_SQL: Record<NonNullable<PageFilters['sort']>, string> = {
-  updated_desc: 'p.updated_at DESC',
-  updated_asc:  'p.updated_at ASC',
-  created_desc: 'p.created_at DESC',
-  slug:         'p.slug ASC',
+  // Every order is total so OFFSET pagination cannot duplicate or omit rows
+  // when multiple pages share the user-visible sort key.
+  updated_desc: 'p.updated_at DESC, p.id DESC',
+  updated_asc:  'p.updated_at ASC, p.id ASC',
+  created_desc: 'p.created_at DESC, p.id DESC',
+  slug:         'p.slug ASC, p.id ASC',
 };
 
 /**

@@ -11,6 +11,7 @@ installCleanupSignalHandlers();
 
 import { readFileSync, existsSync, unlinkSync, fstatSync } from 'fs';
 import { spawn } from 'child_process';
+import { once } from 'node:events';
 import {
   readUpdateCache,
   isCacheFresh,
@@ -33,6 +34,10 @@ import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-optio
 import type { CliOptions } from './core/cli-options.ts';
 import { callRemoteTool, RemoteMcpError, unpackToolResult } from './core/mcp-client.ts';
 import { maybePromptForUpgrade } from './core/thin-client-upgrade-prompt.ts';
+import {
+  publishThinClientListPagesAtomically,
+  REMOTE_LIST_MAX_DURATION_MS,
+} from './core/thin-client-list-pagination.ts';
 import { VERSION } from './version.ts';
 
 // Build CLI name -> operation lookup
@@ -548,6 +553,11 @@ function printCliOnlyHelp(command: string) {
   console.log(`gbrain ${command} - run gbrain --help for the full command list.`);
 }
 
+async function writeStdoutWithBackpressure(output: string): Promise<void> {
+  if (process.stdout.write(output)) return;
+  await once(process.stdout, 'drain');
+}
+
 /**
  * v0.31.1 (Issue #734, CDX-1): route a shared op through the remote MCP
  * server instead of running it locally. Called from main() when
@@ -591,13 +601,34 @@ async function runThinClientRouted(
   await printIdentityBannerBestEffort(cfg, cliOpts, sigintController.signal);
 
   try {
-    const raw = await callRemoteTool(cfg, op.name, params, {
-      timeoutMs,
-      signal: sigintController.signal,
-    });
-    const result = unpackToolResult(raw);
-    const output = formatResult(op.name, result);
-    if (output) process.stdout.write(output);
+    const fetchResult = async (requestParams: Record<string, unknown>): Promise<unknown> => {
+      const raw = await callRemoteTool(cfg, op.name, requestParams, {
+        timeoutMs,
+        signal: sigintController.signal,
+      });
+      return unpackToolResult(raw);
+    };
+    // The server keeps its 100-row remote cap. A thin-client `gbrain list`
+    // aggregates bounded pages inside this one process, reusing its OAuth
+    // token, so the CLI returns the complete brain without extra token mints.
+    if (op.name === 'list_pages') {
+      await publishThinClientListPagesAtomically(
+        params,
+        fetchResult,
+        page => formatResult(op.name, page),
+        writeStdoutWithBackpressure,
+        {
+          // An explicit --timeout remains a whole-command promise. Bare lists
+          // get a larger bounded default because they may require hundreds of
+          // individually capped MCP calls plus a stabilization pass.
+          deadlineAt: Date.now() + (cliOpts.timeoutMs ?? REMOTE_LIST_MAX_DURATION_MS),
+        },
+      );
+    } else {
+      const result = await fetchResult(params);
+      const output = formatResult(op.name, result);
+      if (output) process.stdout.write(output);
+    }
   } catch (e: unknown) {
     if (e instanceof RemoteMcpError) {
       const url = cfg.remote_mcp!.mcp_url;

@@ -8,6 +8,7 @@
  *
  *   - `gbrain init --mcp-only` succeeds and writes remote_mcp config
  *   - `gbrain doctor` reports `mode: thin-client` with all checks green
+ *   - bare and >100-row `gbrain list` calls page through the live MCP host
  *   - `gbrain sync` is refused with the canonical thin-client error
  *   - re-running `gbrain init` refuses without --force
  *
@@ -22,6 +23,7 @@ import { describe, test as testRaw, expect, beforeAll, afterAll } from 'bun:test
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 
 function test(name: string, fn: () => void | Promise<unknown>): void {
   testRaw(name, fn, 120000);
@@ -29,6 +31,8 @@ function test(name: string, fn: () => void | Promise<unknown>): void {
 
 const CLI = join(__dirname, '..', '..', 'src', 'cli.ts');
 const DATABASE_URL = process.env.DATABASE_URL;
+const PAGINATION_TEST_TYPE = 'thin-pagination-test';
+const PAGINATION_PAGE_COUNT = 230;
 
 interface RunResult { exitCode: number; stdout: string; stderr: string; }
 
@@ -69,6 +73,8 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
   let serverPort: number;
   let clientId: string;
   let clientSecret: string;
+  let seedEngine: PostgresEngine;
+  let expectedSlugs: string[];
 
   beforeAll(async () => {
     hostHome = mkdtempSync(join(tmpdir(), 'gbrain-thin-host-'));
@@ -80,6 +86,12 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
     //    embedding, so no provider is needed.
     const init = await spawn(['init', '--non-interactive', '--no-embedding', '--url', DATABASE_URL!], hostHome);
     if (init.exitCode !== 0) throw new Error(`host init failed: ${init.stderr || init.stdout}`);
+
+    // Keep an independent fixture connection for the pagination test. Seeding
+    // happens after doctor so future-dated tied timestamps cannot affect its
+    // health checks.
+    seedEngine = new PostgresEngine();
+    await seedEngine.connect({ database_url: DATABASE_URL!, poolSize: 2 });
 
     // 2. Pick a random free port for serve --http.
     serverPort = 30000 + Math.floor(Math.random() * 30000);
@@ -137,10 +149,40 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
     };
   }
 
+  async function seedPaginationPages(): Promise<void> {
+    await seedEngine.executeRaw('DELETE FROM pages WHERE type = $1', [PAGINATION_TEST_TYPE]);
+    for (let start = 0; start < PAGINATION_PAGE_COUNT; start += 20) {
+      await Promise.all(
+        Array.from({ length: Math.min(20, PAGINATION_PAGE_COUNT - start) }, (_, index) => {
+          const number = start + index;
+          const slug = `thin-pagination/page-${String(number).padStart(3, '0')}`;
+          return seedEngine.putPage(slug, {
+            type: PAGINATION_TEST_TYPE,
+            title: `Thin pagination page ${number}`,
+            compiled_truth: 'pagination boundary fixture',
+          });
+        }),
+      );
+    }
+    await seedEngine.executeRaw(
+      'UPDATE pages SET updated_at = $1 WHERE type = $2',
+      ['2099-08-09T12:00:00.000Z', PAGINATION_TEST_TYPE],
+    );
+    expectedSlugs = (await seedEngine.listPages({
+      limit: Number.MAX_SAFE_INTEGER,
+      type: PAGINATION_TEST_TYPE,
+      sort: 'updated_desc',
+    })).map(page => page.slug);
+  }
+
   afterAll(async () => {
     if (serverProc) {
       try { serverProc.kill(); } catch { /* best-effort */ }
       try { await serverProc.exited; } catch { /* ignore */ }
+    }
+    if (seedEngine) {
+      try { await seedEngine.executeRaw('DELETE FROM pages WHERE type = $1', [PAGINATION_TEST_TYPE]); } catch { /* best-effort */ }
+      try { await seedEngine.disconnect(); } catch { /* ignore */ }
     }
     try { rmSync(hostHome, { recursive: true, force: true }); } catch { /* best-effort */ }
     try { rmSync(clientHome, { recursive: true, force: true }); } catch { /* best-effort */ }
@@ -165,7 +207,7 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
 
   test('doctor reports mode: thin-client with all checks green', async () => {
     const r = await spawn(['doctor', '--json'], clientHome);
-    expect(r.exitCode).toBe(0);
+    expect(r.exitCode, r.stderr || r.stdout).toBe(0);
     const report = JSON.parse(r.stdout.trim());
     expect(report.mode).toBe('thin-client');
     expect(report.status).toBe('ok');
@@ -175,6 +217,26 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
     expect(checkNames).toContain('oauth_token');
     expect(checkNames).toContain('mcp_smoke');
     expect(report.oauth_scope).toContain('admin');
+  });
+
+  test('list returns every live-host row exactly once and honors a limit above the remote cap', async () => {
+    await seedPaginationPages();
+    const parseSlugs = (stdout: string): string[] => stdout
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map(line => line.split('\t', 1)[0]);
+
+    const bare = await spawn(['list'], clientHome);
+    expect(bare.exitCode).toBe(0);
+    const bareSlugs = parseSlugs(bare.stdout);
+    expect(new Set(bareSlugs).size).toBe(bareSlugs.length);
+    expect(bareSlugs.filter(slug => slug.startsWith('thin-pagination/'))).toEqual(expectedSlugs);
+    expect(expectedSlugs).toHaveLength(PAGINATION_PAGE_COUNT);
+
+    const limited = await spawn(['list', '--limit', '175'], clientHome);
+    expect(limited.exitCode).toBe(0);
+    expect(parseSlugs(limited.stdout)).toEqual(expectedSlugs.slice(0, 175));
   });
 
   test('sync is refused with canonical thin-client error', async () => {

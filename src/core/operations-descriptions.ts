@@ -59,8 +59,8 @@ export const LIST_PAGES_DESCRIPTION =
   "List pages with optional filters. " +
   "For 'what's recent / what did I touch this week' questions, use list_pages " +
   "with sort=updated_desc instead of semantic search. " +
-  "Default 50 rows; remote callers are capped at 100 (local CLI callers' explicit " +
-  "limits are honored). A result with exactly `limit` rows may be truncated. " +
+  "Default 50 rows; remote requests are capped at 100 (the thin-client CLI " +
+  "paginates bare lists and explicit larger limits). A result with exactly `limit` rows may be truncated. " +
   "For exhaustive listing, page with sort=updated_asc + " +
   "updated_after=<last row's updated_at> until a page returns fewer rows than the limit.";
 
