@@ -122,6 +122,17 @@ beforeEach(async () => {
     type: 'note', title: 'Dup beta', compiled_truth: 'b', frontmatter: {},
   }, { sourceId: 'beta' });
   await engine.addTag('shared/dup', 'beta-only', { sourceId: 'beta' });
+
+  // Slug-shadowing fixture: a THIRD source ('gamma') also carries the same
+  // slug, plus a registered 'zeta' source that does NOT — used to prove
+  // engine.getPage's federated-array winner follows the documented
+  // precedence (caller's own/anchor source, then lexical) rather than
+  // whatever order Postgres happens to scan rows in.
+  await engine.executeRaw(`INSERT INTO sources (id, name, local_path) VALUES ('gamma', 'gamma', '/tmp/gamma') ON CONFLICT (id) DO NOTHING`);
+  await engine.executeRaw(`INSERT INTO sources (id, name, local_path) VALUES ('zeta', 'zeta', '/tmp/zeta') ON CONFLICT (id) DO NOTHING`);
+  await engine.putPage('shared/dup', {
+    type: 'note', title: 'Dup gamma', compiled_truth: 'g', frontmatter: {},
+  }, { sourceId: 'gamma' });
 });
 
 function remoteCtx(allowedSources: string[]): OperationContext {
@@ -144,6 +155,35 @@ describe('engine.getPage honors sourceIds[] (federated grant)', () => {
     // scalar says alpha, array says beta-only — array wins, page found.
     const page = await engine.getPage('secret/beta-doc', { sourceId: 'alpha', sourceIds: ['beta'] });
     expect(page?.title).toBe('Beta secret');
+  });
+});
+
+describe('engine.getPage same-slug shadowing across federated sources is deterministic', () => {
+  test('the caller\'s own/anchor source (sourceIds[0]) wins even when it sorts after the others lexically', async () => {
+    // 'beta' is NOT alphabetically first among [beta, alpha, gamma] — if the
+    // winner were picked by lexical order (or arbitrary scan order) this
+    // would not reliably return the beta row.
+    const page = await engine.getPage('shared/dup', { sourceIds: ['beta', 'alpha', 'gamma'] });
+    expect(page?.title).toBe('Dup beta');
+  });
+
+  test('anchor reselected: the SAME slug + SAME source set returns the source placed first', async () => {
+    const page = await engine.getPage('shared/dup', { sourceIds: ['gamma', 'beta', 'alpha'] });
+    expect(page?.title).toBe('Dup gamma');
+  });
+
+  test('anchor has no matching page: falls back to lexical order among the remaining matches', async () => {
+    // 'zeta' is a real granted source but has no 'shared/dup' page, so the
+    // anchor itself is not a candidate — tie-break among {gamma, alpha}
+    // must be deterministic (lexically: 'alpha' < 'gamma').
+    const page = await engine.getPage('shared/dup', { sourceIds: ['zeta', 'gamma', 'alpha'] });
+    expect(page?.title).toBe('Dup alpha');
+  });
+
+  test('resolution is stable across repeated calls with the same scope', async () => {
+    const first = await engine.getPage('shared/dup', { sourceIds: ['beta', 'alpha', 'gamma'] });
+    const second = await engine.getPage('shared/dup', { sourceIds: ['beta', 'alpha', 'gamma'] });
+    expect(first?.title).toBe(second?.title);
   });
 });
 

@@ -1085,6 +1085,18 @@ export class PostgresEngine implements BrainEngine {
             ? tx`AND source_id = ${sourceId}`
             : tx``;
       const deletedCondition = includeDeleted ? tx`` : tx`AND deleted_at IS NULL`;
+      // When the same slug exists in more than one source inside a federated
+      // grant, `LIMIT 1` with no ORDER BY leaves the winner to whatever order
+      // Postgres happens to scan rows in — unspecified, and free to change
+      // between identical queries or after a reindex/VACUUM. Deterministic
+      // precedence: the caller's own/anchor source (sourceIds[0] — threaded
+      // first by federatedSearchScope's "resolved source first" contract)
+      // wins when it has a matching row; otherwise the remaining candidates
+      // sort lexically by source_id.
+      const orderCondition =
+        sourceIds && sourceIds.length > 0
+          ? tx`ORDER BY (source_id = ${sourceIds[0]}) DESC, source_id ASC`
+          : tx``;
       const rows = await tx`
         SELECT id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, deleted_at,
                effective_date, effective_date_source,
@@ -1092,6 +1104,7 @@ export class PostgresEngine implements BrainEngine {
                contextual_retrieval_mode
         FROM pages
         WHERE slug = ${slug} ${sourceCondition} ${deletedCondition}
+        ${orderCondition}
         LIMIT 1
       `;
       if (rows.length === 0) return null;

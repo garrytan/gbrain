@@ -1209,9 +1209,16 @@ export class PGLiteEngine implements BrainEngine {
     const params: unknown[] = [slug];
     // #1393: federated grant (sourceIds[]) wins over scalar sourceId so the
     // exact-match read honors allowedSources, not just one source.
+    let orderBy = '';
     if (sourceIds && sourceIds.length > 0) {
       params.push(sourceIds);
       where.push(`source_id = ANY($${params.length}::text[])`);
+      // Same slug in more than one federated source: order deterministically
+      // instead of leaving the winner to scan order (see postgres-engine.ts
+      // getPage for the full rationale). The caller's own/anchor source
+      // (sourceIds[0]) wins when present; otherwise lexical by source_id.
+      params.push(sourceIds[0]);
+      orderBy = ` ORDER BY (source_id = $${params.length}) DESC, source_id ASC`;
     } else if (sourceId) {
       params.push(sourceId);
       where.push(`source_id = $${params.length}`);
@@ -1224,7 +1231,7 @@ export class PGLiteEngine implements BrainEngine {
               effective_date, effective_date_source,
               source_kind, source_uri, ingested_via, ingested_at,
               contextual_retrieval_mode
-       FROM pages WHERE ${where.join(' AND ')} LIMIT 1`,
+       FROM pages WHERE ${where.join(' AND ')}${orderBy} LIMIT 1`,
       params
     );
     if (rows.length === 0) return null;
