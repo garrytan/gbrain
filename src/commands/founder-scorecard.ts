@@ -305,6 +305,8 @@ export async function runFounder(engine: BrainEngine, args: string[]): Promise<v
       kind: 'metric',
       since: windowSince,
       until: windowUntil,
+      // Fail-closed trust: local CLI must say so explicitly.
+      remote: false,
     });
     let takes: Take[] = [];
     try {
