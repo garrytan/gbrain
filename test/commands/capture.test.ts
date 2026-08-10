@@ -16,12 +16,19 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import matter from 'gray-matter';
 import { runCapture, __testing } from '../../src/commands/capture.ts';
+import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
 let tmpRoot: string;
 let brainDir: string;
 
 beforeAll(async () => {
+  // Keep capture's put_page integration hermetic under CI's fake provider keys.
+  configureGateway({
+    embedding_model: 'openai:text-embedding-3-large',
+    embedding_dimensions: 1536,
+    env: {},
+  });
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -29,6 +36,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  resetGateway();
 });
 
 beforeEach(async () => {
