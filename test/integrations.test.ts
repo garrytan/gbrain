@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { resolve, sep } from 'node:path';
@@ -9,6 +9,7 @@ import {
   expandVars,
   executeHealthCheck,
   checkSecrets,
+  evaluateSecrets,
   parseOctet,
   hostnameToOctets,
   isPrivateIpv4,
@@ -760,5 +761,116 @@ describe('secret resolution folds config plane (#2789)', () => {
     process.env.OPENAI_API_KEY = 'sk-env-only';
     const { set } = checkSecrets([secret]);
     expect(set).toEqual(['OPENAI_API_KEY']);
+  });
+});
+
+// --- alternative-provider secret groups ---
+//
+// Regression: recipes offering "provider A or provider B" declared all four
+// keys flat, and getStatus required every one — so a user who configured one
+// provider could never leave `available`. That also gated `doctor`, which only
+// health-checks recipes it considers configured.
+
+describe('option-group secrets', () => {
+  let dir: string;
+  let savedHome: string | undefined;
+  const KEYS = ['CLAWVISOR_URL', 'CLAWVISOR_AGENT_TOKEN', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'PLAIN_KEY'];
+  const saved: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    savedHome = process.env.GBRAIN_HOME;
+    dir = mkdtempSync(join(tmpdir(), 'gbrain-integrations-groups-'));
+    mkdirSync(join(dir, '.gbrain'), { recursive: true });
+    process.env.GBRAIN_HOME = dir;
+    // Config with no folded keys, so process.env is the only plane under test.
+    writeFileSync(join(dir, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite' }));
+    for (const k of KEYS) { saved[k] = process.env[k]; delete process.env[k]; }
+  });
+
+  afterEach(() => {
+    if (savedHome === undefined) delete process.env.GBRAIN_HOME;
+    else process.env.GBRAIN_HOME = savedHome;
+    for (const k of KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k]!;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const s = (name: string, group?: string) => ({ name, description: `${name} desc`, where: 'https://example.com', ...(group ? { group } : {}) });
+
+  const AB = [
+    s('CLAWVISOR_URL', 'clawvisor'),
+    s('CLAWVISOR_AGENT_TOKEN', 'clawvisor'),
+    s('GOOGLE_CLIENT_ID', 'google-oauth'),
+    s('GOOGLE_CLIENT_SECRET', 'google-oauth'),
+  ];
+
+  test('ungrouped secrets keep all-required semantics', () => {
+    const flat = [s('PLAIN_KEY'), s('GOOGLE_CLIENT_ID')];
+    expect(evaluateSecrets(flat).satisfied).toBe(false);
+    process.env.PLAIN_KEY = 'x';
+    expect(evaluateSecrets(flat).satisfied).toBe(false);
+    process.env.GOOGLE_CLIENT_ID = 'y';
+    expect(evaluateSecrets(flat).satisfied).toBe(true);
+  });
+
+  test('completing ONE group satisfies the recipe', () => {
+    process.env.GOOGLE_CLIENT_ID = 'id';
+    process.env.GOOGLE_CLIENT_SECRET = 'secret';
+    const r = evaluateSecrets(AB);
+    expect(r.satisfied).toBe(true);
+    expect(r.blocking).toHaveLength(0);
+    expect(r.groups.find(g => g.name === 'google-oauth')!.satisfied).toBe(true);
+    expect(r.groups.find(g => g.name === 'clawvisor')!.satisfied).toBe(false);
+  });
+
+  test('the declined alternative is still reported as missing, just not blocking', () => {
+    process.env.GOOGLE_CLIENT_ID = 'id';
+    process.env.GOOGLE_CLIENT_SECRET = 'secret';
+    const r = evaluateSecrets(AB);
+    expect(r.missing.map(m => m.name).sort()).toEqual(['CLAWVISOR_AGENT_TOKEN', 'CLAWVISOR_URL']);
+    expect(r.blocking).toHaveLength(0);
+  });
+
+  test('a half-filled group does not count — every member is required', () => {
+    process.env.GOOGLE_CLIENT_ID = 'id'; // secret intentionally absent
+    const r = evaluateSecrets(AB);
+    expect(r.satisfied).toBe(false);
+    expect(r.groups.every(g => !g.satisfied)).toBe(true);
+    expect(r.blocking.map(m => m.name)).toContain('GOOGLE_CLIENT_SECRET');
+  });
+
+  test('with no group complete, every group member blocks', () => {
+    const r = evaluateSecrets(AB);
+    expect(r.satisfied).toBe(false);
+    expect(r.blocking).toHaveLength(4);
+  });
+
+  test('an ungrouped secret still blocks even when a group is complete', () => {
+    const withRequired = [...AB, s('PLAIN_KEY')];
+    process.env.GOOGLE_CLIENT_ID = 'id';
+    process.env.GOOGLE_CLIENT_SECRET = 'secret';
+    const r = evaluateSecrets(withRequired);
+    expect(r.satisfied).toBe(false);
+    expect(r.blocking.map(m => m.name)).toEqual(['PLAIN_KEY']);
+  });
+
+  test('the shipped email-to-brain recipe is satisfied by Google alone', () => {
+    const content = readFileSync(join(RECIPES_DIR, 'email-to-brain.md'), 'utf-8');
+    const recipe = parseRecipe(content, 'email-to-brain.md')!;
+    expect(recipe).not.toBeNull();
+    expect(evaluateSecrets(recipe.frontmatter.secrets).satisfied).toBe(false);
+    process.env.GOOGLE_CLIENT_ID = 'id';
+    process.env.GOOGLE_CLIENT_SECRET = 'secret';
+    expect(evaluateSecrets(recipe.frontmatter.secrets).satisfied).toBe(true);
+  });
+
+  test('every shipped A-or-B recipe declares two groups', () => {
+    for (const file of ['email-to-brain.md', 'credential-gateway.md', 'calendar-to-brain.md']) {
+      const recipe = parseRecipe(readFileSync(join(RECIPES_DIR, file), 'utf-8'), file)!;
+      const groups = [...new Set(recipe.frontmatter.secrets.filter(x => x.group).map(x => x.group))];
+      expect(groups.sort()).toEqual(['clawvisor', 'google-oauth']);
+    }
   });
 });

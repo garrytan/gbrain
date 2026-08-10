@@ -33,6 +33,22 @@ interface RecipeSecret {
   name: string;
   description: string;
   where: string;
+  /**
+   * Optional alternative-provider group. Secrets sharing a group are
+   * ONE WAY of satisfying the recipe, not independent requirements: the group
+   * is satisfied when every member is set, and the recipe is satisfied when
+   * all ungrouped secrets are set AND at least one group is complete.
+   *
+   * Without this, a recipe offering "provider A or provider B" had to declare
+   * all four keys flat, and `getStatus` — which required every one of them —
+   * could never leave `available` for a user who picked one provider. That
+   * also gated `doctor`, which only checks recipes it considers configured,
+   * so a fully working integration was both badged as uninstalled and skipped
+   * by the health checks written to watch it.
+   *
+   * Ungrouped secrets keep the historical all-required semantics.
+   */
+  group?: string;
 }
 
 /**
@@ -574,12 +590,66 @@ export function checkSecrets(secrets: RecipeSecret[]): { set: string[]; missing:
   return { set, missing };
 }
 
+/** One alternative-provider group and whether the user completed it. */
+export interface SecretGroup {
+  name: string;
+  members: RecipeSecret[];
+  satisfied: boolean;
+}
+
+export interface SecretEvaluation {
+  /** Every secret that resolves, grouped or not. */
+  set: string[];
+  /** Every secret that does not resolve — including declined alternatives. */
+  missing: RecipeSecret[];
+  /** The subset of `missing` that actually prevents `configured`. */
+  blocking: RecipeSecret[];
+  groups: SecretGroup[];
+  satisfied: boolean;
+}
+
+/**
+ * Group-aware secret evaluation. `checkSecrets` is kept as the raw
+ * per-name view — it is exported and callers rely on its flat shape — while
+ * this decides whether a recipe is actually satisfied.
+ *
+ * A recipe with no groups behaves exactly as before: every secret required.
+ */
+export function evaluateSecrets(secrets: RecipeSecret[]): SecretEvaluation {
+  const env = secretEnv();
+  const isSet = (s: RecipeSecret) => Boolean(env[s.name]);
+
+  const set = secrets.filter(isSet).map(s => s.name);
+  const missing = secrets.filter(s => !isSet(s));
+  const ungroupedMissing = secrets.filter(s => !s.group && !isSet(s));
+
+  const groupNames = [...new Set(secrets.filter(s => s.group).map(s => s.group as string))];
+  const groups: SecretGroup[] = groupNames.map(name => {
+    const members = secrets.filter(s => s.group === name);
+    // Every member — a gateway URL without its token is not a usable provider.
+    return { name, members, satisfied: members.every(isSet) };
+  });
+
+  // No groups declared → nothing to choose between, so the ungrouped rule alone
+  // decides. Otherwise at least one provider must be complete.
+  const anyGroupSatisfied = groups.length === 0 || groups.some(g => g.satisfied);
+  const satisfied = ungroupedMissing.length === 0 && anyGroupSatisfied;
+
+  // Once a provider is complete the other groups are alternatives the user
+  // declined, not gaps — reporting them as missing is what made a working
+  // install read as unconfigured.
+  const blocking = anyGroupSatisfied
+    ? ungroupedMissing
+    : [...ungroupedMissing, ...groups.flatMap(g => g.members.filter(s => !isSet(s)))];
+
+  return { set, missing, blocking, groups, satisfied };
+}
+
 type IntegrationStatus = 'available' | 'configured' | 'active';
 
 function getStatus(recipe: ParsedRecipe): IntegrationStatus {
-  const { set, missing } = checkSecrets(recipe.frontmatter.secrets);
-  // All required secrets must be set to be "configured"
-  if (missing.length > 0) return 'available';
+  const { satisfied } = evaluateSecrets(recipe.frontmatter.secrets);
+  if (!satisfied) return 'available';
 
   const heartbeat = readHeartbeat(recipe.frontmatter.id);
   const recentEvents = heartbeat.filter(e =>
@@ -714,9 +784,15 @@ function cmdShow(args: string[]): void {
   const env = secretEnv();
   for (const s of f.secrets) {
     const isSet = env[s.name] ? '  [set]' : '  [missing]';
-    console.log(`  ${s.name}${isSet}`);
+    // Name the group so a [missing] on an alternative doesn't read as a gap.
+    const groupTag = s.group ? `  (option: ${s.group})` : '';
+    console.log(`  ${s.name}${isSet}${groupTag}`);
     console.log(`    ${s.description}`);
     console.log(`    Get it: ${s.where}`);
+  }
+  const shownGroups = [...new Set(f.secrets.filter(s => s.group).map(s => s.group))];
+  if (shownGroups.length > 1) {
+    console.log(`\n  Pick ONE option and set all of its keys: ${shownGroups.join(' | ')}`);
   }
 
   if (f.health_checks.length > 0) {
@@ -738,15 +814,23 @@ function cmdStatus(args: string[]): void {
   const recipe = findRecipe(id);
   if (!recipe) return;
 
-  const { set, missing } = checkSecrets(recipe.frontmatter.secrets);
+  const { set, blocking, groups } = evaluateSecrets(recipe.frontmatter.secrets);
   const heartbeat = readHeartbeat(recipe.frontmatter.id);
   const status = getStatus(recipe);
+  const declined = groups.filter(g => !g.satisfied && groups.some(o => o.satisfied));
 
   if (jsonMode) {
     console.log(JSON.stringify({
       id: recipe.frontmatter.id,
       status,
-      secrets: { set, missing: missing.map(m => ({ name: m.name, where: m.where })) },
+      // `missing` stays the blocking set: a declined alternative is not a gap,
+      // and scripts gating on this array want what's actually stopping setup.
+      secrets: { set, missing: blocking.map(m => ({ name: m.name, where: m.where })) },
+      secret_groups: groups.map(g => ({
+        name: g.name,
+        satisfied: g.satisfied,
+        members: g.members.map(m => m.name),
+      })),
       heartbeat: {
         total_events: heartbeat.length,
         last_event: heartbeat.length > 0 ? heartbeat[heartbeat.length - 1] : null,
@@ -762,11 +846,19 @@ function cmdStatus(args: string[]): void {
     for (const s of set) console.log(`  ${s}  [set]`);
   }
 
-  if (missing.length > 0) {
+  if (declined.length > 0) {
+    const active = groups.filter(g => g.satisfied).map(g => g.name).join(', ');
+    console.log(`\nUsing: ${active}  (alternatives not needed: ${declined.map(g => g.name).join(', ')})`);
+  }
+
+  if (blocking.length > 0) {
     console.log('\nMissing secrets:');
-    for (const m of missing) {
-      console.log(`  ${m.name}  [missing]`);
+    for (const m of blocking) {
+      console.log(`  ${m.name}  [missing]${m.group ? `  (option: ${m.group})` : ''}`);
       console.log(`    Get it: ${m.where}`);
+    }
+    if (groups.length > 1 && !groups.some(g => g.satisfied)) {
+      console.log(`\n  Complete ANY ONE option: ${groups.map(g => g.name).join(' | ')}`);
     }
   }
 
@@ -922,6 +1014,16 @@ function cmdTest(args: string[]): void {
   for (const s of f.secrets) {
     if (!s.name) errors.push('Secret missing name');
     if (!s.where) warnings.push(`Secret '${s.name}' missing 'where' URL`);
+  }
+
+  // Option groups express a CHOICE, so a lone group is a modelling error: it
+  // reads as "pick one of one" while behaving exactly like a required set.
+  const declaredGroups = [...new Set(f.secrets.filter(s => s.group).map(s => s.group))];
+  if (declaredGroups.length === 1) {
+    warnings.push(
+      `Only one secret group ('${declaredGroups[0]}') — groups express alternatives, ` +
+      `so declare two or more (or drop 'group' to make them plain requirements)`,
+    );
   }
 
   // Check dependencies
