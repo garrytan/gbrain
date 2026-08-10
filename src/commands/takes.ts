@@ -645,8 +645,19 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
     process.exit(2);
   }
   if (!dryRun && !skipConfirm) {
+    // #hardcoded-haiku: reflect the actual configured chat model, not a
+    // hardcoded Haiku. The gateway may not be configured yet at this
+    // gate (extractTakesFromPages handles unavailability downstream), so
+    // resolve defensively.
+    let modelLabel = 'the configured chat model';
+    try {
+      const { getChatModel } = await import('../core/ai/gateway.ts');
+      modelLabel = getChatModel();
+    } catch {
+      // Gateway unconfigured — keep the generic label.
+    }
     process.stderr.write(
-      `[takes extract] sends concept/atom/lore/briefing/writing/originals page content to Haiku.\n` +
+      `[takes extract] sends concept/atom/lore/briefing/writing/originals page content to ${modelLabel}.\n` +
       `Pass --yes to proceed (or --dry-run to preview).\n`,
     );
     process.exit(1);
