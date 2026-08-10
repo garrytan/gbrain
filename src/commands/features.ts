@@ -37,17 +37,19 @@ interface FeatureScanResult {
   recommendations: FeatureRecommendation[];
 }
 
-// --- Embedded recipe metadata (binary-safe, no disk reads) ---
-
-const RECIPE_META = [
-  { id: 'email-to-brain', name: 'Email to Brain', secrets: ['GMAIL_APP_PASSWORD'] },
-  { id: 'calendar-to-brain', name: 'Calendar Sync', secrets: ['GOOGLE_CALENDAR_API_KEY'] },
-  { id: 'x-to-brain', name: 'X/Twitter to Brain', secrets: ['X_API_BEARER_TOKEN'] },
-  { id: 'twilio-voice-brain', name: 'Voice to Brain', secrets: ['TWILIO_AUTH_TOKEN'] },
-  { id: 'meeting-sync', name: 'Meeting Sync', secrets: ['CIRCLEBACK_API_KEY'] },
-  { id: 'credential-gateway', name: 'Credential Gateway', secrets: ['OAUTH_CLIENT_SECRET'] },
-  { id: 'ngrok-tunnel', name: 'Ngrok Tunnel', secrets: ['NGROK_AUTHTOKEN'] },
-] as const;
+// --- Recipe config status ---
+//
+// This was an embedded lookup table, hardcoded to stay binary-safe when
+// `recipes/` isn't on disk. The copy drifted: 4 of its 7 entries named env
+// vars present in no recipe at all (GMAIL_APP_PASSWORD,
+// GOOGLE_CALENDAR_API_KEY, OAUTH_CLIENT_SECRET, CIRCLEBACK_API_KEY), so for
+// those the "not configured" recommendation could never be satisfied — a user
+// who set the integration up perfectly was still told to go set it up. It also
+// read process.env directly, missing the config.json fold secretEnv() applies.
+//
+// Reading the real recipes is the only way to stay correct. The binary case is
+// handled by silence, not by stale data: no recipes on disk → no claim about
+// which are configured.
 
 // --- Persistence ---
 
@@ -146,10 +148,14 @@ async function scanFeatures(engine: BrainEngine): Promise<FeatureScanResult> {
     }
 
     // Unconfigured integrations
-    const unconfigured = RECIPE_META.filter(r =>
-      !r.secrets.every(s => process.env[s])
-    );
-    if (unconfigured.length > 0) {
+    // Via core/recipe-status, NOT commands/integrations directly — see that
+    // module's header: a direct import leaks the integrations command's flags
+    // into this command's legal-flag set.
+    const { listRecipeConfigStatus } = await import('../core/recipe-status.ts');
+    const allRecipes = listRecipeConfigStatus();
+    const unconfigured = allRecipes.filter(r => !r.satisfied);
+    // allRecipes empty → recipes/ not on disk (compiled binary); say nothing.
+    if (allRecipes.length > 0 && unconfigured.length > 0) {
       recommendations.push({
         id: 'no-integrations', priority: 2,
         title: 'Set Up Integrations',

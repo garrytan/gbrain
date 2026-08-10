@@ -538,6 +538,26 @@ function heartbeatPath(id: string): string {
   return join(heartbeatDir(id), 'heartbeat.jsonl');
 }
 
+/**
+ * Every known recipe with whether its secrets are satisfied — the shared
+ * answer to "which integrations are set up?".
+ *
+ * `gbrain features` used to keep its own hardcoded copy of recipe metadata,
+ * and the copy had drifted: 4 of its 7 entries named env vars that appear in
+ * no recipe at all (GMAIL_APP_PASSWORD, GOOGLE_CALENDAR_API_KEY,
+ * OAUTH_CLIENT_SECRET, CIRCLEBACK_API_KEY), so for those its "not configured"
+ * recommendation could never be satisfied no matter how completely a user set
+ * the integration up. It also read process.env directly, missing the
+ * config.json fold that secretEnv() applies.
+ */
+export function listRecipeConfigStatus(): Array<{ id: string; name: string; satisfied: boolean }> {
+  return loadAllRecipes().map(r => ({
+    id: r.frontmatter.id,
+    name: r.frontmatter.name,
+    satisfied: evaluateSecrets(r.frontmatter.secrets).satisfied,
+  }));
+}
+
 function readHeartbeat(id: string): HeartbeatEntry[] {
   const path = heartbeatPath(id);
   if (!existsSync(path)) return [];

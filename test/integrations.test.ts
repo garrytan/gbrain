@@ -9,6 +9,7 @@ import {
   expandVars,
   executeHealthCheck,
   checkSecrets,
+  listRecipeConfigStatus,
   evaluateSecrets,
   parseOctet,
   hostnameToOctets,
@@ -871,6 +872,33 @@ describe('option-group secrets', () => {
       const recipe = parseRecipe(readFileSync(join(RECIPES_DIR, file), 'utf-8'), file)!;
       const groups = [...new Set(recipe.frontmatter.secrets.filter(x => x.group).map(x => x.group))];
       expect(groups.sort()).toEqual(['clawvisor', 'google-oauth']);
+    }
+  });
+});
+
+// --- listRecipeConfigStatus: single source of truth for "is it set up?" ---
+//
+// `gbrain features` carried a hardcoded RECIPE_META whose secret names had
+// drifted out of every recipe (GMAIL_APP_PASSWORD et al), so its
+// "not configured" nag was unsatisfiable by construction.
+
+describe('listRecipeConfigStatus', () => {
+  test('reports on the real shipped recipes, not a hardcoded copy', () => {
+    const statuses = listRecipeConfigStatus();
+    expect(statuses.length).toBeGreaterThan(0);
+    const ids = statuses.map(s => s.id);
+    expect(ids).toContain('email-to-brain');
+    expect(ids).toContain('credential-gateway');
+  });
+
+  test('every reported secret name exists in the recipe it came from', () => {
+    // The drift guard: RECIPE_META named keys no recipe declared, so no amount
+    // of correct setup could satisfy it. Deriving from recipes makes that
+    // class of drift impossible — assert the derivation really is from disk.
+    for (const { id } of listRecipeConfigStatus()) {
+      const file = join(RECIPES_DIR, `${id}.md`);
+      const recipe = parseRecipe(readFileSync(file, 'utf-8'), `${id}.md`);
+      expect(recipe!.frontmatter.id).toBe(id);
     }
   });
 });
