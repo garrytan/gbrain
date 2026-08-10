@@ -99,4 +99,31 @@ Body text.
     expect(putCall.args[1].title).toBe('Re: October booking');
     expect(putCall.args[1].compiled_truth).toBe('Body text.');
   });
+
+  test('importFile preserves leading thematic-break epigraphs as body content', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-thematic-epigraph-'));
+    try {
+      const filePath = join(dir, 'epigraph.md');
+      writeFileSync(filePath, `---
+> Re: quoted epigraph, not YAML frontmatter
+---
+
+# Epigraph Note
+
+Body text.
+`);
+
+      const engine = mockEngine();
+      const result = await importFile(engine, filePath, 'notes/epigraph.md', { noEmbed: true });
+
+      expect(result.status).toBe('imported');
+      expect(result.error).toBeUndefined();
+      const putCall = (engine as any)._calls.find((call: any) => call.method === 'putPage');
+      expect(putCall.args[1].title).toBe('Epigraph Note');
+      expect(putCall.args[1].compiled_truth).toContain('> Re: quoted epigraph, not YAML frontmatter');
+      expect(putCall.args[1].compiled_truth).toContain('# Epigraph Note');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
