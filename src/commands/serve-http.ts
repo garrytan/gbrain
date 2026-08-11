@@ -2226,6 +2226,22 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // verifyAccessToken. The env-fallback is gone.
       const tokenSourceId = authInfo.sourceId ?? 'default';
 
+      // #3242 parity: the legacy-transport and stdio dispatch sites widen a
+      // no-grant caller's unqualified reads across the federated source set
+      // (localFederatedSourceIds); this SDK-transport site never did, so the
+      // same token saw federated pages over /mcp on one serve mode and scalar
+      // 'default' on the other. hasSourceGrant === false is set ONLY for
+      // legacy bearer tokens with no operator source grant (oauth-provider);
+      // granted tokens and OAuth clients never widen. Best-effort: a resolver
+      // failure keeps the scalar scope.
+      let localFederated: string[] | undefined;
+      if (authInfo.hasSourceGrant === false && tokenSourceId) {
+        try {
+          const { localFederatedSourceIds } = await import('../core/source-resolver.ts');
+          localFederated = await localFederatedSourceIds(engine, tokenSourceId, 'seed_default');
+        } catch { /* scalar scope stands */ }
+      }
+
       let toolResult: Awaited<ReturnType<typeof dispatchToolCall>>;
       try {
         toolResult = await dispatchToolCall(engine, name, params as Record<string, unknown> | undefined, {
@@ -2235,6 +2251,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           transport: 'http',
           takesHoldersAllowList: tokenAllowList,
           sourceId: tokenSourceId,
+          ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),
           metaHook: getBrainHotMemoryMeta,
           // MEMORY_VERBS v1: fail-closed surface enforcement + usage attribution.
           ...(surfaceAllowedOps ? { allowedOps: surfaceAllowedOps } : {}),
