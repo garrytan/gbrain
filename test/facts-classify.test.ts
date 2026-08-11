@@ -9,12 +9,48 @@
  *   - 4-strategy parse fallback for malformed JSON
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import {
   cosineSimilarity,
   classifyAgainstCandidates,
 } from '../src/core/facts/classify.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import type { FactRow } from '../src/core/engine.ts';
+
+/**
+ * Two tests below pin the NO-CHAT-PROVIDER branch (classifier unavailable →
+ * cosine fallback). They used to just assume it, with a comment reading
+ * "Without API key in test env, isAvailable('chat') is false".
+ *
+ * That assumption is false on any machine where the operator exports provider
+ * keys: `test/helpers/legacy-embedding-preload.ts` builds the gateway config
+ * with `env: { ...process.env }`, so an exported ANTHROPIC_API_KEY /
+ * OPENAI_API_KEY makes `isAvailable('chat')` return true. The tests then take
+ * the LLM classifier path and fail (`Expected "duplicate" / Received
+ * "independent"`) — and, worse, a unit test starts making real billable
+ * provider calls.
+ *
+ * Configure the gateway explicitly with an empty `env` so the precondition is
+ * guaranteed rather than inherited. This is the override mechanism the legacy
+ * preload documents ("tests that need a different gateway config call
+ * configureGateway() in their own beforeAll"). resetGateway() in afterAll
+ * returns the baseline for later files in the shard.
+ */
+const NO_PROVIDER_GATEWAY = {
+  embedding_model: 'openai:text-embedding-3-large',
+  embedding_dimensions: 1536,
+  chat_model: 'anthropic:claude-sonnet-4-6',
+  env: {},
+  base_urls: {},
+} as const;
+
+beforeAll(() => {
+  configureGateway({ ...NO_PROVIDER_GATEWAY });
+});
+
+afterAll(() => {
+  resetGateway();
+});
 
 function makeFact(overrides: Partial<FactRow> & { id: number }): FactRow {
   return {
@@ -94,8 +130,8 @@ describe('classifyAgainstCandidates', () => {
       { fact: 'new', kind: 'fact', embedding: a },
       candidates,
     );
-    // Without API key in test env, isAvailable('chat') is false → straight to
-    // cosine fallback. cos ≈ 0.93 ≥ 0.92 → duplicate.
+    // Gateway configured with env:{} above → isAvailable('chat') is false →
+    // straight to cosine fallback. cos ≈ 0.93 ≥ 0.92 → duplicate.
     expect(result.decision).toBe('duplicate');
     expect((result as { reason: string }).reason).toBe('cosine_fallback');
   });
@@ -106,8 +142,9 @@ describe('classifyAgainstCandidates', () => {
       { fact: 'new', kind: 'fact', embedding: null },
       candidates,
     );
-    // Without API key in test env, isAvailable('chat') is false → cosine fallback path.
-    // newFact has no embedding so cosine fallback can't compute → independent.
+    // Gateway configured with env:{} above → isAvailable('chat') is false →
+    // cosine fallback path. newFact has no embedding so cosine fallback can't
+    // compute → independent.
     expect(result.decision).toBe('independent');
     expect((result as { reason: string }).reason).toBe('cosine_fallback');
   });

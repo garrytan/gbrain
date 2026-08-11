@@ -23,4 +23,18 @@ timeout = 60_000
 # were appending rows into the operator's real ~/.gbrain/sync-failures.jsonl,
 # which `gbrain doctor` reads and warns on. See
 # test/helpers/sync-failures-preload.ts.
-preload = ["./test/helpers/legacy-embedding-preload.ts", "./test/helpers/audit-dir-preload.ts", "./test/helpers/sync-failures-preload.ts"]
+#
+# hermetic-env-preload.ts: drop the operator's ambient CONDUCTOR_/MCP_/OPENCLAW_/
+# GBRAIN_ overrides and provider *_API_KEYs, mirroring the scrub run-e2e.sh
+# already performs for the E2E lane. Measured on one operator machine, the
+# ambient environment alone produced 12 failures with no defect in the product
+# (a stray GBRAIN_SOURCE, a GBRAIN_CYCLE_FRESHNESS_WARN_HOURS, and three
+# exported provider keys). Provider keys are left alone when argv names a
+# test/e2e/ path, since that lane needs live providers.
+#
+# ORDER IS LOAD-BEARING: it must precede legacy-embedding-preload, which
+# snapshots `env: {...process.env}` into the gateway. isAvailable() reads that
+# snapshot, not process.env — so keys must be gone BEFORE the snapshot is taken.
+# (This is why a test's own `delete process.env.OPENAI_API_KEY` does not make the
+# gateway unavailable.)
+preload = ["./test/helpers/hermetic-env-preload.ts", "./test/helpers/legacy-embedding-preload.ts", "./test/helpers/audit-dir-preload.ts", "./test/helpers/sync-failures-preload.ts"]
