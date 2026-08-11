@@ -151,6 +151,118 @@ function recordedPathFromFileUri(sourceUri: string | null | undefined, pageRoot:
  * `skipped` / `error` fields (the DB write is the durable sink; the file is
  * best-effort and reconciled by the next `gbrain sync`).
  */
+type ResolvedTarget =
+  | { ok: true; filePath: string; writeRoot: string }
+  | { ok: false; skipped: NonNullable<WriteThroughResult['skipped']> };
+
+/**
+ * Resolve the on-disk artifact path for `slug`, applying every containment and
+ * leak guard. Shared by `writePageThrough` and `deletePageThrough` so the two
+ * planes can never disagree about WHICH file backs a page — a delete that
+ * computed the path differently from the write would either miss the file
+ * (leaving a deleted page's artifact for the git cron to re-commit) or unlink
+ * something it shouldn't.
+ *
+ * #2018: pick the disk target so a page is NEVER written into a different
+ * source's working tree. Two legitimate topologies, plus the leak guard:
+ *   1. The assigned source has its OWN `local_path` (a separate working tree)
+ *      → use that tree's root (matches how `scanOneSource` reads it back;
+ *      never nested under `.sources/`).
+ *   2. No per-source `local_path` → nest under the host repo
+ *      (`sync.repo_path`): default at the root, non-default under
+ *      `.sources/<id>/` (the established multi-source layout).
+ *   3. LEAK GUARD: if `sync.repo_path` is literally ANOTHER source's own
+ *      `local_path`, nesting this page there would pollute that sibling's git
+ *      repo (the reported bug). Skip instead.
+ */
+export async function resolveWriteThroughTarget(
+  engine: BrainEngine,
+  slug: string,
+  sourceId: string,
+): Promise<ResolvedTarget> {
+  let filePath: string;
+  let writeRoot: string;
+  const srcRows = await engine.executeRaw<{ local_path: string | null }>(
+    `SELECT local_path FROM sources WHERE id = $1`,
+    [sourceId],
+  );
+  const sourceLocalPath = srcRows[0]?.local_path ?? null;
+
+  // Prefer the page's recorded `source_path` — the ACTUAL file this row was
+  // imported from — over a slug-derived name. Deriving `<slug>.md` mints a
+  // SECOND file beside the original whenever the on-disk name isn't the slug,
+  // which is the common case for a human-authored vault: `Library/People/
+  // Steve Jobs.md` has slug `library/people/steve-jobs`, so a later put_page
+  // dropped a lowercase `steve-jobs.md` twin next to it. Two artifacts, one
+  // row, and the newer content in whichever the caller didn't expect.
+  //
+  // It also desyncs `gbrain sync`, which keys delete-reconcile on
+  // `source_path` (see collectMissingSourcePaths): the twin is invisible to
+  // reconcile, so deleting the ORIGINAL file deletes the page even though a
+  // file for it is still on disk.
+  //
+  // A NULL `source_path` means the page was born via put/capture and has no
+  // file of record yet — the slug-derived path stays correct for those.
+  //
+  // Deliberately NOT filtered on `deleted_at IS NULL`: `deletePageThrough`
+  // runs AFTER `softDeletePage` has stamped the row, so that predicate would
+  // return nothing on the delete plane and silently fall back to the
+  // slug-derived twin — unlinking the wrong file (or none) and leaving the
+  // real artifact for the git cron to re-commit. That is the very no-op class
+  // this helper exists to close. `UNIQUE (source_id, slug)` guarantees at most
+  // one row, so there is no live/deleted ambiguity to resolve here.
+  const pathRows = await engine.executeRaw<{ source_path: string | null; source_uri: string | null }>(
+    `SELECT source_path, source_uri FROM pages WHERE source_id = $1 AND slug = $2 LIMIT 1`,
+    [sourceId, slug],
+  );
+  const recordedPath = sanitizeRecordedSourcePath(pathRows[0]?.source_path);
+  const recordedUri = pathRows[0]?.source_uri ?? null;
+
+  if (sourceLocalPath) {
+    if (!existsSync(sourceLocalPath) || !statSync(sourceLocalPath).isDirectory()) {
+      return { ok: false, skipped: 'repo_not_found' };
+    }
+    filePath = join(
+      sourceLocalPath,
+      recordedPath ?? recordedPathFromFileUri(recordedUri, sourceLocalPath) ?? `${slug}.md`,
+    );
+    writeRoot = sourceLocalPath;
+  } else {
+    const repoPath = await engine.getConfig('sync.repo_path');
+    if (!repoPath) {
+      return { ok: false, skipped: 'no_repo_configured' };
+    }
+    if (!existsSync(repoPath) || !statSync(repoPath).isDirectory()) {
+      return { ok: false, skipped: 'repo_not_found' };
+    }
+    // Leak guard: refuse to touch a path that is some OTHER source's own
+    // working tree (#2018).
+    const collide = await engine.executeRaw<{ one: number }>(
+      `SELECT 1 AS one FROM sources WHERE id <> $1 AND local_path = $2 LIMIT 1`,
+      [sourceId, repoPath],
+    );
+    if (collide.length > 0) {
+      return { ok: false, skipped: 'source_repo_belongs_to_other_source' };
+    }
+    const pageRoot = sourceId === 'default' ? repoPath : join(repoPath, '.sources', sourceId);
+    const knownPath = recordedPath ?? recordedPathFromFileUri(recordedUri, pageRoot);
+    filePath = knownPath ? join(pageRoot, knownPath) : resolvePageFilePath(repoPath, slug, sourceId);
+    writeRoot = repoPath;
+  }
+
+  // Defense-in-depth (#1647-slug / codex #6): confirm the computed file path
+  // stays within the source's working tree before any mkdir/write/unlink.
+  // validateSlug already rejects `..`/backslash/control/%2e in the slug at
+  // write time, so this guards a pre-existing hostile row or a symlinked
+  // intermediate dir under the source tree from escaping to an arbitrary
+  // filesystem location.
+  if (!isWriteTargetContained(filePath, writeRoot)) {
+    return { ok: false, skipped: 'path_escapes_source_root' };
+  }
+
+  return { ok: true, filePath, writeRoot };
+}
+
 export async function writePageThrough(
   engine: BrainEngine,
   slug: string,
@@ -158,87 +270,9 @@ export async function writePageThrough(
 ): Promise<WriteThroughResult> {
   const sourceId = opts.sourceId ?? 'default';
   try {
-    // #2018: pick the disk target so a page is NEVER written into a different
-    // source's working tree. Two legitimate topologies, plus the leak guard:
-    //   1. The assigned source has its OWN `local_path` (a separate working
-    //      tree) → write at that tree's root (matches how `scanOneSource` reads
-    //      it back; never nested under `.sources/`).
-    //   2. No per-source `local_path` → nest under the host repo
-    //      (`sync.repo_path`): default at the root, non-default under
-    //      `.sources/<id>/` (the established multi-source layout).
-    //   3. LEAK GUARD: if `sync.repo_path` is literally ANOTHER source's own
-    //      `local_path`, nesting this page there would pollute that sibling's
-    //      git repo (the reported bug). Skip instead.
-    let filePath: string;
-    let writeRoot: string;
-    const srcRows = await engine.executeRaw<{ local_path: string | null }>(
-      `SELECT local_path FROM sources WHERE id = $1`,
-      [sourceId],
-    );
-    const sourceLocalPath = srcRows[0]?.local_path ?? null;
-
-    // Prefer the page's recorded `source_path` — the ACTUAL file this row was
-    // imported from — over a slug-derived name. Deriving `<slug>.md` mints a
-    // SECOND file beside the original whenever the on-disk name isn't the slug,
-    // which is the common case for a human-authored vault: `Library/People/
-    // Steve Jobs.md` has slug `library/people/steve-jobs`, so a later put_page
-    // dropped a lowercase `steve-jobs.md` twin next to it. Two artifacts, one
-    // row, and the newer content in whichever the caller didn't expect.
-    //
-    // It also desyncs `gbrain sync`, which keys delete-reconcile on
-    // `source_path` (see collectMissingSourcePaths): the twin is invisible to
-    // reconcile, so deleting the ORIGINAL file deletes the page even though a
-    // file for it is still on disk.
-    //
-    // A NULL `source_path` means the page was born via put/capture and has no
-    // file of record yet — the slug-derived path stays correct for those.
-    const pathRows = await engine.executeRaw<{ source_path: string | null; source_uri: string | null }>(
-      `SELECT source_path, source_uri FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL LIMIT 1`,
-      [sourceId, slug],
-    );
-    const recordedPath = sanitizeRecordedSourcePath(pathRows[0]?.source_path);
-    const recordedUri = pathRows[0]?.source_uri ?? null;
-
-    if (sourceLocalPath) {
-      if (!existsSync(sourceLocalPath) || !statSync(sourceLocalPath).isDirectory()) {
-        return { written: false, skipped: 'repo_not_found' };
-      }
-      filePath = join(
-        sourceLocalPath,
-        recordedPath ?? recordedPathFromFileUri(recordedUri, sourceLocalPath) ?? `${slug}.md`,
-      );
-      writeRoot = sourceLocalPath;
-    } else {
-      const repoPath = await engine.getConfig('sync.repo_path');
-      if (!repoPath) {
-        return { written: false, skipped: 'no_repo_configured' };
-      }
-      if (!existsSync(repoPath) || !statSync(repoPath).isDirectory()) {
-        return { written: false, skipped: 'repo_not_found' };
-      }
-      // Leak guard: refuse to write into a path that is some OTHER source's
-      // own working tree (#2018).
-      const collide = await engine.executeRaw<{ one: number }>(
-        `SELECT 1 AS one FROM sources WHERE id <> $1 AND local_path = $2 LIMIT 1`,
-        [sourceId, repoPath],
-      );
-      if (collide.length > 0) {
-        return { written: false, skipped: 'source_repo_belongs_to_other_source' };
-      }
-      const pageRoot = sourceId === 'default' ? repoPath : join(repoPath, '.sources', sourceId);
-      const knownPath = recordedPath ?? recordedPathFromFileUri(recordedUri, pageRoot);
-      filePath = knownPath ? join(pageRoot, knownPath) : resolvePageFilePath(repoPath, slug, sourceId);
-      writeRoot = repoPath;
-    }
-
-    // Defense-in-depth (#1647-slug / codex #6): confirm the computed file path
-    // stays within the source's working tree before any mkdir/write. validateSlug
-    // already rejects `..`/backslash/control/%2e in the slug at write time, so
-    // this guards a pre-existing hostile row or a symlinked intermediate dir
-    // under the source tree from escaping to an arbitrary filesystem location.
-    if (!isWriteTargetContained(filePath, writeRoot)) {
-      return { written: false, skipped: 'path_escapes_source_root' };
-    }
+    const target = await resolveWriteThroughTarget(engine, slug, sourceId);
+    if (!target.ok) return { written: false, skipped: target.skipped };
+    const { filePath, writeRoot } = target;
 
     const writtenPage = await engine.getPage(slug, { sourceId });
     if (!writtenPage) {
@@ -325,5 +359,62 @@ export async function writePageThrough(
     const msg = e instanceof Error ? e.message : String(e);
     opts.logger?.warn(`[write-through] failed for ${slug}: ${msg}`);
     return { written: false, error: msg };
+  }
+}
+
+export interface DeleteThroughResult {
+  /** True when an artifact existed and was unlinked. */
+  removed: boolean;
+  /** The path that was removed (or would have been). */
+  path?: string;
+  /**
+   * Non-error reasons nothing was removed. Shares the write-through skip
+   * vocabulary, plus:
+   *   - file_not_present: the page had no artifact on disk (DB-only page, or
+   *     already removed by hand) — a clean no-op, not a failure.
+   */
+  skipped?: NonNullable<WriteThroughResult['skipped']> | 'file_not_present';
+  /** Set when the unlink itself threw (EACCES, EPERM, read-only mount). */
+  error?: string;
+}
+
+/**
+ * Remove the on-disk markdown artifact for `slug` — the delete-side counterpart
+ * to `writePageThrough`.
+ *
+ * Why this exists: `put_page`/capture write BOTH sinks (DB row + `.md` file),
+ * but `delete_page` used to touch only the DB. The orphaned file then outlived
+ * the page, and on any repo whose brain is committed on a timer (a `snapshot`
+ * cron, `sources harden`'s post-commit push) the deleted page's artifact gets
+ * committed back into git *after* deletion — so the page reappears on the next
+ * `gbrain sync`, silently resurrecting content the user deleted.
+ *
+ * Deliberately mirrors `writePageThrough`'s contract: never throws, reports via
+ * `skipped`/`error`, and resolves its target through the shared
+ * `resolveWriteThroughTarget` so the two planes cannot disagree about which
+ * file backs a page. The DB row remains the durable sink — a failure here
+ * leaves a stale file that the next `gbrain sync` reconciles, never a lost row.
+ */
+export async function deletePageThrough(
+  engine: BrainEngine,
+  slug: string,
+  opts: { sourceId?: string; logger?: WriteThroughLogger } = {},
+): Promise<DeleteThroughResult> {
+  const sourceId = opts.sourceId ?? 'default';
+  try {
+    const target = await resolveWriteThroughTarget(engine, slug, sourceId);
+    if (!target.ok) return { removed: false, skipped: target.skipped };
+    const { filePath } = target;
+
+    if (!existsSync(filePath)) {
+      return { removed: false, path: filePath, skipped: 'file_not_present' };
+    }
+
+    unlinkSync(filePath);
+    return { removed: true, path: filePath };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    opts.logger?.warn(`[write-through] delete failed for ${slug}: ${msg}`);
+    return { removed: false, error: msg };
   }
 }

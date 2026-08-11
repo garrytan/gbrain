@@ -1,10 +1,10 @@
 import { describe, test, expect, beforeAll, afterAll, spyOn } from 'bun:test';
-import { writeFileSync, mkdirSync, rmSync, symlinkSync, mkdtempSync } from 'fs';
+import { writeFileSync, readFileSync, mkdirSync, rmSync, symlinkSync, mkdtempSync } from 'fs';
 import { join, basename } from 'path';
 import { createHash } from 'crypto';
 import { extname } from 'path';
 import { tmpdir } from 'os';
-import { collectFiles, formatFileSizeKb } from '../src/commands/files.ts';
+import { collectFiles, formatFileSizeKb, noStorageBackendMessage } from '../src/commands/files.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import * as db from '../src/core/db.ts';
 
@@ -246,5 +246,50 @@ describe('collectFiles (production import)', () => {
     } finally {
       rmSync(tmpDir, { recursive: true });
     }
+  });
+});
+
+describe('storage precondition — the silent-no-op class', () => {
+  test('refusal message names the subcommand and why it refuses', () => {
+    const msg = noStorageBackendMessage('upload');
+    expect(msg).toContain('gbrain files upload');
+    // The two facts a user needs: nothing was stored, and metadata-only is why.
+    expect(msg).toContain('refusing to continue');
+    expect(msg).toMatch(/metadata only|no blob column/);
+    expect(noStorageBackendMessage('redirect')).toContain('gbrain files redirect');
+  });
+
+  /**
+   * The guard rung: a bug is a sample, not the population. `upload`, `sync`, and
+   * `redirect` each tested storage permissively and continued when the answer
+   * was "no" — producing phantom rows and, in `redirect`, unlinking local
+   * originals whose bytes were never uploaded. This scan fails if anyone
+   * reintroduces the permissive form, so the whole class stays dead rather than
+   * just the three instances.
+   */
+  test('[GUARD] no storage-dependent path uses the permissive `if (config?.storage)` form', () => {
+    const src = readFileSync(join(import.meta.dir, '..', 'src', 'commands', 'files.ts'), 'utf8');
+    // Strip comments so prose describing the old bug doesn't trip the scan.
+    const code = src
+      .split('\n')
+      .filter((l) => {
+        const t = l.trim();
+        return !t.startsWith('*') && !t.startsWith('//') && !t.startsWith('/*');
+      })
+      .join('\n');
+
+    expect(code).not.toMatch(/if\s*\(\s*config\?\.storage\s*\)/);
+    // And the storage-dependent commands must route through the shared guard.
+    for (const op of ['upload', 'sync', 'mirror', 'redirect']) {
+      expect(code).toContain(`requireStorageBackend('${op}')`);
+    }
+  });
+
+  test('[GUARD] verify never hardcodes its mismatch/missing counts', () => {
+    const src = readFileSync(join(import.meta.dir, '..', 'src', 'commands', 'files.ts'), 'utf8');
+    // The original printed `${verified} files verified, 0 mismatches, 0 missing`
+    // with both counts literal, so phantom rows reported as verified.
+    expect(src).not.toMatch(/files verified, 0 mismatches, 0 missing/);
+    expect(src).toContain('${verified} files verified, ${mismatches} mismatches, ${missing} missing');
   });
 });

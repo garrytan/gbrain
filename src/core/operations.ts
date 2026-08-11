@@ -10,7 +10,7 @@ import { clampSearchLimit } from './engine.ts';
 import type { GBrainConfig } from './config.ts';
 import type { PageType } from './types.ts';
 import { importFromContent } from './import-file.ts';
-import { writePageThrough, type WriteThroughResult } from './write-through.ts';
+import { writePageThrough, deletePageThrough, type WriteThroughResult } from './write-through.ts';
 import { hybridSearch, hybridSearchCached, stampContentFlags, stampUnverifiedExtractions } from './search/hybrid.ts';
 import { looksConceptShaped } from './search/query-intent.ts';
 import { expandQuery } from './search/expansion.ts';
@@ -1886,9 +1886,31 @@ const delete_page: Operation = {
       if (!existing) {
         throw new OperationError('page_not_found', `Page not found: ${slug}`, 'Check the slug.');
       }
-      return { status: 'already_soft_deleted', slug, deleted_at: existing.deleted_at };
+      // Already soft-deleted, but the artifact may still be on disk from a
+      // pre-fix delete — reconcile it here so a re-issued delete is the
+      // documented way to clean up the leak.
+      const wt = await deletePageThrough(ctx.engine, slug, {
+        sourceId: ctx.sourceId,
+        logger: ctx.logger,
+      });
+      return { status: 'already_soft_deleted', slug, deleted_at: existing.deleted_at, write_through: wt };
     }
-    return { status: 'soft_deleted', slug, recoverable_until: 'now + 72h via restore_page' };
+    // Remove the on-disk artifact too. Pre-fix this was DB-only, so a deleted
+    // page's `.md` file survived and any timer-based commit (snapshot cron,
+    // hardened post-commit push) pushed it back into git — resurrecting the
+    // page on the next `gbrain sync`. Sandbox subagents stay DB-only, matching
+    // put_page's trust gate.
+    const isSandboxSubagent = ctx.viaSubagent === true
+      && !(Array.isArray(ctx.allowedSlugPrefixes) && ctx.allowedSlugPrefixes.length > 0);
+    const writeThrough = isSandboxSubagent
+      ? { removed: false, skipped: 'subagent_sandbox' as const }
+      : await deletePageThrough(ctx.engine, slug, { sourceId: ctx.sourceId, logger: ctx.logger });
+    return {
+      status: 'soft_deleted',
+      slug,
+      recoverable_until: 'now + 72h via restore_page',
+      write_through: writeThrough,
+    };
   },
   cliHints: { name: 'delete', positional: ['slug'] },
 };
@@ -1916,7 +1938,17 @@ const restore_page: Operation = {
       }
       return { status: 'already_active', slug };
     }
-    return { status: 'restored', slug };
+    // Re-render the artifact: delete_page now removes it, so without this a
+    // restored page exists in the DB with no file — and `sync --full`'s
+    // delete-reconcile treats a row with no artifact as deleted, silently
+    // re-deleting the page the user just restored. Keeps the two sinks
+    // symmetric across the delete/restore pair.
+    const isSandboxSubagent = ctx.viaSubagent === true
+      && !(Array.isArray(ctx.allowedSlugPrefixes) && ctx.allowedSlugPrefixes.length > 0);
+    const writeThrough = isSandboxSubagent
+      ? { written: false, skipped: 'subagent_sandbox' as const }
+      : await writePageThrough(ctx.engine, slug, { sourceId: ctx.sourceId, logger: ctx.logger });
+    return { status: 'restored', slug, write_through: writeThrough };
   },
   cliHints: { name: 'restore', positional: ['slug'] },
 };
