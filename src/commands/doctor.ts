@@ -1613,6 +1613,8 @@ export async function checkVoiceGateHealth(engine: BrainEngine): Promise<Check> 
  *      Below that they're noise; reranker fails open anyway.
  *   5) Payload-too-large failures: warn at >=1 (indicates a workload
  *      mismatch that the operator should know about).
+ *   6) Budget/pricing failures: warn at >=1 with the rerank pricing surface
+ *      and --max-cost escape hatch.
  *
  * Engine-agnostic (file-based + one config-key read).
  */
@@ -1648,6 +1650,15 @@ export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
         name: 'reranker_health',
         status: 'warn',
         message: `${payloadFails.length} reranker payload-too-large failure(s) in last 7 days. Fix: lower \`search.reranker.top_n_in\` (default 30) or split very large documents.`,
+      };
+    }
+
+    const budgetFails = failures.filter((f) => f.reason === 'budget');
+    if (budgetFails.length > 0) {
+      return {
+        name: 'reranker_health',
+        status: 'warn',
+        message: `${budgetFails.length} reranker budget/pricing failure(s) in last 7 days. Fix: add rerank pricing to src/core/embedding-pricing.ts or drop --max-cost.`,
       };
     }
 

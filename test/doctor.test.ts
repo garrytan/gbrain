@@ -127,6 +127,33 @@ describe('doctor command', () => {
     }
   });
 
+  test('#3628: reranker_health surfaces budget failures with pricing guidance', async () => {
+    const { checkRerankerHealth } = await import('../src/commands/doctor.ts');
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-rerank-budget-doctor-'));
+    try {
+      await withEnv({ GBRAIN_AUDIT_DIR: tmpDir }, async () => {
+        logRerankFailure({
+          model: 'acmecorp:unpriced-reranker-v9',
+          reason: 'budget',
+          query_hash: 'budget01',
+          doc_count: 30,
+          error_summary: 'no pricing entry for model "acmecorp:unpriced-reranker-v9" (kind=rerank)',
+        });
+        const check = await checkRerankerHealth({
+          async getConfig(key: string): Promise<string | null> {
+            return key === 'search.reranker.enabled' ? 'true' : null;
+          },
+        } as any);
+        expect(check.status).toBe('warn');
+        expect(check.message).toContain('budget/pricing');
+        expect(check.message).toContain('embedding-pricing.ts');
+        expect(check.message).toContain('--max-cost');
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   test('runDoctor accepts null engine for filesystem-only mode', async () => {
     const { runDoctor } = await import('../src/commands/doctor.ts');
     // runDoctor should accept null engine — it runs filesystem checks only.
