@@ -1023,6 +1023,11 @@ const get_page: Operation = {
     slug: { type: 'string', required: true, description: 'Page slug' },
     fuzzy: { type: 'boolean', description: 'Enable fuzzy slug resolution (default: false)' },
     include_deleted: { type: 'boolean', description: 'v0.26.5: surface soft-deleted pages with deleted_at populated (default: false). Used by restore workflows.' },
+    source_id: {
+      type: 'string',
+      description:
+        "Scope the lookup to a single source. Defaults to OperationContext.sourceId; when unset, an unqualified read spans every federated source (matching search/query). Pass '__all__' to span every source for trusted local callers; for remote callers '__all__' spans only your granted sources.",
+    },
   },
   handler: async (ctx, p) => {
     const slug = p.slug as string;
@@ -1035,8 +1040,11 @@ const get_page: Operation = {
     // an UNSCOPED exact lookup — a cross-source read of any page by slug. getPage
     // now honors sourceIds[] (both engines), so the same scope closes both paths.
     // #3242: federatedSearchScope (not bare sourceScopeOpts) so an unqualified
-    // read sees pages in `federated: true` sources, matching search/query.
-    const sourceOpts = federatedSearchScope(ctx);
+    // read sees pages in `federated: true` sources, matching search/query. An
+    // explicit per-call source_id narrows through resolveRequestedScope (the
+    // shared trust+grant resolver) so an agent can pin the lookup to one source.
+    const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
+    const sourceOpts = federatedSearchScope(ctx, sourceIdParam);
     const fuzzyScope = sourceOpts;
 
     let page = await ctx.engine.getPage(slug, { includeDeleted, ...sourceOpts });
@@ -1825,6 +1833,11 @@ const list_pages: Operation = {
       description: 'Sort order. Default updated_desc (matches pre-v0.29). Options: updated_desc, updated_asc, created_desc, slug.',
     },
     include_deleted: { type: 'boolean', description: 'v0.26.5: include soft-deleted pages (default: false). Used by restore workflows and operator diagnostics.' },
+    source_id: {
+      type: 'string',
+      description:
+        "Scope the listing to a single source. Defaults to OperationContext.sourceId; when unset, an unqualified listing spans every federated source (matching search/get_page). Pass '__all__' to span every source for trusted local callers; for remote callers '__all__' spans only your granted sources.",
+    },
   },
   handler: async (ctx, p) => {
     // Whitelist the sort enum at the handler before passing to the engine.
@@ -1841,7 +1854,10 @@ const list_pages: Operation = {
     // pages indiscriminately.
     // #3242: federatedSearchScope so unqualified listing spans federated
     // sources (same visibility set as search / get_page). Grants still win.
-    const scope = federatedSearchScope(ctx);
+    // An explicit per-call source_id narrows through resolveRequestedScope,
+    // matching search / get_page / query.
+    const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
+    const scope = federatedSearchScope(ctx, sourceIdParam);
     // The 100-row cap exists to protect remote MCP/OAuth transports from
     // unbounded result dumps. Local CLI callers (ctx.remote === false — the
     // same trust boundary that already bypasses scope enforcement, see the
@@ -1923,14 +1939,22 @@ const search: Operation = {
     limit: { type: 'number', description: 'Max results (default 20)' },
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
     mode: { type: 'string', description: 'Search mode (conservative|balanced|tokenmax). Local callers only.' },
+    source_id: {
+      type: 'string',
+      description:
+        "Scope search to a single source. Defaults to OperationContext.sourceId (set from CLI --source / GBRAIN_SOURCE / .gbrain-source dotfile); when unset, an unqualified read spans every federated source. Pass '__all__' to span every source for trusted local callers; for remote callers '__all__' spans only your granted sources.",
+    },
   },
   handler: async (ctx, p) => {
     const startedAt = Date.now();
     const queryText = p.query as string;
     const limit = (p.limit as number) || 20;
     const offset = (p.offset as number) || 0;
-    // #2561: unqualified trusted-local search spans federated sources.
-    const scope = federatedSearchScope(ctx);
+    // #2561: unqualified trusted-local search spans federated sources. An
+    // explicit per-call source_id narrows through the shared trust+grant
+    // resolver (resolveRequestedScope), matching the `query` op.
+    const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
+    const scope = federatedSearchScope(ctx, sourceIdParam);
 
     // T4/D5 — per-call mode honored ONLY for trusted/local callers so a remote
     // OAuth client can't escalate to the costly tokenmax bundle. Local + unknown
@@ -3140,13 +3164,20 @@ const resolve_slugs: Operation = {
   description: 'Fuzzy-resolve a partial slug to matching page slugs',
   params: {
     partial: { type: 'string', required: true },
+    source_id: {
+      type: 'string',
+      description:
+        "Scope resolution to a single source. Defaults to OperationContext.sourceId; when unset, an unqualified resolve spans every federated source (matching search/get_page). Pass '__all__' to span every source for trusted local callers; for remote callers '__all__' spans only your granted sources.",
+    },
   },
   handler: async (ctx, p) => {
     // #3242: was fully UNSCOPED — the one read that leaked every source's
     // slugs to any caller (the reporter's "resolve_slugs sees them but
     // get_page doesn't" matrix). Route through the same visibility set as
-    // get_page/search: grant > federated set > scalar source.
-    return ctx.engine.resolveSlugs(p.partial as string, federatedSearchScope(ctx));
+    // get_page/search: grant > federated set > scalar source. An explicit
+    // per-call source_id narrows through resolveRequestedScope.
+    const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
+    return ctx.engine.resolveSlugs(p.partial as string, federatedSearchScope(ctx, sourceIdParam));
   },
   scope: 'read',
 };

@@ -231,3 +231,99 @@ describe('#3242 — get_page / list_pages / resolve_slugs share the federated vi
     expect(scalar).not.toContain('old/topic');
   });
 });
+
+// A per-call source_id lets an agent narrow search/get_page to one source even
+// when the transport widened the unqualified scope to the federated set. Only
+// `query` accepted this before; search + get_page dropped it silently.
+describe('per-call source_id narrows search / get_page over a federated ctx', () => {
+  const getPage = operations.find((o) => o.name === 'get_page')!;
+
+  function federatedCtx(overrides: Partial<OperationContext> = {}): OperationContext {
+    return ctxOf({ localFederatedSourceIds: ['default', 'wiki'], ...overrides });
+  }
+
+  test('search source_id declared as a param', () => {
+    expect(search.params.source_id?.type).toBe('string');
+    expect(getPage.params.source_id?.type).toBe('string');
+  });
+
+  test('search: source_id narrows the federated scope to one source', async () => {
+    const results = (await search.handler(federatedCtx(), {
+      query: 'zebra telescope',
+      source_id: 'wiki',
+    })) as Array<{ slug: string }>;
+    const slugs = results.map((r) => r.slug);
+    expect(slugs).toEqual(['wiki/topic']);
+    expect(slugs).not.toContain('notes/home');
+  });
+
+  test('get_page: source_id pins the lookup — foreign source is not found', async () => {
+    // Federated ctx would otherwise resolve wiki/topic; pinning to 'default'
+    // excludes it.
+    await expect(
+      getPage.handler(federatedCtx(), { slug: 'wiki/topic', source_id: 'default' }),
+    ).rejects.toThrow(/not found/i);
+    // Pinning to the correct source still resolves it.
+    const page = (await getPage.handler(federatedCtx(), {
+      slug: 'wiki/topic',
+      source_id: 'wiki',
+    })) as { slug: string };
+    expect(page.slug).toBe('wiki/topic');
+  });
+
+  test('remote caller cannot escape its grant via source_id', async () => {
+    // A federated grant that does NOT include 'wiki' must reject the narrow.
+    const ctx = ctxOf({
+      remote: true,
+      auth: { allowedSources: ['default'] } as OperationContext['auth'],
+    });
+    await expect(
+      search.handler(ctx, { query: 'zebra telescope', source_id: 'wiki' }),
+    ).rejects.toThrow(/outside your granted sources/i);
+  });
+});
+
+// Parity: list_pages and resolve_slugs share the same federated-widening default
+// and must also accept a per-call source_id to narrow it.
+describe('per-call source_id narrows list_pages / resolve_slugs over a federated ctx', () => {
+  const listPages = operations.find((o) => o.name === 'list_pages')!;
+  const resolveSlugsOp = operations.find((o) => o.name === 'resolve_slugs')!;
+
+  function federatedCtx(overrides: Partial<OperationContext> = {}): OperationContext {
+    return ctxOf({ localFederatedSourceIds: ['default', 'wiki'], ...overrides });
+  }
+
+  test('source_id declared as a param on both ops', () => {
+    expect(listPages.params.source_id?.type).toBe('string');
+    expect(resolveSlugsOp.params.source_id?.type).toBe('string');
+  });
+
+  test('list_pages: source_id narrows the federated scope to one source', async () => {
+    const rows = (await listPages.handler(federatedCtx(), { source_id: 'wiki' })) as Array<{ slug: string }>;
+    const slugs = rows.map((r) => r.slug);
+    expect(slugs).toContain('wiki/topic');
+    expect(slugs).not.toContain('notes/home');
+  });
+
+  test('resolve_slugs: source_id narrows the federated scope to one source', async () => {
+    const wikiOnly = (await resolveSlugsOp.handler(federatedCtx(), { partial: 'topic', source_id: 'wiki' })) as string[];
+    expect(wikiOnly).toContain('wiki/topic');
+    expect(wikiOnly).not.toContain('notes/home');
+
+    const defaultOnly = (await resolveSlugsOp.handler(federatedCtx(), { partial: 'topic', source_id: 'default' })) as string[];
+    expect(defaultOnly).not.toContain('wiki/topic');
+  });
+
+  test('remote caller cannot escape its grant via source_id (both ops)', async () => {
+    const ctx = ctxOf({
+      remote: true,
+      auth: { allowedSources: ['default'] } as OperationContext['auth'],
+    });
+    await expect(
+      listPages.handler(ctx, { source_id: 'wiki' }),
+    ).rejects.toThrow(/outside your granted sources/i);
+    await expect(
+      resolveSlugsOp.handler(ctx, { partial: 'topic', source_id: 'wiki' }),
+    ).rejects.toThrow(/outside your granted sources/i);
+  });
+});
