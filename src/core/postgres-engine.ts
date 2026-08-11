@@ -5871,6 +5871,17 @@ export class PostgresEngine implements BrainEngine {
     });
   }
 
+  async getAllConfig(): Promise<Record<string, string>> {
+    return this.connRetry(async () => {
+      const rows = await this.sql<{ key: string; value: string }[]>`
+        SELECT key, value FROM config
+      `;
+      const out: Record<string, string> = {};
+      for (const row of rows) out[row.key] = row.value;
+      return out;
+    });
+  }
+
   // Migration support
   async runMigration(_version: number, sqlStr: string): Promise<void> {
     const conn = this.sql;

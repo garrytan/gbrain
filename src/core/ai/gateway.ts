@@ -52,6 +52,7 @@ import {
   openrouterRequiresExplicitPromptCache,
 } from './recipes/openrouter.ts';
 import { resolveModel, TIER_DEFAULTS } from '../model-config.ts';
+import { snapshotConfigReader } from '../config-snapshot.ts';
 import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
@@ -551,15 +552,24 @@ export function configureGateway(config: AIGatewayConfig): void {
  */
 export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise<AIGatewayConfig> {
   const cfg = requireConfig();
+
+  // Six resolutions follow, each walking a 5-tier precedence chain that reads
+  // up to 4 config keys, plus alias expansion. Against the engine that is ~40
+  // sequential round trips before the CLI does any work — 3.1s of `gbrain
+  // stats`'s wall clock on a hosted brain, for reads the server answered in
+  // microseconds. Take one snapshot of the config table and resolve every
+  // model against it. Same keys, same precedence, one round trip.
+  const reader = await snapshotConfigReader(engine);
+
   // Resolve expansion (utility tier) and chat (reasoning tier). Embedding is
   // intentionally NOT re-resolved here — switching embedding models invalidates
   // the vector index. Out of scope per v0.31.12 plan ("Embedding tier knob").
-  const newExpansion = await resolveModel(engine, {
+  const newExpansion = await resolveModel(reader, {
     configKey: 'models.expansion',
     tier: 'utility',
     fallback: cfg.expansion_model ?? DEFAULT_EXPANSION_MODEL,
   });
-  const newChat = await resolveModel(engine, {
+  const newChat = await resolveModel(reader, {
     configKey: 'models.chat',
     tier: 'reasoning',
     fallback: cfg.chat_model ?? DEFAULT_CHAT_MODEL,
@@ -583,7 +593,7 @@ export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise
   // the resolveModel chain).
   const tierModels: string[] = [];
   for (const tier of ['utility', 'reasoning', 'deep', 'subagent'] as const) {
-    tierModels.push(await resolveModel(engine, { tier, fallback: TIER_DEFAULTS[tier] }));
+    tierModels.push(await resolveModel(reader, { tier, fallback: TIER_DEFAULTS[tier] }));
   }
 
   _config = { ...cfg, expansion_model: expansionFull, chat_model: chatFull };

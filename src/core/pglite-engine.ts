@@ -5908,6 +5908,13 @@ export class PGLiteEngine implements BrainEngine {
     return (rows as { key: string }[]).map(r => r.key);
   }
 
+  async getAllConfig(): Promise<Record<string, string>> {
+    const { rows } = await this.db.query('SELECT key, value FROM config');
+    const out: Record<string, string> = {};
+    for (const row of rows as { key: string; value: string }[]) out[row.key] = row.value;
+    return out;
+  }
+
   // Migration support
   async runMigration(_version: number, sql: string): Promise<void> {
     await this.db.exec(sql);

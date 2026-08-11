@@ -20,7 +20,7 @@
  * AND lose to new-key config when both are set.
  */
 
-import type { BrainEngine } from './engine.ts';
+import type { ConfigReader } from './config-snapshot.ts';
 import { splitProviderModelId } from './model-id.ts';
 
 export type ModelTier = 'utility' | 'reasoning' | 'deep' | 'subagent';
@@ -131,7 +131,7 @@ function emitDeprecationWarning(oldKey: string, newKey: string, ignored: boolean
  * have an engine (rare; usually CLI bootstrap before connect).
  */
 export async function resolveModel(
-  engine: BrainEngine | null,
+  engine: ConfigReader | null,
   opts: ResolveModelOpts,
 ): Promise<string> {
   const envVar = opts.envVar ?? 'GBRAIN_MODEL';
@@ -303,7 +303,7 @@ void enforceSubagentAnthropic;
  * to `super-opus` which aliases to `opus`, we return `super-opus` and stop.
  */
 export async function resolveAlias(
-  engine: BrainEngine | null,
+  engine: ConfigReader | null,
   name: string,
   depth = 0,
 ): Promise<string> {
