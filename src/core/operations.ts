@@ -914,6 +914,51 @@ export function resolveCodeIntelScope(
 }
 
 /**
+ * Federated re-route for the graph four (code_callers / code_callees /
+ * code_blast / code_flow) — the #3242 sibling. An UNQUALIFIED graph query from
+ * a no-grant caller collapses to the scalar seed source (usually 'default'),
+ * which on vault+code brains holds no code — so the graph ops report
+ * `not_built` while code_def / code_refs (which widen across
+ * `ctx.localFederatedSourceIds`) answer fine. Graph traversal must stay
+ * single-source (engine API + cache key take ONE sourceId), so instead of
+ * widening we RE-ROUTE: when the collapsed source has no code chunks and
+ * exactly one source in the caller's federated read set does, traverse that
+ * one — the multi-source cousin of the CLI's `sole_non_default` tier (#1434).
+ *
+ * Fail-closed, in order: never fires when the caller passed `source_id` or
+ * `all_sources` (explicit wins), when the scope is already brain-wide, when
+ * there is no federated read set (a granted token never widens), when the
+ * collapsed source itself has code, or when zero or 2+ federated sources have
+ * code (ambiguous → original scope stands and readiness reports honestly).
+ * Probe errors also keep the original scope.
+ */
+export async function routeCodeIntelScope(
+  ctx: OperationContext,
+  sourceIdParam: string | undefined,
+  allSourcesParam = false,
+): Promise<{ allSources: boolean; sourceId?: string }> {
+  const scope = resolveCodeIntelScope(ctx, sourceIdParam, allSourcesParam);
+  if (
+    sourceIdParam !== undefined || allSourcesParam ||
+    scope.allSources || scope.sourceId === undefined ||
+    !ctx.localFederatedSourceIds || ctx.localFederatedSourceIds.length < 2
+  ) {
+    return scope;
+  }
+  try {
+    const { codeChunksExist } = await import('./code-graph-readiness.ts');
+    if (await codeChunksExist(ctx.engine, scope.sourceId)) return scope;
+    const withCode: string[] = [];
+    for (const id of ctx.localFederatedSourceIds) {
+      if (id === scope.sourceId) continue;
+      if (await codeChunksExist(ctx.engine, id)) withCode.push(id);
+    }
+    if (withCode.length === 1) return { allSources: false, sourceId: withCode[0] };
+  } catch { /* probe failure → original scope stands */ }
+  return scope;
+}
+
+/**
  * T4/D5 — resolve a per-call search-mode override. Honored ONLY for trusted/
  * local callers (ctx.remote === false) so a remote OAuth client can't escalate
  * to the costly tokenmax bundle. Local + unknown mode → loud reject; remote +
@@ -4898,9 +4943,10 @@ const code_callers: Operation = {
     const symbol = p.symbol as string;
     const limit = (p.limit as number) ?? 100;
     const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
-    // Single trust+grant resolver: remote callers can't span sources outside
-    // their grant, and `__all__` collapses to their grant (not the whole brain).
-    const { allSources, sourceId } = resolveCodeIntelScope(ctx, sourceIdParam, p.all_sources === true);
+    // Single trust+grant resolver + federated code-source re-route (see
+    // routeCodeIntelScope): remote callers can't span sources outside their
+    // grant, and `__all__` collapses to their grant (not the whole brain).
+    const { allSources, sourceId } = await routeCodeIntelScope(ctx, sourceIdParam, p.all_sources === true);
     const edges = await ctx.engine.getCallersOf(symbol, {
       limit,
       allSources,
@@ -4929,8 +4975,8 @@ const code_callees: Operation = {
     const symbol = p.symbol as string;
     const limit = (p.limit as number) ?? 100;
     const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
-    // Single trust+grant resolver (see code_callers).
-    const { allSources, sourceId } = resolveCodeIntelScope(ctx, sourceIdParam, p.all_sources === true);
+    // Single trust+grant resolver + federated re-route (see code_callers).
+    const { allSources, sourceId } = await routeCodeIntelScope(ctx, sourceIdParam, p.all_sources === true);
     const edges = await ctx.engine.getCalleesOf(symbol, {
       limit,
       allSources,
@@ -5015,7 +5061,7 @@ const code_blast: Operation = {
     // source outside its grant (pre-fix this scoped by bare ctx.sourceId only).
     // Falls back to ctx.sourceId (a required string) for the trusted-local case,
     // exactly preserving pre-fix local behavior.
-    const { sourceId: scopedSourceId } = resolveCodeIntelScope(ctx, typeof p.source_id === 'string' ? p.source_id : undefined);
+    const { sourceId: scopedSourceId } = await routeCodeIntelScope(ctx, typeof p.source_id === 'string' ? p.source_id : undefined);
     const sourceId = scopedSourceId ?? ctx.sourceId;
     return getCachedOrCompute(
       ctx.engine,
@@ -5051,7 +5097,7 @@ const code_flow: Operation = {
     const max_nodes = Math.min((p.max_nodes as number) ?? 200, 200);
     const exact = (p.exact as boolean) ?? false;
     // Single trust+grant resolver (see code_blast).
-    const { sourceId: scopedSourceId } = resolveCodeIntelScope(ctx, typeof p.source_id === 'string' ? p.source_id : undefined);
+    const { sourceId: scopedSourceId } = await routeCodeIntelScope(ctx, typeof p.source_id === 'string' ? p.source_id : undefined);
     const sourceId = scopedSourceId ?? ctx.sourceId;
     return getCachedOrCompute(
       ctx.engine,
