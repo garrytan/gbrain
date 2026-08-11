@@ -2589,8 +2589,9 @@ contributor traps.
 - [ ] **P2: Document `FREE_LOCAL_RERANK_PROVIDERS` invariant.** `src/core/budget/budget-tracker.ts:lookupPricing`
   returns `{input:0, output:0}` for any model id under the `llama-server-reranker:`
   provider on the rerank kind. The contract relies on all callers going through
-  `gateway.rerank()`'s `assertTouchpoint`-with-extended-models check (which validates
-  the model exists before pricing fires). Theoretical bypass: a future caller that
+  `gateway.rerank()`'s own model-list check (rerank-specific; it validates the
+  model exists before pricing fires — note this was never `assertTouchpoint`,
+  which checks provider touchpoints only). Theoretical bypass: a future caller that
   reserves directly against BudgetTracker with `kind: 'rerank'` and an arbitrary
   `llama-server-reranker:<anything>` model id gets free pricing. Fix: code comment
   documenting the invariant, OR move the freeness check to gateway.rerank() where

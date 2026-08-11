@@ -974,7 +974,8 @@ export function makeJudgeClient(verdictModel: string): JudgeClient | null {
   const modelStr = normalizeModelId(verdictModel);
 
   // #1698 (C1): id-validity via the shared `validateModelId` core (resolveRecipe +
-  // assertTouchpoint) — catches unknown provider AND typo'd native model. We do NOT
+  // assertTouchpoint) — catches unknown provider AND chat-less provider (model-id
+  // typos pass locally and fail at the provider; no runtime allowlist). We do NOT
   // use the full `probeChatModel` here: its `isAvailable` layer would reject
   // non-Anthropic-no-key providers and an unconfigured gateway, breaking the
   // deliberate per-transcript-degrade contract (and test A9). validateModelId reads

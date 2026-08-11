@@ -741,7 +741,9 @@ async function tryBuildGatewayClient(
   const modelStr = normalizeModelId(modelUsed);
 
   // #1698: ONE shared probe (resolveRecipe + assertTouchpoint + isAvailable).
-  // assertTouchpoint catches typo'd native models; isAvailable catches missing keys.
+  // assertTouchpoint catches chat-less providers (voyage/ollama); isAvailable
+  // catches missing keys. Model-id typos are NOT caught locally (no runtime
+  // allowlist) — a nonexistent id fails at the provider with model_not_found.
   // For an EXPLICIT model the user typed, an unusable model is a HARD ERROR (throw)
   // — never silently degrade to the no-LLM stub. For the default/configured-model
   // path, return null so the caller falls through to the graceful "no LLM" stub
@@ -787,7 +789,7 @@ async function tryBuildGatewayClient(
         // existing JSON-parse path produces the graceful degradation answer.
         if (e instanceof AIConfigError) {
           if (opts.explicitModel) throw e;
-          return buildGracefulMessage(modelStr) as unknown as Anthropic.Message;
+          return buildGracefulMessage(modelStr, e) as unknown as Anthropic.Message;
         }
         throw e;
       }
@@ -836,12 +838,19 @@ function mapStopReason(s: ChatResult['stopReason']): 'end_turn' | 'max_tokens' |
 }
 
 /**
- * Sentinel Message returned when gateway.chat throws AIConfigError (typically
- * missing API key for the resolved provider). The caller's JSON parser will
- * fail on this text, fall through to `LLM_OUTPUT_NOT_JSON`, and surface the
- * sentinel as the answer — matches the legacy graceful-degradation shape.
+ * Sentinel Message returned when gateway.chat throws AIConfigError (missing
+ * API key, or the provider rejecting the model/config with a 4xx — with no
+ * runtime model allowlist, a nonexistent model id surfaces here as the
+ * provider's model_not_found). The caller's JSON parser will fail on this
+ * text, fall through to `LLM_OUTPUT_NOT_JSON`, and surface the sentinel as
+ * the answer — matches the legacy graceful-degradation shape.
+ *
+ * When the thrown error is in hand, its own message + fix are surfaced (they
+ * name the actual cause: which key is missing, or what the provider rejected)
+ * instead of the generic key advice — the generic text key-blamed provider
+ * 4xxs like model_not_found.
  */
-function buildGracefulMessage(modelStr: string): {
+function buildGracefulMessage(modelStr: string, err?: AIConfigError): {
   id: string;
   type: 'message';
   role: 'assistant';
@@ -855,7 +864,12 @@ function buildGracefulMessage(modelStr: string): {
     type: 'message',
     role: 'assistant',
     model: modelStr,
-    content: [{ type: 'text', text: '(no LLM available — set anthropic_api_key via gbrain config or ANTHROPIC_API_KEY env)' }],
+    content: [{
+      type: 'text',
+      text: err
+        ? `(no LLM available — ${err.message}${err.fix ? ` Fix: ${err.fix}` : ''})`
+        : '(no LLM available — set anthropic_api_key via gbrain config or ANTHROPIC_API_KEY env)',
+    }],
     usage: { input_tokens: 0, output_tokens: 0 },
     stop_reason: 'end_turn',
   };

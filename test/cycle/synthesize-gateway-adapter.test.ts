@@ -87,12 +87,12 @@ describe('makeJudgeClient — construction-time provider probe', () => {
     });
   });
 
-  test('A8b (#1698): typo native model → null at construction (validateModelId unknown_model)', async () => {
-    // Pre-#1698 makeJudgeClient only checked the provider (resolveRecipe) and would
-    // have returned a client that failed at call time. Now the shared validateModelId
-    // core runs assertTouchpoint, so a typo'd native model is rejected up front.
+  test('A8b (#1698): chat-less-provider model → null at construction (validateModelId unknown_model)', async () => {
+    // validateModelId rejects a provider with no chat touchpoint (voyage).
+    // Unlisted ids on chat-capable providers pass local validation now (no
+    // runtime allowlist) and fail at the provider instead.
     await withEnv({ ANTHROPIC_API_KEY: 'sk-test-A8b' }, async () => {
-      const judge = makeJudgeClient('anthropic:claude-bogus-9');
+      const judge = makeJudgeClient('voyage:voyage-3');
       expect(judge).toBeNull();
     });
   });

@@ -176,14 +176,15 @@ describe('chat touchpoint — model resolver + aliases (Codex F-OV-5)', () => {
       .toThrow(AIConfigError);
   });
 
-  test('assertTouchpoint rejects unknown native model with the model list in the fix hint', () => {
-    try {
-      assertTouchpoint(getRecipe('anthropic')!, 'chat', 'claude-opus-9-99');
-      throw new Error('should have thrown');
-    } catch (e) {
-      expect(e).toBeInstanceOf(AIConfigError);
-      expect((e as AIConfigError).message).toContain('claude-opus-9-99');
-    }
+  test('assertTouchpoint accepts unlisted models on native recipes (no runtime allowlist)', () => {
+    // Frontier models ship weekly; recipe models: arrays are informational
+    // (defaults, guard-test fixtures, display), not a gate. A nonexistent id
+    // surfaces as the provider's own model_not_found at call time.
+    expect(() => assertTouchpoint(getRecipe('anthropic')!, 'chat', 'claude-opus-9-99')).not.toThrow();
+    expect(() => assertTouchpoint(getRecipe('openai')!, 'chat', 'gpt-5.6-sol')).not.toThrow();
+    expect(() => assertTouchpoint(getRecipe('google')!, 'chat', 'gemini-9-flash')).not.toThrow();
+    expect(() => assertTouchpoint(getRecipe('openai')!, 'expansion', 'gpt-5.6-luna')).not.toThrow();
+    expect(() => assertTouchpoint(getRecipe('openai')!, 'embedding', 'text-embedding-9-huge')).not.toThrow();
   });
 
   test('assertTouchpoint accepts arbitrary model on openai-compat tier', () => {

@@ -286,7 +286,9 @@ describe('runThink (with stub client)', () => {
     // used to be stamped NO_ANTHROPIC_API_KEY, sending operators to debug
     // env/keychain when the fix was the model id. Model validity beats the key
     // check in probeChatModel, so the honest label holds even keyless.
-    await engine.setConfig('models.think', 'anthropic:claude-bogus-9');
+    // voyage has no chat touchpoint — the surviving unknown_model trigger now
+    // that unlisted ids on chat-capable providers pass through to the provider.
+    await engine.setConfig('models.think', 'voyage:voyage-3');
     try {
       const result = await withoutAnthropicKey(() => runThink(engine, { question: 'bad model test' }));
       expect(result.warnings).toContain('MODEL_NOT_USABLE:unknown_model');
@@ -358,9 +360,9 @@ describe('runThink — #1698 explicit-model hard error', () => {
     ).rejects.toThrow(/not usable.*unknown_provider/);
   });
 
-  test('explicit typo native --model THROWS (unknown_model)', async () => {
+  test('explicit --model on a chat-less provider THROWS (unknown_model)', async () => {
     await expect(
-      runThink(engine, { question: 'x', model: 'anthropic:claude-bogus-9', modelExplicit: true }),
+      runThink(engine, { question: 'x', model: 'voyage:voyage-3', modelExplicit: true }),
     ).rejects.toThrow(/not usable.*unknown_model/);
   });
 
