@@ -1,6 +1,7 @@
 /**
  * model-pricing.ts — single source of truth for paid cloud CHAT/completion
- * model pricing (USD per 1M tokens, input | output).
+ * model pricing (USD per 1M tokens, input | output), plus exact flat-rate
+ * subscription models whose incremental API-token cost is zero.
  *
  * Every chat-pricing site in the codebase derives its numbers from this table:
  *   - anthropic-pricing.ts          (bare-keyed Anthropic view + estimateMaxCostUsd)
@@ -28,10 +29,10 @@
  * The dream-budget audit JSONL snapshots the rate per call, so historical
  * estimates stay reproducible even after this table changes.
  *
- * Scope: PAID CLOUD chat models only. Free/local providers (llama-server,
- * zero-cost rerankers) are intentionally absent — callers treat those as
- * zero-cost elsewhere. Embeddings live in embedding-pricing.ts (different unit:
- * per-MTok, char-based).
+ * Scope: PAID CLOUD chat models plus exact flat-rate subscription models.
+ * Free/local providers (llama-server, zero-cost rerankers) are intentionally
+ * absent — callers treat those as zero-cost elsewhere. Embeddings live in
+ * embedding-pricing.ts (different unit: per-MTok, char-based).
  */
 
 import { splitProviderModelId } from './model-id.ts';
@@ -104,6 +105,13 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   'deepseek:deepseek-v4-pro':             { input:  0.435, output: 0.87 },
 };
 
+/** Exact ChatGPT subscription routes with no incremental API-token charge. */
+const ZERO_INCREMENTAL_MODELS: ReadonlySet<string> = new Set([
+  'codex-oauth:gpt-5.6-luna',
+  'codex-oauth:gpt-5.6-terra',
+  'codex-oauth:gpt-5.6-sol',
+]);
+
 /**
  * Resolve a model id to its canonical pricing, or `undefined` on miss.
  *
@@ -123,6 +131,7 @@ export function canonicalLookup(
   modelId: string | null | undefined,
 ): ModelPricing | undefined {
   if (!modelId) return undefined;
+  if (ZERO_INCREMENTAL_MODELS.has(modelId)) return { input: 0, output: 0 };
   // 1. Exact key — colon form, already-canonical ids, and slash-bearing model
   //    tails carried verbatim as keys (e.g. together:.../Llama-3.3-70B-...).
   const direct = CANONICAL_PRICING[modelId];
@@ -131,5 +140,6 @@ export function canonicalLookup(
   const { provider, model } = splitProviderModelId(modelId);
   if (!model) return undefined;
   const key = provider ? `${provider}:${model}` : `anthropic:${model}`;
+  if (ZERO_INCREMENTAL_MODELS.has(key)) return { input: 0, output: 0 };
   return CANONICAL_PRICING[key];
 }

@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { isModelPriceable } from '../src/core/budget/budget-tracker.ts';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { BudgetTracker, isModelPriceable } from '../src/core/budget/budget-tracker.ts';
 
 // Regression: extract_atoms applied its DEFAULT cost cap unconditionally.
 // BudgetTracker.reserve() hard-fails with BudgetExhausted(reason:'no_pricing')
@@ -26,6 +29,34 @@ describe('isModelPriceable', () => {
   test('free local providers ARE priceable at $0, so their cap stays enforced', () => {
     expect(isModelPriceable('ollama:gemma3:27b', 'chat')).toBe(true);
     expect(isModelPriceable('llama-server:local-model', 'chat')).toBe(true);
+  });
+
+  test('ChatGPT OAuth subscription chat is priceable at $0 without API billing', () => {
+    expect(isModelPriceable('codex-oauth:gpt-5.6-luna', 'chat')).toBe(true);
+
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-oauth-budget-'));
+    try {
+      const tracker = new BudgetTracker({
+        label: 'oauth-test',
+        maxCostUsd: 0.01,
+        auditPath: join(dir, 'budget.jsonl'),
+      });
+      tracker.reserve({
+        modelId: 'codex-oauth:gpt-5.6-luna',
+        kind: 'chat',
+        estimatedInputTokens: 1_000,
+        maxOutputTokens: 1_000,
+      });
+      tracker.record({
+        modelId: 'codex-oauth:gpt-5.6-luna',
+        kind: 'chat',
+        inputTokens: 1_000,
+        outputTokens: 1_000,
+      });
+      expect(tracker.totalSpent).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test('is a pure predicate — no throw on unusual model ids', () => {

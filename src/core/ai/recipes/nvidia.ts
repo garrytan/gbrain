@@ -47,6 +47,10 @@ export const nvidia: Recipe = {
       max_context_tokens: 128000,
       price_last_verified: '2026-05-24',
     },
+    expansion: {
+      models: ['nvidia/nemotron-3-super-120b-a12b'],
+      price_last_verified: '2026-05-24',
+    },
     embedding: {
       models: [
         'nvidia/nv-embedqa-e5-v5',

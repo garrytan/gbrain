@@ -1448,6 +1448,10 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       throw new AIConfigError(
         `claude-cli has no embedding model. Use openai or google for embeddings.`,
       );
+    case 'codex-oauth':
+      throw new AIConfigError(
+        `codex-oauth has no embedding model. Configure a separate embedding provider.`,
+      );
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
       const auth = applyResolveAuth(recipe, cfg, 'embedding');
@@ -2401,6 +2405,12 @@ function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       const { ClaudeCliLanguageModel } = require('./providers/claude-cli-language-model.ts');
       return new ClaudeCliLanguageModel(modelId);
     }
+    case 'codex-oauth': {
+      throw new AIConfigError(
+        'codex-oauth is chat-only. Keep expansion and OCR on a text/image provider.',
+        recipe.setup_hint,
+      );
+    }
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
       const auth = applyResolveAuth(recipe, cfg, 'expansion');
@@ -2969,6 +2979,10 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
       // openai-compatible path below. No env-var switch, no global flag.
       const { ClaudeCliLanguageModel } = require('./providers/claude-cli-language-model.ts');
       return new ClaudeCliLanguageModel(modelId);
+    }
+    case 'codex-oauth': {
+      const { CodexOAuthLanguageModel } = require('./providers/codex-oauth-language-model.ts');
+      return new CodexOAuthLanguageModel(modelId, cfg.env);
     }
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).

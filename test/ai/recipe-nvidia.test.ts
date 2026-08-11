@@ -6,7 +6,7 @@ import {
 } from '../../src/core/ai/dims.ts';
 import { getRecipe, RECIPES } from '../../src/core/ai/recipes/index.ts';
 import { nvidia } from '../../src/core/ai/recipes/nvidia.ts';
-import { defaultResolveAuth } from '../../src/core/ai/gateway.ts';
+import { configureGateway, defaultResolveAuth, expand, resetGateway } from '../../src/core/ai/gateway.ts';
 import { AIConfigError } from '../../src/core/ai/errors.ts';
 
 describe('recipe: nvidia', () => {
@@ -38,6 +38,45 @@ describe('recipe: nvidia', () => {
     expect(chat.supports_tools).toBe(false);
     expect(chat.supports_subagent_loop).toBe(false);
     expect(chat.max_context_tokens).toBe(128000);
+  });
+
+  test('Nemotron 3 Super runs the expansion path without network access', async () => {
+    const realFetch = globalThis.fetch;
+    let request: Request | undefined;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      request = input instanceof Request ? input : new Request(input, init);
+      return new Response(JSON.stringify({
+        id: 'nvidia-expansion-test',
+        object: 'chat.completion',
+        created: 0,
+        model: 'nvidia/nemotron-3-super-120b-a12b',
+        choices: [{
+          index: 0,
+          message: { role: 'assistant', content: '{"queries":["memory graph","knowledge retrieval"]}' },
+          finish_reason: 'stop',
+        }],
+        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+
+    try {
+      configureGateway({
+        expansion_model: 'nvidia:nvidia/nemotron-3-super-120b-a12b',
+        env: { NVIDIA_API_KEY: 'fake-nvidia' },
+      });
+
+      expect(await expand('personal brain')).toEqual([
+        'personal brain',
+        'memory graph',
+        'knowledge retrieval',
+      ]);
+      expect(request?.url).toBe('https://integrate.api.nvidia.com/v1/chat/completions');
+      expect(request?.headers.get('authorization')).toBe('Bearer fake-nvidia');
+      expect(JSON.parse(await request!.clone().text()).model).toBe('nvidia/nemotron-3-super-120b-a12b');
+    } finally {
+      globalThis.fetch = realFetch;
+      resetGateway();
+    }
   });
 
   test('embedding touchpoint declares tested NVIDIA models and natural dimensions', () => {

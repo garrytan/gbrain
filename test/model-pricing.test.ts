@@ -84,6 +84,14 @@ describe('canonicalLookup — id normalization', () => {
     expect(canonicalLookup('openrouter:anthropic/claude-sonnet-4-6')).toBeUndefined();
   });
 
+  test('exact ChatGPT OAuth models have zero incremental API-token cost', () => {
+    for (const model of ['gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol']) {
+      expect(canonicalLookup(`codex-oauth:${model}`)).toEqual({ input: 0, output: 0 });
+      expect(canonicalLookup(`codex-oauth/${model}`)).toEqual({ input: 0, output: 0 });
+    }
+    expect(canonicalLookup('codex-oauth:gpt-5.6-unknown')).toBeUndefined();
+  });
+
   test('slash-bearing model tail kept as exact key (together Llama)', () => {
     expect(canonicalLookup('together:meta-llama/Llama-3.3-70B-Instruct-Turbo')).toEqual({
       input: 0.88,

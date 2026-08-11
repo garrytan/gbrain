@@ -204,12 +204,30 @@ function pgliteLockTimeoutError(lockDir: string): Error {
   }
 }
 
+function waitForLockRetry(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(new Error('GBrain: Lock acquisition aborted.'));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new Error('GBrain: Lock acquisition aborted.'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 /**
  * Attempt to acquire an exclusive lock on the PGLite data directory.
  * Returns { acquired: true } if the lock was obtained, { acquired: false } otherwise.
  * Stale locks (from dead processes) are automatically cleaned up.
  */
-export async function acquireLock(dataDir: string | undefined, opts?: { timeoutMs?: number }): Promise<LockHandle> {
+export async function acquireLock(
+  dataDir: string | undefined,
+  opts?: { timeoutMs?: number; failFastOnServe?: boolean; signal?: AbortSignal },
+): Promise<LockHandle> {
   const lockDir = getLockDir(dataDir);
 
   // In-memory PGLite — no lock needed (process-scoped, can't be shared)
@@ -226,6 +244,7 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
   let reaped = false; // see LockHandle.reaped
 
   while (Date.now() - startTime < timeoutMs) {
+    if (opts?.signal?.aborted) throw new Error('GBrain: Lock acquisition aborted.');
     // Check for stale lock first
     if (existsSync(lockDir)) {
       const lockPath = join(lockDir, LOCK_FILE);
@@ -247,7 +266,7 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
           reaped = true;
           try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* race condition, try again */ }
         } else {
-          if (isServeCommand(lockData)) {
+          if (opts?.failFastOnServe !== false && isServeCommand(lockData)) {
             throw new LiveServeLockError(
               `GBrain's local database is already open through \`gbrain serve\` (MCP, PID ${lockPid}). ` +
               `This brain uses PGLite, so a separate CLI process cannot open it at the same time. ` +
@@ -259,10 +278,13 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
           // Other live holders may be short-lived, so wait and retry. If one is
           // genuinely wedged (or its PID was reused), the acquire times out;
           // we never force-steal a live holder.
-          await new Promise(r => setTimeout(r, 1000));
+          await waitForLockRetry(1000, opts?.signal);
           continue;
         }
       } catch (err) {
+        // Cancellation while waiting on a LIVE holder is not evidence that the
+        // holder is stale. Never let the broad parse/reap catch delete it.
+        if (opts?.signal?.aborted) throw new Error('GBrain: Lock acquisition aborted.');
         // A live MCP server is not a stale or corrupt lock. Surface the useful
         // explanation without touching the lock it still owns.
         if (err instanceof LiveServeLockError) throw err;
@@ -274,7 +296,7 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
           let lockDirAgeMs = Infinity;
           try { lockDirAgeMs = Date.now() - statSync(lockDir).mtimeMs; } catch { /* dir gone — retry loop handles */ }
           if (lockDirAgeMs < 10_000) {
-            await new Promise(r => setTimeout(r, 200));
+            await waitForLockRetry(200, opts?.signal);
             continue;
           }
         }
@@ -315,7 +337,7 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
         throw pgliteLockTimeoutError(lockDir);
       }
       // Brief wait before retry
-      await new Promise(r => setTimeout(r, 500));
+      await waitForLockRetry(500, opts?.signal);
     }
   }
 

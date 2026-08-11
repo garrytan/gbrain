@@ -130,7 +130,18 @@ function buildToolUseInstructions(
  * placeholders so the model sees the conversation in a coherent shape even
  * though the adapter does not natively round-trip tool calls through claude-cli.
  */
-function renderPrompt(prompt: LanguageModelV2Prompt): { systemText: string; userPrompt: string } {
+function toolOutputValue(output: unknown): { value: unknown; isError: boolean } {
+  if (output !== null && typeof output === 'object' && 'value' in output) {
+    const typed = output as { type?: unknown; value: unknown };
+    return {
+      value: typed.value,
+      isError: typeof typed.type === 'string' && typed.type.startsWith('error-'),
+    };
+  }
+  return { value: output, isError: false };
+}
+
+export function renderPrompt(prompt: LanguageModelV2Prompt): { systemText: string; userPrompt: string } {
   const systemParts: string[] = [];
   const convo: string[] = [];
 
@@ -158,11 +169,16 @@ function renderPrompt(prompt: LanguageModelV2Prompt): { systemText: string; user
           if (p.type === 'text') return p.text;
           if (p.type === 'reasoning') return ''; // dropped on replay
           if (p.type === 'tool-call') {
-            return `[tool_use ${p.toolName}(${p.input})]`;
+            return `[tool_use ${JSON.stringify({ id: p.toolCallId, name: p.toolName, input: p.input })}]`;
           }
           if (p.type === 'tool-result') {
-            const out = typeof p.output === 'string' ? p.output : JSON.stringify(p.output);
-            return `[tool_result ${out}]`;
+            const output = toolOutputValue(p.output);
+            return `[tool_result ${JSON.stringify({
+              id: p.toolCallId,
+              name: p.toolName,
+              output: output.value,
+              ...(output.isError ? { is_error: true } : {}),
+            })}]`;
           }
           return '';
         })
@@ -174,8 +190,13 @@ function renderPrompt(prompt: LanguageModelV2Prompt): { systemText: string; user
     if (msg.role === 'tool') {
       const rendered = msg.content
         .map(p => {
-          const out = typeof p.output === 'string' ? p.output : JSON.stringify(p.output);
-          return `[tool_result ${out}]`;
+          const output = toolOutputValue(p.output);
+          return `[tool_result ${JSON.stringify({
+            id: p.toolCallId,
+            name: p.toolName,
+            output: output.value,
+            ...(output.isError ? { is_error: true } : {}),
+          })}]`;
         })
         .join('\n');
       if (rendered) convo.push(`User: ${rendered}`);

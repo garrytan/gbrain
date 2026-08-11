@@ -48,6 +48,28 @@ describe('pglite-lock', () => {
     await releaseLock(lock1);
   });
 
+  test('aborting a waiter never reaps the live holder', async () => {
+    const holder = await acquireLock(TEST_DIR, { timeoutMs: 2000 });
+    const lockPath = join(TEST_DIR, '.gbrain-lock', 'lock');
+    const owner = readFileSync(lockPath, 'utf8');
+    const controller = new AbortController();
+    const waiter = acquireLock(TEST_DIR, {
+      timeoutMs: 2000,
+      failFastOnServe: false,
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(), 20);
+
+    await expect(waiter).rejects.toThrow(/aborted/);
+    expect(readFileSync(lockPath, 'utf8')).toBe(owner);
+    await expect(acquireLock(TEST_DIR, {
+      timeoutMs: 50,
+      failFastOnServe: false,
+    })).rejects.toThrow(/Timed out/);
+
+    await releaseLock(holder);
+  });
+
   test('detects and cleans stale lock from dead process', async () => {
     // Simulate a stale lock from a dead process
     const lockDir = join(TEST_DIR, '.gbrain-lock');
@@ -144,6 +166,21 @@ describe('pglite-lock #2058 heartbeat + steal-grace', () => {
 
     expect(Date.now() - startedAt).toBeLessThan(1_000);
     expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
+  });
+
+  test('a generic shared lock can wait even when its holder process is gbrain serve', async () => {
+    writeHolder({
+      pid: process.pid,
+      acquiredAgoMs: 60_000,
+      refreshedAgoMs: 0,
+      command: '/path/to/gbrain/src/cli.ts serve',
+      subcommand: 'serve',
+    });
+    setTimeout(() => rmSync(join(TEST_DIR, '.gbrain-lock'), { recursive: true, force: true }), 20);
+
+    const lock = await acquireLock(TEST_DIR, { timeoutMs: 2_000, failFastOnServe: false });
+    expect(lock.acquired).toBe(true);
+    await releaseLock(lock);
   });
 
   test('legacy serve lock metadata is still recognized', async () => {

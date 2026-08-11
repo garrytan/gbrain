@@ -46,6 +46,13 @@ describe('IRON RULE: existing 9 recipes survive the v0.32 resolveAuth refactor',
     }
   });
 
+  test('codex-oauth readiness requires its private OAuth home and pinned CLI', () => {
+    expect(getRecipe('codex-oauth')?.auth_env?.required).toEqual([
+      'GBRAIN_CODEX_HOME',
+      'GBRAIN_CODEX_CLI_BIN',
+    ]);
+  });
+
   test('every recipe with a non-empty required[] returns Authorization Bearer <key>', () => {
     for (const r of listRecipes()) {
       const required = r.auth_env?.required ?? [];
@@ -335,4 +342,3 @@ describe('default_headers / resolveDefaultHeaders contract (v0.37.2.0)', () => {
     expect(e.headers).toEqual({ 'X-Static': 'static-val' });
   });
 });
-
