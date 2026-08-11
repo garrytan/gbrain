@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync } from 'f
 import { isAbsolute, join } from 'path';
 import { homedir } from 'os';
 import type { EngineConfig, EmbeddingColumnConfig } from './types.ts';
+import { loadConfigSnapshot } from './config-snapshot.ts';
 
 /**
  * Where is the active DB URL coming from? Pure introspection, no connection
@@ -694,6 +695,7 @@ export async function loadConfigWithEngine(
   engine: {
     getConfig(key: string): Promise<string | null | undefined>;
     listConfigKeys?(prefix: string): Promise<string[]>;
+    getAllConfig?(): Promise<Record<string, string>>;
   },
   base?: GBrainConfig | null,
 ): Promise<GBrainConfig | null> {
@@ -710,12 +712,22 @@ export async function loadConfigWithEngine(
     (base !== undefined ? base : loadConfig()) ??
     ({ engine: 'postgres' } as GBrainConfig);
 
-  // DB-plane reads. Quiet failures — if the config table doesn't exist yet
-  // (pre-v36 brain mid-migration), treat as null and let file/env defaults
-  // win. The migration runner reads file/env directly anyway.
+  // This function reads two dozen config keys. One key per round trip is free
+  // on PGLite and is most of the wall clock on a hosted Postgres, so read the
+  // whole table once and answer every key from that. See config-snapshot.ts.
+  //
+  // Quiet failure below is deliberate and unchanged: when the snapshot is
+  // unavailable (a pre-v36 brain mid-migration, or an engine from outside this
+  // repo) every read falls back to a per-key getConfig(), same as before.
+  const snapshot = await loadConfigSnapshot(engine);
+
+  function dbRaw(key: string): Promise<string | null | undefined> {
+    if (snapshot) return Promise.resolve(snapshot[key]);
+    return Promise.resolve(engine.getConfig(key));
+  }
   async function dbBool(key: string): Promise<boolean | undefined> {
     try {
-      const v = await engine.getConfig(key);
+      const v = await dbRaw(key);
       if (v === undefined || v === null || v === '') return undefined;
       return v === 'true';
     } catch {
@@ -724,7 +736,7 @@ export async function loadConfigWithEngine(
   }
   async function dbStr(key: string): Promise<string | undefined> {
     try {
-      const v = await engine.getConfig(key);
+      const v = await dbRaw(key);
       if (v === undefined || v === null || v === '') return undefined;
       return v;
     } catch {
@@ -732,11 +744,16 @@ export async function loadConfigWithEngine(
     }
   }
   async function dbPrefixMap(prefix: string): Promise<Record<string, string> | undefined> {
-    if (typeof engine.listConfigKeys !== 'function') return undefined;
     let keys: string[];
-    try {
-      keys = await engine.listConfigKeys(prefix);
-    } catch {
+    if (snapshot) {
+      keys = Object.keys(snapshot);
+    } else if (typeof engine.listConfigKeys === 'function') {
+      try {
+        keys = await engine.listConfigKeys(prefix);
+      } catch {
+        return undefined;
+      }
+    } else {
       return undefined;
     }
 

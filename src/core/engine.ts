@@ -2104,6 +2104,20 @@ export interface BrainEngine {
    * Does NOT support glob/regex on purpose — the caller knows the prefix.
    */
   listConfigKeys(prefix: string): Promise<string[]>;
+  /**
+   * Read the whole config table in one round trip, as a key -> value map.
+   *
+   * `loadConfigWithEngine()` needs ~44 config keys on every connect. Read one
+   * key at a time that is 44 round trips, which costs nothing on PGLite and
+   * dominates the wall clock on a hosted Postgres: `gbrain stats` against a
+   * Supabase brain spent seconds on reads the server answered in under 3ms
+   * total. The config table is a handful of rows, so fetching all of it is
+   * cheaper than fetching any meaningful subset of it.
+   *
+   * Callers that need a single key still use getConfig(). This is for the
+   * bulk-read path only.
+   */
+  getAllConfig(): Promise<Record<string, string>>;
 
   // Migration support
   runMigration(version: number, sql: string): Promise<void>;
