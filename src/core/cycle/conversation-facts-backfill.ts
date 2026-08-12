@@ -45,6 +45,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { BudgetTracker, BudgetExhausted } from '../budget/budget-tracker.ts';
 import { withBudgetTracker } from '../ai/gateway.ts';
+import { anySignal } from '../abort-check.ts';
 import { listSources } from '../sources-ops.ts';
 import {
   runExtractConversationFactsCore,
@@ -183,7 +184,9 @@ export async function runPhaseConversationFactsBackfill(
   }
 
   const startedAt = Date.now();
+  const maxPerSourceWalltimeMs = cfg.maxWalltimeMin * 60_000;
   const maxTotalWalltimeMs = cfg.maxTotalWalltimeMin * 60_000;
+  const totalWalltimeSignal = AbortSignal.timeout(maxTotalWalltimeMs);
 
   const sources = await listSources(engine);
   if (sources.length === 0) {
@@ -207,6 +210,7 @@ export async function runPhaseConversationFactsBackfill(
   const perSourceResults: Record<string, ExtractConversationFactsResult & { error?: string }> = {};
   let skippedByBrainWideCap = 0;
   let skippedByBrainWideWalltime = 0;
+  let sourcesTimedOut = 0;
   let totalSpent = 0;
 
   try {
@@ -219,10 +223,19 @@ export async function runPhaseConversationFactsBackfill(
         if (opts.signal?.aborted) throw new Error('aborted');
 
         // Brain-wide walltime check.
-        if (Date.now() - startedAt > maxTotalWalltimeMs) {
-          skippedByBrainWideWalltime++;
-          continue;
+        if (totalWalltimeSignal.aborted || Date.now() - startedAt > maxTotalWalltimeMs) {
+          skippedByBrainWideWalltime = Math.max(
+            skippedByBrainWideWalltime,
+            sources.length - Object.keys(perSourceResults).length,
+          );
+          break;
         }
+
+        const perSourceWalltimeSignal = AbortSignal.timeout(maxPerSourceWalltimeMs);
+        const boundedSourceSignal = anySignal(
+          perSourceWalltimeSignal,
+          anySignal(totalWalltimeSignal, opts.signal),
+        );
 
         try {
           const result = await runExtractConversationFactsCore(engine, {
@@ -235,7 +248,7 @@ export async function runPhaseConversationFactsBackfill(
             // per-source worker count. Default 1 — opt-in concurrency
             // for cycle paths.
             workers: cfg.workers,
-          }, opts.signal);
+          }, boundedSourceSignal);
           perSourceResults[src.id] = result;
           if (result.budget_exhausted) {
             // Brain-wide cap hit. Remaining sources skipped.
@@ -246,6 +259,16 @@ export async function runPhaseConversationFactsBackfill(
             break;
           }
         } catch (err) {
+          // An operator/worker cancellation owns the whole phase and must not
+          // be swallowed as a single-source failure.
+          if (opts.signal?.aborted) throw err;
+          if (totalWalltimeSignal.aborted) {
+            skippedByBrainWideWalltime = Math.max(
+              skippedByBrainWideWalltime,
+              sources.length - Object.keys(perSourceResults).length,
+            );
+            break;
+          }
           if (err instanceof BudgetExhausted) {
             skippedByBrainWideCap = Math.max(
               0,
@@ -253,6 +276,7 @@ export async function runPhaseConversationFactsBackfill(
             );
             break;
           }
+          if (perSourceWalltimeSignal.aborted) sourcesTimedOut++;
           // Per-source failure: record + continue with next source.
           perSourceResults[src.id] = {
             pages_considered: 0,
@@ -272,7 +296,9 @@ export async function runPhaseConversationFactsBackfill(
             segments_processed: 0,
             facts_extracted: 0,
             facts_inserted: 0,
-            error: (err as Error).message,
+            error: perSourceWalltimeSignal.aborted
+              ? `per-source walltime exceeded (${cfg.maxWalltimeMin} min)`
+              : (err as Error).message,
           };
         }
       }
@@ -343,7 +369,9 @@ export async function runPhaseConversationFactsBackfill(
       spent_usd: totalSpent,
       skipped_by_brain_wide_cap: skippedByBrainWideCap,
       skipped_by_brain_wide_walltime: skippedByBrainWideWalltime,
+      sources_timed_out: sourcesTimedOut,
       types: cfg.types,
+      max_walltime_min: cfg.maxWalltimeMin,
       max_total_cost_usd: cfg.maxTotalCostUsd,
       max_total_walltime_min: cfg.maxTotalWalltimeMin,
       per_source: perSourceResults,

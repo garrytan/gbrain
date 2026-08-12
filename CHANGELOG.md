@@ -28,6 +28,7 @@ Extracted facts now reach consolidation reliably: entity attribution resolves to
 - Conversation fact extraction canonicalizes display names and aliases to one live, source-scoped page before insert, rejects ambiguous or deleted targets, retries on lookup failures, and batches resolution into two indexed database reads.
 - Consolidation diagnostics distinguish scanned, page-resolved, missing-page, below-similarity, missing-embedding, synthesis-failed, and budget-blocked work.
 - Long consolidation runs now use the cycle's native database-lock keepalive instead of continuing after their lock expires.
+- Conversation fact backfill now enforces its documented per-source and brain-wide walltime limits with the native abort path; worker cancellation is propagated instead of being swallowed as a single-source warning.
 - `grade_takes` threads source scope into unresolved-take selection instead of grading every source in a source-scoped cycle.
 
 ## [0.45.9.0] - 2026-08-12
