@@ -502,7 +502,22 @@ export async function runPhaseSynthesize(
       }
       try {
         const verdict = await judgeSignificance(judge, t, config.verdictModel);
-        await engine.putDreamVerdict(t.filePath, t.contentHash, verdict);
+        if (verdict.unreliable) {
+          // Degenerate judgement (truncated, refused/content-filtered, or
+          // unparseable LLM output). Do
+          // NOT write it to dream_verdicts: a cached `worth_processing:
+          // false` is permanent for this content hash, and a brain whose
+          // verdict model reliably truncates (e.g. a reasoning model under
+          // a tight budget) would silently reject every transcript forever.
+          // Log + skip so the next cycle re-judges.
+          process.stderr.write(
+            `[dream] verdict for ${t.basename} was ${verdict.unreliable} ` +
+            `(${verdict.reasons.join('; ')}); not caching in dream_verdicts — ` +
+            `next cycle will re-judge ${t.filePath}\n`,
+          );
+        } else {
+          await engine.putDreamVerdict(t.filePath, t.contentHash, verdict);
+        }
         verdicts.push({ filePath: t.filePath, worth: verdict.worth_processing, reasons: verdict.reasons, cached: false });
         if (verdict.worth_processing) worthProcessing.push(t);
       } catch (e) {
@@ -1030,15 +1045,36 @@ export function makeJudgeClient(verdictModel: string): JudgeClient | null {
       });
 
       // Map gateway.ChatResult → Anthropic.Message shape. judgeSignificance
-      // reads `.content[0].type === 'text'` and `.content[0].text`; other
-      // fields are best-effort for downstream telemetry parity.
+      // reads `.content[0].type === 'text'`, `.content[0].text`, and
+      // `.stop_reason`; other fields are best-effort for downstream
+      // telemetry parity. The stopReason mapping is load-bearing:
+      // 'length' → 'max_tokens' lets judgeSignificance detect a truncated
+      // verdict (reasoning models can burn the whole max_tokens budget on
+      // reasoning tokens, leaving empty/partial text) and
+      // 'refusal'/'content_filter' → 'refusal' surfaces a blocked response,
+      // instead of silently treating either as a clean end-of-turn.
+      // 'other' (gateway's mapStopReason catch-all — unknown provider
+      // finish reasons, which includes both non-standard SUCCESSFUL stops
+      // and the AI SDK's 'error'/'unknown' labels) maps to 'end_turn'
+      // deliberately. Rationale: (a) treating 'other' as abnormal would
+      // permanently disable verdict caching on providers whose successful
+      // stops the gateway doesn't recognize; (b) the residual risk is
+      // narrow — an errored response only gets cached if it still contains
+      // a complete, parseable JSON object with a boolean worth_processing
+      // (unparseable output is never cached), and such a complete verdict
+      // is trustworthy regardless of the finish label. Distinguishing
+      // error/unknown from benign-unknown belongs in gateway.ts's
+      // mapStopReason (out of scope here — see PR notes).
       return {
         id: '',
         type: 'message',
         role: 'assistant',
         model: modelStr,
         content: [{ type: 'text', text: result.text }],
-        stop_reason: 'end_turn',
+        stop_reason: result.stopReason === 'length' ? 'max_tokens'
+          : result.stopReason === 'tool_calls' ? 'tool_use'
+          : (result.stopReason === 'refusal' || result.stopReason === 'content_filter') ? 'refusal'
+          : 'end_turn',
         stop_sequence: null,
         usage: {
           input_tokens: result.usage.input_tokens,
@@ -1052,6 +1088,21 @@ export function makeJudgeClient(verdictModel: string): JudgeClient | null {
 interface VerdictResult {
   worth_processing: boolean;
   reasons: string[];
+  /**
+   * Set when the judgement is degenerate and must NOT be cached in
+   * dream_verdicts:
+   *   'truncated'   — the response hit max_tokens (reasoning models can spend
+   *                   the whole budget on reasoning tokens before emitting the
+   *                   verdict JSON), so the verdict is unreliable;
+   *   'refusal'     — the model refused or a provider content filter blocked
+   *                   the response (stop_reason=refusal);
+   *   'unparseable' — no JSON object with a boolean `worth_processing` could
+   *                   be parsed out of the response.
+   * The synthesize verdict loop skips putDreamVerdict for these so the next
+   * cycle re-judges the transcript instead of permanently trusting a
+   * degenerate `worth_processing: false`.
+   */
+  unreliable?: 'truncated' | 'refusal' | 'unparseable';
 }
 
 export async function judgeSignificance(
@@ -1102,10 +1153,31 @@ Two reasons max, one phrase each.`;
 
   const msg = await client.create({
     model: verdictModel,
-    max_tokens: 200,
+    // 1024, not the 200 this call shipped with for a year: the verdict JSON
+    // itself needs <100 tokens, but reasoning models spend output budget on
+    // reasoning tokens BEFORE the visible text, so a 200-token cap gets
+    // eaten whole and the verdict comes back empty/truncated. Matches the
+    // judge-call ballpark elsewhere in the repo (grade-takes.ts: 600,
+    // eval-contradictions/judge.ts: 1024).
+    max_tokens: 1024,
     system: sys,
     messages: [{ role: 'user', content: `Transcript ${t.basename}:\n\n${trimmed}` }],
   });
+
+  // stop_reason === 'max_tokens' means the response was cut off; 'refusal'
+  // means the model refused or a content filter blocked it. Even if a
+  // parseable JSON object survives either condition, don't trust it as a
+  // durable verdict — mark it unreliable so the caller skips the
+  // dream_verdicts write and the next cycle re-judges. (Legacy SDK-shape
+  // clients and mocks without a stop_reason field land on undefined here,
+  // which is treated as a clean stop — preserves the pre-existing contract.)
+  // Widen: the pinned Anthropic SDK's stop_reason union predates 'refusal',
+  // but the gateway adapter (and newer SDKs) can emit it.
+  const stopReasonRaw = (msg as { stop_reason?: string | null }).stop_reason;
+  const truncated = stopReasonRaw === 'max_tokens';
+  const refused = stopReasonRaw === 'refusal';
+  const abnormalStop: VerdictResult['unreliable'] | undefined =
+    truncated ? 'truncated' : refused ? 'refusal' : undefined;
 
   for (const block of msg.content) {
     if (block.type === 'text') {
@@ -1114,16 +1186,41 @@ Two reasons max, one phrase each.`;
       if (!m) continue;
       try {
         const parsed = JSON.parse(m[0]) as { worth_processing?: unknown; reasons?: unknown };
-        const worth = parsed.worth_processing === true;
+        // A JSON object without a boolean worth_processing (`{}`,
+        // `{"worth_processing": "true"}`) is NOT a verdict — fall through to
+        // the unparseable branch rather than coercing to a cacheable false.
+        if (typeof parsed.worth_processing !== 'boolean') continue;
+        const worth = parsed.worth_processing;
         const reasons = Array.isArray(parsed.reasons)
           ? parsed.reasons.filter((r): r is string => typeof r === 'string').slice(0, 4)
           : [];
-        return { worth_processing: worth, reasons };
+        return abnormalStop
+          ? { worth_processing: worth, reasons, unreliable: abnormalStop }
+          : { worth_processing: worth, reasons };
       } catch { /* fall through */ }
     }
   }
-  // Couldn't parse — default to NOT processing (cheap fallback).
-  return { worth_processing: false, reasons: ['judge response unparseable'] };
+  // Couldn't parse — default to NOT processing this cycle, but flag the
+  // result unreliable so it is never cached as a permanent verdict.
+  if (truncated) {
+    return {
+      worth_processing: false,
+      reasons: ['judge response truncated (stop_reason=max_tokens)'],
+      unreliable: 'truncated',
+    };
+  }
+  if (refused) {
+    return {
+      worth_processing: false,
+      reasons: ['judge response refused or content-filtered (stop_reason=refusal)'],
+      unreliable: 'refusal',
+    };
+  }
+  return {
+    worth_processing: false,
+    reasons: ['judge response unparseable'],
+    unreliable: 'unparseable',
+  };
 }
 
 // ── Subagent prompt ──────────────────────────────────────────────────
