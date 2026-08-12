@@ -36,34 +36,34 @@ describe('file_upload engine ownership', () => {
 
     const result = await dispatchToolCall(engine, 'file_upload', {
       path: fixture,
-      page_slug: 'concepts/hermes-kanban',
+      page_slug: 'concepts/example-board',
     }, { remote: true, sourceId: 'default' });
 
     expect(result.isError).toBeFalsy();
     expect(JSON.parse(result.content[0].text)).toEqual({
       status: 'uploaded',
-      storage_path: 'concepts/hermes-kanban/capture.json',
+      storage_path: 'concepts/example-board/capture.json',
       size_bytes: 21,
     });
 
     const listed = await dispatchToolCall(engine, 'file_list', {
-      slug: 'concepts/hermes-kanban',
+      slug: 'concepts/example-board',
     }, { remote: true, sourceId: 'default' });
     expect(listed.isError).toBeFalsy();
     expect(JSON.parse(listed.content[0].text)).toEqual([
       expect.objectContaining({
-        page_slug: 'concepts/hermes-kanban',
-        storage_path: 'concepts/hermes-kanban/capture.json',
+        page_slug: 'concepts/example-board',
+        storage_path: 'concepts/example-board/capture.json',
       }),
     ]);
 
     const url = await dispatchToolCall(engine, 'file_url', {
-      storage_path: 'concepts/hermes-kanban/capture.json',
+      storage_path: 'concepts/example-board/capture.json',
     }, { remote: true, sourceId: 'default' });
     expect(url.isError).toBeFalsy();
     expect(JSON.parse(url.content[0].text)).toEqual({
-      storage_path: 'concepts/hermes-kanban/capture.json',
-      url: 'gbrain:files/concepts/hermes-kanban/capture.json',
+      storage_path: 'concepts/example-board/capture.json',
+      url: 'gbrain:files/concepts/example-board/capture.json',
     });
   });
 });
