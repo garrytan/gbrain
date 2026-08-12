@@ -6181,6 +6181,44 @@ export async function buildChecks(
     // Best-effort environment check; never block doctor.
   }
 
+  // 3g. pglite_leftovers (#3856). A pglite -> postgres migration leaves the
+  // old engine store (`brain.pglite/`) under the gbrain home forever — dead
+  // weight roughly the size of the live DB that nothing surfaces, silently
+  // riding along in any backup that archives the home dir. Assessment is a
+  // pure helper (src/core/pglite-leftovers-check.ts); it warns ONLY for a
+  // durable postgres engine, and skips while `migrate-manifest.json` exists
+  // (an in-flight/interrupted migration can make `brain.pglite` the LIVE
+  // target while the durable engine still reads postgres — #3194) and for
+  // everything else (fail open).
+  // The engine is read from config.json DIRECTLY, not loadConfig(): a
+  // transient DATABASE_URL (#427) can make a live PGLite brain resolve as
+  // postgres for one process, and deletion advice must never rest on an
+  // env override (Codex review P1).
+  // Warn-only by design: WHEN the abandoned store is safe to drop is a
+  // policy question (#3856), so the remediation is a verified manual delete
+  // — no CLI command is named that does not exist (#3697).
+  try {
+    const { readFileSync } = await import('node:fs');
+    const durableEngine = (
+      JSON.parse(readFileSync(join(gbrainPath(), 'config.json'), 'utf8')) as { engine?: unknown }
+    ).engine;
+    const { assessPgliteLeftovers } = await import('../core/pglite-leftovers-check.ts');
+    const leftovers = assessPgliteLeftovers(
+      typeof durableEngine === 'string' ? durableEngine : undefined,
+      gbrainPath(),
+    );
+    if (leftovers.status !== 'skip') {
+      checks.push({
+        name: 'pglite_leftovers',
+        status: leftovers.status,
+        message: leftovers.message,
+      });
+    }
+  } catch {
+    // Best-effort filesystem-hygiene check; never block doctor (a missing/
+    // unparseable config.json lands here and skips, same fail-open posture).
+  }
+
   // 3b-multi-source. Multi-source drift (v0.31.8 — D8 + D17 + OV12 + OV13).
   // Pre-v0.30.3 putPage misrouted multi-source writes to (default, slug).
   // For each non-default source with local_path set, walk the FS and surface
