@@ -152,11 +152,13 @@ export async function resolveSourceId(
 
   // 5.5. Single-non-default-source convenience (v0.41.13, #1434).
   //      When NO brain_default is set AND exactly one registered source has
-  //      local_path set AND it isn't 'default', route there. This closes
-  //      the "532 silent edit failures" bug class where users with a single
-  //      Vault-mounted source ran `gbrain sync` without --source and routed
-  //      to source_id='default' (which held 0 pages). Conservative: fires
-  //      only when there's literally one option — multi-source brains still
+  //      local_path set AND it isn't 'default' AND the seeded default source
+  //      is empty, route there. This closes the "532 silent edit failures"
+  //      bug class where users with a single vault-mounted source ran
+  //      `gbrain sync` without --source and routed to source_id='default'
+  //      (which held 0 pages), without hijacking established default corpora.
+  //      Conservative: fires only when there's literally one non-default
+  //      option and default has no live pages — multi-source brains still
   //      require explicit --source or sources.default.
   //
   //      Placed AFTER brain_default per codex review: a user who explicitly
@@ -200,11 +202,13 @@ export function resolveSourceIdEngineFree(
 
 /**
  * Returns the id of the SINGLE registered non-default source with a
- * local_path, when exactly one such row exists. Returns null when:
+ * local_path, when exactly one such row exists and 'default' has no live
+ * pages. Returns null when:
  *   - zero non-default sources are registered (fresh install)
  *   - 2+ non-default sources are registered (ambiguous — user must pick)
  *   - the only non-default source has a NULL local_path (no on-disk shape)
  *   - the only registered source IS 'default'
+ *   - the default source already has live pages (established corpus)
  *
  * Excludes archived sources (`archived = false`) so a soft-deleted source
  * doesn't auto-resolve. Shared by `resolveSourceId` and `resolveSourceWithTier`
@@ -212,9 +216,10 @@ export function resolveSourceIdEngineFree(
  *
  * NOTE (#2928): this tier deliberately does NOT consult config.federated —
  * `--no-federated` governs READ mixing, not write routing, and unqualified
- * `sync`/`import` on a single-vault brain must keep landing in the vault
- * (#1434, pinned by test/sync-sole-non-default-routing.test.ts). The
- * unfederate read fix lives in `localFederatedSourceIds` below.
+ * `sync`/`import` on a single-vault brain with an empty default source must
+ * keep landing in the vault (#1434, pinned by
+ * test/sync-sole-non-default-routing.test.ts). The unfederate read fix lives
+ * in `localFederatedSourceIds` below.
  */
 async function pickSoleNonDefaultSource(engine: BrainEngine): Promise<string | null> {
   // archived column was added in v34 (v0.26.5). Older brains may not have
@@ -229,8 +234,17 @@ async function pickSoleNonDefaultSource(engine: BrainEngine): Promise<string | n
       `SELECT id FROM sources WHERE local_path IS NOT NULL AND id != 'default'`,
     );
   }
-  if (rows.length === 1) return rows[0].id;
-  return null;
+  if (rows.length !== 1) return null;
+  try {
+    const defaultPages = await engine.executeRaw<{ one: number }>(
+      `SELECT 1 AS one FROM pages WHERE source_id = 'default' AND deleted_at IS NULL LIMIT 1`,
+    );
+    if (defaultPages.length > 0) return null;
+  } catch {
+    // Legacy/exotic schemas without the expected pages shape keep the
+    // pre-guard behavior instead of making resolution fail.
+  }
+  return rows[0].id;
 }
 
 /**

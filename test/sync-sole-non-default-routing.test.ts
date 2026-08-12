@@ -123,6 +123,51 @@ describe('#1434 — runSync auto-routes to sole_non_default source', () => {
     expect(stderrText).toContain('sole non-default source registered');
   }, 60_000);
 
+  test('established default corpus prevents sole_non_default auto-routing', async () => {
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, type, title, compiled_truth, timeline, frontmatter, source_id, updated_at, created_at)
+       VALUES ('seed/default-page', 'note', 'Default Page', 'already here', '', '{}'::jsonb, 'default', NOW(), NOW())`,
+    );
+    await runSources(engine, ['add', 'studiovault', '--path', repoPath, '--no-federated']);
+    const { runSync } = await import('../src/commands/sync.ts');
+
+    const origWrite = process.stderr.write.bind(process.stderr);
+    const captured: string[] = [];
+    (process.stderr as unknown as { write: typeof origWrite }).write = (
+      chunk: unknown,
+      ...rest: unknown[]
+    ): boolean => {
+      const s = typeof chunk === 'string' ? chunk : chunk instanceof Buffer ? chunk.toString() : String(chunk);
+      captured.push(s);
+      return origWrite(chunk as Parameters<typeof origWrite>[0], ...(rest as []));
+    };
+
+    try {
+      const origExit = process.exit;
+      let exitCode: number | undefined;
+      process.exit = ((code?: number) => {
+        exitCode = code;
+        throw new Error('__exit__');
+      }) as typeof process.exit;
+
+      try {
+        await runSync(engine, ['--full', '--no-embed', '--repo', repoPath]);
+      } catch (e) {
+        if ((e as Error).message !== '__exit__') throw e;
+      } finally {
+        process.exit = origExit;
+      }
+      expect(exitCode === undefined || exitCode === 0).toBe(true);
+    } finally {
+      (process.stderr as unknown as { write: typeof origWrite }).write = origWrite;
+    }
+
+    const counts = await pageCountBySource();
+    expect(counts['default']).toBeGreaterThan(1);
+    expect(counts['studiovault'] ?? 0).toBe(0);
+    expect(captured.join('')).not.toContain('sole non-default source registered');
+  }, 60_000);
+
   test('explicit --source overrides auto-routing (no nudge)', async () => {
     await runSources(engine, ['add', 'studiovault', '--path', repoPath, '--no-federated']);
     const { runSync } = await import('../src/commands/sync.ts');

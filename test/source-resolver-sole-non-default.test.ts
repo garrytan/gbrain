@@ -3,9 +3,11 @@
  * resolveSourceWithTier.
  *
  * When NO brain_default config is set AND exactly one registered source has
- * local_path set and isn't 'default', auto-route to it. Closes the bug
- * class where `gbrain sync` without --source silently routed to source_id
- * 'default' even though the user had a single Vault-mounted source.
+ * local_path set and isn't 'default' AND `default` has no live pages,
+ * auto-route to it. Closes the bug class where `gbrain sync` without
+ * --source silently routed to source_id 'default' even though the user had
+ * a single vault-mounted source, without hijacking established default
+ * corpora.
  *
  * Tier ordering placement codex review forced:
  *   - AFTER brain_default (explicit user intent wins)
@@ -26,7 +28,11 @@ import { withEnv } from './helpers/with-env.ts';
 
 type StubSource = { id: string; local_path: string | null; archived?: boolean };
 
-function makeStub(sources: StubSource[], globalDefault: string | null = null) {
+function makeStub(
+  sources: StubSource[],
+  globalDefault: string | null = null,
+  opts: { defaultHasLivePages?: boolean } = {},
+) {
   return {
     kind: 'pglite' as const,
     async executeRaw<T>(sql: string, _params?: unknown[]): Promise<T[]> {
@@ -45,6 +51,9 @@ function makeStub(sources: StubSource[], globalDefault: string | null = null) {
       if (sql.includes('SELECT id, local_path FROM sources WHERE local_path IS NOT NULL')) {
         return sources.filter(s => s.local_path !== null)
           .map(s => ({ id: s.id, local_path: s.local_path })) as unknown as T[];
+      }
+      if (sql.includes("FROM pages WHERE source_id = 'default'")) {
+        return (opts.defaultHasLivePages ? [{ one: 1 }] : []) as unknown as T[];
       }
       if (sql.includes('SELECT id FROM sources WHERE id =')) {
         const id = (_params as string[])?.[0];
@@ -67,6 +76,22 @@ describe('#1434 — sole_non_default tier', () => {
     const result = await resolveSourceWithTier(engine, null, '/tmp');
     expect(result.source_id).toBe('studiovault');
     expect(result.tier).toBe('sole_non_default');
+  });
+
+  test('does NOT fire when default already has live pages', async () => {
+    const engine = makeStub(
+      [
+        { id: 'default', local_path: null },
+        { id: 'side-vault', local_path: '/work/side-vault' },
+      ],
+      null,
+      { defaultHasLivePages: true },
+    );
+    const tagged = await resolveSourceWithTier(engine, null, '/tmp');
+    const flat = await resolveSourceId(engine, null, '/tmp');
+    expect(tagged.source_id).toBe('default');
+    expect(tagged.tier).toBe('seed_default');
+    expect(flat).toBe('default');
   });
 
   test('does NOT fire when 2+ non-default sources exist (ambiguous — user must pick)', async () => {
