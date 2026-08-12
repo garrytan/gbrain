@@ -139,13 +139,17 @@ cd "$BRAIN"
    gbrain recall --grep "salary"
    ```
 
-   Collect every returned slug into the scope list.
+   Resolve every returned slug to its repo-relative file path and write the
+   paths into `/tmp/brainify-scope.txt` (one per line). This file is the
+   scope list; the structural pass below APPENDS to it — nothing later in
+   the procedure may truncate it, or the retrieval-discovered pages
+   silently drop out of scope.
 
 2. Structural discovery — people files that belong to the company, plus
    keyword hits across the wider scan scope:
 
    ```bash
-   grep -rli 'company: *"acme-example"' people/ --include="*.md" | sort > /tmp/brainify-scope.txt
+   grep -rli 'company: *"acme-example"' people/ --include="*.md" | sort >> /tmp/brainify-scope.txt
    grep -rli -E 'salary|equity|carry|retention|underperform|performance review|hard conversation' \
      meetings/ daily/ companies/ projects/ analysis/ --include="*.md" 2>/dev/null >> /tmp/brainify-scope.txt
    sort -u -o /tmp/brainify-scope.txt /tmp/brainify-scope.txt
@@ -254,16 +258,22 @@ For sanitization, sensitive fact rows must be ACTUALLY REMOVED: find them
 (`gbrain recall --grep`), then delete the row from the page's Facts fence
 (step 5), exactly like a sensitive take. On an in-place shared brain, the
 page edit must then be re-synced (`gbrain sync` re-imports the edited page)
-so the shared database no longer serves the row — an edited page over an
-un-synced DB still leaks through retrieval. `forget` alone can never certify
-a brain clean.
+AND the facts index reconciled — sync's convergence contract covers page
+import only; downstream fact extraction is explicitly decoupled
+(`src/commands/sync.ts`, "CONVERGENCE CONTRACT"), so the DB keeps serving
+the deleted row until the extract-facts reconcile runs. Trigger it
+(`gbrain sweep`, or wait for the serve-resident sweep), then confirm with
+`gbrain recall --grep` that the row is actually gone. An edited page over
+an un-reconciled facts index still leaks through retrieval. `forget` alone
+can never certify a brain clean.
 
 After edits: on the **staging-copy** path the fact rows are removed by editing
 the copied markdown directly (there is no live DB to re-sync yet — the team DB
 is built fresh when Phase 5 Step 0 turns the export into a source). On the
-**in-place shared-brain** path, `gbrain sync` re-imports the changed pages so
-the DB matches the markdown. Either way, run `gbrain check-backlinks check` to
-catch pages still pointing at removed content.
+**in-place shared-brain** path, run `gbrain sync` so the page content matches
+the markdown, then reconcile and verify the facts index as above. Either way,
+run `gbrain check-backlinks check` to catch pages still pointing at removed
+content.
 
 ### Phase 4: Verify
 
@@ -502,7 +512,10 @@ recovery line.
   mirror-clone backup in `~/.gbrain/backups/` for a retention window
   (~30 days is a sane default), then delete it — it contains the
   pre-sanitization history and should not accumulate indefinitely:
-  `rm -rf ~/.gbrain/backups/brain-history-backup-<date>.git`
+  `rm -rf ~/.gbrain/backups/shared-brain-history-backup-<date>.git`
+  (the glob must match the `shared-brain-history-backup-*` name the backup
+  step created — a mismatched pattern deletes nothing and silently retains
+  the pre-sanitization history forever)
 - If the repo carries push hooks or auto-hardening wiring, re-verify remotes
   and hooks survived the rewrite before handing the repo to the team
 
@@ -592,9 +605,11 @@ This skill guarantees:
   covered by the sanitization scan; everything else is excluded by default,
   and the Phase 4 verification greps run against the exported tree before
   the first push.
-- Sensitive fact rows are deleted from the page's Facts fence and re-synced,
-  never merely expired — `gbrain forget` retains the row (struck through,
-  served via `--include-expired`) and can never certify clean.
+- Sensitive fact rows are deleted from the page's Facts fence, re-synced,
+  and the facts index reconciled (extract-facts sweep) with the removal
+  verified via `gbrain recall --grep`, never merely expired — `gbrain
+  forget` retains the row (struck through, served via `--include-expired`)
+  and can never certify clean.
 - The history-purge filter list and its restore manifest both derive from
   the COMPLETE set of sanitized paths, never a subset.
 - Every strip decision is a per-file model judgment grounded in a full read;
@@ -623,7 +638,7 @@ Three artifacts:
 
 - Scope: [N files scanned across people/, meetings/, daily/, ...]
 - Flagged: [M files with hits] (triage list attached)
-- Edited: [K files sanitized; T takes removed; F fact rows removed + re-synced]
+- Edited: [K files sanitized; T takes removed; F fact rows removed + re-synced + facts index reconciled]
 - Verification: [grep residuals: 0 confirmed-sensitive; retrieval checks: clean]
 - History: [not purged | fresh-export | purged after confirmed gate — backup at <path>]
 - Next re-audit: [date / cron slot]
