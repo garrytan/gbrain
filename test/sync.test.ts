@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
-import { buildSyncManifest, isSyncable, pathToSlug, pruneDir, isCodeFilePath } from '../src/core/sync.ts';
+import { buildSyncManifest, isSyncable, pathToSlug, pruneDir, isCodeFilePath, unquoteGitPath } from '../src/core/sync.ts';
 import { buildAutoEmbedArgs, buildGitInvocation } from '../src/commands/sync.ts';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'fs';
 import { join } from 'path';
@@ -304,6 +304,100 @@ describe('buildSyncManifest edge cases', () => {
     expect(manifest.modified).toEqual([]);
     expect(manifest.deleted).toEqual([]);
     expect(manifest.renamed).toEqual([]);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────
+// C-style-quoted paths. git quotes any path containing `"`, `\` or a
+// control character, unconditionally — core.quotepath=false (#119) only
+// governs octal-escaping of NON-ASCII bytes. Before unquoteGitPath, such
+// an entry ended `.md"`, failed isSyncable(), and was dropped from the
+// manifest silently: no error, no warning, no counter.
+// ────────────────────────────────────────────────────────────────
+
+describe('unquoteGitPath', () => {
+  test('leaves an unquoted path untouched', () => {
+    expect(unquoteGitPath('people/plain-name.md')).toBe('people/plain-name.md');
+    expect(unquoteGitPath('people/Ольга Петрова.md')).toBe('people/Ольга Петрова.md');
+    expect(unquoteGitPath('')).toBe('');
+  });
+
+  test('strips the wrapping quotes and unescapes embedded ones', () => {
+    expect(unquoteGitPath('"people/Jason \\"Jay\\" Strand.md"'))
+      .toBe('people/Jason "Jay" Strand.md');
+  });
+
+  test('unescapes a literal backslash', () => {
+    expect(unquoteGitPath('"people/a\\\\b.md"')).toBe('people/a\\b.md');
+  });
+
+  test('decodes single-character escapes', () => {
+    expect(unquoteGitPath('"people/a\\tb\\nc.md"')).toBe('people/a\tb\nc.md');
+  });
+
+  test('decodes octal escapes as bytes, utf-8 decoding once at the end', () => {
+    // "ы" is U+044B = 0xD1 0x8B — one codepoint, two \NNN escapes. Decoding
+    // per-escape instead of per-byte yields mojibake here.
+    expect(unquoteGitPath('"people/\\321\\213.md"')).toBe('people/ы.md');
+  });
+
+  test('resulting path passes the extension filter', () => {
+    expect(isSyncable(unquoteGitPath('"people/Jason \\"Jay\\" Strand.md"'))).toBe(true);
+  });
+});
+
+describe('buildSyncManifest — C-style-quoted paths', () => {
+  test('unquotes add, modify and delete entries', () => {
+    const output = [
+      'A\t"people/Alice \\"Ace\\" Example.md"',
+      'M\t"companies/ПАО \\"Ростелеком\\".md"',
+      'D\t"people/Jason \\"Jay\\" Strand.md"',
+    ].join('\n');
+    const manifest = buildSyncManifest(output);
+    expect(manifest.added).toEqual(['people/Alice "Ace" Example.md']);
+    expect(manifest.modified).toEqual(['companies/ПАО "Ростелеком".md']);
+    expect(manifest.deleted).toEqual(['people/Jason "Jay" Strand.md']);
+  });
+
+  test('unquotes both sides of a rename', () => {
+    const output = 'R100\t"people/old \\"nick\\".md"\t"people/new \\"nick\\".md"';
+    const manifest = buildSyncManifest(output);
+    expect(manifest.renamed).toEqual([
+      { from: 'people/old "nick".md', to: 'people/new "nick".md' },
+    ]);
+  });
+
+  test('quoted entries survive the syncable filter', () => {
+    const output = 'M\t"people/Christian \\"Raz\\" Kippelt.md"';
+    const manifest = buildSyncManifest(output);
+    expect(manifest.modified.filter(p => isSyncable(p))).toHaveLength(1);
+  });
+
+  test('real git output for a quoted filename reaches the manifest', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'gbrain-quoted-path-'));
+    try {
+      const name = 'people/Alice "Ace" Example.md';
+      execSync('git init -q .', { cwd: repo });
+      execSync('git config user.email t@t.t && git config user.name t', { cwd: repo, shell: '/bin/bash' });
+      mkdirSync(join(repo, 'people'));
+      writeFileSync(join(repo, name), 'x\n');
+      execSync('git add -A && git commit -q -m one', { cwd: repo, shell: '/bin/bash' });
+      writeFileSync(join(repo, name), 'x\ny\n');
+      execSync('git add -A && git commit -q -m two', { cwd: repo, shell: '/bin/bash' });
+
+      // gbrain's own invocation, quotepath and all.
+      const argv = buildGitInvocation(repo, ['diff', '--name-status', '-M', 'HEAD~1..HEAD']);
+      const out = execSync(`git ${argv.map(a => JSON.stringify(a)).join(' ')}`, { encoding: 'utf-8' });
+
+      // git really does quote it, whatever core.quotepath says.
+      expect(out.trim()).toBe('M\t"people/Alice \\"Ace\\" Example.md"');
+
+      const manifest = buildSyncManifest(out);
+      expect(manifest.modified).toEqual([name]);
+      expect(manifest.modified.filter(p => isSyncable(p))).toHaveLength(1);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 });
 

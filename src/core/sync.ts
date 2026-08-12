@@ -126,6 +126,54 @@ const CODE_EXTENSIONS = new Set<string>([
  * a real, accepted CLI flag on every command that imports this file. Pinned by
  * `test/cli-flag-validation.test.ts`.
  */
+/**
+ * Undo git's C-style path quoting.
+ *
+ * git quotes any path containing `"`, `\` or a control character, and it does
+ * so unconditionally: `core.quotepath=false` (buildGitInvocation in
+ * commands/sync.ts, #119) only suppresses octal-escaping of NON-ASCII bytes.
+ * A path like `people/Jason "Jay" Strand.md` therefore reaches
+ * buildSyncManifest as `"people/Jason \"Jay\" Strand.md"` — surrounding quotes
+ * included — so it ends `.md"`, fails isMarkdownFilePath(), and is dropped from
+ * the manifest with no error and no counter.
+ *
+ * Octal escapes are decoded as BYTES and utf-8 decoded once at the end: a
+ * single codepoint can span several \NNN escapes, so per-escape decoding
+ * produces mojibake.
+ *
+ * An unquoted path is returned unchanged, so this is a no-op for the common
+ * case.
+ */
+export function unquoteGitPath(raw: string): string {
+  if (raw.length < 2 || !raw.startsWith('"') || !raw.endsWith('"')) return raw;
+  const body = raw.slice(1, -1);
+  const simple: Record<string, number> = {
+    n: 10, t: 9, r: 13, '"': 34, '\\': 92, a: 7, b: 8, f: 12, v: 11,
+  };
+  const bytes: number[] = [];
+  let i = 0;
+  while (i < body.length) {
+    const c = body[i];
+    if (c === '\\' && i + 1 < body.length) {
+      const nxt = body[i + 1];
+      if (nxt in simple) {
+        bytes.push(simple[nxt]);
+        i += 2;
+        continue;
+      }
+      const trio = body.slice(i + 1, i + 4);
+      if (trio.length === 3 && /^[0-7]{3}$/.test(trio)) {
+        bytes.push(parseInt(trio, 8));
+        i += 4;
+        continue;
+      }
+    }
+    for (const b of new TextEncoder().encode(c)) bytes.push(b);
+    i += 1;
+  }
+  return new TextDecoder('utf-8').decode(new Uint8Array(bytes));
+}
+
 export function buildSyncManifest(gitDiffOutput: string): SyncManifest {
   const manifest: SyncManifest = {
     added: [],
@@ -145,19 +193,22 @@ export function buildSyncManifest(gitDiffOutput: string): SyncManifest {
 
     const action = parts[0];
 
+    // Unquote at the single point every path enters the manifest, so the
+    // extension filter and every downstream consumer (slug resolution, file
+    // reads) all see the real name. (#3897)
     if (action === 'A') {
-      manifest.added.push(parts[1]);
+      manifest.added.push(unquoteGitPath(parts[1]));
     } else if (action === 'M' || action === 'T' || action === 'U') {
       // T (typechange) and U (unmerged) both mean "this path exists and its
       // content is not what we imported" — the same remedy as M.
-      manifest.modified.push(parts[1]);
+      manifest.modified.push(unquoteGitPath(parts[1]));
     } else if (action === 'D') {
-      manifest.deleted.push(parts[1]);
+      manifest.deleted.push(unquoteGitPath(parts[1]));
     } else if (action.startsWith('R') || action.startsWith('C')) {
       // Rename/copy: R100\told-path\tnew-path. Copy is unreachable without -C,
       // but if the flags ever change, the destination must still be imported.
-      const oldPath = parts[1];
-      const newPath = parts[2];
+      const oldPath = unquoteGitPath(parts[1]);
+      const newPath = unquoteGitPath(parts[2]);
       if (oldPath && newPath) {
         if (action.startsWith('C')) {
           // A copy leaves the source in place — only the destination is new.
