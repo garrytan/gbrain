@@ -5,14 +5,14 @@
  *
  *   For each (source_id, entity_slug) bucket of unconsolidated active facts:
  *     1. Skip if count < 3 OR oldest fact age < 24h.
- *     2. Cluster by embedding cosine — greedy threshold 0.85.
- *     3. For each cluster ≥ 2: pick the highest-confidence fact's text as
+ *     2. Resolve entity_slug → pages.slug. If the page is missing, diagnose
+ *        and skip the bucket (the take needs an existing page as its home).
+ *     3. Cluster by embedding cosine using override, configured, or historical
+ *        default threshold 0.85.
+ *     4. For each cluster ≥ 2: pick the highest-confidence fact's text as
  *        the take claim (v0.31 ships without LLM synthesis to keep the
  *        cycle deterministic; see TODO at the bottom for the v0.32 Sonnet
  *        rewrite).
- *     4. Resolve entity_slug → pages.slug. If the page is missing, skip
- *        this cluster (no auto-page-creation in v0.31; the take needs a
- *        home).
  *     5. INSERT into takes(kind='fact', holder='self', source=concatenated
  *        source_sessions). row_num = MAX existing for the page + 1.
  *     6. UPDATE contributing facts: consolidated_at = now() +
@@ -26,6 +26,9 @@ import type { BrainEngine, FactRow } from '../../engine.ts';
 import type { PhaseResult } from '../../cycle.ts';
 import { cosineSimilarity } from '../../facts/classify.ts';
 import { isAborted } from '../../abort-check.ts';
+
+export const CONSOLIDATE_THRESHOLD_CONFIG_KEY = 'dream.consolidate.cluster_threshold';
+export const DEFAULT_CONSOLIDATE_CLUSTER_THRESHOLD = 0.85;
 
 export interface ConsolidatePhaseOpts {
   dryRun?: boolean;
@@ -50,7 +53,8 @@ export async function runPhaseConsolidate(
   opts: ConsolidatePhaseOpts = {},
 ): Promise<PhaseResult> {
   const dryRun = opts.dryRun === true;
-  const threshold = opts.clusterThreshold ?? 0.85;
+  const thresholdConfig = await resolveClusterThreshold(engine, opts.clusterThreshold);
+  const threshold = thresholdConfig.value;
   const minPerBucket = opts.minFactsPerBucket ?? 3;
   const minOldestAgeMs = opts.minOldestAgeMs ?? 24 * 60 * 60 * 1000;
 
@@ -58,6 +62,11 @@ export async function runPhaseConsolidate(
   let takesWritten = 0;
   let bucketsProcessed = 0;
   let bucketsSkipped = 0;
+  let bucketsMissingPage = 0;
+  let bucketsBelowSimilarityThreshold = 0;
+  let factsMissingPage = 0;
+  let factsInBelowThresholdBuckets = 0;
+  let factsWithoutEmbedding = 0;
 
   // Pull every (source_id, entity_slug) bucket of unconsolidated facts.
   // Uses the partial idx_facts_unconsolidated index.
@@ -99,10 +108,19 @@ export async function runPhaseConsolidate(
       try { await opts.yieldDuringPhase(); } catch { /* keepalive errors non-fatal */ }
     }
 
-    const facts = await engine.listFactsByEntity(b.source_id, b.entity_slug, {
-      activeOnly: true,
-      limit: 100,
-    });
+    // listFactsByEntity is deliberately capped at 100 for public callers.
+    // Page through the full active entity history before writing anything so
+    // already-consolidated recent rows cannot strand an older pending tail.
+    const facts: FactRow[] = [];
+    for (let offset = 0; ; offset += 100) {
+      const page = await engine.listFactsByEntity(b.source_id, b.entity_slug, {
+        activeOnly: true,
+        limit: 100,
+        offset,
+      });
+      facts.push(...page);
+      if (page.length < 100) break;
+    }
     // Re-filter to unconsolidated since listFactsByEntity returns all active.
     const unconsolidated = facts.filter(f => f.consolidated_at == null);
     if (unconsolidated.length < minPerBucket) {
@@ -119,16 +137,27 @@ export async function runPhaseConsolidate(
       continue;
     }
 
-    bucketsProcessed += 1;
-    const clusters = clusterFacts(unconsolidated, threshold);
-
     // Resolve entity_slug → page_id. If page missing in this source, skip.
     const pageRows = await engine.executeRaw<{ id: number }>(
       `SELECT id FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL LIMIT 1`,
       [b.source_id, b.entity_slug],
     );
-    if (pageRows.length === 0) continue;
+    if (pageRows.length === 0) {
+      bucketsMissingPage += 1;
+      factsMissingPage += b.count;
+      continue;
+    }
     const pageId = pageRows[0].id;
+
+    bucketsProcessed += 1;
+    factsWithoutEmbedding += unconsolidated.filter(f => !f.embedding).length;
+    const clusters = clusterFacts(unconsolidated, threshold);
+    const promotableClusters = clusters.filter(cluster => cluster.length >= 2);
+    if (promotableClusters.length === 0) {
+      bucketsBelowSimilarityThreshold += 1;
+      factsInBelowThresholdBuckets += unconsolidated.length;
+      continue;
+    }
 
     // Existing row_num max for this page → start appending after it.
     const rowMaxRows = await engine.executeRaw<{ max: number }>(
@@ -137,8 +166,7 @@ export async function runPhaseConsolidate(
     );
     let nextRowNum = (rowMaxRows[0]?.max ?? 0) + 1;
 
-    for (const cluster of clusters) {
-      if (cluster.length < 2) continue;
+    for (const cluster of promotableClusters) {
       // Take selection: pick the highest-confidence fact's text as the
       // take claim (v0.31 deterministic). v0.32 will swap to a Sonnet
       // synthesis pass.
@@ -251,21 +279,55 @@ export async function runPhaseConsolidate(
     }
   }
 
+  const hasBlockedBuckets = bucketsMissingPage > 0 || bucketsBelowSimilarityThreshold > 0;
+  const blockerSummary = hasBlockedBuckets
+    ? `; ${bucketsMissingPage} missing-page buckets and ${bucketsBelowSimilarityThreshold} below ${threshold.toFixed(3)} similarity`
+    : '';
+
   return {
     phase: 'consolidate',
-    status: factsConsolidated > 0 ? 'ok' : 'ok',
+    status: hasBlockedBuckets ? 'warn' : 'ok',
     duration_ms: 0,
     summary: dryRun
-      ? `(dry-run) would promote ${factsConsolidated} facts into ${takesWritten} takes across ${bucketsProcessed} buckets`
-      : `promoted ${factsConsolidated} facts into ${takesWritten} takes across ${bucketsProcessed} buckets`,
+      ? `(dry-run) would promote ${factsConsolidated} facts into ${takesWritten} takes across ${bucketsProcessed} page-resolved buckets${blockerSummary}`
+      : `promoted ${factsConsolidated} facts into ${takesWritten} takes across ${bucketsProcessed} page-resolved buckets${blockerSummary}`,
     details: {
       dryRun,
+      cluster_threshold: threshold,
+      cluster_threshold_source: thresholdConfig.source,
       facts_consolidated: factsConsolidated,
       takes_written: takesWritten,
+      buckets_scanned: buckets.length,
       buckets_processed: bucketsProcessed,
       buckets_skipped: bucketsSkipped,
+      buckets_missing_page: bucketsMissingPage,
+      buckets_below_similarity_threshold: bucketsBelowSimilarityThreshold,
+      facts_missing_page: factsMissingPage,
+      facts_in_below_threshold_buckets: factsInBelowThresholdBuckets,
+      facts_without_embedding: factsWithoutEmbedding,
     },
   };
+}
+
+async function resolveClusterThreshold(
+  engine: BrainEngine,
+  override: number | undefined,
+): Promise<{ value: number; source: 'override' | 'config' | 'default' }> {
+  if (isValidThreshold(override)) return { value: override, source: 'override' };
+
+  try {
+    const raw = await engine.getConfig(CONSOLIDATE_THRESHOLD_CONFIG_KEY);
+    const configured = raw === null ? undefined : Number(raw);
+    if (isValidThreshold(configured)) return { value: configured, source: 'config' };
+  } catch {
+    // Missing config storage on legacy brains keeps the historical default.
+  }
+
+  return { value: DEFAULT_CONSOLIDATE_CLUSTER_THRESHOLD, source: 'default' };
+}
+
+function isValidThreshold(value: number | undefined): value is number {
+  return value !== undefined && Number.isFinite(value) && value > 0 && value <= 1;
 }
 
 /**

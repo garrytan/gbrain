@@ -1019,6 +1019,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'models.expansion',
   'models.contextual_synopsis',
   'models.chat',
+  // Cosine floor used by the dream facts -> takes consolidation phase.
+  // Model families can have materially different similarity distributions.
+  'dream.consolidate.cluster_threshold',
   'models.brainstorm.judge',
   'models.eval.longmemeval',
   'facts.extraction_model',

@@ -11,7 +11,11 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { configureGateway } from '../src/core/ai/gateway.ts';
-import { runPhaseConsolidate } from '../src/core/cycle/phases/consolidate.ts';
+import { KNOWN_CONFIG_KEYS } from '../src/core/config.ts';
+import {
+  CONSOLIDATE_THRESHOLD_CONFIG_KEY,
+  runPhaseConsolidate,
+} from '../src/core/cycle/phases/consolidate.ts';
 
 let engine: PGLiteEngine;
 
@@ -43,6 +47,7 @@ beforeEach(async () => {
   // Clean facts + takes between tests for hermetic state.
   await engine.executeRaw(`DELETE FROM facts`);
   await engine.executeRaw(`DELETE FROM takes`);
+  await engine.unsetConfig(CONSOLIDATE_THRESHOLD_CONFIG_KEY);
 });
 
 const oldDate = () => new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString();
@@ -50,6 +55,13 @@ const recentDate = () => new Date(Date.now() - 60 * 1000).toISOString();
 function unitVec(): string {
   const a = new Float32Array(1536);
   a[0] = 1.0;
+  return '[' + Array.from(a).join(',') + ']';
+}
+
+function angledVec(cosine: number, orthogonalAxis: number): string {
+  const a = new Float32Array(1536);
+  a[0] = cosine;
+  a[orthogonalAxis] = Math.sqrt(1 - cosine * cosine);
   return '[' + Array.from(a).join(',') + ']';
 }
 
@@ -129,6 +141,29 @@ describe('runPhaseConsolidate', () => {
     }
   });
 
+  test('paginates beyond 100 active rows without stranding the oldest facts', async () => {
+    await seedPage('cons-large-bucket');
+    await engine.executeRaw(
+      `INSERT INTO facts
+         (source_id, entity_slug, fact, kind, source, valid_from, confidence, embedding, embedded_at)
+       SELECT 'default', 'cons-large-bucket', 'large fact ' || i, 'fact', 'test',
+              $1::timestamptz, 0.9, $2::vector, $1::timestamptz
+       FROM generate_series(1, 103) AS i`,
+      [oldDate(), unitVec()],
+    );
+
+    const first = await runPhaseConsolidate(engine, {});
+    expect(first.details.facts_consolidated).toBe(103);
+
+    const second = await runPhaseConsolidate(engine, {});
+    expect(second.details.facts_consolidated).toBe(0);
+    const pending = await engine.executeRaw<{ count: number }>(
+      `SELECT COUNT(*)::int AS count FROM facts
+       WHERE entity_slug = 'cons-large-bucket' AND consolidated_at IS NULL`,
+    );
+    expect(pending[0].count).toBe(0);
+  });
+
   test('dryRun honored: counters tick but no rows written', async () => {
     await seedPage('cons-dryrun');
     for (let i = 0; i < 3; i++) {
@@ -162,9 +197,108 @@ describe('runPhaseConsolidate', () => {
       );
     }
     const r = await runPhaseConsolidate(engine, {});
-    // Bucket processed (passes count + age gates) but cluster skipped (no page).
-    expect(r.details.buckets_processed).toBeGreaterThanOrEqual(1);
+    // Missing-page buckets are diagnosed, not misreported as processed.
+    expect(r.status).toBe('warn');
+    expect(r.details.buckets_processed).toBe(0);
+    expect(r.details.buckets_missing_page).toBe(1);
+    expect(r.details.facts_missing_page).toBe(4);
     expect(r.details.facts_consolidated).toBe(0);
     expect(r.details.takes_written).toBe(0);
+  });
+
+  test('warns when a promotion succeeds but another bucket remains blocked', async () => {
+    await seedPage('cons-mixed-resolved');
+    for (const slug of ['cons-mixed-resolved', 'cons-mixed-missing']) {
+      for (let i = 0; i < 3; i++) {
+        await engine.executeRaw(
+          `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, embedding, embedded_at)
+           VALUES ('default', $1, $2, 'fact', 'test', $3::timestamptz, $4::vector, $3::timestamptz)`,
+          [slug, `${slug} fact ${i}`, oldDate(), unitVec()],
+        );
+      }
+    }
+
+    const r = await runPhaseConsolidate(engine, {});
+    expect(r.details.facts_consolidated).toBe(3);
+    expect(r.details.buckets_missing_page).toBe(1);
+    expect(r.status).toBe('warn');
+  });
+
+  test('reads a model-calibrated cluster threshold from config', async () => {
+    await seedPage('cons-config-threshold');
+    const vectors = [unitVec(), angledVec(0.845, 1), angledVec(0.845, 2)];
+    for (let i = 0; i < vectors.length; i++) {
+      await engine.executeRaw(
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, embedding, embedded_at)
+         VALUES ('default', 'cons-config-threshold', $1, 'fact', 'test', $2::timestamptz, $3::vector, $2::timestamptz)`,
+        [`configured fact ${i}`, oldDate(), vectors[i]],
+      );
+    }
+
+    const defaultResult = await runPhaseConsolidate(engine, { dryRun: true });
+    expect(defaultResult.details.facts_consolidated).toBe(0);
+    expect(defaultResult.details.buckets_below_similarity_threshold).toBe(1);
+    expect(defaultResult.details.cluster_threshold).toBe(0.85);
+
+    await engine.setConfig(CONSOLIDATE_THRESHOLD_CONFIG_KEY, '0.84');
+    const configuredResult = await runPhaseConsolidate(engine, { dryRun: true });
+    expect(configuredResult.details.cluster_threshold).toBe(0.84);
+    expect(configuredResult.details.cluster_threshold_source).toBe('config');
+    expect(configuredResult.details.facts_consolidated).toBeGreaterThanOrEqual(2);
+    expect(configuredResult.details.takes_written).toBe(1);
+  });
+
+  test('prefers a valid override and falls back from invalid config', async () => {
+    await engine.setConfig(CONSOLIDATE_THRESHOLD_CONFIG_KEY, 'not-a-number');
+    const fallbackResult = await runPhaseConsolidate(engine, { dryRun: true });
+    expect(fallbackResult.details.cluster_threshold).toBe(0.85);
+    expect(fallbackResult.details.cluster_threshold_source).toBe('default');
+
+    const overrideResult = await runPhaseConsolidate(engine, {
+      dryRun: true,
+      clusterThreshold: 0.82,
+    });
+    expect(overrideResult.details.cluster_threshold).toBe(0.82);
+    expect(overrideResult.details.cluster_threshold_source).toBe('override');
+  });
+
+  test('pins threshold validation boundaries and config-read failure fallback', async () => {
+    expect(KNOWN_CONFIG_KEYS).toContain(CONSOLIDATE_THRESHOLD_CONFIG_KEY);
+    for (const clusterThreshold of [0, -0.1, 1.01, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const r = await runPhaseConsolidate(engine, { dryRun: true, clusterThreshold });
+      expect(r.details.cluster_threshold).toBe(0.85);
+      expect(r.details.cluster_threshold_source).toBe('default');
+    }
+
+    const upperBoundary = await runPhaseConsolidate(engine, { dryRun: true, clusterThreshold: 1 });
+    expect(upperBoundary.details.cluster_threshold).toBe(1);
+    expect(upperBoundary.details.cluster_threshold_source).toBe('override');
+
+    const originalGetConfig = engine.getConfig.bind(engine);
+    engine.getConfig = async () => { throw new Error('legacy config storage unavailable'); };
+    try {
+      const r = await runPhaseConsolidate(engine, { dryRun: true });
+      expect(r.details.cluster_threshold).toBe(0.85);
+      expect(r.details.cluster_threshold_source).toBe('default');
+    } finally {
+      engine.getConfig = originalGetConfig;
+    }
+  });
+
+  test('reports facts that cannot participate because embeddings are missing', async () => {
+    await seedPage('cons-no-embedding');
+    for (let i = 0; i < 3; i++) {
+      await engine.executeRaw(
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from)
+         VALUES ('default', 'cons-no-embedding', $1, 'fact', 'test', $2::timestamptz)`,
+        [`unembedded fact ${i}`, oldDate()],
+      );
+    }
+
+    const r = await runPhaseConsolidate(engine, { dryRun: true });
+    expect(r.status).toBe('warn');
+    expect(r.details.buckets_below_similarity_threshold).toBe(1);
+    expect(r.details.facts_without_embedding).toBe(3);
+    expect(r.details.facts_consolidated).toBe(0);
   });
 });
