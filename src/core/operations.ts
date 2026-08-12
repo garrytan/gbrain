@@ -3246,8 +3246,9 @@ const file_list: Operation = {
   },
   scope: 'admin',
   localOnly: true,
-  handler: async (_ctx, p) => {
-    const sql = db.getConnection();
+  handler: async (ctx, p) => {
+    const { sqlQueryForEngine } = await import('./sql-query.ts');
+    const sql = sqlQueryForEngine(ctx.engine);
     const slug = p.slug as string | undefined;
     const rows = slug
       ? await sql`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at FROM files WHERE page_slug = ${slug} ORDER BY filename LIMIT ${FILE_LIST_LIMIT}`
@@ -3304,7 +3305,8 @@ const file_upload: Operation = {
     };
     const mimeType = MIME_TYPES[extname(filePath).toLowerCase()] || null;
 
-    const sql = db.getConnection();
+    const { sqlQueryForEngine } = await import('./sql-query.ts');
+    const sql = sqlQueryForEngine(ctx.engine);
     const existing = await sql`SELECT id FROM files WHERE content_hash = ${hash} AND storage_path = ${storagePath}`;
     if (existing.length > 0) {
       return { status: 'already_exists', storage_path: storagePath };
@@ -3354,8 +3356,9 @@ const file_url: Operation = {
   },
   scope: 'admin',
   localOnly: true,
-  handler: async (_ctx, p) => {
-    const sql = db.getConnection();
+  handler: async (ctx, p) => {
+    const { sqlQueryForEngine } = await import('./sql-query.ts');
+    const sql = sqlQueryForEngine(ctx.engine);
     const rows = await sql`SELECT storage_path, mime_type, size_bytes FROM files WHERE storage_path = ${p.storage_path as string}`;
     if (rows.length === 0) {
       throw new OperationError('storage_error', `File not found: ${p.storage_path}`);
