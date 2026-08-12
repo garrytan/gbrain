@@ -125,6 +125,20 @@ let _config: AIGatewayConfig | null = null;
 const _modelCache = new Map<string, any>();
 
 /**
+ * Materialize `applyResolveAuth`'s SDK-shaped result ({apiKey}|{headers}) into
+ * raw HTTP headers: a Bearer-style apiKey becomes an Authorization header;
+ * custom/default headers ride alongside (they win on conflict, matching the
+ * SDK's header-after-apiKey ordering). Single source for the reranker wire path
+ * and the doctor's base-URL probe.
+ */
+export function authToHeaders(auth: { apiKey?: string; headers?: Record<string, string> }): Record<string, string> {
+  return {
+    ...(auth.apiKey ? { Authorization: `Bearer ${auth.apiKey}` } : {}),
+    ...(auth.headers ?? {}),
+  };
+}
+
+/**
  * Recover the process-global gateway for foreground command entrypoints that
  * were reached without cli.ts's normal engine-connect initialization (#2590).
  * Existing configured gateways, including their DB-resolved model overrides,
@@ -675,7 +689,10 @@ export function __setChatTransportForTests(
   _chatTransport = fn;
 }
 
-function requireConfig(): AIGatewayConfig {
+/** The live gateway config, or throw if unconfigured. Exported for the
+ *  `models doctor` base-URL probe (which reads the same merged config the
+ *  gateway calls with, inside its own fail-open guard). */
+export function requireConfig(): AIGatewayConfig {
   if (!_config) {
     throw new AIConfigError(
       'AI gateway is not configured. Call configureGateway() during engine connect.',
@@ -3915,10 +3932,7 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   // through `auth.headers` alongside Bearer-style apiKey. The merge below
   // materializes both shapes so static-default-headers ride on the reranker
   // wire path the same way they ride the SDK paths.
-  const authHeaders: Record<string, string> = {
-    ...(auth.apiKey ? { Authorization: `Bearer ${auth.apiKey}` } : {}),
-    ...(auth.headers ?? {}),
-  };
+  const authHeaders = authToHeaders(auth);
   const body = JSON.stringify({
     model: parsed.modelId,
     query: input.query,

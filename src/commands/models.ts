@@ -34,7 +34,8 @@ import {
   resolveModel,
   type ModelTier,
 } from '../core/model-config.ts';
-import { resolveRecipe } from '../core/ai/model-resolver.ts';
+import { maybeAttachVersionSuffixHint } from '../core/ai/base-url-probe.ts';
+import type { AIGatewayConfig } from '../core/ai/types.ts';
 
 const TIERS: ModelTier[] = ['utility', 'reasoning', 'deep', 'subagent'];
 
@@ -223,42 +224,33 @@ function classifyError(err: unknown): { status: ProbeStatus; message: string } {
   return { status: 'unknown', message: msg };
 }
 
-const OPENAI_COMPAT_V1_HINT =
-  'If the API key is correct, the base URL may be missing the /v1 suffix. ' +
-  'OpenAI-shaped proxies (codex-proxy, Azure-OpenAI mirrors, LiteLLM fronting an OpenAI route) ' +
-  'serve /v1/chat/completions and 401 on the bare path. ' +
-  'Confirm with: `curl <base>/models` returns 200 with the same bearer, then append /v1 to the base URL.';
+/** Injectable transport + per-run hint cache for the doctor probes. */
+interface ProbeDeps {
+  chat?: typeof import('../core/ai/gateway.ts').chat;
+  embed?: typeof import('../core/ai/gateway.ts').embed;
+  rerank?: typeof import('../core/ai/gateway.ts').rerank;
+  cfg?: AIGatewayConfig;
+  fetchImpl?: typeof fetch;
+  cache?: Map<string, string | undefined>;
+}
 
 /**
- * Fix-hint for the openai-compatible-proxy `/v1`-suffix trap.
- *
- * An OpenAI-shaped proxy whose base URL omits `/v1` (codex-proxy, some
- * Azure-OpenAI mirrors, a LiteLLM proxy fronting an OpenAI-route backend)
- * serves `/v1/chat/completions` and returns 401 on the bare `/chat/completions`
- * the AI SDK appends to the base. `classifyError` reads that 401 as `auth` and
- * points the operator at the bearer token, when the real fix is the URL shape.
- *
- * Returns the corrective hint only when the model routes through an
- * openai-compatible recipe (proxy tier, not native anthropic/openai/google),
- * `baseURL` is set, and `baseURL` does not already end in `/v1` (optionally with
- * a trailing slash). Pure: recipe resolution is synchronous and does no
- * network/engine work; any resolution failure returns undefined.
- *
- * @internal exported for tests.
+ * Build a failed-probe ProbeResult and attach the base-URL version hint. Shared
+ * by the three reachability-probe catch blocks. `resultTouchpoint` names the
+ * result row; `hintTouchpoint` is the auth-resolution touchpoint the hint uses.
  */
-export function openAiCompatV1Hint(
+async function failedProbe(
+  err: unknown,
   modelStr: string,
-  baseURL: string | undefined | null,
-): string | undefined {
-  if (!baseURL || !baseURL.trim()) return undefined;
-  if (/\/v1\/?$/.test(baseURL.trim())) return undefined;
-  try {
-    const { recipe } = resolveRecipe(modelStr);
-    if (recipe.tier !== 'openai-compat') return undefined;
-    return OPENAI_COMPAT_V1_HINT;
-  } catch {
-    return undefined;
-  }
+  resultTouchpoint: ProbeResult['touchpoint'],
+  hintTouchpoint: 'embedding' | 'expansion' | 'chat' | 'reranker',
+  start: number,
+  deps: ProbeDeps,
+): Promise<ProbeResult> {
+  const { status, message } = classifyError(err);
+  const result: ProbeResult = { model: modelStr, touchpoint: resultTouchpoint, status, message, elapsed_ms: Date.now() - start };
+  await maybeAttachVersionSuffixHint(result, modelStr, hintTouchpoint, deps);
+  return result;
 }
 
 /**
@@ -487,7 +479,7 @@ async function probeRerankerConfig(engine: BrainEngine): Promise<ProbeResult> {
  * when set — so a CPU-only local reranker's cold-start warmup doesn't
  * cause the probe to false-fail with `network`/timeout.
  */
-async function probeRerankerReachability(engine: BrainEngine): Promise<ProbeResult | null> {
+export async function probeRerankerReachability(engine: BrainEngine, deps: ProbeDeps = {}): Promise<ProbeResult | null> {
   const modelStr = await resolveLiveRerankerModel(engine);
   if (!modelStr) return null;
 
@@ -501,7 +493,7 @@ async function probeRerankerReachability(engine: BrainEngine): Promise<ProbeResu
 
   const start = Date.now();
   try {
-    const { rerank } = await import('../core/ai/gateway.ts');
+    const rerank = deps.rerank ?? (await import('../core/ai/gateway.ts')).rerank;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(new Error(`probe timed out after ${probeTimeoutMs}ms`)), probeTimeoutMs);
     try {
@@ -523,14 +515,7 @@ async function probeRerankerReachability(engine: BrainEngine): Promise<ProbeResu
       clearTimeout(timeoutId);
     }
   } catch (err) {
-    const { status, message } = classifyError(err);
-    return {
-      model: modelStr,
-      touchpoint: 'reranker_config',
-      status,
-      message,
-      elapsed_ms: Date.now() - start,
-    };
+    return failedProbe(err, modelStr, 'reranker_config', 'reranker', start, deps);
   }
 }
 
@@ -547,10 +532,11 @@ async function probeRerankerReachability(engine: BrainEngine): Promise<ProbeResu
  * Cold-start note: a local CPU embedder loading a model on first call can take
  * several seconds; the 5s timeout may trip on the very first probe. Re-run if so.
  */
-async function probeEmbeddingReachability(): Promise<ProbeResult | null> {
-  const { getEmbeddingModel, embed } = await import('../core/ai/gateway.ts');
-  const modelStr = getEmbeddingModel();
+export async function probeEmbeddingReachability(deps: ProbeDeps = {}): Promise<ProbeResult | null> {
+  const gw = await import('../core/ai/gateway.ts');
+  const modelStr = gw.getEmbeddingModel();
   if (!modelStr) return null;
+  const embed = deps.embed ?? gw.embed;
 
   const start = Date.now();
   const controller = new AbortController();
@@ -565,23 +551,16 @@ async function probeEmbeddingReachability(): Promise<ProbeResult | null> {
       elapsed_ms: Date.now() - start,
     };
   } catch (err) {
-    const { status, message } = classifyError(err);
-    return {
-      model: modelStr,
-      touchpoint: 'embedding_reachability',
-      status,
-      message,
-      elapsed_ms: Date.now() - start,
-    };
+    return failedProbe(err, modelStr, 'embedding_reachability', 'embedding', start, deps);
   } finally {
     clearTimeout(timeoutId);
   }
 }
 
-async function probeModel(modelStr: string, touchpoint: 'chat' | 'expansion'): Promise<ProbeResult> {
+export async function probeModel(modelStr: string, touchpoint: 'chat' | 'expansion', deps: ProbeDeps = {}): Promise<ProbeResult> {
   const start = Date.now();
   try {
-    const { chat } = await import('../core/ai/gateway.ts');
+    const chat = deps.chat ?? (await import('../core/ai/gateway.ts')).chat;
     // Use AbortController so the 5s timeout doesn't hang on a stuck network.
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(new Error('probe timed out after 5s')), 5000);
@@ -597,30 +576,7 @@ async function probeModel(modelStr: string, touchpoint: 'chat' | 'expansion'): P
       clearTimeout(timeoutId);
     }
   } catch (err) {
-    const { status, message } = classifyError(err);
-    const result: ProbeResult = { model: modelStr, touchpoint, status, message, elapsed_ms: Date.now() - start };
-    // An openai-compatible proxy whose base URL omits `/v1` returns 401 (not
-    // 404) on the bare `/chat/completions` path, which classifyError reads as
-    // `auth`. Attach the URL-shape hint so the operator doesn't chase the
-    // bearer token. Fail open: any error resolving the base URL yields no hint
-    // and never breaks the probe.
-    if (status === 'auth') {
-      try {
-        const { loadConfig } = await import('../core/config.ts');
-        const { buildGatewayConfig } = await import('../core/ai/build-gateway-config.ts');
-        const fileCfg = loadConfig();
-        if (fileCfg) {
-          const cfg = buildGatewayConfig(fileCfg);
-          const { recipe } = resolveRecipe(modelStr);
-          const baseURL = cfg.base_urls?.[recipe.id] ?? recipe.base_url_default;
-          const hint = openAiCompatV1Hint(modelStr, baseURL);
-          if (hint) result.fix = hint;
-        }
-      } catch {
-        // fail open — no hint
-      }
-    }
-    return result;
+    return failedProbe(err, modelStr, touchpoint, touchpoint, start, deps);
   }
 }
 
@@ -700,19 +656,23 @@ Tiers: utility (haiku-class) | reasoning (sonnet) | deep (opus) | subagent (Anth
   // config keys live search reads (closes file-plane / DB-plane divergence).
   results.push(await probeRerankerConfig(engine));
 
+  // Per-run cache so several probe sites sharing a base URL run the base-URL
+  // /models sweep once, not once per site.
+  const hintCache = new Map<string, string | undefined>();
+
   for (const [modelStr, touchpoint] of [[chatModel, 'chat'], [expansionModel, 'expansion']] as const) {
     if (shouldSkipProvider(modelStr, skip)) {
       if (!json) process.stderr.write(`[skip] ${touchpoint}: ${modelStr} (provider in --skip)\n`);
       continue;
     }
-    results.push(await probeModel(modelStr, touchpoint));
+    results.push(await probeModel(modelStr, touchpoint, { cache: hintCache }));
   }
 
   // v0.40.x: embedding reachability — only when the config probe passed
   // (codex #8: a config failure shouldn't be reported twice) AND the provider
   // isn't in --skip. Catches a dead/misconfigured LOCAL embed server early.
   if (embeddingConfig.status === 'ok' && !shouldSkipProvider(embeddingConfig.model, skip)) {
-    const er = await probeEmbeddingReachability();
+    const er = await probeEmbeddingReachability({ cache: hintCache });
     if (er) results.push(er);
   }
 
@@ -721,7 +681,7 @@ Tiers: utility (haiku-class) | reasoning (sonnet) | deep (opus) | subagent (Anth
   // actually enabled per the resolved mode bundle.
   const liveRerankerModel = await resolveLiveRerankerModel(engine);
   if (liveRerankerModel && !shouldSkipProvider(liveRerankerModel, skip)) {
-    const r = await probeRerankerReachability(engine);
+    const r = await probeRerankerReachability(engine, { cache: hintCache });
     if (r) results.push(r);
   }
 
