@@ -40,7 +40,7 @@ import { MinionQueue } from '../minions/queue.ts';
 import { waitForCompletion, TimeoutError } from '../minions/wait-for-completion.ts';
 import { makeSubagentHandler } from '../minions/handlers/subagent.ts';
 import type { MinionJobInput, MinionJobContext, MinionHandler, SubagentHandlerData } from '../minions/types.ts';
-import { discoverTranscripts, type DiscoveredTranscript } from './transcript-discovery.ts';
+import { discoverTranscripts, DEFAULT_EXCLUDE_PATTERNS, type DiscoveredTranscript } from './transcript-discovery.ts';
 import { serializeMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
 import { validateSourceId } from '../utils.ts';
@@ -862,7 +862,7 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
     DEFAULT_SUBAGENT_WAIT_TIMEOUT_MS,
   );
 
-  let excludePatterns: string[] = ['medical', 'therapy'];
+  let excludePatterns: string[] = [...DEFAULT_EXCLUDE_PATTERNS];
   if (excludeStr) {
     try {
       const parsed = JSON.parse(excludeStr);
