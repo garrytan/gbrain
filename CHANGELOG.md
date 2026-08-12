@@ -2,6 +2,76 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.45.8.0] - 2026-08-12
+
+**25 community bug fixes in one wave. Your MCP server, sync, and doctor all get more careful.**
+
+This release is all fixes, no new surface. 24 community contributors sent small, tested
+bug fixes over the past weeks. Each one was reviewed, tested in isolation against a real
+checkout, checked by an adversarial second reviewer, security reviewed, and then tested
+again as one combined branch. The themes: the MCP server now handles edge-case inputs
+the way an agent expects, sync and import stop losing or misplacing data in rare
+situations, and doctor stops crying wolf on healthy setups.
+
+If you connect an agent to gbrain over MCP, or you sync a brain repo with unusual file
+names, non-English content, or multiple sources, this release removes a set of paper
+cuts you may have already hit.
+
+## To take advantage of v0.45.8.0
+
+`gbrain upgrade` is enough. These are behavior fixes with no schema migration.
+
+1. **Upgrade and verify:**
+   ```bash
+   gbrain upgrade
+   gbrain doctor
+   ```
+2. **If doctor output changed for you,** that is likely the point: several checks
+   (supervisor, PGLite store health, base-URL hints) now report accurately where they
+   previously false-alarmed.
+3. **If anything looks wrong,** file an issue at https://github.com/garrytan/gbrain/issues
+   with `gbrain doctor` output.
+
+### Itemized changes
+
+**MCP server correctness**
+- `sources_add` over a remote transport now rejects a caller-supplied path outright instead of silently ignoring it. Contributed by @gregario.
+- Stdio serve advertises the tools the caller can actually use. Contributed by @gregario.
+- All stdout logging routes to stderr under stdio MCP, keeping the protocol stream clean. Contributed by @BenSheridanEdwards.
+- Null and empty-string optional params are treated as absent at dispatch. Contributed by @SeanGearin.
+- File ops (`file_list`, `file_upload`) use the connected engine instead of the global DB singleton, so they work on every configured engine. Contributed by @dpaluy.
+- Stdio serve honors the `.gbrain-source` dotfile. Contributed by @javieraldape.
+
+**Sync and import data safety**
+- Global sync anchors only move for the brain repo they describe, so a second repo can no longer skip another repo's pending imports. Contributed by @smdesai27.
+- Sync never writes a baseline commit over an already-populated repo. Contributed by @NidTamil.
+- Git C-style-quoted paths (quotes, backslashes, unicode escapes) unquote correctly in the sync manifest. Contributed by @SergeyShol.
+- Malformed YAML frontmatter is rejected with a clear error instead of importing garbage. Contributed by @javieraldape.
+- Paths that fail once but succeed on a later run clear their failure record. Contributed by @bo-developing.
+- Autopilot resolves the gbrain CLI on Windows via PATH enumeration instead of assuming a POSIX shell. Contributed by @veltri-23.
+- Ctrl-C cleanly terminates bulk commands using the shared progress reporter. Contributed by @javieraldape.
+
+**Engines and search**
+- PGLite batches code-edge inserts below the bind-parameter limit, fixing silent data loss on large code graphs. Contributed by @kyle944.
+- The configured FTS language survives schema replay, so non-English brains no longer revert to English tokenization on re-init. Contributed by @paul-0320.
+- Hyphenated Qwen3-Embedding model ids resolve their dimensions correctly. Contributed by @mikez93.
+
+**Doctor and diagnostics**
+- Doctor surfaces abandoned PGLite stores left behind after an engine migration. Contributed by @Masashi-Ono0611.
+- The base-URL hint uses a real models-probe classifier instead of guessing /v1. Contributed by @brettdavies.
+
+**Models and cycle**
+- Sonnet 5, Fable 5, and Opus 4.8 are in the synthesize context map and brainstorm output caps. Contributed by @p3ob7o.
+- Truncated or degenerate significance verdicts are no longer cached permanently. Contributed by @Masashi-Ono0611.
+- The `models.subagent` config path goes through the same capability checks as every other model path. Contributed by @Masashi-Ono0611.
+- `takes add` resolves the target page before writing markdown. Contributed by @ghizi.
+- A shipped filing rule that bound a personal folder name to a sensitive category is gone. Contributed by @Masashi-Ono0611.
+- BrainBench eval defaults resolve from the package root, so evals run from any working directory. Contributed by @philip-rossoneri.
+- The OpenClaw plugin-loader E2E inspects the real runtime. Contributed by @arisgysel-design.
+
+**For contributors**
+- The committed CLI flag registry, the cycle-sync test mocks, and two test fixtures were updated to match the combined branch.
+
 ## [0.45.7.0] - 2026-08-12
 
 **Ambient recall: your brain shows up at the moments that matter, not just when you ask.** Long-lived agents lose the thread at session boundaries — a fresh start with no warm context, a compaction that drops verbatim detail nothing rehydrates, a heartbeat that re-derives state from scratch. This release adds two new memory verbs that assemble a budget-packed, zero-LLM bundle of exactly what a boundary needs, and wires them into the agent's lifecycle hooks so a warm pack lands automatically at session start and after compaction. It's opt-in, fail-open, and reaches every host: Claude Code gets it pushed through hooks; Codex and any MCP host pull the same two verbs at their own boundaries. Whether your brain is embedded (PGLite) or managed (Postgres), the ambient value is the same.
