@@ -15,8 +15,9 @@ import { SLUG_WORD_CHARS } from './cjk.ts';
 // v0.37.7.0 #1169 submodule-detection helpers. Bottom-of-file already
 // aliases existsSync as `_existsSync` for other purposes; the top-of-file
 // import keeps the pruneDir helper's deps near its callsite.
-import { existsSync, statSync } from 'fs';
-import { join as pathJoin } from 'path';
+import { existsSync, statSync, realpathSync } from 'fs';
+import { join as pathJoin, resolve as pathResolve } from 'path';
+import type { BrainEngine } from './engine.ts';
 
 export interface SyncManifest {
   added: string[];
@@ -568,3 +569,82 @@ export type {
   SyncGateInput,
   SyncGateOutcome,
 } from './sync-failure-ledger.ts';
+
+/**
+ * #2114 — same-directory check for the global sync-anchor ownership guard.
+ * Best-effort realpath so symlinked spellings (macOS `/tmp` vs `/private/tmp`)
+ * and relative invocations compare as the same repo. `realpathSync.native`
+ * first: unlike the JS implementation it canonicalizes path CASE on
+ * case-insensitive filesystems (APFS `/users/x` vs `/Users/x`), so a
+ * case-variant spelling cannot false-refuse the user's own brain repo.
+ */
+export function sameRepoDir(a: string, b: string): boolean {
+  const norm = (p: string): string => {
+    const abs = pathResolve(p);
+    try {
+      return realpathSync.native(abs);
+    } catch {
+      // fall through
+    }
+    try {
+      return realpathSync(abs);
+    } catch {
+      return abs;
+    }
+  };
+  return norm(a) === norm(b);
+}
+
+export interface GlobalAnchorOwnership {
+  owns: boolean;
+  /** The path ownership was judged against (global key first, else the
+   * default source's local_path), or null on a truly fresh brain. */
+  configured: string | null;
+}
+
+/**
+ * #2114 — may an import/sync of `dir` move the GLOBAL sync anchors
+ * (`sync.repo_path` / `sync.last_commit`)?
+ *
+ * The globals describe THE brain repo — the default source's working tree
+ * (source-resolver.ts documents `sync.repo_path` as the legacy pre-v0.18
+ * default-source key; migration v16 seeds the `default` source row FROM it).
+ * Ownership therefore requires BOTH:
+ *   1. the operation resolves to the default source (or the legacy
+ *      no-sourceId path, which is default-by-definition), AND
+ *   2. `dir` matches the brain repo's configured identity — the global key
+ *      when set, else the default source row's `local_path` when set
+ *      (modern sync writes its anchor THERE, leaving the global unset, so
+ *      an unset global alone must not green-light a bootstrap).
+ * Only when neither identity exists is this a fresh brain, and bootstrap
+ * is allowed.
+ */
+export async function ownsGlobalSyncAnchor(
+  engine: BrainEngine,
+  sourceId: string | undefined,
+  dir: string,
+): Promise<GlobalAnchorOwnership> {
+  if (sourceId && sourceId !== 'default') {
+    return { owns: false, configured: null };
+  }
+  const globalPath = await engine.getConfig('sync.repo_path');
+  if (globalPath) {
+    return { owns: sameRepoDir(globalPath, dir), configured: globalPath };
+  }
+  // Global unset — the brain identity may still live on the default source
+  // row (modern sync writes anchors there). Best-effort: a query failure
+  // falls through to bootstrap, preserving pre-#2114 behavior on exotic
+  // engines rather than refusing writes.
+  try {
+    const rows = await engine.executeRaw<{ local_path: string | null }>(
+      `SELECT local_path FROM sources WHERE id = 'default'`,
+    );
+    const defaultLocal = rows[0]?.local_path ?? null;
+    if (defaultLocal) {
+      return { owns: sameRepoDir(defaultLocal, dir), configured: defaultLocal };
+    }
+  } catch {
+    // sources table unavailable (pre-v0.18 brain mid-upgrade) — treat as fresh.
+  }
+  return { owns: true, configured: null };
+}

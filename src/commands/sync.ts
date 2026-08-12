@@ -19,6 +19,7 @@ import {
   isSkippablePath,
   resolveAutoSkipThreshold,
   DEFAULT_SOURCE_ID,
+  ownsGlobalSyncAnchor,
 } from '../core/sync.ts';
 import {
   computeSyncDelta,
@@ -1311,7 +1312,7 @@ async function isAnchorOwnedSyncPath(
   }
 }
 
-async function writeSyncAnchor(
+export async function writeSyncAnchor(
   engine: BrainEngine,
   sourceId: string | undefined,
   which: 'repo_path' | 'last_commit',
@@ -1323,6 +1324,11 @@ async function writeSyncAnchor(
   // git-intrinsic committer time of the HEAD we just synced). `undefined` keeps
   // the legacy 2-column write; `null` clears the column (git unavailable).
   newestContentEpochMs?: number | null,
+  // #2114: the repo dir this anchor write is FOR. Required to guard the
+  // legacy branch's `last_commit` writes (where `value` is a hash, not a
+  // dir). `repo_path` writes self-describe via `value`. Callers that omit
+  // it on a legacy-path last_commit write keep pre-#2114 behavior.
+  repoDir?: string,
 ): Promise<void> {
   if (sourceId) {
     const col = which === 'repo_path' ? 'local_path' : 'last_commit';
@@ -1350,9 +1356,25 @@ async function writeSyncAnchor(
     }
     return;
   }
-  // Legacy no-sourceId path (pre-v0.18 global config). Modern sync always
-  // resolves a sourceId (incl. 'default'), so newest_content_at is written via
-  // the sourceId branch above; the default source is not stuck on NULL.
+  // Legacy no-sourceId path (pre-v0.18 global config; also reached when a
+  // caller could not resolve a source for the dir — dream --dir on an
+  // unregistered directory, minion sync with an unmatched repoPath). #2114:
+  // these globals describe THE brain repo, and this branch used to write
+  // them unconditionally — a full-sync fallback against a foreign directory
+  // silently repointed put_page write-through and poisoned the incremental
+  // anchor. Refuse to move them for a directory that isn't the brain repo.
+  const anchorDir = which === 'repo_path' ? value : repoDir;
+  if (anchorDir !== undefined) {
+    const { owns, configured } = await ownsGlobalSyncAnchor(engine, undefined, anchorDir);
+    if (!owns) {
+      serr(
+        `[sync] sync.${which} stays at ${configured ?? '(unset)'} — not moving the ` +
+        `global anchor for "${anchorDir}". To make that directory the brain repo: ` +
+        `gbrain config set sync.repo_path "${anchorDir}"`,
+      );
+      return;
+    }
+  }
   await engine.setConfig(`sync.${which}`, value);
 }
 
@@ -2493,7 +2515,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // (#1794): advance to the PINNED target, and clear any checkpoint (a resume
     // whose remaining range turned out to have no syncable changes still
     // completes cleanly here).
-    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(gitContextRoot, pin));
+    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(gitContextRoot, pin), gitContextRoot);
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
     await clearOpCheckpoint(engine, ckpt.paths);
@@ -3401,7 +3423,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // "fresh". The checkpoint rows clear here — CONVERGENCE CONTRACT: sync
     // convergence == IMPORT convergence; downstream extract/facts/embed is
     // decoupled (its own resumable stale sweeps).
-    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(gitContextRoot, pin));
+    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(gitContextRoot, pin), gitContextRoot);
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeSyncAnchor(engine, opts.sourceId, 'repo_path', anchorPath);
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
@@ -3752,7 +3774,7 @@ async function performFullSync(
   const advanceFull = async (): Promise<void> => {
     // Persist sync state so the next sync is incremental. Routed through
     // writeSyncAnchor so --source pins the right sources row.
-    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit, newestCommitMs(gitContextRoot));
+    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit, newestCommitMs(gitContextRoot), gitContextRoot);
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeSyncAnchor(engine, opts.sourceId, 'repo_path', anchorPath);
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
