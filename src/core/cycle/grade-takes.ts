@@ -48,9 +48,9 @@ import type { PhaseStatus, CyclePhase } from '../cycle.ts';
  * stay valid (composite cache key includes prompt_version); new runs re-spend
  * LLM tokens.
  */
-export const GRADE_TAKES_PROMPT_VERSION = 'v0.45.11.0-native-evidence';
+export const GRADE_TAKES_PROMPT_VERSION = 'v0.45.9.1-asmitty.1-native-evidence';
 
-export const GRADE_TAKE_PROMPT = `[v0.45.11.0-native-evidence] You are grading a single forecasting take. The author
+export const GRADE_TAKE_PROMPT = `[v0.45.9.1-asmitty.1-native-evidence] You are grading a single forecasting take. The author
 made this claim on the given date. Based on the evidence provided, did the
 claim turn out to be:
 - correct        (the world plays out as predicted)

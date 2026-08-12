@@ -2,13 +2,13 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.45.11.0] - 2026-08-12
+## [0.45.9.1-asmitty.1] - 2026-08-12
 
 **Dream reasoning now uses the model assigned to each phase, and fact consolidation produces model-synthesized takes instead of copying one input fact.**
 
 Extracted facts now reach consolidation reliably: entity attribution resolves to one live page, similarity thresholds are configurable, histories larger than 100 facts are fully scanned, and blocked buckets explain why they were skipped. Consolidation resolves `models.consolidate`, synthesizes one grounded claim per eligible cluster through the provider-neutral gateway, enforces a bounded per-run model budget, and refreshes the cycle lock while it works.
 
-## To take advantage of v0.45.11.0
+## To take advantage of v0.45.9.1-asmitty.1
 
 1. Upgrade with `gbrain upgrade`.
 2. Run `gbrain models` to verify the resolved routes for consolidation, atom/concept synthesis, take proposal/grading, calibration, and thin-page enrichment.
