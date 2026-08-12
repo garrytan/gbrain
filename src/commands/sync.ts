@@ -1039,7 +1039,71 @@ export function discoverGitRoot(inputPath: string): string {
  * gbrain.yml, or a semantic overlap) propagates — better to leave this
  * self-heal wedged with a clear error than commit unknown content.
  */
-function createSyncBaselineCommit(repoPath: string): void {
+/**
+ * Classify a caught `git rev-parse --verify --quiet HEAD` failure for the
+ * baseline-commit guard. A genuinely UNBORN HEAD makes git exit with status
+ * EXACTLY 1 and nothing on stderr — precisely what `--verify --quiet` emits
+ * for an unresolvable HEAD (verified empirically: unborn => exit 1, empty
+ * stderr; born => exit 0). Every OTHER failure shape — a 30s timeout (killed
+ * by signal, so `status` is null), an index/ref lock (`fatal: Unable to
+ * create ...lock`, non-empty stderr), or any nonzero-but-not-1 exit — is NOT
+ * proof the repo is empty; it is the transient-probe-failure class that
+ * corrupted the live brain on 2026-08-10. Return 'unborn' ONLY for the clean
+ * signal so the caller fails CLOSED on 'ambiguous'. Pure (no I/O) so the
+ * distinction is unit-testable without fault injection.
+ */
+export function classifyHeadProbeError(err: unknown): 'unborn' | 'ambiguous' {
+  const e = (err ?? {}) as { status?: number | null; signal?: string | null; stderr?: unknown };
+  const stderr = e.stderr == null ? '' : String(e.stderr).trim();
+  return e.status === 1 && e.signal == null && stderr === '' ? 'unborn' : 'ambiguous';
+}
+
+export function createSyncBaselineCommit(repoPath: string): void {
+  // Fail-closed backstop (2026-08-10 auto-init incident). This function's
+  // ENTIRE contract is "snapshot an unborn/uninitialized repo as its FIRST
+  // commit". It must NEVER run on a repo that already has commits: doing so
+  // stacks a spurious `gbrain: initial commit (auto-init by sync)` commit ON
+  // TOP of real history and, on a case-insensitive filesystem, re-cases the
+  // whole tree (`projects` -> `Projects`) as a `git add -A` side effect.
+  //
+  // Both call sites are *supposed* to reach here only on an unborn/non-git
+  // repo, but each infers "unborn" from a FAILURE to observe git state
+  // (`discoverGitRoot` threw / `git rev-parse HEAD` threw), and those probes
+  // ALSO fail transiently — a 30s timeout on a large brain, or a concurrent
+  // `gbrain-sync` holding a git lock — against a fully-populated repo, which
+  // is exactly what corrupted the live brain on 2026-08-10. So we cannot
+  // trust "the caller said it's unborn"; verify POSITIVELY here — and, since
+  // this very probe is subject to the same transient failures, accept ONLY a
+  // CLEAN unborn signal. A born HEAD (exit 0) OR an ambiguous probe failure
+  // (timeout / lock / other) both REFUSE, so the backstop is fail-closed
+  // against every corruption path, not just the born-HEAD one.
+  // `classifyHeadProbeError` isolates that born/unborn/ambiguous distinction
+  // as a pure, unit-tested predicate.
+  //
+  // Known non-incident edge (B2, documented not fixed): an orphan branch
+  // (`git switch --orphan`) in a repo with history elsewhere probes as unborn
+  // and would still be baselined. A gbrain brain is never in that state; it is
+  // not the incident (no stacking on real history, no re-case of other
+  // branches), so it is left as a limitation rather than complicating the
+  // guard with a `rev-list --all` "commits anywhere" probe.
+  let headState: 'born' | 'unborn' | 'ambiguous';
+  try {
+    git(repoPath, ['rev-parse', '--verify', '--quiet', 'HEAD'], [], 30000, { silenceStderr: true });
+    headState = 'born';
+  } catch (err) {
+    headState = classifyHeadProbeError(err);
+  }
+  if (headState !== 'unborn') {
+    throw new Error(
+      `Refusing to create a sync baseline commit in ${repoPath}: HEAD probe is ` +
+        `'${headState}', expected a clean unborn HEAD. 'born' = the repo already ` +
+        `has commits (real history); 'ambiguous' = the HEAD check failed ` +
+        `transiently (30s timeout, or a concurrent gbrain-sync holding a git ` +
+        `lock), which is NOT proof the repo is empty. Committing either way ` +
+        `would stack a bogus auto-init commit on real history and re-case the ` +
+        `tree on a case-insensitive filesystem.`,
+    );
+  }
   // #2964: db_only exclusion is computed directly from loadStorageConfig
   // and passed to `git add` as pathspecs — deliberately NOT via
   // manageGitignore/.gitignore, for two independent reasons:
@@ -1975,10 +2039,41 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     ) {
       throw err;
     }
-    serr(`[gbrain] auto-recovery: git-initializing brain dir ${repoPath} (no git repo found).`);
-    git(repoPath, ['init', '--quiet']);
-    createSyncBaselineCommit(repoPath);
-    gitContextRoot = realpathSync(discoverGitRoot(repoPath));
+    // 2026-08-10 incident guard. `discoverGitRoot` is a 30s-bounded
+    // `git rev-parse --show-toplevel` that walks UP; it can throw for reasons
+    // OTHER than "no git repo" — a transient timeout on a large brain, or a
+    // concurrent `gbrain-sync` holding a git lock — on a directory that IS a
+    // git repo, whether the repo root is `repoPath` itself OR an ANCESTOR
+    // (subdir-anchored brain, the #753/#774 monorepo pattern). Trusting a
+    // single throw and running `git init` (a no-op reinit at repoPath, or a
+    // NEW nested repo shadowing the ancestor) + baseline-commit stacks a
+    // spurious auto-init commit and re-cases the tree on a case-insensitive
+    // filesystem. So do NOT self-heal on one throw — re-probe once:
+    //   - re-probe SUCCEEDS => the first throw was transient and the repo
+    //     (own or ancestor) is real; use it, never init/commit.
+    //   - re-probe THROWS but `.git` is present at repoPath => a real but
+    //     unreadable repo (corrupt, broken gitlink, or a persistent transient)
+    //     — NEVER init/commit over it; surface the original error.
+    //   - re-probe THROWS and no `.git` at repoPath => genuinely not a git
+    //     repo anywhere up the tree; self-heal.
+    // The createSyncBaselineCommit chokepoint is the fail-closed backstop if
+    // this ever reaches a baseline on a repo that turns out to have commits.
+    let reprobedRoot: string | null = null;
+    try {
+      reprobedRoot = discoverGitRoot(repoPath);
+    } catch {
+      reprobedRoot = null;
+    }
+    if (reprobedRoot !== null) {
+      gitContextRoot = realpathSync(reprobedRoot);
+    } else if (existsSync(join(repoPath, '.git'))) {
+      throw err;
+    } else {
+      serr(`[gbrain] auto-recovery: git-initializing brain dir ${repoPath} (no git repo found).`);
+      git(repoPath, ['init', '--quiet']);
+      createSyncBaselineCommit(repoPath);
+      gitContextRoot = realpathSync(discoverGitRoot(repoPath));
+    }
   }
   const rawScopeRoot = opts.srcSubpath ? join(repoPath, opts.srcSubpath) : repoPath;
   if (!existsSync(rawScopeRoot)) {
