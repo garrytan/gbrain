@@ -315,11 +315,25 @@ function collectValidationErrors(
     }
   }
 
-  // 6. YAML_PARSE — gray-matter threw.
-  if (ctx.yamlParseError) {
+  const looksLikeFrontmatter = hasFrontmatterFieldSyntax(fmBody);
+
+  // 6. YAML_PARSE — validate the fenced YAML directly. gray-matter normally
+  // throws for malformed frontmatter, but it can also return the whole file as
+  // body with empty data, so the validation surface must not depend only on
+  // gray-matter's parse path. Gate this on frontmatter-shaped fields so a
+  // leading Markdown thematic break / epigraph is preserved as body content.
+  let detectedYamlParseError = looksLikeFrontmatter ? ctx.yamlParseError : null;
+  if (!detectedYamlParseError && looksLikeFrontmatter) {
+    try {
+      yamlSafeLoad(fmBody);
+    } catch (e) {
+      detectedYamlParseError = e as Error;
+    }
+  }
+  if (detectedYamlParseError) {
     errors.push({
       code: 'YAML_PARSE',
-      message: `YAML parse failed: ${ctx.yamlParseError.message}`,
+      message: `YAML parse failed: ${detectedYamlParseError.message}`,
       line: firstNonEmpty + 1,
     });
   }
@@ -349,6 +363,17 @@ function collectValidationErrors(
       });
     }
   }
+}
+
+function hasFrontmatterFieldSyntax(fmBody: string): boolean {
+  for (const line of fmBody.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0 || trimmed.startsWith('#')) continue;
+    if (/^(?:['"][^'"]+['"]|[A-Za-z_][\w.-]*)\s*:/.test(trimmed)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
