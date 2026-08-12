@@ -289,6 +289,11 @@ export async function runImport(
   const importedSlugs: string[] = [];
   const errorCounts: Record<string, number> = {};
   const failures: Array<{ path: string; error: string }> = []; // Bug 9
+  // #3839: paths that succeeded (imported OR unchanged) this run, keyed the
+  // same way as `failures` above (importRelPath) so a path that failed on a
+  // prior run and now succeeds clears its ledger row instead of staying
+  // `open` forever.
+  const succeededPaths: string[] = [];
   const startTime = Date.now();
 
   // Progress on stderr so stdout stays clean for the final summary / --json payload.
@@ -328,6 +333,7 @@ export async function runImport(
         importedSlugs.push(result.slug);
         // v0.33.2: path-based checkpoint — record only on success.
         completed.add(relativePath);
+        succeededPaths.push(importRelPath); // #3839
       } else {
         skipped++;
         if (result.error && result.error !== 'unchanged') {
@@ -340,6 +346,7 @@ export async function runImport(
           // 'unchanged' or no-error skip: content_hash matched a prior
           // successful import, so this file IS done for checkpoint purposes.
           completed.add(relativePath);
+          succeededPaths.push(importRelPath); // #3839
         }
       }
     } catch (e: unknown) {
@@ -568,6 +575,18 @@ export async function runImport(
     if (failures.length > 0) {
       const { recordFailures } = await import('../core/sync.ts');
       recordFailures(opts.sourceId ?? 'default', failures, gitHead);
+    }
+
+    // #3839: a path that failed on a prior run and succeeded (imported or
+    // unchanged) this run must clear its ledger row — pre-fix, clearFailures
+    // existed but had no caller anywhere, so `open` rows never healed short
+    // of a manual `gbrain sync --skip-failed`. Runs on every non-empty
+    // success list regardless of whether this SAME run also had failures,
+    // so a stale row from an earlier run gets cleared even if today's run
+    // is only partially clean.
+    if (succeededPaths.length > 0) {
+      const { clearFailures } = await import('../core/sync.ts');
+      clearFailures(opts.sourceId ?? 'default', succeededPaths);
     }
 
     // #2114 guard: the global sync.* keys describe THE brain repo (the
