@@ -30,6 +30,7 @@ import {
 } from '../src/core/cycle/grade-takes.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import type { BrainEngine, Take, TakeResolution } from '../src/core/engine.ts';
+import { BudgetMeter } from '../src/core/cycle/budget-meter.ts';
 
 // ─── Mock engine ────────────────────────────────────────────────────
 
@@ -46,6 +47,7 @@ interface CapturedResolve {
 function buildMockEngine(opts: {
   takes: Take[];
   cachedGrades?: Set<string>; // composite-key strings already in take_grade_cache
+  config?: Record<string, string>;
 }): { engine: BrainEngine; captured: CapturedSql[]; resolves: CapturedResolve[] } {
   const captured: CapturedSql[] = [];
   const resolves: CapturedResolve[] = [];
@@ -53,6 +55,9 @@ function buildMockEngine(opts: {
 
   const engine = {
     kind: 'pglite',
+    async getConfig(key: string): Promise<string | null> {
+      return opts.config?.[key] ?? null;
+    },
     async listTakes() {
       return opts.takes;
     },
@@ -362,5 +367,57 @@ describe('judge model follows the gateway chat model (label = actual)', () => {
     } finally {
       resetGateway();
     }
+  });
+
+  test('models.grade_takes overrides the gateway and drives hint, cache key, and telemetry', async () => {
+    const { configureGateway, resetGateway } = await import('../src/core/ai/gateway.ts');
+    configureGateway({ chat_model: 'openai:gpt-5', env: { OPENAI_API_KEY: 'test-key' } });
+    try {
+      const takes = [buildTake({ id: 2, sinceDate: '2023-01-01' })];
+      const { engine, captured } = buildMockEngine({
+        takes,
+        config: { 'models.grade_takes': 'anthropic:claude-haiku-4-5' },
+      });
+      const hints: Array<string | undefined> = [];
+      const judge: JudgeFn = async ({ modelHint }) => {
+        hints.push(modelHint);
+        return { verdict: 'correct', confidence: 0.9, reasoning: 'held' };
+      };
+      const result = await runPhaseGradeTakes(buildCtx(engine), {
+        judge,
+        evidenceRetriever: async () => 'evidence body',
+      });
+
+      expect(hints).toEqual(['anthropic:claude-haiku-4-5']);
+      expect(result.details.model).toBe('anthropic:claude-haiku-4-5');
+      const insert = captured.find(c => c.sql.includes('INSERT INTO take_grade_cache'));
+      expect(insert!.params[2]).toBe('claude-haiku-4-5');
+    } finally {
+      resetGateway();
+    }
+  });
+
+  test('budgets a configured OpenAI judge with its provider-prefixed model id', async () => {
+    const takes = [buildTake({ id: 3, sinceDate: '2023-01-01' })];
+    const { engine } = buildMockEngine({
+      takes,
+      config: { 'models.grade_takes': 'openai:gpt-4.1-mini' },
+    });
+    let judgeCalls = 0;
+    const result = await runPhaseGradeTakes(buildCtx(engine), {
+      judge: async () => {
+        judgeCalls++;
+        return { verdict: 'correct', confidence: 0.9, reasoning: 'held' };
+      },
+      evidenceRetriever: async () => 'evidence body',
+      meter: new BudgetMeter({
+        budgetUsd: 0.000001,
+        phase: 'grade_takes',
+      }),
+    });
+
+    expect(result.status).toBe('warn');
+    expect(result.details.budget_exhausted).toBe(true);
+    expect(judgeCalls).toBe(0);
   });
 });

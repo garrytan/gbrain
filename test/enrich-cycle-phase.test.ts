@@ -78,10 +78,12 @@ describe('runPhaseEnrichThin', () => {
   test('details carry config knobs for observability', async () => {
     await engine.setConfig('cycle.enrich_thin.enabled', 'true');
     await engine.setConfig('cycle.enrich_thin.order', 'updated');
+    await engine.setConfig('models.enrich_thin', 'openai:gpt-4.1-mini');
     const r = await runPhaseEnrichThin(engine, { dryRun: true });
     expect(r.status).toBe('ok');
     expect(r.details.order).toBe('updated');
     expect(r.details.max_pages_per_tick).toBe(3); // default
+    expect(r.details.model).toBe('openai:gpt-4.1-mini');
     expect(Array.isArray(r.details.types)).toBe(true);
   });
 

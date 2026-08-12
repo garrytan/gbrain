@@ -41,6 +41,7 @@ import {
   ALLOWED_TYPES,
   pageTypesForAllowed,
   ALLOWED_TYPE_ALIASES,
+  canonicalizeExtractedFactEntities,
 } from '../src/commands/extract-conversation-facts.ts';
 import { _resetLlmCacheForTests } from '../src/core/conversation-parser/llm-base.ts';
 import { BudgetExhausted } from '../src/core/budget/budget-tracker.ts';
@@ -396,6 +397,210 @@ describe('runExtractConversationFactsCore', () => {
     );
   });
 
+  test('canonicalizes display names and aliases, but clears unresolved attribution', async () => {
+    await engine.putPage('people/alice-example', {
+      type: 'person',
+      title: 'Alice Example',
+      compiled_truth: 'test person',
+    });
+    await engine.setPageAliases('people/alice-example', 'default', ['example, alice']);
+
+    const base = {
+      fact: 'test fact',
+      kind: 'fact' as const,
+      source: 'test',
+      confidence: 0.9,
+    };
+    const rows = await canonicalizeExtractedFactEntities(engine, 'default', [
+      { ...base, entity_slug: 'Alice Example' },
+      { ...base, entity_slug: 'Example, Alice' },
+      { ...base, entity_slug: 'people/alice-example' },
+      { ...base, entity_slug: 'No Such Person' },
+    ]);
+
+    expect(rows.map(row => row.entity_slug)).toEqual([
+      'people/alice-example',
+      'people/alice-example',
+      'people/alice-example',
+      null,
+    ]);
+  });
+
+  test('uses a unique alias that cannot fuzzy-match the page title', async () => {
+    await engine.putPage('people/canonical-robin-example', {
+      type: 'person',
+      title: 'Robin Example',
+      compiled_truth: 'test person',
+    });
+    await engine.setPageAliases('people/canonical-robin-example', 'default', ['captain banana']);
+
+    const rows = await canonicalizeExtractedFactEntities(engine, 'default', [{
+      fact: 'test fact',
+      kind: 'fact',
+      source: 'test',
+      confidence: 0.9,
+      entity_slug: 'Captain Banana',
+    }]);
+
+    expect(rows[0].entity_slug).toBe('people/canonical-robin-example');
+  });
+
+  test('clears blank and ambiguous alias attribution instead of guessing', async () => {
+    for (const slug of ['people/canonical-one-example', 'people/canonical-two-example']) {
+      await engine.putPage(slug, {
+        type: 'person',
+        title: slug,
+        compiled_truth: 'test person',
+      });
+      await engine.setPageAliases(slug, 'default', ['shared callsign']);
+    }
+
+    const base = {
+      fact: 'test fact',
+      kind: 'fact' as const,
+      source: 'test',
+      confidence: 0.9,
+    };
+    const rows = await canonicalizeExtractedFactEntities(engine, 'default', [
+      { ...base, entity_slug: '   ' },
+      { ...base, entity_slug: 'Shared Callsign' },
+    ]);
+
+    expect(rows.map(row => row.entity_slug)).toEqual([null, null]);
+  });
+
+  test('clears duplicate-title attribution and keeps title matches source-scoped', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('other', 'Other') ON CONFLICT (id) DO NOTHING`,
+    );
+    await engine.putPage('people/canonical-title-one', {
+      type: 'person',
+      title: 'Shared Display Name',
+      compiled_truth: 'default source one',
+    });
+    await engine.putPage('people/canonical-title-two', {
+      type: 'person',
+      title: 'Shared Display Name',
+      compiled_truth: 'default source two',
+    });
+    // A single alias candidate must not override an already-ambiguous title.
+    await engine.setPageAliases('people/canonical-title-one', 'default', ['shared display name']);
+    await engine.putPage('people/canonical-other-source', {
+      type: 'person',
+      title: 'Other Source Only',
+      compiled_truth: 'other source',
+    }, { sourceId: 'other' });
+
+    const base = {
+      fact: 'test fact',
+      kind: 'fact' as const,
+      source: 'test',
+      confidence: 0.9,
+    };
+    const rows = await canonicalizeExtractedFactEntities(engine, 'default', [
+      { ...base, entity_slug: 'shared display name' },
+      { ...base, entity_slug: 'Other Source Only' },
+    ]);
+
+    expect(rows.map(row => row.entity_slug)).toEqual([null, null]);
+  });
+
+  test('does not resolve aliases that point at a deleted page', async () => {
+    await engine.putPage('people/canonical-deleted-example', {
+      type: 'person',
+      title: 'Deleted Example',
+      compiled_truth: 'test person',
+    });
+    await engine.setPageAliases('people/canonical-deleted-example', 'default', ['former callsign']);
+    await engine.executeRaw(
+      `UPDATE pages SET deleted_at = now()
+       WHERE source_id = 'default' AND slug = 'people/canonical-deleted-example'`,
+    );
+
+    const rows = await canonicalizeExtractedFactEntities(engine, 'default', [{
+      fact: 'test fact',
+      kind: 'fact',
+      source: 'test',
+      confidence: 0.9,
+      entity_slug: 'Former Callsign',
+    }]);
+
+    expect(rows[0].entity_slug).toBeNull();
+  });
+
+  test('propagates page lookup failures so extraction can retry', async () => {
+    await engine.putPage('people/canonical-fallback-example', {
+      type: 'person',
+      title: 'Fallback Example',
+      compiled_truth: 'test person',
+    });
+    await engine.setPageAliases('people/canonical-fallback-example', 'default', ['fallback callsign']);
+
+    const originalExecuteRaw = engine.executeRaw.bind(engine);
+    engine.executeRaw = (async (sql: string, params?: unknown[]) => {
+      if (sql.includes('SELECT slug, title') && sql.includes('FROM pages')) {
+        throw new Error('legacy page lookup unavailable');
+      }
+      return originalExecuteRaw(sql, params);
+    }) as typeof engine.executeRaw;
+    try {
+      await expect(canonicalizeExtractedFactEntities(engine, 'default', [{
+        fact: 'test fact',
+        kind: 'fact',
+        source: 'test',
+        confidence: 0.9,
+        entity_slug: 'Fallback Callsign',
+      }])).rejects.toThrow('legacy page lookup unavailable');
+    } finally {
+      engine.executeRaw = originalExecuteRaw;
+    }
+  });
+
+  test('propagates alias lookup failures so extraction can retry', async () => {
+    const originalExecuteRaw = engine.executeRaw.bind(engine);
+    engine.executeRaw = (async (sql: string, params?: unknown[]) => {
+      if (sql.includes('FROM page_aliases pa')) throw new Error('temporary alias outage');
+      return originalExecuteRaw(sql, params);
+    }) as typeof engine.executeRaw;
+    try {
+      await expect(canonicalizeExtractedFactEntities(engine, 'default', [{
+        fact: 'test fact',
+        kind: 'fact',
+        source: 'test',
+        confidence: 0.9,
+        entity_slug: 'No Match Anywhere',
+      }])).rejects.toThrow('temporary alias outage');
+    } finally {
+      engine.executeRaw = originalExecuteRaw;
+    }
+  });
+
+  test('batches page and alias resolution for distinct extracted entities', async () => {
+    const originalExecuteRaw = engine.executeRaw.bind(engine);
+    let pageQueries = 0;
+    let aliasQueries = 0;
+    engine.executeRaw = (async (sql: string, params?: unknown[]) => {
+      if (sql.includes('FROM page_aliases pa')) aliasQueries++;
+      else if (sql.includes('SELECT slug, title')) pageQueries++;
+      return originalExecuteRaw(sql, params);
+    }) as typeof engine.executeRaw;
+    try {
+      const facts = Array.from({ length: 10 }, (_, i) => ({
+        fact: `distinct fact ${i}`,
+        kind: 'fact' as const,
+        source: 'test',
+        confidence: 0.9,
+        entity_slug: `Distinct Unresolved Entity ${i}`,
+      }));
+      const rows = await canonicalizeExtractedFactEntities(engine, 'default', facts);
+      expect(rows.every(row => row.entity_slug === null)).toBe(true);
+      expect(pageQueries).toBe(1);
+      expect(aliasQueries).toBe(1);
+    } finally {
+      engine.executeRaw = originalExecuteRaw;
+    }
+  });
+
   afterAll(async () => {
     __setChatTransportForTests(null);
     __setEmbedTransportForTests(null);
@@ -422,7 +627,16 @@ describe('runExtractConversationFactsCore', () => {
     await engine.executeRaw(`DELETE FROM op_checkpoints WHERE op = 'extract-conversation-facts'`);
     await engine.executeRaw(`DELETE FROM extract_rollup_7d`);
     await engine.executeRaw(`DELETE FROM conversation_parser_llm_cache`);
-    await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE 'conversations/%' OR slug LIKE 'people/alice%'`);
+    await engine.executeRaw(
+      `DELETE FROM page_aliases
+       WHERE slug LIKE 'people/canonical-%' OR slug LIKE 'people/alice%'`,
+    );
+    await engine.executeRaw(
+      `DELETE FROM pages
+       WHERE slug LIKE 'conversations/%'
+          OR slug LIKE 'people/alice%'
+          OR slug LIKE 'people/canonical-%'`,
+    );
     // Set facts.extraction_enabled=true so kill-switch doesn't refuse.
     await engine.setConfig('facts.extraction_enabled', 'true');
     await engine.setConfig('conversation_parser.llm_fallback_enabled', 'false');
@@ -507,6 +721,50 @@ describe('runExtractConversationFactsCore', () => {
     expect(result.pages_processed).toBe(1);
     expect(result.facts_inserted).toBe(0);
     expect(result.segments_processed).toBeGreaterThanOrEqual(1);
+  });
+
+  test('persists canonical and unresolved entity attribution through the extraction pipeline', async () => {
+    await engine.putPage('people/canonical-pipeline-example', {
+      type: 'person',
+      title: 'Pipeline Person',
+      compiled_truth: 'test person',
+    });
+    await engine.setPageAliases('people/canonical-pipeline-example', 'default', ['pipeline callsign']);
+    await engine.putPage('conversations/canonicalization-pipeline', {
+      type: 'conversation',
+      title: 'Canonicalization pipeline fixture',
+      compiled_truth: [
+        fmt('Pipeline Person', '2026-06-02', '9:00 AM', 'First claim.'),
+        fmt('Other Person', '2026-06-02', '9:01 AM', 'Second claim.'),
+      ].join('\n'),
+      timeline: '',
+      frontmatter: {},
+    });
+    chatTextOverride = JSON.stringify({
+      facts: [
+        { fact: 'display-name pipeline fact', kind: 'fact', entity: 'Pipeline Person', confidence: 0.9 },
+        { fact: 'alias pipeline fact', kind: 'fact', entity: 'Pipeline Callsign', confidence: 0.9 },
+        { fact: 'unresolved pipeline fact', kind: 'fact', entity: 'No Such Pipeline Person', confidence: 0.9 },
+      ],
+    });
+
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: 'conversations/canonicalization-pipeline',
+      sleepMs: 0,
+    });
+    expect(result.facts_inserted).toBe(3);
+
+    const rows = await engine.executeRaw<{ fact: string; entity_slug: string | null }>(
+      `SELECT fact, entity_slug FROM facts
+       WHERE fact IN ('display-name pipeline fact', 'alias pipeline fact', 'unresolved pipeline fact')
+       ORDER BY fact`,
+    );
+    expect(rows).toEqual([
+      { fact: 'alias pipeline fact', entity_slug: 'people/canonical-pipeline-example' },
+      { fact: 'display-name pipeline fact', entity_slug: 'people/canonical-pipeline-example' },
+      { fact: 'unresolved pipeline fact', entity_slug: null },
+    ]);
   });
 
   test('dry-run does not write the extract_rollup_7d cache row', async () => {

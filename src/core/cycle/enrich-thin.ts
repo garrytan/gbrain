@@ -26,13 +26,15 @@
  *   cycle.enrich_thin.types                  (["person","company"])
  *   cycle.enrich_thin.order                  ("inbound-links")
  *   cycle.enrich_thin.workers                (1)
- *   cycle.enrich_thin.model                  (configured chat model)
+ *   models.enrich_thin                       (configured chat model)
+ *   cycle.enrich_thin.model                  (deprecated alias)
  */
 
 import type { BrainEngine } from '../engine.ts';
 import type { PageType } from '../types.ts';
 import { BudgetExhausted } from '../budget/budget-tracker.ts';
-import { isAvailable } from '../ai/gateway.ts';
+import { getChatModel, isAvailable } from '../ai/gateway.ts';
+import { resolveModel } from '../model-config.ts';
 import { listSources } from '../sources-ops.ts';
 import {
   runEnrichCore,
@@ -72,7 +74,7 @@ interface ResolvedConfig {
   types: PageType[];
   order: EnrichOrder;
   workers: number;
-  model?: string;
+  model: string;
 }
 
 async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
@@ -134,7 +136,11 @@ async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
     types,
     order,
     workers: parseIntOrDefault(workersRaw, 1),
-    model: model ?? undefined,
+    model: await resolveModel(engine, {
+      configKey: 'models.enrich_thin',
+      deprecatedConfigKey: 'cycle.enrich_thin.model',
+      fallback: model ?? getChatModel(),
+    }),
   };
 }
 
@@ -271,6 +277,7 @@ export async function runPhaseEnrichThin(
       max_pages_per_tick: cfg.maxPagesPerTick,
       types: cfg.types,
       order: cfg.order,
+      model: cfg.model,
       per_source: perSourceResults,
     },
   };

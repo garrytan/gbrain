@@ -37,6 +37,7 @@
 import { createHash } from 'node:crypto';
 import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
 import { chat as gatewayChat, getChatModel } from '../ai/gateway.ts';
+import { resolveModel } from '../model-config.ts';
 import { splitProviderModelId } from '../model-id.ts';
 import { GBrainError } from '../types.ts';
 import type { OperationContext } from '../operations.ts';
@@ -403,7 +404,11 @@ class GradeTakesPhase extends BaseCyclePhase {
     // into judge_model_id, the evidence signature, and budget metering — on
     // brains with a different chat_model, telemetry priced and recorded a
     // model that never ran.
-    const judgeModelFull = opts.model ?? getChatModel();
+    const judgeModelFull = await resolveModel(engine, {
+      cliFlag: opts.model,
+      configKey: 'models.grade_takes',
+      fallback: getChatModel(),
+    });
     // Bare tail for the stored judge_model_id + evidence signature
     // (historical convention). Stock installs are unchanged: getChatModel()
     // defaults to 'anthropic:claude-sonnet-4-6', whose tail equals the old
@@ -468,7 +473,9 @@ class GradeTakesPhase extends BaseCyclePhase {
 
       // Budget pre-check.
       const budget = this.checkBudget({
-        modelId: judgeModelId,
+        // Pricing needs the provider prefix; the bare tail remains only for
+        // the historical cache identity stored in judge_model_id.
+        modelId: judgeModelFull,
         estimatedInputTokens: 1200,
         maxOutputTokens: 400,
       });
@@ -619,6 +626,7 @@ class GradeTakesPhase extends BaseCyclePhase {
       details: {
         ...result,
         prompt_version: promptVersion,
+        model: judgeModelFull,
         auto_resolve: autoResolve,
         auto_resolve_threshold: autoResolveThreshold,
       },

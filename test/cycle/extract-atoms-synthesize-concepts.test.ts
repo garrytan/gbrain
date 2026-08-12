@@ -343,6 +343,30 @@ describe('v0.41 T6: runPhaseSynthesizeConcepts via stubbed chat', () => {
     expect(rows[0].compiled_truth).toContain('Custom synthesized narrative');
   });
 
+  test('models.synthesize_concepts is passed to the synthesis chat call', async () => {
+    await engine.setConfig('models.synthesize_concepts', 'openai:gpt-4.1-mini');
+    const atoms = Array.from({ length: 10 }, (_, i) => ({
+      slug: `s${i}`,
+      title: `T${i}`,
+      body: `b${i}`,
+      concept_refs: ['configured-model-theme'],
+    }));
+    const seenModels: Array<string | undefined> = [];
+    const chat = async (opts: ChatOpts) => {
+      seenModels.push(opts.model);
+      return stubChat('configured narrative')(opts);
+    };
+
+    const result = await runPhaseSynthesizeConcepts(engine, {
+      _atoms: atoms,
+      _chat: chat as typeof import('../../src/core/ai/gateway.ts').chat,
+      dryRun: true,
+    });
+
+    expect(seenModels).toEqual(['openai:gpt-4.1-mini']);
+    expect(result.details.model).toBe('openai:gpt-4.1-mini');
+  });
+
   // #2163: concept pages must enter the retrieval surface. The write routes
   // through importFromContent (the same parse→chunk pipeline put_page uses),
   // so content_chunks rows exist and source-boost's 1.3× 'concepts/' weight

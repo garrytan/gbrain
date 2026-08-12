@@ -40,6 +40,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
 import { chat as gatewayChat, getChatModel, probeChatModel } from '../ai/gateway.ts';
+import { resolveModel } from '../model-config.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
@@ -440,7 +441,14 @@ class ProposeTakesPhase extends BaseCyclePhase {
     const phaseStartMs = Date.now();
     const proposalRunId = `propose-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${randomUUID().slice(0, 8)}`;
 
-    const modelId = opts.model ?? getChatModel();
+    // Phase-specific config wins while preserving the configured gateway
+    // chat model as the stock-install fallback. This is the same native
+    // resolveModel -> gateway.chat path used by the other LLM dream phases.
+    const modelId = await resolveModel(engine, {
+      cliFlag: opts.model,
+      configKey: 'models.propose_takes',
+      fallback: getChatModel(),
+    });
 
     // With the default (gateway) extractor, skip cheaply when the resolved
     // model's provider can't run — same probe semantics as patterns.ts /
@@ -545,7 +553,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
           pagePath: page.slug,
           pageBody: body,
           existingTakes,
-          modelHint: opts.model,
+          modelHint: modelId,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -655,7 +663,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
 
     return {
       summary: `propose_takes: scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.proposals_inserted} new proposals, ${result.tombstones_written} empty (run ${proposalRunId})`,
-      details: { ...result, proposal_run_id: proposalRunId, prompt_version: promptVersion },
+      details: { ...result, proposal_run_id: proposalRunId, prompt_version: promptVersion, model: modelId },
       status: result.budget_exhausted || result.deadline_hit ? 'warn' : 'ok',
     };
   }

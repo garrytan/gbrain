@@ -12,7 +12,10 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { setupDB, teardownDB, hasDatabase, getEngine } from './helpers.ts';
-import { runPhaseConsolidate } from '../../src/core/cycle/phases/consolidate.ts';
+import {
+  runPhaseConsolidate,
+  type ConsolidatePhaseOpts,
+} from '../../src/core/cycle/phases/consolidate.ts';
 
 const RUN = hasDatabase();
 const d = RUN ? describe : describe.skip;
@@ -26,6 +29,9 @@ function unitVec(): string {
   a[0] = 1.0;
   return '[' + Array.from(a).join(',') + ']';
 }
+
+const testSynthesizer: NonNullable<ConsolidatePhaseOpts['synthesizeClaim']> = async ({ facts }) =>
+  facts.reduce((best, fact) => fact.confidence > best.confidence ? fact : best).fact;
 
 d('cycle consolidate phase (Postgres)', () => {
   test('promotes 4 same-vector facts about an entity into 1 take, never DELETE', async () => {
@@ -47,7 +53,7 @@ d('cycle consolidate phase (Postgres)', () => {
       );
     }
 
-    const result = await runPhaseConsolidate(engine, {});
+    const result = await runPhaseConsolidate(engine, { synthesizeClaim: testSynthesizer });
     expect(result.details.facts_consolidated).toBe(4);
     expect(result.details.takes_written).toBe(1);
 
@@ -88,7 +94,7 @@ d('cycle consolidate phase (Postgres)', () => {
         [`recent fact ${i}`, recent, unitVec()],
       );
     }
-    const result = await runPhaseConsolidate(engine, {});
+    const result = await runPhaseConsolidate(engine, { synthesizeClaim: testSynthesizer });
     // 'cons-recent' bucket should be skipped (oldest fact too young).
     const takes = await engine.executeRaw<{ id: number }>(
       `SELECT t.id FROM takes t JOIN pages p ON p.id = t.page_id WHERE p.slug = 'cons-recent'`,

@@ -93,6 +93,7 @@ import { withRefreshingLock, LockUnavailableError } from '../core/db-lock.ts';
 import { assertFactsEmbeddingDimMatchesConfig } from '../core/embedding-dim-check.ts';
 import { writeReceipt, shortRunId } from '../core/extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../core/extract/rollup-writer.ts';
+import { normalizeAlias } from '../core/search/alias-normalize.ts';
 
 // ---------------------------------------------------------------------------
 // Tunables (exported for tests).
@@ -337,6 +338,111 @@ export interface ExtractConversationFactsResult {
   facts_inserted: number;
   budget_exhausted?: boolean;
   spent_usd?: number;
+}
+
+/**
+ * Canonicalize extractor-owned entity strings before they reach facts.entity_slug.
+ *
+ * The extractor contract permits either a canonical slug or a display name. The
+ * latter is not a valid foreign identity by itself: consolidate can only attach a
+ * promoted take to an existing page in the same source. Keep the fact, but clear
+ * unresolved/ambiguous attribution instead of minting a permanently orphaned
+ * entity bucket.
+ *
+ * Resolution is deliberately fail-closed and bounded to two database reads:
+ *   1. Accept an exact page slug or unique case-insensitive page title.
+ *   2. Accept a normalized page alias only when it maps to exactly one live page.
+ *   3. Reject title/alias collisions and typo-only guesses as null.
+ * Lookup failures propagate so extraction retries instead of persisting lost
+ * attribution after a transient database outage.
+ */
+export async function canonicalizeExtractedFactEntities(
+  engine: BrainEngine,
+  sourceId: string,
+  facts: readonly ExtractedFact[],
+): Promise<ExtractedFact[]> {
+  const factKeys: Array<string | null> = [];
+  const rawByKey = new Map<string, string>();
+  for (const fact of facts) {
+    const raw = fact.entity_slug?.trim();
+    if (!raw) {
+      factKeys.push(null);
+      continue;
+    }
+    const key = normalizeAlias(raw) || raw;
+    factKeys.push(key);
+    if (!rawByKey.has(key)) rawByKey.set(key, raw);
+  }
+
+  const slugByKey = new Map<string, string | null>();
+  for (const key of rawByKey.keys()) slugByKey.set(key, null);
+
+  const rawValues = Array.from(rawByKey.values());
+  // ILIKE is backed by idx_pages_trgm. Exclude pattern metacharacters so an
+  // extracted entity can never broaden an exact-title lookup.
+  const literalTitles = rawValues.filter(raw => !/[\\%_]/.test(raw));
+  const pages = await engine.executeRaw<{ slug: string; title: string | null }>(
+    `SELECT slug, title
+     FROM pages
+     WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])
+     UNION
+     SELECT slug, title
+     FROM pages
+     WHERE source_id = $1 AND deleted_at IS NULL AND title ILIKE ANY($3::text[])`,
+    [sourceId, rawValues, literalTitles],
+  );
+  const titleCandidates = new Map<string, string[]>();
+  for (const page of pages) {
+    if (rawByKey.has(page.slug)) slugByKey.set(page.slug, page.slug);
+    const titleKey = normalizeAlias(page.title ?? '');
+    if (titleKey && rawByKey.has(titleKey)) {
+      const candidates = titleCandidates.get(titleKey) ?? [];
+      candidates.push(page.slug);
+      titleCandidates.set(titleKey, candidates);
+    }
+  }
+  const ambiguousTitleKeys = new Set<string>();
+  for (const [key, candidates] of titleCandidates) {
+    if (candidates.length === 1 && slugByKey.get(key) === null) {
+      slugByKey.set(key, candidates[0]);
+    } else if (candidates.length > 1 && slugByKey.get(key) === null) {
+      ambiguousTitleKeys.add(key);
+    }
+  }
+
+  const unresolvedKeys = Array.from(rawByKey.keys()).filter(
+    key => slugByKey.get(key) === null && !ambiguousTitleKeys.has(key),
+  );
+  const aliasNorms = Array.from(new Set(unresolvedKeys));
+  if (aliasNorms.length > 0) {
+    const aliasRows = await engine.executeRaw<{ alias_norm: string; slug: string }>(
+      `SELECT pa.alias_norm, pa.slug
+       FROM page_aliases pa
+       JOIN pages p ON p.source_id = pa.source_id AND p.slug = pa.slug
+       WHERE pa.source_id = $1
+         AND pa.alias_norm = ANY($2::text[])
+         AND p.deleted_at IS NULL
+       ORDER BY pa.alias_norm, pa.slug`,
+      [sourceId, aliasNorms],
+    );
+    const aliases = new Map<string, string[]>();
+    for (const row of aliasRows) {
+      const candidates = aliases.get(row.alias_norm) ?? [];
+      if (!candidates.includes(row.slug)) candidates.push(row.slug);
+      aliases.set(row.alias_norm, candidates);
+    }
+    for (const key of unresolvedKeys) {
+      const candidates = aliases.get(key) ?? [];
+      if (candidates.length === 1) {
+        slugByKey.set(key, candidates[0]);
+      }
+    }
+  }
+
+  return facts.map((fact, index) => {
+    const key = factKeys[index];
+    return { ...fact, entity_slug: key === null ? null : (slugByKey.get(key) ?? null) };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1027,6 +1133,12 @@ async function processPage(
       }
       extracted = extraction.facts;
     }
+
+    extracted = await canonicalizeExtractedFactEntities(
+      state.engine,
+      state.sourceId,
+      extracted,
+    );
 
     state.result.segments_processed++;
     segmentsThisPage++;

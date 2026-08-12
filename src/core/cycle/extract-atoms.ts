@@ -52,6 +52,7 @@ import type { PhaseResult } from '../cycle.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { ProgressReporter } from '../progress.ts';
 import { chat as gatewayChat, withBudgetTracker } from '../ai/gateway.ts';
+import { resolveModel } from '../model-config.ts';
 import { BudgetExhausted, BudgetTracker, isModelPriceable } from '../budget/budget-tracker.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
@@ -567,8 +568,11 @@ export async function runPhaseExtractAtoms(
   let extractModel = DEFAULT_EXTRACT_ATOMS_MODEL;
   let budgetCap = DEFAULT_BUDGET_USD;
   try {
-    const configuredModel = await engine.getConfig('models.dream.extract_atoms');
-    if (configuredModel) extractModel = configuredModel;
+    extractModel = await resolveModel(engine, {
+      configKey: 'models.extract_atoms',
+      deprecatedConfigKey: 'models.dream.extract_atoms',
+      fallback: DEFAULT_EXTRACT_ATOMS_MODEL,
+    });
     const configuredBudget = await engine.getConfig('cycle.extract_atoms.budget_usd');
     if (configuredBudget) {
       const n = Number(configuredBudget);

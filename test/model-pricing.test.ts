@@ -61,6 +61,12 @@ describe('CANONICAL_PRICING — table integrity', () => {
       CANONICAL_PRICING['google:gemini-2.0-flash'],
     );
   });
+
+  test('OpenAI GPT-4.1 family prices are canonical', () => {
+    expect(CANONICAL_PRICING['openai:gpt-4.1']).toEqual({ input: 2.0, output: 8.0 });
+    expect(CANONICAL_PRICING['openai:gpt-4.1-mini']).toEqual({ input: 0.4, output: 1.6 });
+    expect(CANONICAL_PRICING['openai:gpt-4.1-nano']).toEqual({ input: 0.1, output: 0.4 });
+  });
 });
 
 describe('canonicalLookup — id normalization', () => {

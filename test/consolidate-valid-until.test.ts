@@ -14,7 +14,10 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { runPhaseConsolidate } from '../src/core/cycle/phases/consolidate.ts';
+import {
+  runPhaseConsolidate,
+  type ConsolidatePhaseOpts,
+} from '../src/core/cycle/phases/consolidate.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
@@ -81,6 +84,13 @@ async function insertFact(args: {
   return r[0].id;
 }
 
+const testSynthesizer: NonNullable<ConsolidatePhaseOpts['synthesizeClaim']> = async ({ facts }) =>
+  facts.reduce((best, fact) => fact.confidence > best.confidence ? fact : best).fact;
+
+async function runConsolidate(opts: ConsolidatePhaseOpts = {}) {
+  return runPhaseConsolidate(engine, { synthesizeClaim: testSynthesizer, ...opts });
+}
+
 describe('R4a — chronological valid_until writeback', () => {
   test('cluster of 3 chronologically-ordered facts: 2 older get valid_until set, newest stays NULL', async () => {
     await seedPage('cdx4-acme-mrr');
@@ -106,7 +116,7 @@ describe('R4a — chronological valid_until writeback', () => {
       valid_from: newest,
     });
 
-    const r = await runPhaseConsolidate(engine, {});
+    const r = await runConsolidate();
     expect(r.details.facts_consolidated).toBe(3);
     expect(r.details.takes_written).toBe(1);
 
@@ -134,7 +144,7 @@ describe('R4a — chronological valid_until writeback', () => {
     const idB = await insertFact({ entity_slug: 'cdx4-acme-sameday', text: 'same day', valid_from: sameDay });
     const idC = await insertFact({ entity_slug: 'cdx4-acme-sameday', text: 'same day', valid_from: sameDay });
 
-    await runPhaseConsolidate(engine, {});
+    await runConsolidate();
 
     // All three valid_from values are equal; the (id ASC) tiebreaker
     // makes the lowest-id row the "oldest" chronologically. Pin that
@@ -168,7 +178,7 @@ describe('R4b / R7 — cycle idempotency: re-run consolidate produces zero new t
     }
 
     // First run: 1 take, 4 facts consolidated.
-    const r1 = await runPhaseConsolidate(engine, {});
+    const r1 = await runConsolidate();
     expect(r1.details.takes_written).toBe(1);
     const countAfter1 = await engine.executeRaw<{ n: string }>(
       `SELECT COUNT(*)::text AS n FROM takes WHERE page_id = (SELECT id FROM pages WHERE slug = 'cdx4-idempo-1')`,
@@ -186,7 +196,7 @@ describe('R4b / R7 — cycle idempotency: re-run consolidate produces zero new t
     );
 
     // Second run: must NOT append another take.
-    const r2 = await runPhaseConsolidate(engine, {});
+    const r2 = await runConsolidate();
     expect(r2.details.facts_consolidated).toBe(4);
     // takes_written reports the NEW takes inserted this run; on the upsert
     // hit path it's 0 (no new INSERT) but facts still get marked consolidated.
@@ -213,7 +223,7 @@ describe('R4b / R7 — cycle idempotency: re-run consolidate produces zero new t
     await insertFact({ entity_slug: 'cdx4-idempo-2', text: 'iterable', valid_from: t2 });
     await insertFact({ entity_slug: 'cdx4-idempo-2', text: 'iterable', valid_from: t3 });
 
-    await runPhaseConsolidate(engine, {});
+    await runConsolidate();
     const before = await engine.executeRaw<{ id: number; valid_until: Date | null }>(
       `SELECT id, valid_until FROM facts WHERE entity_slug = 'cdx4-idempo-2' ORDER BY valid_from ASC`,
     );
@@ -224,7 +234,7 @@ describe('R4b / R7 — cycle idempotency: re-run consolidate produces zero new t
        WHERE entity_slug = 'cdx4-idempo-2'`,
     );
 
-    await runPhaseConsolidate(engine, {});
+    await runConsolidate();
     const after = await engine.executeRaw<{ id: number; valid_until: Date | null }>(
       `SELECT id, valid_until FROM facts WHERE entity_slug = 'cdx4-idempo-2' ORDER BY valid_from ASC`,
     );

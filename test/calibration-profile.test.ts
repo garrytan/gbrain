@@ -32,7 +32,11 @@ interface CapturedSql {
   params: unknown[];
 }
 
-function buildMockEngine(opts: { scorecard: TakesScorecard; userHolder?: string | null }): {
+function buildMockEngine(opts: {
+  scorecard: TakesScorecard;
+  userHolder?: string | null;
+  config?: Record<string, string>;
+}): {
   engine: BrainEngine;
   captured: CapturedSql[];
 } {
@@ -44,7 +48,7 @@ function buildMockEngine(opts: { scorecard: TakesScorecard; userHolder?: string 
     },
     async getConfig(key: string): Promise<string | null> {
       if (key === 'emotional_weight.user_holder') return opts.userHolder ?? null;
-      return null;
+      return opts.config?.[key] ?? null;
     },
     async executeRaw<T>(sql: string, params?: unknown[]): Promise<T[]> {
       captured.push({ sql, params: params ?? [] });
@@ -380,6 +384,39 @@ describe('generator model follows the gateway chat model', () => {
       const insert = captured.find(c => c.sql.includes('INSERT INTO calibration_profiles'));
       expect(insert).toBeDefined();
       expect(insert!.params).toContain('openai:gpt-5'); // persisted model_id = full configured string
+    } finally {
+      resetGateway();
+    }
+  });
+
+  test('models.calibration_profile overrides the gateway and is persisted', async () => {
+    const { configureGateway, resetGateway } = await import('../src/core/ai/gateway.ts');
+    configureGateway({ chat_model: 'openai:gpt-5', env: { OPENAI_API_KEY: 'test-key' } });
+    try {
+      const { engine, captured } = buildMockEngine({
+        scorecard: ENOUGH_RESOLVED_SCORECARD,
+        config: { 'models.calibration_profile': 'anthropic:claude-haiku-4-5' },
+      });
+      const hints: Array<string | undefined> = [];
+      const gateHints: Array<string | undefined> = [];
+      const patternsGenerator: PatternStatementsGenerator = async ({ modelHint }) => {
+        hints.push(modelHint);
+        return ['You call early-stage tactics well — 8 of 10 held up.'];
+      };
+      const result = await runPhaseCalibrationProfile(buildCtx(engine), {
+        patternsGenerator,
+        biasTagsGenerator: async () => [],
+        voiceGateJudge: async ({ modelHint }) => {
+          gateHints.push(modelHint);
+          return { verdict: 'conversational', reason: 'fine' };
+        },
+      });
+
+      expect(hints).toEqual(['anthropic:claude-haiku-4-5']);
+      expect(gateHints).toEqual(['anthropic:claude-haiku-4-5']);
+      expect(result.details.model).toBe('anthropic:claude-haiku-4-5');
+      const insert = captured.find(c => c.sql.includes('INSERT INTO calibration_profiles'));
+      expect(insert!.params).toContain('anthropic:claude-haiku-4-5');
     } finally {
       resetGateway();
     }

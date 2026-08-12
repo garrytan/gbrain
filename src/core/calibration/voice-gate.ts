@@ -42,6 +42,8 @@ export type VoiceGateJudge = (input: {
   candidate: string;
   mode: VoiceGateMode;
   rubric: string;
+  /** Phase-resolved model. Defaults to the utility tier for other callers. */
+  modelHint?: string;
 }) => Promise<VoiceGateJudgeVerdict>;
 
 export interface VoiceGateResult<T = unknown> {
@@ -83,6 +85,8 @@ export interface VoiceGateOpts<S> {
   maxAttempts?: number;
   /** Inject the judge (tests). Production uses Haiku. */
   judge?: VoiceGateJudge;
+  /** Provider-prefixed model resolved by the owning phase. */
+  judgeModel?: string;
   /** Override the rubric per mode (rarely needed). */
   rubric?: string;
 }
@@ -154,13 +158,14 @@ export async function defaultJudge(input: {
   candidate: string;
   mode: VoiceGateMode;
   rubric: string;
+  modelHint?: string;
 }): Promise<VoiceGateJudgeVerdict> {
   const prompt = HAIKU_GATE_PROMPT
     .replace('{RUBRIC}', input.rubric)
     .replace('{CANDIDATE}', input.candidate);
   const result = await gatewayChat({
     messages: [{ role: 'user', content: prompt }],
-    model: TIER_DEFAULTS.utility,
+    model: input.modelHint ?? TIER_DEFAULTS.utility,
     maxTokens: 100,
   });
   return parseJudgeOutput(result.text);
@@ -220,7 +225,12 @@ export async function gateVoice<S>(opts: VoiceGateOpts<S>): Promise<VoiceGateRes
       lastReason = 'empty_generation';
       continue;
     }
-    const verdict = await judge({ candidate, mode: opts.mode, rubric });
+    const verdict = await judge({
+      candidate,
+      mode: opts.mode,
+      rubric,
+      ...(opts.judgeModel ? { modelHint: opts.judgeModel } : {}),
+    });
     if (verdict.verdict === 'conversational') {
       return { text: candidate, passed: true, attempts: attempt, lastReason: verdict.reason };
     }

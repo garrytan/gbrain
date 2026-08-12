@@ -2174,7 +2174,10 @@ export async function runCycle(
         const { runPhaseConsolidate } = await import('./cycle/phases/consolidate.ts');
         const { result, duration_ms } = await timePhase(() => runPhaseConsolidate(engine, {
           dryRun,
-          yieldDuringPhase: opts.yieldDuringPhase,
+          // Consolidation can run for many minutes over a large fact backlog.
+          // Refresh the cycle DB lock between buckets using the same native
+          // keepalive wrapper as extract_atoms and synthesize_concepts.
+          yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase),
           signal: opts.signal,
         }));
         result.duration_ms = duration_ms;

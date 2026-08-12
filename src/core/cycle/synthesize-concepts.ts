@@ -23,7 +23,8 @@ import type { PhaseResult } from '../cycle.ts';
 import type { ProgressReporter } from '../progress.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
-import { chat as gatewayChat, isAvailable } from '../ai/gateway.ts';
+import { chat as gatewayChat, getChatModel, isAvailable } from '../ai/gateway.ts';
+import { resolveModel } from '../model-config.ts';
 // #2163: concept pages route through importFromContent (the same
 // parse→chunk→embed pipeline put_page uses) instead of a bare engine.putPage,
 // so they land in the retrieval surface (content_chunks + embeddings) where
@@ -61,6 +62,8 @@ export interface SynthesizeConceptsOpts {
   progress?: ProgressReporter;
   /** Test seam: alternative chat function. */
   _chat?: typeof gatewayChat;
+  /** Explicit model override; otherwise models.synthesize_concepts resolves. */
+  model?: string;
   /** Test seam: skip DB query; cluster these atoms directly. */
   _atoms?: Array<{ slug: string; concept_refs: string[]; body: string; title: string }>;
 }
@@ -84,6 +87,11 @@ export async function runPhaseSynthesizeConcepts(
   opts: SynthesizeConceptsOpts = {},
 ): Promise<PhaseResult> {
   const chat = opts._chat ?? gatewayChat;
+  const model = await resolveModel(engine, {
+    cliFlag: opts.model,
+    configKey: 'models.synthesize_concepts',
+    fallback: getChatModel(),
+  });
 
   // 1. Get atom pages (test seam OR DB query)
   let atoms = opts._atoms ?? [];
@@ -196,6 +204,7 @@ export async function runPhaseSynthesizeConcepts(
       } else {
         try {
           const result = await chat({
+            model,
             system: SYNTH_PROMPT,
             messages: [
               {
@@ -318,6 +327,7 @@ export async function runPhaseSynthesizeConcepts(
       failures,
       estimated_spend_usd: estimatedSpendUsd,
       budget_usd: budgetCap,
+      model,
       dry_run: opts.dryRun ?? false,
     },
   };

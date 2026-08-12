@@ -28,6 +28,7 @@
 import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
 import { resolveOwnerHolder } from '../owner-holder.ts';
 import { chat as gatewayChat, getChatModel } from '../ai/gateway.ts';
+import { resolveModel } from '../model-config.ts';
 import { gateVoice, type VoiceGateGenerator, type VoiceGateJudge } from '../calibration/voice-gate.ts';
 import { patternStatementTemplate, type PatternStatementSlots } from '../calibration/templates.ts';
 // v0.41 T10 — domain widening. The aggregator module resolves the active
@@ -149,7 +150,7 @@ export async function defaultPatternsGenerator(input: {
 }
 
 /** Production bias-tags generator. */
-export async function defaultBiasTagsGenerator(patterns: string[]): Promise<string[]> {
+export async function defaultBiasTagsGenerator(patterns: string[], modelHint?: string): Promise<string[]> {
   if (patterns.length === 0) return [];
   const prompt = BIAS_TAGS_PROMPT.replace(
     '{PATTERNS_BULLETS}',
@@ -157,6 +158,7 @@ export async function defaultBiasTagsGenerator(patterns: string[]): Promise<stri
   );
   const result = await gatewayChat({
     messages: [{ role: 'user', content: prompt }],
+    ...(modelHint ? { model: modelHint } : {}),
     maxTokens: 200,
   });
   return parseBiasTagsOutput(result.text);
@@ -241,10 +243,15 @@ class CalibrationProfilePhase extends BaseCyclePhase {
     // contract (a bare id fed back into gateway.chat() throws), and its
     // default IS 'anthropic:claude-sonnet-4-6' — identical to the old
     // constant — so stock installs are unchanged.
-    const modelId = opts.model ?? getChatModel();
+    const modelId = await resolveModel(engine, {
+      cliFlag: opts.model,
+      configKey: 'models.calibration_profile',
+      fallback: getChatModel(),
+    });
     const gradeCompletion = opts.gradeCompletion ?? 1.0;
     const patternsGenerator = opts.patternsGenerator ?? defaultPatternsGenerator;
-    const biasTagsGenerator = opts.biasTagsGenerator ?? defaultBiasTagsGenerator;
+    const biasTagsGenerator = opts.biasTagsGenerator
+      ?? ((patterns: string[]) => defaultBiasTagsGenerator(patterns, modelId));
 
     const result: CalibrationProfileResult = {
       profile_written: false,
@@ -307,6 +314,7 @@ class CalibrationProfilePhase extends BaseCyclePhase {
         fn: patternStatementTemplate,
         slots: pickFallbackSlots(scorecard),
       },
+      judgeModel: modelId,
     };
     if (opts.voiceGateJudge) gateInput.judge = opts.voiceGateJudge;
     const gated = await gateVoice<PatternStatementSlots>(gateInput);
@@ -401,7 +409,7 @@ class CalibrationProfilePhase extends BaseCyclePhase {
         `calibration_profile: holder=${holder} brier=${(scorecard.brier ?? 0).toFixed(2)} ` +
         `(${scorecard.resolved} resolved, ${result.pattern_statements.length} patterns, ` +
         `${result.active_bias_tags.length} bias tags, gate ${gated.passed ? 'passed' : 'fell back to template'})`,
-      details: { ...result },
+      details: { ...result, model: modelId },
       status: 'ok',
     };
   }

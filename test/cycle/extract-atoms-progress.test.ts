@@ -137,7 +137,7 @@ describe('extract_atoms progress wiring (T4)', () => {
   });
 
   test('DB config can override the extract_atoms budget and model', async () => {
-    await engine.setConfig('models.dream.extract_atoms', 'anthropic:claude-haiku-4-5-20251001');
+    await engine.setConfig('models.extract_atoms', 'anthropic:claude-haiku-4-5-20251001');
     await engine.setConfig('cycle.extract_atoms.budget_usd', '0.12');
     const validAtomJson = JSON.stringify([
       { title: 'A', atom_type: 'insight', body: 'body a' },

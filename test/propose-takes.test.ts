@@ -44,12 +44,16 @@ interface CapturedSql {
 function buildMockEngine(opts: {
   pages: Page[];
   existingProposals?: Set<string>; // composite-key strings already in take_proposals
+  config?: Record<string, string>;
 }): { engine: BrainEngine; captured: CapturedSql[] } {
   const captured: CapturedSql[] = [];
   const existing = opts.existingProposals ?? new Set<string>();
 
   const engine = {
     kind: 'pglite',
+    async getConfig(key: string): Promise<string | null> {
+      return opts.config?.[key] ?? null;
+    },
     async listPages() {
       return opts.pages;
     },
@@ -548,6 +552,31 @@ New prose appended here.`;
       const insert = captured.find(c => c.sql.includes('INSERT INTO take_proposals'));
       expect(insert).toBeDefined();
       expect(insert!.params[11]).toBe('openai:gpt-5');
+    } finally {
+      resetGateway();
+    }
+  });
+
+  test('models.propose_takes overrides the gateway model and drives the actual extractor hint', async () => {
+    configureGateway({ chat_model: 'openai:gpt-5', env: { OPENAI_API_KEY: 'test-key' } });
+    try {
+      const pages = [buildPage({ slug: 'wiki/phase-model', body: 'phase model should win' })];
+      const { engine, captured } = buildMockEngine({
+        pages,
+        config: { 'models.propose_takes': 'anthropic:claude-haiku-4-5' },
+      });
+      const hints: Array<string | undefined> = [];
+      const extractor: ProposeTakesExtractor = async ({ modelHint }) => {
+        hints.push(modelHint);
+        return [{ claim_text: 'phase model should win', kind: 'take', holder: 'brain', weight: 0.5 }];
+      };
+
+      const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+      expect(hints).toEqual(['anthropic:claude-haiku-4-5']);
+      expect(result.details.model).toBe('anthropic:claude-haiku-4-5');
+      const insert = captured.find(c => c.sql.includes('INSERT INTO take_proposals'));
+      expect(insert!.params[11]).toBe('anthropic:claude-haiku-4-5');
     } finally {
       resetGateway();
     }

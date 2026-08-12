@@ -116,11 +116,11 @@ function emitDeprecationWarning(oldKey: string, newKey: string, ignored: boolean
   if (ignored) {
     process.stderr.write(
       `[models] deprecated config "${oldKey}" ignored; "${newKey}" is set and wins. ` +
-      `Remove "${oldKey}" from your config in v0.30.\n`,
+      `Remove "${oldKey}" from your config.\n`,
     );
   } else {
     process.stderr.write(
-      `[models] deprecated config "${oldKey}" honored; rename to "${newKey}" before v0.30.\n`,
+      `[models] deprecated config "${oldKey}" honored; rename it to "${newKey}".\n`,
     );
   }
 }
