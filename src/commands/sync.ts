@@ -782,6 +782,18 @@ export interface SyncOpts {
    */
   exclude?: string[];
   /**
+   * Repeatable `--include-hidden <glob>` on the CLI — same glob dialect as
+   * `exclude`, but waives the leading-dot part of `pruneDir`'s exclusion
+   * (`.git`, `.obsidian`, and any other dot-prefixed directory) for paths
+   * that match, instead of removing paths. See `isPathPruned` in
+   * core/sync.ts for exactly what is and isn't waivable, and its doc
+   * comment for the one gap (non-git directory imports via the FS-walk
+   * fallback aren't covered). Unlike `exclude`, this has to reach the
+   * collection step itself — a pruned path is never collected in the first
+   * place, so there's nothing for a post-collection filter to add back.
+   */
+  includeHidden?: string[];
+  /**
    * Include files matched by .gitignore. Git cannot report untracked ignored
    * changes in diffs, so sync uses the full filesystem walker when this is set.
    */
@@ -2359,7 +2371,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     opts.exclude !== undefined && opts.exclude.length > 0 && matchesAnyGlob(scopeRel(p), opts.exclude);
 
   // Filter to syncable files (strategy-aware + scope-aware + exclude-aware)
-  const syncOpts = opts.strategy ? { strategy: opts.strategy } : undefined;
+  const syncOpts = { strategy: opts.strategy, includeHidden: opts.includeHidden };
   // #1970 (F-C): a rename whose DESTINATION is unsyncable drops out of BOTH
   // `renamed` (only `r.to` is kept below) AND `deleted` (git emits it as `R`,
   // not `D`), leaving the OLD page stale. Fold the source side into the delete
@@ -3679,6 +3691,7 @@ async function performFullSync(
     let allFiles = collectSyncableFiles(syncScopeRoot, {
       strategy: opts.strategy ?? 'markdown',
       includeGitignored: opts.includeGitignored,
+      includeHidden: opts.includeHidden,
     });
     if (opts.exclude && opts.exclude.length > 0) {
       allFiles = allFiles.filter(abs => !matchesAnyGlob(relative(syncScopeRoot, abs), opts.exclude));
@@ -3727,6 +3740,7 @@ async function performFullSync(
     strategy: opts.strategy,
     sourceId: opts.sourceId,
     exclude: opts.exclude,
+    includeHidden: opts.includeHidden,
     includeGitignored: opts.includeGitignored,
     slugRoot,
     // issue #1939: performFullSync owns the failure ledger + bookmark via the
@@ -3840,9 +3854,14 @@ async function performFullSync(
     // #774: scoped syncs store git-root-relative source_paths (slugRoot), so
     // relativize the walk to the same base — otherwise every page mismatches
     // and the mass-delete valve trips on a perfectly healthy scoped source.
+    // includeHidden MUST be threaded here too: if it isn't, any page a
+    // --include-hidden full sync just imported would look "gone" on the
+    // very next reconcile pass (its file was never in this collection) and
+    // the mass-delete valve would remove it.
     const currentFiles = collectSyncableFiles(syncScopeRoot, {
       strategy: opts.strategy ?? 'markdown',
       includeGitignored: opts.includeGitignored,
+      includeHidden: opts.includeHidden,
     })
       .map(abs => relative(slugRoot ?? syncScopeRoot, abs));
     const rows = await engine.executeRaw<{ slug: string; source_path: string | null }>(
@@ -4224,6 +4243,14 @@ Options:
                        subdirectory directly as --repo also works.
   --exclude <glob>     Exclude files matching the glob from sync (repeatable;
                        matched against the scope-relative path).
+  --include-hidden <glob>
+                       Waive the leading-dot prune (.git, .obsidian, and any
+                       other dot-prefixed directory — but NOT node_modules/
+                       vendor/dist/build/venv/*.raw, which are never
+                       waivable) for paths matching this glob (repeatable).
+                       Does not reach a non-git directory's FS-walk import
+                       fallback; every git-tracked source (the normal case)
+                       is covered. Cannot combine with --all.
   --include-gitignored Include otherwise-syncable files matched by .gitignore.
                        Forces a full filesystem walk so periodic syncs see
                        ignored untracked content.
@@ -4416,9 +4443,14 @@ See also:
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--exclude' && i + 1 < args.length) excludePatterns.push(args[i + 1]);
   }
-  if (syncAll && (srcSubpath || excludePatterns.length > 0)) {
+  // --include-hidden is repeatable, same parsing shape as --exclude.
+  const includeHiddenPatterns: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--include-hidden' && i + 1 < args.length) includeHiddenPatterns.push(args[i + 1]);
+  }
+  if (syncAll && (srcSubpath || excludePatterns.length > 0 || includeHiddenPatterns.length > 0)) {
     console.error(
-      `--src-subpath/--exclude scope a single sync invocation; they cannot be combined with --all. ` +
+      `--src-subpath/--exclude/--include-hidden scope a single sync invocation; they cannot be combined with --all. ` +
       `For --all runs, register the subdirectory as the source's local_path instead ` +
       `(gbrain sources add <id> --path <repo>/<subdir>).`,
     );
@@ -4921,6 +4953,7 @@ See also:
     strategy: strategyArg, concurrency,
     srcSubpath,
     exclude: excludePatterns.length > 0 ? excludePatterns : undefined,
+    includeHidden: includeHiddenPatterns.length > 0 ? includeHiddenPatterns : undefined,
     signal: composeAbortSignals(singleSourceInterrupt.signal, singleSourceController?.signal),
   };
 
