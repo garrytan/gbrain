@@ -16,13 +16,14 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { flushThenExit } from '../core/cli-force-exit.ts';
 import { cliOptsToProgressOptions, getCliOptions } from '../core/cli-options.ts';
 import { createProgress } from '../core/progress.ts';
 import { buildMetricGlossaryMeta } from '../core/eval/metric-glossary.ts';
 import { isAvailable } from '../core/ai/gateway.ts';
+import { findGbrainRoot } from '../core/skillpack/bundle.ts';
 import { FixtureValidationError, loadCorpus } from '../eval/brainbench/fixtures.ts';
 import { runBrainBench } from '../eval/brainbench/harness.ts';
 import {
@@ -44,9 +45,19 @@ import {
   type HarnessName,
 } from '../eval/brainbench/types.ts';
 
-export const DEFAULT_FIXTURES_DIR = 'evals/brainbench/fixtures';
-export const DEFAULT_GOLD_DIR = 'evals/brainbench/gold';
-export const DEFAULT_BASELINE_PATH = 'evals/brainbench/baselines/main.json';
+const DEFAULT_FIXTURES_RELATIVE = 'evals/brainbench/fixtures';
+const DEFAULT_GOLD_RELATIVE = 'evals/brainbench/gold';
+const DEFAULT_BASELINE_RELATIVE = 'evals/brainbench/baselines/main.json';
+
+const GBRAIN_ROOT = findGbrainRoot();
+
+function resolveBundledPath(relativePath: string): string {
+  return GBRAIN_ROOT ? join(GBRAIN_ROOT, relativePath) : relativePath;
+}
+
+export const DEFAULT_FIXTURES_DIR = resolveBundledPath(DEFAULT_FIXTURES_RELATIVE);
+export const DEFAULT_GOLD_DIR = resolveBundledPath(DEFAULT_GOLD_RELATIVE);
+export const DEFAULT_BASELINE_PATH = resolveBundledPath(DEFAULT_BASELINE_RELATIVE);
 const DEFAULT_LLM_BUDGET_USD = 5;
 
 function usage(): void {
@@ -55,8 +66,8 @@ function usage(): void {
       `Cross-harness memory conformance suite. Hermetic by default: in-memory\n` +
       `PGLite, no API keys, no LLM calls. See docs/eval/BRAINBENCH.md.\n\n` +
       `Options:\n` +
-      `  --fixtures DIR              Fixture corpus (default: ${DEFAULT_FIXTURES_DIR}).\n` +
-      `  --gold DIR                  Sealed gold dir (default: ${DEFAULT_GOLD_DIR}).\n` +
+      `  --fixtures DIR              Fixture corpus (default: bundled ${DEFAULT_FIXTURES_RELATIVE}).\n` +
+      `  --gold DIR                  Sealed gold dir (default: bundled ${DEFAULT_GOLD_RELATIVE}).\n` +
       `  --harness a,b | all         Harness seams to grade (default: all).\n` +
       `  --suite a,b | all           Suites to run (default: all).\n` +
       `  --include-holdout           Score holdout fixtures too (published-run mode).\n` +
@@ -64,8 +75,8 @@ function usage(): void {
       `  --out FILE                  Write the full JSON result to FILE (canonical CI artifact).\n` +
       `  --compare BASE [CURRENT]    Gate against BASE baseline. With CURRENT: pure\n` +
       `                              file-vs-file diff, no run. CI passes MAIN's baseline\n` +
-      `                              as BASE (git show origin/master:${DEFAULT_BASELINE_PATH}).\n` +
-      `  --committed-baseline FILE   Bless-mode verification target (default: ${DEFAULT_BASELINE_PATH}).\n` +
+      `                              as BASE (git show origin/master:${DEFAULT_BASELINE_RELATIVE}).\n` +
+      `  --committed-baseline FILE   Bless-mode verification target (default: bundled ${DEFAULT_BASELINE_RELATIVE}).\n` +
       `  --update-baseline [FILE]    Write this run as the canonical committed baseline.\n` +
       `  --justification "reason"    Recorded in the baseline written by --update-baseline\n` +
       `                              (REQUIRED by the gate when blessing a regression).\n` +
@@ -211,7 +222,11 @@ function parseArgs(argv: string[]): Args | { usageError: string } {
 
 function gitHeadSha(): string {
   try {
-    return execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim();
+    return execSync('git rev-parse HEAD', {
+      cwd: GBRAIN_ROOT ?? undefined,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
   } catch {
     return 'unknown';
   }

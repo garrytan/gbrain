@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const REPO = process.cwd();
+const CLI = join(REPO, 'src', 'cli.ts');
 let root: string;
 let fixtures: string;
 let gold: string;
@@ -23,7 +24,7 @@ function run(args: string[], cwd = REPO): { exitCode: number; stdout: string; st
   const full = args.includes('--committed-baseline')
     ? args
     : [...args, '--committed-baseline', join(root, 'no-committed-baseline.json')];
-  const proc = Bun.spawnSync(['bun', 'src/cli.ts', 'eval', 'brainbench', ...full], {
+  const proc = Bun.spawnSync(['bun', CLI, 'eval', 'brainbench', ...full], {
     cwd,
     env: { ...process.env, GBRAIN_QUIET: '1' },
     stdout: 'pipe',
@@ -60,6 +61,16 @@ beforeAll(() => {
 }, 120_000);
 
 describe('exit contract over a multi-brain run (PGLite exitCode-hijack guard)', () => {
+  test('bundled defaults resolve outside the package working directory', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'bb-outside-cwd-'));
+    const r = run(['--harness', 'openclaw', '--suite', 'know-to-ask', '--json'], outside);
+    expect(r.exitCode).toBe(0);
+    const doc = JSON.parse(r.stdout);
+    expect(doc.cells.length).toBeGreaterThan(0);
+    expect(doc.seed_failures).toEqual([]);
+    expect(r.stderr).not.toContain('not a git repository');
+  }, 60_000);
+
   test('clean run: exit 0, --out is complete valid JSON with the glossary block', () => {
     const out = join(root, 'r1.json');
     const r = run(['--fixtures', fixtures, '--gold', gold, '--harness', 'openclaw', '--out', out]);
