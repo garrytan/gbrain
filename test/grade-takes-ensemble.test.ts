@@ -17,7 +17,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import {
-  runPhaseGradeTakes,
+  runPhaseGradeTakes as runPhaseGradeTakesNative,
   __testing,
   type JudgeFn,
   type EvidenceRetrieverFn,
@@ -48,6 +48,9 @@ function buildMockEngine(opts: { takes: Take[] }): {
   const resolves: CapturedResolve[] = [];
   const engine = {
     kind: 'pglite',
+    async getConfig() {
+      return null;
+    },
     async listTakes() {
       return opts.takes;
     },
@@ -99,6 +102,16 @@ function buildCtx(engine: BrainEngine): OperationContext {
     remote: false,
     sourceId: 'default',
   };
+}
+
+function runPhaseGradeTakes(
+  ctx: OperationContext,
+  opts: NonNullable<Parameters<typeof runPhaseGradeTakesNative>[1]> = {},
+) {
+  return runPhaseGradeTakesNative(ctx, {
+    evidenceRetriever: async () => 'mock evidence body',
+    ...opts,
+  });
 }
 
 // ─── aggregateEnsemble (pure) ───────────────────────────────────────

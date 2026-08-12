@@ -58,6 +58,7 @@ const PER_TASK_KEYS: PerTaskModelRoute[] = [
   { key: 'models.grade_takes',              tier: 'reasoning', description: 'Take outcome judge' },
   { key: 'models.calibration_profile',      tier: 'reasoning', description: 'Calibration profile narrative and tags' },
   { key: 'models.enrich_thin',              tier: 'reasoning', description: 'Thin-page enrichment', deprecatedConfigKey: 'cycle.enrich_thin.model' },
+  { key: 'models.schema_suggest',           tier: 'reasoning', description: 'Schema candidate LLM refinement' },
   { key: 'models.drift',                    tier: 'reasoning', description: 'Drift LLM judge (v0.29 scaffold)' },
   { key: 'models.auto_think',               tier: 'deep',      description: 'Auto-think question answering' },
   { key: 'models.think',                    tier: 'deep',      description: '`gbrain think` synthesis op' },

@@ -20,15 +20,12 @@
  *   flag because relaxing after data accumulates silently shifts which
  *   historical resolutions count as auto-applied.
  *
- * Evidence retrieval status (v0.36.1.0 ship state):
- *   The default evidence retriever returns an "evidence-retrieval not yet
- *   wired" placeholder. Most verdicts produced by the stub-judge against
- *   the stub-evidence will be 'unresolvable'. Real retrieval (hybrid search
- *   over pages newer than the take's since_date, optionally augmented by a
- *   gateway web-search recipe in v0.37+) lands as a follow-up. The phase
- *   ships now so the wiring is real and the cache table accumulates
- *   verdicts even if early ones are conservative; operators get the
- *   end-to-end loop running ahead of the tuned-prompt arrival.
+ * Evidence retrieval:
+ *   The default retriever follows the repository's calibration-quality spec:
+ *   native hybrid search over the first 150 characters of the claim, filtered
+ *   to pages updated after the take's since_date, with the top five distinct
+ *   chunks passed to the judge. Source scope is threaded into both take
+ *   selection and search.
  *
  * Test seam: opts.judge + opts.evidenceRetriever are injected so the
  * phase runs hermetically in unit tests.
@@ -39,9 +36,11 @@ import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-
 import { chat as gatewayChat, getChatModel } from '../ai/gateway.ts';
 import { resolveModel } from '../model-config.ts';
 import { splitProviderModelId } from '../model-id.ts';
+import { hybridSearch, type HybridSearchOpts } from '../search/hybrid.ts';
 import { GBrainError } from '../types.ts';
 import type { OperationContext } from '../operations.ts';
 import type { BrainEngine, Take, TakeResolution } from '../engine.ts';
+import type { SearchResult } from '../types.ts';
 import type { PhaseStatus, CyclePhase } from '../cycle.ts';
 
 /**
@@ -49,9 +48,9 @@ import type { PhaseStatus, CyclePhase } from '../cycle.ts';
  * stay valid (composite cache key includes prompt_version); new runs re-spend
  * LLM tokens.
  */
-export const GRADE_TAKES_PROMPT_VERSION = 'v0.36.1.0-stub';
+export const GRADE_TAKES_PROMPT_VERSION = 'v0.45.11.0-native-evidence';
 
-export const GRADE_TAKE_PROMPT = `[v0.36.1.0-stub] You are grading a single forecasting take. The author
+export const GRADE_TAKE_PROMPT = `[v0.45.11.0-native-evidence] You are grading a single forecasting take. The author
 made this claim on the given date. Based on the evidence provided, did the
 claim turn out to be:
 - correct        (the world plays out as predicted)
@@ -175,7 +174,17 @@ export function aggregateEnsemble(
 }
 
 /** Evidence retriever signature — injected for tests. */
-export type EvidenceRetrieverFn = (take: Take, scope: ScopedReadOpts) => Promise<string>;
+export type EvidenceRetrieverFn = (
+  take: Take,
+  scope: ScopedReadOpts,
+  engine: BrainEngine,
+) => Promise<string>;
+
+export type GradeEvidenceSearchFn = (
+  engine: BrainEngine,
+  query: string,
+  opts: HybridSearchOpts,
+) => Promise<SearchResult[]>;
 
 export interface GradeTakesOpts extends BasePhaseOpts {
   /** Minimum age in months before a take is eligible for grading. Default 6. */
@@ -294,16 +303,72 @@ export function parseJudgeOutput(raw: string): JudgeVerdict | null {
 }
 
 /**
- * Default evidence retriever — v0.36.1.0 ship-state placeholder. Real
- * retrieval lands in v0.37+ via hybrid search over pages newer than the
- * take's since_date. Documented limitation per CDX-8 + D17.
+ * Native evidence retrieval from the repository's calibration-quality spec:
+ * core claim → hybrid search → pages newer than since_date → top five chunks.
+ * The injectable search function keeps the behavior hermetic in unit tests.
  */
-export async function defaultEvidenceRetriever(take: Take, _scope: ScopedReadOpts): Promise<string> {
-  return `[evidence retrieval not yet wired — v0.36.1.0 ship-state]
-Take claim text (the only "evidence" available pre-T-retrieval-impl):
-  ${take.claim}
-Made on: ${take.since_date ?? 'unknown'}
-`;
+export async function retrieveNativeGradeEvidence(
+  engine: BrainEngine,
+  take: Take,
+  scope: ScopedReadOpts,
+  search: GradeEvidenceSearchFn = hybridSearch,
+): Promise<string> {
+  if (!take.since_date) return '(take has no since_date; no temporal evidence window)';
+  const query = take.claim.trim().slice(0, 150);
+  if (!query) return '(take claim is empty; no evidence query available)';
+
+  const hits = await search(engine, query, {
+    ...scope,
+    limit: 20,
+    expansion: false,
+    adaptiveReturn: false,
+    autocut: false,
+  });
+  if (hits.length === 0) {
+    return `(no evidence found after ${take.since_date})`;
+  }
+
+  const pageIds = [...new Set(hits.map(hit => hit.page_id).filter(Number.isFinite))];
+  if (pageIds.length === 0) return `(no evidence found after ${take.since_date})`;
+  const newerRows = await engine.executeRaw<{ id: number; updated_at: Date | string }>(
+    `SELECT id, updated_at
+       FROM pages
+      WHERE id = ANY($1::int[])
+        AND deleted_at IS NULL
+        AND updated_at > $2::timestamptz`,
+    [pageIds, take.since_date],
+  );
+  const updatedByPage = new Map(
+    newerRows.map(row => [Number(row.id), new Date(row.updated_at).toISOString()]),
+  );
+
+  const seenChunks = new Set<string>();
+  const evidence: string[] = [];
+  for (const hit of hits) {
+    const updatedAt = updatedByPage.get(hit.page_id);
+    if (!updatedAt) continue;
+    const identity = `${hit.page_id}:${hit.chunk_id}:${hit.chunk_index}`;
+    if (seenChunks.has(identity)) continue;
+    seenChunks.add(identity);
+    const chunk = hit.chunk_text.trim().slice(0, 1_500);
+    if (!chunk) continue;
+    evidence.push(
+      `- ${updatedAt.slice(0, 10)} | ${hit.slug} | ${hit.title}\n  ${chunk}`,
+    );
+    if (evidence.length >= 5) break;
+  }
+
+  return evidence.length > 0
+    ? evidence.join('\n\n')
+    : `(no evidence found after ${take.since_date})`;
+}
+
+export async function defaultEvidenceRetriever(
+  take: Take,
+  scope: ScopedReadOpts,
+  engine: BrainEngine,
+): Promise<string> {
+  return retrieveNativeGradeEvidence(engine, take, scope);
 }
 
 /**
@@ -439,6 +504,7 @@ class GradeTakesPhase extends BaseCyclePhase {
       active: true,
       sortBy: 'since_date',
       limit: takeLimit,
+      ...scope,
     });
 
     if (opts.reporter) {
@@ -456,7 +522,7 @@ class GradeTakesPhase extends BaseCyclePhase {
       }
 
       // Retrieve evidence first — the signature depends on it.
-      const evidence = await evidenceRetriever(take, scope);
+      const evidence = await evidenceRetriever(take, scope, engine);
       const sig = evidenceSignature(evidence, judgeModelId);
 
       // Idempotency: skip when (take_id, prompt_version, judge_model_id, evidence_signature) exists.

@@ -17,7 +17,9 @@ Extracted facts now reach consolidation reliably: entity attribution resolves to
 ### Changed
 
 - Consolidation uses `models.consolidate` and `cycle.consolidate.budget_usd`; synthesis failures or budget exhaustion leave source facts pending for retry instead of falling back to the old copy-best-fact shortcut.
-- `propose_takes`, `grade_takes`, `calibration_profile`, `synthesize_concepts`, `extract_atoms`, and `enrich_thin` resolve their existing phase-specific `models.*` routes through the shared model resolver.
+- `propose_takes`, `grade_takes`, `calibration_profile`, `synthesize_concepts`, `extract_atoms`, `enrich_thin`, and `schema-suggest` resolve their phase-specific `models.*` routes through the shared model resolver.
+- `schema-suggest` now performs the LLM refinement promised by its native CLI and source contract; provider failure is surfaced in phase notes before the review-only heuristic fallback is used.
+- `grade_takes` retrieves source-scoped evidence through native hybrid search, keeps pages updated after each take's date, and sends the top five distinct chunks to the configured judge model.
 - `gbrain models` reports every model-bearing dream phase, including compatibility aliases for the former atom-extraction and thin-enrichment keys.
 - GPT-4.1 family pricing is registered in the canonical pricing table so the configured `openai:gpt-4.1-mini` consolidation route remains budget-bounded.
 
@@ -26,6 +28,7 @@ Extracted facts now reach consolidation reliably: entity attribution resolves to
 - Conversation fact extraction canonicalizes display names and aliases to one live, source-scoped page before insert, rejects ambiguous or deleted targets, retries on lookup failures, and batches resolution into two indexed database reads.
 - Consolidation diagnostics distinguish scanned, page-resolved, missing-page, below-similarity, missing-embedding, synthesis-failed, and budget-blocked work.
 - Long consolidation runs now use the cycle's native database-lock keepalive instead of continuing after their lock expires.
+- `grade_takes` threads source scope into unresolved-take selection instead of grading every source in a source-scoped cycle.
 
 ## [0.45.9.0] - 2026-08-12
 

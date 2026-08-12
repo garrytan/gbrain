@@ -5,12 +5,14 @@
 // T10 EIIRP skill, and T7 doctor consistency check (per D4(eng): one
 // source of truth, not duplicated).
 //
-// Cost-bounded: per-invocation sampling cap + max_chunks_per_call.
-// Hermetic-by-default: when gateway is unconfigured OR no API key,
-// returns deterministic heuristic-only suggestions rather than throwing.
-// Test seam via `opts.suggestFn` lets unit tests stub the LLM entirely.
+// Cost-bounded: one gateway request per invocation, with a bounded detector
+// payload and output token cap. Hermetic-by-default: when the gateway is
+// unconfigured, returns deterministic heuristic-only suggestions. Test seams
+// let unit tests exercise both the direct suggestion and native gateway paths.
 
 import type { BrainEngine } from '../engine.ts';
+import { chat as gatewayChat, getChatModel, isAvailable } from '../ai/gateway.ts';
+import { resolveModel } from '../model-config.ts';
 import { runDetect, type DetectResult } from './detect.ts';
 
 export interface SuggestOpts {
@@ -19,6 +21,10 @@ export interface SuggestOpts {
   maxSampleSize?: number;
   /** Test seam: replace the LLM call with a deterministic stub. */
   suggestFn?: (input: SuggestPromptInput) => Promise<RawSuggestion[]>;
+  /** Explicit model override; otherwise resolves through models.schema_suggest. */
+  model?: string;
+  /** Test seam for the provider-neutral gateway call. */
+  _chat?: typeof gatewayChat;
 }
 
 export interface SuggestPromptInput {
@@ -67,6 +73,72 @@ function heuristicSuggestions(detected: DetectResult): RawSuggestion[] {
   }));
 }
 
+const SCHEMA_SUGGEST_PROMPT = `You refine schema-pack suggestions for a personal knowledge brain.
+
+Given a bounded, aggregate-only detector report, propose only useful schema changes. Do not invent page prefixes, types, or evidence that are absent from the report.
+
+Output ONLY one JSON object with this shape:
+{"suggestions":[{"kind":"add_type|add_alias|rename|mark_experimental","summary":"concise operator-reviewable change","confidence":0.0,"evidence":["prefix or observed type"]}]}
+
+Return at most 20 suggestions. Confidence must be between 0 and 1. An empty suggestions array is valid when the detected schema already fits.`;
+
+const SUGGESTION_KINDS = new Set<RawSuggestion['kind']>([
+  'add_type',
+  'add_alias',
+  'rename',
+  'mark_experimental',
+]);
+
+/** Parse and validate the native gateway response. Exported for regression tests. */
+export function parseSchemaSuggestions(raw: string): RawSuggestion[] {
+  if (!raw || !raw.trim()) throw new Error('schema-suggest model returned empty output');
+  let text = raw.trim();
+  const fenced = text.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/);
+  if (fenced) text = (fenced[1] ?? '').trim();
+  const objectStart = text.indexOf('{');
+  const arrayStart = text.indexOf('[');
+  const start = objectStart === -1
+    ? arrayStart
+    : arrayStart === -1
+      ? objectStart
+      : Math.min(objectStart, arrayStart);
+  if (start === -1) throw new Error('schema-suggest model output was not JSON');
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text.slice(start));
+  } catch {
+    throw new Error('schema-suggest model output was malformed JSON');
+  }
+  const rows = Array.isArray(parsed)
+    ? parsed
+    : typeof parsed === 'object' && parsed !== null && Array.isArray((parsed as { suggestions?: unknown }).suggestions)
+      ? (parsed as { suggestions: unknown[] }).suggestions
+      : null;
+  if (!rows) throw new Error('schema-suggest model output omitted suggestions[]');
+
+  const suggestions: RawSuggestion[] = [];
+  for (const row of rows.slice(0, 20)) {
+    if (typeof row !== 'object' || row === null) continue;
+    const r = row as Record<string, unknown>;
+    if (!SUGGESTION_KINDS.has(r.kind as RawSuggestion['kind'])) continue;
+    if (typeof r.summary !== 'string' || !r.summary.trim()) continue;
+    const confidence = typeof r.confidence === 'number'
+      ? r.confidence
+      : Number.parseFloat(String(r.confidence ?? ''));
+    if (!Number.isFinite(confidence)) continue;
+    suggestions.push({
+      kind: r.kind as RawSuggestion['kind'],
+      summary: r.summary.trim().slice(0, 500),
+      confidence: Math.max(0, Math.min(1, confidence)),
+      evidence: Array.isArray(r.evidence)
+        ? r.evidence.filter((v): v is string => typeof v === 'string').slice(0, 10)
+        : [],
+    });
+  }
+  return suggestions;
+}
+
 export async function runSuggest(
   engine: BrainEngine,
   opts: SuggestOpts = {},
@@ -86,22 +158,43 @@ export async function runSuggest(
   if (opts.suggestFn) {
     raw = await opts.suggestFn(promptInput);
   } else {
-    // Try the gateway; on any failure fall back to heuristic.
+    // Use the same provider-neutral gateway and model resolver as the other
+    // model-bearing dream phases. An unavailable or failed provider remains
+    // an explicit heuristic fallback in notes; it is never mislabeled as LLM
+    // refinement.
     try {
-      const { isAvailable } = await import('../ai/gateway.ts');
-      if (!isAvailable('chat')) {
+      const chat = opts._chat ?? gatewayChat;
+      if (!opts._chat && !isAvailable('chat')) {
         notes.push('No LLM chat provider configured — returning heuristic-only suggestions.');
         raw = heuristicSuggestions(detected);
       } else {
-        // Real gateway call deferred to a future wave; v0.39.0.0 ships the
-        // hermetic heuristic-by-default path and the test seam. The full
-        // LLM prompt-tuning loop is in test/eval-schema-authoring (T16)
-        // which uses the same `suggestFn` seam.
-        notes.push('LLM refinement deferred to v0.39.1+; using heuristic fallback.');
-        raw = heuristicSuggestions(detected);
+        const model = await resolveModel(engine, {
+          cliFlag: opts.model,
+          configKey: 'models.schema_suggest',
+          tier: 'reasoning',
+          fallback: getChatModel(),
+        });
+        const detectorPayload = {
+          source_id: sourceId,
+          total_pages: detected.total_pages,
+          typed_pages: detected.typed_pages,
+          untyped_pages: detected.untyped_pages,
+          prefixes: detected.prefixes.slice(0, 50),
+          candidate_page_types: detected.candidate.page_types.slice(0, 50),
+          sample_size: promptInput.sampleSize,
+        };
+        const response = await chat({
+          model,
+          system: SCHEMA_SUGGEST_PROMPT,
+          messages: [{ role: 'user', content: JSON.stringify(detectorPayload) }],
+          maxTokens: 1_200,
+        });
+        raw = parseSchemaSuggestions(response.text);
+        notes.push(`LLM refinement completed with ${model}.`);
       }
-    } catch {
-      notes.push('Gateway unavailable — using heuristic fallback.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      notes.push(`LLM refinement failed (${message.slice(0, 160)}) — using heuristic fallback.`);
       raw = heuristicSuggestions(detected);
     }
   }
