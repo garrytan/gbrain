@@ -614,6 +614,80 @@ export async function runPostFusionStages(
   } catch {
     // Non-fatal; preserves the per-stage contract.
   }
+
+  // supersession stage — runs LAST so the penalty applies to the fully-boosted
+  // score. Down-ranks results whose page is the target of a `supersedes` link
+  // (a newer/canon page supersedes it) and stamps `superseded`/`superseded_by`
+  // for --explain, the contradiction probe, and agent renderers. The page-level
+  // analogue of the superseded_by/expired_at awareness recall.ts applies to
+  // facts. Fail-open per the per-stage contract: a brain with no `supersedes`
+  // edges (or a pre-links schema) finds 0 rows / throws and no-ops.
+  try {
+    await applySupersedeDownrank(results, engine);
+  } catch {
+    // Non-fatal; preserves the per-stage contract.
+  }
+}
+
+/**
+ * Down-rank results whose page is superseded by a newer/canon page, and stamp
+ * the SUPERSEDED annotation.
+ *
+ * A page X is "superseded" when it is the `to_page_id` of a `supersedes` link
+ * (`A supersedes B` → from=A canon, to=B stale). This is the page-level
+ * analogue of the `superseded_by`/`expired_at` awareness recall.ts already
+ * applies to the facts table. Stamps `superseded=true`, `superseded_by` (the
+ * superseding page's slug), and multiplies score by SUPERSEDE_PENALTY so
+ * current canon out-scores stale material without hiding it — the flag lets
+ * callers still surface it, and it is authoritative even in reranked modes
+ * where the cross-encoder owns the final head order.
+ *
+ * Single index-hit query bounded by top-K (links.to_page_id is indexed;
+ * `supersedes` edges are sparse). page_id is globally unique, so the lookup is
+ * by page_id array — no source-composite needed. Fail-soft: a brain with no
+ * `supersedes` edges (or a pre-links schema) returns 0 rows / throws and the
+ * stage no-ops (matches applyAliasResolvedBoost's pre-v104 guard).
+ */
+const SUPERSEDE_PENALTY = 0.5;
+
+async function applySupersedeDownrank(
+  results: SearchResult[],
+  engine: import('../engine.ts').BrainEngine,
+): Promise<void> {
+  if (results.length === 0) return;
+  const pageIds = Array.from(
+    new Set(results.map(r => r.page_id).filter((id): id is number => typeof id === 'number')),
+  );
+  if (pageIds.length === 0) return;
+  let rows: Array<{ to_page_id: number; by_slug: string }> = [];
+  try {
+    rows = await engine.executeRaw<{ to_page_id: number; by_slug: string }>(
+      `SELECT DISTINCT l.to_page_id, pf.slug AS by_slug
+         FROM links l
+         JOIN pages pf ON pf.id = l.from_page_id
+        WHERE l.link_type = 'supersedes'
+          AND l.to_page_id = ANY($1::bigint[])`,
+      [pageIds],
+    );
+  } catch {
+    // Pre-links schema or SQL miss; no-op.
+    return;
+  }
+  if (rows.length === 0) return;
+  const supersededBy = new Map<number, string>();
+  for (const row of rows) {
+    const id = Number(row.to_page_id);
+    if (!supersededBy.has(id)) supersededBy.set(id, row.by_slug);
+  }
+  for (const r of results) {
+    const by = supersededBy.get(r.page_id);
+    if (by !== undefined) {
+      r.score *= SUPERSEDE_PENALTY;
+      r.superseded = true;
+      r.superseded_by = by;
+      r.supersede_penalty = SUPERSEDE_PENALTY;
+    }
+  }
 }
 
 /**
