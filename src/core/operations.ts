@@ -4422,11 +4422,12 @@ const sources_add: Operation = {
     const isLocal = ctx.remote === false;
     const remotePath = isLocal ? (p.path as string | undefined) ?? null : null;
     const remoteCloneDir = isLocal ? (p.clone_dir as string | undefined) : undefined;
-    if (!isLocal && (p.path !== undefined || p.clone_dir !== undefined)) {
-      ctx.logger.warn(
-        '[sources_add] ignoring path/clone_dir overrides on HTTP MCP transport ' +
-          '(remote callers can only register a remote --url; the clone path is ' +
-          'fixed under $GBRAIN_HOME/clones/).',
+    if (!isLocal && p.path !== undefined) {
+      throw new OperationError(
+        'invalid_params',
+        'sources_add: path is not honored over MCP (security confinement). ' +
+          'Register with --url instead, or run `gbrain sources add --path ...` on the host CLI.',
+        'Use --url to register a remote source, or run the command locally with --path.',
       );
     }
 
