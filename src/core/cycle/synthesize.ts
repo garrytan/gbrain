@@ -31,7 +31,7 @@ import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { chat as gatewayChat, validateModelId, type ChatResult } from '../ai/gateway.ts';
 import { AIConfigError } from '../ai/errors.ts';
-import { normalizeModelId } from '../model-id.ts';
+import { normalizeModelId, splitProviderModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
 import { basename, join, dirname, isAbsolute, resolve } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
@@ -62,6 +62,10 @@ const SUMMARY_SLUG_RE = new RegExp(`^${PAGE_SLUG_SEG}(\\/${PAGE_SLUG_SEG})*$`, '
  * resolver returns for known Anthropic aliases.
  */
 const MODEL_CONTEXT_TOKENS: Record<string, number> = {
+  'claude-fable-5': 1_000_000,
+  'claude-opus-5': 1_000_000,
+  'claude-sonnet-5': 1_000_000,
+  'claude-opus-4-8': 1_000_000,
   'claude-opus-4-7': 1_000_000,
   'claude-opus-4-6': 1_000_000,
   'claude-sonnet-4-6': 200_000,
@@ -95,14 +99,21 @@ const DEFAULT_SUBAGENT_WAIT_TIMEOUT_MS = 35 * 60 * 1000;
  * accumulation is out of scope for v0.30.2 (terminal-error classification
  * catches turn-N blowups; per-turn budget guard is a v0.31+ follow-up).
  */
-function computeChunkCharBudget(
+export function computeChunkCharBudget(
   model: string,
   configMaxPromptTokens: number | null,
 ): number {
   if (configMaxPromptTokens !== null) {
     return Math.floor(configMaxPromptTokens * CHARS_PER_TOKEN);
   }
-  const ctx = MODEL_CONTEXT_TOKENS[model];
+  // Lookup keyed on the bare model name (after prefix strip), mirroring
+  // ANTHROPIC_OUTPUT_CAPS in brainstorm/judges.ts: resolveModel returns
+  // provider-prefixed strings when TIER_DEFAULTS / config values carry a
+  // prefix (the current tier defaults all do), so a raw keyed lookup sent
+  // every tier-resolved brain to the unknown-model fallback — a 5x budget
+  // cut on 1M-context models.
+  const bare = splitProviderModelId(model).model || model;
+  const ctx = MODEL_CONTEXT_TOKENS[bare];
   if (ctx === undefined) {
     warnUnknownModelOnce(model);
     return Math.floor(UNKNOWN_MODEL_BUDGET_TOKENS * CHARS_PER_TOKEN);
