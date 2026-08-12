@@ -159,7 +159,7 @@ mismatch, typo'd `--type`) before reporting anything.
 
 ```bash
 gbrain link-sources          # citation-graph should appear with the expected count
-gbrain check-backlinks       # confirm no orphaned references
+gbrain check-backlinks check # confirm no orphaned references
 ```
 
 ## Run it (worked example, synthetic fixture)
