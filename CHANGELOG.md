@@ -2,6 +2,29 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.45.10.0] - 2026-08-12
+
+**Extracted facts can now reach consolidation reliably, and blocked buckets explain why they were skipped.**
+
+Conversation extraction now stores entity attribution only when it resolves to one live page in the same source. Consolidation accepts a calibrated similarity threshold, reports page-resolution and embedding blockers, processes entity histories larger than 100 facts, and stays visibly degraded whenever blocked buckets remain.
+
+## To take advantage of v0.45.10.0
+
+1. Upgrade with `gbrain upgrade`.
+2. Run `gbrain dream --phase consolidate --dry-run --json` and inspect the page-resolved, missing-page, below-threshold, and missing-embedding counters before applying changes.
+3. If your embedding model was calibrated below the historical `0.85` default, set its measured threshold with `gbrain config set dream.consolidate.cluster_threshold <value>` and rerun the dry run.
+
+### Changed
+
+- Consolidation reads `dream.consolidate.cluster_threshold`, validates overrides, and exposes the selected value and source in phase diagnostics.
+- Phase summaries distinguish scanned buckets from page-resolved, missing-page, below-similarity, and missing-embedding work, and return `warn` while any eligible bucket remains blocked.
+
+### Fixed
+
+- Conversation fact extraction canonicalizes display names and aliases to one live, source-scoped page before insert, rejects ambiguous or deleted targets, retries on lookup failures, and batches resolution into two indexed database reads.
+- Consolidation pages through complete entity histories so recent consolidated rows cannot strand an older pending tail beyond the public 100-row read cap.
+- Regression coverage now pins configured-threshold boundaries, dry-run behavior, source isolation, deleted and ambiguous aliases, transient database failures, mixed healthy/blocked runs, and 100-plus-fact buckets.
+
 ## [0.45.8.0] - 2026-08-12
 
 **25 community bug fixes in one wave. Your MCP server, sync, and doctor all get more careful.**
