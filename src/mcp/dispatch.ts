@@ -225,6 +225,43 @@ export function validateParams(op: Operation, params: Record<string, unknown>): 
   return null;
 }
 
+/**
+ * Normalize the absent-idioms real MCP clients send for OPTIONAL params
+ * before validation and dispatch: `null` (any type) and `''` (string-typed
+ * params) become "not provided".
+ *
+ * Why: non-Claude models routinely fill optional params with `""` or `null`
+ * instead of omitting them. `validateParams` already reads null as absent
+ * for the required-param check (see above); handlers do not — some guard
+ * with `typeof p.x === 'string' && p.x.length > 0` (entity / session_id in
+ * `recall`), others with `p.x !== undefined` (since in `recall`), so
+ * `recall {since: ""}` silently returned zero facts where the same call
+ * with `since` omitted returns rows. Normalizing once at the shared
+ * dispatch layer gives every handler one canonical absence instead of
+ * per-handler guards.
+ *
+ * Deliberately narrow:
+ *   - Required params are untouched — null on a required param still fails
+ *     validation loudly, and `''` on a required string still reaches the
+ *     handler exactly as before.
+ *   - Type-mismatched junk is untouched — `limit: ""` keeps its loud
+ *     "must be a number" error rather than silently succeeding.
+ *   - Undeclared keys are untouched (they were already ignored).
+ * Copy-on-write: callers' param objects are never mutated.
+ */
+export function normalizeOptionalParams(op: Operation, params: Record<string, unknown>): Record<string, unknown> {
+  let out: Record<string, unknown> | null = null;
+  for (const [key, def] of Object.entries(op.params)) {
+    if (def.required) continue;
+    const val = params[key];
+    const isAbsentIdiom = val === null || (val === '' && def.type === 'string');
+    if (!isAbsentIdiom) continue;
+    if (out === null) out = { ...params };
+    delete out[key];
+  }
+  return out ?? params;
+}
+
 const stderrLogger: OperationContext['logger'] = {
   info: (msg: string) => process.stderr.write(`[info] ${msg}\n`),
   warn: (msg: string) => process.stderr.write(`[warn] ${msg}\n`),
@@ -331,7 +368,7 @@ export async function dispatchToolCall(
     };
   }
 
-  const safeParams = params || {};
+  const safeParams = normalizeOptionalParams(op, params || {});
   const validationError = validateParams(op, safeParams);
   if (validationError) {
     logVerb(false);
