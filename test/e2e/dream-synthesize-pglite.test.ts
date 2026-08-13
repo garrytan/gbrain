@@ -13,7 +13,7 @@
  */
 
 import { describe, test, expect, afterEach } from 'bun:test';
-import { __setChatTransportForTests, resetGateway } from '../../src/core/ai/gateway.ts';
+import { __setChatTransportForTests, resetGateway, type ChatResult } from '../../src/core/ai/gateway.ts';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -531,6 +531,54 @@ describe('E2E synthesize — degenerate verdicts are NOT cached in dream_verdict
     resetGateway();
   });
 
+  test('abort during judge exits as failure before cache, job, or page writes', async () => {
+    const rig = await setupRig();
+    const abort = new AbortController();
+    try {
+      await rig.engine.setConfig('dream.synthesize.enabled', 'true');
+      await rig.engine.setConfig('dream.synthesize.session_corpus_dir', rig.corpusDir);
+      await rig.engine.setConfig('models.dream.synthesize_verdict', 'deepseek:deepseek-chat');
+      const filePath = join(rig.corpusDir, '2026-08-13-abort-during-judge.txt');
+      const body = 'a durable conversation about cancellation safety\n'.repeat(100);
+      writeFileSync(filePath, body);
+
+      __setChatTransportForTests(async (): Promise<ChatResult> => {
+        await new Promise(resolve => setTimeout(resolve, 50));
+        return {
+          text: JSON.stringify({ worth_processing: true, reasons: ['durable cancellation contract'] }),
+          blocks: [],
+          stopReason: 'end',
+          usage: { input_tokens: 10, output_tokens: 20, cache_read_tokens: 0, cache_creation_tokens: 0 },
+          model: 'deepseek:deepseek-chat',
+          providerId: 'deepseek',
+        };
+      });
+
+      setTimeout(() => abort.abort(new Error('test-cancel')), 10);
+      const result = await runPhaseSynthesize(rig.engine, {
+        brainDir: rig.brainDir,
+        dryRun: false,
+        signal: abort.signal,
+      });
+
+      expect(result.status).toBe('fail');
+      expect(JSON.stringify(result.error)).toContain('test-cancel');
+      const { createHash } = await import('node:crypto');
+      const hash = createHash('sha256').update(body, 'utf8').digest('hex');
+      expect(await rig.engine.getDreamVerdict(filePath, hash)).toBeNull();
+      const jobs = await rig.engine.executeRaw<{ n: number }>(
+        `SELECT count(*)::int AS n FROM minion_jobs`,
+      );
+      const pages = await rig.engine.executeRaw<{ n: number }>(
+        `SELECT count(*)::int AS n FROM pages`,
+      );
+      expect(Number(jobs[0]?.n ?? 0)).toBe(0);
+      expect(Number(pages[0]?.n ?? 0)).toBe(0);
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+
   async function captureStderr<T>(body: () => Promise<T>): Promise<{ result: T; stderr: string }> {
     const chunks: string[] = [];
     const original = process.stderr.write.bind(process.stderr);
@@ -630,6 +678,44 @@ describe('E2E synthesize — degenerate verdicts are NOT cached in dream_verdict
 });
 
 describe('E2E synthesize — PGLite inline subagent drain (takeover of #2699)', () => {
+  test('caller abort cancels an active inline child well inside the 30s force-evict grace', async () => {
+    const rig = await setupRig();
+    try {
+      const { MinionQueue } = await import('../../src/core/minions/queue.ts');
+      const queue = new MinionQueue(rig.engine);
+      const queueName = `dream-inline-test-abort-${Date.now()}`;
+      const child = await queue.add(
+        'subagent',
+        { prompt: 'test', model: 'anthropic:claude-sonnet-4-6', max_turns: 1 },
+        { queue: queueName, max_attempts: 1 },
+        { allowProtectedSubmit: true },
+      );
+      const controller = new AbortController();
+      const started = Date.now();
+      setTimeout(() => controller.abort(new Error('test-cancel-inline')), 10);
+
+      await expect(synthTesting.runPgliteSubagentsInline(
+        rig.engine,
+        queue,
+        queueName,
+        undefined,
+        async (ctx) => {
+          await new Promise((_, reject) => {
+            ctx.signal.addEventListener('abort', () => reject(new Error('provider aborted')), { once: true });
+          });
+        },
+        controller.signal,
+      )).rejects.toThrow('test-cancel-inline');
+
+      expect(Date.now() - started).toBeLessThan(30_000);
+      expect((await queue.getJob(child.id))?.status).toBe('cancelled');
+      const pages = await rig.engine.executeRaw<{ count: string }>('SELECT COUNT(*)::text AS count FROM pages');
+      expect(pages[0]?.count).toBe('0');
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+
   test('drains private subagent queue inline so the parent can observe completion', async () => {
     const rig = await setupRig();
     try {

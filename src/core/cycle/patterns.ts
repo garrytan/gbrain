@@ -40,10 +40,13 @@ import type { Page, PageType } from '../types.ts';
 import { loadAllowedSlugPrefixes, loadOutputRoot, runPgliteSubagentsInline } from './synthesize.ts';
 import { probeChatModel } from '../ai/gateway.ts';
 import { normalizeModelId } from '../model-id.ts';
+import { throwIfAborted } from '../abort-check.ts';
 
 export interface PatternsPhaseOpts {
   brainDir: string;
   dryRun: boolean;
+  /** Cooperative cancellation from the enclosing cycle/minion job. */
+  signal?: AbortSignal;
   yieldDuringPhase?: () => Promise<void>;
   /**
    * issue #2860 — `gbrain dream --phase patterns --once`. Bypasses the
@@ -117,6 +120,7 @@ export async function runPhasePatterns(
 ): Promise<PhaseResult> {
   const start = Date.now();
   try {
+    throwIfAborted(opts.signal, '[dream] patterns');
     const config = await loadPatternsConfig(engine);
 
     if (!config.enabled) {
@@ -216,20 +220,36 @@ export async function runPhasePatterns(
     const job = await queue.add('subagent', data as unknown as Record<string, unknown>, submitOpts, {
       allowProtectedSubmit: true,
     });
+    if (opts.signal?.aborted) {
+      await queue.cancelJob(job.id);
+      throwIfAborted(opts.signal, '[dream] patterns subagent');
+    }
 
     // PGLite cannot run a separate Minions worker because the embedded DB
     // holds an exclusive file lock. Drain this phase's private child queue
     // inline so the parent observes the terminal state instead of polling
     // waitForCompletion until subagentWaitTimeoutMs expires. No-op on
     // Postgres (a real worker process claims the job there).
-    await runPgliteSubagentsInline(engine, queue, childQueueName, opts.yieldDuringPhase);
+    await runPgliteSubagentsInline(
+      engine,
+      queue,
+      childQueueName,
+      opts.yieldDuringPhase,
+      undefined,
+      opts.signal,
+    );
 
     let outcome: string;
     try {
       const final = await waitForCompletion(queue, job.id, {
         timeoutMs: budgets.waitTimeoutMs,
         pollMs: 5 * 1000,
+        signal: opts.signal,
       });
+      if (opts.signal?.aborted) {
+        await queue.cancelJob(job.id);
+        throwIfAborted(opts.signal, '[dream] patterns completion wait');
+      }
       outcome = final.status;
     } catch (e) {
       if (e instanceof TimeoutError) {
@@ -246,6 +266,11 @@ export async function runPhasePatterns(
       }
     }
 
+    if (opts.signal?.aborted) {
+      await queue.cancelJob(job.id);
+      throwIfAborted(opts.signal, '[dream] patterns output');
+    }
+
     if (opts.yieldDuringPhase) {
       try { await opts.yieldDuringPhase(); } catch { /* best-effort */ }
     }
@@ -260,7 +285,7 @@ export async function runPhasePatterns(
     const writtenRefs = await collectChildPutPageSlugs(engine, [job.id], cycleSourceId);
 
     // Reverse-write to fs.
-    const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId);
+    const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal);
 
     const details = {
       reflections_considered: reflections.length,
@@ -501,15 +526,19 @@ async function reverseWriteRefs(
   brainDir: string,
   refs: Array<{ slug: string; source_id: string }>,
   nativeSourceId = 'default',
+  signal?: AbortSignal,
 ): Promise<number> {
   let count = 0;
   for (const { slug, source_id } of refs) {
+    throwIfAborted(signal, '[dream] patterns reverse-write');
     // v0.32.8 F6: guard against malformed source_id (would let join() break
     // out of brainDir). validateSourceId throws on `..`, `/`, etc.
     validateSourceId(source_id);
     const page = await engine.getPage(slug, { sourceId: source_id });
+    throwIfAborted(signal, '[dream] patterns reverse-write');
     if (!page) continue;
     const tags = await engine.getTags(slug, { sourceId: source_id });
+    throwIfAborted(signal, '[dream] patterns reverse-write');
     try {
       const md = renderPageToMarkdown(page, tags);
       // v0.32.8 F6: foreign-source pages land under brainDir/.sources/<id>/<slug>.md

@@ -70,10 +70,10 @@ describe('#2415: loadOutputRoot validation + patterns gather scope', () => {
     engine = new PGLiteEngine();
     await engine.connect({});
     await engine.initSchema();
-  });
+  }, 60_000);
 
   afterAll(async () => {
-    await engine.disconnect();
+    if (engine) await engine.disconnect();
   });
 
   test('unset → wiki; trailing slash trimmed; invalid → wiki fallback', async () => {

@@ -46,6 +46,7 @@ import type { Page, PageType } from '../types.ts';
 import { validateSourceId } from '../utils.ts';
 import { safeSplitIndex } from '../text-safe.ts';
 import { PAGE_SLUG_SEG } from '../cjk.ts';
+import { anySignal, throwIfAborted } from '../abort-check.ts';
 
 // Slug grammar from validatePageSlug — shared via PAGE_SLUG_SEG (#738).
 // Used for the orchestrator-written summary index slug. `u` flag required
@@ -242,6 +243,8 @@ export function rewriteChunkedSlug(slug: string, hash6: string, idx: number): st
 export interface SynthesizePhaseOpts {
   brainDir: string;
   dryRun: boolean;
+  /** Cooperative cancellation from the enclosing cycle/minion job. */
+  signal?: AbortSignal;
   /** Generic in-cycle keepalive for cycle-lock TTL renewal during long waits. */
   yieldDuringPhase?: () => Promise<void>;
   /**
@@ -294,10 +297,12 @@ export async function runPgliteSubagentsInline(
   queueName: string,
   yieldDuringPhase?: () => Promise<void>,
   handler: MinionHandler = makeSubagentHandler({ engine }),
+  signal?: AbortSignal,
 ): Promise<void> {
   if (engine.kind !== 'pglite') return;
 
   while (true) {
+    throwIfAborted(signal, '[dream] inline subagent');
     // Housekeeping a worker would normally perform, so child rows can reach
     // terminal states (delayed retries promoted, timeouts dead-lettered)
     // before the synth parent enters waitForCompletion polling.
@@ -317,7 +322,7 @@ export async function runPgliteSubagentsInline(
       name: job.name,
       data: job.data,
       attempts_made: job.attempts_made,
-      signal: abort.signal,
+      signal: anySignal(abort.signal, signal),
       deadlineAtMs: job.timeout_at != null ? job.timeout_at.getTime() : null,
       shutdownSignal: shutdown.signal,
       updateProgress: async (progress: unknown) => {
@@ -366,12 +371,20 @@ export async function runPgliteSubagentsInline(
       : null;
     try {
       const result = await handler(context);
+      if (signal?.aborted) {
+        await queue.cancelJob(job.id);
+        throwIfAborted(signal, '[dream] inline subagent');
+      }
       await queue.completeJob(
         job.id,
         lockToken,
         result != null ? (typeof result === 'object' ? result as Record<string, unknown> : { value: result }) : undefined,
       );
     } catch (e) {
+      if (signal?.aborted) {
+        await queue.cancelJob(job.id);
+        throwIfAborted(signal, '[dream] inline subagent');
+      }
       // Timeout is terminal (handleTimeouts parity: stall → retry,
       // timeout → dead), never a delayed retry.
       const timedOut = abort.signal.aborted;
@@ -414,6 +427,7 @@ export async function runPhaseSynthesize(
     opts.brainDir = resolve(opts.brainDir);
   }
   try {
+    throwIfAborted(opts.signal, '[dream] synthesize');
     const config = await loadSynthConfig(engine);
 
     // Allow ad-hoc --input to run even when config is disabled.
@@ -483,6 +497,7 @@ export async function runPhaseSynthesize(
     // as the cheap pre-flight check).
     const judge = makeJudgeClient(config.verdictModel);
     for (const t of transcripts) {
+      throwIfAborted(opts.signal, '[dream] significance judge');
       const cached = await engine.getDreamVerdict(t.filePath, t.contentHash);
       if (cached) {
         verdicts.push({ filePath: t.filePath, worth: cached.worth_processing, reasons: cached.reasons, cached: true });
@@ -501,7 +516,8 @@ export async function runPhaseSynthesize(
         continue;
       }
       try {
-        const verdict = await judgeSignificance(judge, t, config.verdictModel);
+        const verdict = await judgeSignificance(judge, t, config.verdictModel, opts.signal);
+        throwIfAborted(opts.signal, '[dream] significance judge');
         if (verdict.unreliable) {
           // Degenerate judgement (truncated, refused/content-filtered, or
           // unparseable LLM output). Do
@@ -521,6 +537,7 @@ export async function runPhaseSynthesize(
         verdicts.push({ filePath: t.filePath, worth: verdict.worth_processing, reasons: verdict.reasons, cached: false });
         if (verdict.worth_processing) worthProcessing.push(t);
       } catch (e) {
+        throwIfAborted(opts.signal, '[dream] significance judge');
         // AIConfigError at chat time = provider auth/config went bad mid-run
         // (revoked key, recipe misconfig surfacing at first real call). Skip
         // this transcript with the gateway error message so the user sees the
@@ -579,6 +596,14 @@ export async function runPhaseSynthesize(
       ? `dream-inline-${Date.now()}-${randomUUID().slice(0, 8)}`
       : 'default';
     const childIds: number[] = [];
+    const cancelSubmittedChildren = async (): Promise<void> => {
+      await Promise.allSettled(childIds.map(id => queue.cancelJob(id)));
+    };
+    const throwIfPhaseAborted = async (label: string): Promise<void> => {
+      if (!opts.signal?.aborted) return;
+      await cancelSubmittedChildren();
+      throwIfAborted(opts.signal, label);
+    };
     /** Map child job_id → chunk metadata for D6 orchestrator-side slug rewrite. */
     const chunkInfo = new Map<number, { idx: number; hash6: string }>();
     /** #1978: map child job_id → source transcript path so written pages get a raw_source stamp. */
@@ -593,6 +618,7 @@ export async function runPhaseSynthesize(
     );
 
     for (const t of worthProcessing) {
+      await throwIfPhaseAborted('[dream] synthesize fan-out');
       const hash16 = t.contentHash.slice(0, 16);
       const hash6 = t.contentHash.slice(0, 6);
 
@@ -646,6 +672,7 @@ export async function runPhaseSynthesize(
           ? `anthropic:${config.model}`
           : config.model;
       for (let i = 0; i < chunks.length; i++) {
+        await throwIfPhaseAborted('[dream] synthesize fan-out');
         const childData: SubagentHandlerData = {
           prompt: buildSynthesisPrompt(t, chunks[i], i, chunks.length, priorContradictionsBlock, config.outputRoot),
           model: subagentModel,
@@ -678,6 +705,7 @@ export async function runPhaseSynthesize(
           { allowProtectedSubmit: true },
         );
         childIds.push(child.id);
+        await throwIfPhaseAborted('[dream] synthesize fan-out');
         jobRawSource.set(child.id, t.filePath);
         if (isChunked) {
           chunkInfo.set(child.id, { idx: i, hash6 });
@@ -689,7 +717,15 @@ export async function runPhaseSynthesize(
     // holds an exclusive file lock. Drain this phase's private child queue
     // inline so the parent observes terminal child states instead of polling
     // waiters until subagentWaitTimeoutMs expires. No-op on Postgres.
-    await runPgliteSubagentsInline(engine, queue, childQueueName, opts.yieldDuringPhase);
+    await runPgliteSubagentsInline(
+      engine,
+      queue,
+      childQueueName,
+      opts.yieldDuringPhase,
+      undefined,
+      opts.signal,
+    );
+    await throwIfPhaseAborted('[dream] synthesize subagents');
 
     // Wait for every child to reach a terminal state. Tick yieldDuringPhase
     // every 5 min so the cycle lock TTL refreshes.
@@ -699,7 +735,9 @@ export async function runPhaseSynthesize(
         const job = await waitForCompletion(queue, jobId, {
           timeoutMs: config.subagentWaitTimeoutMs,
           pollMs: 5 * 1000,
+          signal: opts.signal,
         });
+        await throwIfPhaseAborted('[dream] synthesize completion wait');
         childOutcomes.push({ jobId, status: job.status });
       } catch (e) {
         if (e instanceof TimeoutError) {
@@ -708,11 +746,14 @@ export async function runPhaseSynthesize(
           throw e;
         }
       }
+      await throwIfPhaseAborted('[dream] synthesize completion wait');
       // After each child terminal, give the cycle lock + worker job lock a chance.
       if (opts.yieldDuringPhase) {
         try { await opts.yieldDuringPhase(); } catch { /* best-effort */ }
       }
     }
+
+    await throwIfPhaseAborted('[dream] synthesize output');
 
     // Collect slugs from put_page tool executions across the children
     // (codex finding #2: deterministic provenance, NOT pages.updated_at).
@@ -724,6 +765,7 @@ export async function runPhaseSynthesize(
     // source (children write there via SubagentHandlerData.source_id).
     const cycleSourceId = opts.sourceId ?? 'default';
     const writtenRefs = await collectChildPutPageSlugs(engine, childIds, chunkInfo, cycleSourceId, jobRawSource);
+    await throwIfPhaseAborted('[dream] synthesize output');
 
     const summaryDate = opts.date ?? today();
 
@@ -731,10 +773,18 @@ export async function runPhaseSynthesize(
     // of every child-written page BEFORE reverse-rendering, so generated pages
     // are queryable (`frontmatter->>'dream_generated'`) and a later put_page
     // write-through (which re-renders from the DB row) can't erase the stamp.
-    await stampDreamProvenance(engine, writtenRefs, summaryDate);
+    await stampDreamProvenance(engine, writtenRefs, summaryDate, opts.signal);
+    await throwIfPhaseAborted('[dream] synthesize output');
 
     // Dual-write: reverse-render each DB row → markdown file.
-    const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId);
+    const reverseWriteCount = await reverseWriteRefs(
+      engine,
+      opts.brainDir,
+      writtenRefs,
+      cycleSourceId,
+      opts.signal,
+    );
+    await throwIfPhaseAborted('[dream] synthesize output');
 
     // Summary index page (deterministic; orchestrator-written via direct
     // engine.putPage so no allow-list path needed).
@@ -742,8 +792,18 @@ export async function runPhaseSynthesize(
     // Back-compat: writeSummaryPage takes string[] for display; map refs back to slugs.
     const writtenSlugs = writtenRefs.map(r => r.slug);
     if (SUMMARY_SLUG_RE.test(summarySlug)) {
-      await writeSummaryPage(engine, opts.brainDir, summarySlug, summaryDate, writtenSlugs, childOutcomes, cycleSourceId);
+      await writeSummaryPage(
+        engine,
+        opts.brainDir,
+        summarySlug,
+        summaryDate,
+        writtenSlugs,
+        childOutcomes,
+        cycleSourceId,
+        opts.signal,
+      );
     }
+    await throwIfPhaseAborted('[dream] synthesize completion');
 
     // Write completion timestamp ON SUCCESS only.
     await engine.setConfig('dream.synthesize.last_completion_ts', new Date().toISOString());
@@ -963,9 +1023,9 @@ export async function loadAllowedSlugPrefixes(outputRoot = 'wiki'): Promise<stri
 
 // ── Significance judge (gateway-routed; provider-agnostic) ──────────────
 //
-// The JudgeClient interface is unchanged for test-seam stability — existing
-// tests that pass a mock client to judgeSignificance keep working byte-
-// identically. Only the construction path moved from `new Anthropic()` to
+// The JudgeClient interface keeps its existing create call compatible while
+// accepting an optional AbortSignal for cooperative cancellation. Only the
+// construction path moved from `new Anthropic()` to
 // `gateway.chat()` so any provider with a registered recipe (Anthropic,
 // DeepSeek, OpenRouter, Voyage, Ollama, llama-server, etc.) is reachable
 // via `gbrain config set models.dream.synthesize_verdict <provider>:<model>`.
@@ -977,7 +1037,10 @@ export async function loadAllowedSlugPrefixes(outputRoot = 'wiki'): Promise<stri
 // for AIConfigError surfacing mid-run.
 
 export interface JudgeClient {
-  create: (params: Anthropic.MessageCreateParamsNonStreaming) => Promise<Anthropic.Message>;
+  create: (
+    params: Anthropic.MessageCreateParamsNonStreaming,
+    options?: { signal?: AbortSignal },
+  ) => Promise<Anthropic.Message>;
 }
 
 /**
@@ -1015,7 +1078,7 @@ export function makeJudgeClient(verdictModel: string): JudgeClient | null {
   if (v.parsed.providerId === 'anthropic' && !hasAnthropicKey()) return null;
 
   return {
-    create: async (params): Promise<Anthropic.Message> => {
+    create: async (params, options): Promise<Anthropic.Message> => {
       // Map Anthropic.MessageCreateParamsNonStreaming → gateway.ChatOpts.
       // `judgeSignificance` always sends string content + string system,
       // and the adapter only TEXT-flattens the array-of-blocks shape —
@@ -1042,6 +1105,7 @@ export function makeJudgeClient(verdictModel: string): JudgeClient | null {
         system,
         messages,
         maxTokens: params.max_tokens,
+        abortSignal: options?.signal,
       });
 
       // Map gateway.ChatResult → Anthropic.Message shape. judgeSignificance
@@ -1109,6 +1173,7 @@ export async function judgeSignificance(
   client: JudgeClient,
   t: DiscoveredTranscript,
   verdictModel = 'claude-haiku-4-5-20251001',
+  signal?: AbortSignal,
 ): Promise<VerdictResult> {
   // Truncate the transcript at 8K chars for cost control. Haiku's verdict
   // doesn't need the full body; the opening + closing sections are usually
@@ -1162,7 +1227,7 @@ Two reasons max, one phrase each.`;
     max_tokens: 1024,
     system: sys,
     messages: [{ role: 'user', content: `Transcript ${t.basename}:\n\n${trimmed}` }],
-  });
+  }, { signal });
 
   // stop_reason === 'max_tokens' means the response was cut off; 'refusal'
   // means the model refused or a content filter blocked it. Even if a
@@ -1492,10 +1557,12 @@ async function stampDreamProvenance(
   engine: BrainEngine,
   refs: Array<{ slug: string; source_id: string; raw_source?: string }>,
   cycleDate: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   if (refs.length === 0) return;
   const { executeRawJsonb } = await import('../sql-query.ts');
   for (const { slug, source_id, raw_source } of refs) {
+    throwIfAborted(signal, '[dream] synthesize provenance');
     try {
       await executeRawJsonb(
         engine,
@@ -1526,9 +1593,11 @@ async function reverseWriteRefs(
   brainDir: string,
   refs: Array<{ slug: string; source_id: string }>,
   nativeSourceId = 'default',
+  signal?: AbortSignal,
 ): Promise<number> {
   let count = 0;
   for (const { slug, source_id } of refs) {
+    throwIfAborted(signal, '[dream] synthesize reverse-write');
     // v0.32.8 F6: validate source_id is filesystem-safe before any join().
     validateSourceId(source_id);
     const page = await engine.getPage(slug, { sourceId: source_id });
@@ -1588,7 +1657,9 @@ async function writeSummaryPage(
   writtenSlugs: string[],
   childOutcomes: Array<{ jobId: number; status: string }>,
   sourceId = 'default',
+  signal?: AbortSignal,
 ): Promise<void> {
+  throwIfAborted(signal, '[dream] synthesize summary');
   const completed = childOutcomes.filter(c => c.status === 'completed').length;
   const failed = childOutcomes.length - completed;
 
@@ -1633,6 +1704,7 @@ async function writeSummaryPage(
   // unnecessarily; we go straight to the engine.
   const { parseMarkdown } = await import('../markdown.ts');
   const parsed = parseMarkdown(fullMarkdown);
+  throwIfAborted(signal, '[dream] synthesize summary');
   // #1586: summary lands in the cycle's resolved source too — otherwise the
   // children live in the named source while the index drifts to 'default'.
   await engine.putPage(summarySlug, {
@@ -1645,10 +1717,12 @@ async function writeSummaryPage(
 
   // Also write to disk (orchestrator dual-write).
   try {
+    throwIfAborted(signal, '[dream] synthesize summary');
     const filePath = join(brainDir, `${summarySlug}.md`);
     mkdirSync(dirname(filePath), { recursive: true });
     writeFileSync(filePath, fullMarkdown, 'utf8');
   } catch (e) {
+    throwIfAborted(signal, '[dream] synthesize summary');
     const msg = e instanceof Error ? e.message : String(e);
     process.stderr.write(`[dream] summary file-write failed: ${msg}\n`);
   }

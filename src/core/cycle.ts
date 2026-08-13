@@ -1858,6 +1858,7 @@ export async function runCycle(
           // (explicit --source wins, else derived from the checkout dir).
           sourceId: cycleSourceId,
           once: opts.onceForPhase === 'synthesize',
+          signal: opts.signal,
         }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
@@ -2070,6 +2071,7 @@ export async function runCycle(
           // source owns the page, which is what doctor reports as
           // multi_source_drift.
           sourceId: cycleSourceId,
+          signal: opts.signal,
         }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);

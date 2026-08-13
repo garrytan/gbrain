@@ -179,6 +179,8 @@ describe('#1972 — complete cooperative-abort coverage', () => {
     expect(body).toMatch(/runPhaseExtractFacts\([^)]*opts\.signal\)/);
     expect(body).toContain('signal: opts.signal'); // consolidate opts
     expect(body).toContain('runPhaseLint(brainDir, dryRun, engine, opts.signal)');
+    expect(body).toMatch(/runPhaseSynthesize\(engine, \{[\s\S]*?signal: opts\.signal,[\s\S]*?\}\)/);
+    expect(body).toMatch(/runPhasePatterns\(engine, \{[\s\S]*?signal: opts\.signal,[\s\S]*?\}\)/);
     // Reaper runs at cycle start.
     expect(body).toContain('reapDeadHolderLocks(engine)');
     // Terminal guard: the success stamp is gated on !aborted, and the report
@@ -187,6 +189,24 @@ describe('#1972 — complete cooperative-abort coverage', () => {
     expect(body).toContain("reason: 'aborted'");
     // Phase-duration force-evict attribution log (T11).
     expect(body).toContain('FORCE_EVICT_DEADLINE_MS');
+  });
+
+  test('synthesize threads its signal through judge, inline child, and completion wait', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(new URL('../src/core/cycle/synthesize.ts', import.meta.url), 'utf8');
+    expect(src).toContain('signal?: AbortSignal');
+    expect(src).toContain('judgeSignificance(judge, t, config.verdictModel, opts.signal)');
+    expect(src).toMatch(/runPgliteSubagentsInline\([\s\S]*?opts\.yieldDuringPhase,[\s\S]*?opts\.signal/);
+    expect(src).toMatch(/waitForCompletion\(queue, jobId, \{[\s\S]*?signal: opts\.signal/);
+  });
+
+  test('patterns sibling threads the same signal through inline child and completion wait', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(new URL('../src/core/cycle/patterns.ts', import.meta.url), 'utf8');
+    expect(src).toContain('signal?: AbortSignal');
+    expect(src).toMatch(/runPgliteSubagentsInline\([\s\S]*?opts\.yieldDuringPhase,[\s\S]*?opts\.signal/);
+    expect(src).toMatch(/waitForCompletion\(queue, job\.id, \{[\s\S]*?signal: opts\.signal/);
+    expect(src).toContain('reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal)');
   });
 
   test('every long phase core checks isAborted in its batch loop', async () => {
