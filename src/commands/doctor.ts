@@ -782,6 +782,124 @@ export async function checkSourceConfigShape(engine: BrainEngine): Promise<Check
   }
 }
 
+/**
+ * #2674 — pglite_scratch_probe: distinguish a damaged PGLite store from a
+ * broken WASM runtime.
+ *
+ * PGLite reports only `Aborted()` to JS (the PANIC goes to its own stderr),
+ * so when init fails, the error string cannot say WHICH of the two it is.
+ * The probe initializes a throwaway store in a temp dir, round-trips a row,
+ * and reads the outcome:
+ *
+ *   - scratch works, real init failed → the runtime is fine; the failure is
+ *     specific to YOUR store. The store-damage verdict is only ASSERTED when
+ *     the caller supplies positive evidence (`storeDamageEvidence`: a
+ *     damage-class disk diagnosis from `inspectPgliteDataDir`, or a
+ *     wasm-abort/corrupt classification of the real init error). engine=null
+ *     alone also covers locks and config refusals — blaming the store for
+ *     those was the original false-positive defect; without evidence the
+ *     message hedges and points at the `pglite_data_dir` diagnosis instead.
+ *   - scratch fails too → the runtime cannot start on this machine; report
+ *     OS + Bun versions on #223.
+ *
+ * COST GATE: a PGLite cold start is 5–20s on loaded machines, so this never
+ * runs on a routine `gbrain doctor`. It runs only when (a) the real PGLite
+ * engine actually failed to open (engine=null, not --fast, configured engine
+ * is pglite) AND the disk diagnosis didn't already fully explain the failure
+ * (a live lock / missing dir needs no runtime probe), or (b) the operator
+ * asks with `--probe-pglite`.
+ *
+ * `probeFn` is a test seam so message routing can be pinned without paying
+ * real cold starts.
+ */
+export async function checkPgliteScratchProbe(opts: {
+  realInitFailed: boolean;
+  /**
+   * Positive evidence the REAL store is damaged: `inspectPgliteDataDir`
+   * verdict wal-corruption-likely/unsupported-layout (buildChecks path) or a
+   * wasm-abort/corrupt classification of the actual connect error (remote
+   * path). Without it the scratch-ok arm hedges instead of asserting damage.
+   */
+  storeDamageEvidence?: boolean;
+  realStorePath?: string;
+  probeFn?: () => Promise<import('../core/pglite-engine.ts').PgliteScratchProbeResult>;
+}): Promise<Check> {
+  const name = 'pglite_scratch_probe';
+  try {
+    const probe =
+      opts.probeFn ??
+      (async () => {
+        const { probePgliteScratchStore } = await import('../core/pglite-engine.ts');
+        return probePgliteScratchStore(opts.realStorePath);
+      });
+    const r = await probe();
+    const secs = (r.duration_ms / 1000).toFixed(1);
+    if (r.ok) {
+      if (opts.realInitFailed && opts.storeDamageEvidence) {
+        return {
+          name,
+          status: 'fail',
+          message:
+            `A scratch PGLite store initialized, wrote and read back fine on this machine (${secs}s), ` +
+            `so the runtime is healthy and YOUR STORE is damaged — not the WASM runtime. ` +
+            `Your markdown is unaffected: the DB holds derived data (chunks, embeddings, links, facts) that a re-sync rebuilds. ` +
+            `Recover: \`gbrain pglite-repair --dry-run\` to diagnose, \`gbrain pglite-repair --yes\` for in-place WAL repair (data preserved); ` +
+            `if that can't fix it, restore a backup of the store directory or run \`gbrain reinit-pglite\` (wipes + re-inits + re-syncs; ` +
+            `defaults embedding flags from your config file).`,
+          details: { scratch_ok: true, duration_ms: r.duration_ms },
+        };
+      }
+      if (opts.realInitFailed) {
+        // Runtime proven healthy, but no independent evidence of store DAMAGE
+        // — engine=null also covers locks, config refusals, and transient
+        // failures. Hedge rather than convict the store (#2674 review).
+        return {
+          name,
+          status: 'warn',
+          message:
+            `A scratch PGLite store initialized, wrote and read back fine on this machine (${secs}s), ` +
+            `so the WASM runtime is healthy — the failure opening your brain is specific to your store, ` +
+            `its lock, or its configuration. See the \`pglite_data_dir\` check for the on-disk diagnosis; ` +
+            `\`gbrain pglite-repair --dry-run\` diagnoses without mutating anything.`,
+          details: { scratch_ok: true, duration_ms: r.duration_ms },
+        };
+      }
+      return {
+        name,
+        status: 'ok',
+        message: `PGLite runtime healthy: scratch store round-trip in ${secs}s.`,
+        details: { scratch_ok: true, duration_ms: r.duration_ms },
+      };
+    }
+    const errLine = (r.error ?? 'unknown error').split('\n')[0];
+    if (opts.realInitFailed) {
+      return {
+        name,
+        status: 'fail',
+        message:
+          `A fresh scratch PGLite store ALSO failed to start (${secs}s), so the WASM runtime cannot run ` +
+          `on this machine — your store is not necessarily damaged. Report your OS and Bun versions on ` +
+          `https://github.com/garrytan/gbrain/issues/223. Scratch error: ${errLine}`,
+        details: { scratch_ok: false, duration_ms: r.duration_ms, error: r.error, verdict: r.verdict },
+      };
+    }
+    return {
+      name,
+      status: 'warn',
+      message:
+        `Your real store opened, but a fresh scratch PGLite store failed to initialize (${secs}s) — ` +
+        `new stores can't be created on this machine. Report your OS and Bun versions on ` +
+        `https://github.com/garrytan/gbrain/issues/223. Scratch error: ${errLine}`,
+      details: { scratch_ok: false, duration_ms: r.duration_ms, error: r.error, verdict: r.verdict },
+    };
+  } catch (e) {
+    // Includes the never-touch-the-real-store guard refusal. The probe not
+    // running is a diagnostic gap, not a diagnosis — warn, don't fail.
+    const msg = e instanceof Error ? e.message : String(e);
+    return { name, status: 'warn', message: `scratch probe could not run: ${msg}` };
+  }
+}
+
 export async function doctorReportRemote(
   engine: BrainEngine,
   opts: { sourceIds?: string[] } = {},
@@ -804,6 +922,23 @@ export async function doctorReportRemote(
       status: 'fail',
       message: e instanceof Error ? e.message : String(e),
     });
+    // #2674: on PGLite, a dead connection is exactly the ambiguous case the
+    // scratch probe exists for — pay its cold start only on this failure path.
+    // Unlike buildChecks (where the connect error was swallowed upstream), the
+    // real error IS in hand here: classify it, and only let the probe assert
+    // store damage on a damage-class verdict (wasm-abort/corrupt) — a lock or
+    // config refusal classifies 'unknown' and gets the hedged message.
+    if (engine.kind === 'pglite') {
+      let realStorePath: string | undefined;
+      try { realStorePath = loadConfig()?.database_path; } catch { /* no config */ }
+      let storeDamageEvidence = false;
+      try {
+        const { classifyPgliteInitError, stringifyPgliteInitError } = await import('../core/pglite-engine.ts');
+        const verdict = classifyPgliteInitError(stringifyPgliteInitError(e));
+        storeDamageEvidence = verdict === 'wasm-abort' || verdict === 'corrupt';
+      } catch { /* classifier unavailable — stay hedged (fail-closed) */ }
+      checks.push(await checkPgliteScratchProbe({ realInitFailed: true, storeDamageEvidence, realStorePath }));
+    }
     // Without a connection, every other check is meaningless — short-circuit.
     return computeDoctorReport(checks);
   }
@@ -6457,24 +6592,62 @@ export async function buildChecks(
     // Filesystem read failure is non-fatal.
   }
 
-  // 3d. PGLite data-dir diagnosis (WAL-repair wave). Only meaningful when the
-  // connect already FAILED on a PGLite brain (engine === null): the connect
-  // error was swallowed by the fs-only fallback, so this check re-derives the
-  // dir state from disk and names the repair ladder. Skipped under --fast
-  // (connect wasn't attempted, so "engine === null" proves nothing there).
-  if (!fastMode && !engine) {
-    try {
-      const cfg = loadConfig();
-      if (cfg?.engine === 'pglite') {
+  // 3d. PGLite data-dir diagnosis (WAL-repair wave) + scratch-store probe
+  // (#2674). The data-dir check re-derives the failure state from DISK (the
+  // connect error was swallowed by the fs-only fallback); the probe adds the
+  // RUNTIME dimension (a throwaway store that opens fine proves the WASM
+  // runtime is healthy). Both only fire when the connect already FAILED on a
+  // PGLite brain (engine === null, not --fast — under --fast connect wasn't
+  // attempted, so "engine === null" proves nothing there).
+  //
+  // Probe cost gate (a PGLite cold start is 5–20s): auto-runs ONLY when init
+  // failed AND the disk diagnosis didn't already fully explain it — a live
+  // lock or a missing dir needs no runtime probe (and 'locked' was exactly
+  // the reviewed false-positive: blaming the store while `gbrain serve` held
+  // it). Explicit --probe-pglite always runs it. A routine healthy
+  // `gbrain doctor` never pays it.
+  {
+    const probeRequested = args.includes('--probe-pglite');
+    let cfgForProbe: ReturnType<typeof loadConfig> = null;
+    try { cfgForProbe = loadConfig(); } catch { /* no config — nothing to diagnose */ }
+    const pgliteInitFailed = !engine && !fastMode && cfgForProbe?.engine === 'pglite';
+
+    let dirVerdict: import('../core/pglite-repair.ts').PgliteDirDiagnosis['verdict'] | undefined;
+    if (pgliteInitFailed) {
+      try {
         const { inspectPgliteDataDir } = await import('../core/pglite-repair.ts');
         const { resolve } = await import('node:path');
         // Absolutize: a RELATIVE database_path would make the sidecar/backup
         // lookups resolve against doctor's cwd instead of the engine's.
-        const pgliteDataDir = resolve(cfg.database_path || gbrainPath('brain.pglite'));
-        checks.push(computePgliteDataDirCheck(pgliteDataDir, inspectPgliteDataDir(pgliteDataDir)));
+        const pgliteDataDir = resolve(cfgForProbe!.database_path || gbrainPath('brain.pglite'));
+        const diagnosis = inspectPgliteDataDir(pgliteDataDir);
+        dirVerdict = diagnosis.verdict;
+        checks.push(computePgliteDataDirCheck(pgliteDataDir, diagnosis));
+      } catch {
+        // Best-effort: an unreadable config or fs failure must not stop doctor.
       }
-    } catch {
-      // Best-effort: an unreadable config or fs failure must not stop doctor.
+    }
+
+    const dirExplainsFailure = dirVerdict === 'locked' || dirVerdict === 'missing';
+    if (probeRequested || (pgliteInitFailed && !dirExplainsFailure)) {
+      progress.start('doctor.pglite_probe');
+      const stopHb = startHeartbeat(progress, 'pglite scratch-store probe (cold start, can take 5–20s)…');
+      try {
+        checks.push(
+          await checkPgliteScratchProbe({
+            // A lock/missing dir explains the failure without the store being
+            // damaged — an explicit --probe-pglite there still reports on the
+            // runtime, but must not treat the store as the convicted party.
+            realInitFailed: pgliteInitFailed && !dirExplainsFailure,
+            storeDamageEvidence:
+              dirVerdict === 'wal-corruption-likely' || dirVerdict === 'unsupported-layout',
+            realStorePath: cfgForProbe?.database_path,
+          }),
+        );
+      } finally {
+        stopHb();
+        progress.finish();
+      }
     }
   }
 

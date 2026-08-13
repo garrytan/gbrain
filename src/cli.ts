@@ -3028,7 +3028,7 @@ SETUP
   migrate embeddings --to <p:model>  Re-embed onto another embedding provider
   upgrade                            Self-update
   check-update [--json]              Check for new versions
-  doctor [--json] [--fast]            Health check (resolver, skills, pgvector, RLS, embeddings)
+  doctor [--json] [--fast] [--probe-pglite]  Health check (resolver, skills, pgvector, RLS, embeddings; --probe-pglite runs the scratch-store probe)
   integrations [subcommand]          Manage integration recipes (senses + reflexes)
 
 PAGES

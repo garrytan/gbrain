@@ -1,5 +1,10 @@
 import { PGlite } from '@electric-sql/pglite';
 import type { Transaction } from '@electric-sql/pglite';
+// Engine-live path: static top-level imports (scratch probe, #2674) — the
+// engine-dynamic-import guard forbids lazy `import()` here.
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join as joinPath, resolve as resolvePath, sep as pathSep } from 'node:path';
 // Engine-live path: static top-level import (no lazy `import()`). Supplies
 // PGLite's WASM/fsBundle/extension assets embedded via `with { type: 'file' }`
 // so a `bun build --compile` binary can serve a PGLite brain (Bun vfs #1340).
@@ -419,6 +424,95 @@ async function preservingProcessExitCode<T>(fn: () => Promise<T>): Promise<T> {
     return await fn();
   } finally {
     process.exitCode = typeof pre === 'number' || typeof pre === 'string' ? pre : 0;
+  }
+}
+
+/**
+ * #2674 — the scratch-store probe, the diagnostic half of the issue.
+ *
+ * PGLite reports only `Aborted()` to JS and prints the real PANIC (e.g.
+ * `could not locate a valid checkpoint record`) to its own stderr, so from
+ * the JS-visible error alone a damaged store is indistinguishable from a
+ * broken WASM runtime. The one thing that CAN tell them apart is opening a
+ * throwaway store on the same machine:
+ *
+ *   - scratch store works → the runtime is healthy; the REAL store is damaged.
+ *   - scratch store fails too → the runtime cannot start here at all.
+ *
+ * Stderr capture: PGLite 0.4.3 exposes no print/printErr hook on
+ * `PGliteOptions` (checked: only `debug`, which still writes to the
+ * process's own stderr), so we deliberately do NOT try to intercept the
+ * PANIC text — monkey-patching process.stderr.write around an async WASM
+ * init is exactly the hack the classifier comments warn against. The
+ * probe's ok/fail outcome carries the diagnosis instead; `verdict` is
+ * populated from the JS-visible error for callers that want it.
+ *
+ * Runs the SAME code path as the real engine (PGlite.create with the
+ * embedded WASM/extension assets) but deliberately NOT PGLiteEngine.connect():
+ * connect wraps failures in buildPgliteInitErrorMessage, whose hint text
+ * would then pollute re-classification of the probe error.
+ *
+ * Safety: the scratch dir comes from mkdtemp under os.tmpdir() and is
+ * additionally checked against `realStorePath` (refuses any overlap in
+ * either direction) — a bug here must never touch the brain being
+ * diagnosed. The dir is removed in a finally, success or failure.
+ */
+export interface PgliteScratchProbeResult {
+  ok: boolean;
+  duration_ms: number;
+  /** JS-visible error when ok=false (the PANIC itself lands on stderr, not here). */
+  error?: string;
+  verdict?: PgliteInitFailure;
+}
+
+export async function probePgliteScratchStore(
+  realStorePath?: string,
+): Promise<PgliteScratchProbeResult> {
+  const scratchDir = await mkdtemp(joinPath(tmpdir(), 'gbrain-pglite-probe-'));
+  if (realStorePath) {
+    const real = resolvePath(realStorePath);
+    const scratch = resolvePath(scratchDir);
+    if (scratch === real || scratch.startsWith(real + pathSep) || real.startsWith(scratch + pathSep)) {
+      await rm(scratchDir, { recursive: true, force: true }).catch(() => {});
+      throw new Error(
+        `refusing to probe: scratch dir ${scratch} overlaps the real store ${real}`,
+      );
+    }
+  }
+
+  const started = Date.now();
+  let db: PGlite | null = null;
+  try {
+    // Same assets as the real engine's connect(): the embedded WASM/fsBundle/
+    // extension options (Bun vfs #1340) — a compiled binary's probe must
+    // exercise the same runtime path the real store open uses.
+    const embedded = await getEmbeddedPgliteOptions();
+    db = await preservingProcessExitCode(() =>
+      PGlite.create({
+        dataDir: joinPath(scratchDir, 'store'),
+        ...embedded,
+      }),
+    );
+    await db.query(`CREATE TABLE scratch_probe (id int PRIMARY KEY, note text)`);
+    await db.query(`INSERT INTO scratch_probe VALUES (1, 'ok')`);
+    const res = await db.query<{ note: string }>(`SELECT note FROM scratch_probe WHERE id = 1`);
+    if (res.rows[0]?.note !== 'ok') {
+      throw new Error(`scratch store read-back mismatch: ${JSON.stringify(res.rows)}`);
+    }
+    return { ok: true, duration_ms: Date.now() - started };
+  } catch (err) {
+    const message = stringifyPgliteInitError(err);
+    return {
+      ok: false,
+      duration_ms: Date.now() - started,
+      error: message,
+      verdict: classifyPgliteInitError(message),
+    };
+  } finally {
+    if (db) {
+      try { await db.close(); } catch { /* probe store — nothing to save */ }
+    }
+    await rm(scratchDir, { recursive: true, force: true }).catch(() => {});
   }
 }
 

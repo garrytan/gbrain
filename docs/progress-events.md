@@ -135,6 +135,10 @@ sync that calls import emits `sync.import.<file>`, not `import.<file>`.
 Stable phase names shipped in v0.15.2:
 
 - `doctor.db_checks` (umbrella for all DB-side doctor checks)
+- `doctor.pglite_probe` (the #2674 scratch-store probe; only when PGLite init
+  failed with an unexplained/damage-class disk state or `--probe-pglite` was
+  passed — a cold start can take 5–20s, so the heartbeat is the only sign of
+  life)
 - `orphans.scan`
 - `embed.pages`
 - `extract.links_fs`, `extract.timeline_fs`, `extract.links_db`, `extract.timeline_db`
