@@ -31,8 +31,8 @@
  * frontmatter; a re-run skips items whose page is already fresh).
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from 'node:fs';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 
 import type { BrainEngine } from './engine.ts';
 import type { SyncOpts } from '../commands/sync.ts';
@@ -81,6 +81,15 @@ export function isGitHubSourceConfig(config: Record<string, unknown>): boolean {
   return config.kind === GH_KIND;
 }
 
+/** True for "owner/name" with no dot segments, slashes, or empty parts. */
+export function isValidRepoName(repo: string): boolean {
+  if (repo.length === 0 || repo.length > 200) return false;
+  if (repo.startsWith('/') || repo.endsWith('/')) return false;
+  const parts = repo.split('/');
+  if (parts.length !== 2) return false;
+  return parts.every((p) => p.length > 0 && p !== '.' && p !== '..' && /^[\w.-]+$/.test(p));
+}
+
 export function parseGitHubSourceConfig(
   config: Record<string, unknown>,
   fallbackDir: string,
@@ -96,7 +105,7 @@ export function parseGitHubSourceConfig(
       ? config.gh_repos
           .split(',')
           .map((s) => s.trim())
-          .filter((s) => /^[\w.-]+\/[\w.-]+$/.test(s))
+          .filter(isValidRepoName)
       : [];
   const dir =
     typeof config.gh_dir === 'string' && config.gh_dir.length > 0
@@ -186,6 +195,14 @@ export class GitHubClient {
     path: string,
     opts: { signal?: AbortSignal; retries?: number } = {},
   ): Promise<T> {
+    const { data } = await this.fetchJSONWithMeta<T>(path, opts);
+    return data;
+  }
+
+  private async fetchJSONWithMeta<T>(
+    path: string,
+    opts: { signal?: AbortSignal; retries?: number } = {},
+  ): Promise<{ data: T; link: string | null }> {
     const retries = opts.retries ?? 1;
     for (let attempt = 0; attempt <= retries; attempt++) {
       await this.waitForBucket(opts.signal);
@@ -218,29 +235,57 @@ export class GitHubClient {
       if (!res.ok) {
         throw new Error(`GitHub API HTTP ${res.status} on ${path}`);
       }
-      return (await res.json()) as T;
+      return { data: (await res.json()) as T, link: res.headers.get('link') };
     }
     throw new Error(`GitHub API unreachable on ${path}`);
   }
 
-  /** GET all pages of a paginated list, concatenated. */
+  /**
+   * GET all pages of a paginated list, concatenated. Follows the Link
+   * header (rel="next"), which GitHub sends for every paginated endpoint.
+   * Throws GitHubPaginationError when the safety cap is hit so callers
+   * can treat the enumeration as incomplete (never reconcile a truncated
+   * list against the brain).
+   */
   async fetchAllPages<T>(
     path: string,
-    opts: { signal?: AbortSignal; perPage?: number } = {},
+    opts: { signal?: AbortSignal; perPage?: number; field?: string } = {},
   ): Promise<T[]> {
     const perPage = opts.perPage ?? 100;
     const out: T[] = [];
-    let page = 1;
+    let url = `${path}${path.includes('?') ? '&' : '?'}per_page=${perPage}&page=1`;
+    let pages = 0;
     for (;;) {
-      const sep = path.includes('?') ? '&' : '?';
-      const batch = await this.fetchJSON<T[]>(`${path}${sep}per_page=${perPage}&page=${page}`, opts);
+      const { data, link } = await this.fetchJSONWithMeta<Record<string, unknown> | unknown[]>(url, opts);
+      const batch = (Array.isArray(data) ? data : opts.field ? (data as Record<string, unknown>)[opts.field] : []) as T[];
       out.push(...batch);
-      if (batch.length < perPage) break;
-      page++;
-      if (page > 100) break; // safety valve
+      pages++;
+      if (pages >= 500) {
+        throw new GitHubPaginationError(`pagination cap (500 pages) hit on ${path}; refusing to treat a truncated list as complete`);
+      }
+      const next = link !== null ? linkNextUrl(link) : null;
+      if (next === null) break;
+      url = next;
     }
     return out;
   }
+}
+
+/** Thrown when pagination hits the safety cap; callers treat enumeration as incomplete. */
+export class GitHubPaginationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GitHubPaginationError';
+  }
+}
+
+/** Parse the Link header and return the rel="next" URL, or null. */
+export function linkNextUrl(link: string): string | null {
+  for (const part of link.split(',')) {
+    const m = part.match(/<([^>]+)>;\s*rel="next"/);
+    if (m) return m[1];
+  }
+  return null;
 }
 
 // ── Scope resolution ─────────────────────────────────────────────────────────
@@ -480,14 +525,14 @@ async function fetchChecks(
 ): Promise<GitHubItemData['checks']> {
   try {
     const [runs, status] = await Promise.all([
-      client.fetchJSON<RawCheckRuns>(`/repos/${repo}/commits/${headSha}/check-runs`, opts),
+      client.fetchAllPages<RawCheckRun>(`/repos/${repo}/commits/${headSha}/check-runs`, { ...opts, field: 'check_runs' }),
       client.fetchJSON<RawStatus>(`/repos/${repo}/commits/${headSha}/status`, opts),
     ]);
     let pass = 0;
     let fail = 0;
     let pending = 0;
     const failing: string[] = [];
-    for (const run of runs.check_runs) {
+    for (const run of runs) {
       if (run.status !== 'completed') {
         pending++;
       } else if (run.conclusion === 'success' || run.conclusion === 'neutral' || run.conclusion === 'skipped') {
@@ -544,11 +589,27 @@ function yamlList(v: string[]): string {
 }
 
 export function itemPagePath(dir: string, repo: string, number: number): string {
-  return join(dir, 'gh', repo, `${number}.md`);
+  const p = join(dir, 'gh', repo, `${number}.md`);
+  assertContained(dir, p, repo);
+  return p;
 }
 
 export function repoCardPath(dir: string, repo: string): string {
-  return join(dir, 'gh', repo, 'index.md');
+  const p = join(dir, 'gh', repo, 'index.md');
+  assertContained(dir, p, repo);
+  return p;
+}
+
+/** Path-containment guard: a crafted repo name must never escape the managed dir. */
+function assertContained(dir: string, path: string, repo: string): void {
+  if (!isValidRepoName(repo)) {
+    throw new Error(`Invalid GitHub repo name: "${repo}"`);
+  }
+  const base = resolve(dir);
+  const target = resolve(path);
+  if (target !== base && !target.startsWith(base + sep)) {
+    throw new Error(`Path escapes managed dir: "${path}"`);
+  }
 }
 
 export function renderRepoCard(repo: string, data: RawRepo): string {
@@ -747,7 +808,8 @@ async function deleteStalePages(
     (p) => p.startsWith('gh/') && p.endsWith('.md'),
   );
   if (plan.staleSlugs.length === 0) return;
-  if (plan.massDelete) {
+  const { massReconcileAllowed } = await import('../commands/sync.ts');
+  if (plan.massDelete && !massReconcileAllowed()) {
     deps.client.log?.(`[github] mass-delete guard refused ${plan.staleSlugs.length} deletes for source ${deps.sourceId}`);
     return;
   }
@@ -784,10 +846,13 @@ export async function runGitHubSync(
   opts: SyncOpts,
   fetchImpl?: FetchImpl,
 ): Promise<import('../commands/sync.ts').SyncResult> {
-  const token = process.env[cfg.tokenEnv] ?? process.env.GH_TOKEN ?? '';
+  // No fallback chain: cfg.tokenEnv IS the single source of truth (the
+  // default is GH_TOKEN; a custom --token-env that is unset fails loudly
+  // instead of silently using a different token scope, codex LOW).
+  const token = process.env[cfg.tokenEnv] ?? '';
   if (!token) {
     throw new Error(
-      `GitHub source "${sourceId}" has no token. Set ${cfg.tokenEnv} (or GH_TOKEN) in the environment.`,
+      `GitHub source "${sourceId}" has no token. Set ${cfg.tokenEnv} in the environment.`,
     );
   }
   const client = new GitHubClient(token, fetchImpl);
@@ -842,24 +907,41 @@ export async function runGitHubSync(
     try {
       const { issues, prs } = await enumerateRepoItems(repo, client, { since, signal: opts.signal });
       const all = [
-        ...issues.map((i) => ({ repo, number: i.number, kind: 'issue' as const, updated_at: i.updated_at })),
-        ...prs.map((p) => ({ repo, number: p.number, kind: 'pr' as const, updated_at: p.updated_at })),
+        ...issues.map((i) => ({ repo, number: i.number, kind: 'issue' as const, state: i.state, updated_at: i.updated_at })),
+        ...prs.map((p) => ({ repo, number: p.number, kind: 'pr' as const, state: p.state, updated_at: p.updated_at })),
       ];
       for (const item of all) {
-        if (item.updated_at > maxUpdatedAt) maxUpdatedAt = item.updated_at;
         const filePath = itemPagePath(cfg.dir, repo, item.number);
         keepPaths.add(relative(cfg.dir, filePath).replace(/\\/g, '/'));
         summary.itemsSeen++;
-        if (!opts.full && isPageFresh(filePath, item.updated_at)) continue;
+        // Open PRs are never fresh: their check state can change without
+        // touching the PR's updated_at (a new check run does not bump it),
+        // so they are re-fetched every sweep. Cost is bounded by the number
+        // of open PRs, which is small in practice.
+        const isOpenPr = item.kind === 'pr' && item.state === 'open';
+        if (!opts.full && !isOpenPr && isPageFresh(filePath, item.updated_at)) continue;
         summary.itemDetailFetches++;
-        const data = await fetchItemData(repo, item.number, item.kind, client, { signal: opts.signal });
-        mkdirSync(dirname(filePath), { recursive: true });
-        const before = existsSync(filePath);
-        writeFileSync(filePath, renderItemPage(data), 'utf-8');
-        const imported = await importPage(deps, filePath, activePack);
-        summary.pagesAffected.push(imported.slug);
-        summary.chunksCreated += imported.chunks;
-        if (before) summary.modified++; else summary.added++;
+        try {
+          const data = await fetchItemData(repo, item.number, item.kind, client, { signal: opts.signal });
+          mkdirSync(dirname(filePath), { recursive: true });
+          const before = existsSync(filePath);
+          writeFileSync(filePath, renderItemPage(data), 'utf-8');
+          const imported = await importPage(deps, filePath, activePack);
+          summary.pagesAffected.push(imported.slug);
+          summary.chunksCreated += imported.chunks;
+          if (before) summary.modified++; else summary.added++;
+        } catch (err) {
+          // Cursor discipline (codex HIGH): never advance past an item that
+          // failed, and remove the half-written page so the next sweep sees
+          // it as absent and retries the DB import too.
+          deps.client.log?.(`[github] item ${repo}#${item.number} failed: ${err instanceof Error ? err.message : String(err)}`);
+          summary.failedFiles++;
+          summary.status = 'partial';
+          try { rmSync(filePath, { force: true }); } catch { /* best-effort */ }
+          continue;
+        }
+        // Cursor advances only for items that fully succeeded.
+        if (item.updated_at > maxUpdatedAt) maxUpdatedAt = item.updated_at;
       }
       // Repo card, refreshed once per repo.
       const cardPath = repoCardPath(cfg.dir, repo);
@@ -893,10 +975,21 @@ export async function runGitHubSync(
   // Size-gated extract + embed, mirroring performSyncInner's gates.
   await runExtractAndEmbed(deps, summary, activePack);
 
-  state.last_sweep_at = maxUpdatedAt || new Date().toISOString();
+  // Cursor discipline: the sweep cursor only advances on a fully successful
+  // run. On a partial run (item or repo failures) or an aborted signal we
+  // keep the previous cursor so the next sweep re-enumerates from the old
+  // point; fresh pages are still skipped by content hash, so the only real
+  // cost is the retry of whatever failed.
+  if (opts.signal?.aborted) summary.status = 'partial';
   state.repos = repos;
-  writeState(cfg.dir, state);
-  await touchSourceRow(deps, maxUpdatedAt || new Date().toISOString());
+  if (summary.status === 'synced') {
+    state.last_sweep_at = maxUpdatedAt || new Date().toISOString();
+    writeState(cfg.dir, state);
+    await touchSourceRow(deps, maxUpdatedAt || new Date().toISOString());
+  } else {
+    writeState(cfg.dir, state);
+    await touchSourceRow(deps, state.last_sweep_at ?? new Date().toISOString());
+  }
 
   return syncResult(summary, opts);
 }

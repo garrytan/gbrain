@@ -13,8 +13,11 @@ import {
   itemPagePath,
   repoCardPath,
   isPageFresh,
+  isValidRepoName,
+  linkNextUrl,
   type GitHubItemData,
 } from '../src/core/github-source.ts';
+import { extractGitHubItemRef } from '../src/commands/serve-http.ts';
 
 function baseItemData(overrides: Partial<GitHubItemData> = {}): GitHubItemData {
   return {
@@ -217,6 +220,72 @@ describe('renderRepoCard', () => {
     expect(page).toContain('description: "The app"');
     expect(page).toContain('archived: false');
     expect(page).toContain('Default branch: main');
+  });
+});
+
+describe('isValidRepoName', () => {
+  test('accepts normal owner/name', () => {
+    expect(isValidRepoName('acme/app')).toBe(true);
+    expect(isValidRepoName('a.b-c_d/app')).toBe(true);
+  });
+  test('rejects dot segments and malformed shapes', () => {
+    expect(isValidRepoName('../..')).toBe(false);
+    expect(isValidRepoName('..')).toBe(false);
+    expect(isValidRepoName('.')).toBe(false);
+    expect(isValidRepoName('acme/..')).toBe(false);
+    expect(isValidRepoName('/acme/app')).toBe(false);
+    expect(isValidRepoName('acme/app/')).toBe(false);
+    expect(isValidRepoName('acme')).toBe(false);
+    expect(isValidRepoName('a/b/c')).toBe(false);
+    expect(isValidRepoName('')).toBe(false);
+  });
+});
+
+describe('linkNextUrl', () => {
+  test('extracts rel=next from a Link header', () => {
+    const header =
+      '<https://api.github.com/repos/a/b/issues?page=2&per_page=100>; rel="next", ' +
+      '<https://api.github.com/repos/a/b/issues?page=4&per_page=100>; rel="last"';
+    expect(linkNextUrl(header)).toBe('https://api.github.com/repos/a/b/issues?page=2&per_page=100');
+  });
+  test('returns null when no next link exists', () => {
+    expect(linkNextUrl('<https://x>; rel="last"')).toBeNull();
+    expect(linkNextUrl('')).toBeNull();
+  });
+});
+
+describe('extractGitHubItemRef (webhook payload shapes)', () => {
+  const repo = { full_name: 'acme/app' };
+  test('issue event', () => {
+    expect(extractGitHubItemRef({ repository: repo, issue: { number: 7 } })).toEqual({ repo: 'acme/app', number: 7, kind: 'issue' });
+  });
+  test('PR issue_comment event carries the PR inside issue.pull_request', () => {
+    expect(
+      extractGitHubItemRef({ repository: repo, issue: { number: 9, pull_request: {} } }),
+    ).toEqual({ repo: 'acme/app', number: 9, kind: 'pr' });
+  });
+  test('pull_request review event', () => {
+    expect(
+      extractGitHubItemRef({ repository: repo, pull_request: { number: 12 } }),
+    ).toEqual({ repo: 'acme/app', number: 12, kind: 'pr' });
+  });
+  test('check_run event nests linked PRs', () => {
+    expect(
+      extractGitHubItemRef({ repository: repo, check_run: { pull_requests: [{ number: 15 }] } }),
+    ).toEqual({ repo: 'acme/app', number: 15, kind: 'pr' });
+  });
+  test('check_suite and workflow_run also nest linked PRs', () => {
+    expect(
+      extractGitHubItemRef({ repository: repo, check_suite: { pull_requests: [{ number: 16 }] } }),
+    ).toEqual({ repo: 'acme/app', number: 16, kind: 'pr' });
+    expect(
+      extractGitHubItemRef({ repository: repo, workflow_run: { pull_requests: [{ number: 17 }] } }),
+    ).toEqual({ repo: 'acme/app', number: 17, kind: 'pr' });
+  });
+  test('payload without an item reference resolves to null', () => {
+    expect(extractGitHubItemRef({ repository: repo, check_run: { pull_requests: [] } })).toBeNull();
+    expect(extractGitHubItemRef({ repository: repo, zen: 'hi' })).toBeNull();
+    expect(extractGitHubItemRef({})).toBeNull();
   });
 });
 

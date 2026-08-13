@@ -49,6 +49,7 @@ import {
   SourceOpError,
   type SourceRow as OpsSourceRow,
 } from '../core/sources-ops.ts';
+import { isValidRepoName } from '../core/github-source.ts';
 import {
   resolveSourceWithTier,
   SOURCE_TIER_NAMES,
@@ -208,8 +209,8 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     process.exit(2);
   }
   for (const r of ghRepos) {
-    if (!/^[\w.-]+\/[\w.-]+$/.test(r)) {
-      console.error(`Invalid --repos entry: "${r}". Expected owner/name.`);
+    if (!isValidRepoName(r)) {
+      console.error(`Invalid --repos entry: "${r}". Expected owner/name with no dot segments.`);
       process.exit(2);
     }
   }

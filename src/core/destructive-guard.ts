@@ -15,6 +15,7 @@
 
 import type { BrainEngine } from './engine.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from './source-config-sql.ts';
+import { rmSync } from 'node:fs';
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -286,13 +287,30 @@ export async function listArchivedSources(
 export async function purgeExpiredSources(
   engine: BrainEngine,
 ): Promise<string[]> {
-  const rows = await engine.executeRaw<{ id: string }>(
-    `DELETE FROM sources
-     WHERE archived = true
-       AND archive_expires_at IS NOT NULL
-       AND archive_expires_at <= now()
-     RETURNING id`,
+  const rows = await engine.executeRaw<{ id: string; config: unknown; local_path: string | null }>(
+    `SELECT id, config, local_path FROM sources
+    WHERE archived = true
+      AND archive_expires_at IS NOT NULL
+      AND archive_expires_at <= now()`,
   );
+  if (rows.length === 0) return [];
+  await engine.executeRaw(
+    `DELETE FROM sources
+    WHERE archived = true
+      AND archive_expires_at IS NOT NULL
+      AND archive_expires_at <= now()`,
+  );
+  // v0.46: github-kind mirrors are gbrain-owned (API materialization, not
+  // user files). Purging the source must remove the mirror directory,
+  // otherwise private mirrored content stays on disk after the row is gone.
+  for (const row of rows) {
+    const cfg = (typeof row.config === 'string' ? JSON.parse(row.config) : (row.config ?? {})) as Record<string, unknown>;
+    if (cfg.kind === 'github' && row.local_path) {
+      try {
+        rmSync(row.local_path, { recursive: true, force: true });
+      } catch { /* best-effort */ }
+    }
+  }
   return rows.map((r) => r.id);
 }
 

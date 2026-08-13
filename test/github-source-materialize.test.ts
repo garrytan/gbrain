@@ -43,7 +43,7 @@ interface FixtureItem {
 
 const REPO = 'acme/app';
 
-function makeFixture(): { items: Map<number, FixtureItem>; calls: string[]; failIssuesList: boolean } {
+function makeFixture(): { items: Map<number, FixtureItem>; calls: string[]; failIssuesList: boolean; failDetailItems: Set<number> } {
   const items = new Map<number, FixtureItem>([
     [1, {
       number: 1,
@@ -82,10 +82,10 @@ function makeFixture(): { items: Map<number, FixtureItem>; calls: string[]; fail
       merged: true,
     }],
   ]);
-  return { items, calls: [], failIssuesList: false };
+  return { items, calls: [], failIssuesList: false, failDetailItems: new Set() };
 }
 
-function buildFetch(fx: { items: Map<number, FixtureItem>; calls: string[]; failIssuesList: boolean }) {
+function buildFetch(fx: { items: Map<number, FixtureItem>; calls: string[]; failIssuesList: boolean; failDetailItems: Set<number> }) {
   const { items, calls } = fx;
   return async (url: string, init?: RequestInit): Promise<Response> => {
     const u = new URL(url);
@@ -139,6 +139,7 @@ function buildFetch(fx: { items: Map<number, FixtureItem>; calls: string[]; fail
     if (issueMatch) {
       const it = items.get(Number(issueMatch[1]));
       if (!it) return json({ message: 'not found' }, 404);
+      if (fx.failDetailItems.has(it.number)) return json({ message: 'gone' }, 404);
       return json({
         number: it.number,
         title: `Item ${it.number}`,
@@ -410,6 +411,41 @@ describe('github-source materialize', () => {
         expect(res.status).toBe('partial');
         expect(res.deleted).toBe(0);
         expect(await pageSlugs(engine)).toEqual(before);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a failed item does not advance the sweep cursor and is retried next run', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ghsrc-cursor-'));
+    const fx = makeFixture();
+    const fetchImpl = buildFetch(fx);
+    try {
+      await insertSource(engine, dir);
+      await withEnv({ GH_TOKEN: 'test-token' }, async () => {
+        // Item 1's detail fetch fails during bootstrap.
+        fx.failDetailItems.add(1);
+        const partial = await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc', full: true }, fetchImpl);
+        expect(partial.status).toBe('partial');
+        expect(partial.failedFiles).toBeGreaterThan(0);
+        expect(existsSync(join(dir, 'gh', REPO, '1.md'))).toBe(false);
+        // Items 2 and 3 imported despite the failure.
+        expect(existsSync(join(dir, 'gh', REPO, '2.md'))).toBe(true);
+        expect(existsSync(join(dir, 'gh', REPO, '3.md'))).toBe(true);
+        // Cursor must NOT have advanced past the failed item.
+        const state = JSON.parse(readFileSync(join(dir, '.github-source.json'), 'utf-8')) as { last_sweep_at?: string };
+        expect(state.last_sweep_at ?? '').toBe('');
+
+        // Failure clears; the next sweep re-enumerates from the old cursor
+        // and retries item 1.
+        fx.failDetailItems.delete(1);
+        const retry = await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc' }, fetchImpl);
+        expect(retry.status).toBe('synced');
+        expect(retry.added).toBe(1);
+        expect(existsSync(join(dir, 'gh', REPO, '1.md'))).toBe(true);
+        const state2 = JSON.parse(readFileSync(join(dir, '.github-source.json'), 'utf-8')) as { last_sweep_at?: string };
+        expect(state2.last_sweep_at).toBe('2026-08-02T00:00:00Z');
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });

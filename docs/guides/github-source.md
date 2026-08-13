@@ -93,8 +93,10 @@ The command prints the payload URL, secret and the exact event list to
 select. Register the webhook on each repo you track, with events: issues,
 pull requests, issue comments, PR reviews, PR review comments, labels,
 milestones, assignees, check runs, check suites, workflow runs. Each event
-submits a targeted `sync` job that refreshes exactly the item that changed.
-Push events keep their existing git-source behavior.
+submits a targeted `sync` job that refreshes exactly the item that changed
+(check events resolve the linked PR from the payload; events without an
+item reference are acknowledged and skipped). Push events keep their
+existing git-source behavior.
 
 Without a public URL, use a tunnel (Tailscale Funnel, ngrok, or any HTTPS
 host). The webhook is HMAC-signed per source with the same
@@ -116,8 +118,12 @@ repos are acknowledged but never materialized.
 ## Rate limits
 
 The client honors `x-ratelimit` headers, backs off on 403/429 and pauses
-when the bucket runs low. A large bootstrap (tens of thousands of items)
-runs throttled over a few hours and resumes where it left off. Steady-state
+when the bucket runs low. Pagination follows GitHub's Link header, so large
+repositories are never truncated; an enumeration that hits the safety cap
+is treated as failed and never reconciled against the brain. A large
+bootstrap (tens of thousands of items) runs throttled over a few hours and
+resumes where it left off. The sweep cursor only advances after a fully
+successful run, so failed items are retried on the next sweep. Steady-state
 sweeps use a few dozen calls per hour.
 
 ## Removing the source
