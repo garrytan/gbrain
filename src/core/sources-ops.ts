@@ -155,6 +155,19 @@ export interface AddSourceOpts {
    * runs). Does NOT auto-`git init` anything — see `addSource` docstring.
    */
   force?: boolean;
+  /**
+   * v0.46: register a github-kind source (issues/PR sync). When set, the
+   * row is inserted with kind=github config and a managed local_path, and
+   * no git validation or clone happens. See src/core/github-source.ts.
+   */
+  github?: {
+    tokenEnv: string;
+    handle: string;
+    scope: 'auto' | 'repos';
+    repos: string[];
+    dir: string;
+    involvement: boolean;
+  };
 }
 
 export interface RemoveSourceOpts {
@@ -471,6 +484,30 @@ export async function addSource(
         e,
       );
     }
+  } else if (opts.github) {
+    // ── Path C: --kind github (v0.46) ─────────────────────────────────────
+    // API-backed source: no git repo, no clone. The managed dir is created
+    // here so `sources status` and webhook repo matching work immediately;
+    // the materializer populates it on first sync.
+    const finalPath = opts.github.dir;
+    mkdirSync(finalPath, { recursive: true });
+    const config: Record<string, unknown> = {
+      kind: 'github',
+      gh_token_env: opts.github.tokenEnv,
+      gh_handle: opts.github.handle,
+      gh_scope: opts.github.scope,
+      gh_repos: opts.github.repos.join(','),
+      gh_involvement: opts.github.involvement,
+    };
+    if (opts.federated !== null && opts.federated !== undefined) {
+      config.federated = opts.federated;
+    }
+    const displayName = opts.name ?? opts.id;
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+           VALUES ($1, $2, $3, $4::text::jsonb)`,
+      [opts.id, displayName, finalPath, JSON.stringify(config)],
+    );
   } else {
     // ── Path B: --path or no path (existing behavior, pre-v0.28) ─────────
     // #2707: only validate when the path actually exists — a not-yet-created

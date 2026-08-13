@@ -45,6 +45,7 @@ import {
 import {
   addSource as opsAddSource,
   recloneIfMissing,
+  defaultCloneDir,
   SourceOpError,
   type SourceRow as OpsSourceRow,
 } from '../core/sources-ops.ts';
@@ -125,8 +126,10 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   if (!id) {
     console.error(
-      'Usage: gbrain sources add <id> [--path <path> | --url <https-url>] ' +
-        '[--name <display>] [--federated|--no-federated] [--clone-dir <path>] [--force]',
+      'Usage: gbrain sources add <id> [--path <path> | --url <https-url> | --kind github] ' +
+        '[--name <display>] [--federated|--no-federated] [--clone-dir <path>] [--force]\n' +
+        '       github kind: [--token-env <env>] [--handle <login>] [--scope auto|repos] ' +
+        '[--repos owner/name,...] [--dir <path>] [--no-involvement]',
     );
     process.exit(2);
   }
@@ -139,6 +142,14 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   let patFile: string | undefined;
   let noHarden = false;
   let force = false;
+  // v0.46 github-kind flags.
+  let ghKind = false;
+  let ghTokenEnv: string | undefined;
+  let ghHandle: string | undefined;
+  let ghScope: 'auto' | 'repos' = 'auto';
+  let ghRepos: string[] = [];
+  let ghDir: string | undefined;
+  let ghInvolvement = true;
 
   for (let i = 1; i < args.length; i++) {
     const a = args[i];
@@ -151,6 +162,35 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     if (a === '--pat-file') { patFile = args[++i]; continue; }
     if (a === '--no-harden') { noHarden = true; continue; }
     if (a === '--force') { force = true; continue; }
+    if (a === '--kind') {
+      const kind = args[++i];
+      if (kind !== 'github') {
+        console.error(`Unknown source kind: ${kind}. Only "github" is supported.`);
+        process.exit(2);
+      }
+      ghKind = true;
+      continue;
+    }
+    if (a === '--token-env') { ghTokenEnv = args[++i]; continue; }
+    if (a === '--handle') { ghHandle = args[++i]; continue; }
+    if (a === '--scope') {
+      const scope = args[++i];
+      if (scope !== 'auto' && scope !== 'repos') {
+        console.error(`--scope must be "auto" or "repos".`);
+        process.exit(2);
+      }
+      ghScope = scope;
+      continue;
+    }
+    if (a === '--repos') {
+      ghRepos = (args[++i] ?? '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      continue;
+    }
+    if (a === '--dir') { ghDir = args[++i]; continue; }
+    if (a === '--no-involvement') { ghInvolvement = false; continue; }
     console.error(`Unknown flag: ${a}`);
     process.exit(2);
   }
@@ -158,6 +198,20 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   if (remoteUrl && localPath) {
     console.error('Error: --url and --path are mutually exclusive (--url manages its own clone path).');
     process.exit(2);
+  }
+  if (ghKind && (remoteUrl || localPath)) {
+    console.error('Error: --kind github is mutually exclusive with --url and --path.');
+    process.exit(2);
+  }
+  if (ghKind && ghScope === 'repos' && ghRepos.length === 0) {
+    console.error('Error: --scope repos requires --repos owner/name,owner/name.');
+    process.exit(2);
+  }
+  for (const r of ghRepos) {
+    if (!/^[\w.-]+\/[\w.-]+$/.test(r)) {
+      console.error(`Invalid --repos entry: "${r}". Expected owner/name.`);
+      process.exit(2);
+    }
   }
 
   // Throw on SourceOpError; cli.ts wraps every command in a try/catch that
@@ -171,6 +225,18 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     federated,
     cloneDir,
     force,
+    ...(ghKind
+      ? {
+          github: {
+            tokenEnv: ghTokenEnv ?? 'GH_TOKEN',
+            handle: ghHandle ?? '',
+            scope: ghScope,
+            repos: ghRepos,
+            dir: ghDir ?? defaultCloneDir(`${id}-github`),
+            involvement: ghInvolvement,
+          },
+        }
+      : {}),
   });
 
   // Topology A discovery: if the just-added source carries a brain-resident
@@ -1012,11 +1078,15 @@ async function runWebhookSet(engine: BrainEngine, args: string[]): Promise<void>
   }
   const explicitSecret = args.find((a, i) => args[i - 1] === '--secret');
   const githubRepo = args.find((a, i) => args[i - 1] === '--github-repo');
-  if (!githubRepo) {
+  const srcCfg = parseConfig(src.config);
+  const isGitHubKind = srcCfg.kind === 'github';
+  // v0.46: github-kind sources span many repos, so --github-repo is optional
+  // for them (the webhook secret alone gates item-refresh events).
+  if (!githubRepo && !isGitHubKind) {
     console.error('--github-repo owner/name is required (e.g. "Garry-s-List/zion-brain")');
     process.exit(2);
   }
-  if (!/^[\w.-]+\/[\w.-]+$/.test(githubRepo)) {
+  if (githubRepo && !/^[\w.-]+\/[\w.-]+$/.test(githubRepo)) {
     console.error(`Invalid --github-repo format: "${githubRepo}". Expected "owner/name".`);
     process.exit(2);
   }
@@ -1025,21 +1095,27 @@ async function runWebhookSet(engine: BrainEngine, args: string[]): Promise<void>
   const secret = explicitSecret ?? randomBytes(32).toString('hex');
   const cfg = parseConfig(src.config);
   cfg.webhook_secret = secret;
-  cfg.github_repo = githubRepo;
+  if (githubRepo) cfg.github_repo = githubRepo;
   await engine.executeRaw(
     `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
     [JSON.stringify(normalizeSourceConfig(cfg)), id],
   );
 
   console.log(`Webhook configured for source "${id}":`);
-  console.log(`  github_repo:    ${githubRepo}`);
+  if (githubRepo) console.log(`  github_repo:    ${githubRepo}`);
   console.log(`  webhook_secret: ${secret}`);
   console.log('');
   console.log('--- Paste this into GitHub repo settings → Webhooks → Add webhook ---');
   console.log('  Payload URL:  <your gbrain serve --http URL>/webhooks/github');
   console.log('  Content type: application/json');
   console.log(`  Secret:       ${secret}`);
-  console.log('  Events:       Just the push event');
+  console.log(
+    isGitHubKind
+      ? '  Events:       Issues, pull requests, issue comments, PR reviews,\n' +
+        '                 PR review comments, labels, milestones, assignees,\n' +
+        '                 check runs, check suites, workflow runs'
+      : '  Events:       Just the push event',
+  );
   console.log('  Active:       checked');
   console.log('');
   console.log('⚠ This secret is shown ONCE. Save it now; subsequent `gbrain sources webhook show` will NOT display it.');

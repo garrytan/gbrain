@@ -18,6 +18,8 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { randomBytes, createHash } from 'crypto';
 import { safeHexEqual } from '../core/timing-safe.ts';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -2655,6 +2657,131 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     message: { error: 'rate_limit_exceeded', message: 'too many GitHub webhook requests' },
   });
 
+  /**
+   * v0.46: issue/PR event handling for github-kind sources. The payload
+   * names a single item (repo + number); we verify the per-source HMAC and
+   * submit a targeted `sync` job with github_item so exactly that item is
+   * refreshed. Out-of-scope repos are rejected at queue time by the sync
+   * engine's own scope check.
+   */
+  async function handleGitHubItemEvent(
+    engine: BrainEngine,
+    parsed: Record<string, unknown>,
+    sigHeader: string,
+    payload: Buffer,
+    res: Response,
+  ): Promise<void> {
+    const repoObj = parsed.repository as { full_name?: string } | undefined;
+    const fullName = repoObj?.full_name ?? '';
+    const issueObj = parsed.issue as { number?: number } | undefined;
+    const prObj = parsed.pull_request as { number?: number } | undefined;
+    const number = (prObj?.number ?? issueObj?.number) as number | undefined;
+    if (!fullName || typeof number !== 'number') {
+      res.status(400).json({
+        error: 'missing_fields',
+        message: 'repository.full_name and issue/pull_request.number are required',
+      });
+      return;
+    }
+    const kind = prObj ? 'pr' : 'issue';
+
+    // Source lookup: exact github_repo match first (legacy webhook config),
+    // then github-kind sources whose scope covers the repo.
+    let source: { id: string; local_path: string | null; config: unknown } | null = null;
+    try {
+      const rows = await engine.executeRaw<{ id: string; local_path: string | null; config: unknown }>(
+        `SELECT id, local_path, config FROM sources
+           WHERE (config->>'github_repo' = $1)
+              OR (config->>'kind' = 'github' AND config->>'webhook_secret' IS NOT NULL)
+           ORDER BY (config->>'kind' = 'github') DESC
+           LIMIT 50`,
+        [fullName],
+      );
+      for (const row of rows) {
+        const cfg = (typeof row.config === 'string' ? JSON.parse(row.config) : (row.config ?? {})) as Record<string, unknown>;
+        if (cfg.github_repo === fullName) {
+          source = row;
+          break;
+        }
+        if (cfg.kind === 'github' && githubKindCoversRepo(cfg, row.local_path, fullName)) {
+          source = row;
+          break;
+        }
+      }
+    } catch (err) {
+      console.error('webhook: github-kind source lookup error:', err);
+      res.status(500).json({ error: 'lookup_failed' });
+      return;
+    }
+    if (!source) {
+      res.status(404).json({ error: 'unknown_repo', repo: fullName });
+      return;
+    }
+
+    const cfg = (typeof source.config === 'string' ? JSON.parse(source.config) : (source.config ?? {})) as {
+      webhook_secret?: string;
+    };
+    const secret = cfg.webhook_secret;
+    if (!secret || typeof secret !== 'string') {
+      res.status(401).json({ error: 'webhook_not_configured', message: 'Run: gbrain sources webhook set ' + source.id });
+      return;
+    }
+    const { createHmac } = await import('node:crypto');
+    const computedHex = createHmac('sha256', secret).update(payload).digest('hex');
+    const prefix = 'sha256=';
+    if (!sigHeader.startsWith(prefix) || !safeHexEqual(sigHeader.slice(prefix.length), computedHex)) {
+      res.status(401).json({ error: 'signature_mismatch' });
+      return;
+    }
+
+    try {
+      const queue = new MinionQueue(engine);
+      const job = await queue.add(
+        'sync',
+        {
+          sourceId: source.id,
+          noExtract: false,
+          github_item: { repo: fullName, number, kind },
+          embed_reason: 'webhook',
+        },
+        {
+          priority: -10,
+          idempotency_key: `webhook:item:${source.id}:${fullName}:${number}:${Math.floor(Date.now() / 30_000)}`,
+          maxWaiting: 1,
+        },
+      );
+      res.status(202).json({ job_id: job.id, source_id: source.id, item: { repo: fullName, number, kind } });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('webhook: item queue submission error:', msg);
+      res.status(500).json({ error: 'queue_submission_failed', message: msg });
+    }
+  }
+
+  function githubKindCoversRepo(
+    cfg: Record<string, unknown>,
+    localPath: string | null,
+    fullName: string,
+  ): boolean {
+    if (cfg.gh_scope === 'repos') {
+      const repos = typeof cfg.gh_repos === 'string' ? cfg.gh_repos.split(',').map((s) => s.trim()) : [];
+      return repos.includes(fullName);
+    }
+    // auto scope: honor the last discovery (state file). Without state yet,
+    // accept and let the sync engine's own scope re-check decide.
+    if (localPath) {
+      try {
+        const state = JSON.parse(readFileSync(join(localPath, '.github-source.json'), 'utf-8')) as {
+          repos?: string[];
+        };
+        if (Array.isArray(state.repos)) return state.repos.includes(fullName);
+      } catch {
+        /* no state yet */
+      }
+    }
+    return true;
+  }
+
   app.post(
     '/webhooks/github',
     githubWebhookLimiter,
@@ -2669,10 +2796,25 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       }
 
       // D5: filter by event header. GitHub fires webhooks for every event
-      // type. Anything other than 'push' is acknowledged with 202 + reason
-      // so GitHub doesn't retry — but no source lookup or job submission.
+      // type. Anything not in the handled set is acknowledged with 202 +
+      // reason so GitHub doesn't retry — but no source lookup or job
+      // submission. Push events drive git-source sync (below). Issue/PR
+      // events drive github-kind single-item refresh (itemFlow).
       const event = req.header('X-GitHub-Event') ?? '';
-      if (event !== 'push') {
+      const GH_ITEM_EVENTS = new Set([
+        'issues',
+        'pull_request',
+        'issue_comment',
+        'pull_request_review',
+        'pull_request_review_comment',
+        'label',
+        'assignee',
+        'milestone',
+        'check_run',
+        'check_suite',
+        'workflow_run',
+      ]);
+      if (event !== 'push' && !GH_ITEM_EVENTS.has(event)) {
         res.status(202).json({ status: 'ignored', reason: `event=${event || '(missing)'}` });
         return;
       }
@@ -2683,7 +2825,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         return;
       }
 
-      let parsed: { repository?: { full_name?: string }; ref?: string };
+      let parsed: Record<string, unknown>;
       try {
         parsed = JSON.parse(payload.toString('utf8'));
       } catch {
@@ -2691,8 +2833,17 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         return;
       }
 
-      const fullName = parsed.repository?.full_name;
-      const ref = parsed.ref;
+      // GitHub-kind item refresh path (v0.46): issues / pull_request /
+      // comment / review / label / assignee / milestone / check events
+      // refresh exactly the item that changed.
+      if (GH_ITEM_EVENTS.has(event)) {
+        await handleGitHubItemEvent(engine, parsed, sigHeader, payload, res);
+        return;
+      }
+
+      const pushParsed = parsed as { repository?: { full_name?: string }; ref?: string };
+      const fullName = pushParsed.repository?.full_name;
+      const ref = pushParsed.ref;
       if (!fullName || !ref) {
         res.status(400).json({ error: 'missing_fields', message: 'repository.full_name and ref are required' });
         return;
