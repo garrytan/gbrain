@@ -207,6 +207,14 @@ export interface EmbedResult {
    */
   chunkless_pages_healed: number;
   /**
+   * Set when a single-flight run did NO work because another backfill holds
+   * the per-source embed lock. A hard-killed (SIGKILL/crash) run leaves its
+   * lock behind for up to EMBED_BACKFILL_LOCK_TTL_MIN — callers that promise
+   * "re-run to resume" (migrate embeddings) use this to say so instead of
+   * misreporting embed failures.
+   */
+  lock_skipped?: boolean;
+  /**
    * E1 (paced-backfill): end-of-run pacing telemetry. Present ONLY when pacing
    * was active (enabled bundle). The number the operator could not get from an
    * external wrapper ("zero pauses" ≠ "queue safe").
@@ -384,6 +392,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
             try { await h.release(); } catch { /* best-effort */ }
           }
           serr(`  [embed] another backfill is already running for source "${sid}"; skipping (single-flight).`);
+          result.lock_skipped = true;
           return result;
         }
         sfLocks.push(lock);

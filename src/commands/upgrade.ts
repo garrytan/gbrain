@@ -473,19 +473,39 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
         // `ze_sunset_notice_shown` (same pattern as the search-mode banner).
         try {
           const shown = await engine.getConfig('ze_sunset_notice_shown');
-          const { DEFAULT_EMBEDDING_MODEL } = await import('../core/ai/defaults.ts');
+          const { DEFAULT_EMBEDDING_MODEL, ZEROENTROPY_SUNSET_DATE } = await import('../core/ai/defaults.ts');
           const effectiveModel = cfgSchema.embedding_model ?? DEFAULT_EMBEDDING_MODEL;
-          const rerankerModel = await engine.getConfig('search.reranker.model');
+          // Effective reranker via the plane search actually reranks with
+          // (mode bundle + search.reranker.* overrides) — the bare config
+          // key is unset by default while balanced/tokenmax rerank with the
+          // bundle's zeroentropyai model. Same resolution as the
+          // provider_sunset doctor check.
+          let rerankerModel: string | undefined;
+          try {
+            const { loadSearchModeConfig, resolveSearchMode } = await import('../core/search/mode.ts');
+            const knobs = resolveSearchMode(await loadSearchModeConfig(engine));
+            if (knobs.reranker_enabled) rerankerModel = knobs.reranker_model;
+          } catch { /* no reranker-exposure claim */ }
           const onZeEmbedding = effectiveModel.startsWith('zeroentropyai:');
           const onZeReranker = !!rerankerModel?.startsWith('zeroentropyai:');
           if (shown !== 'true' && (onZeEmbedding || onZeReranker)) {
+            // Paste-ready --dim from the ACTUAL column width (config can
+            // drift): keeping the current width avoids a needless dimension
+            // transition + index rebuild when the target supports it.
+            let colDims: number | null = null;
+            try {
+              const { readContentChunksEmbeddingDim } = await import('../core/embedding-dim-check.ts');
+              colDims = (await readContentChunksEmbeddingDim(engine)).dims;
+            } catch { /* fresh brain — omit --dim */ }
+            const dimFlag = colDims ? ` --dim ${colDims}` : '';
             console.log('');
             console.log('═══════════════════════════════════════════════════════════════');
-            console.log('[gbrain] ACTION REQUIRED: ZeroEntropy hosted API sunsets 2026-09-04.');
+            console.log(`[gbrain] ACTION REQUIRED: ZeroEntropy hosted API sunsets ${ZEROENTROPY_SUNSET_DATE}.`);
             if (onZeEmbedding) {
               console.log(`[gbrain] This brain embeds with ${effectiveModel}. After the sunset,`);
-              console.log('[gbrain] semantic retrieval STOPS WORKING (queries can no longer be');
-              console.log('[gbrain] embedded against your existing vectors).');
+              console.log('[gbrain] semantic retrieval STOPS WORKING entirely — your EXISTING');
+              console.log('[gbrain] vectors become unqueryable (queries embed through the same');
+              console.log('[gbrain] endpoint), not just new content.');
             }
             if (onZeReranker) {
               console.log(`[gbrain] The reranker (${rerankerModel}) also sunsets; search falls`);
@@ -493,16 +513,27 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
             }
             console.log('═══════════════════════════════════════════════════════════════');
             console.log('');
-            console.log('Migrate before the sunset (resumable; preview cost first):');
-            console.log('  gbrain migrate embeddings --to <provider:model> --dry-run');
-            console.log('  gbrain migrate embeddings --to <provider:model>');
+            console.log('Two fixes, either works:');
             console.log('');
-            console.log('Self-hosting zembed-1 (weights are Apache-2.0) via llama-server /');
-            console.log('ollama also works and preserves your existing vectors — point');
-            console.log('embedding at the local endpoint instead of migrating.');
+            console.log('[1] Self-host the same model — zembed-1 weights are Apache-2.0. Serve');
+            console.log('    them via llama-server or Ollama and point the config at the local');
+            console.log('    endpoint. Keeps every existing vector; NO re-embed at all. See');
+            console.log('    docs/guides/embedding-migration.md ("Self-hosting instead of migrating").');
+            console.log('');
+            console.log('[2] Migrate to another provider (resumable; preview cost first):');
+            console.log(`      gbrain migrate embeddings --to <provider:model>${dimFlag} --dry-run`);
+            console.log(`      gbrain migrate embeddings --to <provider:model>${dimFlag}`);
+            if (colDims) {
+              console.log(`    (--dim ${colDims} is this brain's current index width — keep it to`);
+              console.log('    avoid a needless schema rebuild when the target supports it.)');
+            }
             if (onZeReranker) {
+              console.log('');
               console.log('Reranker: gbrain config set search.reranker.enabled false (or pick another).');
             }
+            console.log('');
+            console.log(`\`gbrain doctor\` will keep flagging this until the brain is off the`);
+            console.log('provider (check name: provider_sunset).');
             console.log('');
             await engine.setConfig('ze_sunset_notice_shown', 'true');
           }

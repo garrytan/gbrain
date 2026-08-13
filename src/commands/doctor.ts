@@ -2513,6 +2513,131 @@ export async function checkZeEmbeddingHealth(engine: BrainEngine): Promise<Check
 }
 
 /**
+ * provider_sunset doctor check (#3390 follow-up).
+ *
+ * Detects a brain whose EFFECTIVE embedding model (gateway-resolved, which is
+ * how default-config brains land on the shipped default) is on a provider
+ * with an announced hosted-API shutdown, and prints a paste-ready migration
+ * command with the brain's ACTUAL `content_chunks.embedding` column width
+ * filled in — not the config value, which can drift. Keeping the current
+ * width avoids a needless dimension transition + index rebuild when the
+ * target supports it.
+ *
+ * Unlike the one-shot upgrade banner (`ze_sunset_notice_shown`), this fires
+ * on every `gbrain doctor` run until the brain is off the provider —
+ * warn before the shutdown date; fail after it ONLY when the brain is
+ * actually exposed (embedded vectors exist in the affected column, so
+ * retrieval is genuinely down). A zero-vector brain whose config merely
+ * RESOLVES to the dead default stays warn — otherwise every stock fresh
+ * install (and every doctor-as-CI-gate) starts exiting 1 on the date with
+ * no code change. Suppress entirely (accepted-risk installs) via
+ * `gbrain config set doctor.suppress_provider_sunset true`.
+ * No network call; one catalog query for the column width.
+ *
+ * `now` is injectable so tests can pin BOTH sides of the date without
+ * waiting for the calendar (the date itself is a compile-time constant).
+ */
+export async function checkProviderSunset(engine: BrainEngine, now: number = Date.now()): Promise<Check> {
+  const name = 'provider_sunset';
+  try {
+    const suppressed = await engine.getConfig('doctor.suppress_provider_sunset').catch(() => null);
+    if (suppressed === 'true' || suppressed === '1') {
+      return {
+        name,
+        status: 'ok',
+        message: 'Check suppressed via doctor.suppress_provider_sunset (unset it to re-enable).',
+      };
+    }
+    const { DEFAULT_EMBEDDING_MODEL, ZEROENTROPY_SUNSET_DATE } = await import('../core/ai/defaults.ts');
+    // Effective model: gateway when configured (file/env plane, the runtime
+    // truth); the shipped default otherwise — an unset-config brain resolves
+    // to the default at runtime, so it is just as affected.
+    let model = DEFAULT_EMBEDDING_MODEL;
+    try {
+      const { getEmbeddingModel } = await import('../core/ai/gateway.ts');
+      model = getEmbeddingModel();
+    } catch {
+      // Gateway unconfigured — runtime resolves the shipped default.
+    }
+    // Effective reranker: resolve through the SAME plane search actually
+    // reranks with — resolveSearchMode (mode bundle + search.reranker.*
+    // config overrides; hybrid.ts passes `resolvedMode.reranker_model`).
+    // The gateway plane is unset by default while balanced/tokenmax rerank
+    // with the bundle's zeroentropyai model — reading the gateway here
+    // would false-ok the exact brains this check exists to protect.
+    let reranker: string | undefined;
+    try {
+      const { loadSearchModeConfig, resolveSearchMode } = await import('../core/search/mode.ts');
+      const knobs = resolveSearchMode(await loadSearchModeConfig(engine));
+      if (knobs.reranker_enabled) reranker = knobs.reranker_model;
+    } catch {
+      // Mode resolution failed — make no reranker-exposure claim.
+    }
+    const onSunsetEmbedding = model.startsWith('zeroentropyai:');
+    const onSunsetReranker = !!reranker?.startsWith('zeroentropyai:');
+    if (!onSunsetEmbedding && !onSunsetReranker) {
+      return {
+        name,
+        status: 'ok',
+        message: `No configured provider has an announced shutdown (embedding: ${model}).`,
+      };
+    }
+    const past = now >= Date.parse(`${ZEROENTROPY_SUNSET_DATE}T00:00:00Z`);
+    const parts: string[] = [];
+    let hasVectors = false;
+    if (onSunsetEmbedding) {
+      let dims: number | null = null;
+      try {
+        const { readContentChunksEmbeddingDim } = await import('../core/embedding-dim-check.ts');
+        dims = (await readContentChunksEmbeddingDim(engine)).dims;
+      } catch {
+        // Column probe failed (fresh/odd brain) — omit --dim from the hint.
+      }
+      try {
+        const rows = await engine.executeRaw(
+          `SELECT 1 AS one FROM content_chunks WHERE embedding IS NOT NULL LIMIT 1`,
+        );
+        hasVectors = rows.length > 0;
+      } catch {
+        // Probe failed (fresh/odd brain) — no exposure claim, warn-only.
+      }
+      const dimFlag = dims ? ` --dim ${dims}` : '';
+      parts.push(
+        past
+          ? hasVectors
+            ? `embedding_model="${model}": the hosted API shut down on ${ZEROENTROPY_SUNSET_DATE} — semantic retrieval is offline (queries can no longer be embedded against your existing vectors).`
+            : `embedding_model="${model}": the hosted API shut down on ${ZEROENTROPY_SUNSET_DATE}. No embedded vectors exist yet, so retrieval is not impacted — but embedding will fail until the config points elsewhere.`
+          : `embedding_model="${model}": the hosted API shuts down on ${ZEROENTROPY_SUNSET_DATE}. On that date semantic retrieval stops entirely — existing vectors become unqueryable (query embedding uses the same endpoint), not just new content.`,
+      );
+      parts.push(
+        `Two fixes, either works: ` +
+        `[1] self-host the same model — zembed-1 weights are Apache-2.0; serve them via llama-server or Ollama and point the config at the local endpoint. Keeps every existing vector, no re-embed (docs/guides/embedding-migration.md, "Self-hosting instead of migrating"). ` +
+        `[2] migrate to another provider (resumable; preview cost first): ` +
+        `gbrain migrate embeddings --to <provider:model>${dimFlag} --dry-run` +
+        (dims ? ` — keep --dim ${dims} (this brain's actual index width) to avoid a needless schema rebuild when the target supports it.` : ''),
+      );
+    }
+    if (onSunsetReranker) {
+      parts.push(
+        `The reranker (${reranker}) is on the same provider; after the shutdown search falls back to unreranked ordering. ` +
+        `Fix: gbrain config set search.reranker.enabled false, or point search.reranker.model at another provider.`,
+      );
+    }
+    if (onSunsetEmbedding || onSunsetReranker) {
+      parts.push('Accepted the risk? Silence this check: gbrain config set doctor.suppress_provider_sunset true');
+    }
+    // fail = retrieval is ACTUALLY down (past the date AND embedded vectors
+    // exist on the dead provider). Reranker-only exposure stays warn — search
+    // fails open to unreranked ordering (degraded, not down).
+    const failNow = past && onSunsetEmbedding && hasVectors;
+    return { name, status: failNow ? 'fail' : 'warn', message: parts.join(' ') };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { name, status: 'warn', message: `Could not check provider sunset status: ${msg}` };
+  }
+}
+
+/**
  * v0.36.0.0 (A5): embedding_width_consistency doctor check.
  *
  * Cross-checks that `config.embedding_dimensions` matches the actual
@@ -8355,6 +8480,11 @@ export async function buildChecks(
     // v0.36.0.0 (A5): ZE embedding key health + schema/config width consistency.
     progress.heartbeat('ze_embedding_health');
     checks.push(await checkZeEmbeddingHealth(engine));
+    // provider_sunset — brain pinned to a provider with an announced
+    // hosted-API shutdown; paste-ready migration hint with the actual
+    // column width. Warn before the date, fail after.
+    progress.heartbeat('provider_sunset');
+    checks.push(await checkProviderSunset(engine));
     progress.heartbeat('embedding_width_consistency');
     checks.push(await checkEmbeddingWidthConsistency(engine));
     // v0.41.15.0 (T6, codex #19/#20) — facts.embedding column drift

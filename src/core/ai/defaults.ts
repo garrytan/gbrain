@@ -19,3 +19,14 @@
 // steps: {2560, 1280, 640, 320, 160, 80, 40} — see ai/dims.ts.
 export const DEFAULT_EMBEDDING_MODEL = 'zeroentropyai:zembed-1';
 export const DEFAULT_EMBEDDING_DIMENSIONS = 1280;
+
+/**
+ * ZeroEntropy announced (2026-07-24) that its hosted API — including
+ * /models/embed and /models/rerank — shuts down on this date. Query
+ * embedding uses the same endpoint as ingestion, so a brain still on a
+ * `zeroentropyai:*` embedding model loses semantic retrieval ENTIRELY on
+ * that date (existing vectors become unqueryable, not just new content).
+ * Single source of truth for the upgrade banner + the `provider_sunset`
+ * doctor check. Self-hosting the Apache-2.0 zembed-1 weights is unaffected.
+ */
+export const ZEROENTROPY_SUNSET_DATE = '2026-09-04';
