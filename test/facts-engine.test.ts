@@ -69,6 +69,30 @@ describe('insertFact + listFactsByEntity', () => {
     expect(ours!.confidence).toBe(1.0);
   });
 
+  test('unconsolidatedOnly excludes active facts with consolidated_at set', async () => {
+    const entitySlug = 'people/consolidation-filter-example';
+    const consolidated = await engine.insertFact(
+      { fact: 'already consolidated', kind: 'fact', entity_slug: entitySlug, source: 'test' },
+      { source_id: 'default' },
+    );
+    const pending = await engine.insertFact(
+      { fact: 'still pending', kind: 'fact', entity_slug: entitySlug, source: 'test' },
+      { source_id: 'default' },
+    );
+    await engine.executeRaw(
+      `UPDATE facts SET consolidated_at = now() WHERE id = $1`,
+      [consolidated.id],
+    );
+
+    const active = await engine.listFactsByEntity('default', entitySlug);
+    const unconsolidated = await engine.listFactsByEntity('default', entitySlug, {
+      unconsolidatedOnly: true,
+    });
+
+    expect(new Set(active.map(f => f.id))).toEqual(new Set([consolidated.id, pending.id]));
+    expect(unconsolidated.map(f => f.id)).toEqual([pending.id]);
+  });
+
   test('respects kind CHECK', async () => {
     const r = await engine.insertFact(
       { fact: 'durable', kind: 'preference', entity_slug: 'alice-test', source: 'test' },

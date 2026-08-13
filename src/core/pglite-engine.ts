@@ -4908,6 +4908,9 @@ export class PGLiteEngine implements BrainEngine {
     if (opts.activeOnly !== false) {
       whereParts.push(`expired_at IS NULL`);
     }
+    if (opts.unconsolidatedOnly === true) {
+      whereParts.push(`consolidated_at IS NULL`);
+    }
     if (opts.kinds && opts.kinds.length > 0) {
       whereParts.push(`kind = ANY($kinds)`);
       params.kinds = opts.kinds;
