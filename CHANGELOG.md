@@ -2,6 +2,85 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.46.0.0] - 2026-08-13
+
+**Existing project-scoped Codex MCP connections can now satisfy bootstrap without
+GBrain taking ownership of their configuration.**
+
+Codex users who already configured a project-local streamable-HTTP MCP server can
+explicitly adopt that connection after completing a real MCP call. Bootstrap records
+only non-secret structural evidence, leaves the Codex configuration outside the install
+receipt, and never removes it during uninstall. `gbrain bootstrap status` then reports
+the connection as adopted and detects configuration drift, disabled entries, removed
+entries, unsupported transports, or unreadable effective configuration.
+
+Contributed by @TheAngryPit.
+
+## To take advantage of v0.46.0.0
+
+`gbrain upgrade` should install this automatically. There is no schema migration,
+migration file, or automatic Codex configuration change. If the post-upgrade step
+did not finish, or `gbrain doctor` reports a partial upgrade:
+
+1. **Run the post-upgrade orchestrator manually:**
+   ```bash
+   gbrain post-upgrade
+   ```
+2. **No headless or database migration action is required.** The feature remains
+   dormant until you explicitly adopt an existing project-scoped Codex connection.
+3. **Verify the installed version and bootstrap state:**
+   ```bash
+   gbrain --version
+   gbrain bootstrap status --json
+   ```
+4. **If any step fails or the status looks wrong,** run `gbrain doctor` and file an
+   issue at https://github.com/garrytan/gbrain/issues with:
+   - the `gbrain doctor` output;
+   - `~/.gbrain/upgrade-errors.jsonl`, if it exists; and
+   - which step failed.
+
+   That trail helps the maintainers find upgrade paths that need repair.
+
+For an existing project-scoped Codex connection:
+
+1. Configure and authenticate the MCP server in the project's `.codex/config.toml`.
+2. Complete one real MCP call through Codex.
+3. From that project, record the non-owning adoption:
+   ```bash
+   gbrain bootstrap wire --adopt --harness codex --scope project \
+     --name <server> --attest-runtime-call
+   ```
+4. Confirm the adoption with `gbrain bootstrap status --json`. Run
+   `gbrain bootstrap verify` separately for the full workspace install contract.
+
+### What bootstrap status will tell you
+
+| Status | Meaning | Next action |
+|---|---|---|
+| `done` | At least one matching project connection has current adoption evidence | Continue bootstrap |
+| `partial`, configured | Config exists, but no successful call has been attested | Make a real MCP call, then adopt |
+| `partial`, changed or removed | The project config no longer matches the evidence | Verify the connection, then adopt again |
+| `partial`, disabled, unreadable, or unsupported | Codex cannot use the entry as an enabled HTTP connection | Repair the project config before adopting |
+
+### Itemized changes
+
+### Added
+
+- `gbrain bootstrap wire --adopt` for explicit, project-scoped Codex MCP adoption.
+- Secret-free structural fingerprints and drift reporting for adopted connections.
+- Precise partial states for missing, disabled, unreadable, or unsupported effective
+  Codex configuration.
+
+### Safety and ownership
+
+- Adoption requires an explicit operator attestation after a real MCP call; config
+  presence alone is not accepted as runtime proof.
+- Evidence is workspace-bound, schema-versioned, atomically written, and excludes URL
+  credentials, query strings, fragments, header values, bearer environment-variable
+  names, and unknown fields.
+- Independently managed Codex configuration remains outside GBrain's receipt and
+  uninstall lifecycle.
+
 ## [0.45.10.0] - 2026-08-13
 
 **21 more community and maintainer bug fixes. Search answers get more complete, sync gets safer, and doctor learns to warn you before a provider dies.**

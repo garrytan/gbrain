@@ -75,6 +75,10 @@ import {
   type StatusReport,
 } from '../core/bootstrap/status.ts';
 import { verifyWorkspace, deriveWorkspaceSourceId } from '../core/bootstrap/verify.ts';
+import {
+  probeCodexProjectMcp,
+  writeAdoptedConnection,
+} from '../core/bootstrap/wire.ts';
 
 export const BOOTSTRAP_HELP = `gbrain bootstrap — paste-in agent install (Claude Code / Codex)
 
@@ -96,6 +100,9 @@ Subcommands (run \`gbrain bootstrap status\` first — it is the resume entrypoi
                                   Register MCP (+ per-turn hooks on Claude Code,
                                   ON by default; --no-hooks opts out, GBRAIN_HOOKS=0
                                   disables at runtime).
+  wire --adopt --harness codex --scope project --name <server> --attest-runtime-call
+                                  Adopt independently managed project Codex MCP
+                                  config after the operator made a real MCP call.
   repo                            Create the dedicated PRIVATE GitHub repo (or adopt
                                   an EMPTY private repo you created under your own
                                   account), verify the privacy bit via the API, push.
@@ -118,8 +125,8 @@ const SUPPORT_HINT =
 
 /**
  * Per-subcommand `--help`/`-h`/`help` usage text for the subcommands that
- * MUTATE state (create a repo, register MCP/hooks, run the verify contract,
- * adopt a workspace, remove receipt-tracked paths, record an interview
+ * MUTATE state (create a repo, register MCP/hooks, adopt project wiring, run
+ * the verify contract, adopt a workspace, remove receipt-tracked paths, record an interview
  * answer). `runBootstrap`'s dispatch checks `args[0]` for top-level help
  * (`--help`/`-h`/`help`/no args), but a help token AFTER the subcommand name
  * (e.g. `gbrain bootstrap repo --help`, `gbrain bootstrap uninstall help`)
@@ -139,6 +146,10 @@ const SUBCOMMAND_HELP: Record<string, string> = {
   hooks:
     'gbrain bootstrap hooks [--harness claude-code|codex] [--repair] [--no-hooks] [--gbrain-bin <path>]\n' +
     '  Register MCP (+ per-turn hooks on Claude Code, ON by default; --no-hooks opts out).',
+  wire:
+    'gbrain bootstrap wire --adopt --harness codex --scope project --name <server> --attest-runtime-call\n' +
+    '  Record non-owning evidence for independently managed project Codex MCP config.\n' +
+    '  --attest-runtime-call means the operator already completed a real MCP call; config detection alone is not proof.',
   verify:
     'gbrain bootstrap verify [--json]\n' +
     '  The whole install contract (round-trip, graph floor, magic moment, scans, hooks smoke). Exit 0 or not done.',
@@ -963,6 +974,74 @@ async function runHooks(ws: string, rest: string[], home: string, runner: ExecRu
   });
 }
 
+async function runWire(ws: string, rest: string[], home: string, runner: ExecRunner): Promise<number> {
+  if (!rest.includes('--adopt')) {
+    console.error('wire currently requires --adopt; it never creates or changes independently managed harness config');
+    return 2;
+  }
+  const harness = flagValue(rest, '--harness');
+  const scope = flagValue(rest, '--scope');
+  const serverName = flagValue(rest, '--name');
+  if (harness !== 'codex' || scope !== 'project') {
+    console.error('non-owning adoption currently supports only --harness codex --scope project');
+    return 2;
+  }
+  // Safe, expressive subset: supports dotted OAuth/project names plus the
+  // common dash/underscore forms, while refusing TOML quoting/control input.
+  if (!serverName || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(serverName)) {
+    console.error('pass a valid Codex MCP server name with --name <server> (letters, numbers, dots, dashes, underscores)');
+    return 2;
+  }
+  if (!rest.includes('--attest-runtime-call')) {
+    console.error(
+      'adoption requires --attest-runtime-call after the operator has completed a real MCP call; ' +
+        'project config presence alone does not prove a working connection',
+    );
+    return 2;
+  }
+
+  return withLock(ws, async () => {
+    const probe = await probeCodexProjectMcp(ws, serverName, runner);
+    if (!probe.configured) {
+      console.error(
+        `no [mcp_servers.${serverName}] entry exists in this workspace's .codex/config.toml — ` +
+          'wire adoption never creates or changes Codex config',
+      );
+      return 1;
+    }
+    if (!probe.cli_readable || !probe.effective_config_fingerprint || !probe.transport || !probe.auth) {
+      console.error(`${probe.detail ?? 'Codex could not read the effective project MCP entry'} — adoption not recorded`);
+      return probe.detail === 'codex CLI not available' ? 2 : 1;
+    }
+    if (probe.enabled === false) {
+      console.error('the effective project Codex MCP entry is disabled — adoption not recorded');
+      return 1;
+    }
+    if (probe.transport !== 'streamable_http') {
+      console.error(`the effective project Codex MCP entry uses ${probe.transport}; adoption currently requires streamable HTTP`);
+      return 1;
+    }
+    await writeAdoptedConnection(home, {
+      workspace: realpathOrResolve(ws),
+      harness: 'codex',
+      scope: 'project',
+      server_name: serverName,
+      transport: probe.transport,
+      auth: probe.auth,
+      effective_config_fingerprint: probe.effective_config_fingerprint,
+      verification_class: 'operator_attested_runtime_call',
+      verified_at: new Date().toISOString(),
+    });
+    console.log(
+      `adopted project-scoped Codex MCP connection '${serverName}' as non-owning configuration; ` +
+        'the install receipt and uninstall targets were not changed. Authentication is operator-attested: ' +
+        'Codex CLI configuration output does not independently prove OAuth or token success.',
+    );
+    abortIfInjected('wire');
+    return 0;
+  });
+}
+
 async function runVerify(ws: string, rest: string[], home: string): Promise<number> {
   const jsonMode = rest.includes('--json');
   const cfg = loadConfig();
@@ -1155,7 +1234,7 @@ export async function runBootstrap(args: string[], opts: RunBootstrapOpts = {}):
   const logCtx: LogCtx = { home, ws, ...(harnessForLog ? { harness: harnessForLog } : {}) };
   const t0 = Date.now();
 
-  const KNOWN = new Set(['status', 'interview', 'render', 'repo', 'hooks', 'verify', 'attach', 'uninstall', 'cloud-setup-script']);
+  const KNOWN = new Set(['status', 'interview', 'render', 'repo', 'hooks', 'wire', 'verify', 'attach', 'uninstall', 'cloud-setup-script']);
   if (!KNOWN.has(sub)) {
     console.error(`unknown subcommand: ${sub}`);
     console.error(BOOTSTRAP_HELP);
@@ -1163,7 +1242,7 @@ export async function runBootstrap(args: string[], opts: RunBootstrapOpts = {}):
   }
 
   // Subcommand-level help: BEFORE any subcommand body runs, so a help token
-  // after a mutating subcommand (repo/hooks/verify/attach/uninstall/render/
+  // after a mutating subcommand (repo/hooks/wire/verify/attach/uninstall/render/
   // interview) never falls through into the real operation, regardless of
   // what other flags/values precede it in `rest`. No install-log entry
   // either — this isn't a phase run.
@@ -1200,6 +1279,9 @@ export async function runBootstrap(args: string[], opts: RunBootstrapOpts = {}):
         break;
       case 'hooks':
         code = await runHooks(ws, rest, home, runner);
+        break;
+      case 'wire':
+        code = await runWire(ws, rest, home, runner);
         break;
       case 'verify':
         code = await runVerify(ws, rest, home);
