@@ -80,6 +80,10 @@ export function manifestMatchesTarget(manifest: MigrateManifest, targetId: strin
   return manifest.schema_version === 2 && manifest.target_id === targetId;
 }
 
+function makeManifestKey(sourceId: string, slug: string): string {
+  return sourceId === 'default' ? slug : `${sourceId}::${slug}`;
+}
+
 function loadManifest(): MigrateManifest | null {
   const path = getManifestPath();
   if (!existsSync(path)) return null;
@@ -148,6 +152,25 @@ export async function copyMigrationSources(source: BrainEngine, target: BrainEng
       row.contextual_retrieval_mode, row.trust_frontmatter_overrides,
       row.newest_content_at, row.created_at,
     ]);
+  }
+}
+
+export async function copyPageLinksToTarget(
+  source: BrainEngine,
+  target: BrainEngine,
+  page: Page,
+  failedKeys: ReadonlySet<string> = new Set(),
+): Promise<void> {
+  const links = await source.getLinks(page.slug, { sourceId: page.source_id });
+  for (const link of links) {
+    const toSourceId = link.to_source_id ?? page.source_id;
+    if (failedKeys.has(makeManifestKey(toSourceId, link.to_slug))) continue;
+    await target.addLink(
+      link.from_slug, link.to_slug,
+      link.context, link.link_type,
+      undefined, undefined, undefined,
+      { fromSourceId: page.source_id, toSourceId },
+    );
   }
 }
 
@@ -564,8 +587,6 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   // entries were bare slugs; we keep treating those as default-source for
   // back-compat resume.
   const completedSet = new Set(manifest?.completed_slugs || []);
-  const makeManifestKey = (sourceId: string, slug: string): string =>
-    sourceId === 'default' ? slug : `${sourceId}::${slug}`;
   if (!manifest) {
     manifest = {
       completed_slugs: [],
@@ -680,17 +701,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
         progress.tick(1);
         continue;
       }
-      const sourceOpts = { sourceId: page.source_id };
-      const links = await sourceEngine.getLinks(page.slug, sourceOpts);
-      for (const link of links) {
-        if (failedKeys.has(makeManifestKey(page.source_id, link.to_slug))) continue;
-        await targetEngine.addLink(
-          link.from_slug, link.to_slug,
-          link.context, link.link_type,
-          undefined, undefined, undefined,
-          { fromSourceId: page.source_id, toSourceId: page.source_id },
-        );
-      }
+      await copyPageLinksToTarget(sourceEngine, targetEngine, page, failedKeys);
       progress.tick(1);
     }
     progress.finish();
