@@ -5171,9 +5171,10 @@ respective shapes. Small, mechanical; pinned by `test/init-embed-check.test.ts`
 - [ ] **P1 — enforce op scope/localOnly on the stdio MCP dispatch when no auth
   context is present, and consider a narrower default surface for pull-mode
   harness registrations.** HTTP dispatch enforces `scope`/`localOnly` before
-  handlers run; the stdio surface should reach parity so a registration that is
-  user-global by host design (no per-project scoping available) does not expose
-  more authority than the session needs. Surfaced by the v0.45.x ship
+  handlers run; the stdio surface should reach parity so a bootstrap-managed
+  registration that is user-global by `codex mcp add` design does not expose
+  more authority than the session needs. Independently managed project-scoped
+  streamable-HTTP config is a separate path. Surfaced by the v0.45.x ship
   adversarial pass (cross-model); pre-existing behavior, not introduced by the
   Codex scope-consent fix — that fix's prose now states the read+write reality
   honestly. Needs its own design pass (interaction with `--surface` pinning,
