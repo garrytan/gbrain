@@ -720,6 +720,56 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     expect(await pgliteEngine.countStalePagesForExtraction({ sourceId: SRC })).toBe(2);
   });
 
+  // Chunkless-page safety net (embed --stale detection gap): a page with
+  // non-empty content but zero content_chunks rows (e.g. a putPage-only
+  // write) must be found on BOTH engines identically, and quarantined /
+  // embed_skip pages (intentionally chunkless by design) must be excluded
+  // identically on both. Isolated under a dedicated source.
+  test('chunkless-page-with-content detection: Postgres ↔ PGLite parity', async () => {
+    const SRC = 'chunkless-parity';
+    for (const eng of [pgEngine, pgliteEngine]) {
+      await eng.executeRaw(`INSERT INTO sources (id, name, config) VALUES ($1, 'Chunkless Parity', '{}'::jsonb) ON CONFLICT DO NOTHING`, [SRC]);
+
+      // cp/stub: non-empty content, never chunked — THE bug this fix targets.
+      await eng.putPage('cp/stub', { type: 'person', title: 'Stub', compiled_truth: 'stub content, never chunked' }, { sourceId: SRC });
+      // cp/chunked: same shape, but chunked — must be excluded.
+      await eng.putPage('cp/chunked', { type: 'note', title: 'Chunked', compiled_truth: 'chunked content' }, { sourceId: SRC });
+      await eng.upsertChunks('cp/chunked', [
+        { chunk_index: 0, chunk_text: 'chunked content', chunk_source: 'compiled_truth' },
+      ], { sourceId: SRC });
+      // cp/empty: no content — must be excluded (the #2822 empty-put class, not this bug).
+      await eng.putPage('cp/empty', { type: 'note', title: 'Empty', compiled_truth: '' }, { sourceId: SRC });
+      // cp/quarantined: chunkless BY DESIGN — must be excluded.
+      await eng.putPage('cp/quarantined', {
+        type: 'note', title: 'Quarantined', compiled_truth: 'junk content',
+        frontmatter: { quarantine: { reason: 'junk_pattern', detail: 'parity fixture', assessed_at: new Date().toISOString() } },
+      }, { sourceId: SRC });
+      // cp/skipped: chunkless BY DESIGN — must be excluded.
+      await eng.putPage('cp/skipped', {
+        type: 'note', title: 'Skipped', compiled_truth: 'x'.repeat(500),
+        frontmatter: { embed_skip: { reason: 'oversized', bytes: 500, assessed_at: new Date().toISOString() } },
+      }, { sourceId: SRC });
+    }
+
+    expect(await pgEngine.countChunklessPagesWithContent({ sourceId: SRC })).toBe(1);
+    expect(await pgliteEngine.countChunklessPagesWithContent({ sourceId: SRC })).toBe(1);
+
+    const pgRows = await pgEngine.listChunklessPagesWithContent({ sourceId: SRC });
+    const pgliteRows = await pgliteEngine.listChunklessPagesWithContent({ sourceId: SRC });
+    expect(pgRows.map(r => r.slug)).toEqual(['cp/stub']);
+    expect(pgliteRows.map(r => r.slug)).toEqual(['cp/stub']);
+    expect(pgRows[0].compiled_truth).toBe('stub content, never chunked');
+    expect(pgliteRows[0].compiled_truth).toBe(pgRows[0].compiled_truth);
+
+    // Unscoped count/list is >= the scoped count on both engines (other
+    // tests' fixtures may also be chunkless — this only asserts the SRC
+    // subset is reachable without scoping, not an exact global count).
+    const pgAllSlugs = (await pgEngine.listChunklessPagesWithContent({ batchSize: 10000 })).map(r => r.slug);
+    const pgliteAllSlugs = (await pgliteEngine.listChunklessPagesWithContent({ batchSize: 10000 })).map(r => r.slug);
+    expect(pgAllSlugs).toContain('cp/stub');
+    expect(pgliteAllSlugs).toContain('cp/stub');
+  });
+
   test('v0.41.39 listEnrichCandidates parity (thin filter + source-aware inbound + order)', async () => {
     const stub = 'Stub page.';
     const pageSql = `

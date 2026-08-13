@@ -177,6 +177,31 @@ describe('runEmbed --all (parallel)', () => {
     expect(result.embedded).toBe(0);
   });
 
+  test('#1737 review catch: signal aborted during chunkless-page healing stops before invalidateStaleSignatureEmbeddings', async () => {
+    // Round-3 review finding: embedAllStale must check the abort signal
+    // immediately after the chunkless-page healing sweep, before falling
+    // through into invalidateStaleSignatureEmbeddings (a write path) —
+    // otherwise a caller-cancelled run could still NULL out
+    // signature-drifted embeddings and exit, leaving retrieval degraded.
+    const ac = new AbortController();
+    let invalidateCalled = false;
+    const engine = mockEngine({
+      countChunklessPagesWithContent: async () => 1,
+      listChunklessPagesWithContent: async () => {
+        // Simulate the caller's cancellation firing WHILE the healing sweep
+        // is mid-flight (e.g. worker timeout / lock loss / SIGTERM).
+        ac.abort(new Error('lock-lost'));
+        return [];
+      },
+      invalidateStaleSignatureEmbeddings: async () => { invalidateCalled = true; return 0; },
+      countStaleChunks: async () => 0,
+    });
+
+    await runEmbedCore(engine, { stale: true, signal: ac.signal });
+
+    expect(invalidateCalled).toBe(false);
+  });
+
   test('respects GBRAIN_EMBED_CONCURRENCY=1 (serial)', async () => {
     const pages = Array.from({ length: 5 }, (_, i) => ({ slug: `page-${i}` }));
     const chunksBySlug = new Map(

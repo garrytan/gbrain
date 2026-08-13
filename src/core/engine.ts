@@ -1,6 +1,6 @@
 import type {
   Page, PageInput, PageFilters, GetPageOpts,
-  Chunk, ChunkInput, StaleChunkRow, StalePageRow,
+  Chunk, ChunkInput, StaleChunkRow, StalePageRow, ChunklessPageRow,
   SearchResult, SearchOpts,
   Link, GraphNode, GraphPath, RelationalFanoutRow, RelationalFanoutOpts,
   TimelineEntry, TimelineInput, TimelineOpts,
@@ -1087,6 +1087,35 @@ export interface BrainEngine {
     // common denominator on the wire).
     afterUpdatedAt?: string | null;
   }): Promise<StaleChunkRow[]>;
+  /**
+   * Pre-flight count for the chunkless-page safety net: pages with
+   * non-empty `compiled_truth` AND/OR non-empty `timeline` — both are
+   * chunked independently by the healer — and ZERO `content_chunks` rows.
+   * `embed --stale` only scans `content_chunks` (embedding IS NULL) — a
+   * page written directly via `putPage` that never got chunked has no
+   * chunk row to find, so it stays invisible to that scan forever.
+   * `opts.sourceId` scopes the count to a single source, matching
+   * `countStaleChunks`. Quarantined and `embed_skip` pages are excluded —
+   * both are intentionally chunkless by design, not drift needing repair.
+   * See `ChunklessPageRow` for the full rationale.
+   */
+  countChunklessPagesWithContent(opts?: { sourceId?: string }): Promise<number>;
+  /**
+   * List pages with non-empty `compiled_truth` and/or `timeline` and zero
+   * `content_chunks` rows (sibling of `countChunklessPagesWithContent`;
+   * same predicate). Keyset-paginated on `id` (mirrors
+   * `listStalePagesForExtraction`) — pass the last row's `id` as
+   * `afterPageId` for the next page. Default `batchSize` 50 — deliberately
+   * small (unlike the 2000-row default on chunk-metadata-only cursors
+   * elsewhere): each row here carries a FULL page body, so a large batch
+   * of large pages is a real memory concern this is a safety-net sweep for
+   * a rare drift case, not the primary bulk-import chunking path.
+   */
+  listChunklessPagesWithContent(opts?: {
+    batchSize?: number;
+    afterPageId?: number;
+    sourceId?: string;
+  }): Promise<ChunklessPageRow[]>;
   /**
    * Delete every chunk for a page. Internal page-id lookup is sourceId-scoped
    * when `opts.sourceId` is given; otherwise the bare-slug subquery returns

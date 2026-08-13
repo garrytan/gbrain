@@ -624,6 +624,29 @@ export interface StaleChunkRow {
 }
 
 /**
+ * A page with non-empty `compiled_truth` and/or `timeline` (both are
+ * chunked independently by the healer) but ZERO `content_chunks` rows,
+ * returned by `listChunklessPagesWithContent`. `embed --stale` scans
+ * `content_chunks` (embedding IS NULL) — a page written directly via
+ * `putPage` that never went through the chunking step (e.g. an
+ * enrichment-generated entity stub) has no chunk row to go stale, so it is
+ * invisible to that scan forever. This is the safety-net detection: find
+ * such pages so `embed --stale` can chunk them and fold the resulting
+ * NULL-embedding chunks into the same run.
+ *
+ * Quarantined and `embed_skip` pages are excluded by the underlying query
+ * (`src/core/quarantine.ts` / `src/core/embed-skip.ts`) — both are
+ * INTENTIONALLY chunkless by design (content-quality gate), not drift.
+ */
+export interface ChunklessPageRow {
+  id: number;
+  slug: string;
+  source_id: string;
+  compiled_truth: string;
+  timeline: string;
+}
+
+/**
  * v0.42.7 (#1696) — a page that needs link/timeline extraction, returned by
  * `listStalePagesForExtraction`. Carries the page CONTENT (compiled_truth +
  * timeline + frontmatter) so `gbrain extract --stale` extracts in ~1 query per
