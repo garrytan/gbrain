@@ -81,8 +81,10 @@ const BATCH_SIZE = 100;
 const STALE_BATCH_SIZE = Math.max(1, Number(process.env.GBRAIN_EXTRACT_STALE_BATCH) || 25);
 // v0.42.7: wall-clock budget for one `extract --stale` invocation (default
 // 30 min). `--catch-up` removes the cap (loops until 0 stale). Mirrors
-// embedAllStale's time-budget shape.
-const STALE_TIME_BUDGET_MS = Math.max(1000, Number(process.env.GBRAIN_EXTRACT_TIME_BUDGET_MS) || 30 * 60 * 1000);
+// embedAllStale's time-budget shape. Exported so the #2849 deferred-sweep
+// submitters (sync's size-gate defer branch + the jobs continuation chain)
+// derive their job timeout_ms from the SAME budget instead of hardcoding.
+export const STALE_TIME_BUDGET_MS = Math.max(1000, Number(process.env.GBRAIN_EXTRACT_TIME_BUDGET_MS) || 30 * 60 * 1000);
 
 /**
  * v0.42.7 (#1696): best-effort extraction stamp for the source-correct write

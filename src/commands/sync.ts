@@ -3647,10 +3647,68 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // covered regardless.
   const extractOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
   if (!opts.noExtract && totalChanges > 100 && pagesAffected.length > 0) {
+    // #2849: above the size gate the deferred extraction must be DURABLY
+    // QUEUED, not just hinted. The autopilot cycle's extract phase is
+    // slug-scoped (an up_to_date follow-up sync hands it an empty
+    // pagesAffected), so a webhook-driven large sync left
+    // `links_extracted_at` unstamped FOREVER unless an operator ran
+    // `gbrain extract --stale` by hand. Submit a source-scoped stale-sweep
+    // job bound to the consumed commit (idempotency key) so repeated
+    // webhook deliveries / sync retries of the same commit coalesce onto
+    // one job. The sweep itself is the watermark scan — it picks up the
+    // pages this run imported AND any banked across resumed runs.
+    // Best-effort: queue submission failure falls back to the hint-only
+    // behavior (the pages stay stale + visible to doctor, never mis-stamped).
+    let queuedJobId: number | string | null = null;
+    try {
+      const { MinionQueue } = await import('../core/minions/queue.ts');
+      const { STALE_TIME_BUDGET_MS } = await import('./extract.ts');
+      const queue = new MinionQueue(engine);
+      const payload = {
+        stale: true,
+        ...(opts.sourceId ? { sourceId: opts.sourceId } : {}),
+        reason: 'sync_size_gate',
+        // Bound to the PIN this run drained to (== headCommit unless resuming
+        // a stored target), not live HEAD — the sweep covers what we imported.
+        deferred_commit: pin,
+      };
+      // The stale sweep has its own internal wall-clock budget
+      // (GBRAIN_EXTRACT_TIME_BUDGET_MS-derived); without an explicit
+      // timeout_ms the job would inherit the tight null-default and get
+      // wall-clock-killed mid-sweep (#1737 class). 5-min headroom.
+      const timeoutMs = STALE_TIME_BUDGET_MS + 5 * 60 * 1000;
+      // NO maxWaiting here: with an unscoped (NULL-sourceId) payload the
+      // queue's coalesce filter matches ANY waiting 'extract' job (e.g. a
+      // remediation-submitted {mode:'links'} row) and returns THAT job —
+      // silently dropping the sweep while we log "queued". The idempotency
+      // key alone is the dedup for repeat submissions toward the same pin.
+      const key = `extract-stale:${opts.sourceId ?? 'default'}:${pin}`;
+      const isLiveSweep = (j: { status: string; data: Record<string, unknown> }): boolean =>
+        j.data?.stale === true && ['waiting', 'delayed', 'active'].includes(j.status);
+      let job = await queue.add('extract', payload, { idempotency_key: key, timeout_ms: timeoutMs });
+      if (!isLiveSweep(job)) {
+        // The key slot holds a FINISHED row: a prior sweep toward this pin
+        // that completed BEFORE this run's pages landed (checkpoint-resume /
+        // blocked-advance re-sync of the same target). Those pages went
+        // stale after that sweep's watermark pass, so coalescing onto the
+        // finished row would strand them — queue a fresh sweep under a
+        // run-unique key. (An 'active' sweep is safe to coalesce onto: its
+        // end-of-run staleRemaining re-count chains a continuation.)
+        job = await queue.add('extract', payload, {
+          idempotency_key: `${key}:${Date.now()}`,
+          timeout_ms: timeoutMs,
+        });
+      }
+      // Only claim "queued" once we verified the returned row IS a live
+      // stale sweep — never trust queue.add's row blind.
+      if (isLiveSweep(job)) queuedJobId = job.id;
+    } catch { /* best-effort — hint below still tells the operator */ }
     slog(
-      `  Large sync: deferring link/timeline extraction. ` +
-      `Run 'gbrain extract --stale${opts.sourceId ? ` --source-id ${opts.sourceId}` : ''}' ` +
-      `(or let the autopilot cycle's extract phase sweep it).`,
+      `  Large sync: deferring link/timeline extraction` +
+      (queuedJobId != null
+        ? ` — queued stale-sweep job #${queuedJobId} (source: ${opts.sourceId ?? 'default'}); a running jobs worker will consume it.`
+        : `.`) +
+      ` Run 'gbrain extract --stale${opts.sourceId ? ` --source-id ${opts.sourceId}` : ''}' to extract now.`,
     );
   }
   if (!opts.noExtract && totalChanges <= 100 && pagesAffected.length > 0) {
