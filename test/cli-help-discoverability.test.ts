@@ -141,6 +141,32 @@ describe('#1175 — main `gbrain --help` SOURCES block matches the real subcomma
   });
 });
 
+describe('#4003 — `gbrain auth --help` reaches the detailed usage block', () => {
+  test('output contains the real auth subcommand usage, not the generic stub', () => {
+    const { stdout, status } = runCli(['auth', '--help']);
+    expect(status).toBe(0);
+    // Pre-fix: `auth` was missing from CLI_ONLY_SELF_HELP, so this printed
+    // only "gbrain auth - run gbrain --help for the full command list."
+    expect(stdout).toContain('GBrain Token Management');
+    expect(stdout).toContain('gbrain auth create <name>');
+    expect(stdout).toContain('gbrain auth register-client');
+    expect(stdout).not.toContain('run gbrain --help for the full command list');
+  });
+
+  test('-h short flag also works', () => {
+    const { stdout, status } = runCli(['auth', '-h']);
+    expect(status).toBe(0);
+    expect(stdout).toContain('GBrain Token Management');
+  });
+
+  test('main `gbrain --help` lists auth', () => {
+    const { stdout, status } = runCli(['--help']);
+    expect(status).toBe(0);
+    expect(stdout).toMatch(/^\s*auth </m);
+    expect(stdout).toMatch(/^\s*auth --help\s/m);
+  });
+});
+
 describe('#3834 — extract flags are discoverable from both help surfaces', () => {
   const implementedFlags = [
     '--by-mention',
