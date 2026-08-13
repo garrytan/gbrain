@@ -314,7 +314,9 @@ export async function enumerateRepoItems(
     opts,
   );
   const issues = all.filter((i) => !i.pull_request);
-  const prNumbers = all.filter((i) => i.pull_request).map((i) => i.number);
+  const prsFromIssues = all.filter((i) => i.pull_request);
+  const updatedByNumber = new Map(prsFromIssues.map((i) => [i.number, i.updated_at]));
+  const prNumbers = prsFromIssues.map((i) => i.number);
   // Open PRs get head sha so we can refresh checks cheaply.
   const openPrs = await client.fetchAllPages<RawPullListItem>(
     `/repos/${repo}/pulls?state=open`,
@@ -327,7 +329,15 @@ export async function enumerateRepoItems(
     if (open) {
       prs.push(open);
     } else {
-      prs.push({ number: n, title: '', state: 'closed', updated_at: '', head: { sha: '' } });
+      // Keep the real updated_at from the issues list so delta sweeps
+      // re-fetch closed PRs that changed (comments, merge, review).
+      prs.push({
+        number: n,
+        title: '',
+        state: 'closed',
+        updated_at: updatedByNumber.get(n) ?? '',
+        head: { sha: '' },
+      });
     }
   }
   return { issues, prs };
@@ -715,12 +725,22 @@ async function deleteStalePages(
   deps: GitHubSyncDeps,
   keepPaths: Set<string>,
   summary: GitHubSyncSummary,
+  succeededRepos: ReadonlySet<string>,
 ): Promise<void> {
   const { planReconcileDeletes } = await import('../commands/sync.ts');
-  const rows = await deps.engine.executeRaw<{ slug: string; source_path: string | null }>(
+  const allRows = await deps.engine.executeRaw<{ slug: string; source_path: string | null }>(
     `SELECT slug, source_path FROM pages WHERE source_id = $1 AND deleted_at IS NULL`,
     [deps.sourceId],
   );
+  // Data-loss guard: a repo that errored mid-sweep contributes no keepPaths,
+  // so its pages must be EXCLUDED from the reconcile entirely, otherwise a
+  // transient API failure would look like a bulk deletion.
+  const rows = allRows.filter((r) => {
+    if (r.source_path === null) return false;
+    const parts = r.source_path.split('/');
+    const ownerRepo = parts.length >= 3 ? parts.slice(0, 3).join('/') : '';
+    return ownerRepo !== '' && succeededRepos.has(ownerRepo);
+  });
   const plan = planReconcileDeletes(
     rows,
     keepPaths,
@@ -813,6 +833,7 @@ export async function runGitHubSync(
   const state = readState(cfg.dir);
   const since = opts.full ? undefined : state.last_sweep_at ?? undefined;
   const keepPaths = new Set<string>();
+  const succeededRepos = new Set<string>();
   let maxUpdatedAt = state.last_sweep_at ?? '';
   const repoMeta = new Map<string, RawRepo>();
 
@@ -857,6 +878,7 @@ export async function runGitHubSync(
       } else {
         keepPaths.add(relative(cfg.dir, cardPath).replace(/\\/g, '/'));
       }
+      succeededRepos.add(`gh/${repo}`);
     } catch (err) {
       deps.client.log?.(`[github] repo ${repo} failed: ${err instanceof Error ? err.message : String(err)}`);
       summary.failedFiles++;
@@ -865,7 +887,7 @@ export async function runGitHubSync(
   }
 
   if (opts.full) {
-    await deleteStalePages(deps, keepPaths, summary);
+    await deleteStalePages(deps, keepPaths, summary, succeededRepos);
   }
 
   // Size-gated extract + embed, mirroring performSyncInner's gates.

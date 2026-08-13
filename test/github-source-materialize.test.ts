@@ -43,7 +43,7 @@ interface FixtureItem {
 
 const REPO = 'acme/app';
 
-function makeFixture(): { items: Map<number, FixtureItem>; calls: string[] } {
+function makeFixture(): { items: Map<number, FixtureItem>; calls: string[]; failIssuesList: boolean } {
   const items = new Map<number, FixtureItem>([
     [1, {
       number: 1,
@@ -82,10 +82,10 @@ function makeFixture(): { items: Map<number, FixtureItem>; calls: string[] } {
       merged: true,
     }],
   ]);
-  return { items, calls: [] };
+  return { items, calls: [], failIssuesList: false };
 }
 
-function buildFetch(fx: { items: Map<number, FixtureItem>; calls: string[] }) {
+function buildFetch(fx: { items: Map<number, FixtureItem>; calls: string[]; failIssuesList: boolean }) {
   const { items, calls } = fx;
   return async (url: string, init?: RequestInit): Promise<Response> => {
     const u = new URL(url);
@@ -109,6 +109,7 @@ function buildFetch(fx: { items: Map<number, FixtureItem>; calls: string[] }) {
       return json({ full_name: REPO, private: true, archived: false, default_branch: 'main', description: 'The app' });
     }
     if (path === `/repos/${REPO}/issues` || path === `/repos/${REPO}/issues?state=all`) {
+      if (fx.failIssuesList) return json({ message: 'gone' }, 404);
       const list = [...items.values()]
         .filter((it) => !since || it.updated_at > since)
         .map((it) => ({
@@ -365,6 +366,50 @@ describe('github-source materialize', () => {
         const slugs = await pageSlugs(engine);
         expect(slugs).not.toContain('gh/acme/app/3');
         expect(existsSync(join(dir, 'gh', REPO, '3.md'))).toBe(false);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('delta sweep picks up a closed PR that changed upstream', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ghsrc-closedpr-'));
+    const fx = makeFixture();
+    const fetchImpl = buildFetch(fx);
+    try {
+      await insertSource(engine, dir);
+      await withEnv({ GH_TOKEN: 'test-token' }, async () => {
+        await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc', full: true }, fetchImpl);
+        // Closed PR 3 gets a comment upstream.
+        fx.items.get(3)!.updated_at = '2026-08-06T00:00:00Z';
+        fx.items.get(3)!.comments = [{ user: 'bob', body: 'Post-merge follow-up.', created_at: '2026-08-06T00:00:00Z' }];
+        const res = await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc' }, fetchImpl);
+        expect(res.modified).toBe(1);
+        expect(res.pagesAffected).toContain('gh/acme/app/3');
+        const page = readFileSync(join(dir, 'gh', REPO, '3.md'), 'utf-8');
+        expect(page).toContain('Post-merge follow-up.');
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a repo that errors mid-reconcile keeps its pages (no bulk-delete on API failure)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ghsrc-fail-'));
+    const fx = makeFixture();
+    const fetchImpl = buildFetch(fx);
+    try {
+      await insertSource(engine, dir);
+      await withEnv({ GH_TOKEN: 'test-token' }, async () => {
+        await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc', full: true }, fetchImpl);
+        const before = await pageSlugs(engine);
+        expect(before.length).toBe(4);
+        // The repo's issue list now fails; a full reconcile must NOT purge its pages.
+        fx.failIssuesList = true;
+        const res = await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc', full: true }, fetchImpl);
+        expect(res.status).toBe('partial');
+        expect(res.deleted).toBe(0);
+        expect(await pageSlugs(engine)).toEqual(before);
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });
