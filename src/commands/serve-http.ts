@@ -27,7 +27,12 @@ import { OAuthTokenRevocationRequestSchema } from '@modelcontextprotocol/sdk/sha
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
-import { GBrainOAuthProvider, validateTokenEndpointAuthMethod } from '../core/oauth-provider.ts';
+import {
+  GBrainOAuthProvider,
+  validateTokenEndpointAuthMethod,
+  dcrRegistrationContext,
+  DEFAULT_DCR_TTL_MIN_SECONDS,
+} from '../core/oauth-provider.ts';
 import type { SqlQuery } from '../core/oauth-provider.ts';
 import { hasScope, ALLOWED_SCOPES_LIST, normalizeScopesInput } from '../core/scope.ts';
 import { normalizeSourceInput, normalizeFederatedReadInput } from '../core/source-id.ts';
@@ -702,11 +707,41 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // constructor option instead of monkey-patching `_clientsStore` after
   // construction. Same outcome (no /register endpoint when --enable-dcr
   // is not passed); cleaner shape for tests and future maintainers.
+  // #2179: admin-configured clamp window for DCR-requested token TTLs.
+  // DB-plane config keys (`gbrain config set oauth.dcr_ttl_min_seconds ...`).
+  // FAIL-CLOSED defaults: an unset/invalid max is bounded by the operator's
+  // own --token-ttl (never a fixed permissive ceiling), and an inverted
+  // window collapses to the min bound — the same direction clampDcrTokenTtl
+  // itself resolves. A bad config narrows the window; it never widens it.
+  const parseDcrTtlBound = (raw: unknown, fallback: number): number => {
+    const n = Number(raw);
+    return raw != null && Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback;
+  };
+  let dcrTtlMinSeconds = DEFAULT_DCR_TTL_MIN_SECONDS;
+  let dcrTtlMaxSeconds = Math.max(tokenTtl, dcrTtlMinSeconds);
+  try {
+    dcrTtlMinSeconds = parseDcrTtlBound(await engine.getConfig('oauth.dcr_ttl_min_seconds'), DEFAULT_DCR_TTL_MIN_SECONDS);
+    dcrTtlMaxSeconds = parseDcrTtlBound(await engine.getConfig('oauth.dcr_ttl_max_seconds'), Math.max(tokenTtl, dcrTtlMinSeconds));
+  } catch {
+    // Config read is best-effort; the fail-closed defaults stand.
+    dcrTtlMaxSeconds = Math.max(tokenTtl, dcrTtlMinSeconds);
+  }
+  if (dcrTtlMinSeconds > dcrTtlMaxSeconds) {
+    console.error(
+      `[serve-http] WARNING: oauth.dcr_ttl_min_seconds (${dcrTtlMinSeconds}) exceeds ` +
+      `oauth.dcr_ttl_max_seconds (${dcrTtlMaxSeconds}); collapsing the window to ` +
+      `the min bound (${dcrTtlMinSeconds}).`,
+    );
+    dcrTtlMaxSeconds = dcrTtlMinSeconds;
+  }
+
   const oauthProvider = new GBrainOAuthProvider({
     sql,
     tokenTtl,
     dcrDisabled: !enableDcr,
     allowClientCredentialsDcr: enableDcrInsecure === true,
+    dcrTtlMinSeconds,
+    dcrTtlMaxSeconds,
   });
 
   // #1353: loud stderr security WARN when DCR is enabled. DCR is an
@@ -819,6 +854,20 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   app.use('/authorize', cors(corsOAuthOptions));
   app.use('/register', cors(corsOAuthOptions));
   app.use('/revoke', cors(corsOAuthOptions));
+
+  // #2179: capture the optional `token_ttl_seconds` DCR extension field
+  // BEFORE the SDK's /register handler runs — its request schema strips
+  // unknown body members, so the value would never reach registerClient.
+  // The rest of the chain runs inside dcrRegistrationContext; the clients
+  // store clamps + persists it. Malformed values are ignored (fail-safe:
+  // absent → server default; out-of-range → clamped downstream; a TTL hint
+  // never rejects a registration). express.json() here is idempotent with
+  // the SDK router's own body parser.
+  app.use('/register', express.json(), (req: Request, _res: Response, next: NextFunction) => {
+    const raw = (req.body as Record<string, unknown> | null | undefined)?.token_ttl_seconds;
+    const tokenTtlSeconds = typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
+    dcrRegistrationContext.run({ tokenTtlSeconds }, next);
+  });
 
   // ---------------------------------------------------------------------------
   // Custom client_credentials handler (before mcpAuthRouter)

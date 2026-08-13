@@ -13,6 +13,7 @@
  * - Legacy access_tokens fallback for backward compat
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Response } from 'express';
 import type {
   OAuthClientInformationFull,
@@ -235,14 +236,75 @@ interface GBrainOAuthProviderOptions {
    * (operator-trusted, registers grants directly).
    */
   allowClientCredentialsDcr?: boolean;
+  /**
+   * #2179: lower bound (seconds) for DCR-requested per-client token TTLs.
+   * Requests below it clamp up. Default DEFAULT_DCR_TTL_MIN_SECONDS (300).
+   */
+  dcrTtlMinSeconds?: number;
+  /**
+   * #2179: upper bound (seconds) for DCR-requested per-client token TTLs.
+   * Requests above it clamp down. Unset defaults FAIL-CLOSED to
+   * max(tokenTtl, dcrTtlMinSeconds): an anonymous DCR registrant can never
+   * elect a longer-lived token than the operator's own --token-ttl unless
+   * the admin explicitly widened the window.
+   */
+  dcrTtlMaxSeconds?: number;
 }
+
+// ---------------------------------------------------------------------------
+// DCR token TTL (#2179)
+// ---------------------------------------------------------------------------
+
+/**
+ * Default lower clamp bound for DCR-requested token TTLs (#2179). Admins
+ * override via the `oauth.dcr_ttl_min_seconds` / `oauth.dcr_ttl_max_seconds`
+ * config keys, read once by `gbrain serve --http` at startup. There is
+ * deliberately NO fixed default max: an unset max derives fail-closed from
+ * the operator's --token-ttl (`max(tokenTtl, min)`), so a self-registering
+ * client can never out-live the server default without explicit admin opt-in.
+ */
+export const DEFAULT_DCR_TTL_MIN_SECONDS = 300; // 5 minutes
+
+/**
+ * Clamp a DCR-requested token TTL into the admin-configured [min, max]
+ * window. Bounds are REQUIRED — callers resolve them (fail-closed) first.
+ * Never rejects (#2179): out-of-range values clamp to the nearest bound.
+ * Non-integer requests floor; an inverted window collapses to the min bound.
+ */
+export function clampDcrTokenTtl(
+  requested: number,
+  min: number,
+  max: number,
+): number {
+  const lo = Math.max(1, Math.floor(min));
+  const hi = Math.max(lo, Math.floor(max));
+  return Math.min(hi, Math.max(lo, Math.floor(requested)));
+}
+
+/**
+ * Request-scoped carrier for the `token_ttl_seconds` DCR extension field
+ * (#2179). The MCP SDK's /register handler validates the request body against
+ * a strict schema and STRIPS unknown members before they reach
+ * `clientsStore.registerClient`, so serve-http's /register middleware parses
+ * the raw body and runs the SDK chain inside this AsyncLocalStorage context;
+ * the store reads it back out at registration time. No context (CLI, admin
+ * API, programmatic registration) means "no TTL request" — default behavior.
+ */
+export const dcrRegistrationContext = new AsyncLocalStorage<{ tokenTtlSeconds?: number }>();
 
 // ---------------------------------------------------------------------------
 // Clients Store
 // ---------------------------------------------------------------------------
 
 class GBrainClientsStore implements OAuthRegisteredClientsStore {
-  constructor(private sql: SqlQuery, private allowClientCredentialsDcr = false) {}
+  // #2179: DCR TTL bounds are required — the provider resolves fail-closed
+  // defaults (max bounded by tokenTtl); no permissive fallback lives here.
+  constructor(
+    private sql: SqlQuery,
+    private allowClientCredentialsDcr: boolean,
+    private dcrTtlMin: number,
+    private dcrTtlMax: number,
+  ) {}
 
   async getClient(clientId: string): Promise<OAuthClientInformationFull | undefined> {
     const rows = await this.sql`
@@ -392,6 +454,27 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
       }
     }
 
+    // #2179: optional `token_ttl_seconds` hint from the DCR request body,
+    // carried via dcrRegistrationContext (the SDK strips unknown body
+    // members). Fail-safe posture: absent or malformed → server default TTL;
+    // out-of-range → clamped into [dcrTtlMin, dcrTtlMax]; never rejected.
+    // Persist into oauth_clients.token_ttl (the same per-client override the
+    // admin API writes) and echo the EFFECTIVE value in the registration
+    // response so the caller can show the user what it actually got.
+    let effectiveTtl: number | undefined;
+    const requestedTtl = dcrRegistrationContext.getStore()?.tokenTtlSeconds;
+    if (typeof requestedTtl === 'number' && Number.isFinite(requestedTtl)) {
+      const clamped = clampDcrTokenTtl(requestedTtl, this.dcrTtlMin, this.dcrTtlMax);
+      try {
+        await this.sql`UPDATE oauth_clients SET token_ttl = ${clamped} WHERE client_id = ${clientId}`;
+        effectiveTtl = clamped;
+      } catch (e) {
+        // Pre-migration schema without the token_ttl column: keep the
+        // registration, but do NOT echo a TTL that wasn't persisted.
+        if (!isUndefinedColumnError(e, 'token_ttl')) throw e;
+      }
+    }
+
     // Public clients: omit `client_secret` entirely from the response so
     // the wire payload matches RFC 7591 §3.2.1 ("if the client is a
     // public client, the authorization server MUST NOT issue a client
@@ -403,6 +486,9 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
       client_id_issued_at: now,
     };
     if (clientSecret) response.client_secret = clientSecret;
+    if (effectiveTtl !== undefined) {
+      (response as Record<string, unknown>).token_ttl_seconds = effectiveTtl;
+    }
     return response;
   }
 }
@@ -420,10 +506,21 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
 
   constructor(options: GBrainOAuthProviderOptions) {
     this.sql = options.sql;
-    this._clientsStore = new GBrainClientsStore(this.sql, options.allowClientCredentialsDcr === true);
     this.dcrDisabled = options.dcrDisabled === true;
     this.tokenTtl = options.tokenTtl || 3600;
     this.refreshTtl = options.refreshTtl || 30 * 24 * 3600;
+    // #2179 fail-closed: an unset DCR max is bounded by the operator's own
+    // token TTL — never a fixed permissive ceiling — so a self-registering
+    // client cannot elect a longer-lived token than the server default
+    // unless the admin explicitly configured a wider window.
+    const dcrTtlMin = options.dcrTtlMinSeconds ?? DEFAULT_DCR_TTL_MIN_SECONDS;
+    const dcrTtlMax = options.dcrTtlMaxSeconds ?? Math.max(this.tokenTtl, dcrTtlMin);
+    this._clientsStore = new GBrainClientsStore(
+      this.sql,
+      options.allowClientCredentialsDcr === true,
+      dcrTtlMin,
+      dcrTtlMax,
+    );
   }
 
   get clientsStore(): OAuthRegisteredClientsStore {
@@ -931,20 +1028,10 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const requestedScopes = requestedScope ? parseScopeString(requestedScope) : allowedScopes;
     const grantedScopes = requestedScopes.filter(s => hasScope(allowedScopes, s));
 
-    // Per-client TTL override (stored in oauth_clients.token_ttl)
-    // Column may not exist on PGLite/older schemas — graceful fallback
-    let clientTtl: number | undefined;
-    try {
-      const ttlRows = await this.sql`SELECT token_ttl FROM oauth_clients WHERE client_id = ${clientId}`;
-      if (ttlRows.length > 0 && ttlRows[0].token_ttl) clientTtl = Number(ttlRows[0].token_ttl);
-    } catch (e) {
-      // F5 hardening: same posture as the deleted_at probe above. Only the
-      // "column doesn't exist" path is a non-fatal fall-through.
-      if (!isUndefinedColumnError(e, 'token_ttl')) throw e;
-    }
-
     // Client credentials: access token only, NO refresh token (RFC 6749 4.4.3)
-    return this.issueTokens(clientId, grantedScopes, undefined, false, clientTtl);
+    // Per-client TTL (oauth_clients.token_ttl) is applied inside issueTokens
+    // so all three grant paths honor it (#2179).
+    return this.issueTokens(clientId, grantedScopes, undefined, false);
   }
 
   // -------------------------------------------------------------------------
@@ -1204,17 +1291,36 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
   // Internal: Issue access + optional refresh tokens
   // -------------------------------------------------------------------------
 
+  /**
+   * Per-client TTL override lookup (oauth_clients.token_ttl). Set by the
+   * admin API, the CLI, or a DCR `token_ttl_seconds` request (#2179).
+   * Column may not exist on older schemas — graceful fallback to undefined.
+   */
+  private async lookupClientTokenTtl(clientId: string): Promise<number | undefined> {
+    try {
+      const ttlRows = await this.sql`SELECT token_ttl FROM oauth_clients WHERE client_id = ${clientId}`;
+      if (ttlRows.length > 0 && ttlRows[0].token_ttl) return Number(ttlRows[0].token_ttl);
+    } catch (e) {
+      // F5 hardening posture: only the "column doesn't exist" path is a
+      // non-fatal fall-through.
+      if (!isUndefinedColumnError(e, 'token_ttl')) throw e;
+    }
+    return undefined;
+  }
+
   private async issueTokens(
     clientId: string,
     scopes: string[],
     resource: URL | undefined,
     includeRefresh: boolean,
-    ttlOverride?: number,
   ): Promise<OAuthTokens> {
     const accessToken = generateToken('gbrain_at_');
     const accessHash = hashToken(accessToken);
     const now = Math.floor(Date.now() / 1000);
-    const effectiveTtl = ttlOverride || this.tokenTtl;
+    // #2179: the per-client override lives here (not in individual grant
+    // handlers) so client_credentials, authorization_code AND refresh
+    // issuance all honor oauth_clients.token_ttl consistently.
+    const effectiveTtl = (await this.lookupClientTokenTtl(clientId)) || this.tokenTtl;
     const accessExpiry = now + effectiveTtl;
 
     await this.sql`

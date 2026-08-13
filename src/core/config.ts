@@ -1123,6 +1123,11 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'orphans.exclude_slugs',
   'sync.cost_gate_min_usd',
   'sync.federated_v2',
+  // #2179: clamp window for DCR-requested per-client token TTLs. Read by
+  // `gbrain serve --http` at startup; unset min defaults to 300s, unset max
+  // defaults fail-closed to max(--token-ttl, min).
+  'oauth.dcr_ttl_min_seconds',
+  'oauth.dcr_ttl_max_seconds',
   'embed.backfill_cooldown_min',
   'embed.backfill_max_usd_per_source_24h',
   'embed.backfill_max_usd',

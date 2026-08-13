@@ -163,6 +163,22 @@ await oauthProvider.registerClientManual(
 For self-service client registration (Dynamic Client Registration, RFC 7591),
 start the server with `--enable-dcr`. DCR is off by default.
 
+DCR requests may include an optional `token_ttl_seconds` field (integer,
+seconds) to request a per-client access-token lifetime. The server clamps the
+request into an admin-configured window — never rejects over it — persists the
+effective value as the client's TTL override, and echoes it back as
+`token_ttl_seconds` in the registration response. Subsequent `/token` responses
+for that client carry the matching `expires_in`. Clients that omit the field
+keep the server default (`--token-ttl`). The window defaults fail-closed: min
+300 seconds, max bounded by your `--token-ttl` — a self-registering client
+cannot request a longer-lived token than the server default unless you
+explicitly widen the window:
+
+```bash
+gbrain config set oauth.dcr_ttl_min_seconds 600
+gbrain config set oauth.dcr_ttl_max_seconds 86400
+```
+
 ### 3. Expose the server
 
 **Bind explicitly.** `gbrain serve --http` defaults to `127.0.0.1`.
