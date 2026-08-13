@@ -1841,6 +1841,13 @@ export async function hybridSearchCached(
     // resolves) into the cache key so a row written under one exclude
     // policy can't be served to a lookup under another.
     hardExcludes: resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes),
+    // #3515 — fold the EFFECTIVE detail level into the cache key. detail
+    // gates dedup, chunk-source filtering, and the compiled_truth boost, so
+    // a `--detail low` write (compiled-truth-only result set) must never be
+    // served to a default `medium` lookup. Resolve auto-detect the same way
+    // bare hybridSearch does (opts.detail ?? autoDetectDetail(query)) so an
+    // auto-detected `high` query keys like an explicit `high` one.
+    detail: opts?.detail ?? autoDetectDetail(query),
   });
 
   // Cache decision: opts.useCache (explicit) wins over global config; global

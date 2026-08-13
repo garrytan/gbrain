@@ -420,7 +420,23 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // GBRAIN_FTS_LANGUAGE retokenizes both the trigger-built search_vector and
     // the query-side tsquery, so rows written under the previous language must
     // not survive a `reindex-search-vector` switch.
-    expect(KNOBS_HASH_VERSION).toBe(15);
+    // #3515: bumped 15→16 to fold the effective detail level (det=) — a
+    // detail=low write must not be served to a detail=medium lookup.
+    expect(KNOBS_HASH_VERSION).toBe(16);
+  });
+
+  test('#3515: detail set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
+    const knobs = resolveSearchMode({ mode: 'balanced' });
+    const low = knobsHash(knobs, { detail: 'low' });
+    const medium = knobsHash(knobs, { detail: 'medium' });
+    const high = knobsHash(knobs, { detail: 'high' });
+    const unset = knobsHash(knobs);
+    expect(low).not.toBe(medium);
+    expect(medium).not.toBe(high);
+    expect(low).not.toBe(high);
+    // Undefined falls back to 'medium' — the documented default — so legacy
+    // callers that don't thread detail share the default-detail rows.
+    expect(unset).toBe(medium);
   });
 
   test('T1 (codex): floor_ratio set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -585,8 +601,8 @@ describe('v0.40.4 — graph_signals knob', () => {
 });
 
 describe('v0.42.3.0 — autocut knobs', () => {
-  test('KNOBS_HASH_VERSION is 15 (14→15 FTS language fold)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(15);
+  test('KNOBS_HASH_VERSION is 16 (15→16 detail fold #3515)', () => {
+    expect(KNOBS_HASH_VERSION).toBe(16);
   });
 
   test('bundle defaults: conservative off, balanced/tokenmax on @0.20', () => {

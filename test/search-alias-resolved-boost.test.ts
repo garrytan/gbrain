@@ -89,7 +89,7 @@ describe('alias_resolved boost stage', () => {
 });
 
 describe('KNOBS_HASH_VERSION', () => {
-  it('is 15 (14→15 folds the resolved FTS configuration name, so rows written before a reindex-search-vector language switch become unreachable)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(15);
+  it('is 16 (15→16 detail fold makes detail-contaminated rows unreachable, #3515)', () => {
+    expect(KNOBS_HASH_VERSION).toBe(16);
   });
 });

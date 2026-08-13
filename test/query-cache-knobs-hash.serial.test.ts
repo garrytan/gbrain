@@ -301,6 +301,41 @@ describe('hard-exclude cache isolation (#2825)', () => {
   });
 });
 
+describe('detail cache isolation (#3515)', () => {
+  // Hashes computed the way hybridSearchCached does: same resolved mode, ctx
+  // carrying the effective detail level. A row written by a `--detail low`
+  // call (compiled-truth-only result set) must not be served to a default
+  // `medium` lookup, and vice versa.
+  const lowHash = knobsHash(resolveSearchMode({ mode: 'balanced' }), { detail: 'low' });
+  const mediumHash = knobsHash(resolveSearchMode({ mode: 'balanced' }), { detail: 'medium' });
+  const unsetHash = knobsHash(resolveSearchMode({ mode: 'balanced' }));
+
+  test('detail=low write is NOT served to a default (medium) lookup', async () => {
+    const cache = new SemanticQueryCache(engine);
+    const emb = makeEmbedding(8);
+
+    // Simulate `query "X" --detail low` populating the cache with the
+    // narrow compiled-truth-only result set.
+    await cache.store('what is the deploy process', emb, makeResults('narrow', 2), {
+      vector_enabled: true, detail_resolved: 'low', expansion_applied: false,
+    }, { knobsHash: lowHash });
+
+    // Default-detail lookup inside the TTL → MISS (falls through to a
+    // fresh, full search) instead of the narrow set.
+    expect((await cache.lookup(emb, { knobsHash: mediumHash })).hit).toBe(false);
+
+    // The low-detail caller still hits its own row.
+    const original = await cache.lookup(emb, { knobsHash: lowHash });
+    expect(original.hit).toBe(true);
+    expect(original.results?.length).toBe(2);
+  });
+
+  test('undefined detail keys like the documented medium default', () => {
+    expect(unsetHash).toBe(mediumHash);
+    expect(unsetHash).not.toBe(lowHash);
+  });
+});
+
 describe('FTS language cache isolation', () => {
   // GBRAIN_FTS_LANGUAGE retokenizes BOTH sides of the keyword arm (the
   // trigger-built search_vector and the query-side websearch_to_tsquery), so
