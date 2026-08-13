@@ -27,7 +27,10 @@ import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import { serializePageToMarkdown, resolvePageFilePath } from './markdown.ts';
 import { isWriteTargetContained } from './path-confine.ts';
-import { isDurabilityHardened, commitWriteThroughFile } from './brain-repo-durability.ts';
+import {
+  isDurabilityHardened, commitWriteThroughFile, currentBranch, getLastPushOutcome,
+  type PushLogOutcome,
+} from './brain-repo-durability.ts';
 
 /** Minimal logger surface — structurally compatible with operations.ts `Logger`. */
 export interface WriteThroughLogger {
@@ -39,11 +42,28 @@ export interface WriteThroughResult {
   path?: string;
   /**
    * True when the write was also committed to git (#2426). Only attempted on
-   * repos hardened via `gbrain sources harden` (durability hook installed);
-   * the hook then background-pushes the commit. Best-effort — a false/absent
-   * value never blocks the write.
+   * repos hardened via `gbrain sources harden` (durability hook installed).
+   * Commit-only — this says nothing about whether the commit ever reached the
+   * remote. Best-effort — a false/absent value never blocks the write.
    */
   committed?: boolean;
+  /**
+   * Set alongside `committed: true`. The actual push runs detached in the
+   * post-commit hook (see brain-repo-durability.ts), so at the moment this
+   * result is returned the outcome for THIS commit is genuinely unknown —
+   * 'pending' is the only honest value. Check `lastPushStatus` (or
+   * $GBRAIN_HOME/brain-push.log directly) afterward to see whether pushes for
+   * this branch are landing.
+   */
+  pushed?: 'pending';
+  /**
+   * Best-effort snapshot of the most recently logged push outcome for this
+   * branch (read from the hook's shared log), taken right after the commit
+   * above. It reflects push history UP TO that point — not the push this
+   * write just queued — so callers and health tooling can tell "pushes for
+   * this branch have been failing" apart from "this write committed fine".
+   */
+  lastPushStatus?: PushLogOutcome;
   /**
    * Non-error reasons the file was not written:
    *   - no_repo_configured: the resolved target (source `local_path` or, for a
@@ -284,13 +304,23 @@ export async function writePageThrough(
     // post-commit hook background-pushes the commit. Best-effort: a commit
     // failure never fails the write (the DB row + file are the durable sinks).
     let committed = false;
+    let pushed: 'pending' | undefined;
+    let lastPushStatus: PushLogOutcome | undefined;
     try {
       if (isDurabilityHardened(writeRoot)) {
         committed = commitWriteThroughFile(writeRoot, filePath, slug);
+        if (committed) {
+          pushed = 'pending';
+          lastPushStatus = getLastPushOutcome(currentBranch(writeRoot));
+        }
       }
     } catch { /* best-effort */ }
 
-    return { written: true, path: filePath, ...(committed ? { committed } : {}) };
+    return {
+      written: true,
+      path: filePath,
+      ...(committed ? { committed, pushed, lastPushStatus } : {}),
+    };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     opts.logger?.warn(`[write-through] failed for ${slug}: ${msg}`);

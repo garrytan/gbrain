@@ -450,6 +450,58 @@ export function commitWriteThroughFile(repoPath: string, absPath: string, slug: 
   }
 }
 
+// ── Push-state query (D14) ───────────────────────────────────────────────────
+
+export type PushLogStatus = 'ok' | 'needs_attention' | 'unknown';
+
+export interface PushLogOutcome {
+  status: PushLogStatus;
+  detail: string;
+  /** UTC timestamp parsed from the log line, when found. */
+  at?: string;
+}
+
+const PUSH_LOG_OK = /^(\S+) \[push\] (?:ok|ok-after-rebase) (\S+)\b/;
+const PUSH_LOG_LOCAL_ONLY = /^(\S+) \[push\] LOCAL-ONLY, NEEDS ATTENTION: (\S+) /;
+const PUSH_LOG_LOCK_TIMEOUT = /^(\S+) \[push\] lock-timeout (\S+)\b/;
+
+/**
+ * Best-effort read of the most recently logged push outcome for `branch`,
+ * from the shared hook log ($GBRAIN_HOME/brain-push.log). The push itself
+ * runs detached in the background (see `renderPostCommitHook`), so nothing
+ * synchronous ever learns whether a given commit's own push landed — this is
+ * the queryable substitute: "as of the last thing the hook logged for this
+ * branch, were pushes landing?"
+ *
+ * The log is host-wide and keyed only by branch name, not repo path, so two
+ * different hardened repos sharing a branch name (e.g. both on `main`) share
+ * this signal. That's an acceptable approximation for a liveness check, not
+ * a per-repo guarantee.
+ */
+export function getLastPushOutcome(branch: string): PushLogOutcome {
+  const log = pushLogPath();
+  if (!existsSync(log)) return { status: 'unknown', detail: 'no push attempts logged yet' };
+
+  let lines: string[];
+  try {
+    lines = readFileSync(log, 'utf-8').split('\n');
+  } catch (e) {
+    return { status: 'unknown', detail: `push log unreadable: ${(e as Error).message}` };
+  }
+
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!line) continue;
+    let m = line.match(PUSH_LOG_OK);
+    if (m && m[2] === branch) return { status: 'ok', detail: line.trim(), at: m[1] };
+    m = line.match(PUSH_LOG_LOCAL_ONLY);
+    if (m && m[2] === branch) return { status: 'needs_attention', detail: line.trim(), at: m[1] };
+    m = line.match(PUSH_LOG_LOCK_TIMEOUT);
+    if (m && m[2] === branch) return { status: 'needs_attention', detail: line.trim(), at: m[1] };
+  }
+  return { status: 'unknown', detail: `no push attempt logged yet for branch '${branch}'` };
+}
+
 // ── Committed helper ────────────────────────────────────────────────────────
 
 function installHelper(repoPath: string, dryRun: boolean): { status: StepStatus; detail: string } {
@@ -784,7 +836,7 @@ function resolveRepoRoot(path: string): string {
   }
 }
 
-function currentBranch(repoPath: string): string {
+export function currentBranch(repoPath: string): string {
   try {
     return execFileSync('git', ['-C', repoPath, 'rev-parse', '--abbrev-ref', 'HEAD'], {
       stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: { ...process.env, ...GIT_ENV },
