@@ -515,9 +515,9 @@ export function clearFailures(sourceId: string, paths: string[]): void {
 }
 
 /**
- * Acknowledge OPEN file failures (human `--skip-failed`). Scoped to one
- * source when `sourceId` is given (never acks another source — #1939 Codex
- * #2). Sentinels (`<head>`) are NEVER acknowledged this way.
+ * Acknowledge OPEN or AUTO_SKIPPED file failures (human `--skip-failed`).
+ * Scoped to one source when `sourceId` is given (never acks another source
+ * — #1939 Codex #2). Sentinels (`<head>`) are NEVER acknowledged this way.
  */
 export function acknowledgeFailures(sourceId?: string): AcknowledgeResult {
   return withLedgerLock(() => {
@@ -526,7 +526,7 @@ export function acknowledgeFailures(sourceId?: string): AcknowledgeResult {
     let changed = 0;
     const acked: SyncFailure[] = [];
     for (const e of entries) {
-      if (e.state !== 'open') continue;
+      if (e.state !== 'open' && e.state !== 'auto_skipped') continue;
       if (sourceId !== undefined && e.source_id !== sourceId) continue;
       if (!isSkippablePath(e.path)) continue;
       e.state = 'acknowledged';
@@ -543,7 +543,7 @@ export function acknowledgeFailures(sourceId?: string): AcknowledgeResult {
 /**
  * Mark the given chronic file paths `auto_skipped` (valve fired). Only OPEN,
  * non-sentinel rows transition. Auto-skipped rows stay UNRESOLVED so doctor
- * keeps warning until the file imports cleanly.
+ * keeps warning until the file imports cleanly or a human acknowledges them.
  */
 export function autoSkipFailures(sourceId: string, paths: string[]): AcknowledgeResult {
   if (paths.length === 0) return { count: 0, summary: [] };
