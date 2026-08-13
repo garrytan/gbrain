@@ -37,6 +37,7 @@
     "build:pglite-snapshot": "bun run scripts/build-pglite-snapshot.ts",
     "coe:pilot": "bun run scripts/acquire-coe-pilot.ts",
     "coe:evidence-pilot": "bun run scripts/normalize-coe-pilot.ts",
+    "coe:project-postgres": "bun run scripts/project-coe-postgres.ts",
     "check:coe-mapping-review": "bun run scripts/check-coe-mapping-review.ts",
     "test": "bash scripts/run-unit-parallel.sh",
     "test:full": "bun run verify && bash scripts/run-unit-parallel.sh && bun run test:slow && ([ -n \"$DATABASE_URL\" ] && bash scripts/run-e2e.sh || echo '[test:full] skipped E2E (no DATABASE_URL); run docker-compose -f docker-compose.ci.yml up + bun run test:e2e to include' 1>&2)",

@@ -49,7 +49,7 @@ export class SqlCoeEvidenceProjection implements CoeEvidenceProjection {
     await this.engine.transaction(async (tx) => {
       const document = canonicalBundle.normalized_document;
       const snapshotRows = await tx.executeRaw<{ snapshot_id: string; scope_json: unknown }>(
-        "SELECT snapshot_id, scope_json FROM coe_snapshots WHERE snapshot_id = $1",
+        "SELECT snapshot_id, scope_json FROM public.coe_snapshots WHERE snapshot_id = $1",
         [document.snapshot_id],
       );
       if (snapshotRows.length !== 1) {
@@ -61,7 +61,7 @@ export class SqlCoeEvidenceProjection implements CoeEvidenceProjection {
       const documentHash = recordHash(document);
       await executeRawJsonb(
         tx,
-        `INSERT INTO coe_normalized_documents
+        `INSERT INTO public.coe_normalized_documents
            (normalized_document_id, snapshot_id, schema_version, content_hash, byte_size,
             object_key, normalizer_name, normalizer_version, normalizer_config_hash,
             record_hash, record_json, scope_json, warnings_json, created_at)
@@ -88,7 +88,7 @@ export class SqlCoeEvidenceProjection implements CoeEvidenceProjection {
         ],
       );
       const documentRows = await tx.executeRaw<{ record_hash: string }>(
-        "SELECT record_hash FROM coe_normalized_documents WHERE normalized_document_id = $1",
+        "SELECT record_hash FROM public.coe_normalized_documents WHERE normalized_document_id = $1",
         [document.normalized_document_id],
       );
       if (documentRows[0]?.record_hash !== documentHash) {
@@ -99,7 +99,7 @@ export class SqlCoeEvidenceProjection implements CoeEvidenceProjection {
         const sectionHash = recordHash(section);
         await executeRawJsonb(
           tx,
-          `INSERT INTO coe_document_sections
+          `INSERT INTO public.coe_document_sections
              (normalized_document_id, section_id, parent_section_id, ordinal, level, title,
               normalized_start, normalized_end, text_hash, record_hash, record_json)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
@@ -119,7 +119,7 @@ export class SqlCoeEvidenceProjection implements CoeEvidenceProjection {
           [canonicalJsonValue(section)],
         );
         const rows = await tx.executeRaw<{ record_hash: string }>(
-          `SELECT record_hash FROM coe_document_sections
+          `SELECT record_hash FROM public.coe_document_sections
             WHERE normalized_document_id = $1 AND section_id = $2`,
           [document.normalized_document_id, section.section_id],
         );
@@ -132,7 +132,7 @@ export class SqlCoeEvidenceProjection implements CoeEvidenceProjection {
         const mappingHash = recordHash(mapping);
         await executeRawJsonb(
           tx,
-          `INSERT INTO coe_normalized_mappings
+          `INSERT INTO public.coe_normalized_mappings
              (normalized_document_id, ordinal, section_id, normalized_start, normalized_end,
               raw_locator_json, record_hash, record_json)
            VALUES ($1, $2, $3, $4, $5, $7::jsonb, $6, $8::jsonb)
@@ -148,7 +148,7 @@ export class SqlCoeEvidenceProjection implements CoeEvidenceProjection {
           [canonicalJsonValue(mapping.raw_locator), canonicalJsonValue(mapping)],
         );
         const rows = await tx.executeRaw<{ record_hash: string }>(
-          `SELECT record_hash FROM coe_normalized_mappings
+          `SELECT record_hash FROM public.coe_normalized_mappings
             WHERE normalized_document_id = $1 AND ordinal = $2`,
           [document.normalized_document_id, ordinal],
         );
@@ -162,7 +162,7 @@ export class SqlCoeEvidenceProjection implements CoeEvidenceProjection {
         const evidenceHash = recordHash(evidence);
         await executeRawJsonb(
           tx,
-          `INSERT INTO coe_evidence_items
+          `INSERT INTO public.coe_evidence_items
              (evidence_id, snapshot_id, normalized_document_id, section_id, schema_version,
               evidence_type, normalized_text, text_hash, normalized_start, normalized_end,
               raw_locator_json, initial_status, status, supersedes_evidence_id,
@@ -194,7 +194,7 @@ export class SqlCoeEvidenceProjection implements CoeEvidenceProjection {
           ],
         );
         const rows = await tx.executeRaw<{ record_hash: string }>(
-          "SELECT record_hash FROM coe_evidence_items WHERE evidence_id = $1",
+          "SELECT record_hash FROM public.coe_evidence_items WHERE evidence_id = $1",
           [evidence.evidence_id],
         );
         if (rows[0]?.record_hash !== evidenceHash) {
@@ -208,9 +208,9 @@ export class SqlCoeEvidenceProjection implements CoeEvidenceProjection {
         evidence_items: number | string;
       }>(
         `SELECT
-           (SELECT COUNT(*) FROM coe_document_sections WHERE normalized_document_id = $1) AS sections,
-           (SELECT COUNT(*) FROM coe_normalized_mappings WHERE normalized_document_id = $1) AS mappings,
-           (SELECT COUNT(*) FROM coe_evidence_items WHERE normalized_document_id = $1) AS evidence_items`,
+           (SELECT COUNT(*) FROM public.coe_document_sections WHERE normalized_document_id = $1) AS sections,
+           (SELECT COUNT(*) FROM public.coe_normalized_mappings WHERE normalized_document_id = $1) AS mappings,
+           (SELECT COUNT(*) FROM public.coe_evidence_items WHERE normalized_document_id = $1) AS evidence_items`,
         [document.normalized_document_id],
       );
       if (

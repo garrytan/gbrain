@@ -11,6 +11,11 @@ import {
   SqlCoeEvidenceProjection,
 } from "../../src/coe/evidence/index.ts";
 import { CoeSnapshotLedger, SqlCoeSnapshotProjection } from "../../src/coe/registry/index.ts";
+import {
+  assertCoeReplayProjectionPlan,
+  buildCoeRegistryProjectionPlan,
+  guardCoeProjectionEngine,
+} from "../../src/coe/project-postgres.ts";
 import type { PostgresEngine } from "../../src/core/postgres-engine.ts";
 import { hasDatabase, setupDB, teardownDB } from "./helpers.ts";
 
@@ -100,6 +105,49 @@ describePostgres("CoE snapshot and evidence ledger PostgreSQL projections", () =
     expect(rls.every(({ relrowsecurity }) => relrowsecurity)).toBe(true);
   });
 
+  test("outer projector transaction flattens nested SQL projection transactions", async () => {
+    const transactionRoot = await mkdtemp(join(tmpdir(), "gbrain-coe-postgres-outer-tx-"));
+    const canonicalUri = "https://example.invalid/coe-postgres-outer-tx";
+    const sourceId = makeCoeId("src", { canonical_uri: canonicalUri, source_kind: "report" });
+    const outerSource: SourceContract = {
+      ...source(),
+      source_id: sourceId,
+      canonical_uri: canonicalUri,
+      scope: {
+        ...source().scope,
+        source_ids: [sourceId],
+      },
+    };
+    try {
+      await expect(engine.transaction(async (tx) => {
+        const transactionLedger = new CoeSnapshotLedger({
+          root: transactionRoot,
+          projection: new SqlCoeSnapshotProjection(guardCoeProjectionEngine(tx)),
+          clock: () => new Date(FIRST_TIME),
+          nonce: () => crypto.randomUUID(),
+        });
+        await transactionLedger.acquire({
+          source: outerSource,
+          content: "outer transaction rollback fixture",
+          requested_uri: canonicalUri,
+          final_uri: canonicalUri,
+          media_type: "text/plain",
+          expected_media_types: ["text/plain"],
+          acquisition_method: "http",
+          acquired_at: FIRST_TIME,
+        });
+        throw new Error("synthetic outer transaction rollback");
+      })).rejects.toThrow("synthetic outer transaction rollback");
+      const rows = await engine.executeRaw<{ count: number }>(
+        "SELECT COUNT(*)::int AS count FROM public.coe_sources WHERE source_id = $1",
+        [sourceId],
+      );
+      expect(rows).toEqual([{ count: 0 }]);
+    } finally {
+      await rm(transactionRoot, { recursive: true, force: true });
+    }
+  });
+
   test("deduplication, supersession, failure journaling, and retraction stay transactionally consistent", async () => {
     const input = {
       source: source(),
@@ -152,6 +200,9 @@ describePostgres("CoE snapshot and evidence ledger PostgreSQL projections", () =
     expect(await projection.getSnapshotStatus(successor.snapshot!.snapshot_id)).toBe("retracted");
     expect((await ledger.readSnapshotBytes(successor.snapshot!.snapshot_id)).toString("utf8")).toBe("postgres version two");
     expect(canonicalizeJson(await ledger.getCanonicalSnapshot(first.snapshot!.snapshot_id))).toBe(immutableFirst);
+
+    const retractedReplayPlan = await buildCoeRegistryProjectionPlan(root);
+    await expect(assertCoeReplayProjectionPlan(engine, retractedReplayPlan)).resolves.toBeUndefined();
 
     const failedRows = await engine.executeRaw<{ actual_hash: string | null; snapshot_id: string | null }>(
       "SELECT actual_hash, snapshot_id FROM coe_acquisitions WHERE event_id = $1",

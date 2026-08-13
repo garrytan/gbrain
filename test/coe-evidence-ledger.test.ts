@@ -24,6 +24,10 @@ import {
   InMemoryCoeSnapshotProjection,
   SqlCoeSnapshotProjection,
 } from "../src/coe/registry/index.ts";
+import {
+  assertCoeReplayProjectionPlan,
+  buildCoeRegistryProjectionPlan,
+} from "../src/coe/project-postgres.ts";
 import { chunkText } from "../src/core/chunkers/recursive.ts";
 import { PGLiteEngine } from "../src/core/pglite-engine.ts";
 
@@ -418,5 +422,50 @@ describe("CoE evidence SQL projection on PGLite", () => {
       [bundle.normalized_document.normalized_document_id],
     );
     expect(Number(rows[0]?.count)).toBe(0);
+  });
+
+  test("complete replay gate executes on PGLite and rejects scalar drift", async () => {
+    const snapshot = await snapshotLedger.acquire({
+      source: exampleSource(),
+      content: "Replay parity fixture.",
+      requested_uri: "https://example.invalid/evidence",
+      final_uri: "https://example.invalid/evidence",
+      media_type: "text/plain",
+      acquisition_method: "http",
+      acquired_at: "2026-08-04T19:02:00.000Z",
+    });
+    await evidenceLedger.normalizeSnapshot(
+      snapshot.snapshot!.snapshot_id,
+      fixtureNormalizer("1.0.2", "Replay parity evidence."),
+    );
+    const plan = await buildCoeRegistryProjectionPlan(root);
+    await expect(assertCoeReplayProjectionPlan(engine, plan)).resolves.toBeUndefined();
+
+    await engine.executeRaw(
+      "UPDATE public.coe_sources SET schema_version = '9.9.9' WHERE source_id = $1",
+      [exampleSource().source_id],
+    );
+    try {
+      const driftRows = await engine.executeRaw<{
+        schema_version: string;
+        record_schema_version: string;
+        projection_matches_record: boolean;
+      }>(`SELECT schema_version,
+                 record_json->>'schema_version' AS record_schema_version,
+                 schema_version = record_json->>'schema_version' AS projection_matches_record
+            FROM public.coe_sources WHERE source_id = $1`, [exampleSource().source_id]);
+      expect(driftRows[0]).toMatchObject({
+        schema_version: "9.9.9",
+        record_schema_version: "1.0.0",
+        projection_matches_record: false,
+      });
+      await expect(assertCoeReplayProjectionPlan(engine, plan))
+        .rejects.toThrow("projected columns diverge");
+    } finally {
+      await engine.executeRaw(
+        "UPDATE public.coe_sources SET schema_version = record_json->>'schema_version' WHERE source_id = $1",
+        [exampleSource().source_id],
+      );
+    }
   });
 });

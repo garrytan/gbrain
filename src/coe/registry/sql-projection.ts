@@ -1,7 +1,9 @@
 import type { BrainEngine } from "../../core/engine.ts";
 import { executeRawJsonb } from "../../core/sql-query.ts";
 import {
+  AccessScopeSchema,
   CoeContractError,
+  assertScopeDoesNotWiden,
   assertTransition,
   canonicalizeJson,
   sha256Canonical,
@@ -22,6 +24,22 @@ function canonicalJsonValue(value: unknown): unknown {
   return JSON.parse(canonicalizeJson(value));
 }
 
+function parseScopeColumn(value: unknown) {
+  let decoded = value;
+  if (typeof value === "string") {
+    try {
+      decoded = JSON.parse(value);
+    } catch {
+      throw new CoeContractError("invalid_contract", "Snapshot projection contains invalid scope JSON");
+    }
+  }
+  const parsed = AccessScopeSchema.safeParse(decoded);
+  if (!parsed.success) {
+    throw new CoeContractError("invalid_contract", "Snapshot projection contains an invalid scope");
+  }
+  return parsed.data;
+}
+
 export class SqlCoeSnapshotProjection implements CoeSnapshotProjection {
   constructor(private readonly engine: BrainEngine) {}
 
@@ -31,7 +49,7 @@ export class SqlCoeSnapshotProjection implements CoeSnapshotProjection {
       const sourceHash = recordHash(acquisition.source);
       await executeRawJsonb(
         tx,
-        `INSERT INTO coe_sources
+        `INSERT INTO public.coe_sources
            (source_id, schema_version, record_hash, record_json, scope_json, created_at)
          VALUES ($1, $2, $3, $5::jsonb, $6::jsonb, $4::timestamptz)
          ON CONFLICT (source_id) DO NOTHING`,
@@ -44,7 +62,7 @@ export class SqlCoeSnapshotProjection implements CoeSnapshotProjection {
         [canonicalJsonValue(acquisition.source), canonicalJsonValue(acquisition.source.scope)],
       );
       const sourceRows = await tx.executeRaw<{ record_hash: string }>(
-        "SELECT record_hash FROM coe_sources WHERE source_id = $1",
+        "SELECT record_hash FROM public.coe_sources WHERE source_id = $1",
         [acquisition.source.source_id],
       );
       if (sourceRows[0]?.record_hash !== sourceHash) {
@@ -55,14 +73,14 @@ export class SqlCoeSnapshotProjection implements CoeSnapshotProjection {
         const snapshot = acquisition.snapshot;
         const snapshotHash = recordHash(snapshot);
         await tx.executeRaw(
-          `INSERT INTO coe_raw_objects
+          `INSERT INTO public.coe_raw_objects
              (content_hash, object_key, byte_size, created_at, verified_at)
            VALUES ($1, $2, $3, $4::timestamptz, $4::timestamptz)
            ON CONFLICT (content_hash) DO NOTHING`,
           [snapshot.content_hash, snapshot.object_key, snapshot.byte_size, snapshot.acquired_at],
         );
         const rawRows = await tx.executeRaw<{ object_key: string; byte_size: string | number }>(
-          "SELECT object_key, byte_size FROM coe_raw_objects WHERE content_hash = $1",
+          "SELECT object_key, byte_size FROM public.coe_raw_objects WHERE content_hash = $1",
           [snapshot.content_hash],
         );
         if (
@@ -74,7 +92,7 @@ export class SqlCoeSnapshotProjection implements CoeSnapshotProjection {
 
         await executeRawJsonb(
           tx,
-          `INSERT INTO coe_snapshots
+          `INSERT INTO public.coe_snapshots
              (snapshot_id, source_id, schema_version, content_hash, media_type, byte_size,
               object_key, supersedes_snapshot_id, initial_status, status, record_hash,
               record_json, scope_json, acquired_at)
@@ -97,7 +115,7 @@ export class SqlCoeSnapshotProjection implements CoeSnapshotProjection {
           [canonicalJsonValue(snapshot), canonicalJsonValue(snapshot.scope)],
         );
         const snapshotRows = await tx.executeRaw<{ record_hash: string }>(
-          "SELECT record_hash FROM coe_snapshots WHERE snapshot_id = $1",
+          "SELECT record_hash FROM public.coe_snapshots WHERE snapshot_id = $1",
           [snapshot.snapshot_id],
         );
         if (snapshotRows[0]?.record_hash !== snapshotHash) {
@@ -108,7 +126,7 @@ export class SqlCoeSnapshotProjection implements CoeSnapshotProjection {
       const acquisitionHash = recordHash(acquisition);
       await executeRawJsonb(
         tx,
-        `INSERT INTO coe_acquisitions
+        `INSERT INTO public.coe_acquisitions
            (event_id, source_id, snapshot_id, requested_uri, final_uri, acquisition_method,
             outcome, expected_hash, actual_hash, error_code, quarantine_reasons,
             record_hash, record_json, started_at, finished_at)
@@ -133,7 +151,7 @@ export class SqlCoeSnapshotProjection implements CoeSnapshotProjection {
         [canonicalJsonValue(acquisition.quarantine_reasons), canonicalJsonValue(acquisition)],
       );
       const acquisitionRows = await tx.executeRaw<{ record_hash: string }>(
-        "SELECT record_hash FROM coe_acquisitions WHERE event_id = $1",
+        "SELECT record_hash FROM public.coe_acquisitions WHERE event_id = $1",
         [acquisition.event_id],
       );
       if (acquisitionRows[0]?.record_hash !== acquisitionHash) {
@@ -142,7 +160,7 @@ export class SqlCoeSnapshotProjection implements CoeSnapshotProjection {
 
       for (const [hop, redirect] of acquisition.redirects.entries()) {
         await tx.executeRaw(
-          `INSERT INTO coe_acquisition_redirects
+          `INSERT INTO public.coe_acquisition_redirects
              (event_id, hop, from_uri, to_uri, status_code)
            VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (event_id, hop) DO NOTHING`,
@@ -150,7 +168,7 @@ export class SqlCoeSnapshotProjection implements CoeSnapshotProjection {
         );
         const rows = await tx.executeRaw<{ from_uri: string; to_uri: string; status_code: number }>(
           `SELECT from_uri, to_uri, status_code
-             FROM coe_acquisition_redirects WHERE event_id = $1 AND hop = $2`,
+             FROM public.coe_acquisition_redirects WHERE event_id = $1 AND hop = $2`,
           [acquisition.event_id, hop],
         );
         if (
@@ -169,7 +187,7 @@ export class SqlCoeSnapshotProjection implements CoeSnapshotProjection {
 
   async getSnapshotStatus(snapshotId: string): Promise<ArtifactStatus | null> {
     const rows = await this.engine.executeRaw<{ status: ArtifactStatus }>(
-      "SELECT status FROM coe_snapshots WHERE snapshot_id = $1",
+      "SELECT status FROM public.coe_snapshots WHERE snapshot_id = $1",
       [snapshotId],
     );
     return rows[0]?.status ?? null;
@@ -177,7 +195,7 @@ export class SqlCoeSnapshotProjection implements CoeSnapshotProjection {
 
   private async applyLifecycleEventInTransaction(tx: BrainEngine, event: LifecycleEventContract): Promise<void> {
     const existingEvents = await tx.executeRaw<{ payload_hash: string; event_json: unknown }>(
-      "SELECT payload_hash, event_json FROM coe_snapshot_events WHERE event_id = $1",
+      "SELECT payload_hash, event_json FROM public.coe_snapshot_events WHERE event_id = $1",
       [event.event_id],
     );
     if (existingEvents.length > 0) {
@@ -193,12 +211,13 @@ export class SqlCoeSnapshotProjection implements CoeSnapshotProjection {
     if (!event.from_status || !event.to_status || event.aggregate_type !== "snapshot") {
       throw new CoeContractError("invalid_contract", "Snapshot lifecycle event requires from_status and to_status");
     }
-    const rows = await tx.executeRaw<{ status: ArtifactStatus }>(
-      "SELECT status FROM coe_snapshots WHERE snapshot_id = $1",
+    const rows = await tx.executeRaw<{ status: ArtifactStatus; scope_json: unknown }>(
+      "SELECT status, scope_json FROM public.coe_snapshots WHERE snapshot_id = $1",
       [event.aggregate_id],
     );
     const current = rows[0]?.status;
     if (!current) throw new CoeContractError("invalid_contract", "Cannot transition an unprojected snapshot");
+    assertScopeDoesNotWiden(parseScopeColumn(rows[0]!.scope_json), event.scope);
     if (current !== event.from_status) {
       throw new CoeContractError(
         "invalid_transition",
@@ -208,7 +227,7 @@ export class SqlCoeSnapshotProjection implements CoeSnapshotProjection {
     assertTransition("snapshot", current, event.to_status);
     await executeRawJsonb(
       tx,
-      `INSERT INTO coe_snapshot_events
+      `INSERT INTO public.coe_snapshot_events
          (event_id, snapshot_id, event_type, from_status, to_status, reason_code,
           payload_hash, event_json, occurred_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $9::jsonb, $8::timestamptz)`,
@@ -226,7 +245,7 @@ export class SqlCoeSnapshotProjection implements CoeSnapshotProjection {
     );
     const updated = event.to_status === "retracted"
       ? await tx.executeRaw<{ snapshot_id: string }>(
-          `UPDATE coe_snapshots
+          `UPDATE public.coe_snapshots
               SET status = 'retracted', retracted_at = $2::timestamptz,
                   retraction_reason = $3, retraction_event_id = $4
             WHERE snapshot_id = $1 AND status = $5
@@ -234,7 +253,7 @@ export class SqlCoeSnapshotProjection implements CoeSnapshotProjection {
           [event.aggregate_id, event.occurred_at, event.reason_code, event.event_id, current],
         )
       : await tx.executeRaw<{ snapshot_id: string }>(
-          `UPDATE coe_snapshots SET status = $2
+          `UPDATE public.coe_snapshots SET status = $2
             WHERE snapshot_id = $1 AND status = $3
             RETURNING snapshot_id`,
           [event.aggregate_id, event.to_status, current],
