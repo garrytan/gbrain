@@ -457,6 +457,9 @@ export interface DreamVerdictInput {
   reasons: string[];
 }
 
+/** Default lifetime for cached dream significance verdicts. */
+export const DREAM_VERDICT_TTL_SECONDS = 30 * 86400;
+
 // ============================================================
 // v0.31 Hot Memory: facts table + recall surface
 // ============================================================
@@ -1630,6 +1633,8 @@ export interface BrainEngine {
   // page-scoped — transcripts being judged aren't pages yet.
   getDreamVerdict(filePath: string, contentHash: string): Promise<DreamVerdict | null>;
   putDreamVerdict(filePath: string, contentHash: string, verdict: DreamVerdictInput): Promise<void>;
+  /** Delete expired dream verdicts and return the number removed. */
+  sweepDreamVerdicts(): Promise<number>;
 
   // ============================================================
   // v0.32.6 Contradiction probe — batched takes fetch + cache + trends

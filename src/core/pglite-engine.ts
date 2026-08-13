@@ -19,7 +19,7 @@ import type {
   NewFact, FactListOpts, FactsHealth,
   SourceRow,
 } from './engine.ts';
-import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
+import { DREAM_VERDICT_TTL_SECONDS, MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 // Engine-path imports stay static unless a call site carries an explicit
 // engine-dynamic-import-ok justification. The gateway is the only current
 // exception because its local try/catch preserves a soft fallback.
@@ -4385,7 +4385,8 @@ export class PGLiteEngine implements BrainEngine {
     }>(
       `SELECT worth_processing, reasons, judged_at
        FROM dream_verdicts
-       WHERE file_path = $1 AND content_hash = $2`,
+       WHERE file_path = $1 AND content_hash = $2
+         AND expires_at > now()`,
       [filePath, contentHash]
     );
     if (result.rows.length === 0) return null;
@@ -4398,15 +4399,24 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async putDreamVerdict(filePath: string, contentHash: string, verdict: DreamVerdictInput): Promise<void> {
+    const expiresAt = new Date(Date.now() + DREAM_VERDICT_TTL_SECONDS * 1000);
     await this.db.query(
-      `INSERT INTO dream_verdicts (file_path, content_hash, worth_processing, reasons)
-       VALUES ($1, $2, $3, $4::jsonb)
+      `INSERT INTO dream_verdicts (file_path, content_hash, worth_processing, reasons, expires_at)
+       VALUES ($1, $2, $3, $4::jsonb, $5)
        ON CONFLICT (file_path, content_hash) DO UPDATE SET
          worth_processing = EXCLUDED.worth_processing,
          reasons = EXCLUDED.reasons,
-         judged_at = now()`,
-      [filePath, contentHash, verdict.worth_processing, JSON.stringify(verdict.reasons)]
+         judged_at = now(),
+         expires_at = EXCLUDED.expires_at`,
+      [filePath, contentHash, verdict.worth_processing, JSON.stringify(verdict.reasons), expiresAt]
     );
+  }
+
+  async sweepDreamVerdicts(): Promise<number> {
+    const result = await this.db.query(
+      `DELETE FROM dream_verdicts WHERE expires_at <= now()`
+    );
+    return result.affectedRows ?? 0;
   }
 
   // ============================================================

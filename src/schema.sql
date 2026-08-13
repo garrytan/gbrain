@@ -1106,8 +1106,10 @@ CREATE TABLE IF NOT EXISTS dream_verdicts (
   worth_processing BOOLEAN     NOT NULL,
   reasons          JSONB,
   judged_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at       TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '30 days'),
   PRIMARY KEY (file_path, content_hash)
 );
+CREATE INDEX IF NOT EXISTS dream_verdicts_expires_idx ON dream_verdicts (expires_at);
 
 -- ============================================================
 -- Cycle coordination lock — v0.17 runCycle primitive
