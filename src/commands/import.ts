@@ -25,6 +25,34 @@ import {
   resumeFilter,
 } from '../core/import-checkpoint.ts';
 
+/**
+ * Records one failed file against the run's error-grouping state and
+ * returns the running count for its group plus an unredacted sample
+ * message for display.
+ *
+ * `key` groups structurally-identical errors (e.g. the same failure
+ * across many files) so a single noisy failure mode doesn't produce
+ * thousands of near-duplicate warning lines — quoted substrings (typically
+ * a per-file slug or path) are blanked for the GROUPING key only. The
+ * printed `sample` is always a real, unredacted occurrence of the error
+ * (the first one seen for that key), so identifying details that are
+ * constant across the whole group — a Postgres table or constraint name,
+ * for instance — survive into what actually gets shown to the user.
+ * Pre-fix, the redacted key itself was printed, so e.g. a `pages_source_id_fkey`
+ * foreign-key violation surfaced as `table "" violates foreign key constraint ""`.
+ */
+export function recordImportFailure(
+  errorCounts: Record<string, number>,
+  errorSamples: Record<string, string>,
+  msg: string,
+): { key: string; count: number; sample: string } {
+  const key = msg.replace(/"[^"]*"/g, '""');
+  const count = (errorCounts[key] ?? 0) + 1;
+  errorCounts[key] = count;
+  if (!(key in errorSamples)) errorSamples[key] = msg;
+  return { key, count, sample: errorSamples[key] };
+}
+
 function defaultWorkers(): number {
   const cpuCount = cpus().length;
   const memGB = totalmem() / (1024 ** 3);
@@ -288,6 +316,7 @@ export async function runImport(
   let chunksCreated = 0;
   const importedSlugs: string[] = [];
   const errorCounts: Record<string, number> = {};
+  const errorSamples: Record<string, string> = {};
   const failures: Array<{ path: string; error: string }> = []; // Bug 9
   // #3839: paths that succeeded (imported OR unchanged) this run, keyed the
   // same way as `failures` above (importRelPath) so a path that failed on a
@@ -351,12 +380,11 @@ export async function runImport(
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      const errorKey = msg.replace(/"[^"]*"/g, '""');
-      errorCounts[errorKey] = (errorCounts[errorKey] || 0) + 1;
-      if (errorCounts[errorKey] <= 5) {
+      const { count, sample } = recordImportFailure(errorCounts, errorSamples, msg);
+      if (count <= 5) {
         console.error(`  Warning: skipped ${relativePath}: ${msg}`);
-      } else if (errorCounts[errorKey] === 6) {
-        console.error(`  (suppressing further "${errorKey.slice(0, 60)}..." errors)`);
+      } else if (count === 6) {
+        console.error(`  (suppressing further "${sample.slice(0, 60)}..." errors)`);
       }
       errors++;
       skipped++;
@@ -457,9 +485,9 @@ export async function runImport(
   progress.finish();
 
   // Error summary
-  for (const [err, count] of Object.entries(errorCounts)) {
+  for (const [key, count] of Object.entries(errorCounts)) {
     if (count > 5) {
-      console.error(`  ${count} files failed: ${err.slice(0, 100)}`);
+      console.error(`  ${count} files failed: ${errorSamples[key].slice(0, 100)}`);
     }
   }
 
