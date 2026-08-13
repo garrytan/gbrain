@@ -2,6 +2,78 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.45.10.0] - 2026-08-13
+
+**21 more community and maintainer bug fixes. Search answers get more complete, sync gets safer, and doctor learns to warn you before a provider dies.**
+
+This wave continues the v0.45.8.0 cleanup: no new product surface, just fixes. The
+standouts: pages created by the idea-extraction cycle were invisible to search (they
+were written without search chunks) and now show up like everything else, with a repair
+path for existing brains. Query caching now keys on your detail setting, so a compact
+answer is never served to a full-detail request. And doctor now warns you loudly if your
+brain is pinned to an embedding provider that has announced a shutdown, weeks before it
+happens instead of after.
+
+Also riding: the rerank budget fix that landed directly this week. Contributed by @javieraldape.
+
+## To take advantage of v0.45.10.0
+
+`gbrain upgrade` is enough. No schema migration.
+
+1. **Upgrade and check:**
+   ```bash
+   gbrain upgrade
+   gbrain doctor
+   ```
+2. **If doctor now warns about your embedding provider,** that is the new sunset check
+   doing its job. It names the provider, the date, and the migration command.
+3. **Heal previously-invisible atom pages:**
+   ```bash
+   gbrain embed --stale
+   ```
+4. **Things to watch:** the query cache key version moved, so the first re-ask of a
+   cached question is a one-time cache miss. If anything else looks wrong, file an issue
+   with `gbrain doctor` output: https://github.com/garrytan/gbrain/issues
+
+### Itemized changes
+
+**Search and recall**
+- Atom pages produced by the extraction cycle are chunked and embedded like every other page, so they appear in search results. Contributed by @awilhite.
+- `embed --stale` detects and heals pages that have content but no chunks. Contributed by @Masashi-Ono0611.
+- The query cache folds the detail knob into its key, so compact and full-detail answers never cross. Contributed by @time-attack.
+- Rerank budget failures are bucketed under their real cause instead of "unknown". Contributed by @javieraldape.
+
+**Sync, import, and write-through**
+- Deferred link extraction above the size gate is consumed instead of dropped. Contributed by @time-attack.
+- Import error summaries name the failing table and constraint. Contributed by @bo-developing.
+- Write-through honors the page's recorded source path instead of recomputing it. Contributed by @JonMcCutchen.
+- The managed filing-rules block renders each repo's own taxonomy, not the bundled default. Contributed by @dovstern.
+- Timeline extraction no longer splits on bare hyphens inside link labels. Contributed by @time-attack.
+- Export scopes tag and raw-data sidecar reads to the page's source. Contributed by @alexey-metaengage.
+- Cross-source link targets survive an engine migration. Contributed by @RerankerGuo.
+
+**Doctor and diagnostics**
+- A damaged PGLite store is reported as store damage, with runtime problems kept separate, and the verdict requires positive evidence. Contributed by @time-attack.
+- New check: brains pinned to an embedding provider with an announced shutdown get a loud warning with the migration path. Contributed by @time-attack.
+- Source listing distinguishes unset federation from explicit false. Contributed by @dovstern.
+- `put_page` reports push state honestly instead of implying success. Contributed by @dovstern.
+- Flow-style skill triggers parse correctly in skill health checks. Contributed by @RerankerGuo.
+- Sync-failure records auto-skipped as chronic stay visible to doctor until a human resolves them. Contributed by @RerankerGuo.
+
+**Autopilot and agents**
+- The drain worker no longer self-deadlocks at concurrency=1, and its DB reconnect logic is shared with queue operations. Contributed by @time-attack.
+- Stale-lock reaping ignores foreign PIDs it did not create. Contributed by @javieraldape.
+- Agent jobs resolve their brain source at submit time, not execution time. Contributed by @Masashi-Ono0611.
+
+**OAuth**
+- Dynamic client registration accepts `token_ttl_seconds`, clamped to admin policy, and an unset TTL cap now derives from `--token-ttl` instead of a permissive default. Contributed by @time-attack.
+
+**Models**
+- The claude-cli recipe lists the Claude 5 family ids the CLI already serves, with pins. Contributed by @clement0909472.
+
+**For contributors**
+- The CLI flag registry, one wave rider test, and the bootstrap version stamps were refreshed as part of assembly.
+
 ## [0.45.9.0] - 2026-08-12
 
 **Your agent's memory keeps saving itself — even in a cloud sandbox, even on `/exit`, and it tells you the moment it can't.** The paste-in personal-agent install now works first-class in Claude Code's cloud environment, not just on a laptop. The persistence lane got three fixes that matter whether you're local or in the cloud: the workspace push now verifies repo privacy through a portable ladder that keeps working when the sandbox blocks the GitHub API, it runs after every turn (not only at session end, which the harness never fires on `/exit`), and a failed push surfaces on your next turn instead of failing in silence. Setup adapts to where it runs — no more scheduled-job errors on hosts without a scheduler, and no half-created repos in an environment that can't push them.
