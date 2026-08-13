@@ -22,6 +22,7 @@ import {
 } from '../src/core/sweep.ts';
 import { isTotalFailure, runSweep, SWEEP_HELP } from '../src/commands/sweep.ts';
 import { currentExitCode, _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
+import { _resetStdoutRedirectForTests } from '../src/core/console-prefix.ts';
 import type { CapabilityReport } from '../src/core/capability.ts';
 import { __setChatTransportForTests, type ChatResult } from '../src/core/ai/gateway.ts';
 import { runServe, type ServeOptions } from '../src/commands/serve.ts';
@@ -68,6 +69,14 @@ beforeEach(async () => {
 
 afterEach(() => {
   __setChatTransportForTests(null);
+  // The ENG-5 harness drives the real runServe(), whose stdio path flips
+  // console-prefix's module-global stdout→stderr redirect (#3844). bun runs
+  // every test file in one process, so without this reset the flag stays on
+  // and poisons any later file that pins slog's stdout routing
+  // (test/sync-all-parallel.test.ts, test/console-prefix.test.ts) — whether
+  // it bites depends on CI shard composition. Same reset the donor harness
+  // (test/serve-stdio-lifecycle.test.ts) already carries.
+  _resetStdoutRedirectForTests();
 });
 
 async function seedPage(slug: string, type: string, body: string, timeline = '') {
