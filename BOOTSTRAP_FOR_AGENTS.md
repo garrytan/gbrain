@@ -1,4 +1,4 @@
-<!-- gbrain-runbook-stamp: 0.45.10.0 -->
+<!-- gbrain-runbook-stamp: 0.46.0.0 -->
 <!-- This stamp must equal the VERSION file at every release; CI enforces it
      (scripts/check-bootstrap-tag.sh). `gbrain bootstrap status` compares it to
      the installed binary and warns on skew. -->
@@ -130,6 +130,13 @@ you needed; report the count at the end (it feeds the install-time measurement).
      on this machine can reach the brain (read and write) through its MCP
      tools; the off-ramps are `codex mcp remove gbrain` (registration only) or
      `gbrain bootstrap uninstall` (full teardown).
+     If `bootstrap status` instead detects an independently managed project
+     streamable-HTTP entry, follow the exact `gbrain bootstrap wire --adopt`
+     resume command it prints (`--harness codex --scope project` plus
+     `--name <server> --attest-runtime-call`) only after the human has completed
+     a real MCP call.
+     That path records non-owning evidence and never changes or removes the
+     project config.
 7. **Private repo.** `gbrain bootstrap repo` — creates a PRIVATE GitHub repo from
    the workspace, verifies the privacy bit through the API, pushes. If the human
    started from a repo they created themselves (create-repo-first: an EMPTY private

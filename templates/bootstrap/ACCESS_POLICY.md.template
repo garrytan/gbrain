@@ -43,10 +43,14 @@ including someone else's checked-out code whose files may carry hostile
 instructions. Prefer project scope; choose user scope only after accepting
 that tradeoff.
 
-Codex: there is no choice — `codex mcp add` has no scope flag, so the
-registration is always user-global and the tradeoff above is the standing
-state. Off-ramps: `codex mcp remove gbrain` removes just the registration;
-`gbrain bootstrap uninstall` is the full teardown.
+Codex: bootstrap's managed `codex mcp add` path has no scope flag, so that
+registration is user-global and the tradeoff above is the standing state.
+An independently managed entry in this workspace's `.codex/config.toml` may be
+project-scoped; after a real MCP call, `gbrain bootstrap wire --adopt` records
+non-owning evidence for it. Bootstrap uninstall never removes independently
+managed project config. Off-ramps for the managed registration:
+`codex mcp remove gbrain` removes just that registration;
+`gbrain bootstrap uninstall` is the full bootstrap-managed teardown.
 
 ## The transcript corpus
 

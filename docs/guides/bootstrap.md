@@ -19,7 +19,7 @@ follows is `BOOTSTRAP_FOR_AGENTS.md` at the repo root, fetched at the
 | Identity files (SOUL/USER/MEMORY/AGENTS/CLAUDE/HEARTBEAT/ACCESS_POLICY/GITHUB) | your workspace folder | loaded at session start |
 | `agent.json` manifest + `brain/`, `memory/`, `skills/`, `state/` | workspace | — |
 | Local brain (PGLite) | `~/.gbrain/` (never in the repo) | while a session's MCP serve is open |
-| MCP registration (`gbrain serve`) | Claude Code: project scope by default; Codex: user-global (no scope flag) | spawned by your harness per session |
+| Bootstrap-managed MCP registration (`gbrain serve`) | Claude Code: project scope by default; Codex: user-global (`codex mcp add` has no scope flag) | spawned by your harness per session |
 | Hooks (Claude Code, ON by default) | local installs: `.claude/settings.local.json` (gitignored); cloud sandboxes: the COMMITTED `.claude/settings.json` (PATH-resolved, fail-open commands) | each prompt; fail-open; `--no-hooks` opts out at install, `GBRAIN_HOOKS=0` disables at runtime |
 | Per-turn persistence | Stop hook → debounced, detached scan-gated push (per workspace; 5 min default, every turn in cloud sandboxes) | after each assistant turn; `GBRAIN_STOP_PUSH=0` disables; `GBRAIN_STOP_PUSH_DEBOUNCE_MIN` / config `hooks.stop_push_debounce_min` tune it |
 | Session persistence | SessionEnd hook → scan-gated commit+push | at session end (note: the harness never fires SessionEnd on `/exit` — the per-turn push is what covers that) |
@@ -27,6 +27,25 @@ follows is `BOOTSTRAP_FOR_AGENTS.md` at the repo root, fetched at the
 | Optional background job (consent-gated) | git post-commit auto-push + launchd/cron 30-min pull (pull job skipped honestly on hosts without a scheduler) | while logged in |
 | Private GitHub repo | your account, created by `bootstrap repo` (or an empty repo you made yourself, adopted) | privacy verified via API |
 | Machine receipt | `~/.gbrain/bootstrap/receipt.json` | uninstall is keyed to it |
+
+### Adopting independently managed project Codex wiring
+
+Bootstrap's normal Codex writer still uses `codex mcp add`, whose registration
+is user-global. If you instead manage an enabled streamable-HTTP server in this
+workspace's `.codex/config.toml`, make one real MCP call first, then adopt it:
+
+```bash
+gbrain bootstrap wire --adopt --harness codex --scope project \
+  --name <server> --attest-runtime-call
+```
+
+Config detection alone leaves the wire phase `partial`; it does not prove a
+working connection. Adoption writes only a secret-free structural fingerprint
+(transport, credential-free endpoint location, auth/header presence, and
+selected behavior) plus explicit operator attestation to machine-local,
+non-owning evidence. Header values, URL credentials/query/fragment, tokens, and
+client secrets are excluded. It does not add the server to bootstrap's install
+receipt, and `bootstrap uninstall` will not remove the project config.
 
 **What does NOT run:** anything while the harness is closed. Session-triggered
 schedules fire at turn/session boundaries only. True 24/7 operation is what a
@@ -152,7 +171,7 @@ you'd apply to any journal: write what you'd be comfortable persisting.
 | API keys | everything (keyless mode) | semantic search, auto-extraction |
 | GitHub / `gh` | full local agent | off-machine durability (repo re-runnable later) |
 | Hooks (Claude Code) | pull protocol via AGENTS.md gates | automatic per-turn context + session-end persistence |
-| Codex (no hook system, no MCP scope flag) | pull protocol + MCP tools | per-turn push (stated plainly; not oversold) + the ability to confine MCP reach to one folder (`codex mcp add` is always user-global) |
+| Codex (no lifecycle hooks; bootstrap-managed `codex mcp add` is user-global) | pull protocol + MCP tools; independently managed project-scoped HTTP config can be adopted after a real call | automatic per-turn push; folder confinement requires the independently managed project-config path above rather than bootstrap's managed registration |
 | Second simultaneous session | first session unaffected | second session's brain tools fail politely (one live serve per brain — v1 contract) |
 
 ## Multi-device

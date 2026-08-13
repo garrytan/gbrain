@@ -33,6 +33,7 @@ import { VERSION } from '../../version.ts';
 import { loadConfigFileOnly } from '../config.ts';
 import { binaryOnPath, detectExecutionEnvironment, type ExecutionEnvironment } from '../execution-env.ts';
 import { resolveGbrainHome } from '../gbrain-home.ts';
+import { realpathOrResolve } from '../path-confine.ts';
 import { githubOwnerRepoString, isProxyBlocked403 } from '../repo-visibility.ts';
 
 import { BOOTSTRAP_TEMPLATES } from './assets.ts';
@@ -43,6 +44,11 @@ import {
   type ManifestState,
 } from './format.ts';
 import { interviewStatePath, status as interviewStatus } from './interview.ts';
+import {
+  probeCodexProjectMcp,
+  readCodexProjectConfig,
+  readAdoptedConnectionsState,
+} from './wire.ts';
 import {
   CLAUDE_COMMITTED_SETTINGS_FILE_RELPATH,
   CLAUDE_SETTINGS_FILE_RELPATH,
@@ -85,6 +91,7 @@ interface DetectCtx {
   receipt: InstallReceipt | null;
   configPresent: boolean;
   lastVerify: VerifySummary | null;
+  projectCodexWire: { state: PhaseState; detail: string } | null;
 }
 
 interface PhaseSpec {
@@ -265,14 +272,16 @@ export const PHASES: PhaseSpec[] = [
     // outside the harness being wired). Advisory prose; the grep pins in
     // scripts/check-bootstrap-templates.sh §(e) are the enforcement.
     resume_hint:
-      'gbrain bootstrap hooks --harness <claude-code|codex> — MCP scope consent is ' +
-      'Claude Code only (recorded during the interview, pre-confirm); Codex registrations are always user-global (no scope flag)',
+      'gbrain bootstrap hooks --harness <claude-code|codex> for bootstrap-managed wiring; ' +
+      'for independently managed project-scoped Codex MCP config, make a real MCP call, then run ' +
+      '`gbrain bootstrap wire --adopt --harness codex --scope project --name <server> --attest-runtime-call`',
     detect: (ws, ctx) => {
       const regs = ctx.receipt?.registrations ?? [];
       if (regs.length > 0) {
         return { state: 'done', detail: regs.map((r) => `${r.host} (${r.scope})`).join(', ') };
       }
       if (hooksInstalled(ws)) return { state: 'done', detail: 'hooks present in .claude/settings.local.json' };
+      if (ctx.projectCodexWire !== null) return ctx.projectCodexWire;
       return { state: 'pending' };
     },
   },
@@ -431,6 +440,8 @@ export interface StatusSupport {
   /** Engine kind from the config file ('pglite' | 'postgres' | null when uninitialized). */
   engine: string | null;
   harness_registrations: Array<{ host: string; scope: string; detail?: string }>;
+  /** Non-owning, operator-attested project connections. Never uninstall targets. */
+  adopted_harness_connections: Array<{ harness: 'codex'; scope: 'project'; state: 'adopted' | 'drifted'; count: number }>;
   last_verify: { ts: string; ok: boolean; checks_failed: string[] } | null;
   last_push: { ts?: string; ok?: boolean; reason?: string } | null;
   /** Hard-error fraction over the trailing heartbeat window; null = no telemetry. */
@@ -471,12 +482,114 @@ export async function statusReport(ws: string, opts: StatusReportOpts = {}): Pro
   }
 
   const verifyRuns = listVerifyRuns(gbrainHomeDir);
+  const resolvedWs = realpathOrResolve(ws);
+  const receipt = readReceipt(gbrainHomeDir);
+  const receiptMatchesWorkspace = receipt !== null && realpathOrResolve(receipt.workspace_dir) === resolvedWs;
+  const ownedWireSatisfied = (receiptMatchesWorkspace && receipt.registrations.length > 0) || hooksInstalled(ws);
+  const projectConfig = ownedWireSatisfied ? { state: 'absent' as const } : readCodexProjectConfig(ws);
+  const projectNames = projectConfig.state === 'readable' ? projectConfig.names : [];
+  const adoptedState = readAdoptedConnectionsState(gbrainHomeDir);
+  const adopted = (adoptedState.state === 'ok' ? adoptedState.connections : []).filter((entry) =>
+    realpathOrResolve(entry.workspace) === resolvedWs && entry.harness === 'codex' && entry.scope === 'project',
+  );
+  let projectCodexWire: DetectCtx['projectCodexWire'] = null;
+  let adoptedCount = 0;
+  let driftedCount = 0;
+  if (ownedWireSatisfied) {
+    // Existing bootstrap-owned wiring has precedence. Do not run unrelated
+    // Codex subprocess probes after the phase is already satisfied.
+  } else if (projectConfig.state === 'unreadable') {
+    projectCodexWire = {
+      state: 'partial',
+      detail: `project Codex config is unreadable (${projectConfig.detail}) — cannot determine whether adopted wiring still exists`,
+    };
+  } else if (adoptedState.state === 'newer') {
+    projectCodexWire = {
+      state: 'partial',
+      detail: `adopted-connection evidence uses newer schema_version ${adoptedState.schema_version} — upgrade gbrain before trusting or changing it`,
+    };
+  } else if (adoptedState.state === 'invalid') {
+    projectCodexWire = {
+      state: 'partial',
+      detail: `adopted-connection evidence is invalid (${adoptedState.reason}) — it was not treated as absent`,
+    };
+  } else if (projectNames.length > 0) {
+    let unreadableCount = 0;
+    let disabledCount = 0;
+    let unsupportedCount = 0;
+    let configuredOnlyCount = 0;
+    const probes: Array<{ name: string; probe: Awaited<ReturnType<typeof probeCodexProjectMcp>> }> = [];
+    let cursor = 0;
+    await Promise.all(Array.from({ length: Math.min(4, projectNames.length) }, async () => {
+      while (cursor < projectNames.length) {
+        const name = projectNames[cursor++]!;
+        probes.push({ name, probe: await probeCodexProjectMcp(ws, name) });
+      }
+    }));
+    // Four workers bound concurrent subprocess count. Total wall time can grow
+    // by batches when more than four entries exist. The default probe owns and
+    // reaps its child on timeout; injected runners remain a deterministic seam.
+    for (const { name, probe } of probes) {
+      const evidence = adopted.find((entry) => entry.server_name === name);
+      if (!probe.cli_readable || !probe.effective_config_fingerprint) {
+        unreadableCount += 1;
+      } else if (probe.enabled === false) {
+        disabledCount += 1;
+      } else if (probe.transport !== 'streamable_http') {
+        unsupportedCount += 1;
+      } else if (!evidence) {
+        configuredOnlyCount += 1;
+      } else if (evidence.effective_config_fingerprint !== probe.effective_config_fingerprint) {
+        driftedCount += 1;
+      } else {
+        adoptedCount += 1;
+      }
+    }
+    if (adoptedCount > 0) {
+      projectCodexWire = {
+        state: 'done',
+        detail: `${adoptedCount} project-scoped Codex MCP connection${adoptedCount === 1 ? '' : 's'} adopted (authentication remains operator-attested, not independently proven by Codex CLI output)`,
+      };
+    } else if (driftedCount > 0) {
+      projectCodexWire = {
+        state: 'partial',
+        detail: `${driftedCount} adopted project-scoped Codex MCP connection${driftedCount === 1 ? '' : 's'} changed since attestation — make a real MCP call and adopt again`,
+      };
+    } else if (disabledCount > 0) {
+      projectCodexWire = {
+        state: 'partial',
+        detail: `${disabledCount} project-scoped Codex MCP connection${disabledCount === 1 ? '' : 's'} disabled in effective config`,
+      };
+    } else if (unsupportedCount > 0) {
+      projectCodexWire = {
+        state: 'partial',
+        detail: `${unsupportedCount} project-scoped Codex MCP connection${unsupportedCount === 1 ? '' : 's'} use an unsupported transport (non-owning adoption requires enabled streamable HTTP)`,
+      };
+    } else if (unreadableCount > 0) {
+      projectCodexWire = {
+        state: 'partial',
+        detail: `${projectNames.length} project-scoped Codex MCP entr${projectNames.length === 1 ? 'y' : 'ies'} configured, but ${unreadableCount} could not be read through the Codex CLI`,
+      };
+    } else if (configuredOnlyCount > 0) {
+      projectCodexWire = {
+        state: 'partial',
+        detail: `${configuredOnlyCount} project-scoped Codex MCP connection${configuredOnlyCount === 1 ? '' : 's'} configured but not adopted — configuration alone does not prove a working connection`,
+      };
+    }
+  } else if (adopted.length > 0) {
+    driftedCount = adopted.length;
+    projectCodexWire = {
+      state: 'partial',
+      detail: `${adopted.length} adopted project-scoped Codex MCP connection${adopted.length === 1 ? '' : 's'} no longer exists in project config`,
+    };
+  }
   const ctx: DetectCtx = {
     gbrainHomeDir,
     manifest: readManifest(ws),
-    receipt: readReceipt(gbrainHomeDir),
+    receipt: receiptMatchesWorkspace ? receipt : null,
     configPresent: config !== null,
     lastVerify: verifyRuns[0] ?? null,
+    projectCodexWire,
   };
 
   const phases: PhaseStatus[] = PHASES.map((spec) => {
@@ -563,6 +676,10 @@ export async function statusReport(ws: string, opts: StatusReportOpts = {}): Pro
       scope: r.scope,
       ...(r.detail !== undefined ? { detail: r.detail } : {}),
     })),
+    adopted_harness_connections: [
+      ...(adoptedCount > 0 ? [{ harness: 'codex' as const, scope: 'project' as const, state: 'adopted' as const, count: adoptedCount }] : []),
+      ...(driftedCount > 0 ? [{ harness: 'codex' as const, scope: 'project' as const, state: 'drifted' as const, count: driftedCount }] : []),
+    ],
     last_verify: ctx.lastVerify
       ? { ts: ctx.lastVerify.ts, ok: ctx.lastVerify.ok, checks_failed: ctx.lastVerify.checks_failed }
       : null,

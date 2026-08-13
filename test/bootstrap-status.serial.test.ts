@@ -64,10 +64,11 @@ describe('phase list is the single TS source of truth [D5]', () => {
     }
   });
 
-  test('wire hint carries the harness scope rule (Claude Code consent vs Codex user-global)', () => {
+  test('wire hint distinguishes bootstrap-managed wiring from independently managed project Codex config', () => {
     const wire = PHASES.find((p) => p.id === 'wire');
-    expect(wire?.resume_hint).toContain('MCP scope consent is Claude Code only');
-    expect(wire?.resume_hint).toContain('Codex registrations are always user-global (no scope flag)');
+    expect(wire?.resume_hint).toContain('bootstrap-managed wiring');
+    expect(wire?.resume_hint).toContain('independently managed project-scoped Codex MCP config');
+    expect(wire?.resume_hint).toContain('bootstrap wire --adopt');
   });
 });
 
@@ -142,6 +143,7 @@ describe('statusReport detection + support blob [B5]', () => {
     expect(report.support.binary_version).toBe(VERSION);
     expect(report.support.engine).toBeNull();
     expect(report.support.harness_registrations).toEqual([]);
+    expect(report.support.adopted_harness_connections).toEqual([]);
   });
 
   test('artifacts flip phases: config → engine done; confirmed interview → done; manifest → render done', async () => {

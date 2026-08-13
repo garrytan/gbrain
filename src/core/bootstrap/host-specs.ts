@@ -170,7 +170,9 @@ export function claudeProjectsDir(): string {
 
 // ── Codex shapes ────────────────────────────────────────────────────────────
 
-/** Codex CLI config file (user-global; written by `codex mcp add`, never by us). */
+/** Codex CLI's default user-global config file, written by `codex mcp add`.
+ * Independently managed project config may instead live at
+ * `<workspace>/.codex/config.toml`; gbrain detects/adopts but never writes it. */
 export function codexConfigPath(): string {
   return join(homedir(), '.codex', 'config.toml');
 }

@@ -44,6 +44,25 @@ Codex stores the env-var *name* (`GBRAIN_REMOTE_TOKEN`), not the token itself, a
 reads the value when it launches the MCP server. Add the `export` line to your
 `~/.zshrc` / `~/.bashrc` so it's set in every session.
 
+### Bootstrap and project-scoped config
+
+The bootstrap-managed Codex path uses `codex mcp add` and remains user-global.
+For an independently managed enabled streamable-HTTP entry in a workspace's
+`.codex/config.toml`, first complete a real MCP call, then record non-owning
+adoption evidence:
+
+```bash
+gbrain bootstrap wire --adopt --harness codex --scope project \
+  --name <server> --attest-runtime-call
+```
+
+Detection without that explicit attestation is reported as `partial`. The
+evidence stores a secret-free structural fingerprint: transport,
+credential-free endpoint location, auth/header presence, and selected behavior.
+Header values, URL credentials/query/fragment, tokens, and client secrets are
+excluded. The evidence is separate from bootstrap's uninstall receipt, so
+uninstall does not remove the project configuration.
+
 ## Verify
 
 In Codex, ask it to use the brain:

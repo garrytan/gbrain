@@ -175,6 +175,24 @@ describe('bootstrap <subcommand> --help/-h/help never runs the real operation', 
     expect(statSync(receiptPath(home)).mtimeMs).toBe(mtimeBefore);
   });
 
+  test('wire --help: usage text, exit 0, zero exec calls, adoption evidence untouched', async () => {
+    const { runner, calls } = makeRunner();
+    const evidencePath = join(home, 'bootstrap', 'adopted-connections.json');
+    expect(existsSync(evidencePath)).toBe(false);
+    const logCountBefore = readInstallLog(home, 1000).length;
+
+    const r = await capture(() => runBootstrap([
+      'wire', '--workspace', ws, '--adopt', '--harness', 'codex', '--scope', 'project',
+      '--name', 'example.project.oauth', '--attest-runtime-call', '--help',
+    ], { runner }));
+
+    expect(r.result).toBe(0);
+    expect(r.out).toContain('non-owning evidence');
+    expect(calls.length).toBe(0);
+    expect(existsSync(evidencePath)).toBe(false);
+    expect(readInstallLog(home, 1000).length).toBe(logCountBefore);
+  });
+
   test('verify --help: usage text, exit 0, engine never connects (data dir never created)', async () => {
     const verifyDataDir = join(home, 'verify-brain.pglite');
     expect(existsSync(verifyDataDir)).toBe(false); // sanity: config points at a path that doesn't exist yet
