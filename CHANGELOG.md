@@ -50,8 +50,8 @@ For an existing project-scoped Codex connection:
    gbrain bootstrap wire --adopt --harness codex --scope project \
      --name <server> --attest-runtime-call
    ```
-4. Confirm the result with `gbrain bootstrap status --json` or
-   `gbrain bootstrap verify`.
+4. Confirm the adoption with `gbrain bootstrap status --json`. Run
+   `gbrain bootstrap verify` separately for the full workspace install contract.
 
 ### What bootstrap status will tell you
 
