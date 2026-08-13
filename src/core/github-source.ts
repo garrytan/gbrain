@@ -260,16 +260,18 @@ export class GitHubClient {
       const { data, link } = await this.fetchJSONWithMeta<Record<string, unknown> | unknown[]>(url, opts);
       const batch = (Array.isArray(data) ? data : opts.field ? (data as Record<string, unknown>)[opts.field] : []) as T[];
       out.push(...batch);
-      pages++;
-      if (pages >= 500) {
-        throw new GitHubPaginationError(`pagination cap (500 pages) hit on ${path}; refusing to treat a truncated list as complete`);
-      }
       const next = link !== null ? linkNextUrl(link) : null;
       if (next === null) break;
       // Never follow a Link header off api.github.com: the bearer token
       // must not leak to an arbitrary host (codex LOW, round 3).
       if (!next.startsWith('https://api.github.com/')) {
         throw new GitHubPaginationError(`Link header points off api.github.com: ${next}`);
+      }
+      // Cap counts only pages that actually continue: a complete 500-page
+      // enumeration is valid, a 501st page is not (codex LOW, round 4).
+      pages++;
+      if (pages >= 500) {
+        throw new GitHubPaginationError(`pagination cap (500 pages) hit on ${path}; refusing to treat a truncated list as complete`);
       }
       url = next;
     }

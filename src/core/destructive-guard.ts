@@ -15,7 +15,9 @@
 
 import type { BrainEngine } from './engine.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from './source-config-sql.ts';
-import { rmSync } from 'node:fs';
+import { rmSync, lstatSync } from 'node:fs';
+import { isPathContained } from './path-confine.ts';
+import { gbrainPath } from './config.ts';
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -302,17 +304,19 @@ export async function purgeExpiredSources(
   );
   // v0.46: github-kind mirrors are gbrain-owned only when created at the
   // default clone location (gh_managed marker). Purging removes that
-  // managed mirror; a custom --dir is user-owned storage and is never
-  // touched, otherwise private mirrored content would linger on disk
-  // after the row is gone (or, worse, a purge would nuke an arbitrary
-  // user path).
+  // managed mirror with the same containment and symlink checks as
+  // removeSource: an altered or stale local_path must never be recursively
+  // deleted outside the current clone root (codex MED, round 4).
+  const cloneRoot = gbrainPath('clones');
   for (const row of rows) {
     const cfg = (typeof row.config === 'string' ? JSON.parse(row.config) : (row.config ?? {})) as Record<string, unknown>;
-    if (cfg.kind === 'github' && cfg.gh_managed === true && row.local_path) {
-      try {
-        rmSync(row.local_path, { recursive: true, force: true });
-      } catch { /* best-effort */ }
-    }
+    if (cfg.kind !== 'github' || cfg.gh_managed !== true || !row.local_path) continue;
+    try {
+      if (!isPathContained(row.local_path, cloneRoot)) continue;
+      const lst = lstatSync(row.local_path);
+      if (lst.isSymbolicLink()) continue;
+      rmSync(row.local_path, { recursive: true, force: true });
+    } catch { /* best-effort */ }
   }
   return rows.map((r) => r.id);
 }
