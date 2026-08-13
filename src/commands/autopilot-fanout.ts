@@ -34,8 +34,7 @@ import type { BrainEngine, SourceRow } from '../core/engine.ts';
 import type { MinionQueue } from '../core/minions/queue.ts';
 import { NON_GLOBAL_PHASES, GLOBAL_PHASES, LAST_GLOBAL_AT_KEY } from '../core/cycle.ts';
 import { sourceConfigHasRemoteUrl } from '../core/sources-load.ts';
-
-const FULL_CYCLE_FLOOR_MIN = 60;
+import { AUTOPILOT_FULL_CYCLE_FLOOR_MINUTES } from './autopilot-remediation-policy.ts';
 
 // #2194 fix #2: failure cooldown. A source whose autopilot-cycle keeps
 // failing/timing-out re-dispatches every tick today (only SUCCESS gates
@@ -81,6 +80,8 @@ export interface FanoutResult {
   /** True when this tick fell back to the legacy single-job path
    *  (no sources rows / engine empty). */
   legacy_fallback: boolean;
+  /** True when every enumerated source is inside the freshness window. */
+  all_sources_fresh: boolean;
 }
 
 /**
@@ -180,7 +181,11 @@ export function readLastFullCycleAt(src: SourceRow): Date | null {
  * a brain may have fresh sync but stale extract/embed. The 60-min floor on
  * full-cycle is the canonical freshness signal for autopilot dispatch.
  */
-export function isSourceStale(src: SourceRow, now = Date.now(), floorMin = FULL_CYCLE_FLOOR_MIN): boolean {
+export function isSourceStale(
+  src: SourceRow,
+  now = Date.now(),
+  floorMin = AUTOPILOT_FULL_CYCLE_FLOOR_MINUTES,
+): boolean {
   const last = readLastFullCycleAt(src);
   if (last === null) return true;
   const ageMin = (now - last.getTime()) / 60_000;
@@ -328,7 +333,7 @@ export function selectSourcesForDispatch(
   sources: SourceRow[],
   fanoutMax: number,
   now = Date.now(),
-  floorMin = FULL_CYCLE_FLOOR_MIN,
+  floorMin = AUTOPILOT_FULL_CYCLE_FLOOR_MINUTES,
   recentFailures: Map<string, SourceFailure> = new Map(),
   cooldownOpts: CooldownOpts = { baseMin: FAILURE_COOLDOWN_BASE_MIN, capMin: FAILURE_COOLDOWN_CAP_MIN },
 ): { dispatch: SourceRow[]; skippedFresh: SourceRow[]; skippedCap: SourceRow[]; skippedCooldown: SourceRow[] } {
@@ -406,7 +411,14 @@ export async function dispatchPerSource(
     } else {
       log(`[dispatch] job #${job.id} autopilot-cycle (legacy single-source)`);
     }
-    return { dispatched: [], skipped_fresh: [], skipped_cap: [], skipped_cooldown: [], legacy_fallback: true };
+    return {
+      dispatched: [],
+      skipped_fresh: [],
+      skipped_cap: [],
+      skipped_cooldown: [],
+      legacy_fallback: true,
+      all_sources_fresh: false,
+    };
   }
 
   // #2194 fix #2: load recent per-source failures + cooldown knobs so a
@@ -426,7 +438,14 @@ export async function dispatchPerSource(
   }
 
   const { dispatch, skippedFresh, skippedCap, skippedCooldown } =
-    selectSourcesForDispatch(sources, opts.fanoutMax, Date.now(), FULL_CYCLE_FLOOR_MIN, recentFailures, cooldownOpts);
+    selectSourcesForDispatch(
+      sources,
+      opts.fanoutMax,
+      Date.now(),
+      AUTOPILOT_FULL_CYCLE_FLOOR_MINUTES,
+      recentFailures,
+      cooldownOpts,
+    );
 
   const dispatched: string[] = [];
   for (const src of dispatch) {
@@ -509,6 +528,7 @@ export async function dispatchPerSource(
     skipped_cap: skippedCap.map(s => s.id),
     skipped_cooldown: skippedCooldown.map(s => s.id),
     legacy_fallback: false,
+    all_sources_fresh: skippedFresh.length === sources.length,
   };
 }
 

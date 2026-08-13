@@ -80,6 +80,13 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     expect(freshnessBlock).toContain('pull: sourceConfigHasRemoteUrl(src.config)');
   });
 
+  test('#4046: targeted dispatch scopes stable recommendation keys to the interval', () => {
+    expect(AUTOPILOT_SRC).toContain(
+      'idempotency_key: autopilotRemediationIdempotencyKey(step.idempotency_key, slot)',
+    );
+    expect(AUTOPILOT_SRC).not.toContain('idempotency_key: step.idempotency_key,');
+  });
+
   test('#2781: dispatchGlobalMaintenance gets the full-cycle floor, not the outer (non-full-cycle) timeoutMs', () => {
     // Live #2781 regression, found in review: dispatchGlobalMaintenance's
     // call used the object-shorthand `timeoutMs`, which resolved to the
@@ -101,9 +108,12 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     expect(dispatchGlobalCall).not.toMatch(/\{\s*repoPath,\s*slot,\s*timeoutMs,/);
   });
 
-  test('updates lastFullCycleAt on dispatch (so the 60-min floor is honored)', () => {
+  test('updates lastFullCycleAt after dispatch or an all-fresh restart check', () => {
     // After the dispatchPerSource call, the lastFullCycleAt module var
     // must update so the next tick doesn't immediately re-fan-out.
+    expect(AUTOPILOT_SRC).toMatch(
+      /result\.dispatched\.length > 0 \|\| result\.legacy_fallback \|\| result\.all_sources_fresh/,
+    );
     expect(AUTOPILOT_SRC).toMatch(/lastFullCycleAt\s*=\s*Date\.now\(\)/);
   });
 
