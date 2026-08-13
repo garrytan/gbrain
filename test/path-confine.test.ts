@@ -15,10 +15,10 @@ import {
   mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, chmodSync,
   lstatSync, type Stats,
 } from 'fs';
-import { join } from 'path';
+import { join, win32 as win32Path } from 'path';
 import { tmpdir } from 'os';
 import {
-  isTrustedDotfile, isPathContained, realpathOrResolve, isWriteTargetContained,
+  isTrustedDotfile, isPathContained, isResolvedContained, realpathOrResolve, isWriteTargetContained,
 } from '../src/core/path-confine.ts';
 import { validateSlug } from '../src/core/utils.ts';
 import { resolveSourceId } from '../src/core/source-resolver.ts';
@@ -146,6 +146,50 @@ describe('isPathContained', () => {
     const foo = join(base, 'foo'); const foobar = join(base, 'foobar');
     mkdirSync(foo); mkdirSync(foobar);
     expect(isPathContained(foobar, foo)).toBe(false);
+  });
+});
+
+// #3895: `realpathSync` returns backslash-delimited paths on Windows, which
+// this POSIX dev/CI box can't produce. `isResolvedContained` takes the
+// already-resolved strings directly, so `path.win32` pins real Windows
+// separator semantics without touching the filesystem or mocking `path`.
+describe('isResolvedContained — Windows separator semantics (#3895)', () => {
+  test('real subdir is contained', () => {
+    expect(isResolvedContained(
+      'C:\\Users\\me\\project\\skills',
+      'C:\\Users\\me\\project',
+      win32Path,
+    )).toBe(true);
+  });
+  test('parent itself is contained', () => {
+    expect(isResolvedContained('C:\\Users\\me\\project', 'C:\\Users\\me\\project', win32Path)).toBe(true);
+  });
+  test('sibling directory is NOT contained', () => {
+    // Pre-fix on Windows: resolvedParent never ends in '/', so the old check
+    // always appended a literal '/', producing 'C:\Users\me\project/' — a
+    // mixed-separator prefix a real backslash child never starts with. That
+    // made isPathContained fail-closed on EVERY legitimate Windows subdir,
+    // not just siblings; this case additionally confirms a real sibling
+    // ('project2') still correctly returns false with the fixed logic.
+    expect(isResolvedContained(
+      'C:\\Users\\me\\project2',
+      'C:\\Users\\me\\project',
+      win32Path,
+    )).toBe(false);
+  });
+  test('escaping to an unrelated directory is NOT contained', () => {
+    expect(isResolvedContained(
+      'C:\\Users\\me\\other',
+      'C:\\Users\\me\\project',
+      win32Path,
+    )).toBe(false);
+  });
+  test('parent-of-parent is NOT contained', () => {
+    expect(isResolvedContained('C:\\Users\\me', 'C:\\Users\\me\\project', win32Path)).toBe(false);
+  });
+  test('default pathMod (POSIX on this box) still matches isPathContained behavior', () => {
+    expect(isResolvedContained('/a/b', '/a')).toBe(true);
+    expect(isResolvedContained('/a2', '/a')).toBe(false);
   });
 });
 

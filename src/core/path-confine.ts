@@ -20,13 +20,46 @@
  */
 
 import { realpathSync, existsSync, type Stats } from 'fs';
-import { resolve as resolvePath, relative, isAbsolute, dirname, basename, join } from 'path';
+import { resolve as resolvePath, relative, isAbsolute, dirname, basename, join, sep } from 'path';
+
+interface RelativePathMod {
+  relative(from: string, to: string): string;
+  isAbsolute(path: string): boolean;
+  sep: string;
+}
+
+const DEFAULT_PATH_MOD: RelativePathMod = { relative, isAbsolute, sep };
 
 /**
- * Symlink-safe path confinement: realpath BOTH sides, then a separator-aware
- * prefix check. A plain `startsWith()` on un-resolved paths would let a
- * `parent/skills` symlink → `/etc` (or `$GBRAIN_HOME/clones/<id>` → `/etc`)
- * bypass the boundary; resolving first defeats that.
+ * Pure `path.relative`-based containment check on two ALREADY-RESOLVED
+ * paths. Split out from `isPathContained` (#3895) so the Windows-separator
+ * case is unit-testable on POSIX CI: pass `path.win32` as `pathMod` to pin
+ * Windows semantics without touching the filesystem or the real `path`
+ * module used everywhere else in this process.
+ *
+ * `resolvedParent.endsWith('/') ? ... : resolvedParent + '/'` (the pre-fix
+ * check) always fell through to appending a literal `/` on Windows, because
+ * `realpathSync` returns native-OS-separator paths and a backslash-delimited
+ * path essentially never ends in `/`. `relative()` resolves through the
+ * path module's own separator instead, so it works on whichever platform
+ * `pathMod` describes. Matches `isWriteTargetContained` below and
+ * `isWithinRoot` in `sync.ts` (#3415) — same idiom, not new logic.
+ */
+export function isResolvedContained(
+  resolvedChild: string,
+  resolvedParent: string,
+  pathMod: RelativePathMod = DEFAULT_PATH_MOD,
+): boolean {
+  if (resolvedChild === resolvedParent) return true;
+  const rel = pathMod.relative(resolvedParent, resolvedChild);
+  return rel !== '' && rel !== '..' && !rel.startsWith('..' + pathMod.sep) && !pathMod.isAbsolute(rel);
+}
+
+/**
+ * Symlink-safe path confinement: realpath BOTH sides, then
+ * `isResolvedContained`. A plain `startsWith()` on un-resolved paths would
+ * let a `parent/skills` symlink → `/etc` (or `$GBRAIN_HOME/clones/<id>` →
+ * `/etc`) bypass the boundary; resolving first defeats that.
  *
  * Returns true iff `child` exists AND its realpath is `parent`'s realpath or a
  * real subtree of it. Returns false if either path is unresolvable (missing /
@@ -41,9 +74,7 @@ export function isPathContained(child: string, parent: string): boolean {
   } catch {
     return false; // missing / unresolvable path → not contained
   }
-  // Append a separator so /foo doesn't match /foobar.
-  const parentWithSep = resolvedParent.endsWith('/') ? resolvedParent : resolvedParent + '/';
-  return resolvedChild === resolvedParent || resolvedChild.startsWith(parentWithSep);
+  return isResolvedContained(resolvedChild, resolvedParent);
 }
 
 /**
