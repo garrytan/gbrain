@@ -1,0 +1,373 @@
+import { describe, expect, test, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { runGitHubSync, type GitHubSourceConfig } from '../src/core/github-source.ts';
+
+let engine: PGLiteEngine;
+
+beforeAll(async () => {
+  engine = new PGLiteEngine();
+  await engine.connect({});
+  await engine.initSchema();
+});
+
+afterAll(async () => {
+  await engine.disconnect();
+});
+
+beforeEach(async () => {
+  await resetPgliteState(engine);
+});
+
+// ── Fixture: a tiny GitHub API backed by a mutable "database" ───────────────
+
+interface FixtureItem {
+  number: number;
+  kind: 'issue' | 'pr';
+  state: 'open' | 'closed';
+  updated_at: string;
+  merged?: boolean;
+  head?: { sha: string; ref: string };
+  body: string;
+  labels: string[];
+  assignees: string[];
+  comments: { user: string; body: string; created_at: string }[];
+  reviews: { user: string; state: string; body: string; submitted_at: string }[];
+  checks?: { pass: number; fail: number; pending: number; failing: string[] };
+}
+
+const REPO = 'acme/app';
+
+function makeFixture(): { items: Map<number, FixtureItem>; calls: string[] } {
+  const items = new Map<number, FixtureItem>([
+    [1, {
+      number: 1,
+      kind: 'issue',
+      state: 'open',
+      updated_at: '2026-08-01T00:00:00Z',
+      body: 'Broken, relates to #2.',
+      labels: ['bug'],
+      assignees: ['alice'],
+      comments: [{ user: 'bob', body: 'Repro found.', created_at: '2026-08-01T01:00:00Z' }],
+      reviews: [],
+    }],
+    [2, {
+      number: 2,
+      kind: 'pr',
+      state: 'open',
+      updated_at: '2026-08-02T00:00:00Z',
+      body: 'Closes #1.',
+      labels: [],
+      assignees: [],
+      comments: [],
+      reviews: [{ user: 'carol', state: 'APPROVED', body: 'LGTM', submitted_at: '2026-08-02T01:00:00Z' }],
+      head: { sha: 'abc123', ref: 'feat/fix' },
+      checks: { pass: 2, fail: 1, pending: 0, failing: ['lint'] },
+    }],
+    [3, {
+      number: 3,
+      kind: 'pr',
+      state: 'closed',
+      updated_at: '2026-07-30T00:00:00Z',
+      body: 'Old merged work.',
+      labels: [],
+      assignees: [],
+      comments: [],
+      reviews: [],
+      merged: true,
+    }],
+  ]);
+  return { items, calls: [] };
+}
+
+function buildFetch(fx: { items: Map<number, FixtureItem>; calls: string[] }) {
+  const { items, calls } = fx;
+  return async (url: string, init?: RequestInit): Promise<Response> => {
+    const u = new URL(url);
+    const path = u.pathname;
+    const since = u.searchParams.get('since');
+    calls.push(path);
+    const json = (body: unknown, status = 200): Response =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: {
+          'content-type': 'application/json',
+          'x-ratelimit-remaining': '4900',
+          'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 3600),
+        },
+      });
+
+    if (path === '/user/repos') {
+      return json([{ full_name: REPO, private: true, archived: false, default_branch: 'main', description: 'The app' }]);
+    }
+    if (path === `/repos/${REPO}`) {
+      return json({ full_name: REPO, private: true, archived: false, default_branch: 'main', description: 'The app' });
+    }
+    if (path === `/repos/${REPO}/issues` || path === `/repos/${REPO}/issues?state=all`) {
+      const list = [...items.values()]
+        .filter((it) => !since || it.updated_at > since)
+        .map((it) => ({
+          number: it.number,
+          title: `Item ${it.number}`,
+          state: it.state,
+          updated_at: it.updated_at,
+          ...(it.kind === 'pr' ? { pull_request: { url: `https://api.github.com/repos/${REPO}/pulls/${it.number}` } } : {}),
+        }));
+      return json(list);
+    }
+    if (path === `/repos/${REPO}/pulls` && u.searchParams.get('state') === 'open') {
+      return json(
+        [...items.values()]
+          .filter((it) => it.kind === 'pr' && it.state === 'open')
+          .map((it) => ({ number: it.number, title: `Item ${it.number}`, state: it.state, updated_at: it.updated_at, head: it.head })),
+      );
+    }
+    const issueMatch = path.match(/^\/repos\/acme\/app\/issues\/(\d+)$/);
+    const issueCommentsMatch = path.match(/^\/repos\/acme\/app\/issues\/(\d+)\/comments$/);
+    const pullMatch = path.match(/^\/repos\/acme\/app\/pulls\/(\d+)$/);
+    const pullReviewsMatch = path.match(/^\/repos\/acme\/app\/pulls\/(\d+)\/reviews$/);
+    const pullCommentsMatch = path.match(/^\/repos\/acme\/app\/pulls\/(\d+)\/comments$/);
+    const checksMatch = path.match(/^\/repos\/acme\/app\/commits\/([0-9a-f]+)\/check-runs$/);
+    const statusMatch = path.match(/^\/repos\/acme\/app\/commits\/([0-9a-f]+)\/status$/);
+
+    if (issueMatch) {
+      const it = items.get(Number(issueMatch[1]));
+      if (!it) return json({ message: 'not found' }, 404);
+      return json({
+        number: it.number,
+        title: `Item ${it.number}`,
+        state: it.state,
+        state_reason: null,
+        body: it.body,
+        created_at: '2026-07-01T00:00:00Z',
+        updated_at: it.updated_at,
+        closed_at: it.state === 'closed' ? '2026-07-31T00:00:00Z' : null,
+        labels: it.labels.map((name) => ({ name })),
+        assignees: it.assignees.map((login) => ({ login })),
+        milestone: null,
+        html_url: `https://github.com/${REPO}/issues/${it.number}`,
+        user: { login: 'alice' },
+      });
+    }
+    if (issueCommentsMatch) {
+      const it = items.get(Number(issueCommentsMatch[1]));
+      if (!it) return json({ message: 'not found' }, 404);
+      return json(it.comments.map((c) => ({ user: { login: c.user }, body: c.body, created_at: c.created_at })));
+    }
+    if (pullMatch) {
+      const it = items.get(Number(pullMatch[1]));
+      if (!it) return json({ message: 'not found' }, 404);
+      return json({
+        number: it.number,
+        title: `Item ${it.number}`,
+        state: it.state,
+        body: it.body,
+        created_at: '2026-07-01T00:00:00Z',
+        updated_at: it.updated_at,
+        closed_at: it.state === 'closed' ? '2026-07-31T00:00:00Z' : null,
+        labels: [],
+        assignees: [],
+        milestone: null,
+        html_url: `https://github.com/${REPO}/pull/${it.number}`,
+        user: { login: 'alice' },
+        merged: it.merged ?? false,
+        mergeable_state: 'clean',
+        review_decision: it.reviews.length > 0 ? it.reviews[0].state : 'NONE',
+        draft: false,
+        head: it.head ?? { sha: '', ref: '' },
+      });
+    }
+    if (pullReviewsMatch) {
+      const it = items.get(Number(pullReviewsMatch[1]));
+      if (!it) return json({ message: 'not found' }, 404);
+      return json(it.reviews.map((r) => ({ user: { login: r.user }, state: r.state, body: r.body, submitted_at: r.submitted_at })));
+    }
+    if (pullCommentsMatch) {
+      return json([]);
+    }
+    if (checksMatch || statusMatch) {
+      const it = [...items.values()].find(
+        (v) => (checksMatch !== null && v.head?.sha === checksMatch[1]) || (statusMatch !== null && v.head?.sha === statusMatch[1]),
+      );
+      if (!it || !it.checks) return json(checksMatch ? { total_count: 0, check_runs: [] } : { state: 'success', statuses: [] });
+      const runState = (conclusion: string) => ({ status: 'completed', conclusion });
+      const runs = {
+        pass: it.checks.pass,
+        fail: it.checks.fail,
+        pending: it.checks.pending,
+        failing: it.checks.failing,
+      };
+      const check_runs = [
+        ...Array.from({ length: runs.pass }, () => ({ name: 'ok-job', status: 'completed', conclusion: 'success' })),
+        ...Array.from({ length: runs.fail }, (_, i) => ({ name: runs.failing[i] ?? 'bad-job', status: 'completed', conclusion: 'failure' })),
+        ...Array.from({ length: runs.pending }, () => ({ name: 'run-job', status: 'in_progress', conclusion: null })),
+      ];
+      void runState;
+      return json(checksMatch ? { total_count: check_runs.length, check_runs } : { state: 'pending', statuses: [] });
+    }
+    return json({ message: 'unhandled ' + path }, 404);
+  };
+}
+
+function makeCfg(dir: string): GitHubSourceConfig {
+  return {
+    tokenEnv: 'GH_TOKEN',
+    handle: 'veltr',
+    scope: 'repos',
+    repos: [REPO],
+    dir,
+    includeInvolvement: true,
+  };
+}
+
+async function insertSource(engine: PGLiteEngine, dir: string): Promise<void> {
+  await engine.executeRaw(
+    `INSERT INTO sources (id, name, local_path, config) VALUES ($1, $2, $3, $4::text::jsonb)`,
+    ['ghsrc', 'gh', dir, JSON.stringify({ kind: 'github', gh_token_env: 'GH_TOKEN', gh_scope: 'repos', gh_repos: REPO })],
+  );
+}
+
+async function pageSlugs(engine: PGLiteEngine): Promise<string[]> {
+  const rows = await engine.executeRaw<{ slug: string }>(
+    `SELECT slug FROM pages WHERE source_id = 'ghsrc' AND deleted_at IS NULL ORDER BY slug`,
+  );
+  return rows.map((r) => r.slug);
+}
+
+describe('github-source materialize', () => {
+  test('bootstrap imports all items, sweep is a no-op, delta picks up changes', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ghsrc-sync-'));
+    const fx = makeFixture();
+    const fetchImpl = buildFetch(fx);
+    try {
+      await insertSource(engine, dir);
+      await withEnv({ GH_TOKEN: 'test-token' }, async () => {
+        // 1) Full bootstrap.
+        const first = await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc', full: true }, fetchImpl);
+        expect(first.added).toBe(4); // 3 items + repo card
+        expect(first.deleted).toBe(0);
+        expect(await pageSlugs(engine)).toEqual([
+          'gh/acme/app/1',
+          'gh/acme/app/2',
+          'gh/acme/app/3',
+          'gh/acme/app/index',
+        ]);
+
+        // Page content landed with the right fields.
+        const prPage = readFileSync(join(dir, 'gh', REPO, '2.md'), 'utf-8');
+        expect(prPage).toContain('kind: pr');
+        expect(prPage).toContain('checks_fail: 1');
+        expect(prPage).toContain('Failing: lint');
+        expect(prPage).toContain('[[gh/acme/app/1|#1]]');
+        const issuePage = readFileSync(join(dir, 'gh', REPO, '1.md'), 'utf-8');
+        expect(issuePage).toContain('### bob · 2026-08-01T01:00:00Z');
+
+        // State file advanced.
+        const state = JSON.parse(readFileSync(join(dir, '.github-source.json'), 'utf-8')) as { last_sweep_at: string; repos: string[] };
+        expect(state.last_sweep_at).toBe('2026-08-02T00:00:00Z');
+        expect(state.repos).toEqual([REPO]);
+
+        // Sources row touched.
+        const row = await engine.executeRaw<{ last_sync_at: string | null }>(`SELECT last_sync_at FROM sources WHERE id = 'ghsrc'`);
+        expect(row[0].last_sync_at).not.toBeNull();
+
+        // 2) Sweep with nothing changed: up_to_date, no detail fetches.
+        const detailCallsBefore = fx.calls.filter((c) => /\/issues\/\d+$|\/pulls\/\d+$/.test(c)).length;
+        const second = await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc' }, fetchImpl);
+        expect(second.status).toBe('up_to_date');
+        expect(second.added + second.modified).toBe(0);
+        const detailCallsAfter = fx.calls.filter((c) => /\/issues\/\d+$|\/pulls\/\d+$/.test(c)).length;
+        expect(detailCallsAfter).toBe(detailCallsBefore);
+
+        // 3) One item changes upstream; sweep picks it up.
+        fx.items.get(1)!.updated_at = '2026-08-04T00:00:00Z';
+        const third = await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc' }, fetchImpl);
+        expect(third.status).toBe('synced');
+        expect(third.modified).toBe(1);
+        expect(third.pagesAffected).toContain('gh/acme/app/1');
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('webhook item refresh updates exactly one item', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ghsrc-item-'));
+    const fx = makeFixture();
+    const fetchImpl = buildFetch(fx);
+    try {
+      await insertSource(engine, dir);
+      await withEnv({ GH_TOKEN: 'test-token' }, async () => {
+        await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc', full: true }, fetchImpl);
+        fx.items.get(3)!.body = 'Amended after merge.';
+        fx.items.get(3)!.updated_at = '2026-08-05T00:00:00Z';
+        const before = fx.calls.length;
+        const res = await runGitHubSync(
+          engine,
+          'ghsrc',
+          makeCfg(dir),
+          { sourceId: 'ghsrc', githubItem: { repo: REPO, number: 3, kind: 'pr' } },
+          fetchImpl,
+        );
+        expect(res.modified).toBe(1);
+        expect(res.pagesAffected).toEqual(['gh/acme/app/3']);
+        // Only the item endpoints were hit (plus scope discovery).
+        const itemCalls = fx.calls.slice(before).filter((c) => /\/issues\/3$|\/pulls\/3($|\/)/.test(c));
+        expect(itemCalls.length).toBeGreaterThan(0);
+        const page = readFileSync(join(dir, 'gh', REPO, '3.md'), 'utf-8');
+        expect(page).toContain('Amended after merge.');
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('item refresh outside scope is a no-op', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ghsrc-scope-'));
+    const fx = makeFixture();
+    const fetchImpl = buildFetch(fx);
+    try {
+      await insertSource(engine, dir);
+      await withEnv({ GH_TOKEN: 'test-token' }, async () => {
+        const res = await runGitHubSync(
+          engine,
+          'ghsrc',
+          makeCfg(dir),
+          { sourceId: 'ghsrc', githubItem: { repo: 'other/org', number: 1, kind: 'issue' } },
+          fetchImpl,
+        );
+        expect(res.status).toBe('up_to_date');
+        expect(res.added + res.modified).toBe(0);
+        expect(existsSync(join(dir, 'gh', 'other', 'org', '1.md'))).toBe(false);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('full reconcile deletes pages for vanished items', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ghsrc-recon-'));
+    const fx = makeFixture();
+    const fetchImpl = buildFetch(fx);
+    try {
+      await insertSource(engine, dir);
+      await withEnv({ GH_TOKEN: 'test-token' }, async () => {
+        await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc', full: true }, fetchImpl);
+        // Item 3 disappears upstream entirely.
+        fx.items.delete(3);
+        const res = await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc', full: true }, fetchImpl);
+        expect(res.deleted).toBe(1);
+        const slugs = await pageSlugs(engine);
+        expect(slugs).not.toContain('gh/acme/app/3');
+        expect(existsSync(join(dir, 'gh', REPO, '3.md'))).toBe(false);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
