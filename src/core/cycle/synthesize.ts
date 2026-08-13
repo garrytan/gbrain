@@ -1042,6 +1042,9 @@ export function makeJudgeClient(verdictModel: string): JudgeClient | null {
         system,
         messages,
         maxTokens: params.max_tokens,
+        ...(v.parsed.providerId === 'deepseek'
+          ? { providerOptions: { deepseek: { thinking: { type: 'disabled' } } } }
+          : {}),
       });
 
       // Map gateway.ChatResult → Anthropic.Message shape. judgeSignificance
