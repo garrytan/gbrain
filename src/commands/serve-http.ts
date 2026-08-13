@@ -2717,8 +2717,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         `SELECT id, local_path, config FROM sources
            WHERE archived = false
              AND ((config->>'github_repo' = $1)
-               OR (config->>'kind' = 'github' AND config->>'webhook_secret' IS NOT NULL))
-           LIMIT 50`,
+               OR (config->>'kind' = 'github' AND config->>'webhook_secret' IS NOT NULL))`,
         [ref.repo],
       );
       const verified: { id: string; local_path: string | null; config: unknown }[] = [];
@@ -2932,12 +2931,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // safeHexEqual because Buffer.from('sha256=...', 'hex') silently
       // truncates at the first non-hex char (the 's'), leaving both
       // operands as 0-byte buffers and making every signature "match".
-      // Pinned by test/sources-webhook.test.ts tamper assertions.
+      // Strict hex shape first: a malformed 64-char signature would make
+      // safeHexEqual throw (500 instead of 401), codex LOW.
       const { createHmac } = await import('node:crypto');
       const computedHex = createHmac('sha256', secret).update(payload).digest('hex');
       const prefix = 'sha256=';
-      if (!sigHeader.startsWith(prefix)) {
-        res.status(401).json({ error: 'signature_mismatch', message: 'expected sha256= prefix' });
+      if (!/^sha256=[0-9a-f]{64}$/.test(sigHeader)) {
+        res.status(401).json({ error: 'signature_mismatch', message: 'expected sha256=<64 hex> signature' });
         return;
       }
       if (!safeHexEqual(sigHeader.slice(prefix.length), computedHex)) {

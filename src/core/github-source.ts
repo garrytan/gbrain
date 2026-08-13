@@ -31,7 +31,7 @@
  * frontmatter; a re-run skips items whose page is already fresh).
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, renameSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 
 import type { BrainEngine } from './engine.ts';
@@ -266,6 +266,11 @@ export class GitHubClient {
       }
       const next = link !== null ? linkNextUrl(link) : null;
       if (next === null) break;
+      // Never follow a Link header off api.github.com: the bearer token
+      // must not leak to an arbitrary host (codex LOW, round 3).
+      if (!next.startsWith('https://api.github.com/')) {
+        throw new GitHubPaginationError(`Link header points off api.github.com: ${next}`);
+      }
       url = next;
     }
     return out;
@@ -772,9 +777,10 @@ async function importPage(
   deps: GitHubSyncDeps,
   filePath: string,
   activePack: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> } | undefined,
+  relPathOverride?: string,
 ): Promise<{ slug: string; chunks: number; status: 'imported' | 'skipped' }> {
   const { importFile } = await import('./import-file.ts');
-  const rel = relative(deps.cfg.dir, filePath).replace(/\\/g, '/');
+  const rel = relPathOverride ?? relative(deps.cfg.dir, filePath).replace(/\\/g, '/');
   const result = await importFile(deps.engine, filePath, rel, {
     noEmbed: true, // embeddings handled by the size gate below, like sync
     sourceId: deps.sourceId,
@@ -926,19 +932,28 @@ export async function runGitHubSync(
           const data = await fetchItemData(repo, item.number, item.kind, client, { signal: opts.signal });
           mkdirSync(dirname(filePath), { recursive: true });
           const before = existsSync(filePath);
-          writeFileSync(filePath, renderItemPage(data), 'utf-8');
-          const imported = await importPage(deps, filePath, activePack);
-          summary.pagesAffected.push(imported.slug);
-          summary.chunksCreated += imported.chunks;
-          if (before) summary.modified++; else summary.added++;
+          // Temp-write then import then rename: a failed refresh must never
+          // destroy the previously-good page (codex HIGH, round 3). The
+          // import declares the canonical relative path, so the page slug
+          // and source_path stay correct despite the temp filename.
+          const tmpPath = `${filePath}.tmp`;
+          writeFileSync(tmpPath, renderItemPage(data), 'utf-8');
+          try {
+            const imported = await importPage(deps, tmpPath, activePack, relative(cfg.dir, filePath).replace(/\\/g, '/'));
+            renameSync(tmpPath, filePath);
+            summary.pagesAffected.push(imported.slug);
+            summary.chunksCreated += imported.chunks;
+            if (before) summary.modified++; else summary.added++;
+          } finally {
+            rmSync(tmpPath, { force: true });
+          }
         } catch (err) {
           // Cursor discipline (codex HIGH): never advance past an item that
-          // failed, and remove the half-written page so the next sweep sees
-          // it as absent and retries the DB import too.
+          // failed; the old page (if any) is intact because we only ever
+          // touched the temp file.
           deps.client.log?.(`[github] item ${repo}#${item.number} failed: ${err instanceof Error ? err.message : String(err)}`);
           summary.failedFiles++;
           summary.status = 'partial';
-          try { rmSync(filePath, { force: true }); } catch { /* best-effort */ }
           continue;
         }
         // Cursor advances only for items that fully succeeded.

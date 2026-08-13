@@ -760,12 +760,16 @@ export async function removeSource(
 
   // Decide whether we own the clone dir before removing the row.
   const remoteUrl = getRemoteUrl(src.config);
+  const ghCfg = (typeof src.config === 'string' ? JSON.parse(src.config) : (src.config ?? {})) as Record<string, unknown>;
+  // v0.46: github-kind mirrors at the default clone location are owned by
+  // gbrain (gh_managed marker) and get the same cleanup as --url clones.
+  const ghManaged = ghCfg.kind === 'github' && ghCfg.gh_managed === true;
   const cloneRoot = gbrainPath('clones');
   let cloneRemoved = false;
   if (
     !opts.keepStorage &&
     src.local_path &&
-    remoteUrl && // only auto-clean when this was a --url-managed clone
+    (remoteUrl || ghManaged) && // only auto-clean when gbrain managed the dir
     isPathContained(src.local_path, cloneRoot)
   ) {
     try {
