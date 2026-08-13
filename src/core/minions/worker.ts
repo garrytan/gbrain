@@ -31,6 +31,7 @@ import {
 } from './lock-renewal-tick.ts';
 import { lockRenewalAudit } from '../audit/lock-renewal-audit.ts';
 import { isRetryableConnError } from '../retry-matcher.ts';
+import { reconnectAfterConnectionError as reconnectEngineAfterConnError } from './reconnect.ts';
 
 /**
  * Abort reasons that signal infrastructure failure (PgBouncer outage,
@@ -735,18 +736,10 @@ export class MinionWorker extends EventEmitter {
 
   /**
    * Rebuild the worker-owned DB pool after a retryable connection failure.
-   *
-   * PostgresEngine exposes reconnect(); PGLite and test doubles may not. Absence
-   * is a no-op so non-Postgres workers preserve their legacy behavior.
+   * Shared with the inline child drain (#2050) via minions/reconnect.ts.
    */
   private async reconnectAfterConnectionError(site: string, error: unknown): Promise<void> {
-    const reconnect = (this.engine as { reconnect?: (ctx?: { error?: unknown }) => Promise<void> }).reconnect;
-    if (!reconnect) return;
-    try {
-      await reconnect.call(this.engine, { error });
-    } catch (re) {
-      console.error(`[worker] reconnect after ${site} error failed: ${re instanceof Error ? re.message : String(re)}`);
-    }
+    await reconnectEngineAfterConnError(this.engine, site, error);
   }
 
   /** RSS watchdog. Called from the per-job finally and the periodic timer.

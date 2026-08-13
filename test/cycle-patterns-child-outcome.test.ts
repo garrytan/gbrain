@@ -5,7 +5,7 @@
  * zero pattern pages written (e.g. when no subagent-capable worker slot was
  * free for the whole wait window) — a silent no-op for days.
  *
- * A later fix added runPgliteSubagentsInline to this phase (patterns.ts
+ * A later fix added the shared inline drain (now runSubagentsInline) to this phase (patterns.ts
  * previously submitted a job and waited without anything ever claiming it on
  * PGLite — synthesize.ts already had this inline drain, patterns.ts didn't).
  * So a fake ANTHROPIC_API_KEY here now gets claimed and actually attempted;

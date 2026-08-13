@@ -37,6 +37,8 @@ import { basename, join, dirname, isAbsolute, resolve } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
 import { MinionQueue } from '../minions/queue.ts';
+import { reconnectAfterConnectionError } from '../minions/reconnect.ts';
+import { isRetryableConnError } from '../retry-matcher.ts';
 import { waitForCompletion, TimeoutError } from '../minions/wait-for-completion.ts';
 import { makeSubagentHandler } from '../minions/handlers/subagent.ts';
 import type { MinionJobInput, MinionJobContext, MinionHandler, SubagentHandlerData } from '../minions/types.ts';
@@ -276,39 +278,101 @@ export interface SynthesizePhaseOpts {
   once?: boolean;
 }
 
-const INLINE_PGLITE_LOCK_MS = 30_000;
+const INLINE_LOCK_MS = 30_000;
 
 /**
- * PGLite cannot be served by a separate Minions worker process: the embedded
- * data-dir holds an exclusive file lock, so subagent children enqueued by the
- * synth parent would sit in 'waiting' until waitForCompletion times out.
- * Drive the same claim → run → complete/fail loop a worker would perform,
- * inline, against this phase's private child queue.
+ * Drain this phase's private child queue inline: drive the same claim → run →
+ * complete/fail loop a worker would perform, from the parent's own slot.
+ *
+ * Why inline on BOTH engines:
+ *   - PGLite: no separate Minions worker can run at all (the embedded
+ *     data-dir holds an exclusive file lock), so children would sit in
+ *     'waiting' until waitForCompletion times out.
+ *   - Postgres (#2050): the parent phase itself runs as a job inside a
+ *     `jobs work` process. A worker whose slots are all occupied by such
+ *     parents (autopilot spawns its drain worker at the default
+ *     concurrency=1) can never claim the child the parent is blocking on —
+ *     a structural self-deadlock. Running children inline means a child
+ *     never needs a worker slot, so the deadlock is impossible at ANY
+ *     concurrency, and no extra DB-pool pressure is added: the child's work
+ *     replaces the parent's idle waitForCompletion polling in the slot the
+ *     parent already holds.
  *
  * `yieldDuringPhase` is ticked on a 60s interval while a child runs so the
  * 5-min cycle lock TTL keeps refreshing during long (up to 30-min) children.
+ * The child's own claim lock is heartbeated at lockMs/3 (worker cadence
+ * parity) — on Postgres a concurrent worker sweeps handleStalled() across
+ * ALL queues, so without renewal any child running longer than lockMs would
+ * be requeued mid-run and stall-churned to dead.
  */
-export async function runPgliteSubagentsInline(
+export async function runSubagentsInline(
   engine: BrainEngine,
   queue: MinionQueue,
   queueName: string,
   yieldDuringPhase?: () => Promise<void>,
   handler: MinionHandler = makeSubagentHandler({ engine }),
+  lockMs: number = INLINE_LOCK_MS,
 ): Promise<void> {
-  if (engine.kind !== 'pglite') return;
+  // #3555 interaction: the drain's queue ops used to be bare awaits, so a
+  // transient pooler reap mid-drain threw out of the loop and stranded the
+  // remaining children in this per-run private queue — which no worker will
+  // ever claim. Mirror the worker's recovery: on a retryable connection
+  // error, rebuild the pool (shared reconnectAfterConnectionError) and retry
+  // the loop; non-retryable errors still propagate (real bug → phase fails).
+  const MAX_CONN_ERROR_STREAK = 5;
+  let connErrorStreak = 0;
+  let sawConnError = false;
+  const recoverOrThrow = async (site: string, e: unknown): Promise<void> => {
+    if (!isRetryableConnError(e) || ++connErrorStreak > MAX_CONN_ERROR_STREAK) throw e;
+    sawConnError = true;
+    const msg = e instanceof Error ? e.message : String(e);
+    process.stderr.write(`[dream] inline drain ${site} hit a connection error; reconnecting and retrying: ${msg}\n`);
+    await reconnectAfterConnectionError(engine, `inline-${site}`, e);
+    // Small cooperative backoff (setTimeout keeps the cycle-lock keepalive
+    // and any concurrent timers firing) before the loop retries.
+    await new Promise((r) => setTimeout(r, Math.min(1000, Math.max(50, Math.floor(lockMs / 3)))));
+  };
 
   while (true) {
-    // Housekeeping a worker would normally perform, so child rows can reach
-    // terminal states (delayed retries promoted, timeouts dead-lettered)
-    // before the synth parent enters waitForCompletion polling.
-    await queue.promoteDelayed();
-    await queue.handleStalled();
-    await queue.handleTimeouts();
-    await queue.handleWallClockTimeouts(INLINE_PGLITE_LOCK_MS);
-
     const lockToken = randomUUID();
-    const job = await queue.claim(lockToken, INLINE_PGLITE_LOCK_MS, queueName, ['subagent']);
-    if (!job) return;
+    let job: Awaited<ReturnType<MinionQueue['claim']>>;
+    try {
+      // Housekeeping a worker would normally perform, so child rows can reach
+      // terminal states (delayed retries promoted, timeouts dead-lettered)
+      // before the synth parent enters waitForCompletion polling.
+      await queue.promoteDelayed();
+      await queue.handleStalled();
+      await queue.handleTimeouts();
+      await queue.handleWallClockTimeouts(lockMs);
+
+      job = await queue.claim(lockToken, lockMs, queueName, ['subagent']);
+    } catch (e) {
+      await recoverOrThrow('queue-ops', e);
+      continue;
+    }
+    connErrorStreak = 0;
+    if (!job) {
+      if (!sawConnError) return;
+      // A connection-error window may have left a child 'active' under a
+      // lock nobody renews (a claim that committed but whose row never
+      // reached us, or a lost outcome write below). handleStalled() at the
+      // loop top requeues it once the lock expires (≤ lockMs), so only exit
+      // once the queue is actually quiet.
+      let active = 0;
+      try {
+        const rows = await engine.executeRaw<{ n: number }>(
+          `SELECT count(*)::int AS n FROM minion_jobs WHERE queue = $1 AND status = 'active'`,
+          [queueName],
+        );
+        active = rows[0]?.n ?? 0;
+      } catch (e) {
+        await recoverOrThrow('active-check', e);
+        continue;
+      }
+      if (active === 0) return;
+      await new Promise((r) => setTimeout(r, 1000));
+      continue;
+    }
 
     const abort = new AbortController();
     const shutdown = new AbortController();
@@ -364,18 +428,45 @@ export async function runPgliteSubagentsInline(
     const keepalive = yieldDuringPhase
       ? setInterval(() => { yieldDuringPhase().catch(() => { /* best-effort */ }); }, 60_000)
       : null;
+    // #2050: heartbeat the child's claim lock while the handler runs so a
+    // concurrent Postgres worker's handleStalled() sweep (all queues, not
+    // just its own) can't requeue a live child. A false return means the row
+    // was cancelled or reclaimed — abort the handler. Errors are swallowed
+    // (best-effort; the next tick retries), never an unhandledRejection.
+    const renewTimer = setInterval(() => {
+      queue.renewLock(job.id, lockToken, lockMs)
+        .then((ok) => {
+          if (!ok && !abort.signal.aborted) abort.abort(new Error('lock-renewal-failed'));
+        })
+        .catch(() => { /* best-effort; next tick retries */ });
+    }, Math.max(50, Math.floor(lockMs / 3)));
+    // Run, then record — separated so a completeJob connection error can't
+    // masquerade as a handler failure, and a failJob connection error can't
+    // escape the drain and strand the remaining children (worker.ts #1720
+    // parity: reconnect + retry the recording once; if it still fails, leave
+    // the row for the loop's own handleStalled to requeue after lock expiry).
+    let result: unknown;
+    let handlerErr: unknown;
+    let handlerRan = false;
     try {
-      const result = await handler(context);
-      await queue.completeJob(
-        job.id,
-        lockToken,
-        result != null ? (typeof result === 'object' ? result as Record<string, unknown> : { value: result }) : undefined,
-      );
+      result = await handler(context);
+      handlerRan = true;
     } catch (e) {
+      handlerErr = e;
+    }
+    const record = async (): Promise<void> => {
+      if (handlerRan) {
+        await queue.completeJob(
+          job.id,
+          lockToken,
+          result != null ? (typeof result === 'object' ? result as Record<string, unknown> : { value: result }) : undefined,
+        );
+        return;
+      }
       // Timeout is terminal (handleTimeouts parity: stall → retry,
       // timeout → dead), never a delayed retry.
       const timedOut = abort.signal.aborted;
-      const errorText = timedOut ? 'timeout exceeded' : (e instanceof Error ? e.message : String(e));
+      const errorText = timedOut ? 'timeout exceeded' : (handlerErr instanceof Error ? handlerErr.message : String(handlerErr));
       const attemptsExhausted = job.attempts_made + 1 >= job.max_attempts;
       await queue.failJob(
         job.id,
@@ -384,9 +475,30 @@ export async function runPgliteSubagentsInline(
         timedOut || attemptsExhausted ? 'dead' : 'delayed',
         0,
       );
+    };
+    try {
+      try {
+        await record();
+      } catch (recordErr) {
+        if (!isRetryableConnError(recordErr)) throw recordErr;
+        sawConnError = true;
+        const msg = recordErr instanceof Error ? recordErr.message : String(recordErr);
+        process.stderr.write(`[dream] inline drain: recording job ${job.id} outcome hit a connection error; reconnecting and retrying once: ${msg}\n`);
+        await reconnectAfterConnectionError(engine, 'inline-record', recordErr);
+        try {
+          await record();
+        } catch (retryErr) {
+          // Leave the row to the loop's own handleStalled: the claim lock
+          // stops renewing (finally clears renewTimer), expires within
+          // lockMs, and the next iteration requeues it on a live pool.
+          const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+          process.stderr.write(`[dream] inline drain: outcome recording retry for job ${job.id} also failed (${retryMsg}); leaving the row for stall requeue\n`);
+        }
+      }
     } finally {
       if (timeoutTimer) clearTimeout(timeoutTimer);
       if (keepalive) clearInterval(keepalive);
+      clearInterval(renewTimer);
     }
   }
 }
@@ -572,12 +684,11 @@ export async function runPhaseSynthesize(
     }
 
     const queue = new MinionQueue(engine);
-    // PGLite children drain inline (no separate worker can open the embedded
-    // data-dir), so give them a private per-run queue: the inline drain must
-    // never claim unrelated 'default'-queue jobs a Postgres worker owns.
-    const childQueueName = engine.kind === 'pglite'
-      ? `dream-inline-${Date.now()}-${randomUUID().slice(0, 8)}`
-      : 'default';
+    // #2050: children drain inline on BOTH engines (see runSubagentsInline),
+    // so give them a private per-run queue: the inline drain must never claim
+    // unrelated 'default'-queue jobs, and a 'default'-queue worker must never
+    // claim a child this parent is about to run itself.
+    const childQueueName = `dream-inline-${Date.now()}-${randomUUID().slice(0, 8)}`;
     const childIds: number[] = [];
     /** Map child job_id → chunk metadata for D6 orchestrator-side slug rewrite. */
     const chunkInfo = new Map<number, { idx: number; hash6: string }>();
@@ -685,11 +796,11 @@ export async function runPhaseSynthesize(
       }
     }
 
-    // PGLite cannot run a separate Minions worker because the embedded DB
-    // holds an exclusive file lock. Drain this phase's private child queue
-    // inline so the parent observes terminal child states instead of polling
-    // waiters until subagentWaitTimeoutMs expires. No-op on Postgres.
-    await runPgliteSubagentsInline(engine, queue, childQueueName, opts.yieldDuringPhase);
+    // Drain this phase's private child queue inline so the parent observes
+    // terminal child states instead of polling waiters until
+    // subagentWaitTimeoutMs expires. Runs on BOTH engines — on Postgres the
+    // parent job otherwise deadlocks a fully-occupied worker (#2050).
+    await runSubagentsInline(engine, queue, childQueueName, opts.yieldDuringPhase);
 
     // Wait for every child to reach a terminal state. Tick yieldDuringPhase
     // every 5 min so the cycle lock TTL refreshes.
@@ -1709,6 +1820,6 @@ export const __testing = {
   buildSynthesisPrompt,
   stampDreamProvenance,
   reverseWriteRefs,
-  runPgliteSubagentsInline,
+  runSubagentsInline,
   loadSynthConfig,
 };
