@@ -16,7 +16,7 @@
  * calls anywhere — the chat gateway is stubbed.
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { serializeMarkdown, parseMarkdown } from '../src/core/markdown.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runPhaseExtractAtoms } from '../src/core/cycle/extract-atoms.ts';
@@ -155,11 +155,17 @@ describe('extracted atoms reach content_chunks (PGLite round-trip)', () => {
   // (a bare row upsert), so this chunk-count assertion FAILS without the
   // src/core/cycle/extract-atoms.ts change — verified by reverting only the
   // src file and re-running.
-  test('runPhaseExtractAtoms writes content_chunks rows for atom pages', async () => {
-    const engine = new PGLiteEngine();
+  let engine: PGLiteEngine;
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
     await engine.connect({});
     await engine.initSchema();
-    try {
+  });
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+  test('runPhaseExtractAtoms writes content_chunks rows for atom pages', async () => {
+    {
       const chat = async (_o: ChatOpts): Promise<ChatResult> => ({
         text: `[{"title":"Chunked atom","atom_type":"insight","body":"Enterprise buyers want tangible prototypes, not renders."}]`,
         blocks: [{ type: 'text', text: '' }],
@@ -182,8 +188,6 @@ describe('extracted atoms reach content_chunks (PGLite round-trip)', () => {
           WHERE p.type = 'atom'`,
       );
       expect(rows[0].count).toBeGreaterThan(0);
-    } finally {
-      await engine.disconnect();
     }
   }, 60000);
 });
