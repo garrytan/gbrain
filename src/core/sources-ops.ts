@@ -498,6 +498,10 @@ export async function addSource(
       gh_scope: opts.github.scope,
       gh_repos: opts.github.repos.join(','),
       gh_involvement: opts.github.involvement,
+      // Ownership marker: the dir is gbrain-managed only when it is the
+      // default clone location. A custom --dir points at user-owned
+      // storage and must never be deleted by purge.
+      gh_managed: finalPath === defaultCloneDir(`${opts.id}-github`),
     };
     if (opts.federated !== null && opts.federated !== undefined) {
       config.federated = opts.federated;

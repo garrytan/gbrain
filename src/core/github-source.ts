@@ -200,13 +200,14 @@ export class GitHubClient {
   }
 
   private async fetchJSONWithMeta<T>(
-    path: string,
+    pathOrUrl: string,
     opts: { signal?: AbortSignal; retries?: number } = {},
   ): Promise<{ data: T; link: string | null }> {
+    const url = pathOrUrl.startsWith('http') ? pathOrUrl : this.apiUrl(pathOrUrl);
     const retries = opts.retries ?? 1;
     for (let attempt = 0; attempt <= retries; attempt++) {
       await this.waitForBucket(opts.signal);
-      const res = await this.fetchImpl(this.apiUrl(path), {
+      const res = await this.fetchImpl(url, {
         headers: {
           accept: 'application/vnd.github+json',
           authorization: `Bearer ${this.token}`,
@@ -230,14 +231,14 @@ export class GitHubClient {
           });
           continue;
         }
-        throw new Error(`GitHub API HTTP ${res.status} on ${path}`);
+        throw new Error(`GitHub API HTTP ${res.status} on ${pathOrUrl}`);
       }
       if (!res.ok) {
-        throw new Error(`GitHub API HTTP ${res.status} on ${path}`);
+        throw new Error(`GitHub API HTTP ${res.status} on ${pathOrUrl}`);
       }
       return { data: (await res.json()) as T, link: res.headers.get('link') };
     }
-    throw new Error(`GitHub API unreachable on ${path}`);
+    throw new Error(`GitHub API unreachable on ${pathOrUrl}`);
   }
 
   /**
@@ -423,9 +424,9 @@ interface RawCheckRuns {
   check_runs: RawCheckRun[];
 }
 
-interface RawStatus {
+interface RawStatusEntry {
   state: string;
-  statuses: { context: string; state: string }[];
+  context: string;
 }
 
 interface RawMilestone {
@@ -526,7 +527,7 @@ async function fetchChecks(
   try {
     const [runs, status] = await Promise.all([
       client.fetchAllPages<RawCheckRun>(`/repos/${repo}/commits/${headSha}/check-runs`, { ...opts, field: 'check_runs' }),
-      client.fetchJSON<RawStatus>(`/repos/${repo}/commits/${headSha}/status`, opts),
+      client.fetchAllPages<RawStatusEntry>(`/repos/${repo}/commits/${headSha}/status`, { ...opts, field: 'statuses' }),
     ]);
     let pass = 0;
     let fail = 0;
@@ -542,7 +543,7 @@ async function fetchChecks(
         failing.push(run.name);
       }
     }
-    for (const s of status.statuses) {
+    for (const s of status) {
       if (s.state === 'success') pass++;
       else if (s.state === 'pending') pending++;
       else {

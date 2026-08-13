@@ -18,6 +18,7 @@ import {
   type GitHubItemData,
 } from '../src/core/github-source.ts';
 import { extractGitHubItemRef } from '../src/commands/serve-http.ts';
+import { GitHubClient } from '../src/core/github-source.ts';
 
 function baseItemData(overrides: Partial<GitHubItemData> = {}): GitHubItemData {
   return {
@@ -251,6 +252,26 @@ describe('linkNextUrl', () => {
   test('returns null when no next link exists', () => {
     expect(linkNextUrl('<https://x>; rel="last"')).toBeNull();
     expect(linkNextUrl('')).toBeNull();
+  });
+});
+
+describe('fetchAllPages', () => {
+  test('follows absolute Link URLs without double-prefixing the host', async () => {
+    const calls: string[] = [];
+    const client = new GitHubClient('tok', (async (u: string): Promise<Response> => {
+      calls.push(u);
+      const h = new Headers();
+      if (calls.length === 1) {
+        h.set('link', '<https://api.github.com/repos/a/b/issues?page=2&per_page=100>; rel="next"');
+      }
+      return new Response(JSON.stringify([{ n: calls.length }]), { status: 200, headers: h });
+    }) as never);
+    const out = await client.fetchAllPages<{ n: number }>('/repos/a/b/issues');
+    expect(calls).toEqual([
+      'https://api.github.com/repos/a/b/issues?per_page=100&page=1',
+      'https://api.github.com/repos/a/b/issues?page=2&per_page=100',
+    ]);
+    expect(out).toEqual([{ n: 1 }, { n: 2 }]);
   });
 });
 

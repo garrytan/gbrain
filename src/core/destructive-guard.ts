@@ -300,12 +300,15 @@ export async function purgeExpiredSources(
       AND archive_expires_at IS NOT NULL
       AND archive_expires_at <= now()`,
   );
-  // v0.46: github-kind mirrors are gbrain-owned (API materialization, not
-  // user files). Purging the source must remove the mirror directory,
-  // otherwise private mirrored content stays on disk after the row is gone.
+  // v0.46: github-kind mirrors are gbrain-owned only when created at the
+  // default clone location (gh_managed marker). Purging removes that
+  // managed mirror; a custom --dir is user-owned storage and is never
+  // touched, otherwise private mirrored content would linger on disk
+  // after the row is gone (or, worse, a purge would nuke an arbitrary
+  // user path).
   for (const row of rows) {
     const cfg = (typeof row.config === 'string' ? JSON.parse(row.config) : (row.config ?? {})) as Record<string, unknown>;
-    if (cfg.kind === 'github' && row.local_path) {
+    if (cfg.kind === 'github' && cfg.gh_managed === true && row.local_path) {
       try {
         rmSync(row.local_path, { recursive: true, force: true });
       } catch { /* best-effort */ }

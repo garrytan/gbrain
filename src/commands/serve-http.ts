@@ -18,6 +18,7 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { randomBytes, createHash, createHmac } from 'crypto';
 import { safeHexEqual } from '../core/timing-safe.ts';
+import { isValidRepoName } from '../core/github-source.ts';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -81,7 +82,7 @@ export function extractGitHubItemRef(parsed: Record<string, unknown>): { repo: s
     checkSuite?.pull_requests?.[0]?.number ??
     workflowRun?.pull_requests?.[0]?.number;
   const number = prObj?.number ?? issueObj?.number ?? nestedPrNumber;
-  if (typeof number !== 'number') return null;
+  if (typeof number !== 'number' || !isValidRepoName(repo)) return null;
   const kind = prObj !== undefined || issueObj?.pull_request !== undefined || nestedPrNumber !== undefined ? 'pr' : 'issue';
   return { repo, number, kind };
 }
