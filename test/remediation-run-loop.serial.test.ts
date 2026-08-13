@@ -70,11 +70,10 @@ describe('runRemediation recheck loop guard', () => {
     const result = await runRemediation(engine, { maxJobs: 4 });
 
     expect(attemptedJobs.filter((name) => name === 'backlinks')).toHaveLength(1);
-    expect(attemptedJobs).toEqual(['backlinks', 'sync', 'extract']);
+    expect(attemptedJobs).toEqual(['backlinks', 'extract']);
     expect(result.submitted.map((step) => step.id)).toEqual([
       'backlinks.fix',
-      'sync.repo',
-      'extract.all',
+      'extract.stale',
     ]);
   });
 });

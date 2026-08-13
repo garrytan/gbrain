@@ -169,7 +169,7 @@ describe('computeRecommendations', () => {
     expect(recs.find((r) => r.id === 'embed.stale')).toBeUndefined();
   });
 
-  test('stale pages + dead links produce sync + backlinks + extract', () => {
+  test('extraction-stale pages produce DB extraction, never repo sync', () => {
     const health = makeHealth({
       stale_pages: 25,
       dead_links: 8,
@@ -177,26 +177,31 @@ describe('computeRecommendations', () => {
     });
     const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true });
     const ids = recs.map((r) => r.id);
-    expect(ids).toContain('sync.repo');
+    expect(ids).not.toContain('sync.repo');
     expect(ids).toContain('backlinks.fix');
-    expect(ids).toContain('extract.all');
+    expect(ids).toContain('extract.stale');
+    const extract = recs.find((r) => r.id === 'extract.stale')!;
+    expect(extract.job).toBe('extract');
+    expect(extract.params).toEqual({ stale: true });
+    expect(extract.depends_on).toEqual([]);
+    expect(extract.rationale).toContain('link/timeline extraction');
   });
 
-  test('extract.all depends on sync.repo (D14: stable ids)', () => {
+  test('DB extraction does not require a repository path', () => {
     const health = makeHealth({ stale_pages: 10 });
-    const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true });
-    const extract = recs.find((r) => r.id === 'extract.all');
-    expect(extract?.depends_on).toContain('sync.repo');
+    const recs = computeRecommendations(health, { embeddingProviderConfigured: true, sourceId: 'email' });
+    const extract = recs.find((r) => r.id === 'extract.stale');
+    expect(extract?.params).toEqual({ stale: true, sourceId: 'email' });
   });
 
-  test('embed.stale depends on sync.repo when sync also needed', () => {
+  test('embed.stale is independent from extraction staleness', () => {
     const health = makeHealth({
       stale_pages: 10,
       missing_embeddings: 100,
     });
     const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true });
     const embed = recs.find((r) => r.id === 'embed.stale');
-    expect(embed?.depends_on).toContain('sync.repo');
+    expect(embed?.depends_on).toEqual([]);
   });
 
   test('embed.stale has no sync dependency when nothing stale', () => {
