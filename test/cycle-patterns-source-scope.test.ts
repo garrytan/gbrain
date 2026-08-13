@@ -62,11 +62,11 @@ beforeAll(async () => {
     title: 'A pattern',
     compiled_truth: 'a pattern',
   } as any, { sourceId: SOURCE_ID });
-});
+}, 60_000);
 
 afterAll(async () => {
-  await engine.disconnect();
-  rmSync(brainDir, { recursive: true, force: true });
+  if (engine) await engine.disconnect();
+  if (brainDir) rmSync(brainDir, { recursive: true, force: true });
 });
 
 describe('#1586: the patterns phase scopes its writes to the cycle source', () => {
@@ -109,6 +109,43 @@ describe('#1586: the patterns phase scopes its writes to the cycle source', () =
       expect(existsSync(join(foreignDir, `${SLUG}.md`))).toBe(false);
     } finally {
       rmSync(foreignDir, { recursive: true, force: true });
+    }
+  });
+
+  test('abort during reverse-write stops the current and all remaining file writes', async () => {
+    const abortDir = mkdtempSync(join(tmpdir(), 'gbrain-patterns-abort-'));
+    const controller = new AbortController();
+    const refs = [
+      { slug: 'wiki/personal/patterns/abort-first', source_id: SOURCE_ID },
+      { slug: 'wiki/personal/patterns/abort-second', source_id: SOURCE_ID },
+    ];
+    const fakeEngine = {
+      getPage: async (slug: string) => ({
+        slug,
+        type: 'note',
+        title: slug,
+        compiled_truth: slug,
+        frontmatter: {},
+        timeline: '',
+      }),
+      getTags: async () => {
+        controller.abort(new Error('patterns-reverse-write-cancelled'));
+        return [];
+      },
+    };
+
+    try {
+      await expect(reverseWriteRefs(
+        fakeEngine as any,
+        abortDir,
+        refs,
+        SOURCE_ID,
+        controller.signal,
+      )).rejects.toThrow('patterns-reverse-write-cancelled');
+      expect(existsSync(join(abortDir, `${refs[0]!.slug}.md`))).toBe(false);
+      expect(existsSync(join(abortDir, `${refs[1]!.slug}.md`))).toBe(false);
+    } finally {
+      rmSync(abortDir, { recursive: true, force: true });
     }
   });
 });
