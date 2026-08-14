@@ -115,6 +115,26 @@ repos are acknowledged but never materialized.
   line references. `#<n>` mentions and Closes/Fixes/Resolves references
   become wikilinks, so graph traversal works across the whole history.
 
+## Retrieval
+
+Mirrored items are fully searchable through the normal `gbrain query` /
+`gbrain search` paths (hybrid keyword + vector over title, description,
+comments, reviews and checks). Two behaviors worth knowing:
+
+- **Empty-body items** (an issue or PR with no description) render a
+  `## Context` block with labels, milestone, assignees and repo, so they
+  stay recallable by those facets. Without a body, the chunk would hold
+  only the title, and compound titles tokenize poorly.
+- **Near-identical pages** (the same PR merged across several mirrored
+  repos) are de-duplicated at search time by upstream gbrain (Jaccard
+  similarity, `src/core/search/dedup.ts`). Content recall is unaffected:
+  the surviving copy carries the same text, and the hidden copy is still
+  reachable via a repo-scoped query or direct slug lookup. If you need
+  the per-repo copy to win, include the repo name in the query.
+
+A feature-scoped retrieval bench (brain-bench style, hit@K against a live
+mirror) ships with the QA notes; see `QA-REPORT.md` for the summary.
+
 ## Rate limits
 
 The client honors `x-ratelimit` headers, backs off on 403/429 and pauses
