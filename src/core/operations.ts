@@ -980,6 +980,75 @@ export function federatedSearchScope(
 }
 
 /**
+ * Preflight a page endpoint for a same-source mutation.
+ *
+ * Mutation operations intentionally write only to `ctx.sourceId`, while page
+ * reads may span the caller's federated visibility scope. When the requested
+ * slug exists only in another readable source, report that source boundary
+ * explicitly instead of the misleading "not found" emitted by the engine's
+ * exact-source existence check. Hidden sources remain indistinguishable from
+ * absence because the fallback lookup uses the same scope as `get_page`.
+ */
+export async function requireWritablePage(
+  ctx: OperationContext,
+  slug: string,
+  operation: string,
+  endpoint: 'from' | 'to' | 'page',
+): Promise<void> {
+  const writeSource = ctx.sourceId || 'default';
+  const endpointLabel = endpoint === 'page' ? '' : ` ${endpoint}`;
+  // Engine graph rows may still reference soft-deleted pages. Preserve that
+  // existing mutation contract for the exact write source; the federated
+  // diagnostic lookup below intentionally remains active-page-only so a
+  // deleted foreign page is never disclosed.
+  const writable = await ctx.engine.getPage(slug, {
+    sourceId: writeSource,
+    includeDeleted: true,
+  });
+  if (writable) return;
+
+  const visibleScope = federatedSearchScope(ctx);
+  const spansAnotherSource =
+    (visibleScope.sourceIds?.some((sourceId) => sourceId !== writeSource) ?? false) ||
+    (visibleScope.sourceId !== undefined && visibleScope.sourceId !== writeSource);
+  if (spansAnotherSource) {
+    const visible = await ctx.engine.getPage(slug, visibleScope);
+    if (visible && visible.source_id !== writeSource) {
+      throw new OperationError(
+        'permission_denied',
+        `${operation}${endpointLabel} page "${slug}" is readable from source "${visible.source_id}" but this client writes to source "${writeSource}".`,
+        'Cross-source MCP writes are not supported. Put both endpoints in the same source or use a reviewed projector.',
+      );
+    }
+  }
+
+  throw new OperationError(
+    'page_not_found',
+    `${operation}${endpointLabel} page "${slug}" was not found in writable source "${writeSource}".`,
+  );
+}
+
+async function reclassifyMutationTimePageMiss(
+  ctx: OperationContext,
+  slug: string,
+  operation: string,
+  endpoint: 'from' | 'to' | 'page',
+): Promise<never> {
+  // Re-read after the engine's authoritative existence check. This closes the
+  // preflight-to-mutation deletion race while retaining visible-source
+  // diagnostics. If the page was restored between those reads, report the
+  // mutation-time miss deterministically instead of falling back to
+  // internal_error.
+  await requireWritablePage(ctx, slug, operation, endpoint);
+  const writeSource = ctx.sourceId || 'default';
+  const endpointLabel = endpoint === 'page' ? '' : ` ${endpoint}`;
+  throw new OperationError(
+    'page_not_found',
+    `${operation}${endpointLabel} page "${slug}" was unavailable in writable source "${writeSource}" during the mutation.`,
+  );
+}
+
+/**
  * Code-intel adapter for `resolveRequestedScope`. Graph traversal
  * (code_callers/code_callees/code_blast/code_flow) is single-source by design —
  * the engine APIs and the traversal cache key take ONE `sourceId` string, not a
@@ -2687,12 +2756,35 @@ const add_link: Operation = {
     const linkOpts = ctx.sourceId
       ? { fromSourceId: ctx.sourceId, toSourceId: ctx.sourceId, originSourceId: ctx.sourceId }
       : undefined;
-    await ctx.engine.addLink( // gbrain-allow-direct-insert: add_link MCP op is the explicit canonical surface for manual link creation; auto-link reconciliation runs separately via auto_link post-hook
-      p.from as string, p.to as string,
-      (p.context as string) || '', (p.link_type as string) || '',
-      linkSource, undefined, undefined,
-      linkOpts,
-    );
+    await requireWritablePage(ctx, p.from as string, 'add_link', 'from');
+    await requireWritablePage(ctx, p.to as string, 'add_link', 'to');
+    try {
+      await ctx.engine.addLink( // gbrain-allow-direct-insert: add_link MCP op is the explicit canonical surface for manual link creation; auto-link reconciliation runs separately via auto_link post-hook
+        p.from as string, p.to as string,
+        (p.context as string) || '', (p.link_type as string) || '',
+        linkSource, undefined, undefined,
+        linkOpts,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (message.startsWith('addLink failed: from page ')) {
+        return reclassifyMutationTimePageMiss(
+          ctx,
+          p.from as string,
+          'add_link',
+          'from',
+        );
+      }
+      if (message.startsWith('addLink failed: to page ')) {
+        return reclassifyMutationTimePageMiss(
+          ctx,
+          p.to as string,
+          'add_link',
+          'to',
+        );
+      }
+      throw error;
+    }
     return { status: 'ok' };
   },
   cliHints: { name: 'link', aliases: ['link-add'], positional: ['from', 'to'] },
@@ -2858,12 +2950,26 @@ const add_timeline_entry: Operation = {
     }
     // v0.31.8 (D7): thread ctx.sourceId.
     const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
-    await ctx.engine.addTimelineEntry(p.slug as string, { // gbrain-allow-direct-insert: add_timeline_entry MCP op is the explicit canonical surface for manual timeline entries
-      date,
-      source: (p.source as string) || '',
-      summary: p.summary as string,
-      detail: (p.detail as string) || '',
-    }, sourceOpts);
+    await requireWritablePage(ctx, p.slug as string, 'add_timeline_entry', 'page');
+    try {
+      await ctx.engine.addTimelineEntry(p.slug as string, { // gbrain-allow-direct-insert: add_timeline_entry MCP op is the explicit canonical surface for manual timeline entries
+        date,
+        source: (p.source as string) || '',
+        summary: p.summary as string,
+        detail: (p.detail as string) || '',
+      }, sourceOpts);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (message.startsWith('addTimelineEntry failed: page ')) {
+        return reclassifyMutationTimePageMiss(
+          ctx,
+          p.slug as string,
+          'add_timeline_entry',
+          'page',
+        );
+      }
+      throw error;
+    }
     return { status: 'ok' };
   },
   cliHints: { name: 'timeline-add', positional: ['slug', 'date', 'summary'] },

@@ -218,21 +218,37 @@ describe('addLink rewrites the cross-product into a source-qualified JOIN', () =
     expect(rows[0].to_src).toBe('default');
   });
 
-  test('addLink fails fast when the source-qualified endpoint doesn\'t exist', async () => {
-    // Pre-fix: cross-product would silently fall back to the wrong source
-    // pair and succeed. Post-fix: missing-source-row → no JOIN match → no row
-    // inserted → INTERSECT pre-check throws.
-    let err: Error | null = null;
+  test('addLink identifies the missing source-qualified endpoint', async () => {
+    // Missing endpoints must be reported independently so operation dispatch can
+    // classify mutation-time races without parsing the old ambiguous "A or B"
+    // message.
+    let fromErr: Error | null = null;
     try {
       await engine.addLink(
-        FROM_SLUG, TO_SLUG, 'phantom edge', 'documents', 'markdown', undefined, undefined,
-        { fromSourceId: 'nonexistent-src', toSourceId: 'nonexistent-src' },
+        FROM_SLUG, TO_SLUG, 'phantom from edge', 'documents', 'markdown', undefined, undefined,
+        { fromSourceId: 'nonexistent-src', toSourceId: 'default' },
       );
     } catch (e) {
-      err = e as Error;
+      fromErr = e as Error;
     }
-    expect(err).not.toBeNull();
-    expect(err!.message).toMatch(/not found/);
+    expect(fromErr).not.toBeNull();
+    expect(fromErr!.message).toBe(
+      `addLink failed: from page "${FROM_SLUG}" (source=nonexistent-src) not found`,
+    );
+
+    let toErr: Error | null = null;
+    try {
+      await engine.addLink(
+        FROM_SLUG, TO_SLUG, 'phantom to edge', 'documents', 'markdown', undefined, undefined,
+        { fromSourceId: 'default', toSourceId: 'nonexistent-src' },
+      );
+    } catch (e) {
+      toErr = e as Error;
+    }
+    expect(toErr).not.toBeNull();
+    expect(toErr!.message).toBe(
+      `addLink failed: to page "${TO_SLUG}" (source=nonexistent-src) not found`,
+    );
   });
 });
 
@@ -341,6 +357,33 @@ describe('addTimelineEntry source-scoping (Data R1 HIGH 2 fix)', () => {
     }
     expect(err).not.toBeNull();
     expect(err!.message).toMatch(/not found/);
+  });
+
+  test('addTimelineEntry keeps duplicate entries as successful no-ops', async () => {
+    const entry = {
+      date: '2026-05-07',
+      source: 'test',
+      summary: 'testsrc-only entry',
+      detail: 'Should land only under testsrc.',
+    };
+    await engine.addTimelineEntry(TL_SLUG, entry, { sourceId: 'testsrc' });
+    const rows = await engine.executeRaw<{ count: number }>(
+      `SELECT COUNT(*)::int AS count
+         FROM timeline_entries te
+         JOIN pages p ON p.id = te.page_id
+        WHERE p.slug = $1 AND p.source_id = $2 AND te.summary = $3`,
+      [TL_SLUG, 'testsrc', entry.summary],
+    );
+    expect(rows[0].count).toBe(1);
+  });
+
+  test('addTimelineEntry preserves explicit missing-page skip behavior', async () => {
+    await expect(engine.addTimelineEntry('topics/intentionally-missing', {
+      date: '2026-05-08',
+      source: 'test',
+      summary: 'explicit skip',
+      detail: '',
+    }, { sourceId: 'nonexistent-src', skipExistenceCheck: true })).resolves.toBeUndefined();
   });
 
   test('addTimelineEntry without opts defaults to source=default (back-compat)', async () => {
