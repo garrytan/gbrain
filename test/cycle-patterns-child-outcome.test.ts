@@ -12,7 +12,7 @@
  * the real Anthropic call fails immediately, exhausting max_attempts and
  * landing the job in 'dead' (not 'timeout' — nothing ever times out, the
  * failure is immediate). The #2782 status-reflects-outcome contract this
- * test exists to pin is unchanged: any non-'complete' outcome with zero
+ * test exists to pin is unchanged: any non-'completed' outcome with zero
  * writes must still surface as status 'fail', just under the outcome that
  * actually occurs now that the job is drained instead of left stuck in
  * 'waiting' for the full wait window.
