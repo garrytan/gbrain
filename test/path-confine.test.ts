@@ -122,6 +122,22 @@ describe('isPathContained', () => {
     mkdirSync(sub);
     expect(isPathContained(sub, dir)).toBe(true);
   });
+  test('containment uses the OS separator, not a hardcoded "/"', () => {
+    // The boundary check appended '/' unconditionally. realpathSync returns
+    // backslash paths on Windows, so no real child ever matched the
+    // 'C:\\...\\parent/' prefix and every containment check returned false —
+    // which made the skills-dir auto-detector miss a skills/ directory that
+    // was present. Exercised through the public API with OS-native paths.
+    const dir = scratch();
+    const nested = join(dir, 'a', 'b');
+    mkdirSync(nested, { recursive: true });
+    expect(isPathContained(nested, dir)).toBe(true);
+    expect(isPathContained(nested, join(dir, 'a'))).toBe(true);
+    // The separator must remain a real boundary, not a bare string prefix.
+    const sibling = join(dir, 'a-sibling');
+    mkdirSync(sibling);
+    expect(isPathContained(sibling, join(dir, 'a'))).toBe(false);
+  });
   test('symlink escaping the parent is NOT contained', () => {
     const dir = scratch();
     const outside = scratch('pc-outside-');

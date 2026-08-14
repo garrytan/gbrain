@@ -20,7 +20,7 @@
  */
 
 import { realpathSync, existsSync, type Stats } from 'fs';
-import { resolve as resolvePath, relative, isAbsolute, dirname, basename, join } from 'path';
+import { resolve as resolvePath, relative, isAbsolute, dirname, basename, join, sep } from 'path';
 
 /**
  * Symlink-safe path confinement: realpath BOTH sides, then a separator-aware
@@ -41,8 +41,10 @@ export function isPathContained(child: string, parent: string): boolean {
   } catch {
     return false; // missing / unresolvable path → not contained
   }
-  // Append a separator so /foo doesn't match /foobar.
-  const parentWithSep = resolvedParent.endsWith('/') ? resolvedParent : resolvedParent + '/';
+  // Append the OS separator so /foo doesn't match /foobar. `sep`, not a
+  // hardcoded '/': realpathSync returns backslash paths on Windows, so a '/'
+  // suffix would make the prefix test fail for every real subdirectory.
+  const parentWithSep = resolvedParent.endsWith(sep) ? resolvedParent : resolvedParent + sep;
   return resolvedChild === resolvedParent || resolvedChild.startsWith(parentWithSep);
 }
 
