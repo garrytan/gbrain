@@ -1165,10 +1165,14 @@ export async function runGitHubSync(
   if (opts.githubItem) {
     // Scope guard: only refresh items in the resolved scope. Webhooks for
     // out-of-scope repos are acknowledged upstream but never materialized.
-    if (!repos.includes(opts.githubItem.repo)) {
+    // Repo casing is normalized so a webhook payload that differs in case
+    // from the stored repo still matches (GitHub repo names are
+    // case-insensitive; the managed dir layout is lowercase).
+    const item = { ...opts.githubItem, repo: opts.githubItem.repo.toLowerCase() };
+    if (!repos.some((r) => r.toLowerCase() === item.repo)) {
       return syncResult({ ...summary, status: 'up_to_date' }, opts);
     }
-    await refreshSingleItem(deps, opts.githubItem, activePack, summary);
+    await refreshSingleItem(deps, item, activePack, summary);
     await touchSourceRow(deps, new Date().toISOString());
     return syncResult(summary, opts);
   }
@@ -1351,8 +1355,9 @@ async function refreshSingleItem(
   activePack: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> } | undefined,
   summary: GitHubSyncSummary,
 ): Promise<void> {
-  const filePath = itemPagePath(deps.cfg.dir, item.repo, item.number);
-  const slug = `gh/${item.repo}/${item.number}`.toLowerCase();
+  const repo = item.repo.toLowerCase();
+  const filePath = itemPagePath(deps.cfg.dir, repo, item.number);
+  const slug = `gh/${repo}/${item.number}`;
   if (item.deleted) {
     const rows = await deps.engine.executeRaw<{ slug: string }>(
       `SELECT slug FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL`,
@@ -1365,7 +1370,7 @@ async function refreshSingleItem(
     rmSync(filePath, { force: true });
     return;
   }
-  const data = await fetchItemData(item.repo, item.number, item.kind, deps.client, { signal: deps.opts.signal });
+  const data = await fetchItemData(repo, item.number, item.kind, deps.client, { signal: deps.opts.signal });
   mkdirSync(dirname(filePath), { recursive: true });
   const tmpPath = `${filePath}.tmp`;
   writeFileSync(tmpPath, renderItemPage(data), 'utf-8');
