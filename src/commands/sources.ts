@@ -1597,6 +1597,8 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     // v0.40.3.0 contextual retrieval (from master)
     case 'set-cr-mode': return runSetCrMode(engine, rest);
     case 'audit':      return runAudit(engine, rest);
+    // v0.46 github-source demo (offline, privacy-clean fixtures)
+    case 'demo':       { const { runSourcesDemo } = await import('./sources-demo.ts'); return runSourcesDemo(engine, rest); }
     // v0.42.44 brain-repo git durability
     case 'harden':     { const { runHarden } = await import('./sources-harden.ts'); return runHarden(engine, rest); }
     case 'pull':       { const { runPull } = await import('./sources-harden.ts'); return runPull(engine, rest); }
@@ -1648,6 +1650,11 @@ Subcommands:
                                     brain_default/seed_default). Run this
                                     before destructive ops to verify you're
                                     targeting the brain you think you are.
+  demo github [--dir <path>] [--limit <n>]
+                                    Offline demo of the github source kind:
+                                    render privacy-clean fixture pages via the
+                                    real render functions. No token/network/
+                                    brain needed. See docs/guides/github-source.md.
   federate <id>                     Make source appear in cross-source default search.
   unfederate <id>                   Isolate source from default search.
   set-cr-mode <id> <none|title|per_chunk_synopsis>
