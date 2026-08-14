@@ -37,6 +37,7 @@
     "build:admin-embedded": "bun run scripts/build-admin-embedded.ts",
     "build:schema": "bash scripts/build-schema.sh",
     "build:llms": "bun run scripts/build-llms.ts",
+    "build:flag-registry": "bun run scripts/generate-flag-registry.ts",
     "build:pglite-snapshot": "bun run scripts/build-pglite-snapshot.ts",
     "test": "bash scripts/run-unit-parallel.sh",
     "eval:autocut": "bun test test/search/autocut-eval.test.ts",
@@ -49,13 +50,14 @@
     "check:admin-scope-drift": "bash scripts/check-admin-scope-drift.sh",
     "check:cli-exec": "bash scripts/check-cli-executable.sh",
     "check:engine-dynamic-import": "bash scripts/check-engine-dynamic-import.sh",
-    "check:all": "bash scripts/check-privacy.sh && bash scripts/check-proposal-pii.sh && bash scripts/check-test-real-names.sh && bash scripts/check-jsonb-pattern.sh && bash scripts/check-source-id-projection.sh && bash scripts/check-source-config-leak.sh && bash scripts/check-progress-to-stdout.sh && bash scripts/check-no-tracked-symlinks.sh && bash scripts/check-no-legacy-getconnection.sh && bash scripts/check-test-isolation.sh && bash scripts/check-trailing-newline.sh && bash scripts/check-wasm-embedded.sh && bash scripts/check-exports-count.sh && bash scripts/check-admin-build.sh && bash scripts/check-admin-scope-drift.sh && bash scripts/check-cli-executable.sh && bash scripts/check-skill-brain-first.sh && bash scripts/check-operations-filter-bypass.sh && bash scripts/check-gateway-routed-no-direct-anthropic.sh && bash scripts/check-worker-pool-atomicity.sh && bash scripts/check-key-files-current-state.sh && bash scripts/check-no-double-retry.sh && bash scripts/check-batch-audit-site.sh && bash scripts/check-engine-dynamic-import.sh",
+    "check:all": "bash scripts/check-privacy.sh && bash scripts/check-proposal-pii.sh && bash scripts/check-test-real-names.sh && bash scripts/check-jsonb-pattern.sh && bash scripts/check-source-id-projection.sh && bash scripts/check-source-config-leak.sh && bash scripts/check-progress-to-stdout.sh && bash scripts/check-no-tracked-symlinks.sh && bash scripts/check-no-legacy-getconnection.sh && bash scripts/check-test-isolation.sh && bash scripts/check-trailing-newline.sh && bash scripts/check-wasm-embedded.sh && bash scripts/check-pglite-embedded.sh && bash scripts/check-exports-count.sh && bash scripts/check-admin-build.sh && bash scripts/check-admin-scope-drift.sh && bash scripts/check-cli-executable.sh && bash scripts/check-skill-brain-first.sh && bash scripts/check-operations-filter-bypass.sh && bash scripts/check-gateway-routed-no-direct-anthropic.sh && bash scripts/check-worker-pool-atomicity.sh && bash scripts/check-key-files-current-state.sh && bash scripts/check-no-double-retry.sh && bash scripts/check-batch-audit-site.sh && bash scripts/check-engine-dynamic-import.sh",
     "check:gateway-routed": "bash scripts/check-gateway-routed-no-direct-anthropic.sh",
     "check:worker-pool-atomicity": "bash scripts/check-worker-pool-atomicity.sh",
     "check:doc-history": "bash scripts/check-key-files-current-state.sh",
     "check:resolver": "bun src/cli.ts check-resolvable --strict --skills-dir skills/",
     "check:skill-brain-first": "bash scripts/check-skill-brain-first.sh",
     "check:wasm": "bash scripts/check-wasm-embedded.sh",
+    "check:pglite-embedded": "bash scripts/check-pglite-embedded.sh",
     "check:newlines": "bash scripts/check-trailing-newline.sh",
     "test:e2e": "bash scripts/run-e2e.sh",
     "test:slow": "bash scripts/run-slow-tests.sh",
@@ -71,10 +73,13 @@
     "check:no-double-retry": "bash scripts/check-no-double-retry.sh",
     "check:batch-audit-site": "bash scripts/check-batch-audit-site.sh",
     "check:worker-lock-renewal-shape": "bash scripts/check-worker-lock-renewal-shape.sh",
+    "check:bootstrap-tag": "bash scripts/check-bootstrap-tag.sh",
+    "check:bootstrap-templates": "bash scripts/check-bootstrap-templates.sh",
     "check:source-id-projection": "bash scripts/check-source-id-projection.sh",
     "check:privacy": "bash scripts/check-privacy.sh",
     "check:proposal-pii": "bash scripts/check-proposal-pii.sh",
     "check:eval-glossary": "bash scripts/check-eval-glossary-fresh.sh",
+    "check:tool-catalog": "bash scripts/check-tool-catalog-fresh.sh",
     "check:skills-manifest": "bash scripts/check-skills-manifest-fresh.sh",
     "check:test-names": "bash scripts/check-test-real-names.sh",
     "check:progress": "bash scripts/check-progress-to-stdout.sh",
@@ -90,7 +95,9 @@
     "check:source-scope-onboard": "bash scripts/check-source-scope-onboard.sh",
     "postinstall": "bun run scripts/postinstall.ts",
     "prepublish:clawhub": "bun run build:all",
-    "publish:clawhub": "clawhub package publish . --family bundle-plugin"
+    "publish:clawhub": "clawhub package publish . --family bundle-plugin",
+    "check:skill-refs": "bun scripts/check-skill-refs.mjs",
+    "gate:skills": "bash scripts/skills-commit-gate.sh"
   },
   "openclaw": {
     "compat": {
@@ -122,7 +129,7 @@
     "express-rate-limit": "^7.5.0",
     "gray-matter": "^4.0.3",
     "heic-decode": "^2.1.0",
-    "js-yaml": "^3.15.0",
+    "js-yaml": "^3.15.1",
     "marked": "^18.0.2",
     "openai": "^4.0.0",
     "pgvector": "^0.2.0",
@@ -148,17 +155,17 @@
     "bun": ">=1.3.10"
   },
   "license": "MIT",
-  "version": "0.42.72.1",
+  "version": "0.45.14.0",
   "overrides": {
     "@hono/node-server": "^2.0.5",
-    "fast-uri": "^3.1.4",
+    "fast-uri": "^3.1.5",
     "body-parser": "^2.3.0",
     "fast-xml-builder": "^1.1.7",
     "fast-xml-parser": "^5.7.0",
     "form-data": "^4.0.6",
-    "hono": "^4.12.25",
-    "ip-address": "^10.1.1",
+    "hono": "^4.12.34",
+    "ip-address": "^10.3.1",
     "qs": "^6.15.2",
-    "js-yaml": "^3.15.0"
+    "js-yaml": "^3.15.1"
   }
 }

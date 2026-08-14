@@ -49,6 +49,8 @@ ALLOWED=(
   "src/commands/enrich.ts"                       # local CLI tool; calls put_page handler with remote=false, not network-exposed
   "src/commands/book-mirror.ts"                 # local CLI tool; not network-exposed
   "src/commands/tools-json.ts"                  # gbrain --tools-json introspection; full op list IS the purpose
+  "src/mcp/publish-gates.ts"                    # reads op.publishGateKey/name only to compute gate-DISABLED sets; never lists/exposes ops
+  "src/mcp/tool-catalog.ts"                     # docs/TOOL_CATALOG.md renderer; filters !op.localOnly at the boundary; never a transport surface
   "src/commands/serve-http.ts"                  # MUST APPLY .filter(op => !op.localOnly) — verified by grep below
 )
 

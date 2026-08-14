@@ -28,7 +28,7 @@
  */
 
 import {
-  existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, rmSync, statSync, appendFileSync,
+  existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, rmSync, statSync, renameSync,
 } from 'fs';
 import { join, dirname, relative, isAbsolute } from 'path';
 import { execFileSync, execSync } from 'child_process';
@@ -38,8 +38,11 @@ import {
 } from './git-remote.ts';
 import { findResolverFile, RESOLVER_FILENAMES } from './resolver-filenames.ts';
 import { redactSecretsInText } from './minions/handlers/shell-redact.ts';
-// Static import → bundled into the --compile binary so the taxonomy never drifts
-// and needs no runtime skills/ directory.
+import { ensureGbrainHome, resolveGbrainHome } from './gbrain-home.ts';
+import { binaryOnPath } from './execution-env.ts';
+import { loadFilingRules, type FilingRulesDoc } from './filing-audit.ts';
+// Bundled into the --compile binary as the fallback taxonomy for repos that
+// don't ship their own — see resolveFilingRules().
 import filingRulesDoc from '../../skills/_brain-filing-rules.json';
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -92,8 +95,12 @@ const AGENTS_END = '<!-- END gbrain-brain-durability -->';
 const HELPER_REL = 'scripts/brain-commit-push.sh';
 const CRED_MANAGED_KEY = 'gbrain.durability.managedcredential';
 
+/** CX2-8: resolves through the single gbrain-home choke point (config.ts
+ *  semantics — GBRAIN_HOME is a PARENT dir, `.gbrain` is appended). The
+ *  bash templates below use the matching `${GBRAIN_HOME:-$HOME}/.gbrain`
+ *  spelling so the shell and TS sides agree on where brain-push.log lives. */
 function gbrainHome(): string {
-  return process.env.GBRAIN_HOME || join(process.env.HOME || '', '.gbrain');
+  return resolveGbrainHome();
 }
 
 /** Resolve the gbrain CLI path for the cron wrapper (inlined to avoid a
@@ -124,14 +131,39 @@ function pushLogPath(): string {
   return join(gbrainHome(), 'brain-push.log');
 }
 
+/** Rotate the push log at 1MB (keep one predecessor as `.1`). */
+const PUSH_LOG_MAX_BYTES = 1024 * 1024;
+
+/**
+ * S3#10: keep `brain-push.log` 0600 and bounded. The bash hook/helper append
+ * to it forever; without maintenance it grows unbounded and (pre-fix) was
+ * created with the umask default. Called by every harden run (never in
+ * dry-run — a preview must not mutate, #3736). Best-effort: log maintenance
+ * can never fail a harden. Exported for tests.
+ */
+export function maintainPushLog(): void {
+  try {
+    const p = pushLogPath();
+    if (!existsSync(p)) return;
+    try { chmodSync(p, 0o600); } catch { /* */ }
+    if (statSync(p).size > PUSH_LOG_MAX_BYTES) {
+      renameSync(p, `${p}.1`); // overwrite any previous rotation
+      writeFileSync(p, '', { mode: 0o600 });
+    }
+  } catch { /* best-effort */ }
+}
+
 // ── Shared bash push-retry template (DRY at the TS source — D7) ──────────────
 // Rendered into BOTH the (committed) helper and the (local, untracked) hook so
 // there is one source of truth without the hook executing repo-controlled code.
 const PUSH_RETRY = `# --- gbrain durability push-retry (generated; one source of truth) ---
 brain_push() {
   _branch="$1"
-  _log="\${GBRAIN_HOME:-$HOME/.gbrain}/brain-push.log"
+  # CX2-8: GBRAIN_HOME is a PARENT dir (matches config.ts semantics — .gbrain appended)
+  _log="\${GBRAIN_HOME:-$HOME}/.gbrain/brain-push.log"
   mkdir -p "$(dirname "$_log")" 2>/dev/null || true
+  # S3#10: the push log may capture remote errors — never group/other readable.
+  [ -e "$_log" ] || { : >"$_log" 2>/dev/null && chmod 600 "$_log" 2>/dev/null; } || true
   _gd="$(git rev-parse --git-dir 2>/dev/null || echo .git)"
   # Serialize concurrent pushes (commit bursts) so they coalesce instead of a
   # rebase-retry herd. No-op if flock is unavailable.
@@ -161,7 +193,7 @@ set -euo pipefail
 
 _branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
 if [ "$_branch" = "HEAD" ]; then
-  echo "$(date -u +%FT%TZ) [push] detached HEAD; skip" >> "\${GBRAIN_HOME:-$HOME/.gbrain}/brain-push.log" 2>/dev/null || true
+  echo "$(date -u +%FT%TZ) [push] detached HEAD; skip" >> "\${GBRAIN_HOME:-$HOME}/.gbrain/brain-push.log" 2>/dev/null || true
   exit 0
 fi
 
@@ -207,17 +239,33 @@ if git diff --cached --quiet; then echo "nothing to commit"; exit 0; fi
 git commit -m "$_msg"
 
 if brain_push "$_branch"; then exit 0; fi
-echo "PUSH FAILED — commit is local-only, NEEDS ATTENTION (see ${'$'}{GBRAIN_HOME:-$HOME/.gbrain}/brain-push.log)" >&2
+echo "PUSH FAILED — commit is local-only, NEEDS ATTENTION (see ${'$'}{GBRAIN_HOME:-$HOME}/.gbrain/brain-push.log)" >&2
 exit 4
 `;
 }
 
 // ── Managed AGENTS/RESOLVER block (taxonomy from filing rules; no drift) ─────
 
-function renderTaxonomyLines(): string {
+/**
+ * Resolve the filing-rules taxonomy for `repoPath`: prefer the repo's own
+ * `skills/_brain-filing-rules.json`, then `_brain-filing-rules.json` at the
+ * repo root, else the bundled default. Fails open — a missing or malformed
+ * repo file must never break `sources harden`.
+ */
+function resolveFilingRules(repoPath: string): FilingRulesDoc {
+  for (const dir of [join(repoPath, 'skills'), repoPath]) {
+    try {
+      const rules = loadFilingRules(dir);
+      if (rules) return rules;
+    } catch { /* malformed — fall through to the bundled default */ }
+  }
+  return filingRulesDoc as FilingRulesDoc;
+}
+
+function renderTaxonomyLines(rules: FilingRulesDoc): string {
   const seen = new Set<string>();
   const lines: string[] = [];
-  for (const r of (filingRulesDoc as any).rules ?? []) {
+  for (const r of rules.rules ?? []) {
     const dir = String(r.directory || '').trim();
     if (!dir || seen.has(dir)) continue;
     seen.add(dir);
@@ -226,7 +274,8 @@ function renderTaxonomyLines(): string {
   return lines.join('\n');
 }
 
-function renderManagedBlock(): string {
+function renderManagedBlock(repoPath: string): string {
+  const rules = resolveFilingRules(repoPath);
   return `${AGENTS_BEGIN}
 <!-- gbrain durability rules. This block is regenerated by \`gbrain sources harden\`.
      Do not index as user knowledge; do not edit between the markers. -->
@@ -234,7 +283,7 @@ function renderManagedBlock(): string {
 
 1. **Deterministic filing — never use /tmp as storage.** Every persistent output
    goes to its taxonomy path (canonical, from \`skills/_brain-filing-rules.json\`):
-${renderTaxonomyLines()}
+${renderTaxonomyLines(rules)}
    Writing to /tmp, scratch dirs, or outside the repo is forbidden for anything
    meant to persist.
 
@@ -254,7 +303,7 @@ ${AGENTS_END}`;
 function patchResolverFile(repoPath: string, dryRun: boolean): { status: StepStatus; detail: string } {
   const existing = findResolverFile(repoPath);
   const target = existing ?? join(repoPath, RESOLVER_FILENAMES[1]); // default AGENTS.md
-  const block = renderManagedBlock();
+  const block = renderManagedBlock(repoPath);
   const name = relative(repoPath, target) || target;
 
   let current = '';
@@ -282,6 +331,19 @@ function patchResolverFile(repoPath: string, dryRun: boolean): { status: StepSta
 // ── Local untracked post-commit hook (D9) ───────────────────────────────────
 
 /** Resolve the active hooks dir (honors a pre-existing core.hooksPath). */
+/** Worktree-safe path inside the git dir [D6]: `.git` is a FILE in worktrees
+ * and submodules, so any path under it must come from git itself (rev-parse
+ * with the git-path query), never string-joined onto `<repo>/.git/`. */
+function gitDirPath(repoPath: string, rel: string): string {
+  try {
+    const p = execFileSync('git', ['-C', repoPath, 'rev-parse', '--git-path', rel], {
+      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: { ...process.env, ...GIT_ENV },
+    }).toString().trim();
+    if (p) return isAbsolute(p) ? p : join(repoPath, p);
+  } catch { /* fall through to the classic layout */ }
+  return join(repoPath, '.git', rel);
+}
+
 function resolveHooksDir(repoPath: string): { dir: string; tracked: boolean } {
   let hooksPath = '';
   try {
@@ -295,12 +357,12 @@ function resolveHooksDir(repoPath: string): { dir: string; tracked: boolean } {
     const tracked = !dir.includes(`${join('.git', '')}`) && !dir.endsWith('.git/hooks');
     return { dir, tracked };
   }
-  return { dir: join(repoPath, '.git', 'hooks'), tracked: false };
+  return { dir: gitDirPath(repoPath, 'hooks'), tracked: false };
 }
 
-/** Ensure a repo-relative path is in .git/info/exclude so our hook stays untracked. */
+/** Ensure a repo-relative path is in the git exclude file so our hook stays untracked. */
 function ensureExcluded(repoPath: string, relPath: string): void {
-  const exclude = join(repoPath, '.git', 'info', 'exclude');
+  const exclude = gitDirPath(repoPath, 'info/exclude');
   try {
     mkdirSync(dirname(exclude), { recursive: true });
     let body = existsSync(exclude) ? readFileSync(exclude, 'utf-8') : '';
@@ -388,14 +450,67 @@ export function commitWriteThroughFile(repoPath: string, absPath: string, slug: 
   }
 }
 
+// ── Push-state query (D14) ───────────────────────────────────────────────────
+
+export type PushLogStatus = 'ok' | 'needs_attention' | 'unknown';
+
+export interface PushLogOutcome {
+  status: PushLogStatus;
+  detail: string;
+  /** UTC timestamp parsed from the log line, when found. */
+  at?: string;
+}
+
+const PUSH_LOG_OK = /^(\S+) \[push\] (?:ok|ok-after-rebase) (\S+)\b/;
+const PUSH_LOG_LOCAL_ONLY = /^(\S+) \[push\] LOCAL-ONLY, NEEDS ATTENTION: (\S+) /;
+const PUSH_LOG_LOCK_TIMEOUT = /^(\S+) \[push\] lock-timeout (\S+)\b/;
+
+/**
+ * Best-effort read of the most recently logged push outcome for `branch`,
+ * from the shared hook log ($GBRAIN_HOME/brain-push.log). The push itself
+ * runs detached in the background (see `renderPostCommitHook`), so nothing
+ * synchronous ever learns whether a given commit's own push landed — this is
+ * the queryable substitute: "as of the last thing the hook logged for this
+ * branch, were pushes landing?"
+ *
+ * The log is host-wide and keyed only by branch name, not repo path, so two
+ * different hardened repos sharing a branch name (e.g. both on `main`) share
+ * this signal. That's an acceptable approximation for a liveness check, not
+ * a per-repo guarantee.
+ */
+export function getLastPushOutcome(branch: string): PushLogOutcome {
+  const log = pushLogPath();
+  if (!existsSync(log)) return { status: 'unknown', detail: 'no push attempts logged yet' };
+
+  let lines: string[];
+  try {
+    lines = readFileSync(log, 'utf-8').split('\n');
+  } catch (e) {
+    return { status: 'unknown', detail: `push log unreadable: ${(e as Error).message}` };
+  }
+
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!line) continue;
+    let m = line.match(PUSH_LOG_OK);
+    if (m && m[2] === branch) return { status: 'ok', detail: line.trim(), at: m[1] };
+    m = line.match(PUSH_LOG_LOCAL_ONLY);
+    if (m && m[2] === branch) return { status: 'needs_attention', detail: line.trim(), at: m[1] };
+    m = line.match(PUSH_LOG_LOCK_TIMEOUT);
+    if (m && m[2] === branch) return { status: 'needs_attention', detail: line.trim(), at: m[1] };
+  }
+  return { status: 'unknown', detail: `no push attempt logged yet for branch '${branch}'` };
+}
+
 // ── Committed helper ────────────────────────────────────────────────────────
 
 function installHelper(repoPath: string, dryRun: boolean): { status: StepStatus; detail: string } {
   const helperPath = join(repoPath, HELPER_REL);
   const script = renderCommitPushHelper();
   if (existsSync(helperPath) && readFileSync(helperPath, 'utf-8') === script) {
-    // Ensure exec bit even when content is current.
-    try { chmodSync(helperPath, 0o755); } catch { /* */ }
+    // Ensure exec bit even when content is current — but not in dry-run: a
+    // preview must not mutate permissions (#3736).
+    if (!dryRun) { try { chmodSync(helperPath, 0o755); } catch { /* */ } }
     return { status: 'ok', detail: `${HELPER_REL} already current` };
   }
   if (dryRun) return { status: 'fixed', detail: `would write ${HELPER_REL} (dry-run)` };
@@ -461,8 +576,7 @@ function wireRepoCredential(repoPath: string, pat: string, dryRun: boolean): { s
   }
   if (dryRun) return { status: 'fixed', detail: 'would wire repo-scoped credential (dry-run)' };
 
-  mkdirSync(dirname(store), { recursive: true, mode: 0o700 });
-  try { chmodSync(gbrainHome(), 0o700); } catch { /* */ }
+  ensureGbrainHome(); // S3#10/CX2-8: single choke point — creates + chmods 0700
   let body = existsSync(store) ? readFileSync(store, 'utf-8') : '';
   if (!body.split('\n').some(l => l === line)) {
     if (body.length && !body.endsWith('\n')) body += '\n';
@@ -495,6 +609,65 @@ function launchdPlistPath(sourceId: string): string {
   return join(process.env.HOME || '', 'Library', 'LaunchAgents', `${cronLabel(sourceId)}.plist`);
 }
 
+/** Default scheduled-pull interval — ONE definition (harden + doctor probe). */
+export const DEFAULT_PULL_INTERVAL_SEC = 1800;
+
+export interface DurabilityJobStatus {
+  kind: 'launchd' | 'crontab' | 'none';
+  wrapperPresent: boolean;
+  /** Liveness rung [D7]: darwin = launchctl reports the label loaded; linux =
+   * the crontab line exists. undefined = probe unavailable on this host. */
+  live?: boolean;
+  /** Pull log fresher than 2× the interval. undefined = no log yet (fresh
+   * install / never fired) — absence is not evidence of death. */
+  logFresh?: boolean;
+}
+
+/**
+ * Presence + LIVENESS of the scheduled-pull job [D7]. Presence-only checks
+ * (existsSync on the plist) certify dead jobs as healthy — the documented
+ * autopilot-status failure mode — so this probes whether the job is actually
+ * loaded/registered and whether its log shows recent life.
+ */
+export function durabilityJobStatus(
+  sourceId: string,
+  intervalSec = DEFAULT_PULL_INTERVAL_SEC,
+  platform: NodeJS.Platform = process.platform,
+): DurabilityJobStatus {
+  const wrapperPresent = existsSync(cronWrapperPath(sourceId));
+  let kind: DurabilityJobStatus['kind'] = 'none';
+  let live: boolean | undefined;
+  if (platform === 'darwin') {
+    if (existsSync(launchdPlistPath(sourceId))) {
+      kind = 'launchd';
+      try {
+        execFileSync('launchctl', ['list', cronLabel(sourceId)], {
+          stdio: 'ignore', timeout: 5_000, env: process.env,
+        });
+        live = true;
+      } catch {
+        live = false; // plist on disk but not loaded — the dead-job shape
+      }
+    }
+  } else if (binaryOnPath('crontab')) {
+    try {
+      const tab = execSync('crontab -l 2>/dev/null', { encoding: 'utf-8', env: process.env });
+      if (tab.includes(cronLabel(sourceId))) {
+        kind = 'crontab';
+        live = true; // the line exists; cron itself is the OS's liveness domain
+      }
+    } catch { /* no crontab for this user */ }
+  }
+  let logFresh: boolean | undefined;
+  try {
+    const log = join(process.env.HOME || '', '.gbrain', 'brain-pull.log');
+    if (existsSync(log)) {
+      logFresh = Date.now() - statSync(log).mtimeMs <= 2 * intervalSec * 1000;
+    }
+  } catch { /* leave undefined */ }
+  return { kind, wrapperPresent, ...(live !== undefined ? { live } : {}), ...(logFresh !== undefined ? { logFresh } : {}) };
+}
+
 /** Pure cron-wrapper renderer (DB-free pull; secret-free — sources the shell
  *  profile rather than baking keys in). Exported for tests. */
 export function renderCronWrapper(sourceId: string, repoPath: string, branch: string, cli: string, logPath: string): string {
@@ -504,9 +677,12 @@ export function renderCronWrapper(sourceId: string, repoPath: string, branch: st
 # Sources the shell profile for secrets, then runs the hardened, DB-free pull.
 [ -f ~/.zshenv ] && source ~/.zshenv 2>/dev/null
 source ~/.zshrc 2>/dev/null || source ~/.bashrc 2>/dev/null || true
-# Self-disable if the captured checkout is gone (rename/relocation).
-if [ ! -d '${q(repoPath)}/.git' ]; then
-  echo "$(date -u +%FT%TZ) [cron] path gone, skipping: ${q(repoPath)}" >> "${q(logPath)}" 2>/dev/null || true
+# Self-disable when the captured checkout is no longer a git working tree:
+# gone, OR its path reused by a non-git directory. git rev-parse recognizes
+# both the classic .git-dir layout AND worktrees/submodules (where the git
+# marker is a FILE), so a bare dir test would wrongly disable a live worktree.
+if ! git -C '${q(repoPath)}' rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "$(date -u +%FT%TZ) [cron] not a git work tree, skipping: ${q(repoPath)}" >> "${q(logPath)}" 2>/dev/null || true
   exit 0
 fi
 exec '${q(cli)}' sources pull --path '${q(repoPath)}' --branch '${q(branch)}'
@@ -536,10 +712,30 @@ export function generateBrainPullPlist(label: string, wrapperPath: string, home:
 </plist>`;
 }
 
-function installDurabilityCron(sourceId: string, repoPath: string, branch: string, intervalSec: number, dryRun: boolean): { status: StepStatus; detail: string } {
+export function installDurabilityCron(
+  sourceId: string,
+  repoPath: string,
+  branch: string,
+  intervalSec: number,
+  dryRun: boolean,
+  platform: NodeJS.Platform = process.platform,
+): { status: StepStatus; detail: string } {
+  // Probe FIRST [D-cloud/B2]: containers and cloud sandboxes ship without
+  // crontab, and that is EXPECTED there — the honest answer is a skip that
+  // names what still covers persistence, not a needs_attention that reads
+  // like a bug (and no wrapper file is written for a job that can't exist).
+  if (platform !== 'darwin' && !binaryOnPath('crontab')) {
+    return {
+      status: 'skipped',
+      detail:
+        'no crontab on this host (container/cloud sandbox) — scheduled pull skipped; ' +
+        'the post-commit auto-push and per-turn/session-end pushes cover persistence here. ' +
+        'Run `gbrain sources harden <id>` on a persistent machine to add the scheduled pull.',
+    };
+  }
   const wrapper = dryRun ? cronWrapperPath(sourceId) : writeCronWrapper(sourceId, repoPath, branch);
   const home = process.env.HOME || '';
-  if (process.platform === 'darwin') {
+  if (platform === 'darwin') {
     const plistPath = launchdPlistPath(sourceId);
     if (dryRun) return { status: 'fixed', detail: `would install launchd ${cronLabel(sourceId)} every ${intervalSec}s (dry-run)` };
     mkdirSync(dirname(plistPath), { recursive: true });
@@ -553,12 +749,15 @@ function installDurabilityCron(sourceId: string, repoPath: string, branch: strin
   const marker = `# ${cronLabel(sourceId)}`;
   const cronLine = `*/${minutes} * * * * ${wrapper} ${marker}`;
   if (dryRun) return { status: 'fixed', detail: `would install crontab (every ${minutes}m) (dry-run)` };
+  // env: process.env on both calls — Bun otherwise resolves `crontab` against
+  // the STARTUP env snapshot, making runtime PATH changes (and PATH-shimmed
+  // test fakes) invisible (the workspace-push.ts / status.ts precedent).
   let existingCron = '';
-  try { existingCron = execSync('crontab -l 2>/dev/null', { encoding: 'utf-8' }); } catch { /* none */ }
+  try { existingCron = execSync('crontab -l 2>/dev/null', { encoding: 'utf-8', env: process.env }); } catch { /* none */ }
   const kept = existingCron.split('\n').filter(l => l && !l.includes(marker));
   const next = [...kept, cronLine, ''].join('\n');
   try {
-    execSync('crontab -', { input: next, stdio: ['pipe', 'ignore', 'ignore'] });
+    execSync('crontab -', { input: next, stdio: ['pipe', 'ignore', 'ignore'], env: process.env });
     return { status: 'fixed', detail: `crontab every ${minutes}m` };
   } catch (e) {
     return { status: 'needs_attention', detail: `crontab install failed: ${(e as Error).message.slice(0, 120)}` };
@@ -621,7 +820,23 @@ function isGitRepo(repoPath: string): boolean {
   return existsSync(join(repoPath, '.git'));
 }
 
-function currentBranch(repoPath: string): string {
+/**
+ * CX2-3: resolve the repo ROOT for any directory inside it (the sync.ts
+ * `discoverGitRoot` precedent). A workspace layout registers `repo/brain` as
+ * the source dir while the enclosing repo owns `.git` — hardening must
+ * assert/operate on the PARENT repo, not fail on the subdir's missing `.git`.
+ */
+function resolveRepoRoot(path: string): string {
+  try {
+    return execFileSync('git', ['-C', path, 'rev-parse', '--show-toplevel'], {
+      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: { ...process.env, ...GIT_ENV },
+    }).toString().trim();
+  } catch {
+    throw new Error(`not a git repo: ${path}`);
+  }
+}
+
+export function currentBranch(repoPath: string): string {
   try {
     return execFileSync('git', ['-C', repoPath, 'rev-parse', '--abbrev-ref', 'HEAD'], {
       stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: { ...process.env, ...GIT_ENV },
@@ -651,15 +866,18 @@ function pullDetail(o: PullOutcome): { status: StepStatus; detail: string } {
  * already-hardened repo produces all ok/skipped and NO new commit.
  */
 export async function hardenBrainRepo(opts: HardenOpts): Promise<DurabilityReport> {
-  const { repoPath, sourceId } = opts;
+  const { sourceId } = opts;
   const dryRun = !!opts.dryRun;
   const installCron = opts.installCron !== false;
   const verify = opts.verify !== false;
-  const intervalSec = opts.intervalSec ?? 1800;
+  const intervalSec = opts.intervalSec ?? DEFAULT_PULL_INTERVAL_SEC;
   const redact = opts.pat ? (s: string) => redactSecretsInText(s, new Map([['github_pat', opts.pat!]])) : (s: string) => s;
   const log = (l: string) => opts.logger?.(redact(l));
 
-  if (!isGitRepo(repoPath)) throw new Error(`not a git repo: ${repoPath}`);
+  // CX2-3: throws `not a git repo: <path>` when the dir isn't inside one;
+  // otherwise every subsequent step operates on the enclosing repo's root.
+  const repoPath = resolveRepoRoot(opts.repoPath);
+  if (!dryRun) maintainPushLog(); // S3#10 — 0600 + 1MB rotation
 
   const branch = opts.branch || detectDefaultBranch(repoPath);
   const steps: DurabilityStep[] = [];

@@ -343,6 +343,54 @@ describe('http-transport: tools/call dispatch', () => {
 });
 
 // --------------------------------------------------------------------------
+// localOnly confinement (WP1/D7): localOnly ops reach the operator's
+// filesystem, so the network transport neither lists nor dispatches them.
+// stdio (the local pipe) keeps them — the dispatch backstop keys on the
+// transport marker, and the denial envelope is byte-identical to a
+// nonexistent op so the catalog doesn't leak which names exist.
+// --------------------------------------------------------------------------
+
+describe('http-transport: localOnly confinement (WP1/D7)', () => {
+  let srv: TestServer;
+  const TOK = 'tok-localonly';
+
+  beforeAll(async () => {
+    srv = await startTest({ validTokens: new Map([[hash(TOK), { id: 'tok-lo-id', name: 'localonly' }]]) });
+  });
+  afterAll(() => srv.stop());
+
+  test('tools/list never includes localOnly ops', async () => {
+    const r = await fetch(`${srv.url}/mcp`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${TOK}`, 'Content-Type': 'application/json' },
+      body: rpc('tools/list'),
+    });
+    const body = await r.json();
+    const names = new Set(body.result.tools.map((t: { name: string }) => t.name));
+    for (const localOnlyName of ['file_list', 'file_upload', 'file_url', 'sync_brain']) {
+      expect(names.has(localOnlyName)).toBe(false);
+    }
+    // Non-localOnly ops are still present (the filter is targeted).
+    expect(names.has('get_page')).toBe(true);
+  });
+
+  test('tools/call on a localOnly op is denied with the no-leak unknown_tool envelope', async () => {
+    const r = await fetch(`${srv.url}/mcp`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${TOK}`, 'Content-Type': 'application/json' },
+      body: rpc('tools/call', { name: 'file_list', arguments: {} }),
+    });
+    expect(r.status).toBe(200);
+    const body = await r.json();
+    expect(body.result.isError).toBe(true);
+    const parsed = JSON.parse(body.result.content[0].text);
+    expect(parsed.error).toBe('unknown_tool');
+    // Byte-identical message to a nonexistent op: no existence oracle.
+    expect(parsed.message).toBe('Unknown tool: file_list');
+  });
+});
+
+// --------------------------------------------------------------------------
 // CORS
 // --------------------------------------------------------------------------
 
@@ -607,6 +655,26 @@ describe('http-transport: mcp_request_log audit', () => {
       expect(row.operation).toBe('tools/list');
       expect(row.status).toBe('success');
       expect(row.latency_ms).toBeGreaterThanOrEqual(0);
+    } finally { srv.stop(); }
+  });
+
+  test('21b. gated-op call → denied_after_list status (amendment 33 metric parity with OAuth transport)', async () => {
+    const TOK = 'audit-tok-denied';
+    const srv = await startTest({ validTokens: new Map([[hash(TOK), { id: 'a-2', name: 'audit-denied' }]]) });
+    try {
+      // Pin the gate OFF on the DB plane (which wins over the file plane) so
+      // the developer's real ~/.gbrain/config.json can't flip this test —
+      // the call-time backstop then denies with detail config_key=…
+      (srv.engine as { getConfig?: (k: string) => Promise<string | null> }).getConfig =
+        async (key: string) => (key === 'mcp.publish_skills' ? 'false' : null);
+      const r = await fetch(`${srv.url}/mcp`, { method: 'POST', headers: { 'Authorization': `Bearer ${TOK}`, 'Content-Type': 'application/json' }, body: rpc('tools/call', { name: 'list_skills', arguments: {} }) });
+      const body = await r.json();
+      expect(body.result.isError).toBe(true);
+      expect(body.result.content[0].text).toContain('permission_denied');
+      await new Promise(res => setTimeout(res, 10));
+      const row = srv.engine.audit[srv.engine.audit.length - 1];
+      expect(row.operation).toBe('tools/call:list_skills');
+      expect(row.status).toBe('denied_after_list');
     } finally { srv.stop(); }
   });
 

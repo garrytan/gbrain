@@ -69,7 +69,7 @@ Common `actions[]` entries and what they mean:
   non-builtin cron handlers that need plugin registration — follow
   `skills/migrations/v0.11.0.md`.
 - `gbrain embed --stale` — Embeddings are stale.
-- `gbrain check-backlinks --fix` — Dead links or missing back-links.
+- `gbrain check-backlinks fix` — Dead links or missing back-links.
 - Free-text action (no `Run:` prefix in the source message) — agent judgment
   needed. Quote it in the report for the user.
 

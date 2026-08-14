@@ -148,10 +148,38 @@ export function parseSourceConfig(config: unknown): Record<string, unknown> {
   return value ?? {};
 }
 
+/** True iff config declares a non-empty remote URL. */
+export function sourceConfigHasRemoteUrl(config: unknown): boolean {
+  const remoteUrl = parseSourceConfig(config).remote_url;
+  return typeof remoteUrl === 'string' && remoteUrl.trim().length > 0;
+}
+
 /** True iff the source's config.federated field is the literal boolean true. */
 export function isSourceFederated(config: unknown): boolean {
   const parsed = parseSourceConfig(config);
   return parsed.federated === true;
+}
+
+/**
+ * Three-way federation state for display (CLI `sources list`, etc.).
+ *
+ * `isSourceFederated` collapses to a boolean for the inclusion check (does
+ * this source show up in OTHER anchors' unqualified reads?), which is
+ * correctly strict — 'unset' behaves like 'isolated' there. But 'unset' and
+ * 'isolated' are NOT interchangeable for display: only an explicit
+ * `federated: false` (`sources unfederate` / `--no-federated`) opts a source
+ * out of cross-source read mixing in both directions. A source that has
+ * simply never set the flag still widens its OWN unqualified reads to
+ * include the federated set (the #1434 sole-source convenience, pinned
+ * behavior — see test/local-federated-search-scope.test.ts and
+ * test/unfederate-read-scope-2928.test.ts). Labeling it "isolated" overstates
+ * what the flag actually does.
+ */
+export function sourceFederationState(config: unknown): 'federated' | 'isolated' | 'unset' {
+  const raw = parseSourceConfig(config).federated;
+  if (raw === true) return 'federated';
+  if (raw === false) return 'isolated';
+  return 'unset';
 }
 
 /**

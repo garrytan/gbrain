@@ -33,7 +33,10 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import { validateSourceId } from '../../src/core/utils.ts';
 import { extractTakesFromDb } from '../../src/core/cycle/extract-takes.ts';
-import { copyMigrationSources } from '../../src/commands/migrate-engine.ts';
+import {
+  copyMigrationSources,
+  copyPageLinksToTarget,
+} from '../../src/commands/migrate-engine.ts';
 
 let engine: PGLiteEngine;
 let migrationTarget: PGLiteEngine;
@@ -122,6 +125,68 @@ describe('multi-source bug class', () => {
     }
     expect(await migrationTarget.getPage('people/alice', { sourceId: 'default' })).not.toBeNull();
     expect(await migrationTarget.getPage('people/alice', { sourceId: 'media-corpus' })).not.toBeNull();
+  });
+
+  test('migration preserves a cross-source link target source (#3859)', async () => {
+    await copyMigrationSources(engine, migrationTarget);
+    const pages = await engine.listPages({ limit: 100 });
+    for (const page of pages) {
+      await migrationTarget.putPage(page.slug, {
+        type: page.type,
+        title: page.title,
+        compiled_truth: page.compiled_truth,
+        timeline: page.timeline,
+        frontmatter: page.frontmatter,
+      }, { sourceId: page.source_id });
+    }
+    await engine.addLink(
+      'media/x/post-123',
+      'concepts/widget',
+      'cross-source migration',
+      'references',
+      undefined,
+      undefined,
+      undefined,
+      { fromSourceId: 'media-corpus', toSourceId: 'default' },
+    );
+
+    const sourcePage = await engine.getPage(
+      'media/x/post-123',
+      { sourceId: 'media-corpus' },
+    );
+    await copyPageLinksToTarget(engine, migrationTarget, sourcePage!);
+
+    const copied = await migrationTarget.getLinks(
+      'media/x/post-123',
+      { sourceId: 'media-corpus' },
+    );
+    expect(copied).toHaveLength(1);
+    expect(copied[0]!.to_source_id).toBe('default');
+
+    await engine.addLink(
+      'people/alice',
+      'concepts/widget',
+      'failed cross-source target',
+      'references',
+      undefined,
+      undefined,
+      undefined,
+      { fromSourceId: 'media-corpus', toSourceId: 'default' },
+    );
+    const filteredSourcePage = await engine.getPage(
+      'people/alice',
+      { sourceId: 'media-corpus' },
+    );
+    await copyPageLinksToTarget(
+      engine,
+      migrationTarget,
+      filteredSourcePage!,
+      new Set(['concepts/widget']),
+    );
+    expect(await migrationTarget.getLinks(
+      'people/alice',
+      { sourceId: 'media-corpus' },
+    )).toHaveLength(0);
   });
 
   test('listAllPageRefs returns one row per (slug, source_id), ordered (F11)', async () => {

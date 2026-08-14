@@ -51,7 +51,7 @@ When ≥1 signal fires, pause and offer the switch:
 > agents. Want me to flip this task to Minions? (~10s, no extra setup.)"
 
 If the user says yes, submit the task as a Minion job with the same prompt.
-Optionally propose flipping the default: `gbrain config set minion_mode always`.
+Optionally propose flipping the default to `always` (see "Flipping modes" below).
 
 ### Mode C: `off`
 
@@ -85,13 +85,18 @@ Before submitting batch jobs:
 
 ## Flipping modes
 
-The user can change their mind at any time:
+The user can change their mind at any time. `minion_mode` lives in
+`~/.gbrain/preferences.json` (NOT DB config — `gbrain config set minion_mode`
+is rejected as an unknown key). Edit the file directly:
 
-```bash
-gbrain config set minion_mode always           # switch to always-on
-gbrain config set minion_mode pain_triggered   # back to default
-gbrain config set minion_mode off              # disable suggestions
+```json
+{ "minion_mode": "always" }
 ```
 
-Or edit `~/.gbrain/preferences.json` directly. The convention reads the file
-on every decision, so changes take effect next tool call.
+Valid values: `always` | `pain_triggered` | `off`. Keep any other keys the
+file already has. `gbrain apply-migrations --mode <always|pain_triggered|off>`
+also writes it without prompting. The convention reads the file on every
+decision, so changes take effect next tool call.
+
+`skills/conventions/cron-via-minions.md` documents the same key for
+cron-scheduled work; both files use the preferences.json mechanism.

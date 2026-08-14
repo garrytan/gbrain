@@ -27,12 +27,13 @@
 
 import { createAuditWriter, computeIsoWeekFilename } from './audit/audit-writer.ts';
 
-/** Stable error-classification union; matches RerankError.reason. */
+/** Stable error-classification union for reranker fail-open audit rows. */
 export type RerankFailureReason =
   | 'auth'
   | 'rate_limit'
   | 'network'
   | 'timeout'
+  | 'budget'
   | 'payload_too_large'
   | 'unknown';
 

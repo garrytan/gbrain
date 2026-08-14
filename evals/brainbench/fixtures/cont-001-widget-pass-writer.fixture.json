@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "fixture_id": "cont-001-widget-pass-writer",
+  "suites": ["write-back", "continuity"],
+  "category": "continuity",
+  "continuity": { "pair_id": "cont-001", "pair_role": "writer" },
+  "seed_pages": [
+    {
+      "slug": "companies/widget-co",
+      "content": "---\ntitle: Widget Co\ntype: company\nsummary: Seed-stage widget marketplace founded by Alice Example.\n---\n\nWidget Co is a seed-stage widget marketplace founded by Alice Example.\n"
+    }
+  ],
+  "turns": [
+    { "turn_id": 1, "role": "user", "ts": "2026-03-09T16:00:00Z", "text": "Partner meeting wrapped on the Widget Co seed." },
+    { "turn_id": 2, "role": "assistant", "ts": "2026-03-09T16:00:20Z", "text": "What was the call?" },
+    { "turn_id": 3, "role": "user", "ts": "2026-03-09T16:01:00Z", "text": "We decided to pass on the widget-co seed round. Pricing is too rich at this stage." }
+  ]
+}

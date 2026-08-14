@@ -17,6 +17,14 @@ export interface RecommendedSkill {
 
 export const RECOMMENDED: RecommendedSkill[] = [
   {
+    // First on purpose: the day-one "now what?" answer. Every other skill in
+    // this list gets dramatically better once the brain holds the user's real
+    // life — cold-start is what fills it.
+    slug: 'cold-start',
+    description:
+      'START HERE. Day-one brain filling: imports your Gmail, calendar, and contacts (via ClawVisor — an OAuth vault, the agent never holds raw tokens) or offline archives, one consented phase at a time. Run it right after install.',
+  },
+  {
     slug: 'book-mirror',
     description:
       'FLAGSHIP. Take any book (EPUB/PDF), produce a personalized two-column chapter-by-chapter analysis that maps every idea to your life using brain context.',

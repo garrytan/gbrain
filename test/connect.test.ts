@@ -188,6 +188,11 @@ describe('argv + command string', () => {
       'mcp', 'add', 'gbrain', '-t', 'http', 'https://h/mcp', '-H', 'Authorization: Bearer TOK',
     ]);
   });
+  test('claude argv with scope — inserted after the name (#4043 harness lane; claude default is local)', () => {
+    expect(buildClaudeMcpAddArgv({ name: 'gbrain', url: 'https://h/mcp', headerToken: 'TOK', scope: 'user' })).toEqual([
+      'mcp', 'add', 'gbrain', '--scope', 'user', '-t', 'http', 'https://h/mcp', '-H', 'Authorization: Bearer TOK',
+    ]);
+  });
   test('codex argv shape — env-var bearer, no token in argv', () => {
     expect(buildCodexMcpAddArgv({ name: 'gbrain', url: 'https://h/mcp', envVar: ENV_VAR })).toEqual([
       'mcp', 'add', 'gbrain', '--url', 'https://h/mcp', '--bearer-token-env-var', ENV_VAR,

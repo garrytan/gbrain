@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-cont-006-writer",
+  "suites": [
+    "write-back",
+    "continuity"
+  ],
+  "category": "continuity",
+  "seed_pages": [
+    {
+      "slug": "companies/inkwhale-co",
+      "content": "---\ntitle: Inkwhale Co\ntype: company\nsummary: Seed-stage company. Founded by Mireille Coppersmith.\n---\n\nInkwhale Co is a seed-stage company. Founded by Mireille Coppersmith. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "people/mireille-coppersmith",
+      "content": "---\ntitle: Mireille Coppersmith\ntype: person\naliases: [mireille]\nsummary: Founder of Inkwhale Co.\n---\n\nMireille Coppersmith is the founder of Inkwhale Co. Mireille flagged churn as the top risk in the latest update.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Partner meeting wrapped on the Inkwhale Co round.",
+      "ts": "2025-06-15T12:28:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "What was the call?",
+      "ts": "2025-06-15T12:29:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "We decided to wait on the Inkwhale Co round. We want next quarter's numbers first. Logging it now.",
+      "ts": "2025-06-15T12:30:00Z"
+    }
+  ],
+  "continuity": {
+    "pair_id": "gen-cont-006",
+    "pair_role": "writer"
+  },
+  "holdout": true
+}

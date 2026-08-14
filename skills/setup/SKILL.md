@@ -17,6 +17,15 @@ mutating: true
 
 Set up GBrain from scratch. Target: working brain in under 5 minutes.
 
+> **Installing into an agent harness?** (Claude Code, Codex, OpenClaw, etc.)
+> `gbrain bootstrap` is the paste-in install path — it wires hooks, the
+> maintenance sweep, and harness config in one command. On a box that already
+> hosts a brain + a running `gbrain serve --http` (agent-framework boxes),
+> `gbrain bootstrap harness --yes` wires framework-spawned Claude Code/Codex
+> sessions instead — no agent workspace needed. See
+> `docs/guides/bootstrap.md`. This skill covers the brain-side setup
+> (database, sync, first import); the two are complementary.
+
 ## Contract
 
 - Setup completes with a working brain verified by `gbrain doctor --json` (all checks OK).
@@ -256,14 +265,24 @@ echo "=== Discovery Complete ==="
    > "You have N binary files (X GB) in your brain repo. Want to move them to cloud
    > storage? Your git repo will drop from X GB to Y MB. All links keep working."
 
-   If the user agrees, configure storage and run migration:
-   ```bash
-   # Configure storage backend (Supabase Storage recommended)
-   gbrain config set storage.backend supabase
-   gbrain config set storage.bucket brain-files
-   gbrain config set storage.projectUrl <supabase-url>
-   gbrain config set storage.serviceRoleKey <service-role-key>
+   If the user agrees, configure storage and run migration. The storage backend
+   is a **file-plane** config object — `gbrain config set` writes the DB plane,
+   which the files commands never read. Add a `storage` object to
+   `~/.gbrain/config.json` directly (shape matches `StorageConfig` in
+   `src/core/storage.ts`; Supabase Storage recommended):
+   ```json
+   {
+     "storage": {
+       "backend": "supabase",
+       "bucket": "brain-files",
+       "projectUrl": "https://<project>.supabase.co",
+       "serviceRoleKey": "<service-role-key>"
+     }
+   }
+   ```
 
+   Then run the migration:
+   ```bash
    # Migrate binary files to cloud (3-step lifecycle)
    gbrain files mirror <brain-dir>       # Upload to cloud, keep local
    gbrain files redirect <brain-dir>     # Replace local with .redirect.yaml pointers

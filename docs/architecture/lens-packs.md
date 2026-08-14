@@ -1,4 +1,4 @@
-# Lens packs (v0.41.2.0)
+# Lens packs
 
 Four bundled schema packs that turn the gbrain dream cycle into a multi-lens
 brain. Activate one with `gbrain config set schema_pack <name>` and the cycle
@@ -7,7 +7,7 @@ picks up the pack's declared phases on the next `gbrain dream` run.
 ## The four packs
 
 ```
-                gbrain-base (shipped v0.38)
+                gbrain-base
                        ▲
                        │ extends
         ┌──────────────┼──────────────────────┐
@@ -60,37 +60,33 @@ conviction so high-stakes misses cost more).
 
 ### gbrain-engineer
 Bridge-only pack. Declares `learning` page type + reuses base `code`.
-No new cycle phases — the daemon-side `gstack-learnings` IngestionSource
-(T8) watches `~/.gstack/projects/{repo}/learnings.jsonl` and emits
+No new cycle phases — the daemon-side `gstack-learnings` IngestionSource watches `~/.gstack/projects/{repo}/learnings.jsonl` and emits
 each JSONL line as a `learning` page when this pack is active. Three
 calibration domains: `architecture_calls` (scalar_brier),
 `effort_estimates` (weighted_brier), `risk_assessment` (scalar_brier).
 
-Speculative ADR/postmortem/refactor_thesis/tech_debt types deferred
-to v0.42+ — they'll ship when a real user authors the first one (D8).
+Speculative ADR/postmortem/refactor_thesis/tech_debt types are
+deferred — they'll ship when a real user authors the first one.
 
 ### gbrain-everything
-Meta-pack stacking creator + investor + engineer via the v0.38
+Meta-pack stacking creator + investor + engineer via the
 `extends` + `borrow_from` chain. Single-active-pack constraint
 preserved — this IS the active pack; the registry walks extends +
 borrow to materialize the merged view.
 
-**Merge contract (T20 / #1749).** `resolvePack` merges parent → child
-(child-wins) for the six ingest/query-shaping fields: `page_types`,
-`link_types`, `frontmatter_links`, `enrichable_types`, `filing_rules`,
-and `takes_kinds` (unioned — a child cannot narrow it). `phases` and
-`calibration_domains` are **NOT** inherited: they gate cycle execution,
-so each pack must declare its own participation explicitly. That is why
-`gbrain-everything` re-declares all its phases and all 7
-`calibration_domains` — inheritance does not carry them.
+**Merge contract.** The full `extends` + `borrow_from` merge rules live in
+[`schema-packs.md` § Merge contract](./schema-packs.md#merge-contract-extends--borrow_from).
+The one rule that matters here: `phases` and `calibration_domains` are
+**NOT** inherited (they gate cycle execution, so each pack must declare
+its own participation explicitly) — which is why `gbrain-everything`
+re-declares all its phases and all 7 `calibration_domains`.
 
 Activate via `gbrain config set schema_pack gbrain-everything` and
 calibration_profile produces all 7 domain scorecards in one JSONB.
 
-## Calibration profile widening (T10)
+## Calibration profile domains
 
-Before v0.41.2.0, `calibration_profiles.domain_scorecards` was a
-`JSON.stringify({})` placeholder. v0.41.2.0 widens it: each declared
+Each declared
 domain produces a `{n, brier, accuracy, aggregator, page_types,
 extras}` entry. Four aggregator algorithms (closed enum):
 
@@ -109,20 +105,20 @@ Domain names are OPEN (third-party packs can declare new domain labels
 without a gbrain release). Aggregator algorithms are CLOSED (safe SQL
 stays in code, validated at pack-load).
 
-## take_domain_assignments table (T1)
+## take_domain_assignments table
 
-New JOIN table (migration v94):
+JOIN table (migration v94):
 `take_domain_assignments(take_id BIGINT FK, domain TEXT, pack TEXT,
 source TEXT, confidence REAL, assigned_at TIMESTAMPTZ, PK(take_id,
-domain))`. Multi-domain assignment honest — a take about "Sequoia's
-investment in Anthropic" can land in BOTH `deal_success` AND
+domain))`. Multi-domain assignment honest — a take about "fund-a's
+investment in acme-example" can land in BOTH `deal_success` AND
 `market_call` rather than being force-bucketed.
 
 ## What this enables for the user
 
 - **Atoms + concepts ship in the binary.** Your OpenClaw's parallel
   atom-pipeline-coordinator + atom-backfill-coordinator + concept-
-  synthesis crons can retire (T12 follow-up). One `gbrain dream` cron
+  synthesis crons can retire. One `gbrain dream` cron
   covers everything.
 - **gstack learnings reach gbrain.** Engineer-pack-active brains
   surface every gstack-logged learning as a queryable page within
@@ -131,22 +127,22 @@ investment in Anthropic" can land in BOTH `deal_success` AND
   often you're wrong on deals AND market calls AND architecture
   AND effort estimates in one `gbrain calibration --json` call.
 - **Lossless OpenClaw migration.** The `markdown-greenfield`
-  importer (T7, mode='migration') re-ingests existing OpenClaw
+  importer (mode='migration') re-ingests existing OpenClaw
   pages with permanent slug-keyed idempotency + per-row JSONL audit
   + the `imported_from` marker so extract_atoms + synthesize_concepts
   don't re-extract already-atomized material.
 
-## v0.41.2.1 follow-ups (filed in plan)
+## Known gaps / deferred follow-ups
 
 - Per-page-type `frontmatter_validators` on PageTypeSchema so the
   atom_type enum (currently hardcoded in extract_atoms.ts) reads from
-  the active pack manifest at runtime per D11.
+  the active pack manifest at runtime.
 - 3-check quality gate (truism / punchline / entity-page reject) as
   a multi-pass extract_atoms refinement.
 - Embedding-similarity dedup in synthesize_concepts (currently
   exact-string concept ref match only).
-- Voice gate integration for T1 Canon narratives.
+- Voice gate integration for concept narratives.
 - op_checkpoint resumability for cross-cycle continuation in both
   phases.
-- Parity-baseline eval gates against your OpenClaw's existing 13K atoms
-  + 11K concepts on a 500-page sample subset.
+- Parity-baseline eval gates against a pre-existing downstream
+  atom/concept corpus on a sample subset.

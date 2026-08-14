@@ -118,6 +118,13 @@ function buildAdvisoryWithoutWorkspace(
 /**
  * Print the advisory to stderr at the end of init / post-upgrade.
  * No-op when buildAdvisory returns null.
+ *
+ * `init` prints a COMPACT 3-line pointer: the init success screen already
+ * competes for one primary action (the memory-verbs funnel), and the full
+ * 55-line agent-addressed banner buried it. The full banner remains the
+ * `upgrade` surface (its designed audience) and stays available any time
+ * via `gbrain advisor`. buildAdvisory itself is unchanged — it is the
+ * agent-readable document, pinned by tests and shared with `gbrain advisor`.
  */
 export function printAdvisoryIfRecommended(opts: {
   version: string;
@@ -125,7 +132,51 @@ export function printAdvisoryIfRecommended(opts: {
   targetWorkspace?: string | null;
   targetSkillsDir?: string | null;
 }): void {
-  const advisory = buildAdvisory(opts);
-  if (!advisory) return;
-  process.stderr.write(advisory);
+  // Fail-open: this is decoration on the init success screen and runs AFTER
+  // the brain is created (and, since the memory-verbs quickstart now prints
+  // last, BEFORE it). An unreadable RESOLVER.md must never throw here and
+  // starve the primary CTA — same posture as runInitNudge.
+  try {
+    const advisory = buildAdvisory(opts);
+    if (!advisory) return;
+    if (opts.context === 'init') {
+      // Derive the counts for the compact form from the same detection the
+      // full banner used. Detection is hoisted OUT of the filter (one receipt
+      // read+parse total, matching buildAdvisory's own pattern).
+      let workspace = opts.targetWorkspace ?? null;
+      let skillsDir = opts.targetSkillsDir ?? null;
+      if (!skillsDir) {
+        const detected = autoDetectSkillsDir();
+        if (detected.dir) {
+          skillsDir = detected.dir;
+          if (!workspace) workspace = resolvePath(skillsDir, '..');
+        }
+      }
+      const all = currentRecommendedSet();
+      const installed = workspace && skillsDir ? detectInstalledSlugs(skillsDir, workspace) : null;
+      const missing = installed ? all.filter((s) => !installed.has(s.slug)) : all;
+      if (missing.length === 0) return;
+      const names = missing.map((s) => s.slug);
+      const preview = names.slice(0, 4).join(', ') + (names.length > 4 ? ', …' : '');
+      // No workspace detected → scaffold has no target; say so (the full
+      // banner carries the same caveat via workspaceNotDetected).
+      const noWorkspace = installed === null;
+      // Human-voiced (prints on the init success screen where a person may read
+      // it) — no `[AGENT]` stage-direction leaking to the human. An agent reading
+      // the same line still knows the command to offer.
+      process.stderr.write(
+        `\n${missing.length} recommended skill(s) not installed yet (${preview}).\n` +
+          // NOTE: no bare `--flag` tokens in this string — the flag-registry
+          // generator harvests them from source strings and would register a
+          // phantom flag on every command that imports this module.
+          (noWorkspace
+            ? `Open your agent workspace first (scaffold needs a target), then \`${scaffoldCommandFor(missing, all)}\`; full list: gbrain advisor\n`
+            : `Ask me to run \`${scaffoldCommandFor(missing, all)}\`, or see the full list: gbrain advisor\n`),
+      );
+      return;
+    }
+    process.stderr.write(advisory);
+  } catch {
+    /* advisory is best-effort decoration — never break init */
+  }
 }

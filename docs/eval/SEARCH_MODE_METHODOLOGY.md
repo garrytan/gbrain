@@ -1,6 +1,6 @@
 # Search Mode Evaluation Methodology
 
-_How v0.32.3 measures the difference between `conservative`, `balanced`, and `tokenmax`. Written haters-immune: every claim is reproducible from the committed dataset + raw outputs._
+_How gbrain measures the difference between `conservative`, `balanced`, and `tokenmax`. Written haters-immune: every claim is reproducible — pinned datasets, recorded seeds, and the exact run commands below._
 
 ## 1. What this measures and what it doesn't
 
@@ -21,14 +21,15 @@ If you want to know how a mode behaves on YOUR brain, run `gbrain search stats -
 - **Replay captures** — NDJSON from the sibling `gbrain-evals` repo, `n=200` queries. Each query carries a `retrieved_slugs` baseline + a `latency_ms` measurement from the original production run.
 - **BrainBench v1** — `n=1240` documents / `n=350` qrels (binary relevance judgments). Lives in the sibling [`gbrain-evals`](https://github.com/garrytan/gbrain-evals) repo, SHA-pinned at every run.
 
-No private brain content is used in any reported result. The committed NDJSON dumps under `<repo>/.gbrain-evals/` contain only the LongMemEval question IDs + the rank-ordered retrieved session IDs.
+No private brain content is used in any reported result. The NDJSON run records under `<repo>/.gbrain-evals/` contain only the LongMemEval question IDs + the rank-ordered retrieved session IDs.
 
 ## 3. Sample selection
 
 - **Random seed:** `42` throughout. Set via `--seed N` on `gbrain eval run-all`; recorded in every per-run record.
 - **No per-question curation.** Splits are taken whole; no question is filtered for reporting.
-- **No mode-specific tuning.** The same dataset + same seed feeds every mode. The mode is the only independent variable.
-- **Stability across re-runs:** with `--seed 42` and the same dataset SHA, two runs of the same (mode, suite) produce identical retrieval orderings (modulo the optional Haiku expansion call, which is non-deterministic). Persisted in `eval_results` so anyone can re-score from the committed dumps.
+- **No mode-specific tuning.** The same dataset + same seed feeds every mode. The mode bundle is the only independent variable. A mode Δ therefore measures the joint effect of every knob the bundles differ on — today that's `tokenBudget`, `expansion`, `relationalRetrieval` (the typed-edge fourth recall arm, ON for balanced/tokenmax, OFF for conservative), and `searchLimit`; the canonical diff is `MODE_BUNDLES` in `src/core/search/mode.ts`.
+- **Cache comparability across upgrades.** The query cache keys on a versioned knobs hash (`KNOBS_HASH_VERSION` in `mode.ts`) that folds in the active knob set + embedding column/provider, so one mode's cached results can't be served to another mode's queries — and a version bump makes prior rows unreachable (one-time miss spike). Cross-run comparisons that straddle a knobs-hash bump see a cold cache on the first re-run.
+- **Stability across re-runs:** with `--seed 42` and the same dataset SHA, two runs of the same (mode, suite) produce identical retrieval orderings (modulo the optional Haiku expansion call, which is non-deterministic). Persisted in `eval_results` so anyone can re-score from a run's `--output` dumps.
 
 ## 4. Run procedure
 
@@ -46,14 +47,14 @@ gbrain eval run-all \
   --limit 500 \
   --budget-usd-retrieval 5 \
   --budget-usd-answer 20 \
-  --output docs/eval/results/v0.32.3/
+  --output docs/eval/results/<version>/
 
 # Render the comparison.
-gbrain eval compare --md > docs/eval/results/v0.32.3/README.md
-gbrain eval compare --json > docs/eval/results/v0.32.3/comparison.json
+gbrain eval compare --md > docs/eval/results/<version>/README.md
+gbrain eval compare --json > docs/eval/results/<version>/comparison.json
 ```
 
-The orchestrator writes per-run records to `<repo>/.gbrain-evals/eval-results.jsonl`. Every record carries: `run_id`, `ran_at`, `suite`, `mode`, `commit`, `seed`, `limit`, `params`, `status`, `duration_ms`. The dumps under `docs/eval/results/v0.32.3/` carry the raw question-level outputs so a reviewer can re-score with their own metric implementation.
+The orchestrator writes per-run records to `<repo>/.gbrain-evals/eval-results.jsonl`. Every record carries: `run_id`, `ran_at`, `suite`, `mode`, `commit`, `seed`, `limit`, `params`, `status`, `duration_ms`. When a release publishes eval numbers, the `--output` dumps under `docs/eval/results/<version>/` carry the raw question-level outputs so a reviewer can re-score with their own metric implementation. **No dumps are committed in the repo right now** — reproduce by running the commands above; determinism (§3) means your re-run matches the reported orderings.
 
 ## 5. Threats to validity
 
@@ -68,7 +69,7 @@ Honest list. We name what would let a critic dismiss the numbers.
 
 ## 6. Per-question raw outputs
 
-Every reported metric is reproducible from the NDJSON dumps committed at `docs/eval/results/v0.32.3/`. The commit SHA in the methodology footer pins the code version.
+Every reported metric is reproducible from the NDJSON dumps a run writes to its `--output` directory (`docs/eval/results/<version>/` when a release publishes numbers; none are committed right now — see §4). The commit SHA in the methodology footer pins the code version.
 
 **Examples per mode:** the auto-generated `README.md` next to the dumps includes both winning and losing examples per mode, chosen by the deterministic rule:
 

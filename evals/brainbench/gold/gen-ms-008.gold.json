@@ -1,0 +1,14 @@
+{
+  "fixture_id": "gen-ms-008",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "people/tobias-cindergate"
+      ]
+    },
+    "2": {
+      "should_retrieve": false
+    }
+  }
+}

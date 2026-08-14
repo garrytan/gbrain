@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-wb-015",
+  "suites": [
+    "write-back"
+  ],
+  "category": "write-back",
+  "seed_pages": [
+    {
+      "slug": "people/imogen-corvalen",
+      "content": "---\ntitle: Imogen Corvalen\ntype: person\naliases: [imogen]\nsummary: Founder of Emberweave Systems.\n---\n\nImogen Corvalen is the founder of Emberweave Systems. Imogen shipped the v2 launch two weeks ahead of plan.\n"
+    },
+    {
+      "slug": "companies/emberweave-systems",
+      "content": "---\ntitle: Emberweave Systems\ntype: company\nsummary: Seed-stage company. Founded by Imogen Corvalen.\n---\n\nEmberweave Systems is a seed-stage company. Founded by Imogen Corvalen. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Just wrapped the Emberweave Systems call with Imogen Corvalen.",
+      "ts": "2025-09-23T10:39:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "How did it go?",
+      "ts": "2025-09-23T10:40:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Imogen said Emberweave Systems hit their growth target a month early. Ahead of plan.",
+      "ts": "2025-09-23T11:26:00Z"
+    },
+    {
+      "turn_id": 4,
+      "role": "user",
+      "text": "Imogen is worried the Emberweave Systems pricing model undercuts their gross margin. Real concern for the round.",
+      "ts": "2025-09-23T11:27:00Z"
+    }
+  ]
+}

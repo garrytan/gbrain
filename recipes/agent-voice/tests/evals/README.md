@@ -13,10 +13,10 @@ Pass criterion: every axis mean ≥ 7/10 AND no model scored any axis < 5 AND �
 ## Running
 
 ```bash
-# All four eval suites at the default judge tier (~$1-3/full run)
-bun run gen:baselines   # mars-eval + venus-eval + persona-routing + mars-multilingual
+# Baseline receipts for the two persona evals (~$1-3/full run)
+bun run gen:baselines   # mars-eval --baseline + venus-eval --baseline
 
-# Individually
+# Individually (all four suites)
 node tests/evals/mars-eval.mjs
 node tests/evals/venus-eval.mjs
 node tests/evals/persona-routing-eval.mjs
@@ -45,9 +45,9 @@ Capped well below the $1-3 budget. Cost stays low because the judge runs are sho
 
 ## Receipts
 
-`baseline-runs/canonical/*.json` carries **agent-authored synthetic exemplars** — what a passing eval verdict looks like, with no real model output. Used for code-review and onboarding ("what does the harness produce?") without ever shipping residual private context.
+`baseline-runs/canonical/` is **reserved for agent-authored synthetic exemplars** — what a passing eval verdict looks like, with no real model output — for code-review and onboarding ("what does the harness produce?") without ever shipping residual private context. No exemplars are committed yet; see `canonical/README.md` for the contract they must follow. (Note for whoever lands them: the sibling `.gitignore`'s `!canonical/` pattern does not unignore files inside the directory — it needs `!canonical/*.json`.)
 
-`baseline-runs/*.json` (non-`canonical/`) is **gitignored**. Live receipts you generate against your own scrubbed personas live there; never commit them — they may carry response text that leaks operator-specific configuration.
+`baseline-runs/*.json` is **gitignored**. Live receipts you generate against your own scrubbed personas live there; never commit them — they may carry response text that leaks operator-specific configuration.
 
 ## When evals fail
 

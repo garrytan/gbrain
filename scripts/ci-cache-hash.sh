@@ -18,7 +18,10 @@
 #
 # WHAT'S DENY-LISTED (genuinely test-irrelevant):
 #   - CHANGELOG.md, TODOS.md   pure documentation
-#   - README.md, LICENSE        marketing / metadata, no test reads them
+#   - README.md, LICENSE        marketing / metadata — but README.md is
+#                               re-admitted below [C2]: the bootstrap paste
+#                               block lives in it and check-bootstrap-tag.sh
+#                               asserts its distribution refs
 #   - docs/**/*.md, *.txt       all docs/ subtree is doc-only
 #
 # WHAT'S DELIBERATELY NOT DENY-LISTED (affects test outcomes):
@@ -36,7 +39,16 @@
 # `^docs/.*\.md$` deny above would let a policy edit to those skip CI — a
 # false-pass. The ALLOW_PATTERNS list below re-admits them into the hash
 # AFTER the deny. ADD a path there whenever you move a policy/contract doc
-# under docs/ (current entries: docs/TESTING.md, docs/RELEASING.md).
+# under docs/ (current entries: docs/TESTING.md, docs/RELEASING.md,
+# README.md, BOOTSTRAP_FOR_AGENTS.md).
+#
+# The same mechanism re-admits the agent-bootstrap entry documents [C2]:
+# README.md (denied above) and BOOTSTRAP_FOR_AGENTS.md (not denied today —
+# listed defensively so a future root-doc deny can't silently drop it).
+# Both carry the paste-block distribution contract that
+# scripts/check-bootstrap-tag.sh asserts (sanctioned `latest-stable` ref +
+# runbook version stamp), so a README-only paste-block change must never
+# skip CI green.
 #
 # Locale-stable: LC_ALL=C on the sort step so byte-order is identical
 # across runners (different default locales would re-order the line list
@@ -137,6 +149,8 @@ INCLUDED=$(printf '%s\n' "$LS_FILES" | grep -vE "$DENY_RE" || true)
 ALLOW_PATTERNS=(
   'docs/TESTING\.md$'
   'docs/RELEASING\.md$'
+  'README\.md$'
+  'BOOTSTRAP_FOR_AGENTS\.md$'
 )
 ALLOW_ALT=""
 for p in "${ALLOW_PATTERNS[@]}"; do

@@ -308,7 +308,7 @@ function excerptWindow(content: string, requestedStart: number, excerptLen: numb
 }
 
 /** Select the fixed-budget window containing the strongest unique query-term coverage. */
-function selectRelevantExcerpt(
+export function selectRelevantExcerpt(
   content: string,
   query: string,
   excerptLen: number,

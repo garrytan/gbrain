@@ -17,13 +17,19 @@
  *   gbrain autopilot --status [--json]
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, utimesSync, unlinkSync, chmodSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, utimesSync, unlinkSync, chmodSync, statSync } from 'fs';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
-import { join, dirname } from 'path';
+import { detectExecutionEnvironment } from '../core/execution-env.ts';
+import { join, dirname, isAbsolute } from 'path';
 import { execSync } from 'child_process';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadPreferences } from '../core/preferences.ts';
-import { loadConfig, saveConfig, gbrainPath as gbrainHomePath } from '../core/config.ts';
+import { loadConfig, loadConfigFileOnly, saveConfig, gbrainPath as gbrainHomePath } from '../core/config.ts';
+import {
+  classifyAutopilotLockHolder,
+  type AutopilotLockProbeDeps,
+  isPidAlive,
+} from '../core/autopilot-lock.ts';
 import { ChildWorkerSupervisor } from '../core/minions/child-worker-supervisor.ts';
 import { VERSION } from '../version.ts';
 import {
@@ -40,6 +46,25 @@ import { evaluateQuietHours } from '../core/minions/quiet-hours.ts';
 import { inspectLock } from '../core/db-lock.ts';
 import { registerCleanup } from '../core/process-cleanup.ts';
 import { resolveAutopilotDispatchTimeoutMs } from './autopilot-timeout.ts';
+import {
+  autopilotRemediationIdempotencyKey,
+  shouldRunAutopilotFullCycle,
+  shouldSleepHealthyAutopilot,
+} from './autopilot-remediation-policy.ts';
+// Path helpers live in a LEAF core module so other commands (gbrain migrate)
+// can read the daemon's state files without importing this one — a dynamic
+// import of a command module drags its whole flag surface into the importer's
+// CLI allowlist. Re-exported here so existing importers keep working.
+import {
+  autopilotLockPath,
+  autopilotDisabledMarkerPath,
+  autopilotPausedMarkerPath,
+  autopilotDisableStrikesPath,
+  autopilotLaunchdLabel,
+  markerHolderAlive,
+  MIGRATE_PAUSE_MARKER_PREFIX,
+} from '../core/autopilot-paths.ts';
+export { autopilotLockPath, autopilotDisabledMarkerPath, autopilotPausedMarkerPath, autopilotLaunchdLabel };
 
 /**
  * v0.37.7.0 #1162 — classify autopilot reconnect-loop errors.
@@ -52,11 +77,42 @@ import { resolveAutopilotDispatchTimeoutMs } from './autopilot-timeout.ts';
  * config file unreadable): exit immediately so launchd's 60s
  * `ThrottleInterval` backs off the relaunch instead of thrashing.
  *
- * Exported (string-based signature) so tests drive it without needing
+ * `crash` (a JS TypeError from dereferencing an undefined object): a BUG, not a
+ * verdict about the operator's configuration. Treated as recoverable so a code
+ * defect cannot permanently kill the daemon, but logged distinctly so it is not
+ * silently misfiled as "you forgot to set a URL."
+ *
+ * Exported (string-based signature preserved) so tests drive it without needing
  * a real reconnect error.
  */
-export function classifyReconnectError(err: unknown): 'recoverable' | 'unrecoverable' {
+export function classifyReconnectError(err: unknown): 'recoverable' | 'unrecoverable' | 'crash' {
+  // Type check FIRST. Bun/V8 renders a null-deref as
+  //   "undefined is not an object (evaluating 'config.database_url')"
+  // which, lowercased, contains BOTH "database_url" and "undefined" — so the
+  // substring rule below classified a crash as a config verdict and exited the
+  // daemon permanently. That is exactly how a 71-day outage started: an engine
+  // migration rewrote config.json, the running daemon crashed on a stale object,
+  // and the crash was reported as "database_url not set".
+  const earlyMsg = (err instanceof Error ? err.message : String(err ?? '')).toLowerCase();
+  // Invalid-URL errors ARE TypeErrors in JS (`new URL('garbage')`), but they
+  // are an operator-config verdict, not a code defect — test the message
+  // pattern BEFORE the blanket TypeError-means-crash rule, or a malformed
+  // database_url spends the whole reconnect budget before exiting.
+  if (earlyMsg.includes('invalid url') || earlyMsg.includes('malformed') || earlyMsg.includes('parse url')) {
+    return 'unrecoverable';
+  }
+  if (err instanceof Error && err.name === 'TypeError') return 'crash';
   const msg = (err instanceof Error ? err.message : String(err ?? '')).toLowerCase();
+  // Same shape, for hosts where the error arrives as a plain string/serialized
+  // object and the `name` is gone.
+  if (
+    msg.includes('is not an object')
+    || msg.includes('is not a function')
+    || msg.includes('cannot read propert')
+    || msg.includes('undefined is not')
+  ) {
+    return 'crash';
+  }
   if (msg.includes('database_url') && (msg.includes('undefined') || msg.includes('missing') || msg.includes('empty') || msg.includes('not set'))) {
     return 'unrecoverable';
   }
@@ -95,40 +151,86 @@ function logError(phase: string, e: unknown) {
 }
 
 /**
+ * Enumerate %PATH% (Windows) for the gbrain CLI shim, honoring PATHEXT.
+ *
+ * On win32 this is the FIRST resolution path (`which` does not exist in
+ * cmd/PowerShell); resolveGbrainCliPath calls it before the execPath and
+ * argv[1] fallbacks. Unlike `where`, this NEVER looks at the current
+ * directory, so a stray gbrain.exe in cwd cannot hijack resolution. Only
+ * directly spawnable extensions (.exe/.com/.cmd/.bat) are accepted, and
+ * only regular files - a directory named gbrain.exe cannot shadow a real
+ * binary. Returns the first existing candidate, or '' when none exists.
+ */
+export function resolveWindowsCliPath(): string {
+  const pathext = (process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';');
+  const pathDirs = (process.env.PATH ?? '').split(';');
+  for (const dir of pathDirs) {
+    // Skip empty and relative entries: '.' or 'bin' resolve against the
+    // current directory, which would reintroduce the cwd-hijack `where`
+    // has. Only absolute %PATH% entries are trusted.
+    if (!dir || !isAbsolute(dir)) continue;
+    for (const ext of pathext) {
+      // Only directly spawnable types: PATHEXT can also carry .JS/.VBS
+      // (Windows Script Host), which Bun cannot exec - spawning them fails
+      // EFTYPE. .CMD/.BAT spawn through the shell; .COM/.EXE direct.
+      const type = ext.toLowerCase();
+      if (type !== '.exe' && type !== '.com' && type !== '.cmd' && type !== '.bat') continue;
+      const candidate = join(dir, 'gbrain' + type);
+      try {
+        if (statSync(candidate).isFile()) return candidate;
+      } catch { /* missing or unreadable - keep looking */ }
+    }
+  }
+  return '';
+}
+
+/**
  * Resolve the gbrain CLI entrypoint for spawning the worker child.
  *
- * A .ts source path is never a valid spawn target — spawning it fails with
+ * A .ts source path is never a valid spawn target - spawning it fails with
  * EACCES because TypeScript source isn't executable. The canonical install
  * puts a shim at `/usr/local/bin/gbrain` (or wherever `which gbrain`
  * resolves to) that already wraps the right runtime+entrypoint; prefer it.
  *
  * Order of resolution:
- *   1. `which gbrain` — the shim on PATH, canonical for installed builds.
+ *   1. Platform PATH lookup - `which gbrain` on POSIX; explicit %PATH%
+ *      enumeration (resolveWindowsCliPath) on win32, where `which` does
+ *      not exist (#3793).
  *   2. process.execPath if it ends with /gbrain (compiled binary, no shim).
  *   3. argv[1] if it ends with /gbrain (e.g., direct invocation of compiled
  *      binary without PATH). Never .ts source paths.
  *   4. Throw with a clear install hint.
  */
 export function resolveGbrainCliPath(): string {
-  try {
-    // #2747: `env: process.env` is required under Bun. Bun's execSync
-    // snapshots process.env at Bun's OWN startup, not at call time — a
-    // runtime PATH mutation (dotenv/config loading, shell-profile sourcing
-    // in a wrapper, etc.) happening between Bun boot and this call is
-    // invisible to `which` without explicitly forwarding the current env.
-    // This is why "which gbrain" succeeds when run standalone (fresh Bun
-    // process, no prior mutation) but can fail from inside autopilot's own
-    // process at this exact call site. Same fix already applied to
-    // detectTini() in spawn-helpers.ts (see its comment) — this call site
-    // was missed.
-    const which = execSync('which gbrain', {
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      env: process.env,
-    }).trim();
-    if (which) return which;
-  } catch { /* not on $PATH — fall through */ }
-
+  // #3793: `which` does not exist in cmd or PowerShell on Windows, so the
+  // bun-installed gbrain.exe shim on %PATH% was never found and autopilot
+  // died with "Could not resolve the gbrain CLI path". `where` would find
+  // it but has a cwd-hijack; use explicit %PATH% enumeration on win32.
+  if (process.platform === 'win32') {
+    const win = resolveWindowsCliPath();
+    if (win) return win;
+  } else {
+    try {
+      // #2747: `env: process.env` is required under Bun. Bun's execSync
+      // snapshots process.env at Bun's OWN startup, not at call time - a
+      // runtime PATH mutation (dotenv/config loading, shell-profile sourcing
+      // in a wrapper, etc.) happening between Bun boot and this call is
+      // invisible to `which` without explicitly forwarding the current env.
+      // This is why "which gbrain" succeeds when run standalone (fresh Bun
+      // process, no prior mutation) but can fail from inside autopilot's own
+      // process at this exact call site. Same fix already applied to
+      // detectTini() in spawn-helpers.ts (see its comment) - this call site
+      // was missed.
+      const which = execSync('which gbrain', {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        env: process.env,
+      })
+        .trim()
+        .split(/\r?\n/, 1)[0];
+      if (which) return which;
+    } catch { /* not on $PATH - fall through */ }
+  }
   const exec = process.execPath ?? '';
   if (exec.endsWith('/gbrain') || exec.endsWith('\\gbrain.exe')) {
     return exec;
@@ -148,24 +250,26 @@ export function resolveGbrainCliPath(): string {
       `Debug: PATH=${JSON.stringify(process.env.PATH ?? '')} execPath=${JSON.stringify(exec)} argv1=${JSON.stringify(arg1)}`,
   );
 }
-
 export function shouldSpawnAutopilotWorker(args: string[]): boolean {
   return !args.includes('--no-worker');
 }
 
-export function isPidAlive(pid: number): boolean {
-  if (!Number.isFinite(pid) || pid <= 0) return false;
+export { isPidAlive };
+
+export const AUTOPILOT_FOREIGN_PID_TAKEOVER_GRACE_MS = 10 * 60 * 1000;
+
+function autopilotLockAgeMs(lockPath: string): number | null {
   try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error: unknown) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
+    return Date.now() - statSync(lockPath).mtimeMs;
+  } catch {
+    return null;
   }
 }
 
 export function decideLockAcquisition(
   lockPath: string,
   currentPid: number,
+  deps: AutopilotLockProbeDeps = {},
 ): { action: 'acquire' } | { action: 'exit'; holderPid: number } | { action: 'takeover'; reason: string } {
   if (!existsSync(lockPath)) return { action: 'acquire' };
 
@@ -177,10 +281,21 @@ export function decideLockAcquisition(
   }
 
   const holderPid = Number.parseInt(raw, 10);
-  const sameProcess = Number.isFinite(holderPid) && holderPid === currentPid;
-  const alive = !sameProcess && isPidAlive(holderPid);
+  const holder = classifyAutopilotLockHolder(holderPid, currentPid, deps);
 
-  if (alive) return { action: 'exit', holderPid };
+  if (holder.state === 'alive-autopilot' || holder.state === 'alive-unknown') {
+    return { action: 'exit', holderPid };
+  }
+  if (holder.state === 'alive-foreign') {
+    const lockAgeMs = autopilotLockAgeMs(lockPath);
+    if (lockAgeMs !== null && lockAgeMs >= AUTOPILOT_FOREIGN_PID_TAKEOVER_GRACE_MS) {
+      return { action: 'takeover', reason: `foreign pid ${raw || '<empty>'} with stale lock` };
+    }
+    return { action: 'exit', holderPid };
+  }
+  if (holder.state === 'self') {
+    return { action: 'takeover', reason: `own pid ${raw || '<empty>'}` };
+  }
   return { action: 'takeover', reason: `dead pid ${raw || '<empty>'}` };
 }
 
@@ -381,12 +496,15 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     return;
   }
   if (args.includes('--status')) {
-    showStatus(args.includes('--json'));
+    runAutopilotStatus(args);
     return;
   }
 
   const repoPath = parseArg(args, '--repo') || await engine.getConfig('sync.repo_path');
-  const baseInterval = parseInt(parseArg(args, '--interval') || '300', 10);
+  // Same NaN guard as the status path: a typo'd interval would otherwise
+  // reach setTimeout(NaN) → 0ms and busy-loop the daemon against the DB.
+  const rawBaseInterval = parseInt(parseArg(args, '--interval') || '300', 10);
+  const baseInterval = Number.isFinite(rawBaseInterval) && rawBaseInterval > 0 ? rawBaseInterval : 300;
   const jsonMode = args.includes('--json');
   const forceInline = args.includes('--inline');
   const noWorker = !shouldSpawnAutopilotWorker(args);
@@ -402,7 +520,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   // two brains sharing GBRAIN_HOME=different-paths still wrote to the
   // same global lockfile and one would silently respawn the other
   // forever.
-  const lockPath = gbrainHomePath('autopilot.lock');
+  const lockPath = autopilotLockPath();
   try {
     mkdirSync(gbrainHomePath(), { recursive: true });
     const decision = decideLockAcquisition(lockPath, process.pid);
@@ -426,6 +544,15 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   const engineType = cfg?.engine ?? 'pglite';
   const useMinionsDispatch = mode !== 'off' && engineType === 'postgres' && !forceInline;
   const spawnManagedWorker = useMinionsDispatch && !noWorker;
+
+  // Engine identity at boot, re-checked every tick. A cross-engine migration
+  // flips config.json at the END of its copy; this long-lived process would
+  // otherwise keep syncing into the ABANDONED source engine indefinitely —
+  // the health probe keeps succeeding (the old engine stays alive as the
+  // preserved backup) and reconnect() deliberately restores the config
+  // captured at connect() (#2034), never the new file. Same silent-divergence
+  // class as the dead-daemon incident, moved to after the flip.
+  const engineIdentityAtBoot = autopilotEngineIdentity(loadConfigFileOnly());
 
   // v0.42 self-upgrade: if a prior tick swapped the binary and exited for
   // relaunch, we're now the relaunched process — reconcile the breadcrumb so a
@@ -592,6 +719,8 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   // runs the full cycle (phase-coupling exercise) before settling into
   // targeted-submit mode.
   let lastFullCycleAt = 0;
+  // Log the pause/resume transition once each, not every poll.
+  let pausedAnnounced = false;
 
   while (!stopping) {
     const cycleStart = Date.now();
@@ -600,6 +729,60 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     // Refresh the lock mtime so another cron-fired autopilot doesn't
     // declare the instance stale after 10 minutes (Codex C).
     try { utimesSync(lockPath, new Date(), new Date()); } catch { /* best-effort */ }
+
+    // Post-migration convergence: if the file-plane engine identity changed
+    // since boot, this process is connected to the wrong engine. Exit through
+    // the clean shutdown path (engine close matters for PGLite WAL) so the
+    // supervisor relaunches on the new config; the same relaunch contract the
+    // self-upgrade swap relies on. Cron and one-shot targets simply pick up
+    // the new config on their next run.
+    // A torn or failed read (concurrent config write, transient EACCES) must
+    // not restart the daemon: skip the comparison unless the file read
+    // actually produced a config — a genuine migration flip never yields null.
+    let identityNow: string | null = null;
+    try {
+      const fileCfg = loadConfigFileOnly();
+      identityNow = fileCfg ? autopilotEngineIdentity(fileCfg) : null;
+    } catch { /* torn read mid-write; check again next tick */ }
+    if (identityNow !== null && identityNow !== engineIdentityAtBoot) {
+      console.log('[autopilot] engine config changed on disk (migration?) — exiting for relaunch on the new engine.');
+      await shutdown('engine-config-changed');
+      return;
+    }
+
+    // Cooperative pause (see autopilotPausedMarkerPath). Checked AFTER the
+    // heartbeat so a paused daemon still reads as alive, and BEFORE any DB
+    // work so a cross-engine migration is not racing our writes into an
+    // engine that is about to stop being the configured one.
+    if (existsSync(autopilotPausedMarkerPath())) {
+      // Self-heal an orphan: a migrate-owned marker whose recorded pid is dead
+      // was leaked by a killed migration (SIGKILL, power loss — anything its
+      // own cleanup could not catch). Nothing else ever deletes it, and an
+      // orphan parks this daemon forever. An operator's manual hold (no
+      // migrate signature) is never touched, and a live migrate's marker
+      // reads alive and is honored.
+      let orphaned = false;
+      try {
+        const body = readFileSync(autopilotPausedMarkerPath(), 'utf-8');
+        orphaned = body.startsWith(MIGRATE_PAUSE_MARKER_PREFIX) && markerHolderAlive(body) === 'dead';
+      } catch { /* vanished or unreadable: fall through to the normal pause */ }
+      if (orphaned) {
+        console.log('[autopilot] clearing an orphaned pause marker (its migrate process is dead); resuming.');
+        try { unlinkSync(autopilotPausedMarkerPath()); } catch { /* already gone */ }
+      } else {
+        if (!pausedAnnounced) {
+          console.log('[autopilot] paused (autopilot-paused marker present) — skipping cycles until it clears.');
+          pausedAnnounced = true;
+        }
+        // Poll faster than a normal tick so a migration's quiesce window is short.
+        await new Promise((r) => setTimeout(r, Math.min(baseInterval, 30) * 1000));
+        continue;
+      }
+    }
+    if (pausedAnnounced) {
+      console.log('[autopilot] resumed — pause marker cleared.');
+      pausedAnnounced = false;
+    }
 
     // DB health check (reconnect if needed).
     //
@@ -633,7 +816,17 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         logError('reconnect', e);
         autopilotReconnectFails++;
         const klass = classifyReconnectError(e);
-        if (klass === 'unrecoverable') {
+        if (klass === 'crash') {
+          // A gbrain BUG, not an operator misconfiguration. Say so plainly
+          // instead of blaming the config, and keep retrying: a code defect must
+          // not permanently disable the daemon. The consecutive-failure cap below
+          // still bounds it.
+          console.error(
+            `[autopilot] BUG: internal error during reconnect (${(e as Error).message ?? 'unknown'}). ` +
+            `This is a gbrain defect, not a configuration problem — please report it. ` +
+            `Retrying (${autopilotReconnectFails}/${AUTOPILOT_MAX_RECONNECT_FAILS}).`,
+          );
+        } else if (klass === 'unrecoverable') {
           console.error(
             `[autopilot] FATAL: unrecoverable DB error (${(e as Error).message ?? 'unknown'}). ` +
             `Exiting so launchd ThrottleInterval can apply backoff.`,
@@ -706,8 +899,8 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       //
       // New logic: compute the remediation plan (cheap; no full doctor
       // walk), then route to the right level of intervention:
-      //   - Score >= 95 + empty plan: full cycle every 60min (phase-
-      //     coupling exercise), otherwise sleep.
+      //   - Full cycle every 60min regardless of score/plan (phase-
+      //     coupling + freshness invariant); healthy brains sleep before it.
       //   - Small plan (<=3 steps, <5min): submit individual handlers.
       //   - Large plan or low score: full autopilot-cycle (the hammer).
       //
@@ -739,7 +932,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         try {
           const { isFederatedV2Enabled } = await import('../core/feature-flags.ts');
           if (await isFederatedV2Enabled(engine)) {
-            const { loadAllSources } = await import('../core/sources-load.ts');
+            const { loadAllSources, sourceConfigHasRemoteUrl } = await import('../core/sources-load.ts');
             const sources = await loadAllSources(engine);
             const intervalMs = baseInterval * 1000;
             const now = Date.now();
@@ -754,6 +947,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
                   {
                     sourceId: src.id,
                     repoPath: src.local_path,
+                    pull: sourceConfigHasRemoteUrl(src.config),
                     auto_embed_backfill: true,
                     embed_reason: 'autopilot_freshness',
                   },
@@ -951,16 +1145,16 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         const estTotal = plan.reduce((s, r) => s + r.est_seconds, 0);
 
         // Track time since last full cycle for the 60-min floor.
-        const FULL_CYCLE_FLOOR_MIN = 60;
         const minutesSinceLastFull = (Date.now() - lastFullCycleAt) / 60000;
 
-        const shouldFullCycle =
-          (score >= 95 && plan.length === 0 && minutesSinceLastFull >= FULL_CYCLE_FLOOR_MIN) ||
-          plan.length > 3 ||
-          estTotal >= 300 ||
-          score < 70;
+        const shouldFullCycle = shouldRunAutopilotFullCycle({
+          score,
+          planLength: plan.length,
+          estimatedSeconds: estTotal,
+          minutesSinceLastFull,
+        });
 
-        const shouldSleep = score >= 95 && plan.length === 0 && minutesSinceLastFull < FULL_CYCLE_FLOOR_MIN;
+        const shouldSleep = shouldSleepHealthyAutopilot(score, plan.length, minutesSinceLastFull);
 
         if (shouldSleep) {
           if (jsonMode) {
@@ -1011,7 +1205,11 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
               if (jsonMode) process.stderr.write(JSON.stringify({ event: 'global_maintenance_dispatch_failed', error: e instanceof Error ? e.message : String(e) }) + '\n');
             }
           }
-          if (result.dispatched.length > 0 || result.legacy_fallback) {
+          // On restart the process-local clock starts overdue. If persisted
+          // source timestamps say every source is fresh, advance the local
+          // clock too; otherwise a non-empty targeted plan would be skipped
+          // on every tick until the persisted 60-minute window elapsed.
+          if (result.dispatched.length > 0 || result.legacy_fallback || result.all_sources_fresh) {
             lastFullCycleAt = Date.now();
           }
           if (jsonMode) {
@@ -1035,15 +1233,17 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           }
         } else {
           // Small targeted plan — submit individual handlers per step.
-          // D9 content-hash idempotency keys (from computeRecommendations).
-          // maxWaiting:1 per submit per codex #17 (closes the backpressure
-          // gap the prior implementation had for targeted submits).
+          // Recommendation keys stay stable for doctor/remediate checkpoints;
+          // Autopilot adds the dispatch interval so completed rows cannot hold
+          // the remediation slot forever (#4046).
+          // maxWaiting:1 per submit per codex #17 bounds the cross-window
+          // backlog if a targeted handler runs longer than one interval.
           for (const step of plan) {
             try {
               const isProtected = !!step.protected;
               const submitOpts = {
                 queue: 'default',
-                idempotency_key: step.idempotency_key,
+                idempotency_key: autopilotRemediationIdempotencyKey(step.idempotency_key, slot),
                 max_attempts: 2,
                 timeout_ms: timeoutMs,
                 maxWaiting: 1,
@@ -1247,11 +1447,11 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
 // --- Install/Uninstall ---
 
 function plistPath(): string {
-  return join(process.env.HOME || '', 'Library', 'LaunchAgents', 'com.gbrain.autopilot.plist');
+  return join(process.env.HOME || '', 'Library', 'LaunchAgents', `${autopilotLaunchdLabel()}.plist`);
 }
 
 function systemdUnitPath(): string {
-  return join(process.env.HOME || '', '.config', 'systemd', 'user', 'gbrain-autopilot.service');
+  return join(process.env.HOME || '', '.config', 'systemd', 'user', AUTOPILOT_SYSTEMD_UNIT);
 }
 
 function ephemeralStartScriptPath(): string {
@@ -1275,13 +1475,10 @@ export type InstallTarget = 'macos' | 'linux-systemd' | 'ephemeral-container' | 
 export function detectInstallTarget(): InstallTarget {
   if (process.platform === 'darwin') return 'macos';
 
-  const ephemeral = !!(
-    process.env.RENDER
-    || process.env.RAILWAY_ENVIRONMENT
-    || process.env.FLY_APP_NAME
-    || existsSync('/.dockerenv')
-  );
-  if (ephemeral) return 'ephemeral-container';
+  // Shared detector (execution-env.ts): covers the original Render/Railway/
+  // Fly//.dockerenv signals AND the cloud-sandbox signature — both get the
+  // start-script treatment here (no reliable scheduler in either).
+  if (detectExecutionEnvironment() !== 'local') return 'ephemeral-container';
 
   if (existsSync('/run/systemd/system')) {
     try {
@@ -1310,9 +1507,79 @@ function detectOpenClaw(): { detected: boolean; bootstrapCandidates: string[] } 
   return { detected: signal, bootstrapCandidates: existing };
 }
 
-function writeWrapperScript(repoPath: string): string {
-  const home = process.env.HOME || '';
-  const gbrainDir = join(home, '.gbrain');
+/** systemd unit name. The launchd label lives in `autopilotLaunchdLabel()`
+ *  (core/autopilot-paths.ts) so installer, uninstaller, status, and the
+ *  wrapper's self-disable can never name different jobs. */
+export const AUTOPILOT_SYSTEMD_UNIT = 'gbrain-autopilot.service';
+
+
+/**
+ * Bash block that stops the daemon for good when its captured `--repo` is gone.
+ *
+ * Two things this must get right, both learned the hard way:
+ *
+ * 1. PREDICATE. Test the repo DIRECTORY, not `$repo/.git`. `--repo` may be a
+ *    subdirectory of the checkout (sync resolves the root itself by walking up
+ *    with `git rev-parse` show-toplevel), and in worktrees and submodules
+ *    `.git` is a FILE, not a directory. Testing `.git/` would self-disable a
+ *    perfectly healthy install in both shapes.
+ *
+ * 2. MECHANISM. `exit 0` is the right answer for the sibling cron wrapper in
+ *    `brain-repo-durability.ts` because launchd fires that one on StartInterval —
+ *    one shot, so exiting ends it. Autopilot runs under `KeepAlive=true` +
+ *    `ThrottleInterval=60` (and systemd `Restart=always` / `RestartSec=30`),
+ *    where exiting 0 disables NOTHING: it converts a dead install into a silent
+ *    respawn-every-60s log-append loop that runs forever. On those two targets
+ *    the wrapper has to actually take the job out of rotation.
+ *
+ *    `linux-cron` and `ephemeral-container` are periodic/one-shot, so a plain
+ *    exit is correct and sufficient there.
+ *
+ * Exported pure so tests can assert the emitted shape per target without
+ * installing a daemon.
+ */
+export function generateSelfDisableGuard(repoPath: string, target: InstallTarget): string {
+  const q = (s: string) => s.replace(/'/g, "'\\''");
+  const marker = autopilotDisabledMarkerPath();
+  const disableCmd =
+    target === 'macos'
+      ? `  launchctl bootout "gui/$(id -u)/${autopilotLaunchdLabel()}" 2>/dev/null || true\n`
+      : target === 'linux-systemd'
+        ? `  systemctl --user disable --now ${AUTOPILOT_SYSTEMD_UNIT} 2>/dev/null || true\n`
+        : '';
+  const strikes = autopilotDisableStrikesPath();
+  return `# Self-disable if the captured checkout is gone (rename / relocation / deletion).
+# Tests the repo DIRECTORY: --repo may be a subdirectory of the checkout, and
+# .git is a FILE in worktrees and submodules, so [ ! -d "$repo/.git" ] would
+# false-positive on healthy installs.
+# THREE consecutive misses before disabling: repos on external volumes, NFS,
+# or cloud-synced folders are routinely absent for the first launch after
+# login, and one transient miss must not permanently kill the install. Any
+# successful probe resets the strike counter.
+if [ ! -d '${q(repoPath)}' ]; then
+  _strikes=$(($(cat '${q(strikes)}' 2>/dev/null || echo 0) + 1))
+  echo "$_strikes" > '${q(strikes)}' 2>/dev/null || true
+  if [ "$_strikes" -lt 3 ]; then
+    echo "$(date -u +%FT%TZ) [autopilot] repo path missing (strike $_strikes of 3, disabling at 3):" '${q(repoPath)}'
+    exit 0
+  fi
+  echo "$(date -u +%FT%TZ) [autopilot] repo path gone, disabling:" '${q(repoPath)}'
+  printf '%s\\n' 'repo path gone: ${q(repoPath)}' > '${q(marker)}' 2>/dev/null || true
+  rm -f '${q(strikes)}' 2>/dev/null || true
+${disableCmd}  exit 0
+fi
+rm -f '${q(strikes)}' 2>/dev/null || true
+`;
+}
+
+function writeWrapperScript(repoPath: string, target: InstallTarget): string {
+  // gbrainHomePath, not raw $HOME: the daemon writes its lock/markers through
+  // it and the status command reads through it, so a GBRAIN_HOME install must
+  // keep its wrapper (and the start-script detection that looks for it) in
+  // the same directory. Identical to the old behavior when GBRAIN_HOME is
+  // unset. The env var is also baked into the wrapper below — launchd does
+  // not pass the installer's environment to the spawned job.
+  const gbrainDir = gbrainHomePath();
   mkdirSync(gbrainDir, { recursive: true });
 
   // Wrapper sources the user's shell profile for API keys so nothing is
@@ -1351,7 +1618,8 @@ source ~/.zshrc 2>/dev/null || source ~/.bashrc 2>/dev/null || true
 # fallback, keeps the wrapper self-contained regardless of where bun is installed
 # or which init file the OS loaded.
 export PATH=${runtimePathPrefix}"$HOME/.bun/bin:$PATH"
-exec '${safeGbrainPath}' autopilot --repo '${safeRepoPath}'
+${process.env.GBRAIN_HOME ? `# Baked at install: the supervisor does not pass the installer's env, and\n# without this the daemon would read/write a different home than the\n# install that configured it.\nexport GBRAIN_HOME='${(process.env.GBRAIN_HOME).replace(/'/g, "'\\''")}'\n` : ''}
+${generateSelfDisableGuard(repoPath, target)}exec '${safeGbrainPath}' autopilot --repo '${safeRepoPath}'
 `;
   writeFileSync(wrapperPath, wrapper, { mode: 0o755 });
   return wrapperPath;
@@ -1370,7 +1638,12 @@ async function installDaemon(engine: BrainEngine, args: string[]) {
   const injectBootstrap = args.includes('--inject-bootstrap');
   const noInject = args.includes('--no-inject');
 
-  const wrapperPath = writeWrapperScript(repoPath);
+  const wrapperPath = writeWrapperScript(repoPath, target);
+  // A fresh install clears any prior self-disable AND any leaked pause, so a
+  // reinstall does not report "disabled" forever or park itself from day one
+  // on a marker some dead migration left behind.
+  try { unlinkSync(autopilotDisabledMarkerPath()); } catch { /* not disabled */ }
+  try { unlinkSync(autopilotPausedMarkerPath()); } catch { /* not paused */ }
   const home = process.env.HOME || '';
 
   switch (target) {
@@ -1400,7 +1673,7 @@ export function generateLaunchdPlist(wrapperPath: string, home: string): string 
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.gbrain.autopilot</string>
+  <key>Label</key><string>${escapeXml(autopilotLaunchdLabel())}</string>
   <key>ProgramArguments</key><array>
     <string>${escapeXml(wrapperPath)}</string>
   </array>
@@ -1437,7 +1710,7 @@ function installLaunchd(wrapperPath: string, home: string, repoPath: string) {
     // normalize unconditionally.
     chmodSync(plistPath(), 0o644);
     execSync(`launchctl load "${plistPath()}"`, { stdio: 'pipe' });
-    console.log('Installed launchd service: com.gbrain.autopilot');
+    console.log(`Installed launchd service: ${autopilotLaunchdLabel()}`);
     console.log(`  Repo: ${repoPath}`);
     console.log(`  Log: ~/.gbrain/autopilot.log`);
     console.log('  Uninstall: gbrain autopilot --uninstall');
@@ -1551,8 +1824,8 @@ function installSystemd(wrapperPath: string, repoPath: string) {
     // world-writable units); mode only applies on create, so normalize.
     chmodSync(unitPath, 0o644);
     execSync('systemctl --user daemon-reload', { stdio: 'pipe', timeout: 10_000 });
-    execSync('systemctl --user enable --now gbrain-autopilot.service', { stdio: 'pipe', timeout: 15_000 });
-    console.log('Installed systemd user service: gbrain-autopilot.service');
+    execSync(`systemctl --user enable --now ${AUTOPILOT_SYSTEMD_UNIT}`, { stdio: 'pipe', timeout: 15_000 });
+    console.log(`Installed systemd user service: ${AUTOPILOT_SYSTEMD_UNIT}`);
     console.log(`  Repo: ${repoPath}`);
     console.log('  Log: ~/.gbrain/autopilot.log');
     console.log('  Uninstall: gbrain autopilot --uninstall');
@@ -1656,9 +1929,29 @@ function installCrontab(wrapperPath: string, home: string) {
   }
 }
 
-function uninstallDaemon() {
+/**
+ * The status verdict, engine-free. Dispatched BEFORE connectEngine in cli.ts:
+ * a running PGLite daemon holds the exclusive DB lock, so an engine-bound
+ * status could not run against a healthy live install — and a DB outage would
+ * take down the very alarm meant to diagnose it. Everything it reads is
+ * filesystem (lock mtime, markers, plist/unit/crontab, log tail).
+ */
+export function runAutopilotStatus(args: string[]): void {
+  // An INSTALLED daemon always runs the default interval — the generated
+  // wrapper execs `autopilot --repo <path>` with no --interval. The flag is
+  // honored here for the manual foreground case. Garbage input must not
+  // become NaN: staleAfter = NaN makes every age comparison false, which
+  // reads a 71-day-dead daemon as 'fresh' with exit 0 — a typo'd flag would
+  // silently disable the very alarm this exit code exists to be.
+  const rawInterval = parseInt(parseArg(args, '--interval') || '300', 10);
+  showStatus(args.includes('--json'), Number.isFinite(rawInterval) && rawInterval > 0 ? rawInterval : 300);
+}
+
+export function uninstallDaemon() {
   const home = process.env.HOME || '';
-  const wrapperPath = join(home, '.gbrain', 'autopilot-run.sh');
+  // Same resolution as writeWrapperScript — a GBRAIN_HOME install must
+  // uninstall the wrapper it actually wrote, not a sibling under raw $HOME.
+  const wrapperPath = join(gbrainHomePath(), 'autopilot-run.sh');
 
   // Always try all four targets — the user might have run `--install` under
   // one target earlier and moved hosts (e.g. macOS laptop → Linux server).
@@ -1671,7 +1964,7 @@ function uninstallDaemon() {
     try {
       execSync(`launchctl unload "${plistPath()}" 2>/dev/null || true`, { stdio: 'pipe' });
       unlinkSync(plistPath());
-      console.log('Removed launchd service: com.gbrain.autopilot');
+      console.log(`Removed launchd service: ${autopilotLaunchdLabel()}`);
       removed++;
     } catch (e) {
       console.error(`  [warn] launchd: ${e instanceof Error ? e.message : e}`);
@@ -1681,7 +1974,7 @@ function uninstallDaemon() {
   // Linux systemd user unit
   if (existsSync(systemdUnitPath())) {
     try {
-      execSync('systemctl --user disable --now gbrain-autopilot.service 2>/dev/null || true', { stdio: 'pipe', timeout: 10_000 });
+      execSync(`systemctl --user disable --now ${AUTOPILOT_SYSTEMD_UNIT} 2>/dev/null || true`, { stdio: 'pipe', timeout: 10_000 });
       unlinkSync(systemdUnitPath());
       try { execSync('systemctl --user daemon-reload', { stdio: 'pipe', timeout: 5_000 }); } catch { /* best-effort */ }
       console.log('Removed systemd user service: gbrain-autopilot.service');
@@ -1760,36 +2053,230 @@ function uninstallDaemon() {
   if (removed === 0) {
     console.log('No autopilot install found on this host. Nothing to uninstall.');
   }
+
+  // A deliberate uninstall ends the disabled/paused story: without this, a
+  // self-disabled install that is then uninstalled keeps reporting
+  // "DISABLED — repo path gone" with exit 2 forever on a machine with nothing
+  // installed ('disabled' outranks 'not_installed' in the classifier).
+  try { unlinkSync(autopilotDisabledMarkerPath()); } catch { /* not present */ }
+  try { unlinkSync(autopilotPausedMarkerPath()); } catch { /* not present */ }
 }
 
-function showStatus(json: boolean) {
-  const logFile = join(process.env.HOME || '', '.gbrain', 'autopilot.log');
-  let lastLine = '';
-  try {
-    const content = readFileSync(logFile, 'utf-8');
-    const lines = content.trim().split('\n');
-    lastLine = lines[lines.length - 1] || '';
-  } catch { /* no log */ }
+/**
+ * The daemon's view of WHICH engine the file-plane config points at. Pure and
+ * deliberately narrow: only the fields an engine migration flips participate,
+ * so unrelated config edits (models, search knobs, spend gates) never trigger
+ * a restart. Compared at boot vs every tick by the daemon loop.
+ */
+export function autopilotEngineIdentity(
+  cfg: { engine?: string; database_url?: string; database_path?: string } | null,
+): string {
+  return JSON.stringify({
+    engine: cfg?.engine ?? 'pglite',
+    url: cfg?.database_url ?? null,
+    path: cfg?.database_path ?? null,
+  });
+}
 
-  let installed = false;
-  if (process.platform === 'darwin') {
-    installed = existsSync(plistPath());
-  } else {
+export type AutopilotState = 'not_installed' | 'disabled' | 'paused' | 'never_run' | 'stale' | 'fresh';
+
+export interface AutopilotStatusReport {
+  installed: boolean;
+  install_target: InstallTarget | null;
+  state: AutopilotState;
+  disabled_reason: string | null;
+  paused_reason: string | null;
+  heartbeat_age_seconds: number | null;
+  stale_after_seconds: number;
+  last_log: string;
+}
+
+/**
+ * Exit codes for `gbrain autopilot --status`, so cron and CI can gate on it.
+ *   0 — fresh, or nothing installed (nothing claimed, nothing broken)
+ *   1 — installed but not syncing (stale heartbeat, never ran, or parked on a
+ *       cooperative pause marker — a live migrate, or one that died without
+ *       cleaning up; either way the brain is not being kept current)
+ *   2 — the daemon took itself out of rotation (repo gone)
+ */
+export function autopilotStatusExitCode(state: AutopilotState): number {
+  if (state === 'disabled') return 2;
+  if (state === 'stale' || state === 'never_run' || state === 'paused') return 1;
+  return 0;
+}
+
+/**
+ * Pure classifier so the tri-state is testable without an installed daemon.
+ *
+ * The heartbeat is the lock mtime, which the tick loop already refreshes every
+ * pass (`utimesSync(lockPath, ...)`). Deliberately NOT a new artifact: a second
+ * one could disagree with the first, and a daemon still running a pre-upgrade
+ * binary would never write it, so a healthy install would report stale until it
+ * happened to relaunch.
+ */
+export function classifyAutopilotStatus(input: {
+  installed: boolean;
+  installTarget: InstallTarget | null;
+  disabledReason: string | null;
+  pausedReason?: string | null;
+  heartbeatAgeSeconds: number | null;
+  intervalSeconds: number;
+  lastLog: string;
+}): AutopilotStatusReport {
+  // Tolerance = 6 intervals. The adaptive scheduler sleeps TWO intervals
+  // between ticks on the healthiest brains (score >= 90), and the heartbeat
+  // only refreshes at tick top — so a healthy gap is cycle_duration + 2x
+  // interval, and a 3x tolerance would flap 'stale' exit-1 alarms on exactly
+  // the installs doing best. 6x still catches the dead-daemon incident in
+  // 30 minutes at the default interval instead of 71 days. A non-finite or
+  // non-positive interval (a typo'd flag upstream) would make staleAfter NaN
+  // and every age comparison false — reading a long-dead daemon as 'fresh' —
+  // so the pure layer defends itself too.
+  const staleAfter = Number.isFinite(input.intervalSeconds) && input.intervalSeconds > 0
+    ? input.intervalSeconds * 6
+    : 1800;
+  const pausedReason = input.pausedReason ?? null;
+  let state: AutopilotState;
+  if (input.disabledReason !== null) state = 'disabled';
+  else if (!input.installed) state = 'not_installed';
+  // Paused outranks the heartbeat states: the tick loop refreshes its
+  // heartbeat BEFORE honoring the pause marker, so a parked daemon looks
+  // 'fresh' by mtime while doing no work. Without this state a pause marker
+  // orphaned by a dead migrate is invisible — the daemon idles forever and
+  // status swears everything is fine (the 71-day incident's shape again).
+  else if (pausedReason !== null) state = 'paused';
+  else if (input.heartbeatAgeSeconds === null) state = 'never_run';
+  else state = input.heartbeatAgeSeconds > staleAfter ? 'stale' : 'fresh';
+
+  return {
+    installed: input.installed,
+    install_target: input.installTarget,
+    state,
+    disabled_reason: input.disabledReason,
+    paused_reason: pausedReason,
+    heartbeat_age_seconds: input.heartbeatAgeSeconds,
+    stale_after_seconds: staleAfter,
+    last_log: input.lastLog,
+  };
+}
+
+/**
+ * Which supervisor, if any, currently holds an autopilot install.
+ *
+ * Checks every target `installDaemon` can produce. The prior version grepped
+ * crontab ONLY on non-darwin, so systemd-user and ephemeral-container installs
+ * read as "not installed" — cosmetic while status always exited 0, but a hard
+ * false failure once the exit code became load-bearing.
+ */
+function detectInstalledTarget(): InstallTarget | null {
+  if (process.platform === 'darwin' && existsSync(plistPath())) return 'macos';
+  if (existsSync(systemdUnitPath())) return 'linux-systemd';
+  if (existsSync(join(gbrainHomePath(), 'start-autopilot.sh'))) return 'ephemeral-container';
+  try {
+    const crontab = execSync('crontab -l 2>/dev/null || true', { encoding: 'utf-8' });
+    if (crontabIndicatesAutopilotInstall(crontab)) {
+      return 'linux-cron';
+    }
+  } catch { /* no crontab */ }
+  return null;
+}
+
+/**
+ * Does this crontab contain an autopilot INSTALL line? The installed line
+ * invokes the generated wrapper (autopilot-run.sh); older installs called
+ * `gbrain autopilot` directly — match either. But the docs also recommend
+ * cron-ing `gbrain autopilot --status` as a health monitor, and counting THAT
+ * line as an install makes a monitor-only machine report installed/never_run
+ * with exit 1 forever. Comments never count. Pure and exported for tests.
+ */
+export function crontabIndicatesAutopilotInstall(crontab: string): boolean {
+  return crontab.split('\n').some((line) => {
+    if (line.trimStart().startsWith('#')) return false;
+    if (line.includes('autopilot-run.sh')) return true;
+    return line.includes('gbrain autopilot') && !line.includes('--status');
+  });
+}
+
+function showStatus(json: boolean, intervalSeconds: number) {
+  // gbrainHomePath, not raw HOME: the daemon writes its lock through
+  // gbrainHomePath() (#1226), so a GBRAIN_HOME install had status reading one
+  // directory while the daemon wrote another — a permanent false "stale".
+  const home = gbrainHomePath();
+  let lastLine = '';
+  for (const logPath of [join(home, 'autopilot.log'), join(process.env.HOME || '', '.gbrain', 'autopilot.log')]) {
     try {
-      const crontab = execSync('crontab -l 2>/dev/null || true', { encoding: 'utf-8' });
-      // The installed cron line invokes the generated wrapper (…/autopilot-run.sh);
-      // older installs called `gbrain autopilot` directly. Match either so status
-      // isn't a false negative after the wrapper indirection landed.
-      installed = crontab.includes('autopilot-run.sh') || crontab.includes('gbrain autopilot');
-    } catch { /* no crontab */ }
+      const content = readFileSync(logPath, 'utf-8');
+      const lines = content.trim().split('\n');
+      lastLine = lines[lines.length - 1] || '';
+      break;
+    } catch { /* try the next home; supervisor log redirects bake raw $HOME */ }
   }
+
+  let disabledReason: string | null = null;
+  try {
+    disabledReason = readFileSync(autopilotDisabledMarkerPath(), 'utf-8').trim() || null;
+  } catch { /* not self-disabled */ }
+
+  let pausedReason: string | null = null;
+  try {
+    pausedReason = readFileSync(autopilotPausedMarkerPath(), 'utf-8').trim() || 'pause marker present (no reason recorded)';
+  } catch { /* not paused */ }
+
+  let heartbeatAgeSeconds: number | null = null;
+  try {
+    const { mtimeMs } = statSync(autopilotLockPath());
+    heartbeatAgeSeconds = Math.max(0, Math.floor((Date.now() - mtimeMs) / 1000));
+  } catch { /* never ran, or already cleaned up */ }
+
+  const installTarget = detectInstalledTarget();
+  const report = classifyAutopilotStatus({
+    installed: installTarget !== null,
+    installTarget,
+    disabledReason,
+    pausedReason,
+    heartbeatAgeSeconds,
+    intervalSeconds,
+    lastLog: lastLine,
+  });
 
   if (json) {
-    console.log(JSON.stringify({ installed, last_log: lastLine }));
+    console.log(JSON.stringify(report));
   } else {
-    console.log(`Autopilot: ${installed ? 'installed' : 'not installed'}`);
+    switch (report.state) {
+      case 'not_installed':
+        console.log('Autopilot: not installed. Install with `gbrain autopilot --install`.');
+        break;
+      case 'disabled':
+        console.log(`Autopilot: DISABLED — ${report.disabled_reason}`);
+        console.log('  It stopped itself. Fix the path, then `gbrain autopilot --install --repo <path>`.');
+        break;
+      case 'paused':
+        console.log(`Autopilot: PAUSED — ${report.paused_reason}`);
+        console.log('  A pause marker is parked at ' + autopilotPausedMarkerPath() + '.');
+        console.log('  Normal while `gbrain migrate` runs. A marker orphaned by a dead migration');
+        console.log('  clears itself on the daemon\'s next poll; only remove it by hand if the');
+        console.log('  pid it names is dead and no daemon is running to clean it up.');
+        break;
+      case 'never_run':
+        console.log(`Autopilot: installed (${report.install_target}) but has NEVER run.`);
+        break;
+      case 'stale':
+        console.log(
+          `Autopilot: installed (${report.install_target}) but NOT ticking — last heartbeat ` +
+          `${report.heartbeat_age_seconds}s ago (stale after ${report.stale_after_seconds}s).`,
+        );
+        break;
+      case 'fresh':
+        console.log(
+          `Autopilot: running (${report.install_target}) — last heartbeat ` +
+          `${report.heartbeat_age_seconds}s ago.`,
+        );
+        break;
+    }
     if (lastLine) console.log(`Last log: ${lastLine}`);
   }
+
+  setCliExitVerdict(autopilotStatusExitCode(report.state));
 }
 
 function escapeXml(s: string): string {

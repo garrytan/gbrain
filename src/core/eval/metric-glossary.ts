@@ -147,6 +147,66 @@ export const METRIC_GLOSSARY: Readonly<Record<string, Readonly<MetricGlossEntry>
     eli10: 'The size of the largest score drop autocut found, as a fraction of the top result\'s score. A gap of 0.40 means the score fell by 40% of the top score at the steepest point. Autocut cuts there only when this clears the sensitivity threshold (autocut_jump, default 0.20).',
     range: '0..1, higher = a sharper cliff (more confident cut). Below the autocut_jump threshold → no cut.',
   }),
+
+  // ────────────────────────────────────────────────────────────────────────
+  // BrainBench — cross-harness memory conformance suite
+  // (`gbrain eval brainbench`; docs/eval/BRAINBENCH.md)
+  // ────────────────────────────────────────────────────────────────────────
+  'know_to_ask_failure_rate': Object.freeze({
+    industry_term: 'Know-to-ask failure rate (BrainBench)',
+    eli10: 'Of the conversation turns where memory SHOULD have surfaced something unprompted, the fraction where nothing relevant was injected. This is the thesis failure mode every agent harness shares: the agent can\'t ask for what it doesn\'t know it forgot — the memory layer has to volunteer it.',
+    range: '0..1, LOWER is better. 0.15 means memory stayed silent on 15% of the turns where it had the answer.',
+  }),
+  'false_fire_rate': Object.freeze({
+    industry_term: 'False-fire rate (BrainBench)',
+    eli10: 'Of the turns where memory should have stayed SILENT, the fraction where it injected anyway. The anti-gaming companion to the know-to-ask rate — "always inject" would ace one and bomb the other. Silence beats noise.',
+    range: '0..1, LOWER is better.',
+  }),
+  'push_precision': Object.freeze({
+    industry_term: 'Push precision (BrainBench)',
+    eli10: 'Of everything the memory layer volunteered into context, what fraction was actually relevant to the turn? Micro-averaged over injected pointers, so a 3-pointer turn weighs three times a 1-pointer turn — the way a token budget experiences it.',
+    range: '0..1, higher is better.',
+  }),
+  'push_recall': Object.freeze({
+    industry_term: 'Push recall (BrainBench)',
+    eli10: 'Of everything that SHOULD have been volunteered (the gold pointers), what fraction actually was? Pointer budgets cap this by design: a seam that may inject only 1 fragment cannot reach full recall on a 3-entity turn — that constraint is what the per-harness rows measure.',
+    range: '0..1, higher is better.',
+  }),
+  'write_back_fidelity': Object.freeze({
+    industry_term: 'Write-back fidelity (BrainBench)',
+    eli10: 'Of the facts stated in a conversation, what fraction survived the PRODUCTION conversation→memory pipeline (segmentation, insertion, dedup) and are findable afterward with the right entity attached? Measures the write path users actually run, not a test-only insert.',
+    range: '0..1, higher is better.',
+  }),
+  'provenance_accuracy': Object.freeze({
+    industry_term: 'Provenance accuracy (BrainBench)',
+    eli10: 'Of the facts that survived write-back, what fraction carry correct provenance — the right source tag, session id, and origin page? A fact you can\'t trace is a fact you can\'t trust, audit, or expire.',
+    range: '0..1, higher is better.',
+  }),
+  'continuity_rate': Object.freeze({
+    industry_term: 'Cross-session continuity rate (BrainBench)',
+    eli10: 'A decision is recorded in one session and persisted through the production write path; a different harness asks about it later on the same brain. What fraction of those decision probes were recalled — by pointer injection or stored-fact lookup? This is the continuity-that-survives-the-harness-hop moat, measured.',
+    range: '0..1, higher is better. Scored per reader harness (the v1 write path is harness-independent, disclosed in docs/eval/BRAINBENCH.md).',
+  }),
+  'source_isolation_violations': Object.freeze({
+    industry_term: 'Source-isolation violations (BrainBench)',
+    eli10: 'Count of injected pointers that belong to a source other than the active one. Cross-source leakage is gbrain\'s must-never-violate invariant (a missed source filter is a data leak), so this gates at ZERO — any baseline, any run.',
+    range: '0..n, count. MUST be 0; any value above 0 fails the gate.',
+  }),
+  'avg_injected_tokens': Object.freeze({
+    industry_term: 'Average injected tokens per turn (BrainBench)',
+    eli10: 'Estimated tokens of volunteered context per replayed turn (chars/4 heuristic). The intrusion-budget diagnostic: two seams with equal precision can differ 3x in how much context they spend to get it. Reported, not gated, until calibration data exists.',
+    range: '0..n tokens, judgment call — lower is cheaper, but starving the agent has its own cost. Non-gating.',
+  }),
+  'extraction_recall': Object.freeze({
+    industry_term: 'Extraction recall (BrainBench --llm)',
+    eli10: 'With the real LLM extractor running (instead of the deterministic gold extractor), what fraction of the gold facts did it actually extract and persist? Only scored in --llm runs — the hermetic CI gate never calls a model.',
+    range: '0..1, higher is better. Absent in deterministic runs.',
+  }),
+  'extraction_precision': Object.freeze({
+    industry_term: 'Extraction precision (BrainBench --llm)',
+    eli10: 'Of everything the real LLM extractor persisted, what fraction matches a gold fact? Low precision means the extractor invents or over-extracts — junk memory that pollutes future recall.',
+    range: '0..1, higher is better. Absent in deterministic runs.',
+  }),
 });
 
 /**
@@ -225,6 +285,12 @@ export function renderMetricGlossaryMarkdown(): string {
     ['Statistical-Significance Metrics', ['p_value', 'confidence_interval']],
     ['Operational / Cost Metrics', ['cache_hit_rate', 'avg_results', 'avg_tokens', 'cost_per_query_usd', 'p99_latency_ms']],
     ['Result-Sizing Metrics', ['autocut.signal', 'autocut.gap_ratio']],
+    ['BrainBench — Cross-Harness Memory Conformance', [
+      'know_to_ask_failure_rate', 'false_fire_rate', 'push_precision', 'push_recall',
+      'write_back_fidelity', 'provenance_accuracy', 'continuity_rate',
+      'source_isolation_violations', 'avg_injected_tokens',
+      'extraction_recall', 'extraction_precision',
+    ]],
   ];
 
   for (const [groupTitle, metrics] of groups) {

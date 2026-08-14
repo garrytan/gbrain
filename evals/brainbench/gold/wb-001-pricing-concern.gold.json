@@ -1,0 +1,36 @@
+{
+  "fixture_id": "wb-001-pricing-concern",
+  "turns": {
+    "3": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "pricing concern",
+          "fact": "Alice Example is worried the widget-co pricing model undercuts gross margin (seed-round concern)",
+          "entity_slug": "people/alice-example",
+          "match_keywords": ["pricing", "gross margin"],
+          "kind": "belief"
+        }
+      ]
+    },
+    "4": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "checklist commitment",
+          "fact": "Committed to sending Alice Example the diligence checklist by Friday",
+          "entity_slug": "people/alice-example",
+          "match_keywords": ["diligence checklist", "Friday"],
+          "kind": "commitment"
+        },
+        {
+          "gist": "MRR ahead of plan",
+          "fact": "Alice Example said widget-co MRR hit $X last month, ahead of plan",
+          "entity_slug": "people/alice-example",
+          "match_keywords": ["MRR", "ahead of plan"],
+          "kind": "fact"
+        }
+      ]
+    }
+  }
+}

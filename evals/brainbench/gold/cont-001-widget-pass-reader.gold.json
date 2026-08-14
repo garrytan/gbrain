@@ -1,0 +1,19 @@
+{
+  "fixture_id": "cont-001-widget-pass-reader",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": ["companies/widget-co"]
+    }
+  },
+  "continuity": {
+    "pair_id": "cont-001",
+    "decisions": [
+      {
+        "decision_id": "d1",
+        "expected_slugs": ["companies/widget-co"],
+        "match_keywords": ["pass", "widget-co"]
+      }
+    ]
+  }
+}

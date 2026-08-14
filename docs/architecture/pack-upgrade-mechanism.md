@@ -127,10 +127,10 @@ candidate ≠ the active pack name, loads the manifest via
 migration_from.version)`. Returns matching packs sorted by version
 descending.
 
-v0.41.22 covers bundled packs only. v0.43+ TODO: enumerate user-installed
-packs at `~/.gbrain/schema-packs/*/pack.yaml` (defer to v0.43 since the
-filesystem-scan cost needs the cache invalidation strategy from
-`registry.ts`).
+Successor detection covers bundled packs only. Future work: enumerate
+user-installed packs at `~/.gbrain/schema-packs/*/pack.yaml` (deferred
+because the filesystem-scan cost needs the cache invalidation strategy
+from `registry.ts`).
 
 ## The manual_only apply policy
 
@@ -173,8 +173,8 @@ migration_from:
   version: "1.x"
 
 page_types:
-  # Inherit gbrain-base-v2's 15 types here (or use extends to merge
-  # automatically once v0.43+ extends-chain composition lands)
+  # Inherit gbrain-base-v2's 15 types here (or declare `extends:
+  # gbrain-base-v2` and let the merge contract in schema-packs.md merge them)
   - { name: person, primitive: entity, path_prefixes: [people/], expert_routing: true }
   - { name: company, primitive: entity, path_prefixes: [companies/], expert_routing: true }
   # ... all 13 other v2 canonicals ...
@@ -222,17 +222,17 @@ Every unify run writes to `~/.gbrain/audit/schema-unify-YYYY-Www.jsonl`
 identities (before + after), per-phase counts (would_apply + applied),
 warnings, completion timestamp. Privacy: page slugs are NOT logged in
 bulk (only the per-rule sample_slugs[≤10]); for forensic debugging
-add `GBRAIN_AUDIT_FULL=1` (v0.43+ TODO; not yet wired).
+a `GBRAIN_AUDIT_FULL=1` escape hatch has been proposed but is not yet wired.
 
 ## What's NOT yet supported
 
-- Subprocess sandbox for the publish-gate (v0.43+ TODO)
+- Subprocess sandbox for the publish-gate
 - Per-source pack-upgrade (the handler accepts `sourceId` but
   `findPackSuccessors` doesn't yet pass it through)
 - Cross-brain federated mounts that disagree on canonical packs
 - Automatic rollback (today: manual SQL or `gbrain restore`)
-- LLM-assisted mapping_rules codegen from production data (`gbrain
-  schema detect-mappings`; deferred to v0.43+)
+- LLM-assisted mapping_rules codegen from production data (a proposed
+  `gbrain schema detect-mappings`)
 
 ## Reference
 
@@ -242,6 +242,6 @@ add `GBRAIN_AUDIT_FULL=1` (v0.43+ TODO; not yet wired).
 - Onboard check: `src/core/onboard/checks.ts:checkPackUpgradeAvailable`
 - Render allowlist: `src/core/onboard/render.ts:MANUAL_ONLY_PROTECTED_JOBS`
 - Handler: `src/core/schema-pack/unify-types-handler.ts`
-- Migration: `src/core/migrate.ts:105` (slug_aliases table)
+- Migration: the `slug_aliases` entry in `src/core/migrate.ts`'s `MIGRATIONS` array
 - Type taxonomy doc: `docs/architecture/type-taxonomy.md`
 - Skill: `skills/schema-unify/SKILL.md`

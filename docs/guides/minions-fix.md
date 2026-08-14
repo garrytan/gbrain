@@ -1,5 +1,9 @@
 # Minions fix — repairing a half-migrated install
 
+> **Historical repair guide** for the v0.11.0 → v0.11.1 migration. If you're
+> on any recent release, the canonical fix below (`gbrain apply-migrations
+> --yes`) is all you need; the stopgap sections exist for archaeology.
+
 **tl;dr:** on v0.11.1+ everything should self-heal. If Minions is partially
 set up (no `~/.gbrain/preferences.json`, autopilot still inline, cron jobs
 still on `agentTurn`), run:
@@ -34,17 +38,16 @@ stopgap for pre-v0.11.1 binaries that don't have `apply-migrations`.
 gbrain doctor
 ```
 
-If the install is half-migrated, you'll see:
+If the install is half-migrated, you'll see the `minions_migration` check
+fail:
 
 ```
 [FAIL] minions_migration: MINIONS HALF-INSTALLED (partial migration: 0.11.0). Run: gbrain apply-migrations --yes
 ```
 
-or
-
-```
-[FAIL] minions_config: MINIONS HALF-INSTALLED (schema v7+ but no ~/.gbrain/preferences.json). Run: gbrain apply-migrations --yes
-```
+(Missing `~/.gbrain/preferences.json` on a fresh install is a valid
+pre-`apply-migrations` state — doctor deliberately does NOT fail on that
+alone; the partial-migration record is the canonical half-migration signal.)
 
 For a machine-readable report (cron-friendly):
 
@@ -118,6 +121,9 @@ cat ~/.gbrain/preferences.json
 cat ~/.gbrain/migrations/completed.jsonl
 
 # 3. Autopilot is supervising a Minions worker child
+# (v0.46+: the exit code is the verdict — 0 fresh, 1 needs attention,
+#  2 self-disabled — so a nonzero exit here IS the finding, not a
+#  broken verify step. Under `set -e`, append `|| true` to keep going.)
 gbrain autopilot --status
 ps aux | grep 'jobs work'
 

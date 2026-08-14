@@ -17,6 +17,7 @@ import { runPhaseExtractAtoms, parseAtomsResponse } from '../../src/core/cycle/e
 import { runPhaseSynthesizeConcepts } from '../../src/core/cycle/synthesize-concepts.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import type { ChatResult, ChatOpts } from '../../src/core/ai/gateway.ts';
+import { canonicalLookup } from '../../src/core/model-pricing.ts';
 
 let engine: PGLiteEngine;
 
@@ -368,6 +369,93 @@ describe('v0.41 T6: runPhaseSynthesizeConcepts via stubbed chat', () => {
     );
     expect(page[0].type).toBe('concept');
     expect((page[0].fm as Record<string, unknown>).tier).toBe('T1');
+  });
+});
+
+// Canonical pricing: synthesize_concepts' estimated_spend_usd must derive
+// from the model that actually answered (ChatResult.model) through
+// canonicalLookup — not hardcoded Sonnet rates. A wrong per-model rate both
+// trips the $1.50 budget gate early (deterministic-template fallback for
+// work that had budget left) and persists an inflated cost into
+// receipts/rollups. Canonical-miss models keep Sonnet-tier pricing (the
+// same conservative fallback as skillopt/preflight's lookupPrice).
+describe('synthesize_concepts: cost estimate uses canonical per-model pricing', () => {
+  // 6 atoms on one concept → single T2 group → exactly one LLM call.
+  const t2Atoms = Array.from({ length: 6 }, (_, i) => ({
+    slug: `priced-${i}`,
+    title: `Priced ${i}`,
+    body: `Priced body ${i}.`,
+    concept_refs: ['priced-concept'],
+  }));
+
+  // 1M input + 1M output tokens → estimated_spend_usd equals
+  // (input_rate + output_rate) in dollars, read straight off the table.
+  function pricedChat(model: string): (o: ChatOpts) => Promise<ChatResult> {
+    return async (_o: ChatOpts) => ({
+      text: 'Priced narrative.',
+      blocks: [{ type: 'text', text: 'Priced narrative.' }],
+      stopReason: 'end',
+      usage: {
+        input_tokens: 1_000_000,
+        output_tokens: 1_000_000,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+      },
+      model,
+      providerId: model.split(':')[0] ?? 'anthropic',
+    });
+  }
+
+  // Expected values derive from the canonical table (never hand-copied
+  // dollar literals — the same invariant the fix enforces), so these tests
+  // survive future price refreshes in model-pricing.ts.
+  const sonnetRate = canonicalLookup('anthropic:claude-sonnet-4-6')!;
+  const gpt52Rate = canonicalLookup('openai:gpt-5.2')!;
+
+  test('non-Sonnet canonical model is priced at its own rates (openai:gpt-5.2)', async () => {
+    const result = await runPhaseSynthesizeConcepts(engine, {
+      _atoms: t2Atoms,
+      _chat: pricedChat('openai:gpt-5.2') as typeof import('../../src/core/ai/gateway.ts').chat,
+      dryRun: true,
+    });
+    // gpt-5.2's own canonical rates — NOT Sonnet's (the pre-fix hardcode).
+    // Guard the guard: the two rate cards must actually differ, or this
+    // test can't discriminate.
+    expect(gpt52Rate.input + gpt52Rate.output).not.toBeCloseTo(
+      sonnetRate.input + sonnetRate.output,
+      6,
+    );
+    expect(result.details?.estimated_spend_usd).toBeCloseTo(
+      gpt52Rate.input + gpt52Rate.output,
+      6,
+    );
+  });
+
+  test('canonical-miss model falls back to Sonnet-tier pricing', async () => {
+    const result = await runPhaseSynthesizeConcepts(engine, {
+      _atoms: t2Atoms,
+      _chat: pricedChat('acme:unpriced-model-x') as typeof import('../../src/core/ai/gateway.ts').chat,
+      dryRun: true,
+    });
+    // Not in CANONICAL_PRICING → conservative Sonnet-tier fallback.
+    expect(result.details?.estimated_spend_usd).toBeCloseTo(
+      sonnetRate.input + sonnetRate.output,
+      6,
+    );
+  });
+
+  test('control: Sonnet model estimate is unchanged by canonical routing', async () => {
+    const result = await runPhaseSynthesizeConcepts(engine, {
+      _atoms: t2Atoms,
+      _chat: pricedChat('anthropic:claude-sonnet-4-6') as typeof import('../../src/core/ai/gateway.ts').chat,
+      dryRun: true,
+    });
+    // Same Sonnet-tier rates the pre-canonical hardcode used ($3/$15 at
+    // the time of writing) → identical estimate before and after the fix.
+    expect(result.details?.estimated_spend_usd).toBeCloseTo(
+      sonnetRate.input + sonnetRate.output,
+      6,
+    );
   });
 });
 

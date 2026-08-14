@@ -34,6 +34,12 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/openclaw-context-engine-plugin.test.ts",
     "test/e2e/openclaw-plugin-load-real.test.ts",
   ],
+  // claw-test harness (command + core: runners, scenarios, seeding, friction
+  // merge) feeds the scripted + shim-live E2E. The hermes door
+  // (install-real-hermes.serial.test.ts) is deliberately NOT mapped — it is
+  // opt-in-gated (GBRAIN_REAL_HERMES_E2E) and self-skips in run-all anyway.
+  "src/commands/claw-test.ts": ["test/e2e/claw-test.test.ts"],
+  "src/core/claw-test/**": ["test/e2e/claw-test.test.ts"],
   // dream.ts is a thin alias over runCycle in cycle.ts.
   "src/core/cycle.ts": ["test/e2e/cycle.test.ts", "test/e2e/dream.test.ts"],
   // Multi-source sync writes share the per-source bookmark anchor.

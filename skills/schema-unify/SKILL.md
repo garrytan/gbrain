@@ -7,7 +7,7 @@ tools:
   - gbrain onboard --check --explain
   - gbrain onboard --check --json
   - gbrain jobs submit unify-types
-  - gbrain jobs follow
+  - gbrain jobs get
   - gbrain schema active
   - gbrain schema use
   - gbrain schema stats
@@ -100,7 +100,8 @@ nothing and left the active pack unflipped. Omit it to preview.
 Watch progress per phase:
 
 ```bash
-gbrain jobs follow <job_id>
+gbrain jobs get <job_id>      # one job: status, progress, result
+gbrain jobs watch --follow    # live dashboard of the whole queue
 ```
 
 On a 186K-page brain expect ~10 minutes. The handler runs:
@@ -245,7 +246,7 @@ Final celebration summary to stderr:
 ═══════════════════════════════════════════════════════════
 ```
 
-JSON output (`gbrain jobs follow <id> --json`) returns the structured `UnifyTypesResult` shape with `per_phase`, `pack_identity_after`, `active_pack_flipped`.
+For structured JSON, `gbrain call get_job '{"id": <id>}'` returns the job row; its `result` field carries the `UnifyTypesResult` shape with `per_phase`, `pack_identity_after`, `active_pack_flipped` (`gbrain jobs get <id>` prints the same result inline).
 
 ## Reference
 

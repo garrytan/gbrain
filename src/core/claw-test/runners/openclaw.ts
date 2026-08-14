@@ -15,16 +15,19 @@
 
 import { execSync } from 'child_process';
 import { statSync } from 'fs';
-import type { AgentRunner, DetectResult, InvokeOpts, InvokeResult } from '../agent-runner.ts';
+import {
+  BASE_ENV_ALLOWLIST,
+  validateBinPathEnv,
+  type AgentRunner,
+  type DetectResult,
+  type InvokeOpts,
+  type InvokeResult,
+} from '../agent-runner.ts';
 import { spawnWithCapture } from '../transcript-capture.ts';
 
 const DEFAULT_AGENT_NAME = 'default';
-/** Allow-list for env propagation when spawning openclaw. */
-const ENV_ALLOWLIST = [
-  'PATH', 'HOME', 'USER', 'LANG', 'TZ', 'NODE_ENV',
-  'ANTHROPIC_API_KEY', 'OPENAI_API_KEY',
-  'GBRAIN_HOME', 'GBRAIN_FRICTION_RUN_ID', 'GBRAIN_DATABASE_URL',
-];
+/** Allow-list for env propagation when spawning openclaw (no delta from base). */
+const ENV_ALLOWLIST = [...BASE_ENV_ALLOWLIST];
 
 export class OpenClawRunner implements AgentRunner {
   readonly name = 'openclaw';
@@ -34,7 +37,7 @@ export class OpenClawRunner implements AgentRunner {
     let binPath: string | undefined;
 
     if (fromEnv) {
-      const validation = validateAbsolutePath(fromEnv);
+      const validation = validateBinPathEnv('OPENCLAW_BIN', fromEnv);
       if (validation) return { available: false, reason: validation };
       binPath = fromEnv;
     } else {
@@ -91,8 +94,3 @@ export class OpenClawRunner implements AgentRunner {
   }
 }
 
-function validateAbsolutePath(p: string): string | null {
-  if (!p.startsWith('/')) return `OPENCLAW_BIN must be absolute; got ${p}`;
-  if (p.split('/').includes('..')) return `OPENCLAW_BIN must not contain '..' segments; got ${p}`;
-  return null;
-}

@@ -52,9 +52,9 @@ The persona prompt (`services/voice-agent/code/lib/personas/mars.mjs`) carries t
 
 ## Solo-mode tool posture
 
-Mars uses tools SPARINGLY in solo mode. The right tools are:
-- `search_brain` (find related concepts/people/meetings to deepen the reflection)
-- `read_brain_page` (read a specific page aloud when the operator says "tell me about X")
+Mars uses tools SPARINGLY in solo mode. The right tools (op names from the shipped `tools.mjs` allow-list) are:
+- `search` (find related concepts/people/meetings to deepen the reflection)
+- `get_page` (read a specific page aloud when the operator says "tell me about X")
 - `read_article` (summarize a link the operator shared)
 
 Calendar, tasks, email tools are DELIBERATELY ABSENT from Mars's solo-mode usage even though they're in the read-only allow-list. Mars redirects logistical questions to Venus.
@@ -62,8 +62,8 @@ Calendar, tasks, email tools are DELIBERATELY ABSENT from Mars's solo-mode usage
 ## Demo-mode tool posture
 
 Mars uses tools AGGRESSIVELY in demo mode:
-- Search the brain for people/companies the operator introduces
-- Pull current events via `web_search` (when wired)
+- Search the brain (`search` / `query`) for people/companies the operator introduces
+- Summarize links via `read_article` (a general web-search tool is NOT in the shipped allow-list — wire one host-side if you want it)
 - Cross-reference what the operator is saying against the brain in near-real-time
 
 The goal: make the demo audience think "oh, this is what a personal AI can actually do."

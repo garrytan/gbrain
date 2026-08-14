@@ -38,7 +38,7 @@ import {
   type SearchMode,
   type ModeBundle,
 } from '../core/search/mode.ts';
-import { readSearchStats } from '../core/search/telemetry.ts';
+import { readSearchStats, telemetryCoverage, TELEMETRY_COVERAGE_CAVEAT } from '../core/search/telemetry.ts';
 
 const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   cache_enabled: 'Semantic query cache on/off',
@@ -225,6 +225,7 @@ async function runStatsSubcommand(engine: BrainEngine, args: string[]): Promise<
     console.log(JSON.stringify({
       schema_version: 2,
       ...stats,
+      coverage: telemetryCoverage(),
       graph_signals: gsSection,
       _meta: {
         metric_glossary: {
@@ -241,11 +242,15 @@ async function runStatsSubcommand(engine: BrainEngine, args: string[]): Promise<
   }
 
   console.log(`Search stats over the last ${stats.window_days} days:`);
+  console.log(`  Coverage note: ${TELEMETRY_COVERAGE_CAVEAT}`);
   console.log('');
   console.log(`  Total searches:        ${stats.total_calls}`);
   if (stats.total_calls === 0) {
     console.log('');
-    console.log('No telemetry recorded yet. Run a few `gbrain query` calls and re-check.');
+    console.log('No telemetry recorded in this window. This can mean no search activity, or');
+    console.log('it can reflect the coverage gap above — a lone short-lived CLI call is often');
+    console.log('not enough to trigger a flush. `gbrain serve` / an MCP session is more likely');
+    console.log('to record counts over time (telemetry stays best-effort either way).');
     // Still print the graph-signals section since failures are tracked
     // independently of the search_telemetry table.
     if (gsSection.enabled || gsSection.failures_count > 0) {
@@ -382,6 +387,7 @@ async function runTuneSubcommand(engine: BrainEngine, args: string[]): Promise<v
         schema_version: 2,
         status: 'insufficient_data',
         total_calls: stats.total_calls,
+        coverage: telemetryCoverage(),
         recommendations: [],
         message: 'Not enough search activity in the last 7 days to tune. Run `gbrain search stats` after some real usage.',
       }, null, 2));
@@ -389,7 +395,8 @@ async function runTuneSubcommand(engine: BrainEngine, args: string[]): Promise<v
     }
     console.log('Not enough search activity in the last 7 days to tune.');
     console.log(`Total searches: ${stats.total_calls} (need >= 20 for confident recommendations).`);
-    console.log('Run a few `gbrain query` calls, then re-run `gbrain search tune`.');
+    console.log(`(${TELEMETRY_COVERAGE_CAVEAT} Low counts can reflect this gap, not just low usage.)`);
+    console.log('Use `gbrain serve` or an MCP session for a while, then re-run `gbrain search tune`.');
     return;
   }
 
@@ -448,6 +455,7 @@ async function runTuneSubcommand(engine: BrainEngine, args: string[]): Promise<v
       total_calls: stats.total_calls,
       cache_hit_rate: stats.cache_hit_rate,
       active_mode: resolved.resolved_mode,
+      coverage: telemetryCoverage(),
       recommendations: recs,
       applied: apply ? recs.map(r => r.apply_command) : [],
       _meta: {
@@ -466,6 +474,7 @@ async function runTuneSubcommand(engine: BrainEngine, args: string[]): Promise<v
   }
 
   console.log(`Search tune (last 7 days, active mode: ${resolved.resolved_mode}):`);
+  console.log(`(${TELEMETRY_COVERAGE_CAVEAT})`);
   console.log('');
 
   if (recs.length === 0) {

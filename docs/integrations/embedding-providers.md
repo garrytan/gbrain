@@ -23,7 +23,7 @@ The resolved provider + dimensions get persisted to `~/.gbrain/config.json` atom
 
 | Provider | env vars | default dims | cost ($/1M tokens) | local? | multimodal? |
 |---|---|---|---|---|---|
-| `zeroentropyai` | `ZEROENTROPY_API_KEY` | 2560 (Matryoshka to 1280/640/320/...) | 0.05 | no | no |
+| `zeroentropyai` (hosted API **shuts down 2026-09-04** — see note below) | `ZEROENTROPY_API_KEY` | 2560 (Matryoshka to 1280/640/320/...) | 0.05 | no | no |
 | `openai` | `OPENAI_API_KEY` | 1536 | 0.13 | no | no |
 | `openrouter` | `OPENROUTER_API_KEY` | 1536 | 0.02 | no | model-dependent |
 | `voyage` | `VOYAGE_API_KEY` | 1024 | 0.18 | no | yes (`voyage-multimodal-3`) |
@@ -41,6 +41,8 @@ The resolved provider + dimensions get persisted to `~/.gbrain/config.json` atom
 | `groq` | (no embedding model — chat only) | — | — | — | — |
 
 **Note on local providers.** Ollama and llama-server have no required API key, so they don't show up in env-detection auto-pick. Pick them explicitly with `--embedding-model ollama:<model>` to avoid silently routing to a daemon that may not be running.
+
+**Note on the ZeroEntropy hosted API.** ZeroEntropy announced (2026-07-24) that its hosted endpoints shut down on **2026-09-04**. A brain still embedding through the hosted API loses semantic retrieval entirely on that date — query embedding uses the same endpoint, so existing vectors become unqueryable, not just new content. Either self-host the Apache-2.0 zembed-1 weights via llama-server/Ollama (keeps every existing vector, no re-embed), or migrate with `gbrain migrate embeddings` — see [the migration guide](../guides/embedding-migration.md). `gbrain doctor` (check `provider_sunset`) flags affected brains and prints the paste-ready command with the brain's actual `--dim` filled in.
 
 ## If first import fails
 

@@ -1,74 +1,74 @@
 # Refresh algorithm (diff-and-propose)
 
-`gbrain integrations install agent-voice --refresh` re-walks the manifest, classifies every file into one of five states, and lets the operator decide per-file. The reference implementation is in `src/commands/integrations.ts` under the `install_kind: copy-into-host-repo` branch.
+`gbrain integrations install agent-voice --refresh` re-walks the manifest, classifies every file into one of six states, and applies a deterministic decision per state. The implementation is in `src/commands/integrations.ts` under the `install_kind: copy-into-host-repo` branch (`refreshRecipeIntoHostRepo` / `classifyForRefresh`).
+
+This file is the single home for refresh semantics. `recipes/agent-voice.md` and `install/post-install-hint.md` summarize and link here.
 
 ## State machine
 
-For each file declared in `install/manifest.json`:
+For each file declared in `install/manifest.json` (plus each file in the prior install record):
 
 ```
-Let src_hash    = SHA-256 of gbrain-side file at manifest.src
-Let host_path   = <target-repo>/<manifest.target>
-Let recorded   = .gbrain-source.json.files[].sha256 for this entry (or absent if first refresh)
-Let host_hash  = SHA-256 of host_path (or absent if file deleted on host side)
+Let src_hash   = SHA-256 of gbrain-side file at manifest.src
+Let host_path  = <target-repo>/<manifest.target>
+Let recorded   = .gbrain-source.json.files[].sha256 for this entry (absent if new)
+Let host_hash  = SHA-256 of host_path (absent if file missing on host side)
 
-State:
+State (and what refresh does about it):
   - "unchanged-identical"  iff host_hash == src_hash
                            → no-op
   - "unchanged-stale"      iff host_hash == recorded AND host_hash != src_hash
-                           → operator unmodified, source moved → offer update
-  - "locally-modified"     iff host_hash != recorded AND host_hash != src_hash AND host_hash is defined
-                           → operator edited locally; offer three options (see below)
-  - "host-deleted"         iff host_hash is absent AND src exists
-                           → operator removed the file; offer to restore or to remove from manifest
-  - "source-deleted"       iff src is absent AND host_hash is defined
-                           → gbrain reference removed the file; offer cleanup (remove from host)
+                           → operator unmodified, source moved → auto-updated (copied over)
+  - "locally-modified"     iff host_hash != recorded AND host_hash != src_hash AND host exists
+                           → operator edited locally → default keep-mine; see below
+  - "host-deleted"         iff host file absent AND src exists
+                           → left deleted, UNLESS --auto take-theirs (restores the file)
+  - "source-deleted"       iff entry in the prior record but not in the current manifest
+                           → left in place ("orphan"), UNLESS --auto take-theirs (removes it)
+  - "new-in-manifest"      iff entry in the manifest but not in the prior record
+                           → auto-installed (copied in)
 ```
 
-A path-mapping renames table in the manifest (`renames: [{from, to}]`, not yet shipped) allows the refresh algorithm to detect a source-renamed file as a logical update rather than a delete+add.
+There is no interactive per-file prompt: every run is non-interactive, and the only lever is `--auto keep-mine|take-theirs`. Without `--auto`, the defaults above apply (they match `--auto keep-mine`). Run `--dry-run` first to see the per-file classification before anything is written.
 
-## "Locally-modified" decision
+A path-mapping renames table in the manifest (`renames: [{from, to}]`, not yet shipped) would let refresh detect a source-renamed file as a logical update rather than a delete+add.
 
-When a file shows `locally-modified`, the operator picks one of three options:
+## The "locally-modified" decision
 
-- **keep-mine** — leave host file untouched. The manifest entry's `sha256` is updated to the current host hash (the operator's edit becomes the new "recorded" baseline; future refreshes won't re-flag it until they edit it again OR the source changes).
-- **take-theirs** — copy the gbrain reference over the host file. The recorded SHA becomes the new src_hash.
-- **merge** — print a unified diff. Operator hand-merges in their editor; the refresh command exits without writing. Re-run `--refresh` after the merge to confirm.
+- **keep-mine** (the default) — leave the host file untouched. The recorded `sha256` in `.gbrain-source.json` is re-baselined to the current host hash, so future refreshes won't re-flag this file until either side changes again.
+- **take-theirs** (`--auto take-theirs`) — copy the gbrain reference over the host file. The recorded SHA becomes the new src_hash.
 
-## Transaction journal
+There is no `merge` option and no diff output. To hand-merge: run `--dry-run` to find locally-modified files, diff them yourself against the gbrain-side reference (the `src` path printed per file), merge in your editor, then re-run `--refresh`.
 
-`<target-repo>/services/voice-agent/.gbrain-source.refresh.log` is a JSONL append-only file. Each line records:
+## Transaction journal (audit log)
+
+`<target-repo>/services/voice-agent/.gbrain-source.refresh.log` is a JSONL append-only file. Each line records one refresh event:
 
 ```json
-{"ts": "2026-05-17T12:34:56Z", "src": "code/server.mjs", "state": "locally-modified", "decision": "keep-mine"}
+{"ts": "2026-05-17T12:34:56Z", "event": "preserved_local", "src": "code/server.mjs", "target": "services/voice-agent/code/server.mjs", "decision": "keep-mine"}
 ```
 
-The journal exists for two reasons:
-1. **Partial-apply recovery.** If the refresh is interrupted mid-loop (Ctrl-C, crash, machine reboot), re-running `--refresh` reads the journal and resumes where it stopped.
-2. **Audit.** Operators can grep the journal to see which files were touched and why.
-
-The journal is rotated by file size (>1MB triggers rename to `.gbrain-source.refresh.log.1`) and ignored by `--refresh`'s own scan (the journal is host-only metadata, not a managed file).
-
-## Concurrent refresh guard
-
-`--refresh` acquires an advisory file lock at `<target-repo>/services/voice-agent/.gbrain-source.refresh.lock` for the duration of the run. Concurrent `--refresh` invocations on the same host repo fail-fast with "refresh already in progress."
+The journal is an **audit log only** — grep it to see which files were touched by which refresh and why. It is never read back by `--refresh` (every run re-classifies from scratch), it is not rotated, and it is ignored by the scan itself (host-only metadata, not a managed file). Delete or truncate it whenever you like.
 
 ## CLI surface
 
 ```bash
 gbrain integrations install agent-voice --target <repo> --refresh
-gbrain integrations install agent-voice --target <repo> --refresh --dry-run     # report-only
-gbrain integrations install agent-voice --target <repo> --refresh --auto take-theirs   # non-interactive
-gbrain integrations install agent-voice --target <repo> --refresh --auto keep-mine     # bias toward operator's edits
+gbrain integrations install agent-voice --target <repo> --refresh --dry-run              # report-only, per-file detail
+gbrain integrations install agent-voice --target <repo> --refresh --auto take-theirs     # always take upstream
+gbrain integrations install agent-voice --target <repo> --refresh --auto keep-mine       # explicit form of the default
 ```
 
-`--auto <decision>` applies the named decision to ALL `locally-modified` files without prompting. Useful for CI lanes that want either "always take upstream" or "always preserve local" without operator interaction.
+`--auto <decision>` applies the named decision to ALL `locally-modified` files (and, for `take-theirs`, also restores host-deleted files and cleans up source-deleted orphans). Useful for CI lanes.
 
 ## What this v0 deliberately skips
 
-- Conflict resolution for files that exist in both manifests but at different paths (treated as add+delete).
-- Concurrent edits on the SAME file mid-refresh (the advisory lock + per-file atomic write covers this).
-- Semantic merges (we offer file-level diff only; no per-hunk picking).
-- Manifest schema migration (v0.1.0 → v0.2.0 changes are handled by the install command refusing to refresh old manifests and asking the operator to re-install).
+- **Interactive per-file prompting and a merge option** — every run is batch; hand-merges happen in your editor between a `--dry-run` and a re-run.
+- **Journal replay / partial-apply resume** — an interrupted refresh is simply re-run; classification is recomputed from scratch, and completed copies classify as `unchanged-identical` on the second pass.
+- **Journal rotation** — the log grows unbounded (slowly); truncate it yourself if it bothers you.
+- **A concurrent-refresh lock** — don't run two refreshes against the same host repo at once.
+- Renamed-path detection (the `renames` table above).
+- Semantic merges (file-level only; no per-hunk picking).
+- Manifest schema migration (breaking manifest changes are handled by the install command refusing to refresh and asking the operator to re-install).
 
 Each of those is a follow-up TODO.

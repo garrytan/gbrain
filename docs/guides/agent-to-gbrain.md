@@ -12,13 +12,13 @@ surfaces**, and which one you pick depends on the operation.
                        │                gbrain process                │
                        │                                              │
    Agent (hermes,      │  ┌──────────────────┐    ┌────────────────┐ │
-   openclaw, fork) ────┼──▶  MCP ops surface  │    │   localOnly    │ │
-                       │  │ (HTTP + OAuth)    │    │   admin ops    │ │
+   openclaw, fork) ────┼──▶  MCP ops surface  │    │  local-only    │ │
+                       │  │ (HTTP + OAuth)    │    │  commands      │ │
                        │  │                   │    │                │ │
                        │  │  search, query,   │    │  sync, embed,  │ │
-                       │  │  put_page,        │    │  dream, doctor,│ │
-                       │  │  get_page,        │    │  autopilot,    │ │
-                       │  │  find_experts,    │    │  init, secrets │ │
+                       │  │  put_page,        │    │  extract,      │ │
+                       │  │  get_page,        │    │  dream,        │ │
+                       │  │  find_experts,    │    │  enrich, ...   │ │
                        │  │  ...              │    │                │ │
                        │  └──────────────────┘    └────────────────┘ │
                        │           ▲                       ▲          │
@@ -26,7 +26,7 @@ surfaces**, and which one you pick depends on the operation.
                        │           │                       │          │
                        │     thin-client OAuth      shell-job `inherit:`│
                        │     (preferred for          (only path for   │
-                       │      MCP-equivalent ops)    localOnly ops)   │
+                       │      MCP-equivalent ops)    local-only work) │
                        └─────────────────────────────────────────────┘
 ```
 
@@ -45,7 +45,7 @@ the set of ops in `src/core/operations.ts` whose `localOnly` flag is unset
 The host runs gbrain as a long-lived HTTP server:
 
 ```bash
-GBRAIN_ALLOW_SHELL_JOBS=1 gbrain serve --http --port 3131
+gbrain serve --http --port 3131
 ```
 
 The agent registers as an OAuth client (one-time):
@@ -75,22 +75,27 @@ commands through the configured remote MCP. The agent can call
   agent to a specific source within a federated brain.
 - One audit surface (`mcp_request_log`) covers every op call uniformly.
 
-## Surface 2 — localOnly admin ops via shell-job `inherit:`
+## Surface 2 — local-only work via shell-job `inherit:`
 
-Some operations are flagged `localOnly: true` in `src/core/operations.ts` and
-are **refused** in thin-client mode at `src/cli.ts:isThinClient`. The full
-list (as of v0.36.5.0) includes:
+Two mechanisms keep local-only work off the remote surface, and they operate
+at different layers:
 
-- `sync` (filesystem walks need local FS access)
-- `embed` (orchestrates the embed pipeline)
-- `extract` (walks markdown files)
-- `dream` (synthesis cycle)
-- `doctor` (filesystem hygiene checks)
-- `autopilot` (background daemon orchestration)
-- `init` (creates `~/.gbrain/`)
-- `secrets` (config management)
+- **Op layer:** operations flagged `localOnly: true` in
+  `src/core/operations.ts` are filtered out of the HTTP MCP surface entirely
+  — a remote caller never sees them.
+- **CLI layer:** on a thin-client install (remote MCP configured, no local
+  engine), commands that require a local engine or the local filesystem are
+  refused at dispatch with a pinpoint hint naming the closest alternative.
+  The authoritative set is `THIN_CLIENT_REFUSED_COMMANDS` in `src/cli.ts` —
+  read it there rather than trusting any list copied into a doc; it covers
+  `sync`, `embed`, `extract`, `dream`, `enrich`, `serve`, `config`, and a
+  couple dozen more.
 
-For these, the agent cannot route through HTTP MCP. The only path is to run
+Notable non-members: `doctor` is NOT refused on a thin client — it reroutes
+to an outbound-HTTP probe set (`src/core/doctor-remote.ts`); `bootstrap` and
+`hook` are engine-free and work on any install shape.
+
+For refused commands, the agent cannot route through HTTP MCP. The path is to run
 `gbrain` as a CLI subprocess. The recommended pattern is to submit the
 subprocess as a shell job to the gbrain Minions worker so retry / backoff /
 DLQ / audit trail all come for free.
@@ -114,12 +119,11 @@ full validation rules and error catalog.
 
 ### Why this is preferred over writing secrets into `env:` per-job
 
-- Pre-v0.36.5.0 callers passed `env: { GBRAIN_DATABASE_URL: "postgresql://..." }`
-  per job. The URL landed plaintext in `minion_jobs.data` and the shell-audit
-  JSONL. Anyone with brain-DB read access (or a brain dump, or a shared brain
-  via mounts) saw the URL. As of v0.36.5.0, this is rejected at pre-enqueue
-  validation. The error message names `inherit: ["database_url"]` as the
-  replacement.
+- Passing `env: { GBRAIN_DATABASE_URL: "postgresql://..." }` per job would
+  land the URL plaintext in `minion_jobs.data` and the shell-audit JSONL —
+  visible to anyone with brain-DB read access (or a brain dump, or a shared
+  brain via mounts). Pre-enqueue validation rejects it; the error message
+  names `inherit: ["database_url"]` as the replacement.
 
 ### Worker setup (one-time, per host)
 
@@ -146,11 +150,11 @@ proxy for worker env.
 | `get_page` / `list_pages` | HTTP MCP | Same. |
 | `put_page` | HTTP MCP | Same; respects subagent allow-list when applicable. |
 | `find_experts` / `find_orphans` | HTTP MCP | Same. |
-| `sync` / `embed` / `extract` | Shell job + `inherit:` | `localOnly: true`. |
-| `dream` | Shell job + `inherit:` | `localOnly: true`. |
-| `doctor` | Shell job + `inherit:` (or no inherit if no DB) | `localOnly: true`. |
+| `sync` / `embed` / `extract` | Shell job + `inherit:` | Thin-client refused; needs local engine + FS. |
+| `dream` | Shell job + `inherit:` | Thin-client refused; synthesis runs on the host. |
+| `doctor` | Run directly (any install) | Not refused: thin clients get the remote probe set. |
 | `autopilot` | Run as a daemon directly on the host | Long-lived, not job-shaped. |
-| `init` / `secrets` | One-time host setup | Operator action, not agent action. |
+| `init` / `config` | One-time host setup | Operator action, not agent action. |
 
 ## Recommended patterns
 
@@ -166,16 +170,19 @@ proxy for worker env.
 - **`env:` still works** for non-secret values, or for cases where you
   WANT the value in the row (e.g. an opaque correlation token your audit
   flow needs to read back later). The validator doesn't second-guess you.
-- **Never try to route a `localOnly` op through thin-client MCP.** It will
-  fail with `localOnly op refused in thin-client mode`. Use shell-job +
-  `inherit:` (for secrets) or `env:` (for non-secrets).
+- **Never try to route a refused command through a thin client.** The CLI
+  refuses it at dispatch with a hint. Use shell-job + `inherit:` (for
+  secrets) or `env:` (for non-secrets) on the host instead.
+- **Push-based context.** Beyond request/response ops, MCP clients can
+  receive volunteered context via the `volunteer_context` op — see
+  [push-context.md](./push-context.md).
 
-## Migration: from pre-v0.36.5.0
+## Migration: from `env:`-passed secrets
 
 If your agent submits shell jobs that pass secrets via `env:`:
 
 ```jsonc
-// Pre-v0.36.5.0: works but URL persists in minion_jobs.data plaintext.
+// Rejected at submit: the URL would persist in minion_jobs.data plaintext.
 {
   "cmd": "gbrain sync --skip-failed",
   "cwd": "/data/gbrain",
@@ -186,7 +193,7 @@ If your agent submits shell jobs that pass secrets via `env:`:
 Switch to (recommended):
 
 ```jsonc
-// v0.36.5.0+: name in row, value resolved at child-spawn from worker config.
+// Name in row, value resolved at child-spawn from worker config.
 {
   "cmd": "gbrain sync --skip-failed",
   "cwd": "/data/gbrain",

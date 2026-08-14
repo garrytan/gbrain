@@ -38,6 +38,7 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
       exists: ${{ steps.v.outputs.exists }}
+      template_tree_hash: ${{ steps.v.outputs.template_tree_hash }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - id: v
@@ -47,6 +48,13 @@ jobs:
         run: |
           version="$(tr -d '[:space:]' < VERSION)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          # [C3] Record the vendored template tree's git hash alongside the
+          # asset completeness check. The publish-template job embeds it in
+          # the template repo's commit message, so template-repo HEAD can be
+          # audited back to the exact reviewed tree in THIS repo. Empty until
+          # templates/bootstrap/template-repo/ is vendored.
+          tree_hash="$(git rev-parse "HEAD:templates/bootstrap/template-repo" 2>/dev/null || true)"
+          echo "template_tree_hash=$tree_hash" >> "$GITHUB_OUTPUT"
           # Complete = release exists AND carries every asset the self-updater
           # can request. A partial release must NOT short-circuit, so a re-run
           # can repair it.
@@ -137,3 +145,105 @@ jobs:
           files: |
             artifacts/gbrain-darwin-arm64/gbrain-darwin-arm64
             artifacts/gbrain-linux-x64/gbrain-linux-x64
+      # [C1 = D6-A] `latest-stable` is the single sanctioned distribution ref:
+      # the README paste block, the BOOTSTRAP_FOR_AGENTS.md fetch URL, and
+      # `bun install -g github:garrytan/gbrain#latest-stable` all reference it
+      # permanently, so paste blocks copied into the wild never rot and there
+      # is no 404 window between VERSION landing and assets publishing. It is
+      # a maintainer-controlled tag advanced ONLY here — the FINAL step of the
+      # release job, after binaries + provenance attestation have fully
+      # published — so a half-built release never moves it. The force-move
+      # (`+`) is intentional: latest-stable tracks the newest verified release;
+      # per-release history lives in the immutable v<VERSION> tags.
+      # scripts/check-bootstrap-tag.sh keeps the entry docs pinned to this ref.
+      #
+      # If this step ALONE fails, re-advance by hand (a full re-run would skip:
+      # the release already exists with all assets):
+      #   git push origin "+refs/tags/v<VERSION>^{commit}:refs/tags/latest-stable"
+      - name: Advance latest-stable to this release commit
+        run: git push origin "+${GITHUB_SHA}:refs/tags/latest-stable"
+
+  # [G7/S3#4] Publishes the rendered agent-workspace template repo (the
+  # GitHub "Use this template" door) from CI ONLY — no human pushes it by
+  # hand, so what adopters clone is exactly what this repo reviewed. Guarded
+  # three ways:
+  #   1. The release above fully published (needs: release + the exists gate).
+  #   2. The vendored tree templates/bootstrap/template-repo/ exists — the
+  #      generator/doors work may not have landed yet; skip, never fail.
+  #   3. The TEMPLATE_REPO_PAT secret is configured. Secrets are not readable
+  #      in job-level `if:` expressions, so the secret is bound to env (the
+  #      same env-indirection pattern as the release-notes step) and checked
+  #      by the gate step's shell.
+  #
+  # TEMPLATE_REPO_PAT scope: a fine-grained PAT with `contents: write` on the
+  # template repository ONLY — no other repositories, no other permissions.
+  # Documented in docs/RELEASING.md.
+  publish-template:
+    needs: [version, release]
+    if: needs.version.outputs.exists == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      TEMPLATE_REPO_PAT: ${{ secrets.TEMPLATE_REPO_PAT }}
+      # owner/name of the template repo; override via repository variable.
+      TEMPLATE_REPO: ${{ vars.TEMPLATE_REPO || 'garrytan/gbrain-agent-template' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - id: gate
+        name: Gate on PAT + vendored template tree
+        run: |
+          if [ -z "$TEMPLATE_REPO_PAT" ]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "SKIP: TEMPLATE_REPO_PAT secret not configured — template-repo publishing disabled."
+          elif [ ! -d templates/bootstrap/template-repo ]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "SKIP: templates/bootstrap/template-repo/ not vendored yet — nothing to publish."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.gate.outputs.publish == 'true'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.3.13
+      - if: steps.gate.outputs.publish == 'true'
+        run: bun install
+      - if: steps.gate.outputs.publish == 'true'
+        name: Generate template tree and byte-diff against the vendored copy
+        run: |
+          bun run scripts/generate-template-repo.ts --out /tmp/template-tree
+          # [A1] Publish gate: fresh generator output must equal the vendored
+          # tree byte-for-byte. A mismatch means the vendored tree is stale —
+          # regenerate + commit it (scripts/check-bootstrap-templates.sh runs
+          # this same diff offline in `bun run verify`).
+          diff -r /tmp/template-tree templates/bootstrap/template-repo
+      - if: steps.gate.outputs.publish == 'true'
+        name: Force-push the template repo
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          TEMPLATE_TREE_HASH: ${{ needs.version.outputs.template_tree_hash }}
+        run: |
+          set -euo pipefail
+          cd /tmp/template-tree
+          git init -q -b main
+          git config user.name "gbrain-release-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          # History-less by design: each release force-publishes one commit
+          # whose message binds (gbrain version, vendored tree hash) [C3].
+          git commit -q -m "gbrain v${RELEASE_VERSION} template (tree ${TEMPLATE_TREE_HASH:-unvendored})"
+          # Out-of-band credential: a one-shot GIT_ASKPASS script reads the
+          # PAT from env at prompt time, so the token never rides argv (where
+          # `ps`, runner traces, and error messages echoing the remote URL
+          # could surface it).
+          ASKPASS="$(mktemp)"
+          # shellcheck disable=SC2016  # $1/$TEMPLATE_REPO_PAT are literal on
+          # purpose — they must expand when /bin/sh runs the askpass script at
+          # git's credential prompt, not when this outer shell writes the file.
+          printf '%s\n' '#!/bin/sh' \
+            'case "$1" in Username*) printf "x-access-token\n" ;; *) printf "%s\n" "$TEMPLATE_REPO_PAT" ;; esac' \
+            > "$ASKPASS"
+          chmod +x "$ASKPASS"
+          GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 \
+            git push --force "https://github.com/${TEMPLATE_REPO}.git" HEAD:main
+          rm -f "$ASKPASS"

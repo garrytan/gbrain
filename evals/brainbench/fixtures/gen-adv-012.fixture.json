@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-adv-012",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "adversarial",
+  "seed_pages": [
+    {
+      "slug": "people/petra-moonstead",
+      "content": "---\ntitle: Petra Moonstead\ntype: person\naliases: [petra]\nsummary: Founder of Bramblevolt Co.\n---\n\nPetra Moonstead is the founder of Bramblevolt Co. Petra shipped the v2 launch two weeks ahead of plan.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Did Petra Moonsteader reach out yet?"
+    }
+  ]
+}

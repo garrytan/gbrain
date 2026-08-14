@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-kta-neg-008",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "kta-neg",
+  "seed_pages": [
+    {
+      "slug": "people/dmitri-brackenbury",
+      "content": "---\ntitle: Dmitri Brackenbury\ntype: person\naliases: [dmitri]\nsummary: Founder of Windrose.\n---\n\nDmitri Brackenbury is the founder of Windrose. Dmitri is exploring a pivot toward the enterprise segment.\n"
+    },
+    {
+      "slug": "companies/windrose",
+      "content": "---\ntitle: Windrose\ntype: company\nsummary: Seed-stage company. Founded by Dmitri Brackenbury.\n---\n\nWindrose is a seed-stage company. Founded by Dmitri Brackenbury. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Can you clean up the formatting in that last doc?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "By the way, someone named Priya Yarrowgate emailed about partnerships. Never heard of them."
+    }
+  ]
+}

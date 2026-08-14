@@ -50,7 +50,6 @@ import {
 import { resolveSearchMode, loadSearchModeConfig } from '../../search/mode.ts';
 import { resolveModel } from '../../model-config.ts';
 import { DEFAULT_SYNOPSIS_MODEL } from '../../page-summary.ts';
-import { registerConfigSelectedChatModel } from '../../ai/gateway.ts';
 
 /**
  * Default global concurrency cap for contextual synopsis calls. The public
@@ -168,7 +167,6 @@ export function makeContextualReindexHandler(opts: MakeContextualReindexHandlerO
     const chunkConcurrency = resolveContextualChunkConcurrency();
     const synopsisModel = await resolveContextualSynopsisModel(engine);
     const leaseSettings = resolveContextualSynopsisLeaseSettings(synopsisModel);
-    registerConfigSelectedChatModel(synopsisModel);
 
     const result: ReembedPageResult = await reembedPage({
       engine,

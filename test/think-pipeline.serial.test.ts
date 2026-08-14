@@ -286,7 +286,9 @@ describe('runThink (with stub client)', () => {
     // used to be stamped NO_ANTHROPIC_API_KEY, sending operators to debug
     // env/keychain when the fix was the model id. Model validity beats the key
     // check in probeChatModel, so the honest label holds even keyless.
-    await engine.setConfig('models.think', 'anthropic:claude-bogus-9');
+    // voyage has no chat touchpoint — the surviving unknown_model trigger now
+    // that unlisted ids on chat-capable providers pass through to the provider.
+    await engine.setConfig('models.think', 'voyage:voyage-3');
     try {
       const result = await withoutAnthropicKey(() => runThink(engine, { question: 'bad model test' }));
       expect(result.warnings).toContain('MODEL_NOT_USABLE:unknown_model');
@@ -358,9 +360,9 @@ describe('runThink — #1698 explicit-model hard error', () => {
     ).rejects.toThrow(/not usable.*unknown_provider/);
   });
 
-  test('explicit typo native --model THROWS (unknown_model)', async () => {
+  test('explicit --model on a chat-less provider THROWS (unknown_model)', async () => {
     await expect(
-      runThink(engine, { question: 'x', model: 'anthropic:claude-bogus-9', modelExplicit: true }),
+      runThink(engine, { question: 'x', model: 'voyage:voyage-3', modelExplicit: true }),
     ).rejects.toThrow(/not usable.*unknown_model/);
   });
 
@@ -436,15 +438,17 @@ describe('runThink + persistSynthesis — #1698 never persist empty', () => {
     expect(full.synthesisOk).toBe(true);
   });
 
-  test('opts.stubResponse path never made a real LLM call — usage stays undefined', async () => {
+  test('opts.stubResponse path never made a real LLM call — usage stays null', async () => {
     // Same distinction synthesisOk already makes: opts.stubResponse bypasses
     // client.create() entirely, so there is no real usage to report. cost_usd
     // must not be computed (and should render as null in --json) when this
-    // happens, since there is nothing to compute it from.
+    // happens, since there is nothing to compute it from. Since the [E2]
+    // MEMORY_VERBS usage-accounting change, "no LLM ran" is spelled `null`
+    // (the frozen cost-block contract), not `undefined`.
     const result = await runThink(engine, {
       question: 'stub no usage', stubResponse: { answer: 'has content', citations: [], gaps: [] },
     });
-    expect(result.usage).toBeUndefined();
+    expect(result.usage).toBeNull();
   });
 
   test('pre-existing ThinkResult literal without synthesisOk still persists (back-compat)', async () => {

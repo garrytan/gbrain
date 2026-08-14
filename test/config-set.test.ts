@@ -33,6 +33,23 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('search.cache.enabled');
   });
 
+  // Regression: `sources.default` is read by source-resolver.ts tier 5 on
+  // every unqualified call and written by `gbrain sources default <id>`, yet
+  // it was absent from this list — so `gbrain config set sources.default`
+  // warned "Nothing in gbrain reads this", which is false and misdirects an
+  // operator away from the one knob that pins brain-level source routing.
+  test('contains sources.default (read by the resolver, written by `sources default`)', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain('sources.default');
+  });
+
+  // The fix registers the ONE key the resolver reads, not a `sources.` prefix:
+  // a prefix would bless arbitrary unread `sources.*` keys and weaken the
+  // unknown-key guard this list exists to provide.
+  test('does not bless arbitrary sources.* keys', () => {
+    expect(KNOWN_CONFIG_KEYS).not.toContain('sources.anything-else');
+    expect(KNOWN_CONFIG_KEY_PREFIXES).not.toContain('sources.');
+  });
+
   test('contains the models-tier keys (v0.31.12)', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('models.default');
     expect(KNOWN_CONFIG_KEYS).toContain('models.tier.subagent');
@@ -69,6 +86,11 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('conversation_parser.llm_fallback_enabled');
     expect(KNOWN_CONFIG_KEY_PREFIXES).not.toContain('conversation_parser.');
     expect(KNOWN_CONFIG_KEYS).not.toContain('conversation_parser.llm_polish_enabled');
+  });
+
+  test('contains orphan-reporting override keys', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain('orphans.exclude_prefixes');
+    expect(KNOWN_CONFIG_KEYS).toContain('orphans.exclude_slugs');
   });
 
   test('no duplicate entries', () => {
@@ -232,6 +254,69 @@ describe('#2753 — the doctor-proposed gateway-loop command is accepted by `con
     }
     return { logs, errs, exit };
   }
+
+  // `sources.default` is the one config key whose value the resolver
+  // dereferences on every unqualified call (tier 5 → assertSourceExists).
+  // Registering it in KNOWN_CONFIG_KEYS without a set-time check would make
+  // `config set` a way around the validation `gbrain sources default <id>`
+  // already performs, and a typo would surface later as a throw on unrelated
+  // commands. These pin that `config set` refuses the same inputs.
+  function sourcesEngine(registered: string[]): { engine: BrainEngine; setCalls: Array<[string, string]> } {
+    const setCalls: Array<[string, string]> = [];
+    const engine = {
+      getConfig: async () => null,
+      setConfig: async (k: string, v: string) => { setCalls.push([k, v]); },
+      executeRaw: async (_sql: string, params?: unknown[]) => {
+        const id = String((params ?? [])[0] ?? '');
+        return registered.includes(id) ? [{ id, name: id }] : [];
+      },
+    } as unknown as BrainEngine;
+    return { engine, setCalls };
+  }
+
+  test('sources.default: refuses an id that is not a valid source id', async () => {
+    const { engine, setCalls } = sourcesEngine(['wiki']);
+    const { errs, exit } = await runConfigCapture(engine, ['set', 'sources.default', 'Not A Source']);
+    expect(exit).toBe(1);
+    expect(errs.join('\n')).toContain('lowercase alphanumerics');
+    expect(setCalls).toEqual([]);
+  });
+
+  test('sources.default: refuses an unregistered source instead of writing it', async () => {
+    const { engine, setCalls } = sourcesEngine(['wiki']);
+    const { errs, exit } = await runConfigCapture(engine, ['set', 'sources.default', 'ghost']);
+    expect(exit).toBe(1);
+    expect(errs.join('\n')).toContain('not registered');
+    expect(setCalls).toEqual([]);
+  });
+
+  test('sources.default: accepts a registered source without --force', async () => {
+    const { engine, setCalls } = sourcesEngine(['wiki']);
+    const { errs, exit } = await runConfigCapture(engine, ['set', 'sources.default', 'wiki']);
+    expect(exit).toBeNull();
+    // The false "Nothing in gbrain reads this" line is the bug this fixes.
+    expect(errs.join('\n')).not.toContain('Nothing in gbrain reads this');
+    expect(setCalls).toEqual([['sources.default', 'wiki']]);
+  });
+
+  // A DB failure must not be laundered into "source is not registered" — that
+  // would send an operator chasing a source-registration problem that doesn't
+  // exist while the real fault (connection, permissions, SQL regression) is
+  // swallowed.
+  test('sources.default: a lookup failure propagates instead of reading as unregistered', async () => {
+    const setCalls: Array<[string, string]> = [];
+    const engine = {
+      getConfig: async () => null,
+      setConfig: async (k: string, v: string) => { setCalls.push([k, v]); },
+      executeRaw: async () => { throw new Error('connection terminated unexpectedly'); },
+    } as unknown as BrainEngine;
+    // The real error must escape rather than be reshaped into a validation
+    // message, so this rejects instead of returning an exit code.
+    await expect(
+      runConfigCapture(engine, ['set', 'sources.default', 'wiki']),
+    ).rejects.toThrow('connection terminated unexpectedly');
+    expect(setCalls).toEqual([]);
+  });
 
   test('doctor-proposed command round-trips through `config set` without --force', async () => {
     const check = await withEnv(

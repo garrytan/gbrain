@@ -214,6 +214,38 @@ describe("extractTriggers", () => {
     expect(triggers).toEqual(["what do we know", "tell me about"]);
   });
 
+  test("parses triggers from a single-line YAML flow sequence", () => {
+    const fm = [
+      "---",
+      "name: transcript-insights",
+      'triggers: ["analyze this transcript", podcast takeaways]',
+      "---",
+      "",
+    ].join("\n");
+    expect(extractTriggers(fm)).toEqual([
+      "analyze this transcript",
+      "podcast takeaways",
+    ]);
+  });
+
+  test("parses triggers from a wrapped YAML flow sequence (#3887)", () => {
+    const fm = [
+      "---",
+      "name: transcript-insights",
+      "triggers: [analyze this transcript, podcast takeaways, video transcript insights, interview",
+      "    takeaways, policy mechanisms from transcript]",
+      "---",
+      "",
+    ].join("\n");
+    expect(extractTriggers(fm)).toEqual([
+      "analyze this transcript",
+      "podcast takeaways",
+      "video transcript insights",
+      "interview takeaways",
+      "policy mechanisms from transcript",
+    ]);
+  });
+
   test("returns [] when frontmatter is missing", () => {
     expect(extractTriggers("# Just a body, no frontmatter\n")).toEqual([]);
   });
@@ -450,4 +482,3 @@ function afterEachCleanup(fn: () => void) {
   const { afterEach } = require("bun:test");
   afterEach(fn);
 }
-

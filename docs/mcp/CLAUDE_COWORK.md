@@ -27,6 +27,19 @@ Desktop bridges local MCP servers into Cowork via its SDK layer.
 This means: if `gbrain serve` is running and configured in Claude Desktop,
 you don't need a separate server for Cowork.
 
+## Verify
+
+In a Cowork session, try:
+
+```
+Call get_brain_identity, then search my brain for [any topic]
+```
+
+You should get pages from your brain back. If `list_skills` returns nothing,
+skill publishing is off on the host — enable it with
+`gbrain config set mcp.publish_skills true` (see
+[CLAUDE_CODE.md](CLAUDE_CODE.md) for the full gotcha).
+
 ## Which to use?
 
 - **Remote server:** works even when your laptop is closed, available to all org members

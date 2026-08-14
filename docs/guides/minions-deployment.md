@@ -40,6 +40,10 @@ gbrain jobs supervisor status --json
 
 # Graceful stop (SIGTERM + drain wait + SIGKILL fallback).
 gbrain jobs supervisor stop
+
+# Optional: cap worker memory in MB (--max-rss). Without the flag the RSS
+# watchdog is still on, at a RAM-relative auto-sized cap.
+gbrain jobs supervisor --concurrency 4 --max-rss 4096
 ```
 
 **Exit codes:**
@@ -50,9 +54,11 @@ gbrain jobs supervisor stop
 | 1 | Max crashes exceeded (worker kept dying) |
 | 2 | Another supervisor holds the PID lock |
 | 3 | PID file unwritable (permission / path error) |
+| 4 | Queue-scoped DB lock lost mid-run (`LOCK_LOST` — exited rather than risk a split-brain) |
 
 An agent seeing exit=2 can safely treat it as "one is already running";
-exit=1 should page a human.
+exit=4 as "restart me — the DB lock refresh failed"; exit=1 should page
+a human.
 
 ### Lowering scheduling priority (`--nice`)
 
@@ -233,7 +239,7 @@ use a dedicated queue name like `nightly-enrich` above.
 
 ## Upgrading from an older deployment
 
-### From `minion-watchdog.sh` (pre-v0.20)
+### From `minion-watchdog.sh`
 
 Earlier versions of this guide shipped a 68-line bash watchdog
 (`minion-watchdog.sh`). It's been replaced by `gbrain jobs supervisor`
@@ -270,10 +276,10 @@ Regardless of which deployment path you're upgrading from:
    in-flight job landing partial schema.
 2. **Run `gbrain upgrade`**. Then `gbrain apply-migrations --yes` if
    `gbrain doctor` reports any migration as `partial` or `pending`.
-3. **If you run shell jobs:** from v0.14 onward, pass
-   `--allow-shell-jobs` to the supervisor (or keep
-   `GBRAIN_ALLOW_SHELL_JOBS=1` in `/etc/gbrain.env`). Submitters don't
-   need the flag; only the worker does.
+3. **If you run shell jobs:** pass `--allow-shell-jobs` to the
+   supervisor (or keep `GBRAIN_ALLOW_SHELL_JOBS=1` in
+   `/etc/gbrain.env`). Submitters don't need the flag; only the worker
+   does.
 4. **Verify.** `gbrain doctor` should report zero `pending` or `partial`
    migrations plus a healthy `supervisor` check. `gbrain jobs stats`
    should show no unexplained growth in `dead` between pre- and
@@ -283,29 +289,30 @@ Regardless of which deployment path you're upgrading from:
 
 ### Supabase connection drops
 
-The worker uses a single Postgres connection. If Supabase drops it
-(maintenance, connection limits, network blip), lock renewal fails
-silently. The stall detector then dead-letters the job after
-`max_stalled` misses.
+If Supabase drops the worker's Postgres connection (maintenance,
+connection limits, network blip), this now self-heals under the
+supervisor: the worker's DB-liveness probe self-exits (`db_dead`) on a
+dead pool and the supervisor respawns it with a fresh pool, and the
+supervisor also restarts a worker that stops making progress while
+claimable work waits. The escalation commands and thresholds live in the
+[queue operations runbook](queue-operations-runbook.md) — that's the
+canonical home for wedge recovery.
 
-**Current defaults that make this worse:**
+What can still bite: a *brief* blip during a long-running job can make
+lock renewal miss, and the stall detector dead-letters the job after
+`max_stalled` misses (schema column default 5; lock duration and stall
+check interval are both 30 s).
 
-- `lockDuration: 30000` (30 s) — too short for long jobs during
-  connection blips.
-- `max_stalled: 5` (schema column default — see `src/schema.sql` and
-  `src/core/pglite-schema.ts`). Five missed heartbeats before dead-letter.
-- `stalledInterval: 30000` (30 s) — checks too aggressively.
-
-**Tune per-job today.** `gbrain jobs submit` accepts `--max-stalled N`,
+**Tune per-job.** `gbrain jobs submit` accepts `--max-stalled N`,
 `--backoff-type fixed|exponential`, `--backoff-delay <ms>`,
-`--backoff-jitter 0..1`, and `--timeout-ms N` as first-class flags
-(since v0.13.1). These write onto the job row at submit time — which is
-what `handleStalled()` reads — so per-job tuning is the real knob today.
+`--backoff-jitter 0..1`, and `--timeout-ms N` as first-class flags.
+These write onto the job row at submit time — which is what
+`handleStalled()` reads — so per-job tuning is the real knob.
 
 ### DO NOT pass `maxStalledCount` to `MinionWorker`
 
 It's a no-op. The stall detector reads the row's `max_stalled` column
-(set at submit time), not the worker opt in `src/core/minions/worker.ts:74`.
+(set at submit time), not the worker opt in `src/core/minions/worker.ts`.
 Use `gbrain jobs submit --max-stalled N` per-job instead.
 
 ### Zombie shell children

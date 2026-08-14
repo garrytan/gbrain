@@ -1,0 +1,17 @@
+{
+  "fixture_id": "gen-kta-pos-007",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "companies/junipergrid-labs"
+      ],
+      "acceptable_slugs": [
+        "companies/junipergrid-labs"
+      ]
+    },
+    "3": {
+      "should_retrieve": false
+    }
+  }
+}

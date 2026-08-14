@@ -8,6 +8,11 @@ The orienting idea: **GBrain itself is rounding error; the spend that matters is
 downstream embedding.** These gates exist so a routine sync or enrich can't run up
 an unexpected embedding bill, while never wedging an unattended cron.
 
+**Keyless mode:** if you run with zero provider keys (`gbrain init --no-embedding`,
+the keyless bootstrap posture — see `docs/guides/bootstrap.md` and
+`docs/operations/headless-install.md`), nothing here can spend and none of these
+gates ever fire. This doc applies once you add a key.
+
 ## `spend.posture` — one switch for "cost is not my constraint"
 
 ```bash
@@ -18,7 +23,7 @@ gbrain config set spend.posture gated      # default — gates enforce
 | Value | Effect |
 |-------|--------|
 | `gated` (default) | Every cost gate enforces its limit as documented below. |
-| `tokenmax` | Every cost gate prints its estimate and **proceeds** — informational only. Spend is still recorded to the ledger; posture removes the *ceiling*, not the *accounting*. |
+| `tokenmax` | Every embedding-spend gate in the table below prints its estimate and **proceeds** — informational only. Spend is still recorded to the ledger; posture removes the *ceiling*, not the *accounting*. (Commands with their own LLM cost caps outside this doc's embedding scope — e.g. `extract-conversation-facts --max-cost-usd` — don't resolve posture; their per-call flags govern.) |
 
 `spend.posture` is deliberately separate from `search.mode=tokenmax` (which governs
 retrieval payload size, not embedding spend). When a gate fires and

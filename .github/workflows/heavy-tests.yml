@@ -1,7 +1,7 @@
 name: Heavy Tests
 
 # Heavy ops-shape tests under tests/heavy/. Cost minutes per run; NOT part
-# of default PR CI. Two triggers:
+# of default PR CI. Three triggers:
 #   - Nightly schedule (catches regressions within 24h of merge to master).
 #   - On-demand opt-in via PR label `heavy-tests` (slow loop kept off by default).
 #   - Manual workflow_dispatch for triage.
@@ -66,6 +66,20 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
         run: bun run test:heavy
 
+      # Agent-bootstrap offline Docker e2e [A7] — placeholder registration.
+      # The networkless cold-machine container test (interview → render →
+      # verify with a fake gh) lands with the bootstrap doors task at
+      # tests/docker/bootstrap-e2e.sh. Gated on file existence so this stays
+      # a visible no-op until then. It runs at heavy cadence (nightly +
+      # `heavy-tests` label) by design — never in the PR shard matrix.
+      - name: Bootstrap offline Docker e2e (placeholder)
+        run: |
+          if [ -f tests/docker/bootstrap-e2e.sh ]; then
+            bash tests/docker/bootstrap-e2e.sh
+          else
+            echo "SKIP: tests/docker/bootstrap-e2e.sh not present yet — placeholder until the bootstrap doors task lands."
+          fi
+
       # The heavy runner writes per-script logs to ~/.gbrain/audit/ on every
       # run. Upload those + the rss workload JSON on failure for triage
       # without re-running locally.
@@ -87,3 +101,236 @@ jobs:
           path: heavy-artifacts/
           retention-days: 14
           if-no-files-found: ignore
+
+  # Real-agent door e2e: drives the ACTUAL `claude` + `codex` + `hermes`
+  # binaries (no PATH shims) against a real gbrain over MCP. These pay real API
+  # cost and need the binaries installed + authed, which a stock GitHub runner
+  # does NOT have — so the tests self-SKIP (describe.skipIf on binary/auth) and
+  # the job is a clean no-op here. It exists so a self-hosted /
+  # manually-provisioned runner WITH authed claude/codex/hermes (and
+  # ANTHROPIC/OPENAI creds) actually exercises the real binaries. Heavy cadence
+  # only (nightly + `real-agent-e2e` label + dispatch); NEVER the PR shard
+  # matrix.
+  real-agent-e2e:
+    name: Real-agent door e2e (skips without authed binaries)
+    if: |
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'real-agent-e2e') ||
+      contains(github.event.pull_request.labels.*.name, 'heavy-tests')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Open the hermes opt-in door here so binary/auth absence — not the
+      # opt-in var — is what skips (same posture as the claude/codex doors).
+      GBRAIN_REAL_HERMES_E2E: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.3.13
+      - run: bun install
+
+      # Reference the door tests; run only the ones present (a door may land
+      # in a sibling PR). Missing binary/auth → the file self-skips, so a
+      # stock runner reports a green no-op rather than failing.
+      - name: Run real-agent door tests
+        run: |
+          files=()
+          for f in \
+            test/e2e/bootstrap-real-claude.serial.test.ts \
+            test/e2e/bootstrap-real-codex.serial.test.ts \
+            test/e2e/install-real-hermes.serial.test.ts; do
+            [ -f "$f" ] && files+=("$f")
+          done
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "SKIP: no real-agent door test files present yet."
+            exit 0
+          fi
+          echo "Running: ${files[*]}"
+          # --timeout: real-agent turns are slow (live claude/codex); the door
+          # tests self-skip without authed binaries so this is a no-op elsewhere.
+          bun test --timeout=600000 "${files[@]}"
+
+  # Hermes door e2e: unlike real-agent-e2e above (best-effort, self-skipping),
+  # this job PROVISIONS the real hermes binary itself — pinned installer digest,
+  # non-interactive auth + model pin — and then requires the door tests to
+  # actually execute. It pays real API cost, so it stays label-gated at heavy
+  # cadence (nightly + `real-agent-e2e`/`heavy-tests` label + dispatch); NEVER
+  # the PR shard matrix. Loud-fail throughout: a runner that cannot install or
+  # auth hermes fails this job rather than skipping.
+  hermes-door:
+    name: Hermes door e2e (real binary, loud-fail)
+    if: |
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'real-agent-e2e') ||
+      contains(github.event.pull_request.labels.*.name, 'heavy-tests')
+    runs-on: ubuntu-latest
+    # Four serial door tests at 600s each plus the installer budget cannot
+    # fit the sibling job's 20 minutes.
+    timeout-minutes: 40
+    env:
+      # Pin values documented in docs/mcp/HERMES-CLI-PIN.md — update them
+      # together, deliberately, after reviewing upstream changes. The digest
+      # pins the INSTALLER SCRIPT; the tag + commit pin the PAYLOAD it clones
+      # (without them, the installer pulls upstream main into the runner that
+      # later holds secrets). The commit is v2026.8.3's dereferenced SHA —
+      # immutable even if the tag moves.
+      HERMES_VERSION: "0.20.0"
+      HERMES_GIT_TAG: "v2026.8.3"
+      HERMES_GIT_COMMIT: "3c27eb6234bf91b8ceee9e9071591b31e9b148cb"
+      HERMES_INSTALL_SHA256: "c118ff31618dc70339049ce71061b8f1351a1c70d9c2a236ed50d8a2550c550d"
+      GBRAIN_REAL_HERMES_E2E: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.3.13
+      - run: bun install
+
+      # `runner.temp` is not an allowed context in job-level env, so the
+      # evidence dir is derived here and exported for every later step (the
+      # door test writes into it; the failure-path upload reads it — exporting
+      # early keeps that upload working even when an install/precondition step
+      # is what failed).
+      - name: Prepare evidence dir
+        run: |
+          echo "GBRAIN_E2E_EVIDENCE_DIR=$RUNNER_TEMP/hermes-door-evidence" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/hermes-door-evidence"
+
+      # NO secrets in this step's env: the installer is downloaded from the
+      # network and executed, so it must never see credentials. The digest pin
+      # turns an upstream installer change into a loud failure instead of
+      # unreviewed code running in CI. Bound + retry the install run itself
+      # (same posture as the e2e tier2 OpenClaw install): `timeout` kills a
+      # hung attempt, 3 attempts ride out transient flakes, step cap backstops.
+      - name: Install hermes (pinned installer digest)
+        timeout-minutes: 15
+        run: |
+          curl -fsSL --retry 3 -o hermes-install.sh https://hermes-agent.nousresearch.com/install.sh
+          if ! echo "$HERMES_INSTALL_SHA256  hermes-install.sh" | sha256sum -c -; then
+            echo "::error::hermes installer digest drift — re-pin deliberately: update HERMES_INSTALL_SHA256 + HERMES_VERSION in this workflow and docs/mcp/HERMES-CLI-PIN.md after reviewing upstream changes" >&2
+            exit 1
+          fi
+          for attempt in 1 2 3; do
+            if timeout 600 bash hermes-install.sh --skip-setup --non-interactive --branch "$HERMES_GIT_TAG" --commit "$HERMES_GIT_COMMIT"; then
+              # The branch/commit flags above are ASSERTED here, not trusted:
+              # a shell installer that silently ignores unknown flags would
+              # clone upstream main into a runner that later holds secrets.
+              # Verify the actual checkout before anything else runs it.
+              actual_commit=$(git -C "$HOME/.hermes/hermes-agent" rev-parse HEAD 2>/dev/null || echo "no-git-checkout")
+              if [ "$actual_commit" != "$HERMES_GIT_COMMIT" ]; then
+                echo "::error::hermes payload drift — installed checkout is $actual_commit, pinned $HERMES_GIT_COMMIT. Either the installer ignored its branch/commit flags or the layout moved from ~/.hermes/hermes-agent; re-pin deliberately (HERMES_GIT_TAG/HERMES_GIT_COMMIT + docs/mcp/HERMES-CLI-PIN.md) after reviewing upstream." >&2
+                exit 1
+              fi
+              echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+              exit 0
+            fi
+            echo "::warning::hermes install attempt $attempt failed or timed out; retrying in 10s" >&2
+            sleep 10
+          done
+          echo "::error::hermes install failed after 3 attempts" >&2
+          exit 1
+
+      - name: Preconditions (binary, secret, version pin)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if ! command -v hermes >/dev/null 2>&1; then
+            echo "::error::hermes did not resolve on PATH after install" >&2
+            exit 1
+          fi
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::ANTHROPIC_API_KEY secret is empty — fork PRs get no secrets from GitHub, and this labeled job cannot run without them" >&2
+            exit 1
+          fi
+          version_output=$(hermes --version)
+          echo "$version_output"
+          # Observed shape: `Hermes Agent v0.20.0 (2026.8.3)`.
+          if ! printf '%s' "$version_output" | grep -qF "v$HERMES_VERSION"; then
+            echo "::error::hermes version drift — expected v$HERMES_VERSION in: $version_output" >&2
+            exit 1
+          fi
+
+      - name: Configure hermes (auth + model pin)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          mkdir -p ~/.hermes
+          printf 'ANTHROPIC_API_KEY=%s\n' "$ANTHROPIC_API_KEY" > ~/.hermes/.env
+          chmod 600 ~/.hermes/.env
+          # `hermes model` is interactive-only; `config set` is the observed
+          # non-interactive model pin.
+          hermes config set model.default anthropic/claude-haiku-4.5
+          # Global health check — informational only, never a gate here.
+          hermes doctor || true
+
+      - name: Run hermes door tests
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          # Redirect to a file, then tail — never pipe bun through tail (the
+          # pipe eats the real exit code and truncates failure details).
+          # `|| EXIT=$?` keeps the default `-e` shell from bailing before the
+          # tail runs.
+          EXIT=0
+          bun test --timeout=600000 test/e2e/install-real-hermes.serial.test.ts > door.txt 2>&1 || EXIT=$?
+          tail -40 door.txt
+          if [ "$EXIT" -ne 0 ]; then
+            # Preserve the FULL bun output for the failure artifact — bun
+            # prints failure details before the summary, so the 40-line tail
+            # above can drop exactly the lines a paid-CI triage needs.
+            cp door.txt "$GBRAIN_E2E_EVIDENCE_DIR/" 2>/dev/null || true
+            exit "$EXIT"
+          fi
+          # This job provisions the binary + auth above, so the door must
+          # actually EXECUTE: a summary with zero passing tests means the
+          # suite ran nothing or self-skipped everything — never let that
+          # read as green.
+          pass_count=$(grep -Eo '[0-9]+ pass' door.txt | tail -1 | grep -Eo '^[0-9]+' || true)
+          if [ -z "$pass_count" ] || [ "$pass_count" -eq 0 ]; then
+            echo "::error::hermes door summary shows no passing tests (nothing ran or everything skipped) — refusing to go green while testing nothing" >&2
+            exit 1
+          fi
+
+      # The door test copies its evidence into GBRAIN_E2E_EVIDENCE_DIR; the
+      # workflow only uploads it. The test already excludes credential files —
+      # the scrub below is defensive belt-and-suspenders before upload. Both
+      # steps also require the evidence-dir env (a failure before the prepare
+      # step leaves it unset, and there is nothing to upload then anyway).
+      - name: Scrub credentials from evidence (defensive)
+        if: failure() && env.GBRAIN_E2E_EVIDENCE_DIR != ''
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          # Three layers, because the evidence dir carries files WRITTEN BY
+          # THE THIRD-PARTY HERMES BINARY (logs/sessions) and upload-artifact
+          # follows symlinks:
+          # 1. filename scrub (env files),
+          # 2. symlink delete (an agent-dropped link could dereference to a
+          #    real credential file at upload time),
+          # 3. content scrub (any file that embeds the key — auth-error dumps
+          #    are most likely exactly on the failure path that uploads).
+          find "$GBRAIN_E2E_EVIDENCE_DIR" -type f \( -name '.env' -o -name '*.env' \) -exec rm -f {} + 2>/dev/null || true
+          find "$GBRAIN_E2E_EVIDENCE_DIR" -type l -delete 2>/dev/null || true
+          if [ -n "$ANTHROPIC_API_KEY" ]; then
+            grep -rlF "$ANTHROPIC_API_KEY" "$GBRAIN_E2E_EVIDENCE_DIR" 2>/dev/null | while IFS= read -r f; do
+              echo "::warning::removing evidence file containing the API key: ${f#"$GBRAIN_E2E_EVIDENCE_DIR"/}" >&2
+              rm -f "$f"
+            done
+          fi
+      - name: Upload hermes door evidence
+        if: failure() && env.GBRAIN_E2E_EVIDENCE_DIR != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: hermes-door-evidence
+          path: ${{ env.GBRAIN_E2E_EVIDENCE_DIR }}
+          retention-days: 14
+          if-no-files-found: ignore
+
+      # Hosted ubuntu-latest runners are ephemeral, but this must not depend
+      # on that: if the job ever moves to a self-hosted runner (the sibling
+      # real-agent-e2e job is designed for one), a key left in ~/.hermes/.env
+      # would persist for every later workload on that runner.
+      - name: Remove hermes credentials (unconditional)
+        if: always()
+        run: rm -f ~/.hermes/.env

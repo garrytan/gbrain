@@ -1,6 +1,6 @@
 ---
 name: media-ingest
-version: 1.0.0
+version: 1.1.0
 description: |
   Ingest video, audio, PDF, book, screenshot, and GitHub repo content into the brain.
   Multi-format handling with entity extraction and backlink propagation. Covers
@@ -31,6 +31,7 @@ writes_to:
   - people/
   - companies/
   - sources/
+upstream: media-ingest@fc834ee
 ---
 
 # Media Ingest Skill
@@ -38,6 +39,14 @@ writes_to:
 Ingest video, audio, PDF, book, screenshot, and GitHub repo content into the brain.
 
 > **Filing rule:** Read `skills/_brain-filing-rules.md` before creating any new page.
+
+## Input
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| source | yes | URL, file path, or uploaded file reference |
+| title | no | Override title (auto-detected if omitted) |
+| target_slug | no | Override page slug (auto-generated if omitted) |
 
 ## Contract
 
@@ -111,6 +120,22 @@ A media item is NOT fully ingested until entity propagation is complete.
 
 Brain page created with summary, highlights, and entity cross-links. Report to user:
 "Ingested {title}: {N} entities detected, {N} pages updated."
+
+## Error Handling
+
+- **Transcription failure:** If STT or captions are unavailable, note `[transcript unavailable]` in the page and proceed with whatever metadata is available. Do NOT fabricate content.
+- **Duplicate detection:** Before creating a page, search the brain for the source URL or file hash. If found, ask the user whether to update the existing page or skip.
+- **Partial OCR / audio:** Mark unclear segments with `[inaudible]` or `[illegible]`. Never guess at proper nouns.
+- **Large content (books > 500 pages):** Summarize by chapter; do not attempt to inline the full text. Link to the raw upload.
+- **Retry policy:** On transient API failures (network, timeout), retry once. On auth failures, abort immediately.
+
+## Known Pitfalls
+
+1. **YouTube auto-captions misidentify proper nouns.** Always cross-reference entity names against existing brain pages before creating new ones. A caption that garbles a name (e.g. "Alise" when the speakers are discussing alice-example) should match the existing `alice-example` page, not create a new one.
+2. **Re-running ingest on same source creates duplicates.** Always check brain for existing source URL match before Phase 3.
+3. **Book OCR quality varies wildly.** Scanned PDFs often have garbled text. If OCR quality is <80% readable, flag to user rather than ingesting garbage.
+4. **Video transcript without speaker diarization is low-value.** If multiple speakers are present but no diarization is available, note this limitation prominently rather than attributing all speech to one person.
+5. **Large audio files (>2hr) can timeout transcription services.** Split into chunks before transcription if needed.
 
 ## Anti-Patterns
 

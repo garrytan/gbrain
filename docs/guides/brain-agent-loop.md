@@ -27,6 +27,7 @@ READ: check brain FIRST (before responding)
   │  → gbrain search "{entity name}"
   │  → gbrain get {slug} (if you know it)
   │  → gbrain query "what do we know about {topic}"
+  │  → full protocol: brain-first-lookup.md
   │
   ▼
 RESPOND with brain context (every answer is better with context)
@@ -100,12 +101,14 @@ on_message(text):
    Write immediately after the conversation, while the context is fresh.
 
 3. **Sync after every write batch.** Without sync, the brain search index is
-   stale. The next query won't find what you just wrote.
+   stale. The next query won't find what you just wrote. On installs set up
+   via `gbrain bootstrap`, per-turn context injection and session-end
+   persistence hooks automate parts of this loop — see
+   [bootstrap.md](bootstrap.md) and [push-context.md](push-context.md).
 
-4. **External APIs are fallback, not primary.** `gbrain search` before
-   Brave Search. `gbrain get` before Crustdata. The brain has relationship
-   history, your own assessments, meeting transcripts, cross-references.
-   No external API can provide that.
+4. **External APIs are fallback, not primary.** `gbrain search` before any
+   web or enrichment API. The full brain-before-external protocol (and why)
+   lives in [brain-first-lookup.md](brain-first-lookup.md).
 
 ## How to Verify It Works
 

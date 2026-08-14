@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-wb-018",
+  "suites": [
+    "write-back"
+  ],
+  "category": "write-back",
+  "seed_pages": [
+    {
+      "slug": "people/mireille-coppersmith",
+      "content": "---\ntitle: Mireille Coppersmith\ntype: person\naliases: [mireille]\nsummary: Founder of Inkwhale Co.\n---\n\nMireille Coppersmith is the founder of Inkwhale Co. Mireille pushed back on the proposed valuation during diligence.\n"
+    },
+    {
+      "slug": "companies/inkwhale-co",
+      "content": "---\ntitle: Inkwhale Co\ntype: company\nsummary: Seed-stage company. Founded by Mireille Coppersmith.\n---\n\nInkwhale Co is a seed-stage company. Founded by Mireille Coppersmith. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Just wrapped the Inkwhale Co call with Mireille Coppersmith.",
+      "ts": "2025-07-21T16:29:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "How did it go?",
+      "ts": "2025-07-21T16:30:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Mireille prefers async updates over standing calls. Noted for next time.",
+      "ts": "2025-07-21T17:16:00Z"
+    },
+    {
+      "turn_id": 4,
+      "role": "user",
+      "text": "I committed to sending Mireille the diligence checklist by Friday.",
+      "ts": "2025-07-21T17:17:00Z"
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Mireille is worried the Inkwhale Co pricing model undercuts their gross margin. Real concern for the round.",
+      "ts": "2025-07-21T17:18:00Z"
+    }
+  ]
+}

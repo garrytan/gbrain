@@ -45,15 +45,16 @@ Venus boots already knowing the topic's recent conversation. Only the `topicId` 
 
 ## Tool posture
 
-Venus uses the read-only allow-list from `services/voice-agent/code/tools.mjs`:
+Venus uses the read-only allow-list from `services/voice-agent/code/tools.mjs` (op names as advertised to the model):
 
-- `search_brain` (semantic + keyword search)
-- `read_brain_page` (full page read aloud)
+- `search` / `query` (semantic + keyword search)
+- `get_page` (full page read aloud) / `list_pages`
 - `read_article` (URL fetch + summarize)
-- `web_search` (when wired)
 - `get_recent_salience` (what's been emotionally active lately)
 - `get_recent_transcripts` (recent voice notes / meeting transcripts)
 - `find_experts` (who knows about a topic)
+
+There is no general web-search tool in the shipped allow-list; wire one host-side if you want it.
 
 Write tools (`put_page`, `submit_job`, `set_reminder` unless opted in, etc.) are NOT in Venus's tool surface. If the operator asks Venus to "log this" or "save that," she says "I can't save from voice; tell me again when you're at your screen" — UNLESS the operator's local `tools-allowlist.local.json` opts into the bounded write set.
 

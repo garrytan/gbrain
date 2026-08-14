@@ -22,13 +22,8 @@ import { dirname } from 'path';
 import { gbrainPath } from '../config.ts';
 
 import type { BrainEngine } from '../engine.ts';
-import {
-  citationValidator,
-  linkValidator,
-  backLinkValidator,
-  tripleHrValidator,
-} from './validators/index.ts';
-import type { ValidationFinding, PageValidator } from './writer.ts';
+import { BUILTIN_VALIDATORS, FIX_HINTS } from './validators/index.ts';
+import type { ValidationFinding } from './writer.ts';
 
 const getLintLogFile = () => gbrainPath('validator-lint.jsonl');
 const LINT_CONFIG_KEY = 'writer.lint_on_put_page';
@@ -98,7 +93,6 @@ export async function runPostWriteLint(
     return { ran: false, slug, findings: [], skippedReason: 'validate_false_frontmatter' };
   }
 
-  const validators: PageValidator[] = [citationValidator, linkValidator, backLinkValidator, tripleHrValidator];
   const ctx = {
     slug,
     type: page.type,
@@ -111,7 +105,7 @@ export async function runPostWriteLint(
   };
 
   const findings: ValidationFinding[] = [];
-  for (const v of validators) {
+  for (const v of BUILTIN_VALIDATORS) {
     try {
       const out = await v.validate(ctx);
       for (const f of out) findings.push(f);
@@ -127,6 +121,92 @@ export async function runPostWriteLint(
   }
 
   return { ran: true, slug, findings };
+}
+
+// ---------------------------------------------------------------------------
+// put_page payload plumbing (T11 writer-lint visibility)
+// ---------------------------------------------------------------------------
+
+/** top_findings cap: enough to act on, small enough for the wire. */
+const TOP_FINDINGS_CAP = 5;
+/** Per-finding message cap; validators already truncate embedded content. */
+const FINDING_MESSAGE_MAX = 200;
+
+export interface WriterLintFindingSummary {
+  validator: string;
+  severity: 'error' | 'warning';
+  line?: number;
+  message: string;
+  hint: string;
+}
+
+export interface WriterLintSummary {
+  error_count: number;
+  warning_count: number;
+  /** Errors-first, capped at TOP_FINDINGS_CAP, one actionable hint each. */
+  top_findings: WriterLintFindingSummary[];
+  /** True when findings beyond the cap were dropped from top_findings. */
+  details_truncated: boolean;
+  /** Finding count per validator id, e.g. { citation: 17, link: 2 }. */
+  by_validator: Record<string, number>;
+}
+
+/**
+ * The put_page `writer_lint` value: a full summary when lint ran, or the
+ * crash marker — distinguishable from lint-off, where the key is absent.
+ */
+export type WriterLintPayload = WriterLintSummary | { status: 'lint_error' };
+
+/**
+ * Shape the `writer_lint` response block from the full findings array.
+ * Sort is stable, so within a severity findings keep validator order.
+ */
+export function summarizeWriterLint(findings: ValidationFinding[]): WriterLintSummary {
+  const errorsFirst = [...findings].sort((a, b) =>
+    a.severity === b.severity ? 0 : a.severity === 'error' ? -1 : 1,
+  );
+  const byValidator: Record<string, number> = {};
+  for (const f of findings) byValidator[f.validator] = (byValidator[f.validator] ?? 0) + 1;
+  return {
+    error_count: findings.filter(f => f.severity === 'error').length,
+    warning_count: findings.filter(f => f.severity === 'warning').length,
+    top_findings: errorsFirst.slice(0, TOP_FINDINGS_CAP).map(f => ({
+      validator: f.validator,
+      severity: f.severity,
+      ...(f.line !== undefined ? { line: f.line } : {}),
+      message: truncate(f.message, FINDING_MESSAGE_MAX),
+      // Registry completeness is test-pinned; the fallback covers a
+      // non-builtin validator ever reaching this path.
+      hint: FIX_HINTS[f.validator] ?? 'see the validator rule for the fix',
+    })),
+    details_truncated: findings.length > TOP_FINDINGS_CAP,
+    by_validator: byValidator,
+  };
+}
+
+/**
+ * put_page-facing wrapper mapping every lint outcome to the response
+ * contract: ran (zero findings included) → full summary; did not run
+ * (flag off / validate:false / page missing) → undefined so the
+ * writer_lint key stays absent; threw → {status: 'lint_error'} so a lint
+ * crash is distinguishable from lint-off. Never throws.
+ */
+export async function writerLintForPutPage(
+  engine: BrainEngine,
+  slug: string,
+  opts: PostWriteLintOpts = {},
+): Promise<WriterLintPayload | undefined> {
+  try {
+    const lint = await runPostWriteLint(engine, slug, opts);
+    if (!lint.ran) return undefined;
+    return summarizeWriterLint(lint.findings);
+  } catch {
+    return { status: 'lint_error' };
+  }
+}
+
+function truncate(s: string, n: number): string {
+  return s.length <= n ? s : s.slice(0, n - 3) + '...';
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-ms-010",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "multi-source",
+  "sources": [
+    "teambrain"
+  ],
+  "active_source": "default",
+  "seed_pages": [
+    {
+      "slug": "people/alarico-marrowfield",
+      "content": "---\ntitle: Alarico Marrowfield\ntype: person\naliases: [alarico]\nsummary: Founder of Lumenforge Systems.\n---\n\nAlarico Marrowfield is the founder of Lumenforge Systems. Alarico wants a technical co-founder intro before committing.\n"
+    },
+    {
+      "slug": "people/alarico-marrowfield",
+      "content": "---\ntitle: Alarico Marrowfield\ntype: person\naliases: [alarico]\nsummary: Founder of Lumenforge Systems.\n---\n\nAlarico Marrowfield is the founder of Lumenforge Systems. Alarico wants a technical co-founder intro before committing.\n",
+      "source_id": "teambrain"
+    },
+    {
+      "slug": "companies/emberweave-systems",
+      "content": "---\ntitle: Emberweave Systems\ntype: company\nsummary: Seed-stage company.\n---\n\nEmberweave Systems is a seed-stage company. The seed conversation started in 2025.\n",
+      "source_id": "teambrain"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "What do I have on Alarico Marrowfield?"
+    },
+    {
+      "turn_id": 2,
+      "role": "user",
+      "text": "Anything on Emberweave Systems in here?"
+    }
+  ]
+}

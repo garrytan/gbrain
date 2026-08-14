@@ -168,6 +168,96 @@ Every metric `gbrain eval *` and `gbrain search stats` reports has a plain-Engli
 
 **Range:** 0..1, higher = a sharper cliff (more confident cut). Below the autocut_jump threshold → no cut.
 
+## BrainBench — Cross-Harness Memory Conformance
+
+### Know-to-ask failure rate (BrainBench)
+
+**Key:** `know_to_ask_failure_rate`
+
+**Plain English:** Of the conversation turns where memory SHOULD have surfaced something unprompted, the fraction where nothing relevant was injected. This is the thesis failure mode every agent harness shares: the agent can't ask for what it doesn't know it forgot — the memory layer has to volunteer it.
+
+**Range:** 0..1, LOWER is better. 0.15 means memory stayed silent on 15% of the turns where it had the answer.
+
+### False-fire rate (BrainBench)
+
+**Key:** `false_fire_rate`
+
+**Plain English:** Of the turns where memory should have stayed SILENT, the fraction where it injected anyway. The anti-gaming companion to the know-to-ask rate — "always inject" would ace one and bomb the other. Silence beats noise.
+
+**Range:** 0..1, LOWER is better.
+
+### Push precision (BrainBench)
+
+**Key:** `push_precision`
+
+**Plain English:** Of everything the memory layer volunteered into context, what fraction was actually relevant to the turn? Micro-averaged over injected pointers, so a 3-pointer turn weighs three times a 1-pointer turn — the way a token budget experiences it.
+
+**Range:** 0..1, higher is better.
+
+### Push recall (BrainBench)
+
+**Key:** `push_recall`
+
+**Plain English:** Of everything that SHOULD have been volunteered (the gold pointers), what fraction actually was? Pointer budgets cap this by design: a seam that may inject only 1 fragment cannot reach full recall on a 3-entity turn — that constraint is what the per-harness rows measure.
+
+**Range:** 0..1, higher is better.
+
+### Write-back fidelity (BrainBench)
+
+**Key:** `write_back_fidelity`
+
+**Plain English:** Of the facts stated in a conversation, what fraction survived the PRODUCTION conversation→memory pipeline (segmentation, insertion, dedup) and are findable afterward with the right entity attached? Measures the write path users actually run, not a test-only insert.
+
+**Range:** 0..1, higher is better.
+
+### Provenance accuracy (BrainBench)
+
+**Key:** `provenance_accuracy`
+
+**Plain English:** Of the facts that survived write-back, what fraction carry correct provenance — the right source tag, session id, and origin page? A fact you can't trace is a fact you can't trust, audit, or expire.
+
+**Range:** 0..1, higher is better.
+
+### Cross-session continuity rate (BrainBench)
+
+**Key:** `continuity_rate`
+
+**Plain English:** A decision is recorded in one session and persisted through the production write path; a different harness asks about it later on the same brain. What fraction of those decision probes were recalled — by pointer injection or stored-fact lookup? This is the continuity-that-survives-the-harness-hop moat, measured.
+
+**Range:** 0..1, higher is better. Scored per reader harness (the v1 write path is harness-independent, disclosed in docs/eval/BRAINBENCH.md).
+
+### Source-isolation violations (BrainBench)
+
+**Key:** `source_isolation_violations`
+
+**Plain English:** Count of injected pointers that belong to a source other than the active one. Cross-source leakage is gbrain's must-never-violate invariant (a missed source filter is a data leak), so this gates at ZERO — any baseline, any run.
+
+**Range:** 0..n, count. MUST be 0; any value above 0 fails the gate.
+
+### Average injected tokens per turn (BrainBench)
+
+**Key:** `avg_injected_tokens`
+
+**Plain English:** Estimated tokens of volunteered context per replayed turn (chars/4 heuristic). The intrusion-budget diagnostic: two seams with equal precision can differ 3x in how much context they spend to get it. Reported, not gated, until calibration data exists.
+
+**Range:** 0..n tokens, judgment call — lower is cheaper, but starving the agent has its own cost. Non-gating.
+
+### Extraction recall (BrainBench --llm)
+
+**Key:** `extraction_recall`
+
+**Plain English:** With the real LLM extractor running (instead of the deterministic gold extractor), what fraction of the gold facts did it actually extract and persist? Only scored in --llm runs — the hermetic CI gate never calls a model.
+
+**Range:** 0..1, higher is better. Absent in deterministic runs.
+
+### Extraction precision (BrainBench --llm)
+
+**Key:** `extraction_precision`
+
+**Plain English:** Of everything the real LLM extractor persisted, what fraction matches a gold fact? Low precision means the extractor invents or over-extracts — junk memory that pollutes future recall.
+
+**Range:** 0..1, higher is better. Absent in deterministic runs.
+
 ---
 
 ## Coverage

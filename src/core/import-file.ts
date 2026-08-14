@@ -224,7 +224,7 @@ export interface ImportResult {
    * Parsed page content. Present for status='imported' AND status='skipped'
    * (skip happens when content is identical to existing page; auto-link still
    * needs to run for reconciliation in case links table drifted from page text).
-   * Absent only on status='error' (early payload-size rejection).
+   * Absent on early rejection before a page can be parsed.
    */
   parsedPage?: ParsedPage;
   /** Content-quality gate (issue #1699): true when the page landed with a
@@ -238,6 +238,13 @@ export interface ImportResult {
 }
 
 const MAX_FILE_SIZE = 5_000_000; // 5MB
+
+function invalidYamlFrontmatterError(parsed: ReturnType<typeof parseMarkdown>): string | null {
+  const yamlError = parsed.errors?.find((error) => error.code === 'YAML_PARSE');
+  if (!yamlError) return null;
+  const detail = yamlError.message.replace(/^YAML parse failed:\s*/, '').trim();
+  return `Invalid YAML frontmatter: ${detail}. Quote scalar values that contain ": " or fix the frontmatter block.`;
+}
 
 /**
  * Import content from a string. Core pipeline:
@@ -343,7 +350,14 @@ export async function importFromContent(
     };
   }
 
-  const parsed = parseMarkdown(content, slug + '.md', { activePack: opts.activePack });
+  const parsed = parseMarkdown(content, slug + '.md', {
+    validate: true,
+    ...(opts.activePack ? { activePack: opts.activePack } : {}),
+  });
+  const frontmatterError = invalidYamlFrontmatterError(parsed);
+  if (frontmatterError) {
+    return { slug, status: 'error', chunks: 0, error: frontmatterError };
+  }
 
   // v0.42 (#1699 trust boundary): strip gate-owned markers from UNTRUSTED
   // input. parseMarkdown preserves every frontmatter key except type/title/
@@ -1092,6 +1106,17 @@ export async function importFromFile(
     });
   }
 
+  const preInferenceParsed = parseMarkdown(content, relativePath, { validate: true });
+  const preInferenceFrontmatterError = invalidYamlFrontmatterError(preInferenceParsed);
+  if (preInferenceFrontmatterError) {
+    return {
+      slug: slugifyPath(relativePath),
+      status: 'skipped',
+      chunks: 0,
+      error: preInferenceFrontmatterError,
+    };
+  }
+
   // v0.22.8 — Frontmatter inference: if the file has no frontmatter and
   // inference is enabled, synthesize it from the filesystem path + content.
   // This turns bare markdown files into fully-typed, dated, tagged pages
@@ -1106,7 +1131,11 @@ export async function importFromFile(
     }
   }
 
-  const parsed = parseMarkdown(content, relativePath, { activePack: opts.activePack });
+  const parsed = parseMarkdown(content, relativePath, {
+    validate: true,
+    ...(opts.activePack ? { activePack: opts.activePack } : {}),
+  });
+  const frontmatterError = invalidYamlFrontmatterError(parsed);
 
   // Enforce path-authoritative slug. parseMarkdown prefers frontmatter.slug over
   // the path-derived slug, so a mismatch here means the frontmatter is trying
@@ -1118,6 +1147,15 @@ export async function importFromFile(
   const expectedSlug = slugifyPath(relativePath);
   let resolvedSlug = expectedSlug;
   let usedFrontmatterFallback = false;
+
+  if (frontmatterError) {
+    return {
+      slug: expectedSlug,
+      status: 'skipped',
+      chunks: 0,
+      error: frontmatterError,
+    };
+  }
 
   if (expectedSlug === '') {
     if (parsed.slug && parsed.slug.length > 0) {

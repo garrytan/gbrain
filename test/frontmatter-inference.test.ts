@@ -7,6 +7,10 @@
 
 import { describe, test, expect } from 'bun:test';
 import {
+  compileExcludePatterns,
+  DEFAULT_EXCLUDE_PATTERNS,
+} from '../src/core/cycle/transcript-discovery.ts';
+import {
   inferFrontmatter,
   extractDateFromFilename,
   extractTitleFromFilename,
@@ -303,12 +307,133 @@ describe('DIRECTORY_RULES', () => {
     expect(catchAll!.type).toBe('note');
   });
 
+  // Mirror production normalization: inferFrontmatter lowercases BOTH sides
+  // before `startsWith` (frontmatter-inference.ts:297), so a rule authored as
+  // 'Apple Notes/YC/' matches at runtime and must be examined here too.
+  const APPLE_PREFIX = 'apple notes/';
+  const applePrefixOf = (r: { pathPrefix: string }) => r.pathPrefix.toLowerCase();
+  const isAppleRule = (r: { pathPrefix: string }) => applePrefixOf(r).startsWith(APPLE_PREFIX);
+  const isGenericApple = (r: { pathPrefix: string }) => applePrefixOf(r) === APPLE_PREFIX;
+
+  /**
+   * True when a subfolder rule reproduces exactly what the generic
+   * 'apple notes/' rule already derives, and so can never change an outcome.
+   */
+  const isRedundantApple = (
+    r: { pathPrefix: string; tags?: string[]; type?: string; source?: string; datePattern?: string; titleStrategy?: string },
+    generic: { type?: string; source?: string; datePattern?: string; titleStrategy?: string },
+  ): boolean => {
+    if (!isAppleRule(r) || isGenericApple(r)) return false;
+    const seg = applePrefixOf(r).slice(APPLE_PREFIX.length).replace(/\/+$/, '').split('/')[0];
+    const derived = seg.replace(/\s+/g, '-');
+    // inferFrontmatter defaults both optional strategy fields to 'filename'
+    // (frontmatter-inference.ts:310, :317), so an omitted field and an
+    // explicit 'filename' are the same rule. Comparing them literally would
+    // let a redundant rule escape by simply leaving them out.
+    const dp = (v?: string) => v ?? 'filename';
+    const ts = (v?: string) => v ?? 'filename';
+    const sameFields =
+      r.type === generic.type &&
+      r.source === generic.source &&
+      dp(r.datePattern) === dp(generic.datePattern) &&
+      ts(r.titleStrategy) === ts(generic.titleStrategy);
+    return sameFields && [...(r.tags ?? [])].sort().join(',') === derived;
+  };
+
+  // Transcripts matching gbrain's sensitivity vocabulary are dropped before any
+  // LLM call. A shipped DIRECTORY_RULE that maps a specific person's folder
+  // onto one of those categories encodes a private fact about a real individual
+  // into every install, which the Privacy rule in CLAUDE.md forbids for
+  // checked-in code. Personal mappings belong in the operator's own notes.
+  //
+  // Matched with the production compiler, not a local `includes`: bare words
+  // compile to \b<word>\b, so `therapy-notes` and `medical records` are caught
+  // the same way discoverTranscripts catches them. An exact-equality check
+  // would let those spellings recreate the association with CI green.
+  test('no shipped rule binds a path to a sensitive category', () => {
+    const res = compileExcludePatterns([...DEFAULT_EXCLUDE_PATTERNS]);
+    expect(res.length).toBe(DEFAULT_EXCLUDE_PATTERNS.length); // no silent drop
+    const offenders = DIRECTORY_RULES.filter(r =>
+      (r.tags ?? []).some(t => res.some(re => re.test(t))),
+    );
+    // Report indices, not prefixes: an offending prefix is by definition the
+    // kind of string this test exists to keep out of public artifacts, and a
+    // failing assertion is printed into CI logs.
+    expect(offenders.map(r => DIRECTORY_RULES.indexOf(r))).toEqual([]);
+  });
+
   test('Apple Notes rules are more specific than the catch-all', () => {
-    const appleRules = DIRECTORY_RULES.filter(r => r.pathPrefix.startsWith('apple notes/'));
+    const appleRules = DIRECTORY_RULES.filter(isAppleRule);
     expect(appleRules.length).toBeGreaterThan(1); // subfolder rules + catch-all
-    // Subfolder rules should come before the generic apple notes/ rule
-    const ycIdx = DIRECTORY_RULES.findIndex(r => r.pathPrefix === 'apple notes/yc/');
-    const genericIdx = DIRECTORY_RULES.findIndex(r => r.pathPrefix === 'apple notes/');
-    expect(ycIdx).toBeLessThan(genericIdx);
+    // EVERY subfolder rule must come before the generic one, not just a named
+    // example: findIndex on an absent prefix returns -1, which satisfies
+    // `toBeLessThan(genericIdx)` vacuously, so an assertion naming one rule
+    // keeps passing after that rule is deleted.
+    const genericIdx = DIRECTORY_RULES.findIndex(isGenericApple);
+    expect(genericIdx).toBeGreaterThanOrEqual(0);
+    const subIdx = appleRules
+      .filter(r => !isGenericApple(r))
+      .map(r => DIRECTORY_RULES.indexOf(r));
+    expect(subIdx.length).toBeGreaterThan(0);
+    for (const i of subIdx) expect(i).toBeLessThan(genericIdx);
+  });
+
+  test('no Apple Notes subfolder rule duplicates what the generic rule derives', () => {
+    // The generic 'apple notes/' rule assigns type/source/date/title and tags
+    // the first path segment, lowercased and hyphenated. A subfolder rule that
+    // reproduces exactly that is dead weight: it can never change an output,
+    // but it reads as a deliberate override.
+    const generic = DIRECTORY_RULES.find(isGenericApple);
+    expect(generic).toBeDefined();
+    expect(DIRECTORY_RULES.filter(r => isRedundantApple(r, generic!)).map(r => r.pathPrefix)).toEqual([]);
+  });
+
+  test('a path under a removed prefix now reports the generic rule', () => {
+    // Accepted, and pinned rather than incidental: `matchedRule` is a
+    // diagnostic label, surfaced as results[].rule by `gbrain frontmatter`
+    // (frontmatter.ts:486). Deleting a rule necessarily changes which rule is
+    // named. Everything the label does NOT cover — title/type/date/source/tags,
+    // i.e. every field serializeFrontmatter persists — is unchanged.
+    const out = inferFrontmatter('Apple Notes/YC/2024-03-05 A Note.md', 'body');
+    expect(out.matchedRule).toBe('apple notes/');
+    expect(out).toMatchObject({
+      title: 'A Note',
+      type: 'apple-note',
+      date: '2024-03-05',
+      source: 'apple-notes',
+      tags: ['yc'],
+    });
+    // The catch-all branch in frontmatter.ts keys on the literal '(default)',
+    // so its skip decision is untouched by this rename.
+    expect(out.matchedRule).not.toBe('(default)');
+  });
+
+  test('the redundancy predicate catches the shapes a naive one misses', () => {
+    // A guard that never fires is indistinguishable from a guard that cannot
+    // fire. Feed it the two spellings production would still match: a
+    // mixed-case prefix (inferFrontmatter lowercases both sides before
+    // startsWith) and a nested prefix (the generic rule tags parts[1] only,
+    // so a deeper rule repeating the first segment is equally redundant).
+    const generic = DIRECTORY_RULES.find(isGenericApple)!;
+    const like = (pathPrefix: string, tags: string[]) => ({
+      pathPrefix,
+      tags,
+      type: generic.type,
+      source: generic.source,
+      datePattern: generic.datePattern,
+      titleStrategy: generic.titleStrategy,
+    });
+    expect(isRedundantApple(like('Apple Notes/YC/', ['yc']), generic)).toBe(true);
+    expect(isRedundantApple(like('apple notes/yc/archive/', ['yc']), generic)).toBe(true);
+    expect(isRedundantApple(like('apple notes/pitch notes/', ['pitch-notes']), generic)).toBe(true);
+    // Omitting the optional strategy fields is the same rule as spelling out
+    // their defaults, so leaving them out must not buy an escape.
+    const { datePattern: _dp, titleStrategy: _ts, ...withoutDefaults } = like('apple notes/yc/', ['yc']);
+    expect(isRedundantApple(withoutDefaults, generic)).toBe(true);
+    // Real overrides must NOT be flagged: a different tag set, or a field the
+    // generic rule sets differently.
+    expect(isRedundantApple(like('apple notes/youtube shows/', ['youtube', 'shows']), generic)).toBe(false);
+    expect(isRedundantApple({ ...like('apple notes/yc/', ['yc']), type: 'note' }, generic)).toBe(false);
+    expect(isRedundantApple(like('wiki/yc/', ['yc']), generic)).toBe(false); // not an Apple Notes rule
   });
 });

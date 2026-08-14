@@ -11,9 +11,12 @@
  * takes-quality-eval/pricing.ts duplicated the numbers and drifted: Opus 4.7
  * read $15/$75 in one and $5/$25 in the other.)
  *
- * Codex P1 #10 fold: non-Anthropic models (gemini, gpt, anything not in this
- * map) bypass the budget gate with a `BUDGET_METER_NO_PRICING` warn once per
- * process. The cycle still runs unbounded for those models.
+ * Codex P1 #10 fold: `estimateMaxCostUsd` keeps its null-on-miss contract, and
+ * a null estimate makes the dream-cycle budget gate wave the submit through.
+ * BudgetMeter therefore prices through `canonicalLookup` first and only falls
+ * back here, so a model is unbounded ONLY when the canonical table has no
+ * rates for it either — that case still warns `BUDGET_METER_NO_PRICING` once
+ * per process.
  */
 
 import { CANONICAL_PRICING, type ModelPricing } from './model-pricing.ts';

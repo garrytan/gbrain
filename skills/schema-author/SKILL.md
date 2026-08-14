@@ -69,9 +69,8 @@ flags). For these adjacent jobs, route elsewhere:
   already has a schema-check phase. Don't duplicate.
 - **Just looking up a type's settings** → `gbrain schema explain <type>`
   directly. This skill is for CHANGING the pack, not READING from it.
-- **Querying who knows about X** → `skills/expert-routing/SKILL.md` (or
-  `gbrain whoknows` directly). schema-author makes a type expert-routable;
-  it does not run the query.
+- **Querying who knows about X** → `gbrain whoknows <topic>` directly.
+  schema-author makes a type expert-routable; it does not run the query.
 
 ## Convention
 
@@ -120,7 +119,7 @@ declared prefixes with zero matching pages — probable mis-declarations).
 If coverage < 90%, there's untyped content worth typing.
 
 ```
-gbrain schema review-orphans --limit 50 --json
+gbrain schema review-orphans --json
 ```
 
 Untyped pages drilldown. Look for shared path prefixes (e.g. "12 of these

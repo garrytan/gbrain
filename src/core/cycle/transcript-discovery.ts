@@ -120,6 +120,14 @@ export function isDreamOutput(content: string, bypass = false): boolean {
 }
 
 /**
+ * Sensitivity categories dream excludes from transcript ingestion by default.
+ * The single source for this vocabulary: `dream.synthesize.exclude_patterns`
+ * overrides it at runtime, and test/frontmatter-inference.test.ts asserts no
+ * shipped DIRECTORY_RULE binds a path to one of these.
+ */
+export const DEFAULT_EXCLUDE_PATTERNS: readonly string[] = ['medical', 'therapy'];
+
+/**
  * Auto-wrap bare-word patterns in `\b<word>\b`. Power users can pass full
  * regex (e.g. `^therapy:`) which we honor verbatim. Heuristic: any input
  * that's purely alphanumeric+hyphen+underscore is treated as a bare word.

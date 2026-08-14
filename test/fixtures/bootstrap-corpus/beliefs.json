@@ -1,0 +1,74 @@
+[
+  {
+    "text": "alice-example prefers async written standups over live meetings.",
+    "entity_slug": "people/alice-example",
+    "visibility": "world",
+    "confidence": 0.9
+  },
+  {
+    "text": "ridge-platform ships PGLite as its default embedded engine for new installs.",
+    "entity_slug": "companies/ridge-platform",
+    "visibility": "world",
+    "confidence": 0.95
+  },
+  {
+    "text": "carol-fictional owns the hybrid-retrieval reranker and reviews all changes to it.",
+    "entity_slug": "people/carol-fictional",
+    "visibility": "world",
+    "confidence": 0.85
+  },
+  {
+    "text": "summit-robotics uses graph-traversal for warehouse path planning.",
+    "entity_slug": "companies/summit-robotics",
+    "visibility": "world",
+    "confidence": 0.9
+  },
+  {
+    "text": "bob-placeholder invests through vector-co and mentors alice-example.",
+    "entity_slug": "people/bob-placeholder",
+    "visibility": "world",
+    "confidence": 0.8
+  },
+  {
+    "text": "vector-co focuses its fund on memory-systems and robotics startups.",
+    "entity_slug": "companies/vector-co",
+    "visibility": "world",
+    "confidence": 0.75
+  },
+  {
+    "text": "synthesis-layers reduces token budget by pre-fetching a synopsis before recall.",
+    "entity_slug": "concepts/synthesis-layers",
+    "visibility": "world",
+    "confidence": 0.7
+  },
+  {
+    "text": "alice-example privately plans to step down as CEO of ridge-platform next year.",
+    "entity_slug": "people/alice-example",
+    "visibility": "private",
+    "confidence": 0.6
+  },
+  {
+    "text": "summit-robotics is quietly exploring an acquisition offer from a larger competitor.",
+    "entity_slug": "companies/summit-robotics",
+    "visibility": "private",
+    "confidence": 0.5
+  },
+  {
+    "text": "carol-fictional is unhappy with her equity grant and considering leaving ridge-platform.",
+    "entity_slug": "people/carol-fictional",
+    "visibility": "private",
+    "confidence": 0.55
+  },
+  {
+    "text": "vector-co marked down its ridge-platform stake in the latest internal report.",
+    "entity_slug": "companies/vector-co",
+    "visibility": "private",
+    "confidence": 0.5
+  },
+  {
+    "text": "bob-placeholder is negotiating a secret side letter with an undisclosed limited partner.",
+    "entity_slug": "people/bob-placeholder",
+    "visibility": "private",
+    "confidence": 0.5
+  }
+]

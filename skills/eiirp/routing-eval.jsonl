@@ -7,3 +7,14 @@
 {"intent": "please file all of this properly", "expected_skill": "eiirp"}
 {"intent": "organize all of this work so it's findable later", "expected_skill": "eiirp"}
 {"intent": "archive this research thread once we're done", "expected_skill": "eiirp", "ambiguous_with": ["data-research"]}
+// Routing-eval additions for skills/eiirp v1.1.0 (auto-fire gate merge from
+// deep-analysis-brain-auto@fc834ee). Merge into skills/eiirp/routing-eval.jsonl
+// once the RESOLVER.md eiirp row carries the new trigger phrases
+// ("analyze this document", "deep analysis", "review this report").
+// The gate itself is ALWAYS-ON (fires at delivery time, not via routing);
+// these fixtures cover the explicit-ask surface only.
+{"intent": "run a deep analysis on this diligence packet from acme-example and make sure it's findable later", "expected_skill": "eiirp"}
+{"intent": "can you analyze this document I just uploaded and file the takeaways somewhere permanent?", "expected_skill": "eiirp"}
+{"intent": "here's a PDF — deep analysis please, then save to brain", "expected_skill": "eiirp", "ambiguous_with": ["capture"]}
+{"intent": "please review this report on the widget-co pilot and give me structured findings", "expected_skill": "eiirp"}
+{"intent": "what page is the indemnity clause on in this contract?", "expected_skill": null, "ambiguous_with": []}

@@ -664,6 +664,11 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
   bound_brain_id          TEXT NULL,
   bound_slug_prefixes     TEXT[] NULL,
   bound_max_concurrent    INTEGER NOT NULL DEFAULT 1,
+  -- WP4 (v127): per-client MCP tool surface + who set it ('operator' |
+  -- 'self' | 'dcr_default'). Value space is OPEN (future client tiers write
+  -- tier names into surface); NULL = server/config surface resolution.
+  surface                 TEXT NULL,
+  surface_set_by          TEXT NULL,
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 -- v0.34.1 (#861, D13 + #876): source_id is the write-source scope;
@@ -764,6 +769,23 @@ CREATE INDEX IF NOT EXISTS context_volunteer_events_src_time_idx
   ON context_volunteer_events (source_id, volunteered_at DESC);
 CREATE INDEX IF NOT EXISTS context_volunteer_events_src_slug_idx
   ON context_volunteer_events (source_id, slug);
+
+-- session_context_state (v0.45.7 / migration v126 — ambient recall issue #1):
+-- per-session cursor + boundary-tie dedup for the \`delta\` verb + heartbeat
+-- runtime. Key (source_id, client_id, session_id); client_id 'local' sentinel
+-- for CLI/hook, remote auth client id otherwise. jsonb DDL-literal defaults.
+CREATE TABLE IF NOT EXISTS session_context_state (
+  source_id         TEXT NOT NULL,
+  client_id         TEXT NOT NULL DEFAULT 'local',
+  session_id        TEXT NOT NULL,
+  standing_entities JSONB NOT NULL DEFAULT '[]'::jsonb,
+  surfaced_slugs    JSONB NOT NULL DEFAULT '[]'::jsonb,
+  last_wake_at      TIMESTAMPTZ,
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_id, client_id, session_id)
+);
+CREATE INDEX IF NOT EXISTS session_context_state_updated_idx
+  ON session_context_state (updated_at);
 
 -- migration_impact_log moved BELOW minion_jobs (was here, lines 645-676)
 -- because its \`job_id BIGINT REFERENCES minion_jobs(id)\` FK requires
@@ -931,6 +953,9 @@ CREATE INDEX IF NOT EXISTS idx_minion_jobs_parent ON minion_jobs(parent_job_id);
 CREATE INDEX IF NOT EXISTS idx_minion_jobs_timeout ON minion_jobs (timeout_at) WHERE status = 'active' AND timeout_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_minion_jobs_parent_status ON minion_jobs (parent_job_id, status) WHERE parent_job_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_minion_jobs_idempotency ON minion_jobs (idempotency_key) WHERE idempotency_key IS NOT NULL;
+-- WP4/WP5 (v127, ENG-10): wedge-signal index — covers the queue-health count
+-- FILTERs and max(updated_at) reads in queryWedgeSignals (supervisor.ts).
+CREATE INDEX IF NOT EXISTS idx_minion_jobs_queue_status_updated ON minion_jobs (queue, status, updated_at);
 
 -- Inbox table for sidechannel messaging
 CREATE TABLE IF NOT EXISTS minion_inbox (

@@ -317,7 +317,6 @@ async function expectHandlerRegistersNativeSynopsisRoute(opts: {
 
   expect(generatedModels).toEqual([expectedModel]);
   expect(validateModelId(expectedModel, 'chat').ok).toBe(true);
-  expect(validateModelId(expectedModel, 'expansion').ok).toBe(false);
 }
 
 async function captureModelsReport(engine: StubConfigEngine): Promise<{

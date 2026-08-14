@@ -25,19 +25,18 @@ import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
 import { MinionQueue } from '../minions/queue.ts';
 import { waitForCompletion, TimeoutError } from '../minions/wait-for-completion.ts';
-import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
+import type { MinionJobInput, MinionJobStatus, SubagentHandlerData } from '../minions/types.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
 // #2415: allow-list + output-root resolution shared with the synthesize
 // phase — both phases must agree on the configured namespace.
-// runPgliteSubagentsInline is shared too: PGLite has no separate Minions
-// worker process (the embedded data-dir holds an exclusive file lock), so a
-// job submitted via queue.add() sits in 'waiting' forever unless something
-// drives the claim -> run -> complete loop inline. synthesize.ts already
-// does this for its own children; patterns.ts previously submitted and
-// waited without ever draining, so every real (non-dry-run) invocation on a
-// PGLite brain hung until subagentWaitTimeoutMs (default 35 min).
-import { loadAllowedSlugPrefixes, loadOutputRoot, runPgliteSubagentsInline } from './synthesize.ts';
+// runSubagentsInline is shared too: a job submitted via queue.add() sits in
+// 'waiting' forever unless something drives the claim -> run -> complete
+// loop — on PGLite because no separate worker can open the embedded
+// data-dir, on Postgres because the parent phase itself occupies a worker
+// slot and can deadlock a fully-occupied worker (#2050). synthesize.ts
+// drains its own children the same way.
+import { loadAllowedSlugPrefixes, loadOutputRoot, runSubagentsInline } from './synthesize.ts';
 import { probeChatModel } from '../ai/gateway.ts';
 import { normalizeModelId } from '../model-id.ts';
 
@@ -60,6 +59,13 @@ export interface PatternsPhaseOpts {
    * mid-phase and starves every tail phase (#2781).
    */
   deadlineAtMs?: number | null;
+  /**
+   * #1586: the cycle's resolved source. Stamped onto every subagent child as
+   * `source_id` so put_page writes land in this source's rows, and passed to
+   * reverseWriteRefs so getPage/getTags read the correct (source_id, slug)
+   * row. Unset → legacy 'default'. Mirrors synthesize.ts's `sourceId`.
+   */
+  sourceId?: string;
 }
 
 /**
@@ -185,18 +191,20 @@ export async function runPhasePatterns(
     }
 
     const queue = new MinionQueue(engine);
-    // PGLite children drain inline (no separate worker can open the embedded
-    // data-dir), so give this job a private per-run queue: the inline drain
-    // must never claim unrelated 'default'-queue jobs a Postgres worker owns.
-    // Mirrors synthesize.ts's childQueueName derivation exactly.
-    const childQueueName = engine.kind === 'pglite'
-      ? `dream-inline-${Date.now()}-${randomUUID().slice(0, 8)}`
-      : 'default';
+    // #2050: children drain inline on BOTH engines (see runSubagentsInline),
+    // so give this job a private per-run queue: the inline drain must never
+    // claim unrelated 'default'-queue jobs, and a 'default'-queue worker must
+    // never claim a child this parent is about to run itself. Mirrors
+    // synthesize.ts's childQueueName derivation exactly.
+    const childQueueName = `dream-inline-${Date.now()}-${randomUUID().slice(0, 8)}`;
     const data: SubagentHandlerData = {
       prompt: buildPatternsPrompt(reflections, config.minEvidence, config.sourceSlugPrefix, config.outputSlugPrefix),
       model: config.model,
       max_turns: 30,
       allowed_slug_prefixes: allowedSlugPrefixes,
+      // #1586: scope every child tool call to the cycle's resolved source so
+      // put_page writes land there instead of the hardcoded 'default'.
+      ...(opts.sourceId ? { source_id: opts.sourceId } : {}),
     };
     const submitOpts: Partial<MinionJobInput> = {
       max_stalled: 3,
@@ -207,14 +215,13 @@ export async function runPhasePatterns(
       allowProtectedSubmit: true,
     });
 
-    // PGLite cannot run a separate Minions worker because the embedded DB
-    // holds an exclusive file lock. Drain this phase's private child queue
-    // inline so the parent observes the terminal state instead of polling
-    // waitForCompletion until subagentWaitTimeoutMs expires. No-op on
-    // Postgres (a real worker process claims the job there).
-    await runPgliteSubagentsInline(engine, queue, childQueueName, opts.yieldDuringPhase);
+    // Drain this phase's private child queue inline so the parent observes
+    // the terminal state instead of polling waitForCompletion until
+    // subagentWaitTimeoutMs expires. Runs on BOTH engines — on Postgres the
+    // parent job otherwise deadlocks a fully-occupied worker (#2050).
+    await runSubagentsInline(engine, queue, childQueueName, opts.yieldDuringPhase);
 
-    let outcome: string;
+    let outcome: MinionJobStatus | 'timeout';
     try {
       const final = await waitForCompletion(queue, job.id, {
         timeoutMs: budgets.waitTimeoutMs,
@@ -243,10 +250,14 @@ export async function runPhasePatterns(
     // Collect refs the subagent wrote (codex finding #2 — query tool exec rows).
     // v0.32.8: refs carry source_id so reverseWriteRefs targets the right
     // (source, slug) row instead of the first DB match.
-    const writtenRefs = await collectChildPutPageSlugs(engine, [job.id]);
+    // #1586: refs carry the cycle's resolved source (children wrote there via
+    // SubagentHandlerData.source_id), so getPage/getTags read the same row the
+    // child wrote, and the reverse-write treats it as the native source.
+    const cycleSourceId = opts.sourceId ?? 'default';
+    const writtenRefs = await collectChildPutPageSlugs(engine, [job.id], cycleSourceId);
 
     // Reverse-write to fs.
-    const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs);
+    const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId);
 
     const details = {
       reflections_considered: reflections.length,
@@ -260,7 +271,7 @@ export async function runPhasePatterns(
     // returned status:ok even when the subagent timed out (e.g. no
     // subagent-capable worker slot free for the whole wait window) and zero
     // pattern pages were written — a silent no-op for days.
-    if (outcome !== 'complete') {
+    if (outcome !== 'completed') {
       if (writtenRefs.length === 0) {
         return {
           phase: 'patterns',
@@ -454,13 +465,14 @@ When done, briefly list the pattern slugs you wrote/updated in your final messag
 async function collectChildPutPageSlugs(
   engine: BrainEngine,
   childIds: number[],
+  sourceId = 'default',
 ): Promise<Array<{ slug: string; source_id: string }>> {
   if (childIds.length === 0) return [];
   // v0.32.8: subagent put_page tool schema doesn't expose source_id (subagents
-  // are scoped to a single source). Default to 'default' here; multi-source
-  // dream cycles are a v0.33 follow-up. The point of threading source_id is
-  // so reverseWriteRefs can pass it through getPage and pick the correct
-  // (source_id, slug) row instead of whatever the DB happens to return.
+  // are scoped to a single source). #1586: stamp the cycle's resolved source —
+  // children write there via SubagentHandlerData.source_id — so reverseWriteRefs
+  // can pass it through getPage and pick the correct (source_id, slug) row
+  // instead of whatever the DB happens to return. Unset → legacy 'default'.
   const rows = await engine.executeRaw<{ slug: string }>(
     `SELECT DISTINCT
             COALESCE(input->>'slug', (input #>> '{}')::jsonb->>'slug') AS slug
@@ -474,7 +486,7 @@ async function collectChildPutPageSlugs(
   return rows
     .map(r => r.slug)
     .filter((s): s is string => typeof s === 'string' && s.length > 0)
-    .map(slug => ({ slug, source_id: 'default' }));
+    .map(slug => ({ slug, source_id: sourceId }));
 }
 
 // ── Reverse-write ────────────────────────────────────────────────────
@@ -485,6 +497,7 @@ async function reverseWriteRefs(
   engine: BrainEngine,
   brainDir: string,
   refs: Array<{ slug: string; source_id: string }>,
+  nativeSourceId = 'default',
 ): Promise<number> {
   let count = 0;
   for (const { slug, source_id } of refs) {
@@ -496,11 +509,12 @@ async function reverseWriteRefs(
     const tags = await engine.getTags(slug, { sourceId: source_id });
     try {
       const md = renderPageToMarkdown(page, tags);
-      // v0.32.8 F6: non-default sources land under brainDir/.sources/<id>/<slug>.md
-      // so same-slug-different-source pages don't collide on disk. Default-source
-      // pages stay at brainDir/<slug>.md so single-source brains see no change.
-      // `.sources/` is a reserved prefix; walkBrainRepo skips dot-dirs.
-      const filePath = source_id === 'default'
+      // v0.32.8 F6: foreign-source pages land under brainDir/.sources/<id>/<slug>.md
+      // so same-slug-different-source pages don't collide on disk. Pages belonging
+      // to the cycle's own source (#1586: brainDir IS that source's checkout —
+      // legacy 'default' when unscoped) stay at brainDir/<slug>.md so single-source
+      // brains see no change. `.sources/` is a reserved prefix; walkBrainRepo skips dot-dirs.
+      const filePath = source_id === nativeSourceId
         ? join(brainDir, `${slug}.md`)
         : join(brainDir, '.sources', source_id, `${slug}.md`);
       mkdirSync(dirname(filePath), { recursive: true });
@@ -558,3 +572,11 @@ function failed(error: PhaseError): PhaseResult {
 function makeError(cls: string, code: string, message: string, hint?: string): PhaseError {
   return hint ? { class: cls, code, message, hint } : { class: cls, code, message };
 }
+
+// `__testing` re-exports otherwise-private helpers so unit tests can pin the
+// source-scoping contract (#1586) without driving a whole dream cycle.
+// Mirrors synthesize.ts's `__testing` block.
+export const __testing = {
+  collectChildPutPageSlugs,
+  reverseWriteRefs,
+};

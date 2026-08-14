@@ -72,7 +72,10 @@ function runWrapper(extraArgs: string[] = []): { code: number; stdout: string; s
   const result = spawnSync(
     'bash',
     [join(TMPROOT, 'scripts', 'run-unit-parallel.sh'), '--shards', '2', ...extraArgs],
-    { cwd: TMPROOT, encoding: 'utf-8', env: { ...process.env } },
+    // Shard-mechanics tests pin explicit --shards behavior with tiny
+    // synthetic files; disable mem-adaptation so a RAM-limited runner (CI's
+    // ~7GB) can't collapse 2 shards -> 1 and break the shard 1/2 expectations.
+    { cwd: TMPROOT, encoding: 'utf-8', env: { ...process.env, GBRAIN_TEST_NO_MEM_ADAPT: '1' } },
   );
   return {
     code: result.status ?? -1,
@@ -209,6 +212,8 @@ describe('passing', () => {
       HOME: process.env.HOME ?? FROOT,
       TMPDIR: process.env.TMPDIR ?? '/tmp',
       GBRAIN_TEST_SHARD_TIMEOUT: '300',
+      // Same rationale as runWrapper: explicit-shard mechanics under test.
+      GBRAIN_TEST_NO_MEM_ADAPT: '1',
     };
   });
 
@@ -255,5 +260,143 @@ describe('failing-on-purpose', () => {
     } finally {
       rmSync(join(FROOT, 'test', 'z-fail.test.ts'), { force: true });
     }
+  });
+});
+
+describe('run-unit-parallel.sh OOM rescue lane', () => {
+  // A fixture that fails WITH the WASM out-of-memory signature on its first
+  // run (no sentinel file yet) and passes once the sentinel exists — exactly
+  // the phantom-failure shape: dies under parallel memory pressure, passes
+  // serially. The runner must (1) detect the signature, (2) re-run the file
+  // at --max-concurrency 1, (3) exit 0 with an oom_rescued note.
+  let OROOT: string;
+
+  beforeAll(() => {
+    OROOT = mkdtempSync(join(tmpdir(), 'gbrain-parallel-oom-'));
+    mkdirSync(join(OROOT, 'scripts'), { recursive: true });
+    mkdirSync(join(OROOT, 'test'), { recursive: true });
+    for (const s of ['run-unit-parallel.sh', 'run-unit-shard.sh', 'run-serial-tests.sh']) {
+      copyFileSync(resolve(REPO_ROOT, 'scripts', s), join(OROOT, 'scripts', s));
+      chmodSync(join(OROOT, 'scripts', s), 0o755);
+    }
+    const passing = `import { describe, it, expect } from 'bun:test';
+describe('passing', () => {
+  it('arithmetic works', () => { expect(1 + 1).toBe(2); });
+});`;
+    const oomOnce = `import { describe, it, expect } from 'bun:test';
+import { existsSync, writeFileSync } from 'fs';
+describe('oom-once', () => {
+  it('fails with the WASM OOM signature on first run, passes on retry', () => {
+    const sentinel = new URL('./oom-sentinel.txt', import.meta.url).pathname;
+    if (!existsSync(sentinel)) {
+      writeFileSync(sentinel, 'ran-once');
+      console.error('Original error: Out of memory');
+      throw new Error('Out of memory (simulated PGLite WASM connect failure)');
+    }
+    expect(1).toBe(1);
+  });
+});`;
+    writeFileSync(join(OROOT, 'test', 'a-pass.test.ts'), passing);
+    writeFileSync(join(OROOT, 'test', 'b-oom-once.test.ts'), oomOnce);
+  });
+
+  afterAll(() => {
+    if (OROOT) rmSync(OROOT, { recursive: true, force: true });
+  });
+
+  function runOom(env: Record<string, string> = {}): { code: number; stdout: string; stderr: string } {
+    rmSync(join(OROOT, 'test', 'oom-sentinel.txt'), { force: true });
+    const result = spawnSync(
+      'bash',
+      [join(OROOT, 'scripts', 'run-unit-parallel.sh'), '--shards', '2'],
+      { cwd: OROOT, encoding: 'utf-8', env: { ...process.env, GBRAIN_TEST_NO_MEM_ADAPT: '1', ...env } },
+    );
+    return { code: result.status ?? -1, stdout: result.stdout || '', stderr: result.stderr || '' };
+  }
+
+  it('rescues an OOM-signature failure serially and exits 0 with an oom_rescued note', () => {
+    const r = runOom();
+    expect(r.stdout + r.stderr).toContain('OOM rescue pass');
+    expect(r.stderr).toContain('oom_rescued=');
+    expect(r.code).toBe(0);
+  }, 120_000);
+
+  it('GBRAIN_TEST_NO_OOM_FALLBACK=1 disables the rescue lane (stays red)', () => {
+    const r = runOom({ GBRAIN_TEST_NO_OOM_FALLBACK: '1' });
+    expect(r.code).not.toBe(0);
+    expect(r.stdout + r.stderr).not.toContain('OOM rescue pass');
+  }, 120_000);
+
+  it('memory-aware sizing is advertised in the banner (mem-ok or mem-adapted)', () => {
+    // The one test that needs adaptation ON — override the harness-wide
+    // NO_MEM_ADAPT base (which keeps the shard-mechanics tests deterministic
+    // on RAM-limited CI runners).
+    const r = runOom({ GBRAIN_TEST_NO_MEM_ADAPT: '0' });
+    expect(r.stderr).toMatch(/mem-(ok|adapted)/);
+  }, 120_000);
+
+  it('mixed run: a plain assertion failure stays red even when the OOM phantom rescues green', () => {
+    // The NON_OOM_FAIL gate — the branch that stops the rescue lane from
+    // absolving real failures that happened to share a run with phantoms.
+    const realFail = `import { describe, it, expect } from 'bun:test';
+describe('real-failure', () => {
+  it('expects 1 to equal 2', () => { expect(1).toBe(2); });
+});`;
+    writeFileSync(join(OROOT, 'test', 'c-real-fail.test.ts'), realFail);
+    try {
+      const r = runOom();
+      expect(r.code).not.toBe(0);
+    } finally {
+      rmSync(join(OROOT, 'test', 'c-real-fail.test.ts'), { force: true });
+    }
+  }, 120_000);
+
+  it('a deterministic failure carrying the OOM signature re-fails serially and stays red', () => {
+    // The oom_rescue_failed lane: signature match queues the file, but the
+    // serial re-run confirms the failure is real — run must stay red.
+    const alwaysOom = `import { describe, it } from 'bun:test';
+describe('oom-always', () => {
+  it('always fails with the signature', () => {
+    console.error('Original error: Out of memory');
+    throw new Error('Out of memory (deterministic)');
+  });
+});`;
+    writeFileSync(join(OROOT, 'test', 'd-oom-always.test.ts'), alwaysOom);
+    try {
+      const r = runOom();
+      expect(r.code).not.toBe(0);
+      expect(r.stderr).toContain('oom_rescue_failed=');
+      expect(r.stdout + r.stderr).toContain('oom-rescue (serial, confirmed real)');
+    } finally {
+      rmSync(join(OROOT, 'test', 'd-oom-always.test.ts'), { force: true });
+    }
+  }, 120_000);
+});
+
+describe('run-unit-parallel.sh external-kill rescue contract', () => {
+  // An externally-killed shard (sibling workspace pkill, memory jetsam)
+  // presents as rc 143/137 well before the shard timeout. Simulating a
+  // mid-run external kill deterministically in a fixture is flaky, so this
+  // pins the load-bearing structure instead: the early-death detector, the
+  // 80%-of-timeout threshold that separates external kills from real wedges,
+  // and the rescue-queue routing for both the wedged and non-wedged branches.
+  it('detects early SIGTERM/SIGKILL deaths against the 80% timeout threshold', () => {
+    const source = readFileSync(PARALLEL_SH_SRC, 'utf-8');
+    expect(source).toContain('[ "$rc" = "143" ] || [ "$rc" = "137" ]');
+    expect(source).toContain('$((SHARD_TIMEOUT * 80 / 100))');
+    expect(source).toContain('shard_external_kill=1');
+  });
+
+  it('routes externally-killed shards into the serial rescue queue, not the red path', () => {
+    const source = readFileSync(PARALLEL_SH_SRC, 'utf-8');
+    const killBranches = source.split('shard_external_kill" = "1"').length - 1;
+    expect(killBranches).toBeGreaterThanOrEqual(2); // wedged + non-wedged branch
+    expect(source).toContain('KILLED externally after ${s_elapsed}s');
+  });
+
+  it('stamps per-shard start/end epochs so early death is measurable', () => {
+    const source = readFileSync(PARALLEL_SH_SRC, 'utf-8');
+    expect(source).toContain('date +%s > "$LOG_DIR/shard-$i.start"');
+    expect(source).toContain('date +%s > "$LOG_DIR/shard-$i.end"');
   });
 });

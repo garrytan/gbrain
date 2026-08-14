@@ -26,6 +26,27 @@ fixed. You wake up and the brain is smarter than when you went to sleep.
 | Weekly | Brain maintenance | `gbrain doctor`, embed stale, orphan detection | [maintain skill](../../skills/maintain/SKILL.md) |
 | Nightly | Dream cycle | Entity sweep, enrich thin spots, fix citations | See below |
 
+### Prefer gbrain's native schedulers where they fit
+
+System cron is the lowest common denominator, but gbrain ships its own
+scheduling surfaces — reach for these first:
+
+- **`gbrain dream`** — the shipped nightly maintenance cycle (lint,
+  backlinks, extract, sync, embed, synthesize). Schedule THIS instead of
+  hand-rolling the dream cycle below.
+- **`gbrain jobs` / minions** — queue shell jobs or LLM subagents with retry,
+  backoff, and an audit trail. See the `minion-orchestrator` skill.
+- **`gbrain autopilot`** — the long-lived background daemon that runs cycles
+  on its own cadence.
+- **`cron-scheduler` skill** (`skills/cron-scheduler/`) — teaches an agent to
+  manage its harness's scheduler.
+- **Bootstrap session-triggered schedules** — `gbrain bootstrap` installs
+  HEARTBEAT.md-driven schedules that fire on session activity; see
+  [bootstrap.md](bootstrap.md).
+
+For scheduling `sync` + `embed --stale` specifically, the home doc is
+[live-sync.md](live-sync.md).
+
 ## Implementation: Setting Up Cron Jobs
 
 ```bash
@@ -44,24 +65,24 @@ fixed. You wake up and the brain is smarter than when you went to sleep.
 # Brain health — weekly Mondays at 6 AM
 0 6 * * 1 gbrain doctor --json >> /tmp/gbrain-health.log 2>&1 && gbrain embed --stale
 
+# Autopilot health gate — daily at 7 AM. The exit code is the signal:
+# 0 fresh (or nothing installed), 1 needs attention (stale heartbeat,
+# never ran, or paused), 2 the daemon took itself out of rotation.
+# Status is filesystem-only, so it works even during a DB outage.
+0 7 * * * gbrain autopilot --status >> /tmp/gbrain-autopilot-health.log 2>&1 || your-notify "gbrain autopilot needs attention"
+
 # Dream cycle — nightly at 2 AM
 0 2 * * * /path/to/dream-cycle.sh
 ```
 
 ### Quiet Hours Gate (MANDATORY)
 
-Every cron job that sends notifications MUST check quiet hours first.
-See [Quiet Hours](quiet-hours.md) for the full pattern.
-
-```bash
-# In every cron script:
-if ! bash scripts/quiet-hours-gate.sh; then
-  mkdir -p /tmp/cron-held
-  echo "$OUTPUT" > /tmp/cron-held/$(basename "$0" .sh).md
-  exit 0
-fi
-# Not quiet hours — send normally
-```
+Every cron job that sends notifications MUST check quiet hours first. The
+gate is a small script YOU create (it doesn't ship with gbrain) and call at
+the top of every notification-sending cron script; held output goes to a
+holding directory that the morning briefing drains. See
+[Quiet Hours](quiet-hours.md) for the gate script and the full pattern —
+don't copy a snippet from here, that page is the single home.
 
 ### Travel-Aware Timezone Handling
 
@@ -87,6 +108,12 @@ morning briefing. Zero config change needed.
 ## The Dream Cycle
 
 The most important cron job. Runs while you sleep.
+
+**gbrain ships this**: `gbrain dream` runs the maintenance half of the cycle
+(lint, backlinks, extract, sync, embed, synthesize) as one command — schedule
+it nightly and Phase 4 below (plus most of Phase 2's hygiene checks) is
+covered. The pseudocode that follows is the harness-side variant for agents
+that also do LLM-driven entity sweeps and memory consolidation on top.
 
 ### What It Does
 
@@ -150,11 +177,11 @@ echo "Dream cycle starting at $(date)"
 # Phase 1: Entity sweep (spawn sub-agent)
 # Read today's conversation logs, extract entities, update brain
 
-# Phase 2: Citation hygiene
-gbrain doctor --json | jq '.checks[] | select(.status=="warn")'
+# Phase 2: Shipped maintenance cycle (lint, backlinks, extract, sync, embed, synthesize)
+gbrain dream
 
-# Phase 3: Embed any stale content
-gbrain embed --stale
+# Phase 3: Surface anything the cycle flagged
+gbrain doctor --json | jq '.checks[] | select(.status=="warn")'
 
 echo "Dream cycle complete at $(date)"
 ```

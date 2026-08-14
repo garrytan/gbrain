@@ -124,7 +124,7 @@ When the user says any of these, route here:
 
 - `gbrain doctor` — the `frontmatter_integrity` subcheck reports the same counts as `audit`.
 - `skills/maintain/SKILL.md` — broader brain health audit; chain after this skill if other classes of issue are suspected.
-- `skills/lint/SKILL.md` (via `gbrain lint`) — overlapping rules for skill-file lint; the `frontmatter-*` rule names in lint output come from this skill's validation surface.
+- `gbrain lint` — overlapping rules for skill-file lint (a CLI command, not a skill); the `frontmatter-*` rule names in lint output come from this skill's validation surface.
 
 ## Output Format
 

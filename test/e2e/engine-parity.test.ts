@@ -17,6 +17,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import type { ChunkInput, SearchResult } from '../../src/core/types.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { getSessionContextState, upsertSessionContextState } from '../../src/core/context/session-state.ts';
 import { hasDatabase, setupDB, teardownDB, getEngine } from './helpers.ts';
 
 const SKIP_PG = !hasDatabase();
@@ -528,6 +529,38 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     }
   });
 
+  test('#2555 getChunks sourceIds[] parity: federated grant + scalar floor + unset default identical on both engines', async () => {
+    for (const eng of [pgEngine, pgliteEngine]) {
+      await eng.executeRaw(`INSERT INTO sources (id, name, local_path) VALUES ('gcp-beta', 'gcp-beta', '/tmp/gcp-beta') ON CONFLICT (id) DO NOTHING`);
+      await eng.putPage('wiki/gcp-doc', {
+        type: 'note', title: 'beta doc', compiled_truth: 'beta body', timeline: '',
+      }, { sourceId: 'gcp-beta' });
+      await eng.upsertChunks('wiki/gcp-doc', [
+        { chunk_index: 0, chunk_text: 'gcp beta chunk', chunk_source: 'compiled_truth' },
+      ], { sourceId: 'gcp-beta' });
+      await eng.putPage('wiki/gcp-doc', {
+        type: 'note', title: 'default decoy', compiled_truth: 'decoy body', timeline: '',
+      }, { sourceId: 'default' });
+      await eng.upsertChunks('wiki/gcp-doc', [
+        { chunk_index: 0, chunk_text: 'gcp default decoy', chunk_source: 'compiled_truth' },
+      ], { sourceId: 'default' });
+    }
+
+    for (const eng of [pgEngine, pgliteEngine]) {
+      // Federated array wins over scalar and reaches the non-default source.
+      const federated = await eng.getChunks('wiki/gcp-doc', { sourceId: 'default', sourceIds: ['gcp-beta'] });
+      expect(federated.map(c => c.chunk_text)).toEqual(['gcp beta chunk']);
+      // Out-of-grant array → empty, never a fall-through to 'default'.
+      const outOfGrant = await eng.getChunks('wiki/gcp-doc', { sourceIds: ['gcp-nonexistent'] });
+      expect(outOfGrant).toEqual([]);
+      // Unset opts keep the historical 'default' floor.
+      const unset = await eng.getChunks('wiki/gcp-doc');
+      expect(unset.map(c => c.chunk_text)).toEqual(['gcp default decoy']);
+      // #2544 trim keeps the Chunk shape (embedding deliberately unselected → null).
+      expect(federated[0].embedding).toBeNull();
+    }
+  });
+
   test('v114 (#1941) listLinkSources parity: same ordered provenance counts on both engines', async () => {
     const mk = async (eng: BrainEngine) => {
       for (const s of ['lsp-a', 'lsp-b', 'lsp-c']) {
@@ -685,6 +718,56 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     }
     expect(await pgEngine.countStalePagesForExtraction({ sourceId: SRC })).toBe(2); // sp/1 (edited) + sp/3 (NULL)
     expect(await pgliteEngine.countStalePagesForExtraction({ sourceId: SRC })).toBe(2);
+  });
+
+  // Chunkless-page safety net (embed --stale detection gap): a page with
+  // non-empty content but zero content_chunks rows (e.g. a putPage-only
+  // write) must be found on BOTH engines identically, and quarantined /
+  // embed_skip pages (intentionally chunkless by design) must be excluded
+  // identically on both. Isolated under a dedicated source.
+  test('chunkless-page-with-content detection: Postgres ↔ PGLite parity', async () => {
+    const SRC = 'chunkless-parity';
+    for (const eng of [pgEngine, pgliteEngine]) {
+      await eng.executeRaw(`INSERT INTO sources (id, name, config) VALUES ($1, 'Chunkless Parity', '{}'::jsonb) ON CONFLICT DO NOTHING`, [SRC]);
+
+      // cp/stub: non-empty content, never chunked — THE bug this fix targets.
+      await eng.putPage('cp/stub', { type: 'person', title: 'Stub', compiled_truth: 'stub content, never chunked' }, { sourceId: SRC });
+      // cp/chunked: same shape, but chunked — must be excluded.
+      await eng.putPage('cp/chunked', { type: 'note', title: 'Chunked', compiled_truth: 'chunked content' }, { sourceId: SRC });
+      await eng.upsertChunks('cp/chunked', [
+        { chunk_index: 0, chunk_text: 'chunked content', chunk_source: 'compiled_truth' },
+      ], { sourceId: SRC });
+      // cp/empty: no content — must be excluded (the #2822 empty-put class, not this bug).
+      await eng.putPage('cp/empty', { type: 'note', title: 'Empty', compiled_truth: '' }, { sourceId: SRC });
+      // cp/quarantined: chunkless BY DESIGN — must be excluded.
+      await eng.putPage('cp/quarantined', {
+        type: 'note', title: 'Quarantined', compiled_truth: 'junk content',
+        frontmatter: { quarantine: { reason: 'junk_pattern', detail: 'parity fixture', assessed_at: new Date().toISOString() } },
+      }, { sourceId: SRC });
+      // cp/skipped: chunkless BY DESIGN — must be excluded.
+      await eng.putPage('cp/skipped', {
+        type: 'note', title: 'Skipped', compiled_truth: 'x'.repeat(500),
+        frontmatter: { embed_skip: { reason: 'oversized', bytes: 500, assessed_at: new Date().toISOString() } },
+      }, { sourceId: SRC });
+    }
+
+    expect(await pgEngine.countChunklessPagesWithContent({ sourceId: SRC })).toBe(1);
+    expect(await pgliteEngine.countChunklessPagesWithContent({ sourceId: SRC })).toBe(1);
+
+    const pgRows = await pgEngine.listChunklessPagesWithContent({ sourceId: SRC });
+    const pgliteRows = await pgliteEngine.listChunklessPagesWithContent({ sourceId: SRC });
+    expect(pgRows.map(r => r.slug)).toEqual(['cp/stub']);
+    expect(pgliteRows.map(r => r.slug)).toEqual(['cp/stub']);
+    expect(pgRows[0].compiled_truth).toBe('stub content, never chunked');
+    expect(pgliteRows[0].compiled_truth).toBe(pgRows[0].compiled_truth);
+
+    // Unscoped count/list is >= the scoped count on both engines (other
+    // tests' fixtures may also be chunkless — this only asserts the SRC
+    // subset is reachable without scoping, not an exact global count).
+    const pgAllSlugs = (await pgEngine.listChunklessPagesWithContent({ batchSize: 10000 })).map(r => r.slug);
+    const pgliteAllSlugs = (await pgliteEngine.listChunklessPagesWithContent({ batchSize: 10000 })).map(r => r.slug);
+    expect(pgAllSlugs).toContain('cp/stub');
+    expect(pgliteAllSlugs).toContain('cp/stub');
   });
 
   test('v0.41.39 listEnrichCandidates parity (thin filter + source-aware inbound + order)', async () => {
@@ -927,6 +1010,164 @@ describeBoth('Engine parity — federated sourceIds[] secondary reads (#2200)', 
       const pg = (await pgEngine.getTimeline('fed/doc', opts)).map(e => e.summary).sort();
       const pglite = (await pgliteEngine.getTimeline('fed/doc', opts)).map(e => e.summary).sort();
       expect(pg).toEqual(pglite);
+    }
+  });
+});
+
+// ── ambient recall parity (v0.45.7, issue #1) ───────────────────────────
+// Two seams that only real Postgres can vet:
+//   1. The keyset-pagination WHERE clause (PageFilters.updatedAfterKeyset) —
+//      Postgres composes it from postgres.js sql`` fragments, PGLite from
+//      positional $N params. A drift here means the `delta` verb's session
+//      cursor drops or re-delivers pages after `gbrain migrate --to supabase`.
+//   2. The session_context_state $N::text::jsonb upsert (session-state.ts) —
+//      the postgres.js jsonb double-encode trap PGLite structurally cannot
+//      surface (the CLAUDE.md #2339 class).
+const KS_TIE_TS = '2026-08-05T12:00:00.000Z';
+const KS_EARLY_TS = '2026-08-01T00:00:00.000Z';
+const KS_LATE_TS = '2026-08-09T00:00:00.000Z';
+// 10-page tie cluster: bulk syncs stamp identical now() across a transaction,
+// so a >limit same-timestamp cluster is the exact shape the slug tiebreaker
+// exists for (limit 3 below forces two cursor advances INSIDE the cluster).
+const KS_TIE_SLUGS = Array.from({ length: 10 }, (_, i) => `ks/tie-${String(i).padStart(2, '0')}`);
+
+async function seedKeyset(eng: BrainEngine) {
+  const stamp = async (slug: string, ts: string) => {
+    await eng.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug} body`, timeline: '' });
+    // Direct updated_at stamp (same precedent as the stale-parity test) —
+    // putPage server-stamps now(), which can't produce a controlled tie.
+    await eng.executeRaw(
+      `UPDATE pages SET updated_at = $1::timestamptz WHERE slug = $2 AND source_id = 'default'`,
+      [ts, slug],
+    );
+  };
+  for (const slug of KS_TIE_SLUGS) await stamp(slug, KS_TIE_TS);
+  await stamp('ks/early-1', KS_EARLY_TS);
+  await stamp('ks/early-2', KS_EARLY_TS);
+  await stamp('ks/late-1', KS_LATE_TS);
+  await stamp('ks/late-2', KS_LATE_TS);
+}
+
+/** Page through listPages exactly the way the delta verb does (turn-context.ts):
+ * anchor at (updated_at, slug) of the last DELIVERED row, sort updated_asc. */
+async function drainKeyset(
+  eng: BrainEngine,
+  start: { updatedAt: string; slug: string },
+): Promise<string[]> {
+  const out: string[] = [];
+  let cursor = start;
+  // Iteration guard: a strict-greater bug that fails to advance the cursor
+  // would livelock the loop instead of failing the assertion below.
+  for (let i = 0; i < 20; i++) {
+    const batch = await eng.listPages({
+      updatedAfterKeyset: cursor,
+      sort: 'updated_asc',
+      limit: 3,
+      slugPrefix: 'ks/',
+      sourceId: 'default',
+    });
+    if (batch.length === 0) break;
+    for (const p of batch) out.push(p.slug);
+    const last = batch[batch.length - 1];
+    cursor = { updatedAt: last.updated_at.toISOString(), slug: last.slug };
+    if (batch.length < 3) break;
+  }
+  return out;
+}
+
+describeBoth('Engine parity — ambient recall keyset + session cursor (v0.45.7)', () => {
+  let pgEngine: BrainEngine;
+  let pgliteEngine: PGLiteEngine;
+
+  beforeAll(async () => {
+    pgEngine = await setupDB();
+    await seedKeyset(pgEngine);
+    pgliteEngine = new PGLiteEngine();
+    await pgliteEngine.connect({});
+    await pgliteEngine.initSchema();
+    await seedKeyset(pgliteEngine);
+    // session_context_state is not in helpers' TRUNCATE list — clear this
+    // block's key space so a prior run's rows can't leak into assertions.
+    await pgEngine.executeRaw(`DELETE FROM session_context_state WHERE session_id LIKE 'parity-%'`);
+  }, 90_000);
+
+  afterAll(async () => {
+    await pgliteEngine.disconnect();
+    await teardownDB();
+  }, 30_000);
+
+  test('keyset drain from bucket start: identical ordered sequence, no dupes/omissions', async () => {
+    // slug '' ⇒ start of the tie bucket (every tie slug > ''). Earlier pages
+    // are strictly excluded (updated_at < ts); later pages follow the cluster.
+    const start = { updatedAt: KS_TIE_TS, slug: '' };
+    const pg = await drainKeyset(pgEngine, start);
+    const pglite = await drainKeyset(pgliteEngine, start);
+    expect(pg).toEqual(pglite);
+    expect(pg).toEqual([...KS_TIE_SLUGS, 'ks/late-1', 'ks/late-2']);
+    expect(new Set(pg).size).toBe(pg.length); // no duplicates across batches
+  });
+
+  test('keyset strict-greater: anchor slug excluded, mid-cluster resume identical', async () => {
+    // Resuming from tie-04 must exclude tie-04 itself (strict >, not >=) and
+    // everything before it in the (updated_at, slug) total order.
+    const anchor = { updatedAt: KS_TIE_TS, slug: 'ks/tie-04' };
+    const pg = await drainKeyset(pgEngine, anchor);
+    const pglite = await drainKeyset(pgliteEngine, anchor);
+    expect(pg).toEqual(pglite);
+    expect(pg).toEqual([...KS_TIE_SLUGS.slice(5), 'ks/late-1', 'ks/late-2']);
+    expect(pg).not.toContain('ks/tie-04');
+  });
+
+  test('session_context_state round trip: jsonb arrays stay arrays + keep-if-absent', async () => {
+    const sess = 'parity-sess-1';
+    const entities = ['people/alice-example', 'companies/acme-example'];
+    for (const eng of [pgEngine, pgliteEngine]) {
+      await upsertSessionContextState(eng, 'default', null, sess, {
+        standingEntities: entities,
+        lastWakeAt: KS_TIE_TS,
+        cursorSlug: 'ks/tie-04',
+      });
+    }
+
+    const pg = await getSessionContextState(pgEngine, 'default', null, sess);
+    const pglite = await getSessionContextState(pgliteEngine, 'default', null, sess);
+    expect(pg).not.toBeNull();
+    expect(pglite).not.toBeNull();
+    expect(pg!.standing_entities).toEqual(entities);
+    expect(pglite!.standing_entities).toEqual(pg!.standing_entities);
+    expect(pg!.surfaced_slugs).toEqual(['ks/tie-04']); // single-element keyset slug
+    expect(pglite!.surfaced_slugs).toEqual(pg!.surfaced_slugs);
+    expect(pg!.last_wake_at).toBe(KS_TIE_TS);
+    expect(pglite!.last_wake_at).toBe(pg!.last_wake_at);
+
+    // The read helper JSON.parses string scalars (fail-open), so it would MASK
+    // a double-encoded write. jsonb_typeof is the unmaskable probe — a
+    // JSON.stringify'd value bound straight into ::jsonb stores typeof
+    // 'string', not 'array'. Only the real-Postgres arm can actually surface
+    // the postgres.js trap; PGLite is asserted for stored-shape parity.
+    for (const eng of [pgEngine, pgliteEngine]) {
+      const rows = await eng.executeRaw<{ se: string; ss: string }>(
+        `SELECT jsonb_typeof(standing_entities) AS se, jsonb_typeof(surfaced_slugs) AS ss
+         FROM session_context_state
+         WHERE source_id = 'default' AND client_id = 'local' AND session_id = $1`,
+        [sess],
+      );
+      expect(rows[0]?.se).toBe('array');
+      expect(rows[0]?.ss).toBe('array');
+    }
+
+    // keep-if-absent: a patch omitting standingEntities/cursorSlug must leave
+    // both stored sets untouched while the wake cursor advances.
+    for (const eng of [pgEngine, pgliteEngine]) {
+      await upsertSessionContextState(eng, 'default', null, sess, { lastWakeAt: KS_LATE_TS });
+    }
+    for (const st of [
+      await getSessionContextState(pgEngine, 'default', null, sess),
+      await getSessionContextState(pgliteEngine, 'default', null, sess),
+    ]) {
+      expect(st!.standing_entities).toEqual(entities);
+      expect(st!.surfaced_slugs).toEqual(['ks/tie-04']);
+      expect(st!.last_wake_at).toBe(KS_LATE_TS);
     }
   });
 });

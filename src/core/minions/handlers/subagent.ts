@@ -48,6 +48,7 @@ import {
   logSubagentHeartbeat,
 } from './subagent-audit.ts';
 import { resolveModel, isAnthropicProvider, TIER_DEFAULTS } from '../../model-config.ts';
+import { splitProviderModelId, normalizeModelId } from '../../model-id.ts';
 import { resolveAnthropicKey } from '../../ai/anthropic-key.ts';
 import { buildSystemPrompt, DEFAULT_SUBAGENT_SYSTEM } from '../system-prompt.ts';
 import { toolLoop as gatewayToolLoop } from '../../ai/gateway.ts';
@@ -211,31 +212,79 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     // Default is the legacy path so v0.38 patch releases ship the same
     // behavior as v0.37. Users dogfood the gateway path by flipping the flag.
     //
-    // Refuse-at-handler-entry when the model literally lacks tool calling
-    // OR is from an unknown provider. The queue.ts gate already catches this
-    // for queue-submitted jobs; the check here covers direct `gbrain agent run`
-    // invocations and any code path that bypasses the queue's capability check.
-    if (data.model) {
-      const verdict = classifyCapabilities(data.model);
-      if (verdict === 'unusable:no_tools') {
-        throw new Error(
-          `subagent job rejected: data.model "${data.model}" lacks native tool calling. ` +
-          `The subagent loop dispatches brain ops via tool calls — without tool support the loop has no way to run.`,
-        );
-      }
-      if (verdict === 'unknown') {
-        throw new Error(
-          `subagent job rejected: data.model "${data.model}" references an unknown provider. ` +
-          `Use format provider:model where provider matches a recipe in src/core/ai/recipes/.`,
-        );
-      }
-    }
     const model = data.model
       ?? await resolveModel(engine, {
         tier: 'subagent',
         configKey: 'models.subagent',
         fallback: TIER_DEFAULTS.subagent,
       });
+
+    // Refuse-at-handler-entry on the FINAL resolved model, not just an
+    // explicit data.model: `models.subagent` config resolves through
+    // resolveModel's explicit-key branch, which does NOT run
+    // enforceSubagentCapable's silent fallback (only the inherited
+    // models.default / tier / env branches do). An explicitly chosen
+    // tool-incapable model must be refused loudly here rather than silently
+    // run a loop that has no way to dispatch tools.
+    // The queue.ts gate already catches explicit data.model at submit; this
+    // check additionally covers config-resolved models, direct `gbrain agent
+    // run` invocations, and any path that bypasses the queue's check.
+    //
+    // Exception (#1151 precedent): a replayed job whose last persisted
+    // message is a terminal assistant turn (no tool_use blocks) needs NO
+    // further provider call — the path-specific replay logic below returns
+    // the already-committed result. Don't let a capability refusal (e.g.
+    // config repointed to a tool-incapable model between submit and replay)
+    // dead-letter completed work.
+    {
+      const lastRows = await engine.executeRaw<{ role: string; content_blocks: unknown }>(
+        `SELECT role, content_blocks FROM subagent_messages
+          WHERE job_id = $1 ORDER BY message_idx DESC LIMIT 1`,
+        [ctx.id],
+      );
+      const lastRow = lastRows[0];
+      const lastBlocks = lastRow
+        ? (typeof lastRow.content_blocks === 'string'
+            ? JSON.parse(lastRow.content_blocks)
+            : lastRow.content_blocks) as Array<{ type?: string; text?: unknown }>
+        : null;
+      // Terminal = assistant turn with NO pending tool dispatch in EITHER
+      // block vocabulary (legacy Anthropic `tool_use`, gateway `tool-call`)
+      // AND actual text (the gateway terminal rule) — a pending-tool replay
+      // must still pass the gate before the loop resumes on the provider.
+      const alreadyTerminal = lastRow?.role === 'assistant'
+        && Array.isArray(lastBlocks)
+        && !lastBlocks.some(b => b?.type === 'tool_use' || b?.type === 'tool-call')
+        && lastBlocks.some(b => b?.type === 'text' && typeof b.text === 'string' && b.text.trim() !== '');
+      const modelSource = data.model ? 'data.model' : 'the resolved subagent model config';
+      // A BARE Anthropic id (`claude-sonnet-4-6`, no `provider:` prefix) is a
+      // supported value everywhere else: isAnthropicProvider() has an explicit
+      // bare-`claude-` branch, the legacy path strips the prefix before calling
+      // the Messages API, and this handler's own DEFAULT_MODEL is bare.
+      // classifyCapabilities() resolves through the recipe registry, which
+      // requires an explicit provider, so classifying the raw value would
+      // report `unknown` and refuse a working config. Normalize first — the
+      // dream cycle does the same before queueing children
+      // (src/core/cycle/synthesize.ts). Narrow on purpose: only bare ids that
+      // isAnthropicProvider() recognizes are normalized, so a bare
+      // non-Anthropic id still classifies as `unknown` and is still refused.
+      const modelForVerdict = splitProviderModelId(model).provider === null && isAnthropicProvider(model)
+        ? normalizeModelId(model)
+        : model;
+      const verdict = alreadyTerminal ? 'ok' : classifyCapabilities(modelForVerdict);
+      if (verdict === 'unusable:no_tools') {
+        throw new Error(
+          `subagent job rejected: ${modelSource} "${model}" lacks native tool calling. ` +
+          `The subagent loop dispatches brain ops via tool calls — without tool support the loop has no way to run.`,
+        );
+      }
+      if (verdict === 'unknown') {
+        throw new Error(
+          `subagent job rejected: ${modelSource} "${model}" references an unknown provider. ` +
+          `Use format provider:model where provider matches a recipe in src/core/ai/recipes/.`,
+        );
+      }
+    }
     const maxTurns = data.max_turns ?? DEFAULT_MAX_TURNS;
     // #2778: per-turn output cap — data.max_tokens → config → 8192 default.
     const maxOutputTokens = resolveMaxOutputTokens(

@@ -1,12 +1,11 @@
 # Skillpacks as scaffolding, not amber
 
-GBrain v0.33 reshapes `gbrain skillpack` from a package manager into a
-scaffold + reference library. This guide explains the model and the
-workflow.
+`gbrain skillpack` is a scaffold + reference library, not a package
+manager. This guide explains the model and the workflow.
 
-## Why we changed it
+## Why it works this way
 
-Pre-v0.33 (the "amber" model):
+An earlier design (the "amber" model):
 
 - `gbrain skillpack install <name>` copied bundled skills into your
   workspace AND wrote a managed-block fence into your `RESOLVER.md` /
@@ -26,7 +25,16 @@ repo. You scaffold once, you own them, you fork and edit freely. When
 gbrain ships a new version, you ask "what changed?" — the agent reads
 the diff and decides what (if anything) to integrate.
 
-## The five commands
+## The core workflow commands
+
+The five commands below are the scaffold-and-own workflow. The full
+`gbrain skillpack` surface is larger (`list`, `diff`, `check`, `search`,
+`info`, `registry`, `doctor`, `init`, `pack`, `endorse`, …) — run
+`gbrain skillpack --help` for the always-current list. One worth calling
+out here: **`gbrain skillpack init-brain-pack <name>`** scaffolds a
+*brain-resident* pack inside a brain/source repo (`brain_resident: true`
+plus a machine-parseable README) that connecting harnesses discover on
+`gbrain sources add`.
 
 ### `gbrain skillpack scaffold <name> [--workspace PATH]`
 
@@ -77,15 +85,15 @@ gbrain skillpack reference book-mirror
 `reference <name> --apply-clean-hunks` is the auto-apply path. It
 parses the diff between gbrain's bundle and your local copy, applies
 every hunk whose pre-change context matches uniquely. **Two-way merge
-limitation**: without scaffold-time base tracking (intentionally
-out-of-scope for v0.33), this cannot distinguish "gbrain changed X"
+limitation**: without scaffold-time base tracking (intentionally out of
+scope), this cannot distinguish "gbrain changed X"
 from "you changed X." Applied hunks align everything to gbrain. Use
 `--dry-run` first to preview, or run plain `reference` to inspect the
 diff before letting auto-apply touch anything.
 
 ### `gbrain skillpack migrate-fence [--workspace PATH] [--dry-run]`
 
-One-shot conversion for workspaces on the pre-v0.33 managed-block
+One-shot conversion for workspaces still on the legacy managed-block
 model. Strips the `<!-- gbrain:skillpack:begin -->` / `end -->`
 markers and the manifest receipt comment from your resolver file.
 
@@ -157,7 +165,7 @@ Your agent's job at runtime is to walk `skills/*/SKILL.md`, parse the
 frontmatter, and match the user's intent against every skill's
 `triggers:` array. When a match scores high enough, invoke that skill.
 
-This replaces the v0.32 model where `gbrain skillpack install` wrote
+This replaces the legacy model where `gbrain skillpack install` wrote
 table rows into your `RESOLVER.md`. Rows are gone (or, for users
 migrating from the old model, preserved transitionally by
 `migrate-fence` until they run `scrub-legacy-fence-rows`).
@@ -173,7 +181,7 @@ If you're a downstream agent author updating to this model:
 
 ## Removing a scaffolded skill
 
-There's no `gbrain skillpack uninstall` command in v0.33. The files
+There's no `gbrain skillpack uninstall` command. The files
 in your `skills/<slug>/` are first-class members of your repo —
 delete them like any other code:
 
@@ -195,16 +203,17 @@ You own the files. There's no manifest to update, no fence to rebuild.
 ## When to use which command (quick decision tree)
 
 - **New host repo, want a gbrain skill** → `scaffold`
+- **Shipping a pack from inside a brain/source repo** → `init-brain-pack`
 - **gbrain shipped a new version, want to see what's changed**
   → `reference` (read-only) or `reference --apply-clean-hunks` (auto)
-- **Upgrading from v0.32 or earlier** → `migrate-fence` (one-shot)
+- **Upgrading from the legacy managed-block model** → `migrate-fence` (one-shot)
 - **Cleanup after `migrate-fence`** → `scrub-legacy-fence-rows`
 - **Lift your fork's skill back into gbrain** → `harvest` + the
   `skillpack-harvest` editorial skill
 
 ## What about `install` and `uninstall`?
 
-Both are removed in v0.33. Running either prints an error pointing at
-the replacement command. No deprecated alias — this is a clean break.
+Both are removed. Running either prints an error pointing at the
+replacement command. No deprecated alias — this is a clean break.
 If you have existing scripts referencing the old names, update them
 once and move on.

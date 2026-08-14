@@ -1,8 +1,8 @@
 /**
  * AgentRunner — pluggable contract for invoking external agents (openclaw,
- * hermes, codex, …) inside the claw-test harness. v1 ships a single
- * implementation (openclaw); the interface stays narrow and concrete so
- * adding a second runner in v1.1 is a ~50-line file.
+ * hermes, codex, …) inside the claw-test harness. Two implementations ship
+ * (openclaw, hermes); the interface stays narrow and concrete so adding
+ * another runner is a ~100-line file.
  *
  * The harness wraps spawn/timeout/transcript-capture; runners only have to
  * answer "where's your binary?" and "how do I invoke it with this prompt?".
@@ -80,6 +80,50 @@ export interface TranscriptEvent {
   ts: number;
   channel: 'stdin' | 'stdout' | 'stderr';
   bytes: Buffer;
+}
+
+// ---------------------------------------------------------------------------
+// Shared runner helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Env keys every runner forwards to its agent subprocess. Runners compose
+ * `[...BASE_ENV_ALLOWLIST, ...delta]` instead of duplicating the list — the
+ * allowlist (not a denylist) is the leak barrier: anything not named here
+ * never reaches the agent.
+ *
+ * GBRAIN_DATABASE_URL is deliberately ABSENT (removed in the hermes-harness
+ * wave's adversarial review): live mode's staging + success oracle operate on
+ * the hermetic PGLite under GBRAIN_HOME=tempdir, and an inherited
+ * GBRAIN_DATABASE_URL would flip only the AGENT's gbrain children to the
+ * operator's real Postgres — polluting the real brain while the oracle probes
+ * the untouched PGLite and fails with a misleading verdict.
+ */
+export const BASE_ENV_ALLOWLIST = [
+  'PATH', 'HOME', 'USER', 'LANG', 'TZ', 'NODE_ENV',
+  'ANTHROPIC_API_KEY', 'OPENAI_API_KEY',
+  'GBRAIN_HOME', 'GBRAIN_FRICTION_RUN_ID',
+  // Proxy plumbing (both spellings — Node reads upper, Python/curl read
+  // lower): an operator behind a corporate proxy runs their agent through
+  // these, and dropping them turns live mode into a misleading network
+  // failure blamed on the agent.
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY',
+  'http_proxy', 'https_proxy', 'no_proxy',
+] as const;
+
+/**
+ * Validate a *_BIN env override: must be absolute, free of `..` segments, and
+ * free of shell-active characters. The value is interpolated into generated
+ * sh shim scripts (single-quoted), so quotes/backslashes/dollar/backtick or a
+ * newline would break out of the quoting and become code — reject them
+ * outright rather than trying to escape. Spaces are fine (quoted).
+ * Returns an error string (naming the env var) or null when valid.
+ */
+export function validateBinPathEnv(envName: string, p: string): string | null {
+  if (!p.startsWith('/')) return `${envName} must be absolute; got ${p}`;
+  if (p.split('/').includes('..')) return `${envName} must not contain '..' segments; got ${p}`;
+  if (/['"`$\\\n\r]/.test(p)) return `${envName} must not contain quotes, backslashes, dollar signs, backticks, or newlines; got ${p}`;
+  return null;
 }
 
 // ---------------------------------------------------------------------------

@@ -88,6 +88,7 @@ the repo. The architectural rule still holds — these aren't
 | `eval_candidates` / `eval_capture_failures` | Contributor-mode dev loop; opt-in capture. |
 | `dream_verdicts` | Cheap verdict cache. Rebuildable by re-running Haiku. |
 | `gbrain_cycle_locks` / migration ledger | Infrastructure. |
+| `op_checkpoint_paths` | Sync-resume checkpoint. Append-only progress banking; a completed sync makes it irrelevant. |
 | `config` (some keys) | Site-local routing config (e.g. `sync.repo_path`). |
 
 A new derived table that holds user-knowledge MUST land FS-first.
@@ -189,9 +190,6 @@ reconciler / migration layer without the explicit allow-list comment.
 
 ## Related
 
-- `~/.claude/plans/system-instruction-you-are-working-expressive-pony.md`
-  — the v0.32.2 design plan (decisions D1-D22 + Q1-Q8, Codex round 1
-  and round 2 finds)
 - `skills/migrations/v0.32.2.md` — the agent-facing migration guide
 - `CHANGELOG.md` v0.32.2 entry — the release manifesto
 - `scripts/check-system-of-record.sh` — the CI gate that enforces

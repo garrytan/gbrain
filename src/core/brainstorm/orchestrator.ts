@@ -252,9 +252,11 @@ export interface BrainstormResult {
 // ---------------------------------------------------------------------------
 
 /**
- * Per-profile cost estimate. brainstorm: ~$0.05-0.15. lsd: ~$0.20-0.40.
- * Real numbers depend on configured model; we anchor on Sonnet pricing.
- * The estimate is informational — operators see actuals printed at run-end.
+ * Per-profile cost estimate. At Sonnet pricing ($3/M in, $15/M out — the
+ * gateway fallback), this formula yields brainstorm ~$0.8 and lsd ~$1.0;
+ * it scales linearly with the configured chat model's pricing (a Haiku 4.5
+ * chat_model at $1/$5 lands exactly 3x lower). The estimate is
+ * informational — operators see actuals printed at run-end.
  */
 export function estimateCost(profile: BrainstormProfile, model: string): number {
   const crosses = profile.k_close * profile.m_far;

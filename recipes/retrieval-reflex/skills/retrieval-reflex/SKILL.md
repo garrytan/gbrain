@@ -9,7 +9,8 @@ triggers:
 mutating: false
 writes_pages: false
 writes_to: []
-tools: [get_page, query, graph, backlinks]
+# MCP op names; over the CLI, traverse_graph/get_backlinks are `gbrain graph` / `gbrain backlinks`
+tools: [get_page, query, traverse_graph, get_backlinks]
 ---
 
 # Retrieval Reflex — retrieve on demand, when an entity is salient

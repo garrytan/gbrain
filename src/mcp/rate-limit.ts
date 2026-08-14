@@ -117,6 +117,19 @@ export class RateLimiter {
     }
   }
 
+  /**
+   * Return one token to a key's bucket (capped at the limit). For callers
+   * that meter an action's SUCCESS, not its attempt: check() before the
+   * action, refund() when the action turns out to be a no-op (e.g. a
+   * concurrent-lock loser whose UPDATE affected 0 rows) so denials don't
+   * consume the caller's budget. No-op for unknown keys.
+   */
+  refund(key: string): void {
+    const bucket = this.buckets.get(key);
+    if (!bucket) return;
+    bucket.tokens = Math.min(this.opts.limit, bucket.tokens + 1);
+  }
+
   /** Test helper: current key count. */
   get size(): number {
     return this.buckets.size;

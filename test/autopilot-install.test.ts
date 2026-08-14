@@ -137,8 +137,14 @@ describe('autopilot wrapper script — bun PATH export (v0.42.x regression)', ()
 // that installed via the wrapper indirection.
 describe('autopilot showStatus — wrapper-path detection', () => {
   test('status detects the autopilot-run.sh wrapper line', async () => {
+    // The inline crontab.includes check became the pure, unit-tested
+    // crontabIndicatesAutopilotInstall (a cron'd status-monitor line must not
+    // read as an install). Pin the behavior through the function itself and
+    // the detect path's wiring to it.
+    const { crontabIndicatesAutopilotInstall } = await import('../src/commands/autopilot.ts');
+    expect(crontabIndicatesAutopilotInstall("*/5 * * * * '/h/.gbrain/autopilot-run.sh' >> log 2>&1")).toBe(true);
     const { readFileSync } = await import('fs');
     const src = readFileSync('src/commands/autopilot.ts', 'utf8');
-    expect(src).toMatch(/crontab\.includes\('autopilot-run\.sh'\)/);
+    expect(src).toMatch(/crontabIndicatesAutopilotInstall\(crontab\)/);
   });
 });

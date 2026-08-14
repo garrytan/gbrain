@@ -8,6 +8,11 @@ Without this: brain pages are thin shells with only what the user manually typed
 
 ## Implementation
 
+gbrain ships both halves of this: `gbrain enrich` is the batch enrichment
+primitive (finds thin pages and enriches at scale), and the `enrich` skill
+(`skills/enrich/`) is the agent-driven page-at-a-time workflow. The pipeline
+below is the pattern they implement — use it to customize or extend.
+
 ```
 on enrich(entity, trigger):
     # trigger: meeting mention, email thread, social interaction, user request
@@ -68,9 +73,10 @@ on enrich(entity, trigger):
     gbrain link <person_slug> <deal_slug>          # person -> deal
     # Every entity page links to every other entity page that references it
 
-# People page sections (not a LinkedIn profile -- a living portrait):
-#   Executive Summary, State, What They Believe, What They're Building,
-#   What Motivates Them, Assessment, Trajectory, Relationship, Contact, Timeline
+# People page sections: use the person-page structure from compiled-truth.md
+# (Executive Summary, State, What They Believe, ... Timeline) -- that doc is
+# the single home for the section taxonomy. Enrichment can add texture
+# sections on top (What Motivates Them, Hobby Horses, Open Threads).
 # Facts are table stakes. TEXTURE is the value.
 
 # Extract texture, not just facts:
@@ -100,4 +106,4 @@ on enrich(entity, trigger):
 5. Try to re-enrich the same person. Confirm the system checks the `fetched_at` timestamp and skips if less than a week old.
 
 ---
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*
+*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md). See also: [Compiled Truth](compiled-truth.md) for the person-page section taxonomy, [Spend Controls](../operations/spend-controls.md) for gbrain's own embedding/LLM spend gates.*

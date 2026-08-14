@@ -25,13 +25,31 @@ import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { OAuthTokenRevocationRequestSchema } from '@modelcontextprotocol/sdk/shared/auth.js';
 import type { BrainEngine } from '../core/engine.ts';
-import { operations, OperationError } from '../core/operations.ts';
+import { operations, OperationError, opAllowedForBoundClient } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
-import { GBrainOAuthProvider, validateTokenEndpointAuthMethod } from '../core/oauth-provider.ts';
+import { disabledOpsForPublishGates } from '../mcp/publish-gates.ts';
+import {
+  GBrainOAuthProvider,
+  validateTokenEndpointAuthMethod,
+  dcrRegistrationContext,
+  DEFAULT_DCR_TTL_MIN_SECONDS,
+} from '../core/oauth-provider.ts';
 import type { SqlQuery } from '../core/oauth-provider.ts';
 import { hasScope, ALLOWED_SCOPES_LIST, normalizeScopesInput } from '../core/scope.ts';
-import { summarizeMcpParams, dispatchToolCall } from '../mcp/dispatch.ts';
-import { paramDefToSchema } from '../mcp/tool-defs.ts';
+import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
+import { normalizeSourceInput, normalizeFederatedReadInput } from '../core/source-id.ts';
+import { summarizeMcpParams, dispatchToolCall, requestLogStatusForResult } from '../mcp/dispatch.ts';
+import { resolveStrictParamsMode } from '../mcp/validate-params.ts';
+import { buildToolDefs } from '../mcp/tool-defs.ts';
+import {
+  filterOpsForSurface,
+  clampSurface,
+  minSurface,
+  resolveClientRowSurface,
+  resolveDefaultClientSurface,
+  type McpSurface,
+} from '../mcp/surface.ts';
+import { writeSurfaceChangeAudit } from '../core/surface-audit.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildError, serializeError } from '../core/errors.ts';
@@ -475,6 +493,15 @@ interface ServeHttpOptions {
    */
   suppressBootstrapToken?: boolean;
   /**
+   * MEMORY_VERBS v1 + WP4: tool-surface mode. 'verbs' = exactly the seven
+   * protocol verbs; 'starter' = the STARTER_OPS daily-driver set; 'full'
+   * (default) = every non-localOnly operation. Enforced on the tool list AND
+   * in dispatch (fail-closed). WP4/D2: this is the server CEILING — each
+   * request resolves min(ceiling, client row surface ?? config default),
+   * so per-client rows can narrow below it but never widen past it.
+   */
+  surface?: McpSurface;
+  /**
    * #2624: force-print the generated admin bootstrap token even on a
    * non-TTY (containerized) start. By default the raw token is only printed
    * when stderr is an interactive TTY, so it never lands in centralized log
@@ -694,11 +721,41 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // constructor option instead of monkey-patching `_clientsStore` after
   // construction. Same outcome (no /register endpoint when --enable-dcr
   // is not passed); cleaner shape for tests and future maintainers.
+  // #2179: admin-configured clamp window for DCR-requested token TTLs.
+  // DB-plane config keys (`gbrain config set oauth.dcr_ttl_min_seconds ...`).
+  // FAIL-CLOSED defaults: an unset/invalid max is bounded by the operator's
+  // own --token-ttl (never a fixed permissive ceiling), and an inverted
+  // window collapses to the min bound — the same direction clampDcrTokenTtl
+  // itself resolves. A bad config narrows the window; it never widens it.
+  const parseDcrTtlBound = (raw: unknown, fallback: number): number => {
+    const n = Number(raw);
+    return raw != null && Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback;
+  };
+  let dcrTtlMinSeconds = DEFAULT_DCR_TTL_MIN_SECONDS;
+  let dcrTtlMaxSeconds = Math.max(tokenTtl, dcrTtlMinSeconds);
+  try {
+    dcrTtlMinSeconds = parseDcrTtlBound(await engine.getConfig('oauth.dcr_ttl_min_seconds'), DEFAULT_DCR_TTL_MIN_SECONDS);
+    dcrTtlMaxSeconds = parseDcrTtlBound(await engine.getConfig('oauth.dcr_ttl_max_seconds'), Math.max(tokenTtl, dcrTtlMinSeconds));
+  } catch {
+    // Config read is best-effort; the fail-closed defaults stand.
+    dcrTtlMaxSeconds = Math.max(tokenTtl, dcrTtlMinSeconds);
+  }
+  if (dcrTtlMinSeconds > dcrTtlMaxSeconds) {
+    console.error(
+      `[serve-http] WARNING: oauth.dcr_ttl_min_seconds (${dcrTtlMinSeconds}) exceeds ` +
+      `oauth.dcr_ttl_max_seconds (${dcrTtlMaxSeconds}); collapsing the window to ` +
+      `the min bound (${dcrTtlMinSeconds}).`,
+    );
+    dcrTtlMaxSeconds = dcrTtlMinSeconds;
+  }
+
   const oauthProvider = new GBrainOAuthProvider({
     sql,
     tokenTtl,
     dcrDisabled: !enableDcr,
     allowClientCredentialsDcr: enableDcrInsecure === true,
+    dcrTtlMinSeconds,
+    dcrTtlMaxSeconds,
   });
 
   // #1353: loud stderr security WARN when DCR is enabled. DCR is an
@@ -811,6 +868,20 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   app.use('/authorize', cors(corsOAuthOptions));
   app.use('/register', cors(corsOAuthOptions));
   app.use('/revoke', cors(corsOAuthOptions));
+
+  // #2179: capture the optional `token_ttl_seconds` DCR extension field
+  // BEFORE the SDK's /register handler runs — its request schema strips
+  // unknown body members, so the value would never reach registerClient.
+  // The rest of the chain runs inside dcrRegistrationContext; the clients
+  // store clamps + persists it. Malformed values are ignored (fail-safe:
+  // absent → server default; out-of-range → clamped downstream; a TTL hint
+  // never rejects a registration). express.json() here is idempotent with
+  // the SDK router's own body parser.
+  app.use('/register', express.json(), (req: Request, _res: Response, next: NextFunction) => {
+    const raw = (req.body as Record<string, unknown> | null | undefined)?.token_ttl_seconds;
+    const tokenTtlSeconds = typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
+    dcrRegistrationContext.run({ tokenTtlSeconds }, next);
+  });
 
   // ---------------------------------------------------------------------------
   // Custom client_credentials handler (before mcpAuthRouter)
@@ -1295,7 +1366,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       `;
       const legacyKeys = await sql`
         SELECT a.id, a.name, 'api_key' as auth_type,
-          '{"bearer"}' as grant_types, 'read write admin' as scope, a.created_at, null as token_ttl,
+          '{"bearer"}' as grant_types,
+          a.scopes,
+          a.created_at, null as token_ttl,
           CASE WHEN a.revoked_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
           a.last_used_at,
           (SELECT count(*)::int FROM mcp_request_log WHERE token_name = a.name) as total_requests,
@@ -1304,7 +1377,15 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       `;
       res.json([
         ...oauthClients,
-        ...legacyKeys.map((key) => ({ ...key, source_id: null, federated_read: [] })),
+        ...legacyKeys.map(({ scopes, ...key }) => ({
+          ...key,
+          // The SAME normalizer the verify path uses — the dashboard must
+          // never display a grant the serve doesn't enforce (NULL =
+          // grandfathered full access; damaged/deny rows show empty).
+          scope: normalizeTokenScopes(scopes)?.join(' ') ?? 'read write admin',
+          source_id: null,
+          federated_read: [],
+        })),
       ]);
     } catch (e) {
       res.status(503).json({ error: 'service_unavailable' });
@@ -1358,8 +1439,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     try {
       const now = Math.floor(Date.now() / 1000);
       const [expiring] = await sql`SELECT count(*)::int as count FROM oauth_tokens WHERE token_type = 'access' AND expires_at BETWEEN ${now} AND ${now + 86400}`;
-      const [errors] = await sql`SELECT count(*)::int as count FROM mcp_request_log WHERE status != 'success' AND created_at > now() - interval '24 hours'`;
-      const [total] = await sql`SELECT count(*)::int as count FROM mcp_request_log WHERE created_at > now() - interval '24 hours'`;
+      // Excluded from the error numerator: success and success_with_warnings
+      // (a warn-mode success); denied_after_list stays counted — a denied
+      // call IS a failure signal. surface_change is an OPERATION value (audit
+      // rows carry status='success'), so audit rows are excluded from BOTH
+      // counts — they are records of operator/self actions, not traffic.
+      const [errors] = await sql`SELECT count(*)::int as count FROM mcp_request_log WHERE status NOT IN ('success', 'success_with_warnings') AND operation != 'surface_change' AND created_at > now() - interval '24 hours'`;
+      const [total] = await sql`SELECT count(*)::int as count FROM mcp_request_log WHERE operation != 'surface_change' AND created_at > now() - interval '24 hours'`;
       const errorRate = (total as any).count > 0 ? ((errors as any).count / (total as any).count * 100).toFixed(1) : '0';
       res.json({
         expiring_soon: (expiring as any).count,
@@ -1652,7 +1738,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       //     and other malformed inputs
       // normalizeScopesInput handles all four valid shapes (string, string[],
       // missing, empty) and rejects the rest with a structured 400.
-      const { name, tokenTtl, grantTypes, redirectUris, tokenEndpointAuthMethod } = req.body;
+      const { name, source, federatedRead, tokenTtl, grantTypes, redirectUris, tokenEndpointAuthMethod } = req.body;
       const rawScopes = (req.body as Record<string, unknown>).scopes ?? (req.body as Record<string, unknown>).scope;
       if (!name) { res.status(400).json({ error: 'Name required' }); return; }
       let scopeString: string;
@@ -1684,8 +1770,27 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         });
         return;
       }
+      // v0.41.x: honor optional `source` (write source_id) and `federatedRead`
+      // (read source set) from the request body, mirroring the CLI's
+      // `--source` / `--federated-read` flags. Omitting both preserves the
+      // historical behavior (source_id='default', federated_read=[source_id]).
+      // Pre-fix this endpoint hardcoded 'default'/undefined, so an admin SPA or
+      // a proxy could never mint a client bound to a non-default brain source
+      // over HTTP — only the CLI could. Validated here for a structured 400.
+      let sourceId: string;
+      let federatedReadIds: string[] | undefined;
+      try {
+        sourceId = normalizeSourceInput(source);
+        federatedReadIds = normalizeFederatedReadInput(federatedRead);
+      } catch (e) {
+        res.status(400).json({
+          error: 'invalid_source',
+          message: e instanceof Error ? e.message : String(e),
+        });
+        return;
+      }
       const result = await oauthProvider.registerClientManual(
-        name, grants, scopeString, uris, 'default', undefined, validatedAuthMethod,
+        name, grants, scopeString, uris, sourceId, federatedReadIds, validatedAuthMethod,
       );
       // Set per-client TTL if specified
       if (tokenTtl && Number(tokenTtl) > 0) {
@@ -1717,7 +1822,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // validator inside rescopeClient.
   app.post('/admin/api/rescope-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
     try {
-      const { clientId, sourceId, federatedRead, boundSlugPrefixes } = req.body ?? {};
+      const { clientId, sourceId, federatedRead, boundSlugPrefixes, surface } = req.body ?? {};
       if (!clientId || typeof clientId !== 'string') {
         res.status(400).json({ error: 'clientId required' });
         return;
@@ -1739,12 +1844,31 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         res.status(400).json({ error: 'boundSlugPrefixes must be null or an array of slug-prefix strings' });
         return;
       }
-      const result = await oauthProvider.rescopeClient(clientId, { sourceId, federatedRead, boundSlugPrefixes });
+      // WP4: tri-state surface rescope — omitted = untouched, null = clear
+      // (surface + surface_set_by both NULL), value = set + operator lock
+      // (mirrors the CLI's --surface verbs|starter|full|clear).
+      if (surface !== undefined && surface !== null &&
+          surface !== 'verbs' && surface !== 'starter' && surface !== 'full') {
+        res.status(400).json({ error: 'surface must be null or one of: verbs, starter, full' });
+        return;
+      }
+      const result = await oauthProvider.rescopeClient(clientId, { sourceId, federatedRead, boundSlugPrefixes, surface });
+      // WP4 (amendment 32 / ENG-8): every surface mutation writes an audit
+      // row — this endpoint, the rescope CLI, and the request_tools persist.
+      if (surface !== undefined) {
+        await writeSurfaceChangeAudit(engine, {
+          actor: 'admin-api',
+          client_id: clientId,
+          old: result.surfaceOld ?? null,
+          new: result.surface ?? null,
+          via: 'admin_api',
+        });
+      }
       res.json(result);
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Rescope failed';
       const status = /No OAuth client found/.test(message) ? 404
-        : /Invalid source_id|requires --source|cannot be empty|does not exist|cannot be an empty list|bound_slug_prefixes entr/.test(message) ? 400
+        : /Invalid source_id|requires --source|cannot be empty|does not exist|cannot be an empty list|bound_slug_prefixes entr|--surface must be/.test(message) ? 400
         : 500;
       res.status(status).json({ error: message });
     }
@@ -1839,7 +1963,46 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   // MCP tool calls (bearer auth + scope enforcement)
   // ---------------------------------------------------------------------------
-  const mcpOperations = operations.filter(op => !op.localOnly);
+  // MEMORY_VERBS v1 + WP4 (D2): the server-resolved surface is the CEILING.
+  // The per-REQUEST effective surface — min(ceiling, client row surface ??
+  // config default), clamped by the GBRAIN_MCP_FORCE_SURFACE kill switch
+  // (narrow-only, FOV-6a) — is resolved inside the /mcp handler so a rescope
+  // or config flip takes effect on the client's next request without a
+  // restart, and the dispatch allow-set is recomputed per request
+  // (amendment 20). The surface filter applies AFTER the localOnly filter;
+  // the same set feeds dispatch as allowedOps so hidden ops are uncallable,
+  // not just unlisted [c2].
+  const serverSurfaceCeiling: McpSurface = options.surface ?? 'full';
+  const mcpOperationsBase = operations.filter(op => !op.localOnly);
+
+  /**
+   * WP4 (D2): resolve this request's effective surface from the caller's
+   * verified auth. The config default (`mcp.default_surface_dcr`) is read
+   * dual-plane ONLY when the client row carries no usable surface — the
+   * common full-surface path pays no extra config read. Unknown row values
+   * are ignored with a warn-once per client (amendment 18). Never throws:
+   * surface resolution must not take a request down. On a default-surface
+   * read failure the LAST successfully read default (per process) still
+   * applies, so a transient config outage cannot silently widen a client
+   * that normally resolves narrower than the ceiling; with no prior read,
+   * the ceiling is the only floor available (pre-WP4 behavior).
+   */
+  let lastKnownDefaultSurface: McpSurface | null = null;
+  async function resolveEffectiveSurface(authInfo: AuthInfo): Promise<{ ceiling: McpSurface; effective: McpSurface }> {
+    const ceiling = clampSurface(serverSurfaceCeiling);
+    // min() can never go below the narrowest surface: a 'verbs' ceiling makes
+    // the row/default resolution a no-op, so skip the awaited config read.
+    if (ceiling === 'verbs') return { ceiling, effective: ceiling };
+    const rowSurface = resolveClientRowSurface(authInfo.surface, authInfo.clientId);
+    if (rowSurface !== null) return { ceiling, effective: minSurface(ceiling, rowSurface) };
+    try {
+      const dflt = await resolveDefaultClientSurface(engine, config);
+      lastKnownDefaultSurface = dflt ?? null;
+      return { ceiling, effective: minSurface(ceiling, dflt ?? ceiling) };
+    } catch {
+      return { ceiling, effective: minSurface(ceiling, lastKnownDefaultSurface ?? ceiling) };
+    }
+  }
 
   // v0.36.x #1076: MCP Streamable HTTP spec — GET /mcp opens an optional SSE
   // backchannel for server-initiated messages. gbrain's transport is stateless
@@ -1862,6 +2025,14 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     // for legacy tokens or when the JOIN row's client_name is NULL.
     const agentName = authInfo.clientName ?? authInfo.clientId;
 
+    // WP4 (D2): per-request effective surface + fail-closed allow-set,
+    // recomputed per request (amendment 20) so rescopes/request_tools
+    // persists take effect on the next request with zero restart.
+    const { ceiling: surfaceCeiling, effective: surface } = await resolveEffectiveSurface(authInfo);
+    const mcpOperations = filterOpsForSurface(mcpOperationsBase, surface);
+    const surfaceAllowedOps: ReadonlySet<string> | undefined =
+      surface === 'full' ? undefined : new Set(mcpOperations.map(o => o.name));
+
     // Create a fresh MCP server per request (stateless)
     const server = new Server(
       { name: 'gbrain', version: VERSION },
@@ -1869,10 +2040,48 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     );
 
     server.setRequestHandler(ListToolsRequestSchema, async () => {
+      // WP1 honest catalog: the advertised list is exactly what THIS token
+      // can call. Three per-request filters, cheapest first:
+      //   1. token scope — a read-only token never sees admin/write tools;
+      //   2. bound-client fence — a slug-bound client never sees ops the
+      //      dispatch fence would deny (same predicate, cannot drift);
+      //   3. publish gates — gated ops (skills/advisor) are hidden while
+      //      their gate is off; the resolver never throws (read failure =
+      //      hidden, matching the default-off consent posture) so a config
+      //      hiccup costs at most the 4 gated tools, never the whole list.
+      // Call-time enforcement (hasScope / fence / assertPublishEnabled)
+      // stays as the fail-closed backstop for all three layers.
+      // Both per-request config reads are independent — issue them
+      // concurrently (one RTT of latency on network Postgres, not two).
+      const [gateDisabled, strictParamsMode] = await Promise.all([
+        disabledOpsForPublishGates(engine, config),
+        resolveStrictParamsMode(engine, config),
+      ]);
+      // FOV-4: `agent` deliberately implies only itself, which would strand
+      // agent-only tokens with ZERO discovery — ops flagged `agentCallable`
+      // (request_tools) are visible to (and callable by, below) agent scope
+      // in addition to their declared scope.
+      const visibleOps = mcpOperations.filter(op =>
+        (hasScope(authInfo.scopes, op.scope ?? 'read')
+          || (op.agentCallable === true && hasScope(authInfo.scopes, 'agent')))
+        && opAllowedForBoundClient(authInfo, op)
+        && !gateDisabled.has(op.name),
+      );
+      // WP3 (amendment 14): ONE schema mapper — the inline map this handler
+      // carried is unified onto buildToolDefs so the byte-pin test covers the
+      // transport consumers actually use. strict_params is read dual-plane
+      // PER REQUEST (same restart-free property as the publish gates above):
+      // 'reject' closes each schema with additionalProperties:false and
+      // declares the _meta/dry_run passthrough keys (D14.1).
+      const strictParams = strictParamsMode === 'reject';
+      const tools = buildToolDefs(visibleOps, { strictParams });
       // v0.28.10: log every JSON-RPC method, not just successful tools/call.
       // Pre-fix, /admin/api/requests showed nothing for clients that only
       // ever called tools/list, and the v0.26.3 persistence regression test
       // asserting >= 2 rows after tools/list + tools/call was unreachable.
+      // Amendment 23 stopgap (full list-size telemetry deferred): the row's
+      // params carry the listed-tool count so per-token-class list sizes are
+      // queryable (`params->>'tool_count'`) without new telemetry plumbing.
       const latency = Date.now() - startTime;
       try {
         await executeRawJsonb(
@@ -1880,7 +2089,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
            VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
           [authInfo.clientId, agentName, 'tools/list', latency, 'success'],
-          [null],
+          [{ tool_count: tools.length }],
         );
       } catch { /* best effort */ }
       broadcastEvent({
@@ -1891,19 +2100,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         status: 'success',
         timestamp: new Date().toISOString(),
       });
-      return {
-        tools: mcpOperations.map(op => ({
-          name: op.name,
-          description: op.description,
-          inputSchema: {
-            type: 'object' as const,
-            properties: Object.fromEntries(
-              Object.entries(op.params).map(([k, v]) => [k, paramDefToSchema(v)]),
-            ),
-            required: Object.entries(op.params).filter(([, v]) => v.required).map(([k]) => k),
-          },
-        })),
-      };
+      return { tools };
     });
 
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -1941,17 +2138,26 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // hierarchy. Plain string includes() at this site would have made
       // sources_admin tokens look like they couldn't even read.)
       const requiredScope = op.scope || 'read';
-      if (!hasScope(authInfo.scopes, requiredScope)) {
+      // FOV-4: agentCallable carve-out mirrors the tools/list filter above —
+      // an op listed for an agent-only token must not scope-deny at call time.
+      const scopeSatisfied = hasScope(authInfo.scopes, requiredScope)
+        || (op.agentCallable === true && hasScope(authInfo.scopes, 'agent'));
+      if (!scopeSatisfied) {
         // v0.28.10: persist scope-rejected attempts. Same operator-visibility
         // motivation as the unknown-op path — and it makes the v0.26.3
         // persistence regression test reliable across both rejection paths.
+        // Amendment 33: a call-time scope deny is a LIST-LEVEL denial (the
+        // tools/list filter uses this same hasScope predicate, so the op was
+        // never advertised to this token — the client ignored or staled its
+        // list, or list/call drifted). status='denied_after_list' makes the
+        // honest-catalog metric a one-line count that trends to zero.
         const latency = Date.now() - startTime;
         try {
           await executeRawJsonb(
             engine,
             `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
              VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
-            [authInfo.clientId, agentName, name, latency, 'error', `insufficient_scope: requires '${requiredScope}'`],
+            [authInfo.clientId, agentName, name, latency, 'denied_after_list', `insufficient_scope: requires '${requiredScope}'`],
             [null],
           );
         } catch { /* best effort */ }
@@ -1960,7 +2166,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           operation: name,
           scopes: authInfo.scopes.join(','),
           latency_ms: latency,
-          status: 'error',
+          status: 'denied_after_list',
           error: { code: 'insufficient_scope', message: `requires '${requiredScope}'` },
           timestamp: new Date().toISOString(),
         });
@@ -2004,8 +2210,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // injection via the metaHook. HTTP-specific concerns (mcp_request_log
       // persistence + SSE broadcast) stay here; the dispatcher returns the
       // ToolResult and we read isError + _meta to pick the right branch.
-      const tokenAllowList = (authInfo as AuthInfo & { takesHoldersAllowList?: string[] }).takesHoldersAllowList
-        ?? ['world'];
+      // #2529: takesHoldersAllowList is a typed AuthInfo field populated by
+      // verifyAccessToken from access_tokens.permissions.takes_holders for
+      // legacy bearer tokens ([] preserved as deny-all). The fail-closed
+      // ['world'] default covers OAuth-client tokens (no per-client storage
+      // yet — see TODOS.md) and pre-v29 brains (no permissions column →
+      // isUndefinedColumnError fallback in verifyAccessToken).
+      const tokenAllowList = authInfo.takesHoldersAllowList ?? ['world'];
       // v0.34.1 (#861, D13): AuthInfo.sourceId is now a real typed field
       // populated from oauth_clients.source_id (migration v60 backfilled
       // NULL → 'default'). Pre-fix this site cast through AuthInfo and
@@ -2019,9 +2230,17 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       try {
         toolResult = await dispatchToolCall(engine, name, params as Record<string, unknown> | undefined, {
           remote: true,
+          // WP1/D7: network transport — the dispatch-layer localOnly
+          // backstop keys off this marker.
+          transport: 'http',
           takesHoldersAllowList: tokenAllowList,
           sourceId: tokenSourceId,
           metaHook: getBrainHotMemoryMeta,
+          // MEMORY_VERBS v1: fail-closed surface enforcement + usage attribution.
+          ...(surfaceAllowedOps ? { allowedOps: surfaceAllowedOps } : {}),
+          surface,
+          // WP4 (D2): request_tools bounds its catalog + persist by this.
+          surfaceCeiling,
           // v0.31 follow-up fix: thread auth so the whoami op (and any
           // future scope-aware handlers) can introspect the caller. The
           // original D12/eE1 refactor moved dispatch into dispatchToolCall
@@ -2069,17 +2288,24 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         // dispatchToolCall serializes the error into the content text;
         // for the audit log we re-extract a message string for the
         // mcp_request_log error_message column. Best-effort parse.
+        // Amendment 33 / D10: op-level denials the list should have
+        // prevented (publish-gate backstop `config_key=...`, bound-client
+        // fence op-level deny `fence=op`) log status='denied_after_list'
+        // instead of plain 'error' — the honest-catalog trend-to-zero
+        // metric. Argument-level fence denials carry no marker and stay
+        // 'error' (legitimate for a listed op).
         let errMsg = 'unknown_error';
         try {
           const parsed = JSON.parse(toolResult.content[0]?.text ?? '{}');
           errMsg = parsed.error?.message ?? parsed.message ?? errMsg;
         } catch { /* ignore */ }
+        const errStatus = requestLogStatusForResult(toolResult);
         try {
           await executeRawJsonb(
             engine,
             `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
              VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
-            [authInfo.clientId, agentName, name, latency, 'error', errMsg],
+            [authInfo.clientId, agentName, name, latency, errStatus, errMsg],
             [logParamsObj],
           );
         } catch { /* best effort */ }
@@ -2089,19 +2315,24 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           params: broadcastParams,
           scopes: authInfo.scopes.join(','),
           latency_ms: latency,
-          status: 'error',
+          status: errStatus,
           error: { code: 'op_error', message: errMsg },
           timestamp: new Date().toISOString(),
         });
         return toolResult;
       }
 
+      // WP3 (amendment 13): warn-mode observability. A success whose _meta
+      // carries a non-empty warnings array logs as 'success_with_warnings' so
+      // the reject-flip decision is evidence-based (count per client via the
+      // status column). Warn CONTENTS (the raw unknown keys) are never logged.
+      const successStatus = requestLogStatusForResult(toolResult);
       try {
         await executeRawJsonb(
           engine,
           `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
            VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
-          [authInfo.clientId, agentName, name, latency, 'success'],
+          [authInfo.clientId, agentName, name, latency, successStatus],
           [logParamsObj],
         );
       } catch { /* best effort */ }
@@ -2111,7 +2342,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         params: broadcastParams,
         scopes: authInfo.scopes.join(','),
         latency_ms: latency,
-        status: 'success',
+        status: successStatus,
         timestamp: new Date().toISOString(),
       });
       return toolResult;

@@ -1,15 +1,24 @@
 # Install
 
-Three install paths. Pick one. Mix later if needed.
+**Recommended door: the agent bootstrap.** Open your agent (Codex, Claude Code,
+or any harness) in the folder that will become its home and paste the block
+from the [README's install section](../README.md) — the agent fetches
+`BOOTSTRAP_FOR_AGENTS.md` from the `latest-stable` tag, installs the CLI,
+initializes a local PGLite brain, wires MCP, and isn't done until
+`gbrain bootstrap verify` exits 0. Full contract, security posture, and
+uninstall: [docs/guides/bootstrap.md](guides/bootstrap.md).
 
-## 1. Run with an agent platform (recommended)
+The paths below are the manual equivalents and deep-dive detail. Pick one.
+Mix later if needed.
+
+## 1. Run with an agent platform
 
 Already running [OpenClaw](https://github.com/garrytan/openclaw) or [Hermes](https://github.com/garrytan/hermes)?
 
 ```bash
-bun install -g github:garrytan/gbrain
+bun install -g github:garrytan/gbrain#latest-stable
 gbrain init --pglite                  # 2 seconds; no server
-gbrain skillpack scaffold --all       # 43 skills scaffolded into your agent workspace
+gbrain skillpack scaffold --all       # scaffolds every bundled skill (skills/manifest.json) into your agent workspace
 gbrain doctor                         # green checks all the way down
 ```
 
@@ -24,7 +33,7 @@ To upgrade later: `gbrain upgrade` runs schema migrations + post-upgrade prompts
 No agent platform, just shell + MCP-aware editor.
 
 ```bash
-bun install -g github:garrytan/gbrain
+bun install -g github:garrytan/gbrain#latest-stable
 gbrain init --pglite
 ```
 
@@ -58,16 +67,17 @@ gbrain autopilot --install        # background daemon for nightly enrichment
 **Wire this same local brain into your coding agent** — zero server, zero token:
 
 ```bash
-claude mcp add gbrain -- gbrain serve    # Claude Code
-codex  mcp add gbrain -- gbrain serve    # Codex
+claude mcp add gbrain -- gbrain serve --surface verbs    # Claude Code
+codex  mcp add gbrain -- gbrain serve --surface verbs    # Codex
 ```
 
-The agent spawns `gbrain serve` as a stdio subprocess against your local brain. Full walkthrough (both this local path and connecting to a remote brain), plus the brain-first protocol to paste into `CLAUDE.md` / `AGENTS.md`: **[Give your coding agent a memory](tutorials/connect-coding-agent.md)**.
+The agent spawns `gbrain serve` as a stdio subprocess against your local brain. `--surface verbs` gives the agent the seven-verb memory protocol (`recall`, `remember`, `entity`, `synthesize`, `forget`, `context_pack`, `delta` — [MEMORY_VERBS v1](protocol/MEMORY_VERBS_v1.md)) instead of the full tool catalog; `--surface starter` adds the daily-driver set on top of the verbs (~26 ops total); drop the flag (default `full`) for every operation. Full walkthrough (both this local path and connecting to a remote brain), plus the brain-first protocol to paste into `CLAUDE.md` / `AGENTS.md`: **[Give your coding agent a memory](tutorials/connect-coding-agent.md)**.
 
 ## 3. MCP server (any MCP client)
 
 ```bash
 gbrain serve                      # stdio MCP (Claude Desktop / Code / Cursor)
+gbrain serve --surface verbs      # stdio MCP, just the 7 memory verbs (quickstart)
 gbrain serve --http               # HTTP MCP with OAuth 2.1 + admin dashboard
 ```
 
@@ -106,44 +116,31 @@ Useful for: team mounts, brain-as-a-service deployments, dev machines without di
 ## Verifying the install
 
 ```bash
+gbrain bootstrap verify           # the whole install contract; exits non-zero on failure
 gbrain doctor --json              # full health check
 gbrain models                     # which AI models are configured for what
 gbrain models doctor              # 1-token probe per configured model
 ```
 
-If anything's yellow, `gbrain doctor` names the fix command in the message. Most issues are missing API keys or stale schema (`gbrain upgrade --force-schema`).
+If anything's yellow, `gbrain doctor` names the fix command in the message. Most issues are missing API keys or stale schema (`gbrain upgrade --force-schema`). For the manual check-by-check runbook, see [docs/GBRAIN_VERIFY.md](GBRAIN_VERIFY.md).
 
 ## Troubleshooting
 
-### PGLite crashes on macOS 26.x (Tahoe)
+### PGLite crashes at startup (`RuntimeError: Aborted()`)
 
-PGLite's embedded WASM engine is incompatible with macOS 26.x (Tahoe) on Apple Silicon. If `gbrain init --pglite` crashes during engine initialization, switch to native Homebrew PostgreSQL:
+This crash (typically first seen after a macOS upgrade) is **not** a
+macOS/WASM incompatibility — an unclean shutdown tore the data dir's
+write-ahead log, and every subsequent open fails WAL replay. The short
+version of the recovery ladder:
 
-```bash
-# Install PostgreSQL + pgvector
-brew install postgresql@17
-brew services start postgresql@17
-createdb gbrain
+1. **Auto-repair (default):** run any gbrain command — gbrain detects the
+   abort, resets the WAL in place (data preserved, backup kept), and
+   continues. Then run `gbrain doctor`.
+2. **Manual repair:** `gbrain pglite-repair --dry-run`, then
+   `gbrain pglite-repair --yes`.
+3. **Rebuild:** `gbrain reinit-pglite`.
+4. **Switch engines:** Supabase or native Homebrew Postgres + pgvector.
 
-# Build pgvector from source (required for vector search)
-cd /tmp && git clone --branch v0.8.0 https://github.com/pgvector/pgvector.git
-cd pgvector && make && make install
-psql gbrain -c "CREATE EXTENSION IF NOT EXISTS vector;"
-
-# Point gbrain at your local Postgres
-cat > ~/.gbrain/config.json << 'EOF'
-{
-  "engine": "postgres",
-  "database_url": "postgresql://localhost:5432/gbrain",
-  "schema_pack": "gbrain-base-v2"
-}
-EOF
-
-# Run migrations and verify
-gbrain apply-migrations --yes
-gbrain doctor
-```
-
-All 102 migrations run on first try. Once `gbrain doctor` shows green, the brain works identically to PGLite — same commands, same skills, same data model. The only difference is the storage backend.
-
-> **Note:** This workaround is temporary. When the upstream WASM runtime fix ships (likely via a Bun update), `--pglite` will work on Tahoe again.
+The full ladder — safety bounds, kill-switches, when WAL repair can't help,
+and the Homebrew Postgres recipe — lives in
+[docs/ENGINES.md](ENGINES.md#troubleshooting-startup-abort-runtimeerror-aborted).

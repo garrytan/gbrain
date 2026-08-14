@@ -1,10 +1,13 @@
 ---
 name: briefing
+version: 1.3.0
 description: Compile daily briefing with meeting context, active deals, and citation tracking
 triggers:
   - "daily briefing"
   - "morning briefing"
   - "what's happening today"
+  - "brain pulse"
+  - "pre-briefing pull"
 tools:
   - search
   - query
@@ -12,6 +15,7 @@ tools:
   - list_pages
   - get_timeline
 mutating: false
+upstream: briefing@fc834ee
 ---
 
 # Briefing Skill
@@ -29,9 +33,45 @@ Compile a daily briefing from brain context.
 - The briefing is read-only: no brain pages are created or modified unless the user explicitly requests it.
 - Stale alerts surface pages relevant to today's context, not just all stale pages.
 
-## Phases
+## Pre-Briefing Context Pull
 
-0. **Hot memory pulse (v0.32).** Before composing anything else, run:
+Run these BEFORE composing the briefing sections. All four pulls are read-only.
+
+0a. **Salience scan.** Surface pages with high emotional or activity salience:
+
+   ```bash
+   gbrain salience --days 7
+   ```
+
+   Returns pages ranked by emotional weight and recent activity. Fold the top
+   5-10 into the briefing under a "High-Salience Pages" section — these are the
+   entities and topics that are emotionally or operationally hot right now. Use
+   this to prioritize which meetings/deals/people get the most briefing depth.
+
+0b. **Anomaly detection.** Surface statistical anomalies in the brain:
+
+   ```bash
+   gbrain anomalies
+   ```
+
+   Defaults to today against a 30-day baseline; widen with
+   `--lookback-days N` or lower the threshold with `--sigma 2`. Flags cohorts
+   (by tag, by type) whose activity broke from their normal cadence — sudden
+   spikes in mentions or pages updating far off their usual rhythm. Add hits to
+   an "Anomalies" section after the brain pulse.
+
+0c. **Personal recall.** Check stored personal facts and preferences before
+   composing:
+
+   ```bash
+   gbrain recall --query "current priorities and preferences" --json
+   ```
+
+   Use recall to pull personal context — dietary preferences, communication
+   preferences, prior commitments or promises made. This prevents the briefing
+   from contradicting things the user has previously stated or decided.
+
+0d. **Hot memory pulse (v0.32).** Before composing anything else, run:
 
    ```bash
    gbrain recall --since-last-run --supersessions --pending --rollup --json
@@ -54,6 +94,8 @@ Compile a daily briefing from brain context.
    explicitly — cron doesn't start in your repo-root cwd, so dotfile resolution
    may miss the right source. Thin-client installs (`gbrain init --mcp-only`)
    route through the remote brain transparently.
+
+## Phases
 
 1. **Today's meetings.** For each meeting on the calendar:
    - Search gbrain for each participant by name
@@ -82,7 +124,7 @@ Before generating any briefing, load context from gbrain systematically.
 For every attendee on the calendar invite:
 - `gbrain search "<attendee name>"` -- find their brain page
 - `gbrain get <slug>` -- load compiled truth, recent timeline, relationship context
-- If no page exists, note the gap ("No brain page for Sarah Chen -- consider enrichment")
+- If no page exists, note the gap ("No brain page for alice-example -- consider enrichment")
 
 ### Before an email reply
 
@@ -97,7 +139,7 @@ Run these queries to populate the briefing sections:
 - `gbrain query "active deals status"` -- deal pipeline snapshot
 - `gbrain query "meetings this week"` -- recent meeting pages with insights
 - `gbrain query "pending commitments follow-ups"` -- open threads and action items
-- `gbrain search --type person --sort updated --limit 10` -- people in play
+- `gbrain list --type person --sort updated_desc --limit 10` -- people in play
 
 ## Output Format
 

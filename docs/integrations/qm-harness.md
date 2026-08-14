@@ -60,7 +60,15 @@ Isolation model:
 
 The write fence is a **write** boundary within a source. It is not a privacy
 boundary, and it does not make every side effect prefix-clean. As of
-v0.42.72.0:
+v0.42.73.2:
+
+- **The fence follows a delegated write.** When a client with `agent` scope
+  hands work to a subagent via `submit_agent`, that subagent runs under its own
+  slug confinement rather than the parent's OAuth binding. Both confinements are
+  enforced, including on the path where deduplication redirects a write onto an
+  existing page: the redirected target is checked against whichever confinement
+  the calling context actually carries, so delegation does not widen what a
+  client can write.
 
 - **`add_link`/`remove_link` fence the `from` endpoint only.** A bound client
   can create an edge pointing AT a page it cannot write; the edge's `context`

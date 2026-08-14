@@ -194,3 +194,30 @@ describe('runJudge wires computeJudgeMaxTokens into chat({maxTokens})', () => {
     expect(captured[2].maxTokens).toBe(Math.max(LEGACY_MIN_MAX_TOKENS, 50 * 150 + 500)); // 8000
   });
 });
+
+describe('current-generation model caps (Sonnet 5 / Fable 5 / Opus 4.8)', () => {
+  test('500 ideas on claude-sonnet-5: cap binds at its 64K entry, not the 32K unknown-model fallback', () => {
+    // 500 * 150 + 500 = 75_500 → capped. Without a map entry this would
+    // fall to MAX_OUTPUT_TOKENS_CEIL (32_000) and silently halve the
+    // budget on a current-generation model.
+    expect(computeJudgeMaxTokens(500, 'claude-sonnet-5')).toBe(ANTHROPIC_OUTPUT_CAPS['claude-sonnet-5']);
+    expect(ANTHROPIC_OUTPUT_CAPS['claude-sonnet-5']).toBe(64_000);
+  });
+
+  test('provider-prefixed id resolves to the same entry', () => {
+    expect(computeJudgeMaxTokens(500, 'anthropic:claude-sonnet-5')).toBe(64_000);
+  });
+
+  test('claude-fable-5 caps at 64K; claude-opus-4-8 at 32K', () => {
+    expect(computeJudgeMaxTokens(500, 'claude-fable-5')).toBe(64_000);
+    expect(computeJudgeMaxTokens(500, 'claude-opus-4-8')).toBe(32_000);
+  });
+});
+
+describe('claude-opus-5 cap', () => {
+  test('500 ideas on claude-opus-5: cap binds at its 32K entry (Opus-family convention), prefixed form included', () => {
+    expect(computeJudgeMaxTokens(500, 'claude-opus-5')).toBe(ANTHROPIC_OUTPUT_CAPS['claude-opus-5']);
+    expect(ANTHROPIC_OUTPUT_CAPS['claude-opus-5']).toBe(32_000);
+    expect(computeJudgeMaxTokens(500, 'anthropic:claude-opus-5')).toBe(32_000);
+  });
+});

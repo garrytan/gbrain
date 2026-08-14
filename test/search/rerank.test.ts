@@ -17,6 +17,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { applyReranker, type RerankerOpts } from '../../src/core/search/rerank.ts';
 import { RerankError, type RerankResult } from '../../src/core/ai/gateway.ts';
+import { BudgetExhausted } from '../../src/core/budget/budget-tracker.ts';
 import { readRecentRerankFailures } from '../../src/core/rerank-audit.ts';
 import type { SearchResult } from '../../src/core/types.ts';
 import { withEnv } from '../helpers/with-env.ts';
@@ -207,6 +208,37 @@ describe('applyReranker — fail-open on every RerankError reason', () => {
     };
     const out = await applyReranker('q', results, opts);
     expect(out).toEqual(results);
+  });
+
+  test('#3628: BudgetExhausted fail-opens and audits budget instead of unknown', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-rerank-budget-'));
+    try {
+      await withEnv({ GBRAIN_AUDIT_DIR: tmpDir }, async () => {
+        const results = [makeResult('a', 1.0, 'a')];
+        const out = await applyReranker('q', results, {
+          enabled: true,
+          topNIn: 1,
+          topNOut: null,
+          model: 'acmecorp:unpriced-reranker-v9',
+          rerankerFn: async () => {
+            throw new BudgetExhausted('rerank budget missing pricing', {
+              reason: 'no_pricing',
+              spent: 0,
+              cap: 1,
+              modelId: 'acmecorp:unpriced-reranker-v9',
+            });
+          },
+        });
+
+        expect(out).toEqual(results);
+        const failures = readRecentRerankFailures(1);
+        expect(failures).toHaveLength(1);
+        expect(failures[0]!.reason).toBe('budget');
+        expect(failures[0]!.error_summary).toContain('missing pricing');
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   test('fail-open on malformed reranker response (empty results array)', async () => {

@@ -709,3 +709,135 @@ describe('subagent handler output-token cap (#2778)', () => {
     expect(texts.some(t => t.includes('truncated') && t.includes('DROPPED'))).toBe(true);
   });
 });
+
+describe('handler-entry capability gate on the config-resolved model', () => {
+  test('config-resolved models.subagent lacking tool calling is refused at dispatch', async () => {
+    // The queue submit gate only sees explicit data.model. A job that omits
+    // data.model resolves `models.subagent` inside the handler — pre-fix that
+    // path bypassed the capability check entirely and a tool-incapable model
+    // (declared supports_tools: false) ran the loop anyway.
+    await engine.setConfig('models.subagent', 'minimax:MiniMax-M2');
+    try {
+      const client = new FakeMessagesClient([
+        { content: [{ type: 'text', text: 'should never run' }] as any, stop_reason: 'end_turn' },
+      ]);
+      const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+      const ctx = await makeCtx({ prompt: 'hi' }); // no data.model → queue gate passes
+      await expect(handler(ctx)).rejects.toThrow(/lacks native tool calling/);
+      expect(client.calls.length).toBe(0); // refused before any provider call
+    } finally {
+      await engine.unsetConfig('models.subagent');
+    }
+  });
+
+  test('already-terminal replay is NOT refused when config points at a tool-incapable model', async () => {
+    // #1151 precedent: a job whose last persisted message is a terminal
+    // assistant turn needs no provider call — the replay short-circuit
+    // returns the committed result. A capability refusal here (config
+    // repointed between submit and replay) would dead-letter completed work.
+    // Gateway loop ON: that's the only routing where the capability gate is
+    // the deciding check (the legacy path's Anthropic pin refuses
+    // non-Anthropic models regardless). The gateway path's terminal
+    // early-return runs before any provider client is constructed, so no
+    // API key is needed.
+    await engine.setConfig('models.subagent', 'minimax:MiniMax-M2');
+    await engine.setConfig('agent.use_gateway_loop', 'true');
+    try {
+      const client = new FakeMessagesClient([]);
+      const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+      const ctx = await makeCtx({ prompt: 'hi' });
+      // Persist a completed transcript: seed user + terminal assistant.
+      await engine.executeRaw(
+        `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks)
+         VALUES ($1, 0, 'user', $2::text::jsonb), ($1, 1, 'assistant', $3::text::jsonb)`,
+        [
+          ctx.id,
+          JSON.stringify([{ type: 'text', text: 'hi' }]),
+          JSON.stringify([{ type: 'text', text: 'committed answer' }]),
+        ],
+      );
+      const result = await handler(ctx);
+      expect(result.result).toBe('committed answer');
+      // Replay short-circuit: no new turns persisted beyond the 2 seeded rows
+      // (a provider call would have appended an assistant row — and would have
+      // failed anyway, since no gateway credentials are configured here).
+      const rows = await engine.executeRaw<{ count: string }>(
+        `SELECT count(*)::text AS count FROM subagent_messages WHERE job_id = $1`,
+        [ctx.id],
+      );
+      expect(parseInt(rows[0]!.count, 10)).toBe(2);
+    } finally {
+      await engine.unsetConfig('models.subagent');
+      await engine.unsetConfig('agent.use_gateway_loop');
+    }
+  });
+
+  test('non-terminal gateway replay (pending tool-call) IS still refused on a tool-incapable model', async () => {
+    // A gateway transcript persists pending dispatch as `tool-call` blocks.
+    // A replay that still needs the loop to resume on the provider must NOT
+    // slip past the capability gate via the terminal exception.
+    await engine.setConfig('models.subagent', 'minimax:MiniMax-M2');
+    await engine.setConfig('agent.use_gateway_loop', 'true');
+    try {
+      const client = new FakeMessagesClient([]);
+      const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+      const ctx = await makeCtx({ prompt: 'hi' });
+      await engine.executeRaw(
+        `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks)
+         VALUES ($1, 0, 'user', $2::text::jsonb), ($1, 1, 'assistant', $3::text::jsonb)`,
+        [
+          ctx.id,
+          JSON.stringify([{ type: 'text', text: 'hi' }]),
+          JSON.stringify([{ type: 'tool-call', toolCallId: 'tc_1', toolName: 'echo', input: {} }]),
+        ],
+      );
+      await expect(handler(ctx)).rejects.toThrow(/lacks native tool calling/);
+    } finally {
+      await engine.unsetConfig('models.subagent');
+      await engine.unsetConfig('agent.use_gateway_loop');
+    }
+  });
+
+  test('a BARE Anthropic id in models.subagent still runs (not refused as unknown provider)', async () => {
+    // A bare `claude-*` id (no `provider:` prefix) is a supported config value
+    // everywhere else: isAnthropicProvider() has an explicit bare-`claude-`
+    // branch and the legacy path strips the prefix before calling the Messages
+    // API. classifyCapabilities() resolves through the recipe registry, which
+    // requires an explicit provider, so classifying the raw value would report
+    // `unknown` and this gate would refuse a config that works.
+    await engine.setConfig('models.subagent', 'claude-sonnet-4-6');
+    try {
+      const client = new FakeMessagesClient([
+        { content: [{ type: 'text', text: 'ran on the bare id' }] as any, stop_reason: 'end_turn' },
+      ]);
+      const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+      const ctx = await makeCtx({ prompt: 'hi' }); // no data.model → config resolves
+      const result = await handler(ctx);
+      expect(result.result).toBe('ran on the bare id');
+      // The provider call carries the bare id (the legacy path strips any prefix).
+      expect(client.calls.length).toBe(1);
+      expect(client.calls[0]!.model).toBe('claude-sonnet-4-6');
+    } finally {
+      await engine.unsetConfig('models.subagent');
+    }
+  });
+
+  test('a bare NON-Anthropic id in models.subagent is still refused', async () => {
+    // The normalization above is deliberately narrow: only bare ids that
+    // isAnthropicProvider() recognizes get an `anthropic:` prefix for the
+    // verdict. A bare `gpt-5` is not a recipe-resolvable model, so the gate
+    // must keep reporting `unknown` rather than classifying it as Anthropic.
+    await engine.setConfig('models.subagent', 'gpt-5');
+    try {
+      const client = new FakeMessagesClient([
+        { content: [{ type: 'text', text: 'should never run' }] as any, stop_reason: 'end_turn' },
+      ]);
+      const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+      const ctx = await makeCtx({ prompt: 'hi' });
+      await expect(handler(ctx)).rejects.toThrow(/references an unknown provider/);
+      expect(client.calls.length).toBe(0);
+    } finally {
+      await engine.unsetConfig('models.subagent');
+    }
+  });
+});

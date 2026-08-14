@@ -129,11 +129,10 @@ JSONL records the same. Pre-enqueue validation rejects the submission if the
 worker can't resolve the requested key, with a paste-ready
 `gbrain config set database_url <value>` hint.
 
-**Why not just write the URL into `env:` directly?** Pre-v0.36.5.0 callers
-wrote things like:
+**Why not just write the URL into `env:` directly?** You *can*:
 
 ```jsonc
-// ❌ Deprecated as of v0.36.5.0 — REJECTED at submit time.
+// ❌ Works, but plants the secret in the job row. Prefer inherit:.
 {
   "cmd": "gbrain stats",
   "cwd": "/data/gbrain",
@@ -141,14 +140,14 @@ wrote things like:
 }
 ```
 
-This planted plaintext secrets in `minion_jobs.data` (DB row) and in the
+This plants plaintext secrets in `minion_jobs.data` (DB row) and in the
 shell-audit JSONL. Anyone with read access to the brain DB (or a brain dump,
-or a shared brain via the mounts feature) saw the URL. v0.36.5.0 doesn't
-forbid that pattern — the validator trusts the agent — but **prefer
+or a shared brain via the mounts feature) sees the URL. The validator
+doesn't forbid the pattern — it trusts the agent — but **prefer
 `inherit:`** for any secret you want kept out of the row. Names land in the
 row; values resolve at child-spawn from the worker's config.
 
-**Scope:** v0.36.5.0 `inherit:` is **free-form**. Pass any snake_case
+**Scope:** `inherit:` is **free-form**. Pass any snake_case
 config-key name and the worker resolves the value from `loadConfig()` at
 child-spawn time:
 

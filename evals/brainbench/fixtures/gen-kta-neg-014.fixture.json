@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-kta-neg-014",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "kta-neg",
+  "seed_pages": [
+    {
+      "slug": "people/ingrid-stargazer",
+      "content": "---\ntitle: Ingrid Stargazer\ntype: person\naliases: [ingrid]\nsummary: Founder of Quartzbloom Systems.\n---\n\nIngrid Stargazer is the founder of Quartzbloom Systems. Ingrid flagged churn as the top risk in the latest update.\n"
+    },
+    {
+      "slug": "companies/quartzbloom-systems",
+      "content": "---\ntitle: Quartzbloom Systems\ntype: company\nsummary: Seed-stage company. Founded by Ingrid Stargazer.\n---\n\nQuartzbloom Systems is a seed-stage company. Founded by Ingrid Stargazer. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "What time is it in Tokyo right now?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "By the way, someone named Priya Felbrook emailed about partnerships. Never heard of them."
+    }
+  ]
+}

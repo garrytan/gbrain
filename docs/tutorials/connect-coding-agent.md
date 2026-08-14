@@ -6,6 +6,11 @@ you decided three meetings ago, and re-derive context you already have written
 down somewhere. GBrain is the retrieval layer that fixes that: search, synthesis,
 and a self-wiring knowledge graph, wired into your agent over MCP.
 
+> This tutorial is the **memory-only** tier. Want the whole agent — identity,
+> per-turn context, schedules, and a private GitHub repo as its durable body?
+> That's `gbrain bootstrap`: the "For Codex" / "For Claude Code" paste blocks in
+> the README, full contract in [docs/guides/bootstrap.md](../guides/bootstrap.md).
+
 There are two ways to do this. Pick the one that matches where you are:
 
 - **Path A — I already run a brain** (OpenClaw, Hermes, or any `gbrain serve`
@@ -61,9 +66,9 @@ special). Turn it on:
 gbrain config set mcp.publish_skills true
 ```
 
-(New brains from `gbrain init` default this ON. Brains upgraded from before
-v0.41.36 stay OFF until you opt in, so this is the common gotcha for existing
-OpenClaw users.)
+(New brains from `gbrain init` default this ON. Brains upgraded from a release
+before skill publishing existed stay OFF until you opt in, so this is the
+common gotcha for existing OpenClaw users.)
 
 ### A2. On the host: mint a token
 
@@ -91,7 +96,7 @@ token fails right now, not silently on the agent's first request. You'll see:
 
 ```
 Added MCP server 'gbrain' -> https://your-host.example.com/mcp.
-Verified: {"version":"0.42.x","engine":"postgres","page_count":146646,...}
+Verified: {"version":"0.42.x","engine":"postgres","page_count":1204,...}
 ```
 
 Drop `--install` to print a paste-ready block instead (useful when the host and
@@ -142,14 +147,23 @@ generate while working, and is genuinely useful by day two.
 
 ```bash
 # Claude Code
-claude mcp add gbrain -- gbrain serve
+claude mcp add gbrain -- gbrain serve --surface verbs
 
 # Codex
-codex mcp add gbrain -- gbrain serve
+codex mcp add gbrain -- gbrain serve --surface verbs
 ```
 
 That's the whole wire-up. No token, no URL, no tunnel. The agent spawns
 `gbrain serve` as a stdio subprocess and talks to your local brain directly.
+
+`--surface verbs` exposes exactly the seven-verb memory protocol
+(`recall`, `remember`, `entity`, `synthesize`, `forget`, `context_pack`, `delta` —
+[MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md), frozen + additive-forever)
+instead of the full operation catalog, so the agent sees a tight, stable surface
+instead of a 110-tool wall. `--surface starter` sits between: the verbs plus the
+daily-driver set (~26 ops total). Drop the flag (or pass `--surface full`) for every
+operation. The default when the flag is omitted is `full`, so existing wire-ups
+are unchanged.
 
 ### B4. Verify
 
@@ -175,14 +189,19 @@ on the patterns.
 You have a knowledge brain connected over MCP. Before answering any question
 about people, companies, decisions, projects, or past context:
 
-1. **Search first.** Call `search` (or `query` for a synthesized answer) against
-   the brain BEFORE answering from memory or asking me. If the brain has the
-   answer, use it. Never ask "who is X?" or "what did we decide about Y?" before
-   searching — the brain probably already knows.
+1. **Brain first — route by the shape of the question.** Exact names or known
+   tokens → `search` (cheap hybrid, no expansion). Concept, landscape, or
+   "all the X that do Y" questions → `query` FIRST — it recovers synonym
+   phrasings `search` misses, and a populated `search` result set is not proof
+   of coverage. On the verbs surface the same split is `recall` (retrieve)
+   vs `synthesize` (reasoned answer). Check the brain BEFORE answering from
+   memory or asking me. Never ask "who is X?" or "what did we decide about Y?"
+   before checking — the brain probably already knows.
 2. **Write back.** When I make a decision, mention a new person/company, or land
-   on an idea worth keeping, write it to the brain with `put_page` (entity pages
-   under people/, companies/; decisions under decisions/ or notes/). One insight,
-   one page, linked.
+   on an idea worth keeping, write it to the brain: `remember` on the verbs
+   surface (one fact, with provenance), or `put_page` on the full surface
+   (entity pages under people/, companies/; decisions under decisions/ or
+   notes/). One insight, one page, linked.
 3. **Cite.** When you answer from the brain, name the page you used.
 ```
 
@@ -204,13 +223,14 @@ hundreds of linked pages and patterns you didn't know were there.
 **3. Briefing from your brain (not from the internet).** *"What do I need to know
 before my 2pm with the Acme team?"* pulls your meeting history, the people,
 what's still open, what the brain doesn't know yet. The agent does your prep
-because it read your context. (`query` gives you the synthesized answer with
-citations; this is the example on the [README](../../README.md).)
+because it read your context. (`query` — `synthesize` on the verbs surface —
+gives you the synthesized answer with citations; this is the example on the
+[README](../../README.md).)
 
 **4. whoknows (expertise routing).** *"Who do I know who's shipped a rate
-limiter in Postgres?"* The `find_experts` tool ranks people in your brain by
-relevance + recency. Useful the moment your brain has more than a handful of
-people in it.
+limiter in Postgres?"* The `find_experts` tool (full surface) ranks people in
+your brain by relevance + recency. Useful the moment your brain has more than a
+handful of people in it.
 
 That's the spine of it. Two commands to connect, one protocol to paste, four
 habits to build. Your agent stops being amnesiac.
@@ -229,7 +249,7 @@ habits to build. Your agent stops being amnesiac.
 
 ## Next steps
 
-- Go full autonomous: the overnight enrichment daemon ([dream cycle](../../CHANGELOG.md)) fixes citations, dedupes people, builds scorecards while you sleep. See `gbrain autopilot --install`.
+- Go full autonomous: the overnight enrichment daemon ([dream cycle](../guides/operational-disciplines.md)) fixes citations, dedupes people, builds scorecards while you sleep. See `gbrain autopilot --install`.
 - Run a real agent platform on top: [personal-brain tutorial](personal-brain.md).
 - Scale to a team: [company-brain tutorial](company-brain.md).
 - Every MCP client's exact setup: [`docs/mcp/`](../mcp/).

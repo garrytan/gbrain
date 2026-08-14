@@ -1,6 +1,6 @@
 ---
 name: eiirp
-version: 1.0.0
+version: 1.1.0
 prompt_version: 1
 description: |
   Everything In Its Right Place. The universal post-work organizer. After
@@ -10,7 +10,10 @@ description: |
   enriched brain pages, (5) audit the skill graph for DRY+MECE, (6) verify
   resolvability, (7) report. Named after the Radiohead song. Nothing
   produced during significant work lives only in chat — knowledge becomes
-  permanent, patterns become reusable.
+  permanent, patterns become reusable. Also carries the always-on
+  auto-fire gate: when >=500 words of structured analysis on a
+  user-shared document is about to be delivered, file the brain page
+  first, then deliver the analysis with the link in that same reply.
 triggers:
   - "everything in its right place"
   - "eiirp"
@@ -28,6 +31,9 @@ triggers:
   - "make this re-doable"
   - "DRY this up"
   - "check everything is in the right place"
+  - "analyze this document"
+  - "deep analysis"
+  - "review this report"
 tools:
   - search
   - query
@@ -54,7 +60,10 @@ writes_to:
   - writing/
   - analysis/
   - guides/
+  - research/
 filing_exempt: true
+# The auto-fire gate section below is imported content:
+upstream: deep-analysis-brain-auto@fc834ee
 distinct_from:
   - name: brain-taxonomist
     reason: "brain-taxonomist classifies individual pages at write time (the filing GATE). EIIRP orchestrates the full post-work LIFECYCLE — inventory + taxonomy + schema + skillify + verify."
@@ -62,6 +71,10 @@ distinct_from:
     reason: "ingest handles NEW content from external URLs/media. EIIRP handles COMPLETED research that needs to be decomposed and filed across multiple brain locations."
   - name: skillify
     reason: "skillify is the meta-skill for turning a feature into a tested skill. EIIRP calls skillify when Phase 5 identifies a reusable pattern."
+  - name: signal-detector
+    reason: "signal-detector ambiently captures the USER's ideas + entity mentions on every inbound message. EIIRP's auto-fire gate files the AGENT's own deliverable analysis at reply time. Both are always-on; they watch opposite directions of the conversation."
+  - name: meeting-ingestion
+    reason: "meeting-ingestion (like idea-ingest, media-ingest, voice-note-ingest, book-mirror) is a dedicated pipeline with its own brain-write logic. The auto-fire gate EXEMPTS dedicated-pipeline content — it never double-files."
 ---
 
 # EIIRP — Everything In Its Right Place
@@ -94,6 +107,93 @@ Knowledge → brain. Patterns → skills. Everything in its right place.
 - When the user says "EIIRP", "organize this", "DRY this up", "make this re-doable".
 - When a work session produced both knowledge AND new capabilities.
 - When you notice skill overlap, duplication, or gaps.
+
+## Auto-Fire Gate — file before you deliver (ALWAYS-ON)
+
+> **Convention:** see [conventions/brain-first.md](../conventions/brain-first.md)
+> — this is its write side. Substantial analysis belongs in the brain, not
+> only in chat.
+
+Unlike the 7-phase audit above (which the user invokes after a work
+session), this gate is an **always-on agent-side convention**, like
+`signal-detector`: the agent applies it on every substantive reply, not
+when a trigger phrase routes here. Always-on is a harness-routing
+convention that a well-behaved agent follows — not a mechanical
+guarantee; nothing in the gbrain runtime blocks a reply if the skill
+never loads.
+
+**The moment of evaluation is delivery, not request.** The gate
+evaluates when substantial analysis (>=500 words of structured output
+on a user-shared document) is ABOUT to be delivered — the analysis is
+done and the reply is being composed. At that moment, file the brain
+page FIRST, then deliver the analysis plus the page link in that same
+reply. The user should never have to ask "did you file this?"
+
+### Fire conditions (all three must hold)
+
+1. The user shared a document — a PDF, a file attachment, a link to a
+   doc, or pasted long-form content.
+2. The reply about to be delivered contains substantial analysis:
+   >=500 words of structured output (findings, recommendations, or
+   extracted data — not restatement or formatting).
+3. The content is knowledge worth re-finding — someone reading the
+   brain months later would want this page.
+
+### Does NOT fire
+
+- Quick answers ("what page is X on?", "what date is on this?").
+- Simple lookups, or forwarding a document unchanged.
+- Purely operational content (task lists, calendar items, status pings).
+- Documents already flowing through a dedicated pipeline (next list).
+- Users who have turned auto-filing off (storage policy below).
+
+### Dedicated-pipeline exemptions
+
+These pipelines own their brain-write logic; the gate must NOT
+double-file on top of them. If one of these is the right route, invoke
+it and let it file:
+
+- `skills/meeting-ingestion/SKILL.md` — transcripts + attendee propagation
+- `skills/idea-ingest/SKILL.md` — articles with author/publication metadata
+- `skills/media-ingest/SKILL.md` — bulk file ingestion
+- `skills/voice-note-ingest/SKILL.md` — voice notes
+- `skills/book-mirror/SKILL.md` — personalized book mirrors
+
+### Filing mechanics (before the reply goes out)
+
+1. **Path** — consult `skills/brain-taxonomist/SKILL.md`. It reads the
+   active schema pack (`gbrain schema show --json`); document analysis
+   usually lands under `analysis/` or `research/`, entity-centric
+   findings under `people/` or `companies/`.
+2. **Write** — file via capture:
+
+   ```bash
+   gbrain capture --file <analysis.md> --slug <taxonomist-path>
+   ```
+
+   (or `put_page` over MCP on thin-client installs). Full frontmatter
+   per Phase 4a. The page must be self-contained — a reader months
+   later gets the full picture without the chat thread.
+3. **Link in the SAME reply** — the analysis inline (conversational,
+   not just "see the brain page") plus a link line to the filed page,
+   formatted per `skills/brain-link-discipline/SKILL.md` (it owns the
+   link format and the resolve-verification step). Multiple pages →
+   list every link.
+
+### Per-user storage policy
+
+Auto-filing is a DEFAULT, not a mandate — a per-user storage policy.
+If the user says to stop auto-filing document analyses (or asks for
+chat-only handling of a specific document), record that preference and
+stop firing the gate: deliver the analysis without a page. Re-enable
+on request.
+
+### Relationship to the 7-phase audit
+
+The gate is the single-deliverable fast path: one document → one page →
+link in the delivery reply. A full work session still deserves the
+complete EIIRP pass below; the gate just ensures no individual analysis
+waits for it.
 
 ## Phase 1: INVENTORY — What did we produce?
 
@@ -360,6 +460,17 @@ reads it; doctor cross-references the pack version).
   "Sanctioned exception" section.
 - **Treating non-English sources as secondary citations.** Multilingual
   sources are first-class.
+- **Delivering substantial document analysis without a filed page + link.**
+  The auto-fire gate files FIRST, then delivers analysis + link in the
+  same reply. Never "I'll create the page" as a future action; never the
+  link in a follow-up message; never wait for the user to ask.
+- **Double-filing dedicated-pipeline content.** Meeting transcripts,
+  articles, bulk media, voice notes, and book mirrors have their own
+  ingestion skills with their own brain-write logic. The gate exempts
+  them.
+- **Auto-filing after the user turned it off.** Auto-filing is a
+  per-user storage-policy default, not a mandate. Honor the recorded
+  preference.
 
 ## Hard Rules
 
@@ -381,6 +492,18 @@ reads it; doctor cross-references the pack version).
 - **EIIRP consumes the active schema pack as data.** Never hard-code directory tables in EIIRP's logic — read from `gbrain schema show --json` so users who picked `gbrain-recommended` OR custom packs get the right behavior automatically.
 
 ## Changelog
+
+### v1.1.0 — auto-fire gate merge (upstream deep-analysis-brain-auto@fc834ee)
+- Merged the always-on auto-fire gate: when >=500 words of structured
+  analysis on a user-shared document is about to be delivered, file the
+  brain page first, then deliver analysis + link in that same reply.
+- Filing routes through brain-taxonomist (active schema pack) +
+  `gbrain capture` instead of the donor's git-commit mechanics; the
+  donor's direct GitHub-API link check was dropped in favor of the
+  brain-link-discipline skill's link format + verify step.
+- Donor examples and origin story genericized per CLAUDE.md privacy
+  rules; added dedicated-pipeline exemptions and the per-user
+  storage-policy off switch.
 
 ### v1.0.0 — gbrain v0.39.0.0
 - Initial port from upstream OpenClaw. Genericized — no references to

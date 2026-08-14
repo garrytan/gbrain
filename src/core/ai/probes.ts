@@ -6,6 +6,10 @@
 export interface ProbeResult {
   reachable: boolean;
   models_endpoint_valid?: boolean;
+  /** Model ids the endpoint reports as served/pulled (when the models
+   *  endpoint is valid). Lets callers check "is the recipe's model actually
+   *  available" instead of treating daemon-up as model-ready. */
+  models?: string[];
   error?: string;
 }
 
@@ -22,14 +26,25 @@ export async function probeOpenAICompat(baseUrl: string, timeoutMs: number = 100
       signal: controller.signal,
       headers: { accept: 'application/json' },
     });
-    clearTimeout(timer);
-    if (!res.ok) return { reachable: true, models_endpoint_valid: false, error: `HTTP ${res.status}` };
+    if (!res.ok) {
+      clearTimeout(timer);
+      return { reachable: true, models_endpoint_valid: false, error: `HTTP ${res.status}` };
+    }
+    // Keep the abort timer live through the BODY read — a daemon that accepts,
+    // returns headers, then stalls the body would otherwise hang past the
+    // advertised timeout (the probe sits on init's interactive critical path).
     const body = await res.json().catch(() => null);
+    clearTimeout(timer);
     if (!body || typeof body !== 'object') {
       return { reachable: true, models_endpoint_valid: false, error: 'non-JSON response' };
     }
     const isList = (body as any).object === 'list' && Array.isArray((body as any).data);
-    return { reachable: true, models_endpoint_valid: isList };
+    const models = isList
+      ? ((body as any).data as Array<{ id?: unknown }>)
+          .map((m) => (typeof m?.id === 'string' ? m.id : ''))
+          .filter(Boolean)
+      : undefined;
+    return { reachable: true, models_endpoint_valid: isList, models };
   } catch (e) {
     clearTimeout(timer);
     return { reachable: false, error: e instanceof Error ? e.message : String(e) };

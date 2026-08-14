@@ -23,6 +23,16 @@ function hasFlag(args: string[], flag: string): boolean {
 }
 
 /**
+ * Resolve the canonical positive-polarity pull flag while preserving queued
+ * jobs that still carry the legacy inverse `noPull` key.
+ */
+export function resolveJobPull(data: Record<string, unknown>): boolean {
+  if (typeof data.pull === 'boolean') return data.pull;
+  if (typeof data.noPull === 'boolean') return !data.noPull;
+  return true;
+}
+
+/**
  * Long-lived workers outlive operator config changes. Re-stamp the AI gateway
  * from DB-backed model config immediately before queued jobs enter gateway-backed
  * paths, so a stale process-level default cannot route new work to the wrong
@@ -1414,7 +1424,7 @@ export async function registerBuiltinHandlers(
   worker.register('sync', async (job) => {
     const { performSync } = await import('./sync.ts');
     const repoPath = typeof job.data.repoPath === 'string' ? job.data.repoPath : undefined;
-    const noPull = !!job.data.noPull;
+    const noPull = !resolveJobPull(job.data);
     // noEmbed defaults to true (embed is a separate job — submit `embed --stale`
     // after sync, OR run via the autopilot cycle which has its own embed phase).
     // Caller can opt in by passing { noEmbed: false } in job params.
@@ -1520,11 +1530,16 @@ export async function registerBuiltinHandlers(
     // readable via `gbrain jobs get <id>`). Stderr from the worker daemon
     // only emits coarse job-start / job-done lines; per-page detail lives
     // in the DB. Per Codex review #20.
-    await runEmbedCore(engine, {
+    const embedResult = await runEmbedCore(engine, {
       slug: typeof job.data.slug === 'string' ? job.data.slug : undefined,
       slugs: Array.isArray(job.data.slugs) ? (job.data.slugs as string[]) : undefined,
       all: !!job.data.all,
       stale: job.data.all ? false : (job.data.stale !== false),
+      // `embed --background` serializes dryRun into the payload (embed.ts's
+      // job-args builder). Not reading it back here meant a backgrounded
+      // preview embedded for real: API spend and NULL->vector writes from an
+      // invocation whose whole point was to do neither.
+      dryRun: !!job.data.dryRun,
       sourceId: typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined,
       // CX1+CX5: pace overrides ride in the job payload as explicit overrides
       // only; runEmbedCore re-resolves env > config > bundle at execution so
@@ -1543,7 +1558,16 @@ export async function registerBuiltinHandlers(
         job.updateProgress({ done, total, embedded, phase: 'embed.pages' }).catch(() => {});
       },
     });
-    return { embedded: true };
+    // Report what happened, not a constant. `embedded: true` claimed a dry run
+    // had embedded, which is the same lie in miniature: `gbrain jobs get`
+    // showed it. `embedded` stays the key it always was and stays truthy on a
+    // real run (it is now the count, 0 on a dry run).
+    return {
+      embedded: embedResult.embedded,
+      dry_run: !!embedResult.dryRun,
+      would_embed: embedResult.would_embed,
+      failures: embedResult.failures,
+    };
   });
 
   worker.register('lint', async (job) => {
@@ -1684,7 +1708,44 @@ export async function registerBuiltinHandlers(
   });
 
   worker.register('extract', async (job) => {
-    const { runExtractCore } = await import('./extract.ts');
+    const { runExtractCore, extractStaleFromDB, STALE_TIME_BUDGET_MS } = await import('./extract.ts');
+    // #2849: stale mode — the durable follow-up for extraction deferred by
+    // performSync's size gate (totalChanges > 100). Runs the same DB-source
+    // watermark sweep as `gbrain extract --stale`, scoped to the source the
+    // sync that deferred it was scoped to (job.data.sourceId; absent =
+    // unscoped, matching what the CLI hint tells a default-brain operator
+    // to run). The sweep is checkout-less + idempotent, so retries and
+    // overlapping submissions converge.
+    if (job.data.stale === true) {
+      const sourceIdFilter = typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
+      const r = await extractStaleFromDB(engine, {
+        dryRun: !!job.data.dryRun,
+        jsonMode: false,
+        includeFrontmatter: false,
+        sourceIdFilter,
+        catchUp: false,
+      });
+      // Internal 30-min budget hit with work remaining → chain a
+      // continuation job so a very large deferred backlog converges without
+      // waiting for the next sync. Forward-progress guard (pagesProcessed >
+      // 0) prevents an infinite chain if the sweep can't advance.
+      if (!job.data.dryRun && r.staleRemaining > 0 && r.pagesProcessed > 0) {
+        try {
+          const queue = new MinionQueue(engine);
+          // NO maxWaiting: with an unscoped (NULL-sourceId) payload the
+          // coalesce filter matches ANY waiting 'extract' job and would
+          // swallow the continuation. Each completed sweep chains at most
+          // one continuation and the sweep is an idempotent watermark scan,
+          // so there is no pile-up to guard against.
+          await queue.add(
+            'extract',
+            { ...job.data, continuation_of: job.id },
+            { timeout_ms: STALE_TIME_BUDGET_MS + 5 * 60 * 1000 },
+          );
+        } catch { /* best-effort: next sync/manual sweep picks up the rest */ }
+      }
+      return { stale: true, source_id: sourceIdFilter ?? null, ...r };
+    }
     const mode = (typeof job.data.mode === 'string' && ['links', 'timeline', 'all'].includes(job.data.mode))
       ? (job.data.mode as 'links' | 'timeline' | 'all')
       : 'all';
@@ -1855,8 +1916,7 @@ export async function registerBuiltinHandlers(
       ? (job.data.phases as string[]).filter(p => validPhases.has(p as any))
       : undefined;
 
-    // Pull default: legacy `true` for back-compat; explicit boolean wins.
-    const pull = typeof job.data.pull === 'boolean' ? job.data.pull : true;
+    const pull = resolveJobPull(job.data);
 
     // #2194 fix #2 / codex #5 (D4): claim-time cooldown guard. A job already
     // queued or retrying (max_attempts:2) can reach the worker after the

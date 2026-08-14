@@ -1,6 +1,6 @@
 ---
 name: data-research
-version: 1.0.0
+version: 1.1.0
 description: |
   Structured data research: search sources, extract structured data,
   archive raw sources, maintain canonical tracker pages, deduplicate.
@@ -24,6 +24,7 @@ tools:
   - put_raw_data
   - file_upload
 mutating: true
+upstream: data-research@fc834ee
 ---
 
 # Data Research
@@ -49,7 +50,10 @@ All three use the same 7-phase pipeline with parameterized recipes.
 
 ### Phase 1: Define Research Recipe
 
-Ask the user what they want to track. Either:
+Infer the research target from conversation context, recent brain activity, active
+tasks (`ops/tasks.md`), and memory files. If the request is ambiguous, present the
+most likely interpretation based on what the user has been working on. Only ask for
+clarification if context is genuinely insufficient. Options:
 - Pick a built-in recipe: investor-updates, expense-tracker, company-updates
 - Define a custom recipe with: source queries, classification rules, extraction schema,
   tracker page path, tracker format

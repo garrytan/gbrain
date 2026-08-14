@@ -11,7 +11,9 @@
  *
  * Per Codex P1 #10: each subagent submit estimates max-cost from
  * `model + max_output_tokens`, accumulates per-cycle, refuses next submit
- * if cumulative > budget. Non-Anthropic models bypass the gate with a
+ * if cumulative > budget. Pricing resolves through the canonical chat table
+ * (`canonicalLookup`), so any provider carried there is gated. Only a model
+ * absent from canonical too bypasses the gate, with a
  * `BUDGET_METER_NO_PRICING` warn (once per process).
  *
  * Ledger lives at `~/.gbrain/audit/dream-budget-YYYY-Www.jsonl` (ISO-week
@@ -24,6 +26,7 @@ import { mkdirSync, appendFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { isoWeekFilename, resolveAuditDir } from '../audit-week-file.ts';
 import { estimateMaxCostUsd, ANTHROPIC_PRICING } from '../anthropic-pricing.ts';
+import { canonicalLookup } from '../model-pricing.ts';
 
 export interface BudgetMeterOpts {
   /** USD cap for the whole cycle. 0 or negative disables the gate. */
@@ -82,20 +85,57 @@ export class BudgetMeter {
   }
 
   /**
+   * Max-cost estimate for a planned submit.
+   *
+   * Prices through `canonicalLookup` first. `estimateMaxCostUsd` reads
+   * ANTHROPIC_PRICING, which CLAUDE.md defines as a DERIVED view of the one
+   * canonical chat-pricing table — so reaching for it directly made every
+   * non-Anthropic model unpriceable here even when the canonical table has
+   * its rates, and an unpriceable model disables the gate entirely (see
+   * `check`). Anthropic ids resolve identically either way, since the derived
+   * view is generated from canonical.
+   *
+   * Returns null only for models absent from the canonical table too; the
+   * caller keeps the existing warn-and-allow behaviour for those.
+   */
+  private estimateCost(estimate: SubmitEstimate): number | null {
+    const p = canonicalLookup(estimate.modelId);
+    const raw = p
+      ? (estimate.estimatedInputTokens / 1_000_000) * p.input +
+        (estimate.maxOutputTokens      / 1_000_000) * p.output
+      : estimateMaxCostUsd(
+          estimate.modelId,
+          estimate.estimatedInputTokens,
+          estimate.maxOutputTokens,
+        );
+    // A non-finite estimate must not reach the accumulator. Both tables are
+    // plain object literals, so a model id colliding with an inherited key
+    // ('constructor', 'toString', '__proto__') resolves to a truthy
+    // Object.prototype value whose .input/.output are undefined, and the
+    // arithmetic yields NaN. `cumulative + NaN` is NaN, `NaN > budget` is
+    // false, so a single such submit would silently disable the gate for the
+    // rest of the cycle. Treated as unpriceable instead, which routes into
+    // the documented warn-and-allow branch for that one submit and leaves
+    // the running total intact. (The same shape exists on the
+    // estimateMaxCostUsd path today; not changed here.)
+    return raw !== null && Number.isFinite(raw) ? raw : null;
+  }
+
+  /**
    * Check whether a planned submit fits within the remaining budget.
    * Records the attempt to the ledger regardless of allow/deny.
    * Caller is responsible for skipping the actual LLM call when allowed=false.
    */
   check(estimate: SubmitEstimate): BudgetCheckResult {
-    const cost = estimateMaxCostUsd(estimate.modelId, estimate.estimatedInputTokens, estimate.maxOutputTokens);
+    const cost = this.estimateCost(estimate);
 
-    // Codex P1 #10: non-Anthropic / unpriced models bypass the gate.
+    // Codex P1 #10: models absent from the canonical table bypass the gate.
     if (cost === null) {
       this.unpricedSubmitsThisCycle++;
       if (!_unpricedWarnings.has(estimate.modelId)) {
         _unpricedWarnings.add(estimate.modelId);
         process.stderr.write(
-          `[budget] BUDGET_METER_NO_PRICING: model "${estimate.modelId}" not in ANTHROPIC_PRICING. ` +
+          `[budget] BUDGET_METER_NO_PRICING: model "${estimate.modelId}" has no canonical pricing. ` +
           `Budget gate disabled for this submit. (Per-provider pricing modules: TODO v0.29.)\n`,
         );
       }

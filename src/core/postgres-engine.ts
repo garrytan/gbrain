@@ -56,11 +56,11 @@ import {
   COLUMN_NAME_REGEX,
   EmbeddingColumnNotRegisteredError,
 } from './search/embedding-column.ts';
-import { getFtsLanguage } from './fts-language.ts';
+import { getFtsLanguage, applyFtsLanguagePolicy } from './fts-language.ts';
 import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
-  Chunk, ChunkInput, StaleChunkRow, StalePageRow,
+  Chunk, ChunkInput, StaleChunkRow, StalePageRow, ChunklessPageRow,
   SearchResult, SearchOpts,
   Link, GraphNode, GraphPath,
   TimelineEntry, TimelineInput, TimelineOpts,
@@ -93,6 +93,8 @@ import { DELETE_BATCH_SIZE } from './engine-constants.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from './source-config-sql.ts';
 import { shouldExcludeFromOrphanReporting, loadOrphanPolicyOverrides } from './orphan-policy.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from './link-extraction.ts';
+import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
+import { QUARANTINE_FILTER_FRAGMENT } from './quarantine.ts';
 
 function escapeSqlStringLiteral(value: string): string {
   return value.replace(/'/g, "''");
@@ -107,7 +109,7 @@ export function getPostgresSchema(
     throw new Error(`Invalid embedding dimensions: ${dims}`);
   }
   const sanitizedModel = escapeSqlStringLiteral(String(model));
-  return applyChunkEmbeddingIndexPolicy(SCHEMA_SQL, parsedDims)
+  return applyFtsLanguagePolicy(applyChunkEmbeddingIndexPolicy(SCHEMA_SQL, parsedDims))
     .replace(/vector\(1536\)/g, `vector(${parsedDims})`)
     .replace(/'text-embedding-3-large'/g, `'${sanitizedModel}'`)
     .replace(/\('embedding_dimensions', '1536'\)/g, `('embedding_dimensions', '${parsedDims}')`);
@@ -535,6 +537,8 @@ export class PostgresEngine implements BrainEngine {
       oauth_clients_exists: boolean;
       oauth_clients_source_id_exists: boolean;
       oauth_clients_federated_read_exists: boolean;
+      oauth_clients_surface_exists: boolean;
+      oauth_clients_surface_set_by_exists: boolean;
       sources_exists: boolean;
       sources_archived_exists: boolean;
       sources_archived_at_exists: boolean;
@@ -589,6 +593,10 @@ export class PostgresEngine implements BrainEngine {
                 WHERE table_schema = current_schema() AND table_name = 'oauth_clients' AND column_name = 'source_id') AS oauth_clients_source_id_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema = current_schema() AND table_name = 'oauth_clients' AND column_name = 'federated_read') AS oauth_clients_federated_read_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'oauth_clients' AND column_name = 'surface') AS oauth_clients_surface_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'oauth_clients' AND column_name = 'surface_set_by') AS oauth_clients_surface_set_by_exists,
         EXISTS (SELECT 1 FROM information_schema.tables
                 WHERE table_schema = current_schema() AND table_name = 'sources') AS sources_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
@@ -624,7 +632,13 @@ export class PostgresEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.tables
                 WHERE table_schema = current_schema() AND table_name = 'timeline_entries') AS timeline_entries_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema = current_schema() AND table_name = 'timeline_entries' AND column_name = 'event_page_id') AS timeline_event_page_id_exists
+                WHERE table_schema = current_schema() AND table_name = 'timeline_entries' AND column_name = 'event_page_id') AS timeline_event_page_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema = current_schema() AND table_name = 'minion_jobs') AS minion_jobs_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'minion_jobs' AND column_name = 'timeout_at') AS minion_jobs_timeout_at_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'minion_jobs' AND column_name = 'idempotency_key') AS minion_jobs_idempotency_key_exists
     `;
     const probe = probeRows[0]!;
 
@@ -663,6 +677,17 @@ export class PostgresEngine implements BrainEngine {
     // SCHEMA_SQL crash without them.
     const needsOauthClientsBootstrap = probe.oauth_clients_exists
       && (!probe.oauth_clients_source_id_exists || !probe.oauth_clients_federated_read_exists);
+    // WP4 (v127): oauth_clients.surface + surface_set_by. No SCHEMA_SQL index
+    // references them, but the columns are migration-added AND in the blob's
+    // CREATE TABLE — the exact v121 mask class — so the bootstrap adds them
+    // defense-in-depth (and satisfies the MIGRATIONS ADD COLUMN coverage
+    // gate). They ship in one migration and go missing together.
+    const probeSurface = probe as {
+      oauth_clients_surface_exists?: boolean;
+      oauth_clients_surface_set_by_exists?: boolean;
+    };
+    const needsOauthClientsSurface = probe.oauth_clients_exists
+      && (!probeSurface.oauth_clients_surface_exists || !probeSurface.oauth_clients_surface_set_by_exists);
     // v0.26.5 (v34): sources.archived + archived_at + archive_expires_at added
     // for soft-delete lifecycle. SCHEMA_SQL's `CREATE TABLE IF NOT EXISTS sources`
     // is a no-op on pre-existing sources tables (won't add columns), so the
@@ -703,6 +728,9 @@ export class PostgresEngine implements BrainEngine {
       pages_links_extracted_at_exists?: boolean;
       timeline_entries_exists?: boolean;
       timeline_event_page_id_exists?: boolean;
+      minion_jobs_exists?: boolean;
+      minion_jobs_timeout_at_exists?: boolean;
+      minion_jobs_idempotency_key_exists?: boolean;
     };
     const needsContextualRetrievalColumns = (probe.pages_exists
         && (!probeCr.pages_cr_mode_exists || !probeCr.pages_corpus_generation_exists))
@@ -725,18 +753,28 @@ export class PostgresEngine implements BrainEngine {
     // v121: schema-blob indexes reference event_page_id before migrations run.
     const needsTimelineEventPageId = probeCr.timeline_entries_exists === true
       && !probeCr.timeline_event_page_id_exists;
+    // v7-era (#2626 class sweep): minion_jobs.timeout_at + idempotency_key are
+    // migration-added AND referenced by blob indexes (idx_minion_jobs_timeout,
+    // uniq_minion_jobs_idempotency) — a pre-v7 minion_jobs wedges blob replay
+    // exactly like the v121 incident.
+    const needsMinionJobsTimeoutAt = probeCr.minion_jobs_exists === true
+      && !probeCr.minion_jobs_timeout_at_exists;
+    const needsMinionJobsIdempotencyKey = probeCr.minion_jobs_exists === true
+      && !probeCr.minion_jobs_idempotency_key_exists;
 
     if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
         && !needsPagesDeletedAt && !needsMcpLogBootstrap && !needsSubagentProviderId
         && !needsChunksEmbeddingImage && !needsPagesRecency
         && !needsIngestLogSourceId && !needsFilesBootstrap
-        && !needsOauthClientsBootstrap && !needsSourcesArchive
+        && !needsOauthClientsBootstrap && !needsOauthClientsSurface
+        && !needsSourcesArchive
         && !needsPagesLastRetrievedAt
         && !needsPagesProvenance
         && !needsContextualRetrievalColumns && !needsPagesGeneration
         && !needsPagesEmbeddingSignature
         && !needsPagesLinksExtractedAt
-        && !needsTimelineEventPageId) return;
+        && !needsTimelineEventPageId
+        && !needsMinionJobsTimeoutAt && !needsMinionJobsIdempotencyKey) return;
 
     process.stderr.write('  Pre-v0.21 brain detected, applying forward-reference bootstrap\n');
 
@@ -900,6 +938,18 @@ export class PostgresEngine implements BrainEngine {
       `);
     }
 
+    if (needsOauthClientsSurface) {
+      // WP4 (v127): per-client MCP tool surface + operator-lock marker.
+      // Nullable TEXT, no index — bootstrap mirrors the v127 column shape so
+      // the blob's CREATE TABLE presence can't mask the forward reference on
+      // pre-v127 brains (the v121 wedge class). v127 runs later via
+      // runMigrations and is idempotent. Mirror of the PGLite bootstrap.
+      await conn.unsafe(`
+        ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS surface TEXT;
+        ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS surface_set_by TEXT;
+      `);
+    }
+
     if (needsSourcesArchive) {
       // v34 (destructive_guard_columns) promotes archive lifecycle from JSONB
       // config to real columns on sources. SCHEMA_SQL's `CREATE TABLE IF NOT EXISTS
@@ -989,6 +1039,20 @@ export class PostgresEngine implements BrainEngine {
       // source of truth for the FK and indexes and runs idempotently afterward.
       await conn.unsafe(`
         ALTER TABLE timeline_entries ADD COLUMN IF NOT EXISTS event_page_id INTEGER;
+      `);
+    }
+
+    if (needsMinionJobsTimeoutAt) {
+      // v7: blob index idx_minion_jobs_timeout references timeout_at; a
+      // pre-v7 minion_jobs wedges blob replay without it (same class as v121).
+      await conn.unsafe(`
+        ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS timeout_at TIMESTAMPTZ;
+      `);
+    }
+    if (needsMinionJobsIdempotencyKey) {
+      // v7: blob index uniq_minion_jobs_idempotency references idempotency_key.
+      await conn.unsafe(`
+        ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
       `);
     }
   }
@@ -1334,7 +1398,13 @@ export class PostgresEngine implements BrainEngine {
     const typeCondition = filters?.type ? sql`AND p.type = ${filters.type}` : sql``;
     const tagJoin = filters?.tag ? sql`JOIN tags t ON t.page_id = p.id` : sql``;
     const tagCondition = filters?.tag ? sql`AND t.tag = ${filters.tag}` : sql``;
-    const updatedCondition = updatedAfter ? sql`AND p.updated_at > ${updatedAfter}::timestamptz` : sql``;
+    // v0.45.7 keyset (updated_at, slug) supersedes updated_after when set.
+    const keyset = filters?.updatedAfterKeyset;
+    const updatedCondition = keyset
+      ? sql`AND (p.updated_at > ${keyset.updatedAt}::timestamptz OR (p.updated_at = ${keyset.updatedAt}::timestamptz AND p.slug > ${keyset.slug}))`
+      : updatedAfter
+        ? sql`AND p.updated_at > ${updatedAfter}::timestamptz`
+        : sql``;
     // slugPrefix uses the (source_id, slug) UNIQUE btree index for range scans.
     // Escape LIKE metacharacters so the user prefix is treated as a literal.
     const slugPrefix = filters?.slugPrefix;
@@ -2613,8 +2683,15 @@ export class PostgresEngine implements BrainEngine {
       const scope = sourceIds
         ? tx`p.source_id = ANY(${sourceIds}::text[])`
         : tx`p.source_id = ${scalarSourceId}`;
+      // #2544: explicit non-vector column list — rowToChunk discards
+      // embeddings at this call site (includeEmbedding defaults false), so
+      // `cc.*` shipped every vector over the wire only to be thrown away.
       const rows = await tx`
-        SELECT cc.* FROM content_chunks cc
+        SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+               cc.model, cc.token_count, cc.embedded_at, cc.language,
+               cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line,
+               cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality
+        FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
         WHERE p.slug = ${slug} AND ${scope}
         ORDER BY cc.chunk_index
@@ -2830,6 +2907,78 @@ export class PostgresEngine implements BrainEngine {
         LIMIT ${limit}
       `;
       return rows as unknown as StaleChunkRow[];
+    });
+  }
+
+  /**
+   * Shared chunkless-page-with-content predicate (mirrors PGLiteEngine).
+   * Excludes quarantined + embed_skip pages — both are intentionally
+   * chunkless by design, not drift the safety net should repair.
+   */
+  private buildChunklessPagesWhere(opts?: { sourceId?: string }): { where: string; params: unknown[] } {
+    const conds: string[] = [
+      'p.deleted_at IS NULL',
+      // healChunklessPages chunks BOTH compiled_truth and timeline (mirrors
+      // embedPage) — a timeline-only page (rare but schema-legal) has
+      // something to heal even with compiled_truth = ''.
+      `(p.compiled_truth <> '' OR p.timeline <> '')`,
+      EMBED_SKIP_FILTER_FRAGMENT,
+      QUARANTINE_FILTER_FRAGMENT,
+      'NOT EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id)',
+    ];
+    const params: unknown[] = [];
+    if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      conds.push(`p.source_id = $${params.length}`);
+    }
+    return { where: conds.join(' AND '), params };
+  }
+
+  async countChunklessPagesWithContent(opts?: { sourceId?: string }): Promise<number> {
+    const { where, params } = this.buildChunklessPagesWhere(opts);
+    // RLS scope binding (opt-in via GBRAIN_RLS_SCOPE_BINDING).
+    return await this.withScopedReadTransaction(undefined, opts?.sourceId, async (tx) => {
+      const rows = await tx.unsafe(
+        `SELECT count(*)::int AS count FROM pages p WHERE ${where}`,
+        params as Parameters<typeof tx.unsafe>[1],
+      );
+      return Number((rows[0] as { count?: number } | undefined)?.count ?? 0);
+    });
+  }
+
+  async listChunklessPagesWithContent(opts?: {
+    batchSize?: number;
+    afterPageId?: number;
+    sourceId?: string;
+  }): Promise<ChunklessPageRow[]> {
+    const { where, params } = this.buildChunklessPagesWhere(opts);
+    let afterClause = '';
+    if (opts?.afterPageId != null) {
+      params.push(opts.afterPageId);
+      afterClause = ` AND p.id > $${params.length}`;
+    }
+    // Small default (unlike the 2000-row chunk-metadata cursors elsewhere):
+    // each row here carries a FULL page body. See engine.ts docstring.
+    const limit = opts?.batchSize ?? 50;
+    params.push(limit);
+    const limitIdx = params.length;
+    // RLS scope binding (opt-in via GBRAIN_RLS_SCOPE_BINDING).
+    return await this.withScopedReadTransaction(undefined, opts?.sourceId, async (tx) => {
+      const rows = await tx.unsafe(
+        `SELECT p.id, p.slug, p.source_id, p.compiled_truth, p.timeline
+           FROM pages p
+          WHERE ${where}${afterClause}
+          ORDER BY p.id
+          LIMIT $${limitIdx}`,
+        params as Parameters<typeof tx.unsafe>[1],
+      );
+      return (rows as Record<string, unknown>[]).map(r => ({
+        id: r.id as number,
+        slug: r.slug as string,
+        source_id: (r.source_id as string | undefined) ?? 'default',
+        compiled_truth: (r.compiled_truth as string | null) ?? '',
+        timeline: (r.timeline as string | null) ?? '',
+      }));
     });
   }
 

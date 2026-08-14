@@ -109,6 +109,28 @@ describe('v0.29 — redirect hints on existing ops', () => {
   });
 });
 
+describe('#2416 — concept/landscape routing between search and query', () => {
+  test('search describes the cheap-hybrid default, not the keyword-era model', () => {
+    expect(SEARCH_DESCRIPTION).toContain("Cheap hybrid search");
+    expect(SEARCH_DESCRIPTION).toContain("no LLM expansion");
+    expect(SEARCH_DESCRIPTION).not.toContain("Keyword search using full-text search");
+  });
+
+  test('search declares the completeness boundary and both escape routes', () => {
+    expect(SEARCH_DESCRIPTION).toContain("NOT proof of coverage");
+    expect(SEARCH_DESCRIPTION).toContain("landscape");
+    expect(SEARCH_DESCRIPTION).toContain("list_pages");
+  });
+
+  test('query owns concept/landscape questions but does not oversell coverage', () => {
+    expect(QUERY_DESCRIPTION).toContain("landscape");
+    expect(QUERY_DESCRIPTION).toContain("expansion recovers synonym");
+    expect(QUERY_DESCRIPTION).toContain("Still top-K");
+    expect(QUERY_DESCRIPTION).toContain("list_pages");
+    expect(QUERY_DESCRIPTION).toContain("cheaper");
+  });
+});
+
 describe('v0.29 — subagent allow-list', () => {
   test('includes get_recent_salience and find_anomalies', () => {
     expect(BRAIN_TOOL_ALLOWLIST.has('get_recent_salience')).toBe(true);

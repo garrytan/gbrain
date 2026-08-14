@@ -65,14 +65,14 @@ For each step:
    more than 0.05.
 6. **Commit.** D8 history-intent-first 5-step atomic write — crash-safe.
 
-After each epoch with no improvement: D6 slow-update fires one meta-edit
-proposal (this lives in v0.42 follow-up; v1 emits the audit event).
+After each epoch with no improvement: D6 slow-update fires. Today it emits
+the audit event only; the full meta-edit proposal is a tracked follow-up.
 
 ## Flags
 
 | Flag | Default | Purpose |
 |---|---|---|
-| `--benchmark <path>` | `skills/<n>/skillopt-benchmark.jsonl` | Path to benchmark JSONL |
+| `--benchmark <path>` | `skills/<name>/skillopt-benchmark.jsonl` | Path to benchmark JSONL |
 | `--bootstrap-from-skill` | off | Generate a starter benchmark from SKILL.md (recommended; no routing-eval needed) |
 | `--bootstrap-tasks N` | 15 | How many starter tasks `--bootstrap-from-skill` generates (max 50) |
 | `--bootstrap-from-routing` | off | Auto-build benchmark from routing-eval.jsonl |
@@ -136,7 +136,7 @@ refuses to start when the estimate exceeds `--max-cost-usd`.
 
 - **No benchmark.** Optimizing against guesses is worse than not optimizing.
 - **Write-flavored skills.** Skills whose job is to `put_page` heavily can't
-  use the v1 read-only sandbox; mocked-write capture is a v0.42 follow-up.
+  use the read-only sandbox; mocked-write capture is a tracked follow-up.
 - **Tiny benchmarks (<10 tasks).** D_sel < 5 refuses by default; meaningful
   validation needs ≥20 tasks total per the paper.
 

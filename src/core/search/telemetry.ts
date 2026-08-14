@@ -2,8 +2,17 @@
  * v0.32.3 search-lite telemetry rollup writer.
  *
  * Architecture decision (D2 in the plan, [CDX-19]): per-process in-memory
- * bucket, flushed periodically (60s OR 100 calls, whichever first) AND on
- * process exit via beforeExit/SIGINT/SIGTERM with a 2-second timeout cap.
+ * bucket, flushed on a best-effort basis (60s timer, or FLUSH_THRESHOLD_CALLS
+ * records — the latter is a trigger, not a guarantee: a threshold-crossing
+ * record that arrives while a flush is in flight coalesces onto it and does
+ * not drain the new bucket, so a buffer can exceed the threshold). There is
+ * deliberately NO flush on process exit — `ensureExitHook` below documents why
+ * the beforeExit/SIGINT/SIGTERM drain was removed. Consequence: anything still
+ * buffered when the process exits is lost, and so is a snapshot handed to an
+ * in-flight `flush()` that has not committed yet (`flush` clears `buckets`
+ * before awaiting the write). Long-running processes (HTTP MCP server,
+ * autopilot, jobs work) are covered by the timer; a short-lived CLI invocation
+ * usually exits before either trigger fires, so its calls are simply dropped.
  * The search hot path NEVER waits on this write — `record()` is sync and
  * the flush is fire-and-forget.
  *
@@ -19,8 +28,10 @@
  * Per-process bucketing means stdio MCP, HTTP MCP, and CLI processes each
  * maintain their own buffers. Stats are directional, not exact — acceptable
  * because the consumer is the operator (or an agent running `gbrain search
- * tune`), not a financial ledger. The "lose last bucket on hard crash"
- * downside is documented in the methodology doc.
+ * tune`), not a financial ledger. Note the loss is not limited to hard
+ * crashes: with no exit drain, an ordinary exit loses whatever has not been
+ * committed. Weigh that when reading counts from a process class that exits
+ * often.
  */
 
 import type { BrainEngine } from '../engine.ts';
@@ -49,14 +60,45 @@ interface Bucket {
 const RANK1_SOLID_FLOOR = 0.6;
 const RANK1_HIGH_FLOOR = 0.85;
 
+/**
+ * WP2/T3 — reserved `mode` value for the empty-result cause rollup. Rides
+ * the existing (date, mode, intent) PK with ZERO new DDL: rows keyed
+ * (date, 'empty_result', <cause>) count empty responses by cause, and
+ * readSearchStats diverts them out of the call/intent/mode aggregates.
+ * Never collides with real modes ('conservative'|'balanced'|'tokenmax'|
+ * 'unset'). Bounded growth: 3 causes × 365 days ≈ 1.1k rows/year.
+ */
+export const EMPTY_RESULT_MODE = 'empty_result';
+
+export type EmptyResultCause = 'vector_disabled' | 'budget_dropped_all' | 'keyword_zero';
+
+/**
+ * WP2/T3 — why did this search return zero results? Precedence: a budget
+ * that dropped everything (only reachable with GBRAIN_SEARCH_SALVAGE=off;
+ * the minKeep failsafe otherwise returns 1) beats vector-unavailability
+ * beats "healthy pipeline, keyword found nothing".
+ */
+export function classifyEmptyResultCause(meta: HybridSearchMeta): EmptyResultCause {
+  const tb = meta.token_budget;
+  if (
+    (tb && tb.kept === 0 && tb.dropped > 0) ||
+    meta.degraded?.some((d) => d.stage === 'budget_dropped_all')
+  ) {
+    return 'budget_dropped_all';
+  }
+  if (!meta.vector_enabled) return 'vector_disabled';
+  return 'keyword_zero';
+}
+
 const FLUSH_INTERVAL_MS = 60_000;
 const FLUSH_THRESHOLD_CALLS = 100;
 
 /**
  * Per-process telemetry singleton. Each gbrain process (CLI, stdio MCP,
- * HTTP MCP) gets one instance. The flush timer and exit hooks are
- * installed lazily on the first `record()` call so importing this module
- * has no side effects.
+ * HTTP MCP) gets one instance. The flush timer is installed lazily by the
+ * first `setEngine()` call, not by `record()`, so importing this module has
+ * no side effects and a caller can wire an engine without recording. No exit
+ * hooks are installed — see `ensureExitHook`.
  */
 class TelemetryWriter {
   private buckets = new Map<string, Bucket>();
@@ -124,6 +166,12 @@ class TelemetryWriter {
       else b.rank1_high += 1;
     }
 
+    // WP2/T3 — empty-result cause rollup. Cache HITS are excluded: an empty
+    // hit slice is an offset-past-end artifact, not a retrieval failure.
+    if (opts.results_count === 0 && meta.cache?.status !== 'hit') {
+      this.recordEmptyResult(date, classifyEmptyResultCause(meta));
+    }
+
     this.pendingCount += 1;
     if (this.pendingCount >= FLUSH_THRESHOLD_CALLS) {
       void this.flush().catch(() => { /* swallow */ });
@@ -131,10 +179,43 @@ class TelemetryWriter {
   }
 
   /**
+   * Bump the reserved (date, EMPTY_RESULT_MODE, cause) bucket. Only `count`
+   * carries signal on these rows — every other column stays 0 and the flush
+   * SQL is unchanged (zero new DDL).
+   */
+  private recordEmptyResult(date: string, cause: EmptyResultCause): void {
+    const key = `${date}::${EMPTY_RESULT_MODE}::${cause}`;
+    let b = this.buckets.get(key);
+    if (!b) {
+      b = {
+        date,
+        mode: EMPTY_RESULT_MODE,
+        intent: cause,
+        count: 0,
+        sum_results: 0,
+        sum_tokens: 0,
+        sum_budget_dropped: 0,
+        cache_hit: 0,
+        cache_miss: 0,
+        sum_rank1_score: 0,
+        count_rank1: 0,
+        rank1_lt_solid: 0,
+        rank1_solid: 0,
+        rank1_high: 0,
+      };
+      this.buckets.set(key, b);
+    }
+    b.count += 1;
+  }
+
+  /**
    * Drain the bucket map to the database. Idempotent; concurrent flushes
-   * are coalesced via flushInFlight. The bucket map is swapped atomically
-   * before the SQL write so new `record()` calls during flush land in a
-   * fresh map.
+   * are coalesced via flushInFlight — a caller arriving mid-flush awaits the
+   * running write and does NOT get its own drain, so whatever it buffered
+   * waits for the next trigger. The bucket map is swapped atomically before
+   * the SQL write so new `record()` calls during flush land in a fresh map;
+   * that swap is also why an uncommitted snapshot is unrecoverable if the
+   * process exits mid-write.
    */
   async flush(): Promise<void> {
     if (this.flushInFlight) return this.flushInFlight;
@@ -186,7 +267,11 @@ class TelemetryWriter {
     return this.flushInFlight;
   }
 
-  /** Stop the timer and uninstall exit hooks. Called from tests / shutdown. */
+  /**
+   * Stop the timer and drop the buffer. Test-only in practice: the sole
+   * caller is `_resetTelemetryWriterForTest`. Nothing in production shuts
+   * the writer down — processes exit and the buffer goes with them.
+   */
   stop(): void {
     if (this.timer) {
       clearInterval(this.timer);
@@ -240,9 +325,9 @@ class TelemetryWriter {
     // exit immediately, not block on a DB write that may never complete.
   }
 
-  // Test-only: previously inspected by tests. Retained as a no-op so the
-  // test harness's _resetTelemetryWriterForTest doesn't need to know about
-  // the exit-hook decision.
+  // Test-only, and currently unreferenced: no test calls it and
+  // `_resetTelemetryWriterForTest` uses `stop()`. Despite the name it is not
+  // a no-op and is not wired to any exit path — it just forces a flush.
   flushOnExitForTest(): Promise<void> {
     return this.flush().catch(() => { /* swallow */ });
   }
@@ -296,6 +381,11 @@ export interface StatsWindow {
   avg_rank1_score: number | null; // null when no rank-1 samples
   rank1_count: number;
   rank1_distribution: { lt_solid: number; solid: number; high: number };
+  // WP2/T3 — empty-result responses by cause (vector_disabled /
+  // budget_dropped_all / keyword_zero). Diverted from the reserved
+  // EMPTY_RESULT_MODE rows; never counted in total_calls or the
+  // intent/mode distributions.
+  empty_results: { total: number; by_cause: Record<string, number> };
 }
 
 export async function readSearchStats(
@@ -358,8 +448,17 @@ export async function readSearchStats(
     let r1_lt = 0;
     let r1_solid = 0;
     let r1_high = 0;
+    let empty_total = 0;
+    const empty_by_cause: Record<string, number> = {};
 
     for (const r of rows) {
+      // WP2/T3 — reserved empty-result rows carry cause in the intent slot;
+      // divert them so they never skew calls/averages/distributions.
+      if (r.mode === EMPTY_RESULT_MODE) {
+        empty_total += r.count;
+        empty_by_cause[r.intent] = (empty_by_cause[r.intent] ?? 0) + r.count;
+        continue;
+      }
       total_calls += r.count;
       cache_hits += r.cache_hit;
       cache_misses += r.cache_miss;
@@ -394,6 +493,7 @@ export async function readSearchStats(
       avg_rank1_score: count_rank1 > 0 ? sum_rank1 / count_rank1 : null,
       rank1_count: count_rank1,
       rank1_distribution: { lt_solid: r1_lt, solid: r1_solid, high: r1_high },
+      empty_results: { total: empty_total, by_cause: empty_by_cause },
     };
   } catch {
     // Table missing or query failed — return empty stats rather than throw.
@@ -411,8 +511,53 @@ export async function readSearchStats(
       avg_rank1_score: null,
       rank1_count: 0,
       rank1_distribution: { lt_solid: 0, solid: 0, high: 0 },
+      empty_results: { total: 0, by_cause: {} },
     };
   }
+}
+
+/**
+ * Coverage disclosure for `readSearchStats()` consumers (`gbrain search
+ * stats` / `gbrain search tune`). This documents the buffering behavior
+ * from the module header above — it changes NO behavior, it only gives
+ * display layers a single source of truth for the caveat text instead of
+ * each caller re-describing (and risking drift on) the flush mechanics.
+ *
+ * Short-lived CLI invocations (a single `gbrain query "..."` call) usually
+ * exit before the 60s timer or the 100-call threshold fires, so their
+ * search is buffered in-memory and then lost with the process — never
+ * written to `search_telemetry`. Long-lived processes (`gbrain serve`,
+ * stdio/HTTP MCP, `gbrain jobs work`) survive long enough for the periodic
+ * flush and are captured reliably. A CLI run that itself issues 100+
+ * search calls before exiting (e.g. a bulk eval) CAN cross the threshold
+ * and flush — hence "typically", not "never".
+ */
+export const TELEMETRY_COVERAGE_NOTE =
+  'Counts are most complete for long-lived processes (gbrain serve, MCP stdio/HTTP, ' +
+  'gbrain jobs work). A single short-lived CLI invocation typically exits before the ' +
+  'telemetry buffer flushes (60s timer or 100-call threshold), so its search is ' +
+  'usually not recorded here — see search/telemetry.ts for the buffering design.';
+
+/**
+ * Short, single-line form of {@link TELEMETRY_COVERAGE_NOTE} for human CLI
+ * output (the long form is better suited to `--json`'s `reason` field).
+ * Every human-facing caveat in `gbrain search stats`/`gbrain search tune`
+ * reuses this literal string instead of paraphrasing it, so the wording
+ * cannot drift between call sites.
+ */
+export const TELEMETRY_COVERAGE_CAVEAT =
+  'Coverage favors long-lived processes (gbrain serve, MCP, jobs work) — a lone ' +
+  'short-lived CLI search call is typically not recorded.';
+
+export interface TelemetryCoverage {
+  /** Whether a lone short-lived CLI search call is reliably counted. */
+  cli_invocations: 'typically_not_recorded';
+  reason: string;
+}
+
+/** Machine-readable form of {@link TELEMETRY_COVERAGE_NOTE} for `--json` output. */
+export function telemetryCoverage(): TelemetryCoverage {
+  return { cli_invocations: 'typically_not_recorded', reason: TELEMETRY_COVERAGE_NOTE };
 }
 
 function nowDate(): string {

@@ -1,0 +1,19 @@
+{
+  "fixture_id": "gen-push-014",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "people/noor-wrenhaven",
+        "people/cosmo-hollybrook",
+        "funds/quartzgate-capital"
+      ],
+      "acceptable_slugs": [
+        "companies/windrose"
+      ]
+    },
+    "3": {
+      "should_retrieve": false
+    }
+  }
+}

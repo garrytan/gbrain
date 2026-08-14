@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-cont-002-writer",
+  "suites": [
+    "write-back",
+    "continuity"
+  ],
+  "category": "continuity",
+  "seed_pages": [
+    {
+      "slug": "companies/junipergrid-labs",
+      "content": "---\ntitle: Junipergrid Labs\ntype: company\nsummary: Seed-stage company. Founded by Leander Crestfallow.\n---\n\nJunipergrid Labs is a seed-stage company. Founded by Leander Crestfallow. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "people/leander-crestfallow",
+      "content": "---\ntitle: Leander Crestfallow\ntype: person\naliases: [leander]\nsummary: Founder of Junipergrid Labs.\n---\n\nLeander Crestfallow is the founder of Junipergrid Labs. Leander wants a technical co-founder intro before committing.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Partner meeting wrapped on the Junipergrid Labs round.",
+      "ts": "2026-05-06T15:22:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "What was the call?",
+      "ts": "2026-05-06T15:23:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "We decided to lead the Junipergrid Labs round. Standard terms, clean round. Logging it now.",
+      "ts": "2026-05-06T15:24:00Z"
+    }
+  ],
+  "continuity": {
+    "pair_id": "gen-cont-002",
+    "pair_role": "writer"
+  },
+  "holdout": true
+}

@@ -1,8 +1,8 @@
 # Headless install: Docker, CI, postinstall
 
-As of v0.37, `gbrain init --pglite` in a non-TTY context (Docker `RUN`, CI step, postinstall hook) exits 1 when no embedding-provider API key is present in the environment. This is a deliberate fail-loud — the alternative was the v0.36 silent-broken-state class where init succeeded with a default that didn't match any real key.
+`gbrain init --pglite` in a non-TTY context (Docker `RUN`, CI step, postinstall hook) exits 1 when no embedding-provider API key is present in the environment. This is a deliberate fail-loud — the alternative is a silent-broken state where init succeeds with a default that doesn't match any real key.
 
-Two patterns work for headless installs. Pick whichever fits your image lifecycle.
+Three patterns work for headless installs. Pick whichever fits your image lifecycle.
 
 ## Pattern 1: Provider key available at image build time
 
@@ -16,7 +16,7 @@ FROM oven/bun:1 AS builder
 ARG OPENAI_API_KEY
 ENV OPENAI_API_KEY=$OPENAI_API_KEY
 
-RUN bun install -g github:garrytan/gbrain
+RUN bun install -g github:garrytan/gbrain#latest-stable
 RUN gbrain init --pglite  # auto-picks OpenAI, persists config
 ```
 
@@ -26,7 +26,7 @@ RUN gbrain init --pglite  # auto-picks OpenAI, persists config
   env:
     OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
   run: |
-    bun install -g github:garrytan/gbrain
+    bun install -g github:garrytan/gbrain#latest-stable
     gbrain init --pglite
 ```
 
@@ -38,7 +38,7 @@ If the API key is a runtime secret (Kubernetes secret, runtime env injection, en
 
 ```dockerfile
 FROM oven/bun:1
-RUN bun install -g github:garrytan/gbrain
+RUN bun install -g github:garrytan/gbrain#latest-stable
 
 # Build the brain shape without a provider — schema lands at the default
 # width, but no embed callsite will actually run until runtime config.
@@ -59,6 +59,20 @@ The runtime `gbrain init --force` re-runs the init flow against the now-populate
 - Resolves the provider via env detection.
 - Re-templates the PGLite schema if dim differs from the build-time default.
 
+## Pattern 3: No key, ever (keyless mode)
+
+`--no-embedding` isn't only a deferral — it's also the install shape for **keyless mode**, a first-class supported end state (not a broken one). With zero provider keys, gbrain runs keyword-only (BM25) search and takes memory from agent-authored `## Facts` fences and write ops; embedding and extraction paths refuse cleanly instead of failing silently. Concretely: the documented always-current chain (`gbrain sync --repo <path> && gbrain embed --stale`) is safe to schedule on a keyless brain — a bare stale embed exits 0 with a stderr note instead of breaking the chain, while explicit embed requests (a slug, `--slugs`, `--all`) still exit 1.
+
+```dockerfile
+FROM oven/bun:1
+RUN bun install -g github:garrytan/gbrain#latest-stable
+RUN gbrain init --pglite --no-embedding   # keyless install — done; no runtime re-init needed
+```
+
+`gbrain bootstrap verify` (and the agent-bootstrap flow generally) prints an honest capability report for this posture — a "keyless mode" banner, per-touchpoint lines, and the one-key upsell (`src/core/capability.ts`). Keyless installs for the agent-bootstrap path are covered in `docs/guides/bootstrap.md`; this doc covers the Docker/CI shape. Adding a single provider key later upgrades in place via Pattern 2's runtime `gbrain init --force`.
+
+Since every embedding cost gate is structurally moot with no key, none of `docs/operations/spend-controls.md` applies until you add one.
+
 ## What WON'T work
 
 ```dockerfile
@@ -67,7 +81,7 @@ The runtime `gbrain init --force` re-runs the init flow against the now-populate
 RUN gbrain init --pglite
 ```
 
-If you upgrade from a pre-v0.37 image that used this pattern, `gbrain doctor` will surface the mismatch on first run after upgrade and print a paste-ready repair command (`gbrain init --force --embedding-model …` for empty brains, `gbrain retrieval-upgrade --reindex` for non-empty).
+If an older image used this pattern, `gbrain doctor` will surface the mismatch on first run after upgrade and print a paste-ready repair command — `gbrain init --force --pglite --embedding-model <model> --embedding-dimensions <dims>` for brains with no embeddings yet, `gbrain migrate embeddings --to <model> --dim <dims>` for non-empty brains.
 
 ## Verifying a headless install
 

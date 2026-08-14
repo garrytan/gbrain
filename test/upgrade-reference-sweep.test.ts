@@ -109,13 +109,14 @@ describe('postUpgradeReferenceSweep', () => {
     });
   });
 
-  it('empty skills/ dir (never scaffolded) → silent (no noise)', async () => {
+  it('empty skills/ dir (never scaffolded / opted out) → silent (no noise)', async () => {
     await withEnv({ GBRAIN_SKIP_REFERENCE_SWEEP: undefined }, async () => {
       const ws = scratchEmptyHost();
       await postUpgradeReferenceSweep({ gbrainRoot: GBRAIN_ROOT, targetWorkspace: ws });
-      // Every bundled skill reports missing-only — filter requires
-      // identical+differs > 0, so all are suppressed. Header never prints.
-      expect(logs.join('\n')).not.toContain('Skillpack reference sweep');
+      // A host with ZERO scaffolded skills has opted out. New-skill surfacing
+      // is gated on having scaffolded at least one, so this stays silent — no
+      // "N new skills" spam on every upgrade for non-skill users.
+      expect(logs.join('\n')).not.toContain('Skillpack sweep (post-upgrade)');
     });
   });
 
@@ -124,12 +125,25 @@ describe('postUpgradeReferenceSweep', () => {
       const ws = scratchHostWithSkill('book-mirror', { drift: true });
       await postUpgradeReferenceSweep({ gbrainRoot: GBRAIN_ROOT, targetWorkspace: ws });
       const out = logs.join('\n');
-      expect(out).toContain('Skillpack reference sweep');
+      expect(out).toContain('Skillpack sweep (post-upgrade)');
       expect(out).toContain('book-mirror');
       expect(out).toContain('differs:1'); // the one edited file
       expect(out).toContain('gbrain skillpack reference <slug>');
       expect(out).toContain('_AGENT_README.md');
       expect(out).toContain('GBRAIN_SKIP_REFERENCE_SWEEP');
+    });
+  });
+
+  it('host with a scaffolded skill → surfaces new bundled skills + the sync command', async () => {
+    await withEnv({ GBRAIN_SKIP_REFERENCE_SWEEP: undefined }, async () => {
+      // book-mirror scaffolded (so the host is a skills user), every OTHER
+      // bundled skill is `new` → surfacing kicks in.
+      const ws = scratchHostWithSkill('book-mirror');
+      await postUpgradeReferenceSweep({ gbrainRoot: GBRAIN_ROOT, targetWorkspace: ws });
+      const out = logs.join('\n');
+      expect(out).toContain('Skillpack sweep (post-upgrade)');
+      expect(out).toContain('new built-in skill');
+      expect(out).toContain('gbrain skillpack sync');
     });
   });
 
@@ -140,7 +154,7 @@ describe('postUpgradeReferenceSweep', () => {
         gbrainRoot: GBRAIN_ROOT,
         targetWorkspace: GBRAIN_ROOT,
       });
-      expect(logs.join('\n')).not.toContain('Skillpack reference sweep');
+      expect(logs.join('\n')).not.toContain('Skillpack sweep (post-upgrade)');
     });
   });
 

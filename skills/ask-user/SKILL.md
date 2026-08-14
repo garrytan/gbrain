@@ -11,7 +11,6 @@ triggers:
   - "ask before proceeding"
   - "choice gate"
   - "user decision"
-priority: 50
 ---
 
 # Ask User — Choice Gate Pattern

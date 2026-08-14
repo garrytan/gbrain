@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BudgetMeter, _resetBudgetMeterWarningsForTest, ANTHROPIC_PRICING } from '../src/core/cycle/budget-meter.ts';
+import { estimateMaxCostUsd } from '../src/core/anthropic-pricing.ts';
 
 let tmpDir: string;
 let auditPath: string;
@@ -58,6 +59,65 @@ describe('BudgetMeter', () => {
     expect(r1.unpriced).toBe(true);
     expect(r2.allowed).toBe(true);
     expect(meter.unpricedSubmits).toBe(2);
+  });
+
+  test('a canonical-priced non-Anthropic model is gated, not waved through', () => {
+    // openai:gpt-5.2 is in CANONICAL_PRICING but not in the derived
+    // ANTHROPIC_PRICING view, so the pre-canonical lookup returned null and
+    // check() took the unpriced bypass: allowed, cost 0, gate disabled.
+    const meter = new BudgetMeter({ budgetUsd: 0.001, phase: 'auto_think', auditPath });
+    const r = meter.check({
+      modelId: 'openai:gpt-5.2',
+      estimatedInputTokens: 1_000_000,
+      maxOutputTokens: 1_000_000,
+      label: 'canonical-priced',
+    });
+    expect(r.unpriced).toBeFalsy();
+    expect(r.estimatedCostUsd).toBeGreaterThan(0);
+    expect(r.allowed).toBe(false);          // 1M+1M tokens cannot fit $0.001
+    expect(meter.unpricedSubmits).toBe(0);
+    expect(readLedger().at(-1)!.event).toBe('submit_denied');
+  });
+
+  test('a model absent from the canonical table keeps the documented bypass', () => {
+    // Unchanged behaviour: gemini-3-pro is in neither table. Whether these
+    // should also be gated (via a conservative fallback rate, as
+    // synthesize-concepts and skillopt/preflight do) is a policy call and is
+    // deliberately not decided here.
+    const meter = new BudgetMeter({ budgetUsd: 0.001, phase: 'auto_think', auditPath });
+    const r = meter.check({ modelId: 'gemini-3-pro', estimatedInputTokens: 1000, maxOutputTokens: 1000, label: 'absent' });
+    expect(r.unpriced).toBe(true);
+    expect(r.allowed).toBe(true);
+    expect(readLedger().at(-1)!.event).toBe('submit_unpriced');
+  });
+
+  test('Anthropic ids price identically through canonical and the derived view', () => {
+    // The derived view is generated from canonical, so routing through
+    // canonicalLookup must not move any Anthropic number.
+    const meter = new BudgetMeter({ budgetUsd: 1000, phase: 'auto_think', auditPath });
+    const r = meter.check({ modelId: 'claude-opus-4-7', estimatedInputTokens: 5000, maxOutputTokens: 4000, label: 'parity' });
+    const viaView = estimateMaxCostUsd('claude-opus-4-7', 5000, 4000);
+    expect(viaView).not.toBeNull();
+    expect(r.estimatedCostUsd).toBeCloseTo(viaView!, 10);
+  });
+
+  test('an inherited-key model id cannot poison the running total', () => {
+    // Both pricing tables are object literals, so 'constructor' resolves to a
+    // truthy Object.prototype value and the rate arithmetic yields NaN. If
+    // that reached cumulativeUsd, every later submit would pass the gate.
+    const meter = new BudgetMeter({ budgetUsd: 0.001, phase: 'auto_think', auditPath });
+    const poison = meter.check({ modelId: 'constructor', estimatedInputTokens: 1000, maxOutputTokens: 1000, label: 'poison' });
+    expect(poison.unpriced).toBe(true);              // treated as unpriceable
+    expect(Number.isFinite(poison.cumulativeCostUsd)).toBe(true);
+
+    const after = meter.check({
+      modelId: 'claude-opus-4-7',
+      estimatedInputTokens: 1_000_000,
+      maxOutputTokens: 1_000_000,
+      label: 'after-poison',
+    });
+    expect(after.allowed).toBe(false);               // gate still enforcing
+    expect(Number.isFinite(after.cumulativeCostUsd)).toBe(true);
   });
 
   test('ledger captures every submit (allowed + denied + unpriced)', () => {

@@ -26,6 +26,8 @@ Any agent doing search-adjacent work in a gbrain brain consults this convention:
 
 The 3 bundles live in `src/core/search/mode.ts` as `MODE_BUNDLES` (frozen).
 Don't redefine them per-install; that breaks the public methodology numbers.
+The canonical knob table (with cost anchors) lives in
+`docs/guides/search-modes.md` — update that first if the bundles change.
 
 | Knob                          | `conservative` | `balanced` | `tokenmax`     |
 |-------------------------------|----------------|------------|----------------|
@@ -35,6 +37,7 @@ Don't redefine them per-install; that breaks the public methodology numbers.
 | `intentWeighting`             | true           | true       | true           |
 | `tokenBudget`                 | **4000**       | **12000**  | **off**        |
 | `expansion` (LLM multi-query) | false          | false      | **true**       |
+| `relationalRetrieval`         | false          | **true**   | **true**       |
 | `searchLimit` default         | 10             | 25         | 50             |
 
 **Cache, intent weighting, and similarity threshold are constant across modes**

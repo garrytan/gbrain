@@ -13,9 +13,29 @@
 #
 # Env overrides:
 #   SHARDS=N                     same as --shards
-#   GBRAIN_TEST_SHARD_TIMEOUT    per-shard wallclock cap, seconds (default 1500)
+#   GBRAIN_TEST_SHARD_TIMEOUT    per-shard wallclock cap, seconds (default 3000)
 #   GBRAIN_TEST_SHARD_KILL_AFTER grace after TERM before KILL (default 30)
 #   GBRAIN_TEST_MAX_CONCURRENCY  passed through to bun test (default 4)
+#   GBRAIN_TEST_MEM_PER_FILE_MB  memory budget per concurrent test file used by
+#                                the adaptive sizing below (default 1536 — a
+#                                PGLite WASM instance reserves ~1-1.5GB)
+#   GBRAIN_TEST_NO_MEM_ADAPT=1   disable memory-aware concurrency reduction
+#   GBRAIN_TEST_NO_OOM_FALLBACK=1 disable the serial OOM-rescue pass
+#
+# Memory safety (two layers; both default-on):
+#   1. ADAPTIVE SIZING — before spawning, total concurrency (shards ×
+#      intra-shard --max-concurrency) is capped to what available memory can
+#      hold at GBRAIN_TEST_MEM_PER_FILE_MB per concurrent file. Concurrent
+#      Conductor workspaces running their own suites shrink the budget
+#      automatically instead of OOMing each other.
+#   2. SERIAL PHANTOM RESCUE — two phantom classes are re-run serially
+#      (--max-concurrency 1) after the parallel pass: (a) failures whose
+#      shard log carries the PGLite WASM out-of-memory signature, and
+#      (b) shards killed EXTERNALLY (SIGTERM/SIGKILL well before the shard
+#      timeout — sibling Conductor workspaces' process cleanup, macOS memory
+#      jetsam). Phantoms pass serially and the run goes green with an
+#      oom_rescued note; real failures fail again and stay red. Plain
+#      assertion failures never match either signature.
 #
 # Output files (workspace-local; falls back to /tmp if .context/ unwritable):
 #   .context/test-failures.log   failure blocks (cleared at start)
@@ -36,6 +56,35 @@ detect_cpus() {
   n=$(sysctl -n hw.physicalcpu 2>/dev/null) && [ -n "$n" ] && [ "$n" -gt 0 ] && echo "$n" && return
   n=$(nproc 2>/dev/null) && [ -n "$n" ] && [ "$n" -gt 0 ] && echo "$n" && return
   echo 4
+}
+
+# ──────────────────────────────────────────────────────────────────────────
+# Available-memory detection (MB). macOS: vm_stat free + inactive +
+# speculative + purgeable pages (inactive/purgeable are reclaimable on
+# pressure, which is exactly the scenario we size for). Linux: MemAvailable.
+# Unknown platform → 0, and the caller skips adaptation entirely.
+# ──────────────────────────────────────────────────────────────────────────
+detect_available_mem_mb() {
+  if command -v vm_stat >/dev/null 2>&1; then
+    vm_stat 2>/dev/null | awk '
+      /page size of/ { psize = $8 }
+      /Pages free/        { free = $NF }
+      /Pages inactive/    { inactive = $NF }
+      /Pages speculative/ { spec = $NF }
+      /Pages purgeable/   { purge = $NF }
+      END {
+        gsub(/\./, "", free); gsub(/\./, "", inactive)
+        gsub(/\./, "", spec); gsub(/\./, "", purge)
+        if (psize == 0) psize = 16384
+        printf "%d\n", (free + inactive + spec + purge) * psize / 1048576
+      }'
+    return
+  fi
+  if [ -r /proc/meminfo ]; then
+    awk '/MemAvailable/ { printf "%d\n", $2 / 1024; found = 1 } END { if (!found) print 0 }' /proc/meminfo
+    return
+  fi
+  echo 0
 }
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -76,13 +125,63 @@ INTRA_CONC="${MAX_CONCURRENCY_OVERRIDE:-${GBRAIN_TEST_MAX_CONCURRENCY:-4}}"
 # 4-shard default each shard runs 159 files / ~2420 tests with internal
 # wallclock 960-1020s. The 900s value (sized for 8-shard's ~80 files /
 # 1100 tests at 620-770s) false-killed shard 1 at 900s even though it
-# had completed in 968s. 1500s cap gives ~55% headroom over observed
-# 4-shard wallclock; real hangs still hit it. Override via
-# GBRAIN_TEST_SHARD_TIMEOUT=N.
-SHARD_TIMEOUT="${GBRAIN_TEST_SHARD_TIMEOUT:-1500}"
+# had completed in 968s. The cap must track suite growth: the suite roughly
+# tripled since the 1500s cap was set (June: ~3900 tests, 92-migration PGLite
+# replay; now: 13k+ tests with the agent-bootstrap wave, 120-migration replay
+# per PGLite init). The split balances file COUNT, not weight — the heaviest
+# count-balanced shard is still making steady per-test progress at 1800s under
+# 4-way contention while its siblings finish at 1150-1550s. 3000s keeps the
+# ~55%-headroom doctrine over observed wallclock; genuinely hung TESTS still
+# die at bun's per-test timeout, mid-run stalls still hit this cap, and
+# post-completion exit-hangs are classified separately (see the EXIT-HANG
+# block below). Override via GBRAIN_TEST_SHARD_TIMEOUT=N.
+SHARD_TIMEOUT="${GBRAIN_TEST_SHARD_TIMEOUT:-3000}"
 SHARD_KILL_AFTER="${GBRAIN_TEST_SHARD_KILL_AFTER:-30}"
 if ! printf '%s' "$SHARD_KILL_AFTER" | grep -qE '^[0-9]+$' || [ "$SHARD_KILL_AFTER" -lt 1 ]; then
   echo "ERROR: invalid shard kill-after: $SHARD_KILL_AFTER" >&2; exit 2
+fi
+
+# ──────────────────────────────────────────────────────────────────────────
+# Memory-aware concurrency (layer 1). Total concurrent test files =
+# N shards × INTRA_CONC; each concurrent file can hold a PGLite WASM
+# instance (~1-1.5GB reserved). 4×4 = 16 concurrent instances OOM'd on a
+# 128GB machine when other Conductor workspaces ran their suites at the
+# same time — every PGLite connect across every shard failed at once
+# ("Out of memory" at PGlite.create). Cap total concurrency to what's
+# actually available, keeping a 4GB reserve for the OS + bun itself.
+# Applies to explicit --shards overrides too (an operator who wants an
+# over-committed run sets GBRAIN_TEST_NO_MEM_ADAPT=1).
+# ──────────────────────────────────────────────────────────────────────────
+MEM_PER_FILE_MB="${GBRAIN_TEST_MEM_PER_FILE_MB:-1536}"
+MEM_NOTE=""
+if [ "${GBRAIN_TEST_NO_MEM_ADAPT:-0}" != "1" ]; then
+  AVAIL_MB=$(detect_available_mem_mb)
+  if [ "${AVAIL_MB:-0}" -gt 0 ] 2>/dev/null; then
+    BUDGET_MB=$((AVAIL_MB - 4096))
+    [ "$BUDGET_MB" -lt "$MEM_PER_FILE_MB" ] && BUDGET_MB="$MEM_PER_FILE_MB"
+    MAX_TOTAL=$((BUDGET_MB / MEM_PER_FILE_MB))
+    [ "$MAX_TOTAL" -lt 1 ] && MAX_TOTAL=1
+    ORIG_N="$N"; ORIG_INTRA="$INTRA_CONC"
+    # Shed shards before intra-shard concurrency: fewer bun processes frees
+    # more than narrower ones (each process carries its own heap + WASM).
+    while [ $((N * INTRA_CONC)) -gt "$MAX_TOTAL" ]; do
+      if [ "$N" -gt 1 ]; then N=$((N - 1))
+      elif [ "$INTRA_CONC" -gt 1 ]; then INTRA_CONC=$((INTRA_CONC - 1))
+      else break
+      fi
+    done
+    if [ "$N" != "$ORIG_N" ] || [ "$INTRA_CONC" != "$ORIG_INTRA" ]; then
+      # Fewer shards → more files per shard → each shard legitimately runs
+      # longer. Scale the per-shard cap by the shed ratio so adaptation
+      # doesn't convert memory safety into false WEDGED verdicts.
+      if [ "$N" -lt "$ORIG_N" ]; then
+        SHARD_TIMEOUT=$((SHARD_TIMEOUT * ORIG_N / N))
+      fi
+      MEM_NOTE=" | mem-adapted ${ORIG_N}x${ORIG_INTRA}→${N}x${INTRA_CONC} (avail=${AVAIL_MB}MB, ${MEM_PER_FILE_MB}MB/file, timeout→${SHARD_TIMEOUT}s)"
+    else
+      MEM_NOTE=" | mem-ok (avail=${AVAIL_MB}MB)"
+    fi
+  fi
 fi
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -100,7 +199,7 @@ else
   mkdir -p "$LOG_DIR" || { echo "ERROR: cannot create log dir" >&2; exit 2; }
 fi
 # Clear from prior run.
-rm -f "$LOG_DIR"/shard-*.log "$LOG_DIR"/shard-*.exit "$LOG_DIR"/shard-*.wedged 2>/dev/null
+rm -f "$LOG_DIR"/shard-*.log "$LOG_DIR"/shard-*.exit "$LOG_DIR"/shard-*.wedged "$LOG_DIR"/shard-*.lastkb "$LOG_DIR"/shard-*.lastprogress "$LOG_DIR"/shard-*.start "$LOG_DIR"/shard-*.end 2>/dev/null
 : > "$FAILURES_LOG"
 : > "$SUMMARY_FILE"
 
@@ -114,7 +213,7 @@ elif command -v timeout >/dev/null 2>&1; then TIMEOUT_BIN="timeout"
 fi
 
 START_TS=$(date +%s)
-echo "[unit-parallel] N=$N shards | --max-concurrency=$INTRA_CONC | timeout=${SHARD_TIMEOUT}s | kill-after=${SHARD_KILL_AFTER}s | logs=$LOG_DIR" >&2
+echo "[unit-parallel] N=$N shards | --max-concurrency=$INTRA_CONC | timeout=${SHARD_TIMEOUT}s | kill-after=${SHARD_KILL_AFTER}s | logs=$LOG_DIR${MEM_NOTE}" >&2
 
 if [ "$DRY_RUN" = "1" ]; then
   echo "[unit-parallel] dry-run: would spawn $N shards with the above settings."
@@ -133,6 +232,7 @@ SHARD_PIDS=()
 for i in $(seq 1 "$N"); do
   (
     SHARD_LOG="$LOG_DIR/shard-$i.log"
+    date +%s > "$LOG_DIR/shard-$i.start"
     if [ -n "$TIMEOUT_BIN" ]; then
       "$TIMEOUT_BIN" --signal=TERM --kill-after="${SHARD_KILL_AFTER}s" "${SHARD_TIMEOUT}s" \
         env SHARD="$i/$N" \
@@ -162,6 +262,7 @@ for i in $(seq 1 "$N"); do
       kill "$cap_pid" 2>/dev/null
       wait "$cap_pid" 2>/dev/null
     fi
+    date +%s > "$LOG_DIR/shard-$i.end"
     echo "$rc" > "$LOG_DIR/shard-$i.exit"
     { [ "$rc" = "124" ] || [ "$rc" = "137" ]; } && echo "WEDGED" > "$LOG_DIR/shard-$i.wedged"
   ) &
@@ -272,6 +373,15 @@ heartbeat() {
           local pglite; pglite=$(shard_pglite_init_count "$lf")
           local kb; kb=$(log_size_kb "$lf")
           local et; et=$(fmt_elapsed "$hb_elapsed")
+          # Progress stamp for the exit-hang classifier: any log growth counts
+          # as progress. A wedged shard whose log went silent (≥ idle window)
+          # with zero fails did its work and hung at exit.
+          local prev_kb=""
+          [ -f "$LOG_DIR/shard-$i.lastkb" ] && prev_kb=$(cat "$LOG_DIR/shard-$i.lastkb" 2>/dev/null)
+          if [ "$kb" != "$prev_kb" ]; then
+            echo "$kb" > "$LOG_DIR/shard-$i.lastkb"
+            echo "$now" > "$LOG_DIR/shard-$i.lastprogress"
+          fi
           if [ "$total" -gt 0 ]; then
             line="$line [s$i: ~${pglite}/${total}f ${kb}KB ${et}]"
           else
@@ -316,6 +426,69 @@ TOTAL_FAILURES=0
 TOTAL_PASS=0
 TOTAL_SKIP=0
 TOTAL_RC=0
+
+# Layer 2 state (serial OOM rescue). A shard whose log carries the WASM
+# out-of-memory signature gets its failing files queued for a serial re-run;
+# NON_OOM_FAIL records that at least one failure exists that the rescue lane
+# must NOT absolve (plain assertion failures, wedges without the signature).
+OOM_RE='Out of memory|WebAssembly\.Memory|RuntimeError: [Aa]borted|Aborted\(\)'
+OOM_RESCUE_LIST="$LOG_DIR/oom-rescue-files.txt"
+: > "$OOM_RESCUE_LIST"
+NON_OOM_FAIL=0
+# Set when any shard was killed externally — killed-midrun shards leave lock/
+# state residue that can poison the LATER serial pass, so serial failures are
+# only rescue-eligible under this flag (or their own OOM signature). A flaky
+# serial test in an otherwise-clean run must stay red.
+EXTERNAL_KILL_ANY=0
+
+# failing_files_in_log: attribute each `(fail)` block to the test file whose
+# `path.test.ts:` header most recently preceded it in bun's output. Under
+# GITHUB_ACTIONS the shard wraps each file section as `::group::path.test.ts:`
+# — strip that prefix or the rescue pass feeds bun literal `::group::...`
+# non-paths that match zero test files (CI-only; local runs have no groups).
+failing_files_in_log() {
+  local file="$1"
+  [ -f "$file" ] || return 0
+  awk '
+    /^(::group::)?[^ ].*\.test\.ts:$/ {
+      current = $0
+      sub(/^::group::/, "", current)
+      current = substr(current, 1, length(current) - 1)
+      next
+    }
+    /^\(fail\) / && current != "" { print current }
+  ' "$file" | sort -u
+}
+
+# shard_unstarted_files: completion evidence for the EXIT-HANG classifier.
+# Prints every file assigned to shard $1 (same deterministic split the shard
+# itself used, via --dry-run-list) whose started file-header never appeared
+# in the shard log $2. Bun prints `path.test.ts:` as each file starts; under
+# GITHUB_ACTIONS that header is wrapped as `::group::path.test.ts:` — both
+# forms count as started. Fail-closed: an underivable assigned list or a
+# missing log emits markers so the caller treats the shard as WEDGED rather
+# than warn-passing without evidence.
+shard_unstarted_files() {
+  local shard_idx="$1" log="$2"
+  local assigned
+  assigned=$(SHARD="$shard_idx/$N" bash scripts/run-unit-shard.sh --dry-run-list 2>/dev/null)
+  if [ -z "$assigned" ]; then
+    echo "(assigned-file-list-underivable)"
+    return
+  fi
+  if [ ! -f "$log" ]; then
+    printf '%s\n' "$assigned"
+    return
+  fi
+  local af
+  while IFS= read -r af; do
+    [ -n "$af" ] || continue
+    if ! grep -qxF "${af}:" "$log" && ! grep -qxF "::group::${af}:" "$log"; then
+      printf '%s\n' "$af"
+    fi
+  done <<< "$assigned"
+}
+
 for i in $(seq 1 "$N"); do
   SHARD_LOG="$LOG_DIR/shard-$i.log"
   EXIT_FILE="$LOG_DIR/shard-$i.exit"
@@ -330,15 +503,119 @@ for i in $(seq 1 "$N"); do
   TOTAL_FAILURES=$((TOTAL_FAILURES + fail_count))
   TOTAL_SKIP=$((TOTAL_SKIP + skip_count))
 
+  shard_oom=0
+  if [ "$rc" != "0" ] && [ "${GBRAIN_TEST_NO_OOM_FALLBACK:-0}" != "1" ] \
+     && [ -f "$SHARD_LOG" ] && grep -qE "$OOM_RE" "$SHARD_LOG"; then
+    shard_oom=1
+  fi
+
+  # External-kill detection: rc 143 (SIGTERM) / 137 (SIGKILL) with the shard
+  # dying before 80% of the shard timeout means something OUTSIDE the runner
+  # killed it — sibling Conductor workspaces' process cleanup and macOS
+  # memory jetsam both present exactly this way (observed: 3 shards TERM'd +
+  # 1 KILL'd at ~700s under a 3000s cap, all mid-progress). A REAL wedge is
+  # killed BY the runner at ~SHARD_TIMEOUT and stays red. Externally-killed
+  # shards are phantoms: queue for the serial rescue lane like OOM.
+  shard_external_kill=0
+  if [ "$shard_oom" = "0" ] && [ "${GBRAIN_TEST_NO_OOM_FALLBACK:-0}" != "1" ] \
+     && { [ "$rc" = "143" ] || [ "$rc" = "137" ]; }; then
+    s_start=$(cat "$LOG_DIR/shard-$i.start" 2>/dev/null) || s_start=""
+    s_end=$(cat "$LOG_DIR/shard-$i.end" 2>/dev/null) || s_end=""
+    if [ -n "$s_start" ] && [ -n "$s_end" ]; then
+      s_elapsed=$((s_end - s_start))
+      if [ "$s_elapsed" -lt $((SHARD_TIMEOUT * 80 / 100)) ]; then
+        shard_external_kill=1
+        EXTERNAL_KILL_ANY=1
+      fi
+    fi
+  fi
+
   if [ -f "$WEDGED_FILE" ]; then
+    # EXIT-HANG classifier (pre-existing PGLite-adjacent leak, TODOS.md
+    # "unit-shard exit hang"): a shard killed by the watchdog whose log shows
+    # every assigned file STARTED and zero (fail) markers did all its work and
+    # then failed to exit (a leaked ref'd handle; reproduces on master with
+    # the same file combination). Bun's per-test --timeout turns a genuinely
+    # hung TEST into a (fail), so this cannot mask one — the residual
+    # maskable case is a file-level import hang in the very last file, which
+    # the loud banner keeps visible. Classified shards warn instead of
+    # red-Xing the run; their pass counts are undercounted (bun never printed
+    # its final summary before the kill).
+    inline_fails=$(grep_count '^\(fail\) ' "$SHARD_LOG")
+    # Idle window: the log stopped growing this long before the kill. Bun's
+    # per-test --timeout turns a hung TEST into a printed (fail) — new output —
+    # so a silent-with-zero-fails shard was done with its work.
+    idle_secs=-1
+    if [ -f "$LOG_DIR/shard-$i.lastprogress" ] && [ -f "$WEDGED_FILE" ]; then
+      last_prog=$(cat "$LOG_DIR/shard-$i.lastprogress" 2>/dev/null || echo 0)
+      kill_ts=$(stat -f %m "$WEDGED_FILE" 2>/dev/null || stat -c %Y "$WEDGED_FILE" 2>/dev/null || echo 0)
+      [ "$kill_ts" -gt 0 ] && [ "$last_prog" -gt 0 ] && idle_secs=$((kill_ts - last_prog))
+    fi
+    # Warn-pass gate: rescue-eligible kills (OOM signature / external kill)
+    # are excluded so they reach the serial rescue queue below instead of
+    # being absolved without a re-run.
+    if [ "$fail_count" = "0" ] && [ "$inline_fails" = "0" ] && [ "$idle_secs" -ge 300 ] \
+       && [ "$shard_oom" = "0" ] && [ "$shard_external_kill" = "0" ]; then
+      # Completion evidence (fail-closed): warn-pass additionally requires
+      # every assigned file to have STARTED (its file-header appears in the
+      # log). A silent idle window can also mean the shard wedged before
+      # reaching its last files — that stays a hard WEDGE.
+      unstarted=$(shard_unstarted_files "$i" "$SHARD_LOG")
+      if [ -z "$unstarted" ]; then
+        {
+          echo "⚠️  shard $i/$N: EXIT-HANG after ${SHARD_TIMEOUT}s — log silent for ${idle_secs}s with 0 failures"
+          echo "    and every assigned file started; the process finished its work, leaked a handle, and"
+          echo "    never exited (pre-existing, master-reproducible; see TODOS.md 'unit-shard exit hang')."
+          echo "    Treating as pass-with-warning."
+        } >&2
+        echo "shard $i/$N: EXIT-HANG (idle ${idle_secs}s, 0 fails, all files started) rc=$rc — warn-pass" >> "$SUMMARY_FILE"
+        continue
+      fi
+      unstarted_count=$(printf '%s\n' "$unstarted" | grep -c .)
+      {
+        echo "⚠️  shard $i/$N: watchdog-killed with 0 fails and idle ${idle_secs}s, but ${unstarted_count} assigned"
+        echo "    file(s) never started — classifying WEDGED, not EXIT-HANG:"
+        printf '%s\n' "$unstarted" | sed 's/^/      /'
+      } >&2
+    fi
     TOTAL_RC=1
+    if [ "$shard_external_kill" = "1" ]; then
+      SHARD="$i/$N" bash scripts/run-unit-shard.sh --dry-run-list 2>/dev/null >> "$OOM_RESCUE_LIST"
+      echo "shard $i/$N: KILLED externally after ${s_elapsed}s (rc=$rc, well before ${SHARD_TIMEOUT}s cap — queued for serial rescue)" >> "$SUMMARY_FILE"
+    elif [ "$shard_oom" = "1" ]; then
+      # Wedged UNDER memory pressure: we can't attribute failures, so queue
+      # the shard's entire file list for the serial rescue pass.
+      SHARD="$i/$N" bash scripts/run-unit-shard.sh --dry-run-list 2>/dev/null >> "$OOM_RESCUE_LIST"
+      echo "shard $i/$N: WEDGED after ${SHARD_TIMEOUT}s (rc=$rc, OOM signature — queued for serial rescue)" >> "$SUMMARY_FILE"
+    else
+      NON_OOM_FAIL=1
+      echo "shard $i/$N: WEDGED after ${SHARD_TIMEOUT}s (rc=$rc)" >> "$SUMMARY_FILE"
+    fi
     {
       echo "--- shard $i: WEDGED after ${SHARD_TIMEOUT}s ---"
       [ -f "$SHARD_LOG" ] && tail -50 "$SHARD_LOG"
       echo ""
     } >> "$FAILURES_LOG"
-    echo "shard $i/$N: WEDGED after ${SHARD_TIMEOUT}s (rc=$rc)" >> "$SUMMARY_FILE"
     continue
+  fi
+
+  if [ "$rc" != "0" ]; then
+    if [ "$shard_oom" = "1" ]; then
+      # One scan, reused for both the queue append and the emptiness check.
+      shard_failing_files=$(failing_files_in_log "$SHARD_LOG")
+      if [ -n "$shard_failing_files" ]; then
+        printf '%s\n' "$shard_failing_files" >> "$OOM_RESCUE_LIST"
+      else
+        # OOM signature but no attributable files (e.g. bun died before any
+        # file header) → rescue the whole shard.
+        SHARD="$i/$N" bash scripts/run-unit-shard.sh --dry-run-list 2>/dev/null >> "$OOM_RESCUE_LIST"
+      fi
+    elif [ "$shard_external_kill" = "1" ]; then
+      SHARD="$i/$N" bash scripts/run-unit-shard.sh --dry-run-list 2>/dev/null >> "$OOM_RESCUE_LIST"
+      echo "shard $i/$N: KILLED externally after ${s_elapsed}s (rc=$rc — queued for serial rescue)" >> "$SUMMARY_FILE"
+    else
+      NON_OOM_FAIL=1
+    fi
   fi
 
   echo "shard $i/$N: pass=$pass_count fail=$fail_count skip=$skip_count rc=$rc" >> "$SUMMARY_FILE"
@@ -395,6 +672,17 @@ if [ "$SERIAL_FILES_COUNT" -gt 0 ]; then
   cat "$LOG_DIR/serial.log"
   if [ "$SERIAL_RC" != "0" ]; then
     TOTAL_RC=1
+    if [ "${GBRAIN_TEST_NO_OOM_FALLBACK:-0}" != "1" ] \
+       && { grep -qE "$OOM_RE" "$LOG_DIR/serial.log" || [ "$EXTERNAL_KILL_ANY" = "1" ]; }; then
+      # Serial failures are rescue-eligible ONLY with their own OOM signature
+      # or when an externally-killed shard ran earlier in this invocation
+      # (killed-midrun shards leave lock/state residue that poisons the serial
+      # pass). A merely-OOM'd sibling shard is NOT grounds — a flaky serial
+      # test must stay red rather than get silently absolved.
+      failing_files_in_log "$LOG_DIR/serial.log" >> "$OOM_RESCUE_LIST"
+    else
+      NON_OOM_FAIL=1
+    fi
     s_fail=$(bun_summary_count "fail" "$LOG_DIR/serial.log")
     TOTAL_FAILURES=$((TOTAL_FAILURES + s_fail))
     if [ "$s_fail" -gt 0 ]; then
@@ -420,6 +708,92 @@ if [ "$SERIAL_FILES_COUNT" -gt 0 ]; then
   fi
 fi
 
+# ──────────────────────────────────────────────────────────────────────────
+# Layer 2: serial OOM rescue. Re-run every file that failed inside an
+# OOM-signature shard, one at a time (1 shard, --max-concurrency 1), after
+# the parallel fan-out has fully drained. Phantom failures (the WASM ran out
+# of memory because 16 instances were up at once) pass here and the run goes
+# green with an oom_rescued note; real failures fail again and stay red.
+# ──────────────────────────────────────────────────────────────────────────
+OOM_RESCUED=0
+OOM_RESCUE_NOTE=""
+sort -u "$OOM_RESCUE_LIST" -o "$OOM_RESCUE_LIST" 2>/dev/null
+# grep -c exits 1 on zero matches — assign in two steps so an empty rescue
+# list yields a single "0" (the grep_count double-output bug, same class).
+RESCUE_COUNT=$(grep -c . "$OOM_RESCUE_LIST" 2>/dev/null) || RESCUE_COUNT=0
+if [ "$TOTAL_RC" != "0" ] && [ "${RESCUE_COUNT:-0}" -gt 0 ]; then
+  echo "════════════ OOM rescue pass ($RESCUE_COUNT files, serial) ════════════"
+  echo "[unit-parallel] OOM signature detected — re-running $RESCUE_COUNT failing file(s) at --max-concurrency 1" >&2
+  RESCUE_LOG="$LOG_DIR/oom-rescue.log"
+  # 60s-per-file floor with the shard cap as a minimum, and 2x the shard cap
+  # as a CEILING: a wedged shard queueing its whole file list must not turn
+  # `bun run test` into an unbounded multi-hour serial re-run — hitting the
+  # ceiling reads as a red rescue, not silence.
+  RESCUE_TIMEOUT=$((RESCUE_COUNT * 60))
+  [ "$RESCUE_TIMEOUT" -lt "$SHARD_TIMEOUT" ] && RESCUE_TIMEOUT="$SHARD_TIMEOUT"
+  [ "$RESCUE_TIMEOUT" -gt $((SHARD_TIMEOUT * 2)) ] && RESCUE_TIMEOUT=$((SHARD_TIMEOUT * 2))
+  # Split the queue: *.serial.test.ts files require one bun PROCESS per file
+  # (run-serial-tests.sh's isolation contract — top-level mock.module leaks
+  # across files in a shared registry); the remainder batches in one process.
+  # Both lanes mirror the shard invocation's --timeout=60000 — bun's default
+  # 5s per-test timeout would re-fail PGLite phantoms (120-migration replay)
+  # and mislabel them 'confirmed real'.
+  grep -v '\.serial\.test\.ts$' "$OOM_RESCUE_LIST" > "$LOG_DIR/oom-rescue-batch.txt" || true
+  grep '\.serial\.test\.ts$' "$OOM_RESCUE_LIST" > "$LOG_DIR/oom-rescue-serial.txt" || true
+  RESCUE_RC=0
+  : > "$RESCUE_LOG"
+  run_rescue() { # $1 = per-invocation timeout seconds; rest = test-file args
+    local t="$1"; shift
+    if [ -n "$TIMEOUT_BIN" ]; then
+      "$TIMEOUT_BIN" --signal=TERM --kill-after="${SHARD_KILL_AFTER}s" "${t}s" \
+        bun test --max-concurrency 1 --timeout=60000 "$@" >> "$RESCUE_LOG" 2>&1
+    else
+      bun test --max-concurrency 1 --timeout=60000 "$@" >> "$RESCUE_LOG" 2>&1
+    fi
+  }
+  if [ -s "$LOG_DIR/oom-rescue-batch.txt" ]; then
+    # shellcheck disable=SC2046
+    run_rescue "$RESCUE_TIMEOUT" $(cat "$LOG_DIR/oom-rescue-batch.txt") || RESCUE_RC=1
+  fi
+  if [ -s "$LOG_DIR/oom-rescue-serial.txt" ]; then
+    while IFS= read -r serial_file; do
+      [ -n "$serial_file" ] || continue
+      run_rescue 300 "$serial_file" || RESCUE_RC=1
+    done < "$LOG_DIR/oom-rescue-serial.txt"
+  fi
+  cat "$RESCUE_LOG"
+  r_pass=$(bun_summary_count "pass" "$RESCUE_LOG")
+  r_fail=$(bun_summary_count "fail" "$RESCUE_LOG")
+  if [ "$RESCUE_RC" = "0" ] && [ "$NON_OOM_FAIL" = "0" ]; then
+    # Every failure in the run was OOM-phantom and every rescued file passed
+    # serially: the run is green. Adjust the headline numbers so they reflect
+    # the rescue verdict, and mark the earlier failure blocks superseded.
+    TOTAL_RC=0
+    OOM_RESCUED=1
+    # Do NOT fold r_pass into TOTAL_PASS — the failing shard's own summary
+    # already counted the rescued files' passing tests, so folding would
+    # double-count. Rescue results ride in the note instead.
+    TOTAL_FAILURES=0
+    OOM_RESCUE_NOTE=" | oom_rescued=${RESCUE_COUNT}files(${r_pass}p serial)"
+    {
+      echo "--- OOM rescue: all $RESCUE_COUNT file(s) passed serially (${r_pass} tests) ---"
+      echo "--- failure blocks above were WASM out-of-memory phantoms, superseded ---"
+    } >> "$FAILURES_LOG"
+    echo "oom-rescue: $RESCUE_COUNT files pass=$r_pass rc=0 (phantom OOM failures superseded)" >> "$SUMMARY_FILE"
+  else
+    # Real failures confirmed serially (or a non-OOM failure exists anyway).
+    OOM_RESCUE_NOTE=" | oom_rescue_failed=${r_fail}real"
+    awk '
+      /^\(fail\) / { in_block=1; print "--- oom-rescue (serial, confirmed real): " $0; next }
+      in_block {
+        if (/^\(pass\)/ || /^\(skip\)/ || /^[[:space:]]*$/ || /__bun_test_summary__/) { in_block=0; print ""; next }
+        print $0
+      }
+    ' "$RESCUE_LOG" >> "$FAILURES_LOG"
+    echo "oom-rescue: $RESCUE_COUNT files pass=$r_pass fail=$r_fail rc=$RESCUE_RC (real failures confirmed)" >> "$SUMMARY_FILE"
+  fi
+fi
+
 END_TS=$(date +%s)
 ELAPSED=$((END_TS - START_TS))
 
@@ -436,10 +810,10 @@ if [ "$TOTAL_RC" != "0" ]; then
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     tail -30 "$FAILURES_LOG"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "[unit-parallel] elapsed=${ELAPSED}s | pass=$TOTAL_PASS fail=$TOTAL_FAILURES skip=$TOTAL_SKIP"
+    echo "[unit-parallel] elapsed=${ELAPSED}s | pass=$TOTAL_PASS fail=$TOTAL_FAILURES skip=$TOTAL_SKIP${OOM_RESCUE_NOTE}"
   } >&2
   exit 1
 fi
 
-echo "[unit-parallel] elapsed=${ELAPSED}s | pass=$TOTAL_PASS fail=$TOTAL_FAILURES skip=$TOTAL_SKIP" >&2
+echo "[unit-parallel] elapsed=${ELAPSED}s | pass=$TOTAL_PASS fail=$TOTAL_FAILURES skip=$TOTAL_SKIP${OOM_RESCUE_NOTE}" >&2
 exit 0

@@ -20,10 +20,14 @@
  *
  * Safe deny-list invariants:
  *   - CHANGELOG.md edit → same hash
- *   - README.md edit → same hash
  *   - docs/guide.md edit → same hash
  *   - TODOS.md edit → same hash
  *   - LICENSE edit → same hash
+ *
+ * Policy-doc re-admissions (ALLOW_PATTERNS — must invalidate):
+ *   - README.md edit → DIFFERENT hash (carries the bootstrap paste block; a
+ *     paste-block edit must never ship under a cached green [C2])
+ *   - BOOTSTRAP_FOR_AGENTS.md edit → DIFFERENT hash (same reason)
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
@@ -249,12 +253,22 @@ describe("ci-cache-hash.sh — SAFE deny-list invariants (must NOT invalidate)",
     });
   });
 
-  it("README.md edit produces SAME hash (deny-listed)", () => {
+  it("README.md edit produces DIFFERENT hash (re-admitted: carries the paste block [C2])", () => {
     withSandbox((sb) => {
       const before = hash(sb);
       modify(sb, "README.md", "# Project\n\nupdated tagline\n");
       const after = hash(sb);
-      expect(after).toBe(before);
+      expect(after).not.toBe(before);
+    });
+  });
+
+  it("BOOTSTRAP_FOR_AGENTS.md edit produces DIFFERENT hash (re-admitted [C2])", () => {
+    withSandbox((sb) => {
+      modify(sb, "BOOTSTRAP_FOR_AGENTS.md", "<!-- gbrain-runbook-stamp: 0.0.0.0 -->\n# runbook\n");
+      const before = hash(sb);
+      modify(sb, "BOOTSTRAP_FOR_AGENTS.md", "<!-- gbrain-runbook-stamp: 0.0.0.0 -->\n# runbook v2\n");
+      const after = hash(sb);
+      expect(after).not.toBe(before);
     });
   });
 

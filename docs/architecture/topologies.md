@@ -108,11 +108,13 @@ instead of a local DB connection:
 }
 ```
 
-The CLI dispatch guard refuses any DB-bound command (`sync`, `embed`,
-`extract`, `migrate`, `apply-migrations`, `repair-jsonb`, `orphans`,
-`integrity`, `serve`) on a thin-client install with a clear error pointing
-at the remote host. `gbrain doctor` runs a dedicated thin-client check set
-(OAuth discovery, token round-trip, MCP smoke).
+The CLI dispatch guard refuses every DB-bound command (`sync`, `embed`,
+`extract`, `migrate`, `serve`, `enrich`, `jobs`, `sources`, `pages`,
+`files`, `eval`, and the rest of the local-only surface — the full hint
+table is `THIN_CLIENT_REFUSE_HINTS` in `src/cli.ts`) on a thin-client
+install with a clear error pointing at the remote host. `gbrain doctor`
+runs a dedicated thin-client check set (OAuth discovery, token round-trip,
+MCP smoke). See [`thin-client.md`](./thin-client.md) for the routing seam.
 
 ### Setup
 
@@ -394,6 +396,9 @@ simultaneously — that's by design.
 
 ## See also
 
+- `docs/guides/bootstrap.md` — `gbrain bootstrap`, the paved-road paste-in
+  install for Topology 1 with a desktop coding agent (interview, hooks,
+  MCP registration, verify).
 - `docs/architecture/brains-and-sources.md` — in-brain organization (brains
   vs sources axes).
 - `docs/mcp/CLAUDE_DESKTOP.md` and siblings — per-client MCP setup.

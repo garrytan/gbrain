@@ -332,7 +332,7 @@ export class BudgetTracker {
         // pricing we can't enforce the cap, and silently ignoring it would
         // void the contract.
         const msg = `${this.opts.label}: no pricing entry for model "${estimate.modelId}" (kind=${estimate.kind}). ` +
-          `Add it to src/core/${estimate.kind === 'embed' ? 'embedding-pricing.ts' : 'anthropic-pricing.ts'} or drop --max-cost.`;
+          `Add it to src/core/${estimate.kind === 'embed' || estimate.kind === 'rerank' ? 'embedding-pricing.ts' : 'anthropic-pricing.ts'} or drop --max-cost.`;
         this.fireExhausted();
         throw new BudgetExhausted(msg, {
           reason: 'no_pricing',

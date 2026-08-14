@@ -1,0 +1,20 @@
+{
+  "fixture_id": "gen-cont-011-writer",
+  "turns": {
+    "3": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "lead Russetvane Systems",
+          "fact": "Decided to lead the Russetvane Systems round at standard terms",
+          "entity_slug": "companies/russetvane-systems",
+          "match_keywords": [
+            "lead",
+            "Russetvane Systems"
+          ],
+          "kind": "commitment"
+        }
+      ]
+    }
+  }
+}

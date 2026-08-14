@@ -8,6 +8,12 @@ Without this: media links are bookmarks that decay -- you remember watching a vi
 
 ## Implementation
 
+gbrain's own media surfaces complement this pattern: the bundled
+`media-ingest` skill (`skills/media-ingest/`) ships the ingestion workflow,
+and `gbrain files` handles binary/file upload for attachments that should
+live alongside pages. For meeting recordings specifically, see
+[meeting-ingestion.md](meeting-ingestion.md).
+
 ```
 on user_shares_media(url_or_file):
 
@@ -119,7 +125,7 @@ on user_shares_media(url_or_file):
 ## Tricky Spots
 
 1. **Always FULL transcript, never AI summary.** YouTube's auto-summary and AI-generated summaries lose the texture: who said what, exact phrasing, tone, what was left unsaid. The full diarized transcript is the evidence base. The agent's analysis goes above it.
-2. **The agent's OWN analysis is the value, not regurgitation.** "The video discussed AI safety" is worthless. "Dario made a specific claim about compute scaling that contradicts what Ilya said in the NeurIPS talk -- see media/youtube/ilya-neurips-2025" is useful. The analysis connects the new media to the existing brain.
+2. **The agent's OWN analysis is the value, not regurgitation.** "The video discussed AI safety" is worthless. "The speaker made a specific claim about compute scaling that contradicts what another researcher said in their NeurIPS talk -- see media/youtube/a-researcher-neurips-2025" is useful. The analysis connects the new media to the existing brain.
 3. **Social media is a bundle, not a single tweet.** A tweet without its thread, quoted tweets, linked articles, and engagement context is a fragment. Reconstruct the full context before creating the brain page.
 4. **Cross-references make media pages alive.** A YouTube page without back-links to the people and companies mentioned is a dead archive. Every mentioned entity gets a link and a timeline entry.
 5. **Over time, `media/` becomes a searchable archive.** Every video, podcast, talk, interview, article, and tweet the user has consumed, with the agent's commentary layered on top. This is the memex at full power.

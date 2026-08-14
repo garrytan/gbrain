@@ -26,19 +26,21 @@ Two equivalent paths:
 
 **Path B — manual lifecycle (still supported):**
 - `bun test` — unit tests (no database required)
-- Follow the "E2E test DB lifecycle" steps above to spin up the test DB,
-  run `bun run test:e2e`, then tear it down.
+- Follow the "E2E test DB lifecycle" steps in
+  [docs/TESTING.md](TESTING.md) to spin up the test DB, run
+  `bun run test:e2e`, then tear it down.
 
 Both must pass. Do not ship with failing E2E tests. Do not skip E2E tests.
 
-**Always run typecheck before pushing.** `bun test` (the bun runner)
-skips TypeScript type checking — it only enforces runtime behavior.
+**Always run typecheck before pushing.** Neither `bun test` (the bun runner)
+nor `bun run test` gates on types — `bun run test` is just
+`bash scripts/run-unit-parallel.sh` (the sharded unit runner; no typecheck,
+no shell pre-checks — see the test-tier table in [docs/TESTING.md](TESTING.md)).
 Three ways to actually gate on types:
 
-1. `bun run test` (npm script in `package.json`) — includes `bun run typecheck`
-   plus the four shell pre-checks (`check-jsonb-pattern.sh`,
-   `check-progress-to-stdout.sh`, `check-trailing-newline.sh`,
-   `check-wasm-embedded.sh`) before the runner. Use this mid-branch.
+1. `bun run verify` — runs the shell guard checks (privacy, jsonb, source-id,
+   progress-to-stdout, …) plus `bun run typecheck` in parallel
+   (`scripts/run-verify-parallel.sh`). Use this mid-branch.
 2. `bun run typecheck` — `tsc --noEmit` standalone. Fast (~5s on this repo).
 3. `bun run ci:local` — the full local CI gate from Path A.
 
@@ -290,7 +292,8 @@ matter" with BrainBench-style before/after table, "what this means" closer, then
 
 Create a migration file at `skills/migrations/v[version].md` when a release
 includes changes that existing users need to act on. The auto-update agent
-reads these files post-upgrade (Section 17, Step 4) and executes them.
+reads these files post-upgrade (see `docs/guides/upgrades-auto-update.md`)
+and executes them.
 
 **You need a migration file when:**
 - New setup step that existing installs don't have (e.g., v0.5.0 added live sync,
@@ -343,8 +346,8 @@ canonical.
 ## Schema state tracking
 
 `~/.gbrain/update-state.json` tracks which recommended schema directories the user
-adopted, declined, or added custom. The auto-update agent (SKILLPACK Section 17)
-reads this during upgrades to suggest new schema additions without re-suggesting
+adopted, declined, or added custom. The auto-update agent
+(`docs/guides/upgrades-auto-update.md`) reads this during upgrades to suggest new schema additions without re-suggesting
 things the user already declined. The setup skill writes the initial state during
 Phase C/E. Never modify a user's custom directories or re-suggest declined ones.
 
@@ -373,6 +376,46 @@ the release the same, uses that version's `CHANGELOG.md` entry as the notes
 (`scripts/changelog-entry.sh`; falls back to a CHANGELOG link if the entry is
 missing), and attaches the compiled binaries.
 
+### The `latest-stable` tag
+
+The **final step of the release job** force-advances the `latest-stable` tag to
+the release commit (`git push origin "+${GITHUB_SHA}:refs/tags/latest-stable"`).
+`latest-stable` is the single sanctioned distribution ref: the README paste
+block, the `BOOTSTRAP_FOR_AGENTS.md` fetch URL, and
+`bun install -g github:garrytan/gbrain#latest-stable` all reference it
+permanently, so paste blocks copied into the wild never rot and there is no 404
+window between VERSION landing and assets publishing.
+`scripts/check-bootstrap-tag.sh` keeps the entry docs pinned to this ref.
+
+Because it moves ONLY after binaries + provenance attestation have fully
+published, a half-built release never advances it. If the tag-advance step
+alone fails, re-advance by hand (a full workflow re-run would skip — the
+release already exists with all assets):
+
+```bash
+git push origin "+refs/tags/v<VERSION>^{commit}:refs/tags/latest-stable"
+```
+
+### The `publish-template` job
+
+After the release job, a `publish-template` job force-pushes the rendered
+agent-workspace template repo (the GitHub "Use this template" door,
+`vars.TEMPLATE_REPO`, default `garrytan/gbrain-agent-template`) from CI only —
+no human pushes it by hand, so what adopters clone is exactly what this repo
+reviewed. It is guarded three ways: the release above fully published; the
+vendored tree `templates/bootstrap/template-repo/` exists (skip, never fail,
+if not); and the `TEMPLATE_REPO_PAT` secret is configured (skip if not).
+Before pushing, it regenerates the template tree
+(`bun run scripts/generate-template-repo.ts`) and byte-diffs it against the
+vendored copy — a mismatch fails the job; regenerate + commit the vendored
+tree (`scripts/check-bootstrap-templates.sh` runs the same diff offline in
+`bun run verify`).
+
+**`TEMPLATE_REPO_PAT` scope:** a fine-grained PAT with `contents: write` on
+the template repository ONLY — no other repositories, no other permissions.
+Configure it as a repo secret; when absent, template publishing is disabled
+and the job skips cleanly.
+
 Why every bump, not selective: `gbrain check-update` resolves the latest
 version from `VERSION` on master, while binary self-update
 (`src/core/binary-self-update.ts`) downloads assets from `releases/latest`.
@@ -395,6 +438,9 @@ Invariants:
   history; every new 4-segment `VERSION` mints a fresh tag.
 - **Permissions stay scoped.** `contents: write` lives on the release job
   only; everything else runs read-only.
+- **Never advance `latest-stable` on a partial release.** The tag moves only
+  as the final release-job step, after every asset has published. Manual
+  re-advances must point at a fully published `v<VERSION>` release.
 
 ## PR descriptions cover the whole branch
 

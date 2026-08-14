@@ -4,7 +4,7 @@ You inherit a gbrain v0.18 brain (the harness has already replayed a seed SQL du
 
 1. **Run `gbrain doctor --json`** first. Note any warnings or fix-hints.
 2. **Run `gbrain init --pglite`** with the existing database path. The migration chain should detect the old `schema_version` and walk forward to the latest.
-3. **Run `gbrain doctor --json` again.** The `status` field should be `"ok"`.
+3. **Run `gbrain doctor --json` again.** The `status` field should be `"healthy"` or `"warnings"` — never `"unhealthy"`.
 4. **Verify queries still work:** `gbrain query "alice"` should return results from the seeded brain.
 
 ## Friction protocol

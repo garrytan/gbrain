@@ -86,8 +86,21 @@ describe('operations contract — every op has scope + correct mutability shape'
       'users_admin',
       'agent',
     ]);
+    // Remote-gated exception (#2598, same allowlist as test/oauth.test.ts):
+    // `think` is read-scoped for OAuth/MCP because its handler forces
+    // save/take OFF for remote callers before persistence — pinned by
+    // test/takes-mcp-allowlist.serial.test.ts. Local CLI can still persist.
+    // WP4/D9: request_tools is read-scoped + mutating — its only write (the
+    // {surface} persist branch) self-enforces the D2 ceiling, the operator
+    // lock, and a per-client rate limit (test/request-tools.test.ts pins all
+    // three); read scope keeps discovery available to every token class.
+    const REMOTE_READ_ONLY_MUTATING_OPS = new Set(['think', 'request_tools']);
     for (const op of operations) {
       if (op.mutating === true) {
+        if (REMOTE_READ_ONLY_MUTATING_OPS.has(op.name)) {
+          expect(op.scope, `remote-gated mutating op "${op.name}" should be read-scoped`).toBe('read');
+          continue;
+        }
         expect(
           WRITE_CLASS_SCOPES.has(op.scope ?? 'read'),
           `mutating op "${op.name}" has read-tier scope "${op.scope}"; expected one of ${[...WRITE_CLASS_SCOPES].join('/')}`,

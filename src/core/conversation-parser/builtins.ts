@@ -1,7 +1,7 @@
 /**
  * v0.41.16.0 — Built-in conversation parser pattern registry.
  *
- * Seventeen hand-vetted patterns covering the chat-export formats this
+ * Eighteen hand-vetted patterns covering the chat-export formats this
  * codebase is most likely to encounter. Each pattern's regex was
  * derived from a public format reference (source_doc field) so future
  * maintainers can verify against the wild shape.
@@ -50,7 +50,7 @@ export function cleanSpeaker(raw: string, override?: RegExp): string {
   return stripped || raw.trim();
 }
 
-/** The 17 hand-vetted built-in patterns. */
+/** The 18 hand-vetted built-in patterns. */
 export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
   // -------------------------------------------------------------------
   // INLINE-DATE patterns (date in every line; less ambiguous; tried first).
@@ -669,6 +669,46 @@ export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
     test_positive: ['18:37 <alice> hello', '06:00 <bob> morning'],
     test_negative: ['<alice> classic irc, no time', '[18:37] @alice: matrix'],
     source_doc: 'weechat default logger.format `%H:%M %p\\t%m`',
+  },
+
+  {
+    id: 'markdown-heading-turn',
+    origin: 'builtin',
+    // gbrain transcript-ingest shape: a heading-only line ('## User' /
+    // '## Assistant' / '### Human') opens a turn; the message text is
+    // the continuation lines below the heading (D5), not anything on
+    // the heading line itself. No per-line timestamps — date comes
+    // from frontmatter / effective_date. The speaker set is closed
+    // (User/Assistant/Human/System only) so ordinary section headings
+    // like '## Summary' never match, and a heading with trailing prose
+    // ('## User said hello') is rejected rather than mis-captured.
+    regex: /^#{2,3}\s+(User|Assistant|Human|System)\s*:?\s*()$/,
+    captures: {
+      speaker_group: 1,
+      text_group: 2,
+    },
+    date_source: 'frontmatter',
+    time_format: '24h',
+    timezone_policy: 'utc_assumed_with_warn',
+    multi_line: true,
+    score_continuations_as_body: true,
+    // Narrowed to a role-prefix superset (NOT bare `/^#{2,3}\s/`): a body
+    // that pastes unrelated markdown headings (e.g. a document with many
+    // '## Section' headings) would otherwise inflate the D18 scorer's
+    // anchor-candidate denominator without inflating the anchored count,
+    // starving the pattern's score toward 0 on otherwise-valid transcripts.
+    // Still a strict superset of `regex` per validatePatternEntry's
+    // invariant (every test_positive sample passes both).
+    quick_reject: /^#{2,3}\s+(?:User|Assistant|Human|System)\b/,
+    test_positive: ['## User', '## Assistant', '### Human', '## System', '## User:'],
+    test_negative: [
+      '## Summary',
+      '#### User',
+      'User: plain no heading',
+      '## User said hello',
+    ],
+    source_doc:
+      'gbrain nightly transcript ingest: compiled_truth bodies use markdown headings per turn',
   },
 ];
 

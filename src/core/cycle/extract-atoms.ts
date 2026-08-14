@@ -6,14 +6,16 @@
 //      pages already extracted by content hash — see "Idempotency" below).
 //   2. Dedup by content_hash; transcripts win on collision.
 //   3. Per work-item, ask Haiku for 1-3 atoms.
-//   4. Write each atom via engine.putPage(slug, page, {sourceId})
-//      with sourceId threaded so federated brains route correctly.
+//   4. Write each atom via importFromContent(slug, markdown, {sourceId})
+//      with sourceId threaded so federated brains route correctly. The
+//      canonical import path (not engine.putPage) is what chunks and embeds
+//      the page — see the write site below and #2163.
 //
 // Idempotency (per-atom, via deterministic slug):
 //   Each atom's slug is `atoms/<source-date>/<stem>-<title-hash>` — built from
 //   the SOURCE date (the transcript's own date / the page slug), NOT the run
 //   date, plus a 6-char hash of the title. Re-extracting the same atom resolves
-//   to the SAME slug, so engine.putPage upserts in place instead of minting a
+//   to the SAME slug, so the import upserts in place instead of minting a
 //   duplicate. This closes three bugs in one scheme:
 //     - PR #1414's page-side re-extraction.
 //     - The cross-day transcript duplicate: append-only transcripts grow daily,
@@ -51,7 +53,9 @@ import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { ProgressReporter } from '../progress.ts';
-import { chat as gatewayChat, withBudgetTracker } from '../ai/gateway.ts';
+import { chat as gatewayChat, withBudgetTracker, isAvailable } from '../ai/gateway.ts';
+import { importFromContent } from '../import-file.ts';
+import { serializeMarkdown } from '../markdown.ts';
 import { BudgetExhausted, BudgetTracker, isModelPriceable } from '../budget/budget-tracker.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
@@ -681,32 +685,38 @@ export async function runPhaseExtractAtoms(
             item.kind === 'transcript'
               ? { source_path: item.filePath }
               : { source_slug: item.slug };
-          // v0.41.2.1 D9 #1 — thread sourceId through every putPage so
-          // atoms land in the source we discovered them from. Pre-fix
-          // the third arg was missing and atoms always wrote to 'default'.
-          await engine.putPage(
-            slug,
+          // Serialize to markdown and import via the canonical pipeline so
+          // the atom is chunked (+ embedded when a provider is configured).
+          // engine.putPage is a bare page-row upsert that never chunks, so
+          // atoms written through it never reached content_chunks and were
+          // invisible to search — the same defect #2163 fixed for concept
+          // pages in synthesize-concepts.ts, which was never applied here.
+          //
+          // `type: 'atom'` rides in frontmatter, which parseMarkdown honours
+          // as an explicit override ahead of path inference, so the page type
+          // survives the round-trip. sourceId stays threaded (v0.41.2.1 D9 #1)
+          // so atoms still land in the source they were discovered from.
+          const md = serializeMarkdown(
             {
-              title: atom.title,
-              type: 'atom',
-              compiled_truth: atom.body,
-              frontmatter: {
-                type: 'atom',
-                atom_type: atom.atom_type,
-                ...originFrontmatter,
-                source_hash: item.contentHash.slice(0, 16),
-                ...(atom.source_quote && { source_quote: atom.source_quote }),
-                ...(atom.lesson && { lesson: atom.lesson }),
-                ...(atom.concepts && atom.concepts.length > 0 && { concepts: atom.concepts }),
-                ...(atom.virality_score !== undefined && { virality_score: atom.virality_score }),
-                ...(atom.emotional_register && { emotional_register: atom.emotional_register }),
-                extracted_at: new Date().toISOString(),
-                extracted_by: 'extract_atoms-v0.41.2.1',
-              },
-              timeline: '',
+              atom_type: atom.atom_type,
+              ...originFrontmatter,
+              source_hash: item.contentHash.slice(0, 16),
+              ...(atom.source_quote && { source_quote: atom.source_quote }),
+              ...(atom.lesson && { lesson: atom.lesson }),
+              ...(atom.concepts && atom.concepts.length > 0 && { concepts: atom.concepts }),
+              ...(atom.virality_score !== undefined && { virality_score: atom.virality_score }),
+              ...(atom.emotional_register && { emotional_register: atom.emotional_register }),
+              extracted_at: new Date().toISOString(),
+              extracted_by: 'extract_atoms-v0.41.2.1',
             },
-            { sourceId },
+            atom.body,
+            '',
+            { type: 'atom', title: atom.title, tags: [] },
           );
+          await importFromContent(engine, slug, md, {
+            sourceId,
+            noEmbed: !isAvailable('embedding'),
+          });
           totalAtomsExtracted++;
         }
       } else {

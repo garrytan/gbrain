@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-push-009",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "push",
+  "seed_pages": [
+    {
+      "slug": "people/ronan-pellwarden",
+      "content": "---\ntitle: Ronan Pellwarden\ntype: person\naliases: [ronan]\nsummary: Founder of Saplingrove Works.\n---\n\nRonan Pellwarden is the founder of Saplingrove Works. Ronan wants a technical co-founder intro before committing.\n"
+    },
+    {
+      "slug": "people/caspian-ironwood",
+      "content": "---\ntitle: Caspian Ironwood\ntype: person\naliases: [caspian]\nsummary: Founder of Umbergale Labs.\n---\n\nCaspian Ironwood is the founder of Umbergale Labs. Caspian wants a technical co-founder intro before committing.\n"
+    },
+    {
+      "slug": "companies/saplingrove-works",
+      "content": "---\ntitle: Saplingrove Works\ntype: company\nsummary: Seed-stage company. Founded by Ronan Pellwarden.\n---\n\nSaplingrove Works is a seed-stage company. Founded by Ronan Pellwarden. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "funds/stonelantern-capital",
+      "content": "---\ntitle: Stonelantern Capital\ntype: org\nsummary: Early-stage fund that co-invests on seed rounds.\n---\n\nStonelantern Capital is an early-stage fund that co-invests on seed rounds.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Draft a memo for the partner meeting: Ronan Pellwarden and Caspian Ironwood both want Stonelantern Capital in the Saplingrove Works round."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Drafting now."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Make the memo lead with traction, then risks, then the ask."
+    }
+  ],
+  "holdout": true
+}

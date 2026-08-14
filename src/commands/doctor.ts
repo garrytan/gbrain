@@ -12,6 +12,9 @@ import {
   type SkillsManifest,
 } from '../core/skills-integrity.ts';
 import { loadOrDeriveManifest } from '../core/skill-manifest.ts';
+import { computeSkillCurrency } from '../core/skillpack/skill-currency.ts';
+import { findGbrainRoot } from '../core/skillpack/bundle.ts';
+import { checkPreconditions, type PreconditionContext } from '../core/skillpack/preconditions.ts';
 import { parseSkillFrontmatter } from '../core/skill-frontmatter.ts';
 import {
   analyzeSkillBrainFirst,
@@ -48,7 +51,8 @@ import {
 import { probeSourceGitState } from '../core/git-head.ts';
 // v0.41.32.0: remote staleness reads the stored newest_content_at column via
 // this pure comparator (no git subprocess on the HTTP MCP doctor path).
-import { lagFromContentMs } from '../core/source-health.ts';
+import { lagFromContentMs, resolveStalenessCeilingSeconds } from '../core/source-health.ts';
+import { resolveEnvNumber, resolveHoursEnv, warnOnceForEnv } from '../core/env-number.ts';
 import { CHUNKER_VERSION } from '../core/chunkers/code.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from '../core/link-extraction.ts';
 import { isUndefinedColumnError } from '../core/utils.ts';
@@ -67,6 +71,13 @@ import { resolveHardExcludes, DEFAULT_HARD_EXCLUDES } from '../core/search/sourc
 import { escapeLikePattern, buildVisibilityClause } from '../core/search/sql-ranking.ts';
 import { unverifiedExtractionFragment } from '../core/extraction-review.ts';
 import { hnswIndexExpected, hnswMaxDimsForType } from '../core/vector-index.ts';
+// Agent-bootstrap doctor group (plan B2/B4/ENG-4 + one-live-serve note).
+import { readHarnessReceiptState, readReceipt } from '../core/bootstrap/format.ts';
+import { probeLivePgliteHolder, resolveBrainDataDir } from '../core/bootstrap/uninstall.ts';
+import { readRunbookStamp, hooksInstalled, listVerifyRuns } from '../core/bootstrap/status.ts';
+import { resolveGbrainHome } from '../core/gbrain-home.ts';
+import { VERSION as GBRAIN_BINARY_VERSION } from '../version.ts';
+import { execFileSync } from 'child_process';
 
 export interface Check {
   name: string;
@@ -376,19 +387,38 @@ export async function jsonbIntegrityCheck(
   progress?: Pick<ProgressReporter, 'heartbeat'>,
 ): Promise<Check> {
   try {
-    const targets: Array<{ table: string; col: string; expected: 'object' | 'array' }> = [
-      { table: 'pages',         col: 'frontmatter',    expected: 'object' },
-      { table: 'raw_data',      col: 'data',           expected: 'object' },
-      { table: 'ingest_log',    col: 'pages_updated',  expected: 'array'  },
-      { table: 'files',         col: 'metadata',       expected: 'object' },
-      { table: 'page_versions', col: 'frontmatter',    expected: 'object' },
+    const targets: Array<{ table: string; col: string; expected: 'object' | 'array'; jsonPayloadOnly?: boolean }> = [
+      { table: 'pages',                    col: 'frontmatter',    expected: 'object' },
+      { table: 'raw_data',                 col: 'data',           expected: 'object' },
+      { table: 'ingest_log',               col: 'pages_updated',  expected: 'array'  },
+      { table: 'files',                    col: 'metadata',       expected: 'object' },
+      { table: 'page_versions',            col: 'frontmatter',    expected: 'object' },
+      // Subagent persistence — second double-encode site (historical damage
+      // rows from the pre-v0.42.53.0 positional bind; write paths fixed in
+      // #2375). Mirrors repair-jsonb's targets incl. jsonPayloadOnly: these
+      // columns can legitimately hold jsonb STRING scalars (persistToolExec
+      // binds pre-serialized string payloads as-is), so only JSON-container
+      // content counts as damage.
+      { table: 'subagent_messages',        col: 'content_blocks', expected: 'array',  jsonPayloadOnly: true },
+      { table: 'subagent_tool_executions', col: 'input',          expected: 'object', jsonPayloadOnly: true },
+      { table: 'subagent_tool_executions', col: 'output',         expected: 'object', jsonPayloadOnly: true },
     ];
     let totalBad = 0;
     const breakdown: string[] = [];
-    for (const { table, col } of targets) {
+    for (const { table, col, jsonPayloadOnly } of targets) {
       progress?.heartbeat(`jsonb_integrity.${table}.${col}`);
+      // Skip targets whose table doesn't exist on this brain (subagent_*
+      // tables are v0.15+; pre-v0.15 brains naturally lack them).
+      const existsRows = await engine.executeRaw<{ exists: boolean }>(
+        `SELECT to_regclass($1) IS NOT NULL AS exists`,
+        [table],
+      );
+      if (!existsRows[0]?.exists) continue;
+      const damage = jsonPayloadOnly
+        ? `jsonb_typeof(${col}) = 'string' AND (${col} #>> '{}') ~ '^[[:space:]]*[\\[{]' AND pg_input_is_valid(${col} #>> '{}', 'jsonb')`
+        : `jsonb_typeof(${col}) = 'string'`;
       const rows = await engine.executeRaw<{ n: number }>(
-        `SELECT count(*)::int AS n FROM ${table} WHERE jsonb_typeof(${col}) = 'string'`,
+        `SELECT count(*)::int AS n FROM ${table} WHERE ${damage}`,
       );
       const n = Number(rows[0]?.n ?? 0);
       if (n > 0) { totalBad += n; breakdown.push(`${table}.${col}=${n}`); }
@@ -403,6 +433,119 @@ export async function jsonbIntegrityCheck(
     };
   } catch {
     return { name: 'jsonb_integrity', status: 'warn', message: 'Could not check JSONB integrity' };
+  }
+}
+
+/**
+ * Per-channel push-context visibility (harness hook adapters). Groups
+ * context_volunteer_events by channel over the last 7 days so the operator
+ * can see which adapters (ambient reflex / op / watch / claude-code / codex)
+ * are actually firing. Engine-aware SIBLING of buildRetrievalReflexCheck
+ * (which is engine-free and heartbeat-file based) — deliberately a separate
+ * check so the existing builder keeps its signature.
+ *
+ * Info-only (never warn/fail on quiet channels — most installs use a subset).
+ * The message distinguishes the two "installed but nothing happens" classes:
+ * a hook script that never registered (restart the harness session) vs a
+ * registered adapter whose channel went quiet. Pre-v117 brains (no events
+ * table) return ok with a note instead of throwing. A serve started before
+ * this build logs hook traffic as 'reflex' — restart serve after upgrade.
+ */
+export async function checkVolunteerChannels(
+  engine: BrainEngine,
+  opts: { sourceIds?: string[] } = {},
+): Promise<Check> {
+  const name = 'volunteer_channels';
+  try {
+    // Source scoping (cross-model P1): remote source-bound callers pass their
+    // authorized ids — an unqualified aggregate would leak other sources'
+    // activity counts/timestamps. Local trusted doctor passes none (brain-wide).
+    // Unscoped shape: no source_id predicate → the composite
+    // (source_id, volunteered_at DESC) index can't range-scan and this
+    // seq-scans the table. Accepted DELIBERATELY for the local info check
+    // (table is TTL-pruned at 90 days) — do NOT reuse on a hot path.
+    const scoped = Array.isArray(opts.sourceIds) && opts.sourceIds.length > 0;
+    const rows = await engine.executeRaw<{ channel: string; n: string | number; last_fired: string | Date | null }>(
+      scoped
+        ? `SELECT channel, count(*)::int AS n, max(volunteered_at) AS last_fired
+             FROM context_volunteer_events
+            WHERE source_id = ANY($1::text[])
+              AND volunteered_at > now() - interval '7 days'
+            GROUP BY channel
+            ORDER BY channel`
+        : `SELECT channel, count(*)::int AS n, max(volunteered_at) AS last_fired
+             FROM context_volunteer_events
+            WHERE volunteered_at > now() - interval '7 days'
+            GROUP BY channel
+            ORDER BY channel`,
+      scoped ? [opts.sourceIds] : [],
+    );
+    const channels: Record<string, { count: number; last_fired: string | null }> = {};
+    for (const r of rows) {
+      channels[r.channel] = {
+        count: Number(r.n),
+        last_fired: r.last_fired ? new Date(r.last_fired).toISOString() : null,
+      };
+    }
+    const active = Object.keys(channels);
+
+    // RT reconciliation: server-side delivery counts fire at the response
+    // write — a hook client that timed out / hit its deadline / trimmed to
+    // nothing still gets counted. The hook's own heartbeat records those
+    // degradations, so surface the degraded rate next to the counts: a
+    // "healthy" channel with a mostly-degraded heartbeat is delivery failure.
+    let heartbeatNote = '';
+    let heartbeat: { user_prompt_ok: number; user_prompt_degraded: number } | undefined;
+    try {
+      const { readHeartbeatTail } = await import('./hook.ts');
+      const tail = await readHeartbeatTail(200);
+      // Same 7-day window as the event counts (a month-old degraded streak
+      // must not indict a healthy current week), and a minimum sample floor
+      // so one bad entry can't trigger the caution.
+      const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      const up = tail.filter(
+        (e) => e.event === 'user-prompt' && Date.parse(e.ts ?? '') >= cutoff,
+      );
+      if (up.length >= 5) {
+        const degraded = up.filter((e) => e.outcome !== 'ok').length;
+        heartbeat = { user_prompt_ok: up.length - degraded, user_prompt_degraded: degraded };
+        if (degraded > up.length / 2) {
+          heartbeatNote = ` — CAUTION: the hook heartbeat shows ${degraded}/${up.length} user-prompt events degraded this week, so server-side counts may overstate what was actually injected`;
+        }
+      }
+    } catch { /* heartbeat surface is best-effort */ }
+
+    // Engine-aware quiet-channel guidance: the harness-hook lane rides the
+    // PGLite serve socket — on a Postgres brain, "check your registration and
+    // restart" can never make the channel fire (pull-mode covers Postgres).
+    const cfg = (() => { try { return loadConfig(); } catch { return null; } })();
+    const quietGuidance =
+      cfg?.engine === 'pglite'
+        ? 'if a hook adapter is installed, confirm its registration landed and the harness session was RESTARTED (hooks snapshot at session start); a serve older than this build logs NOTHING for the hook lane — restart serve on the new build to activate the feedback loop'
+        : 'note: the harness-hook channels require a PGLite serve socket — on this engine the hook lane stays quiet by design (pull-mode retrieval covers it)';
+    const message = active.length
+      ? `push-context channels active (7d): ${active.map((c) => `${c}=${channels[c].count}`).join(', ')}${heartbeatNote}`
+      : `no push-context activity in 7 days — ${quietGuidance}`;
+    return {
+      name,
+      status: 'ok',
+      message,
+      details: { window_days: 7, channels, ...(heartbeat ? { hook_heartbeat: heartbeat } : {}) },
+    };
+  } catch (e) {
+    // Discriminate table-absent (pre-v117 brain) from transient failures —
+    // a connection blip on a fully-migrated brain must not be misreported
+    // as an old schema. Info-only either way; never block doctor.
+    const msg = e instanceof Error ? e.message : String(e);
+    const tableAbsent = /does not exist|undefined table|no such table|42P01/i.test(msg);
+    return {
+      name,
+      status: 'ok',
+      message: tableAbsent
+        ? 'volunteer-events table not available (pre-v117 brain) — per-channel push visibility inactive'
+        : `volunteer_channels query failed (info-only check; may or may not be transient): ${msg}`,
+      details: { window_days: 7, channels: {} },
+    };
   }
 }
 
@@ -639,7 +782,128 @@ export async function checkSourceConfigShape(engine: BrainEngine): Promise<Check
   }
 }
 
-export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorReport> {
+/**
+ * #2674 — pglite_scratch_probe: distinguish a damaged PGLite store from a
+ * broken WASM runtime.
+ *
+ * PGLite reports only `Aborted()` to JS (the PANIC goes to its own stderr),
+ * so when init fails, the error string cannot say WHICH of the two it is.
+ * The probe initializes a throwaway store in a temp dir, round-trips a row,
+ * and reads the outcome:
+ *
+ *   - scratch works, real init failed → the runtime is fine; the failure is
+ *     specific to YOUR store. The store-damage verdict is only ASSERTED when
+ *     the caller supplies positive evidence (`storeDamageEvidence`: a
+ *     damage-class disk diagnosis from `inspectPgliteDataDir`, or a
+ *     wasm-abort/corrupt classification of the real init error). engine=null
+ *     alone also covers locks and config refusals — blaming the store for
+ *     those was the original false-positive defect; without evidence the
+ *     message hedges and points at the `pglite_data_dir` diagnosis instead.
+ *   - scratch fails too → the runtime cannot start on this machine; report
+ *     OS + Bun versions on #223.
+ *
+ * COST GATE: a PGLite cold start is 5–20s on loaded machines, so this never
+ * runs on a routine `gbrain doctor`. It runs only when (a) the real PGLite
+ * engine actually failed to open (engine=null, not --fast, configured engine
+ * is pglite) AND the disk diagnosis didn't already fully explain the failure
+ * (a live lock / missing dir needs no runtime probe), or (b) the operator
+ * asks with `--probe-pglite`.
+ *
+ * `probeFn` is a test seam so message routing can be pinned without paying
+ * real cold starts.
+ */
+export async function checkPgliteScratchProbe(opts: {
+  realInitFailed: boolean;
+  /**
+   * Positive evidence the REAL store is damaged: `inspectPgliteDataDir`
+   * verdict wal-corruption-likely/unsupported-layout (buildChecks path) or a
+   * wasm-abort/corrupt classification of the actual connect error (remote
+   * path). Without it the scratch-ok arm hedges instead of asserting damage.
+   */
+  storeDamageEvidence?: boolean;
+  realStorePath?: string;
+  probeFn?: () => Promise<import('../core/pglite-engine.ts').PgliteScratchProbeResult>;
+}): Promise<Check> {
+  const name = 'pglite_scratch_probe';
+  try {
+    const probe =
+      opts.probeFn ??
+      (async () => {
+        const { probePgliteScratchStore } = await import('../core/pglite-engine.ts');
+        return probePgliteScratchStore(opts.realStorePath);
+      });
+    const r = await probe();
+    const secs = (r.duration_ms / 1000).toFixed(1);
+    if (r.ok) {
+      if (opts.realInitFailed && opts.storeDamageEvidence) {
+        return {
+          name,
+          status: 'fail',
+          message:
+            `A scratch PGLite store initialized, wrote and read back fine on this machine (${secs}s), ` +
+            `so the runtime is healthy and YOUR STORE is damaged — not the WASM runtime. ` +
+            `Your markdown is unaffected: the DB holds derived data (chunks, embeddings, links, facts) that a re-sync rebuilds. ` +
+            `Recover: \`gbrain pglite-repair --dry-run\` to diagnose, \`gbrain pglite-repair --yes\` for in-place WAL repair (data preserved); ` +
+            `if that can't fix it, restore a backup of the store directory or run \`gbrain reinit-pglite\` (wipes + re-inits + re-syncs; ` +
+            `defaults embedding flags from your config file).`,
+          details: { scratch_ok: true, duration_ms: r.duration_ms },
+        };
+      }
+      if (opts.realInitFailed) {
+        // Runtime proven healthy, but no independent evidence of store DAMAGE
+        // — engine=null also covers locks, config refusals, and transient
+        // failures. Hedge rather than convict the store (#2674 review).
+        return {
+          name,
+          status: 'warn',
+          message:
+            `A scratch PGLite store initialized, wrote and read back fine on this machine (${secs}s), ` +
+            `so the WASM runtime is healthy — the failure opening your brain is specific to your store, ` +
+            `its lock, or its configuration. See the \`pglite_data_dir\` check for the on-disk diagnosis; ` +
+            `\`gbrain pglite-repair --dry-run\` diagnoses without mutating anything.`,
+          details: { scratch_ok: true, duration_ms: r.duration_ms },
+        };
+      }
+      return {
+        name,
+        status: 'ok',
+        message: `PGLite runtime healthy: scratch store round-trip in ${secs}s.`,
+        details: { scratch_ok: true, duration_ms: r.duration_ms },
+      };
+    }
+    const errLine = (r.error ?? 'unknown error').split('\n')[0];
+    if (opts.realInitFailed) {
+      return {
+        name,
+        status: 'fail',
+        message:
+          `A fresh scratch PGLite store ALSO failed to start (${secs}s), so the WASM runtime cannot run ` +
+          `on this machine — your store is not necessarily damaged. Report your OS and Bun versions on ` +
+          `https://github.com/garrytan/gbrain/issues/223. Scratch error: ${errLine}`,
+        details: { scratch_ok: false, duration_ms: r.duration_ms, error: r.error, verdict: r.verdict },
+      };
+    }
+    return {
+      name,
+      status: 'warn',
+      message:
+        `Your real store opened, but a fresh scratch PGLite store failed to initialize (${secs}s) — ` +
+        `new stores can't be created on this machine. Report your OS and Bun versions on ` +
+        `https://github.com/garrytan/gbrain/issues/223. Scratch error: ${errLine}`,
+      details: { scratch_ok: false, duration_ms: r.duration_ms, error: r.error, verdict: r.verdict },
+    };
+  } catch (e) {
+    // Includes the never-touch-the-real-store guard refusal. The probe not
+    // running is a diagnostic gap, not a diagnosis — warn, don't fail.
+    const msg = e instanceof Error ? e.message : String(e);
+    return { name, status: 'warn', message: `scratch probe could not run: ${msg}` };
+  }
+}
+
+export async function doctorReportRemote(
+  engine: BrainEngine,
+  opts: { sourceIds?: string[] } = {},
+): Promise<DoctorReport> {
   const checks: Check[] = [];
 
   // 1. Connection
@@ -658,6 +922,23 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
       status: 'fail',
       message: e instanceof Error ? e.message : String(e),
     });
+    // #2674: on PGLite, a dead connection is exactly the ambiguous case the
+    // scratch probe exists for — pay its cold start only on this failure path.
+    // Unlike buildChecks (where the connect error was swallowed upstream), the
+    // real error IS in hand here: classify it, and only let the probe assert
+    // store damage on a damage-class verdict (wasm-abort/corrupt) — a lock or
+    // config refusal classifies 'unknown' and gets the hedged message.
+    if (engine.kind === 'pglite') {
+      let realStorePath: string | undefined;
+      try { realStorePath = loadConfig()?.database_path; } catch { /* no config */ }
+      let storeDamageEvidence = false;
+      try {
+        const { classifyPgliteInitError, stringifyPgliteInitError } = await import('../core/pglite-engine.ts');
+        const verdict = classifyPgliteInitError(stringifyPgliteInitError(e));
+        storeDamageEvidence = verdict === 'wasm-abort' || verdict === 'corrupt';
+      } catch { /* classifier unavailable — stay hedged (fail-closed) */ }
+      checks.push(await checkPgliteScratchProbe({ realInitFailed: true, storeDamageEvidence, realStorePath }));
+    }
     // Without a connection, every other check is meaningless — short-circuit.
     return computeDoctorReport(checks);
   }
@@ -898,6 +1179,12 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   // surfacing layer.)
   checks.push(await checkSubagentCapability(engine));
 
+  // Harness hook adapters — per-channel push-context visibility (sibling of
+  // the engine-free retrieval_reflex_health heartbeat check). Source-scoped
+  // for remote callers (cross-model P1): a source-bound token must not see
+  // other sources' activity counts/timestamps.
+  checks.push(await checkVolunteerChannels(engine, { sourceIds: opts.sourceIds }));
+
   // 6. Sync freshness check
   checks.push(await checkSyncFreshness(engine));
 
@@ -998,8 +1285,7 @@ export function checkSelfUpgradeHealth(): Check {
     const { loadConfig } = require('../core/config.ts');
     const {
       resolveSelfUpgradeMode,
-      readUpdateCache,
-      isCacheFresh,
+      pendingUpgradeVersion,
     } = require('../core/self-upgrade.ts');
     const { readRecentSelfUpgrades } = require('../core/audit/self-upgrade-audit.ts');
 
@@ -1014,9 +1300,11 @@ export function checkSelfUpgradeHealth(): Check {
     }
 
     const parts: string[] = [`mode=${mode}`];
-    const entry = readUpdateCache();
-    if (entry && isCacheFresh(entry, Date.now()) && entry.marker.kind === 'upgrade_available') {
-      parts.push(`update available: ${entry.marker.current} -> ${entry.marker.latest} (run: gbrain self-upgrade)`);
+    // Shared stale/foreign-cache guard: only report an upgrade strictly newer
+    // than the RUNNING binary (pendingUpgradeVersion owns the rule).
+    const pendingLatest = pendingUpgradeVersion(GBRAIN_BINARY_VERSION, Date.now());
+    if (pendingLatest) {
+      parts.push(`update available: ${GBRAIN_BINARY_VERSION} -> ${pendingLatest} (run: gbrain self-upgrade)`);
     }
     const failedVersions: string[] = cfg?.self_upgrade?.failed_versions ?? [];
     if (failedVersions.length > 0) {
@@ -1594,6 +1882,8 @@ export async function checkVoiceGateHealth(engine: BrainEngine): Promise<Check> 
  *      Below that they're noise; reranker fails open anyway.
  *   5) Payload-too-large failures: warn at >=1 (indicates a workload
  *      mismatch that the operator should know about).
+ *   6) Budget/pricing failures: warn at >=1 with the rerank pricing surface
+ *      and --max-cost escape hatch.
  *
  * Engine-agnostic (file-based + one config-key read).
  */
@@ -1629,6 +1919,15 @@ export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
         name: 'reranker_health',
         status: 'warn',
         message: `${payloadFails.length} reranker payload-too-large failure(s) in last 7 days. Fix: lower \`search.reranker.top_n_in\` (default 30) or split very large documents.`,
+      };
+    }
+
+    const budgetFails = failures.filter((f) => f.reason === 'budget');
+    if (budgetFails.length > 0) {
+      return {
+        name: 'reranker_health',
+        status: 'warn',
+        message: `${budgetFails.length} reranker budget/pricing failure(s) in last 7 days. Fix: add rerank pricing to src/core/embedding-pricing.ts or drop --max-cost.`,
       };
     }
 
@@ -1788,13 +2087,48 @@ export async function computeQueueHealthCheck(
       [`${oldWaitingHours} hours`],
     );
 
-    let liveWorkerQueues = new Set<string>();
-    if (oldWaitingRows.length > 0) {
-      const workers = opts.readWorkers
-        ? opts.readWorkers()
-        : (await import('../core/minions/worker-registry.ts')).readWorkers();
-      liveWorkerQueues = new Set(workers.map((w) => w.queue));
-    }
+    // Read the live-worker registry unconditionally (was: only when old
+    // embed-backfill rows existed) — the structured `details.worker_alive`
+    // below needs it on every run. Cheap: one directory enumeration.
+    const workers = opts.readWorkers
+      ? opts.readWorkers()
+      : (await import('../core/minions/worker-registry.ts')).readWorkers();
+    const liveWorkerQueues = new Set(workers.map((w) => w.queue));
+
+    // Minions-visibility wave: structured details so machine callers stop
+    // parsing prose. depth = total waiting jobs; oldest_age_seconds = age of
+    // the oldest waiting job (null when the queue is empty); worker_alive =
+    // every queue holding waiting work has a live registered worker
+    // (vacuously true with zero waiting jobs). Messages stay unchanged.
+    // Perf note (twin of buildQueueDepths in status.ts): WHERE constrains
+    // only `status` — the second column of the (queue, status, updated_at)
+    // wedge index — so this GROUP BY full-scans minion_jobs today. Acceptable
+    // at doctor frequency over pruned waiting sets; a partial
+    // (queue, created_at) WHERE status='waiting' index is the fix if hot.
+    const waitingByQueue: Array<{
+      queue: string;
+      depth: number | string;
+      oldest_age_seconds: number | string | null;
+    }> = await engine.executeRaw(
+      `SELECT queue,
+              count(*)::int AS depth,
+              EXTRACT(EPOCH FROM (now() - min(created_at)))::int AS oldest_age_seconds
+         FROM minion_jobs
+        WHERE status = 'waiting'
+        GROUP BY queue`,
+    );
+    const details: Record<string, unknown> = {
+      depth: waitingByQueue.reduce((n, r) => n + Number(r.depth), 0),
+      oldest_age_seconds: waitingByQueue.reduce<number | null>(
+        (max, r) => {
+          const age = r.oldest_age_seconds === null ? null : Number(r.oldest_age_seconds);
+          if (age === null) return max;
+          return max === null ? age : Math.max(max, age);
+        },
+        null,
+      ),
+      worker_alive: waitingByQueue.every((r) => liveWorkerQueues.has(r.queue)),
+    };
 
     const problems: string[] = [];
     if (stalledRows.length > 0) {
@@ -1847,12 +2181,14 @@ export async function computeQueueHealthCheck(
         name: 'queue_health',
         status: 'ok',
         message: `No stalled-forever jobs; no queue over depth ${threshold}; no old embed-backfill jobs without a worker.`,
+        details,
       };
     }
     return {
       name: 'queue_health',
       status: 'warn',
       message: problems.join(' '),
+      details,
     };
   } catch (e) {
     return {
@@ -2346,6 +2682,131 @@ export async function checkZeEmbeddingHealth(engine: BrainEngine): Promise<Check
       status: 'warn',
       message: `Could not check ZE embedding health: ${msg}`,
     };
+  }
+}
+
+/**
+ * provider_sunset doctor check (#3390 follow-up).
+ *
+ * Detects a brain whose EFFECTIVE embedding model (gateway-resolved, which is
+ * how default-config brains land on the shipped default) is on a provider
+ * with an announced hosted-API shutdown, and prints a paste-ready migration
+ * command with the brain's ACTUAL `content_chunks.embedding` column width
+ * filled in — not the config value, which can drift. Keeping the current
+ * width avoids a needless dimension transition + index rebuild when the
+ * target supports it.
+ *
+ * Unlike the one-shot upgrade banner (`ze_sunset_notice_shown`), this fires
+ * on every `gbrain doctor` run until the brain is off the provider —
+ * warn before the shutdown date; fail after it ONLY when the brain is
+ * actually exposed (embedded vectors exist in the affected column, so
+ * retrieval is genuinely down). A zero-vector brain whose config merely
+ * RESOLVES to the dead default stays warn — otherwise every stock fresh
+ * install (and every doctor-as-CI-gate) starts exiting 1 on the date with
+ * no code change. Suppress entirely (accepted-risk installs) via
+ * `gbrain config set doctor.suppress_provider_sunset true`.
+ * No network call; one catalog query for the column width.
+ *
+ * `now` is injectable so tests can pin BOTH sides of the date without
+ * waiting for the calendar (the date itself is a compile-time constant).
+ */
+export async function checkProviderSunset(engine: BrainEngine, now: number = Date.now()): Promise<Check> {
+  const name = 'provider_sunset';
+  try {
+    const suppressed = await engine.getConfig('doctor.suppress_provider_sunset').catch(() => null);
+    if (suppressed === 'true' || suppressed === '1') {
+      return {
+        name,
+        status: 'ok',
+        message: 'Check suppressed via doctor.suppress_provider_sunset (unset it to re-enable).',
+      };
+    }
+    const { DEFAULT_EMBEDDING_MODEL, ZEROENTROPY_SUNSET_DATE } = await import('../core/ai/defaults.ts');
+    // Effective model: gateway when configured (file/env plane, the runtime
+    // truth); the shipped default otherwise — an unset-config brain resolves
+    // to the default at runtime, so it is just as affected.
+    let model = DEFAULT_EMBEDDING_MODEL;
+    try {
+      const { getEmbeddingModel } = await import('../core/ai/gateway.ts');
+      model = getEmbeddingModel();
+    } catch {
+      // Gateway unconfigured — runtime resolves the shipped default.
+    }
+    // Effective reranker: resolve through the SAME plane search actually
+    // reranks with — resolveSearchMode (mode bundle + search.reranker.*
+    // config overrides; hybrid.ts passes `resolvedMode.reranker_model`).
+    // The gateway plane is unset by default while balanced/tokenmax rerank
+    // with the bundle's zeroentropyai model — reading the gateway here
+    // would false-ok the exact brains this check exists to protect.
+    let reranker: string | undefined;
+    try {
+      const { loadSearchModeConfig, resolveSearchMode } = await import('../core/search/mode.ts');
+      const knobs = resolveSearchMode(await loadSearchModeConfig(engine));
+      if (knobs.reranker_enabled) reranker = knobs.reranker_model;
+    } catch {
+      // Mode resolution failed — make no reranker-exposure claim.
+    }
+    const onSunsetEmbedding = model.startsWith('zeroentropyai:');
+    const onSunsetReranker = !!reranker?.startsWith('zeroentropyai:');
+    if (!onSunsetEmbedding && !onSunsetReranker) {
+      return {
+        name,
+        status: 'ok',
+        message: `No configured provider has an announced shutdown (embedding: ${model}).`,
+      };
+    }
+    const past = now >= Date.parse(`${ZEROENTROPY_SUNSET_DATE}T00:00:00Z`);
+    const parts: string[] = [];
+    let hasVectors = false;
+    if (onSunsetEmbedding) {
+      let dims: number | null = null;
+      try {
+        const { readContentChunksEmbeddingDim } = await import('../core/embedding-dim-check.ts');
+        dims = (await readContentChunksEmbeddingDim(engine)).dims;
+      } catch {
+        // Column probe failed (fresh/odd brain) — omit --dim from the hint.
+      }
+      try {
+        const rows = await engine.executeRaw(
+          `SELECT 1 AS one FROM content_chunks WHERE embedding IS NOT NULL LIMIT 1`,
+        );
+        hasVectors = rows.length > 0;
+      } catch {
+        // Probe failed (fresh/odd brain) — no exposure claim, warn-only.
+      }
+      const dimFlag = dims ? ` --dim ${dims}` : '';
+      parts.push(
+        past
+          ? hasVectors
+            ? `embedding_model="${model}": the hosted API shut down on ${ZEROENTROPY_SUNSET_DATE} — semantic retrieval is offline (queries can no longer be embedded against your existing vectors).`
+            : `embedding_model="${model}": the hosted API shut down on ${ZEROENTROPY_SUNSET_DATE}. No embedded vectors exist yet, so retrieval is not impacted — but embedding will fail until the config points elsewhere.`
+          : `embedding_model="${model}": the hosted API shuts down on ${ZEROENTROPY_SUNSET_DATE}. On that date semantic retrieval stops entirely — existing vectors become unqueryable (query embedding uses the same endpoint), not just new content.`,
+      );
+      parts.push(
+        `Two fixes, either works: ` +
+        `[1] self-host the same model — zembed-1 weights are Apache-2.0; serve them via llama-server or Ollama and point the config at the local endpoint. Keeps every existing vector, no re-embed (docs/guides/embedding-migration.md, "Self-hosting instead of migrating"). ` +
+        `[2] migrate to another provider (resumable; preview cost first): ` +
+        `gbrain migrate embeddings --to <provider:model>${dimFlag} --dry-run` +
+        (dims ? ` — keep --dim ${dims} (this brain's actual index width) to avoid a needless schema rebuild when the target supports it.` : ''),
+      );
+    }
+    if (onSunsetReranker) {
+      parts.push(
+        `The reranker (${reranker}) is on the same provider; after the shutdown search falls back to unreranked ordering. ` +
+        `Fix: gbrain config set search.reranker.enabled false, or point search.reranker.model at another provider.`,
+      );
+    }
+    if (onSunsetEmbedding || onSunsetReranker) {
+      parts.push('Accepted the risk? Silence this check: gbrain config set doctor.suppress_provider_sunset true');
+    }
+    // fail = retrieval is ACTUALLY down (past the date AND embedded vectors
+    // exist on the dead provider). Reranker-only exposure stays warn — search
+    // fails open to unreranked ordering (degraded, not down).
+    const failNow = past && onSunsetEmbedding && hasVectors;
+    return { name, status: failNow ? 'fail' : 'warn', message: parts.join(' ') };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { name, status: 'warn', message: `Could not check provider sunset status: ${msg}` };
   }
 }
 
@@ -3174,10 +3635,6 @@ export async function checkSubagentCapability(engine: BrainEngine): Promise<Chec
 const checkSubagentProvider = checkSubagentCapability;
 void checkSubagentProvider;
 
-// Module-scoped set so each invalid-env-var warning fires once per process,
-// per variable name (v0.42.7 #1696: was a single bool shared across all vars).
-const _envNumberWarned = new Set<string>();
-
 /**
  * v0.42.7 (#1696): single source of truth for the extraction-lag warn
  * threshold (percent). Both the `links_extraction_lag` doctor check AND the
@@ -3191,31 +3648,19 @@ export const EXTRACTION_LAG_WARN_PCT_DEFAULT = 20;
 export const EXTRACTION_LAG_MIN_PAGES = 100;
 
 /**
- * v0.42.7 (#1696, C1): generic "read a positive number from an env var, warn
- * once + fall back on garbage." Extracted from _resolveSyncFreshnessHours so
- * the percent-threshold doctor checks don't reuse a `...Hours`-named helper.
- * `opts.unit` is purely cosmetic for the warning string ('h', '%', '').
- * Exported (D3) so the sync nudge resolves the threshold the same way.
+ * Re-exported from `src/core/env-number.ts`, which now owns the implementation
+ * AND the warn-once memo. `source-health.ts` needs the hours resolver for the
+ * staleness ceiling, and doctor already imports from source-health — so the
+ * helper had to move to core or the import graph would cycle.
+ *
+ * The `_resolveEnvNumber` name is kept because `sync.ts:5730` dynamically
+ * imports it from this module.
  */
-export function _resolveEnvNumber(varName: string, fallback: number, opts?: { unit?: string }): number {
-  const raw = process.env[varName];
-  if (raw === undefined || raw === '') return fallback;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) {
-    if (!_envNumberWarned.has(varName)) {
-      _envNumberWarned.add(varName);
-      console.warn(
-        `[gbrain doctor] Ignoring invalid ${varName}=${raw}; using default ${fallback}${opts?.unit ?? ''}.`,
-      );
-    }
-    return fallback;
-  }
-  return n;
-}
+export { resolveEnvNumber as _resolveEnvNumber };
 
-function _resolveSyncFreshnessHours(varName: string, fallback: number): number {
-  return _resolveEnvNumber(varName, fallback, { unit: 'h' });
-}
+/** Local aliases; the shared memo lives in core so it can't fork per module. */
+const _resolveEnvNumber = resolveEnvNumber;
+const _resolveSyncFreshnessHours = resolveHoursEnv;
 
 /**
  * Sync freshness check (v0.32.4) — verify that sources with local_path have
@@ -3609,9 +4054,11 @@ export async function checkLinksExtractionLag(
       const n = Number(failRaw);
       if (Number.isFinite(n) && n > 0) {
         failPct = n;
-      } else if (!_envNumberWarned.has('GBRAIN_EXTRACTION_LAG_FAIL_PCT')) {
-        _envNumberWarned.add('GBRAIN_EXTRACTION_LAG_FAIL_PCT');
-        console.warn(`[gbrain doctor] Ignoring invalid GBRAIN_EXTRACTION_LAG_FAIL_PCT=${failRaw}; hard-fail stays disabled.`);
+      } else {
+        warnOnceForEnv(
+          'GBRAIN_EXTRACTION_LAG_FAIL_PCT',
+          `[gbrain] Ignoring invalid GBRAIN_EXTRACTION_LAG_FAIL_PCT=${failRaw}; hard-fail stays disabled.`,
+        );
       }
     }
 
@@ -3742,7 +4189,9 @@ function collectMarkdownSlugs(root: string): Set<string> {
       continue;
     }
     for (const e of entries) {
-      if (e.name.startsWith('.') || e.name === 'node_modules') continue;
+      // Hidden directories can contain canonical, tracked knowledge (for
+      // example `.archive/`). Only implementation metadata is never a page.
+      if (e.name === '.git' || e.name === 'node_modules') continue;
       const childRel = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory()) stack.push(childRel);
       else if (/\.mdx?$/i.test(e.name)) out.add(slugifyPath(childRel).toLowerCase());
@@ -4199,7 +4648,7 @@ export async function checkSyncFreshness(
     // bucket). Empty when nothing is syncing — keeps the steady-state messages
     // byte-for-byte unchanged.
     const inProgress: string[] = [];
-    let liveSyncSnap: (sourceId: string) => Promise<{ holder_pid: number; holder_host: string } | null> =
+    let liveSyncSnap: (sourceId: string) => Promise<{ holder_pid: number; holder_host: string; age_ms: number } | null> =
       async () => null;
     try {
       const { inspectLock, syncLockId } = await import('../core/db-lock.ts');
@@ -4207,7 +4656,7 @@ export async function checkSyncFreshness(
         try {
           const snap = await inspectLock(engine, syncLockId(sourceId));
           return snap && !snap.ttl_expired
-            ? { holder_pid: snap.holder_pid, holder_host: snap.holder_host }
+            ? { holder_pid: snap.holder_pid, holder_host: snap.holder_host, age_ms: snap.age_ms }
             : null;
         } catch {
           return null;
@@ -4217,6 +4666,10 @@ export async function checkSyncFreshness(
       /* db-lock unavailable — skip in-progress detection, staleness stands. */
     }
 
+    // One ceiling for the whole report: hoisted out of the loop so every
+    // source is judged against the same number (and the env read + warn-once
+    // machinery runs once, not once per source).
+    const stalenessCeilingSeconds = resolveStalenessCeilingSeconds();
     for (const source of sources) {
       // Embed source.id in user-visible messages so `gbrain sync --source <id>`
       // matches what the user copy-pastes. Show display name in parens when set.
@@ -4226,10 +4679,35 @@ export async function checkSyncFreshness(
 
       // BUG 4: actively syncing (live lock) → healthy, count as synced_recently
       // and skip the staleness checks. Keeps the 3-bucket invariant intact.
+      //
+      // ...but ONLY up to the staleness ceiling. `withRefreshingLock` bumps the
+      // heartbeat on its own timer regardless of whether the import is making
+      // forward progress (`liveSyncStatus`'s docstring is explicit: callers may
+      // report "running", NOT "healthy"). So a holder blocked inside a query
+      // keeps refreshing forever, and an uncapped in-progress verdict would
+      // mask that source from every staleness check indefinitely — the same
+      // invisible-failure class this whole pass exists to close, just reached
+      // through the lock table instead of the freshness column.
       const liveSnap = await liveSyncSnap(source.id);
       if (liveSnap) {
-        inProgress.push(`${display} sync in progress (pid ${liveSnap.holder_pid} on ${liveSnap.holder_host})`);
-        synced_recently_count++;
+        const ceilingMs = stalenessCeilingSeconds * 1000;
+        if (liveSnap.age_ms <= ceilingMs) {
+          inProgress.push(`${display} sync in progress (pid ${liveSnap.holder_pid} on ${liveSnap.holder_host})`);
+          synced_recently_count++;
+          continue;
+        }
+        // Sub-hour ceilings are legal (fractional env override), and an alarm
+        // that names a zero duration ("held the lock for 0h") reads as broken.
+        const heldFor = liveSnap.age_ms >= 3600_000
+          ? `${Math.floor(liveSnap.age_ms / 3600_000)}h`
+          : `${Math.max(1, Math.floor(liveSnap.age_ms / 60_000))}m`;
+        issues.push(
+          `Source ${display} has held the sync lock for ${heldFor} ` +
+          `(pid ${liveSnap.holder_pid} on ${liveSnap.holder_host}) — heartbeating but not finishing. ` +
+          `Run \`gbrain sync --break-lock --source ${source.id}\` after confirming the holder is wedged.`,
+        );
+        hasFailures = true;
+        stale_count++;
         continue;
       }
 
@@ -4318,6 +4796,7 @@ export async function checkSyncFreshness(
           contentMs !== null && Number.isFinite(contentMs) ? contentMs : null,
           lastSync,
           now,
+          stalenessCeilingSeconds,
         );
         thresholdAgeMs = lagSec === null ? ageMs : lagSec * 1000;
       }
@@ -4649,6 +5128,96 @@ export async function checkCycleFreshness(
  *   - `progress` reporter writes to stderr (heartbeats per check)
  *   - `engine.executeRaw` / handler-leaf calls (the actual probe work)
  */
+// ≥2 failed repair attempts inside 7 days = the corruption keeps regenerating.
+const REPAIR_RECURRENCE_WINDOW_MS = 7 * 24 * 3600 * 1000;
+const REPAIR_RECURRENCE_THRESHOLD = 2;
+
+/**
+ * WAL-repair wave (#223/#1670/#2575): when the DB failed to connect on a
+ * PGLite brain, diagnose the data dir from the FILESYSTEM (the connect error
+ * itself was swallowed by doctor's fs-only fallback — this check re-derives
+ * the state from disk). Pure: interprets an `inspectPgliteDataDir` diagnosis
+ * into a Check; exported so `test/doctor-pglite-datadir.test.ts` drives it
+ * directly (same convention as computeWorkerOomLoopCheck). Returns a Check
+ * always — the call site only runs it when connect already failed, so even a
+ * healthy-looking dir warrants a pointer at the repair tooling.
+ *
+ * Recurrence escalation (eng-review 2A): repeated failed repair attempts on
+ * record mean the corruption keeps regenerating (unclean-shutdown genesis) —
+ * escalate to the engine-switch ladder instead of letting the brain silently
+ * lose a WAL tail per cycle. Backup-dir inventory rides along (same
+ * disk-visibility class as orphan_clones).
+ */
+export function computePgliteDataDirCheck(
+  dataDir: string,
+  diagnosis: import('../core/pglite-repair.ts').PgliteDirDiagnosis,
+): Check {
+  const backupNote = diagnosis.backupDirs.length > 0
+    ? ` ${diagnosis.backupDirs.length} repair backup dir(s) on disk (newest: ${diagnosis.backupDirs[0]}) — delete old ones to reclaim space once the brain is healthy.`
+    : '';
+  // Count BOTH outcomes (adversarial review F12): a >1h-period crash loop where
+  // each repair "succeeds" discards a WAL tail per cycle with zero FAILED
+  // attempts on record — escalation must still fire.
+  const recentAttempts = diagnosis.recentAttempts.filter(
+    (a) => Date.now() - a.ts < REPAIR_RECURRENCE_WINDOW_MS,
+  ).length;
+  const recurrence = recentAttempts >= REPAIR_RECURRENCE_THRESHOLD
+    ? ` Auto-repair has run ${recentAttempts}x this week — the corruption keeps regenerating (likely an unclean-shutdown loop). Consider switching engines (docs/ENGINES.md: \`gbrain init --supabase\` or native Postgres).`
+    : '';
+
+  switch (diagnosis.verdict) {
+    case 'locked':
+      return {
+        name: 'pglite_data_dir',
+        status: 'warn',
+        message:
+          `Could not connect, and the PGLite data-dir lock is held by live PID ${diagnosis.lockHolderPid} — ` +
+          `another gbrain process (often \`gbrain serve\`) has the brain open. Stop it and re-run.${backupNote}`,
+        remediation_status: 'human_only',
+      };
+    case 'missing':
+      return {
+        name: 'pglite_data_dir',
+        status: 'warn',
+        message: `No PGLite data dir at ${dataDir}. Run \`gbrain init --pglite\` to create one.`,
+        remediation_status: 'human_only',
+      };
+    case 'unsupported-layout':
+      return {
+        name: 'pglite_data_dir',
+        status: 'fail',
+        message:
+          `PGLite data dir at ${dataDir} is not repairable in place (${diagnosis.detail}). ` +
+          `Rebuild from your brain repo: \`gbrain reinit-pglite\` (or back up ~/.gbrain, move the dir aside, ` +
+          `\`gbrain init --pglite\`, re-add sources + sync + embed).${backupNote}${recurrence}`,
+        remediation_status: 'human_only',
+      };
+    case 'wal-corruption-likely':
+      return {
+        name: 'pglite_data_dir',
+        status: 'fail',
+        message:
+          `PGLite failed to open and the data dir shows unclean-shutdown state (${diagnosis.detail}). ` +
+          `This is the torn-WAL class behind issue #223 — repairable in place, data preserved: ` +
+          `\`gbrain pglite-repair --dry-run\` to diagnose, \`gbrain pglite-repair --yes\` to repair.${backupNote}${recurrence}`,
+        remediation_status: 'human_only',
+      };
+    case 'looks-healthy':
+    default:
+      return {
+        name: 'pglite_data_dir',
+        status: 'fail',
+        message:
+          `PGLite failed to open but the data dir layout validates (${diagnosis.detail}). ` +
+          `IF the connect error mentions \`Aborted()\` this is likely torn WAL state — ` +
+          `\`gbrain pglite-repair --dry-run\` to diagnose, \`gbrain pglite-repair --yes\` to repair in place ` +
+          `(repair discards the un-checkpointed WAL tail — don't run it for lock-contention or ` +
+          `catalog-corruption errors; 58P01/pgvector load failures need \`gbrain reinit-pglite\` instead).${backupNote}${recurrence}`,
+        remediation_status: 'human_only',
+      };
+  }
+}
+
 /**
  * issue #1685 (GAP A) — the single authoritative "worker is OOM-looping" signal.
  *
@@ -4833,6 +5402,46 @@ export async function computePoolReapHealthCheck(
  * Policy-skill install state is reported in details (it ships into the HOST
  * repo, so absence in gbrain's own skills dir is expected, not a failure).
  */
+/**
+ * MEMORY_VERBS v1 (Cathedral 1, E4) — usage-sidecar health. Read-only,
+ * fail-open. Stats only (local JSONL, never uploaded; never source of truth):
+ *   - no sidecar file        → ok, "no verb calls recorded yet" (fresh install)
+ *   - recent events parse    → ok, names the last verb + timestamp
+ *   - file exists, unreadable→ warn (observability degraded, verbs unaffected)
+ */
+export async function buildMemoryVerbsCheck(): Promise<Check> {
+  const name = 'memory_verbs_usage';
+  try {
+    const { readVerbUsage, usageLogPath } = await import('../core/verbs/usage-log.ts');
+    if (!existsSync(usageLogPath())) {
+      return {
+        name,
+        status: 'ok',
+        message: 'no verb calls recorded yet (sidecar appears on first remember/recall/entity/synthesize/forget)',
+      };
+    }
+    const events = await readVerbUsage({ days: 30 });
+    if (events.length === 0) {
+      return { name, status: 'ok', message: 'sidecar present; no verb calls in the last 30 days' };
+    }
+    const last = events[events.length - 1];
+    const byVerb = new Map<string, number>();
+    for (const e of events) byVerb.set(e.verb, (byVerb.get(e.verb) ?? 0) + 1);
+    const mix = [...byVerb.entries()].map(([v, n]) => `${v}:${n}`).join(' ');
+    return {
+      name,
+      status: 'ok',
+      message: `${events.length} verb calls in 30d (${mix}); last ${last.verb} at ${last.ts} — local JSONL only, never uploaded`,
+    };
+  } catch (e) {
+    return {
+      name,
+      status: 'warn',
+      message: `verb usage sidecar unreadable (${e instanceof Error ? e.message : String(e)}) — observability degraded; verbs unaffected`,
+    };
+  }
+}
+
 export function buildRetrievalReflexCheck(skillsDir: string | null): Check {
   const name = 'retrieval_reflex_health';
   try {
@@ -5026,6 +5635,21 @@ export async function buildChecks(
     checks.push(buildRetrievalReflexCheck(skillsDir));
   }
 
+  // 1b-2. Per-channel push-context visibility (the hook lane's feedback
+  // loop). Engine-aware sibling of the reflex heartbeat check above — the
+  // LOCAL `gbrain doctor` is the primary operator surface for this, so it
+  // runs here as well as on the remote report path. Skipped in fs-only mode.
+  if (scope === 'all' && engine && !fastMode) {
+    checks.push(await checkVolunteerChannels(engine));
+  }
+
+  // 1c. MEMORY_VERBS v1 usage sidecar health (Cathedral 1, E4). Read-only,
+  // fail-open: reports whether the local JSONL sidecar is present + parseable
+  // and when a verb last fired. Local file only — never uploaded.
+  if (scope === 'all') {
+    checks.push(await buildMemoryVerbsCheck());
+  }
+
   // 2. Skill conformance (SKILL group — gated)
   if (scope === 'all' && skillsDir) {
     const conformanceResult = skillConformanceCheck(skillsDir);
@@ -5057,6 +5681,21 @@ export async function buildChecks(
   if (scope === 'all' && skillsDir) {
     checks.push(skillsManifestIntegrityCheck(skillsDir));
   }
+
+  // 2c-bis. Skill currency (new built-in skills available downstream) +
+  // live precondition verification for installed skills that declare
+  // `requires:`. Currency is filesystem-only; preconditions need the engine
+  // and skip cleanly without one.
+  if (scope === 'all' && skillsDir) {
+    checks.push(skillCurrencyCheck(skillsDir));
+    checks.push(await skillPreconditionsCheck(skillsDir, engine));
+  }
+
+  // 2d. Agent-bootstrap health (plan B2/B4/ENG-4). Filesystem-first; the
+  // one engine-dependent pairing check degrades gracefully when engine is
+  // null. Emits NOTHING on machines with no bootstrap state, so ordinary
+  // brains keep a clean doctor.
+  checks.push(...(await bootstrapDoctorChecks(engine)));
 
   // 3. Half-migrated Minions detection (filesystem-only).
   // If completed.jsonl has any status:"partial" entry with no later
@@ -5275,7 +5914,15 @@ export async function buildChecks(
     if (lastStarted && engine) {
       const queue = typeof lastStarted.queue === 'string' ? lastStarted.queue : 'default';
       const effectiveMaxRss = typeof lastStarted.max_rss_mb === 'number' ? lastStarted.max_rss_mb : null;
-      const localPid = readSupervisorPid(DEFAULT_PID_FILE).pid;
+      // The 'started' event already records the pid-file path actually in use
+      // (this.opts.pidFile, which reflects a custom --pid-file). Prefer that
+      // over re-deriving DEFAULT_PID_FILE locally so a custom --pid-file
+      // deployment doesn't false-positive a singleton mismatch against itself.
+      // Falls back to DEFAULT_PID_FILE when the event carries no usable value.
+      const pidFilePath = typeof lastStarted.pid_file === 'string' && lastStarted.pid_file.length > 0
+        ? lastStarted.pid_file
+        : DEFAULT_PID_FILE;
+      const localPid = readSupervisorPid(pidFilePath).pid;
       const localHost = hostname();
 
       // Read the DB singleton lock holder for this queue.
@@ -5851,6 +6498,44 @@ export async function buildChecks(
     // Best-effort environment check; never block doctor.
   }
 
+  // 3g. pglite_leftovers (#3856). A pglite -> postgres migration leaves the
+  // old engine store (`brain.pglite/`) under the gbrain home forever — dead
+  // weight roughly the size of the live DB that nothing surfaces, silently
+  // riding along in any backup that archives the home dir. Assessment is a
+  // pure helper (src/core/pglite-leftovers-check.ts); it warns ONLY for a
+  // durable postgres engine, and skips while `migrate-manifest.json` exists
+  // (an in-flight/interrupted migration can make `brain.pglite` the LIVE
+  // target while the durable engine still reads postgres — #3194) and for
+  // everything else (fail open).
+  // The engine is read from config.json DIRECTLY, not loadConfig(): a
+  // transient DATABASE_URL (#427) can make a live PGLite brain resolve as
+  // postgres for one process, and deletion advice must never rest on an
+  // env override (Codex review P1).
+  // Warn-only by design: WHEN the abandoned store is safe to drop is a
+  // policy question (#3856), so the remediation is a verified manual delete
+  // — no CLI command is named that does not exist (#3697).
+  try {
+    const { readFileSync } = await import('node:fs');
+    const durableEngine = (
+      JSON.parse(readFileSync(join(gbrainPath(), 'config.json'), 'utf8')) as { engine?: unknown }
+    ).engine;
+    const { assessPgliteLeftovers } = await import('../core/pglite-leftovers-check.ts');
+    const leftovers = assessPgliteLeftovers(
+      typeof durableEngine === 'string' ? durableEngine : undefined,
+      gbrainPath(),
+    );
+    if (leftovers.status !== 'skip') {
+      checks.push({
+        name: 'pglite_leftovers',
+        status: leftovers.status,
+        message: leftovers.message,
+      });
+    }
+  } catch {
+    // Best-effort filesystem-hygiene check; never block doctor (a missing/
+    // unparseable config.json lands here and skips, same fail-open posture).
+  }
+
   // 3b-multi-source. Multi-source drift (v0.31.8 — D8 + D17 + OV12 + OV13).
   // Pre-v0.30.3 putPage misrouted multi-source writes to (default, slug).
   // For each non-default source with local_path set, walk the FS and surface
@@ -5943,6 +6628,65 @@ export async function buildChecks(
     }
   } catch {
     // Filesystem read failure is non-fatal.
+  }
+
+  // 3d. PGLite data-dir diagnosis (WAL-repair wave) + scratch-store probe
+  // (#2674). The data-dir check re-derives the failure state from DISK (the
+  // connect error was swallowed by the fs-only fallback); the probe adds the
+  // RUNTIME dimension (a throwaway store that opens fine proves the WASM
+  // runtime is healthy). Both only fire when the connect already FAILED on a
+  // PGLite brain (engine === null, not --fast — under --fast connect wasn't
+  // attempted, so "engine === null" proves nothing there).
+  //
+  // Probe cost gate (a PGLite cold start is 5–20s): auto-runs ONLY when init
+  // failed AND the disk diagnosis didn't already fully explain it — a live
+  // lock or a missing dir needs no runtime probe (and 'locked' was exactly
+  // the reviewed false-positive: blaming the store while `gbrain serve` held
+  // it). Explicit --probe-pglite always runs it. A routine healthy
+  // `gbrain doctor` never pays it.
+  {
+    const probeRequested = args.includes('--probe-pglite');
+    let cfgForProbe: ReturnType<typeof loadConfig> = null;
+    try { cfgForProbe = loadConfig(); } catch { /* no config — nothing to diagnose */ }
+    const pgliteInitFailed = !engine && !fastMode && cfgForProbe?.engine === 'pglite';
+
+    let dirVerdict: import('../core/pglite-repair.ts').PgliteDirDiagnosis['verdict'] | undefined;
+    if (pgliteInitFailed) {
+      try {
+        const { inspectPgliteDataDir } = await import('../core/pglite-repair.ts');
+        const { resolve } = await import('node:path');
+        // Absolutize: a RELATIVE database_path would make the sidecar/backup
+        // lookups resolve against doctor's cwd instead of the engine's.
+        const pgliteDataDir = resolve(cfgForProbe!.database_path || gbrainPath('brain.pglite'));
+        const diagnosis = inspectPgliteDataDir(pgliteDataDir);
+        dirVerdict = diagnosis.verdict;
+        checks.push(computePgliteDataDirCheck(pgliteDataDir, diagnosis));
+      } catch {
+        // Best-effort: an unreadable config or fs failure must not stop doctor.
+      }
+    }
+
+    const dirExplainsFailure = dirVerdict === 'locked' || dirVerdict === 'missing';
+    if (probeRequested || (pgliteInitFailed && !dirExplainsFailure)) {
+      progress.start('doctor.pglite_probe');
+      const stopHb = startHeartbeat(progress, 'pglite scratch-store probe (cold start, can take 5–20s)…');
+      try {
+        checks.push(
+          await checkPgliteScratchProbe({
+            // A lock/missing dir explains the failure without the store being
+            // damaged — an explicit --probe-pglite there still reports on the
+            // runtime, but must not treat the store as the convicted party.
+            realInitFailed: pgliteInitFailed && !dirExplainsFailure,
+            storeDamageEvidence:
+              dirVerdict === 'wal-corruption-likely' || dirVerdict === 'unsupported-layout',
+            realStorePath: cfgForProbe?.database_path,
+          }),
+        );
+      } finally {
+        stopHb();
+        progress.finish();
+      }
+    }
   }
 
   // --- DB checks (skip if --fast or no engine) ---
@@ -6188,7 +6932,7 @@ export async function buildChecks(
           status: 'warn',
           message:
             'Auto-RLS event trigger missing. New tables created outside gbrain may not get RLS. ' +
-            'Fix: gbrain apply-migrations --force-retry 35',
+            'Fix: recreate it with the SQL in docs/guides/rls-and-you.md ("What if the trigger gets dropped?").',
         });
       } else if (rows[0].evtenabled !== 'O' && rows[0].evtenabled !== 'A') {
         checks.push({
@@ -7947,6 +8691,11 @@ export async function buildChecks(
     // v0.36.0.0 (A5): ZE embedding key health + schema/config width consistency.
     progress.heartbeat('ze_embedding_health');
     checks.push(await checkZeEmbeddingHealth(engine));
+    // provider_sunset — brain pinned to a provider with an announced
+    // hosted-API shutdown; paste-ready migration hint with the actual
+    // column width. Warn before the date, fail after.
+    progress.heartbeat('provider_sunset');
+    checks.push(await checkProviderSunset(engine));
     progress.heartbeat('embedding_width_consistency');
     checks.push(await checkEmbeddingWidthConsistency(engine));
     // v0.41.15.0 (T6, codex #19/#20) — facts.embedding column drift
@@ -8003,6 +8752,329 @@ export async function buildChecks(
  * test/doctor-behavioral.test.ts for the in-process seam coverage and
  * test/doctor-cli-smoke.test.ts for the subprocess wrapper coverage.
  */
+/**
+ * Agent-bootstrap check group (plan B2, B4, ENG-4, one-live-serve, C1 skew).
+ *
+ * Gated on bootstrap state actually existing on this machine (install
+ * receipt, hook heartbeat, or push-status) — machines that never ran
+ * `gbrain bootstrap` get ZERO checks from this group. Every probe is
+ * fail-soft: a broken telemetry file degrades to a warn, never a throw.
+ */
+export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise<Check[]> {
+  const checks: Check[] = [];
+  let home: string;
+  try {
+    home = resolveGbrainHome();
+  } catch {
+    return [];
+  }
+  const receipt = readReceipt(home);
+  // One reader for every push-status surface [D8]; per-root files [D13].
+  const { readPushStatuses, pushStatusFilesExist } = await import('../core/workspace-push.ts');
+  const pushStatuses = readPushStatuses();
+  const statusFilesOnDisk = pushStatusFilesExist();
+  const heartbeatFile = join(home, 'integrations', 'hooks', 'heartbeat.jsonl');
+  // #4043: a harness-only box (bootstrap harness, no workspace install) is
+  // bootstrap state too — without this, such a machine gets ZERO checks.
+  const harnessState = readHarnessReceiptState(home);
+  const hasBootstrapState =
+    receipt !== null || statusFilesOnDisk || existsSync(heartbeatFile) || harnessState.state !== 'absent';
+  if (!hasBootstrapState) return [];
+
+  const ws = receipt?.workspace_dir ?? null;
+
+  // 0. Harness registration health (#4043): three states so it neither cries
+  // wolf nor goes silent — skip (not a harness box) / warn (serve unreachable,
+  // a normal transient; or receipt unreadable) / fail (a target failed, or a
+  // prior rotation never converged). Token liveness needs the bearer (only
+  // recoverable from host config) — that's `gbrain bootstrap harness
+  // --status`'s job; doctor stays offline-cheap.
+  if (harnessState.state === 'ok') {
+    const hr = harnessState.receipt;
+    const failed = hr.targets.filter((t) => t.state === 'failed');
+    const pending = hr.targets.filter((t) => t.state === 'pending');
+    if (failed.length > 0 || pending.length > 0) {
+      checks.push({
+        name: 'bootstrap_harness_health',
+        status: 'fail',
+        message:
+          `harness wiring incomplete: ${failed.length} failed / ${pending.length} pending target(s)` +
+          ` — re-run \`gbrain bootstrap harness\` to converge (details: gbrain bootstrap harness --status).`,
+      });
+    } else if (hr.token.previous_ids && hr.token.previous_ids.length > 0) {
+      checks.push({
+        name: 'bootstrap_harness_health',
+        status: 'fail',
+        message: `${hr.token.previous_ids.length} previous harness token(s) were never revoked (ids ${hr.token.previous_ids.join(', ')}) — re-run \`gbrain bootstrap harness\`, or run \`gbrain auth revoke\` with the id flag per id.`,
+      });
+    } else if (hr.targets.length === 0 && hr.token.minted && hr.token.id !== undefined) {
+      // Half-removed state: a remove under a live PGLite serve strips every
+      // host target but defers the revoke — the wiring is gone yet the minted
+      // token stays ACTIVE. A vacuous all-confirmed must not read green.
+      // (Flag names spelled without dashes here: the flag-registry generator
+      // harvests bare flag tokens from comments one import level deep.)
+      checks.push({
+        name: 'bootstrap_harness_health',
+        status: 'fail',
+        message: `harness removal pending: host wiring removed but the minted token (id ${hr.token.id}) is not yet revoked — stop the serve and re-run \`gbrain bootstrap harness\` with the remove flag, or run \`gbrain auth revoke\` with the id flag.`,
+      });
+    } else {
+      try {
+        const base = hr.url.replace(/\/mcp$/, '');
+        const res = await fetch(`${base}/health`, { signal: AbortSignal.timeout(3000) });
+        const body = res.ok ? ((await res.json()) as { status?: string }) : null;
+        if (body?.status === 'ok') {
+          checks.push({
+            name: 'bootstrap_harness_health',
+            status: 'ok',
+            message: `harness wired to ${hr.url} (serve healthy; token check: gbrain bootstrap harness --status)`,
+          });
+        } else {
+          checks.push({
+            name: 'bootstrap_harness_health',
+            status: 'warn',
+            message: `harness wired to ${hr.url} but the serve is not answering /health — start \`gbrain serve\` in http mode (a down serve is a normal transient, sessions just lose brain access until it returns).`,
+          });
+        }
+      } catch {
+        checks.push({
+          name: 'bootstrap_harness_health',
+          status: 'warn',
+          message: `harness wired to ${hr.url} but the serve is unreachable — start \`gbrain serve\` in http mode.`,
+        });
+      }
+    }
+  } else if (harnessState.state !== 'absent') {
+    checks.push({
+      name: 'bootstrap_harness_health',
+      status: 'warn',
+      message: `the harness receipt is unreadable (${harnessState.state}) — see \`gbrain bootstrap harness --status\`.`,
+    });
+  }
+
+  // 1. Hook heartbeat failure rate [B3 read side]. Hard errors only —
+  // degraded entries are DESIGNED fallbacks (pull-mode, no serve).
+  let hooksSeen = false;
+  try {
+    const { readHeartbeatTail, HEARTBEAT_FAILURE_WINDOW, HEARTBEAT_FAILURE_RATE_THRESHOLD } =
+      await import('./hook.ts');
+    const tail = await readHeartbeatTail(HEARTBEAT_FAILURE_WINDOW);
+    if (tail.length > 0) {
+      hooksSeen = true;
+      const failures = tail.filter((e) => e.outcome === 'error').length;
+      const rate = failures / tail.length;
+      if (rate > HEARTBEAT_FAILURE_RATE_THRESHOLD) {
+        checks.push({
+          name: 'bootstrap_hooks_heartbeat',
+          status: 'fail',
+          message: `${failures}/${tail.length} recent hook invocations hard-failed — brain context is not reaching the session. Check \`gbrain bootstrap verify\` and the serve process.`,
+        });
+      } else if (rate > 0.2) {
+        checks.push({
+          name: 'bootstrap_hooks_heartbeat',
+          status: 'warn',
+          message: `${failures}/${tail.length} recent hook invocations hard-failed. Watch it; hooks fail open so sessions still work.`,
+        });
+      } else {
+        checks.push({
+          name: 'bootstrap_hooks_heartbeat',
+          status: 'ok',
+          message: `hook heartbeat healthy (${failures}/${tail.length} hard failures in the trailing window)`,
+        });
+      }
+    }
+  } catch {
+    checks.push({ name: 'bootstrap_hooks_heartbeat', status: 'warn', message: 'hook heartbeat unreadable' });
+  }
+
+  // 2. Push staleness [B4]: fail when the last successful push is >48h old
+  // AND the workspace tree is dirty (recent work provably unpushed). Per-root
+  // status files [D13]: the WORST entry decides, so one workspace's success
+  // can never mask another's failure.
+  try {
+    if (pushStatuses.length > 0) {
+      const { PUSH_STALE_MS } = await import('./hook.ts'); // hook.ts owns the threshold (single source)
+      const failing = pushStatuses.filter((s) => s.ok === false);
+      if (failing.length > 0) {
+        const s = failing[0]!;
+        const target = s.repoRoot ?? ws ?? undefined;
+        const rest = failing.length > 1 ? ` [+${failing.length - 1} more workspace(s)]` : '';
+        checks.push({
+          name: 'bootstrap_push_health',
+          status: 'warn',
+          message: `last workspace push FAILED${target ? ` for ${target}` : ''} (${s.ts ?? 'unknown'}): ${s.reason ?? 'unknown'}${rest} — run \`gbrain sources push${target ? ` --path ${target}` : ''}\``,
+        });
+      } else {
+        const stamps = pushStatuses.map((s) => Date.parse(s.ts ?? '')).filter((t) => Number.isFinite(t));
+        const stalest = stamps.length > 0 ? Math.min(...stamps) : NaN;
+        const staleIso = Number.isFinite(stalest) ? new Date(stalest).toISOString() : 'unknown';
+        const stale = Number.isFinite(stalest) && Date.now() - stalest > PUSH_STALE_MS;
+        let dirty = false;
+        if (ws) {
+          try {
+            dirty = execFileSync('git', ['-C', ws, 'status', '--porcelain'], {
+              stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000,
+            }).toString().trim() !== '';
+          } catch { dirty = false; }
+        }
+        if (stale && dirty) {
+          checks.push({
+            name: 'bootstrap_push_health',
+            status: 'fail',
+            message: `last successful push ${staleIso} (>48h) with a DIRTY workspace tree — recent agent memory is unpushed [B4]. Run \`gbrain sources push --path ${ws}\`.`,
+          });
+        } else if (stale) {
+          checks.push({ name: 'bootstrap_push_health', status: 'warn', message: `last successful push ${staleIso} (>48h ago); tree clean — likely just idle` });
+        } else {
+          checks.push({ name: 'bootstrap_push_health', status: 'ok', message: `last push ok (${staleIso})` });
+        }
+      }
+    } else if (statusFilesOnDisk) {
+      // Files exist but none parsed — the tolerant reader skips corrupt
+      // records; doctor must not let that read as "no news is good news".
+      checks.push({ name: 'bootstrap_push_health', status: 'warn', message: 'push status unreadable' });
+    }
+  } catch {
+    checks.push({ name: 'bootstrap_push_health', status: 'warn', message: 'push status unreadable' });
+  }
+
+  // 2b. Durability job [B7/D7]: presence + LIVENESS. A presence-only check
+  // certifies dead jobs as healthy (the autopilot-status failure mode), so
+  // this warns on plist-present-but-unloaded and stale pull logs. Only warns
+  // when the user actually consented to the job; containers/cloud sandboxes
+  // are expected to have none.
+  try {
+    if (ws !== null && receipt !== null) {
+      const { detectExecutionEnvironment } = await import('../core/execution-env.ts');
+      const envKind = detectExecutionEnvironment();
+      if (envKind !== 'local') {
+        // Answered BEFORE the subprocess probes — cloud/container doctor
+        // runs must not pay launchctl/crontab spawns for an answer that is
+        // discarded (no scheduler exists there by design).
+        checks.push({
+          name: 'bootstrap_durability_job',
+          status: 'ok',
+          message: `no scheduler in this environment (${envKind}) — expected; per-turn and session-end pushes cover persistence`,
+        });
+      } else {
+      const { durabilityJobStatus } = await import('../core/brain-repo-durability.ts');
+      const { readInterviewState } = await import('../core/bootstrap/interview.ts');
+      const sourceId = receipt.source_id ?? 'workspace';
+      const js = durabilityJobStatus(sourceId);
+      let consented = false;
+      try {
+        const iv = readInterviewState(ws);
+        consented = iv.ok && (iv.state.answers['PERSIST_CRON']?.value ?? '').toLowerCase() === 'yes';
+      } catch { consented = false; }
+      if (!consented) {
+        if (js.kind !== 'none') {
+          checks.push({ name: 'bootstrap_durability_job', status: 'ok', message: `${js.kind} pull job present (not required by consent — fine)` });
+        }
+        // no consent + no job → nothing to check; stay silent
+      } else if (js.kind === 'none') {
+        checks.push({
+          name: 'bootstrap_durability_job',
+          status: 'warn',
+          message: `background persistence was consented (PERSIST_CRON=yes) but no scheduled job exists — run \`gbrain sources harden ${sourceId}\``,
+        });
+      } else if (js.live === false) {
+        checks.push({
+          name: 'bootstrap_durability_job',
+          status: 'warn',
+          message: `${js.kind} job is on disk but NOT loaded — a dead job looks healthy to presence checks. Re-run \`gbrain sources harden ${sourceId}\` to reload it.`,
+        });
+      } else if (!js.wrapperPresent) {
+        checks.push({
+          name: 'bootstrap_durability_job',
+          status: 'warn',
+          message: `${js.kind} job exists but its wrapper script is missing — re-run \`gbrain sources harden ${sourceId}\``,
+        });
+      } else if (js.logFresh === false) {
+        checks.push({
+          name: 'bootstrap_durability_job',
+          status: 'warn',
+          message: `${js.kind} job present but the pull log is stale (no run within 2× the interval) — the job may be dead; re-run \`gbrain sources harden ${sourceId}\``,
+        });
+      } else if (js.kind === 'crontab' && js.logFresh === undefined) {
+        // The crontab LINE existing proves installation, not that the cron
+        // daemon runs it — with no pull log yet we can't claim liveness.
+        checks.push({ name: 'bootstrap_durability_job', status: 'ok', message: 'crontab pull job installed (no run logged yet — liveness confirmed once it first fires)' });
+      } else {
+        checks.push({ name: 'bootstrap_durability_job', status: 'ok', message: `${js.kind} pull job present and live` });
+      }
+      }
+    }
+  } catch { /* best-effort — durability probing never fails doctor */ }
+
+  // 3. One-live-serve / lock collision note. A live serve is the healthy
+  // shape (it provides hook IPC); the note names the v1 contract.
+  try {
+    const dataDir = resolveBrainDataDir(home);
+    const holder = probeLivePgliteHolder(dataDir);
+    if (holder) {
+      checks.push({
+        name: 'bootstrap_serve_lock',
+        status: holder.serve ? 'ok' : 'warn',
+        message: holder.serve
+          ? `live serve (pid ${holder.pid}) owns the brain — hook IPC available. One live serve per brain is the v1 contract; a second simultaneous session collides politely.`
+          : `a non-serve gbrain process (pid ${holder.pid}) holds the PGLite lock — hook IPC and new sessions will fail until it exits.`,
+      });
+    }
+  } catch { /* probe is best-effort */ }
+
+  // 4. [ENG-4] Hooks-in-use + unmigrated brain: the direct-engine hook paths
+  // swallow missing-table errors on pre-v110/v117 schemas, so context
+  // degrades SILENTLY. Pair the two signals into a named warning.
+  const hooksActive = hooksSeen || (ws !== null && hooksInstalled(ws));
+  if (hooksActive && engine) {
+    try {
+      const versionStr = await engine.getConfig('version');
+      const version = parseInt(versionStr || '0', 10);
+      if (version < LATEST_VERSION) {
+        checks.push({
+          name: 'bootstrap_hook_schema_pairing',
+          status: 'warn',
+          message: `hooks are in use but the brain schema is v${version} (< v${LATEST_VERSION}) — hook context can degrade silently on missing tables [ENG-4]. Run \`gbrain apply-migrations --yes\`.`,
+        });
+      }
+    } catch { /* schema_version check above already covers unreadable version */ }
+  }
+
+  // 5. Runbook skew [C1]: the fetched runbook's stamp vs this binary.
+  if (ws) {
+    try {
+      const stamp = readRunbookStamp(ws);
+      if (stamp !== null && stamp !== GBRAIN_BINARY_VERSION) {
+        checks.push({
+          name: 'bootstrap_runbook_skew',
+          status: 'warn',
+          message: `BOOTSTRAP_FOR_AGENTS.md stamp ${stamp} != installed binary ${GBRAIN_BINARY_VERSION} — prefer the binary's instructions; re-fetch the runbook.`,
+        });
+      }
+    } catch { /* best effort */ }
+  }
+
+  // 6. Last verify freshness [B2 read side] — surfaced so "verify weekly"
+  // has a nag with teeth.
+  try {
+    const runs = listVerifyRuns(home);
+    if (runs.length > 0) {
+      const last = runs[0];
+      const t = Date.parse(last.ts);
+      const ageDays = Number.isFinite(t) ? (Date.now() - t) / 86_400_000 : NaN;
+      if (!last.ok) {
+        checks.push({ name: 'bootstrap_last_verify', status: 'warn', message: `last bootstrap verify FAILED (${last.ts}): ${last.checks_failed.join(', ') || 'see snapshot'} — re-run \`gbrain bootstrap verify\`` });
+      } else if (Number.isFinite(ageDays) && ageDays > 14) {
+        checks.push({ name: 'bootstrap_last_verify', status: 'warn', message: `last bootstrap verify passed ${Math.floor(ageDays)}d ago — re-run it as the workspace rot self-check` });
+      } else {
+        checks.push({ name: 'bootstrap_last_verify', status: 'ok', message: `last verify passed (${last.ts})` });
+      }
+    }
+  } catch { /* best effort */ }
+
+  return checks;
+}
+
 export async function runDoctor(
   engine: BrainEngine | null,
   args: string[],
@@ -8179,6 +9251,155 @@ export function skillsManifestIntegrityCheck(skillsDir: string): Check {
       `skills/ drifted from ${SKILLS_MANIFEST_FILENAME} (advisory — local edits are fine): ${parts.join('; ')}. ` +
       `If intentional, regenerate: bun run scripts/generate-skills-manifest.ts`,
     details: { modified: drift.modified, missing: drift.missing, extra: drift.extra },
+  };
+}
+
+/**
+ * Skill currency check — compares the built-in skills bundle against what
+ * the downstream workspace has scaffolded and surfaces NEW skills the user
+ * doesn't have yet. Advisory: `new` skills are a WARN (you're missing
+ * shipped capability); `drifted` skills are informational only (local edits
+ * are legitimate — the ownership model). No-ops when running inside the
+ * gbrain repo itself (bundle == install, always current) or when the bundle
+ * can't be located.
+ */
+export function skillCurrencyCheck(skillsDir: string): Check {
+  const name = 'skill_currency';
+  const targetWorkspace = resolvePath(skillsDir, '..');
+  const gbrainRoot = findGbrainRoot();
+  if (!gbrainRoot) {
+    return { name, status: 'ok', message: 'skill currency not applicable (no bundled skills pack found)' };
+  }
+  if (resolvePath(targetWorkspace) === resolvePath(gbrainRoot)) {
+    return { name, status: 'ok', message: 'skill currency not applicable (running inside the gbrain repo)' };
+  }
+  let report: ReturnType<typeof computeSkillCurrency>;
+  try {
+    report = computeSkillCurrency({ gbrainRoot, targetWorkspace });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { name, status: 'ok', message: `skill currency check skipped (${msg})` };
+  }
+  const { counts, skills } = report;
+  const sample = (status: 'new' | 'drifted'): string => {
+    const s = skills.filter(k => k.status === status).map(k => k.slug);
+    return s.slice(0, 8).join(', ') + (s.length > 8 ? `, … +${s.length - 8} more` : '');
+  };
+  if (counts.new === 0) {
+    const drift = counts.drifted > 0 ? ` (${counts.drifted} drifted — local edits are fine)` : '';
+    return { name, status: 'ok', message: `${counts.current}/${counts.total} built-in skills current${drift}` };
+  }
+  return {
+    name,
+    status: 'warn',
+    message:
+      `${counts.new} new built-in skill(s) available that this workspace hasn't installed: ${sample('new')}. ` +
+      `Add them with \`gbrain skillpack sync\`.` +
+      (counts.drifted > 0 ? ` (${counts.drifted} drifted from the bundle — local edits are fine.)` : ''),
+    details: {
+      new: skills.filter(k => k.status === 'new').map(k => k.slug),
+      drifted: skills.filter(k => k.status === 'drifted').map(k => k.slug),
+    },
+  };
+}
+
+/**
+ * Skill preconditions check — the LIVE half of the `requires:` frontmatter
+ * contract. For every skill INSTALLED in this workspace that declares
+ * preconditions, verify each against the connected brain and WARN on unmet
+ * ones with a paste-ready hint. Engine-dependent: skips cleanly when there
+ * is no brain to check against (the static list lives in
+ * `gbrain skillpack setup`).
+ */
+export async function skillPreconditionsCheck(
+  skillsDir: string,
+  engine: BrainEngine | null,
+): Promise<Check> {
+  const name = 'skill_preconditions';
+  if (!engine) {
+    return { name, status: 'ok', message: 'skill preconditions not checked (no connected brain)' };
+  }
+  // Collect installed skills declaring `requires:`.
+  let installed: { slug: string; requires: string[] }[];
+  try {
+    installed = readdirSync(skillsDir, { withFileTypes: true })
+      .filter(e => e.isDirectory())
+      .map(e => {
+        const md = join(skillsDir, e.name, 'SKILL.md');
+        if (!existsSync(md)) return null;
+        const fm = parseSkillFrontmatter(readFileSync(md, 'utf-8'));
+        const requires = fm?.requires ?? [];
+        return requires.length > 0 ? { slug: e.name, requires } : null;
+      })
+      .filter((x): x is { slug: string; requires: string[] } => x !== null);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { name, status: 'ok', message: `skill preconditions check skipped (${msg})` };
+  }
+  if (installed.length === 0) {
+    return { name, status: 'ok', message: 'no installed skills declare preconditions' };
+  }
+
+  // Engine-backed precondition context. Read-only COUNT/getConfig queries;
+  // no source scoping (doctor is a trusted local context). Every accessor
+  // fails soft to a conservative value so a query error never throws the check.
+  const ctx: PreconditionContext = {
+    async countPages() {
+      try {
+        const rows = await engine.executeRaw<{ n: number }>('SELECT COUNT(*)::int AS n FROM pages');
+        return rows[0]?.n ?? 0;
+      } catch { return 0; }
+    },
+    async countPagesInDir(dir: string) {
+      const prefix = dir.endsWith('/') ? dir : `${dir}/`;
+      try {
+        const rows = await engine.executeRaw<{ n: number }>(
+          `SELECT COUNT(*)::int AS n FROM pages WHERE slug LIKE $1 ESCAPE '\\'`,
+          [`${prefix.replace(/[%_\\]/g, m => `\\${m}`)}%`],
+        );
+        return rows[0]?.n ?? 0;
+      } catch { return 0; }
+    },
+    async listSourceIds() {
+      try {
+        const rows = await engine.executeRaw<{ id: string }>(`SELECT id FROM sources WHERE id <> 'default'`);
+        return rows.map(r => r.id);
+      } catch { return []; }
+    },
+    async countPagesForSource(id: string) {
+      try {
+        const rows = await engine.executeRaw<{ n: number }>(
+          'SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1',
+          [id],
+        );
+        return rows[0]?.n ?? 0;
+      } catch { return 0; }
+    },
+    async getConfig(key: string) {
+      try {
+        return (await engine.getConfig(key)) ?? undefined;
+      } catch { return undefined; }
+    },
+  };
+
+  const unmet: string[] = [];
+  for (const skill of installed) {
+    const results = await checkPreconditions(skill.requires, ctx);
+    for (const r of results) {
+      if (!r.met) unmet.push(`${skill.slug}: ${r.req.raw} — ${r.hint}`);
+    }
+  }
+  if (unmet.length === 0) {
+    return { name, status: 'ok', message: `${installed.length} skill(s) with preconditions, all met` };
+  }
+  return {
+    name,
+    status: 'warn',
+    message:
+      `${unmet.length} unmet skill precondition(s):\n  ` +
+      unmet.slice(0, 8).join('\n  ') +
+      (unmet.length > 8 ? `\n  … +${unmet.length - 8} more` : ''),
+    details: { unmet },
   };
 }
 

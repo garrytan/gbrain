@@ -468,6 +468,22 @@ export async function listStaleLocks(engine: BrainEngine): Promise<LockSnapshot[
 }
 
 /**
+ * Every lock whose holder still looks live (TTL unexpired / holder judged
+ * alive by `isLockHolderLive`). This is the "is anything writing right now?"
+ * probe: cycle runs, sync imports, and embed backfills all hold rows in
+ * `gbrain_cycle_locks` while they work, so an empty result means the write
+ * planes this table guards are drained. Used by `gbrain migrate`'s quiesce
+ * to wait for in-flight work instead of sleeping a blind fixed grace.
+ */
+export async function listLiveLocks(
+  engine: BrainEngine,
+  ttlMinutes: number = DEFAULT_TTL_MINUTES,
+): Promise<LockSnapshot[]> {
+  const rows = await selectLockRows(engine);
+  return rows.filter((snap) => isLockHolderLive(snap, ttlMinutes));
+}
+
+/**
  * v0.41.6.0 D3: atomic verify-and-delete for `gbrain sync --break-lock`.
  *
  * Runs `DELETE ... WHERE id = $1 AND holder_pid = $2 RETURNING id`.

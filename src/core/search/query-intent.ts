@@ -340,3 +340,64 @@ export function intentToDetail(intent: QueryIntent): 'low' | 'medium' | 'high' |
 export function autoDetectDetail(query: string): 'low' | 'medium' | 'high' | undefined {
   return classifyQuery(query).suggestedDetail;
 }
+
+// ─────────────────────────────────────────────────────────
+// #2416 — concept-shaped query detection (CLI nudge)
+// ─────────────────────────────────────────────────────────
+
+// Fuzzy-quantifier / landscape cues. A concept-shaped question asks for a
+// SET defined by meaning ("all the X that do Y", "the landscape of Z") —
+// exactly where `query`'s multi-query expansion recovers synonym- and
+// outcome-phrased matches that the expansion-off `search` op can miss.
+//
+// Deliberately EXCLUDED cues (owned by other routers — a nudge toward
+// `query` on these would fight their descriptions):
+//   - "who are the …"        → find_experts
+//   - bare "anything …"      → get_recent_salience / find_anomalies
+const CONCEPT_CUE_PATTERNS: RegExp[] = [
+  /\b(all|every)\b.+\b(that|who|which|doing|with|about|related to)\b/i,
+  /\b(find|list|show)\s+(all|every|everything)\b/i,
+  /\beverything\s+(about|on|matching|related)\b/i,
+  /\bthe\s+(landscape|ecosystem|space|universe)\s+of\b/i,
+  /\b(landscape|ecosystem)\s+(of|around)\b/i,
+  /\bwhich\s+\w+[\w\s]*\b(do|does|are|have|use|work)\b/i,
+];
+
+// Exact-identifier anti-signals: the query names a specific thing, so the
+// cheap `search` op is the right tool and a nudge would be noise.
+const CONCEPT_ANTI_PATTERNS: RegExp[] = [
+  /["'“”][^"'“”]+["'“”]/,               // quoted phrase — exact-match intent
+  /\b[a-z0-9]+(?:-[a-z0-9]+){1,}\b/,    // slug-like token (kebab-case)
+];
+
+/**
+ * True when a query is concept-shaped: it carries a fuzzy-quantifier or
+ * landscape cue AND no exact-identifier anti-signal. Tuned to favor
+ * false-negatives (silence) over false-positives (noise): short queries,
+ * quoted phrases, slugs, and entity lookups (per classifyQueryIntent)
+ * never trigger. Pure function; no LLM, no DB.
+ */
+export function looksConceptShaped(query: string): boolean {
+  const q = query.trim();
+  if (q.split(/\s+/).length < 3) return false; // bare token / proper-noun lookup
+  if (!matches(CONCEPT_CUE_PATTERNS, q)) return false;
+  if (matches(CONCEPT_ANTI_PATTERNS, q)) return false;
+  if (classifyQueryIntent(q) === 'entity') return false;
+  return true;
+}
+
+/**
+ * One-line CLI hint steering a concept-shaped `search` toward `query`.
+ * Returns null when the query is not concept-shaped. Message generation
+ * lives here (not in cli.ts) so the full string is unit-testable; the CLI
+ * wiring is a two-liner per dispatch path, stderr only, `--quiet`-gated.
+ */
+export function conceptNudge(query: string): string | null {
+  if (!looksConceptShaped(query)) return null;
+  const preview = query.length > 60 ? `${query.slice(0, 57)}...` : query;
+  return (
+    `hint: concept-shaped question — try \`gbrain query "${preview}"\` ` +
+    `(adds multi-query expansion; recovers synonym-phrased matches search can miss). ` +
+    `A nonzero search count is not proof of completeness.`
+  );
+}

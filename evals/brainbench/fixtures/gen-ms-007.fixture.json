@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-ms-007",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "multi-source",
+  "sources": [
+    "teambrain"
+  ],
+  "active_source": "default",
+  "seed_pages": [
+    {
+      "slug": "people/caspian-ironwood",
+      "content": "---\ntitle: Caspian Ironwood\ntype: person\naliases: [caspian]\nsummary: Founder of Umbergale Labs.\n---\n\nCaspian Ironwood is the founder of Umbergale Labs. Caspian flagged churn as the top risk in the latest update.\n"
+    },
+    {
+      "slug": "people/caspian-ironwood",
+      "content": "---\ntitle: Caspian Ironwood\ntype: person\naliases: [caspian]\nsummary: Founder of Umbergale Labs.\n---\n\nCaspian Ironwood is the founder of Umbergale Labs. Caspian is exploring a pivot toward the enterprise segment.\n",
+      "source_id": "teambrain"
+    },
+    {
+      "slug": "companies/skylarkift",
+      "content": "---\ntitle: Skylarkift\ntype: company\nsummary: Seed-stage company.\n---\n\nSkylarkift is a seed-stage company. The seed conversation started in 2025.\n",
+      "source_id": "teambrain"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "What do I have on Caspian Ironwood?"
+    },
+    {
+      "turn_id": 2,
+      "role": "user",
+      "text": "Anything on Skylarkift in here?"
+    }
+  ]
+}

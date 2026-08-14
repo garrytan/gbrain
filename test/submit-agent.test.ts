@@ -112,7 +112,9 @@ async function callSubmitAgent(ctx: any, params: Record<string, unknown>): Promi
 describe('submit_agent op (v0.38 Slice 3 — remote-callable agent dispatch with binding enforcement)', () => {
   describe('op surface', () => {
     it('declares scope=agent + mutating=true', () => {
-      expect(submit_agent.scope).toBe('agent' as any);
+      // Minions-visibility wave: 'agent' is a first-class member of the
+      // Operation scope union now (amendment 16) — no `as any` escape hatch.
+      expect(submit_agent.scope).toBe('agent');
       expect(submit_agent.mutating).toBe(true);
     });
     it('declares required prompt param', () => {
@@ -365,6 +367,15 @@ describe('submit_agent op (v0.38 Slice 3 — remote-callable agent dispatch with
       expect(result.id).toBeGreaterThan(0);
       expect(result.name).toBe('subagent');
       expect(result.client_id).toBe('cursor');
+      // Minions-visibility wave (amendments 24/25): every successful submit
+      // carries a queue-state probe. Either a real snapshot (depth counts the
+      // job just enqueued) or the fail-open {probe_failed: true} marker —
+      // never absent, never an error.
+      expect(result.queue_state).toBeDefined();
+      if (!result.queue_state.probe_failed) {
+        expect(result.queue_state.depth).toBeGreaterThanOrEqual(1);
+        expect(typeof result.queue_state.worker_alive).toBe('boolean');
+      }
 
       // Job persisted with correct shape.
       const rows = await engine.executeRaw<Record<string, unknown>>(

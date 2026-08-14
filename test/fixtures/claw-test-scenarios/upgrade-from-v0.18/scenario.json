@@ -6,5 +6,9 @@
     "doctor.db_checks"
   ],
   "seed": "seed",
-  "brain": "brain"
+  "brain": "brain",
+  "oracle": {
+    "query": "alice",
+    "min_results": 1
+  }
 }

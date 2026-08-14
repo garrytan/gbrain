@@ -1,7 +1,7 @@
 ---
 id: agent-voice
 name: Voice Personas (Mars + Venus)
-version: 0.1.0
+version: 0.1.1
 description: WebRTC-first voice agent reference (Mars + Venus personas, optional Twilio adapter). Skillpack-as-reference paradigm — the install-time agent COPIES code into your host agent repo where it becomes user-owned and mutable, NOT a runtime gbrain dependency.
 category: voice
 install_kind: copy-into-host-repo
@@ -10,15 +10,9 @@ secrets:
   - name: OPENAI_API_KEY
     description: OpenAI API key with Realtime API access enabled
     where: https://platform.openai.com/api-keys — click "+ Create new secret key", copy immediately
-  - name: TWILIO_ACCOUNT_SID
-    description: (optional) Twilio Account SID — only if wiring inbound Twilio calls
-    where: https://www.twilio.com/console
-  - name: TWILIO_AUTH_TOKEN
-    description: (optional) Twilio auth token — only if wiring inbound Twilio calls
-    where: https://www.twilio.com/console
 health_checks:
   - type: env_exists
-    var: OPENAI_API_KEY
+    name: OPENAI_API_KEY
     label: OPENAI_API_KEY present
 setup_time: 10 min
 cost_estimate: "$0.06-0.24/min OpenAI Realtime, optional $1-2/mo Twilio number"
@@ -34,19 +28,21 @@ A reference voice agent (WebRTC-first; OpenAI Realtime) shipped as **copy-into-y
 - **WebRTC browser client** at `/call?test=1` for the production-grade voice loop. Production load installs zero test instrumentation; `?test=1` enables Web Audio API tee → MediaRecorder capture for the E2E.
 - **Tool router** with a read-only allow-list by default (search, query, get_page, list_pages, find_experts, get_recent_salience, get_recent_transcripts, read_article). Write ops are denylisted; operators opt in to a bounded set via local override.
 - **Persona-aware prompt builder** with identity-first composition + Unicode sanitization for Realtime API safety.
-- **Optional Twilio adapter** (`/voice` TwiML, WSS bridge) for phone inbound. Skip if you only want browser voice.
+- **Optional Twilio adapter** (`/voice` TwiML, WSS bridge) for phone inbound. Skip if you only want browser voice. If you wire it, set `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` in `$TARGET_REPO/.env` (from https://www.twilio.com/console). They're deliberately NOT in this recipe's `secrets:` frontmatter — every listed secret must be set before the integration reports `configured`, and Twilio is genuinely optional.
 - **Three skills** for resolver routing: `voice-persona-mars`, `voice-persona-venus`, `voice-post-call`.
-- **Unit + E2E tests** that ride with the copy. PII-shape regex guards every prompt, classifier triages upstream vs plumbing failures.
+- **Unit tests** that ride with the copy (PII-shape regex guards every prompt; a classifier triages upstream vs plumbing failures). The E2E and eval suites stay gbrain-side under `recipes/agent-voice/tests/` — see Tests below.
 
 ## The skillpack-as-reference paradigm
 
 Earlier gbrain skillpacks installed to `~/.gbrain/skills/<name>/` as managed-block-canonical first-class skills. The user's local edits drifted from the canonical and updates were either "overwrite local" or "skip update" — neither is what an operator wants on code they've extended.
 
-This recipe ships a different shape: gbrain holds the up-to-date REFERENCE, and `gbrain integrations install agent-voice --target <host-repo>` COPIES it into the operator's repo. The code now lives in the host repo, on the operator's release cadence, with the operator's edits. Subsequent `--refresh` invocations diff host-side files against gbrain's reference and propose changes; the operator picks per-file (keep mine / take theirs / merge).
+This recipe ships a different shape: gbrain holds the up-to-date REFERENCE, and `gbrain integrations install agent-voice --target <host-repo>` COPIES it into the operator's repo. The code now lives in the host repo, on the operator's release cadence, with the operator's edits. Subsequent `--refresh` invocations diff host-side files against gbrain's reference and apply updates while preserving local edits by default (`--auto keep-mine|take-theirs` for CI lanes).
 
 The shipped reference does NOT contain personal names, hardcoded private paths, or upstream-agent codenames. A CI guard (`scripts/check-no-pii-in-agent-voice.sh`) blocks any drift back; a deterministic import script (`scripts/import-from-upstream.sh`) refreshes the gbrain reference from an upstream voice-agent source.
 
 ## Install
+
+> Note: this recipe's category is `voice`, which the `gbrain integrations list` dashboard does not render (it shows infra / sense / reflex sections only). Install it directly by id, as below.
 
 ```bash
 # 1. Detect target repo
@@ -85,15 +81,9 @@ git -C $(which gbrain | xargs -I{} dirname {})/.. pull   # or your gbrain update
 gbrain integrations install agent-voice --target $TARGET_REPO --refresh
 ```
 
-`--refresh` reads the `.gbrain-source.json` manifest written by the original install, re-computes per-file SHA-256 against gbrain's current reference, and classifies each file:
+`--refresh` reads the `.gbrain-source.json` manifest written by the original install, re-computes per-file SHA-256 against gbrain's current reference, and classifies each file into one of six states (identical / stale / locally-modified / host-deleted / source-deleted / new-in-manifest). Stale and new files are updated automatically; **locally-modified files are preserved by default** (`--auto take-theirs` to overwrite; `--dry-run` to preview). An append-only audit journal is written to `<target>/services/voice-agent/.gbrain-source.refresh.log`.
 
-- **unchanged-identical** — host file matches gbrain reference; skip.
-- **unchanged-stale** — host file matches the recorded SHA but reference moved; offer to update.
-- **locally-modified** — host file diverges from the recorded SHA; show diff, offer three options (keep mine / take theirs / merge).
-- **source-deleted** — gbrain reference removed a file; offer cleanup.
-- **source-renamed** — detected via path-mapping; offer to follow.
-
-A transaction journal at `<target>/services/voice-agent/.gbrain-source.refresh.log` allows partial-apply recovery if the refresh is interrupted.
+The full state machine and per-state decisions live in [`recipes/agent-voice/install/refresh-algorithm.md`](agent-voice/install/refresh-algorithm.md) — the single home for refresh semantics.
 
 ## Architecture
 
@@ -132,7 +122,9 @@ Reference code ships intentionally minimal. Before public deployment:
 
 - **Twilio signature validation** on `/voice` — currently absent; add `X-Twilio-Signature` header validation.
 - **Rate limiting** on `/session` and `/tool` — currently absent.
-- **CORS allowlist** — currently `*`; restrict to your deployed origins.
+- **CORS allowlist** — default-deny out of the box: no `Access-Control-Allow-Origin` header is emitted unless the request's Origin exactly matches `AGENT_VOICE_CORS_ORIGIN` (comma-separated origins, e.g. `AGENT_VOICE_CORS_ORIGIN=https://your.app,https://staging.your.app`). The served `/call` page is same-origin and needs no configuration. `/session` and `/tool` additionally reject cross-origin browser requests (403) unless allowlisted — CORS headers alone can't stop a no-preflight "simple" POST from executing.
+- **Bind address** — the server listens on `127.0.0.1` by default; set `HOST=0.0.0.0` for containers or direct LAN exposure (and prefer a tunnel for anything public).
+- **Host-header allowlist** — not shipped; the origin gate derives self-origin from the `Host` header, so DNS rebinding is not covered. Add a `Host` allowlist before exposing beyond loopback.
 - **Auth on /tool** — voice-side tool calls currently trust the in-process connection; if you expose `/tool` publicly, gate it behind a session token.
 - **HTTPS** — required for browser mic access in production. Use ngrok / Caddy / Cloudflare Tunnel.
 - **Twilio fallback URL** — `/fallback` is a TwiML stub; wire to your operator's cell for crash recovery.
@@ -140,9 +132,15 @@ Reference code ships intentionally minimal. Before public deployment:
 
 ## Tests
 
+The install copies the **unit suites only**; the E2E and eval suites stay gbrain-side under `recipes/agent-voice/tests/` (they carry puppeteer fixtures and live-API costs the host repo shouldn't inherit).
+
 ```bash
+# Host-side (rides with the copy)
 cd $TARGET_REPO/services/voice-agent
-bun run test                   # host-side unit tests (5 suites, ~100 cases)
+bun run test                   # unit tests
+
+# gbrain-side (from your gbrain checkout)
+cd <gbrain-checkout>/recipes/agent-voice && bun install
 AGENT_VOICE_E2E=1 bun run test:e2e             # WebRTC roundtrip (~$0.10/run)
 AGENT_VOICE_FULL_E2E=1 bun run test:full-flow  # openclaw-driven install + roundtrip (~$1-2/run)
 ```

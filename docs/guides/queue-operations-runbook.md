@@ -1,8 +1,8 @@
 # Queue operations runbook
 
 "My queue looks wedged — what do I run?" The commands below are in the order
-you probably want them. Shipped with v0.19.1 after a production incident
-where the queue held for 90+ minutes before the operator noticed.
+you probably want them. Born from a production incident where the queue held
+for 90+ minutes before the operator noticed.
 
 ## First signal: jobs aren't running
 
@@ -23,16 +23,18 @@ container health), but its DB connection died (common behind a transaction
 pooler) and never came back, so it claims no jobs and finishes nothing. Jobs
 pile up with **0 active**. Liveness checks all pass; nothing crashes.
 
-As of v0.42.22.0 this self-heals — you usually won't have to do anything:
+This self-heals — you usually won't have to do anything:
 
 - **The worker exits on its own dead pool.** Under a supervisor, the worker's
   DB-liveness probe runs and self-exits (`db_dead`) after ~3 minutes; the
   supervisor respawns it with a fresh pool.
 - **The supervisor restarts a worker that stops making progress.** If a queue
   has claimable work, **0 live-lock active jobs**, and no completions for 15
-  minutes while the child is alive, the supervisor restarts it (covers stuck
-  handlers too, not just dead pools). Tune with `--wedge-restart-minutes` /
-  `--wedge-restart-checks` on `gbrain jobs supervisor` (0 disables).
+  minutes across 3 consecutive health checks while the child is alive, the
+  supervisor restarts it (covers stuck handlers too, not just dead pools).
+  These thresholds are built in — there are no CLI flags to tune them. A
+  restart-loop breaker caps wedge restarts at 3 per 30-minute window, then
+  switches to a one-shot `wedge_restart_loop` alert in the audit log.
 
 The signal is loud now — check either:
 
@@ -45,8 +47,12 @@ gbrain doctor --json | jq '.checks[] | select(.name == "wedged_queue")'
 stale completions). Manual fix if you ever need it:
 
 ```bash
-gbrain jobs supervisor stop && gbrain jobs supervisor start   # fresh pool
-gbrain jobs retry <id>                                        # dead-lettered jobs
+# Restart the supervisor with a fresh pool. `start` alone runs in the
+# FOREGROUND (blocks); use --detach to get your shell back.
+gbrain jobs supervisor stop && gbrain jobs supervisor start --detach --json
+
+# Re-queue any jobs that were dead-lettered during the wedge.
+gbrain jobs retry <id>
 ```
 
 ## Triage commands
@@ -101,9 +107,9 @@ claiming. Start one:
 GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs work --concurrency 4
 ```
 
-## Follow-ups tracked for v0.20+
+## Related
 
-- B7 — `minion_workers` heartbeat table for ground-truth liveness (the
-  `--no-worker` probe and the dropped `queue_health` worker-heartbeat
-  subcheck both need this).
-- B3 — `gbrain doctor --fix` learns to rescue queue wedges.
+- [Minions worker deployment](minions-deployment.md) — supervisor lifecycle,
+  exit codes, and per-platform deployment (systemd / Fly / Render).
+- [Minions shell jobs](minions-shell-jobs.md) — the `shell` job type's
+  security model and error table.

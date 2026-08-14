@@ -21,6 +21,42 @@ describe('classifyReconnectError (#1162)', () => {
     expect(classifyReconnectError(err)).toBe('unrecoverable');
   });
 
+  describe('crash vs config verdict — the 71-day-outage class', () => {
+    test('real Bun null-deref → crash, NOT unrecoverable', () => {
+      // Verbatim Bun/V8 text. Lowercased it contains BOTH "database_url" and
+      // "undefined", so the substring rules below used to classify it as a
+      // config verdict and exit the daemon permanently. It is a gbrain bug.
+      const err = new TypeError("undefined is not an object (evaluating 'config.database_url')");
+      expect(classifyReconnectError(err)).toBe('crash');
+    });
+
+    test('any TypeError → crash, by error type', () => {
+      expect(classifyReconnectError(new TypeError('cfg.foo is not a function'))).toBe('crash');
+    });
+
+    test('V8-worded null-deref arriving as a plain Error → crash, by message shape', () => {
+      // Some hosts lose the error class across a serialization boundary.
+      expect(classifyReconnectError(new Error("Cannot read properties of undefined (reading 'database_url')")))
+        .toBe('crash');
+    });
+
+    test('a genuine missing-config error is still unrecoverable', () => {
+      // Guard against over-broadening: the crash rules must not swallow the
+      // real "operator never set a URL" case, which SHOULD stop the daemon.
+      expect(classifyReconnectError(new Error('GBRAIN_DATABASE_URL is not set'))).toBe('unrecoverable');
+      expect(classifyReconnectError(new Error('No brain configured. Run: gbrain init'))).toBe('unrecoverable');
+    });
+
+    test('a malformed URL is a config verdict even though JS throws it as a TypeError', () => {
+      // `new URL('garbage')` throws TypeError('Invalid URL'). The blanket
+      // TypeError-means-crash rule would spend the whole 30-attempt reconnect
+      // budget on an error only the operator can fix (adversarial review
+      // catch); the message pattern is tested first.
+      expect(classifyReconnectError(new TypeError('Invalid URL'))).toBe('unrecoverable');
+      expect(classifyReconnectError(new Error('failed to parse URL from postgres://'))).toBe('unrecoverable');
+    });
+  });
+
   test('database_url empty → unrecoverable', () => {
     expect(classifyReconnectError(new Error('database_url is empty'))).toBe('unrecoverable');
   });

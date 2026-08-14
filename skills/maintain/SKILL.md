@@ -1,6 +1,7 @@
 ---
 name: maintain
-version: 1.0.0
+version: 1.1.0
+upstream: maintain@fc834ee
 description: |
   Brain health checks: back-link enforcement, citation audit, filing validation,
   stale info detection, orphan pages, and benchmarks. Use when asked to check
@@ -195,6 +196,13 @@ Verify autopilot is running:
 ```bash
 gbrain autopilot --status
 ```
+The exit code is trustworthy for gating: 0 fresh (or nothing installed),
+1 needs attention (stale heartbeat, never ran, or paused by a migration),
+2 the daemon disabled itself (its repo path vanished). `--json` emits the
+full report (`state`, `heartbeat_age_seconds`, `paused_reason`,
+`disabled_reason`). Status reads only the filesystem, so it works even
+when the database is down.
+
 If not running, install it:
 ```bash
 gbrain autopilot --install --repo ~/brain
@@ -278,6 +286,13 @@ Going forward, every `gbrain put` call auto-creates and reconciles links via the
 auto-link post-hook (default on; disable: `gbrain config set auto_link false`).
 So link-extract is mostly a one-time backfill. timeline-extract should be re-run
 after bulk imports or content edits that add new dated entries.
+
+### Feature adoption check (weekly)
+```bash
+gbrain features --json    # scan for underused features + recommendations
+```
+Run weekly alongside lint. Surfaces missing embeddings, unused integrations,
+and configuration improvements.
 
 ### Embedding freshness
 Chunks without embeddings, or chunks embedded with an old model.

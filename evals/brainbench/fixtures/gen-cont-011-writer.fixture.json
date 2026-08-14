@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-cont-011-writer",
+  "suites": [
+    "write-back",
+    "continuity"
+  ],
+  "category": "continuity",
+  "seed_pages": [
+    {
+      "slug": "companies/russetvane-systems",
+      "content": "---\ntitle: Russetvane Systems\ntype: company\nsummary: Seed-stage company. Founded by Zelda Bransome.\n---\n\nRussetvane Systems is a seed-stage company. Founded by Zelda Bransome. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "people/zelda-bransome",
+      "content": "---\ntitle: Zelda Bransome\ntype: person\naliases: [zelda]\nsummary: Founder of Russetvane Systems.\n---\n\nZelda Bransome is the founder of Russetvane Systems. Zelda shipped the v2 launch two weeks ahead of plan.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Partner meeting wrapped on the Russetvane Systems round.",
+      "ts": "2026-11-02T12:34:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "What was the call?",
+      "ts": "2026-11-02T12:35:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "We decided to lead the Russetvane Systems round. Standard terms, clean round. Logging it now.",
+      "ts": "2026-11-02T12:36:00Z"
+    }
+  ],
+  "continuity": {
+    "pair_id": "gen-cont-011",
+    "pair_role": "writer"
+  }
+}

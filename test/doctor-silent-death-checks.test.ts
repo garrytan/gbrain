@@ -150,6 +150,16 @@ describe('undeclared_db_only_pages (#2784)', () => {
     expect(c.status).toBe('ok');
   });
 
+  test('file-backed page under a canonical hidden directory → ok', async () => {
+    const repo = makeRepo();
+    mkdirSync(join(repo, '.archive', 'people'), { recursive: true });
+    writeFileSync(join(repo, '.archive', 'people', 'alice-example.md'), '# Alice');
+    await addSource('src-a', repo);
+    await addPage('.archive/people/alice-example', { sourceId: 'src-a' });
+    const c = await checkUndeclaredDbOnlyPages(engine);
+    expect(c.status).toBe('ok');
+  });
+
   test('derive-phase default prefixes are implicitly declared', async () => {
     const repo = makeRepo();
     await addSource('src-a', repo);

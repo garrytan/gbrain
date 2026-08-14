@@ -125,7 +125,7 @@ no boost.
 
 ## See also
 
-- `docs/recency.md` — full reference
+- `src/core/search/recency-decay.ts` — the decay implementation (config + env resolution)
 - `gbrain query --explain` — see resolved values + factor contributions
 - `get_recent_salience` op gains `recency_bias: 'flat' | 'on'` — opt
   into per-prefix decay on the dedicated salience query

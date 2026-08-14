@@ -6,21 +6,16 @@
  * the self-upgrade refresh path.
  */
 
-import { readUpdateCache } from '../self-upgrade.ts';
+import { pendingUpgradeVersion } from '../self-upgrade.ts';
 import type { AdvisorCollector } from './types.ts';
 
 export const collectVersion: AdvisorCollector = {
   id: 'version',
   collect: async (ctx) => {
-    let latest: string | undefined;
-    try {
-      const entry = readUpdateCache();
-      if (entry && entry.marker.kind === 'upgrade_available' && entry.marker.latest) {
-        latest = entry.marker.latest;
-      }
-    } catch {
-      return [];
-    }
+    // Shared stale/foreign-cache guard: fresh cache only, and only an upgrade
+    // strictly newer than the RUNNING version (pendingUpgradeVersion owns the
+    // rule; never throws).
+    const latest = pendingUpgradeVersion(ctx.version, Date.now());
     if (!latest) return [];
     return [
       {

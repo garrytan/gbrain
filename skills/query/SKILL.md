@@ -33,6 +33,21 @@ mutating: false
 
 Answer questions using the brain's knowledge with 3-layer search and synthesis.
 
+> **Memory verbs (MEMORY_VERBS v1, gbrain ≥ 0.43).** When connected to a brain
+> over MCP, prefer the seven frozen memory verbs for memory work — they carry
+> provenance, evidence, and a server-enforced token budget:
+> - **`recall(query | entity, budget_tokens)`** — the budget-packed memory read.
+>   Use it instead of bare `search` for "what do we know that we SAVED about X".
+> - **`entity(name)`** — a zero-LLM person/company/project card (aliases,
+>   last-touched, open threads, top edges). Use it instead of `get_page` +
+>   `get_backlinks` when you just need the card.
+> - **`synthesize(question)`** — the explicitly-expensive cross-page answer; the
+>   heavy version of `query`. Reach for it only when the answer must combine
+>   evidence across pages.
+> Fall back to `search`/`query`/`get_page` when the verbs aren't on the surface
+> (pre-0.43 servers; `--surface full` includes the verbs alongside every other
+> op). See `docs/protocol/MEMORY_VERBS_v1.md`.
+
 ## Contract
 
 This skill guarantees:
@@ -49,8 +64,8 @@ This skill guarantees:
    - Semantic query for conceptual questions
    - Structured queries (list by type, backlinks) for relational questions
 2. **Execute searches:**
-   - Keyword search gbrain for FTS matches (search)
-   - Hybrid search gbrain for semantic+keyword with expansion (query)
+   - Cheap-hybrid search gbrain for exact tokens / known names (search)
+   - Full-hybrid search gbrain with multi-query expansion for concept questions (query)
    - List pages in gbrain by type or check backlinks for structural queries
 3. **Read top results.** Read the top 3-5 pages from gbrain to get full context.
 4. **Synthesize answer** with citations. Every claim traces back to a specific page slug.

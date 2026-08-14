@@ -108,17 +108,23 @@ describe('hybridSearchCached \u2014 meta surfaces intent', () => {
 });
 
 describe('hybridSearchCached \u2014 token budget', () => {
-  test('budget undefined returns no token_budget meta (no cut)', async () => {
+  test('budget undefined carries the inner run\'s mode-resolved budget record (no cut)', async () => {
     let meta: HybridSearchMeta | undefined;
     const results = await hybridSearchCached(engine, 'alice', {
       limit: 10,
       onMeta: (m) => { meta = m; },
     });
     // Non-empty matters: pre-fix the fixture had no chunks, so this ran
-    // against an empty result set and the absent-budget assertion was
+    // against an empty result set and the budget assertion was
     // trivially true.
     expect(results.length).toBeGreaterThan(0);
-    expect(meta?.token_budget).toBeUndefined();
+    // WP2/T3 (ENG-5): the wrapper's spread-carry rebuild no longer HIDES
+    // the inner run's budget record — the mode bundle's default budget
+    // (balanced = 12000) applied inside bare hybridSearch, so the honest
+    // report is "budget ran, nothing cut", not key-absence.
+    expect(meta?.token_budget?.dropped).toBe(0);
+    expect(meta?.token_budget?.truncated).toBeUndefined();
+    expect(results.length).toBe(meta?.token_budget?.kept ?? -1);
   });
 
   test('budget meta is always emitted when budget is set', async () => {

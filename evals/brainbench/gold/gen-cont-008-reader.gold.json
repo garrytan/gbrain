@@ -1,0 +1,26 @@
+{
+  "fixture_id": "gen-cont-008-reader",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "companies/saplingrove-works"
+      ]
+    }
+  },
+  "continuity": {
+    "pair_id": "gen-cont-008",
+    "decisions": [
+      {
+        "decision_id": "d1",
+        "expected_slugs": [
+          "companies/saplingrove-works"
+        ],
+        "match_keywords": [
+          "lead",
+          "Saplingrove Works"
+        ]
+      }
+    ]
+  }
+}

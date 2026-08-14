@@ -1,6 +1,7 @@
 ---
 name: idea-ingest
-version: 1.0.0
+version: 1.1.0
+upstream: idea-ingest@fc834ee
 description: |
   Ingest links, articles, tweets, and ideas into the brain. Fetch content, save
   to brain with analysis, create author people page, and cross-link. Use when the
@@ -40,6 +41,12 @@ This skill guarantees:
 - Raw source preserved for provenance via `gbrain files upload-raw`
 - Every fact has an inline `[Source: ...]` citation
 - Filing follows primary subject rules (not format-based)
+
+**Returns** (when invoked by another skill or sub-agent):
+- `page_path`: brain page path of the ingested item (e.g., `concepts/flywheel-effects`)
+- `author_path`: brain page path of the author (e.g., `people/alice-example`)
+- `cross_links`: list of all cross-links created
+- `status`: `ingested` | `updated` | `fetch_failed`
 
 > **Convention:** See `skills/conventions/quality.md` for Iron Law back-linking.
 
@@ -95,6 +102,15 @@ Format: `- **YYYY-MM-DD** | Referenced in [page title](path) — brief context`
 {How this connects to existing brain knowledge. What's new. What contradicts.}
 ```
 
+## Edge Cases
+
+- **Fetch fails (paywall, 404, timeout):** Save a stub page with URL + metadata + reason for failure. Tell the user content couldn't be fetched and ask if they can paste it.
+- **Duplicate URL:** Before ingesting, search brain for the URL. If found, update the existing page rather than creating a new one. Tell the user it was already ingested.
+- **No identifiable author:** Use `sources/` filing. Skip the people page but note the gap.
+- **Tweet thread vs single tweet:** Fetch the entire thread. Treat the thread as one unit.
+- **Video/podcast link:** Note that only metadata can be ingested unless a transcript is available. Ask the user for a transcript.
+- **Raw upload:** Use the `file_upload` tool (not CLI `gbrain files upload-raw`) when operating as an agent.
+
 ## Anti-Patterns
 
 - Just summarizing without connecting to brain knowledge
@@ -102,3 +118,7 @@ Format: `- **YYYY-MM-DD** | Referenced in [page title](path) — brief context`
 - Skipping the author people page
 - Not cross-linking to mentioned entities
 - Ingesting without checking brain first for existing coverage
+- Overwriting an existing brain page instead of merging new content into it
+- Hallucinating connections to brain knowledge — only cite connections you verified via search/query
+- Creating generic slugs like `concepts/strategy` — be specific: `concepts/flywheel-effects`
+- Assuming the fetch succeeded without verifying content was actually retrieved

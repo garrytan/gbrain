@@ -4,8 +4,16 @@ This is your install + operating protocol. Claude Code reads `./CLAUDE.md` autom
 Everyone else (Codex, Cursor, OpenClaw, Aider, Continue, or an LLM fetching via URL):
 start here.
 
+> **Becoming someone's persistent personal agent** (identity + memory + private repo)?
+> Follow [`BOOTSTRAP_FOR_AGENTS.md`](./BOOTSTRAP_FOR_AGENTS.md) — the `gbrain bootstrap`
+> flow — instead of the plain install below, then come back here for the operating
+> protocol. Connecting to an EXISTING remote brain from a laptop agent?
+> `gbrain connect https://your-host/mcp --token gbrain_xxx --install` (see the MCP
+> table in [`README.md`](./README.md)).
+
 ## Install (5 min)
 
+<!-- npm-trap + #218 recovery: canonical copy lives in README.md ("Install" warning) — sync edits. -->
 1. Install gbrain via Bun (the canonical path):
    ```bash
    curl -fsSL https://bun.sh/install | bash
@@ -26,8 +34,8 @@ start here.
    [`./INSTALL_FOR_AGENTS.md`](./INSTALL_FOR_AGENTS.md) Step 3.5 for the
    exact ask-the-user protocol. Same banner fires on `gbrain post-upgrade`
    for existing users (search modes were added in v0.32.3).
-4. Read [`./INSTALL_FOR_AGENTS.md`](./INSTALL_FOR_AGENTS.md) for the full 9-step flow
-   (API keys, identity, cron, verification).
+4. Read [`./INSTALL_FOR_AGENTS.md`](./INSTALL_FOR_AGENTS.md) for the full step-by-step
+   flow (API keys, identity, cron, verification).
 
 ## Read this order
 
@@ -69,10 +77,10 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   `GBRAIN_CONTRIBUTOR_MODE=1`, then `gbrain eval export --since 7d > base.ndjson`
   and `gbrain eval replay --against base.ndjson`. For public benchmark
   coverage (LongMemEval, ground-truth scoring), `gbrain eval longmemeval
-  <dataset.jsonl>` (v0.28.8) runs against an isolated in-memory PGLite
+  <dataset.jsonl>` runs against an isolated in-memory PGLite
   per question — your `~/.gbrain` is never opened. Full guide:
   [`docs/eval-bench.md`](./docs/eval-bench.md).
-- **Drive the brain to a target health score (v0.36.4.0):** the one-command
+- **Drive the brain to a target health score:** the one-command
   loop. `gbrain doctor --remediation-plan --json` previews what would be
   fixed; `gbrain doctor --remediate --yes --target-score 90 --max-usd 5`
   walks a dependency-ordered plan (sync before extract, embed after
@@ -81,22 +89,20 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   keys hit a `max_reachable_score` ceiling and bail with what's missing.
   Three phase handlers (synthesize / patterns / consolidate) are
   PROTECTED — only trusted local callers can submit them; MCP cannot.
-  Reference: [`docs/architecture/topologies.md`](./docs/architecture/topologies.md)
-  and the CHANGELOG entry for v0.36.4.0.
-- **Track a founder/company over time (v0.35.7):** when an entity has
+  Reference: [`docs/architecture/topologies.md`](./docs/architecture/topologies.md).
+- **Track a founder/company over time:** when an entity has
   typed metric claims in its `## Facts` fence (`metric: mrr`, `value: 50000`,
   `unit: USD`, `period: monthly` columns), run
   `gbrain eval trajectory <entity-slug>` for the chronological history
   with regressions auto-flagged, or `gbrain founder scorecard <entity-slug>`
   for a four-signal JSON rollup (claim_accuracy / consistency /
   growth_trajectory / red_flags). MCP op `find_trajectory` exposes the
-  same data — read scope, visibility-filtered for remote callers. **v0.40.2.0:**
-  `gbrain think` now uses this substrate automatically on temporal /
+  same data — read scope, visibility-filtered for remote callers.
+  `gbrain think` uses this substrate automatically on temporal /
   knowledge_update intent (default ON; flip `think.trajectory_enabled=false`
-  to opt out). Migration v82 added `facts.event_type` so non-metric event
-  rows (`meeting`, `job_change`, `location_change`) ride through the same
-  pipeline; pass `kind: 'event'` or `'all'` to `find_trajectory` to query
-  them.
+  to opt out). Non-metric event rows (`meeting`, `job_change`,
+  `location_change`) ride through the same pipeline via `facts.event_type`;
+  pass `kind: 'event'` or `'all'` to `find_trajectory` to query them.
 - **Everything else:** [`./llms.txt`](./llms.txt) is the full documentation map.
   [`./llms-full.txt`](./llms-full.txt) is the same map with core docs inlined for
   single-fetch ingestion.

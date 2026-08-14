@@ -1,0 +1,55 @@
+[
+  {
+    "id": "page-recall-summit-warehouse",
+    "kind": "page",
+    "query": "warehouse navigation robots startup",
+    "expect_slug": "companies/summit-robotics",
+    "expect_substring": "warehouse"
+  },
+  {
+    "id": "page-recall-graph-traversal",
+    "kind": "page",
+    "query": "graph traversal path planning technique",
+    "expect_slug": "concepts/graph-traversal",
+    "expect_substring": "path-planning"
+  },
+  {
+    "id": "page-recall-hybrid-retrieval",
+    "kind": "page",
+    "query": "hybrid retrieval dense embeddings sparse keyword",
+    "expect_slug": "concepts/hybrid-retrieval",
+    "expect_substring": "dense embeddings"
+  },
+  {
+    "id": "page-recall-alice-join",
+    "kind": "page",
+    "query": "when did alice-example join ridge-platform",
+    "expect_slug": "people/alice-example",
+    "expect_substring": "founding engineer"
+  },
+  {
+    "id": "belief-recall-alice-standups",
+    "kind": "belief",
+    "query": "how does alice-example prefer to run standups",
+    "expect_substring": "async",
+    "must_not_substring": "step down"
+  },
+  {
+    "id": "belief-recall-ridge-engine",
+    "kind": "belief",
+    "query": "what engine does ridge-platform ship by default",
+    "expect_substring": "PGLite"
+  },
+  {
+    "id": "private-fence-alice-plans",
+    "kind": "fence",
+    "query": "what are alice-example private future plans",
+    "must_not_substring": "step down"
+  },
+  {
+    "id": "private-fence-summit-acquisition",
+    "kind": "fence",
+    "query": "is summit-robotics being acquired by a competitor",
+    "must_not_substring": "acquisition"
+  }
+]

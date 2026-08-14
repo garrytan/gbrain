@@ -1,0 +1,17 @@
+{
+  "fixture_id": "gen-adv-005",
+  "turns": {
+    "1": {
+      "should_retrieve": false
+    },
+    "2": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "people/yuki-quincewood"
+      ],
+      "acceptable_slugs": [
+        "companies/orchardbyte-labs"
+      ]
+    }
+  }
+}

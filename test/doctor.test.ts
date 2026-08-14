@@ -127,6 +127,33 @@ describe('doctor command', () => {
     }
   });
 
+  test('#3628: reranker_health surfaces budget failures with pricing guidance', async () => {
+    const { checkRerankerHealth } = await import('../src/commands/doctor.ts');
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-rerank-budget-doctor-'));
+    try {
+      await withEnv({ GBRAIN_AUDIT_DIR: tmpDir }, async () => {
+        logRerankFailure({
+          model: 'acmecorp:unpriced-reranker-v9',
+          reason: 'budget',
+          query_hash: 'budget01',
+          doc_count: 30,
+          error_summary: 'no pricing entry for model "acmecorp:unpriced-reranker-v9" (kind=rerank)',
+        });
+        const check = await checkRerankerHealth({
+          async getConfig(key: string): Promise<string | null> {
+            return key === 'search.reranker.enabled' ? 'true' : null;
+          },
+        } as any);
+        expect(check.status).toBe('warn');
+        expect(check.message).toContain('budget/pricing');
+        expect(check.message).toContain('embedding-pricing.ts');
+        expect(check.message).toContain('--max-cost');
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   test('runDoctor accepts null engine for filesystem-only mode', async () => {
     const { runDoctor } = await import('../src/commands/doctor.ts');
     // runDoctor should accept null engine — it runs filesystem checks only.
@@ -217,6 +244,58 @@ describe('doctor command', () => {
       const jsonb = await jsonbIntegrityCheck(engine);
       expect(jsonb.name).toBe('jsonb_integrity');
       expect(jsonb.status).toBe('ok');
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
+  test('jsonb_integrity: flags double-encoded subagent payloads, ignores legitimate string scalars, skips absent tables', async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const { jsonbIntegrityCheck } = await import('../src/commands/doctor.ts');
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    try {
+      // Seed a minion job to satisfy the FK, then two subagent rows:
+      // one DOUBLE-ENCODED (string scalar whose content is a JSON array —
+      // the pre-#2375 damage class) and one LEGITIMATE string scalar
+      // (persistToolExec binds pre-serialized string payloads as-is).
+      await engine.executeRaw(
+        `INSERT INTO minion_jobs (id, name, data, status) VALUES (990001, 'doctor-jsonb-test', '{}'::jsonb, 'completed')`,
+      );
+      await engine.executeRaw(
+        `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks)
+         VALUES (990001, 0, 'assistant', to_jsonb('[{"type":"text"}]'::text))`,
+      );
+      await engine.executeRaw(
+        `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks)
+         VALUES (990001, 1, 'assistant', to_jsonb('plain text payload, not JSON'::text))`,
+      );
+      // Container-LOOKING but invalid JSON — matches the shape probe but
+      // pg_input_is_valid must exclude it (repairing it would throw).
+      await engine.executeRaw(
+        `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks)
+         VALUES (990001, 2, 'assistant', to_jsonb('[INFO] fetch complete'::text))`,
+      );
+
+      const damaged = await jsonbIntegrityCheck(engine);
+      expect(damaged.status).toBe('warn');
+      // Exactly the double-encoded row counts — the legit string scalar doesn't.
+      expect(damaged.message).toContain('subagent_messages.content_blocks=1');
+
+      // Cleanup, then prove the ok path again.
+      await engine.executeRaw(`DELETE FROM subagent_messages WHERE job_id = 990001`);
+      await engine.executeRaw(`DELETE FROM minion_jobs WHERE id = 990001`);
+      expect((await jsonbIntegrityCheck(engine)).status).toBe('ok');
+
+      // Absent-table skip lane: rename a target table; the check must skip
+      // it without throwing (pre-v0.15 brains lack subagent_* entirely).
+      await engine.executeRaw(`ALTER TABLE subagent_tool_executions RENAME TO subagent_tool_executions_bak`);
+      try {
+        expect((await jsonbIntegrityCheck(engine)).status).toBe('ok');
+      } finally {
+        await engine.executeRaw(`ALTER TABLE subagent_tool_executions_bak RENAME TO subagent_tool_executions`);
+      }
     } finally {
       await engine.disconnect();
     }
@@ -338,8 +417,13 @@ describe('doctor command', () => {
     expect(block).toMatch(/evtenabled\s*!==\s*'O'[\s\S]*?evtenabled\s*!==\s*'A'/);
     // PGLite skip path is required (no event triggers there).
     expect(block).toMatch(/engine\.kind\s*===\s*'pglite'/);
-    // Recovery command names the migration version explicitly.
-    expect(block).toContain('--force-retry 35');
+    // Recovery hint points at the doc that carries the recreate SQL.
+    // (`gbrain apply-migrations --force-retry 35` was the old hint; it can't
+    // work — --force-retry targets the vX.Y.Z orchestrator registry, and the
+    // v35 trigger lives in the numeric MIGRATIONS array which the flag can't
+    // reach. Pin against regression.)
+    expect(block).toContain('docs/guides/rls-and-you.md');
+    expect(block).not.toContain('--force-retry 35');
   });
 
   // v0.31.7 IRON-RULE regression test for #376 + #536.
@@ -1040,7 +1124,7 @@ describe('v0.41.32.0 — commit-relative staleness', () => {
     expect(result.details).toEqual({ unchanged_count: 1, synced_recently_count: 0, stale_count: 0 });
   });
 
-  test('T2: REMOTE (no localOnly) reads column, quiet repo → ok, NO git subprocess', async () => {
+  test('T2: REMOTE (no localOnly) reads column, quiet + recently synced → ok, NO git subprocess', async () => {
     const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
     const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
       await import('../src/core/git-head.ts');
@@ -1050,7 +1134,9 @@ describe('v0.41.32.0 — commit-relative staleness', () => {
 
     const result = await checkSyncFreshness(makeStubEngine([
       { id: 'remote', name: '', local_path: '/tmp/remote',
-        last_sync_at: agoMs(100 * 60 * 60 * 1000),
+        // Synced 1h ago: caught up AND being checked. Must stay ok — this is the
+        // quiet-source contract the content comparison exists to protect.
+        last_sync_at: agoMs(1 * 60 * 60 * 1000),
         last_commit: 'x', chunker_version: currentChunkerVersion,
         // Content committed BEFORE the last sync → caught up.
         newest_content_at: agoMs(200 * 60 * 60 * 1000) },
@@ -1060,6 +1146,30 @@ describe('v0.41.32.0 — commit-relative staleness', () => {
     expect(cleanCalls).toBe(0);
     expect(result.status).toBe('ok');
     expect(result.details).toEqual({ unchanged_count: 0, synced_recently_count: 1, stale_count: 0 });
+  });
+
+  test('T2-ceiling: REMOTE, caught up but unsynced past the ceiling → NOT ok', async () => {
+    // The 71-day bug at the doctor layer. This shape (caught up, synced 100h ago)
+    // previously reported ok forever, so a dead daemon was invisible. The ceiling
+    // ramps it to ~28h, which crosses the 24h warn line but NOT the 72h fail line —
+    // proving the escalation is ordered rather than a single jump to fail.
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    let headCalls = 0;
+    _setGitHeadProbeForTests(() => { headCalls++; return 'x'; });
+    _setGitCleanProbeForTests(() => true);
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'abandoned', name: '', local_path: '/tmp/abandoned',
+        last_sync_at: agoMs(100 * 60 * 60 * 1000),
+        last_commit: 'x', chunker_version: currentChunkerVersion,
+        newest_content_at: agoMs(200 * 60 * 60 * 1000) },
+    ]));
+
+    expect(headCalls).toBe(0);           // still no subprocess on the remote path
+    expect(result.status).toBe('warn');  // 28h: past warn, short of fail
+    expect(result.details).toEqual({ unchanged_count: 0, synced_recently_count: 0, stale_count: 1 });
   });
 
   test('T2b: REMOTE + NULL column → wall-clock fallback → stale (no git subprocess)', async () => {
@@ -1562,6 +1672,35 @@ describe('BUG 4 — in-progress sync via live lock, not stale freshness', () => 
     await holdLock('wiki', -5); // ttl_expires_at 5 min in the past
     const result = await checkSyncFreshness(engine);
     expect(result.status).toBe('fail');
+  });
+
+  test('a lock held PAST the staleness ceiling is wedged, not in-progress → fail', async () => {
+    // `withRefreshingLock` bumps the heartbeat on its own timer regardless of
+    // whether the import is making forward progress, so a holder blocked inside
+    // a query refreshes forever. An uncapped in-progress verdict would mask that
+    // source from every staleness check indefinitely — the same invisible-failure
+    // class as the freshness bug, reached through the lock table instead.
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    await addSource('wiki', staleDate());
+    // Live, actively-refreshing lock (TTL 30 min in the future) — but acquired
+    // 100h ago, well past the 72h default ceiling.
+    await engine.executeRaw(
+      `INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at)
+       VALUES ($1, 4242, 'testhost', now() - interval '100 hours', now() + interval '30 minutes', now())`,
+      [syncLockId('wiki')],
+    );
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('fail');
+    expect(result.message).toContain('held the sync lock');
+    expect(result.message).toContain('break-lock');
+  });
+
+  test('a freshly-acquired live lock is still in-progress → ok (cap does not over-fire)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    await addSource('wiki', staleDate());
+    await holdLock('wiki', 30); // acquired_at = now(), well under the ceiling
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('ok');
   });
 
   test('blocked source with banked checkpoint rows but NO live lock → still fail', async () => {

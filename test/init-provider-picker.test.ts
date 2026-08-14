@@ -44,20 +44,60 @@ describe('pickProvider — defensive paths', () => {
     // OPENAI_API_KEY set → openai is env-ready. readLineSafe returns the
     // default '1' in non-stdin-TTY bun:test mode, so picker picks the first
     // ready recipe deterministically. We mostly want to verify NO null
-    // return and a sensible payload shape.
+    // return and a sensible payload shape. probeLocal is stubbed unreachable
+    // so ollama drops out and the unit test never touches the network.
     let stderr = '';
     const got = await pickProvider({
       touchpoint: 'embedding',
       env: { OPENAI_API_KEY: 'sk-test' },
       isTTY: true,
       writeStderr: (s) => { stderr += s; },
+      probeLocal: async () => ({ reachable: false }),
     });
     expect(got).not.toBeNull();
     if (got) {
       expect(got.fullModel).toMatch(/:/);  // provider:model shape
       expect(got.dim).toBeGreaterThan(0);  // embedding always has dims
-      expect(stderr).toContain('Pick a embedding provider');
+      expect(stderr).toContain('Pick an embedding provider');
+      // Keyless is always an explicit option for embedding.
+      expect(stderr).toContain('0) none — continue keyless');
     }
+  });
+
+  test('keyless machine (no keys, ollama daemon down) → keyless default, returns null', async () => {
+    let stderr = '';
+    const got = await pickProvider({
+      touchpoint: 'embedding',
+      env: {},
+      isTTY: true,
+      writeStderr: (s) => { stderr += s; },
+      probeLocal: async () => ({ reachable: false }),
+    });
+    // No keyed provider ready → default is 0 (keyless) → null return; the
+    // caller continues keyless. A bare Enter can no longer select a broken
+    // local daemon. (readLineSafe resolves the default in bun:test's
+    // non-stdin-TTY mode, so the null return IS the default-path proof.)
+    expect(got).toBeNull();
+    expect(stderr).toContain('0) none — continue keyless');
+  });
+
+  test('ollama daemon up but model not pulled → annotated with the pull fix, keyless still default', async () => {
+    let stderr = '';
+    const got = await pickProvider({
+      touchpoint: 'embedding',
+      env: {},
+      isTTY: true,
+      writeStderr: (s) => { stderr += s; },
+      probeLocal: async () => ({
+        reachable: true,
+        models_endpoint_valid: true,
+        models: ['some-other-model'],
+      }),
+    });
+    expect(stderr).toContain('model not pulled — run: ollama pull');
+    // Daemon-up-model-missing must NOT be the bare-Enter default: with no
+    // keyed provider ready, the default resolves to 0 (keyless) → null.
+    expect(got).toBeNull();
   });
 
   test('caveat fires when picking non-Anthropic chat without ANTHROPIC_API_KEY', async () => {
@@ -118,6 +158,7 @@ describe('pickProvider — defensive paths', () => {
       env: { OPENAI_API_KEY: 'sk-test' },
       isTTY: true,
       writeStderr: (s) => { stderr += s; },
+      probeLocal: async () => ({ reachable: false }),
     });
     expect(stderr).toContain('embedding provider');
   });

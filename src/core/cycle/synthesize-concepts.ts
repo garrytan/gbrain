@@ -30,8 +30,20 @@ import { chat as gatewayChat, isAvailable } from '../ai/gateway.ts';
 // source-boost's 1.3× 'concepts/' weighting can actually reach them.
 import { importFromContent } from '../import-file.ts';
 import { serializeMarkdown } from '../markdown.ts';
+import { canonicalLookup, type ModelPricing } from '../model-pricing.ts';
 
 const DEFAULT_BUDGET_USD = 1.5;
+// Canonical-miss policy — mirrors skillopt/preflight.ts's lookupPrice:
+// assume Sonnet-tier pricing for models absent from CANONICAL_PRICING.
+// Conservative and non-throwing; keeps the budget gate effective (and
+// matches this file's pre-canonical behavior) instead of letting an
+// unpriced model run unmetered. The rates are DERIVED from the canonical
+// table (never hand-copied — CLAUDE.md invariant); the literal pair only
+// fires if the Sonnet key itself ever leaves the table.
+const FALLBACK_PRICING: ModelPricing = canonicalLookup('anthropic:claude-sonnet-4-6') ?? {
+  input: 3.0,
+  output: 15.0,
+};
 const TIER_T1_MIN = 10;
 const TIER_T2_MIN = 5;
 const TIER_T3_MIN = 2;
@@ -204,9 +216,14 @@ export async function runPhaseSynthesizeConcepts(
           // codex flagged. Throttle inside maybeYield bounds the actual
           // refresh rate.
           await maybeYield();
-          // Sonnet at ~$3/M input + $15/M output
+          // Price from the model that actually answered, through the one
+          // canonical chat-pricing table (CLAUDE.md invariant). Canonical
+          // miss → Sonnet-tier FALLBACK_PRICING (see constant above).
+          const pricing = canonicalLookup(result.model) ?? FALLBACK_PRICING;
           estimatedSpendUsd +=
-            (result.usage.input_tokens * 3.0 + result.usage.output_tokens * 15.0) / 1_000_000;
+            (result.usage.input_tokens * pricing.input +
+              result.usage.output_tokens * pricing.output) /
+            1_000_000;
           narrative = result.text.trim() || deterministicNarrative(group);
         } catch (err) {
           failures.push({

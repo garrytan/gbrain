@@ -212,13 +212,12 @@ gbrain schema lint --with-db
 
 **Commit your pack to source control.** If `~/.gbrain/schema-packs/mine/` is a git repo, commit `pack.json` and push. Your pack survives across machines, and the `mutation_count_anomaly` lint rule will nudge you when you hit >50 mutations in a week (the "you should be committing this" signal).
 
-**For agents (MCP):** the same operations are reachable over HTTPS MCP via 9 new ops. Register an admin-scope OAuth client and `schema_apply_mutations` lets a remote agent compose multi-step refactors as one atomic batch. The batched MCP op + per-pack lock + audit log are the load-bearing primitives that make remote schema authoring safe. See [`skills/schema-author/SKILL.md`](../skills/schema-author/SKILL.md) for the agent dispatcher.
+**For agents (MCP):** the same operations are reachable over HTTPS MCP as schema ops. Register an admin-scope OAuth client and `schema_apply_mutations` lets a remote agent compose multi-step refactors as one atomic batch. The batched MCP op + per-pack lock + audit log are the load-bearing primitives that make remote schema authoring safe. See [`skills/schema-author/SKILL.md`](../skills/schema-author/SKILL.md) for the agent dispatcher.
 
 **Undo a mistake.** Every mutation primitive has an inverse (`remove-type`, `remove-alias`, `remove-prefix`, `remove-link-type`, `set-extractable false`, etc.). If you fork twice and want to revert, `gbrain schema downgrade` restores the previous active pack from `~/.gbrain/schema-pack-history.jsonl`.
 
 ## Related docs
 
-- **Reference:** `gbrain schema --help` for the full 22-verb CLI surface; CLAUDE.md's "Schema Cathedral v3 (v0.40.7.0)" section for the module-by-module architecture.
+- **Reference:** `gbrain schema --help` for the full CLI surface (30+ subcommands); the "Schema Cathedral v3" section of `docs/architecture/KEY_FILES.md` for the module-by-module architecture.
 - **How-to:** [`skills/schema-author/SKILL.md`](../skills/schema-author/SKILL.md) — the agent dispatcher with the 7-phase workflow (brain → assess → propose → apply → sync → verify → commit).
 - **Explanation:** [`skills/conventions/schema-evolution.md`](../skills/conventions/schema-evolution.md) — when to add a type vs alias vs prefix.
-- **Plan + decisions:** the original design captured 21 decisions including the bundled-pack guard rationale (D6), the empty-filter fallback contract (D4), and the MCP non-localOnly trust posture (D2). Lives in `~/.claude/plans/system-instruction-you-are-working-recursive-thacker.md` (private).

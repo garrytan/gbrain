@@ -3,6 +3,11 @@
 Read this entire file, then follow the steps. Ask the user for API keys when needed.
 Target: ~30 minutes to a fully working brain.
 
+> **Scope note:** this guide installs the BRAIN (for agent platforms like OpenClaw
+> and Hermes, or a standalone brain). If you are Claude Code or Codex and the human
+> asked you to become their persistent personal agent — identity + memory + private
+> repo — follow `BOOTSTRAP_FOR_AGENTS.md` instead.
+
 ## Step 0: If you are not Claude Code
 
 Read `AGENTS.md` at the repo root first. It's the non-Claude-agent operating
@@ -16,10 +21,13 @@ If you fetched this file by URL without cloning yet, the companion files live at
 
 ## Step 1: Install GBrain
 
+<!-- npm-trap + #218 recovery: canonical copy lives in README.md ("Install" warning) — sync edits. -->
 > **NEVER install from the npm registry.** GBrain is not distributed on npm; the npm
 > package named `gbrain` is an unrelated package. Do NOT run `npm install -g gbrain` or
 > `bun add -g gbrain` (note the missing `github:` prefix — that's the trap). The only
-> supported sources are `github:garrytan/gbrain` and a git clone, exactly as shown below.
+> supported sources are `github:garrytan/gbrain` (optionally pinned as
+> `github:garrytan/gbrain#latest-stable`, the form the bootstrap flow mandates) and a
+> git clone, exactly as shown below.
 > If an unrelated npm install is already present, remove it first
 > (`npm uninstall -g gbrain` / `bun remove -g gbrain`); `gbrain doctor` also detects this.
 
@@ -82,12 +90,14 @@ NOT inside ~/gbrain.
 ## Step 3.5: Confirm search mode with the user (DO NOT SKIP)
 
 `gbrain init` auto-applied a default search mode (`tokenmax` unless your subagent
-tier is Haiku-class or no OpenAI key is configured). The init output included the
-cost matrix below preceded by `[AGENT]` markers. You must NOT silently accept the
-default. Stop and ask the operator.
+tier is Haiku-class or no expansion-capable API key — Anthropic, OpenAI, or
+Google — is configured). The init output included the cost matrix below preceded
+by `[AGENT]` markers. You must NOT silently accept the default. Stop and ask the
+operator.
 
 **Present this matrix verbatim:**
 
+<!-- Cost matrix: three verbatim homes — CLAUDE.md "Search Mode", src/commands/init-mode-picker.ts, and this block. Sync all three when refreshing. -->
 ```
 Per-query cost @ 10K queries/mo (typical single-user volume):
 
@@ -198,14 +208,24 @@ scaffold the bundled skills into it:
 
 ```bash
 cd /path/to/agent/workspace
-gbrain skillpack scaffold --all       # copy 43 curated skills + RESOLVER.md
+gbrain skillpack scaffold --all       # copy the 50+ bundled skills + RESOLVER.md
 ```
 
 Scaffolded skills are first-class files in your repo. Edit freely; re-running scaffold
 refuses to overwrite anything that exists. Use `gbrain skillpack reference <name>` to
 diff against gbrain's bundle when you want upstream improvements. (The legacy
-`gbrain skillpack install` managed-block model was retired in v0.36.0.0 — run
+`gbrain skillpack install` managed-block model was removed in v0.33 — run
 `gbrain skillpack migrate-fence` once if upgrading from an older release.)
+
+**If you are Hermes:** register gbrain as your MCP server:
+
+```bash
+printf 'Y\n' | hermes mcp add gbrain --env GBRAIN_HOME=$HOME --connect-timeout 60 --command $(which gbrain) --args serve
+```
+
+Keep `--args` last (everything after it becomes server argv) and verify with
+`hermes mcp test gbrain` — the add exits 0 even on failure. Full reference:
+[docs/mcp/HERMES.md](docs/mcp/HERMES.md).
 
 Whether you scaffolded or not, read `skills/RESOLVER.md` (in your workspace, or the
 bundled copy at `~/gbrain/skills/RESOLVER.md` when running from the cloned repo). It's
@@ -242,7 +262,13 @@ Set up using your platform's scheduler (OpenClaw cron, Railway cron, crontab), o
 platform glue entirely with `gbrain autopilot --install` (built-in self-maintaining daemon):
 
 - **Live sync** (every 15 min): `gbrain sync --repo ~/brain && gbrain embed --stale`
-  — or `gbrain sync --watch` for a continuous loop.
+  — or `gbrain sync --watch` for a continuous loop. Safe on keyless brains:
+  a bare `gbrain embed --stale` exits 0 with a stderr note when embeddings
+  are disabled, so the chain doesn't break.
+- **Health gate** (daily): `gbrain autopilot --status` — exit 0 fresh (or
+  nothing installed), 1 needs attention (stale heartbeat, never ran, or
+  paused), 2 the daemon took itself out of rotation. Filesystem-only, so it
+  works during DB outages.
 - **Auto-update** (daily): `gbrain check-update --json` (tell user, never auto-install).
 - **Dream cycle** (nightly): `gbrain dream` runs the 8-phase overnight maintenance cycle.
   Entity sweep, citation fixes, memory consolidation, plus (v0.23+) overnight conversation
@@ -261,8 +287,17 @@ Verify: `gbrain integrations doctor` (after at least one is configured)
 
 ## Step 9: Verify
 
-Read `docs/GBRAIN_VERIFY.md` and run all 7 verification checks. Check #4 (live sync
-actually works) is the most important.
+Read `docs/GBRAIN_VERIFY.md` and run every verification check in it. Check #4
+(live sync actually works) is the most important.
+
+Once verification passes and the brain has content, run the activation probe:
+
+```bash
+gbrain onboard --check --json
+```
+
+See "The onboard surface" below for what the recommendations mean and the
+consent gates around unattended remediation.
 
 ## Upgrade
 
@@ -305,7 +340,7 @@ columns. PGLite brains no-op. If wiki-style imports were truncated by the old
 `splitBody` bug, run `gbrain sync --full` after upgrading to rebuild
 `compiled_truth` from source markdown.
 
-## v0.42.0+ onboard surface (NEW)
+## The onboard surface
 
 `gbrain onboard` is the activation surface gbrain did not have before.
 Once your brain has any content, run `gbrain onboard --check --json` to

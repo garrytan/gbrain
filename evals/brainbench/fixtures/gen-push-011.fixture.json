@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-push-011",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "push",
+  "seed_pages": [
+    {
+      "slug": "people/mireille-coppersmith",
+      "content": "---\ntitle: Mireille Coppersmith\ntype: person\naliases: [mireille]\nsummary: Founder of Inkwhale Co.\n---\n\nMireille Coppersmith is the founder of Inkwhale Co. Mireille pushed back on the proposed valuation during diligence.\n"
+    },
+    {
+      "slug": "people/vada-tavenner",
+      "content": "---\ntitle: Vada Tavenner\ntype: person\naliases: [vada]\nsummary: Founder of Tidecraft Systems.\n---\n\nVada Tavenner is the founder of Tidecraft Systems. Vada pushed back on the proposed valuation during diligence.\n"
+    },
+    {
+      "slug": "companies/inkwhale-co",
+      "content": "---\ntitle: Inkwhale Co\ntype: company\nsummary: Seed-stage company. Founded by Mireille Coppersmith.\n---\n\nInkwhale Co is a seed-stage company. Founded by Mireille Coppersmith. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "funds/galeharbor-ventures",
+      "content": "---\ntitle: Galeharbor Ventures\ntype: org\nsummary: Early-stage fund that co-invests on seed rounds.\n---\n\nGaleharbor Ventures is an early-stage fund that co-invests on seed rounds.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Draft a memo for the partner meeting: Mireille Coppersmith and Vada Tavenner both want Galeharbor Ventures in the Inkwhale Co round."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Drafting now."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Make the memo lead with traction, then risks, then the ask."
+    }
+  ]
+}

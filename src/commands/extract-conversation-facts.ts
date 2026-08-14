@@ -69,6 +69,8 @@ import type { Page } from '../core/types.ts';
 import {
   extractFactsFromTurnWithOutcome,
   isFactsExtractionEnabled,
+  type ExtractInput,
+  type ExtractedFact,
 } from '../core/facts/extract.ts';
 import { configureGatewayIfUninitialized, isAvailable, withBudgetTracker } from '../core/ai/gateway.ts';
 import { BudgetTracker, BudgetExhausted } from '../core/budget/budget-tracker.ts';
@@ -286,6 +288,14 @@ export interface ExtractConversationFactsCoreOpts {
    * if you need exact-ceiling compliance.
    */
   workers?: number;
+  /**
+   * Injectable per-segment extractor (BrainBench decision 15). When unset,
+   * the production path is `extractFactsFromTurnWithOutcome` (fail-hard: a
+   * per-segment extraction failure aborts the page). The bench's deterministic
+   * CI mode injects a gold-facts extractor here so segmentation → insertFacts →
+   * dedup → provenance all execute THIS production pipeline with zero LLM calls.
+   */
+  extractor?: (input: ExtractInput) => Promise<ExtractedFact[]>;
 }
 
 export interface ExtractConversationFactsResult {
@@ -671,6 +681,12 @@ interface ExtractCoreState {
   types: AllowedType[];
   signal: AbortSignal | undefined;
   /**
+   * Injected per-segment extractor (BrainBench decision 15). ONLY set when a
+   * caller overrides; when undefined the production fail-hard
+   * `extractFactsFromTurnWithOutcome` path runs.
+   */
+  extractor?: (input: ExtractInput) => Promise<ExtractedFact[]>;
+  /**
    * v0.41.15.0 (D11): shared per-(sourceId, slug) checkpoint map mutated
    * in place from processPage callers. Map.set is atomic in JS's single-
    * threaded event loop so parallel workers (D9) don't clobber each
@@ -979,22 +995,38 @@ async function processPage(
     const text = renderSegmentForExtraction(page.title || page.slug, seg);
     const sessionId = `${PER_SEGMENT_SOURCE_PREFIX}:${page.slug}`;
 
-    const extraction = await extractFactsFromTurnWithOutcome({
-      turnText: text,
-      sessionId,
-      source: PER_SEGMENT_SOURCE_PREFIX,
-      engine: state.engine,
-      abortSignal: state.signal,
-    });
-    if (!extraction.ok) {
-      const detail = extraction.error instanceof Error
-        ? `: ${extraction.error.message}`
-        : '';
-      throw new Error(
-        `segment ${seg.startIso}..${seg.endIso} extraction failed (${extraction.reason})${detail}`,
-      );
+    // BrainBench (decision 15) may inject a deterministic extractor; when it
+    // does, use it (returns facts directly — the hermetic gold path). The
+    // DEFAULT production path is master's fail-hard-with-reason contract: a
+    // per-segment extraction failure aborts the page rather than silently
+    // dropping facts.
+    let extracted: ExtractedFact[];
+    if (state.extractor) {
+      extracted = await state.extractor({
+        turnText: text,
+        sessionId,
+        source: PER_SEGMENT_SOURCE_PREFIX,
+        engine: state.engine,
+        abortSignal: state.signal,
+      });
+    } else {
+      const extraction = await extractFactsFromTurnWithOutcome({
+        turnText: text,
+        sessionId,
+        source: PER_SEGMENT_SOURCE_PREFIX,
+        engine: state.engine,
+        abortSignal: state.signal,
+      });
+      if (!extraction.ok) {
+        const detail = extraction.error instanceof Error
+          ? `: ${extraction.error.message}`
+          : '';
+        throw new Error(
+          `segment ${seg.startIso}..${seg.endIso} extraction failed (${extraction.reason})${detail}`,
+        );
+      }
+      extracted = extraction.facts;
     }
-    const extracted = extraction.facts;
 
     state.result.segments_processed++;
     segmentsThisPage++;
@@ -1223,6 +1255,7 @@ export async function runExtractConversationFactsCore(
     segmentLimit,
     types,
     signal,
+    extractor: opts.extractor,
     cpMap: new Map(),
     llmFallbackModel,
   };

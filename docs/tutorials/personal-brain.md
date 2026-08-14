@@ -6,7 +6,7 @@ This is the install I'd run if I were setting up the whole stack from scratch to
 
 > "This is the Apple I, we're just soldering breadboards over here."
 
-If you only want the **brain layer** (no agent, no Telegram, just gbrain as memory for an MCP client you already use), skip to the [CLI standalone install](../INSTALL.md#2-cli-standalone) in INSTALL.md. If you want the whole agent **shared with a team**, read the [company brain tutorial](company-brain.md) instead. This tutorial is the solo, full-stack, talk-to-it-on-Telegram path.
+If you only want the **brain layer** (no agent, no Telegram, just gbrain as memory for an MCP client you already use), skip to the [CLI standalone install](../INSTALL.md#2-cli-standalone) in INSTALL.md. If your daily driver is a **coding agent** (Claude Code / Codex) and you want it to bootstrap its own full agent — identity, per-turn context, schedules, a private repo as its durable body — that's `gbrain bootstrap`: see the paste blocks in the README and [docs/guides/bootstrap.md](../guides/bootstrap.md). If you want the whole agent **shared with a team**, read the [company brain tutorial](company-brain.md) instead. This tutorial is the solo, full-stack, talk-to-it-on-Telegram path.
 
 ---
 
@@ -17,7 +17,7 @@ A personal AI agent with four pieces:
 - **A brain** (git repo). Your knowledge base, constantly ingesting and growing.
 - **A harness** (OpenClaw via AlphaClaw). The runtime that gives the LLM tools, memory, and integrations.
 - **A chat interface** (Telegram). How you talk to it.
-- **Skills** (60+ installed via GBrain). Reusable capabilities the agent can invoke.
+- **Skills** (50+ installed via GBrain). Reusable capabilities the agent can invoke.
 
 Architecture:
 
@@ -127,7 +127,7 @@ gbrain skillpack scaffold --all
 
 `gbrain init --supabase` walks a short wizard that asks for your Supabase connection string and creates the schema. You'll get that connection string in Step 7 — read 7a and 7b first so you paste the right one (the transaction pooler, not the direct connection). If you'd rather try things locally before paying for a database, `gbrain init --pglite` gives you a zero-config embedded engine instead; you can migrate to Supabase later with `gbrain migrate --to supabase`.
 
-`gbrain skillpack scaffold --all` copies the ~43 bundled skills into your agent workspace as first-class files you can edit freely. (The old managed-install model was retired in v0.36.0.0; see `docs/INSTALL.md` if you're upgrading from an older release.)
+`gbrain skillpack scaffold --all` copies the 50+ bundled skills into your agent workspace as first-class files you can edit freely. (The old managed-install model was retired; see `docs/INSTALL.md` if you're upgrading from an older release.)
 
 From this point, the agent has working memory and access to every skill.
 
@@ -252,7 +252,7 @@ My production setup is about $10,000 a month, but that's 10 instances, 200 crons
 2. **GitHub PAT can't see the repos.** Reload the page after creating repos. Make sure the fine-grained token has the correct repo selection.
 3. **Telegram bot doesn't respond.** Check the bot token in AlphaClaw. Make sure the Render instance is actually running.
 4. **Supabase bottleneck on heavy ingestion.** Upgrade the DB instance size before the small one chokes.
-5. **GBrain.io provisioning fails.** The hosted instance may need Pro tier. Check the machine allocation in the AlphaClaw UI.
+5. **Hosted-instance provisioning fails.** If you're using a hosted brain instance instead of self-hosting, it may need the Pro tier. Check the machine allocation in the AlphaClaw UI.
 
 ---
 

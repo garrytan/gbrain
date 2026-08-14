@@ -91,6 +91,21 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       console.error('Usage: gbrain config unset <key> | --pattern <prefix>');
       process.exit(1);
     }
+    if (key === 'push.allow_unverified_remote' || key === 'hooks.stop_push_debounce_min') {
+      const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
+      const cfg = loadConfigFileOnly();
+      const [top, leaf] = key.split('.') as ['push' | 'hooks', string];
+      const branch = cfg?.[top] as Record<string, unknown> | undefined;
+      if (cfg && branch && leaf in branch) {
+        delete branch[leaf];
+        saveConfig(cfg);
+        console.log(`Unset ${key} (file plane)`);
+      } else {
+        console.error(`Config key not found: ${key}`);
+        process.exit(1);
+      }
+      return;
+    }
     const n = await engine.unsetConfig(key);
     if (n > 0) {
       console.log(`Unset ${key}`);
@@ -111,7 +126,14 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     // overlays env onto the file) — and report which plane answered on
     // stderr, keeping stdout a bare value for scripts.
     const filePlane = loadConfig() as Record<string, unknown> | null;
-    const fileVal = filePlane?.[key];
+    // Dotted keys (push.allow_unverified_remote, hooks.stop_push_debounce_min)
+    // are stored NESTED by `set`; resolve the path so `get`/`unset` see them.
+    const resolveDotted = (obj: Record<string, unknown> | null, k: string): unknown => {
+      if (!obj) return undefined;
+      if (k in obj) return obj[k];
+      return k.split('.').reduce<unknown>((acc, seg) => (acc && typeof acc === 'object' ? (acc as Record<string, unknown>)[seg] : undefined), obj);
+    };
+    const fileVal = resolveDotted(filePlane, key);
     const dbVal = await engine.getConfig(key);
     const val = fileVal !== undefined && fileVal !== null ? fileVal : dbVal;
     if (val !== null && val !== undefined) {
@@ -129,6 +151,38 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       process.exit(1);
     }
   } else if (action === 'set' && key && value) {
+    // Bootstrap hook-lane keys are FILE-plane canonical: they are read by
+    // engine-free processes (the harness hook children and the detached
+    // `sources push` child) via loadConfigFileOnly, which never sees the DB
+    // plane — and the DB plane is unreadable anyway while a `gbrain serve`
+    // holds the single-writer lock. Route them to ~/.gbrain/config.json.
+    if (key === 'push.allow_unverified_remote' || key === 'hooks.stop_push_debounce_min') {
+      const { loadConfigFileOnly, saveConfig, isConfigTruthy } = await import('../core/config.ts');
+      const cfg = (loadConfigFileOnly() ?? { engine: 'pglite' }) as Parameters<typeof saveConfig>[0];
+      if (key === 'push.allow_unverified_remote') {
+        const on = isConfigTruthy(value);
+        cfg.push = { ...(cfg.push ?? {}), allow_unverified_remote: on };
+        saveConfig(cfg);
+        console.log(`Set ${key} = ${on} (file plane: ~/.gbrain/config.json)`);
+        if (on) {
+          console.log(
+            'WARNING: workspace pushes now SKIP repo-visibility verification. ' +
+              'This trusts the remote on your word — unset it once verification works: ' +
+              'gbrain config set push.allow_unverified_remote false',
+          );
+        }
+      } else {
+        const n = Number.parseInt(value, 10);
+        if (!Number.isFinite(n) || n < 0) {
+          console.error(`[config] ${key} must be an integer >= 0 (minutes; 0 = push every turn)`);
+          process.exit(1);
+        }
+        cfg.hooks = { ...(cfg.hooks ?? {}), stop_push_debounce_min: n };
+        saveConfig(cfg);
+        console.log(`Set ${key} = ${n} (file plane: ~/.gbrain/config.json)`);
+      }
+      return;
+    }
     // v0.37.11.0 fix wave (Lane C.2 + CDX2-13): refuse writes to schema-sizing
     // fields unconditionally. These fields size the `content_chunks.embedding`
     // column at init time and are file-plane canonical. `gbrain config set
@@ -203,6 +257,42 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     // they're mid-backfill.
     const coverageOverride =
       args.includes('--coverage-override') || args.includes('--yes');
+
+    // Validate sources.default at set time. This key is read by
+    // source-resolver.ts tier 5 on EVERY unqualified call, and tier 5 calls
+    // assertSourceExists — so a syntactically valid but non-existent id set
+    // here would make every later unqualified command throw, far from the
+    // typo that caused it. `gbrain sources default <id>` already validates;
+    // config set is the lower-level door to the same key and must not be a
+    // way around that check.
+    if (key === 'sources.default') {
+      const { isValidSourceId } = await import('../core/source-id.ts');
+      if (!isValidSourceId(value)) {
+        console.error(
+          `[config] sources.default must be 1-32 lowercase alphanumerics with ` +
+          `optional interior hyphens (got '${value}').\n` +
+          `[config]   gbrain sources default <id>   # preferred — validates and reports`,
+        );
+        process.exit(1);
+      }
+      // No .catch() here: a connection failure or SQL regression must NOT be
+      // reported as "source is not registered". fetchSource already absorbs
+      // the one expected legacy-column case; anything else is a real error and
+      // should surface as itself.
+      const { fetchSource } = await import('../core/sources-load.ts');
+      const src = await fetchSource(engine, value);
+      if (!src) {
+        // NOTE: keep flag literals out of this message. The generated flag
+        // registry (#2185) scans command sources for flag tokens, so naming a
+        // flag in prose would silently grant it to `gbrain config`.
+        console.error(
+          `[config] source "${value}" is not registered; refusing to set sources.default.\n` +
+          `[config]   gbrain sources list      # see registered sources\n` +
+          `[config]   gbrain sources add       # register one first`,
+        );
+        process.exit(1);
+      }
+    }
 
     // v0.42.42.0 (#2139): validate spend.posture at set time so a typo
     // ('tokenMax', 'max') doesn't silently fall back to gated.

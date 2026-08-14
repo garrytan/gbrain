@@ -25,10 +25,10 @@ recipes/<name>/
 ├── README.md                           # paradigm doc; gbrain-side only (not copied)
 ├── package.json                        # top-of-bundle; copied to <host>/services/<name>/package.json
 ├── code/                               # copied to <host>/services/<name>/code/
-├── tests/                              # copied to <host>/services/<name>/tests/
-│   ├── unit/
-│   ├── e2e/
-│   └── evals/
+├── tests/
+│   ├── unit/                           # copied to <host>/services/<name>/tests/unit/
+│   ├── e2e/                            # gbrain-side only (puppeteer + live-API costs)
+│   └── evals/                          # gbrain-side only (LLM-judge suites)
 ├── skills/                             # copied to <host>/skills/<skill-name>/
 ├── install/                            # gbrain-side only; install metadata
 │   ├── manifest.json                   # src → target map + per-file SHA-256
@@ -54,7 +54,7 @@ Three rules for new recipes following this shape:
 - `code/lib/personas/private-name-blocklist.json` — privacy guard source of truth (read by the shipped guard script and by host-side prompt-shape tests).
 - `code/lib/personas/context-builder.contract.md` — API the operator implements for live brain context.
 
-## Files (in `bundle = code/ + tests/ + skills/ + package.json`) — copied to host repo
+## Files (in `bundle = code/ + tests/unit/ + skills/ + package.json`) — copied to host repo
 
 The install subcommand reads `install/manifest.json` and copies each listed file to its target path under the host repo. SHA-256s computed at copy time get persisted into `<host>/services/<name>/.gbrain-source.json` so `--refresh` can do three-way classification (unchanged-identical / unchanged-stale / locally-modified) without re-walking the entire bundle.
 

@@ -18,4 +18,9 @@ timeout = 60_000
 # runs, so audit-emitting code paths (content-sanity, shell-audit, etc.)
 # can't leak fixture events into the operator's real ~/.gbrain/audit/. See
 # test/helpers/audit-dir-preload.ts for the full rationale.
-preload = ["./test/helpers/legacy-embedding-preload.ts", "./test/helpers/audit-dir-preload.ts"]
+#
+# Same treatment for the sync failure ledger: broken-fixture import/sync tests
+# were appending rows into the operator's real ~/.gbrain/sync-failures.jsonl,
+# which `gbrain doctor` reads and warns on. See
+# test/helpers/sync-failures-preload.ts.
+preload = ["./test/helpers/legacy-embedding-preload.ts", "./test/helpers/audit-dir-preload.ts", "./test/helpers/sync-failures-preload.ts"]

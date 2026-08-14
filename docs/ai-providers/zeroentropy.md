@@ -1,5 +1,23 @@
 # ZeroEntropy — zembed-1 + zerank-2
 
+> **Hosted API shutdown: 2026-09-04.** ZeroEntropy announced (2026-07-24)
+> that its hosted endpoints — `/models/embed` and `/models/rerank` — shut
+> down on that date. A brain still embedding through the hosted API loses
+> semantic retrieval entirely on that date: query embedding uses the same
+> endpoint, so **existing vectors become unqueryable**, not just new
+> content. Two fixes, either works:
+>
+> 1. **Self-host the same model** — zembed-1 weights are Apache-2.0. Serve
+>    them via `llama-server` or Ollama and point the config at the local
+>    endpoint. Keeps every existing vector; no re-embed at all.
+> 2. **Migrate to another provider** — `gbrain migrate embeddings --to
+>    <provider:model> --dim <N> --dry-run` (resumable; see
+>    [the migration guide](../guides/embedding-migration.md)). `gbrain
+>    doctor` (check `provider_sunset`) prints this command with your
+>    brain's actual `--dim` filled in.
+>
+> The hosted setup below remains accurate until the shutdown date.
+
 [ZeroEntropy](https://zeroentropy.dev) ships two specialized small models
 for retrieval pipelines:
 

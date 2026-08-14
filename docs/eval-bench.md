@@ -8,11 +8,19 @@ For the **NDJSON wire format** consumed by gbrain-evals, see
 [`eval-capture.md`](./eval-capture.md). This doc is the human dev loop
 that lives on top of that format.
 
-## v0.41 update — the LOOP is now real
+If you're touching **memory behavior** rather than retrieval ranking — the
+Retrieval Reflex push path, conversation→facts write-back, cross-session
+continuity, source isolation — the gate for that layer is **BrainBench**
+(`gbrain eval brainbench`): see [`eval/BRAINBENCH.md`](./eval/BRAINBENCH.md).
+The two stack: this doc's capture→baseline→replay loop gates query-level
+result sets; BrainBench gates the memory behaviors above them, with its own
+committed baseline (`evals/brainbench/baselines/main.json`) compared against
+MAIN's copy in CI so a PR can't self-approve a regression.
 
-Before v0.41, you could capture eval rows and replay them but nothing
-stitched them into a gate. `gbrain bench publish` + `gbrain eval gate`
-close the loop. Two gates:
+## The eval gate loop
+
+`gbrain bench publish` + `gbrain eval gate` stitch captured eval rows into
+a pass/fail gate. Two gates:
 
 - **Regression gate** (`--baseline X.baseline.ndjson`): replays a baseline
   you captured against your current brain. Catches: "did my refactor break
@@ -39,7 +47,7 @@ gbrain bench publish --from /tmp/captured.ndjson --to ~/.gbrain/baselines/person
 gbrain eval gate --baseline ~/.gbrain/baselines/personal.baseline.ndjson
 ```
 
-### Privacy posture (D9)
+### Privacy posture
 
 **Public baselines in `gbrain-evals` are hermetic-synthetic ONLY.** Real
 user captures stay local in `~/.gbrain/baselines/`. The boundary is
@@ -131,14 +139,9 @@ gbrain query "anything" >/dev/null
 psql $DATABASE_URL -c 'SELECT count(*) FROM eval_candidates'   # should be > 0
 ```
 
-To override (force on/off regardless of env var), edit `~/.gbrain/config.json`:
-
-```json
-{"eval": {"capture": true}}    // force on
-{"eval": {"capture": false}}   // force off
-```
-
-Explicit config beats the env var both directions.
+The full on/off resolution order (config beats env var, both directions) is
+documented once in [`eval-capture.md`](./eval-capture.md) — that file is the
+capture contract.
 
 ## The 4-command loop
 
@@ -205,7 +208,7 @@ retrieval, and which queries did it move most?"
 
 For a third evaluation axis — public benchmark, ground-truth labels, full
 question-answer pipeline (not just retrieval) — `gbrain eval longmemeval
-<dataset.jsonl>` (v0.28.8) runs the LongMemEval benchmark against gbrain's
+<dataset.jsonl>` runs the LongMemEval benchmark against gbrain's
 hybrid retrieval. Each question gets a clean in-memory PGLite, its haystack
 imported, the question asked, the hypothesis emitted as JSONL — exactly the
 shape LongMemEval's `evaluate_qa.py` consumes. Your `~/.gbrain` brain is
@@ -337,7 +340,7 @@ Existing `eval_candidates` rows stay until you `gbrain eval prune
 | `rows_errored > 0` | One or more queries threw. Inspect first 3 in human output, or `--json` to see all `error_message` fields |
 | Many `skipped: empty query` | Capture ran on rows where someone passed empty `query` — check why those were captured |
 
-## Public benchmarks: LongMemEval (v0.28.8)
+## Public benchmarks: LongMemEval
 
 `gbrain eval longmemeval` runs the public [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval)
 benchmark directly against gbrain's hybrid retrieval. Different evaluation
@@ -398,7 +401,7 @@ p50 25.9ms / p99 30.3ms warm reset+import+search on Apple Silicon (per the
 500ms speed gate. 500 questions = ~13s of overhead plus your retrieval and
 LLM latency.
 
-## Measuring brain consistency over time (v0.32.6)
+## Measuring brain consistency over time
 
 `gbrain eval suspected-contradictions` is a complementary measurement
 instrument: it samples retrieval results for unmarked semantic
@@ -435,20 +438,19 @@ commands per high-severity finding.
 - CHANGELOG `## [0.32.6]` — full release notes including the bigger-swing
   decision criteria gated on Wilson CI lower-bound.
 
-## v0.40.1.0 Track D — Eval infrastructure
+## Eval infrastructure: by-type breakdowns, the hermetic gate, batch scoring
 
-Three eval surfaces grew non-trivial capabilities in v0.40.1.0. This section
-covers the dev loop that uses them and the gates they enforce.
+Three further eval surfaces, and the dev loop that uses them.
 
 ### `gbrain eval longmemeval --by-type` — per-question-type R@k breakdown
 
-LongMemEval has always computed per-question-type recall internally; v0.40.1.0
-surfaces it in machine-readable form. Two additive changes:
+LongMemEval computes per-question-type recall internally, and surfaces it in
+machine-readable form:
 
-1. Every per-question JSONL row now includes a `question: string` field so the
+1. Every per-question JSONL row includes a `question: string` field so the
    `gbrain eval cross-modal --batch` consumer (below) can read it without
    joining back against the source dataset.
-2. New `--by-type` flag emits a final aggregate line keyed by `question_type`:
+2. The `--by-type` flag emits a final aggregate line keyed by `question_type`:
 
 ```json
 {"schema_version": 1, "kind": "by_type_summary",
@@ -480,11 +482,11 @@ echo "exit=$?"  # 1 if any type fell below 0.80
 
 ### Hermetic retrieval gate — `test/eval-replay-gate.test.ts`
 
-The v0.40.1.0 Track D structural fix for "PRs touching `src/core/search/`
-silently regress retrieval." Replaces the original "replay against captured
-eval_candidates" design (which Codex caught as non-functional in CI — see
-the `v0.41+: contributor-mode CI capture` TODO in `TODOS.md` for the deferred
-real-query version).
+The structural fix for "PRs touching `src/core/search/` silently regress
+retrieval." A "replay against captured eval_candidates" design can't work in
+CI (CI has no captured production queries), so the gate is hermetic; see the
+`contributor-mode CI capture` TODO in `TODOS.md` for the deferred
+real-query version.
 
 How it works:
 - Hand-curated qrels fixture at `test/fixtures/eval-baselines/qrels-search.json`
@@ -499,7 +501,7 @@ How it works:
 - Lives in the unit-shard test matrix (`.github/workflows/test.yml`) so it
   runs on every PR via `bun test`, NOT in the E2E fixed-file workflow.
 
-#### Refreshing the qrels fixture (the `Why:` discipline, D4)
+#### Refreshing the qrels fixture (the `Why:` discipline)
 
 When CI fails because a legitimate ranking change moved expected slugs, the
 fix is to edit `qrels-search.json` directly. **Always include a `Why:` line

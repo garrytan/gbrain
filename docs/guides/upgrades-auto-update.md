@@ -16,11 +16,16 @@ benefit-focused bullets, waits for explicit permission, then runs the full
 upgrade flow including re-reading skills, running migrations, and syncing
 schema. The user gets new capabilities automatically.
 
-## Self-upgrade modes (v0.42)
+## Self-upgrade modes
 
-gbrain now stays current the way gstack does: it rides invocation frequency. A
+gbrain stays current the way gstack does: it rides invocation frequency. A
 throttled, cache-read-only check runs at the start of every `gbrain` invocation
-(CLI and MCP) and emits an `UPGRADE_AVAILABLE <old> <new>` marker on stderr. No
+(CLI and MCP) and emits an `UPGRADE_AVAILABLE <old> <new>` marker on stderr. The
+raw marker line is suppressed when stderr is an interactive TTY (a human sees
+only the plain `gbrain X -> Y available` sentence, not the machine token); set
+`GBRAIN_FORCE_UPGRADE_MARKER=1` if an agent harness parses the token but runs
+under a PTY. `<old>` is always the RUNNING binary's version, so a stale or
+foreign-written cache never nags about an upgrade this binary already has. No
 host cron required — every agent kind (Claude Code, Codex, OpenClaw, Hermes, the
 `gbrain serve` host behind a Perplexity thin client) converges to current by
 construction. The behavior is governed by one file-plane config key,
@@ -43,6 +48,14 @@ because applying code from GitHub unattended is, by design, remote code
 execution. The trust model is TLS + GitHub (same as `gbrain upgrade`);
 signature verification is a tracked follow-up. Apply manually any time with
 `gbrain self-upgrade`.
+
+The `auto` quiet-hours window is configured via the
+`self_upgrade.quiet_hours` config key
+(`gbrain config set self_upgrade.quiet_hours '{"start":23,"end":8,"tz":"US/Pacific"}'`).
+The quiet-hours *pattern* itself — gating any notification or background
+action on the user's local sleep window — is owned by
+[quiet-hours.md](quiet-hours.md); this doc only covers the self-upgrade
+hook into it.
 
 ## Implementation
 
@@ -163,15 +176,18 @@ Also persist in `~/.gbrain/update-state.json` so it survives agent context reset
 
 If you loaded this SKILLPACK directly (copied or read from GitHub) without
 installing gbrain, you can still stay current. Both GBRAIN_SKILLPACK.md and
-GBRAIN_RECOMMENDED_SCHEMA.md have version markers:
+GBRAIN_RECOMMENDED_SCHEMA.md carry a `<!-- source: ... -->` header pointing
+at their canonical copies, and GBRAIN_RECOMMENDED_SCHEMA.md also carries a
+version marker:
 
 ```bash
-curl -s https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_SKILLPACK.md | head -1
-# Returns: <!-- skillpack-version: X.Y.Z -->
+curl -s https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_RECOMMENDED_SCHEMA.md | head -1
+# Returns: <!-- schema-version: X.Y.Z -->
 ```
 
-If the remote version is newer, fetch the full file and replace your local
-copy. Set up a weekly cron to check automatically.
+If the remote version is newer (or the remote SKILLPACK content differs from
+your local copy), fetch the full file and replace your local copy. Set up a
+weekly cron to check automatically.
 
 ## Tricky Spots
 

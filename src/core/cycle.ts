@@ -2063,6 +2063,13 @@ export async function runCycle(
           yieldDuringPhase: opts.yieldDuringPhase,
           once: opts.onceForPhase === 'patterns',
           deadlineAtMs: opts.deadlineAtMs ?? null,
+          // #1586: scope pattern writes to the cycle's resolved source, same as
+          // synthesize above. Without it the child's put_page rows land in
+          // 'default' while the reverse-write drops the file into the named
+          // source's checkout — the row and the file disagree about which
+          // source owns the page, which is what doctor reports as
+          // multi_source_drift.
+          sourceId: cycleSourceId,
         }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);

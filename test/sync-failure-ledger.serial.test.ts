@@ -2,7 +2,7 @@
  * issue #1939 — sync failure ledger + bounded auto-skip valve.
  *
  * Covers the correctness gates the /codex outside-voice review identified:
- *   #1 auto-skipped entries stay UNRESOLVED (doctor WARN), not hidden
+ *   #1 auto-skipped entries stay UNRESOLVED (doctor WARN) until explicit ack
  *   #2 (source_id, path) keying — failures never merge across sources
  *   #3 `<head>` sentinel never auto-skips; always hard-blocks
  *   #4 success clears a path so `attempts` is truly consecutive
@@ -64,6 +64,25 @@ describe('#2 multi-source keying', () => {
     const rows = loadSyncFailures();
     expect(rows.find(r => r.source_id === 'alpha')!.state).toBe('acknowledged');
     expect(rows.find(r => r.source_id === 'beta')!.state).toBe('open');
+  });
+
+  test('acknowledgeFailures resolves auto-skipped rows for that source (#3829)', async () => {
+    const {
+      recordFailures,
+      autoSkipFailures,
+      acknowledgeFailures,
+      loadSyncFailures,
+    } = await L();
+    recordFailures('alpha', [{ path: 'a.md', error: 'YAML parse failed' }], 'c1');
+    recordFailures('beta', [{ path: 'b.md', error: 'YAML parse failed' }], 'c1');
+    autoSkipFailures('alpha', ['a.md']);
+    autoSkipFailures('beta', ['b.md']);
+
+    const result = acknowledgeFailures('alpha');
+    expect(result.count).toBe(1);
+    const rows = loadSyncFailures();
+    expect(rows.find(r => r.source_id === 'alpha')!.state).toBe('acknowledged');
+    expect(rows.find(r => r.source_id === 'beta')!.state).toBe('auto_skipped');
   });
 });
 

@@ -143,4 +143,7 @@ the same pass.
 
 ---
 
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*
+*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md). The
+[email-to-brain recipe](../../recipes/email-to-brain.md) implements this
+collector pattern end-to-end; [cron-schedule.md](cron-schedule.md) covers
+scheduling it.*

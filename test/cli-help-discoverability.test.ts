@@ -140,3 +140,46 @@ describe('#1175 — main `gbrain --help` SOURCES block matches the real subcomma
     expect(stdout).toMatch(/^\s*sources --help\s/m);
   });
 });
+
+describe('#3834 — extract flags are discoverable from both help surfaces', () => {
+  const implementedFlags = [
+    '--by-mention',
+    '--catch-up',
+    '--concurrency',
+    '--explain',
+    '--from-meetings',
+    '--include-frontmatter',
+    '--infer-dates',
+    '--ner',
+    '--source-id',
+    '--stale',
+    '--workers',
+  ];
+
+  test('`gbrain extract --help` reaches detailed command help without a configured brain', () => {
+    const { stdout, stderr, status } = runCli(['extract', '--help']);
+    expect(status).toBe(0);
+    expect(stderr).toBe('');
+    expect(stdout).toContain('Usage: gbrain extract');
+    expect(stdout).not.toContain('run gbrain --help for the full command list');
+    for (const flag of implementedFlags) expect(stdout).toContain(flag);
+  });
+
+  test('`gbrain extract -h` reaches the same detailed command help', () => {
+    const { stdout, status } = runCli(['extract', '-h']);
+    expect(status).toBe(0);
+    expect(stdout).toContain('--stale');
+    expect(stdout).toContain('--include-frontmatter');
+  });
+
+  test('main `gbrain --help` documents every implemented extract flag', () => {
+    const { stdout, status } = runCli(['--help']);
+    expect(status).toBe(0);
+    const extractStart = stdout.indexOf('  extract <links|timeline|all>');
+    const publishStart = stdout.indexOf('  publish <page.md>', extractStart);
+    expect(extractStart).toBeGreaterThan(-1);
+    expect(publishStart).toBeGreaterThan(extractStart);
+    const extractHelp = stdout.slice(extractStart, publishStart);
+    for (const flag of implementedFlags) expect(extractHelp).toContain(flag);
+  });
+});

@@ -85,12 +85,10 @@ export function getProviderCapabilities(modelString: string): ProviderCapabiliti
     );
   }
 
-  // For native providers, the model must be in the recipe's allow-list. For
-  // openai-compatible recipes (litellm, ollama, llama-server), arbitrary model
-  // ids are accepted because the gateway behind the proxy decides what's real.
-  // We don't error here — `assertTouchpoint` already enforces this at gateway
-  // boundary; this function returns capabilities for whatever the user asked
-  // for, on the assumption it'll be validated elsewhere.
+  // Model ids are never validated against recipe model lists (any id goes to
+  // the provider, which is the real authority on what exists). This function
+  // returns capabilities for whatever the user asked for; a nonexistent model
+  // surfaces as the provider's own model_not_found at call time.
 
   const promptCache = chat.supports_prompt_cache;
 

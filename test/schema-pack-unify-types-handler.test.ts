@@ -156,3 +156,21 @@ describe('runUnifyTypes', () => {
     });
   });
 });
+
+// #1575 — the jobs worker registration must honor the handler's documented
+// dry-run default. `apply: data.apply ?? true` made the canonical operator
+// invocation (`gbrain jobs submit unify-types --allow-protected --params
+// '{"target_pack":...}'`) destructively retype pages by default while
+// UnifyTypesOpts.apply documents 'Default false (dry-run)'. Structural pin —
+// the worker source must default apply to false.
+import { readFileSync } from 'fs';
+
+describe('#1575 unify-types worker dry-run default', () => {
+  it('jobs.ts worker registration defaults apply to false, matching the handler contract', () => {
+    const jobsSource = readFileSync(new URL('../src/commands/jobs.ts', import.meta.url), 'utf-8');
+    const workerBlock = jobsSource.slice(jobsSource.indexOf("worker.register('unify-types'"));
+    const registration = workerBlock.slice(0, workerBlock.indexOf('});'));
+    expect(registration).toContain('apply: data.apply ?? false');
+    expect(registration).not.toContain('apply: data.apply ?? true');
+  });
+});

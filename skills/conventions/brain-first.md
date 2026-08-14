@@ -11,8 +11,8 @@ Your tool inventory includes these (prefixed `gbrain__` in OpenClaw):
 
 | Tool | Use for |
 |------|---------|
-| `gbrain__search` / `search` | Keyword search — fast, always works |
-| `gbrain__query` / `query` | Hybrid search (keyword + semantic) — best quality |
+| `gbrain__search` / `search` | Exact tokens / known names — cheap hybrid, no expansion |
+| `gbrain__query` / `query` | Concept / landscape questions — hybrid + LLM expansion |
 | `gbrain__get_page` / `get_page` | Direct page read when you know the slug |
 | `gbrain__get_links` / `get_links` | Outgoing links from a page |
 | `gbrain__get_backlinks` / `get_backlinks` | Who references this entity |
@@ -28,10 +28,22 @@ Tool names vary by transport (MCP uses short names, OpenClaw plugin uses
 
 ## The Lookup Chain (MANDATORY ORDER)
 
-1. **`search`** first — keyword search, fast, zero API cost
-2. **`query`** if search is thin — hybrid semantic search, uses embedding API
-3. **`get_page`** if you found a slug — read the full compiled truth
-4. **External APIs only after steps 1-2 return nothing useful**
+Route by the SHAPE of the question, then escalate:
+
+1. **Exact known token / name / structured field** → **`search`** — cheap
+   hybrid (vector + keyword, no expansion; embedding-only cost).
+2. **Concept / landscape / synonym-phrased question** ("all the X that do Y",
+   "the landscape of Z") → **`query`** FIRST — multi-query expansion recovers
+   phrasings `search` misses. Costs one extra LLM expansion call; worth it
+   for these.
+3. **`get_page`** if you found a slug — read the full compiled truth.
+4. **External APIs only after steps 1-2 return nothing useful.**
+
+**A nonzero `search` count is NOT a completeness signal.** For "did I capture
+everything about X?" run `query` even if `search` already returned hits —
+synonym- and outcome-phrased matches drop silently otherwise. And `query` is
+still top-K: for literal "list every page that…" enumeration, use `list_pages`
+with pagination.
 
 Never skip to external APIs without completing steps 1-2. The brain has
 thousands of pages. The answer is almost always there.
@@ -44,6 +56,9 @@ thousands of pages. The answer is almost always there.
   are supplementary.
 - **After any brain page write:** trigger a sync so new pages are searchable.
   In OpenClaw: `gbrain__sync_brain`. From CLI: `gbrain sync --no-pull`.
+- **Bank every notable external API pull** via `gbrain capture` into the inbox
+  before the conversation moves on — the cycle enriches it later. A lookup you
+  paid for and didn't bank is a lookup you'll pay for again.
 - **Every brain page reference in output** should use a clickable link format
   appropriate to the deployment (GitHub URL, local path, or slug).
 - **Never use `memory_search` for entity lookups.** Memory tools search

@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-cont-015-writer",
+  "suites": [
+    "write-back",
+    "continuity"
+  ],
+  "category": "continuity",
+  "seed_pages": [
+    {
+      "slug": "companies/glintworks-co",
+      "content": "---\ntitle: Glintworks Co\ntype: company\nsummary: Seed-stage company. Founded by Rafael Maplevale.\n---\n\nGlintworks Co is a seed-stage company. Founded by Rafael Maplevale. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "people/rafael-maplevale",
+      "content": "---\ntitle: Rafael Maplevale\ntype: person\naliases: [rafael]\nsummary: Founder of Glintworks Co.\n---\n\nRafael Maplevale is the founder of Glintworks Co. Rafael flagged churn as the top risk in the latest update.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Partner meeting wrapped on the Glintworks Co round.",
+      "ts": "2026-11-13T14:12:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "What was the call?",
+      "ts": "2026-11-13T14:13:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "We decided to wait on the Glintworks Co round. We want next quarter's numbers first. Logging it now.",
+      "ts": "2026-11-13T14:14:00Z"
+    }
+  ],
+  "continuity": {
+    "pair_id": "gen-cont-015",
+    "pair_role": "writer"
+  }
+}

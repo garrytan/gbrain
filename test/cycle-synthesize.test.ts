@@ -334,6 +334,111 @@ describe('judgeSignificance', () => {
     expect(r.worth_processing).toBe(false);
     expect(r.reasons[0]).toContain('unparseable');
   });
+
+  test('marks unparseable output unreliable so the caller never caches it', async () => {
+    const client: JudgeClient = {
+      create: async () => ({
+        content: [{ type: 'text', text: 'no json here' }],
+        stop_reason: 'end_turn',
+      } as any),
+    };
+    const r = await judgeSignificance(client, makeTranscript());
+    expect(r.worth_processing).toBe(false);
+    expect(r.unreliable).toBe('unparseable');
+  });
+
+  test('marks truncated response (stop_reason=max_tokens) unreliable — reasoning models can burn the budget', async () => {
+    // Simulates a reasoning model that spent the whole max_tokens budget on
+    // reasoning tokens: visible text is a partial JSON fragment and
+    // stop_reason is 'max_tokens'.
+    const client: JudgeClient = {
+      create: async () => ({
+        content: [{ type: 'text', text: '{"worth_process' }],
+        stop_reason: 'max_tokens',
+      } as any),
+    };
+    const r = await judgeSignificance(client, makeTranscript());
+    expect(r.worth_processing).toBe(false);
+    expect(r.unreliable).toBe('truncated');
+    expect(r.reasons[0]).toContain('truncated');
+  });
+
+  test('marks truncated response unreliable even when a parseable JSON object survives the cut', async () => {
+    const client: JudgeClient = {
+      create: async () => ({
+        content: [{ type: 'text', text: '{"worth_processing": true, "reasons": ["r1"]}' }],
+        stop_reason: 'max_tokens',
+      } as any),
+    };
+    const r = await judgeSignificance(client, makeTranscript());
+    // The parsed values still drive THIS cycle...
+    expect(r.worth_processing).toBe(true);
+    expect(r.reasons).toEqual(['r1']);
+    // ...but the verdict must not be banked as permanent.
+    expect(r.unreliable).toBe('truncated');
+  });
+
+  test('clean parse with stop_reason=end_turn stays cacheable (no unreliable marker)', async () => {
+    const client: JudgeClient = {
+      create: async () => ({
+        content: [{ type: 'text', text: '{"worth_processing": true, "reasons": ["r1"]}' }],
+        stop_reason: 'end_turn',
+      } as any),
+    };
+    const r = await judgeSignificance(client, makeTranscript());
+    expect(r.worth_processing).toBe(true);
+    expect(r.unreliable).toBeUndefined();
+  });
+
+  test('marks refused/content-filtered response (stop_reason=refusal) unreliable', async () => {
+    const client: JudgeClient = {
+      create: async () => ({
+        content: [{ type: 'text', text: '{"worth_processing": false, "reasons": ["blocked"]}' }],
+        stop_reason: 'refusal',
+      } as any),
+    };
+    const r = await judgeSignificance(client, makeTranscript());
+    expect(r.unreliable).toBe('refusal');
+  });
+
+  test('JSON object without worth_processing key is unparseable, not a cacheable false', async () => {
+    const client: JudgeClient = {
+      create: async () => ({
+        content: [{ type: 'text', text: '{}' }],
+        stop_reason: 'end_turn',
+      } as any),
+    };
+    const r = await judgeSignificance(client, makeTranscript());
+    expect(r.worth_processing).toBe(false);
+    expect(r.unreliable).toBe('unparseable');
+  });
+
+  test('non-boolean worth_processing ("true") is unparseable, not a cacheable false', async () => {
+    const client: JudgeClient = {
+      create: async () => ({
+        content: [{ type: 'text', text: '{"worth_processing": "true", "reasons": ["r1"]}' }],
+        stop_reason: 'end_turn',
+      } as any),
+    };
+    const r = await judgeSignificance(client, makeTranscript());
+    expect(r.worth_processing).toBe(false);
+    expect(r.unreliable).toBe('unparseable');
+  });
+
+  test('judge max_tokens budget is exactly 1024 (reasoning-model headroom, cost-capped)', async () => {
+    let captured: number | undefined;
+    const client: JudgeClient = {
+      create: async (p: any) => {
+        captured = p.max_tokens;
+        return {
+          content: [{ type: 'text', text: '{"worth_processing": false, "reasons": []}' }],
+          stop_reason: 'end_turn',
+        } as any;
+      },
+    };
+    await judgeSignificance(client, makeTranscript());
+    expect(captured).toBe(1024);
+  });
 });
 
 // ─── v0.41.13: UTF-16 safety in judgeSignificance ─────────────────────

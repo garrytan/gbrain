@@ -12,7 +12,8 @@
  * Run: bun test test/e2e/dream-synthesize-pglite.test.ts
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, afterEach } from 'bun:test';
+import { __setChatTransportForTests, resetGateway } from '../../src/core/ai/gateway.ts';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -517,6 +518,117 @@ describe('E2E synthesize — verdict cache (Q-2)', () => {
   }, 30_000);
 });
 
+describe('E2E synthesize — degenerate verdicts are NOT cached in dream_verdicts', () => {
+  // A truncated (stop_reason=length) or unparseable judge response used to be
+  // banked as a permanent `worth_processing: false` row — a brain whose
+  // verdict model reliably truncates (e.g. a reasoning model whose reasoning
+  // tokens ate the old 200-token budget) silently rejected every transcript
+  // forever. These tests pin the fix: degenerate verdicts skip the cache
+  // write (with a stderr warning) so the next cycle re-judges.
+
+  afterEach(() => {
+    __setChatTransportForTests(null);
+    resetGateway();
+  });
+
+  async function captureStderr<T>(body: () => Promise<T>): Promise<{ result: T; stderr: string }> {
+    const chunks: string[] = [];
+    const original = process.stderr.write.bind(process.stderr);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (process.stderr as any).write = (chunk: any, ..._args: any[]): boolean => {
+      const s = typeof chunk === 'string' ? chunk : chunk.toString();
+      chunks.push(s);
+      return true;
+    };
+    try {
+      const result = await body();
+      return { result, stderr: chunks.join('') };
+    } finally {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (process.stderr as any).write = original;
+    }
+  }
+
+  /** Run body with a fake ANTHROPIC_API_KEY so makeJudgeClient constructs; the
+   * transport stub means no network call ever happens. */
+  async function withFakeAnthropicKey<T>(body: () => Promise<T>): Promise<T> {
+    const saved = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'sk-test-degenerate-verdict';
+    try {
+      return await body();
+    } finally {
+      if (saved === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = saved;
+    }
+  }
+
+  async function runWithStubbedJudge(opts: {
+    text: string;
+    stopReason: 'end' | 'length';
+  }): Promise<{ verdictRow: unknown; stderr: string }> {
+    const rig = await setupRig();
+    try {
+      await rig.engine.setConfig('dream.synthesize.enabled', 'true');
+      await rig.engine.setConfig('dream.synthesize.session_corpus_dir', rig.corpusDir);
+      const filePath = join(rig.corpusDir, '2026-05-01-session.txt');
+      const body = 'a meaningful conversation\n'.repeat(200);
+      writeFileSync(filePath, body);
+
+      __setChatTransportForTests(async () => ({
+        text: opts.text,
+        blocks: [],
+        stopReason: opts.stopReason,
+        usage: { input_tokens: 10, output_tokens: 200, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'test:stub',
+        providerId: 'test',
+      }));
+
+      const { stderr } = await withFakeAnthropicKey(() =>
+        captureStderr(() =>
+          runPhaseSynthesize(rig.engine, { brainDir: rig.brainDir, dryRun: true }),
+        ),
+      );
+
+      const { createHash } = await import('node:crypto');
+      const hash = createHash('sha256').update(body, 'utf8').digest('hex');
+      const verdictRow = await rig.engine.getDreamVerdict(filePath, hash);
+      return { verdictRow, stderr };
+    } finally {
+      await rig.cleanup();
+    }
+  }
+
+  test('truncated judge response (stop_reason=length) → no dream_verdicts row + warning', async () => {
+    const { verdictRow, stderr } = await runWithStubbedJudge({
+      text: '{"worth_process', // reasoning ate the budget; partial JSON
+      stopReason: 'length',
+    });
+    expect(verdictRow).toBeNull();
+    expect(stderr).toMatch(/\[dream\] verdict for 2026-05-01-session was truncated/);
+    expect(stderr).toMatch(/not caching in dream_verdicts/);
+  }, 30_000);
+
+  test('unparseable judge response → no dream_verdicts row + warning', async () => {
+    const { verdictRow, stderr } = await runWithStubbedJudge({
+      text: 'not json at all',
+      stopReason: 'end',
+    });
+    expect(verdictRow).toBeNull();
+    expect(stderr).toMatch(/\[dream\] verdict for 2026-05-01-session was unparseable/);
+    expect(stderr).toMatch(/not caching in dream_verdicts/);
+  }, 30_000);
+
+  test('control: clean parseable verdict is still cached', async () => {
+    const { verdictRow, stderr } = await runWithStubbedJudge({
+      text: '{"worth_processing": false, "reasons": ["routine ops"]}',
+      stopReason: 'end',
+    });
+    expect(verdictRow).not.toBeNull();
+    expect((verdictRow as { worth_processing: boolean }).worth_processing).toBe(false);
+    expect(stderr).not.toMatch(/not caching in dream_verdicts/);
+  }, 30_000);
+});
+
 describe('E2E synthesize — PGLite inline subagent drain (takeover of #2699)', () => {
   test('drains private subagent queue inline so the parent can observe completion', async () => {
     const rig = await setupRig();
@@ -532,7 +644,7 @@ describe('E2E synthesize — PGLite inline subagent drain (takeover of #2699)', 
       );
 
       let ticks = 0;
-      await synthTesting.runPgliteSubagentsInline(
+      await synthTesting.runSubagentsInline(
         rig.engine,
         queue,
         queueName,
@@ -573,7 +685,7 @@ describe('E2E synthesize — PGLite inline subagent drain (takeover of #2699)', 
         { allowProtectedSubmit: true },
       );
 
-      await synthTesting.runPgliteSubagentsInline(
+      await synthTesting.runSubagentsInline(
         rig.engine,
         queue,
         queueName,
@@ -607,7 +719,7 @@ describe('E2E synthesize — PGLite inline subagent drain (takeover of #2699)', 
       // Handler only ends when ctx.signal fires — like the real subagent
       // handler mid-LLM-call. Without the inline timeout timer this awaits
       // forever and the drain (and the whole cycle) wedges.
-      await synthTesting.runPgliteSubagentsInline(
+      await synthTesting.runSubagentsInline(
         rig.engine,
         queue,
         queueName,

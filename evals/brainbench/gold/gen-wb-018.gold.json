@@ -1,0 +1,49 @@
+{
+  "fixture_id": "gen-wb-018",
+  "turns": {
+    "3": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "async updates",
+          "fact": "Mireille Coppersmith prefers async updates over standing calls",
+          "entity_slug": "people/mireille-coppersmith",
+          "match_keywords": [
+            "async updates"
+          ],
+          "kind": "preference"
+        }
+      ]
+    },
+    "4": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "diligence checklist / Friday",
+          "fact": "Committed to sending Mireille Coppersmith the diligence checklist by Friday",
+          "entity_slug": "people/mireille-coppersmith",
+          "match_keywords": [
+            "diligence checklist",
+            "Friday"
+          ],
+          "kind": "commitment"
+        }
+      ]
+    },
+    "5": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "pricing / Inkwhale Co",
+          "fact": "Mireille Coppersmith is worried the Inkwhale Co pricing model undercuts gross margin (round concern)",
+          "entity_slug": "people/mireille-coppersmith",
+          "match_keywords": [
+            "pricing",
+            "Inkwhale Co"
+          ],
+          "kind": "belief"
+        }
+      ]
+    }
+  }
+}

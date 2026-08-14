@@ -7,8 +7,8 @@ sunsetting provider (for example ZeroEntropy's hosted API, which shuts down
 but it is provider-agnostic: any configured `provider:model` works as a
 target.
 
-Also reachable as `gbrain retrieval-upgrade` (the name `doctor` and the
-README reference).
+Also reachable as `gbrain retrieval-upgrade` — the alias that `gbrain doctor`
+repair hints and the README point at.
 
 ## Quick start
 
@@ -26,6 +26,37 @@ gbrain migrate embeddings --to voyage:voyage-3-large --yes
 `--dim <N>` overrides the target width; it defaults to the provider recipe's
 declared width and is required for recipes that don't declare one (litellm,
 llama-server, and other bring-your-own-model providers).
+
+**Pick `--dim` = your brain's current column width when the target supports
+it.** A different width triggers the destructive schema transition (column +
+index rebuild across all three dim-pinned tables); the same width skips it
+entirely. `gbrain doctor` (check `provider_sunset`, for providers with an
+announced shutdown) prints the paste-ready command with your actual width
+already filled in — it reads the real `vector(N)` column, not the config
+value, which can drift.
+
+## How affected brains find out (provider sunsets)
+
+Two surfaces flag a brain whose embedding model (or reranker) is on a
+provider with an announced hosted-API shutdown, such as ZeroEntropy
+(2026-09-04):
+
+- **`gbrain doctor`** — the `provider_sunset` check warns on every run until
+  the brain is off the provider. After the shutdown date it escalates to
+  `fail` only when embedded vectors actually exist on the dead provider
+  (retrieval is genuinely down); a zero-vector brain whose config merely
+  resolves to the dead default stays `warn`, so doctor-as-CI-gate setups
+  don't start exiting 1 on the date. The reranker side resolves through the
+  same plane search actually reranks with (the mode bundle +
+  `search.reranker.*` overrides). The message carries the paste-ready
+  migration command with the brain's actual `--dim`. Accepted the risk?
+  `gbrain config set doctor.suppress_provider_sunset true` silences it.
+- **`gbrain upgrade`** — a one-shot banner (gated by
+  `ze_sunset_notice_shown`) with the same two fixes.
+
+Both state the full consequence: after the shutdown, **existing vectors
+become unqueryable** — query embedding uses the same endpoint as ingestion —
+not just new content.
 
 ## What it does, in order
 
@@ -87,6 +118,12 @@ the target are never re-embedded, the schema/config steps no-op, and the run
 continues where it stopped. An in-flight marker (`embedding_migration.state`
 in DB config) records the target; it is cleared only when the backlog drains
 to zero.
+
+One caveat after a HARD kill (SIGKILL, crash, power loss — not Ctrl-C): the
+run's per-source single-flight embed lock is left behind, and an immediate
+re-run skips the re-embed and reports the migration as paused. The command
+says so explicitly (`lock_skipped` in `--json`); the lock expires on its own
+after at most 60 minutes, then the same re-run resumes normally.
 
 A page whose chunks straddle two stale batches is embedded correctly but not
 stamped by the embed loop (which only stamps all-or-nothing per batch), so the

@@ -18,6 +18,8 @@
  *   gbrain sources detach        — remove .gbrain-source from CWD
  *   gbrain sources federate <id>   — sources.config.federated = true
  *   gbrain sources unfederate <id> — sources.config.federated = false
+ *   gbrain sources push [<id>|--path <dir>] — scan-gated add→commit→pull→push
+ *                               (agent-bootstrap; core in src/core/workspace-push.ts)
  *
  * NOT in scope for Step 6 (deferred per plan):
  *   - import-from-github (needs SSRF + clone integration)
@@ -55,6 +57,7 @@ import {
   parseSourceConfig,
   normalizeSourceConfig,
   isSourceFederated,
+  sourceFederationState,
   type SourceRow as LoadedSourceRow,
 } from '../core/sources-load.ts';
 
@@ -317,6 +320,126 @@ function deriveBrainId(created: OpsSourceRow, localPath: string): string {
   return `path:${createHash('sha256').update(localPath).digest('hex').slice(0, 16)}`;
 }
 
+// ── Subcommand: push (agent-bootstrap D6/G6/G8/G14) ─────────
+//
+// `gbrain sources push [<id>|--path <dir>]` — scan-gated add→commit→pull→push
+// of a workspace repo. The heavy lifting (single-flight lock, deny-glob
+// backstop, secret scan, commit-first-then-pull ordering, remote-privacy
+// refusal, push-status.json) lives in src/core/workspace-push.ts; this
+// wrapper only parses args, resolves <id> → local_path, and maps statuses
+// to exit codes:
+//   0  pushed / skipped (push already in flight — clean single-flight skip)
+//   5  blocked (secrets / tracked deny-glob) or refused (unverified remote)
+//   1  pull conflict / push failure / other error
+
+async function runPush(engine: BrainEngine, args: string[]): Promise<void> {
+  let id: string | undefined;
+  let path: string | undefined;
+  let branch: string | undefined;
+  let message: string | undefined;
+  let allowUnverified = false;
+  let json = false;
+
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--path') { path = args[++i]; continue; }
+    if (a === '--branch') { branch = args[++i]; continue; }
+    if (a === '--message') { message = args[++i]; continue; }
+    if (a === '--allow-unverified-remote') { allowUnverified = true; continue; }
+    if (a === '--json') { json = true; continue; }
+    if (!a.startsWith('--') && !id) { id = a; continue; }
+    console.error(`Unknown flag: ${a}`);
+    process.exit(2);
+  }
+
+  if ((!id && !path) || (id && path)) {
+    console.error('Usage: gbrain sources push [<id> | --path <dir>] [--branch <b>] [--message <m>] [--allow-unverified-remote] [--json]');
+    process.exit(2);
+  }
+
+  let dir = path;
+  if (id) {
+    const src = await fetchSource(engine, id);
+    if (!src) {
+      console.error(`Source "${id}" not found.`);
+      process.exit(4);
+    }
+    if (!src.local_path) {
+      console.error(`Source "${id}" has no local_path — nothing to push.`);
+      process.exit(1);
+    }
+    dir = src.local_path;
+  }
+
+  const { workspacePush } = await import('../core/workspace-push.ts');
+  const { SCAN_ALLOW_FILENAME } = await import('../core/secret-scan.ts');
+  const res = await workspacePush({
+    dir: dir!,
+    branch,
+    commitMessage: message,
+    allowUnverifiedRemote: allowUnverified,
+    logger: (l) => console.error(`[gbrain] ${l}`),
+  });
+
+  if (json) console.log(JSON.stringify(res, null, 2));
+
+  switch (res.status) {
+    case 'skipped_in_flight':
+      // G14/A5: the second concurrent caller exits 0 — nothing went wrong.
+      if (!json) console.log(`skipped: push in flight (pid ${res.lockHolderPid ?? 'unknown'})`);
+      return;
+    case 'pushed':
+      if (!json) {
+        console.log(
+          `Pushed ${res.repoRoot} → origin/${res.branch}` +
+            (res.committed ? ' (new commit)' : ' (no new commit; pushed pending state)'),
+        );
+        for (const p of res.excludedUntracked ?? []) {
+          console.log(`  excluded (deny list, still on disk): ${p}`);
+        }
+      }
+      return;
+    case 'blocked_secrets':
+      if (!json) {
+        console.error('PUSH BLOCKED — secret scan findings (nothing committed):');
+        for (const f of res.findings ?? []) {
+          console.error(`  ${f.file}:${f.line} [${f.pattern}] ${f.redactedPreview}`);
+          console.error(`    allow this finding: echo '${f.fingerprint}' >> ${SCAN_ALLOW_FILENAME}`);
+        }
+      }
+      process.exit(5);
+      break;
+    case 'blocked_tracked_deny':
+      if (!json) {
+        console.error('PUSH BLOCKED — tracked file(s) match the deny list:');
+        for (const p of res.denyMatches ?? []) console.error(`  ${p}`);
+        console.error('Remove from the index first: git rm --cached <path>');
+      }
+      process.exit(5);
+      break;
+    case 'blocked_unscannable':
+      if (!json) {
+        console.error('PUSH BLOCKED — staged file(s) the secret scan could not read (fail-closed):');
+        for (const p of res.unscannable ?? []) console.error(`  ${p}`);
+        console.error(
+          'Remove from the index (git rm --cached <path>), keep it under the scan cap, ' +
+            `or allowlist it in ${SCAN_ALLOW_FILENAME}.`,
+        );
+      }
+      process.exit(5);
+      break;
+    case 'refused_visibility':
+      if (!json) {
+        console.error(`PUSH REFUSED: ${res.reason}`);
+      }
+      process.exit(5);
+      break;
+    default:
+      if (!json) console.error(`push failed (${res.status}): ${res.reason ?? 'unknown error'}`);
+      process.exit(1);
+  }
+}
+
 // ── Subcommand: list ────────────────────────────────────────
 
 async function runList(engine: BrainEngine, args: string[]): Promise<void> {
@@ -348,8 +471,14 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
   // Human-readable table.
   console.log('SOURCES');
   console.log('───────');
-  for (const e of entries) {
-    const fedMark = e.federated ? 'federated' : (e as any).archived ? '⚠ archived' : 'isolated';
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    // Explicit `federated: false` (`sources unfederate`) fully isolates a
+    // source's reads in both directions; an absent key ('unset') only keeps
+    // it out of OTHER anchors' reads — its own unqualified reads still widen
+    // outward (see sourceFederationState). Collapsing both to "isolated"
+    // overstates what an unset flag does.
+    const fedMark = (e as any).archived ? '⚠ archived' : sourceFederationState(rows[i].config);
     const pathStr = e.local_path ?? '(no local path)';
     const sync = e.last_sync_at ? `last sync ${e.last_sync_at}` : 'never synced';
     console.log(`  ${e.id.padEnd(20)}  ${fedMark.padEnd(12)}  ${String(e.page_count).padStart(6)} pages  ${sync}`);
@@ -1364,6 +1493,8 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     // v0.42.44 brain-repo git durability
     case 'harden':     { const { runHarden } = await import('./sources-harden.ts'); return runHarden(engine, rest); }
     case 'pull':       { const { runPull } = await import('./sources-harden.ts'); return runPull(engine, rest); }
+    // agent-bootstrap: scan-gated workspace push
+    case 'push':       return runPush(engine, rest);
     case 'unharden':   { const { runUnharden } = await import('./sources-harden.ts'); return runUnharden(engine, rest); }
     case undefined:
     case '--help':
@@ -1425,6 +1556,25 @@ Subcommands:
   pull <id> | --path <dir> [--branch <b>]
                                     Divergence-safe rebase-pull (skip-on-dirty).
                                     --path is DB-free (the harden cron's entry).
+  push <id> | --path <dir> [--branch <b>] [--message <m>]
+       [--allow-unverified-remote] [--json]
+                                    Scan-gated add→commit→pull→push of a workspace
+                                    repo. Blocks on secret-scan findings (override
+                                    per finding via .gbrain-scan-allow) and on
+                                    tracked deny-list files (*.pglite, .env*,
+                                    *.pem, *.key, .gbrain/**). Refuses remotes not
+                                    verifiably private — verified via REST, falling
+                                    back to pure git protocol where gh is blocked
+                                    (cloud proxies); private verdicts cached 1h.
+                                    Unverified-remote overrides (self-hosted git
+                                    you trust; every use warns loudly): the flag
+                                    above, GBRAIN_ALLOW_UNVERIFIED_REMOTE=1, or
+                                    "gbrain config set push.allow_unverified_remote
+                                    true" (file-plane — reaches detached hook
+                                    children). Single-flight (a concurrent push
+                                    exits 0 as "skipped"); pushes even on a clean
+                                    tree. Writes per-root status under
+                                    ~/.gbrain/bootstrap/.
   unharden <id>                     Remove durability cron/hook/credential wiring.
 
 Source id: [a-z0-9-]{1,32}. Immutable citation key.

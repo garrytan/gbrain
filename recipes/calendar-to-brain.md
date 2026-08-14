@@ -90,7 +90,7 @@ Agent reads daily files
 
 - 09:00-09:30 **Team standup** (Work) — with Alice, Bob, Carol
 - 10:00-11:00 **Board meeting** (Work) 📍 Office — with Diana, Eduardo, Fiona
-- 12:00-13:00 **Lunch with Pedro** (Personal) 📍 Chez Panisse — with Pedro Franceschi
+- 12:00-13:00 **Lunch with Charlie** (Personal) 📍 A Restaurant — with charlie-example
 - 14:00-14:30 **1:1 with Jordan** (Work) — with Jordan Lee
 ```
 
@@ -113,79 +113,26 @@ This builds the full relationship graph from day one.
 
 ## Setup Flow
 
-### Step 1: Choose and Configure Calendar Access
+### Step 1: Configure Calendar Access (via credential-gateway)
 
-Ask the user: "How do you want to connect to Google Calendar?
+Credential setup (ClawVisor vs direct Google OAuth, consent screen, validation
+commands) lives in ONE place: run the **[credential-gateway](credential-gateway.md)**
+recipe first — this recipe declares `requires: [credential-gateway]` for exactly
+that reason. Then apply the two calendar-specific details:
 
-**Option A: ClawVisor (recommended)**
-ClawVisor handles OAuth, token refresh, and encryption. You never touch Google
-credentials directly. If you already use ClawVisor for email, this uses the same setup.
+- **Option A (ClawVisor):** activate the **Google Calendar** service and use a
+  task purpose like: "Full calendar access for historical backfill and ongoing
+  sync. List events, read event details, search across all calendars."
+  (Be EXPANSIVE — narrow purposes block requests; see credential-gateway's
+  Tricky Spots.)
+- **Option B (direct OAuth):** the scope is
+  `https://www.googleapis.com/auth/calendar.readonly`, and the sync script's
+  OAuth flow stores tokens in `~/.gbrain/google-tokens.json` (auto-refreshes
+  on expiry). Also enable the Calendar API at
+  https://console.cloud.google.com/apis/library/calendar-json.googleapis.com
 
-**Option B: Google OAuth2 directly**
-Connect to Google Calendar API directly. No extra service needed, but you manage
-OAuth tokens yourself. Good if you don't want another dependency."
-
-#### Option A: ClawVisor Setup
-
-Tell the user:
-"I need your ClawVisor URL and agent token.
-1. Go to https://clawvisor.com
-2. Create an agent (or use existing)
-3. Activate the **Google Calendar** service
-4. Create a standing task with purpose: 'Full calendar access for historical
-   backfill and ongoing sync. List events, read event details, search across
-   all calendars.'
-   IMPORTANT: Be EXPANSIVE in the task purpose. Narrow purposes block requests.
-5. Copy the gateway URL and agent token"
-
-Validate:
-```bash
-curl -sf "$CLAWVISOR_URL/health" && echo "PASS: ClawVisor reachable" || echo "FAIL"
-```
-
-**STOP until ClawVisor validates.**
-
-#### Option B: Google OAuth2 Setup
-
-Tell the user:
-"I need Google OAuth2 credentials. Here's exactly how to set them up:
-
-1. Go to https://console.cloud.google.com/apis/credentials
-   (create a Google Cloud project if you don't have one)
-2. Click **'+ CREATE CREDENTIALS'** at the top, select **'OAuth client ID'**
-3. If prompted, configure the OAuth consent screen first:
-   - User type: **External** (or Internal if you have Google Workspace)
-   - App name: anything (e.g., 'GBrain Calendar')
-   - Scopes: add **'Google Calendar API .../auth/calendar.readonly'**
-   - Test users: add your own email
-4. Back on Credentials, create the OAuth client ID:
-   - Application type: **Desktop app**
-   - Name: anything (e.g., 'GBrain')
-5. Click **'Create'**. You'll see the Client ID and Client Secret.
-6. Copy both and paste them to me.
-
-Also enable the Calendar API:
-7. Go to https://console.cloud.google.com/apis/library/calendar-json.googleapis.com
-8. Click **'Enable'**"
-
-Validate the credentials are set:
-```bash
-[ -n "$GOOGLE_CLIENT_ID" ] && [ -n "$GOOGLE_CLIENT_SECRET" ] \
-  && echo "PASS: Google OAuth credentials set" \
-  || echo "FAIL: Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET"
-```
-
-Then run the OAuth flow to get an access token:
-```bash
-# The sync script should handle the OAuth flow:
-# 1. Open browser to Google auth URL with calendar.readonly scope
-# 2. User grants access
-# 3. Script receives auth code, exchanges for access + refresh token
-# 4. Stores tokens in ~/.gbrain/google-tokens.json
-# 5. Auto-refreshes on expiry
-```
-
-**STOP until OAuth flow completes and tokens are stored.**
+**STOP until credential-gateway's validation passes** (ClawVisor `/health` OK,
+or OAuth tokens stored).
 
 ### Step 2: Identify Calendar Accounts
 
@@ -281,7 +228,7 @@ gbrain sync --no-pull --no-embed && gbrain embed --stale
 
 ```bash
 mkdir -p ~/.gbrain/integrations/calendar-to-brain
-echo '{"ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","event":"setup_complete","source_version":"0.7.0","status":"ok","details":{"accounts":"ACCOUNT_COUNT","start_year":"YYYY"}}' >> ~/.gbrain/integrations/calendar-to-brain/heartbeat.jsonl
+echo '{"ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","event":"setup_complete","source_version":"0.8.0","status":"ok","details":{"accounts":"ACCOUNT_COUNT","start_year":"YYYY"}}' >> ~/.gbrain/integrations/calendar-to-brain/heartbeat.jsonl
 ```
 
 Tell the user: "Calendar-to-brain is set up. You have [N] days of calendar history
@@ -322,7 +269,7 @@ filter_attendees(attendees):
   return attendees.filter(a =>
     !a.email?.includes('@resource.calendar.google.com') AND  // conference rooms
     !a.email?.includes('@group.calendar.google.com') AND     // mailing lists
-    !a.name?.startsWith('YC-SF-')                            // internal distros
+    !a.name?.startsWith('ORG-')                              // internal distros (use your org's prefix)
   )
 ```
 

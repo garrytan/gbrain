@@ -132,6 +132,44 @@ describe('issue #1801 fix #3 — computeWedgedQueueCheck', () => {
   });
 });
 
+describe('Minions-visibility wave — computeQueueHealthCheck structured details', () => {
+  it('ok path carries {depth, oldest_age_seconds, worker_alive} (messages unchanged)', async () => {
+    const check = await computeQueueHealthCheck(pgLike, { readWorkers: () => [] });
+    expect(check.status).toBe('ok');
+    // Message text is pinned elsewhere by prose consumers — unchanged.
+    expect(check.message).toContain('No stalled-forever jobs');
+    // Empty queue: zero depth, null oldest age, vacuously worker_alive.
+    expect(check.details).toEqual({ depth: 0, oldest_age_seconds: null, worker_alive: true });
+  });
+
+  it('warn path reports total waiting depth + oldest age + worker_alive=false when a waiting queue has no worker', async () => {
+    await seed('default', 'embed-backfill', 'waiting', {
+      createdAtSql: "now() - interval '3 hours'",
+    });
+    await seed('default', 'embed', 'waiting', {
+      createdAtSql: "now() - interval '10 minutes'",
+    });
+    const check = await computeQueueHealthCheck(pgLike, {
+      readWorkers: () => [],
+      oldWaitingHours: 1,
+    });
+    expect(check.status).toBe('warn');
+    const d = check.details as { depth: number; oldest_age_seconds: number; worker_alive: boolean };
+    expect(d.depth).toBe(2);
+    expect(d.oldest_age_seconds).toBeGreaterThanOrEqual(3 * 3600 - 60);
+    expect(d.worker_alive).toBe(false);
+  });
+
+  it('worker_alive=true when every waiting queue has a live registered worker', async () => {
+    await seed('default', 'embed', 'waiting');
+    const check = await computeQueueHealthCheck(pgLike, {
+      readWorkers: () => [{ queue: 'default' }],
+    });
+    const d = check.details as { worker_alive: boolean };
+    expect(d.worker_alive).toBe(true);
+  });
+});
+
 describe('issue #1801 fix #3 — remote queue_health state→status regression', () => {
   it('doctor.ts no longer queries the non-existent `state` column', () => {
     const src = readFileSync(

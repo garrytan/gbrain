@@ -1,11 +1,13 @@
 /**
  * Friction reporter — JSONL-backed signal capture for the claw-test feedback loop.
  *
- * The friction CLI (`gbrain friction log/render/list/summary`) writes here.
- * The claw-test harness reads here. The agent calls `gbrain friction log`
- * directly when it hits something confusing, missing, or wrong.
+ * The friction CLI (`gbrain friction log/render/list/summary/diff`) writes
+ * and reads here. The claw-test harness reads here. The agent calls
+ * `gbrain friction log` directly when it hits something confusing, missing,
+ * or wrong; `friction diff` compares two runs cross-agent.
  *
- * Storage shape: append-only JSONL files under `$GBRAIN_HOME/friction/`.
+ * Storage shape: append-only JSONL files under `$GBRAIN_HOME/.gbrain/friction/`
+ * (configDir() appends the '.gbrain' segment).
  *   - `<run-id>.jsonl` for each harness run (run-id from $GBRAIN_FRICTION_RUN_ID)
  *   - `standalone.jsonl` for entries logged outside a harness run
  *
@@ -61,6 +63,10 @@ export interface FrictionEntry {
   transcript_offset?: number;
   /** For phase-marker entries only. */
   marker?: PhaseMarker;
+  /** Scenario name the run executed (stamped on the run-start marker). */
+  scenario?: string;
+  /** Harness meta-record schema version (stamped on the run-start marker). */
+  harness_schema?: number;
 }
 
 export interface FrictionLogInput {
@@ -74,6 +80,8 @@ export interface FrictionLogInput {
   agent?: string;
   transcriptOffset?: number;
   marker?: PhaseMarker;
+  scenario?: string;
+  harnessSchema?: number;
   /** When the writer is called from the harness wrapping a child error. */
   errorClass?: string;
   errorCode?: string;
@@ -141,6 +149,8 @@ export function logFriction(input: FrictionLogInput): void {
   if (input.agent) entry.agent = input.agent;
   if (input.transcriptOffset !== undefined) entry.transcript_offset = input.transcriptOffset;
   if (input.marker) entry.marker = input.marker;
+  if (input.scenario) entry.scenario = input.scenario;
+  if (input.harnessSchema !== undefined) entry.harness_schema = input.harnessSchema;
 
   const line = JSON.stringify(entry) + '\n';
   appendFileSync(frictionFile(runId), line, 'utf-8');

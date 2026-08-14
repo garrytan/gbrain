@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-ms-004",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "multi-source",
+  "sources": [
+    "teambrain"
+  ],
+  "active_source": "default",
+  "seed_pages": [
+    {
+      "slug": "people/leander-crestfallow",
+      "content": "---\ntitle: Leander Crestfallow\ntype: person\naliases: [leander]\nsummary: Founder of Junipergrid Labs.\n---\n\nLeander Crestfallow is the founder of Junipergrid Labs. Leander wants a technical co-founder intro before committing.\n"
+    },
+    {
+      "slug": "people/leander-crestfallow",
+      "content": "---\ntitle: Leander Crestfallow\ntype: person\naliases: [leander]\nsummary: Founder of Junipergrid Labs.\n---\n\nLeander Crestfallow is the founder of Junipergrid Labs. Leander shipped the v2 launch two weeks ahead of plan.\n",
+      "source_id": "teambrain"
+    },
+    {
+      "slug": "companies/saplingrove-works",
+      "content": "---\ntitle: Saplingrove Works\ntype: company\nsummary: Seed-stage company.\n---\n\nSaplingrove Works is a seed-stage company. The seed conversation started in 2025.\n",
+      "source_id": "teambrain"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "What do I have on Leander Crestfallow?"
+    },
+    {
+      "turn_id": 2,
+      "role": "user",
+      "text": "Anything on Saplingrove Works in here?"
+    }
+  ]
+}

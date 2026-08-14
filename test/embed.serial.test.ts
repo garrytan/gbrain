@@ -177,6 +177,31 @@ describe('runEmbed --all (parallel)', () => {
     expect(result.embedded).toBe(0);
   });
 
+  test('#1737 review catch: signal aborted during chunkless-page healing stops before invalidateStaleSignatureEmbeddings', async () => {
+    // Round-3 review finding: embedAllStale must check the abort signal
+    // immediately after the chunkless-page healing sweep, before falling
+    // through into invalidateStaleSignatureEmbeddings (a write path) —
+    // otherwise a caller-cancelled run could still NULL out
+    // signature-drifted embeddings and exit, leaving retrieval degraded.
+    const ac = new AbortController();
+    let invalidateCalled = false;
+    const engine = mockEngine({
+      countChunklessPagesWithContent: async () => 1,
+      listChunklessPagesWithContent: async () => {
+        // Simulate the caller's cancellation firing WHILE the healing sweep
+        // is mid-flight (e.g. worker timeout / lock loss / SIGTERM).
+        ac.abort(new Error('lock-lost'));
+        return [];
+      },
+      invalidateStaleSignatureEmbeddings: async () => { invalidateCalled = true; return 0; },
+      countStaleChunks: async () => 0,
+    });
+
+    await runEmbedCore(engine, { stale: true, signal: ac.signal });
+
+    expect(invalidateCalled).toBe(false);
+  });
+
   test('respects GBRAIN_EMBED_CONCURRENCY=1 (serial)', async () => {
     const pages = Array.from({ length: 5 }, (_, i) => ({ slug: `page-${i}` }));
     const chunksBySlug = new Map(
@@ -278,6 +303,38 @@ describe('runEmbedCore --dry-run never calls the embedding model', () => {
     // countStaleChunks call. pages_processed is 0 because we don't enumerate
     // pages in dry-run (cheaper pre-flight).
     expect(result.pages_processed).toBe(0);
+  });
+
+  test('dry-run --stale emits no page progress, since it processes no pages', async () => {
+    const { runEmbedCore } = await import('../src/commands/embed.ts');
+    const stale = [
+      { slug: 'a', chunk_index: 0, chunk_text: 'a', chunk_source: 'compiled_truth' as const, model: null, token_count: 1, source_id: 'default', page_id: 1 },
+      { slug: 'b', chunk_index: 0, chunk_text: 'b', chunk_source: 'compiled_truth' as const, model: null, token_count: 1, source_id: 'default', page_id: 2 },
+      { slug: 'c', chunk_index: 0, chunk_text: 'c', chunk_source: 'compiled_truth' as const, model: null, token_count: 1, source_id: 'default', page_id: 3 },
+    ];
+    const engine = mockEngine({
+      countStaleChunks: async () => stale.length,
+      listStaleChunks: async () => stale,
+      listPages: async () => [{ slug: 'a' }, { slug: 'b' }, { slug: 'c' }],
+      getChunks: async () => [],
+    });
+
+    const calls: Array<[number, number]> = [];
+    const result = await runEmbedCore(engine, {
+      stale: true,
+      dryRun: true,
+      onProgress: (done, total) => { calls.push([done, total]); },
+    });
+
+    // The CLI latches its `embed.pages` total from the first callback, so a
+    // synthetic (1, 1) here made the progress stream announce one page while
+    // the summary named every stale chunk. Consistent with pages_processed
+    // above: a dry run enumerates no pages, so it reports no page progress.
+    // docs/progress-events.md permits omitting a total that is not known up
+    // front; it does not permit asserting a wrong one.
+    expect(calls).toEqual([]);
+    expect(result.pages_processed).toBe(0);
+    expect(result.would_embed).toBe(3);
   });
 
   test('dry-run --stale correctly identifies stale chunks (SQL-side path)', async () => {

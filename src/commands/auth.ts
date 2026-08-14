@@ -23,6 +23,9 @@ import { createHash, randomBytes } from 'crypto';
 import { loadConfig, toEngineConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import type { BrainEngine } from '../core/engine.ts';
+import { assertAllowedScopes } from '../core/scope.ts';
+import { TOKEN_ID_RE } from '../core/token-mint.ts';
+import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
 import { sqlQueryForEngine, executeRawJsonb, type SqlQuery } from '../core/sql-query.ts';
 
 function hashToken(token: string): string {
@@ -66,8 +69,20 @@ async function withConfiguredSql<T>(
   }
 }
 
-async function create(name: string, opts: { takesHolders?: string[] } = {}) {
-  if (!name) { console.error('Usage: auth create <name> [--takes-holders world,garry]'); process.exit(1); }
+async function create(name: string, opts: { takesHolders?: string[]; scopes?: string[] } = {}) {
+  if (!name) { console.error('Usage: auth create <name> [--takes-holders world,garry] [--scopes read,write]'); process.exit(1); }
+  // #4043 least-privilege: validate scopes at mint time — the verify path
+  // treats a filtered-empty scopes array as DENY, so a typo must fail loudly
+  // here, never silently brick (or widen) the token.
+  if (opts.scopes !== undefined) {
+    try {
+      if (opts.scopes.length === 0) throw new Error('at least one scope is required');
+      assertAllowedScopes(opts.scopes);
+    } catch (e: any) {
+      console.error(`Invalid --scopes: ${e.message}`);
+      process.exit(1);
+    }
+  }
   const token = generateToken();
   const hash = hashToken(token);
 
@@ -84,17 +99,35 @@ async function create(name: string, opts: { takesHolders?: string[] } = {}) {
       // through the wire-protocol type oid without the v0.12.0 double-encode
       // bug class (verified by test/e2e/auth-permissions.test.ts:67 on
       // Postgres and test/sql-query.test.ts on PGLite).
-      await executeRawJsonb(
-        engine,
-        `INSERT INTO access_tokens (name, token_hash, permissions)
-         VALUES ($1, $2, $3::jsonb)`,
-        [name, hash],
-        [permissions],
-      );
-      console.log(`Token created for "${name}" (takes_holders=${JSON.stringify(takesHolders)}):\n`);
+      //
+      // Scopes (when given) land in the original-schema scopes TEXT[] column
+      // via an array literal through a TEXT param — values are allowlisted,
+      // so the literal needs no quoting and runs identically on both engines.
+      // Omitted → NULL → the historical grandfathered full-access grant.
+      if (opts.scopes !== undefined) {
+        await executeRawJsonb(
+          engine,
+          `INSERT INTO access_tokens (name, token_hash, permissions, scopes)
+           VALUES ($1, $2, $4::jsonb, $3::text[])`,
+          [name, hash, `{${opts.scopes.join(',')}}`],
+          [permissions],
+        );
+      } else {
+        await executeRawJsonb(
+          engine,
+          `INSERT INTO access_tokens (name, token_hash, permissions)
+           VALUES ($1, $2, $3::jsonb)`,
+          [name, hash],
+          [permissions],
+        );
+      }
+      const scopeLine = opts.scopes !== undefined
+        ? `scopes=${JSON.stringify(opts.scopes)}`
+        : 'scopes=full access (grandfathered — pass --scopes read,write to narrow)';
+      console.log(`Token created for "${name}" (takes_holders=${JSON.stringify(takesHolders)}, ${scopeLine}):\n`);
       console.log(`  ${token}\n`);
       console.log('Save this token — it will not be shown again.');
-      console.log(`Revoke with: gbrain auth revoke "${name}"`);
+      console.log(`Revoke with: gbrain auth revoke "${name}" (or gbrain auth revoke --id <id> from auth list)`);
       console.log(`Update visibility: gbrain auth permissions "${name}" set-takes-holders world,garry`);
     });
   } catch (e: any) {
@@ -121,10 +154,19 @@ async function permissions(name: string, action: string, value: string | undefin
       }
       const perms = { takes_holders: list };
       // JSONB UPDATE via executeRawJsonb — same pattern as create() above.
+      // MERGE, never whole-object replace: `SET permissions = $2::jsonb`
+      // would silently DELETE every other grant key (source_id federation,
+      // and any future key) on a routine takes-holders edit — the grant-wipe
+      // class the #4043 review caught.
+      // The jsonb_typeof guard repairs rows carrying historical double-encode
+      // damage (a jsonb string/array scalar): `scalar || object` would produce
+      // a jsonb ARRAY and silently strand every grant, so a damaged left
+      // operand is reset to '{}' on edit — the old whole-replace semantics for
+      // damaged rows, merge semantics for healthy object rows.
       const result = await executeRawJsonb(
         engine,
         `UPDATE access_tokens
-            SET permissions = $2::jsonb
+            SET permissions = (CASE WHEN jsonb_typeof(permissions) = 'object' THEN permissions ELSE '{}'::jsonb END) || $2::jsonb
             WHERE name = $1
             RETURNING id`,
         [name],
@@ -142,10 +184,20 @@ async function permissions(name: string, action: string, value: string | undefin
   }
 }
 
+/** Render a token row's scope grant honestly (#4043: NULL = grandfathered).
+ * Routes through the SAME normalizer the verify path uses — the ops surface
+ * must never claim admin on a row the serve actually scopes or denies. */
+export function renderTokenScopes(scopes: unknown): string {
+  const normalized = normalizeTokenScopes(scopes);
+  if (normalized === undefined) return 'admin (grandfathered)';
+  if (normalized.length === 0) return '(deny-all)';
+  return normalized.join(',');
+}
+
 async function list() {
   await withConfiguredSql(async (sql) => {
     const rows = await sql`
-      SELECT name, created_at, last_used_at, revoked_at
+      SELECT id, name, scopes, created_at, last_used_at, revoked_at
       FROM access_tokens
       ORDER BY created_at DESC
     `;
@@ -153,20 +205,22 @@ async function list() {
       console.log('No tokens found. Create one: gbrain auth create "my-client"');
       return;
     }
-    console.log('Name                  Created              Last Used            Status');
-    console.log('─'.repeat(80));
+    console.log('ID                                    Name                  Scopes                 Created              Last Used            Status');
+    console.log('─'.repeat(126));
     for (const r of rows) {
+      const id = String(r.id).padEnd(36);
       const name = (r.name as string).padEnd(20);
+      const scopes = renderTokenScopes(r.scopes).padEnd(21);
       const created = new Date(r.created_at as string).toISOString().slice(0, 19);
       const lastUsed = r.last_used_at ? new Date(r.last_used_at as string).toISOString().slice(0, 19) : 'never'.padEnd(19);
       const status = r.revoked_at ? 'REVOKED' : 'active';
-      console.log(`${name}  ${created}  ${lastUsed}  ${status}`);
+      console.log(`${id}  ${name}  ${scopes}  ${created}  ${lastUsed}  ${status}`);
     }
   });
 }
 
 async function revoke(name: string) {
-  if (!name) { console.error('Usage: auth revoke <name>'); process.exit(1); }
+  if (!name) { console.error('Usage: auth revoke <name> | auth revoke --id <uuid>'); process.exit(1); }
   await withConfiguredSql(async (sql) => {
     const rows = await sql`
       UPDATE access_tokens SET revoked_at = now()
@@ -177,7 +231,33 @@ async function revoke(name: string) {
       console.error(`No active token found with name "${name}".`);
       process.exit(1);
     }
+    if (rows.length > 1) {
+      console.log(`Note: ${rows.length} active tokens carried the name "${name}" — all revoked. Use revoke --id for precision.`);
+    }
     console.log(`Token "${name}" revoked.`);
+  });
+}
+
+/** #4043: names are not unique — revoke-by-id is the precise path. The
+ * revocation semantics are canonical in src/core/token-mint.ts
+ * (revokeLegacyTokenById); this CLI wrapper keeps its own UPDATE only to
+ * RETURN the name for the confirmation line — keep the two in lockstep. */
+async function revokeById(id: string) {
+  if (!id || !TOKEN_ID_RE.test(id)) {
+    console.error('Usage: auth revoke --id <uuid>   (ids are shown by `gbrain auth list`)');
+    process.exit(1);
+  }
+  await withConfiguredSql(async (sql) => {
+    const rows = await sql`
+      UPDATE access_tokens SET revoked_at = now()
+      WHERE id = ${id}::uuid AND revoked_at IS NULL
+      RETURNING name
+    `;
+    if (rows.length === 0) {
+      console.error(`No active token found with id "${id}".`);
+      process.exit(1);
+    }
+    console.log(`Token "${rows[0].name}" (${id}) revoked.`);
   });
 }
 
@@ -388,7 +468,36 @@ export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
         i += 2;
         break;
       }
-      case '--scopes': out.scopes = requireValue(); i += 2; break;
+      case '--scopes': {
+        // v0.42.x: accept comma-separated input (`--scopes read,write,admin`)
+        // in addition to the space-separated OAuth wire form
+        // (`--scopes "read write admin"`). init.ts's own registration hint
+        // (line ~730) recommends the comma form, but the parser previously
+        // only split on whitespace, so a comma-joined string fell through
+        // as a single unrecognized token and registerClientManual's
+        // assertAllowedScopes rejected it as `Unknown scope
+        // "read,write,admin"` — self-contradicting the hint. Normalizing
+        // here (rather than in the shared parseScopeString) keeps that
+        // function's OAuth-wire-format (RFC 6749 space-delimited) contract
+        // intact for DCR/refresh/request-scope parsing, which stays
+        // comma-agnostic on purpose.
+        const v = requireValue();
+        const normalized = v.split(/[\s,]+/).filter(Boolean).join(' ');
+        // Zero-token input (`--scopes ","`, `--scopes ",,,"`, `--scopes "  "`,
+        // `--scopes ""`) collapses to an empty string under the split above.
+        // parseScopeString('') returns [] downstream, and
+        // assertAllowedScopes([]) passes vacuously on an empty list — so
+        // without this guard, registerClientManual would silently register
+        // a client with no usable scopes instead of reporting malformed
+        // input. Reject here, at the parser boundary, with a clear message
+        // rather than relying on whatever downstream error the raw string
+        // happens to produce.
+        if (!normalized) {
+          throw new Error(`--scopes requires at least one scope (got ${JSON.stringify(v)})`);
+        }
+        out.scopes = normalized;
+        i += 2; break;
+      }
       case '--source': out.sourceId = requireValue(); i += 2; break;
       case '--federated-read': {
         const v = requireValue();
@@ -523,8 +632,19 @@ async function registerClient(name: string, args: string[]) {
  * so widening happens here (trusted local CLI) or via the requireAdmin
  * /admin/api/rescope-client endpoint.
  */
+/**
+ * WP4: parse the `--surface` rescope value. 'clear' → null (clears both
+ * surface AND surface_set_by); one of the three known surfaces → itself;
+ * anything else → undefined (caller errors out). Exported for unit tests.
+ */
+export function parseRescopeSurfaceValue(value: string): 'verbs' | 'starter' | 'full' | null | undefined {
+  if (value === 'clear') return null;
+  if (value === 'verbs' || value === 'starter' || value === 'full') return value;
+  return undefined;
+}
+
 async function rescopeClient(clientId: string, args: string[]) {
-  const usage = 'Usage: auth rescope-client <client_id> [--source SOURCE] [--federated-read SRC1,SRC2,...] [--bound-slug-prefixes P1,P2|none]';
+  const usage = 'Usage: auth rescope-client <client_id> [--source SOURCE] [--federated-read SRC1,SRC2,...] [--bound-slug-prefixes P1,P2|none] [--surface verbs|starter|full|clear]';
   if (!clientId) {
     console.error(usage);
     process.exit(1);
@@ -535,6 +655,9 @@ async function rescopeClient(clientId: string, args: string[]) {
   // array = replace. Lets roster churn (channel joins/leaves) update the
   // write fence in place instead of register+rotate.
   let boundSlugPrefixes: string[] | null | undefined;
+  // WP4: tri-state — undefined = untouched, null = clear ('clear'), value =
+  // set + surface_set_by='operator' (the lock request_tools cannot override).
+  let surface: 'verbs' | 'starter' | 'full' | null | undefined;
   for (let i = 0; i < args.length; i += 2) {
     const flag = args[i];
     const value = args[i + 1];
@@ -550,29 +673,181 @@ async function rescopeClient(clientId: string, args: string[]) {
       boundSlugPrefixes = value === 'none'
         ? null
         : value.split(',').map(s => s.trim()).filter(Boolean);
+    } else if (flag === '--surface') {
+      surface = parseRescopeSurfaceValue(value);
+      if (surface === undefined) {
+        console.error(`Error: --surface must be verbs | starter | full | clear (got "${value}")`);
+        console.error(usage);
+        process.exit(1);
+      }
     } else {
       console.error(`Error: Unknown flag: ${flag}`);
       console.error(usage);
       process.exit(1);
     }
   }
-  if (sourceId === undefined && federatedRead === undefined && boundSlugPrefixes === undefined) {
-    console.error('Error: pass --source, --federated-read, and/or --bound-slug-prefixes');
+  if (sourceId === undefined && federatedRead === undefined && boundSlugPrefixes === undefined && surface === undefined) {
+    console.error('Error: pass --source, --federated-read, --bound-slug-prefixes, and/or --surface');
     console.error(usage);
     process.exit(1);
   }
   try {
-    await withConfiguredSql(async (sql) => {
+    await withConfiguredSql(async (sql, engine) => {
       const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
       const provider = new GBrainOAuthProvider({ sql });
-      const result = await provider.rescopeClient(clientId, { sourceId, federatedRead, boundSlugPrefixes });
+      const result = await provider.rescopeClient(clientId, { sourceId, federatedRead, boundSlugPrefixes, surface });
+      // WP4 (amendment 32 / ENG-8): every surface mutation writes an audit
+      // row (this CLI, the admin endpoint, the request_tools persist).
+      if (surface !== undefined) {
+        const { writeSurfaceChangeAudit } = await import('../core/surface-audit.ts');
+        await writeSurfaceChangeAudit(engine, {
+          actor: 'operator',
+          client_id: clientId,
+          old: result.surfaceOld ?? null,
+          new: result.surface ?? null,
+          via: 'rescope_cli',
+        });
+      }
       console.log(`OAuth client rescoped: "${result.clientName}" (${result.clientId})\n`);
       console.log(`  Write source:        ${result.sourceId}`);
       console.log(`  Federated reads:     ${result.federatedRead.join(', ') || '<none>'}`);
       if (result.boundSlugPrefixes !== undefined) {
         console.log(`  Bound slug prefixes: ${result.boundSlugPrefixes?.join(', ') ?? '<none — full-source write authority>'}`);
       }
+      if (result.surface !== undefined) {
+        console.log(`  Tool surface:        ${result.surface ?? '<cleared — server/config surface applies>'}${result.surface != null ? ' (operator-pinned; request_tools cannot override)' : ''}`);
+      }
       console.log('\nTakes effect on the client\'s next request (existing tokens included).');
+    });
+  } catch (e: any) {
+    console.error('Error:', e.message);
+    process.exit(1);
+  }
+}
+
+/**
+ * E4 (WP4 expansion): `gbrain auth clients [--usage] [--days N] [--json]`.
+ *
+ * Lists OAuth clients with their scopes + per-client MCP tool surface
+ * (`surface` / `surface_set_by`, WP4), and with `--usage` joins the
+ * per-client op-call usage from `mcp_request_log` via the shared reader
+ * (src/core/mcp-usage.ts — same hygiene rules as the E3 advisor collector
+ * and scripts/derive-starter-ops.ts). Legacy bearer tokens that called in
+ * the window appear too (they log under their token name) but carry no
+ * per-client surface row. stdio clients never appear — that transport does
+ * not write mcp_request_log.
+ */
+export function parseAuthClientsArgs(args: string[]): { usage: boolean; days: number; json: boolean } {
+  const out = { usage: false, days: 30, json: false };
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i];
+    if (flag === '--usage') out.usage = true;
+    else if (flag === '--json') out.json = true;
+    else if (flag === '--days') {
+      const v = Number(args[i + 1]);
+      if (!Number.isInteger(v) || v < 1 || v > 3650) {
+        throw new Error('--days must be an integer between 1 and 3650');
+      }
+      out.days = v;
+      i++;
+    } else {
+      throw new Error(`Unknown flag: ${flag}`);
+    }
+  }
+  return out;
+}
+
+interface ClientRow {
+  client_id: string;
+  client_name: string | null;
+  scope: string | null;
+  surface: string | null;
+  surface_set_by: string | null;
+}
+
+async function clientsCmd(args: string[]) {
+  const usageLine = 'Usage: auth clients [--usage] [--days N] [--json]';
+  let parsed: { usage: boolean; days: number; json: boolean };
+  try {
+    parsed = parseAuthClientsArgs(args);
+  } catch (e: any) {
+    console.error(`Error: ${e.message}`);
+    console.error(usageLine);
+    process.exit(1);
+  }
+  try {
+    await withConfiguredSql(async (_sql, engine) => {
+      // Surface columns land in migration v127; a pre-migration brain still
+      // gets the listing (surface renders as unknown) instead of an error.
+      let clients: ClientRow[];
+      try {
+        clients = await engine.executeRaw<ClientRow>(
+          `SELECT client_id, client_name, scope, surface, surface_set_by
+             FROM oauth_clients ORDER BY client_name, client_id`,
+        );
+      } catch {
+        const bare = await engine.executeRaw<Omit<ClientRow, 'surface' | 'surface_set_by'>>(
+          `SELECT client_id, client_name, scope FROM oauth_clients ORDER BY client_name, client_id`,
+        );
+        clients = bare.map(r => ({ ...r, surface: null, surface_set_by: null }));
+      }
+
+      const { readClientOpUsage } = await import('../core/mcp-usage.ts');
+      const usage = parsed.usage ? await readClientOpUsage(engine, { days: parsed.days }) : [];
+      const usageByToken = new Map(usage.map(u => [u.token_name, u]));
+      const clientIds = new Set(clients.map(c => c.client_id));
+      const legacyUsage = usage.filter(u => !clientIds.has(u.token_name));
+
+      if (parsed.json) {
+        console.log(JSON.stringify({
+          window_days: parsed.days,
+          usage_included: parsed.usage,
+          clients: clients.map(c => ({
+            client_id: c.client_id,
+            client_name: c.client_name,
+            scopes: c.scope,
+            surface: c.surface,
+            surface_set_by: c.surface_set_by,
+            usage: usageByToken.get(c.client_id) ?? null,
+          })),
+          // Legacy bearer tokens seen in the window (no oauth_clients row).
+          legacy_tokens: legacyUsage,
+        }, null, 2));
+        return;
+      }
+
+      if (clients.length === 0 && legacyUsage.length === 0) {
+        console.log('No OAuth clients registered. Register one: gbrain auth register-client "my-client"');
+        return;
+      }
+      const fmtTop = (u: (typeof usage)[number]) =>
+        Object.entries(u.ops).slice(0, 5).map(([op, n]) => `${op}(${n})`).join(', ');
+      for (const c of clients) {
+        const u = usageByToken.get(c.client_id);
+        console.log(`${c.client_name ?? '<unnamed>'} (${c.client_id})`);
+        const surfaceStr = c.surface
+          ? `${c.surface}${c.surface_set_by ? ` (set by ${c.surface_set_by})` : ''}`
+          : '<server/config resolution>';
+        console.log(`  scopes: ${c.scope ?? '<none>'}    surface: ${surfaceStr}`);
+        if (parsed.usage) {
+          if (u) {
+            const auto = u.likely_automation ? '    [automation-shaped: >90% context_pack/delta]' : '';
+            console.log(`  calls (${parsed.days}d): ${u.total_calls} across ${u.distinct_ops.length} ops    last seen: ${u.last_seen}${auto}`);
+            console.log(`  top ops: ${fmtTop(u)}`);
+          } else {
+            console.log(`  calls (${parsed.days}d): 0 (no HTTP MCP calls in window; stdio use is not logged)`);
+          }
+        }
+        console.log('');
+      }
+      if (parsed.usage && legacyUsage.length > 0) {
+        console.log(`Legacy bearer tokens seen in the last ${parsed.days}d (no per-client surface row):`);
+        for (const u of legacyUsage) {
+          const auto = u.likely_automation ? '    [automation-shaped]' : '';
+          console.log(`  ${u.token_name}: ${u.total_calls} calls across ${u.distinct_ops.length} ops    last seen: ${u.last_seen}${auto}`);
+          console.log(`    top ops: ${fmtTop(u)}`);
+        }
+      }
     });
   } catch (e: any) {
     console.error('Error:', e.message);
@@ -586,22 +861,40 @@ async function rescopeClient(clientId: string, args: string[]) {
  * still works.
  */
 /**
- * Parse `auth create` args into `{ name, takesHolders }`.
+ * Parse `auth create` args into `{ name, takesHolders, scopes }`.
  *
  * Exported + pure so the positional-vs-flag logic is unit-testable. Only
- * excludes the --takes-holders VALUE from the positional search when the flag
- * is present — the pre-v0.41 inline version used `rest[takesIdx + 1]` which
+ * excludes flag VALUES from the positional search when their flag is
+ * present — the pre-v0.41 inline version used `rest[takesIdx + 1]` which
  * resolved to `rest[0]` when `takesIdx === -1`, silently dropping the name on
  * the bare `gbrain auth create <name>` form.
+ *
+ * --scopes accepts comma- and/or whitespace-separated input (the
+ * register-client #3990 normalization precedent). Validation against the
+ * allowed scope set happens in create() so the error path exits cleanly.
  */
-export function parseAuthCreateArgs(rest: string[]): { name: string; takesHolders?: string[] } {
+export function parseAuthCreateArgs(rest: string[]): { name: string; takesHolders?: string[]; scopes?: string[]; error?: string } {
   const takesIdx = rest.indexOf('--takes-holders');
-  const takesHolders = takesIdx >= 0 && rest[takesIdx + 1]
-    ? rest[takesIdx + 1].split(',').map(s => s.trim()).filter(Boolean)
-    : undefined;
   const takesValue = takesIdx >= 0 ? rest[takesIdx + 1] : undefined;
-  const positional = rest.find(a => !a.startsWith('--') && a !== takesValue);
-  return { name: positional || '', takesHolders };
+  // Fail closed on a missing/flag-like value: `--scopes` as the last arg
+  // silently minting a grandfathered FULL-ACCESS token is the exact
+  // fail-open-by-silent-precedence class the harness parser rejects [X14].
+  if (takesIdx >= 0 && (takesValue === undefined || takesValue.startsWith('--'))) {
+    return { name: '', error: 'the takes-holders flag requires a value (e.g. world,garry)' };
+  }
+  const takesHolders = takesValue !== undefined
+    ? takesValue.split(',').map(s => s.trim()).filter(Boolean)
+    : undefined;
+  const scopesIdx = rest.indexOf('--scopes');
+  const scopesValue = scopesIdx >= 0 ? rest[scopesIdx + 1] : undefined;
+  if (scopesIdx >= 0 && (scopesValue === undefined || scopesValue.startsWith('--'))) {
+    return { name: '', error: 'the scopes flag requires a value (e.g. read,write) — omitting it would mint a full-access token' };
+  }
+  const scopes = scopesValue !== undefined
+    ? scopesValue.split(/[\s,]+/).map(s => s.trim()).filter(Boolean)
+    : undefined;
+  const positional = rest.find(a => !a.startsWith('--') && a !== takesValue && a !== scopesValue);
+  return { name: positional || '', takesHolders, ...(scopes !== undefined ? { scopes } : {}) };
 }
 
 export async function runAuth(args: string[]): Promise<void> {
@@ -609,12 +902,21 @@ export async function runAuth(args: string[]): Promise<void> {
   switch (cmd) {
     case 'create': {
       // v0.28: optional --takes-holders world,garry,brain (default: world only)
+      // #4043: optional --scopes read,write (default: full access, grandfathered)
       const parsed = parseAuthCreateArgs(rest);
-      await create(parsed.name, { takesHolders: parsed.takesHolders });
+      if (parsed.error) {
+        console.error(`Error: ${parsed.error}`);
+        process.exit(1);
+      }
+      await create(parsed.name, { takesHolders: parsed.takesHolders, scopes: parsed.scopes });
       return;
     }
     case 'list': await list(); return;
-    case 'revoke': await revoke(rest[0]); return;
+    case 'revoke': {
+      if (rest[0] === '--id') { await revokeById(rest[1] || ''); return; }
+      await revoke(rest[0]);
+      return;
+    }
     case 'permissions': {
       // gbrain auth permissions <name> set-takes-holders world,garry
       await permissions(rest[0] || '', rest[1] || '', rest[2]);
@@ -623,6 +925,7 @@ export async function runAuth(args: string[]): Promise<void> {
     case 'register-client': await registerClient(rest[0], rest.slice(1)); return;
     case 'rescope-client': await rescopeClient(rest[0], rest.slice(1)); return;
     case 'revoke-client': await revokeClient(rest[0]); return;
+    case 'clients': await clientsCmd(rest); return;
     case 'test': {
       const tokenIdx = rest.indexOf('--token');
       const url = rest.find(a => !a.startsWith('--') && a !== rest[tokenIdx + 1]);
@@ -634,13 +937,17 @@ export async function runAuth(args: string[]): Promise<void> {
       console.log(`GBrain Token Management
 
 Usage:
-  gbrain auth create <name> [--takes-holders world,garry,brain]
+  gbrain auth create <name> [--takes-holders world,garry,brain] [--scopes read,write]
                                                           Create a legacy bearer token. v0.28: --takes-holders
                                                           sets the per-token allow-list for the takes.holder
                                                           field (default: ["world"]). MCP-bound calls to
                                                           takes_list / takes_search / query filter by this.
-  gbrain auth list                                         List all tokens
-  gbrain auth revoke <name>                                Revoke a legacy token
+                                                          --scopes narrows the token to the listed op scopes
+                                                          (comma or space separated; omit = full access,
+                                                          grandfathered).
+  gbrain auth list                                         List all tokens (id, scopes, usage)
+  gbrain auth revoke <name>                                Revoke a legacy token (ALL active rows with that name)
+  gbrain auth revoke --id <uuid>                           Revoke exactly one token by id (names are not unique)
   gbrain auth permissions <name> set-takes-holders <h1,h2,h3>
                                                           Update visibility for an existing token
   gbrain auth register-client <name> [options]             Register an OAuth 2.1 client (v0.26+)
@@ -672,6 +979,15 @@ Usage:
      --source <id>                                        New write source
      --federated-read <id1,id2,...>                       New read-scope source list
      --bound-slug-prefixes <p1,p2|none>                   Replace the slug-prefix write fence ('none' clears it)
+     --surface <verbs|starter|full|clear>                 Pin the client's MCP tool surface (operator lock —
+                                                          request_tools cannot override; 'clear' removes the pin
+                                                          so server/config resolution applies again). Always
+                                                          bounded by the server's --surface ceiling.
+  gbrain auth clients [--usage] [--days N] [--json]       List OAuth clients with scopes + tool surface. --usage
+                                                          joins per-client op-call counts, top ops, and last-seen
+                                                          from mcp_request_log (default 30d window; HTTP clients
+                                                          only — stdio use is not logged). Automation-shaped
+                                                          clients (>90% context_pack/delta) are flagged.
   gbrain auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
   gbrain auth test <url> --token <token>                  Smoke-test a remote MCP server
 `);

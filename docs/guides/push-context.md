@@ -5,13 +5,14 @@ contributed anything. Push-based context inverts that — the brain volunteers
 relevant pages from the recent conversation, confidence-gated so push noise
 never becomes worse than pull silence.
 
-Three channels share one zero-LLM core (`src/core/context/volunteer.ts`):
+The push channels share one zero-LLM core (`src/core/context/volunteer.ts`):
 
 | Channel | Surface | When to use |
 |---|---|---|
 | `reflex` | automatic, inside the context engine | default-on for plugin hosts; nothing to call |
 | `op` | `gbrain volunteer-context` / MCP `volunteer_context` | agents without the plugin; one call per turn |
 | `watch` | `gbrain watch` | stream a transcript in, volunteered pages stream out |
+| `claude-code` / `codex` | `gbrain hook user-prompt` (registered by `gbrain bootstrap`) | per-prompt injection inside a harness; see "Harness hooks" below |
 
 ## How it decides
 
@@ -52,6 +53,42 @@ input exits at EOF) or use the ambient reflex channel instead, which routes
 through a running serve's resolve socket rather than taking the lock. Routing
 watch through that same socket is a filed follow-up (TODOS.md). Postgres
 brains are unaffected.
+
+## Harness hooks (the prompt-time channel)
+
+`gbrain bootstrap` registers `gbrain hook user-prompt` as a Claude Code
+`UserPromptSubmit` hook: every prompt is assembled into a per-turn context
+block (reflex pointers + volunteered pages + hot facts) through a running
+serve's IPC socket and injected as `additionalContext`. Two properties make
+this channel production-grade rather than spammy-and-invisible:
+
+- **Cross-turn dedupe.** The hook reads its OWN previous injections back out
+  of the session transcript (Claude Code records them as structured
+  `hook_additional_context` attachments; only gbrain-marked blocks count) and
+  passes them as prior context — so a page is volunteered once per session,
+  not once per mention. The dedupe horizon is bounded (the recent transcript
+  window, byte-capped), so a marathon session can eventually re-volunteer its
+  oldest injections. The extraction is structural, never substring matching
+  over raw turn text, so a short slug appearing in a tool payload can't
+  over-suppress.
+- **The feedback loop.** The serve logs each DELIVERED block's volunteered
+  pages and pointers to `context_volunteer_events` under the hook's channel
+  (`claude-code` by default; a codex hook registration passes
+  `--harness codex`). `gbrain volunteer-context --stats` then shows
+  per-harness precision, and `gbrain doctor`'s `volunteer_channels` check
+  shows which channels actually fire, with guidance for the two quiet cases:
+  "hook installed but never registered (restart the session)" and "registered
+  but quiet". Logging happens at the delivery point only — a block abandoned
+  before the serve responded is never counted — and because a delivered
+  response still isn't proof of injection (the hook can trim or drop it
+  client-side), the doctor check reconciles the counts against the hook's own
+  heartbeat and cautions when they diverge.
+
+The hook lane rides the PGLite serve's IPC socket: on a Postgres brain or a
+thin-client install the hook stays quiet by design (pull-mode retrieval covers
+those; extending the lane is a filed follow-up in TODOS.md).
+
+Kill switch: `GBRAIN_HOOKS=0`. Install/uninstall: `docs/guides/bootstrap.md`.
 
 ## Config
 

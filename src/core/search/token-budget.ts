@@ -21,7 +21,8 @@
  * enforcer is a no-op. The pre-v0.32 contract for search results is
  * unchanged.
  *
- * Pure module. No DB, no LLM, no async. Tested in test/token-budget.test.ts.
+ * Pure module. No DB, no LLM, no async; the only ambient input is the
+ * GBRAIN_SEARCH_SALVAGE env kill switch. Tested in test/token-budget.test.ts.
  */
 
 import type { SearchResult } from '../types.ts';
@@ -60,53 +61,120 @@ export interface TokenBudgetMeta {
   dropped: number;
   /** Count of results actually returned. */
   kept: number;
+  /**
+   * WP2/T3 (ENG-2/FOV-2) — set when the minKeep failsafe kept ONE result
+   * whose chunk_text was truncated (on a copy) to fit the budget. Only the
+   * search wrapper (`enforceTokenBudget`) produces this; `packToBudget`
+   * stays strict for the frozen verb consumers.
+   */
+  truncated?: boolean;
 }
 
 /**
- * Greedy top-down budget enforcement. Walks the input in order, accumulates
- * token costs, and stops as soon as adding the next result would exceed
- * the budget. Results are NOT re-ranked — caller's order is preserved.
+ * WP2/T3 (ENG-7) — env-only kill switch for the fail-loud salvage behavior
+ * (allSettled embed/vector fan-outs in hybrid.ts + the minKeep:1 budget
+ * failsafe below). `GBRAIN_SEARCH_SALVAGE=off` restores the pre-wave
+ * all-or-nothing embeds and the strict budget wrapper. Env-above-config on
+ * purpose (incident escape hatch, pace-mode precedent); no config surface.
+ */
+export function searchSalvageEnabled(): boolean {
+  return process.env.GBRAIN_SEARCH_SALVAGE !== 'off';
+}
+
+/**
+ * Generic greedy top-down budget packer (v1 memory-verbs protocol). Walks
+ * the input in order, accumulates per-item costs via the caller-supplied
+ * cost function, and stops as soon as adding the next item would exceed
+ * the budget. Items are NOT re-ranked — caller's order is preserved.
  *
  * Edge cases (all preserve the pre-v0.32 contract):
  *   - budget undefined / <= 0: returns input unchanged; dropped=0, kept=N.
- *   - First result alone exceeds budget: returns []; dropped=N, kept=0.
- *     (Intentionally strict: the caller asked for a hard cap.)
+ *   - First item alone exceeds budget: returns []; dropped=N, kept=0.
+ *     (Intentionally strict: the caller asked for a hard cap. FROZEN for
+ *     the memory-verb consumers — recall/entity/context_pack budget-pack
+ *     through this; the search wrapper enforceTokenBudget layers its
+ *     minKeep failsafe on top, never here.)
  *   - Input empty: returns []; budget unused.
+ */
+export function packToBudget<T>(
+  items: T[],
+  cost: (item: T) => number,
+  budget: number | undefined,
+): { items: T[]; meta: TokenBudgetMeta } {
+  const safeBudget = typeof budget === 'number' && budget > 0 ? budget : 0;
+
+  if (safeBudget === 0 || items.length === 0) {
+    return {
+      items,
+      meta: {
+        budget: safeBudget,
+        used: items.reduce((acc, it) => acc + cost(it), 0),
+        dropped: 0,
+        kept: items.length,
+      },
+    };
+  }
+
+  const kept: T[] = [];
+  let used = 0;
+  for (const it of items) {
+    const c = cost(it);
+    if (used + c > safeBudget) break;
+    kept.push(it);
+    used += c;
+  }
+
+  return {
+    items: kept,
+    meta: {
+      budget: safeBudget,
+      used,
+      dropped: items.length - kept.length,
+      kept: kept.length,
+    },
+  };
+}
+
+/**
+ * Search-pipeline budget enforcement — a thin wrapper over packToBudget
+ * with the SearchResult cost model (title + chunk_text). Pinned by
+ * test/token-budget.test.ts.
+ *
+ * WP2/T3 (ENG-2/FOV-2) minKeep:1 failsafe: when the FIRST result alone
+ * exceeds the budget (packToBudget's strict [] edge), keep one result with
+ * chunk_text truncated to fit — on a COPY, never mutating the shared
+ * SearchResult (it flows on to cache write + eval capture). A budget below
+ * even the title-only cost truncates the TITLE too (chunk_text: ''), so
+ * `used <= budget` holds unconditionally — a hard cap that can be exceeded
+ * is not a cap. The failsafe lives HERE, not in packToBudget, because it also
+ * feeds the frozen memory-verb paths (recall/entity/context_pack) whose
+ * strict-cap contract must not drift. `GBRAIN_SEARCH_SALVAGE=off`
+ * restores the strict [] behavior (ENG-7).
  */
 export function enforceTokenBudget(
   results: SearchResult[],
   budget: number | undefined,
 ): { results: SearchResult[]; meta: TokenBudgetMeta } {
-  const safeBudget = typeof budget === 'number' && budget > 0 ? budget : 0;
-
-  if (safeBudget === 0 || results.length === 0) {
+  const { items, meta } = packToBudget(results, resultTokens, budget);
+  if (items.length === 0 && results.length > 0 && meta.budget > 0 && searchSalvageEnabled()) {
+    const first = results[0];
+    // Chars that keep resultTokens(copy) <= budget under the char/4 model:
+    // ceil(4*(budget - titleCost)/4) = budget - titleCost. A sub-title-cost
+    // budget slices the title itself (budget*4 chars costs exactly budget
+    // tokens under ceil(len/4)), so used <= budget holds unconditionally.
+    const title = (first.title ?? '').slice(0, meta.budget * 4);
+    const chunkChars = Math.max(0, (meta.budget - estimateTokens(title)) * 4);
+    const copy: SearchResult = { ...first, title, chunk_text: first.chunk_text.slice(0, chunkChars) };
     return {
-      results,
+      results: [copy],
       meta: {
-        budget: safeBudget,
-        used: results.reduce((acc, r) => acc + resultTokens(r), 0),
-        dropped: 0,
-        kept: results.length,
+        budget: meta.budget,
+        used: resultTokens(copy),
+        dropped: results.length - 1,
+        kept: 1,
+        truncated: true,
       },
     };
   }
-
-  const kept: SearchResult[] = [];
-  let used = 0;
-  for (const r of results) {
-    const cost = resultTokens(r);
-    if (used + cost > safeBudget) break;
-    kept.push(r);
-    used += cost;
-  }
-
-  return {
-    results: kept,
-    meta: {
-      budget: safeBudget,
-      used,
-      dropped: results.length - kept.length,
-      kept: kept.length,
-    },
-  };
+  return { results: items, meta };
 }

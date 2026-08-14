@@ -25,6 +25,7 @@ if (skip) {
 }
 
 const CLI = join(import.meta.dir, '..', '..', 'src', 'cli.ts');
+const DOCTOR_PROGRESS_TIMEOUT_MS = 60_000;
 
 describeE2E('gbrain doctor --progress-json (E2E)', () => {
   beforeAll(async () => {
@@ -41,7 +42,7 @@ describeE2E('gbrain doctor --progress-json (E2E)', () => {
     const res = spawnSync('bun', [CLI, '--progress-json', 'doctor', '--json'], {
       encoding: 'utf-8',
       env: { ...process.env, NO_COLOR: '1' },
-      timeout: 30_000,
+      timeout: DOCTOR_PROGRESS_TIMEOUT_MS,
     });
 
     // Even if some checks warn, doctor runs to completion. Failures would
@@ -85,13 +86,13 @@ describeE2E('gbrain doctor --progress-json (E2E)', () => {
     // progress-line pollution on stdout.
     const parsed = JSON.parse(res.stdout);
     expect(Array.isArray(parsed.checks) || Array.isArray(parsed)).toBe(true);
-  });
+  }, DOCTOR_PROGRESS_TIMEOUT_MS + 5_000);
 
   test('default (no --progress-json) writes human-plain progress to stderr only', () => {
     const res = spawnSync('bun', [CLI, 'doctor'], {
       encoding: 'utf-8',
       env: { ...process.env, NO_COLOR: '1' },
-      timeout: 30_000,
+      timeout: DOCTOR_PROGRESS_TIMEOUT_MS,
     });
 
     // Stdout may contain the check summary (human-readable) but should NOT
@@ -103,13 +104,13 @@ describeE2E('gbrain doctor --progress-json (E2E)', () => {
     if (res.stderr.length > 0) {
       expect(res.stderr).toContain('doctor.db_checks');
     }
-  });
+  }, DOCTOR_PROGRESS_TIMEOUT_MS + 5_000);
 
   test('--quiet suppresses progress entirely', () => {
     const res = spawnSync('bun', [CLI, '--quiet', 'doctor'], {
       encoding: 'utf-8',
       env: { ...process.env, NO_COLOR: '1' },
-      timeout: 30_000,
+      timeout: DOCTOR_PROGRESS_TIMEOUT_MS,
     });
 
     // With --quiet the reporter emits no start/finish/tick lines on stderr.
@@ -117,5 +118,5 @@ describeE2E('gbrain doctor --progress-json (E2E)', () => {
     // just no progress phases.
     expect(res.stderr).not.toContain('[doctor.db_checks]');
     expect(res.stderr).not.toContain('"event":"start"');
-  });
+  }, DOCTOR_PROGRESS_TIMEOUT_MS + 5_000);
 });

@@ -8,7 +8,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runSearch } from '../src/commands/search.ts';
-import { recordSearchTelemetry, _resetTelemetryWriterForTest, getTelemetryWriter } from '../src/core/search/telemetry.ts';
+import { recordSearchTelemetry, _resetTelemetryWriterForTest, getTelemetryWriter, TELEMETRY_COVERAGE_CAVEAT } from '../src/core/search/telemetry.ts';
 import type { HybridSearchMeta } from '../src/core/types.ts';
 
 let engine: PGLiteEngine;
@@ -165,6 +165,81 @@ describe('gbrain search stats', () => {
     const outBig = await captureRun(() => runSearch(engine, ['stats', '--days', '9999', '--json']));
     expect(JSON.parse(outBig).window_days).toBe(365);
   });
+
+  // Coverage disclosure: short-lived CLI search calls typically don't
+  // survive the telemetry flush timer/threshold, so `search stats` must
+  // say so instead of presenting the (possibly CLI-blind) count as total.
+  test('--json includes a coverage disclosure (empty table)', async () => {
+    const out = await captureRun(() => runSearch(engine, ['stats', '--json']));
+    const stats = JSON.parse(out);
+    expect(stats.coverage).toBeDefined();
+    expect(stats.coverage.cli_invocations).toBe('typically_not_recorded');
+    // Pin the substance, not just presence — an inaccurate reason string
+    // (e.g. "long-lived processes only") must fail this test.
+    expect(stats.coverage.reason).toMatch(/short-lived CLI/i);
+    expect(stats.coverage.reason).toMatch(/typically.*not recorded|not.*typically recorded/i);
+  });
+
+  test('--json includes a coverage disclosure (non-empty table)', async () => {
+    const w = getTelemetryWriter();
+    w.setEngine(engine);
+    recordSearchTelemetry(engine, makeMeta({ cache: { status: 'hit' } }), { results_count: 5 });
+    await w.flush();
+
+    const out = await captureRun(() => runSearch(engine, ['stats', '--json']));
+    const stats = JSON.parse(out);
+    expect(stats.coverage.cli_invocations).toBe('typically_not_recorded');
+  });
+
+  // Wording-accuracy pin, independent of the TELEMETRY_COVERAGE_NOTE import:
+  // importing the same constant into production code and the assertion
+  // would let an inaccurate edit to the constant sail through unnoticed
+  // (round-1 review caught exactly this class of bug — "long-lived
+  // processes only" overclaimed and dropped `jobs work`). Hardcode the
+  // substance here instead of comparing production output to itself.
+  test('--json coverage.reason names all three long-lived process kinds + the threshold exception', async () => {
+    const out = await captureRun(() => runSearch(engine, ['stats', '--json']));
+    const reason: string = JSON.parse(out).coverage.reason;
+    expect(reason).toMatch(/gbrain serve/i);
+    expect(reason).toMatch(/mcp/i);
+    expect(reason).toMatch(/jobs work/i);
+    expect(reason).toMatch(/short-lived CLI/i);
+    // Must not claim CLI calls are NEVER recorded — a bulk CLI run that
+    // itself crosses the 100-call flush threshold before exiting IS
+    // captured, so the wording must hedge ("typically"/"usually"), not
+    // assert absolute exclusivity ("only"/"never").
+    expect(reason).toMatch(/typically|usually/i);
+    expect(reason).not.toMatch(/\bonly\b/i);
+    expect(reason).not.toMatch(/\bnever\b/i);
+  });
+
+  test('human output surfaces the exact coverage caveat (empty table)', async () => {
+    const out = await captureRun(() => runSearch(engine, ['stats']));
+    // Pin the literal shared constant — proves the display layer isn't
+    // paraphrasing (and risking drift on) the buffering caveat.
+    expect(out).toContain(TELEMETRY_COVERAGE_CAVEAT);
+    expect(out.toLowerCase()).toContain('coverage gap above');
+  });
+
+  // Same independent-wording-pin rationale as the --json test above,
+  // applied to the short human caveat.
+  test('human coverage caveat names long-lived processes + jobs work + the hedge word, independent of the import', async () => {
+    const out = await captureRun(() => runSearch(engine, ['stats']));
+    expect(out).toMatch(/favors long-lived processes/i);
+    expect(out).toMatch(/jobs work/i);
+    expect(out).toMatch(/typically not recorded/i);
+    expect(out).not.toMatch(/only long-lived processes/i);
+  });
+
+  test('human output surfaces the exact coverage caveat (non-empty table)', async () => {
+    const w = getTelemetryWriter();
+    w.setEngine(engine);
+    recordSearchTelemetry(engine, makeMeta({ cache: { status: 'hit' } }), { results_count: 5 });
+    await w.flush();
+
+    const out = await captureRun(() => runSearch(engine, ['stats']));
+    expect(out).toContain(TELEMETRY_COVERAGE_CAVEAT);
+  });
 });
 
 describe('gbrain search tune (recommendations)', () => {
@@ -173,6 +248,26 @@ describe('gbrain search tune (recommendations)', () => {
     const r = JSON.parse(out);
     expect(r.status).toBe('insufficient_data');
     expect(r.recommendations).toEqual([]);
+  });
+
+  // Coverage disclosure: `tune`'s recommendations are only as complete as
+  // the telemetry they're read from — same caveat as `search stats`.
+  test('insufficient data → --json includes coverage disclosure', async () => {
+    const out = await captureRun(() => runSearch(engine, ['tune', '--json']));
+    const r = JSON.parse(out);
+    expect(r.coverage).toBeDefined();
+    expect(r.coverage.cli_invocations).toBe('typically_not_recorded');
+    expect(r.coverage.reason).toMatch(/short-lived CLI/i);
+  });
+
+  test('insufficient data → human output notes the exact coverage caveat', async () => {
+    const out = await captureRun(() => runSearch(engine, ['tune']));
+    expect(out).toContain(TELEMETRY_COVERAGE_CAVEAT);
+    // The old copy told the user to "run a few `gbrain query` calls" to fix
+    // a zero count — that's misleading advice given the caveat (a single
+    // CLI call is exactly what tends NOT to be recorded). Pin the corrected
+    // suggestion instead.
+    expect(out).toMatch(/gbrain serve.*or an MCP session/i);
   });
 
   test('conservative + high budget drop rate → recommends balanced', async () => {
@@ -194,6 +289,25 @@ describe('gbrain search tune (recommendations)', () => {
     const modeRec = r.recommendations.find((x: { knob: string }) => x.knob === 'search.mode');
     expect(modeRec).toBeDefined();
     expect(modeRec.suggested).toBe('balanced');
+    // Coverage disclosure travels with real recommendations too, not just
+    // the insufficient-data early-return path.
+    expect(r.coverage.cli_invocations).toBe('typically_not_recorded');
+  });
+
+  test('has_recommendations → human output notes the exact coverage caveat', async () => {
+    await engine.setConfig('search.mode', 'conservative');
+    const w = getTelemetryWriter();
+    w.setEngine(engine);
+    for (let i = 0; i < 30; i++) {
+      recordSearchTelemetry(engine, makeMeta({
+        mode: 'conservative',
+        token_budget: { budget: 4000, used: 4000, kept: 5, dropped: 5 },
+      }), { results_count: 5 });
+    }
+    await w.flush();
+
+    const out = await captureRun(() => runSearch(engine, ['tune']));
+    expect(out).toContain(TELEMETRY_COVERAGE_CAVEAT);
   });
 
   test('tokenmax + Haiku subagent → recommends balanced', async () => {

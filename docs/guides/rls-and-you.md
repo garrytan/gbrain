@@ -34,35 +34,35 @@ docs/guides/rls-and-you.md for the GBRAIN:RLS_EXEMPT comment escape hatch.
 
 99% of the time, you want the fix. Run the SQL. Re-run `gbrain doctor`. Done.
 
-## v0.26.7 — auto-RLS event trigger and one-time backfill
+## Auto-RLS: the event trigger and the one-time backfill
 
-Starting in v0.26.7 (migration v35), gbrain ships two changes that close the
-gap where a table could exist in your `public` schema without RLS for any
-amount of time at all.
+gbrain ships two mechanisms (schema migration v35) that close the gap where a
+table could exist in your `public` schema without RLS for any amount of time
+at all.
 
 **1. The event trigger.** A Postgres DDL event trigger named
 `auto_rls_on_create_table` runs `ALTER TABLE … ENABLE ROW LEVEL SECURITY`
 on every newly created `public.*` table. It covers `CREATE TABLE`,
 `CREATE TABLE AS … SELECT`, and `SELECT … INTO` — every syntax Postgres
 reports as a table-creation command. Tables created by gbrain itself, by
-your other apps sharing the same Supabase project (Baku, Hermes, anything),
-or by a human running raw SQL all get RLS enabled the moment they exist.
+any other app sharing the same Supabase project, or by a human running raw
+SQL all get RLS enabled the moment they exist.
 Non-`public` schemas (`auth`, `storage`, `realtime`, etc.) are explicitly
 ignored — Supabase manages those, and we should not touch them.
 
-**2. The one-time backfill.** When you upgrade to v0.26.7, the migration
+**2. The one-time backfill.** The first upgrade that applies migration v35
 walks every existing `public.*` base table whose RLS is off and whose comment
 doesn't carry the `GBRAIN:RLS_EXEMPT` exemption (see below) and enables RLS
 on each. After the upgrade, `gbrain doctor`'s `rls` check should be a no-op
 on every brain.
 
-### Breaking change: read this before upgrading
+### Read this before upgrading a pre-auto-RLS brain
 
 If you have public tables that are intentionally RLS-off and you want them
 to stay that way, you MUST add the `GBRAIN:RLS_EXEMPT` comment **before**
-running `gbrain upgrade` to v0.26.7. The backfill flips RLS on for any public
-table that doesn't carry the exact comment contract documented below. There
-is no `--dry-run` flag on the migration.
+the upgrade that applies migration v35. The backfill flips RLS on for any
+public table that doesn't carry the exact comment contract documented below.
+There is no `--dry-run` flag on the migration.
 
 The minimum cost of getting this wrong is one round-trip: the operator runs
 the SQL to enable RLS on a table that should have been exempt, then
@@ -71,7 +71,7 @@ prevent a re-flip on a later doctor run. No data is lost.
 
 ### Cross-app implications
 
-If a non-gbrain app (Baku, Hermes, a script you wrote, anything) creates
+If a non-gbrain app (a side project, a script you wrote, anything) creates
 tables in the same Supabase project, the trigger will enable RLS on those
 tables too. Two ways to handle that:
 
@@ -90,17 +90,40 @@ ship a policy.
 
 ### What if the trigger gets dropped?
 
-`gbrain doctor` includes a new `rls_event_trigger` check that verifies the
+`gbrain doctor` includes an `rls_event_trigger` check that verifies the
 trigger is installed and enabled. If you drop it manually for any reason
-(debugging, migration testing, anything), doctor warns and gives you the
-recovery command:
+(debugging, migration testing, anything), doctor warns and points you here.
 
-```
-gbrain apply-migrations --force-retry 35
+Recreate it by re-running the trigger DDL from migration v35 — idempotent
+(`CREATE OR REPLACE` + `DROP EVENT TRIGGER IF EXISTS`), safe to paste into
+psql as a BYPASSRLS role (e.g. `postgres`):
+
+```sql
+CREATE OR REPLACE FUNCTION auto_enable_rls()
+RETURNS event_trigger AS $$
+DECLARE
+  obj record;
+BEGIN
+  FOR obj IN SELECT * FROM pg_event_trigger_ddl_commands()
+    WHERE object_type = 'table'
+    AND schema_name = 'public'
+  LOOP
+    EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', obj.object_identity);
+  END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP EVENT TRIGGER IF EXISTS auto_rls_on_create_table;
+CREATE EVENT TRIGGER auto_rls_on_create_table
+  ON ddl_command_end
+  WHEN TAG IN ('CREATE TABLE', 'CREATE TABLE AS', 'SELECT INTO')
+  EXECUTE FUNCTION auto_enable_rls();
 ```
 
-Re-running migration v35 is idempotent — it `DROP EVENT TRIGGER IF EXISTS`
-and recreates cleanly.
+(This is the same DDL migration v35 runs — the canonical copy lives in the
+`MIGRATIONS` array in `src/core/migrate.ts`. There's no CLI shortcut:
+`gbrain apply-migrations --force-retry` targets the vX.Y.Z orchestrator
+registry, not numeric schema migrations like v35.)
 
 ### Why no FORCE ROW LEVEL SECURITY?
 
@@ -147,7 +170,7 @@ Rules:
 ```sql
 ALTER TABLE public.expenses_ramp DISABLE ROW LEVEL SECURITY;
 COMMENT ON TABLE public.expenses_ramp IS
-  'GBRAIN:RLS_EXEMPT reason=analytics-only, anon-readable ok, owner=garry, 2026-04-22';
+  'GBRAIN:RLS_EXEMPT reason=analytics-only, anon-readable ok, owner=you, 2026-04-22';
 ```
 
 After that, `gbrain doctor` reports:

@@ -77,6 +77,21 @@ describe('self-upgrade marker on a real invocation', () => {
     expect(stderr).not.toContain('UPGRADE_AVAILABLE');
   });
 
+  test('cache latest == running version → suppressed (no marker, no human sentence)', () => {
+    writeCache(`UPGRADE_AVAILABLE ${VERSION} ${VERSION}`);
+    const { stderr } = runGbrain('notify');
+    expect(stderr).not.toContain('UPGRADE_AVAILABLE');
+    expect(stderr).not.toContain('Run: gbrain self-upgrade');
+  });
+
+  test('foreign-writer cache → marker prints the RUNNING version, not the writer\'s', () => {
+    // An older gbrain on PATH wrote the cache: marker.current is 0.0.1, not us.
+    writeCache('UPGRADE_AVAILABLE 0.0.1 0.99.0');
+    const { stderr } = runGbrain('notify');
+    expect(stderr).toContain(`UPGRADE_AVAILABLE ${VERSION} 0.99.0`);
+    expect(stderr).not.toContain('UPGRADE_AVAILABLE 0.0.1');
+  });
+
   test('active snooze for the version → no marker (notify mode honors snooze)', () => {
     writeCache(`UPGRADE_AVAILABLE ${VERSION} 0.99.0`);
     // snooze record: "<version> <level> <epoch-ms>" — fresh ts so it's active.
