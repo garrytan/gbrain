@@ -167,6 +167,41 @@ describe('#4003 — `gbrain auth --help` reaches the detailed usage block', () =
   });
 });
 
+describe('#4083 follow-up — auth subcommand + --help shows usage, never executes', () => {
+  // Caught by automated PR review on #4083: once `auth` joined
+  // CLI_ONLY_SELF_HELP, the generic --help short-circuit in cli.ts stopped
+  // intercepting `gbrain auth <subcommand> --help` before it reached
+  // runAuth. Without an early --help check inside runAuth itself, a
+  // trailing --help on a real subcommand fell through to that
+  // subcommand's real handler instead of showing help — e.g. `gbrain auth
+  // create foo --help` would mint a real token named "foo".
+  test('`gbrain auth create <name> --help` shows usage, does not create a token', () => {
+    const { stdout, status } = runCli(['auth', 'create', 'definitely-not-a-real-token-name', '--help']);
+    expect(status).toBe(0);
+    expect(stdout).toContain('GBrain Token Management');
+    expect(stdout).not.toContain('Token created for');
+  });
+
+  test('`gbrain auth revoke <name> --help` shows usage, does not attempt a revoke', () => {
+    const { stdout, status } = runCli(['auth', 'revoke', 'definitely-not-a-real-token-name', '--help']);
+    expect(status).toBe(0);
+    expect(stdout).toContain('GBrain Token Management');
+  });
+
+  test('`gbrain auth register-client <name> --help` shows usage, does not register a client', () => {
+    const { stdout, status } = runCli(['auth', 'register-client', 'definitely-not-a-real-client', '--help']);
+    expect(status).toBe(0);
+    expect(stdout).toContain('GBrain Token Management');
+  });
+
+  test('-h works the same way as --help on a subcommand', () => {
+    const { stdout, status } = runCli(['auth', 'create', 'definitely-not-a-real-token-name', '-h']);
+    expect(status).toBe(0);
+    expect(stdout).toContain('GBrain Token Management');
+    expect(stdout).not.toContain('Token created for');
+  });
+});
+
 describe('#3834 — extract flags are discoverable from both help surfaces', () => {
   const implementedFlags = [
     '--by-mention',
