@@ -154,6 +154,11 @@ const CLI_ONLY_SELF_HELP = new Set([
   // would leave that help dead code behind the generic stub (the init.ts:117
   // trap ENG-2 names).
   'bootstrap', 'hook', 'sweep',
+  // #4003: auth ships its own detailed usage (token/OAuth-client commands +
+  // flags) in its `default:` switch case, hit whenever the subcommand isn't
+  // one of create/list/revoke/etc — including --help. Without this entry the
+  // generic short-circuit fires first and that usage block is dead code.
+  'auth',
 ]);
 
 /**
@@ -3205,6 +3210,9 @@ ADMIN
     --public-url URL                 Public issuer URL (required behind proxy/tunnel)
   connect <mcp-url> --token <t>      Wire Claude Code to a remote gbrain (bearer token)
         [--install] [--json]         Print the paste-ready command, or --install to run it
+  auth <create|list|revoke|...>      Manage legacy tokens + OAuth 2.1 clients
+  auth --help                        Full subcommand list (register-client,
+                                     rescope-client, revoke-client, permissions, test, ...)
   watch [--json]                     Push-based context: pipe conversation turns in,
                                      volunteered brain pages stream out (#2095)
   call <tool> '<json>'               Raw tool invocation
