@@ -1841,6 +1841,9 @@ export async function hybridSearchCached(
     // resolves) into the cache key so a row written under one exclude
     // policy can't be served to a lookup under another.
     hardExcludes: resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes),
+    // Compact scout results and hydrated evidence results have different
+    // shapes and must occupy different semantic-cache rows.
+    detail: opts?.detail ?? autoDetectDetail(query),
   });
 
   // Cache decision: opts.useCache (explicit) wins over global config; global

@@ -1,0 +1,11 @@
+node_modules
+.git
+docs
+evals
+examples
+test
+tests
+*.log
+.env
+.env.*
+fly.toml

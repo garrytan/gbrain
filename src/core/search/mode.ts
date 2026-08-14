@@ -779,7 +779,11 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // to cache.ttl_seconds, with no warning and no way for an operator to tell.
 // Same one-time global cold-miss pattern as the bumps above; refills within
 // cache.ttl_seconds (3600s default).
-export const KNOBS_HASH_VERSION = 15;
+//
+// bump 15→16 (#3515): `detail` folds into the key via ctx.detail (det=).
+// Detail changes the result shape, so a compact scout lookup must never
+// contaminate a later evidence-hydration lookup (or vice versa).
+export const KNOBS_HASH_VERSION = 16;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -818,6 +822,8 @@ export interface KnobsHashContext {
    * 'none' for legacy callers that don't thread excludes.
    */
   hardExcludes?: string[];
+  /** Effective result detail for this call. Undefined is the medium default. */
+  detail?: 'low' | 'medium' | 'high';
 }
 
 export function knobsHash(
@@ -921,6 +927,8 @@ export function knobsHash(
     // memoizes and validates against /^[a-z][a-z0-9_]*$/, so this stays a
     // cheap, bounded string.
     `fts=${getFtsLanguage()}`,
+    // v=16 addition: compact scout and hydrated evidence rows are isolated.
+    `det=${ctx?.detail ?? 'medium'}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));
@@ -1192,4 +1200,3 @@ export async function loadSearchModeConfig(
     overrides: loadOverridesFromConfig(configMap),
   };
 }
-

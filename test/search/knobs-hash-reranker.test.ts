@@ -71,7 +71,7 @@ describe('KNOBS_HASH_VERSION + version invariants', () => {
     // name (fts=). It retokenizes both the trigger-built search_vector and
     // the query-side tsquery, so rows written under the previous language
     // must not survive a `reindex-search-vector` language switch.
-    expect(KNOBS_HASH_VERSION).toBe(15);
+    expect(KNOBS_HASH_VERSION).toBe(16);
   });
 
   test('hash is 16 hex chars regardless of reranker config', () => {

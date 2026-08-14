@@ -73,14 +73,28 @@ const MODEL_CONTEXT_TOKENS: Record<string, number> = {
 const CHARS_PER_TOKEN = 3.5;
 /** Reserve 10% of context window for system prompt + tool defs + output. */
 const HEADROOM_RATIO = 0.9;
-/** Floor on user-overridable max_prompt_tokens (matches PR #748 minimum). */
-const MIN_PROMPT_TOKENS = 100_000;
+/**
+ * Floor on user-overridable max_prompt_tokens. The former 100K floor made a
+ * configured 30K ceiling a silent no-op and routinely shipped whole meeting
+ * transcripts to the model. Eight thousand still leaves room for a useful
+ * evidence packet while allowing operators to bound background work.
+ */
+const MIN_PROMPT_TOKENS = 8_000;
 /** Default chunk-count cap; operator-configurable via dream.synthesize.max_chunks_per_transcript. */
 const DEFAULT_MAX_CHUNKS = 24;
 /** Conservative default budget when model is unknown (200K × HEADROOM_RATIO). */
 const UNKNOWN_MODEL_BUDGET_TOKENS = 180_000;
 const DEFAULT_SUBAGENT_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_SUBAGENT_WAIT_TIMEOUT_MS = 35 * 60 * 1000;
+
+type SynthesisDepth = 'standard' | 'deep';
+
+const DREAM_ALLOWED_TOOLS = ['query', 'get_page', 'put_page'] as const;
+
+const DREAM_SYSTEM_PROMPT =
+  'You are gBrain\'s Dream synthesis editor. Preserve durable insight, not transcript volume. ' +
+  'Use the smallest sufficient evidence set, write useful pages through put_page, and never ' +
+  'substitute a long prose answer for the requested database write.';
 
 /**
  * Compute per-chunk character budget for the resolved model + config override.
@@ -464,6 +478,7 @@ export async function runPhaseSynthesize(
 
     // Significance verdicts (cached in dream_verdicts; Haiku on miss).
     const worthProcessing: DiscoveredTranscript[] = [];
+    const depthByPath = new Map<string, SynthesisDepth>();
     const verdicts: Array<{ filePath: string; worth: boolean; reasons: string[]; cached: boolean }> = [];
     // Provider-aware judge client routes through gateway.chat, so any
     // configured provider works (Anthropic, DeepSeek, OpenRouter, Voyage,
@@ -475,7 +490,10 @@ export async function runPhaseSynthesize(
       const cached = await engine.getDreamVerdict(t.filePath, t.contentHash);
       if (cached) {
         verdicts.push({ filePath: t.filePath, worth: cached.worth_processing, reasons: cached.reasons, cached: true });
-        if (cached.worth_processing) worthProcessing.push(t);
+        if (cached.worth_processing) {
+          worthProcessing.push(t);
+          depthByPath.set(t.filePath, inferSynthesisDepth(t, cached.reasons));
+        }
         continue;
       }
       if (!judge) {
@@ -493,7 +511,10 @@ export async function runPhaseSynthesize(
         const verdict = await judgeSignificance(judge, t, config.verdictModel);
         await engine.putDreamVerdict(t.filePath, t.contentHash, verdict);
         verdicts.push({ filePath: t.filePath, worth: verdict.worth_processing, reasons: verdict.reasons, cached: false });
-        if (verdict.worth_processing) worthProcessing.push(t);
+        if (verdict.worth_processing) {
+          worthProcessing.push(t);
+          depthByPath.set(t.filePath, inferSynthesisDepth(t, verdict.reasons, verdict.depth));
+        }
       } catch (e) {
         // AIConfigError at chat time = provider auth/config went bad mid-run
         // (revoked key, recipe misconfig surfacing at first real call). Skip
@@ -590,7 +611,12 @@ export async function runPhaseSynthesize(
         continue;
       }
 
-      const chunks = splitTranscriptByBudget(t.content, t.contentHash, maxCharsPerChunk);
+      const preparedContent = prepareTranscriptForSynthesis(t);
+      const chunks = splitTranscriptByBudget(preparedContent, t.contentHash, maxCharsPerChunk);
+      const depth = depthByPath.get(t.filePath) ?? inferSynthesisDepth(t, []);
+      const maxTurns = depth === 'deep' ? config.deepMaxTurns : config.standardMaxTurns;
+      const maxTokens = depth === 'deep' ? config.deepMaxTokens : config.standardMaxTokens;
+      const maxPages = depth === 'deep' ? config.deepMaxPages : config.standardMaxPages;
 
       // D5 cap hit: log + skip; do NOT write to dream_verdicts. Closes the
       // poison-pill class — next cycle re-attempts under whatever budget
@@ -621,9 +647,21 @@ export async function runPhaseSynthesize(
           : config.model;
       for (let i = 0; i < chunks.length; i++) {
         const childData: SubagentHandlerData = {
-          prompt: buildSynthesisPrompt(t, chunks[i], i, chunks.length, priorContradictionsBlock, config.outputRoot),
+          prompt: buildSynthesisPrompt(
+            t,
+            chunks[i],
+            i,
+            chunks.length,
+            priorContradictionsBlock,
+            config.outputRoot,
+            depth,
+            maxPages,
+          ),
           model: subagentModel,
-          max_turns: 30,
+          max_turns: maxTurns,
+          max_tokens: maxTokens,
+          allowed_tools: [...DREAM_ALLOWED_TOOLS],
+          system: DREAM_SYSTEM_PROMPT,
           allowed_slug_prefixes: allowedSlugPrefixes,
           // #1586: scope every child tool call to the cycle's resolved source
           // so put_page writes land there instead of the hardcoded 'default'.
@@ -724,6 +762,9 @@ export async function runPhaseSynthesize(
 
     const ms = Date.now() - start;
     const submittedTranscripts = worthProcessing.length - skipReports.length;
+    const deepTranscripts = worthProcessing.filter(
+      t => depthByPath.get(t.filePath) === 'deep' && !skipReports.some(s => s.filePath === t.filePath),
+    ).length;
     return ok(`${submittedTranscripts} transcript(s) synthesized in ${(ms / 1000).toFixed(1)}s`, {
       transcripts_discovered: transcripts.length,
       transcripts_processed: submittedTranscripts,
@@ -733,6 +774,10 @@ export async function runPhaseSynthesize(
       // synthesize wrote in this cycle.
       written_slugs: writtenSlugs,
       reverse_write_count: reverseWriteCount,
+      synthesis_depth: {
+        standard_transcripts: submittedTranscripts - deepTranscripts,
+        deep_transcripts: deepTranscripts,
+      },
       child_outcomes: childOutcomes,
       // Children submitted (one per chunk for chunked transcripts; one per
       // transcript for single-chunk). Differs from transcripts_processed
@@ -783,6 +828,14 @@ interface SynthConfig {
   outputRoot: string;
   subagentTimeoutMs: number;
   subagentWaitTimeoutMs: number;
+  /** Standard background synthesis: intentionally compact. */
+  standardMaxTurns: number;
+  standardMaxTokens: number;
+  standardMaxPages: number;
+  /** High-salience synthesis: enough room for chief-of-staff-grade analysis. */
+  deepMaxTurns: number;
+  deepMaxTokens: number;
+  deepMaxPages: number;
 }
 
 /** #2415: shared output-root resolution (synthesize + patterns phases). */
@@ -835,6 +888,36 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
     'dream.synthesize.subagent_wait_timeout_ms',
     DEFAULT_SUBAGENT_WAIT_TIMEOUT_MS,
   );
+  const standardMaxTurns = Math.max(2, Math.floor(await getNumberConfig(
+    engine,
+    'dream.synthesize.standard_max_turns',
+    4,
+  )));
+  const standardMaxTokens = Math.max(1024, Math.floor(await getNumberConfig(
+    engine,
+    'dream.synthesize.standard_max_tokens',
+    4096,
+  )));
+  const standardMaxPages = Math.max(1, Math.floor(await getNumberConfig(
+    engine,
+    'dream.synthesize.standard_max_pages',
+    2,
+  )));
+  const deepMaxTurns = Math.max(standardMaxTurns, Math.floor(await getNumberConfig(
+    engine,
+    'dream.synthesize.deep_max_turns',
+    10,
+  )));
+  const deepMaxTokens = Math.max(standardMaxTokens, Math.floor(await getNumberConfig(
+    engine,
+    'dream.synthesize.deep_max_tokens',
+    8192,
+  )));
+  const deepMaxPages = Math.max(standardMaxPages, Math.floor(await getNumberConfig(
+    engine,
+    'dream.synthesize.deep_max_pages',
+    6,
+  )));
 
   let excludePatterns: string[] = ['medical', 'therapy'];
   if (excludeStr) {
@@ -875,6 +958,12 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
     outputRoot: await loadOutputRoot(engine),
     subagentTimeoutMs,
     subagentWaitTimeoutMs,
+    standardMaxTurns,
+    standardMaxTokens,
+    standardMaxPages,
+    deepMaxTurns,
+    deepMaxTokens,
+    deepMaxPages,
   };
 }
 
@@ -1040,6 +1129,7 @@ export function makeJudgeClient(verdictModel: string): JudgeClient | null {
 interface VerdictResult {
   worth_processing: boolean;
   reasons: string[];
+  depth: SynthesisDepth;
 }
 
 export async function judgeSignificance(
@@ -1085,7 +1175,11 @@ NOT WORTH PROCESSING (return worth_processing=false):
 - Short message exchanges with no original thought
 - Repetitive content the brain already has
 
-Respond as JSON: {"worth_processing": <bool>, "reasons": ["<short>", "<short>"]}.
+DEPTH:
+- standard: a useful update, operating lesson, or bounded reflection
+- deep: a consequential decision, original thesis, repeated personal pattern, strategic synthesis, or rich self-reflection
+
+Respond as JSON: {"worth_processing": <bool>, "depth": "standard"|"deep", "reasons": ["<short>", "<short>"]}.
 Two reasons max, one phrase each.`;
 
   const msg = await client.create({
@@ -1101,20 +1195,50 @@ Two reasons max, one phrase each.`;
       const m = /\{[\s\S]*\}/.exec(text);
       if (!m) continue;
       try {
-        const parsed = JSON.parse(m[0]) as { worth_processing?: unknown; reasons?: unknown };
+        const parsed = JSON.parse(m[0]) as { worth_processing?: unknown; depth?: unknown; reasons?: unknown };
         const worth = parsed.worth_processing === true;
         const reasons = Array.isArray(parsed.reasons)
           ? parsed.reasons.filter((r): r is string => typeof r === 'string').slice(0, 4)
           : [];
-        return { worth_processing: worth, reasons };
+        const depth: SynthesisDepth = parsed.depth === 'deep' ? 'deep' : 'standard';
+        return { worth_processing: worth, reasons, depth };
       } catch { /* fall through */ }
     }
   }
   // Couldn't parse — default to NOT processing (cheap fallback).
-  return { worth_processing: false, reasons: ['judge response unparseable'] };
+  return { worth_processing: false, reasons: ['judge response unparseable'], depth: 'standard' };
 }
 
 // ── Subagent prompt ──────────────────────────────────────────────────
+
+/**
+ * Granola files already contain a curated summary and commitments before the
+ * verbatim `## Transcript` appendix. Dream should reason over that high-signal
+ * packet instead of paying to reread the raw transcript. The raw-content hash
+ * remains the idempotency identity, so an edited source still gets reconsidered.
+ */
+export function prepareTranscriptForSynthesis(t: DiscoveredTranscript): string {
+  const isMeeting = /(?:^|[/\\])raw[/\\]meetings(?:[/\\]|$)/i.test(t.filePath) ||
+    /(?:^|-)granola(?:-|$)/i.test(t.basename);
+  if (!isMeeting) return t.content;
+  const marker = /\n## Transcript\s*\r?\n/i.exec(t.content);
+  if (!marker || marker.index < 800) return t.content;
+  return t.content.slice(0, marker.index).trimEnd() +
+    '\n\n[Verbatim transcript omitted: Dream used the source commitments and curated meeting summary.]\n';
+}
+
+/** Cached pre-depth verdicts still escalate when their reasons or filename are clearly strategic. */
+export function inferSynthesisDepth(
+  t: DiscoveredTranscript,
+  reasons: string[],
+  judgedDepth?: SynthesisDepth,
+): SynthesisDepth {
+  if (judgedDepth === 'deep') return 'deep';
+  const signal = `${t.basename} ${reasons.join(' ')}`.toLowerCase();
+  return /(strateg|decision|thesis|mental model|original idea|reflection|personal pattern|emotion|brain session|quarterly|business review|acquisition)/i.test(signal)
+    ? 'deep'
+    : 'standard';
+}
 
 /**
  * Build the prompt for one subagent. When `chunkTotal > 1`, the slug seed
@@ -1177,6 +1301,8 @@ function buildSynthesisPrompt(
   chunkTotal: number,
   priorContradictionsBlock = '',
   outputRoot = 'wiki',
+  depth: SynthesisDepth = 'standard',
+  maxPages = 2,
 ): string {
   const dateHint = t.inferredDate ?? today();
   const baseSlugSegment = sanitizeForSlug(t.basename) || `session-${dateHint}`;
@@ -1197,12 +1323,20 @@ CONTEXT
 - Transcript hash suffix (USE THIS in slugs): ${hashSuffix}
 - Source file basename: ${baseSlugSegment}${chunkBanner}${priorContradictionsBlock}
 
+SYNTHESIS DEPTH: ${depth.toUpperCase()}
+- ${depth === 'deep'
+    ? 'Develop the implications, tensions, counterarguments, and decisions this material supports. Depth is welcome when it produces durable judgment.'
+    : 'Capture the durable update or lesson compactly. Do not inflate routine material into a thesis.'}
+
 OUTPUT POLICY (ALL of these are required)
-1. Quote the user verbatim. Do not paraphrase memorable phrasings.
-2. Cross-reference compulsively: every new page MUST contain at least one wikilink (e.g., \`[ref](people/jane-doe)\` or \`[[people/jane-doe]]\`) to existing brain content. Use the search tool to find existing pages first.
-3. Do NOT write to any path outside the allow-list shown in the put_page schema.
-4. Slug discipline: lowercase alphanumeric and hyphens only, slash-separated segments. NO underscores, NO file extensions.
-5. Self-contained opening: begin every new page's body with a 2-3 sentence summary that a reader unfamiliar with this transcript could understand on its own, before any quotes or detail. Do not assume the reader has the source conversation for context.
+1. Write at most ${maxPages} pages. Quality and durability beat coverage.
+2. Use \`query\` once with detail=low, limit=3, and expansion disabled to find the smallest relevant historical context set. Reuse it. Call \`get_page\` only for a result whose full evidence is load-bearing.
+3. Add only meaningful cross-references. Every written page needs at least one useful wikilink, but never link merely to satisfy density.
+4. Quote at most three memorable user phrasings. Paraphrase the rest accurately.
+5. Do NOT write outside the allow-list shown in the put_page schema.
+6. Slugs are lowercase alphanumeric and hyphens only, slash-separated, with no underscores or extensions.
+7. Begin each page with a self-contained 2-3 sentence compiled judgment, followed by evidence and implications.
+8. A page must be created through \`put_page\`. Never draft an unwritten page in the final response.
 
 TASKS
 A. Reflections (self-knowledge, pattern recognition, emotional processing):
@@ -1213,14 +1347,14 @@ B. Originals (new ideas, frames, theses, mental models):
 
 C. People mentions: search first; if a page exists, do not put_page over it (the orchestrator handles people enrichment via timeline entries — your job is the reflection/original synthesis, NOT modifying existing person pages).
 
-D. If nothing in this transcript meets the bar (significance filter already passed but the content is still routine), return without writing anything.
+D. If nothing meets the bar, call no write tool and return exactly \`NO_WRITE\`.
 
 TRANSCRIPT (${transcriptHeader})
 ---
 ${chunkText}
 ---
 
-When done, briefly list the slugs you wrote in your final message so the orchestrator can audit.`;
+When done, list only the slugs written, in at most 100 tokens. Do not repeat page content in the final message.`;
 }
 
 function sanitizeForSlug(s: string): string {

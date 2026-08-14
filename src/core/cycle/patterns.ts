@@ -195,7 +195,11 @@ export async function runPhasePatterns(
     const data: SubagentHandlerData = {
       prompt: buildPatternsPrompt(reflections, config.minEvidence, config.sourceSlugPrefix, config.outputSlugPrefix),
       model: config.model,
-      max_turns: 30,
+      max_turns: config.maxTurns,
+      max_tokens: config.maxTokens,
+      allowed_tools: ['query', 'get_page', 'put_page'],
+      system:
+        'You are gBrain\'s longitudinal pattern analyst. Prefer a few well-evidenced patterns over broad thematic summaries. Write through put_page; never return an unwritten draft.',
       allowed_slug_prefixes: allowedSlugPrefixes,
     };
     const submitOpts: Partial<MinionJobInput> = {
@@ -325,6 +329,8 @@ interface PatternsConfig {
   subagentTimeoutMs: number;
   /** #1594-family: waitForCompletion timeout, config `dream.patterns.subagent_wait_timeout_ms`. */
   subagentWaitTimeoutMs: number;
+  maxTurns: number;
+  maxTokens: number;
 }
 
 const DEFAULT_PATTERNS_SUBAGENT_TIMEOUT_MS = 30 * 60 * 1000;
@@ -377,6 +383,12 @@ async function loadPatternsConfig(engine: BrainEngine): Promise<PatternsConfig> 
     subagentWaitTimeoutMs: await getNumberConfig(
       engine, 'dream.patterns.subagent_wait_timeout_ms', DEFAULT_PATTERNS_SUBAGENT_WAIT_TIMEOUT_MS,
     ),
+    maxTurns: Math.max(3, Math.floor(await getNumberConfig(
+      engine, 'dream.patterns.max_turns', 8,
+    ))),
+    maxTokens: Math.max(2048, Math.floor(await getNumberConfig(
+      engine, 'dream.patterns.max_tokens', 8192,
+    ))),
   };
 }
 
@@ -430,7 +442,7 @@ function buildPatternsPrompt(
 OUTPUT POLICY
 - Only name a pattern if it appears in at least ${minEvidence} DISTINCT reflections.
 - Each pattern page MUST cite the reflections that constitute its evidence (use [[${sourceSlugPrefix}/...]] wikilinks).
-- Use \`search\` to check whether a similar pattern page already exists; if yes, update it (use the same slug). If no, create a new one.
+- Use \`query\` once with detail=low and limit=3 to check for an existing pattern. Hydrate a result only when it is load-bearing. If a similar page exists, update it; otherwise create one.
 - Pattern slug format: \`${outputSlugPrefix}/<topic-slug>\` (lowercase alphanumeric + hyphens; no underscores, no extension, no date).
 - A "pattern" is a recurring theme, anxiety, decision pattern, relationship dynamic, or self-knowledge motif. NOT a single insight. NOT a list of unrelated topics.
 
@@ -446,7 +458,7 @@ CONTEXT
 REFLECTIONS
 ${corpus}
 
-When done, briefly list the pattern slugs you wrote/updated in your final message.`;
+If no pattern clears the evidence bar, return exactly \`NO_WRITE\`. Otherwise list only the slugs written or updated, in at most 100 tokens.`;
 }
 
 // ── Provenance via put_page tool execution rows ─────────────────────

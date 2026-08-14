@@ -2561,6 +2561,62 @@ export async function checkFactsEmbeddingWidthConsistency(engine: BrainEngine): 
   }
 }
 
+/** Detect the silent cache-width drift that otherwise presents as 0% hits. */
+export async function checkQueryCacheEmbeddingWidthConsistency(engine: BrainEngine): Promise<Check> {
+  if (engine.kind !== 'postgres') {
+    return {
+      name: 'query_cache_embedding_width_consistency',
+      status: 'ok',
+      message: 'Skipped on PGLite (schema and gateway dimensions initialize together).',
+    };
+  }
+  try {
+    const {
+      readQueryCacheEmbeddingDim,
+      buildQueryCacheAlterRecipe,
+    } = await import('../core/embedding-dim-check.ts');
+    const col = await readQueryCacheEmbeddingDim(engine);
+    if (!col.exists) {
+      return {
+        name: 'query_cache_embedding_width_consistency',
+        status: 'ok',
+        message: 'query_cache.embedding is not present (migration pending).',
+      };
+    }
+    if (col.dims === null || col.columnType === null) {
+      return {
+        name: 'query_cache_embedding_width_consistency',
+        status: 'warn',
+        message: 'query_cache.embedding has an unrecognized vector type.',
+      };
+    }
+    const { getEmbeddingDimensions, getEmbeddingModel } = await import('../core/ai/gateway.ts');
+    const configuredDims = getEmbeddingDimensions();
+    const model = getEmbeddingModel();
+    if (col.dims === configuredDims) {
+      return {
+        name: 'query_cache_embedding_width_consistency',
+        status: 'ok',
+        message: `query_cache.embedding is ${col.columnType}(${col.dims}) and matches ${model}.`,
+      };
+    }
+    return {
+      name: 'query_cache_embedding_width_consistency',
+      status: 'warn',
+      message:
+        `query_cache.embedding is ${col.columnType}(${col.dims}) but the gateway produces ` +
+        `${configuredDims} dimensions (${model}). Cache writes are failing silently, causing a ` +
+        `permanent 0% hit rate.\n\n${buildQueryCacheAlterRecipe(configuredDims, col.columnType)}`,
+    };
+  } catch (e) {
+    return {
+      name: 'query_cache_embedding_width_consistency',
+      status: 'warn',
+      message: `Could not check query_cache.embedding width: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
 /**
  * v0.32.3 [CDX-20]: surface mode + per-key override drift.
  *
@@ -8085,6 +8141,8 @@ export async function buildChecks(
     // parity check. Same drift class as content_chunks, separate column.
     progress.heartbeat('facts_embedding_width_consistency');
     checks.push(await checkFactsEmbeddingWidthConsistency(engine));
+    progress.heartbeat('query_cache_embedding_width_consistency');
+    checks.push(await checkQueryCacheEmbeddingWidthConsistency(engine));
 
     // v0.37.7.0 doctor checks (#1167, #1166, #1226) — fast-mode skipped
     // since these touch DB queries with cost on large brains.

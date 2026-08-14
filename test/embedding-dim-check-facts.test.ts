@@ -20,6 +20,8 @@ import {
   buildFactsAlterRecipe,
   FactsEmbeddingDimMismatchError,
   assertFactsEmbeddingDimMatchesConfig,
+  readQueryCacheEmbeddingDim,
+  buildQueryCacheAlterRecipe,
 } from '../src/core/embedding-dim-check.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { readFileSync } from 'fs';
@@ -34,6 +36,8 @@ function makeStubEngine(opts: {
   kind: 'postgres' | 'pglite';
   factsExists?: boolean;
   factsFormatted?: string | null;
+  queryCacheExists?: boolean;
+  queryCacheFormatted?: string | null;
 }): BrainEngine {
   const exists = opts.factsExists ?? false;
   const formatted = opts.factsFormatted ?? null;
@@ -45,6 +49,12 @@ function makeStubEngine(opts: {
       }
       if (sql.includes('format_type') && sql.includes("'facts'")) {
         return [{ formatted }] as unknown as T[];
+      }
+      if (sql.includes('information_schema.columns') && sql.includes("'query_cache'")) {
+        return [{ exists: opts.queryCacheExists ?? false }] as unknown as T[];
+      }
+      if (sql.includes('format_type') && sql.includes("'query_cache'")) {
+        return [{ formatted: opts.queryCacheFormatted ?? null }] as unknown as T[];
       }
       return [] as T[];
     },
@@ -108,6 +118,28 @@ describe('readFactsEmbeddingDim', () => {
     const r = await readFactsEmbeddingDim(eng);
     expect(r.columnType).toBe('halfvec');
     expect(r.dims).toBe(1280);
+  });
+});
+
+describe('query-cache embedding width drift', () => {
+  test('reads the pinned query-cache width', async () => {
+    const eng = makeStubEngine({
+      kind: 'postgres',
+      queryCacheExists: true,
+      queryCacheFormatted: 'halfvec(1536)',
+    });
+    expect(await readQueryCacheEmbeddingDim(eng)).toEqual({
+      exists: true,
+      dims: 1536,
+      columnType: 'halfvec',
+    });
+  });
+
+  test('repair recipe clears only the disposable cache before resizing', () => {
+    const recipe = buildQueryCacheAlterRecipe(768, 'halfvec');
+    expect(recipe).toMatch(/TRUNCATE TABLE query_cache[\s\S]*halfvec\(768\)/);
+    expect(recipe).toContain('halfvec_cosine_ops');
+    expect(recipe).not.toContain('facts');
   });
 });
 
@@ -212,6 +244,11 @@ describe('doctor checkFactsEmbeddingWidthConsistency wiring (T6)', () => {
     expect(DOC_SRC).toMatch(
       /export\s+async\s+function\s+checkFactsEmbeddingWidthConsistency/,
     );
+  });
+
+  test('doctor surfaces query-cache width drift too', () => {
+    expect(DOC_SRC).toMatch(/checkQueryCacheEmbeddingWidthConsistency/);
+    expect(DOC_SRC).toMatch(/readQueryCacheEmbeddingDim/);
   });
 
   test('check is registered in runDoctor alongside the content_chunks check', () => {

@@ -592,6 +592,75 @@ export async function readFactsEmbeddingDim(engine: BrainEngine): Promise<FactsC
   return { exists: true, dims: null, columnType: null };
 }
 
+/**
+ * Read the semantic query-cache embedding width. This column is pinned to
+ * the text embedding space just like facts.embedding, but cache failures are
+ * deliberately swallowed on the hot path. Without a doctor surface, width
+ * drift therefore looks like a mysterious permanent 0% cache-hit rate.
+ */
+export async function readQueryCacheEmbeddingDim(engine: BrainEngine): Promise<FactsColumnDimResult> {
+  const existsRows = await engine.executeRaw<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'query_cache'
+         AND column_name = 'embedding'
+     ) AS exists`,
+  );
+  const exists = !!existsRows?.[0]?.exists;
+  if (!exists) return { exists: false, dims: null, columnType: null };
+
+  const formatRows = await engine.executeRaw<{ formatted: string | null }>(
+    `SELECT format_type(a.atttypid, a.atttypmod) AS formatted
+       FROM pg_attribute a
+       JOIN pg_class c ON c.oid = a.attrelid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public'
+        AND c.relname = 'query_cache'
+        AND a.attname = 'embedding'
+        AND NOT a.attisdropped`,
+  );
+  const formatted = formatRows?.[0]?.formatted ?? null;
+  if (!formatted) return { exists: true, dims: null, columnType: null };
+  const halfMatch = formatted.match(/halfvec\((\d+)\)/i);
+  if (halfMatch) {
+    return { exists: true, dims: parseInt(halfMatch[1], 10), columnType: 'halfvec' };
+  }
+  const vecMatch = formatted.match(/vector\((\d+)\)/i);
+  if (vecMatch) {
+    return { exists: true, dims: parseInt(vecMatch[1], 10), columnType: 'vector' };
+  }
+  return { exists: true, dims: null, columnType: null };
+}
+
+/** Safe repair recipe for a disposable semantic cache. */
+export function buildQueryCacheAlterRecipe(
+  configuredDims: number,
+  columnType: 'halfvec' | 'vector',
+): string {
+  const opclass = columnType === 'halfvec' ? 'halfvec_cosine_ops' : 'vector_cosine_ops';
+  const targetType = `${columnType}(${configuredDims})`;
+  const hnswMaxDims = hnswMaxDimsForType(columnType);
+  const indexLines = configuredDims <= hnswMaxDims
+    ? [
+        `CREATE INDEX idx_query_cache_embedding_hnsw`,
+        `  ON query_cache USING hnsw (embedding ${opclass})`,
+        `  WHERE embedding IS NOT NULL;`,
+      ]
+    : [
+        `-- Skip reindex. ${targetType} exceeds pgvector's HNSW cap of ${hnswMaxDims};`,
+        `-- semantic-cache similarity falls back to exact scans.`,
+      ];
+  return [
+    `-- query_cache is disposable; clear incompatible vectors before resizing.`,
+    `DROP INDEX IF EXISTS idx_query_cache_embedding_hnsw;`,
+    `TRUNCATE TABLE query_cache;`,
+    `ALTER TABLE query_cache ALTER COLUMN embedding TYPE ${targetType}`,
+    `  USING NULL::${targetType};`,
+    ...indexLines,
+  ].join('\n');
+}
+
 /** Tagged error thrown by `assertFactsEmbeddingDimMatchesConfig` on drift. */
 export class FactsEmbeddingDimMismatchError extends Error {
   readonly tag = 'FACTS_EMBEDDING_DIM_MISMATCH' as const;

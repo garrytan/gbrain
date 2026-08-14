@@ -748,6 +748,10 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
               const lastSyncMs = src.last_sync_at ? new Date(src.last_sync_at).getTime() : 0;
               const ageMs = now - lastSyncMs;
               if (ageMs < intervalMs) continue; // fresh enough
+              // Carried patch 2026-08-11: never dispatch sync from a host
+              // that cannot sync (see GBRAIN_SYNC_DISABLED in sync.ts).
+              // Stops the 90+/day dead-sync churn on the Fly worker.
+              if (process.env.GBRAIN_SYNC_DISABLED === '1') continue;
               try {
                 const job = await queue.add(
                   'sync',
