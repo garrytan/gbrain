@@ -50,6 +50,25 @@ carries the disambiguation rules for overlapping matches. If the two disagree,
 frontmatter wins. (There is no machine-managed block inside `RESOLVER.md` or
 `AGENTS.md`; that pattern was retired.)
 
+## The always-on memory loop
+
+Routing a requested skill is only half the job. On every inbound message,
+apply the bundled `signal-detector` contract directly (or through a host-native
+background lane when the user has authorized delegation), then close the turn
+with same-turn write-back:
+
+1. Read relevant entity/project context before answering.
+2. Detect durable new facts, preferences, decisions, commitments, relationships,
+   and original thinking in the user's message and in the resulting discussion.
+3. Write atomic facts with GBrain's `remember` verb and explicit provenance.
+   Route richer knowledge through `brain-ops` (`put_page`, timeline, links).
+4. Verify with `recall`, `entity`, or `get_page` before claiming the write landed.
+
+Context injection is read-side automation; it does not, by itself, capture what
+the agent just learned. A turn that learned something durable and recorded
+nothing is incomplete. Skip only transient logistics, acknowledgments, and facts
+already verified as present.
+
 ## When the user invokes a skill
 
 Read the entire `skills/<slug>/SKILL.md` file. Follow its `## Phases`,

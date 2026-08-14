@@ -75,6 +75,7 @@ import {
   type StatusReport,
 } from '../core/bootstrap/status.ts';
 import { verifyWorkspace, deriveWorkspaceSourceId } from '../core/bootstrap/verify.ts';
+import { auditWritebackContract, repairWritebackContract } from '../core/bootstrap/contract.ts';
 
 export const BOOTSTRAP_HELP = `gbrain bootstrap — paste-in agent install (Claude Code / Codex)
 
@@ -92,6 +93,8 @@ Subcommands (run \`gbrain bootstrap status\` first — it is the resume entrypoi
   render [--force] [--only F] [--minimal]
                                   Render identity files from the confirmed answers.
                                   Never clobbers; --force backs up first.
+  contract [--repair]             Audit the same-turn GBrain write-back contract.
+                                  --repair appends it additively and backs up AGENTS.md.
   hooks [--harness claude-code|codex] [--repair] [--no-hooks] [--gbrain-bin <path>]
                                   Register MCP (+ per-turn hooks on Claude Code,
                                   ON by default; --no-hooks opts out, GBRAIN_HOOKS=0
@@ -132,6 +135,9 @@ const SUBCOMMAND_HELP: Record<string, string> = {
   render:
     'gbrain bootstrap render [--force] [--only F] [--minimal]\n' +
     '  Render identity files from the confirmed interview answers. Never clobbers; --force backs up first.',
+  contract:
+    'gbrain bootstrap contract [--repair]\n' +
+    '  Audit AGENTS.md for the same-turn GBrain write-back contract. --repair appends a marker-owned block and backs up the original.',
   repo:
     'gbrain bootstrap repo\n' +
     '  Create the dedicated PRIVATE GitHub repo (or adopt an EMPTY private repo you created\n' +
@@ -454,6 +460,20 @@ async function runStatus(ws: string, rest: string[], home: string): Promise<numb
     );
   }
   return 0;
+}
+
+async function runContract(ws: string, rest: string[]): Promise<number> {
+  const repair = rest.includes('--repair');
+  if (!repair) {
+    const audit = auditWritebackContract(ws);
+    console.log(JSON.stringify(audit, null, 2));
+    return audit.ok ? 0 : 1;
+  }
+  return withLock(ws, async () => {
+    const result = repairWritebackContract(ws);
+    console.log(JSON.stringify(result, null, 2));
+    return result.ok ? 0 : 1;
+  });
 }
 
 /** One copy of the A8 invalidation warning — shared by --set and --skip so
@@ -1221,7 +1241,7 @@ export async function runBootstrap(args: string[], opts: RunBootstrapOpts = {}):
   const logCtx: LogCtx = { home, ws, ...(harnessForLog ? { harness: harnessForLog } : {}) };
   const t0 = Date.now();
 
-  const KNOWN = new Set(['status', 'interview', 'render', 'repo', 'hooks', 'verify', 'attach', 'uninstall', 'cloud-setup-script']);
+  const KNOWN = new Set(['status', 'interview', 'render', 'contract', 'repo', 'hooks', 'verify', 'attach', 'uninstall', 'cloud-setup-script']);
   if (!KNOWN.has(sub)) {
     console.error(`unknown subcommand: ${sub}`);
     console.error(BOOTSTRAP_HELP);
@@ -1260,6 +1280,9 @@ export async function runBootstrap(args: string[], opts: RunBootstrapOpts = {}):
         break;
       case 'render':
         code = await runRender(ws, rest, home);
+        break;
+      case 'contract':
+        code = await runContract(ws, rest);
         break;
       case 'repo':
         code = await runRepo(ws, rest, home, runner);
