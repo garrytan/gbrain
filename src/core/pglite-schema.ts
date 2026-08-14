@@ -610,6 +610,19 @@ CREATE TABLE IF NOT EXISTS gbrain_cycle_locks (
 );
 CREATE INDEX IF NOT EXISTS idx_cycle_locks_ttl ON gbrain_cycle_locks(ttl_expires_at);
 
+-- Dream-cycle significance verdict cache. Expired rows are ignored on read
+-- and swept at the beginning of the synthesize significance phase.
+CREATE TABLE IF NOT EXISTS dream_verdicts (
+  file_path        TEXT        NOT NULL,
+  content_hash     TEXT        NOT NULL,
+  worth_processing BOOLEAN     NOT NULL,
+  reasons          JSONB,
+  judged_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at       TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '30 days'),
+  PRIMARY KEY (file_path, content_hash)
+);
+CREATE INDEX IF NOT EXISTS dream_verdicts_expires_idx ON dream_verdicts (expires_at);
+
 -- Eval capture (v0.25.0). PGLite ignores RLS — see src/schema.sql for the
 -- cross-engine spec.
 CREATE TABLE IF NOT EXISTS eval_candidates (

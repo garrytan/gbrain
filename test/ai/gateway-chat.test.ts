@@ -381,4 +381,20 @@ describe('chat touchpoint — provider_chat_options passthrough', () => {
       },
     });
   });
+
+  test('call-scoped providerOptions merge last without dropping configured siblings', async () => {
+    const providerOptions = await captureProviderOptions({
+      chat_model: 'deepseek:deepseek-v4-flash',
+      provider_chat_options: {
+        deepseek: { temperature: 0.2 },
+      },
+      env: { DEEPSEEK_API_KEY: 'fake' },
+    }, {
+      providerOptions: { deepseek: { thinking: { type: 'disabled' } } },
+    });
+
+    expect(providerOptions).toEqual({
+      deepseek: { temperature: 0.2, thinking: { type: 'disabled' } },
+    });
+  });
 });

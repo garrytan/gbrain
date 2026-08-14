@@ -586,6 +586,14 @@ export async function runPhaseSynthesize(
     }
 
     // Significance verdicts (cached in dream_verdicts; Haiku on miss).
+    // Best-effort housekeeping: expiry is enforced on reads regardless, so a
+    // sweep failure must not block synthesis when the database is otherwise usable.
+    try {
+      const swept = await engine.sweepDreamVerdicts();
+      if (swept > 0) process.stderr.write(`[dream] swept ${swept} expired verdict cache row(s)\n`);
+    } catch (e) {
+      process.stderr.write(`[dream] warning: verdict cache sweep failed: ${e instanceof Error ? e.message : String(e)}\n`);
+    }
     const worthProcessing: DiscoveredTranscript[] = [];
     const verdicts: Array<{ filePath: string; worth: boolean; reasons: string[]; cached: boolean }> = [];
     // Provider-aware judge client routes through gateway.chat, so any
@@ -1153,6 +1161,9 @@ export function makeJudgeClient(verdictModel: string): JudgeClient | null {
         system,
         messages,
         maxTokens: params.max_tokens,
+        ...(v.parsed.providerId === 'deepseek'
+          ? { providerOptions: { deepseek: { thinking: { type: 'disabled' } } } }
+          : {}),
       });
 
       // Map gateway.ChatResult → Anthropic.Message shape. judgeSignificance

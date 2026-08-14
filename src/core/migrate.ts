@@ -5672,6 +5672,27 @@ export const MIGRATIONS: Migration[] = [
         ON session_context_state (updated_at);
     `,
   },
+  {
+    version: 127,
+    name: 'dream_verdicts_ttl',
+    // Bound the significance-verdict cache and expire legacy verdicts from
+    // before #3918 stopped degenerate responses from being cached. Backfill
+    // preserves each row's original age instead of granting old rows a fresh
+    // 30-day lifetime.
+    idempotent: true,
+    sql: `
+      ALTER TABLE dream_verdicts
+        ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+      UPDATE dream_verdicts
+        SET expires_at = judged_at + interval '30 days'
+        WHERE expires_at IS NULL;
+      ALTER TABLE dream_verdicts
+        ALTER COLUMN expires_at SET DEFAULT (now() + interval '30 days'),
+        ALTER COLUMN expires_at SET NOT NULL;
+      CREATE INDEX IF NOT EXISTS dream_verdicts_expires_idx
+        ON dream_verdicts (expires_at);
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

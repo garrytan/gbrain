@@ -107,10 +107,12 @@ describe('JudgeClient.create — gateway routing + shape adapter', () => {
       let transportCalled = false;
       let receivedSystem: string | undefined;
       let receivedModel: string | undefined;
+      let receivedProviderOptions: Record<string, unknown> | undefined;
       __setChatTransportForTests(async (opts): Promise<ChatResult> => {
         transportCalled = true;
         receivedSystem = opts.system;
         receivedModel = opts.model;
+        receivedProviderOptions = opts.providerOptions;
         return {
           text: WORTH_PROCESSING_JSON,
           blocks: [],
@@ -132,9 +134,39 @@ describe('JudgeClient.create — gateway routing + shape adapter', () => {
       expect(receivedSystem).toBe('judge system prompt');
       // Gateway model gets the anthropic: prefix normalized
       expect(receivedModel).toBe('anthropic:claude-haiku-4-5-20251001');
+      expect(receivedProviderOptions).toBeUndefined();
       // Anthropic.Message shape returned
       expect(result.content?.[0]?.type).toBe('text');
       expect((result.content?.[0] as { type: string; text: string }).text).toBe(WORTH_PROCESSING_JSON);
+    });
+  });
+
+  test('A3b: DeepSeek verdict judge disables thinking only for its call', async () => {
+    const judge = makeJudgeClient('deepseek:deepseek-v4-flash');
+    expect(judge).not.toBeNull();
+
+    let receivedProviderOptions: Record<string, unknown> | undefined;
+    __setChatTransportForTests(async (opts): Promise<ChatResult> => {
+      receivedProviderOptions = opts.providerOptions;
+      return {
+        text: WORTH_PROCESSING_JSON,
+        blocks: [],
+        stopReason: 'end',
+        usage: { input_tokens: 10, output_tokens: 20, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'deepseek:deepseek-v4-flash',
+        providerId: 'deepseek',
+      };
+    });
+
+    await judge!.create({
+      model: 'deepseek:deepseek-v4-flash',
+      max_tokens: 1024,
+      system: 'judge system prompt',
+      messages: [{ role: 'user', content: 'judge this' }],
+    });
+
+    expect(receivedProviderOptions).toEqual({
+      deepseek: { thinking: { type: 'disabled' } },
     });
   });
 

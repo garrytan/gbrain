@@ -2851,6 +2851,8 @@ export interface ChatOpts {
   tools?: ChatToolDef[];
   maxTokens?: number;
   abortSignal?: AbortSignal;
+  /** Per-call provider options, merged after configured provider options. */
+  providerOptions?: Record<string, Record<string, unknown>>;
   /**
    * Anthropic-specific: cache the system prompt + last tool def. Silently
    * ignored on providers without `supports_prompt_cache`.
@@ -3291,7 +3293,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
 
   const tools = toAISDKTools(opts.tools);
 
-  const providerOptions: Record<string, any> = {};
+  let providerOptions: Record<string, any> = {};
   if (useCache) {
     // Call-level `providerOptions.anthropic.cacheControl` is NOT a no-op:
     // @ai-sdk/anthropic 3.0.47+ passes it through as a top-level
@@ -3330,6 +3332,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     if (promptCacheKey) providerOptions.openai = { promptCacheKey };
   }
   applyConfiguredChatProviderOptions(providerOptions, cfg, recipe.id, modelId);
+  providerOptions = deepMergeRecords(providerOptions, opts.providerOptions);
 
   // Derive ONE canonical cache-control value AFTER config merging and reuse
   // it for every breakpoint (system block, last tool def, call-level). If
