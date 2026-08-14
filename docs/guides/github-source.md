@@ -67,21 +67,24 @@ Dream cycle and autopilot pick the source up automatically: the cycle's
 
 ## Freshness model
 
-Three layers, cheapest to fastest:
+Three layers, fastest to cheapest:
 
-1. **Poll sweeps** (default): `gbrain sync --source gh` on your own cron or
+1. **Webhook (recommended)**: event-driven, sub-second item refreshes.
+   GitHub pushes the change to you the moment it happens; no polling, no
+   standing API traffic. See below.
+2. **Poll sweeps** (fallback): `gbrain sync --source gh` on your own cron or
    via autopilot. Zero standing infrastructure. A sweep is one list call per
-   repo plus detail calls for changed items.
-2. **Full reconcile** (daily recommended): `gbrain sync --source gh --full`
+   repo plus detail calls for changed items. Use it where a webhook cannot
+   reach the brain (no public URL, locked-down network).
+3. **Full reconcile** (daily recommended): `gbrain sync --source gh --full`
    re-enumerates everything, refreshes strays and deletes pages for items
    that vanished. Backed by the same mass-delete guard as git sources.
-3. **Webhook** (optional accelerator): event-driven, sub-second item
-   refreshes. See below.
+   It is the audit that catches anything the webhook or sweeps missed.
 
 Every page carries `synced_at` and the API `updated_at` in frontmatter, so
 staleness is measurable and the next sweep skips fresh pages.
 
-## Webhook (optional but recommended)
+## Webhook (recommended: instant sync)
 
 Point GitHub webhooks at your `gbrain serve --http` instance:
 
