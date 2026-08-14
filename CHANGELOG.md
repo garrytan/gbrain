@@ -2,6 +2,27 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.45.15.0] - 2026-08-14
+
+**Cross-source mutation mistakes now explain the source boundary instead of
+pretending a readable page does not exist.**
+
+`add_link` and `add_timeline_entry` remain intentionally same-source writes. If
+you target a page that `get_page` can read from another granted source, the MCP
+error now names the failing endpoint, its source, and the client's write source.
+Pages outside the caller's read grants still return `page_not_found` without
+disclosing that another source exists.
+
+To take advantage of v0.45.15.0, run `gbrain upgrade`; no schema migration is
+required.
+
+### Fixed
+- `add_link` now identifies whether `from` or `to` crossed the write-source
+  boundary instead of returning the ambiguous `A or B not found` engine error.
+- `add_timeline_entry` now returns `permission_denied` with an explicit source
+  boundary for a visible page owned by another source instead of wrapping the
+  mismatch as `internal_error`.
+
 ## [0.45.14.0] - 2026-08-14
 
 **The box that already has a brain: framework-spawned coding agents get brain access by default.** The bootstrap door built in v0.45.0.0 was for a human at a laptop. A growing share of Claude Code and Codex sessions are spawned by an agent framework — your OpenClaw, or anything that shells out to headless sessions — on a machine that already hosts a brain and a running `gbrain serve --http`. Until now those sessions got nothing unless someone hand-replicated settings writers across every project directory. One command fixes that:
