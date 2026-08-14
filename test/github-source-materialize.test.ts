@@ -385,6 +385,30 @@ describe('github-source materialize', () => {
     }
   });
 
+  test('webhook import rejection preserves existing page', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ghsrc-webhook-fail-'));
+    const fx = makeFixture();
+    const fetchImpl = buildFetch(fx);
+    try {
+      await insertSource(engine, dir);
+      await withEnv({ GH_TOKEN: 'test-token' }, async () => {
+        await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc', full: true }, fetchImpl);
+        const oldPage = readFileSync(join(dir, 'gh', REPO, '3.md'), 'utf-8');
+        fx.items.get(3)!.body = 'x'.repeat(5_000_001);
+        await expect(runGitHubSync(
+          engine,
+          'ghsrc',
+          makeCfg(dir),
+          { sourceId: 'ghsrc', noExtract: true, noEmbed: true, githubItem: { repo: REPO, number: 3, kind: 'pr' } },
+          fetchImpl,
+        )).rejects.toThrow('File too large');
+        expect(readFileSync(join(dir, 'gh', REPO, '3.md'), 'utf-8')).toBe(oldPage);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('item refresh outside scope is a no-op', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ghsrc-scope-'));
     const fx = makeFixture();
