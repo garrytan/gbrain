@@ -216,7 +216,14 @@ export class SemanticQueryCache {
       // so ON CONFLICT (id) DO UPDATE just refreshes the same-mode row.
       await this.engine.executeRaw(
         `INSERT INTO query_cache (id, query_text, source_id, knobs_hash, embedding, results, meta, ttl_seconds, created_at)
-         VALUES ($1, $2, $3, $4, $5::vector, $6::jsonb, $7::jsonb, $8, now())
+         VALUES (
+           $1, $2, $3, $4, $5::vector,
+           CASE WHEN jsonb_typeof($6::jsonb) = 'string'
+             THEN (($6::jsonb #>> '{}')::jsonb) ELSE $6::jsonb END,
+           CASE WHEN jsonb_typeof($7::jsonb) = 'string'
+             THEN (($7::jsonb #>> '{}')::jsonb) ELSE $7::jsonb END,
+           $8, now()
+         )
          ON CONFLICT (id) DO UPDATE SET
            query_text = EXCLUDED.query_text,
            knobs_hash = EXCLUDED.knobs_hash,

@@ -221,6 +221,12 @@ export async function runPostFusionStages(
 export interface HybridSearchOpts extends SearchOpts {
   expansion?: boolean;
   expandFn?: (query: string) => Promise<string[]>;
+  /**
+   * Query embedding already computed by hybridSearchCached for its semantic
+   * cache lookup. Internal plumbing only: reusing it prevents a cache miss
+   * from paying for the same provider call twice.
+   */
+  precomputedQueryEmbedding?: Float32Array;
   /** Override default RRF K constant (default: 60). Lower values boost top-ranked results more. */
   rrfK?: number;
   /** Override dedup pipeline parameters. */
@@ -238,6 +244,44 @@ export interface HybridSearchOpts extends SearchOpts {
    * row; everyone else leaves it undefined and pays no cost.
    */
   onMeta?: (meta: HybridSearchMeta) => void;
+}
+
+/**
+ * Embed expanded query variants while reusing a caller-provided embedding for
+ * the original query. Kept as a small pure seam so the no-double-embed
+ * contract can be tested without an external embedding provider.
+ */
+export async function embedQueryVariants(
+  queries: string[],
+  originalQuery: string,
+  precomputed: Float32Array | undefined,
+  embedFn: (query: string) => Promise<Float32Array> = embedQuery,
+  timeoutMs = 5000,
+): Promise<Float32Array[]> {
+  // Keep the original first so cosine re-scoring always uses the actual user
+  // query. Expansion variants are best-effort, but a surviving variant must
+  // never be mistaken for the original when the original embedding fails.
+  const tryEmbed = async (value: string): Promise<Float32Array | null> => {
+    try {
+      return await withTimeout(embedFn(value), timeoutMs, 'embed_query_variant');
+    } catch {
+      return null;
+    }
+  };
+  const originalPromise = precomputed
+    ? Promise.resolve(precomputed)
+    : tryEmbed(originalQuery);
+  const variantsPromise = Promise.all(
+    queries
+      .filter(q => q !== originalQuery)
+      .map(q => tryEmbed(q)),
+  );
+  const [original, variants] = await Promise.all([originalPromise, variantsPromise]);
+  if (!original) return [];
+  return [
+    original,
+    ...variants.filter((embedding): embedding is Float32Array => embedding !== null),
+  ];
 }
 
 const SEARCH_OPTS_KEYS = [
@@ -433,17 +477,17 @@ export async function hybridSearch(
     // v0.35.0.0+: query-side embedding. For asymmetric providers (ZE zembed-1,
     // Voyage v3+) routes input_type='query' through the embed seam; symmetric
     // providers ignore the field — no behavior change.
-    // ── OPTIMIZATION: 5s timeout on embedding to avoid OpenRouter outliers (10s+) ──
+    // Expanded variants are individually bounded and best-effort. When the
+    // semantic cache already embedded the original query, that vector is
+    // always retained even if every expansion call times out.
     const _tEmb = performance.now();
-    const _embedTimeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('embed_query timeout (5s)')), 5000)
+    const embeddings = await embedQueryVariants(
+      queries,
+      query,
+      opts?.precomputedQueryEmbedding,
     );
-    const embeddings = await Promise.race([
-      Promise.all(queries.map(q => embedQuery(q))),
-      _embedTimeout,
-    ]);
     _timings.embed_query = performance.now() - _tEmb;
-    queryEmbedding = embeddings[0];
+    queryEmbedding = embeddings[0] ?? null;
     const _tVS = performance.now();
     vectorLists = await Promise.all(
       embeddings.map(emb => engine.searchVector(emb, searchOpts)),
@@ -785,6 +829,10 @@ export async function hybridSearchCached(
   try {
     results = await withTimeout(hybridSearch(engine, query, {
       ...opts,
+      // The semantic-cache lookup already paid for this exact embedding.
+      // Thread it into the search miss path instead of calling the provider
+      // a second time.
+      precomputedQueryEmbedding: queryEmbedding ?? undefined,
       onMeta: (m) => {
         innerMetaBox.current = m;
       },
