@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { generateKeyPairSync } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -9,12 +10,16 @@ import {
   extractLinkedNumbers,
   linkifyMentions,
   renderItemPage,
+  renderListItemPage,
   renderRepoCard,
   itemPagePath,
   repoCardPath,
   isPageFresh,
+  pageHasDetail,
   isValidRepoName,
   linkNextUrl,
+  mintAppInstallationToken,
+  AppTokenProvider,
   type GitHubItemData,
 } from '../src/core/github-source.ts';
 import { extractGitHubItemRef } from '../src/commands/serve-http.ts';
@@ -330,5 +335,159 @@ describe('paths and freshness', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('fast path (two-pass)', () => {
+  test('renderListItemPage emits a list-only page marked detail_fetched: false', () => {
+    const page = renderListItemPage('acme/app', 'issue', {
+      number: 7,
+      title: 'List title',
+      state: 'open',
+      updated_at: '2026-08-04T00:00:00Z',
+      body: 'Closes #9 body text',
+      html_url: 'https://github.com/acme/app/issues/7',
+      created_at: '2026-08-01T00:00:00Z',
+      labels: [{ name: 'bug' }],
+      assignees: [{ login: 'alice' }],
+      user: { login: 'bob' },
+    });
+    expect(page).toContain('detail_fetched: false');
+    expect(page).toContain('title: "List title"');
+    expect(page).toContain('## Description');
+    expect(page).toContain('[[gh/acme/app/9|#9]]');
+    // No detail sections until pass 2.
+    expect(page).not.toContain('## Comments');
+    expect(page).not.toContain('## Reviews');
+  });
+
+  test('pageHasDetail: missing marker means complete (pre-change pages), false means pending', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ghsrc-detail-'));
+    try {
+      const old = join(dir, 'old.md');
+      writeFileSync(old, '---\nupdated_at: "2026-08-01T00:00:00Z"\n---\nbody', 'utf-8');
+      expect(pageHasDetail(old)).toBe(true);
+      const pending = join(dir, 'pending.md');
+      writeFileSync(pending, '---\ndetail_fetched: false\n---\nbody', 'utf-8');
+      expect(pageHasDetail(pending)).toBe(false);
+      const done = join(dir, 'done.md');
+      writeFileSync(done, '---\ndetail_fetched: true\n---\nbody', 'utf-8');
+      expect(pageHasDetail(done)).toBe(true);
+      expect(pageHasDetail(join(dir, 'missing.md'))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('GitHub App tokens', () => {
+  function tempKey(): { dir: string; pemPath: string } {
+    const dir = mkdtempSync(join(tmpdir(), 'ghsrc-app-'));
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const pemPath = join(dir, 'key.pem');
+    writeFileSync(pemPath, privateKey.export({ type: 'pkcs8', format: 'pem' }), 'utf-8');
+    return { dir, pemPath };
+  }
+
+  test('mintAppInstallationToken signs a JWT, discovers the install and mints', async () => {
+    const { dir, pemPath } = tempKey();
+    try {
+      const calls: Array<{ url: string; auth: string }> = [];
+      const fakeFetch = async (url: string, init: RequestInit): Promise<Response> => {
+        const auth = String((init.headers as Record<string, string>).authorization);
+        calls.push({ url, auth });
+        if (url.endsWith('/app/installations')) {
+          return new Response(JSON.stringify([{ id: 153578804 }]), { status: 200 });
+        }
+        if (url.includes('/access_tokens')) {
+          return new Response(
+            JSON.stringify({ token: 'ghs_install-token', expires_at: '2026-08-14T02:00:00Z' }),
+            { status: 200 },
+          );
+        }
+        return new Response('{}', { status: 404 });
+      };
+      const out = await mintAppInstallationToken({ appId: 4588667, pemPath }, fakeFetch);
+      expect(out.token).toBe('ghs_install-token');
+      expect(out.expiresAt).toBe(Date.parse('2026-08-14T02:00:00Z'));
+      expect(calls.length).toBe(2);
+      expect(calls[0].url).toContain('/app/installations');
+      // Bearer is an RS256 JWT: decode the payload, check iss/exp window.
+      const jwt = calls[0].auth.replace('Bearer ', '');
+      const payload = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url').toString('utf-8'));
+      expect(payload.iss).toBe(4588667);
+      expect(payload.exp - payload.iat).toBe(540);
+      expect(calls[1].url).toContain('/app/installations/153578804/access_tokens');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('explicit install id skips discovery', async () => {
+    const { dir, pemPath } = tempKey();
+    try {
+      const urls: string[] = [];
+      const fakeFetch = async (url: string, init: RequestInit): Promise<Response> => {
+        urls.push(url);
+        return new Response(
+          JSON.stringify({ token: 'ghs_x', expires_at: '2026-08-14T02:00:00Z' }),
+          { status: 200 },
+        );
+      };
+      await mintAppInstallationToken({ appId: 1, pemPath, installId: 99 }, fakeFetch);
+      expect(urls).toEqual(['https://api.github.com/app/installations/99/access_tokens']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('AppTokenProvider caches within the window and refreshes after expiry', async () => {
+    const { dir, pemPath } = tempKey();
+    try {
+      let mints = 0;
+      const fakeFetch = async (url: string, _init: RequestInit): Promise<Response> => {
+        if (url.includes('/access_tokens')) {
+          mints++;
+          return new Response(
+            JSON.stringify({
+              token: `ghs_${mints}`,
+              expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response(JSON.stringify([{ id: 1 }]), { status: 200 });
+      };
+      const provider = new AppTokenProvider({ appId: 1, pemPath }, fakeFetch);
+      expect(await provider.getToken()).toBe('ghs_1');
+      expect(await provider.getToken()).toBe('ghs_1'); // cached
+      expect(mints).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('parseGitHubSourceConfig app fields', () => {
+  test('parses app credentials when present', () => {
+    const cfg = parseGitHubSourceConfig(
+      {
+        kind: 'github',
+        gh_app_id: 4588667,
+        gh_app_pem_path: '/keys/app.pem',
+        gh_app_install_id: 153578804,
+      },
+      '/tmp/fallback',
+    );
+    expect(cfg.app).toEqual({ appId: 4588667, pemPath: '/keys/app.pem', installId: 153578804 });
+  });
+
+  test('partial app config yields null (PAT path unchanged)', () => {
+    const cfg = parseGitHubSourceConfig(
+      { kind: 'github', gh_app_id: 4588667 },
+      '/tmp/fallback',
+    );
+    expect(cfg.app).toBeNull();
+    expect(cfg.tokenEnv).toBe('GH_TOKEN');
   });
 });

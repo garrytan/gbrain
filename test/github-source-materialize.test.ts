@@ -219,6 +219,7 @@ function buildFetch(fx: { items: Map<number, FixtureItem>; calls: string[]; fail
 function makeCfg(dir: string): GitHubSourceConfig {
   return {
     tokenEnv: 'GH_TOKEN',
+    app: null,
     handle: 'veltr',
     scope: 'repos',
     repos: [REPO],

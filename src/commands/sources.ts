@@ -130,7 +130,8 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
       'Usage: gbrain sources add <id> [--path <path> | --url <https-url> | --kind github] ' +
         '[--name <display>] [--federated|--no-federated] [--clone-dir <path>] [--force]\n' +
         '       github kind: [--token-env <env>] [--handle <login>] [--scope auto|repos] ' +
-        '[--repos owner/name,...] [--dir <path>] [--no-involvement]',
+        '[--repos owner/name,...] [--dir <path>] [--no-involvement] ' +
+        '[--app-id <n> --app-pem <path>] [--app-install <n>]',
     );
     process.exit(2);
   }
@@ -151,6 +152,9 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   let ghRepos: string[] = [];
   let ghDir: string | undefined;
   let ghInvolvement = true;
+  let ghAppId: number | undefined;
+  let ghAppPem: string | undefined;
+  let ghAppInstall: number | undefined;
 
   for (let i = 1; i < args.length; i++) {
     const a = args[i];
@@ -192,6 +196,25 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     }
     if (a === '--dir') { ghDir = args[++i]; continue; }
     if (a === '--no-involvement') { ghInvolvement = false; continue; }
+    if (a === '--app-id') {
+      const v = Number(args[++i]);
+      if (!Number.isInteger(v) || v <= 0) {
+        console.error('--app-id must be a positive integer.');
+        process.exit(2);
+      }
+      ghAppId = v;
+      continue;
+    }
+    if (a === '--app-pem') { ghAppPem = args[++i]; continue; }
+    if (a === '--app-install') {
+      const v = Number(args[++i]);
+      if (!Number.isInteger(v) || v <= 0) {
+        console.error('--app-install must be a positive integer.');
+        process.exit(2);
+      }
+      ghAppInstall = v;
+      continue;
+    }
     console.error(`Unknown flag: ${a}`);
     process.exit(2);
   }
@@ -206,6 +229,10 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   }
   if (ghKind && ghScope === 'repos' && ghRepos.length === 0) {
     console.error('Error: --scope repos requires --repos owner/name,owner/name.');
+    process.exit(2);
+  }
+  if (ghKind && ((ghAppId === undefined) !== (ghAppPem === undefined))) {
+    console.error('Error: --app-id and --app-pem must be provided together.');
     process.exit(2);
   }
   for (const r of ghRepos) {
@@ -235,6 +262,9 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
             repos: ghRepos,
             dir: ghDir ?? defaultCloneDir(`${id}-github`),
             involvement: ghInvolvement,
+            appId: ghAppId,
+            appPemPath: ghAppPem,
+            appInstallId: ghAppInstall,
           },
         }
       : {}),

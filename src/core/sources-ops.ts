@@ -167,6 +167,12 @@ export interface AddSourceOpts {
     repos: string[];
     dir: string;
     involvement: boolean;
+    /** GitHub App id; with appPemPath the sync mints installation tokens itself. */
+    appId?: number;
+    /** Path to the app's private key PEM. */
+    appPemPath?: string;
+    /** Installation id; optional, first installation is used when absent. */
+    appInstallId?: number;
   };
 }
 
@@ -503,6 +509,13 @@ export async function addSource(
       // storage and must never be deleted by purge.
       gh_managed: finalPath === defaultCloneDir(`${opts.id}-github`),
     };
+    if (opts.github.appId !== undefined && opts.github.appPemPath !== undefined) {
+      config.gh_app_id = opts.github.appId;
+      config.gh_app_pem_path = opts.github.appPemPath;
+      if (opts.github.appInstallId !== undefined) {
+        config.gh_app_install_id = opts.github.appInstallId;
+      }
+    }
     if (opts.federated !== null && opts.federated !== undefined) {
       config.federated = opts.federated;
     }

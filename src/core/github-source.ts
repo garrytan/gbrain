@@ -32,6 +32,7 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, renameSync } from 'node:fs';
+import { createSign } from 'node:crypto';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 
 import type { BrainEngine } from './engine.ts';
@@ -39,9 +40,20 @@ import type { SyncOpts } from '../commands/sync.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
+export interface GitHubAppConfig {
+  /** GitHub App ID (Settings -> Developer settings -> GitHub Apps). */
+  appId: number;
+  /** Path to the app's private key PEM (rsa). */
+  pemPath: string;
+  /** Installation id; when absent the first installation of the app is used. */
+  installId?: number;
+}
+
 export interface GitHubSourceConfig {
-  /** Env var holding the token (default GH_TOKEN). */
+  /** Env var holding the token (default GH_TOKEN). Ignored when `app` is set. */
   tokenEnv: string;
+  /** GitHub App credentials; when set, the sync mints hourly installation tokens itself. */
+  app: GitHubAppConfig | null;
   /** GitHub handle for involvement queries and auto-scope (default: none). */
   handle: string;
   /** 'auto' = owner + collaborator + org-member repos; 'repos' = explicit list. */
@@ -98,6 +110,22 @@ export function parseGitHubSourceConfig(
     typeof config.gh_token_env === 'string' && config.gh_token_env.length > 0
       ? config.gh_token_env
       : 'GH_TOKEN';
+  const app: GitHubAppConfig | null =
+    typeof config.gh_app_id === 'number' &&
+    Number.isInteger(config.gh_app_id) &&
+    typeof config.gh_app_pem_path === 'string' &&
+    config.gh_app_pem_path.length > 0
+      ? {
+          appId: config.gh_app_id,
+          pemPath: config.gh_app_pem_path,
+          installId:
+            typeof config.gh_app_install_id === 'number' &&
+            Number.isInteger(config.gh_app_install_id) &&
+            config.gh_app_install_id > 0
+              ? config.gh_app_install_id
+              : undefined,
+        }
+      : null;
   const handle = typeof config.gh_handle === 'string' ? config.gh_handle : '';
   const scope = config.gh_scope === 'repos' ? 'repos' : 'auto';
   const repos =
@@ -112,7 +140,7 @@ export function parseGitHubSourceConfig(
       ? config.gh_dir
       : fallbackDir;
   const includeInvolvement = config.gh_involvement !== false;
-  return { tokenEnv, handle, scope, repos, dir, includeInvolvement };
+  return { tokenEnv, app, handle, scope, repos, dir, includeInvolvement };
 }
 
 export function gitHubStateFile(dir: string): string {
@@ -152,9 +180,91 @@ interface RateInfo {
   resetAt: number | null;
 }
 
+// ── Token acquisition (PAT or GitHub App) ────────────────────────────────────
+
+/** A credential source the client can refresh mid-run (apps mint hourly tokens). */
+export interface GitHubTokenProvider {
+  getToken(): Promise<string>;
+  refresh(): Promise<string>;
+}
+
+function b64url(input: string): string {
+  return Buffer.from(input, 'utf-8')
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+interface MintedInstallationToken {
+  token: string;
+  expiresAt: number; // epoch ms
+}
+
+/**
+ * Mint an installation access token for a GitHub App:
+ * RS256 JWT (iss = app id, 9 min) -> find installation -> POST access_tokens.
+ * Installation tokens last 1 hour; callers refresh before expiry.
+ */
+export async function mintAppInstallationToken(
+  app: GitHubAppConfig,
+  fetchImpl: FetchImpl = fetch,
+): Promise<MintedInstallationToken> {
+  const pem = readFileSync(app.pemPath, 'utf-8');
+  const nowSec = Math.floor(Date.now() / 1000);
+  const header = b64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+  const payload = b64url(JSON.stringify({ iat: nowSec, exp: nowSec + 540, iss: app.appId }));
+  const signer = createSign('RSA-SHA256');
+  signer.update(`${header}.${payload}`);
+  signer.end();
+  const sig = signer.sign(pem, 'base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const jwt = `${header}.${payload}.${sig}`;
+  const headers = {
+    authorization: `Bearer ${jwt}`,
+    accept: 'application/vnd.github+json',
+    'x-github-api-version': '2022-11-28',
+  };
+
+  let installId = app.installId;
+  if (!installId) {
+    const res = await fetchImpl('https://api.github.com/app/installations', { headers });
+    if (!res.ok) throw new Error(`GitHub App installations HTTP ${res.status}`);
+    const installs = (await res.json()) as Array<{ id: number }>;
+    if (installs.length === 0) throw new Error('GitHub App has no installations');
+    installId = installs[0].id;
+  }
+  const res = await fetchImpl(`https://api.github.com/app/installations/${installId}/access_tokens`, {
+    method: 'POST',
+    headers,
+  });
+  if (!res.ok) throw new Error(`GitHub App access_tokens HTTP ${res.status}`);
+  const body = (await res.json()) as { token: string; expires_at: string };
+  return { token: body.token, expiresAt: Date.parse(body.expires_at) };
+}
+
+/** Caches a minted installation token and refreshes it before expiry. */
+export class AppTokenProvider implements GitHubTokenProvider {
+  private cached: MintedInstallationToken | null = null;
+
+  constructor(
+    private readonly app: GitHubAppConfig,
+    private readonly fetchImpl: FetchImpl = fetch,
+  ) {}
+
+  async getToken(): Promise<string> {
+    if (this.cached && this.cached.expiresAt - 5 * 60_000 > Date.now()) return this.cached.token;
+    return this.refresh();
+  }
+
+  async refresh(): Promise<string> {
+    this.cached = await mintAppInstallationToken(this.app, this.fetchImpl);
+    return this.cached.token;
+  }
+}
+
 export class GitHubClient {
   constructor(
-    private readonly token: string,
+    private readonly token: string | GitHubTokenProvider,
     private readonly fetchImpl: FetchImpl = fetch,
     public readonly log: (msg: string) => void = () => {},
   ) {}
@@ -199,6 +309,10 @@ export class GitHubClient {
     return data;
   }
 
+  private async tokenValue(): Promise<string> {
+    return typeof this.token === 'string' ? this.token : this.token.getToken();
+  }
+
   private async fetchJSONWithMeta<T>(
     pathOrUrl: string,
     opts: { signal?: AbortSignal; retries?: number } = {},
@@ -210,12 +324,19 @@ export class GitHubClient {
       const res = await this.fetchImpl(url, {
         headers: {
           accept: 'application/vnd.github+json',
-          authorization: `Bearer ${this.token}`,
+          authorization: `Bearer ${await this.tokenValue()}`,
           'x-github-api-version': '2022-11-28',
         },
         signal: opts.signal,
       });
       this.trackRate(res);
+      if (res.status === 401 && typeof this.token !== 'string' && attempt < retries) {
+        // Installation tokens expire hourly; a 401 mid-run means the minted
+        // token lapsed. Refresh once and retry the same request.
+        this.log('[github] HTTP 401; refreshing token');
+        await this.token.refresh();
+        continue;
+      }
       if (res.status === 403 || res.status === 429) {
         const retryAfter = res.headers.get('retry-after');
         const waitMs = retryAfter !== null ? Number(retryAfter) * 1000 : this.rate.resetAt !== null
@@ -334,12 +455,26 @@ export async function resolveScopeRepos(
 
 // ── Item enumeration ─────────────────────────────────────────────────────────
 
+/**
+ * List-payload shapes. The enumeration endpoints return most issue fields
+ * (body, labels, assignees, author, milestone, dates) without extra calls,
+ * so pass 1 of a sync materializes pages from these alone.
+ */
 interface RawIssueListItem {
   number: number;
   title: string;
   state: 'open' | 'closed';
   updated_at: string;
   pull_request?: { url: string };
+  body?: string | null;
+  html_url?: string;
+  created_at?: string;
+  closed_at?: string | null;
+  labels?: { name: string }[];
+  assignees?: { login: string }[];
+  milestone?: RawMilestone | null;
+  user?: { login: string } | null;
+  draft?: boolean;
 }
 
 interface RawPullListItem {
@@ -348,6 +483,17 @@ interface RawPullListItem {
   state: 'open' | 'closed';
   updated_at: string;
   head: { sha: string };
+  body?: string | null;
+  html_url?: string;
+  created_at?: string;
+  closed_at?: string | null;
+  labels?: { name: string }[];
+  assignees?: { login: string }[];
+  milestone?: RawMilestone | null;
+  user?: { login: string } | null;
+  draft?: boolean;
+  merged?: boolean;
+  mergeable_state?: string | null;
 }
 
 /**
@@ -650,7 +796,7 @@ function checksSummaryLines(checks: GitHubItemData['checks']): string[] {
   return ['', line + failing, ''];
 }
 
-export function renderItemPage(data: GitHubItemData): string {
+export function renderItemPage(data: GitHubItemData, detailFetched = true): string {
   const d = data.detail;
   const now = new Date().toISOString();
   const isPr = data.kind === 'pr';
@@ -673,6 +819,7 @@ export function renderItemPage(data: GitHubItemData): string {
     `updated_at: ${yamlStr(d.updated_at)}`,
     `closed_at: ${yamlStr(d.closed_at ?? '')}`,
     `synced_at: ${yamlStr(now)}`,
+    `detail_fetched: ${detailFetched}`,
     `labels: ${yamlList(d.labels.map((l) => l.name))}`,
     `assignees: ${yamlList(d.assignees.map((a) => a.login))}`,
     `milestone: ${yamlStr(d.milestone?.title ?? '')}`,
@@ -741,6 +888,56 @@ export function renderItemPage(data: GitHubItemData): string {
   return frontmatter.join('\n') + '\n' + body.join('\n') + '\n';
 }
 
+/**
+ * Build the pass-1 page from list payloads alone (no per-item detail calls).
+ * Approximate for PRs: review_decision/merged/mergeable_state come from the
+ * pulls list when available; comments, reviews and checks are filled by pass 2.
+ */
+export function renderListItemPage(
+  repo: string,
+  kind: 'issue' | 'pr',
+  item: RawIssueListItem | RawPullListItem,
+): string {
+  const isPr = kind === 'pr';
+  const pr = item as RawPullListItem;
+  const detail: RawIssueDetail = {
+    number: item.number,
+    title: item.title,
+    state: item.state,
+    state_reason: null,
+    body: item.body ?? null,
+    created_at: item.created_at ?? '',
+    updated_at: item.updated_at,
+    closed_at: item.closed_at ?? null,
+    labels: item.labels ?? [],
+    assignees: item.assignees ?? [],
+    milestone: item.milestone ?? null,
+    html_url: item.html_url ?? '',
+    draft: item.draft,
+    user: item.user ?? null,
+  };
+  if (isPr) {
+    Object.assign(detail, {
+      merged: pr.merged ?? false,
+      mergeable_state: pr.mergeable_state ?? null,
+      review_decision: null,
+      head: { sha: pr.head?.sha ?? '', ref: '' },
+    });
+  }
+  const data: GitHubItemData = {
+    repo,
+    number: item.number,
+    kind,
+    detail,
+    comments: [],
+    reviews: [],
+    reviewComments: [],
+    checks: null,
+    linked: extractLinkedNumbers(detail.body ?? ''),
+  };
+  return renderItemPage(data, false);
+}
+
 // ── Page freshness helpers ───────────────────────────────────────────────────
 
 interface StoredFrontmatter {
@@ -763,6 +960,22 @@ export function isPageFresh(filePath: string, apiUpdatedAt: string): boolean {
   const stored = readStoredUpdatedAt(filePath);
   if (stored === null) return false;
   return stored >= apiUpdatedAt; // ISO-8601 strings compare lexicographically
+}
+
+/**
+ * True when the page went through a detail fetch (comments, reviews, checks).
+ * Pages written before the two-pass change have no marker and ARE complete,
+ * so a missing marker reads as true; only `detail_fetched: false` (pass-1
+ * list render) is treated as pending detail.
+ */
+export function pageHasDetail(filePath: string): boolean {
+  try {
+    const raw = readFileSync(filePath, 'utf-8');
+    const m = raw.match(/^detail_fetched:\s*(true|false)/m);
+    return m ? m[1] === 'true' : true;
+  } catch {
+    return true;
+  }
 }
 
 // ── Sync runner ──────────────────────────────────────────────────────────────
@@ -855,16 +1068,18 @@ export async function runGitHubSync(
   opts: SyncOpts,
   fetchImpl?: FetchImpl,
 ): Promise<import('../commands/sync.ts').SyncResult> {
-  // No fallback chain: cfg.tokenEnv IS the single source of truth (the
-  // default is GH_TOKEN; a custom --token-env that is unset fails loudly
-  // instead of silently using a different token scope, codex LOW).
-  const token = process.env[cfg.tokenEnv] ?? '';
-  if (!token) {
+  // Credential source: a GitHub App (auto-minted hourly installation tokens)
+  // wins when configured; otherwise cfg.tokenEnv is the single source of
+  // truth (the default is GH_TOKEN; a custom --token-env that is unset fails
+  // loudly instead of silently using a different token scope, codex LOW).
+  if (!cfg.app && !process.env[cfg.tokenEnv]) {
     throw new Error(
-      `GitHub source "${sourceId}" has no token. Set ${cfg.tokenEnv} in the environment.`,
+      `GitHub source "${sourceId}" has no token. Set ${cfg.tokenEnv} in the environment or configure a GitHub App (gh_app_id + gh_app_pem_path).`,
     );
   }
-  const client = new GitHubClient(token, fetchImpl);
+  const client = cfg.app
+    ? new GitHubClient(new AppTokenProvider(cfg.app, fetchImpl ?? fetch), fetchImpl)
+    : new GitHubClient(process.env[cfg.tokenEnv] ?? '', fetchImpl);
   const deps: GitHubSyncDeps = { engine, sourceId, cfg, opts, client };
   const summary: GitHubSyncSummary = {
     status: 'synced',
@@ -908,6 +1123,9 @@ export async function runGitHubSync(
   const since = opts.full ? undefined : state.last_sweep_at ?? undefined;
   const keepPaths = new Set<string>();
   const succeededRepos = new Set<string>();
+  // Pages counted in pass 1 must not be counted again when pass 2 replaces
+  // them in the same run (added/modified describe distinct page outcomes).
+  const countedSlugs = new Set<string>();
   let maxUpdatedAt = state.last_sweep_at ?? '';
   const repoMeta = new Map<string, RawRepo>();
 
@@ -915,11 +1133,19 @@ export async function runGitHubSync(
     if (opts.signal?.aborted) break;
     try {
       const { issues, prs } = await enumerateRepoItems(repo, client, { since, signal: opts.signal });
-      const all = [
-        ...issues.map((i) => ({ repo, number: i.number, kind: 'issue' as const, state: i.state, updated_at: i.updated_at })),
-        ...prs.map((p) => ({ repo, number: p.number, kind: 'pr' as const, state: p.state, updated_at: p.updated_at })),
+      const items: Array<{
+        repo: string;
+        number: number;
+        kind: 'issue' | 'pr';
+        state: string;
+        updated_at: string;
+        list: RawIssueListItem | RawPullListItem;
+      }> = [
+        ...issues.map((i) => ({ repo, number: i.number, kind: 'issue' as const, state: i.state, updated_at: i.updated_at, list: i as RawIssueListItem })),
+        ...prs.map((p) => ({ repo, number: p.number, kind: 'pr' as const, state: p.state, updated_at: p.updated_at, list: p as RawPullListItem })),
       ];
-      for (const item of all) {
+      const pendingDetail: typeof items = [];
+      for (const item of items) {
         const filePath = itemPagePath(cfg.dir, repo, item.number);
         keepPaths.add(relative(cfg.dir, filePath).replace(/\\/g, '/'));
         summary.itemsSeen++;
@@ -928,16 +1154,59 @@ export async function runGitHubSync(
         // so they are re-fetched every sweep. Cost is bounded by the number
         // of open PRs, which is small in practice.
         const isOpenPr = item.kind === 'pr' && item.state === 'open';
-        if (!opts.full && !isOpenPr && isPageFresh(filePath, item.updated_at)) continue;
+        const fresh = isPageFresh(filePath, item.updated_at);
+        const hasDetail = pageHasDetail(filePath);
+        if (!opts.full && !isOpenPr && fresh && hasDetail) continue;
+        // Pass 1 (cheap): materialize from the list payload when the page is
+        // missing or never detail-fetched. Pages that already carry detail
+        // are left intact until pass 2 replaces them, so comments never
+        // vanish mid-sweep.
+        if (!hasDetail) {
+          try {
+            mkdirSync(dirname(filePath), { recursive: true });
+            const before = existsSync(filePath);
+            // Temp-write then import then rename: a failed refresh must never
+            // destroy the previously-good page (codex HIGH, round 3). The
+            // import declares the canonical relative path, so the page slug
+            // and source_path stay correct despite the temp filename.
+            const tmpPath = `${filePath}.tmp`;
+            writeFileSync(tmpPath, renderListItemPage(repo, item.kind, item.list), 'utf-8');
+            try {
+              const imported = await importPage(deps, tmpPath, activePack, relative(cfg.dir, filePath).replace(/\\/g, '/'));
+              renameSync(tmpPath, filePath);
+              summary.pagesAffected.push(imported.slug);
+              summary.chunksCreated += imported.chunks;
+              if (!countedSlugs.has(imported.slug)) {
+                if (before) summary.modified++; else summary.added++;
+                countedSlugs.add(imported.slug);
+              }
+            } finally {
+              rmSync(tmpPath, { force: true });
+            }
+          } catch (err) {
+            deps.client.log?.(`[github] item ${repo}#${item.number} list render failed: ${err instanceof Error ? err.message : String(err)}`);
+            summary.failedFiles++;
+            summary.status = 'partial';
+            continue;
+          }
+        }
+        pendingDetail.push(item);
+      }
+      // Pass 2 (expensive): comments, reviews, checks, exact merge state.
+      // Runs in the same sweep so the final page is complete; an item that
+      // fails here keeps its pass-1 (or previous) page and the cursor does
+      // not advance past it, so the next sweep retries just that item.
+      for (const item of pendingDetail) {
+        if (opts.signal?.aborted) {
+          summary.status = 'partial';
+          break;
+        }
+        const filePath = itemPagePath(cfg.dir, repo, item.number);
         summary.itemDetailFetches++;
         try {
           const data = await fetchItemData(repo, item.number, item.kind, client, { signal: opts.signal });
           mkdirSync(dirname(filePath), { recursive: true });
           const before = existsSync(filePath);
-          // Temp-write then import then rename: a failed refresh must never
-          // destroy the previously-good page (codex HIGH, round 3). The
-          // import declares the canonical relative path, so the page slug
-          // and source_path stay correct despite the temp filename.
           const tmpPath = `${filePath}.tmp`;
           writeFileSync(tmpPath, renderItemPage(data), 'utf-8');
           try {
@@ -945,14 +1214,14 @@ export async function runGitHubSync(
             renameSync(tmpPath, filePath);
             summary.pagesAffected.push(imported.slug);
             summary.chunksCreated += imported.chunks;
-            if (before) summary.modified++; else summary.added++;
+            if (!countedSlugs.has(imported.slug)) {
+              if (before) summary.modified++; else summary.added++;
+              countedSlugs.add(imported.slug);
+            }
           } finally {
             rmSync(tmpPath, { force: true });
           }
         } catch (err) {
-          // Cursor discipline (codex HIGH): never advance past an item that
-          // failed; the old page (if any) is intact because we only ever
-          // touched the temp file.
           deps.client.log?.(`[github] item ${repo}#${item.number} failed: ${err instanceof Error ? err.message : String(err)}`);
           summary.failedFiles++;
           summary.status = 'partial';
@@ -985,6 +1254,10 @@ export async function runGitHubSync(
       summary.status = 'partial';
     }
   }
+
+  // A page can be imported twice in a run (pass 1 list render, then pass 2
+  // detail render): dedupe before extract/embed so each page is processed once.
+  summary.pagesAffected = [...new Set(summary.pagesAffected)];
 
   if (opts.full) {
     await deleteStalePages(deps, keepPaths, summary, succeededRepos);
