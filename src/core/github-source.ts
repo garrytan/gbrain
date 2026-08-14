@@ -439,11 +439,25 @@ export async function resolveScopeRepos(
   if (cfg.scope === 'repos') {
     return [...cfg.repos];
   }
-  const repos = await client.fetchAllPages<RawRepo>(
-    '/user/repos?affiliation=owner,collaborator,organization_member&sort=full_name',
-    { signal },
-  );
-  const names = repos.map((r) => r.full_name).sort();
+  // Installation tokens cannot call /user/repos, so the app path resolves
+  // through /installation/repositories (object-shaped: { repositories }).
+  const names = cfg.app
+    ? (
+        await client.fetchAllPages<RawRepo>('/installation/repositories', {
+          signal,
+          field: 'repositories',
+        })
+      )
+        .map((r) => r.full_name)
+        .sort()
+    : (
+        await client.fetchAllPages<RawRepo>(
+          '/user/repos?affiliation=owner,collaborator,organization_member&sort=full_name',
+          { signal },
+        )
+      )
+        .map((r) => r.full_name)
+        .sort();
   // Persist the discovered list so webhook repo matching and status display
   // work without an API call.
   mkdirSync(cfg.dir, { recursive: true });
@@ -529,13 +543,24 @@ export async function enumerateRepoItems(
       prs.push(open);
     } else {
       // Keep the real updated_at from the issues list so delta sweeps
-      // re-fetch closed PRs that changed (comments, merge, review).
+      // re-fetch closed PRs that changed (comments, merge, review), and
+      // carry the issue-list fields so a pass-1 render is never blank.
+      const src = prsFromIssues.find((i) => i.number === n);
       prs.push({
         number: n,
-        title: '',
+        title: src?.title ?? '',
         state: 'closed',
         updated_at: updatedByNumber.get(n) ?? '',
         head: { sha: '' },
+        body: src?.body ?? null,
+        html_url: src?.html_url ?? '',
+        created_at: src?.created_at,
+        closed_at: src?.closed_at ?? null,
+        labels: src?.labels ?? [],
+        assignees: src?.assignees ?? [],
+        milestone: src?.milestone ?? null,
+        user: src?.user ?? null,
+        draft: src?.draft,
       });
     }
   }
@@ -917,8 +942,11 @@ export function renderListItemPage(
     user: item.user ?? null,
   };
   if (isPr) {
+    // merged stays null until pass 2: the list payloads do not carry it for
+    // closed PRs, and a wrong `merged: false` on a merged PR is worse than
+    // an unknown one.
     Object.assign(detail, {
-      merged: pr.merged ?? false,
+      merged: pr.merged ?? null,
       mergeable_state: pr.mergeable_state ?? null,
       review_decision: null,
       head: { sha: pr.head?.sha ?? '', ref: '' },
@@ -969,6 +997,10 @@ export function isPageFresh(filePath: string, apiUpdatedAt: string): boolean {
  * list render) is treated as pending detail.
  */
 export function pageHasDetail(filePath: string): boolean {
+  // A missing file has no detail yet: pass 1 materializes the cheap list
+  // page first, pass 2 enriches it. Only markerless EXISTING pages (written
+  // before the two-pass change) are treated as complete.
+  if (!existsSync(filePath)) return false;
   try {
     const raw = readFileSync(filePath, 'utf-8');
     const m = raw.match(/^detail_fetched:\s*(true|false)/m);
@@ -1156,7 +1188,13 @@ export async function runGitHubSync(
         const isOpenPr = item.kind === 'pr' && item.state === 'open';
         const fresh = isPageFresh(filePath, item.updated_at);
         const hasDetail = pageHasDetail(filePath);
-        if (!opts.full && !isOpenPr && fresh && hasDetail) continue;
+        if (!opts.full && !isOpenPr && fresh && hasDetail) {
+          // Cursor accounting: a fresh skip is a success too. Without this,
+          // a repo whose newest item is always fresh stays re-listed on
+          // every sweep (the since filter never passes it).
+          if (item.updated_at > maxUpdatedAt) maxUpdatedAt = item.updated_at;
+          continue;
+        }
         // Pass 1 (cheap): materialize from the list payload when the page is
         // missing or never detail-fetched. Pages that already carry detail
         // are left intact until pass 2 replaces them, so comments never

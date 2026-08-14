@@ -373,7 +373,8 @@ describe('fast path (two-pass)', () => {
       const done = join(dir, 'done.md');
       writeFileSync(done, '---\ndetail_fetched: true\n---\nbody', 'utf-8');
       expect(pageHasDetail(done)).toBe(true);
-      expect(pageHasDetail(join(dir, 'missing.md'))).toBe(true);
+      // A missing file has no detail yet: pass 1 materializes it first.
+      expect(pageHasDetail(join(dir, 'missing.md'))).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

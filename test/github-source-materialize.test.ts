@@ -430,7 +430,10 @@ describe('github-source materialize', () => {
         const partial = await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc', full: true }, fetchImpl);
         expect(partial.status).toBe('partial');
         expect(partial.failedFiles).toBeGreaterThan(0);
-        expect(existsSync(join(dir, 'gh', REPO, '1.md'))).toBe(false);
+        // Pass 1 still materialized a list page for item 1 (fast path);
+        // the failed detail fetch leaves it marked detail_fetched: false.
+        expect(existsSync(join(dir, 'gh', REPO, '1.md'))).toBe(true);
+        expect(readFileSync(join(dir, 'gh', REPO, '1.md'), 'utf-8')).toContain('detail_fetched: false');
         // Items 2 and 3 imported despite the failure.
         expect(existsSync(join(dir, 'gh', REPO, '2.md'))).toBe(true);
         expect(existsSync(join(dir, 'gh', REPO, '3.md'))).toBe(true);
@@ -438,13 +441,16 @@ describe('github-source materialize', () => {
         const state = JSON.parse(readFileSync(join(dir, '.github-source.json'), 'utf-8')) as { last_sweep_at?: string };
         expect(state.last_sweep_at ?? '').toBe('');
 
-        // Failure clears; the next sweep re-enumerates from the old cursor
-        // and retries item 1.
+        // Failure clears; the next sweep re-enumerates from the old cursor,
+        // retries item 1's detail fetch and upgrades the page.
         fx.failDetailItems.delete(1);
         const retry = await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc' }, fetchImpl);
         expect(retry.status).toBe('synced');
-        expect(retry.added).toBe(1);
-        expect(existsSync(join(dir, 'gh', REPO, '1.md'))).toBe(true);
+        // Item 1 upgrades to full detail; item 2 is an open PR re-rendered
+        // every sweep (check state).
+        expect(retry.modified).toBe(2);
+        expect(retry.added).toBe(0);
+        expect(readFileSync(join(dir, 'gh', REPO, '1.md'), 'utf-8')).toContain('detail_fetched: true');
         const state2 = JSON.parse(readFileSync(join(dir, '.github-source.json'), 'utf-8')) as { last_sweep_at?: string };
         expect(state2.last_sweep_at).toBe('2026-08-02T00:00:00Z');
       });
