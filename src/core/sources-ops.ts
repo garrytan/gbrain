@@ -508,6 +508,12 @@ export async function addSource(
       // default clone location. A custom --dir points at user-owned
       // storage and must never be deleted by purge.
       gh_managed: finalPath === defaultCloneDir(`${opts.id}-github`),
+      // v0.46: a github-kind mirror is a first-class citizen of unqualified
+      // reads (search/query/get_page without an explicit source_id). The
+      // federated widening in localFederatedSourceIds spans sources with
+      // config.federated=true — without this default, a fresh mirror is
+      // invisible to search. Explicit --no-federated opts out.
+      federated: opts.federated ?? true,
     };
     if (opts.github.appId !== undefined && opts.github.appPemPath !== undefined) {
       config.gh_app_id = opts.github.appId;
@@ -515,9 +521,6 @@ export async function addSource(
       if (opts.github.appInstallId !== undefined) {
         config.gh_app_install_id = opts.github.appInstallId;
       }
-    }
-    if (opts.federated !== null && opts.federated !== undefined) {
-      config.federated = opts.federated;
     }
     const displayName = opts.name ?? opts.id;
     await engine.executeRaw(
