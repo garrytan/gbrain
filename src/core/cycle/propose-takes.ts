@@ -146,7 +146,7 @@ export type ProposeTakesExtractor = (input: {
 export interface ProposeTakesOpts extends BasePhaseOpts {
   /** Brain repo root for fs-source page walking. Optional — defaults to engine pages. */
   repoPath?: string;
-  /** Limit pages processed in this cycle (for triage / quick smoke). Default: 100. */
+  /** Limit pages processed in this cycle (for triage / quick smoke). Default: 25. */
   pageLimit?: number;
   /** Inject the LLM call for tests; production uses gateway.chat. */
   extractor?: ProposeTakesExtractor;
@@ -171,6 +171,15 @@ export interface ProposeTakesResult {
   /** True when the phase deadline fired before the page loop completed (partial result). */
   deadline_hit?: boolean;
   warnings: string[];
+}
+
+/** Optional runtime config read; lightweight test engines may omit this plane. */
+async function readOptionalConfig(engine: BrainEngine, key: string): Promise<string | null> {
+  try {
+    return await engine.getConfig(key);
+  } catch {
+    return null;
+  }
 }
 
 /** Narrow projection of `pages` — the only columns this phase reads. */
@@ -295,7 +304,7 @@ export async function defaultExtractor(
   const result = await gatewayChat({
     messages: [{ role: 'user', content: prompt }],
     ...(input.modelHint ? { model: input.modelHint } : {}),
-    maxTokens: 2048,
+    maxTokens: 1024,
     abortSignal: AbortSignal.timeout(EXTRACTOR_CALL_TIMEOUT_MS),
   });
 
@@ -434,13 +443,58 @@ class ProposeTakesPhase extends BaseCyclePhase {
   ): Promise<{ summary: string; details: Record<string, unknown>; status?: PhaseStatus }> {
     const extractor = opts.extractor ?? defaultExtractor;
     const promptVersion = opts.promptVersion ?? PROPOSE_TAKES_PROMPT_VERSION;
-    const pageLimit = opts.pageLimit ?? 100;
+    const configuredPageLimitRaw = await readOptionalConfig(engine, 'cycle.propose_takes.page_limit');
+    const configuredPageLimit = configuredPageLimitRaw == null ? Number.NaN : Number(configuredPageLimitRaw);
+    const pageLimit = opts.pageLimit ?? (
+      Number.isFinite(configuredPageLimit) && configuredPageLimit > 0
+        ? Math.floor(configuredPageLimit)
+        : 25
+    );
     const skipPagesWithFence = opts.skipPagesWithFence ?? false;
     const deadlineMs = opts.deadlineMs ?? ProposeTakesPhase.PHASE_DEADLINE_MS;
     const phaseStartMs = Date.now();
     const proposalRunId = `propose-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${randomUUID().slice(0, 8)}`;
 
-    const modelId = opts.model ?? getChatModel();
+    let modelId = opts.model;
+    if (!modelId) {
+      if (opts.extractor) {
+        // Injected extractors do not dispatch a model. Preserve the gateway's
+        // configured id for receipts/budget tests without requiring DB config.
+        modelId = getChatModel();
+      } else {
+        const { resolveModel } = await import('../model-config.ts');
+        modelId = await resolveModel(engine, {
+          configKey: 'models.dream.propose_takes',
+          tier: 'utility',
+          fallback: 'haiku',
+        });
+      }
+    }
+
+    // Calibration changes slowly. Run the LLM extractor periodically rather
+    // than on every nightly cycle; unchanged pages remain protected by the
+    // content-hash cache either way. Set cadence_days=1 for daily operation.
+    const configuredCadenceRaw = await readOptionalConfig(engine, 'cycle.propose_takes.cadence_days');
+    const configuredCadence = configuredCadenceRaw == null ? Number.NaN : Number(configuredCadenceRaw);
+    const cadenceDays = Number.isFinite(configuredCadence) && configuredCadence >= 0
+      ? configuredCadence
+      : 7;
+    const lastCompletion = await readOptionalConfig(engine, 'cycle.propose_takes.last_completion_ts');
+    if (cadenceDays > 0 && lastCompletion) {
+      const lastMs = Date.parse(lastCompletion);
+      const nextMs = lastMs + cadenceDays * 24 * 60 * 60 * 1000;
+      if (Number.isFinite(lastMs) && Date.now() < nextMs) {
+        return {
+          summary: `propose_takes skipped: cadence window active until ${new Date(nextMs).toISOString()}`,
+          details: {
+            reason: 'cadence_active',
+            cadence_days: cadenceDays,
+            next_run_at: new Date(nextMs).toISOString(),
+          },
+          status: 'skipped',
+        };
+      }
+    }
 
     // With the default (gateway) extractor, skip cheaply when the resolved
     // model's provider can't run — same probe semantics as patterns.ts /
@@ -545,7 +599,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
           pagePath: page.slug,
           pageBody: body,
           existingTakes,
-          modelHint: opts.model,
+          modelHint: modelId,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -652,6 +706,13 @@ class ProposeTakesPhase extends BaseCyclePhase {
       round_completed_delta: halted ? 0 : 1,
       halt_delta: halted ? 1 : 0,
     });
+    if (!halted) {
+      try {
+        await engine.setConfig('cycle.propose_takes.last_completion_ts', new Date().toISOString());
+      } catch {
+        // Optional config plane (hermetic/injected engines); extraction itself succeeded.
+      }
+    }
 
     return {
       summary: `propose_takes: scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.proposals_inserted} new proposals, ${result.tombstones_written} empty (run ${proposalRunId})`,
