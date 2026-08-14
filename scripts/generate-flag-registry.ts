@@ -26,6 +26,14 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { dirname, resolve as resolvePath, join } from 'path';
 import { fileURLToPath } from 'url';
 
+/** Read source with CRLF normalized to LF: the parser's block-boundary and
+ *  comment-strip regexes are LF-anchored (`\n}\n`, `//[^\n]*`), so Windows
+ *  checkouts (autocrlf=true) would otherwise widen scan windows and inflate
+ *  the last command's flag list. Deterministic on every platform. */
+function readSrc(path: string): string {
+  return readFileSync(path, 'utf-8').replace(/\r\n/g, '\n');
+}
+
 const ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** Flags that live deeper than the one-level module scan. Keep commented. */
@@ -63,7 +71,7 @@ function relativeImports(src: string, fromDir: string): string[] {
 }
 
 export function buildFlagRegistry(): Record<string, string[]> {
-  const cliSource = readFileSync(join(ROOT, 'src/cli.ts'), 'utf-8');
+  const cliSource = readSrc(join(ROOT, 'src/cli.ts'));
 
   // CLI_ONLY membership (the single source of truth in src/cli.ts). Strip
   // line comments first — the set literal carries commentary whose quoted
@@ -130,11 +138,11 @@ export function buildFlagRegistry(): Record<string, string[]> {
       .map(mm => resolvePath(join(ROOT, 'src'), mm[1]))
       .filter(p => existsSync(p));
     for (const modPath of commandModules) {
-      const modSrc = readFileSync(modPath, 'utf-8');
+      const modSrc = readSrc(modPath);
       depthZeroText += modSrc;
       for (const f of flagsInText(modSrc)) { flags.add(f); depthZero.add(f); }
       for (const dep of relativeImports(modSrc, dirname(modPath))) {
-        for (const f of flagsInText(readFileSync(dep, 'utf-8'))) flags.add(f);
+        for (const f of flagsInText(readSrc(dep))) flags.add(f);
       }
     }
 
