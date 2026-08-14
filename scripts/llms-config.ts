@@ -158,6 +158,12 @@ export const SECTIONS: DocSection[] = [
         path: "docs/guides/push-context.md",
       },
       {
+        title: "docs/guides/github-source.md",
+        description:
+          "Mirror GitHub issues, PRs, comments, reviews and CI checks as brain pages. One key + one registration command to a searchable mirror; webhook-driven instant refresh, poll-sweep fallback, daily reconcile, App-credential option.",
+        path: "docs/guides/github-source.md",
+      },
+      {
         title: "docs/mcp/DEPLOY.md",
         description: "MCP server deployment.",
         path: "docs/mcp/DEPLOY.md",
