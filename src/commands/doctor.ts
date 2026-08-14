@@ -16,6 +16,7 @@ export interface Check {
   name: string;
   status: 'ok' | 'warn' | 'fail';
   message: string;
+  code?: string;
   issues?: Array<{ type: string; skill: string; action: string; fix?: any }>;
 }
 
@@ -53,12 +54,119 @@ export function computeDoctorReport(checks: Check[]): DoctorReport {
   return { schema_version: 2, status, health_score: score, checks };
 }
 
+export interface VectorRetrievalProbeDeps {
+  embedQuery: (text: string) => Promise<Float32Array>;
+  expectedDimensions: number;
+  timeoutMs?: number;
+  /** Require at least one hit when corpus stats say embeddings exist. */
+  requireResult?: boolean;
+}
+
+class VectorProbeTimeoutError extends Error {}
+
+async function withVectorProbeTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new VectorProbeTimeoutError()), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+export interface DoctorReportRemoteOptions {
+  /** Internal test seam. Production callers omit this to exercise the live gateway. */
+  vectorProbe?: VectorRetrievalProbeDeps;
+}
+
+/** Exercise live query embedding and pgvector search without leaking provider errors. */
+export async function vectorRetrievalHealthCheck(
+  engine: BrainEngine,
+  deps: VectorRetrievalProbeDeps,
+): Promise<Check> {
+  const timeoutMs = deps.timeoutMs ?? 15_000;
+  const deadlineAt = Date.now() + timeoutMs;
+  const remainingMs = () => Math.max(1, deadlineAt - Date.now());
+  let embedding: Float32Array;
+  try {
+    embedding = await withVectorProbeTimeout(
+      deps.embedQuery('gbrain vector retrieval health probe'),
+      remainingMs(),
+    );
+  } catch (error) {
+    if (error instanceof VectorProbeTimeoutError) {
+      return {
+        name: 'vector_retrieval',
+        status: 'fail',
+        code: 'embedding_probe_timeout',
+        message: `Live query embedding exceeded the ${timeoutMs}ms vector-probe deadline; hybrid search can silently degrade to keyword-only.`,
+      };
+    }
+    return {
+      name: 'vector_retrieval',
+      status: 'fail',
+      code: 'embedding_probe_failed',
+      message: 'Live query embedding failed; hybrid search can silently degrade to keyword-only. Verify embedding provider credentials and base URL.',
+    };
+  }
+
+  if (!(embedding instanceof Float32Array) || embedding.length !== deps.expectedDimensions) {
+    return {
+      name: 'vector_retrieval',
+      status: 'fail',
+      code: 'embedding_dimension_mismatch',
+      message: `Live query embedding returned an invalid dimension; expected ${deps.expectedDimensions}. Verify embedding model and brain schema configuration.`,
+    };
+  }
+
+  try {
+    const results = await withVectorProbeTimeout(
+      engine.searchVector(embedding, { limit: 1 }),
+      remainingMs(),
+    );
+    if (deps.requireResult && results.length === 0) {
+      return {
+        name: 'vector_retrieval',
+        status: 'fail',
+        code: 'vector_probe_no_results',
+        message: 'Live vector search returned no result even though the corpus reports embeddings. Verify vector query latency, pgvector availability, and embedding index integrity.',
+      };
+    }
+    return {
+      name: 'vector_retrieval',
+      status: 'ok',
+      code: 'vector_probe_ok',
+      message: `Live query embedding (${embedding.length} dimensions) and vector search succeeded (${results.length} result(s))`,
+    };
+  } catch (error) {
+    if (error instanceof VectorProbeTimeoutError) {
+      return {
+        name: 'vector_retrieval',
+        status: 'fail',
+        code: 'vector_search_probe_timeout',
+        message: `Live vector search exceeded the ${timeoutMs}ms vector-probe deadline. Verify pgvector availability and query latency.`,
+      };
+    }
+    return {
+      name: 'vector_retrieval',
+      status: 'fail',
+      code: 'vector_search_probe_failed',
+      message: 'Live query embedding succeeded but vector search failed. Verify pgvector schema, index, and embedding dimensions.',
+    };
+  }
+}
+
 /**
  * Focused doctor for `run_doctor` MCP op + `gbrain remote doctor` CLI.
  *
- * Runs five checks scoped to "what does a remote operator need to know about
+ * Runs focused checks scoped to "what does a remote operator need to know about
  * this brain right now?":
  *   - connection (engine reachable + page count)
+ *   - vector_retrieval (live query embedding + pgvector probe)
  *   - schema_version (current vs latest)
  *   - brain_score (the 5-component health composite)
  *   - sync_failures (unacked parse failures)
@@ -193,14 +301,21 @@ export async function takesWeightGridCheck(engine: BrainEngine): Promise<Check> 
   }
 }
 
-export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorReport> {
+export async function doctorReportRemote(
+  engine: BrainEngine,
+  options: DoctorReportRemoteOptions = {},
+): Promise<DoctorReport> {
   const checks: Check[] = [];
 
   // 1. Connection
   let pageCount = 0;
+  let chunkCount = 0;
+  let embeddedCount = 0;
   try {
     const stats = await engine.getStats();
     pageCount = stats.page_count ?? 0;
+    chunkCount = stats.chunk_count ?? 0;
+    embeddedCount = stats.embedded_count ?? 0;
     checks.push({
       name: 'connection',
       status: 'ok',
@@ -216,7 +331,40 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
     return computeDoctorReport(checks);
   }
 
-  // 2. Schema version. Uses engine.getConfig('version') — the same engine-
+  // 2. Live vector retrieval. Unlike corpus embedding counts, this exercises
+  // the current process environment and catches keyword-only degradation.
+  if (chunkCount > 0 && embeddedCount === 0) {
+    checks.push({
+      name: 'vector_retrieval',
+      status: 'fail',
+      code: 'vector_corpus_unembedded',
+      message: 'The corpus contains chunks but no embeddings, so vector retrieval is unavailable. Run the embedding pipeline before relying on hybrid search.',
+    });
+  } else {
+    try {
+      let probeDeps = options.vectorProbe;
+      if (!probeDeps) {
+        const embedding = await import('../core/embedding.ts');
+        probeDeps = {
+          embedQuery: embedding.embedQuery,
+          expectedDimensions: embedding.getEmbeddingDimensions(),
+        };
+      }
+      checks.push(await vectorRetrievalHealthCheck(engine, {
+        ...probeDeps,
+        requireResult: embeddedCount > 0,
+      }));
+    } catch {
+      checks.push({
+        name: 'vector_retrieval',
+        status: 'fail',
+        code: 'embedding_config_unavailable',
+        message: 'Live vector probe could not resolve embedding configuration. Verify the MCP process environment and embedding model settings.',
+      });
+    }
+  }
+
+  // 3. Schema version. Uses engine.getConfig('version') — the same engine-
   // agnostic API the local doctor uses, works on both Postgres and PGLite.
   try {
     const versionStr = await engine.getConfig('version');
