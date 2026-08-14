@@ -580,6 +580,10 @@ export async function runPhaseSynthesize(
     const jobRawSource = new Map<number, string>();
     /** Skip reasons for the cycle report (D5 cap hits, D8 legacy-key skips). */
     const skipReports: Array<{ filePath: string; reason: string }> = [];
+    // Prompt-volume telemetry. Character counts are provider-neutral and stay
+    // trustworthy even when a CLI adapter reports placeholder token usage.
+    let sourceCharsSubmitted = 0;
+    let preparedCharsSubmitted = 0;
 
     const maxCharsPerChunk = computeChunkCharBudget(config.model, config.maxPromptTokens);
     const successfulLegacyKeys = await loadSuccessfulLegacySynthesisKeys(
@@ -633,6 +637,9 @@ export async function runPhaseSynthesize(
         });
         continue;
       }
+
+      sourceCharsSubmitted += t.content.length;
+      preparedCharsSubmitted += preparedContent.length;
 
       const isChunked = chunks.length > 1;
       // queue.add subagent validator (classifyCapabilities → resolveRecipe)
@@ -777,6 +784,11 @@ export async function runPhaseSynthesize(
       synthesis_depth: {
         standard_transcripts: submittedTranscripts - deepTranscripts,
         deep_transcripts: deepTranscripts,
+      },
+      prompt_volume: {
+        source_chars: sourceCharsSubmitted,
+        prepared_chars: preparedCharsSubmitted,
+        compaction_saved_chars: Math.max(0, sourceCharsSubmitted - preparedCharsSubmitted),
       },
       child_outcomes: childOutcomes,
       // Children submitted (one per chunk for chunked transcripts; one per
@@ -1222,7 +1234,10 @@ export function prepareTranscriptForSynthesis(t: DiscoveredTranscript): string {
     /(?:^|-)granola(?:-|$)/i.test(t.basename);
   if (!isMeeting) return t.content;
   const marker = /\n## Transcript\s*\r?\n/i.exec(t.content);
-  if (!marker || marker.index < 800) return t.content;
+  // A small but real curated packet is still enough. Ten of the current
+  // Granola files have useful summaries under the former 800-char guard,
+  // including several multi-thousand-character raw appendices.
+  if (!marker || marker.index < 200) return t.content;
   return t.content.slice(0, marker.index).trimEnd() +
     '\n\n[Verbatim transcript omitted: Dream used the source commitments and curated meeting summary.]\n';
 }

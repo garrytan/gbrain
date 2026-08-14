@@ -462,12 +462,18 @@ class ProposeTakesPhase extends BaseCyclePhase {
         // configured id for receipts/budget tests without requiring DB config.
         modelId = getChatModel();
       } else {
-        const { resolveModel } = await import('../model-config.ts');
-        modelId = await resolveModel(engine, {
-          configKey: 'models.dream.propose_takes',
-          tier: 'utility',
-          fallback: 'haiku',
-        });
+        try {
+          const { resolveModel } = await import('../model-config.ts');
+          modelId = await resolveModel(engine, {
+            configKey: 'models.dream.propose_takes',
+            tier: 'utility',
+            fallback: 'haiku',
+          });
+        } catch {
+          // Small embedded/test engines can intentionally omit the config
+          // plane. Preserve the gateway's provider-probe behavior there.
+          modelId = getChatModel();
+        }
       }
     }
 

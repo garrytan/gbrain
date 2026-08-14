@@ -28,7 +28,10 @@ cd /app
 if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
   (
     while true; do
-      gbrain autopilot --interval 900 >>/tmp/autopilot.log 2>&1 || true
+      # Healthy brains now check hourly (adaptive 2x); degraded brains still
+      # tighten to 15 minutes. This halves idle doctor/dispatch churn without
+      # weakening recovery when the score drops.
+      gbrain autopilot --interval 1800 >>/tmp/autopilot.log 2>&1 || true
       echo "[entrypoint] autopilot exited, respawning in 10s" >>/tmp/autopilot.log
       sleep 10
     done

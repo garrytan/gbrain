@@ -18,7 +18,13 @@ import {
   isDreamOutput,
   DREAM_OUTPUT_MARKER_RE,
 } from '../src/core/cycle/transcript-discovery.ts';
-import { judgeSignificance, renderPageToMarkdown, type JudgeClient } from '../src/core/cycle/synthesize.ts';
+import {
+  inferSynthesisDepth,
+  judgeSignificance,
+  prepareTranscriptForSynthesis,
+  renderPageToMarkdown,
+  type JudgeClient,
+} from '../src/core/cycle/synthesize.ts';
 
 let tmpDir: string;
 
@@ -199,6 +205,48 @@ describe('readSingleTranscript', () => {
     const path = makeTranscript('random-basename.txt', 'a'.repeat(3000));
     const t = readSingleTranscript(path, { minChars: 1000 });
     expect(t!.inferredDate).toBeNull();
+  });
+});
+
+describe('Dream synthesis preparation', () => {
+  function transcript(overrides: Partial<import('../src/core/cycle/transcript-discovery.ts').DiscoveredTranscript> = {}) {
+    return {
+      filePath: '/tmp/raw/meetings/2026-08-14-granola.md',
+      contentHash: 'abc123',
+      content: '',
+      basename: '2026-08-14-granola',
+      inferredDate: '2026-08-14',
+      ...overrides,
+    };
+  }
+
+  test('uses curated Granola summary and omits the verbatim appendix', () => {
+    const summary = `# Meeting\n\n## Summary\n${'decision and commitment. '.repeat(12)}`;
+    const raw = `speaker-by-speaker filler ${'x'.repeat(100_000)}`;
+    const prepared = prepareTranscriptForSynthesis(transcript({
+      content: `${summary}\n\n## Transcript\n${raw}`,
+    }));
+
+    expect(prepared).toContain('decision and commitment');
+    expect(prepared).toContain('Verbatim transcript omitted');
+    expect(prepared).not.toContain('speaker-by-speaker filler');
+    expect(prepared.length).toBeLessThan(summary.length + 200);
+  });
+
+  test('does not compact ordinary transcripts', () => {
+    const content = `ordinary conversation ${'x'.repeat(2_000)}`;
+    const t = transcript({
+      filePath: '/tmp/conversations/2026-08-14-session.md',
+      basename: '2026-08-14-session',
+      content,
+    });
+    expect(prepareTranscriptForSynthesis(t)).toBe(content);
+  });
+
+  test('reserves deep synthesis for strategic or reflective material', () => {
+    expect(inferSynthesisDepth(transcript(), ['quarterly strategy decision'])).toBe('deep');
+    expect(inferSynthesisDepth(transcript({ basename: 'routine-status' }), ['ordinary update'])).toBe('standard');
+    expect(inferSynthesisDepth(transcript({ basename: 'routine-status' }), [], 'deep')).toBe('deep');
   });
 });
 
