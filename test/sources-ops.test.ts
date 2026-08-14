@@ -1148,4 +1148,10 @@ describe('addSource github kind', () => {
     const config = await addGithubSource(false);
     expect(config.federated).toBe(false);
   });
+
+  test('github mirror is not reported as a broken git clone', async () => {
+    await addGithubSource();
+    const status = await getSourceStatus(engine, 'ghsrc');
+    expect(status.clone_state).toBe('not-applicable');
+  });
 });

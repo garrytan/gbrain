@@ -763,7 +763,7 @@ export interface SyncOpts {
    * github source kind: refresh exactly one item (webhook path).
    * When set, sync skips the sweep and re-fetches this single issue/PR.
    */
-  githubItem?: { repo: string; number: number; kind: 'issue' | 'pr' };
+  githubItem?: { repo: string; number: number; kind: 'issue' | 'pr'; deleted?: boolean };
   /** Multi-repo: sync strategy override (markdown, code, auto). */
   strategy?: 'markdown' | 'code' | 'auto';
   /**

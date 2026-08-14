@@ -845,8 +845,12 @@ export async function getSourceStatus(
   const archived = archivedRows[0]?.archived === true;
 
   const remoteUrl = getRemoteUrl(src.config);
+  const sourceConfig =
+    typeof src.config === 'string'
+      ? (JSON.parse(src.config) as Record<string, unknown>)
+      : ((src.config ?? {}) as Record<string, unknown>);
   let cloneState: SourceStatus['clone_state'] = 'not-applicable';
-  if (src.local_path) {
+  if (src.local_path && sourceConfig.kind !== 'github') {
     cloneState = validateRepoState(src.local_path, remoteUrl ?? undefined);
   }
 

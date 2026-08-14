@@ -2698,6 +2698,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     sigHeader: string,
     payload: Buffer,
     res: Response,
+    eventName: string,
   ): Promise<void> {
     const ref = extractGitHubItemRef(parsed);
     if (ref === null) {
@@ -2757,7 +2758,12 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         {
           sourceId: source.id,
           noExtract: false,
-          github_item: { repo: ref.repo, number: ref.number, kind: ref.kind },
+          github_item: {
+            repo: ref.repo,
+            number: ref.number,
+            kind: ref.kind,
+            ...(eventName === 'issues' && parsed.action === 'deleted' ? { deleted: true } : {}),
+          },
           embed_reason: 'webhook',
         },
         {
@@ -2872,7 +2878,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // comment / review / label / assignee / milestone / check events
       // refresh exactly the item that changed.
       if (GH_ITEM_EVENTS.has(event)) {
-        await handleGitHubItemEvent(engine, parsed, sigHeader, payload, res);
+        await handleGitHubItemEvent(engine, parsed, sigHeader, payload, res, event);
         return;
       }
 

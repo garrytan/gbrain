@@ -1470,6 +1470,7 @@ export async function registerBuiltinHandlers(
             repo: String((job.data.github_item as Record<string, unknown>).repo),
             number: Number((job.data.github_item as Record<string, unknown>).number),
             kind: (job.data.github_item as Record<string, unknown>).kind === 'pr' ? 'pr' as const : 'issue' as const,
+            deleted: (job.data.github_item as Record<string, unknown>).deleted === true,
           }
         : undefined;
     let result;

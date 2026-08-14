@@ -330,6 +330,61 @@ describe('github-source materialize', () => {
     }
   });
 
+  test('deleted webhook item removes its page without fetching a missing item', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ghsrc-item-delete-'));
+    const fx = makeFixture();
+    const fetchImpl = buildFetch(fx);
+    try {
+      await insertSource(engine, dir);
+      await withEnv({ GH_TOKEN: 'test-token' }, async () => {
+        await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc', full: true }, fetchImpl);
+        const before = fx.calls.length;
+        const res = await runGitHubSync(
+          engine,
+          'ghsrc',
+          { ...makeCfg(dir), repos: [REPO.toUpperCase()] },
+          { sourceId: 'ghsrc', githubItem: { repo: REPO.toUpperCase(), number: 3, kind: 'pr', deleted: true } },
+          fetchImpl,
+        );
+        expect(res.deleted).toBe(1);
+        expect(fx.calls.length).toBe(before);
+        expect(await pageSlugs(engine)).not.toContain('gh/acme/app/3');
+        expect(existsSync(join(dir, 'gh', REPO, '3.md'))).toBe(false);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('import rejection preserves page and sweep cursor', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ghsrc-import-fail-'));
+    const fx = makeFixture();
+    const fetchImpl = buildFetch(fx);
+    try {
+      await insertSource(engine, dir);
+      await withEnv({ GH_TOKEN: 'test-token' }, async () => {
+        await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc', full: true }, fetchImpl);
+        const oldPage = readFileSync(join(dir, 'gh', REPO, '3.md'), 'utf-8');
+        fx.items.get(3)!.body = 'x'.repeat(5_000_001);
+        fx.items.get(3)!.updated_at = '2026-08-07T00:00:00Z';
+        const res = await runGitHubSync(
+          engine,
+          'ghsrc',
+          makeCfg(dir),
+          { sourceId: 'ghsrc', noExtract: true, noEmbed: true },
+          fetchImpl,
+        );
+        expect(res.status).toBe('partial');
+        expect(res.failedFiles).toBeGreaterThan(0);
+        expect(readFileSync(join(dir, 'gh', REPO, '3.md'), 'utf-8')).toBe(oldPage);
+        const state = JSON.parse(readFileSync(join(dir, '.github-source.json'), 'utf-8')) as { last_sweep_at: string };
+        expect(state.last_sweep_at).toBe('2026-08-02T00:00:00Z');
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('item refresh outside scope is a no-op', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ghsrc-scope-'));
     const fx = makeFixture();
@@ -347,6 +402,76 @@ describe('github-source materialize', () => {
         expect(res.status).toBe('up_to_date');
         expect(res.added + res.modified).toBe(0);
         expect(existsSync(join(dir, 'gh', 'other', 'org', '1.md'))).toBe(false);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('newly added repo gets history bootstrap despite source cursor', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ghsrc-new-repo-'));
+    const calls: string[] = [];
+    const fetchImpl = async (url: string): Promise<Response> => {
+      const u = new URL(url);
+      const path = u.pathname;
+      const json = (body: unknown): Response => new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'x-ratelimit-remaining': '4900', 'x-ratelimit-reset': '9999999999' },
+      });
+      calls.push(url);
+      if (path === '/repos/acme/one/issues') return json([]);
+      if (path === '/repos/acme/one/pulls') return json([]);
+      if (path === '/repos/acme/one') return json({ full_name: 'acme/one', private: false, archived: false, default_branch: 'main', description: null });
+      if (path === '/repos/acme/two/issues') {
+        if (u.searchParams.has('since')) return json([]);
+        return json([{
+          number: 7,
+          title: 'Historical issue',
+          state: 'open',
+          updated_at: '2026-08-01T00:00:00Z',
+          body: 'Existing before repo was added.',
+          html_url: 'https://github.com/acme/two/issues/7',
+          created_at: '2026-07-01T00:00:00Z',
+          labels: [],
+          assignees: [],
+          milestone: null,
+          user: { login: 'alice' },
+        }]);
+      }
+      if (path === '/repos/acme/two/pulls') return json([]);
+      if (path === '/repos/acme/two') return json({ full_name: 'acme/two', private: false, archived: false, default_branch: 'main', description: null });
+      if (path === '/repos/acme/two/issues/7') return json({
+        number: 7,
+        title: 'Historical issue',
+        state: 'open',
+        state_reason: null,
+        body: 'Existing before repo was added.',
+        created_at: '2026-07-01T00:00:00Z',
+        updated_at: '2026-08-01T00:00:00Z',
+        closed_at: null,
+        labels: [],
+        assignees: [],
+        milestone: null,
+        html_url: 'https://github.com/acme/two/issues/7',
+        user: { login: 'alice' },
+      });
+      if (path === '/repos/acme/two/issues/7/comments') return json([]);
+      return new Response(JSON.stringify({ message: 'unexpected ' + path }), { status: 404 });
+    };
+    try {
+      await insertSource(engine, dir);
+      await withEnv({ GH_TOKEN: 'test-token' }, async () => {
+        await runGitHubSync(engine, 'ghsrc', { ...makeCfg(dir), repos: ['acme/one'] }, {
+          sourceId: 'ghsrc', full: true, noExtract: true, noEmbed: true,
+        }, fetchImpl);
+        const res = await runGitHubSync(engine, 'ghsrc', { ...makeCfg(dir), repos: ['acme/one', 'acme/two'] }, {
+          sourceId: 'ghsrc', noExtract: true, noEmbed: true,
+        }, fetchImpl);
+        expect(res.added).toBe(2); // new item plus new repo card
+        expect(await pageSlugs(engine)).toContain('gh/acme/two/7');
+        const newRepoIssuesCall = calls.find((url) => url.includes('/repos/acme/two/issues?'));
+        expect(newRepoIssuesCall).toBeDefined();
+        expect(newRepoIssuesCall).not.toContain('since=');
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });

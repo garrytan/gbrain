@@ -159,7 +159,7 @@ describe('renderItemPage', () => {
           review_decision: 'APPROVED',
           head: { sha: 'abc123', ref: 'feat/thing' },
         } as GitHubItemData['detail'],
-        reviews: [{ user: { login: 'carol' }, state: 'APPROVED', body: 'LGTM', submitted_at: '2026-08-02T00:00:00Z' }],
+        reviews: [{ user: { login: 'carol' }, state: 'APPROVED', body: 'LGTM, see #88.', submitted_at: '2026-08-02T00:00:00Z' }],
       }),
     );
     expect(page).toContain('kind: pr');
@@ -167,6 +167,7 @@ describe('renderItemPage', () => {
     expect(page).toContain('merged: true');
     expect(page).toContain('head_ref: "feat/thing"');
     expect(page).toContain('## Reviews');
+    expect(page).toContain('[[gh/acme/app/88|#88]]');
     expect(page).toContain('### carol · APPROVED · 2026-08-02T00:00:00Z');
   });
 
@@ -198,7 +199,7 @@ describe('renderItemPage', () => {
         reviewComments: [
           {
             user: { login: 'dave' },
-            body: 'off by one here',
+            body: 'off by one here; see #89',
             created_at: '2026-08-02T02:00:00Z',
             path: 'src/app.ts',
             line: 41,
@@ -208,6 +209,7 @@ describe('renderItemPage', () => {
       }),
     );
     expect(page).toContain('## Review comments');
+    expect(page).toContain('[[gh/acme/app/89|#89]]');
     expect(page).toContain('### dave · src/app.ts:41 · 2026-08-02T02:00:00Z');
   });
 });

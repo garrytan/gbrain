@@ -70,6 +70,7 @@ export interface GitHubItemRef {
   repo: string; // owner/name
   number: number;
   kind: 'issue' | 'pr';
+  deleted?: boolean;
 }
 
 export interface GitHubSyncSummary {
@@ -897,7 +898,7 @@ export function renderItemPage(data: GitHubItemData, detailFetched = true): stri
     body.push('## Reviews', '');
     for (const r of data.reviews) {
       body.push(`### ${r.user?.login ?? 'ghost'} · ${r.state}${r.submitted_at ? ` · ${r.submitted_at}` : ''}`, '');
-      if (r.body) body.push(r.body, '');
+      if (r.body) body.push(linkifyMentions(r.body, data.repo), '');
     }
   }
 
@@ -906,7 +907,7 @@ export function renderItemPage(data: GitHubItemData, detailFetched = true): stri
     for (const rc of data.reviewComments) {
       const loc = rc.path + (rc.line ? `:${rc.line}` : '');
       body.push(`### ${rc.user?.login ?? 'ghost'} · ${loc} · ${rc.created_at}`, '');
-      body.push(rc.body, '');
+      body.push(linkifyMentions(rc.body, data.repo), '');
     }
   }
 
@@ -1033,6 +1034,9 @@ async function importPage(
     sourceId: deps.sourceId,
     activePack,
   });
+  if (result.status === 'error' || result.error) {
+    throw new Error(result.error ?? `Import failed for ${rel}`);
+  }
   return { slug: result.slug, chunks: result.chunks, status: result.status === 'imported' ? 'imported' : 'skipped' };
 }
 
@@ -1138,6 +1142,11 @@ export async function runGitHubSync(
     } catch { /* fall back to legacy typing */ }
   }
 
+  // Keep previous scope before auto-discovery writes its refreshed repo list.
+  // A repo added to an existing source needs a history bootstrap even when
+  // the source-wide cursor is already ahead of its old items.
+  const state = readState(cfg.dir);
+  const previousRepos = new Set(state.repos.filter((repo): repo is string => typeof repo === 'string'));
   const repos = await resolveScopeRepos(cfg, client, opts.signal);
 
   if (opts.githubItem) {
@@ -1151,7 +1160,6 @@ export async function runGitHubSync(
     return syncResult(summary, opts);
   }
 
-  const state = readState(cfg.dir);
   const since = opts.full ? undefined : state.last_sweep_at ?? undefined;
   const keepPaths = new Set<string>();
   const succeededRepos = new Set<string>();
@@ -1164,7 +1172,8 @@ export async function runGitHubSync(
   for (const repo of repos) {
     if (opts.signal?.aborted) break;
     try {
-      const { issues, prs } = await enumerateRepoItems(repo, client, { since, signal: opts.signal });
+      const repoSince = opts.full || !previousRepos.has(repo) ? undefined : since;
+      const { issues, prs } = await enumerateRepoItems(repo, client, { since: repoSince, signal: opts.signal });
       const items: Array<{
         repo: string;
         number: number;
@@ -1329,14 +1338,33 @@ async function refreshSingleItem(
   activePack: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> } | undefined,
   summary: GitHubSyncSummary,
 ): Promise<void> {
-  const data = await fetchItemData(item.repo, item.number, item.kind, deps.client, { signal: deps.opts.signal });
   const filePath = itemPagePath(deps.cfg.dir, item.repo, item.number);
+  const slug = `gh/${item.repo}/${item.number}`.toLowerCase();
+  if (item.deleted) {
+    const rows = await deps.engine.executeRaw<{ slug: string }>(
+      `SELECT slug FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL`,
+      [deps.sourceId, slug],
+    );
+    if (rows.length > 0) {
+      await deps.engine.deletePages([slug], { sourceId: deps.sourceId });
+      summary.deleted += rows.length;
+    }
+    rmSync(filePath, { force: true });
+    return;
+  }
+  const data = await fetchItemData(item.repo, item.number, item.kind, deps.client, { signal: deps.opts.signal });
   mkdirSync(dirname(filePath), { recursive: true });
-  writeFileSync(filePath, renderItemPage(data), 'utf-8');
-  const imported = await importPage(deps, filePath, activePack);
-  summary.pagesAffected.push(imported.slug);
-  summary.chunksCreated += imported.chunks;
-  summary.modified++;
+  const tmpPath = `${filePath}.tmp`;
+  writeFileSync(tmpPath, renderItemPage(data), 'utf-8');
+  try {
+    const imported = await importPage(deps, tmpPath, activePack, relative(deps.cfg.dir, filePath).replace(/\\/g, '/'));
+    summary.pagesAffected.push(imported.slug);
+    summary.chunksCreated += imported.chunks;
+    summary.modified++;
+    renameSync(tmpPath, filePath);
+  } finally {
+    rmSync(tmpPath, { force: true });
+  }
   await runExtractAndEmbed(deps, summary, activePack);
 }
 
