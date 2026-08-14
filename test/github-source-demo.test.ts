@@ -80,6 +80,25 @@ describe('github-source demo fixture', () => {
     }
   });
 
+  test('empty-body issue page gets a matchable Context block', () => {
+    const empty = DEMO_ITEMS.find((i) => i.detail.body === null);
+    expect(empty).toBeDefined();
+    const page = renderItemPage(empty!);
+    expect(page).toContain('_no description_');
+    expect(page).toContain('## Context');
+    expect(page).toContain('- labels: bug, test-flake');
+    expect(page).toContain('- milestone: v0.3.0');
+    expect(page).toContain('- assignees: bob');
+    expect(page).toContain('- repo: alice-example/sample-app');
+  });
+
+  test('populated items do not get a Context block (no churn)', () => {
+    const filled = DEMO_ITEMS.find((i) => i.detail.body !== null);
+    expect(filled).toBeDefined();
+    const page = renderItemPage(filled!);
+    expect(page).not.toContain('## Context');
+  });
+
   test('privacy: no real-world names in the fixture', () => {
     const joined = JSON.stringify({ items: DEMO_ITEMS, repos: DEMO_REPOS });
     for (const bad of ['veltri', 'Veltri', 'garrytan', 'Garry-s-List', 'acme']) {

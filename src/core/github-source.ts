@@ -875,7 +875,20 @@ export function renderItemPage(data: GitHubItemData, detailFetched = true): stri
     body.push(...checksSummaryLines(data.checks));
   }
   body.push('## Description', '');
-  body.push(d.body ? linkifyMentions(d.body, data.repo) : '_no description_', '');
+  if (d.body) {
+    body.push(linkifyMentions(d.body, data.repo), '');
+  } else {
+    body.push('_no description_', '');
+    // Empty-body items render almost nothing matchable (title alone), which
+    // makes them near-unrecallable by label/milestone/assignee queries.
+    // Surface the structured context so retrieval has tokens to hit.
+    const ctx: string[] = [];
+    if (d.labels.length) ctx.push(`labels: ${d.labels.map((l) => l.name).join(', ')}`);
+    if (d.milestone) ctx.push(`milestone: ${d.milestone.title}`);
+    if (d.assignees.length) ctx.push(`assignees: ${d.assignees.map((a) => a.login).join(', ')}`);
+    ctx.push(`repo: ${data.repo}`);
+    body.push('', '## Context', '', ...ctx.map((c) => `- ${c}`), '');
+  }
 
   if (data.linked.length > 0) {
     body.push(
