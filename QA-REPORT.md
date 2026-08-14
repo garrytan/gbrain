@@ -22,4 +22,4 @@ Validation:
 - `bun run typecheck`: **pass**.
 - `bun test test/sources-ops.test.ts`: **40 pass, 14 fail**. Failures are pre-existing Windows git-test harness failures, documented by prior branch commit `aa528945`; no GitHub-kind test failed.
 - No real GitHub API calls made by GitHub-source tests; all GitHub fetches used offline fixtures.
-- Retrieval bench against the live brain: hit@1 6/15, hit@5 9/15, hit@10 9/15; negative controls pass (no phantom items, gibberish gets low confidence); full table in `retrieval-bench.md`.
+- Retrieval bench against the live brain: 12/13 positive queries hit@5 (hit@1 9/13); the one miss is the empty-body case fixed in finding 7 (live fleet re-render pending). Negative controls pass: no phantom items, gibberish fabricates nothing. Full table in `retrieval-bench.md`.
