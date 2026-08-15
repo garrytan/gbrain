@@ -1,0 +1,13 @@
+// Routing eval fixtures for skills/skillify. Each positive intent includes
+// at least one frontmatter trigger string as substring (structural matcher
+// requirement) while paraphrasing real user phrasing.
+{"intent":"Skillify this workflow end to end — full checklist, eval contract, and resolver row","expected_skill":"skillify"}
+{"intent":"Check skill completeness on this workflow before we call it done","expected_skill":"skillify"}
+{"intent":"Did this skill regress after my edit? Compare the fresh score against the prior baseline","expected_skill":"skillify"}
+// Ambiguous vs skill-creator: creating the skill is skill-creator's lane;
+// taking a draft through the checklist + evals is skillify's. This phrasing
+// legitimately trips both.
+{"intent":"Skillify this new skill draft — take it through the whole checklist and evals","expected_skill":"skillify","ambiguous_with":["skill-creator"]}
+// Negative: adjacent (skills as a topic) but out of scope — a bundling
+// question, not a make-this-a-proper-skill request.
+{"intent":"Which of our skills are bundled into the plugin for downstream installs?","expected_skill":null}

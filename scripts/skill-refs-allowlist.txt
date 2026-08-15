@@ -1,0 +1,5 @@
+# check-skill-refs donor-remnant allowlist (ratchet: may shrink, never silently grow).
+# These files legitimately DOCUMENT donor/OpenClaw environments; they do not
+# instruct writes to those paths. Review any addition like a permission grant.
+skills/setup/SKILL.md
+skills/smoke-test/SKILL.md

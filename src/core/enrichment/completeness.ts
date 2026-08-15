@@ -112,7 +112,8 @@ function nonRedundancy(page: Page): number {
 }
 
 function hasTitle(page: Page): number {
-  return page.title && page.title.trim().length > 0 ? 1 : 0;
+  // Coerce (issue #1939): a malformed YAML date/number title could be non-string.
+  return String(page.title ?? '').trim().length > 0 ? 1 : 0;
 }
 
 function hasBody(page: Page): number {
@@ -242,7 +243,7 @@ for (const [type, rubric] of RUBRICS_BY_TYPE) {
 // ---------------------------------------------------------------------------
 
 export function scorePage(page: Page): CompletenessScore {
-  const rubric = RUBRICS_BY_TYPE.get(page.type as PageType) ?? defaultRubric;
+  const rubric = RUBRICS_BY_TYPE.get(page.type as string) ?? defaultRubric;
   const dimensionScores: Record<string, number> = {};
   let total = 0;
   for (const d of rubric.dimensions) {
@@ -260,7 +261,7 @@ export function scorePage(page: Page): CompletenessScore {
 }
 
 export function getRubric(type: PageType | string): Rubric {
-  const r = RUBRICS_BY_TYPE.get(type as PageType);
+  const r = RUBRICS_BY_TYPE.get(type as string);
   return r ?? defaultRubric;
 }
 

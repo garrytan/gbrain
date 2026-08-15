@@ -20,8 +20,9 @@ import type { OperationContext } from '../src/core/operations.ts';
 import type { ChunkInput } from '../src/core/types.ts';
 
 let engine: PGLiteEngine;
+let schemaDim: number;
 
-function basisEmbedding(idx: number, dim = 1536): Float32Array {
+function basisEmbedding(idx: number, dim: number): Float32Array {
   const emb = new Float32Array(dim);
   emb[idx % dim] = 1.0;
   return emb;
@@ -31,6 +32,18 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+
+  // v0.41.8.0: query the schema's actual embedding dim instead of
+  // hardcoding 1536. Pre-fix, the test hardcoded 1536 but master's
+  // v0.36.0 default changed to ZeroEntropy 1280d, AND a gateway-
+  // configured local env may resolve to OpenAI 1536d. The dim is
+  // resolved at initSchema() time from the configured gateway (with
+  // DEFAULT_EMBEDDING_DIMENSIONS=1280 fallback). Either way, the seed
+  // embedding's dim must match the column's dim, so we ask the column.
+  const dimRows = await engine.executeRaw<{ atttypmod: number }>(
+    "SELECT atttypmod FROM pg_attribute WHERE attrelid = 'content_chunks'::regclass AND attname = 'embedding'",
+  );
+  schemaDim = dimRows[0]?.atttypmod ?? 1280;
 
   await engine.putPage('wiki/people/expert', {
     type: 'person',
@@ -42,7 +55,7 @@ beforeAll(async () => {
       chunk_index: 0,
       chunk_text: 'Expert is the authority on widgets.',
       chunk_source: 'compiled_truth',
-      embedding: basisEmbedding(7),
+      embedding: basisEmbedding(7, schemaDim),
       token_count: 10,
     } as ChunkInput,
   ]);

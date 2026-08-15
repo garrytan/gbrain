@@ -1,0 +1,49 @@
+{
+  "fixture_id": "gen-wb-020",
+  "turns": {
+    "3": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "async updates",
+          "fact": "Emrys Galewright prefers async updates over standing calls",
+          "entity_slug": "people/emrys-galewright",
+          "match_keywords": [
+            "async updates"
+          ],
+          "kind": "preference"
+        }
+      ]
+    },
+    "4": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "diligence checklist / Friday",
+          "fact": "Committed to sending Emrys Galewright the diligence checklist by Friday",
+          "entity_slug": "people/emrys-galewright",
+          "match_keywords": [
+            "diligence checklist",
+            "Friday"
+          ],
+          "kind": "commitment"
+        }
+      ]
+    },
+    "5": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "pricing / Glintworks Co",
+          "fact": "Emrys Galewright is worried the Glintworks Co pricing model undercuts gross margin (round concern)",
+          "entity_slug": "people/emrys-galewright",
+          "match_keywords": [
+            "pricing",
+            "Glintworks Co"
+          ],
+          "kind": "belief"
+        }
+      ]
+    }
+  }
+}

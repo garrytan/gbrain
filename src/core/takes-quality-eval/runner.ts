@@ -31,11 +31,19 @@ import {
 } from './receipt-name.ts';
 import type { TakesQualityReceipt } from './receipt.ts';
 import { estimateCost, getPricing, PricingNotFoundError } from './pricing.ts';
+import { DEFAULT_CYCLES_NONTTY } from '../eval/cycle-default.ts';
 
+/**
+ * Three distinct providers (uncorrelated judge blind spots). Every entry MUST
+ * be listed in its recipe's chat touchpoint AND in the SUPPORTED_MODELS
+ * pricing allowlist — pinned by test/default-model-panels.test.ts.
+ * google:gemini-1.5-pro (retired by Google) and openai:gpt-4o (dropped from
+ * the OpenAI recipe's chat list) sat here dead until #3510.
+ */
 export const DEFAULT_MODEL_PANEL = [
-  'openai:gpt-4o',
+  'openai:gpt-5.2',
   'anthropic:claude-opus-4-7',
-  'google:gemini-1.5-pro',
+  'google:gemini-2.0-flash',
 ] as const;
 
 export interface RunOpts {
@@ -145,7 +153,10 @@ async function callOneModel(
 
 export async function runEval(engine: BrainEngine, opts: RunOpts = {}): Promise<RunResult> {
   const limit = opts.limit ?? 100;
-  const cycles = opts.cycles ?? (process.stdout.isTTY ? 3 : 1);
+  // Library core stays TTY-agnostic (#1784): default to the cost-conservative
+  // value. The CLI layer (eval-takes-quality.ts) owns the TTY=3 upgrade + the
+  // banner annotation; it always passes an explicit `cycles` down.
+  const cycles = opts.cycles ?? DEFAULT_CYCLES_NONTTY;
   const models = opts.models ?? DEFAULT_MODEL_PANEL;
   const budgetUsd = opts.budgetUsd ?? null;
   const source = opts.source ?? 'db';

@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-wb-008",
+  "suites": [
+    "write-back"
+  ],
+  "category": "write-back",
+  "seed_pages": [
+    {
+      "slug": "people/alarico-marrowfield",
+      "content": "---\ntitle: Alarico Marrowfield\ntype: person\naliases: [alarico]\nsummary: Founder of Lumenforge Systems.\n---\n\nAlarico Marrowfield is the founder of Lumenforge Systems. Alarico pushed back on the proposed valuation during diligence.\n"
+    },
+    {
+      "slug": "companies/lumenforge-systems",
+      "content": "---\ntitle: Lumenforge Systems\ntype: company\nsummary: Seed-stage company. Founded by Alarico Marrowfield.\n---\n\nLumenforge Systems is a seed-stage company. Founded by Alarico Marrowfield. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Just wrapped the Lumenforge Systems call with Alarico Marrowfield.",
+      "ts": "2026-04-18T14:35:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "How did it go?",
+      "ts": "2026-04-18T14:36:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Alarico prefers async updates over standing calls. Noted for next time.",
+      "ts": "2026-04-18T15:22:00Z"
+    },
+    {
+      "turn_id": 4,
+      "role": "user",
+      "text": "Alarico is worried the Lumenforge Systems pricing model undercuts their gross margin. Real concern for the round.",
+      "ts": "2026-04-18T15:23:00Z"
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Alarico said Lumenforge Systems hit their growth target a month early. Ahead of plan.",
+      "ts": "2026-04-18T15:24:00Z"
+    }
+  ]
+}

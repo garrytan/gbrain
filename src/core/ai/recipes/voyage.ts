@@ -37,8 +37,10 @@ export const voyage: Recipe = {
         'voyage-multimodal-3',
       ],
       default_dims: 1024,
-      cost_per_1m_tokens_usd: 0.18,
-      price_last_verified: '2026-04-20',
+      // Display hint for `gbrain providers` only (billing math goes through
+      // src/core/embedding-pricing.ts). Rate for the default voyage-4-large.
+      cost_per_1m_tokens_usd: 0.12,
+      price_last_verified: '2026-07-28',
       // Voyage enforces 120K tokens per batch. Voyage's tokenizer runs
       // ~3-4× denser than OpenAI tiktoken on mixed content (code/JSON/CJK),
       // so the per-recipe pre-split uses 1 char ≈ 1 token at 0.5 utilization

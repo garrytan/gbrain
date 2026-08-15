@@ -1,0 +1,58 @@
+{
+  "_meta": {
+    "fixture_version": "v0.36.1.0",
+    "page": "meeting-2026-04-10-fundraise-fund-a.md",
+    "synthetic": true,
+    "notes": "Meeting-note genre. Claims appear both in prose and in the explicit ## Takes section. Both should be extracted by the tuned propose_takes prompt. Conviction values explicit in the ## Takes section; inferred for prose claims."
+  },
+  "claims": [
+    {
+      "claim_text": "LA market will be slower than the SF data implies for acme-example",
+      "kind": "judgment",
+      "domain": "geography",
+      "conviction": 0.65,
+      "since_date": "2026-04-10",
+      "rationale": "Prose hedge: 'I don't think she's modeling correctly'"
+    },
+    {
+      "claim_text": "Vertical-depth competitive moat thesis is weaker than alice-example claims",
+      "kind": "judgment",
+      "domain": "competitive-dynamics",
+      "conviction": 0.55,
+      "since_date": "2026-04-10",
+      "rationale": "'I'm not sure I buy that' = mild dissent"
+    },
+    {
+      "claim_text": "acme-example's current pricing leaves money on the table for top-decile cohort",
+      "kind": "judgment",
+      "domain": "pricing",
+      "conviction": 0.6,
+      "since_date": "2026-04-10",
+      "rationale": "Modest conviction inferred"
+    },
+    {
+      "claim_text": "acme-example closes Series A on Q4 2026 timeline",
+      "kind": "bet",
+      "domain": "fundraise",
+      "conviction": 0.7,
+      "since_date": "2026-04-10",
+      "rationale": "Explicit conviction in ## Takes"
+    },
+    {
+      "claim_text": "fund-a leads acme-example's Series A round",
+      "kind": "bet",
+      "domain": "fundraise",
+      "conviction": 0.75,
+      "since_date": "2026-04-10",
+      "rationale": "Explicit conviction in ## Takes"
+    },
+    {
+      "claim_text": "Vertical-depth competitive thesis will look weaker in 12 months",
+      "kind": "prediction",
+      "domain": "competitive-dynamics",
+      "conviction": 0.55,
+      "since_date": "2026-04-10",
+      "rationale": "Explicit conviction in ## Takes"
+    }
+  ]
+}

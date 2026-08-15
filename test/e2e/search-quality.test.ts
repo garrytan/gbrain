@@ -128,6 +128,17 @@ describe('SearchResult fields', () => {
     expect(r.chunk_index).toBeDefined();
     expect(typeof r.chunk_index).toBe('number');
   });
+
+  test('empty keyword query returns a defined array without throwing', async () => {
+    const results = await engine.searchKeyword('');
+    expect(Array.isArray(results)).toBe(true);
+  });
+
+  test('zero vector search returns a defined array without throwing', async () => {
+    const zeroVector = new Float32Array(1536);
+    const results = await engine.searchVector(zeroVector);
+    expect(Array.isArray(results)).toBe(true);
+  });
 });
 
 describe('detail parameter', () => {
@@ -145,9 +156,11 @@ describe('detail parameter', () => {
   });
 
   test('detail=low on vector search filters to compiled_truth', async () => {
-    // Use a timeline-direction embedding — with detail=low, should get no results
-    // or only compiled_truth results
+    // Use a timeline-direction embedding — detail=low filters to compiled_truth.
+    // Vector search returns every chunk with an embedding (ordered by distance),
+    // so the seeded compiled_truth chunks are non-empty and ALL compiled_truth.
     const results = await engine.searchVector(basisEmbedding(1), { detail: 'low' });
+    expect(results.length).toBeGreaterThan(0);
     for (const r of results) {
       expect(r.chunk_source).toBe('compiled_truth');
     }

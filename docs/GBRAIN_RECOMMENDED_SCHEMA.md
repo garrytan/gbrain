@@ -6,6 +6,14 @@ A system prompt for any AI agent that wants to build and maintain a personal kno
 
 Drop this into your agent's workspace as a skill or system prompt. Your agent will build the rest.
 
+> **Relationship to schema packs:** this document is the prose, paste-in
+> version of the schema pattern. gbrain also ships a machine-enforced
+> counterpart — schema packs (`gbrain schema`, typed pages, extraction,
+> aliases, lint) — documented in `docs/architecture/schema-packs.md` and
+> `docs/schema-author-tutorial.md`. The prose schema here and the active
+> schema pack should describe the same brain; when you evolve one, evolve
+> the other.
+
 ---
 
 ## What this is

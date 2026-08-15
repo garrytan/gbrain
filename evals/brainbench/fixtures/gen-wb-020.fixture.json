@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-wb-020",
+  "suites": [
+    "write-back"
+  ],
+  "category": "write-back",
+  "seed_pages": [
+    {
+      "slug": "people/emrys-galewright",
+      "content": "---\ntitle: Emrys Galewright\ntype: person\naliases: [emrys]\nsummary: Founder of Glintworks Co.\n---\n\nEmrys Galewright is the founder of Glintworks Co. Emrys shipped the v2 launch two weeks ahead of plan.\n"
+    },
+    {
+      "slug": "companies/glintworks-co",
+      "content": "---\ntitle: Glintworks Co\ntype: company\nsummary: Seed-stage company. Founded by Emrys Galewright.\n---\n\nGlintworks Co is a seed-stage company. Founded by Emrys Galewright. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Just wrapped the Glintworks Co call with Emrys Galewright.",
+      "ts": "2026-02-04T10:23:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "How did it go?",
+      "ts": "2026-02-04T10:24:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Emrys prefers async updates over standing calls. Noted for next time.",
+      "ts": "2026-02-04T11:10:00Z"
+    },
+    {
+      "turn_id": 4,
+      "role": "user",
+      "text": "I committed to sending Emrys the diligence checklist by Friday.",
+      "ts": "2026-02-04T11:11:00Z"
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Emrys is worried the Glintworks Co pricing model undercuts their gross margin. Real concern for the round.",
+      "ts": "2026-02-04T11:12:00Z"
+    }
+  ]
+}

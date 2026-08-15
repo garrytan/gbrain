@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-kta-pos-018",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "kta-pos",
+  "seed_pages": [
+    {
+      "slug": "people/noor-wrenhaven",
+      "content": "---\ntitle: Noor Wrenhaven\ntype: person\naliases: [noor]\nsummary: Founder of Windrose.\n---\n\nNoor Wrenhaven is the founder of Windrose. Noor flagged churn as the top risk in the latest update.\n"
+    },
+    {
+      "slug": "companies/windrose",
+      "content": "---\ntitle: Windrose\ntype: company\nsummary: Seed-stage company. Founded by Noor Wrenhaven.\n---\n\nWindrose is a seed-stage company. Founded by Noor Wrenhaven. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "I'm meeting Noor tomorrow — anything I should remember?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Great, thanks. That covers it."
+    }
+  ]
+}

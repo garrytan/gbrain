@@ -1,0 +1,19 @@
+{
+  "id": "gbrain",
+  "label": "gbrain company brain",
+  "advertise": "gbrain",
+  "hints": [
+    "Company knowledge brain: searchable, cross-source, persistent.",
+    "Search it BEFORE answering questions about the org, people, projects, decisions, or history: `gbrain search \"<question>\"`.",
+    "Write durable knowledge with `gbrain put <slug> --content ...`, only under your own slug prefixes.",
+    "See the gbrain skill for slug conventions and first-run setup."
+  ],
+  "auth": {
+    "check": "gbrain whoami",
+    "reauth": "gbrain init --mcp-only --force --issuer-url \"$GBRAIN_ISSUER_URL\" --mcp-url \"$GBRAIN_MCP_URL\" --oauth-client-id \"$GBRAIN_CLIENT_ID\" --oauth-client-secret \"$GBRAIN_CLIENT_SECRET\"",
+    "credentialPaths": [
+      { "path": ".gbrain/config.json", "kind": "file" }
+    ]
+  },
+  "install": { "binary": "gbrain" }
+}

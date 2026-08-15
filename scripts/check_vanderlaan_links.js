@@ -11,7 +11,7 @@ try {
   const pageRes = await db.query(`
     SELECT id, slug, deleted_at, title, type FROM pages WHERE slug LIKE '%vanderlaan_vasey_2009_coercion%'
   `);
-  
+
   console.log(`Found ${pageRes.rows.length} rows matching '%vanderlaan_vasey_2009_coercion%':`);
   for (const row of pageRes.rows) {
     console.log(`- ID: ${row.id}, Slug: '${row.slug}', Deleted At: ${row.deleted_at}, Title: ${row.title}, Type: ${row.type}`);

@@ -270,6 +270,166 @@ describe('MinionQueue: Stall Detection', () => {
   });
 });
 
+// --- #1737 — honest attempt accounting on terminal dead-letter paths ---
+
+describe('MinionQueue: #1737 attempt accounting on dead-letter', () => {
+  test('wall-clock dead-letter increments attempts_made (no more 0/N (started:M))', async () => {
+    const job = await queue.add('sync', {}, { max_attempts: 2 });
+    // Per-job timeout so the wall-clock threshold is timeout_ms * 2 = 2s.
+    await engine.executeRaw('UPDATE minion_jobs SET timeout_ms = 1000 WHERE id = $1', [job.id]);
+    await queue.claim('tok1', 30000, 'default', ['sync']);
+    expect((await queue.getJob(job.id))!.attempts_made).toBe(0); // bug repro: started but not made
+
+    // Force cumulative wall-clock past timeout_ms * 2.
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET started_at = now() - interval '10 seconds' WHERE id = $1",
+      [job.id]
+    );
+    const dead = await queue.handleWallClockTimeouts(30000);
+    expect(dead.length).toBe(1);
+    expect(dead[0].status).toBe('dead');
+    expect(dead[0].error_text).toBe('wall-clock timeout exceeded');
+    // The fix: a job killed by wall-clock consumed an attempt.
+    expect(dead[0].attempts_made).toBe(1);
+    // Constraint chk_attempts_order (attempts_made <= attempts_started) holds.
+    expect(dead[0].attempts_made).toBeLessThanOrEqual(dead[0].attempts_started);
+  });
+
+  test('wall-clock dead-letter is terminal — does NOT retry even with attempts remaining', async () => {
+    const job = await queue.add('sync', {}, { max_attempts: 5 });
+    await engine.executeRaw('UPDATE minion_jobs SET timeout_ms = 1000 WHERE id = $1', [job.id]);
+    await queue.claim('tok1', 30000, 'default', ['sync']);
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET started_at = now() - interval '10 seconds' WHERE id = $1",
+      [job.id]
+    );
+    const dead = await queue.handleWallClockTimeouts(30000);
+    expect(dead.length).toBe(1);
+    // Even with 4 attempts left, wall-clock is terminal (non-idempotent handler safety).
+    expect(dead[0].status).toBe('dead');
+    expect(dead[0].status).not.toBe('delayed');
+  });
+
+  test('stall dead-letter increments attempts_made; requeue does NOT', async () => {
+    const job = await queue.add('sync', {}, { max_attempts: 3 });
+    await engine.executeRaw('UPDATE minion_jobs SET max_stalled = 2 WHERE id = $1', [job.id]);
+
+    // First stall: requeued, attempts_made stays 0 (lease-loss recovery, not an app attempt).
+    await queue.claim('tok1', 30000, 'default', ['sync']);
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
+      [job.id]
+    );
+    const r1 = await queue.handleStalled();
+    expect(r1.requeued.length).toBe(1);
+    expect(r1.requeued[0].attempts_made).toBe(0);
+
+    // Second stall: dead-lettered, attempts_made now increments.
+    await queue.claim('tok2', 30000, 'default', ['sync']);
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
+      [job.id]
+    );
+    const r2 = await queue.handleStalled();
+    expect(r2.dead.length).toBe(1);
+    expect(r2.dead[0].error_text).toBe('max stalled count exceeded');
+    expect(r2.dead[0].attempts_made).toBe(1);
+    expect(r2.dead[0].attempts_made).toBeLessThanOrEqual(r2.dead[0].attempts_started);
+  });
+});
+
+// --- #1737 — per-handler default wall-clock budget at submit ---
+
+describe('MinionQueue: #1737 per-handler default timeout', () => {
+  test('long handler with no explicit timeout_ms gets the 30-min default stamped', async () => {
+    const job = await queue.add('embed-backfill', { sourceId: 'x' });
+    expect(job.timeout_ms).toBe(30 * 60 * 1000);
+  });
+
+  test('autopilot-cycle + subagent also get the long default', async () => {
+    const cycle = await queue.add('autopilot-cycle', {});
+    // subagent is a protected name → needs the trusted-submit flag (4th arg).
+    const sub = await queue.add('subagent', {}, undefined, { allowProtectedSubmit: true });
+    expect(cycle.timeout_ms).toBe(30 * 60 * 1000);
+    expect(sub.timeout_ms).toBe(30 * 60 * 1000);
+  });
+
+  // #3207 — facts-absorb is one LLM extraction call per page (same shape as
+  // chronicle_extract) but was missing from HANDLER_DEFAULT_TIMEOUT_MS, so it
+  // inherited the tight null-default wall-clock and was dead-lettered
+  // mid-generation on slow chat providers (facts silently lost).
+  test('facts-absorb gets the 10-min LLM-extraction default (#3207)', async () => {
+    const job = await queue.add('facts-absorb', { slug: 'people/alice-example' });
+    expect(job.timeout_ms).toBe(10 * 60 * 1000);
+  });
+
+  test('contextual per-chunk reindex gets the 60-min default', async () => {
+    const job = await queue.add('contextual_reindex_per_chunk', { page_slug: 'large-transcript' }, undefined, {
+      allowProtectedSubmit: true,
+    });
+    expect(job.timeout_ms).toBe(60 * 60 * 1000);
+  });
+
+  test('explicit timeout_ms always wins over the default', async () => {
+    const job = await queue.add('embed-backfill', { sourceId: 'x' }, { timeout_ms: 5000 });
+    expect(job.timeout_ms).toBe(5000);
+  });
+
+  test('short handler keeps null timeout_ms (tight wall-clock default applies)', async () => {
+    const job = await queue.add('sync', {});
+    expect(job.timeout_ms).toBeNull();
+  });
+});
+
+// --- Claim-time budget fallback (jobs fix wave, upstream issue #3) ---
+//
+// Rows inserted before submit-time stamping existed (or by writers that
+// bypass add()) carry timeout_ms = NULL and used to fall to the minutes-scale
+// null-default wall-clock sweep. claim() now COALESCEs the budget from
+// HANDLER_DEFAULT_TIMEOUT_MS and derives timeout_at from the coalesced value.
+// Seeding NULL requires a direct UPDATE because add() stamps at submit.
+
+describe('MinionQueue: claim-time timeout fallback', () => {
+  test('legacy NULL-timeout long-handler row gets the map budget stamped at claim', async () => {
+    const job = await queue.add('subagent', {}, undefined, { allowProtectedSubmit: true });
+    await engine.executeRaw(
+      `UPDATE minion_jobs SET timeout_ms = NULL, timeout_at = NULL WHERE id = $1`,
+      [job.id],
+    );
+    const before = Date.now();
+    const claimed = await queue.claim('tok-fallback', 30_000, 'default', ['subagent']);
+    expect(claimed).not.toBeNull();
+    expect(claimed!.id).toBe(job.id);
+    expect(claimed!.timeout_ms).toBe(30 * 60 * 1000);
+    expect(claimed!.timeout_at).toBeInstanceOf(Date);
+    const deadline = claimed!.timeout_at!.getTime();
+    // timeout_at ≈ claim time + 30min (generous 60s slop for slow CI).
+    expect(deadline).toBeGreaterThan(before + 30 * 60 * 1000 - 60_000);
+    expect(deadline).toBeLessThan(before + 30 * 60 * 1000 + 60_000);
+    // Persisted, not just returned — a restarted worker sees the same budget.
+    const rows = await engine.executeRaw<{ timeout_ms: number | null }>(
+      `SELECT timeout_ms FROM minion_jobs WHERE id = $1`, [job.id],
+    );
+    expect(Number(rows[0].timeout_ms)).toBe(30 * 60 * 1000);
+  });
+
+  test('name outside the map keeps NULL budget at claim (fail-open, todays behavior)', async () => {
+    const job = await queue.add('noop', {});
+    expect(job.timeout_ms).toBeNull();
+    const claimed = await queue.claim('tok-nomap', 30_000, 'default', ['noop']);
+    expect(claimed).not.toBeNull();
+    expect(claimed!.timeout_ms).toBeNull();
+    expect(claimed!.timeout_at).toBeNull();
+  });
+
+  test('explicit timeout_ms is never overridden at claim', async () => {
+    await queue.add('embed-backfill', { sourceId: 'x' }, { timeout_ms: 5000 });
+    const claimed = await queue.claim('tok-explicit', 30_000, 'default', ['embed-backfill']);
+    expect(claimed).not.toBeNull();
+    expect(claimed!.timeout_ms).toBe(5000);
+  });
+});
+
 // --- v0.13.1 #219 — max_stalled default + input surface ---
 
 describe('MinionQueue: v0.13.1 max_stalled schema default (#219)', () => {
@@ -607,6 +767,26 @@ describe('MinionQueue: Prune', () => {
     const count = await queue.prune({ olderThan: new Date(Date.now() + 86400000) }); // future date = prune everything old enough
     expect(count).toBe(1); // only the cancelled one
   });
+
+  // #2712: --dry-run used to be silently ignored — the destructive default
+  // ran and deleted rows while the operator believed they were previewing.
+  test('dryRun counts prunable jobs without deleting', async () => {
+    const job1 = await queue.add('sync', {});
+    await queue.cancelJob(job1.id); // terminal → prunable
+
+    const wouldPrune = await queue.prune({ olderThan: new Date(Date.now() + 86400000), dryRun: true });
+    expect(wouldPrune).toBe(1);
+
+    // The row must still exist after a dry run.
+    const stillThere = await queue.getJob(job1.id);
+    expect(stillThere).not.toBeNull();
+    expect(stillThere!.status).toBe('cancelled');
+
+    // A real prune afterwards actually deletes it.
+    const pruned = await queue.prune({ olderThan: new Date(Date.now() + 86400000) });
+    expect(pruned).toBe(1);
+    expect(await queue.getJob(job1.id)).toBeNull();
+  });
 });
 
 // --- Stats (1 test) ---
@@ -639,6 +819,99 @@ describe('MinionQueue: Cancel & Retry', () => {
     const retried = await queue.retryJob(job.id);
     expect(retried!.status).toBe('waiting');
     expect(retried!.error_text).toBeNull();
+  });
+
+  // #2783: retry must reset started_at/attempts_made/attempts_started/
+  // stalled_counter — an explicit `jobs retry` is an operator asserting
+  // "run this fresh".
+  test('retry resets started_at/attempts_made/attempts_started/stalled_counter', async () => {
+    const job = await queue.add('sync', {}, { max_attempts: 3, max_stalled: 3 });
+    await queue.claim('tok1', 30000, 'default', ['sync']);
+    await queue.failJob(job.id, 'tok1', 'error', 'dead');
+    // Simulate the original claim having stamped started_at long ago,
+    // attempts already elevated, and a near-exhausted stall budget —
+    // matching what a real dead job (killed by wall-clock OR by stall
+    // exhaustion) looks like.
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET started_at = now() - interval '1 hour', stalled_counter = 2 WHERE id = $1",
+      [job.id],
+    );
+    const retried = await queue.retryJob(job.id);
+    expect(retried!.status).toBe('waiting');
+    expect(retried!.started_at).toBeNull();
+    expect(retried!.attempts_made).toBe(0);
+    expect(retried!.attempts_started).toBe(0);
+    expect(retried!.stalled_counter).toBe(0);
+  });
+
+  // #2783 repro: retry issued long after the original claim must NOT be
+  // immediately dead-lettered by the wall-clock sweep on re-claim.
+  test('retry survives handleWallClockTimeouts after re-claim, even long after the original attempt', async () => {
+    const job = await queue.add('sync', {}, { max_attempts: 3 });
+    await engine.executeRaw('UPDATE minion_jobs SET timeout_ms = 1000 WHERE id = $1', [job.id]);
+    await queue.claim('tok1', 30000, 'default', ['sync']);
+    // Original attempt dies from a wall-clock timeout — matches the issue's
+    // repro (an outage that outlasts timeout_ms).
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET started_at = now() - interval '10 seconds' WHERE id = $1",
+      [job.id],
+    );
+    const firstDead = await queue.handleWallClockTimeouts(30000);
+    expect(firstDead.length).toBe(1);
+    expect(firstDead[0].status).toBe('dead');
+
+    // Outage clears; operator retries — LONG after the original claim time
+    // (this is the exact scenario that used to dead-letter in <1s: without
+    // the fix, started_at would still be the original claim's timestamp).
+    await queue.retryJob(job.id);
+    const reclaimed = await queue.claim('tok2', 30000, 'default', ['sync']);
+    expect(reclaimed).not.toBeNull();
+    expect(reclaimed!.attempts_made).toBe(0);
+
+    // The sweep must NOT kill it immediately this time — started_at was
+    // re-stamped fresh on re-claim (claim()'s COALESCE(started_at, now())).
+    const stillAlive = await queue.handleWallClockTimeouts(30000);
+    expect(stillAlive.length).toBe(0);
+    expect((await queue.getJob(job.id))!.status).toBe('active');
+  });
+
+  // #2783 repro (stall side): a job dead-lettered by stall exhaustion must
+  // get a fresh stall budget on retry, not immediately re-die on its first
+  // stall after being re-claimed.
+  test('retry survives one stall after re-claim, even after the original stall budget was exhausted', async () => {
+    const job = await queue.add('sync', {}, { max_attempts: 3, max_stalled: 2 });
+
+    // Exhaust the stall budget the same way the existing stall test does:
+    // one requeue stall, then one dead-lettering stall.
+    await queue.claim('tok1', 30000, 'default', ['sync']);
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
+      [job.id],
+    );
+    await queue.handleStalled();
+    await queue.claim('tok2', 30000, 'default', ['sync']);
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
+      [job.id],
+    );
+    const r2 = await queue.handleStalled();
+    expect(r2.dead.length).toBe(1);
+    expect(r2.dead[0].status).toBe('dead');
+    expect(r2.dead[0].stalled_counter).toBe(2); // == max_stalled — exhausted
+
+    // Operator retries. Without the stalled_counter reset, the very next
+    // stall would immediately satisfy `stalled_counter + 1 >= max_stalled`
+    // and dead-letter again despite "run this fresh".
+    const retried = await queue.retryJob(job.id);
+    expect(retried!.stalled_counter).toBe(0);
+    await queue.claim('tok3', 30000, 'default', ['sync']);
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
+      [job.id],
+    );
+    const r3 = await queue.handleStalled();
+    expect(r3.requeued.length).toBe(1); // fresh budget — requeued, not dead
+    expect(r3.dead.length).toBe(0);
   });
 });
 
@@ -1205,6 +1478,12 @@ describe('MinionQueue: handleTimeouts', () => {
     const dead = await queue.getJob(job.id);
     expect(dead!.status).toBe('dead');
     expect(dead!.error_text).toBe('timeout exceeded');
+    // #1737 regression: the timed-out run counts as a spent attempt, mirroring
+    // the wall-clock + stall dead-letter paths. Without this the job reads
+    // `attempts: 0/N (started: N)`. Asserted on both the RETURNING row and the
+    // persisted row so a future refactor can't silently drop the increment.
+    expect(timedOut[0].attempts_made).toBe(1);
+    expect(dead!.attempts_made).toBe(1);
   });
 
   test('handleTimeouts ignores stalled jobs (lock_until > now guard)', async () => {
@@ -1387,6 +1666,73 @@ describe('MinionQueue: Idempotency', () => {
     const j2 = await queue.add('sync', { v: 2 }, { idempotency_key: 'same' });
     expect(j2.id).toBe(j1.id);
     expect(j2.data).toEqual({ v: 1 }); // first wins
+  });
+
+  test('dead job with idempotency_key allows re-submission', async () => {
+    const j1 = await queue.add('test-synth', { prompt: 'synthesize' }, {
+      idempotency_key: 'dream:synth:test:abc123',
+      max_attempts: 1,
+    });
+    await engine.executeRaw(
+      `UPDATE minion_jobs SET status = 'dead', finished_at = now() WHERE id = $1`,
+      [j1.id]
+    );
+    const j2 = await queue.add('test-synth', { prompt: 'synthesize' }, {
+      idempotency_key: 'dream:synth:test:abc123',
+      max_attempts: 8,
+    });
+    expect(j2.id).not.toBe(j1.id);
+    expect(j2.status).toBe('waiting');
+    const oldRow = await engine.executeRaw<{ idempotency_key: string | null }>(
+      `SELECT idempotency_key FROM minion_jobs WHERE id = $1`,
+      [j1.id]
+    );
+    expect(oldRow[0].idempotency_key).toBeNull();
+  });
+
+  test('cancelled job with idempotency_key allows re-submission', async () => {
+    const j1 = await queue.add('test-synth', {}, {
+      idempotency_key: 'dream:synth:test:cancel',
+    });
+    await engine.executeRaw(
+      `UPDATE minion_jobs SET status = 'cancelled', finished_at = now() WHERE id = $1`,
+      [j1.id]
+    );
+    const j2 = await queue.add('test-synth', {}, {
+      idempotency_key: 'dream:synth:test:cancel',
+    });
+    expect(j2.id).not.toBe(j1.id);
+    expect(j2.status).toBe('waiting');
+  });
+
+  test('completed job with idempotency_key still blocks re-submission', async () => {
+    const j1 = await queue.add('sync', {}, {
+      idempotency_key: 'dream:synth:test:completed',
+    });
+    await engine.executeRaw(
+      `UPDATE minion_jobs SET status = 'completed', finished_at = now() WHERE id = $1`,
+      [j1.id]
+    );
+    const j2 = await queue.add('sync', {}, {
+      idempotency_key: 'dream:synth:test:completed',
+    });
+    expect(j2.id).toBe(j1.id);
+    expect(j2.status).toBe('completed');
+  });
+
+  test('active job with idempotency_key still blocks re-submission', async () => {
+    const j1 = await queue.add('sync', {}, {
+      idempotency_key: 'dream:synth:test:active',
+    });
+    await engine.executeRaw(
+      `UPDATE minion_jobs SET status = 'active' WHERE id = $1`,
+      [j1.id]
+    );
+    const j2 = await queue.add('sync', {}, {
+      idempotency_key: 'dream:synth:test:active',
+    });
+    expect(j2.id).toBe(j1.id);
+    expect(j2.status).toBe('active');
   });
 });
 
@@ -1773,11 +2119,186 @@ describe('MinionQueue: v0.19.1 maxWaiting — cap correctness + race (D2/H2)', (
     expect(b.queue).toBe('shell');
   });
 
+  test('cross-source isolation — waiting sync for source A does NOT swallow source B (multi-source regression)', async () => {
+    // Regression: the cap counted all waiting (name, queue) rows regardless
+    // of data.sourceId, so a waiting default-source sync coalesced away every
+    // other source's freshness sync — a secondary source sat 29h stale while
+    // dispatch logs showed its syncs "dispatched".
+    const a = await queue.add('srcsync', { sourceId: 'default' }, { maxWaiting: 1 });
+    const a2 = await queue.add('srcsync', { sourceId: 'default' }, { maxWaiting: 1 });
+    expect(a2.id).toBe(a.id); // same source still coalesces
+    const b = await queue.add('srcsync', { sourceId: 'projects' }, { maxWaiting: 1 });
+    expect(b.id).not.toBe(a.id); // different source MUST get its own row
+    const b2 = await queue.add('srcsync', { sourceId: 'projects' }, { maxWaiting: 1 });
+    expect(b2.id).toBe(b.id); // and its own cap
+  });
+
   test('unset maxWaiting — normal submit path, no coalesce, no cap', async () => {
     const a = await queue.add('uncapped', {});
     const b = await queue.add('uncapped', {});
     const c = await queue.add('uncapped', {});
     expect(new Set([a.id, b.id, c.id]).size).toBe(3);
+  });
+
+  // REGRESSION (jobs fix wave): the backpressure scope now reads BOTH payload
+  // spellings. A snake_case source_id submission previously fell into the
+  // NULL-wildcard arm (counted ALL rows for name+queue); it now scopes
+  // exactly like camelCase sourceId. Pin the new arm for maxWaiting too —
+  // the maxPending tests below cover it for the new option only.
+  test('maxWaiting + snake_case source_id: scoped per source, not wildcard', async () => {
+    const a1 = await queue.add('srcsync2', { source_id: 'src-a' }, { maxWaiting: 1 });
+    // Different source: must NOT be swallowed by src-a's waiting row.
+    const b1 = await queue.add('srcsync2', { source_id: 'src-b' }, { maxWaiting: 1 });
+    expect(b1.id).not.toBe(a1.id);
+    // Same source coalesces.
+    const a2 = await queue.add('srcsync2', { source_id: 'src-a' }, { maxWaiting: 1 });
+    expect(a2.id).toBe(a1.id);
+    expect(a2.coalesced).toBe(true);
+  });
+});
+
+// --- maxPending — single-flight counting waiting + LIVE-LOCK active rows ---
+//
+// Jobs fix wave (upstream issue #2): the autopilot dispatch guards failed once
+// a job sat in 'active' — maxWaiting counts only waiting rows and the slot
+// idempotency key rotates every baseInterval, so a stalled cycle accumulated
+// unbounded byte-identical duplicates. maxPending counts waiting rows PLUS
+// live-lock actives (lock_until > now()); an expired-lock active belongs to a
+// dead/blocked worker and must NOT suppress dispatch — the fresh waiting row
+// keeps feeding the waitingClaimable>0 wedge detectors. Scope is EXACT on
+// COALESCE(data.sourceId, data.source_id): NULL matches only NULL.
+//
+// NOTE: the Promise.all race here runs on single-writer PGLite — a smoke
+// check. The advisory-lock guarantee under real concurrency is pinned by the
+// DATABASE_URL-gated e2e (concurrent same-scope submissions on Postgres).
+
+describe('MinionQueue: maxPending — single-flight (waiting + live-lock active)', () => {
+  async function forceActive(id: number, lockUntilSql: string): Promise<void> {
+    await engine.executeRaw(
+      `UPDATE minion_jobs SET status = 'active', lock_token = 'tok-mp',
+              lock_until = ${lockUntilSql}, started_at = now() - interval '5 minutes'
+        WHERE id = $1`,
+      [id],
+    );
+  }
+
+  test('cap 1: second submission coalesces onto the waiting row (coalesced metadata set)', async () => {
+    const a = await queue.add('single-flight', {}, { maxPending: 1 });
+    expect(a.coalesced).toBeUndefined(); // fresh insert carries no metadata
+    const b = await queue.add('single-flight', {}, { maxPending: 1 });
+    expect(b.id).toBe(a.id);
+    expect(b.coalesced).toBe(true);
+  });
+
+  test('LIVE-LOCK active row suppresses dispatch (the issue-#2 fix)', async () => {
+    const a = await queue.add('single-flight', {}, { maxPending: 1 });
+    await forceActive(a.id, `now() + interval '5 minutes'`);
+    const b = await queue.add('single-flight', {}, { maxPending: 1 });
+    expect(b.id).toBe(a.id); // coalesced onto the in-flight ACTIVE row
+    expect(b.coalesced).toBe(true);
+    expect(b.status).toBe('active');
+  });
+
+  test('EXPIRED-lock active row does NOT suppress — fresh insert (wedge detectors stay fed)', async () => {
+    const a = await queue.add('single-flight', {}, { maxPending: 1 });
+    await forceActive(a.id, `now() - interval '1 second'`);
+    const b = await queue.add('single-flight', {}, { maxPending: 1 });
+    expect(b.id).not.toBe(a.id);
+    expect(b.status).toBe('waiting');
+    expect(b.coalesced).toBeUndefined();
+  });
+
+  test('waiting row preferred over live active on cap-hit', async () => {
+    const active = await queue.add('single-flight', {}, { maxPending: 2 });
+    await forceActive(active.id, `now() + interval '5 minutes'`);
+    const waiting = await queue.add('single-flight', {}, { maxPending: 2 });
+    expect(waiting.status).toBe('waiting');
+    const c = await queue.add('single-flight', {}, { maxPending: 2 });
+    expect(c.id).toBe(waiting.id); // most-recent WAITING wins the coalesce
+    expect(c.coalesced).toBe(true);
+  });
+
+  test('dead row frees the cap', async () => {
+    const a = await queue.add('single-flight', {}, { maxPending: 1 });
+    await engine.executeRaw(
+      `UPDATE minion_jobs SET status = 'dead', finished_at = now() WHERE id = $1`, [a.id],
+    );
+    const b = await queue.add('single-flight', {}, { maxPending: 1 });
+    expect(b.id).not.toBe(a.id);
+    expect(b.status).toBe('waiting');
+  });
+
+  test('EXACT source scope: NULL-source submission never coalesces onto a per-source row (and vice versa)', async () => {
+    const perSource = await queue.add('single-flight', { source_id: 'src-a' }, { maxPending: 1 });
+    // NULL-source submission: per-source row must not count for it.
+    const legacy = await queue.add('single-flight', {}, { maxPending: 1 });
+    expect(legacy.id).not.toBe(perSource.id);
+    // And a second NULL-source submission coalesces onto the legacy row only.
+    const legacy2 = await queue.add('single-flight', {}, { maxPending: 1 });
+    expect(legacy2.id).toBe(legacy.id);
+    // A second per-source submission coalesces onto the per-source row only.
+    const perSource2 = await queue.add('single-flight', { source_id: 'src-a' }, { maxPending: 1 });
+    expect(perSource2.id).toBe(perSource.id);
+  });
+
+  test('snake_case source_id scoping: two sources keep independent caps; same source coalesces', async () => {
+    const a1 = await queue.add('single-flight', { source_id: 'src-a' }, { maxPending: 1 });
+    const b1 = await queue.add('single-flight', { source_id: 'src-b' }, { maxPending: 1 });
+    expect(b1.id).not.toBe(a1.id);
+    const a2 = await queue.add('single-flight', { source_id: 'src-a' }, { maxPending: 1 });
+    expect(a2.id).toBe(a1.id);
+  });
+
+  test('camelCase sourceId scoping parity', async () => {
+    const a1 = await queue.add('single-flight', { sourceId: 'src-a' }, { maxPending: 1 });
+    const b1 = await queue.add('single-flight', { sourceId: 'src-b' }, { maxPending: 1 });
+    expect(b1.id).not.toBe(a1.id);
+    const a2 = await queue.add('single-flight', { sourceId: 'src-a' }, { maxPending: 1 });
+    expect(a2.id).toBe(a1.id);
+  });
+
+  test('clamp: maxPending 0 → 1; floor: 1.7 → 1', async () => {
+    const a = await queue.add('single-flight', {}, { maxPending: 0 });
+    const b = await queue.add('single-flight', {}, { maxPending: 0 });
+    expect(b.id).toBe(a.id); // 0 clamps to 1 → coalesce
+    await engine.executeRaw('DELETE FROM minion_jobs');
+    const c = await queue.add('single-flight', {}, { maxPending: 1.7 });
+    const d = await queue.add('single-flight', {}, { maxPending: 1.7 });
+    expect(d.id).toBe(c.id); // floor(1.7)=1 → coalesce
+  });
+
+  test('race: concurrent submissions hold the cap (PGLite smoke; PG e2e pins the real guarantee)', async () => {
+    const results = await Promise.all(
+      Array.from({ length: 4 }, () => queue.add('single-flight', {}, { maxPending: 1 })),
+    );
+    const ids = new Set(results.map(r => r.id));
+    expect(ids.size).toBe(1);
+  });
+
+  test('both guards supplied: maxPending checked first, both enforced', async () => {
+    // One waiting row. maxPending: 2 passes (1 pending < 2) but
+    // maxWaiting: 1 must still coalesce — both guards apply.
+    const a = await queue.add('single-flight', {}, { maxPending: 2, maxWaiting: 1 });
+    const b = await queue.add('single-flight', {}, { maxPending: 2, maxWaiting: 1 });
+    expect(b.id).toBe(a.id);
+    expect(b.coalesced).toBe(true);
+    // Now force it ACTIVE (live lock): maxWaiting alone would let a new row
+    // in (waiting=0), but maxPending: 1 fires FIRST and coalesces onto the
+    // in-flight row.
+    await forceActive(a.id, `now() + interval '5 minutes'`);
+    const c = await queue.add('single-flight', {}, { maxPending: 1, maxWaiting: 1 });
+    expect(c.id).toBe(a.id);
+    expect(c.coalesced).toBe(true);
+  });
+
+  test('ON CONFLICT idempotency race fallback also carries coalesced metadata', async () => {
+    // Same idempotency_key twice: the fast-path SELECT returns the existing
+    // row with coalesced: true (first coalesce path).
+    const a = await queue.add('single-flight', {}, { idempotency_key: 'sf-key-1' });
+    expect(a.coalesced).toBeUndefined();
+    const b = await queue.add('single-flight', {}, { idempotency_key: 'sf-key-1' });
+    expect(b.id).toBe(a.id);
+    expect(b.coalesced).toBe(true);
   });
 });
 

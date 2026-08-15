@@ -29,10 +29,17 @@ import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import { operations } from '../core/operations.ts';
+import type { AuthInfo } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
-import { dispatchToolCall } from './dispatch.ts';
+import { dispatchToolCall, requestLogStatusForResult } from './dispatch.ts';
+import { parseStrictParamsMode } from './validate-params.ts';
+import { filterOpsForSurface, clampSurface, type McpSurface } from './surface.ts';
+import { disabledOpsForPublishGates } from './publish-gates.ts';
+import { loadConfig } from '../core/config.ts';
 import { buildDefaultLimiters, type RateLimiter } from './rate-limit.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
+import { parseLegacyTokenScope, parseTakesHoldersAllowList, coerceLegacyPermissions } from '../core/legacy-token-scope.ts';
+export { parseLegacyTokenScope };
 
 const DEFAULT_BODY_CAP = 1024 * 1024; // 1 MiB
 
@@ -58,6 +65,16 @@ interface HttpTransportOptions {
   engine: BrainEngine;
   /** Override limiters (for tests). Defaults to env-driven buildDefaultLimiters. */
   limiters?: { ip: RateLimiter; token: RateLimiter };
+  /**
+   * MEMORY_VERBS v1 [c1]: tool-surface mode for this transport (the SECOND
+   * HTTP path — the OAuth path in serve-http.ts carries its own). 'verbs' =
+   * exactly the seven protocol verbs; 'starter' (WP4) = the STARTER_OPS
+   * daily-driver set; 'full' (default) = everything. Legacy bearer tokens
+   * have no oauth_clients row, so there is no per-client surface here — the
+   * transport surface (clamped by GBRAIN_MCP_FORCE_SURFACE, narrow-only)
+   * applies to every caller.
+   */
+  surface?: McpSurface;
 }
 
 interface AuthResult {
@@ -74,7 +91,25 @@ interface AuthResult {
    * for narrower scoping.
    */
   sourceId?: string;
+  /**
+   * #1336: AuthInfo carrying the legacy token's stored federated_read grant
+   * (`permissions.source_id` array). Threaded so `sourceScopeOpts` can scope
+   * read ops to the operator-granted sources instead of just scalar `sourceId`.
+   * Bounded to the stored grant — never widened to "all".
+   */
+  auth?: AuthInfo;
+  /**
+   * #3242: true when the token row carries an operator-set
+   * `permissions.source_id` (string OR array — even a malformed one, which
+   * fails closed to 'default' without widening). false = the historical
+   * no-grant 'default' floor; ONLY that case gets the federated read set
+   * (config.federated sources) threaded as localFederatedSourceIds.
+   */
+  hasSourceGrant?: boolean;
 }
+
+/* Legacy token source-scope parsing lives in core/legacy-token-scope.ts and is
+ * re-exported above so the legacy HTTP transport and OAuth provider cannot drift. */
 
 /** Read up to `cap` bytes off req.body. Returns null if cap exceeded. */
 async function readBodyWithCap(req: Request, cap: number): Promise<string | null> {
@@ -135,25 +170,57 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
   const limiters = opts.limiters || buildDefaultLimiters();
   const bodyCap = envInt('GBRAIN_HTTP_MAX_BODY_BYTES', DEFAULT_BODY_CAP);
   const corsAllowlist = parseCorsAllowlist();
-  const tools = buildToolDefs(operations);
+  // MEMORY_VERBS v1 [c1]: surface filter applies to THIS transport too —
+  // the advertised list AND dispatch (allowedOps), fail-closed. WP4: the
+  // GBRAIN_MCP_FORCE_SURFACE kill switch min()s in (narrow-only, FOV-6a);
+  // resolved once at startup — this transport builds its tool list once.
+  const surface = clampSurface(opts.surface ?? 'full');
+  // WP1/D7: this is a network transport — localOnly ops (operator-filesystem
+  // reach) never appear in its catalog, matching serve-http's filter. The
+  // dispatch-layer backstop denies them even if a caller guesses the name.
+  const surfacedOps = filterOpsForSurface(operations.filter(op => !op.localOnly), surface);
+  const surfaceAllowedOps: ReadonlySet<string> | undefined =
+    surface === 'full' ? undefined : new Set(surfacedOps.map(o => o.name));
+  // WP3: strict-params schema emission resolved ONCE at startup from the FILE
+  // config plane — this transport builds its tool list once, so a
+  // `mcp.strict_params` flip needs a restart here (deliberate; the OAuth
+  // serve-http path re-reads dual-plane per request). Dispatch-side
+  // enforcement still resolves per call.
+  const fileConfig = loadConfig();
+  const strictParams = parseStrictParamsMode(fileConfig?.mcp?.strict_params) === 'reject';
+  const tools = buildToolDefs(surfacedOps, { strictParams });
 
-  function corsHeaders(origin: string | null, extra: Record<string, string> = {}): Record<string, string> {
-    const headers: Record<string, string> = { ...extra };
-    if (corsAllowlist && origin && corsAllowlist.has(origin)) {
-      headers['Access-Control-Allow-Origin'] = origin;
-      headers['Vary'] = 'Origin';
-    }
-    return headers;
+  /**
+   * v0.41.3 (T6): single consolidated CORS header builder. Pre-fix there were
+   * two parallel functions (`corsHeaders` for actual requests, `corsPreflightHeaders`
+   * for OPTIONS) — the preflight variant unconditionally emitted
+   * `Access-Control-Allow-Methods` + `Access-Control-Allow-Headers` to EVERY
+   * Origin, leaking the API surface to attackers probing the preflight. The
+   * actual-request path was correctly default-deny.
+   *
+   * One function, one allowlist gate. Methods/Headers only emit when
+   * preflight=true AND origin is allowlisted. Allow-Origin emits only when
+   * origin is allowlisted (unchanged). `Vary: Origin` pairs with Allow-Origin
+   * so caches don't serve allowlisted responses to non-allowlisted requests.
+   *
+   * `extra` is for response-specific headers (Retry-After, etc.) and is
+   * never gated by the allowlist.
+   */
+  interface CorsHeaderOpts {
+    preflight?: boolean;
+    extra?: Record<string, string>;
   }
-
-  function corsPreflightHeaders(origin: string | null): Record<string, string> {
-    const headers: Record<string, string> = {
-      'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, Accept',
-    };
-    if (corsAllowlist && origin && corsAllowlist.has(origin)) {
+  function corsHeaders(origin: string | null, opts: CorsHeaderOpts = {}): Record<string, string> {
+    const { preflight = false, extra = {} } = opts;
+    const headers: Record<string, string> = { ...extra };
+    const allowed = corsAllowlist && origin && corsAllowlist.has(origin);
+    if (allowed) {
       headers['Access-Control-Allow-Origin'] = origin;
       headers['Vary'] = 'Origin';
+      if (preflight) {
+        headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS';
+        headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept';
+      }
     }
     return headers;
   }
@@ -179,21 +246,35 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         .catch(() => { /* fire-and-forget */ });
       // v0.28: extract per-token takes-holder allow-list. Fail-safe default
       // is ['world'] — a token with no permissions row sees public claims only.
-      const perms = (row as { permissions?: { takes_holders?: unknown } }).permissions;
-      const allowList = Array.isArray(perms?.takes_holders)
-        ? (perms!.takes_holders as unknown[]).filter(h => typeof h === 'string') as string[]
-        : ['world'];
+      // #2529: decode + parse via the shared core helpers so this transport and
+      // the OAuth provider behind `serve --http` cannot drift — including a
+      // double-encoded jsonb string scalar (#2339 class), which both now decode
+      // identically instead of one honoring the grant while the other fails
+      // open to ['world'].
+      const perms = coerceLegacyPermissions((row as { permissions?: unknown }).permissions);
+      const allowList = parseTakesHoldersAllowList(perms?.takes_holders) ?? ['world'];
+      // #1336: honor the operator-set source grant stored on the token.
+      const { sourceId, allowedSources } = parseLegacyTokenScope(perms?.source_id);
+      const auth: AuthInfo = {
+        token,
+        clientId: rowId,
+        clientName: rowName,
+        scopes: [],
+        sourceId,
+        ...(allowedSources ? { allowedSources } : {}),
+      };
       return {
         ok: true,
         tokenId: rowId,
         tokenName: rowName,
         takesHoldersAllowList: allowList,
         // v0.34.1 (#861, D13): legacy bearer tokens default to 'default'
-        // source. Preserves the pre-v0.34 effective behavior of the
-        // serve-http fallback chain that was removed for OAuth clients
-        // (migration v60 backfills oauth_clients.source_id). This path
-        // is for the older v0.22.7 access_tokens transport.
-        sourceId: 'default',
+        // source unless the token carries an explicit grant (#1336 above).
+        sourceId,
+        auth,
+        // #3242: distinguish "operator granted a scope" from "historical
+        // no-grant floor" — only the latter widens to federated sources.
+        hasSourceGrant: perms?.source_id != null,
       };
     } catch {
       return { ok: false };
@@ -216,7 +297,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
 
       // CORS preflight
       if (req.method === 'OPTIONS') {
-        return new Response(null, { headers: corsPreflightHeaders(origin) });
+        return new Response(null, { headers: corsHeaders(origin, { preflight: true }) });
       }
 
       // Health check — no auth, no rate limit. Probes the DB so orchestration
@@ -253,7 +334,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           { error: 'rate_limited', message: 'Too many requests' },
           {
             status: 429,
-            headers: corsHeaders(origin, { 'Retry-After': String(ipCheck.retryAfter ?? 60) }),
+            headers: corsHeaders(origin, { extra: { 'Retry-After': String(ipCheck.retryAfter ?? 60) } }),
           },
         );
       }
@@ -286,7 +367,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           { error: 'rate_limited', message: 'Too many requests for this token' },
           {
             status: 429,
-            headers: corsHeaders(origin, { 'Retry-After': String(tokCheck.retryAfter ?? 60) }),
+            headers: corsHeaders(origin, { extra: { 'Retry-After': String(tokCheck.retryAfter ?? 60) } }),
           },
         );
       }
@@ -329,9 +410,23 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
 
       // tools/list
       if (method === 'tools/list') {
+        // WP1/E5 truthful catalog on THIS transport too: publish-gated ops
+        // (`Operation.publishGateKey`) are hidden while their gate resolves
+        // off. Read per request (dual-plane, DB > file > false) so a
+        // `gbrain config set mcp.publish_skills true` takes effect on the
+        // next list with no restart — matching the OAuth transport. The
+        // resolver never throws (read failure = hidden, the fail-closed
+        // consent posture); the in-handler gates stay as the call-time
+        // backstop. Pre-fix this transport listed the gated ops
+        // unconditionally, so gates-off served the exact listed-but-denied
+        // catalog lie E5 (test/truthful-catalog.e2e-lite.test.ts) pins out.
+        const gateDisabled = await disabledOpsForPublishGates(engine, fileConfig);
+        const visibleTools = gateDisabled.size === 0
+          ? tools
+          : tools.filter(t => !gateDisabled.has(t.name));
         logRequest(auth.tokenName!, 'tools/list', 'success', Date.now() - startedMs);
         return Response.json(
-          { result: { tools }, jsonrpc: '2.0', id },
+          { result: { tools: visibleTools }, jsonrpc: '2.0', id },
           { headers: corsHeaders(origin) },
         );
       }
@@ -344,12 +439,37 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         // takes_search / query (when it returns takes) can server-side filter.
         // v0.34.1 (#861): thread source-isolation scope. Legacy access_tokens
         // path defaults to 'default' per AuthResult.sourceId above.
+        // #3242: a token with NO operator-set source grant reads across the
+        // federated set (config.federated sources), not just the scalar
+        // 'default' floor. Granted tokens (hasSourceGrant) never widen.
+        let localFederated: string[] | undefined;
+        if (auth.hasSourceGrant === false && auth.sourceId) {
+          try {
+            const { localFederatedSourceIds } = await import('../core/source-resolver.ts');
+            localFederated = await localFederatedSourceIds(engine, auth.sourceId, 'seed_default');
+          } catch { /* scalar scope stands */ }
+        }
         const result = await dispatchToolCall(engine, toolName, args, {
           remote: true,
+          // WP1/D7: network transport — the dispatch-layer localOnly
+          // backstop keys off this marker.
+          transport: 'http',
           takesHoldersAllowList: auth.takesHoldersAllowList,
           sourceId: auth.sourceId,
+          ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),
+          // #1336: thread the token's federated_read grant so read ops scope
+          // to the operator-granted sources via sourceScopeOpts.
+          auth: auth.auth,
+          // MEMORY_VERBS v1 [c1/c2]: fail-closed surface enforcement here too.
+          ...(surfaceAllowedOps ? { allowedOps: surfaceAllowedOps } : {}),
+          surface,
+          // WP4 (D2): this transport has no per-client rows, so its surface
+          // IS the ceiling request_tools bounds catalog + persist by.
+          surfaceCeiling: surface,
         });
-        const status = result.isError ? 'error' : 'success';
+        // Same status taxonomy as the OAuth transport (denied_after_list /
+        // success_with_warnings feed the amendment-33 metric + E4 usage).
+        const status = requestLogStatusForResult(result);
         logRequest(auth.tokenName!, `tools/call:${toolName}`, status, Date.now() - startedMs);
         return Response.json(
           { result, jsonrpc: '2.0', id },

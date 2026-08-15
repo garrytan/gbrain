@@ -1,0 +1,35 @@
+{
+  "fixture_id": "gen-wb-019",
+  "turns": {
+    "3": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "growth target / Kelpforge",
+          "fact": "Mateo Glimmerton reported Kelpforge hit its growth target a month early",
+          "entity_slug": "people/mateo-glimmerton",
+          "match_keywords": [
+            "growth target",
+            "Kelpforge"
+          ],
+          "kind": "fact"
+        }
+      ]
+    },
+    "4": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "diligence checklist / Friday",
+          "fact": "Committed to sending Mateo Glimmerton the diligence checklist by Friday",
+          "entity_slug": "people/mateo-glimmerton",
+          "match_keywords": [
+            "diligence checklist",
+            "Friday"
+          ],
+          "kind": "commitment"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-push-015",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "push",
+  "seed_pages": [
+    {
+      "slug": "people/leander-crestfallow",
+      "content": "---\ntitle: Leander Crestfallow\ntype: person\naliases: [leander]\nsummary: Founder of Junipergrid Labs.\n---\n\nLeander Crestfallow is the founder of Junipergrid Labs. Leander wants a technical co-founder intro before committing.\n"
+    },
+    {
+      "slug": "people/stellan-frostholm",
+      "content": "---\ntitle: Stellan Frostholm\ntype: person\naliases: [stellan]\nsummary: Founder of Umbergale Labs.\n---\n\nStellan Frostholm is the founder of Umbergale Labs. Stellan flagged churn as the top risk in the latest update.\n"
+    },
+    {
+      "slug": "companies/junipergrid-labs",
+      "content": "---\ntitle: Junipergrid Labs\ntype: company\nsummary: Seed-stage company. Founded by Leander Crestfallow.\n---\n\nJunipergrid Labs is a seed-stage company. Founded by Leander Crestfallow. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "funds/mistral-hollow-partners",
+      "content": "---\ntitle: Mistral Hollow Partners\ntype: org\nsummary: Early-stage fund that co-invests on seed rounds.\n---\n\nMistral Hollow Partners is an early-stage fund that co-invests on seed rounds.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Draft a memo for the partner meeting: Leander Crestfallow and Stellan Frostholm both want Mistral Hollow Partners in the Junipergrid Labs round."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Drafting now."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Make the memo lead with traction, then risks, then the ask."
+    }
+  ]
+}

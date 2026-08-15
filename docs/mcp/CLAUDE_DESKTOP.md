@@ -1,5 +1,10 @@
 # Connect GBrain to Claude Desktop
 
+This page covers connecting Claude Desktop to a **remote** brain. For a brain
+on the same machine as Claude Desktop, a local stdio entry in
+`claude_desktop_config.json` with `"command": "gbrain", "args": ["serve"]`
+works too — but only against a full local install, never a thin-client one.
+
 **Important:** Claude Desktop does NOT connect to remote MCP servers via
 `claude_desktop_config.json`. That file only works for local stdio servers.
 Remote HTTP servers must be added through the GUI.

@@ -9,8 +9,8 @@ import {
 } from "../src/core/migrate.ts";
 
 const EXPECTED_RLS_TABLES = new Map([
-  [67, 6],
-  [68, 4],
+  [129, 6],
+  [130, 4],
 ]);
 
 describe("CoE migrations fail closed on RLS", () => {
@@ -52,23 +52,35 @@ describe("CoE migrations fail closed on RLS", () => {
     expect(tail.match(/ALTER TABLE coe_[a-z_]+ ENABLE ROW LEVEL SECURITY;/g)).toHaveLength(10);
   });
 
-  test("migration 67 enforces source/snapshot and content-addressed SQL invariants", () => {
-    const sql = MIGRATIONS.find((migration) => migration.version === 67)?.sql ?? "";
+  test("migration 129 enforces source/snapshot and content-addressed SQL invariants", () => {
+    const sql = MIGRATIONS.find((migration) => migration.version === 129)?.sql ?? "";
     expect(sql).toContain("UNIQUE (snapshot_id, source_id)");
     expect(sql).toContain("FOREIGN KEY (snapshot_id, source_id)");
     expect(sql.match(/object_key = 'objects\/sha256\/'/g)).toHaveLength(2);
   });
 
-  test("migration 68 binds normalized-document object keys to their hashes", () => {
-    const sql = MIGRATIONS.find((migration) => migration.version === 68)?.sql ?? "";
+  test("migration 130 binds normalized-document object keys to their hashes", () => {
+    const sql = MIGRATIONS.find((migration) => migration.version === 130)?.sql ?? "";
     expect(sql).toContain("object_key = 'objects/sha256/'");
+  });
+
+  test("Postgres RLS handlers stamp their own migration version", async () => {
+    for (const version of [129, 130]) {
+      const seen: number[] = [];
+      const migration = MIGRATIONS.find((candidate) => candidate.version === version);
+      await migration?.handler?.({
+        kind: "postgres",
+        runMigration: async (appliedVersion: number) => { seen.push(appliedVersion); },
+      } as never);
+      expect(seen).toEqual([version]);
+    }
   });
 
   test("an idempotent retry that still fails verification never advances schema version", async () => {
     const configuredVersions: string[] = [];
     const engine = {
       kind: "pglite",
-      getConfig: async () => "66",
+      getConfig: async () => "128",
       setConfig: async (_key: string, value: string) => { configuredVersions.push(value); },
       runMigration: async () => undefined,
       executeRaw: async () => [{ count: 0 }],

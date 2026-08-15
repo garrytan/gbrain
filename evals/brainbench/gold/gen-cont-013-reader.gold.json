@@ -1,0 +1,26 @@
+{
+  "fixture_id": "gen-cont-013-reader",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "companies/kelpforge"
+      ]
+    }
+  },
+  "continuity": {
+    "pair_id": "gen-cont-013",
+    "decisions": [
+      {
+        "decision_id": "d1",
+        "expected_slugs": [
+          "companies/kelpforge"
+        ],
+        "match_keywords": [
+          "pass",
+          "Kelpforge"
+        ]
+      }
+    ]
+  }
+}

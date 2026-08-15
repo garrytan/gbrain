@@ -42,7 +42,7 @@ interface FeatureScanResult {
 const RECIPE_META = [
   { id: 'email-to-brain', name: 'Email to Brain', secrets: ['GMAIL_APP_PASSWORD'] },
   { id: 'calendar-to-brain', name: 'Calendar Sync', secrets: ['GOOGLE_CALENDAR_API_KEY'] },
-  { id: 'x-to-brain', name: 'X/Twitter to Brain', secrets: ['X_BEARER_TOKEN'] },
+  { id: 'x-to-brain', name: 'X/Twitter to Brain', secrets: ['X_API_BEARER_TOKEN'] },
   { id: 'twilio-voice-brain', name: 'Voice to Brain', secrets: ['TWILIO_AUTH_TOKEN'] },
   { id: 'meeting-sync', name: 'Meeting Sync', secrets: ['CIRCLEBACK_API_KEY'] },
   { id: 'credential-gateway', name: 'Credential Gateway', secrets: ['OAUTH_CLIENT_SECRET'] },

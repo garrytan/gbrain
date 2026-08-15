@@ -1,0 +1,3 @@
+{"schema_version":1,"phase":"auto_think","event":"submit","model":"claude-haiku-4-5-20251001","label":"verdict","estimated_cost_usd":0.0035,"cumulative_cost_usd":0.0035,"budget_usd":1.0}
+{"schema_version":1,"phase":"auto_think","event":"submit_denied","model":"claude-opus-4-7","label":"big-call","estimated_cost_usd":0.5,"cumulative_cost_usd":0.0035,"budget_usd":0.01}
+{"schema_version":1,"phase":"drift","event":"submit_unpriced","model":"gpt-5","label":"unpriced","estimated_input_tokens":1000,"max_output_tokens":1000}

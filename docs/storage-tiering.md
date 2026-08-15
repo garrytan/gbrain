@@ -4,7 +4,7 @@
 
 GBrain supports storage tiering to separate version-controlled content from bulk machine-generated data. This prevents git repositories from becoming bloated with large amounts of automatically generated content while still preserving it in the database.
 
-> Note on naming: prior to v0.22.11 the keys were `git_tracked` / `supabase_only`. The canonical names are now `db_tracked` / `db_only` (engine-agnostic — works on both PGLite and Postgres). The deprecated keys still load with a once-per-process warning. Run `gbrain doctor --fix` for an automated rename when that path lands.
+> Note on naming: prior to v0.22.11 the keys were `git_tracked` / `supabase_only`. The canonical names are now `db_tracked` / `db_only` (engine-agnostic — works on both PGLite and Postgres). The deprecated keys still load with a once-per-process warning; rename them in your config by hand to silence it.
 
 ## Configuration
 
@@ -51,6 +51,18 @@ When storage configuration is present, `gbrain sync` automatically manages `.git
 - Skipped when the repo is a git submodule (`.git` is a file, not a directory) — submodule .gitignore changes don't survive parent updates. A warning explains.
 - Skipped entirely when `GBRAIN_NO_GITIGNORE=1` is set (escape hatch for shared-repo setups where a maintainer wants gbrain to leave .gitignore alone).
 - Failures (write permission denied, etc.) are caught and logged, never crash sync.
+- Warns when a configured collector's declared output dir (recipe `output_paths`
+  frontmatter) sits inside a `db_only` path: gitignored files never appear in the
+  git-walking sync diff, and `gbrain import` honors `.gitignore` too — the
+  collector would run green while nothing reaches the DB. The
+  `db_only_collector_collision` doctor check surfaces the same trap.
+
+Related doctor coverage: `undeclared_db_only_pages` warns about DB pages with no
+backing file that sit outside every declared `db_only` path. The engine's own
+derive-phase output prefixes (`life/events/`, `atoms/`, `extracts/`,
+`dream-cycle-summaries/`) count as implicitly declared for that check, so healthy
+brains stay quiet without adding them to `gbrain.yml`. They are NOT auto-added to
+`.gitignore` — only explicitly declared `db_only` dirs are.
 
 Example `.gitignore` addition:
 

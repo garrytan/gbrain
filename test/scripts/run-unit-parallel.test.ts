@@ -14,12 +14,13 @@
  * containing one passing and one failing test, override the discovery
  * roots via env-vars, and run with --shards=2.
  *
- * NOT covered here: the heartbeat (timing-sensitive and not load-bearing
- * for correctness). Timeout / WEDGED behavior uses a hermetic fake shard.
+ * NOT covered behaviorally here: the heartbeat and a real hung Bun process
+ * (both timing-sensitive). The timeout escalation wiring is covered as a
+ * source contract below and exercised separately by a process-leak smoke.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
-import { execFileSync, spawn, spawnSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, copyFileSync, chmodSync, symlinkSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
@@ -71,67 +72,16 @@ function runWrapper(extraArgs: string[] = []): { code: number; stdout: string; s
   const result = spawnSync(
     'bash',
     [join(TMPROOT, 'scripts', 'run-unit-parallel.sh'), '--shards', '2', ...extraArgs],
-    { cwd: TMPROOT, encoding: 'utf-8', env: { ...process.env } },
+    // Shard-mechanics tests pin explicit --shards behavior with tiny
+    // synthetic files; disable mem-adaptation so a RAM-limited runner (CI's
+    // ~7GB) can't collapse 2 shards -> 1 and break the shard 1/2 expectations.
+    { cwd: TMPROOT, encoding: 'utf-8', env: { ...process.env, GBRAIN_TEST_NO_MEM_ADAPT: '1' } },
   );
   return {
     code: result.status ?? -1,
     stdout: result.stdout || '',
     stderr: result.stderr || '',
   };
-}
-
-function pidIsAlive(pid: number, expectedCommand?: string): boolean {
-  try {
-    process.kill(pid, 0);
-    // kill(0) also succeeds for zombies. In a minimal Docker PID namespace
-    // without a subreaping init, an already-terminated descendant can remain
-    // as Z until the container exits; it is no longer a live worker and
-    // cannot consume CPU or handle signals.
-    const state = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], {
-      encoding: 'utf-8',
-    });
-    if (state.status === 0 && state.stdout.trim().startsWith('Z')) return false;
-    if (state.error && process.platform === 'linux') {
-      try {
-        const stat = readFileSync(`/proc/${pid}/stat`, 'utf-8');
-        const rest = stat.slice(stat.lastIndexOf(') ') + 2).trim().split(/\s+/);
-        if (rest[0]?.startsWith('Z')) return false;
-      } catch {
-        return false;
-      }
-    }
-    // Under a busy suite the kernel can reuse a terminated child's PID
-    // before this assertion polls again. Never classify or kill a reused,
-    // unrelated PID as the original fixture process.
-    if (expectedCommand) {
-      const command = spawnSync('ps', ['-o', 'command=', '-p', String(pid)], {
-        encoding: 'utf-8',
-      });
-      if (command.status === 0 && !command.stdout.includes(expectedCommand)) return false;
-      if (command.error && process.platform === 'linux') {
-        try {
-          const cmdline = readFileSync(`/proc/${pid}/cmdline`, 'utf-8')
-            .replaceAll('\0', ' ')
-            .trim();
-          if (!cmdline.includes(expectedCommand)) return false;
-        } catch {
-          return false;
-        }
-      }
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function waitUntil(predicate: () => boolean, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await Bun.sleep(25);
-  }
-  throw new Error(`condition not met within ${timeoutMs}ms`);
 }
 
 describe('run-unit-parallel.sh exit-code propagation (a)', () => {
@@ -207,557 +157,246 @@ describe('failing-on-purpose', () => {
   });
 });
 
-function runAdaptiveDryRun(
-  probes: {
-    cpus: number;
-    memAvailableMb: number;
-    psiFullX100: number;
-    swapFreePct: number;
-    loadPerCpuX100: number;
-  },
-  extraArgs: string[] = [],
-  extraEnv: Record<string, string> = {},
-): ReturnType<typeof spawnSync> {
-  return spawnSync(
-    'bash',
-    [join(TMPROOT, 'scripts', 'run-unit-parallel.sh'), ...extraArgs, '--dry-run'],
-    {
-      cwd: TMPROOT,
-      encoding: 'utf-8',
-      env: {
-        ...process.env,
-        SHARDS: '',
-        GBRAIN_TEST_MAX_CONCURRENCY: '',
-        GBRAIN_TEST_BATCH_SIZE: '',
-        GBRAIN_TEST_SHARD_TIMEOUT: '',
-        GBRAIN_TEST_RESOURCE_CPUS: String(probes.cpus),
-        GBRAIN_TEST_RESOURCE_MEM_AVAILABLE_MB: String(probes.memAvailableMb),
-        GBRAIN_TEST_RESOURCE_PSI_FULL_X100: String(probes.psiFullX100),
-        GBRAIN_TEST_RESOURCE_SWAP_FREE_PCT: String(probes.swapFreePct),
-        GBRAIN_TEST_RESOURCE_LOAD_PER_CPU_X100: String(probes.loadPerCpuX100),
-        ...extraEnv,
-      },
-    },
-  );
-}
-
-describe('run-unit-parallel.sh adaptive resource profiles', () => {
-  it('selects critical under active memory and scheduler pressure', () => {
-    const result = runAdaptiveDryRun({
-      cpus: 8,
-      memAvailableMb: 3500,
-      psiFullX100: 600,
-      swapFreePct: 2,
-      loadPerCpuX100: 160,
-    });
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).toContain('profile=critical');
-    expect(result.stderr).toContain('N=1 shards');
-    expect(result.stderr).toContain('--max-concurrency=1');
-    expect(result.stderr).toContain('batch-size=1');
-    expect(result.stderr).toContain('timeout=1800s');
+describe('run-unit-parallel.sh timeout escalation contract', () => {
+  it('gives a timed-out shard 30 seconds after TERM, then forces KILL', () => {
+    const source = readFileSync(PARALLEL_SH_SRC, 'utf-8');
+    expect(source).toContain('SHARD_KILL_AFTER="${GBRAIN_TEST_SHARD_KILL_AFTER:-30}"');
+    expect(source).toContain('--signal=TERM --kill-after="${SHARD_KILL_AFTER}s"');
+    expect(source).toContain('sleep "$SHARD_KILL_AFTER" && kill -KILL "$pid"');
   });
 
-  it('selects busy when headroom is constrained but not critical', () => {
-    const result = runAdaptiveDryRun({
-      cpus: 8,
-      memAvailableMb: 6000,
-      psiFullX100: 50,
-      swapFreePct: 40,
-      loadPerCpuX100: 40,
-    });
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).toContain('profile=busy');
-    expect(result.stderr).toContain('N=1 shards');
-    expect(result.stderr).toContain('--max-concurrency=1');
-    expect(result.stderr).toContain('batch-size=10');
-    expect(result.stderr).toContain('timeout=1200s');
+  it('marks both ordinary timeout and forced-KILL timeout exits as wedged', () => {
+    const source = readFileSync(PARALLEL_SH_SRC, 'utf-8');
+    expect(source).toContain('[ "$rc" = "124" ] || [ "$rc" = "137" ]');
   });
+});
 
-  it('selects balanced with moderate idle headroom', () => {
-    const result = runAdaptiveDryRun({
-      cpus: 8,
-      memAvailableMb: 12000,
-      psiFullX100: 20,
-      swapFreePct: 60,
-      loadPerCpuX100: 40,
-    });
+describe('run-unit-parallel.sh no-timeout-binary fallback (rc from shard wait, not watchdog teardown)', () => {
+  // Forces the no-gtimeout/no-timeout branch by running the wrapper under a
+  // curated PATH that has every tool the scripts call EXCEPT timeout
+  // binaries (real `bun` symlinked in), so the fallback executes even on
+  // hosts with coreutils installed.
+  //
+  // Regression pinned here: the shard's sentinel .exit file must record the
+  // exit code read right after `wait $pid` (the shard's own rc). The
+  // watchdog subshell is killed with SIGTERM and reports 143; reading `$?`
+  // after that teardown stamped rc=143 into every shard's sentinel — the
+  // wrapper exited non-zero with rc=143 summaries even when every test
+  // passed.
+  let FROOT: string;
+  let FENV: Record<string, string>;
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toContain('profile=balanced');
-    expect(result.stderr).toContain('N=2 shards');
-    expect(result.stderr).toContain('--max-concurrency=1');
-    expect(result.stderr).toContain('batch-size=10');
-    expect(result.stderr).toContain('timeout=900s');
-  });
-
-  it('does not treat stale full swap as active pressure when RAM and PSI are healthy', () => {
-    const result = runAdaptiveDryRun({
-      cpus: 8,
-      memAvailableMb: 32768,
-      psiFullX100: 20,
-      swapFreePct: 2,
-      loadPerCpuX100: 40,
-    });
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).toContain('profile=balanced');
-    expect(result.stderr).toContain('N=2 shards');
-  });
-
-  it('selects high-headroom only with abundant idle resources', () => {
-    const result = runAdaptiveDryRun({
-      cpus: 16,
-      memAvailableMb: 32768,
-      psiFullX100: 10,
-      swapFreePct: 80,
-      loadPerCpuX100: 20,
-    });
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).toContain('profile=high-headroom');
-    expect(result.stderr).toContain('N=2 shards');
-    expect(result.stderr).toContain('--max-concurrency=2');
-    expect(result.stderr).toContain('batch-size=20');
-    expect(result.stderr).toContain('timeout=900s');
-  });
-
-  it('fails closed to busy when swap, PSI, or load signals are unknown', () => {
-    const result = runAdaptiveDryRun({
-      cpus: 16,
-      memAvailableMb: 32768,
-      psiFullX100: -1,
-      swapFreePct: -1,
-      loadPerCpuX100: -1,
-    });
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).toContain('profile=busy');
-    expect(result.stderr).toContain('N=1 shards');
-  });
-
-  it('keeps explicit per-setting overrides authoritative', () => {
-    const result = runAdaptiveDryRun(
-      {
-        cpus: 8,
-        memAvailableMb: 3500,
-        psiFullX100: 600,
-        swapFreePct: 2,
-        loadPerCpuX100: 160,
-      },
-      ['--shards=2', '--max-concurrency=3', '--batch-size=4', '--timeout=333'],
-      {
-        SHARDS: '7',
-        GBRAIN_TEST_MAX_CONCURRENCY: '8',
-        GBRAIN_TEST_BATCH_SIZE: '9',
-        GBRAIN_TEST_SHARD_TIMEOUT: '999',
-      },
-    );
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).toContain('profile=critical');
-    expect(result.stderr).toContain('N=2 shards');
-    expect(result.stderr).toContain('--max-concurrency=3');
-    expect(result.stderr).toContain('batch-size=4');
-    expect(result.stderr).toContain('timeout=333s');
-    const src = readFileSync(PARALLEL_SH_SRC, 'utf-8');
-    expect(src.match(/--batch-size="\$BATCH_SIZE"/g)).toHaveLength(1);
-    expect(src.match(/--batch-size="\$batch_size"/g)).toHaveLength(1);
-  });
-
-  it('keeps environment per-setting overrides authoritative', () => {
-    const result = runAdaptiveDryRun(
-      {
-        cpus: 8,
-        memAvailableMb: 3500,
-        psiFullX100: 600,
-        swapFreePct: 2,
-        loadPerCpuX100: 160,
-      },
-      [],
-      {
-        SHARDS: '3',
-        GBRAIN_TEST_MAX_CONCURRENCY: '2',
-        GBRAIN_TEST_BATCH_SIZE: '7',
-        GBRAIN_TEST_SHARD_TIMEOUT: '777',
-      },
-    );
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).toContain('profile=critical');
-    expect(result.stderr).toContain('N=3 shards');
-    expect(result.stderr).toContain('--max-concurrency=2');
-    expect(result.stderr).toContain('batch-size=7');
-    expect(result.stderr).toContain('timeout=777s');
-  });
-
-  it('uses effective cgroup v2 CPU and memory headroom', () => {
-    const fixtureRoot = mkdtempSync(join(tmpdir(), 'gbrain-cgroup-v2-'));
-    const cgroupRoot = join(fixtureRoot, 'cgroup');
-    const scopeDir = join(cgroupRoot, 'ci.scope');
-    const selfCgroup = join(fixtureRoot, 'self.cgroup');
-    mkdirSync(scopeDir, { recursive: true });
-    writeFileSync(selfCgroup, '0::/ci.scope\n');
-    writeFileSync(join(scopeDir, 'cpu.max'), '200000 100000\n');
-    writeFileSync(join(scopeDir, 'memory.max'), '4294967296\n');
-    writeFileSync(join(scopeDir, 'memory.current'), '1073741824\n');
-
-    try {
-      const result = runAdaptiveDryRun(
-        {
-          cpus: 64,
-          memAvailableMb: 65536,
-          psiFullX100: 0,
-          swapFreePct: 100,
-          loadPerCpuX100: 0,
-        },
-        [],
-        {
-          GBRAIN_TEST_RESOURCE_CPUS: '',
-          GBRAIN_TEST_RESOURCE_MEM_AVAILABLE_MB: '',
-          GBRAIN_TEST_CGROUP_ROOT: cgroupRoot,
-          GBRAIN_TEST_PROC_SELF_CGROUP: selfCgroup,
-        },
-      );
-
-      expect(result.status).toBe(0);
-      expect(result.stderr).toContain('resources=cpus:2,mem:3072MiB');
-      expect(result.stderr).toContain('profile=critical');
-    } finally {
-      rmSync(fixtureRoot, { recursive: true, force: true });
+  beforeAll(() => {
+    FROOT = mkdtempSync(join(tmpdir(), 'gbrain-parallel-fallback-'));
+    mkdirSync(join(FROOT, 'scripts'), { recursive: true });
+    mkdirSync(join(FROOT, 'test'), { recursive: true });
+    for (const s of ['run-unit-parallel.sh', 'run-unit-shard.sh', 'run-serial-tests.sh']) {
+      copyFileSync(resolve(REPO_ROOT, 'scripts', s), join(FROOT, 'scripts', s));
+      chmodSync(join(FROOT, 'scripts', s), 0o755);
     }
-  });
+    const passing = `import { describe, it, expect } from 'bun:test';
+describe('passing', () => {
+  it('arithmetic works', () => { expect(1 + 1).toBe(2); });
+});`;
+    writeFileSync(join(FROOT, 'test', 'a-pass.test.ts'), passing);
+    writeFileSync(join(FROOT, 'test', 'b-pass.test.ts'), passing);
 
-  it('uses effective cgroup v1 CPU and memory headroom', () => {
-    const fixtureRoot = mkdtempSync(join(tmpdir(), 'gbrain-cgroup-v1-'));
-    const cgroupRoot = join(fixtureRoot, 'cgroup');
-    const cpuDir = join(cgroupRoot, 'cpu,cpuacct', 'docker', 'ci');
-    const memoryDir = join(cgroupRoot, 'memory', 'docker', 'ci');
-    const selfCgroup = join(fixtureRoot, 'self.cgroup');
-    mkdirSync(cpuDir, { recursive: true });
-    mkdirSync(memoryDir, { recursive: true });
-    writeFileSync(selfCgroup, '2:cpu,cpuacct:/docker/ci\n3:memory:/docker/ci\n');
-    writeFileSync(join(cpuDir, 'cpu.cfs_quota_us'), '200000\n');
-    writeFileSync(join(cpuDir, 'cpu.cfs_period_us'), '100000\n');
-    writeFileSync(join(memoryDir, 'memory.limit_in_bytes'), '4294967296\n');
-    writeFileSync(join(memoryDir, 'memory.usage_in_bytes'), '1073741824\n');
-
-    try {
-      const result = runAdaptiveDryRun(
-        {
-          cpus: 64,
-          memAvailableMb: 65536,
-          psiFullX100: 0,
-          swapFreePct: 100,
-          loadPerCpuX100: 0,
-        },
-        [],
-        {
-          GBRAIN_TEST_RESOURCE_CPUS: '',
-          GBRAIN_TEST_RESOURCE_MEM_AVAILABLE_MB: '',
-          GBRAIN_TEST_CGROUP_ROOT: cgroupRoot,
-          GBRAIN_TEST_PROC_SELF_CGROUP: selfCgroup,
-        },
-      );
-
-      expect(result.status).toBe(0);
-      expect(result.stderr).toContain('resources=cpus:2,mem:3072MiB');
-      expect(result.stderr).toContain('profile=critical');
-    } finally {
-      rmSync(fixtureRoot, { recursive: true, force: true });
+    const bin = join(FROOT, 'bin');
+    mkdirSync(bin);
+    for (const tool of ['bash', 'sh', 'env', 'dirname', 'basename', 'mktemp', 'date', 'sleep', 'cat', 'tail', 'head', 'rm', 'mkdir', 'pkill', 'grep', 'sed', 'awk', 'wc', 'tr', 'seq', 'find', 'sort', 'bun']) {
+      const p = Bun.which(tool);
+      if (p) symlinkSync(p, join(bin, tool));
     }
+    FENV = {
+      PATH: bin,
+      HOME: process.env.HOME ?? FROOT,
+      TMPDIR: process.env.TMPDIR ?? '/tmp',
+      GBRAIN_TEST_SHARD_TIMEOUT: '300',
+      // Same rationale as runWrapper: explicit-shard mechanics under test.
+      GBRAIN_TEST_NO_MEM_ADAPT: '1',
+    };
   });
 
-  it('returns usage error 2 for a missing option value', () => {
+  afterAll(() => {
+    if (FROOT) rmSync(FROOT, { recursive: true, force: true });
+  });
+
+  function runFallbackWrapper(): { code: number; stdout: string; stderr: string } {
     const result = spawnSync(
       'bash',
-      [join(TMPROOT, 'scripts', 'run-unit-parallel.sh'), '--shards'],
-      {
-        cwd: TMPROOT,
-        encoding: 'utf-8',
-        env: {
-          ...process.env,
-          GBRAIN_TEST_RESOURCE_CPUS: '8',
-          GBRAIN_TEST_RESOURCE_MEM_AVAILABLE_MB: '12000',
-          GBRAIN_TEST_RESOURCE_PSI_FULL_X100: '20',
-          GBRAIN_TEST_RESOURCE_SWAP_FREE_PCT: '60',
-          GBRAIN_TEST_RESOURCE_LOAD_PER_CPU_X100: '40',
-        },
-      },
+      [join(FROOT, 'scripts', 'run-unit-parallel.sh'), '--shards', '2'],
+      { cwd: FROOT, encoding: 'utf-8', env: FENV },
     );
+    return {
+      code: result.status ?? -1,
+      stdout: result.stdout || '',
+      stderr: result.stderr || '',
+    };
+  }
 
-    expect(result.status).toBe(2);
-    expect(result.stderr).toContain('missing value for --shards');
+  it('exits zero with rc=0 shard sentinels when all shards pass', () => {
+    const r = runFallbackWrapper();
+    const summary = readFileSync(join(FROOT, '.context', 'test-summary.txt'), 'utf-8');
+    expect(summary).toMatch(/shard 1\/2: pass=\d+ fail=0 skip=0 rc=0/);
+    expect(summary).toMatch(/shard 2\/2: pass=\d+ fail=0 skip=0 rc=0/);
+    expect(summary).not.toContain('rc=143');
+    expect(r.code).toBe(0);
   });
 
-  it('returns usage error 2 for explicitly empty option values', () => {
-    for (const option of [
-      '--shards=',
-      '--max-concurrency=',
-      '--batch-size=',
-      '--timeout=',
-      '--shard-timeout=',
-    ]) {
-      const result = runAdaptiveDryRun(
-        {
-          cpus: 8,
-          memAvailableMb: 12000,
-          psiFullX100: 20,
-          swapFreePct: 60,
-          loadPerCpuX100: 40,
-        },
-        [option],
-      );
-
-      expect(result.status).toBe(2);
-      expect(result.stderr).toContain(`missing value for ${option.slice(0, -1)}`);
+  it('propagates a failing shard rc as the test runner rc (1), not the watchdog 143', () => {
+    const failing = `import { describe, it, expect } from 'bun:test';
+describe('failing-on-purpose', () => {
+  it('expects 1 to equal 2', () => { expect(1).toBe(2); });
+});`;
+    writeFileSync(join(FROOT, 'test', 'z-fail.test.ts'), failing);
+    try {
+      const r = runFallbackWrapper();
+      expect(r.code).not.toBe(0);
+      const summary = readFileSync(join(FROOT, '.context', 'test-summary.txt'), 'utf-8');
+      expect(summary).toMatch(/shard \d\/2: pass=\d+ fail=1 skip=0 rc=1/);
+      expect(summary).not.toContain('rc=143');
+      const failureLog = readFileSync(join(FROOT, '.context', 'test-failures.log'), 'utf-8');
+      expect(failureLog).toContain('failing-on-purpose');
+    } finally {
+      rmSync(join(FROOT, 'test', 'z-fail.test.ts'), { force: true });
     }
   });
 });
 
-describe('run-unit-parallel.sh session-safety guards', () => {
-  it('refuses a symlink lock without touching its target', () => {
-    const safetyRoot = mkdtempSync(join(tmpdir(), 'gbrain-lock-symlink-'));
-    const scriptsDir = join(safetyRoot, 'scripts');
-    const contextDir = join(safetyRoot, '.context');
-    const victimDir = join(safetyRoot, 'victim');
-    const wrapperScript = join(scriptsDir, 'run-unit-parallel.sh');
-    mkdirSync(scriptsDir, { recursive: true });
-    mkdirSync(join(safetyRoot, 'test'), { recursive: true });
-    mkdirSync(contextDir, { recursive: true });
-    mkdirSync(victimDir, { recursive: true });
-    copyFileSync(PARALLEL_SH_SRC, wrapperScript);
-    chmodSync(wrapperScript, 0o755);
-    writeFileSync(join(scriptsDir, 'run-unit-shard.sh'), `#!/usr/bin/env bash
-if [ "\${1:-}" = "--dry-run-list" ]; then echo test/fake.test.ts; exit 0; fi
-exit 0
-`);
-    chmodSync(join(scriptsDir, 'run-unit-shard.sh'), 0o755);
-    writeFileSync(join(victimDir, 'pid'), '99999999\n');
-    symlinkSync(victimDir, join(contextDir, 'unit-parallel.lock'));
+describe('run-unit-parallel.sh OOM rescue lane', () => {
+  // A fixture that fails WITH the WASM out-of-memory signature on its first
+  // run (no sentinel file yet) and passes once the sentinel exists — exactly
+  // the phantom-failure shape: dies under parallel memory pressure, passes
+  // serially. The runner must (1) detect the signature, (2) re-run the file
+  // at --max-concurrency 1, (3) exit 0 with an oom_rescued note.
+  let OROOT: string;
 
-    try {
-      const result = spawnSync('bash', [wrapperScript, '--shards=1'], {
-        cwd: safetyRoot,
-        encoding: 'utf-8',
-      });
-      expect(result.status).toBe(2);
-      expect(result.stderr).toContain('unsafe symbolic test lock');
-      expect(readFileSync(join(victimDir, 'pid'), 'utf-8')).toBe('99999999\n');
-    } finally {
-      rmSync(safetyRoot, { recursive: true, force: true });
+  beforeAll(() => {
+    OROOT = mkdtempSync(join(tmpdir(), 'gbrain-parallel-oom-'));
+    mkdirSync(join(OROOT, 'scripts'), { recursive: true });
+    mkdirSync(join(OROOT, 'test'), { recursive: true });
+    for (const s of ['run-unit-parallel.sh', 'run-unit-shard.sh', 'run-serial-tests.sh']) {
+      copyFileSync(resolve(REPO_ROOT, 'scripts', s), join(OROOT, 'scripts', s));
+      chmodSync(join(OROOT, 'scripts', s), 0o755);
     }
+    const passing = `import { describe, it, expect } from 'bun:test';
+describe('passing', () => {
+  it('arithmetic works', () => { expect(1 + 1).toBe(2); });
+});`;
+    const oomOnce = `import { describe, it, expect } from 'bun:test';
+import { existsSync, writeFileSync } from 'fs';
+describe('oom-once', () => {
+  it('fails with the WASM OOM signature on first run, passes on retry', () => {
+    const sentinel = new URL('./oom-sentinel.txt', import.meta.url).pathname;
+    if (!existsSync(sentinel)) {
+      writeFileSync(sentinel, 'ran-once');
+      console.error('Original error: Out of memory');
+      throw new Error('Out of memory (simulated PGLite WASM connect failure)');
+    }
+    expect(1).toBe(1);
+  });
+});`;
+    writeFileSync(join(OROOT, 'test', 'a-pass.test.ts'), passing);
+    writeFileSync(join(OROOT, 'test', 'b-oom-once.test.ts'), oomOnce);
   });
 
-  it('refuses a lock that is still initializing', () => {
-    const safetyRoot = mkdtempSync(join(tmpdir(), 'gbrain-lock-initializing-'));
-    const scriptsDir = join(safetyRoot, 'scripts');
-    const contextDir = join(safetyRoot, '.context');
-    const lockDir = join(contextDir, 'unit-parallel.lock');
-    const wrapperScript = join(scriptsDir, 'run-unit-parallel.sh');
-    mkdirSync(scriptsDir, { recursive: true });
-    mkdirSync(join(safetyRoot, 'test'), { recursive: true });
-    mkdirSync(lockDir, { recursive: true });
-    copyFileSync(PARALLEL_SH_SRC, wrapperScript);
-    chmodSync(wrapperScript, 0o755);
-    writeFileSync(join(scriptsDir, 'run-unit-shard.sh'), `#!/usr/bin/env bash
-if [ "\${1:-}" = "--dry-run-list" ]; then echo test/fake.test.ts; exit 0; fi
-exit 0
-`);
-    chmodSync(join(scriptsDir, 'run-unit-shard.sh'), 0o755);
-
-    try {
-      const result = spawnSync('bash', [wrapperScript, '--shards=1'], {
-        cwd: safetyRoot,
-        encoding: 'utf-8',
-      });
-      expect(result.status).toBe(2);
-      expect(result.stderr).toContain('test lock is initializing or invalid');
-      expect(existsSync(lockDir)).toBe(true);
-    } finally {
-      rmSync(safetyRoot, { recursive: true, force: true });
-    }
+  afterAll(() => {
+    if (OROOT) rmSync(OROOT, { recursive: true, force: true });
   });
 
-  it('traps session-ending signals and terminates shard process trees', () => {
-    const src = readFileSync(PARALLEL_SH_SRC, 'utf-8');
-    expect(src).toContain('trap on_signal HUP INT TERM');
-    expect(src).toContain('terminate_pid_tree "$shard_pid"');
-    expect(src).toContain('cleanup_children');
-    expect(src).toContain('--kill-after=5s');
+  function runOom(env: Record<string, string> = {}): { code: number; stdout: string; stderr: string } {
+    rmSync(join(OROOT, 'test', 'oom-sentinel.txt'), { force: true });
+    const result = spawnSync(
+      'bash',
+      [join(OROOT, 'scripts', 'run-unit-parallel.sh'), '--shards', '2'],
+      { cwd: OROOT, encoding: 'utf-8', env: { ...process.env, GBRAIN_TEST_NO_MEM_ADAPT: '1', ...env } },
+    );
+    return { code: result.status ?? -1, stdout: result.stdout || '', stderr: result.stderr || '' };
+  }
+
+  it('rescues an OOM-signature failure serially and exits 0 with an oom_rescued note', () => {
+    const r = runOom();
+    expect(r.stdout + r.stderr).toContain('OOM rescue pass');
+    expect(r.stderr).toContain('oom_rescued=');
+    expect(r.code).toBe(0);
+  }, 120_000);
+
+  it('GBRAIN_TEST_NO_OOM_FALLBACK=1 disables the rescue lane (stays red)', () => {
+    const r = runOom({ GBRAIN_TEST_NO_OOM_FALLBACK: '1' });
+    expect(r.code).not.toBe(0);
+    expect(r.stdout + r.stderr).not.toContain('OOM rescue pass');
+  }, 120_000);
+
+  it('memory-aware sizing is advertised in the banner (mem-ok or mem-adapted)', () => {
+    // The one test that needs adaptation ON — override the harness-wide
+    // NO_MEM_ADAPT base (which keeps the shard-mechanics tests deterministic
+    // on RAM-limited CI runners).
+    const r = runOom({ GBRAIN_TEST_NO_MEM_ADAPT: '0' });
+    expect(r.stderr).toMatch(/mem-(ok|adapted)/);
+  }, 120_000);
+
+  it('mixed run: a plain assertion failure stays red even when the OOM phantom rescues green', () => {
+    // The NON_OOM_FAIL gate — the branch that stops the rescue lane from
+    // absolving real failures that happened to share a run with phantoms.
+    const realFail = `import { describe, it, expect } from 'bun:test';
+describe('real-failure', () => {
+  it('expects 1 to equal 2', () => { expect(1).toBe(2); });
+});`;
+    writeFileSync(join(OROOT, 'test', 'c-real-fail.test.ts'), realFail);
+    try {
+      const r = runOom();
+      expect(r.code).not.toBe(0);
+    } finally {
+      rmSync(join(OROOT, 'test', 'c-real-fail.test.ts'), { force: true });
+    }
+  }, 120_000);
+
+  it('a deterministic failure carrying the OOM signature re-fails serially and stays red', () => {
+    // The oom_rescue_failed lane: signature match queues the file, but the
+    // serial re-run confirms the failure is real — run must stay red.
+    const alwaysOom = `import { describe, it } from 'bun:test';
+describe('oom-always', () => {
+  it('always fails with the signature', () => {
+    console.error('Original error: Out of memory');
+    throw new Error('Out of memory (deterministic)');
+  });
+});`;
+    writeFileSync(join(OROOT, 'test', 'd-oom-always.test.ts'), alwaysOom);
+    try {
+      const r = runOom();
+      expect(r.code).not.toBe(0);
+      expect(r.stderr).toContain('oom_rescue_failed=');
+      expect(r.stdout + r.stderr).toContain('oom-rescue (serial, confirmed real)');
+    } finally {
+      rmSync(join(OROOT, 'test', 'd-oom-always.test.ts'), { force: true });
+    }
+  }, 120_000);
+});
+
+describe('run-unit-parallel.sh external-kill rescue contract', () => {
+  // An externally-killed shard (sibling workspace pkill, memory jetsam)
+  // presents as rc 143/137 well before the shard timeout. Simulating a
+  // mid-run external kill deterministically in a fixture is flaky, so this
+  // pins the load-bearing structure instead: the early-death detector, the
+  // 80%-of-timeout threshold that separates external kills from real wedges,
+  // and the rescue-queue routing for both the wedged and non-wedged branches.
+  it('detects early SIGTERM/SIGKILL deaths against the 80% timeout threshold', () => {
+    const source = readFileSync(PARALLEL_SH_SRC, 'utf-8');
+    expect(source).toContain('[ "$rc" = "143" ] || [ "$rc" = "137" ]');
+    expect(source).toContain('$((SHARD_TIMEOUT * 80 / 100))');
+    expect(source).toContain('shard_external_kill=1');
   });
 
-  it('acquires the single-run lock before clearing active-run artifacts', () => {
-    const src = readFileSync(PARALLEL_SH_SRC, 'utf-8');
-    const acquire = src.indexOf('printf \'%s\\n\' "$$" > "$RUN_LOCK_DIR/pid"');
-    const clear = src.indexOf('rm -f "$LOG_DIR"/shard-*.log');
-    expect(acquire).toBeGreaterThan(-1);
-    expect(clear).toBeGreaterThan(acquire);
-    expect(src).toContain('ERROR: unit test suite already running');
+  it('routes externally-killed shards into the serial rescue queue, not the red path', () => {
+    const source = readFileSync(PARALLEL_SH_SRC, 'utf-8');
+    const killBranches = source.split('shard_external_kill" = "1"').length - 1;
+    expect(killBranches).toBeGreaterThanOrEqual(2); // wedged + non-wedged branch
+    expect(source).toContain('KILLED externally after ${s_elapsed}s');
   });
 
-  it('terminates a live shard descendant and releases the lock on SIGTERM', async () => {
-    const safetyRoot = mkdtempSync(join(tmpdir(), 'gbrain-signal-safety-'));
-    const scriptsDir = join(safetyRoot, 'scripts');
-    const contextDir = join(safetyRoot, '.context');
-    const shardScript = join(scriptsDir, 'run-unit-shard.sh');
-    const wrapperScript = join(scriptsDir, 'run-unit-parallel.sh');
-    const childPidFile = join(contextDir, 'fake-child.pid');
-    let childPid = 0;
-
-    mkdirSync(scriptsDir, { recursive: true });
-    mkdirSync(join(safetyRoot, 'test'), { recursive: true });
-    copyFileSync(PARALLEL_SH_SRC, wrapperScript);
-    chmodSync(wrapperScript, 0o755);
-    writeFileSync(shardScript, `#!/usr/bin/env bash
-set -euo pipefail
-if [ "\${1:-}" = "--dry-run-list" ]; then
-  echo test/fake.test.ts
-  exit 0
-fi
-sleep 300 &
-child_pid=$!
-mkdir -p .context
-echo "$child_pid" > .context/fake-child.pid
-wait "$child_pid"
-`);
-    chmodSync(shardScript, 0o755);
-
-    const wrapper = spawn('bash', [wrapperScript, '--shards', '1'], {
-      cwd: safetyRoot,
-      env: { ...process.env, GBRAIN_TEST_SHARD_TIMEOUT: '300' },
-      stdio: 'ignore',
-    });
-
-    try {
-      await waitUntil(() => existsSync(childPidFile), 12_000);
-      childPid = Number(readFileSync(childPidFile, 'utf-8').trim());
-      expect(Number.isInteger(childPid)).toBe(true);
-      expect(pidIsAlive(childPid, 'sleep 300')).toBe(true);
-
-      const overlapping = spawnSync('bash', [wrapperScript, '--shards', '1'], {
-        cwd: safetyRoot,
-        env: { ...process.env, GBRAIN_TEST_SHARD_TIMEOUT: '300' },
-        encoding: 'utf-8',
-      });
-      expect(overlapping.status).toBe(2);
-      expect(overlapping.stderr).toContain('unit test suite already running');
-
-      wrapper.kill('SIGTERM');
-      await waitUntil(() => wrapper.exitCode !== null, 12_000);
-      await waitUntil(() => !pidIsAlive(childPid, 'sleep 300'), 12_000);
-
-      expect(wrapper.exitCode).toBe(130);
-      expect(existsSync(join(contextDir, 'unit-parallel.lock'))).toBe(false);
-    } finally {
-      if (childPid > 0 && pidIsAlive(childPid, 'sleep 300')) process.kill(childPid, 'SIGKILL');
-      if (wrapper.exitCode === null) wrapper.kill('SIGKILL');
-      rmSync(safetyRoot, { recursive: true, force: true });
-    }
-  }, 40_000);
-
-  it('does not label a legitimate shard exit 124 as wedged', () => {
-    const safetyRoot = mkdtempSync(join(tmpdir(), 'gbrain-legitimate-124-'));
-    const scriptsDir = join(safetyRoot, 'scripts');
-    const binDir = join(safetyRoot, 'bin');
-    const contextDir = join(safetyRoot, '.context');
-    const wrapperScript = join(scriptsDir, 'run-unit-parallel.sh');
-    const shardScript = join(scriptsDir, 'run-unit-shard.sh');
-    const timeoutScript = join(binDir, 'timeout');
-    mkdirSync(scriptsDir, { recursive: true });
-    mkdirSync(binDir, { recursive: true });
-    mkdirSync(join(safetyRoot, 'test'), { recursive: true });
-    copyFileSync(PARALLEL_SH_SRC, wrapperScript);
-    chmodSync(wrapperScript, 0o755);
-    writeFileSync(shardScript, `#!/usr/bin/env bash
-if [ "\${1:-}" = "--dry-run-list" ]; then echo test/fake.test.ts; exit 0; fi
-exit 124
-`);
-    chmodSync(shardScript, 0o755);
-    writeFileSync(timeoutScript, `#!/usr/bin/env bash
-shift 2
-"$@"
-`);
-    chmodSync(timeoutScript, 0o755);
-
-    try {
-      const result = spawnSync('bash', [wrapperScript, '--shards=1'], {
-        cwd: safetyRoot,
-        encoding: 'utf-8',
-        env: {
-          ...process.env,
-          PATH: `${binDir}:${process.env.PATH ?? ''}`,
-          GBRAIN_TEST_RESOURCE_CPUS: '8',
-          GBRAIN_TEST_RESOURCE_MEM_AVAILABLE_MB: '12000',
-          GBRAIN_TEST_RESOURCE_PSI_FULL_X100: '20',
-          GBRAIN_TEST_RESOURCE_SWAP_FREE_PCT: '60',
-          GBRAIN_TEST_RESOURCE_LOAD_PER_CPU_X100: '40',
-        },
-      });
-
-      expect(result.status).toBe(1);
-      expect(readFileSync(join(contextDir, 'test-shards', 'shard-1.exit'), 'utf-8').trim()).toBe('124');
-      expect(existsSync(join(contextDir, 'test-shards', 'shard-1.wedged'))).toBe(false);
-    } finally {
-      rmSync(safetyRoot, { recursive: true, force: true });
-    }
+  it('stamps per-shard start/end epochs so early death is measurable', () => {
+    const source = readFileSync(PARALLEL_SH_SRC, 'utf-8');
+    expect(source).toContain('date +%s > "$LOG_DIR/shard-$i.start"');
+    expect(source).toContain('date +%s > "$LOG_DIR/shard-$i.end"');
   });
-
-  it('normalizes the no-timeout-binary fallback to 124 and kills descendants', () => {
-    const safetyRoot = mkdtempSync(join(tmpdir(), 'gbrain-timeout-fallback-'));
-    const scriptsDir = join(safetyRoot, 'scripts');
-    const contextDir = join(safetyRoot, '.context');
-    const wrapperScript = join(scriptsDir, 'run-unit-parallel.sh');
-    const shardScript = join(scriptsDir, 'run-unit-shard.sh');
-
-    mkdirSync(scriptsDir, { recursive: true });
-    mkdirSync(join(safetyRoot, 'test'), { recursive: true });
-    copyFileSync(PARALLEL_SH_SRC, wrapperScript);
-    chmodSync(wrapperScript, 0o755);
-    writeFileSync(shardScript, `#!/usr/bin/env bash
-set -u
-if [ "\${1:-}" = "--dry-run-list" ]; then
-  echo test/fake.test.ts
-  exit 0
-fi
-bash -c 'trap "" TERM; while :; do sleep 1; done' &
-child_pid=$!
-mkdir -p .context
-echo "$child_pid" > .context/fallback-child.pid
-wait "$child_pid"
-`);
-    chmodSync(shardScript, 0o755);
-
-    try {
-      const result = spawnSync(
-        'bash',
-        [wrapperScript, '--shards=1', '--timeout=1'],
-        {
-          cwd: safetyRoot,
-          encoding: 'utf-8',
-          timeout: 10000,
-          env: {
-            ...process.env,
-            GBRAIN_TEST_DISABLE_TIMEOUT_BIN: '1',
-            GBRAIN_TEST_RESOURCE_CPUS: '8',
-            GBRAIN_TEST_RESOURCE_MEM_AVAILABLE_MB: '12000',
-            GBRAIN_TEST_RESOURCE_PSI_FULL_X100: '20',
-            GBRAIN_TEST_RESOURCE_SWAP_FREE_PCT: '60',
-            GBRAIN_TEST_RESOURCE_LOAD_PER_CPU_X100: '40',
-          },
-        },
-      );
-
-      expect(result.error).toBeUndefined();
-      expect(result.status).not.toBe(0);
-      expect(readFileSync(join(contextDir, 'test-shards', 'shard-1.exit'), 'utf-8').trim()).toBe('124');
-      expect(existsSync(join(contextDir, 'test-shards', 'shard-1.wedged'))).toBe(true);
-      const childPid = Number(readFileSync(join(contextDir, 'fallback-child.pid'), 'utf-8').trim());
-      expect(() => process.kill(childPid, 0)).toThrow();
-    } finally {
-      rmSync(safetyRoot, { recursive: true, force: true });
-    }
-  }, 15_000);
 });

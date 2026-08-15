@@ -350,6 +350,47 @@ describe('renderFactsTable', () => {
 // ─────────────────────────────────────────────────────────────────
 
 describe('round-trip: render then parse returns equivalent rows', () => {
+  test('preserves escaped pipes, backslashes, empty cells, and adjacent ordinary rows', () => {
+    const originals: ParsedFact[] = [
+      minimalFact(1, {
+        claim: 'scores correct|incorrect|partial',
+        validFrom: '2026-07-10',
+        validUntil: undefined,
+        source: String.raw`consumer\facts|review`,
+        context: String.raw`left|right\tail`,
+      }),
+      minimalFact(2, {
+        claim: 'ordinary adjacent fact',
+        validFrom: undefined,
+        validUntil: undefined,
+        source: undefined,
+        context: undefined,
+      }),
+    ];
+
+    const rendered = renderFactsTable(originals);
+    expect(rendered).toContain(String.raw`scores correct\|incorrect\|partial`);
+    expect(rendered).toContain(String.raw`consumer\facts\|review`);
+
+    const reparsed = parseFactsFence(rendered);
+    expect(reparsed.warnings).toEqual([]);
+    expect(reparsed.facts).toHaveLength(2);
+    expect(reparsed.facts[0]).toMatchObject({
+      claim: originals[0].claim,
+      validFrom: originals[0].validFrom,
+      validUntil: undefined,
+      source: originals[0].source,
+      context: originals[0].context,
+    });
+    expect(reparsed.facts[1]).toMatchObject({
+      claim: originals[1].claim,
+      validFrom: undefined,
+      validUntil: undefined,
+      source: undefined,
+      context: undefined,
+    });
+  });
+
   test('canonical row survives render+parse with all fields intact', () => {
     const original: ParsedFact = minimalFact(1, {
       claim: 'Founded Acme in 2017',

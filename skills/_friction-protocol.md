@@ -55,6 +55,7 @@ gbrain friction list                      # recent runs with counts
 gbrain friction render --run-id <id>      # markdown report (default)
 gbrain friction render --run-id <id> --json
 gbrain friction summary --run-id <id>     # friction + delight side-by-side
+gbrain friction diff --base <run-or-agent> --compare <run-or-agent>   # cross-run/cross-agent comparison
 ```
 
 `render` defaults to `--redact` for markdown (strips `$HOME`/`$CWD` to `<HOME>`/`<CWD>` placeholders) so reports paste safely into PRs and issues.

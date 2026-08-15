@@ -60,6 +60,51 @@ async function seedPage(slug: string, body: string): Promise<void> {
 }
 
 describe('runExtractCore — incremental cycle path (#417)', () => {
+  test('Dream incremental all-mode stamps the source-scoped extraction watermark (#2636)', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path) VALUES ($1, $2, $3)`,
+      ['repo-a', 'repo-a', tempDir],
+    );
+    await engine.putPage('people/alice-example', {
+      type: 'person',
+      title: 'alice-example',
+      compiled_truth: '# alice',
+      timeline: '',
+      frontmatter: {},
+      content_hash: 'h',
+    }, { sourceId: 'repo-a' });
+    writeFileSync(join(tempDir, 'people/alice-example.md'), '# alice');
+
+    await runExtractCore(engine as unknown as BrainEngine, {
+      mode: 'all',
+      dir: tempDir,
+      slugs: ['people/alice-example'],
+      sourceId: 'repo-a',
+    });
+
+    const rows = await engine.executeRaw<{ links_extracted_at: string | null }>(
+      `SELECT links_extracted_at FROM pages WHERE slug = $1 AND source_id = $2`,
+      ['people/alice-example', 'repo-a'],
+    );
+    expect(rows[0]?.links_extracted_at).not.toBeNull();
+    expect(await engine.countStalePagesForExtraction({ sourceId: 'repo-a' })).toBe(0);
+  });
+
+  test('Dream incremental dry-run does NOT stamp the watermark', async () => {
+    await seedPage('people/alice-example', '# alice');
+    await runExtractCore(engine as unknown as BrainEngine, {
+      mode: 'all',
+      dir: tempDir,
+      slugs: ['people/alice-example'],
+      dryRun: true,
+    });
+    const rows = await engine.executeRaw<{ links_extracted_at: string | null }>(
+      `SELECT links_extracted_at FROM pages WHERE slug = $1`,
+      ['people/alice-example'],
+    );
+    expect(rows[0]?.links_extracted_at ?? null).toBeNull();
+  });
+
   test('1. slugs: [] returns immediately with zero counts (early-return path)', async () => {
     await seedPage('people/alice-example', '# alice');
     const result = await runExtractCore(engine as unknown as BrainEngine, {
@@ -188,6 +233,40 @@ describe('runExtractCore — incremental cycle path (#417)', () => {
     // (resolved via the full allSlugs set built from walkMarkdownFiles).
     expect(result.pages_processed).toBe(1);
     // Link from alice to bob was extracted successfully via the full allSlugs set
+    expect(result.links_created).toBeGreaterThan(0);
+  });
+});
+describe('runExtractCore — incremental frontmatter gate (includeFrontmatter)', () => {
+  // alice has a `source:` frontmatter edge but NO body links. The incremental
+  // path extracts body links only by default, so the frontmatter edge is the
+  // sole signal that distinguishes the gate off vs on.
+  const aliceFm = '---\nsource: companies/acme-example\n---\n# alice';
+
+  test('9. default (flag omitted) does NOT extract frontmatter links on the incremental path', async () => {
+    await seedPage('companies/acme-example', '# acme');
+    await seedPage('people/alice-example', aliceFm);
+    const result = await runExtractCore(engine as unknown as BrainEngine, {
+      mode: 'all',
+      dir: tempDir,
+      slugs: ['people/alice-example'],
+    });
+    // alice's only potential edge is her frontmatter `source:`; with the gate off
+    // it must not be extracted (preserves the body-only incremental behavior).
+    expect(result.pages_processed).toBe(1);
+    expect(result.links_created).toBe(0);
+  });
+
+  test('10. includeFrontmatter: true extracts the frontmatter link on the incremental path', async () => {
+    await seedPage('companies/acme-example', '# acme');
+    await seedPage('people/alice-example', aliceFm);
+    const result = await runExtractCore(engine as unknown as BrainEngine, {
+      mode: 'all',
+      dir: tempDir,
+      slugs: ['people/alice-example'],
+      includeFrontmatter: true,
+    });
+    // Same page, gate on → the `source:` frontmatter edge is now extracted.
+    expect(result.pages_processed).toBe(1);
     expect(result.links_created).toBeGreaterThan(0);
   });
 });

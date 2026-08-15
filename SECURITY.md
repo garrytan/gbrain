@@ -8,17 +8,44 @@ on GitHub.
 
 Do not open a public issue for security vulnerabilities.
 
+## Automated security scanning
+
+CI runs three automated security checks alongside secret scanning (Gitleaks):
+
+- **Dependency vulnerabilities** — OSV-Scanner
+  (`.github/workflows/osv-scanner.yml`) runs weekly and on any PR that touches
+  `package.json` or `bun.lock`.
+- **Static analysis (SAST)** — Semgrep CE (`.github/workflows/semgrep.yml`)
+  runs on every PR and weekly. It is currently **advisory (non-blocking)**
+  while the finding baseline is tuned; the graduation path to a blocking check
+  is documented in the workflow file.
+- **Release binary provenance** — release builds
+  (`.github/workflows/release.yml`) attest each compiled binary with
+  [GitHub artifact attestations](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations).
+  Verify a downloaded release binary with:
+
+  ```bash
+  gh attestation verify ./gbrain-darwin-arm64 -R garrytan/gbrain
+  gh attestation verify ./gbrain-linux-x64 -R garrytan/gbrain
+  ```
+
+All security workflows use SHA-pinned actions and least-privilege permissions,
+enforced structurally by actionlint on every workflow change.
+
 ## Remote MCP Security
 
-### ⚠️ Do NOT use open OAuth client registration for remote MCP
+### Keep dynamic client registration disabled unless explicitly needed
 
-If you deploy GBrain's MCP server behind an HTTP wrapper with OAuth 2.1
-support, **never allow unauthenticated client registration**. An attacker
-who discovers your server URL can:
+GBrain disables Dynamic Client Registration (DCR) by default. Keep that
+default for internet-reachable deployments and pre-register trusted clients
+with operator-approved scopes and source access. Enabling DCR lets network
+callers create OAuth client records, so use it only when the deployment's
+trust model requires self-service registration and browser approval remains
+part of the authorization flow.
 
-1. Register a new OAuth client via `POST /register`
-2. Use `client_credentials` grant to obtain a bearer token
-3. Access all brain data via the MCP tools
+Do not enable `--enable-dcr-insecure` on an untrusted network. That option is
+reserved for deployments that intentionally allow self-registered
+machine-to-machine clients without browser approval.
 
 ### Recommended: `gbrain serve --http`
 
@@ -49,6 +76,53 @@ exclusively via `gbrain auth create/list/revoke`.
 3. **Restrict scopes** — never issue tokens with unlimited scope
 4. **Log all token issuance** — alert on unexpected registrations
 5. **Rate-limit registration and token endpoints**
+
+### Pre-registering claude.ai / ChatGPT clients without DCR (v0.41.3+)
+
+The recommended hardening posture above is: ship `gbrain serve --http`
+**without** `--enable-dcr` and pre-register every client manually. As of
+v0.41.3, `gbrain auth register-client` accepts the OAuth fields
+browser-based clients need:
+
+```bash
+# Pre-register claude.ai (confidential client; two redirect URIs)
+gbrain auth register-client claude-ai \
+  --scopes "read write" \
+  --redirect-uri https://claude.ai/api/mcp/auth_callback \
+  --redirect-uri https://claude.com/api/mcp/auth_callback
+# --grant-types is auto-set to authorization_code,refresh_token when
+# --redirect-uri is passed; pass --grant-types explicitly to override.
+
+# Pre-register ChatGPT (public PKCE client; no client_secret minted)
+gbrain auth register-client chatgpt \
+  --scopes "read write" \
+  --redirect-uri https://chatgpt.com/connector/oauth/<HASH> \
+  --token-endpoint-auth-method none
+```
+
+Auth methods (`--token-endpoint-auth-method`):
+
+- `client_secret_post` (default) — confidential client, secret in body
+- `client_secret_basic` — confidential client, secret in `Authorization` header
+- `none` — public PKCE-only client (no secret minted; ChatGPT custom
+  connector, Claude Code, Cursor)
+
+The same validator applies to CLI, admin, and DCR registration paths, so
+unknown authentication methods are rejected consistently. Browser-based
+clients can be configured entirely through the supported CLI flags; operators
+do not need to edit OAuth database rows by hand.
+
+### DCR consent default (v0.42.55+)
+
+The "disable `client_credentials`, only allow `authorization_code`" guidance
+above is now the built-in default for the DCR path, not just advice for custom
+wrappers. With `--enable-dcr` on, a self-registered client defaults to the
+`authorization_code` (browser-approval) grant, and an explicit
+`client_credentials` request is rejected with `invalid_client_metadata`.
+Operators who genuinely need the machine-to-machine grant on the registration
+endpoint opt in with `--enable-dcr-insecure` (which implies `--enable-dcr`); a
+startup WARNING prints whenever DCR is enabled, and a second when the insecure
+grant is allowed. Pre-registering clients via the CLI / admin API is unchanged.
 
 ### Token Management
 
@@ -86,6 +160,18 @@ the PGLite schema. Local agents continue to use stdio (`gbrain serve`).
 Running `--http` against a PGLite-backed install fails fast with a clear
 error message at startup.
 
+### Docker network isolation (self-hosted Postgres)
+
+OAuth and source scoping enforce isolation on the `serve --http` path only.
+Raw Postgres reachability bypasses both: a container that shares Docker's
+default `bridge` network with the brain's Postgres can open a direct DB
+session without any token and read every source. Put the brain's Postgres on
+a user-defined Docker network with nothing untrusted on it, publish its port
+loopback-only (if at all), and never put `DATABASE_URL` or a Postgres
+password in untrusted agent containers — those should reach the brain
+exclusively via OAuth against `serve --http`. Full operator checklist:
+[docs/mcp/DEPLOY.md — Co-located Docker workloads](docs/mcp/DEPLOY.md#co-located-docker-workloads-self-hosted-postgres).
+
 ### CORS
 
 Default-deny: no `Access-Control-Allow-Origin` header is sent unless an
@@ -100,6 +186,13 @@ GBRAIN_HTTP_CORS_ORIGIN=https://claude.ai,https://your.app gbrain serve --http
 When the request `Origin` matches the allowlist, the server echoes it
 back in `Access-Control-Allow-Origin` (with `Vary: Origin`). Otherwise no
 CORS header is sent and the browser blocks the request.
+
+The same allowlist gates the complete MCP and OAuth HTTP surface. Actual
+requests and browser preflight requests use one allowlist-gated policy, so
+unlisted origins receive no cross-origin authorization. A startup stderr
+warning fires when `--bind 0.0.0.0` is set without
+`GBRAIN_HTTP_CORS_ORIGIN`, surfacing the default-deny posture before the
+first request.
 
 ### Rate limiting
 
@@ -124,15 +217,34 @@ deployments.
 
 ### Reverse-proxy trust
 
-Disabled by default. To honor `X-Forwarded-For` (or `X-Real-IP`) when
-gbrain runs behind a trusted reverse proxy:
+**Loopback-only by default** (v0.41.3+ Express server agrees with the
+legacy transport; pre-v0.41.3 the Express server hardcoded `'loopback'`
+while docs claimed "disabled by default" — that disagreement is gone).
+The default trusts only same-host proxies (127.0.0.1, ::1, fc00::/7);
+external forwarded-for headers are ignored regardless. To widen or
+narrow trust:
 
 ```bash
+# Trust exactly one hop — Fly.io, Render, Vercel, single-layer nginx
 GBRAIN_HTTP_TRUST_PROXY=1 gbrain serve --http --port 8787
+
+# Trust N hops — Cloudflare → nginx → gbrain
+GBRAIN_HTTP_TRUST_PROXY=2 gbrain serve --http --port 8787
+
+# Disable entirely — direct-exposure deployment with no proxy
+GBRAIN_HTTP_TRUST_PROXY=0 gbrain serve --http --port 8787
+
+# Named Express modes (uniquelocal, linklocal) or CIDR lists pass through
+GBRAIN_HTTP_TRUST_PROXY=uniquelocal gbrain serve --http --port 8787
+GBRAIN_HTTP_TRUST_PROXY="10.0.0.0/8,192.168.1.0/24" gbrain serve --http --port 8787
 ```
 
-**Critical safety contract:** only set `GBRAIN_HTTP_TRUST_PROXY=1` when
-**both** of these are true:
+Both transports (Express OAuth server in `src/commands/serve-http.ts` and
+the legacy bearer transport in `src/mcp/http-transport.ts`) read the same
+env var, so single source of truth.
+
+**Critical safety contract:** only widen past `'loopback'` when **both**
+of these are true:
 
 1. gbrain is reachable only via a trusted reverse proxy (not directly
    exposed to the internet on the configured port). As of v0.34
@@ -145,11 +257,11 @@ GBRAIN_HTTP_TRUST_PROXY=1 gbrain serve --http --port 8787
    X-Forwarded-For $remote_addr` does this; Cloudflare and most cloud
    load balancers handle it automatically.)
 
-If gbrain is reachable directly AND `GBRAIN_HTTP_TRUST_PROXY=1` is set,
-clients can spoof their IP by sending arbitrary `X-Forwarded-For`
-headers, defeating the pre-auth IP rate limit. Without the flag, gbrain
-ignores all forwarded-for headers and uses the socket peer address,
-which is the safe default for direct-exposure deployments.
+If gbrain is reachable directly AND `GBRAIN_HTTP_TRUST_PROXY=1` (or any
+non-loopback value) is set, clients can spoof their IP by sending
+arbitrary `X-Forwarded-For` headers, defeating the pre-auth IP rate
+limit. The `'loopback'` default protects against this by ignoring all
+forwarded-for headers and using the socket peer address.
 
 ### Body size cap
 

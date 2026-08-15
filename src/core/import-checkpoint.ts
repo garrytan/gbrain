@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'fs';
-import { relative, isAbsolute } from 'path';
+import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync, realpathSync } from 'fs';
+import { relative, isAbsolute, resolve } from 'path';
 
 /**
  * Path-based import checkpoint.
@@ -25,6 +25,12 @@ import { relative, isAbsolute } from 'path';
  * enter the set.
  */
 export interface ImportCheckpoint {
+  /** Checkpoint payload schema. v1 is path-based with explicit producer metadata. */
+  schema_version: 1;
+  /** Producer marker for downstream consumers that validate before acting. */
+  owner: 'gbrain';
+  /** Checkpoint kind. Prevents unrelated checkpoint files from being treated as import state. */
+  kind: 'import';
   /** Absolute brain directory the checkpoint was created against. Mismatch on resume → discard. */
   dir: string;
   /**
@@ -37,6 +43,21 @@ export interface ImportCheckpoint {
 }
 
 const OLD_FORMAT_LOG = 'Older checkpoint format detected — re-walking (cheap via content_hash)';
+export const IMPORT_CHECKPOINT_SCHEMA_VERSION = 1;
+export const IMPORT_CHECKPOINT_OWNER = 'gbrain';
+export const IMPORT_CHECKPOINT_KIND = 'import';
+
+/**
+ * Capture the import target once at run start. `resolve()` removes caller
+ * spelling such as `.` or `../staging`; `realpathSync()` collapses symlinks
+ * and proves the target exists. The returned value is the only directory
+ * identity import checkpoints should ever persist (#1728 — a raw `.` here
+ * made the checkpoint `dir` resolve to whatever CWD the NEXT consumer ran
+ * from, which downstream tooling treated as an owned staging directory).
+ */
+export function resolveImportTargetDir(dir: string): string {
+  return realpathSync(resolve(dir));
+}
 
 /**
  * Load a checkpoint and verify it's compatible with the current run.
@@ -72,11 +93,21 @@ export function loadCheckpoint(path: string, currentDir: string): ImportCheckpoi
   }
 
   if (typeof obj.dir !== 'string') return null;
+  if (!isAbsolute(obj.dir)) return null;
   if (obj.dir !== currentDir) return null;
+  // Self-describing metadata (#1728): absent fields are tolerated (legacy
+  // path-based checkpoints predate them), but present-and-wrong means the
+  // file was written by something else — don't resume from it.
+  if (obj.schema_version !== undefined && obj.schema_version !== IMPORT_CHECKPOINT_SCHEMA_VERSION) return null;
+  if (obj.owner !== undefined && obj.owner !== IMPORT_CHECKPOINT_OWNER) return null;
+  if (obj.kind !== undefined && obj.kind !== IMPORT_CHECKPOINT_KIND) return null;
   if (typeof obj.timestamp !== 'string') return null;
   if (!obj.completedPaths.every((p): p is string => typeof p === 'string')) return null;
 
   return {
+    schema_version: IMPORT_CHECKPOINT_SCHEMA_VERSION,
+    owner: IMPORT_CHECKPOINT_OWNER,
+    kind: IMPORT_CHECKPOINT_KIND,
     dir: obj.dir,
     completedPaths: obj.completedPaths,
     timestamp: obj.timestamp,
@@ -98,6 +129,9 @@ export function saveCheckpoint(path: string, cp: ImportCheckpoint): void {
     // Sort for stable serialization — keeps diffs across snapshots minimal
     // and tests deterministic.
     const payload: ImportCheckpoint = {
+      schema_version: IMPORT_CHECKPOINT_SCHEMA_VERSION,
+      owner: IMPORT_CHECKPOINT_OWNER,
+      kind: IMPORT_CHECKPOINT_KIND,
       dir: cp.dir,
       completedPaths: [...cp.completedPaths].sort(),
       timestamp: cp.timestamp,

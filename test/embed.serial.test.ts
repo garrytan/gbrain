@@ -33,10 +33,23 @@ mock.module('../src/core/embedding.ts', () => ({
       activeEmbedCalls--;
     }
   },
+  // v0.41.31: embedAll/embedAllStale read the current embedding signature to
+  // stamp provenance. The mock returns a stable value; the mock engine's
+  // setPageEmbeddingSignature / invalidateStaleSignatureEmbeddings resolve to
+  // null via the Proxy default, so the signature value is inert here.
+  currentEmbeddingSignature: () => 'test:model:1536',
 }));
 
 // Import AFTER mocking.
-const { runEmbed } = await import('../src/commands/embed.ts');
+const { runEmbed, runEmbedCore } = await import('../src/commands/embed.ts');
+
+// v0.41.6.0 D1: runEmbedCore now preflights embedding credentials. This
+// test stack uses the LEGACY embedBatch mock path, not the gateway,
+// so the preflight would throw before our mocks see anything. Install
+// the gateway embed transport seam so diagnoseEmbedding's fast-path
+// flags the preflight as ok without touching real env vars.
+const { __setEmbedTransportForTests } = await import('../src/core/ai/gateway.ts');
+__setEmbedTransportForTests(async () => ({ embeddings: [], usage: { tokens: 0 } } as any));
 
 // Proxy-based mock engine that matches test/import-file.test.ts pattern.
 function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
@@ -101,6 +114,98 @@ describe('runEmbed --all (parallel)', () => {
     expect(maxConcurrentEmbedCalls).toBeGreaterThan(1);
     // And stayed within the configured limit.
     expect(maxConcurrentEmbedCalls).toBeLessThanOrEqual(10);
+  });
+
+  test('v0.41.31: stamps embedding_signature after embedding each page (--all)', async () => {
+    const pages = [{ slug: 'a', source_id: 'default' }, { slug: 'b', source_id: 'default' }];
+    const chunksBySlug = new Map(
+      pages.map(p => [
+        p.slug,
+        [{ chunk_index: 0, chunk_text: `text ${p.slug}`, chunk_source: 'compiled_truth', embedded_at: null, token_count: 4 }],
+      ]),
+    );
+    const engine = mockEngine({
+      listPages: async () => pages,
+      getChunks: async (slug: string) => chunksBySlug.get(slug) || [],
+      upsertChunks: async () => {},
+    });
+
+    await runEmbed(engine, ['--all']);
+
+    // The wiring gap this pins: embedAll must CALL setPageEmbeddingSignature
+    // after upsertChunks, with the current signature (mocked to test:model:1536).
+    const stampCalls = (engine as any)._calls.filter((c: any) => c.method === 'setPageEmbeddingSignature');
+    expect(stampCalls.length).toBe(2); // one per page
+    expect(stampCalls[0].args[1]).toEqual({ sourceId: 'default', signature: 'test:model:1536' });
+  });
+
+  // #1737: cooperative abort. A pre-aborted signal must stop the embed loop
+  // BEFORE any embedBatch call, so a job killed by wall-clock/lock-loss frees
+  // the worker (and lets the cycle's finally release gbrain_cycle_locks)
+  // instead of grinding through the full 10-15 min embed phase.
+  test('#1737 --all: pre-aborted signal embeds nothing (no embedBatch call)', async () => {
+    const pages = Array.from({ length: 10 }, (_, i) => ({ slug: `page-${i}`, source_id: 'default' }));
+    const chunksBySlug = new Map(
+      pages.map(p => [
+        p.slug,
+        [{ chunk_index: 0, chunk_text: `text ${p.slug}`, chunk_source: 'compiled_truth', embedded_at: null, token_count: 4 }],
+      ]),
+    );
+    const engine = mockEngine({
+      listPages: async () => pages,
+      getChunks: async (slug: string) => chunksBySlug.get(slug) || [],
+      upsertChunks: async () => {},
+    });
+
+    const ac = new AbortController();
+    ac.abort(new Error('wall-clock'));
+    const result = await runEmbedCore(engine, { all: true, signal: ac.signal });
+
+    expect(totalEmbedCalls).toBe(0);
+    expect(result.embedded).toBe(0);
+  });
+
+  test('#1737 --stale: pre-aborted signal breaks the loop before listStaleChunks', async () => {
+    let listStaleCalls = 0;
+    const engine = mockEngine({
+      countStaleChunks: async () => 5, // non-zero so we pass the early return
+      listStaleChunks: async () => { listStaleCalls++; return []; },
+      invalidateStaleSignatureEmbeddings: async () => 0,
+    });
+
+    const ac = new AbortController();
+    ac.abort(new Error('lock-lost'));
+    const result = await runEmbedCore(engine, { stale: true, signal: ac.signal });
+
+    // The top-of-loop abort check fires before the first listStaleChunks page load.
+    expect(listStaleCalls).toBe(0);
+    expect(totalEmbedCalls).toBe(0);
+    expect(result.embedded).toBe(0);
+  });
+
+  test('#1737 review catch: signal aborted during chunkless-page healing stops before invalidateStaleSignatureEmbeddings', async () => {
+    // Round-3 review finding: embedAllStale must check the abort signal
+    // immediately after the chunkless-page healing sweep, before falling
+    // through into invalidateStaleSignatureEmbeddings (a write path) —
+    // otherwise a caller-cancelled run could still NULL out
+    // signature-drifted embeddings and exit, leaving retrieval degraded.
+    const ac = new AbortController();
+    let invalidateCalled = false;
+    const engine = mockEngine({
+      countChunklessPagesWithContent: async () => 1,
+      listChunklessPagesWithContent: async () => {
+        // Simulate the caller's cancellation firing WHILE the healing sweep
+        // is mid-flight (e.g. worker timeout / lock loss / SIGTERM).
+        ac.abort(new Error('lock-lost'));
+        return [];
+      },
+      invalidateStaleSignatureEmbeddings: async () => { invalidateCalled = true; return 0; },
+      countStaleChunks: async () => 0,
+    });
+
+    await runEmbedCore(engine, { stale: true, signal: ac.signal });
+
+    expect(invalidateCalled).toBe(false);
   });
 
   test('respects GBRAIN_EMBED_CONCURRENCY=1 (serial)', async () => {
@@ -204,6 +309,38 @@ describe('runEmbedCore --dry-run never calls the embedding model', () => {
     // countStaleChunks call. pages_processed is 0 because we don't enumerate
     // pages in dry-run (cheaper pre-flight).
     expect(result.pages_processed).toBe(0);
+  });
+
+  test('dry-run --stale emits no page progress, since it processes no pages', async () => {
+    const { runEmbedCore } = await import('../src/commands/embed.ts');
+    const stale = [
+      { slug: 'a', chunk_index: 0, chunk_text: 'a', chunk_source: 'compiled_truth' as const, model: null, token_count: 1, source_id: 'default', page_id: 1 },
+      { slug: 'b', chunk_index: 0, chunk_text: 'b', chunk_source: 'compiled_truth' as const, model: null, token_count: 1, source_id: 'default', page_id: 2 },
+      { slug: 'c', chunk_index: 0, chunk_text: 'c', chunk_source: 'compiled_truth' as const, model: null, token_count: 1, source_id: 'default', page_id: 3 },
+    ];
+    const engine = mockEngine({
+      countStaleChunks: async () => stale.length,
+      listStaleChunks: async () => stale,
+      listPages: async () => [{ slug: 'a' }, { slug: 'b' }, { slug: 'c' }],
+      getChunks: async () => [],
+    });
+
+    const calls: Array<[number, number]> = [];
+    const result = await runEmbedCore(engine, {
+      stale: true,
+      dryRun: true,
+      onProgress: (done, total) => { calls.push([done, total]); },
+    });
+
+    // The CLI latches its `embed.pages` total from the first callback, so a
+    // synthetic (1, 1) here made the progress stream announce one page while
+    // the summary named every stale chunk. Consistent with pages_processed
+    // above: a dry run enumerates no pages, so it reports no page progress.
+    // docs/progress-events.md permits omitting a total that is not known up
+    // front; it does not permit asserting a wrong one.
+    expect(calls).toEqual([]);
+    expect(result.pages_processed).toBe(0);
+    expect(result.would_embed).toBe(3);
   });
 
   test('dry-run --stale correctly identifies stale chunks (SQL-side path)', async () => {
@@ -727,5 +864,182 @@ describe('embedAllStale --source threading (D7)', () => {
     });
     await runEmbedCore(engine, { stale: true, sourceId: 'media-corpus' });
     expect((firstCallOpts as { sourceId?: string }).sourceId).toBe('media-corpus');
+  });
+});
+
+// ────────────────────────────────────────────────────────────────
+// Code metadata preservation across re-embed (regression for #769)
+// ────────────────────────────────────────────────────────────────
+//
+// gbrain v0.30.1 and earlier silently clobbered code-chunk metadata
+// (language, symbol_name, symbol_type, start_line, end_line,
+// parent_symbol_path, doc_comment, symbol_name_qualified) on every
+// re-embed pass. The chunker populated those columns at import time,
+// but embed.ts loaded chunks via getChunks then mapped them to a
+// stripped ChunkInput carrying only 5 fields. upsertChunks then
+// OVERWROTE (not COALESCEd) the metadata columns from EXCLUDED, so
+// re-embed wiped them to NULL. End result on a real brain: 4875 code
+// pages, 47866 chunks, all with NULL language/symbol_name/symbol_type;
+// code-def returned 0 hits across every indexed repo.
+//
+// All three runEmbed paths (--stale autopilot, --all, --slugs) must
+// thread metadata through the re-upsert. Tests below assert that the
+// engine.upsertChunks call carries the same metadata it loaded.
+
+describe('runEmbed preserves code-chunk metadata across re-embed (regression for #769)', () => {
+  const fullCodeChunk = {
+    chunk_index: 0,
+    chunk_text: '[Java] foo/Bar.java:10-20 method baz',
+    chunk_source: 'compiled_truth' as const,
+    embedded_at: null,
+    token_count: 12,
+    language: 'java',
+    symbol_name: 'baz',
+    symbol_type: 'function',
+    start_line: 10,
+    end_line: 20,
+    parent_symbol_path: ['Bar'],
+    doc_comment: 'does the thing',
+    symbol_name_qualified: 'Bar.baz',
+  };
+
+  function metadataOf(chunk: any) {
+    return {
+      language: chunk.language,
+      symbol_name: chunk.symbol_name,
+      symbol_type: chunk.symbol_type,
+      start_line: chunk.start_line,
+      end_line: chunk.end_line,
+      parent_symbol_path: chunk.parent_symbol_path,
+      doc_comment: chunk.doc_comment,
+      symbol_name_qualified: chunk.symbol_name_qualified,
+    };
+  }
+
+  test('--stale (autopilot path) carries code metadata into upsertChunks', async () => {
+    const stale = [{
+      slug: 'code-page',
+      chunk_index: 0,
+      chunk_text: fullCodeChunk.chunk_text,
+      chunk_source: 'compiled_truth',
+      model: null,
+      token_count: 12,
+    }];
+    let upsertChunkArgs: any[] | null = null;
+    const engine = mockEngine({
+      countStaleChunks: async () => 1,
+      listStaleChunks: async () => stale,
+      getChunks: async () => [fullCodeChunk],
+      upsertChunks: async (_slug: string, chunks: any[]) => { upsertChunkArgs = chunks; },
+    });
+
+    await runEmbed(engine, ['--stale']);
+
+    expect(upsertChunkArgs).not.toBeNull();
+    expect(upsertChunkArgs!).toHaveLength(1);
+    expect(metadataOf(upsertChunkArgs![0])).toEqual(metadataOf(fullCodeChunk));
+  });
+
+  test('--all (full re-embed) carries code metadata into upsertChunks', async () => {
+    let upsertChunkArgs: any[] | null = null;
+    const engine = mockEngine({
+      listPages: async () => [{ slug: 'code-page' }],
+      getChunks: async () => [fullCodeChunk],
+      upsertChunks: async (_slug: string, chunks: any[]) => { upsertChunkArgs = chunks; },
+    });
+
+    await runEmbed(engine, ['--all']);
+
+    expect(upsertChunkArgs).not.toBeNull();
+    expect(upsertChunkArgs!).toHaveLength(1);
+    expect(metadataOf(upsertChunkArgs![0])).toEqual(metadataOf(fullCodeChunk));
+  });
+
+  test('--slugs (per-page embed) carries code metadata into upsertChunks', async () => {
+    let upsertChunkArgs: any[] | null = null;
+    const engine = mockEngine({
+      getPage: async () => ({ slug: 'code-page', compiled_truth: 'x', timeline: '' }),
+      getChunks: async () => [fullCodeChunk],
+      upsertChunks: async (_slug: string, chunks: any[]) => { upsertChunkArgs = chunks; },
+    });
+
+    await runEmbed(engine, ['--slugs', 'code-page']);
+
+    expect(upsertChunkArgs).not.toBeNull();
+    expect(upsertChunkArgs!).toHaveLength(1);
+    expect(metadataOf(upsertChunkArgs![0])).toEqual(metadataOf(fullCodeChunk));
+  });
+});
+
+// ────────────────────────────────────────────────────────────────
+// #3507 — `embed --stale` must reproduce the page's STORED
+// contextual-retrieval wrapping convention instead of embedding raw
+// chunk_text (which silently stripped contextual prefixes on every
+// re-embed, including the normal post-model-migration path).
+// ────────────────────────────────────────────────────────────────
+
+describe('embed --stale contextual-retrieval wrapping (#3507)', () => {
+  const wrapChunks = [
+    { chunk_index: 0, chunk_text: 'prose chunk', chunk_source: 'compiled_truth', embedded_at: null, token_count: 1 },
+    { chunk_index: 1, chunk_text: 'const x = 1;', chunk_source: 'fenced_code', embedded_at: null, token_count: 1 },
+  ];
+  const wrapStale = [
+    { slug: 'wrapped', chunk_index: 0, chunk_text: 'prose chunk', chunk_source: 'compiled_truth' as const, model: null, token_count: 1, source_id: 'default', page_id: 1 },
+    { slug: 'wrapped', chunk_index: 1, chunk_text: 'const x = 1;', chunk_source: 'fenced_code' as any, model: null, token_count: 1, source_id: 'default', page_id: 1 },
+  ];
+
+  function wrappingHarness(mode: string | null) {
+    const seen: string[] = [];
+    const restamps: any[][] = [];
+    embedBatchBehavior = async (texts: string[]) => {
+      seen.push(...texts);
+      return texts.map(() => new Float32Array(1536));
+    };
+    const engine = mockEngine({
+      countStaleChunks: async () => 2,
+      listStaleChunks: async () => wrapStale,
+      getPage: async () => ({
+        slug: 'wrapped',
+        title: 'Widget Notes',
+        source_id: 'default',
+        compiled_truth: 'x',
+        timeline: '',
+        contextual_retrieval_mode: mode,
+      }),
+      getChunks: async () => wrapChunks,
+      upsertChunks: async () => {},
+      updatePageContextualRetrievalState: async (...args: any[]) => { restamps.push(args); },
+    });
+    return { engine, seen, restamps };
+  }
+
+  test('title-mode page: stale re-embed wraps prose with the title prefix; fenced_code stays raw', async () => {
+    const { engine, seen, restamps } = wrappingHarness('title');
+    const result = await runEmbedCore(engine, { stale: true });
+    expect(result.embedded).toBe(2);
+    expect(seen).toContain('<context>Widget Notes\n</context>\nprose chunk');
+    expect(seen).toContain('const x = 1;');
+    expect(restamps).toHaveLength(0); // title tier: stamp already honest
+  });
+
+  test('per_chunk_synopsis page: fully re-embedded page restamps to the title tier', async () => {
+    const { engine, seen, restamps } = wrappingHarness('per_chunk_synopsis');
+    const result = await runEmbedCore(engine, { stale: true });
+    expect(result.embedded).toBe(2);
+    expect(seen).toContain('<context>Widget Notes\n</context>\nprose chunk');
+    expect(restamps).toHaveLength(1);
+    const [slug, sourceId, newMode] = restamps[0];
+    expect(slug).toBe('wrapped');
+    expect(sourceId).toBe('default');
+    expect(newMode).toBe('title');
+  });
+
+  test('page with no stored CR mode embeds raw chunk_text (convention preserved)', async () => {
+    const { engine, seen, restamps } = wrappingHarness(null);
+    const result = await runEmbedCore(engine, { stale: true });
+    expect(result.embedded).toBe(2);
+    expect(seen).toContain('prose chunk');
+    expect(seen.some((t) => t.startsWith('<context>'))).toBe(false);
+    expect(restamps).toHaveLength(0);
   });
 });

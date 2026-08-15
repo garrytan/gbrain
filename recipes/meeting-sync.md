@@ -18,6 +18,8 @@ health_checks:
       Content-Type: "application/json"
     body: '{"jsonrpc":"2.0","method":"tools/list","id":1}'
     label: "Circleback API"
+output_paths:
+  - meetings/
 setup_time: 15 min
 cost_estimate: "$0-17/mo (Circleback free for 10 meetings/mo, Pro $17/mo unlimited)"
 ---
@@ -104,7 +106,7 @@ tags: [team, weekly, sync]
 ```
 
 **Attendee filtering:**
-- Skip calendar resources (e.g., "YC-SF Conference Room")
+- Skip calendar resources (e.g., "HQ Conference Room")
 - Skip group addresses (e.g., "team@company.com")
 - Extract display names, not email addresses
 

@@ -58,6 +58,18 @@ export function skillMdTemplate(v: ScaffoldVars): string {
   lines.push('');
   lines.push(`${v.description}`);
   lines.push('');
+  // v0.36.x scaffold pre-insert (A3 + F10 from /plan-eng-review). New
+  // skills inherit the canonical brain-first Convention callout by
+  // default; authors of pure-infra skills can delete this line and add
+  // `brain_first: exempt` to frontmatter instead. Both are zero-friction
+  // one-line operations. The skillify-check item 12 (brain-first
+  // compliance, required) catches the no-callout / no-exempt case at
+  // audit time if the author removes this without opting out.
+  lines.push(
+    '> **Convention:** see [conventions/brain-first.md](../conventions/brain-first.md) ' +
+    'for the lookup chain (search → query → get_page → external).',
+  );
+  lines.push('');
   lines.push('## The rule');
   lines.push('');
   lines.push(`<!-- ${SKILLIFY_STUB_MARKER} -->`);

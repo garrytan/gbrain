@@ -38,11 +38,13 @@ describe('recipe: azure-openai', () => {
     expect(r!.tier).toBe('openai-compat');
     expect(r!.implementation).toBe('openai-compatible');
     expect(r!.base_url_default).toBeUndefined(); // env-templated only
+    // Keyless (Entra/AAD) support: AZURE_OPENAI_API_KEY moved required → optional.
     expect(r!.auth_env?.required).toEqual([
-      'AZURE_OPENAI_API_KEY',
       'AZURE_OPENAI_ENDPOINT',
       'AZURE_OPENAI_DEPLOYMENT',
     ]);
+    expect(r!.auth_env?.optional).toContain('AZURE_OPENAI_API_KEY');
+    expect(r!.auth_env?.optional).toContain('AZURE_OPENAI_USE_ENTRA');
     expect(r!.auth_env?.optional).toContain('AZURE_OPENAI_API_VERSION');
   });
 
@@ -66,9 +68,88 @@ describe('recipe: azure-openai', () => {
     expect(auth.token).not.toContain('Bearer'); // critical: no Bearer prefix
   });
 
-  test('resolveAuth throws AIConfigError when AZURE_OPENAI_API_KEY missing', () => {
+  test('resolveAuth key mode wins when a key is present and Entra is not forced', () => {
     const r = getRecipe('azure-openai')!;
-    expect(() => r.resolveAuth!({})).toThrow(AIConfigError);
+    const auth = r.resolveAuth!({ ...FULL_ENV });
+    expect(auth.headerName).toBe('api-key');
+  });
+
+  test('resolveAuth Entra mode (explicit opt-in, no key) returns Authorization Bearer from the token cache', async () => {
+    const { __setEntraTokenForTests } = await import('../../src/core/ai/recipes/azure-openai.ts');
+    __setEntraTokenForTests('fake-aad-token');
+    try {
+      const r = getRecipe('azure-openai')!;
+      const auth = r.resolveAuth!({
+        AZURE_OPENAI_ENDPOINT: FULL_ENV.AZURE_OPENAI_ENDPOINT,
+        AZURE_OPENAI_DEPLOYMENT: FULL_ENV.AZURE_OPENAI_DEPLOYMENT,
+        AZURE_OPENAI_USE_ENTRA: '1',
+      });
+      expect(auth.headerName).toBe('Authorization');
+      expect(auth.token).toBe('Bearer fake-aad-token');
+    } finally {
+      __setEntraTokenForTests(null);
+    }
+  });
+
+  test('resolveAuth AZURE_OPENAI_USE_ENTRA=1 forces Entra even with a key present', async () => {
+    const { __setEntraTokenForTests } = await import('../../src/core/ai/recipes/azure-openai.ts');
+    __setEntraTokenForTests('fake-aad-token');
+    try {
+      const r = getRecipe('azure-openai')!;
+      const auth = r.resolveAuth!({ ...FULL_ENV, AZURE_OPENAI_USE_ENTRA: '1' });
+      expect(auth.headerName).toBe('Authorization');
+      expect(auth.token).toBe('Bearer fake-aad-token');
+    } finally {
+      __setEntraTokenForTests(null);
+    }
+  });
+
+  test('Entra fetch wrapper refreshes the Authorization header per request (cached models never go stale)', async () => {
+    const { __setEntraTokenForTests } = await import('../../src/core/ai/recipes/azure-openai.ts');
+    __setEntraTokenForTests('fresh-aad-token');
+    const r = getRecipe('azure-openai')!;
+    const cfg = r.resolveOpenAICompatConfig!({
+      AZURE_OPENAI_ENDPOINT: FULL_ENV.AZURE_OPENAI_ENDPOINT,
+      AZURE_OPENAI_DEPLOYMENT: FULL_ENV.AZURE_OPENAI_DEPLOYMENT,
+      AZURE_OPENAI_USE_ENTRA: '1',
+    }); // explicit Entra opt-in (no key)
+    const capturedAuth: (string | null)[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = ((_input: any, init?: any) => {
+      capturedAuth.push(new Headers(init?.headers).get('Authorization'));
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    }) as typeof fetch;
+    try {
+      await cfg.fetch!(
+        'https://my-resource.openai.azure.com/openai/deployments/embed-deployment/embeddings',
+        { headers: { Authorization: 'Bearer stale-instantiation-token', 'content-type': 'application/json' } },
+      );
+      expect(capturedAuth).toEqual(['Bearer fresh-aad-token']);
+    } finally {
+      globalThis.fetch = realFetch;
+      __setEntraTokenForTests(null);
+    }
+  });
+
+  test('key-mode fetch wrapper does NOT touch the Authorization header', async () => {
+    const r = getRecipe('azure-openai')!;
+    const cfg = r.resolveOpenAICompatConfig!(FULL_ENV); // key present → key mode
+    const captured: any[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = ((_input: any, init?: any) => {
+      captured.push(init);
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    }) as typeof fetch;
+    try {
+      await cfg.fetch!(
+        'https://my-resource.openai.azure.com/openai/deployments/embed-deployment/embeddings',
+        { headers: { 'api-key': 'az-fake-key' } },
+      );
+      expect(new Headers(captured[0]?.headers).get('Authorization')).toBeNull();
+      expect(new Headers(captured[0]?.headers).get('api-key')).toBe('az-fake-key');
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 
   test('applyResolveAuth puts the key in headers (NOT apiKey) — no double-auth', () => {

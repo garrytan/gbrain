@@ -155,7 +155,7 @@ describe('persistRunRecord audit trail', () => {
 
   test('appends to eval-results.jsonl, creates dir if missing', () => {
     const record: EvalRunRecord = {
-      schema_version: 2,
+      schema_version: 3,
       run_id: 'abc123-longmemeval-conservative-42',
       ran_at: '2026-05-12T12:00:00Z',
       suite: 'longmemeval',
@@ -173,12 +173,12 @@ describe('persistRunRecord audit trail', () => {
     expect(content).toContain('abc123-longmemeval-conservative-42');
     const parsed = JSON.parse(content.trim());
     expect(parsed.mode).toBe('conservative');
-    expect(parsed.schema_version).toBe(2);
+    expect(parsed.schema_version).toBe(3);
   });
 
   test('appends multiple records (NDJSON)', () => {
     const base = {
-      schema_version: 2 as const,
+      schema_version: 3 as const,
       ran_at: '2026-05-12T12:00:00Z',
       suite: 'longmemeval' as const,
       commit: 'abc',
@@ -193,5 +193,25 @@ describe('persistRunRecord audit trail', () => {
     const content = readFileSync(join(tmp, 'eval-results.jsonl'), 'utf-8');
     const lines = content.trim().split('\n');
     expect(lines.length).toBe(3);
+  });
+
+  test("v3: brainbench records carry mode 'n/a' (decision 16 — no params.mode_independent hack)", () => {
+    const record: EvalRunRecord = {
+      schema_version: 3,
+      run_id: 'abc123-brainbench-na-42',
+      ran_at: '2026-06-12T12:00:00Z',
+      suite: 'brainbench',
+      mode: 'n/a',
+      commit: 'abc123',
+      seed: 42,
+      params: { fixtures_hash: 'deadbeef', cells: {} },
+      status: 'completed',
+      duration_ms: 1,
+    };
+    persistRunRecord(tmp, record, tmp);
+    const parsed = JSON.parse(readFileSync(join(tmp, 'eval-results.jsonl'), 'utf-8').trim());
+    expect(parsed.mode).toBe('n/a');
+    expect(parsed.suite).toBe('brainbench');
+    expect(parsed.params.mode_independent).toBeUndefined();
   });
 });

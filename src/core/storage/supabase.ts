@@ -195,7 +195,14 @@ export class SupabaseStorage implements StorageBackend {
       throw new Error(`Supabase signed URL failed: ${res.status} ${body}`);
     }
     const result = await res.json() as { signedURL: string };
-    return `${this.projectUrl}${result.signedURL}`;
+    // Supabase returns `signedURL` relative to the Storage API root, e.g.
+    // "/object/sign/<bucket>/<path>?token=...". Prepend projectUrl + "/storage/v1"
+    // (not just projectUrl) or the link 404s. Tolerate an already-absolute URL or a
+    // value that already carries the /storage/v1 prefix.
+    const signed = result.signedURL;
+    if (/^https?:\/\//.test(signed)) return signed;
+    if (signed.startsWith('/storage/v1')) return `${this.projectUrl}${signed}`;
+    return `${this.projectUrl}/storage/v1${signed.startsWith('/') ? '' : '/'}${signed}`;
   }
 
   async getUrl(path: string): Promise<string> {

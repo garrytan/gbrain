@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-wb-009",
+  "suites": [
+    "write-back"
+  ],
+  "category": "write-back",
+  "seed_pages": [
+    {
+      "slug": "people/noor-wrenhaven",
+      "content": "---\ntitle: Noor Wrenhaven\ntype: person\naliases: [noor]\nsummary: Founder of Windrose.\n---\n\nNoor Wrenhaven is the founder of Windrose. Noor wants a technical co-founder intro before committing.\n"
+    },
+    {
+      "slug": "companies/windrose",
+      "content": "---\ntitle: Windrose\ntype: company\nsummary: Seed-stage company. Founded by Noor Wrenhaven.\n---\n\nWindrose is a seed-stage company. Founded by Noor Wrenhaven. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Just wrapped the Windrose call with Noor Wrenhaven.",
+      "ts": "2025-06-03T16:33:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "How did it go?",
+      "ts": "2025-06-03T16:34:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Noor is worried the Windrose pricing model undercuts their gross margin. Real concern for the round.",
+      "ts": "2025-06-03T17:20:00Z"
+    },
+    {
+      "turn_id": 4,
+      "role": "user",
+      "text": "I committed to sending Noor the diligence checklist by Friday.",
+      "ts": "2025-06-03T17:21:00Z"
+    }
+  ]
+}

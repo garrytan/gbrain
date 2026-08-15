@@ -1,12 +1,15 @@
 ---
 name: minion-orchestrator
-version: 1.0.0
+version: 1.1.0
 description: |
   Unified Minions skill for both deterministic shell jobs and LLM subagent
   orchestration. Replaces the older `gbrain-jobs` routing intent. Use when:
   submitting gbrain jobs, shell/background tasks, spawning subagents,
   checking progress, steering running work, pausing/resuming, parallel
-  fan-out. One durable, observable, steerable queue interface.
+  fan-out. One durable, observable, steerable queue interface. Also carries
+  the durable-execution doctrine for any operation expected to exceed ~2
+  minutes: capability ladder, deadman checks that verify the result was
+  reported, and content-addressed stage checkpoints for expensive pipelines.
 triggers:
   - "gbrain jobs submit"
   - "submit a gbrain job"
@@ -29,6 +32,12 @@ triggers:
   - "parallel tasks"
   - "fan out"
   - "do these in parallel"
+  - "long operation"
+  - "durable execution"
+  - "arm a deadman"
+  - "the job went silent"
+  - "operation died in the background"
+  - "make this pipeline resumable"
 tools:
   - submit_job
   - get_job
@@ -40,6 +49,7 @@ tools:
   - send_job_message
   - get_job_progress
 mutating: true
+upstream: long-ops@fc834ee, subagent-deadman@fc834ee, pipeline-stage-cache@fc834ee
 ---
 
 # Minion Orchestrator
@@ -64,6 +74,26 @@ Guarantees:
 - Jobs can be paused, resumed, or cancelled at any time
 - Parent-child DAGs with configurable failure policies
 
+Durable-execution doctrine (routing convention the agent follows — nothing
+mechanically enforces it; see "Durable execution" below):
+- Operations expected to exceed ~2 minutes route through the capability
+  ladder, never a bare background shell that dies with the session.
+- A deadman check verifies the result was REPORTED to the user, not merely
+  that the process exited — a swallowed completion event looks identical to
+  a dead job from the user's side.
+- The deadman is second-line insurance, not a delivery guarantee: it can
+  itself die before firing (scheduler restart, deleted entry). Backstop:
+  on the next turn, sweep `gbrain jobs list --status active` and recent
+  completions for overdue work whose result never reached the user.
+- Deadman checks are idempotent. A double-fire, or a fire that races the
+  normal completion report, produces silence — it checks reported-state
+  first and tags any recovery report with the job ID so duplicates are
+  detectable.
+- A checkpoint or progress file is trusted only with a freshness check.
+  A stale checkpoint reads as "still running" forever; compare its
+  timestamp against the expected progress interval and against
+  `gbrain jobs get <id>`.
+
 ## Route the Request: Shell Job vs Subagent
 
 | Condition | Action |
@@ -74,6 +104,7 @@ Guarantees:
 | User asks to steer/pause/resume an agent | Subagent job lifecycle tools (MCP-callable) |
 | Single simple operation under ~30s | Consider inline execution first |
 | Needs restart durability/observability | Submit as Minion job |
+| Operation expected to exceed ~2 minutes | Route through the Durable execution ladder (below) |
 | Parallel work (2+ streams) | `gbrain agent run --fanout-manifest` or parent + child subagents |
 
 If intent is ambiguous, ask one clarification:
@@ -250,6 +281,178 @@ get_job ID                         # result, token counts, transcript
 Token accounting: every job tracks `tokens_input`, `tokens_output`, `tokens_cache_read`.
 Child tokens roll up to parent automatically on completion.
 
+## Durable execution (operations >2 minutes)
+
+Background shells die silently: session compaction, harness restart, tool
+timeout. Long gbrain operations (`extract all`, `embed --stale`, a full
+`sync --all`) routinely run 10-60 minutes — past every one of those
+ceilings. And even when the work survives, the *completion event* can be
+swallowed (worker restart, dropped notification), leaving the user staring
+at silence while a finished result sits unreported. Durable execution
+covers both halves: the work survives, and the report provably lands.
+
+Route any operation expected to exceed ~2 minutes through the **highest
+rung of this ladder the deployment supports**. This is a harness-routing
+convention the agent follows, not a mechanical guarantee — nothing stops a
+bare background shell except this skill saying don't.
+
+### Rung 1 — Minion job + deadman (Postgres + worker)
+
+Requires: Postgres engine, a running `gbrain jobs work` worker, and — for
+the shell lane — `GBRAIN_ALLOW_SHELL_JOBS=1` on the worker. All the
+Preconditions above still hold: the flag defaults OFF, shell submission is
+CLI-only across the MCP trust boundary, and PGLite has no worker daemon
+(see Rung 3). Nothing in this section loosens that contract.
+
+1. **Submit as a job** so the work survives restarts:
+
+   ```
+   gbrain jobs submit shell \
+     --timeout-ms 3600000 \
+     --params '{"cmd":"gbrain extract all","cwd":"/abs/path","inherit":["database_url"]}'
+   ```
+
+   Work that needs LLM judgment goes through the subagent lane
+   (`gbrain agent run`, above) instead — a submitted agent job you never
+   check on is the same bug as an unwatched shell job.
+
+2. **Arm a deadman in the same action block** (pattern below). Submitting
+   without arming is the classic half-fix: the job survives, the silence
+   doesn't.
+
+### Rung 2 — cron-checked progress file (no agent-waking scheduler)
+
+When no scheduler can wake the agent but the host has a plain crontab (or
+the work runs outside the queue entirely): make the operation write a
+progress/heartbeat file as it advances (or rely on `get_job_progress` for
+queue jobs), and register a recurring host-cron check that compares the
+file's freshness against the expected progress interval. The agent also
+checks it at the start of the next turn. A checkpoint that stops advancing
+means **stalled**, not "still running" — the freshness comparison is the
+entire value of this rung.
+
+### Rung 3 — foreground + output buffering (PGLite / no worker / no scheduler)
+
+Run the operation inline in the foreground — on PGLite that's
+`gbrain jobs submit ... --follow`, or just the raw command — and buffer
+all output to a file, reading bounded slices, per
+`skills/conventions/exec-output.md`. An empty tool result after a long
+command is truncation, not a dead shell. This rung has no silent-death
+insurance, so keep the operation in the foreground and stay with it;
+backgrounding here recreates the exact failure the ladder exists to
+prevent.
+
+### The deadman pattern
+
+A one-shot, self-deleting scheduled check that fires at
+expected-finish-plus-margin and verifies the **result was reported** — not
+just that the process exited. Arm it **in the same action block as the
+submission** (not after, not "if I remember").
+
+1. Estimate `expected_minutes` honestly; round up.
+2. Deadline = now + estimate + margin, where `margin = max(10 min, 50% of
+   estimate)`. Restarts delay delivery — too tight false-fires, hours-late
+   defeats the point.
+3. Create the check with whatever one-shot scheduler the host offers: a
+   harness cron tool with delete-after-run semantics, `at`, or a crontab
+   entry the check removes on first fire. The check's instruction:
+   - Verify the result was **already reported to the user**. `gbrain jobs
+     get <id>` gives the job state; the reported-check asks whether a
+     completion message actually reached the user.
+   - **Reported** → do nothing, stay silent, self-delete.
+   - **Completed but unreported** (swallowed event) → pull the result via
+     `gbrain jobs get <id>` and post the recovery report now, tagged with
+     the job ID.
+   - **Still running** → post a one-line status with a new ETA and arm ONE
+     follow-up deadman at +50% of the original estimate. One follow-up
+     max — no infinite chains.
+   - **Dead/failed** → report what it produced before dying (`stderr_tail`
+     from `gbrain jobs get <id>`) and offer `gbrain jobs retry <id>`.
+4. **Disarm on normal completion.** When the completion arrives and you
+   report it, remove the deadman. If it fires anyway, the reported-check
+   makes it a silent no-op — belt and suspenders.
+
+Failure modes the pattern must own (mirrored in Contract and
+Anti-Patterns): the deadman itself dying before it fires (second-line
+insurance, backstopped by the next-turn overdue sweep), double-fire
+(idempotent reported-check + job-ID-tagged reports), and stale checkpoints
+(freshness check before trusting "still running").
+
+Eval contract, imported with the pattern — a deadman deployment is judged
+on:
+
+- **ARMED_ON_SPAWN** — created in the same action block as the long
+  submission?
+- **SELF_DELETING** — one-shot, and silent when all is well?
+- **DETECTS_SWALLOWED** — verifies the result was reported, not just that
+  the job exited?
+- **RECOVERS** — on a swallowed event, pulls the output and posts the
+  recovery report?
+- **RIGHT_DEADLINE** — expected finish + sane margin, neither false-firing
+  nor hours late?
+
+Hard fails: a long user-facing operation with no deadman armed; a deadman
+that posts noise when the completion arrived normally; emulating the timer
+with `sleep` or a poll loop instead of a scheduler entry (a sleeping
+process dies with the session — the exact failure being insured against).
+
+### Sequencing and locks
+
+Maintenance operations share locks (`sync`, `embed`, `extract`,
+`integrity`). Run them **sequentially, chained**: submit job 1, arm its
+deadman; on completion, submit job 2, arm the next; finish with
+`gbrain doctor` and report the health delta. If a job dies mid-operation
+its lock expires at TTL (a live, recently-refreshed holder is protected by
+the steal grace) — never hand-delete lock rows to "unstick" a queue.
+
+### Typical long operations
+
+Durations scale with corpus size; treat these as order-of-magnitude
+anchors for `--timeout-ms`, not promises.
+
+| Operation | Typical duration | Suggested `--timeout-ms` |
+|---|---|---|
+| `extract all` | 30-60 min on large brains | 3600000 |
+| `embed --stale` | 5-30 min (scales with missing count) | 1800000 |
+| `sync --all` | 5-20 min | 1200000 |
+| `integrity auto` | 10-30 min | 1800000 |
+| `dream` | 5-15 min | 900000 |
+
+### Appendix: content-addressed stage checkpoints
+
+For a multi-stage pipeline with an expensive middle (extract → score →
+explain → render → verify, where the scoring stage burns real LLM spend),
+make each stage a content-addressed checkpoint so a crash — or a
+deadman-triggered retry, or a `replay_job` — **resumes** instead of
+re-spending:
+
+- **Key each stage** on a hash of (the stage's own logic + its params +
+  the hashes of its upstream artifacts). Store artifacts under a `.cache/`
+  directory in the pipeline's working tree, addressed by content hash.
+- **Warm re-run is a no-op**: every key matches, nothing recomputes, the
+  whole pipeline replays in well under a second.
+- **Busting cascades correctly**: a param change or a logic edit changes
+  that stage's key, recomputing it and every downstream stage whose
+  upstream hashes changed. The stage's own source must be part of the
+  key — omit it and logic edits silently reuse stale artifacts.
+- **Record provenance**: a provenance file per run records each stage's
+  key, inputs, outputs, and computed-at, so every artifact traces to the
+  exact logic + data that produced it and "which stage recomputed and
+  why" stays answerable.
+- **Verify integrity on restore**: check live artifacts against recorded
+  checksums; a mismatch means recompute or restore from cache, never
+  silent reuse.
+
+Judged on: **IDEMPOTENT** (warm re-run recomputes nothing),
+**CORRECT_BUSTING** (a change recomputes exactly the affected stages),
+**PROVENANCE** (every artifact traces to logic + params + upstreams),
+**INTEGRITY** (corrupted artifacts detected, never silently reused).
+
+This composes with the ladder rather than replacing it: the ladder keeps
+the pipeline running and reported; stage checkpoints keep a retry cheap.
+Pair them whenever a single stage costs more than pocket change in LLM
+spend.
+
 ## Output Format
 
 When reporting job status to the user:
@@ -287,6 +490,12 @@ Total tokens so far: 4.3k
 - Don't spawn > 5 concurrent agents without checking `gbrain jobs stats` first
 - For subagent work, don't use `sessions_spawn` with `runtime: "subagent"` when Minions is available (use `gbrain agent run` instead)
 - Don't poll `get_job` in a tight loop (use `get_job_progress` for lightweight checks)
+- Don't run an operation expected to exceed ~2 minutes as a bare background shell — it dies with the session; route through the Durable execution ladder
+- Don't say "I'll report back when it finishes" without an armed deadman or a scheduled check that will actually fire
+- Don't let a deadman post noise when the completion arrived normally — check reported-state first, stay silent, self-delete
+- Don't emulate the deadman timer with `sleep` or a poll loop — a sleeping process dies with the session, which is the exact failure being insured against
+- Don't trust a checkpoint or progress file without a freshness check — a stale checkpoint reads as "still running" forever
+- Don't run lock-acquiring maintenance ops (`sync`, `embed`, `extract`, `integrity`) simultaneously, and don't hand-delete lock rows to unstick them (locks expire at TTL)
 
 ## Tools Used
 

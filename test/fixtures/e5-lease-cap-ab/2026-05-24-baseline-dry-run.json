@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "timestamp": "2026-05-24T07:42:34.170Z",
+  "spec": {
+    "job_count": 500,
+    "budget_per_arm_usd": 8,
+    "injection_at_min": 15
+  },
+  "arms": [
+    {
+      "arm": "fixed",
+      "jobs_submitted": 500,
+      "jobs_completed": 0,
+      "jobs_dead": 0,
+      "wall_clock_ms": 1,
+      "total_cost_usd": 0,
+      "lease_cap_history": [
+        8
+      ],
+      "bounces": 0,
+      "upstream_429s": 0
+    },
+    {
+      "arm": "adaptive",
+      "jobs_submitted": 500,
+      "jobs_completed": 0,
+      "jobs_dead": 0,
+      "wall_clock_ms": 0,
+      "total_cost_usd": 0,
+      "lease_cap_history": [
+        8
+      ],
+      "bounces": 0,
+      "upstream_429s": 0
+    }
+  ],
+  "verdict": {
+    "throughput_advantage_pct": 0,
+    "cost_efficiency_delta_pct": 0,
+    "pr_gate_pass": false,
+    "note": "controller does NOT meet PR gate; defaults stay OFF"
+  }
+}

@@ -86,6 +86,9 @@ describe('v0.22.4 migration (B11)', () => {
             total: 8,
             errors_by_code: { NESTED_QUOTES: 8 },
             sample: [],
+            ignoredMissingOpen: 0,
+            status: 'scanned' as const,
+            files_scanned: 8,
           },
           {
             source_id: 'archive',
@@ -93,6 +96,9 @@ describe('v0.22.4 migration (B11)', () => {
             total: 4,
             errors_by_code: { NULL_BYTES: 4 },
             sample: [],
+            ignoredMissingOpen: 0,
+            status: 'scanned' as const,
+            files_scanned: 4,
           },
           {
             source_id: 'clean-source',
@@ -100,9 +106,14 @@ describe('v0.22.4 migration (B11)', () => {
             total: 0,
             errors_by_code: {},
             sample: [],
+            ignoredMissingOpen: 0,
+            status: 'scanned' as const,
+            files_scanned: 10,
           },
         ],
         scanned_at: new Date().toISOString(),
+        partial: false,
+        aborted_at_source: null,
       };
       const r = __testing.phaseCEmitTodo(
         { yes: true, dryRun: false, noAutopilotInstall: true },

@@ -1,0 +1,43 @@
+{
+  "_meta": {
+    "fixture_version": "v0.36.1.0",
+    "page": "daily-2026-04-18.md",
+    "synthetic": true,
+    "holdout": true,
+    "notes": "Daily-journal holdout. Tests propose_takes handling of probabilistic framing ('75/25 in favor') and explicit conviction self-tagging ('call it ~0.5')."
+  },
+  "claims": [
+    {
+      "claim_text": "acme-example hits meaningful ARR milestone by year-end",
+      "kind": "prediction",
+      "domain": "company-specific",
+      "conviction": 0.75,
+      "since_date": "2026-04-18",
+      "rationale": "Explicit '75/25 in favor' probabilistic framing"
+    },
+    {
+      "claim_text": "widget-co has 2 quarters of runway before emergency raise",
+      "kind": "prediction",
+      "domain": "company-specific",
+      "conviction": 0.7,
+      "since_date": "2026-04-18",
+      "rationale": "'I think' + concrete timeline + supporting signals"
+    },
+    {
+      "claim_text": "At least one fund-b portfolio company folds by Q3",
+      "kind": "prediction",
+      "domain": "fund-portfolio",
+      "conviction": 0.65,
+      "since_date": "2026-04-18",
+      "rationale": "'I expect' = moderate conviction"
+    },
+    {
+      "claim_text": "Vertical-SaaS IPO window reopens by Q2 2027",
+      "kind": "prediction",
+      "domain": "market-cycle",
+      "conviction": 0.5,
+      "since_date": "2026-04-18",
+      "rationale": "Explicit self-tagged conviction ('call it ~0.5')"
+    }
+  ]
+}

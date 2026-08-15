@@ -7,7 +7,7 @@
  *   `${GBRAIN_AUDIT_DIR:-~/.gbrain/audit}/supervisor-YYYY-Www.jsonl`
  * using ISO-8601 week numbering. `computeAuditFilename(kind, now)` derives
  * the filename; the ISO-week math is shared with `shell-audit.ts` via the
- * `computeIsoWeekName()` helper that both call.
+ * `computeIsoWeekFilename()` helper that both call.
  *
  * Shape: every emission already includes `event` and `ts`; we write it
  * verbatim and let consumers (like `gbrain doctor`) grep for events of
@@ -21,11 +21,15 @@
  *
  * `GBRAIN_AUDIT_DIR` overrides the default `~/.gbrain/audit/` path for
  * container deploys where `$HOME` is read-only.
+ *
+ * v0.40.4.0: internals delegate to the shared `src/core/audit/audit-writer.ts`
+ * primitive. Public API preserved (writeSupervisorEvent, readSupervisorEvents,
+ * computeSupervisorAuditFilename) AND the cross-surface helpers (isCrashExit,
+ * summarizeCrashes, CrashSummary, CLEAN_EXIT_CAUSES) stay here — those are
+ * supervisor-domain logic, not audit-write primitives.
  */
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import { resolveAuditDir } from './shell-audit.ts';
+import { createAuditWriter, computeIsoWeekFilename } from '../../audit/audit-writer.ts';
 import type { SupervisorEmission } from '../supervisor.ts';
 
 /**
@@ -36,17 +40,20 @@ import type { SupervisorEmission } from '../supervisor.ts';
  * is `supervisor-2026-W53.jsonl`.
  */
 export function computeSupervisorAuditFilename(now: Date = new Date()): string {
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const dayNum = (d.getUTCDay() + 6) % 7; // Mon=0, Sun=6
-  d.setUTCDate(d.getUTCDate() - dayNum + 3); // shift to Thursday (ISO week anchor)
-  const isoYear = d.getUTCFullYear();
-  const firstThursday = new Date(Date.UTC(isoYear, 0, 4));
-  const firstThursdayDayNum = (firstThursday.getUTCDay() + 6) % 7;
-  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstThursdayDayNum + 3);
-  const weekNum = Math.round((d.getTime() - firstThursday.getTime()) / (7 * 86400000)) + 1;
-  const ww = String(weekNum).padStart(2, '0');
-  return `supervisor-${isoYear}-W${ww}.jsonl`;
+  return computeIsoWeekFilename('supervisor', now);
 }
+
+// On-disk shape: SupervisorEmission already carries `event` + `ts`, plus the
+// caller-injected `supervisor_pid`. The audit-writer's T param is
+// {ts:string,...} so we match that contract while allowing arbitrary extra
+// fields from the emission shape.
+type SupervisorRow = SupervisorEmission & { supervisor_pid: number; ts: string };
+
+const writer = createAuditWriter<SupervisorRow>({
+  featureName: 'supervisor',
+  errorLabel: 'supervisor-audit',
+  errorTrailer: '; continuing',
+});
 
 /**
  * Append a single supervisor lifecycle event to the rotated JSONL audit
@@ -55,27 +62,31 @@ export function computeSupervisorAuditFilename(now: Date = new Date()): string {
  * supervisors still produces parseable traces).
  */
 export function writeSupervisorEvent(emission: SupervisorEmission, supervisorPid: number): void {
-  const dir = resolveAuditDir();
-  const filename = computeSupervisorAuditFilename();
-  const fullPath = path.join(dir, filename);
-  const line = JSON.stringify({ ...emission, supervisor_pid: supervisorPid }) + '\n';
-
-  try {
-    fs.mkdirSync(dir, { recursive: true });
-    fs.appendFileSync(fullPath, line, { encoding: 'utf8' });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[supervisor-audit] write failed (${msg}); continuing\n`);
-  }
+  // SupervisorEmission's `ts` field is already set upstream. The writer
+  // honors caller-supplied ts (won't restamp). Cast through unknown
+  // because SupervisorEmission's type doesn't guarantee `ts: string` at
+  // the TS level (it's a discriminated union over event-shapes).
+  writer.log({ ...emission, supervisor_pid: supervisorPid } as unknown as SupervisorRow);
 }
 
 /**
  * Read back the latest supervisor audit file. Returns events sorted
  * oldest-first. Best-effort: missing file / parse errors return [].
  * Used by `gbrain doctor` (Lane D) to surface supervisor health.
+ *
+ * Pre-v0.40.4 this only walked the CURRENT week's file. v0.40.4 keeps
+ * that semantic (single-file read, no cross-week walk) so doctor's
+ * existing assertions don't shift. Callers wanting cross-week scope
+ * should compute the previous-week filename themselves OR use
+ * `writer.readRecent(days, now)` directly via the unexported writer.
  */
 export function readSupervisorEvents(opts: { sinceMs?: number } = {}): SupervisorEmission[] {
-  const dir = resolveAuditDir();
+  // Replicate the pre-v0.40.4 single-file behavior by reading just the
+  // current-week file directly (the shared writer.readRecent() walks two
+  // files; behavior-preserving here means staying with one).
+  const fs = require('node:fs') as typeof import('node:fs');
+  const path = require('node:path') as typeof import('node:path');
+  const dir = writer.resolveDir();
   const filename = computeSupervisorAuditFilename();
   const fullPath = path.join(dir, filename);
 
@@ -104,4 +115,128 @@ export function readSupervisorEvents(opts: { sinceMs?: number } = {}): Superviso
     }
   }
   return events;
+}
+
+/**
+ * Cross-week supervisor read for windows that can straddle a Monday boundary
+ * (issue #1685, CODEX #7). The single-file `readSupervisorEvents` above can lose
+ * a Sunday-night OOM loop when read on Monday because it only opens the current
+ * ISO-week file. This variant delegates to the shared writer's `readRecent`,
+ * which walks current + previous week (the same prev-week walk db-disconnect and
+ * the other audits already use), then applies an hour-precision cutoff.
+ *
+ * Used by `worker_oom_loop` in doctor.ts so the OOM-loop verdict can't silently
+ * miss a week-boundary incident. The legacy `readSupervisorEvents` keeps its
+ * single-file semantics so the existing `supervisor` check's assertions don't
+ * shift (and PR #1688, concurrently editing that check, doesn't conflict).
+ */
+export function readRecentSupervisorEvents(
+  hours = 24,
+  now: Date = new Date(),
+): SupervisorEmission[] {
+  const days = hours / 24;
+  const events = writer.readRecent(days, now);
+  const cutoff = now.getTime() - hours * 3_600_000;
+  return events.filter((e) => {
+    if (!e.event || !e.ts) return false;
+    const t = Date.parse(e.ts);
+    return !Number.isFinite(t) || t >= cutoff;
+  });
+}
+
+/**
+ * Denylist of clean-exit `likely_cause` values. Anything not in this set —
+ * including future unrecognized values — counts as a crash. Matches the
+ * domain asymmetry: clean exits are explicit (the worker exited because we
+ * asked it to); crashes are an open catch-all. `wedge_restart` (issue #1801)
+ * is a deliberate supervisor self-heal of an alive-but-wedged worker — counted
+ * as clean here so doctor / `jobs supervisor status` don't inflate the crash
+ * count on self-heals; the wedge itself surfaces via the
+ * `restarting_wedged_worker` / `wedge_restart_loop` health_warn instead. If a future maintainer adds a
+ * new `likely_cause` upstream in `child-worker-supervisor.ts` (e.g.
+ * `lock_lost`, `panic`), the doctor surfaces it by default instead of
+ * silently underreporting — denylist semantics close the bug class this
+ * helper was added to fix.
+ */
+const CLEAN_EXIT_CAUSES = new Set(['clean_exit', 'graceful_shutdown', 'wedge_restart']);
+
+/**
+ * Per-cause crash bucket shape returned by `summarizeCrashes()`. Bucket names
+ * mirror the upstream `likely_cause` values: `runtime_error` (code=1),
+ * `oom_or_external_kill` (SIGKILL), `unknown` (other signals/codes). The
+ * `legacy` bucket catches pre-v0.34 entries lacking `likely_cause` that fall
+ * through to the `code !== 0` fallback.
+ */
+export interface CrashSummary {
+  total: number;
+  by_cause: {
+    runtime_error: number;
+    oom_or_external_kill: number;
+    /** v0.42.5.0: worker drained itself because RSS crossed the watchdog cap
+     *  (issue #1678). A real problem (the cap is too low for the workload, or a
+     *  leak) but distinct from an OOM-killer SIGKILL — surfaced as its own
+     *  bucket so operators see "raise --max-rss" signal, not generic crashes. */
+    rss_watchdog: number;
+    unknown: number;
+    legacy: number;
+  };
+  clean_exits: number;
+}
+
+/**
+ * Classify a single audit event. Returns true when the event represents a
+ * worker crash (not a clean shutdown, watchdog drain, or non-exit lifecycle
+ * event). Pre-v0.34 audit lines lacking `likely_cause` fall back to
+ * `code !== 0`.
+ */
+export function isCrashExit(event: SupervisorEmission): boolean {
+  if (event.event !== 'worker_exited') return false;
+  const cause = event.likely_cause as string | undefined;
+  if (cause === undefined) {
+    // Legacy fallback for pre-v0.34 entries lacking `likely_cause`. Treat
+    // any non-zero exit code as a crash; missing/null `code` also counts
+    // (truly malformed line — fail-loud, the user can investigate the audit
+    // file directly).
+    const code = event.code as number | null | undefined;
+    return code !== 0;
+  }
+  return !CLEAN_EXIT_CAUSES.has(cause);
+}
+
+/**
+ * Summarize crash counts across a window of supervisor audit events. Both
+ * `gbrain doctor` and `gbrain jobs supervisor status` consume this — single
+ * regression point, single test target.
+ *
+ * Bucketing rule: `worker_exited` events classified as crashes by
+ * `isCrashExit()` are dispatched to `by_cause` based on `likely_cause`. The
+ * `legacy` bucket catches BOTH (a) pre-v0.34 entries lacking `likely_cause`
+ * that fell through to the `code !== 0` fallback, AND (b) future
+ * unrecognized `likely_cause` values not in the explicit allowlist
+ * (`runtime_error` / `oom_or_external_kill` / `unknown`). Operators
+ * watching `legacy=N` rise know the upstream classifier added a value the
+ * doctor doesn't yet name — that's the intended signal for "extend my
+ * bucket vocabulary."
+ */
+export function summarizeCrashes(events: SupervisorEmission[]): CrashSummary {
+  const summary: CrashSummary = {
+    total: 0,
+    by_cause: { runtime_error: 0, oom_or_external_kill: 0, rss_watchdog: 0, unknown: 0, legacy: 0 },
+    clean_exits: 0,
+  };
+  for (const e of events) {
+    if (e.event !== 'worker_exited') continue;
+    if (!isCrashExit(e)) {
+      summary.clean_exits++;
+      continue;
+    }
+    summary.total++;
+    const cause = e.likely_cause as string | undefined;
+    if (cause === 'runtime_error') summary.by_cause.runtime_error++;
+    else if (cause === 'oom_or_external_kill') summary.by_cause.oom_or_external_kill++;
+    else if (cause === 'rss_watchdog') summary.by_cause.rss_watchdog++;
+    else if (cause === 'unknown') summary.by_cause.unknown++;
+    else summary.by_cause.legacy++;  // pre-v0.34 fallback OR future unrecognized cause
+  }
+  return summary;
 }

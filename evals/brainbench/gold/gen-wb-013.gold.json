@@ -1,0 +1,34 @@
+{
+  "fixture_id": "gen-wb-013",
+  "turns": {
+    "3": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "pricing / Russetvane Systems",
+          "fact": "Zelda Bransome is worried the Russetvane Systems pricing model undercuts gross margin (round concern)",
+          "entity_slug": "people/zelda-bransome",
+          "match_keywords": [
+            "pricing",
+            "Russetvane Systems"
+          ],
+          "kind": "belief"
+        }
+      ]
+    },
+    "4": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "async updates",
+          "fact": "Zelda Bransome prefers async updates over standing calls",
+          "entity_slug": "people/zelda-bransome",
+          "match_keywords": [
+            "async updates"
+          ],
+          "kind": "preference"
+        }
+      ]
+    }
+  }
+}

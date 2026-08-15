@@ -22,11 +22,27 @@ export type Implementation =
   | 'native-openai'
   | 'native-google'
   | 'native-anthropic'
-  | 'openai-compatible';
+  | 'openai-compatible'
+  | 'claude-cli';
 
 export interface EmbeddingTouchpoint {
   models: string[];
   default_dims: number;
+  /**
+   * Per-model native dimensions, keyed by bare model id (no `provider:`
+   * prefix). Consulted before `default_dims` when resolving schema width
+   * for a specific model.
+   *
+   * Local recipes (ollama, llama-server) serve models with very different
+   * native widths — nomic-embed-text is 768, bge-m3 and mxbai-embed-large
+   * are 1024, qwen3-embed-8b is 4096. A single recipe-wide `default_dims`
+   * silently picks the wrong width for every model except the one it was
+   * chosen for, producing a schema that only fails at first insert (#2051).
+   *
+   * Partial by design: a model absent from this map falls back to
+   * `default_dims`, so a recipe can declare only the models it knows.
+   */
+  model_dims?: Readonly<Record<string, number>>;
   dims_options?: number[]; // for Matryoshka-aware providers
   cost_per_1m_tokens_usd?: number;
   price_last_verified?: string; // ISO date
@@ -54,6 +70,16 @@ export interface EmbeddingTouchpoint {
    * `max_batch_tokens` is also set.
    */
   safety_factor?: number;
+  /**
+   * Maximum number of inputs per embedding request. Some endpoints enforce a
+   * hard COUNT cap independent of token budget — notably llama.cpp's
+   * `llama-server`, which rejects requests with more inputs than its launch
+   * batch size (e.g. `batch size 100 > maximum allowed batch size 32`). The
+   * token-budget pre-split cannot bound item count (many tiny chunks fit under
+   * any token budget), so this is enforced as a separate hard re-split after
+   * the token split. When unset, no count cap is applied.
+   */
+  max_batch_items?: number;
   /**
    * v0.27.1: when true, at least one model in this recipe accepts image
    * inputs via a multimodal embedding endpoint (e.g. Voyage's
@@ -88,6 +114,17 @@ export interface EmbeddingTouchpoint {
    */
   user_provided_models?: true;
   /**
+   * #2271: trust a user-supplied `--embedding-dimensions` for this recipe even
+   * when it's not in the known-Matryoshka allowlist. Set ONLY on local /
+   * bring-your-own-backend recipes where the user knows their model's native dim
+   * and we can't enumerate every model (ollama, llama-server, litellm). The
+   * provider's `/embeddings` response-dim validation catches a genuine mismatch
+   * pre-storage. Must NOT be set on fixed-dim hosted providers (openai/voyage/
+   * zeroentropy stay fail-closed) or on recipes that declare recipe-wide
+   * `dims_options` (e.g. openrouter, whose Tier-1 options legitimately govern).
+   */
+  trust_custom_dims?: true;
+  /**
    * v0.32 (#779 reworked): explicit opt-out of the missing-max_batch_tokens
    * startup warning. Set to `true` for recipes whose batch capacity is
    * genuinely dynamic (Ollama: depends on user-loaded model; LiteLLM proxy:
@@ -104,15 +141,52 @@ export interface EmbeddingTouchpoint {
 
 /**
  * v0.27.1: input shape for gateway.embedMultimodal(). Discriminated union;
- * today the only kind is image_base64 (raw bytes encoded by the caller).
- * Future kinds (image_url, video_keyframe) extend the union without
- * widening callers because the discriminator is exhaustive.
+ * variants extend without widening callers because the discriminator is
+ * exhaustive.
  *
  * No image_url variant: SSRF surface. Callers must read the bytes and
- * base64-encode them; the gateway never fetches external URLs.
+ * base64-encode them; the gateway never fetches external URLs. For
+ * remote-callable image-as-query, the dedicated SSRF-defended loader at
+ * `src/core/search/image-loader.ts` resolves URLs to base64 first.
+ *
+ * v0.36 (cross-modal wave) adds the `text` variant for query-side
+ * multimodal embedding (`embedQueryMultimodal(text)`) — Voyage's
+ * multimodal endpoint accepts a content array mixing text + image entries.
  */
 export type MultimodalInput =
-  | { kind: 'image_base64'; data: string; mime: string };
+  | { kind: 'image_base64'; data: string; mime: string }
+  | { kind: 'text'; text: string };
+
+/**
+ * v0.36 — opts for gateway.embedMultimodal().
+ *
+ * `inputType` threads Voyage's retrieval discipline through:
+ *   - 'document' (default) — embedding side of asymmetric retrieval
+ *   - 'query' — query side; routes to the matching half of Voyage's space
+ *
+ * Mixing inputType across calls is fine; mixing within one batch is not
+ * supported (Voyage requires one input_type per request).
+ */
+export interface EmbedMultimodalOpts {
+  inputType?: 'document' | 'query';
+}
+
+/**
+ * v0.36 — return shape for partial-failure-aware multimodal batching.
+ *
+ * Used by `embedMultimodalSafe()` (the Phase-3-reindex-safe variant). The
+ * default `embedMultimodal()` throws on first failure to preserve the
+ * pre-v0.36 contract; callers who can persist partial progress opt into
+ * the safe variant explicitly.
+ */
+export interface MultimodalBatchResult {
+  /** Successful embeddings, indexed parallel to the original inputs (may contain holes as undefined). */
+  embeddings: Array<Float32Array | undefined>;
+  /** Indices of inputs that failed to embed, in original-input order. */
+  failedIndices: number[];
+  /** Last error encountered (for diagnostics; not necessarily the only failure). */
+  lastError?: Error;
+}
 
 export interface ExpansionTouchpoint {
   models: string[];
@@ -149,6 +223,20 @@ export interface RerankerTouchpoint {
   cost_per_1m_tokens_usd?: number;
   price_last_verified?: string;
   max_payload_bytes: number;
+  /**
+   * Override the rerank URL path. Defaults to '/models/rerank' (ZeroEntropy's
+   * legacy path; ZE-compatible-wire-shape providers like llama.cpp set
+   * '/v1/rerank').
+   */
+  path?: string;
+  /**
+   * Recipe-level timeout fallback for `gateway.rerank()` and search-mode
+   * resolution. Caller's `input.timeoutMs` and `search.reranker.timeout_ms`
+   * config still win when set. Used to give CPU-only local rerankers (e.g.
+   * llama.cpp serving Qwen3-Reranker-4B) headroom for first-call warmup
+   * without forcing every user to discover the config key.
+   */
+  default_timeout_ms?: number;
 }
 
 export interface ChatTouchpoint {
@@ -160,8 +248,24 @@ export interface ChatTouchpoint {
    * Strictly stronger than supports_tools.
    */
   supports_subagent_loop: boolean;
-  /** Anthropic-style ephemeral prompt cache markers honored. */
-  supports_prompt_cache?: boolean;
+  /**
+   * Prompt caching honored for this chat touchpoint. Static booleans cover
+   * native providers; openai-compatible aggregators may decide per model id
+   * (e.g. OpenRouter caches OpenAI and Anthropic routes but not every routed
+   * model family).
+   */
+  supports_prompt_cache?: boolean | ((modelId: string) => boolean);
+  /**
+   * Backend honors OpenAI structured outputs (a strict `json_schema`
+   * response_format). Threaded into `createOpenAICompatible`'s
+   * `supportsStructuredOutputs` so query expansion's `generateObject` sends a
+   * real schema (strict validation) instead of degrading to schemaless JSON.
+   * Default false: an openai-compatible recipe may front arbitrary backends,
+   * most of which lack strict json_schema support, so `expand()` routes them
+   * through the schemaless text path. Opt in per recipe when the backend is
+   * known to honor it.
+   */
+  supports_structured_outputs?: boolean;
   max_context_tokens?: number;
   cost_per_1m_input_usd?: number;
   cost_per_1m_output_usd?: number;
@@ -224,6 +328,29 @@ export interface Recipe {
     token: string;
   };
   /**
+   * v0.37.6.0: static request headers applied to every openai-compatible
+   * touchpoint (embedding, expansion, chat, reranker). Use for static-per-recipe
+   * attribution headers (OpenRouter's HTTP-Referer + X-OpenRouter-Title).
+   * Merged into the SDK call site after `applyResolveAuth` resolves auth.
+   *
+   * Mutually exclusive with `resolveDefaultHeaders` — declaring both throws
+   * `AIConfigError` at gateway-configure time. Keys conflicting with the
+   * resolved auth header (Authorization, the resolver's custom header) are
+   * rejected at `applyResolveAuth` call time so defaults cannot accidentally
+   * shadow auth.
+   */
+  default_headers?: Record<string, string>;
+  /**
+   * v0.37.6.0: env-templated equivalent of `default_headers`. Same merge
+   * semantics and same key-conflict guards. Used by recipes whose attribution
+   * headers vary by deployment (forks override referer/title via env). When
+   * declared, `default_headers` MUST be omitted.
+   *
+   * Runs at gateway-configure time on the `cfg.env` snapshot, never
+   * `process.env`.
+   */
+  resolveDefaultHeaders?(env: Record<string, string | undefined>): Record<string, string>;
+  /**
    * v0.32: templated openai-compatible config for recipes whose URL shape
    * doesn't fit a static `base_url_default`. Returns the resolved baseURL
    * and an optional fetch wrapper for cases like Azure OpenAI that need a
@@ -239,6 +366,18 @@ export interface Recipe {
    */
   resolveOpenAICompatConfig?(env: Record<string, string | undefined>): {
     baseURL: string;
+    fetch?: typeof fetch;
+  };
+  /**
+   * Optional inbound-response rewriter for openai-compatible recipes whose wire
+   * shape needs normalizing before the AI SDK adapter parses it. `fetch` wraps
+   * the transport and MUST be fail-open (return the original response on any
+   * error). Used by DeepSeek to promote `reasoning_content` into `content` when
+   * the reasoner returns an empty `content` (the adapter reads only `content`).
+   * Applied by `applyOpenAICompatConfig`; a `resolveOpenAICompatConfig`-provided
+   * fetch takes precedence when both are present.
+   */
+  compat?: {
     fetch?: typeof fetch;
   };
   /**
@@ -292,6 +431,8 @@ export interface AIGatewayConfig {
   chat_fallback_chain?: string[];
   /** Optional per-provider base URL override (openai-compatible variants). */
   base_urls?: Record<string, string>;
+  /** Optional chat providerOptions overrides keyed by recipe id or "recipe:modelId". */
+  provider_chat_options?: Record<string, Record<string, unknown>>;
   /** Env snapshot read once at configuration time. Gateway never reads process.env at call time. */
   env: Record<string, string | undefined>;
 }

@@ -1,0 +1,17 @@
+{
+  "fixture_id": "gen-kta-pos-008",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "people/verity-thornquist"
+      ],
+      "acceptable_slugs": [
+        "companies/fernwheel"
+      ]
+    },
+    "3": {
+      "should_retrieve": false
+    }
+  }
+}

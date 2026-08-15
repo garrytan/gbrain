@@ -1,0 +1,43 @@
+{
+  "kind": "voice-agent-install",
+  "description": "Wrap openclaw doing a copy-into-host-repo install of agent-voice, verify the install + server boot. Friction-discovery flavor, NOT a ship gate.",
+  "label": "BENCHMARK_FRICTION",
+  "blocks_ship": false,
+  "expected_phases": [
+    "integrations.install",
+    "voice-agent.startup",
+    "voice-agent.health_ok"
+  ],
+  "scratch_seed": {
+    "init_git": true,
+    "agents_md_stub": true,
+    "skills_dir": true
+  },
+  "env_passthrough": [
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "OPENCLAW_BIN",
+    "AGENT_VOICE_TEST_PORT"
+  ],
+  "expected_artifacts": [
+    "services/voice-agent/code/server.mjs",
+    "services/voice-agent/code/lib/personas/mars.mjs",
+    "services/voice-agent/code/lib/personas/venus.mjs",
+    "services/voice-agent/.gbrain-source.json",
+    "services/voice-agent/package.json",
+    "skills/voice-persona-mars/SKILL.md",
+    "skills/voice-persona-venus/SKILL.md",
+    "skills/voice-post-call/SKILL.md"
+  ],
+  "expected_resolver_rows": [
+    "voice-persona-mars",
+    "voice-persona-venus",
+    "voice-post-call"
+  ],
+  "post_install_assertions": [
+    "no_pii_leak_in_copied_tree",
+    "gbrain_source_json_has_sha256_per_file",
+    "gbrain_source_json_no_upstream_repo_field"
+  ],
+  "max_runtime_minutes": 8
+}

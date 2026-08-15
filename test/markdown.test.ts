@@ -302,3 +302,88 @@ Some content.`;
     expect(parseMarkdown('', 'projects/blog/writing/essay.md').type).toBe('writing');
   });
 });
+
+// issue #1939 — js-yaml parses `title: 2024-06-01` as a Date and `title: 1458`
+// as a number. The old `(frontmatter.title as string)` cast was a compile-time
+// lie; at runtime downstream `.toLowerCase()` threw and wedged sync. Coercion
+// must be non-throwing AND deterministic (UTC ISO for dates, no timezone drift).
+describe('issue #1939 — non-string frontmatter coercion', () => {
+  test('date title coerces to its UTC ISO date string', () => {
+    const parsed = parseMarkdown('---\ntitle: 2024-06-01\n---\nbody\n', 'apple-notes/x.md');
+    expect(parsed.title).toBe('2024-06-01');
+    expect(typeof parsed.title).toBe('string');
+  });
+
+  test('number title coerces to its string form', () => {
+    const parsed = parseMarkdown('---\ntitle: 1458\n---\nbody\n', 'apple-notes/x.md');
+    expect(parsed.title).toBe('1458');
+  });
+
+  test('date title is timezone-independent (UTC) — repro file shape', () => {
+    // sources/apple-notes/YC/Talks YC/2023-04-25 1458.md style page.
+    const parsed = parseMarkdown('---\ntitle: 2023-04-25\n---\nnotes\n', 'apple-notes/2023-04-25 1458.md');
+    expect(parsed.title).toBe('2023-04-25'); // never "Mon Apr 24 2023 ...GMT-0700"
+  });
+
+  test('date/number slug + type coerce without throwing', () => {
+    const parsed = parseMarkdown('---\nslug: 2024-06-01\ntype: 2024\n---\nbody\n', 'x.md');
+    expect(typeof parsed.slug).toBe('string');
+    expect(parsed.slug).toBe('2024-06-01');
+    expect(typeof parsed.type).toBe('string');
+  });
+
+  test('missing/empty title falls back to inferred title (no throw)', () => {
+    const parsed = parseMarkdown('---\ntype: note\n---\nbody\n', 'people/alice-example.md');
+    expect(typeof parsed.title).toBe('string');
+    expect(parsed.title.length).toBeGreaterThan(0);
+  });
+
+  test('string title still passes through unchanged', () => {
+    const parsed = parseMarkdown('---\ntitle: A Normal Title\n---\nbody\n', 'x.md');
+    expect(parsed.title).toBe('A Normal Title');
+  });
+});
+
+// issue #2446 — when frontmatter has no `title:`, prefer the body's first H1
+// over the slug/filename-humanized fallback. Slug-based imports (contacts,
+// calendar) carry a correct `# Heading` but no frontmatter title; humanizing
+// the slug leaks date/id tokens and loses casing (`Defalco` vs `DeFalco`).
+describe('issue #2446 — body H1 fallback for missing frontmatter title', () => {
+  test('no frontmatter title uses the body H1, not the slug-humanized junk', () => {
+    const md = '---\ntype: person\n---\n\n# John DeFalco\n\nNotes about John.\n';
+    const parsed = parseMarkdown(md, 'people/contact-20170928-5-john-defalco.md');
+    expect(parsed.title).toBe('John DeFalco');
+    // The slug-derived junk title must NOT win.
+    expect(parsed.title).not.toBe('Contact 20170928 5 John Defalco');
+  });
+
+  test('no frontmatter title and no H1 falls back to the inferred slug title', () => {
+    const md = '---\ntype: note\n---\n\njust body prose, no heading\n';
+    const parsed = parseMarkdown(md, 'people/alice-example.md');
+    expect(parsed.title).toBe('Alice Example');
+  });
+
+  test('frontmatter title wins over a body H1 (no regression)', () => {
+    const md = '---\ntitle: Frontmatter Wins\n---\n\n# Body Heading\n\nbody\n';
+    const parsed = parseMarkdown(md, 'people/some-slug.md');
+    expect(parsed.title).toBe('Frontmatter Wins');
+  });
+
+  test('h2 is not treated as the title; first real H1 is used', () => {
+    const md = '---\ntype: note\n---\n\n## Subsection First\n\n# The Real Title\n\nbody\n';
+    const parsed = parseMarkdown(md, 'notes/x.md');
+    expect(parsed.title).toBe('The Real Title');
+  });
+
+  test('a # inside a fenced code block is not mistaken for the title', () => {
+    const md = '---\ntype: note\n---\n\n```sh\n# this is a shell comment, not a heading\n```\n\n# Actual Heading\n';
+    const parsed = parseMarkdown(md, 'notes/x.md');
+    expect(parsed.title).toBe('Actual Heading');
+  });
+
+  test('trailing closing hashes are stripped from the H1', () => {
+    const md = '---\ntype: note\n---\n\n# Closed ATX Heading #\n\nbody\n';
+    const parsed = parseMarkdown(md, 'notes/x.md');
+    expect(parsed.title).toBe('Closed ATX Heading');
+  });
+});

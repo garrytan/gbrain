@@ -1,14 +1,21 @@
-import { describe, test, expect, beforeAll } from 'bun:test';
+import { describe, test, expect, beforeAll, beforeEach, afterEach } from 'bun:test';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { resolve, sep } from 'node:path';
 import {
   parseRecipe,
   isUnsafeHealthCheck,
   expandVars,
   executeHealthCheck,
+  checkSecrets,
   parseOctet,
   hostnameToOctets,
   isPrivateIpv4,
   isInternalUrl,
 } from '../src/commands/integrations.ts';
+
+const RECIPES_DIR = resolve(import.meta.dir, '..', 'recipes');
 
 // --- parseRecipe tests ---
 
@@ -255,10 +262,39 @@ describe('twilio-voice-brain recipe', () => {
     );
     const recipe = parseRecipe(content, 'twilio-voice-brain.md');
     expect(recipe).not.toBeNull();
-    const recipesDir = new URL('../recipes/', import.meta.url).pathname;
+    const recipesDir = RECIPES_DIR;
     for (const dep of recipe!.frontmatter.requires) {
       const depPath = resolve(recipesDir, `${dep}.md`);
       expect(existsSync(depPath)).toBe(true);
+    }
+  });
+});
+
+describe('x-to-brain recipe', () => {
+  test('health check works with an app-only bearer token (#2343)', () => {
+    const { readFileSync } = require('fs');
+    const content = readFileSync(
+      new URL('../recipes/x-to-brain.md', import.meta.url),
+      'utf-8'
+    );
+    const recipe = parseRecipe(content, 'x-to-brain.md');
+    expect(recipe).not.toBeNull();
+    const httpChecks = recipe!.frontmatter.health_checks
+      .filter((c: any) => typeof c === 'object' && c.type === 'http');
+    expect(httpChecks.length).toBeGreaterThan(0);
+    const secretNames = new Set(recipe!.frontmatter.secrets.map((s: any) => s.name));
+    for (const check of httpChecks as any[]) {
+      // /users/me requires user-context OAuth; the recipe only collects an
+      // app-only bearer token, so probing it always fails.
+      expect(check.url).not.toContain('/users/me');
+      // Every $VAR the check expands must be declared in secrets, or the
+      // installer never prompts for it and the check fails for everyone.
+      const vars = [check.url, check.auth_token, check.auth_user, check.auth_pass]
+        .filter((v: unknown): v is string => typeof v === 'string')
+        .flatMap((v: string) => v.match(/\$[A-Z_][A-Z0-9_]*/g) ?? [])
+        .map((v: string) => v.slice(1));
+      expect(vars.length).toBeGreaterThan(0);
+      for (const name of vars) expect(secretNames.has(name)).toBe(true);
     }
   });
 });
@@ -269,7 +305,7 @@ describe('all recipes', () => {
   test('every recipe file in recipes/ parses correctly', () => {
     const { readFileSync, readdirSync } = require('fs');
     const { resolve } = require('path');
-    const recipesDir = new URL('../recipes/', import.meta.url).pathname;
+    const recipesDir = RECIPES_DIR;
     const files = readdirSync(recipesDir).filter((f: string) => f.endsWith('.md'));
     expect(files.length).toBeGreaterThan(0);
     for (const file of files) {
@@ -283,7 +319,7 @@ describe('all recipes', () => {
   test('no recipe contains personal references', () => {
     const { readFileSync, readdirSync } = require('fs');
     const { resolve } = require('path');
-    const recipesDir = new URL('../recipes/', import.meta.url).pathname;
+    const recipesDir = RECIPES_DIR;
     const files = readdirSync(recipesDir).filter((f: string) => f.endsWith('.md'));
     const personalPatterns = /wintermute|mercury|16507969501|\+1650796/i;
     for (const file of files) {
@@ -295,7 +331,7 @@ describe('all recipes', () => {
   test('typed health_checks parse correctly in all recipes', () => {
     const { readFileSync, readdirSync } = require('fs');
     const { resolve } = require('path');
-    const recipesDir = new URL('../recipes/', import.meta.url).pathname;
+    const recipesDir = RECIPES_DIR;
     const files = readdirSync(recipesDir).filter((f: string) => f.endsWith('.md'));
     for (const file of files) {
       const content = readFileSync(resolve(recipesDir, file), 'utf-8');
@@ -307,7 +343,7 @@ describe('all recipes', () => {
           expect(typeof check).toBe('string');
         } else {
           // Typed checks must have a valid type
-          expect(['http', 'env_exists', 'command', 'any_of']).toContain((check as any).type);
+          expect(['http', 'env_exists', 'command', 'any_of', 'heartbeat_max_age']).toContain((check as any).type);
         }
       }
     }
@@ -632,7 +668,9 @@ describe('getRecipeDirs (B1 trust boundary)', () => {
       expect(typeof d.dir).toBe('string');
     }
     // In this repo, the source recipes dir must be trusted
-    const source = dirs.find(d => d.dir.endsWith('/recipes') && d.trusted);
+    // `dir` is native-format (`...\recipes` on Windows). Only the separator
+    // comes from `path`; the directory name stays hand-written.
+    const source = dirs.find(d => d.dir.endsWith(`${sep}recipes`) && d.trusted);
     expect(source).toBeDefined();
   });
 
@@ -648,5 +686,79 @@ describe('getRecipeDirs (B1 trust boundary)', () => {
         expect(d.trusted).toBe(false);
       }
     }
+  });
+});
+
+// --- #2789: secret resolution folds the config plane (buildGatewayConfig seam) ---
+
+describe('secret resolution folds config plane (#2789)', () => {
+  let dir: string;
+  let savedHome: string | undefined;
+  let savedKey: string | undefined;
+
+  beforeEach(() => {
+    savedHome = process.env.GBRAIN_HOME;
+    savedKey = process.env.OPENAI_API_KEY;
+    dir = mkdtempSync(join(tmpdir(), 'gbrain-integrations-2789-'));
+    mkdirSync(join(dir, '.gbrain'), { recursive: true });
+    process.env.GBRAIN_HOME = dir;
+    delete process.env.OPENAI_API_KEY;
+  });
+
+  afterEach(() => {
+    if (savedHome === undefined) delete process.env.GBRAIN_HOME;
+    else process.env.GBRAIN_HOME = savedHome;
+    if (savedKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = savedKey;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeConfig(cfg: Record<string, unknown>) {
+    writeFileSync(join(dir, '.gbrain', 'config.json'), JSON.stringify(cfg));
+  }
+
+  const secret = { name: 'OPENAI_API_KEY', description: 'test key', where: 'https://example.com' };
+
+  test('checkSecrets sees a key stored only in config.json', () => {
+    writeConfig({ engine: 'pglite', openai_api_key: 'sk-test-config-only' });
+    const { set, missing } = checkSecrets([secret]);
+    expect(set).toEqual(['OPENAI_API_KEY']);
+    expect(missing).toHaveLength(0);
+  });
+
+  test('checkSecrets still reports missing when the key is nowhere', () => {
+    writeConfig({ engine: 'pglite' });
+    const { set, missing } = checkSecrets([secret]);
+    expect(set).toHaveLength(0);
+    expect(missing.map(m => m.name)).toEqual(['OPENAI_API_KEY']);
+  });
+
+  test('expandVars expands a config-folded key', () => {
+    writeConfig({ engine: 'pglite', openai_api_key: 'sk-from-config' });
+    expect(expandVars('Bearer $OPENAI_API_KEY')).toBe('Bearer sk-from-config');
+  });
+
+  test('non-empty process.env still wins over the config plane', () => {
+    writeConfig({ engine: 'pglite', openai_api_key: 'sk-from-config' });
+    process.env.OPENAI_API_KEY = 'sk-from-env';
+    expect(expandVars('$OPENAI_API_KEY')).toBe('sk-from-env');
+  });
+
+  test('env_exists health check sees a config-folded key', async () => {
+    writeConfig({ engine: 'pglite', openai_api_key: 'sk-from-config' });
+    const result = await executeHealthCheck(
+      { type: 'env_exists', name: 'OPENAI_API_KEY', label: 'key present' },
+      'test-id',
+      true,
+    );
+    expect(result.status).toBe('ok');
+    expect(result.output).toContain('set');
+  });
+
+  test('falls back to process.env when no config file exists (pre-init)', () => {
+    // No config.json written — pre-`gbrain init` shape.
+    process.env.OPENAI_API_KEY = 'sk-env-only';
+    const { set } = checkSecrets([secret]);
+    expect(set).toEqual(['OPENAI_API_KEY']);
   });
 });

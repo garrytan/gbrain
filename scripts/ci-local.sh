@@ -5,16 +5,17 @@
 # of E2E) inside Docker. See docker-compose.ci.yml.
 #
 # Modes:
-#   bash scripts/ci-local.sh              # full local gate: gitleaks + unit + ALL E2E (2-way sharded)
-#   bash scripts/ci-local.sh --diff       # full local gate: gitleaks + unit + selected E2E (2-way sharded)
+#   bash scripts/ci-local.sh              # full local gate: gitleaks + unit + ALL E2E (4-way sharded)
+#   bash scripts/ci-local.sh --diff       # full local gate: gitleaks + unit + selected E2E (4-way sharded)
 #   bash scripts/ci-local.sh --no-pull    # skip docker compose pull (offline / debug)
 #   bash scripts/ci-local.sh --clean      # nuke named volumes for cold debug
 #   bash scripts/ci-local.sh --no-shard   # debug: run E2E sequentially against postgres-1 only
+#   GBRAIN_CI_PARALLELISM=1 ...           # serialize shards on memory-constrained hosts
 #
-# 2-way E2E sharding: 2 pgvector services on host ports 5434-5435. The E2E
-# files split N/2 per shard. Both shards and files within each shard run
+# 4-way E2E sharding: 4 pgvector services on host ports 5434-5437. The 36 E2E
+# files split N/4 per shard; shards run in parallel. Within a shard, files run
 # sequentially (TRUNCATE CASCADE no-race property documented in run-e2e.sh).
-# Sequential shards trade wall time for deterministic memory release on constrained hosts.
+# Wall-time on a 16-core host: ~6 min sequential -> ~1.5-2 min sharded.
 #
 # Stronger than PR CI: PR CI runs only Tier 1's 2 files; this runs all 36.
 
@@ -41,6 +42,12 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+CI_PARALLELISM="${GBRAIN_CI_PARALLELISM:-4}"
+if ! [[ "$CI_PARALLELISM" =~ ^[1-4]$ ]]; then
+  echo "[ci-local] ERROR: GBRAIN_CI_PARALLELISM must be an integer from 1 to 4." >&2
+  exit 1
+fi
 
 cleanup() {
   echo ""
@@ -85,29 +92,11 @@ if [ "$DIFF" = "1" ]; then
   esac
 fi
 
-# The Compose services can consume at most 5 GiB (4 GiB runner + four 256 MiB
-# Postgres shards). On Linux, require another 1 GiB of immediately reclaimable
-# headroom before creating containers so the CI gate fails locally instead of
-# competing with persistent services until the host invokes the global OOM killer.
-if [ -r /proc/meminfo ]; then
-  MEM_AVAILABLE_KIB=$(awk '/^MemAvailable:/ { print $2; exit }' /proc/meminfo)
-  MIN_AVAILABLE_KIB=6291456 # 6 GiB
-  if ! printf '%s' "$MEM_AVAILABLE_KIB" | grep -qE '^[0-9]+$'; then
-    echo "[ci-local] ERROR: unable to read MemAvailable from /proc/meminfo." >&2
-    exit 1
-  fi
-  if [ "$MEM_AVAILABLE_KIB" -lt "$MIN_AVAILABLE_KIB" ]; then
-    echo "[ci-local] ERROR: insufficient host memory: MemAvailable=${MEM_AVAILABLE_KIB} KiB; require >= ${MIN_AVAILABLE_KIB} KiB for the 5 GiB CI budget plus 1 GiB headroom." >&2
-    exit 1
-  fi
-  echo "[ci-local] Memory pre-flight OK: MemAvailable=${MEM_AVAILABLE_KIB} KiB (required >= ${MIN_AVAILABLE_KIB} KiB)."
-fi
-
-# Pre-flight: postgres host ports for 2 shards. Defaults to 5434-5435 (avoid
+# Pre-flight: postgres host ports for 4 shards. Defaults to 5434-5437 (avoid
 # 5432 manual gbrain-test-pg, 5433 commonly held by sibling projects).
-# GBRAIN_CI_PG_PORT defines BASE; shards take BASE..BASE+1.
+# GBRAIN_CI_PG_PORT defines BASE; shards take BASE..BASE+3.
 PG_PORT_BASE="${GBRAIN_CI_PG_PORT:-5434}"
-for shard in 1 2; do
+for shard in 1 2 3 4; do
   port=$((PG_PORT_BASE + shard - 1))
   PORT_OWNER=$(docker ps --filter "publish=$port" --format "{{.Names}}" | head -1)
   if [ -n "$PORT_OWNER" ]; then
@@ -148,13 +137,13 @@ if [ "$NO_PULL" = "0" ]; then
   docker compose -f "$COMPOSE_FILE" pull 2>&1 | tail -5
 fi
 
-# Step 2: 2 postgres shards up + wait for healthy.
-echo "[ci-local] Starting 2 postgres shards..."
-docker compose -f "$COMPOSE_FILE" up -d postgres-1 postgres-2
-echo "[ci-local] Waiting for both postgres shards healthy..."
+# Step 2: 4 postgres shards up + wait for healthy.
+echo "[ci-local] Starting 4 postgres shards..."
+docker compose -f "$COMPOSE_FILE" up -d postgres-1 postgres-2 postgres-3 postgres-4
+echo "[ci-local] Waiting for all 4 postgres shards healthy..."
 for i in {1..40}; do
   all_healthy=1
-  for shard in 1 2; do
+  for shard in 1 2 3 4; do
     status=$(docker compose -f "$COMPOSE_FILE" ps --format json postgres-$shard 2>/dev/null | grep -o '"Health":"[^"]*"' | head -1 | sed 's/.*":"//;s/"//')
     if [ "$status" != "healthy" ]; then
       all_healthy=0
@@ -162,7 +151,7 @@ for i in {1..40}; do
     fi
   done
   if [ "$all_healthy" = "1" ]; then
-    echo "[ci-local] Both postgres shards healthy."
+    echo "[ci-local] All 4 postgres shards healthy."
     break
   fi
   if [ "$i" = "40" ]; then
@@ -185,17 +174,19 @@ if [ "$SMOKE_ONE_ARG" != "test/e2e/sync.test.ts" ]; then
   echo "[ci-local] ERROR: --dry-run-list with 1 arg printed '$SMOKE_ONE_ARG'" >&2
   exit 1
 fi
-SHARD_TOTAL=$(( $(SHARD=1/2 bash scripts/run-e2e.sh --dry-run-list | wc -l) + \
-                $(SHARD=2/2 bash scripts/run-e2e.sh --dry-run-list | wc -l) ))
+SHARD_TOTAL=$(( $(SHARD=1/4 bash scripts/run-e2e.sh --dry-run-list | wc -l) + \
+                $(SHARD=2/4 bash scripts/run-e2e.sh --dry-run-list | wc -l) + \
+                $(SHARD=3/4 bash scripts/run-e2e.sh --dry-run-list | wc -l) + \
+                $(SHARD=4/4 bash scripts/run-e2e.sh --dry-run-list | wc -l) ))
 if [ "$SHARD_TOTAL" != "$EXPECTED_ALL" ]; then
-  echo "[ci-local] ERROR: shards 1-2 covered $SHARD_TOTAL files, expected $EXPECTED_ALL" >&2
+  echo "[ci-local] ERROR: shards 1-4 covered $SHARD_TOTAL files, expected $EXPECTED_ALL" >&2
   exit 1
 fi
-echo "[ci-local] Smoke OK ($SMOKE_NO_ARGS files no-arg, 1 single-arg, ${SHARD_TOTAL}=2-shard total)."
+echo "[ci-local] Smoke OK ($SMOKE_NO_ARGS files no-arg, 1 single-arg, ${SHARD_TOTAL}=4-shard total)."
 
 # Step 4: build the runner-side command.
-# Tier 1: 2-shard parallel UNIT + E2E. Each shard runs half the unit and E2E
-# files against postgres-N, with Bun concurrency capped at one file per shard.
+# Tier 1: 4-shard parallel UNIT + E2E. Each shard runs ~46 unit files + ~9
+# E2E files against postgres-N. Guards + typecheck run ONCE before fan-out.
 # --no-shard runs the legacy unsharded flow (debug aid).
 if [ "$NO_SHARD" = "1" ]; then
   if [ "$DIFF" = "1" ]; then
@@ -205,21 +196,17 @@ bash scripts/check-progress-to-stdout.sh
 bash scripts/check-trailing-newline.sh
 bash scripts/check-wasm-embedded.sh
 bun run typecheck
-echo "[runner] Tier 3: building PGLite snapshot fixture (cached across reruns)"
-if [ ! -f test/fixtures/pglite-snapshot.tar ] || [ ! -f test/fixtures/pglite-snapshot.version ]; then
-  bun run build:pglite-snapshot
-else
-  echo "[runner] snapshot fixture exists; engine will validate hash at load time"
-fi
-export GBRAIN_PGLITE_SNAPSHOT=test/fixtures/pglite-snapshot.tar
 echo "[runner] unit (unsharded, DATABASE_URL unset)"
-env -u DATABASE_URL bash scripts/run-unit-shard.sh --batch-size=10 --max-concurrency=1
+env -u DATABASE_URL bash scripts/run-unit-shard.sh
 echo "[runner] e2e (unsharded, --diff selected)"
 SELECTED=$(bun run scripts/select-e2e.ts)
 if [ -z "$SELECTED" ]; then
   echo "[runner] selector emitted nothing (doc-only diff); skipping E2E."
 else
-  DATABASE_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test echo "$SELECTED" | xargs bash scripts/run-e2e.sh
+  DATABASE_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \
+  GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer \
+  GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \
+  echo "$SELECTED" | xargs bash scripts/run-e2e.sh
 fi'
   else
     RUN_PHASES_CMD='echo "[runner] guards + typecheck"
@@ -228,21 +215,17 @@ bash scripts/check-progress-to-stdout.sh
 bash scripts/check-trailing-newline.sh
 bash scripts/check-wasm-embedded.sh
 bun run typecheck
-echo "[runner] Tier 3: building PGLite snapshot fixture (cached across reruns)"
-if [ ! -f test/fixtures/pglite-snapshot.tar ] || [ ! -f test/fixtures/pglite-snapshot.version ]; then
-  bun run build:pglite-snapshot
-else
-  echo "[runner] snapshot fixture exists; engine will validate hash at load time"
-fi
-export GBRAIN_PGLITE_SNAPSHOT=test/fixtures/pglite-snapshot.tar
 echo "[runner] unit (unsharded, DATABASE_URL unset)"
-env -u DATABASE_URL bash scripts/run-unit-shard.sh --batch-size=10 --max-concurrency=1
+env -u DATABASE_URL bash scripts/run-unit-shard.sh
 echo "[runner] e2e (unsharded)"
-DATABASE_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test bash scripts/run-e2e.sh'
+DATABASE_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \
+GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer \
+GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \
+bash scripts/run-e2e.sh'
   fi
 else
   # Tier 1 sharded path. Each shard runs unit+E2E sequentially against its
-  # own postgres-N. Shards run sequentially via xargs -P1 to release Bun memory.
+  # own postgres-N. Shards run in parallel via xargs -P4.
   if [ "$DIFF" = "1" ]; then
     DIFF_E2E_PREP='SELECTED=$(bun run scripts/select-e2e.ts)
 if [ -z "$SELECTED" ]; then
@@ -260,37 +243,41 @@ bash scripts/check-progress-to-stdout.sh
 bash scripts/check-trailing-newline.sh
 bash scripts/check-wasm-embedded.sh
 bun run typecheck
-echo \"[runner] Tier 3: building PGLite snapshot fixture (cached across reruns)\"
-if [ ! -f test/fixtures/pglite-snapshot.tar ] || [ ! -f test/fixtures/pglite-snapshot.version ]; then
-  bun run build:pglite-snapshot
-else
-  echo \"[runner] snapshot fixture exists; engine will validate hash at load time\"
-fi
+echo \"[runner] Tier 3: PGLite snapshot fixture (idempotent; rebuilds on hash drift)\"
+# W0 fix-wave (Tier-1 #16): unconditional call — the build script self-
+# short-circuits on a fresh hash and rebuilds STALE snapshots (the old
+# if-missing guard left a stale-but-present snapshot permanently on the
+# warn+slow path). Concurrency-safe via the script's mkdir lock (D5.8).
+bun run build:pglite-snapshot
 export GBRAIN_PGLITE_SNAPSHOT=test/fixtures/pglite-snapshot.tar
 echo \"[runner] resolving E2E file selection (--diff aware)\"
 ${DIFF_E2E_PREP}
 mkdir -p /tmp/shard-logs
-echo \"[runner] Tier 1: 2 sequential shards, unit + E2E (xargs -P1)\"
+echo \"[runner] Tier 1: 4 unit + E2E shards (xargs -P${CI_PARALLELISM})\"
 set +e
-printf '%s\\n' 1 2 | xargs -P1 -I{} sh -c '
+printf '%s\\n' 1 2 3 4 | xargs -P${CI_PARALLELISM} -I{} sh -c '
   shard=\$1
   log=/tmp/shard-logs/shard-\${shard}.log
   echo \"[shard \${shard}] start\" > \$log
-  echo \"[shard \${shard}] unit phase (SHARD=\${shard}/2, DATABASE_URL unset)\" >> \$log
-  env -u DATABASE_URL SHARD=\${shard}/2 bash scripts/run-unit-shard.sh --batch-size=10 --max-concurrency=1 >> \$log 2>&1
+  echo \"[shard \${shard}] unit phase (SHARD=\${shard}/4, DATABASE_URL unset)\" >> \$log
+  env -u DATABASE_URL SHARD=\${shard}/4 bash scripts/run-unit-shard.sh >> \$log 2>&1
   unit_exit=\$?
   if [ \$unit_exit -ne 0 ]; then
     echo \"[shard \${shard}] UNIT FAILED (exit=\$unit_exit)\" >> \$log
     exit \$unit_exit
   fi
-  echo \"[shard \${shard}] e2e phase (SHARD=\${shard}/2, DATABASE_URL=postgres-\${shard})\" >> \$log
+  echo \"[shard \${shard}] e2e phase (SHARD=\${shard}/4, DATABASE_URL=postgres-\${shard})\" >> \$log
   if [ -s /tmp/e2e-selected.txt ]; then
-    SHARD=\${shard}/2 \\
+    SHARD=\${shard}/4 \\
     DATABASE_URL=postgresql://postgres:postgres@postgres-\${shard}:5432/gbrain_test \\
+    GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer \\
+    GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \\
     xargs -a /tmp/e2e-selected.txt bash scripts/run-e2e.sh >> \$log 2>&1
   else
-    SHARD=\${shard}/2 \\
+    SHARD=\${shard}/4 \\
     DATABASE_URL=postgresql://postgres:postgres@postgres-\${shard}:5432/gbrain_test \\
+    GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer \\
+    GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \\
     bash scripts/run-e2e.sh >> \$log 2>&1
   fi
   e2e_exit=\$?
@@ -304,7 +291,7 @@ shard_xargs_exit=\$?
 set -e
 echo \"\"
 echo \"=== SHARD LOGS (last 30 lines each + unit/e2e summaries) ===\"
-for s in 1 2; do
+for s in 1 2 3 4; do
   echo \"\"
   echo \"--- shard \$s ---\"
   if [ -f /tmp/shard-logs/shard-\$s.log ]; then
@@ -323,7 +310,7 @@ if [ \$shard_xargs_exit -ne 0 ]; then
   echo \"[runner] One or more shards failed (xargs exit=\$shard_xargs_exit). See SHARD LOGS above.\"
   exit \$shard_xargs_exit
 fi
-echo \"[runner] Both shards passed.\""
+echo \"[runner] All 4 shards passed.\""
 fi
 
 INNER_CMD=$(cat <<'EOF'
@@ -345,7 +332,11 @@ fi
 __RUN_PHASES__
 EOF
 )
-INNER_CMD="${INNER_CMD%%__RUN_PHASES__*}${RUN_PHASES_CMD}${INNER_CMD#*__RUN_PHASES__}"
+# Bash 5.2 can expand '&' in parameter-substitution replacements to the
+# matched text. Without disabling that behavior, shell redirections such as
+# `2>&1` become `2>__RUN_PHASES__1` and leak a generated file into the repo.
+shopt -u patsub_replacement 2>/dev/null || true
+INNER_CMD="${INNER_CMD/__RUN_PHASES__/$RUN_PHASES_CMD}"
 
 # Conductor / git-worktree support: when `.git` is a file (not a directory),
 # it points at a host gitdir outside the bind-mount. Without remounting that
@@ -370,11 +361,7 @@ if [ -f .git ]; then
 fi
 
 echo "[ci-local] Running checks inside runner container..."
-if [ "${#EXTRA_MOUNTS[@]}" -gt 0 ]; then
-  docker compose -f "$COMPOSE_FILE" run --rm "${EXTRA_MOUNTS[@]}" runner bash -c "$INNER_CMD"
-else
-  docker compose -f "$COMPOSE_FILE" run --rm runner bash -c "$INNER_CMD"
-fi
+docker compose -f "$COMPOSE_FILE" run --rm "${EXTRA_MOUNTS[@]}" runner bash -c "$INNER_CMD"
 
 echo ""
 echo "[ci-local] All checks passed."

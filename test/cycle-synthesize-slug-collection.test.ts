@@ -21,7 +21,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { __testing } from '../src/core/cycle/synthesize.ts';
 
-const { collectChildPutPageSlugs } = __testing;
+const { collectChildPutPageSlugs, stampDreamProvenance } = __testing;
 
 let engine: PGLiteEngine;
 
@@ -102,5 +102,121 @@ describe('C6: collectChildPutPageSlugs survives double-encoded jsonb (#745)', ()
     const refs = await collectChildPutPageSlugs(engine as any, [1003], new Map());
     // Function silently drops rows whose slug resolves to null/empty.
     expect(refs.map((r: { slug: string }) => r.slug)).not.toContain('no-slug');
+  });
+
+  // #1586: refs are stamped with the cycle's resolved source, not a
+  // hardcoded 'default'.
+  test('stamps refs with the provided cycle sourceId (#1586)', async () => {
+    const refs = await collectChildPutPageSlugs(engine as any, [1001], new Map(), 'mybrain');
+    expect(refs.length).toBeGreaterThan(0);
+    for (const r of refs) expect(r.source_id).toBe('mybrain');
+  });
+
+  test('defaults to source_id=default when no sourceId is passed (legacy)', async () => {
+    const refs = await collectChildPutPageSlugs(engine as any, [1001], new Map());
+    expect(refs.length).toBeGreaterThan(0);
+    for (const r of refs) expect(r.source_id).toBe('default');
+  });
+
+  // #1978: refs carry the source transcript path when the orchestrator
+  // supplies a job_id → path map, so stampDreamProvenance can persist it.
+  test('stamps refs with raw_source from the jobRawSource map (#1978)', async () => {
+    const jobRawSource = new Map([[1001, '/transcripts/2026-07-01-standup.md']]);
+    const refs = await collectChildPutPageSlugs(engine as any, [1001], new Map(), 'default', jobRawSource);
+    const ref = refs.find((r: { slug: string }) => r.slug === 'wiki/agents/test/normal-shape');
+    expect(ref?.raw_source).toBe('/transcripts/2026-07-01-standup.md');
+  });
+
+  test('normalizes bigint job ids before number-keyed metadata lookups', async () => {
+    const bigintEngine = {
+      executeRaw: async () => [{
+        job_id: 1001n,
+        slug: 'wiki/agents/test/bigint-job-abc123',
+      }],
+    };
+    const chunkInfo = new Map([[1001, { idx: 2, hash6: 'abc123' }]]);
+    const jobRawSource = new Map([[1001, '/transcripts/bigint-source.md']]);
+
+    const refs = await collectChildPutPageSlugs(
+      bigintEngine as any,
+      [1001],
+      chunkInfo,
+      'default',
+      jobRawSource,
+    );
+
+    expect(refs).toEqual([{
+      slug: 'wiki/agents/test/bigint-job-abc123-c2',
+      source_id: 'default',
+      raw_source: '/transcripts/bigint-source.md',
+    }]);
+  });
+
+  test('omits raw_source when no map entry exists for the job (#1978)', async () => {
+    const refs = await collectChildPutPageSlugs(engine as any, [1001], new Map(), 'default', new Map());
+    const ref = refs.find((r: { slug: string }) => r.slug === 'wiki/agents/test/normal-shape');
+    expect(ref).toBeDefined();
+    expect('raw_source' in (ref as object)).toBe(false);
+  });
+});
+
+describe('#2569: stampDreamProvenance persists the marker into DB frontmatter', () => {
+  test('merges dream_generated + dream_cycle_date into pages.frontmatter', async () => {
+    await engine.putPage('wiki/originals/ideas/2026-07-17-stamp-me-abc123', {
+      type: 'note',
+      title: 'Stamp me',
+      compiled_truth: 'body',
+      timeline: '',
+      frontmatter: { keep_me: 'yes' },
+    });
+    await stampDreamProvenance(
+      engine as any,
+      [{ slug: 'wiki/originals/ideas/2026-07-17-stamp-me-abc123', source_id: 'default' }],
+      '2026-07-17',
+    );
+    const rows = await engine.executeRaw<{ fm: Record<string, unknown> }>(
+      `SELECT frontmatter AS fm FROM pages WHERE slug = 'wiki/originals/ideas/2026-07-17-stamp-me-abc123'`,
+    );
+    expect(rows.length).toBe(1);
+    const fm = rows[0].fm as Record<string, unknown>;
+    // The stamp lands as real JSONB values (queryable via ->>), not a
+    // double-encoded string scalar.
+    expect(fm.dream_generated).toBe(true);
+    expect(fm.dream_cycle_date).toBe('2026-07-17');
+    // Merge, not replace: pre-existing frontmatter keys survive.
+    expect(fm.keep_me).toBe('yes');
+  });
+
+  test('is idempotent and never throws for a missing page', async () => {
+    const refs = [{ slug: 'wiki/originals/ideas/does-not-exist', source_id: 'default' }];
+    await stampDreamProvenance(engine as any, refs, '2026-07-17'); // no throw
+    await stampDreamProvenance(engine as any, refs, '2026-07-17'); // idempotent
+  });
+
+  // #1978: raw-source persistence — the stamp carries the transcript path
+  // the synthesis was derived from, when the ref supplies one.
+  test('persists raw_source into pages.frontmatter when the ref carries it (#1978)', async () => {
+    await engine.putPage('wiki/originals/ideas/2026-07-17-raw-src-def456', {
+      type: 'note',
+      title: 'Raw source stamp',
+      compiled_truth: 'body',
+      timeline: '',
+      frontmatter: {},
+    });
+    await stampDreamProvenance(
+      engine as any,
+      [{
+        slug: 'wiki/originals/ideas/2026-07-17-raw-src-def456',
+        source_id: 'default',
+        raw_source: '/transcripts/2026-07-17-standup.md',
+      }],
+      '2026-07-17',
+    );
+    const rows = await engine.executeRaw<{ fm: Record<string, unknown> }>(
+      `SELECT frontmatter AS fm FROM pages WHERE slug = 'wiki/originals/ideas/2026-07-17-raw-src-def456'`,
+    );
+    const fm = rows[0].fm as Record<string, unknown>;
+    expect(fm.dream_generated).toBe(true);
+    expect(fm.raw_source).toBe('/transcripts/2026-07-17-standup.md');
   });
 });

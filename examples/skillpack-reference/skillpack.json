@@ -1,0 +1,29 @@
+{
+  "api_version": "gbrain-skillpack-v1",
+  "name": "reference-pack",
+  "version": "0.1.0",
+  "description": "(edit me) one-line description of the reference-pack skillpack",
+  "author": "gbrain maintainers",
+  "license": "MIT",
+  "homepage": "https://github.com/garrytan/gbrain/tree/master/examples/skillpack-reference",
+  "gbrain_min_version": "0.36.0",
+  "skills": [
+    "skills/reference-pack"
+  ],
+  "runbooks": {
+    "bootstrap": "runbooks/bootstrap.md"
+  },
+  "changelog": "CHANGELOG.md",
+  "unit_tests": [
+    "test/**/*.test.ts"
+  ],
+  "e2e_tests": [
+    "e2e/**/*.test.ts"
+  ],
+  "llm_evals": [
+    "evals/*.judge.json"
+  ],
+  "routing_evals": [
+    "skills/reference-pack/routing-eval.jsonl"
+  ]
+}

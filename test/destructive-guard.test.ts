@@ -53,6 +53,22 @@ async function seedSource(engine: PGLiteEngine, id: string, opts?: { withPages?:
   }
 }
 
+async function setRawSourceConfig(engine: PGLiteEngine, id: string, rawJson: string): Promise<void> {
+  await engine.executeRaw(
+    `UPDATE sources SET config = $2::text::jsonb WHERE id = $1`,
+    [id, rawJson],
+  );
+}
+
+async function readSourceConfig(engine: PGLiteEngine, id: string): Promise<Record<string, unknown>> {
+  const rows = await engine.executeRaw<{ config: unknown }>(
+    `SELECT config FROM sources WHERE id = $1`,
+    [id],
+  );
+  const config = rows[0].config;
+  return typeof config === 'string' ? JSON.parse(config) : config as Record<string, unknown>;
+}
+
 describe('assessDestructiveImpact', () => {
   let engine: PGLiteEngine;
 
@@ -209,6 +225,38 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
     expect(config.archived_at).toBeUndefined();
   });
 
+  test('softDeleteSource normalizes nested-string config without dropping keys', async () => {
+    const id = 'sd-string-config';
+    await seedSource(engine, id);
+    await setRawSourceConfig(
+      engine,
+      id,
+      JSON.stringify(JSON.stringify({ federated: true, remote_url: 'https://example.invalid/repo' })),
+    );
+    await softDeleteSource(engine, id);
+    expect(await readSourceConfig(engine, id)).toEqual({
+      federated: false,
+      remote_url: 'https://example.invalid/repo',
+    });
+  });
+
+  test('softDeleteSource flattens recoverable array config without dropping keys', async () => {
+    const id = 'sd-array-config';
+    await seedSource(engine, id);
+    await setRawSourceConfig(engine, id, JSON.stringify([
+      '{"remote_url":"https://example.invalid/repo"}',
+      { tracked_branch: 'main' },
+      { federated: true },
+      'not-json',
+    ]));
+    await softDeleteSource(engine, id);
+    expect(await readSourceConfig(engine, id)).toEqual({
+      federated: false,
+      remote_url: 'https://example.invalid/repo',
+      tracked_branch: 'main',
+    });
+  });
+
   test('restoreSource clears the column state and re-federates by default', async () => {
     const id = 'sd-restore-fed';
     await seedSource(engine, id, { withPages: 1 });
@@ -235,6 +283,29 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
     );
     const config = typeof rows[0].config === 'string' ? JSON.parse(rows[0].config) : rows[0].config;
     expect(config.federated).toBe(false);
+  });
+
+  test('restoreSource repairs array config and preserves recoverable keys', async () => {
+    const id = 'sd-restore-array';
+    await seedSource(engine, id);
+    await engine.executeRaw(
+      `UPDATE sources
+          SET archived = true,
+              archived_at = now(),
+              archive_expires_at = now() + interval '1 hour'
+        WHERE id = $1`,
+      [id],
+    );
+    await setRawSourceConfig(engine, id, JSON.stringify([
+      { remote_url: 'https://example.invalid/repo' },
+      '{"federated":false,"tracked_branch":"main"}',
+    ]));
+    expect(await restoreSource(engine, id)).toBe(true);
+    expect(await readSourceConfig(engine, id)).toEqual({
+      federated: true,
+      remote_url: 'https://example.invalid/repo',
+      tracked_branch: 'main',
+    });
   });
 
   test('restoreSource is idempotent-as-false on already-active', async () => {

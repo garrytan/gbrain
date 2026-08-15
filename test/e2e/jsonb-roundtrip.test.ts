@@ -21,9 +21,17 @@ import { hasDatabase, setupDB, teardownDB, getEngine, getConn } from './helpers.
 const skip = !hasDatabase();
 const describeE2E = skip ? describe.skip : describe;
 
+if (skip) {
+  console.log('Skipping E2E JSONB roundtrip tests (DATABASE_URL not set)');
+}
+
 describeE2E('E2E: JSONB roundtrip — v0.12.1 reliability wave', () => {
-  beforeAll(async () => { await setupDB(); });
-  afterAll(async () => { await teardownDB(); });
+  // 60s hook budget: setupDB runs connect + the full migration chain, which
+  // exceeds bun's default 5s hook timeout on loaded CI runners. Hooks do NOT
+  // inherit a test's third-arg timeout (verified on bun 1.3.14) — they need
+  // their own second-arg budget. Same pattern as op-checkpoint-jsonb-parity.
+  beforeAll(async () => { await setupDB(); }, 60_000);
+  afterAll(async () => { await teardownDB(); }, 60_000);
 
   test('putPage writes frontmatter as object, not double-encoded string', async () => {
     const engine = getEngine();
@@ -65,7 +73,7 @@ describeE2E('E2E: JSONB roundtrip — v0.12.1 reliability wave', () => {
     `;
     expect(row.t).toBe('object');
     expect(row.marker).toBe('rawdata-value');
-  });
+  }, 30_000);
 
   test('logIngest writes pages_updated as array, not double-encoded string', async () => {
     const engine = getEngine();
@@ -87,7 +95,7 @@ describeE2E('E2E: JSONB roundtrip — v0.12.1 reliability wave', () => {
     expect(row.t).toBe('array');
     expect(Number(row.n)).toBe(3);
     expect(row.first).toBe('test/a');
-  });
+  }, 30_000);
 
   // files.ts:254 (uploadRaw's cloud-upload branch) was changed from
   // `${JSON.stringify({...})}::jsonb` to `${sql.json({...})}` in v0.12.1.
@@ -110,7 +118,7 @@ describeE2E('E2E: JSONB roundtrip — v0.12.1 reliability wave', () => {
     expect(row.t).toBe('object');
     expect(row.type).toBe('pdf');
     expect(row.method).toBe('TUS resumable');
-  });
+  }, 30_000);
 
   // Source-level tripwire: if anyone re-introduces the old `${JSON.stringify(x)}::jsonb`
   // pattern for the fixed sites, fail loudly. Greps actual source files per the
@@ -125,5 +133,5 @@ describeE2E('E2E: JSONB roundtrip — v0.12.1 reliability wave', () => {
       const source = await Bun.file(new URL(rel, import.meta.url)).text();
       expect(source.match(bad)?.[0] ?? null).toBeNull();
     }
-  });
+  }, 30_000);
 });

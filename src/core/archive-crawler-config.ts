@@ -29,11 +29,12 @@
 
 import { existsSync, readFileSync } from 'fs';
 import { homedir } from 'os';
-import { isAbsolute, join, resolve as resolvePath } from 'path';
+import { isAbsolute, join, sep, resolve as resolvePath } from 'path';
 
 export interface ArchiveCrawlerConfig {
   /** Absolute paths the agent is permitted to scan. ~ expanded; paths
-   * normalized to absolute form; trailing-slash normalized.
+   * normalized to absolute form; terminated with the PLATFORM separator
+   * (`\` on Windows, `/` on POSIX).
    * Required to be non-empty when the section exists. */
   scan_paths: string[];
   /** Absolute paths within scan_paths to explicitly deny. Optional;
@@ -134,6 +135,48 @@ function expandHome(p: string): string {
   return p;
 }
 
+const IS_WINDOWS = process.platform === 'win32';
+
+/**
+ * toComparablePrefix — the ONE canonical form used for every prefix
+ * comparison in this module. Both the stored allow/deny paths and the
+ * candidate path must go through this, or the prefix test is
+ * meaningless.
+ *
+ * Stored paths keep native separators (see normalizeOnePath) so error
+ * messages and CLI output read naturally on each platform; this
+ * function exists so the *comparison* is separator- and case-agnostic
+ * without the stored form having to be.
+ *
+ * On Windows:
+ *   - `\` is folded to `/`. `resolve()` emits `\`, but a user may
+ *     legitimately write `C:/Users/...` in gbrain.yml (Win32 accepts
+ *     both), and a caller may hand-build a config with either. Mixing
+ *     the two at the boundary is precisely the bug this replaces: a
+ *     `\`-joined candidate never matched a `/`-terminated prefix, so
+ *     isPathAllowed denied every real path.
+ *   - The result is lowercased. NTFS is case-insensitive, so
+ *     `...\writing\Private\` and `...\writing\private\` are the SAME
+ *     directory. A case-sensitive compare would let
+ *     `...\writing\private\tax.md` slip past a deny_path spelled
+ *     `Private` — a fail-OPEN against exactly the sensitive content
+ *     D12 exists to fence off.
+ *
+ * On POSIX: identity apart from the trailing separator. Deliberately
+ * NOT folded — `\` is a legal filename character and paths are
+ * case-sensitive, so folding either would collide two genuinely
+ * different paths into one comparable and fail open.
+ *
+ * The trailing `/` is appended AFTER folding so a single check covers
+ * both a native-separator tail (`C:\a\b\`) and an already-forward
+ * -slashed one, keeping directory-boundary matching intact
+ * (`/a/b/` must not match `/a/bc/`).
+ */
+function toComparablePrefix(p: string): string {
+  const folded = IS_WINDOWS ? p.replace(/\\/g, '/').toLowerCase() : p;
+  return folded.endsWith('/') ? folded : folded + '/';
+}
+
 /**
  * Normalize and validate a parsed RawArchiveCrawler into the public
  * ArchiveCrawlerConfig shape.
@@ -147,9 +190,11 @@ function expandHome(p: string): string {
  *   - Path-traversal rejection: a path containing `..` after
  *     normalization is rejected to prevent allow-list escape via
  *     `~/Documents/../../../etc/passwd`. Throws invalid_path.
- *   - Trailing slash normalization: paths without trailing slash get
- *     one appended (so prefix matching is unambiguous: `/a/b/`
- *     does NOT match `/a/bc/`).
+ *   - Trailing separator normalization: paths without a trailing
+ *     separator get the PLATFORM separator appended (so prefix matching
+ *     is unambiguous: `/a/b/` does NOT match `/a/bc/`). Separator- and
+ *     case-folding for the comparison itself lives in
+ *     toComparablePrefix(), which isPathAllowed() applies to both sides.
  */
 export function normalizeAndValidateArchiveCrawlerConfig(
   raw: RawArchiveCrawler,
@@ -194,10 +239,16 @@ function normalizeOnePath(raw: string, field: 'scan_paths' | 'deny_paths'): stri
     );
   }
 
-  // Normalize: resolve any tail and ensure trailing slash for unambiguous
-  // prefix-matching. resolve() strips trailing slash; we re-add it.
+  // Normalize: resolve any tail and ensure a trailing separator for
+  // unambiguous prefix-matching. resolve() strips the trailing separator;
+  // we re-add it using the PLATFORM separator, not a hardcoded '/' —
+  // resolve() emits '\' on Windows, so appending '/' produced a
+  // mixed-separator path ('C:\Users\...\writing/') that no candidate
+  // could ever prefix-match. Comparison is done on the folded form from
+  // toComparablePrefix(), so storing native separators here is safe and
+  // keeps error messages readable on each platform.
   const resolved = resolvePath(expanded);
-  return resolved.endsWith('/') ? resolved : resolved + '/';
+  return resolved.endsWith(sep) ? resolved : resolved + sep;
 }
 
 /**
@@ -267,8 +318,15 @@ export function loadArchiveCrawlerConfig(
  * (when it grows a runtime check) to gate per-file decisions.
  *
  * Both inputs are normalized via `resolvePath` and compared as absolute
- * directory prefixes (with trailing slash) so `media/x/` does not match
- * `media/xerox/foo`.
+ * directory prefixes (with trailing separator) so `media/x/` does not
+ * match `media/xerox/foo`.
+ *
+ * Every side of the comparison — candidate, scan_paths and deny_paths —
+ * is funnelled through toComparablePrefix() so the three agree on
+ * separator and case. The config entries are folded here rather than
+ * trusted as-is because isPathAllowed is part of the public surface and
+ * a caller may hand-build an ArchiveCrawlerConfig without going through
+ * normalizeAndValidateArchiveCrawlerConfig().
  */
 export function isPathAllowed(
   candidate: string,
@@ -276,14 +334,17 @@ export function isPathAllowed(
 ): boolean {
   const expanded = expandHome(candidate);
   if (!isAbsolute(expanded)) return false;
-  const resolved = resolvePath(expanded);
-  const prefix = resolved.endsWith('/') ? resolved : resolved + '/';
+  const prefix = toComparablePrefix(resolvePath(expanded));
 
   // Must be inside at least one scan_path.
-  const allowed = config.scan_paths.some((sp) => prefix.startsWith(sp));
+  const allowed = config.scan_paths.some((sp) =>
+    prefix.startsWith(toComparablePrefix(sp)),
+  );
   if (!allowed) return false;
 
   // Must NOT be inside any deny_path.
-  const denied = config.deny_paths.some((dp) => prefix.startsWith(dp));
+  const denied = config.deny_paths.some((dp) =>
+    prefix.startsWith(toComparablePrefix(dp)),
+  );
   return !denied;
 }

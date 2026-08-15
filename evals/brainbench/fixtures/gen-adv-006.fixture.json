@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-adv-006",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "adversarial",
+  "seed_pages": [
+    {
+      "slug": "people/ingrid-stargazer",
+      "content": "---\ntitle: Ingrid Stargazer\ntype: person\naliases: [ingrid]\nsummary: Founder of Quartzbloom Systems.\n---\n\nIngrid Stargazer is the founder of Quartzbloom Systems. Ingrid shipped the v2 launch two weeks ahead of plan.\n"
+    },
+    {
+      "slug": "companies/quartzbloom-systems",
+      "content": "---\ntitle: Quartzbloom Systems\ntype: company\nsummary: Seed-stage company. Founded by Ingrid Stargazer.\n---\n\nQuartzbloom Systems is a seed-stage company. Founded by Ingrid Stargazer. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Catch me up on Ingrid Stargazer."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Pulled the page up."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Ok. And does Ingrid Stargazer have board consent lined up?"
+    }
+  ],
+  "holdout": true
+}

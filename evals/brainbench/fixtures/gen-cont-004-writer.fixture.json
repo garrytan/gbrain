@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-cont-004-writer",
+  "suites": [
+    "write-back",
+    "continuity"
+  ],
+  "category": "continuity",
+  "seed_pages": [
+    {
+      "slug": "companies/junipergrid-labs",
+      "content": "---\ntitle: Junipergrid Labs\ntype: company\nsummary: Seed-stage company. Founded by Anouk Mirelez.\n---\n\nJunipergrid Labs is a seed-stage company. Founded by Anouk Mirelez. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "people/anouk-mirelez",
+      "content": "---\ntitle: Anouk Mirelez\ntype: person\naliases: [anouk]\nsummary: Founder of Junipergrid Labs.\n---\n\nAnouk Mirelez is the founder of Junipergrid Labs. Anouk raised concerns about gross margin at the last board sync.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Partner meeting wrapped on the Junipergrid Labs round.",
+      "ts": "2025-04-15T14:03:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "What was the call?",
+      "ts": "2025-04-15T14:04:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "We decided to pass on the Junipergrid Labs round. Pricing is too rich at this stage. Logging it now.",
+      "ts": "2025-04-15T14:05:00Z"
+    }
+  ],
+  "continuity": {
+    "pair_id": "gen-cont-004",
+    "pair_role": "writer"
+  }
+}

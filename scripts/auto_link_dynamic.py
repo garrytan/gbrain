@@ -44,7 +44,7 @@ def parse_frontmatter(content):
                 break
         elif in_fm:
             fm_lines.append(line)
-            
+
     if start_idx != -1 and end_idx != -1:
         fm_text = '\n'.join(fm_lines)
         body_text = '\n'.join(lines[end_idx+1:])
@@ -75,11 +75,11 @@ def parse_frontmatter(content):
 
 def build_dynamic_link_map():
     dynamic_map = {}
-    
+
     # Walk over all markdown files in brain
     all_mds = list(BRAIN_DIR.glob("**/*.md"))
     print(f"Scanning {len(all_mds)} files to build dynamic link map...")
-    
+
     for file_path in all_mds:
         # Skip node_modules, .git, etc.
         rel_parts = file_path.relative_to(BRAIN_DIR).parts
@@ -87,18 +87,18 @@ def build_dynamic_link_map():
             continue
         if file_path.name.startswith('_') or file_path.name == 'README.md':
             continue
-            
+
         slug = str(file_path.relative_to(BRAIN_DIR).with_suffix(''))
-        
+
         try:
             with open(file_path, "r", encoding="utf-8") as f:
                 content = f.read()
         except Exception:
             continue
-            
+
         meta, body = parse_frontmatter(content)
         title = meta.get("title", file_path.stem)
-        
+
         # Clean title for exact mapping
         # E.g. "The Myth of Male Power" -> map to slug
         # Only map titles that are longer than 5 chars to avoid noise
@@ -108,7 +108,7 @@ def build_dynamic_link_map():
             # Replace whitespace with \s+ pattern
             title_pat = r'\b' + re.sub(r'\s+', r'\\s+', re.escape(clean_title)) + r'\b'
             dynamic_map[title_pat] = f"[[{slug}|{title}]]"
-            
+
         # Get author/authors
         authors = []
         if "author" in meta:
@@ -123,22 +123,22 @@ def build_dynamic_link_map():
                 authors.extend(authors_val)
             elif isinstance(authors_val, str):
                 authors.append(authors_val)
-                
+
         year = meta.get("year")
-        
+
         if authors:
             # 1. Map full author names
             for author in authors:
                 if len(author) > 3:
                     author_pat = r'\b' + re.sub(r'\s+', r'\\s+', re.escape(author)) + r'\b'
                     dynamic_map[author_pat] = f"[[{slug}|{author}]]"
-                    
+
             # 2. Map citations if it is an academic paper (year present)
             if year:
                 year_str = str(year).strip()
                 # Determine lead author last name
                 lead_author = authors[0].split()[-1] # Usually last name
-                
+
                 if len(lead_author) > 2:
                     # Lead author last name only
                     if len(authors) == 1:
@@ -163,7 +163,7 @@ def build_dynamic_link_map():
                         # Just last name + year
                         pat2 = r'\b' + re.escape(lead_author) + r'\s*\,?\s*\(?' + re.escape(year_str) + r'\)?\b'
                         dynamic_map[pat2] = f"[[{slug}|{lead_author} et al. ({year_str})]]"
-                        
+
     return dynamic_map
 
 def auto_link_file(file_path, link_map):
@@ -199,14 +199,14 @@ def auto_link_file(file_path, link_map):
 
     for pattern in sorted_patterns:
         link = link_map[pattern]
-        
+
         # Avoid self-linking
         target_slug_match = re.match(r"^\[\[([^|\]]+)", link)
         if target_slug_match:
             target_slug = target_slug_match.group(1).strip()
             if target_slug == current_slug:
                 continue
-        
+
         regex = re.compile(pattern, re.IGNORECASE)
         if regex.search(body):
             def replace_fn(match):
@@ -236,17 +236,17 @@ def auto_link_file(file_path, link_map):
 def main():
     print("Initializing Dynamic Auto-Linker...")
     dynamic_map = build_dynamic_link_map()
-    
+
     # Merge maps: let explicit custom mappings override dynamic ones
     merged_map = {}
     merged_map.update(dynamic_map)
     merged_map.update(LINK_MAP)
-    
+
     print(f"Total compiled dictionary contains {len(merged_map)} active mapping patterns.")
-    
+
     all_mds = list(BRAIN_DIR.glob("**/*.md"))
     updated_count = 0
-    
+
     for file_path in all_mds:
         # Skip node_modules, etc.
         rel_parts = file_path.relative_to(BRAIN_DIR).parts
@@ -254,10 +254,10 @@ def main():
             continue
         if file_path.name.startswith('_') or file_path.name == 'README.md':
             continue
-            
+
         if auto_link_file(file_path, merged_map):
             updated_count += 1
-            
+
     print(f"\nAuto-linking completed. Updated {updated_count} files successfully!")
 
 if __name__ == "__main__":

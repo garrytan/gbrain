@@ -223,6 +223,56 @@ describe('writeFactsToFence — atomic recovery', () => {
   });
 });
 
+describe('writeFactsToFence — stub guard (v0.34.5)', () => {
+  test('refuses to stub-create an unprefixed entity page (bare slug)', async () => {
+    const result = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug: 'alice' },
+      [baseInput()],
+    );
+
+    // Result shape: no facts inserted, guard flag set, no ids.
+    expect(result.inserted).toBe(0);
+    expect(result.ids).toHaveLength(0);
+    expect(result.stubGuardBlocked).toBe(true);
+
+    // No phantom file at brain root.
+    expect(existsSync(join(brainDir, 'alice.md'))).toBe(false);
+    // No phantom .tmp either.
+    expect(existsSync(join(brainDir, 'alice.md.tmp'))).toBe(false);
+  });
+
+  test('prefixed slugs (people/, companies/, etc.) bypass the guard', async () => {
+    // Sanity: re-prove the happy path right next to the guard test so a
+    // future refactor that breaks the guard's slug.includes('/') check
+    // can't silently pass by only running the guard case.
+    const result = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug: 'people/zelda' },
+      [baseInput({ fact: 'Founded Hyrule Labs in 2024' })],
+    );
+
+    expect(result.inserted).toBe(1);
+    expect(result.stubGuardBlocked).toBeUndefined();
+    expect(existsSync(join(brainDir, 'people/zelda.md'))).toBe(true);
+  });
+
+  test('empty facts array is a no-op (does NOT trigger the guard)', async () => {
+    // Empty input short-circuits BEFORE the guard runs — confirming the
+    // guard only fires when there's actual work the caller wants to do.
+    const result = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug: 'alice' },
+      [],
+    );
+
+    expect(result.inserted).toBe(0);
+    expect(result.stubGuardBlocked).toBeUndefined();
+    expect(result.legacyFallback).toBeUndefined();
+    expect(existsSync(join(brainDir, 'alice.md'))).toBe(false);
+  });
+});
+
 describe('lookupSourceLocalPath', () => {
   test('returns the configured local_path for an existing source', async () => {
     const got = await lookupSourceLocalPath(engine, 'default');
@@ -239,6 +289,77 @@ describe('lookupSourceLocalPath', () => {
     await (engine as any).db.query(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
     const got = await lookupSourceLocalPath(engine, 'default');
     expect(got).toBeNull();
+  });
+});
+
+describe('writeFactsToFence — row_num survives a fence-less rewrite', () => {
+  // Regression: row_num uniqueness is enforced by idx_facts_fence_key on
+  // (source_id, source_markdown_slug, row_num), but the value was derived
+  // from the markdown fence alone, falling back to 1 when the file has no
+  // fence. Any write path that rewrites a page without preserving its facts
+  // fence (put_page write-through, sync, dream-cycle reverse-render) then
+  // makes the next absorb re-issue an already-taken row_num, and the whole
+  // batch dies on a duplicate-key error.
+  test('does not reuse a row_num after the fence is stripped from the file', async () => {
+    const slug = 'people/carol';
+    const filePath = join(brainDir, `${slug}.md`);
+
+    const first = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug },
+      [baseInput({ fact: 'First fact' }), baseInput({ fact: 'Second fact' })],
+    );
+    expect(first.inserted).toBe(2);
+
+    // Simulate a non-fence-aware writer replacing the page body. The DB still
+    // holds row_num 1 and 2; the file now advertises none.
+    writeFileSync(
+      filePath,
+      '---\ntype: person\ntitle: Carol\nslug: people/carol\n---\n\n# Carol\n\nRegenerated without the fence.\n',
+      'utf-8',
+    );
+    expect(readFileSync(filePath, 'utf-8')).not.toContain('First fact');
+
+    // Pre-fix this threw: upsertFactRow restarted at 1, colliding with the
+    // existing rows on idx_facts_fence_key.
+    const second = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug },
+      [baseInput({ fact: 'Third fact' })],
+    );
+    expect(second.inserted).toBe(1);
+    expect(second.fenceWriteFailed).toBeUndefined();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      'SELECT row_num, fact FROM facts WHERE source_markdown_slug = $1 ORDER BY row_num',
+      [slug],
+    );
+    const rowNums = rows.rows.map((r: { row_num: number }) => r.row_num);
+    // Three distinct row_nums, and the new one clears the previous maximum.
+    expect(new Set(rowNums).size).toBe(3);
+    expect(Math.max(...rowNums)).toBeGreaterThan(2);
+  });
+
+  test('still writes when the facts table cannot be consulted', async () => {
+    // The DB seed is a hint, not a hard dependency: a lookup failure must
+    // degrade to the previous file-derived behaviour rather than making
+    // fence writes impossible (pre-v51 brains, transient DB errors).
+    const brokenEngine = Object.create(engine) as typeof engine;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (brokenEngine as any).executeRaw = async (sqlText: string, params: unknown[]) => {
+      if (sqlText.includes('MAX(row_num)')) throw new Error('simulated lookup failure');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (engine as any).executeRaw(sqlText, params);
+    };
+
+    const result = await writeFactsToFence(
+      brokenEngine,
+      { sourceId: 'default', localPath: brainDir, slug: 'people/dave' },
+      [baseInput({ fact: 'Written despite the failed hint' })],
+    );
+    expect(result.inserted).toBe(1);
+    expect(result.fenceWriteFailed).toBeUndefined();
   });
 });
 

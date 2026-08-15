@@ -1,6 +1,7 @@
 ---
 name: maintain
-version: 1.0.0
+version: 1.1.0
+upstream: maintain@fc834ee
 description: |
   Brain health checks: back-link enforcement, citation audit, filing validation,
   stale info detection, orphan pages, and benchmarks. Use when asked to check
@@ -49,6 +50,34 @@ This skill guarantees:
 - Results are reported with counts per dimension
 
 ## Phases
+
+### Autonomous path (v0.36.4.0) — when you want to reach a target score
+
+If the user asks "get my brain to 90/100" or "fix what's broken", prefer the
+one-command loop over walking each dimension by hand:
+
+```bash
+gbrain doctor --remediation-plan --json              # preview what would run
+gbrain doctor --remediate --yes --target-score 90 --max-usd 5
+```
+
+`--remediation-plan` prints a dependency-ordered list (sync before extract,
+embed after consolidate, etc.) with per-step `est_seconds` and `est_usd_cost`.
+`--remediate` walks the plan, submitting each step as a Minion job, re-checking
+score between every step. `--max-usd N` is a hard cost cap — submission refuses
+when the plan would exceed the cap (prevents synthesize loops from burning
+Anthropic credits unattended).
+
+When the target score is unreachable for the brain (empty brain with no entity
+pages → `graph_coverage` caps at 70; unconfigured embedding key → caps at 60),
+the command bails with a list of what's missing rather than looping.
+
+Use the per-dimension walk below (Phase 2 onward) when:
+- The user explicitly asks for a dimension-by-dimension audit
+- You're investigating why score is stuck below `--remediate`'s ceiling
+- A specific dimension needs manual judgment that the auto path skips
+
+### Manual path
 
 1. **Run health check.** Check gbrain health to get the dashboard.
 2. **Check each dimension:**
@@ -167,6 +196,13 @@ Verify autopilot is running:
 ```bash
 gbrain autopilot --status
 ```
+The exit code is trustworthy for gating: 0 fresh (or nothing installed),
+1 needs attention (stale heartbeat, never ran, or paused by a migration),
+2 the daemon disabled itself (its repo path vanished). `--json` emits the
+full report (`state`, `heartbeat_age_seconds`, `paused_reason`,
+`disabled_reason`). Status reads only the filesystem, so it works even
+when the database is down.
+
 If not running, install it:
 ```bash
 gbrain autopilot --install --repo ~/brain
@@ -250,6 +286,13 @@ Going forward, every `gbrain put` call auto-creates and reconciles links via the
 auto-link post-hook (default on; disable: `gbrain config set auto_link false`).
 So link-extract is mostly a one-time backfill. timeline-extract should be re-run
 after bulk imports or content edits that add new dated entries.
+
+### Feature adoption check (weekly)
+```bash
+gbrain features --json    # scan for underused features + recommendations
+```
+Run weekly alongside lint. Surfaces missing embeddings, unused integrations,
+and configuration improvements.
 
 ### Embedding freshness
 Chunks without embeddings, or chunks embedded with an old model.

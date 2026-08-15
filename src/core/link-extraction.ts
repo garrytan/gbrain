@@ -12,7 +12,38 @@
  */
 
 import type { BrainEngine } from './engine.ts';
-import type { PageType } from './types.ts';
+import type { PageType, EffectiveDateSource } from './types.ts';
+import { ensureWellFormed } from './text-safe.ts';
+import { slugifyPath } from './sync.ts';
+
+/**
+ * v0.42.7 — link-extraction version stamp. Bump this ISO timestamp whenever the
+ * shape of `extractPageLinks` / `inferLinkType` / `parseTimelineEntries` changes
+ * meaningfully, so the extraction freshness watermark (`pages.links_extracted_at`)
+ * treats every previously-stamped page as stale and re-extracts it on the next
+ * `gbrain extract --stale` sweep. Same role CHUNKER_VERSION plays for chunking.
+ *
+ * Consumed by `countStalePagesForExtraction` / `listStalePagesForExtraction`
+ * (both engines) and the `links_extraction_lag` doctor check: a page is stale
+ * when `links_extracted_at IS NULL OR links_extracted_at < LINK_EXTRACTOR_VERSION_TS
+ * OR updated_at > links_extracted_at`. It is an ISO-8601 string (NOT a number) —
+ * the column is TIMESTAMPTZ and the predicate binds it as `::timestamptz`.
+ */
+// 2026-08-01: bumped for the fix-wave-i extraction batch — the #3466
+// inferTypeByDir fix (unevidenced people/ -> companies/ adjacency now infers
+// 'mentions' instead of 'works_at') AND the #2576 bug-2 fix (the DIR_PATTERN
+// whitelist no longer drops markdown links / bare-slug refs / slash-shaped
+// wikilinks in non-whitelisted directories). Pages stamped by earlier sweeps
+// are re-flagged so the next --stale sweep re-extracts under both fixes.
+// The watermark MUST NOT be in the future: the stamp path clamps
+// links_extracted_at up to the watermark (so a fresh extraction isn't
+// immediately re-listed), which means a future watermark masks concurrent
+// edits until that date — the exact race D4 guards (test/extract-stale.test.ts).
+// The converse limitation is inherent and accepted: a stamp written by
+// PRE-wave code after this date reads as fresh and won't re-extract until
+// the page is next edited; no fixed watermark can cover code that keeps
+// running past it.
+export const LINK_EXTRACTOR_VERSION_TS = '2026-08-01T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -31,22 +62,60 @@ export interface EntityRef {
    *   - sourceId null  → 'unqualified'
    */
   sourceId?: string | null;
+  /**
+   * Issue #972: set when the ref came from the generic `[[bare-name]]`
+   * pass (not gated by DIR_PATTERN). The `slug` field holds the literal
+   * wikilink text — callers MUST run it through a SlugResolver's
+   * `resolveBasenameMatches` (gated by `link_resolution.global_basename`)
+   * before persisting. Untagged refs already match a known entity dir
+   * (people/, companies/, etc.) and need no resolution.
+   *
+   * One ref tagged `needsResolution: true` may resolve to MULTIPLE target
+   * slugs when multiple pages share the basename. The caller emits one
+   * LinkCandidate per resolved match.
+   */
+  needsResolution?: boolean;
 }
+
+/**
+ * Issue #972: edge type stamped on graph rows produced by the
+ * global-basename wikilink resolution path. Distinct from the verb-
+ * inferred types (`mentions`, `works_at`, etc.) so users can audit or
+ * prune via `gbrain graph-query <slug> --type wikilink_basename`.
+ *
+ * All edges from this path also carry `linkSource: 'wikilink-resolved'`
+ * (the link-source provenance is the why; this edge type is the what).
+ */
+export const WIKILINK_BASENAME_LINK_TYPE = 'wikilink_basename';
 
 /** v0.17.0: how a link's target source was pinned at extraction time. */
 export type LinkResolutionType = 'qualified' | 'unqualified';
 
 /**
- * Directory prefix whitelist. These are the top-level slug dirs the extractor
- * recognizes as entity references. Upstream canonical + our extensions:
- *   - Gbrain canonical: people, companies, meetings, concepts, deal, civic, project, source, media, yc, projects
- *   - Our domain extensions: tech, finance, personal, openclaw (domain-organized wikis)
- *   - Our entity prefix: entities (we kept some legacy entities/projects/ pages)
+ * Directory prefix whitelist. These are the canonical top-level slug dirs
+ * (gbrain-base pack dirs + historical extensions). #2576 (bug 2): this list
+ * is NO LONGER a drop-gate for markdown links, bare-slug prose refs, or
+ * slash-shaped wikilinks — those now match ANY_DIR_SEGMENT and rely on the
+ * downstream page-existence checks that every persist path already runs
+ * (resolveCandidateSources in extract.ts, the allSlugs filter in put_page
+ * auto-link, and addLinksBatch's INNER JOINs as the final backstop). The
+ * whitelist survives only as the typed fast-path for pass-2b wikilinks;
+ * non-whitelisted `[[dir/...]]` get equivalent treatment in pass 2c.
  */
-const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|projects|source|sources|media|yc|tech|finance|personal|openclaw|entities)';
+const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|projects|source|media|yc|tech|finance|personal|openclaw|entities|reference)';
 
 /**
- * Match `[Name](path)` markdown links pointing to entity directories.
+ * #2576 (bug 2): a plausible top-level slug directory — lowercase alnum
+ * with dashes/underscores, digit-leading allowed (`90-people`). Used where
+ * the hardcoded DIR_PATTERN whitelist used to silently drop every
+ * user-invented directory (`ops/`, `notes/`, custom schema-pack dirs).
+ * Candidates matched through this are validated for page existence
+ * downstream, so a wider net creates no dead edges — only candidates.
+ */
+const ANY_DIR_SEGMENT = '[a-z0-9][a-z0-9_-]*';
+
+/**
+ * Match `[Name](path)` markdown links pointing at page-shaped paths.
  * Accepts both filesystem-relative format (`[Name](../people/slug.md)`)
  * AND engine-slug format (`[Name](people/slug)`).
  *
@@ -54,9 +123,14 @@ const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|pr
  *
  * The regex permits an optional `../` prefix (any number) and an optional
  * `.md` suffix so the same function works for both filesystem and DB content.
+ *
+ * #2576 (bug 2): the first segment is ANY_DIR_SEGMENT, not the DIR_PATTERN
+ * whitelist — `[Pointer](../ops/services/pointer-agent.md)` must produce a
+ * candidate for a brain that has an `ops/` directory. Nonexistent targets
+ * are dropped by the callers' existence checks, exactly as before.
  */
 const ENTITY_REF_RE = new RegExp(
-  `\\[([^\\]]+)\\]\\((?:\\.\\.\\/)*(${DIR_PATTERN}\\/[^)\\s]+?)(?:\\.md)?\\)`,
+  `\\[([^\\]]+)\\]\\((?:\\.\\.\\/)*(${ANY_DIR_SEGMENT}\\/[^)\\s]+?)(?:\\.md)?\\)`,
   'g',
 );
 
@@ -91,12 +165,44 @@ const QUALIFIED_WIKILINK_RE = new RegExp(
 );
 
 /**
+ * Issue #972: generic Obsidian-style wikilink — matches `[[anything]]`
+ * with no DIR_PATTERN gate. Wiki/topic/learning pages frequently link
+ * via `[[bare-name]]` (`[[Fast-Weigh]]`, `[[2026-05-07-cost-plan]]`,
+ * `[[struktura]]`) where the literal text isn't a canonical slug; the
+ * resolver is responsible for matching it to the real page via
+ * basename uniqueness.
+ *
+ * Used AFTER QUALIFIED_WIKILINK_RE and WIKILINK_RE pick off their
+ * cases — the masked-ranges pass in extractEntityRefs prevents
+ * double-emission. Refs from this pass are tagged
+ * `needsResolution: true` so callers know to run them through a
+ * SlugResolver before the page-existence check.
+ *
+ * Regex shape is the union of the two existing wikilink regexes,
+ * minus the DIR_PATTERN gate. The character class disallows pipe,
+ * close-bracket, hash (anchor separator), newline, and open-bracket
+ * so we never match across line breaks or capture nested `[[...]]`.
+ *
+ * Adapted from PR #1233 (rayers).
+ */
+const WIKILINK_GENERIC_RE = /\[\[([^|\]#\n[]+?)(?:#[^|\]]*?)?(?:\|([^\]]+?))?\]\]/g;
+
+/**
+ * Issue #972 (codex [P2]): a markdown link whose LABEL contains a wikilink,
+ * e.g. `[see [[acme]]](companies/acme.md)`. Pass-1's ENTITY_REF_RE can't match
+ * the nested `]]` so it never spans this; without masking, the generic 2c pass
+ * would emit a stray basename ref for the inner `[[acme]]`. Mask the whole
+ * span out of the 2c scan so a wikilink inside a markdown label is inert.
+ */
+const MARKDOWN_LABEL_WIKILINK_RE = /\[[^\]\n]*\[\[[^\]\n]+\]\][^\]\n]*\]\([^)\n]+\)/g;
+
+/**
  * Strip fenced code blocks (```...```) and inline code (`...`) from markdown,
  * replacing them with whitespace of equivalent length. Preserves byte offsets
  * for any caller that cares about positions; for our extractors this is just
  * defense-in-depth — slugs inside code are not real entity references.
  */
-function stripCodeBlocks(content: string): string {
+export function stripCodeBlocks(content: string): string {
   let out = '';
   let i = 0;
   while (i < content.length) {
@@ -235,6 +341,7 @@ export function extractEntityRefs(content: string): EntityRef[] {
   //    Markdown links have no source-qualification syntax — they're
   //    always unqualified. Omit sourceId so the shape stays compatible
   //    with pre-v0.17 consumers doing strict equality.
+  const markdownRanges: Array<[number, number]> = [];
   const mdPattern = new RegExp(ENTITY_REF_RE.source, ENTITY_REF_RE.flags);
   while ((match = mdPattern.exec(stripped)) !== null) {
     const name = match[1];
@@ -242,6 +349,7 @@ export function extractEntityRefs(content: string): EntityRef[] {
     const slug = fullPath;
     const dir = fullPath.split('/')[0];
     refs.push({ name, slug, dir });
+    markdownRanges.push([match.index, match.index + match[0].length]);
   }
 
   // 2a. v0.17.0 qualified wikilinks: [[source-id:path]] or [[source-id:path|Display]]
@@ -263,6 +371,7 @@ export function extractEntityRefs(content: string): EntityRef[] {
 
   // 2b. Unqualified Obsidian wikilinks: [[path]] or [[path|Display Text]]
   //     Same shape rule: omit sourceId when unqualified.
+  const unqualifiedRanges: Array<[number, number]> = [];
   const unmasked = maskRanges(stripped, qualifiedRanges);
   const wikiPattern = new RegExp(WIKILINK_RE.source, WIKILINK_RE.flags);
   while ((match = wikiPattern.exec(unmasked)) !== null) {
@@ -273,6 +382,38 @@ export function extractEntityRefs(content: string): EntityRef[] {
     const displayName = (match[2] || slug).trim();
     const dir = slug.split('/')[0];
     refs.push({ name: displayName, slug, dir });
+    unqualifiedRanges.push([match.index, match.index + match[0].length]);
+  }
+
+  // 2c. Issue #972: generic `[[bare-name]]` wikilinks not gated by
+  //     DIR_PATTERN. Wiki/topic/learning content frequently uses these
+  //     where the bare text isn't a canonical brain slug. Tagged
+  //     `needsResolution: true` so the caller routes them through a
+  //     SlugResolver's `resolveBasenameMatches` before persisting.
+  //     Mask out 2a/2b ranges so we don't double-emit; skip qualified-
+  //     syntax tokens (contain `:`) that would be 2a's job. Issue #972
+  //     (codex [P2]): ALSO mask pass-1 markdown-link ranges so a wikilink
+  //     inside a markdown label — `[see [[acme]]](companies/acme.md)` —
+  //     doesn't spawn a stray generic basename ref from inside the label.
+  const labelWikilinkRanges: Array<[number, number]> = [];
+  const labelWlPattern = new RegExp(MARKDOWN_LABEL_WIKILINK_RE.source, MARKDOWN_LABEL_WIKILINK_RE.flags);
+  while ((match = labelWlPattern.exec(stripped)) !== null) {
+    labelWikilinkRanges.push([match.index, match.index + match[0].length]);
+  }
+  const genericMasked = maskRanges(
+    stripped,
+    [...markdownRanges, ...qualifiedRanges, ...unqualifiedRanges, ...labelWikilinkRanges],
+  );
+  const genericPattern = new RegExp(WIKILINK_GENERIC_RE.source, WIKILINK_GENERIC_RE.flags);
+  while ((match = genericPattern.exec(genericMasked)) !== null) {
+    let slug = match[1].trim();
+    if (!slug) continue;
+    if (slug.includes('://')) continue;
+    if (slug.includes(':')) continue; // qualified-syntax token; 2a owns these
+    if (slug.endsWith('.md')) slug = slug.slice(0, -3);
+    const displayName = (match[2] || slug).trim();
+    const dir = slug.includes('/') ? slug.split('/')[0] : '';
+    refs.push({ name: displayName, slug, dir, needsResolution: true });
   }
 
   return refs;
@@ -361,11 +502,81 @@ export async function extractPageLinks(
   frontmatter: Record<string, unknown>,
   pageType: PageType,
   resolver: SlugResolver,
+  opts: { globalBasename?: boolean; skipFrontmatter?: boolean } = {},
 ): Promise<PageLinksResult> {
   const candidates: LinkCandidate[] = [];
 
   // 1. Markdown entity refs.
   for (const ref of extractEntityRefs(content)) {
+    // Issue #972: refs from the generic `[[bare-name]]` pass carry the
+    // literal wikilink text, not a real page slug. When global_basename
+    // mode is on AND the resolver implements basename lookup, resolve
+    // to every matching page and emit one candidate per match. When the
+    // flag is off (default), drop silently — back-compat with the
+    // pre-v0.40.8.2 behavior of dropping bare wikilinks outside
+    // DIR_PATTERN.
+    if (ref.needsResolution) {
+      const slashIdx = ref.slug.lastIndexOf('/');
+      // #2576 (bug 2): a slash-shaped wikilink outside DIR_PATTERN
+      // (`[[ops/services/pointer-agent]]`) gets the SAME treatment a
+      // whitelisted dir gets from pass 2b — a direct, verb-typed candidate
+      // for the literal path, emitted regardless of the global_basename
+      // flag. Downstream existence checks (resolveCandidateSources /
+      // put_page's allSlugs filter / addLinksBatch's INNER JOINs) drop it
+      // when no such page exists, exactly as they do for 2b candidates.
+      // Pre-fix these refs were silently dropped (flag off) or demoted to
+      // untyped wikilink_basename edges (flag on).
+      if (slashIdx !== -1 && ref.slug !== slug) {
+        const litIdx = content.indexOf(ref.slug);
+        const litContext = litIdx >= 0 ? excerpt(content, litIdx, 240) : ref.name;
+        candidates.push({
+          targetSlug: ref.slug,
+          linkType: inferLinkType(pageType, litContext, content, ref.slug),
+          context: litContext,
+          linkSource: 'markdown',
+        });
+      }
+      if (typeof resolver.resolveBasenameMatches !== 'function') continue;
+      // Issue #972 (codex): resolve by the wikilink TARGET (ref.slug — the
+      // text inside `[[...]]` before any `|`), NOT the display alias
+      // (ref.name = match[2]). `[[struktura|the project]]` must resolve
+      // `struktura`, not "the project". The display text is for context only.
+      //
+      // Issue #1964: a dir-qualified wikilink (`[[llm-wiki/entities/AI 3.0]]`)
+      // carries a raw Obsidian path while page slugs are sync-slugified
+      // (`llm-wiki/entities/ai-3.0`). Slugify the path the same way sync does,
+      // then match by exact slug or path-suffix (wiki-root-relative authoring).
+      // This runs regardless of global_basename — it's dir-qualified, so the
+      // cross-dir false-positive risk the flag guards against doesn't apply.
+      // Mirrors the FS path's resolveSlug ancestor walk. Bare `[[name]]`
+      // wikilinks still require the global_basename flag.
+      // The EXACT raw literal is excluded — the direct typed candidate
+      // above already covers it (#2576), so keeping it would double-emit.
+      let matches: string[] = [];
+      const slugified = ref.slug.includes('/') ? slugifyPath(ref.slug) : '';
+      if (slugified.includes('/')) {
+        const tail = slugified.slice(slugified.lastIndexOf('/') + 1);
+        matches = (await resolver.resolveBasenameMatches(tail))
+          .filter(m => m !== ref.slug && (m === slugified || m.endsWith(`/${slugified}`)));
+      } else if (opts.globalBasename) {
+        matches = await resolver.resolveBasenameMatches(ref.slug);
+      }
+      if (matches.length === 0) continue;
+      const idx = content.indexOf(ref.slug);
+      const context = idx >= 0 ? excerpt(content, idx, 240) : ref.name;
+      for (const matched of matches) {
+        // Issue #972 (codex [P2]): a basename `[[own-tail]]` on its own page
+        // resolves back to itself — drop the self-loop.
+        if (matched === slug) continue;
+        candidates.push({
+          targetSlug: matched,
+          linkType: WIKILINK_BASENAME_LINK_TYPE,
+          context,
+          linkSource: 'wikilink-resolved',
+        });
+      }
+      continue;
+    }
     const idx = content.indexOf(ref.name);
     // Wider context window (240 chars vs original 80) catches verbs that
     // appear at sentence-or-paragraph distance from the slug — common in
@@ -381,11 +592,21 @@ export async function extractPageLinks(
   }
 
   // 2. Bare slug references (e.g. "see people/alice-chen for context").
-  // Limited to the same entity directories ENTITY_REF_RE covers.
+  // #2576 (bug 2): any dir-shaped path, not just the DIR_PATTERN whitelist —
+  // `see ops/services/pointer-agent` must produce a candidate. Prose noise
+  // that happens to look like a path (`on/off`, `com/foo/bar` inside a URL)
+  // is dropped by the callers' page-existence checks, never persisted.
   // Code blocks are stripped first — slugs in code samples are not real refs.
-  const strippedContent = stripCodeBlocks(content);
+  // Wikilink spans are masked too (equal-length blanks, so match indices stay
+  // valid for excerpt()): the wikilink pass above owns `[[...]]` interiors,
+  // and without the mask a dir-qualified wikilink like
+  // `[[llm-wiki/entities/AI 3.0]]` leaves its lowercase prefix
+  // `llm-wiki/entities` as a bare-path match — a spurious edge to the parent
+  // page whenever that page exists.
+  const strippedContent = stripCodeBlocks(content)
+    .replace(/\[\[[^\]]*\]\]/g, (s) => ' '.repeat(s.length));
   const bareRe = new RegExp(
-    `\\b(${DIR_PATTERN}\\/[a-z0-9][a-z0-9/-]*[a-z0-9])\\b`,
+    `\\b(${ANY_DIR_SEGMENT}\\/[a-z0-9][a-z0-9/-]*[a-z0-9])\\b`,
     'g',
   );
   let m: RegExpExecArray | null;
@@ -393,6 +614,8 @@ export async function extractPageLinks(
     // Skip matches that are part of a markdown link (already handled above).
     const charBefore = m.index > 0 ? strippedContent[m.index - 1] : '';
     if (charBefore === '/' || charBefore === '(') continue;
+    // #2576: never emit a self-loop for a page mentioning its own slug.
+    if (m[1] === slug) continue;
     const context = excerpt(strippedContent, m.index, 240);
     candidates.push({
       targetSlug: m[1],
@@ -403,12 +626,28 @@ export async function extractPageLinks(
   }
 
   // 3. Frontmatter-derived edges (v0.13). Includes the legacy `source:`
-  // field along with the full field map.
-  const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver);
-  candidates.push(...fm.candidates);
+  // field along with the full field map. Caller can suppress via
+  // `opts.skipFrontmatter` — used by `extractLinksFromDB` to keep
+  // `--include-frontmatter` off semantics while still passing a real
+  // resolver (needed for `resolveBasenameMatches` in global-basename
+  // mode). Pre-issue-#972 this gating lived in the caller via a
+  // synthetic `nullResolver`; that pattern broke once the bare-wikilink
+  // path needed `resolveBasenameMatches` on the real resolver.
+  let fmUnresolved: UnresolvedFrontmatterRef[] = [];
+  if (!opts.skipFrontmatter) {
+    const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver, opts.globalBasename);
+    candidates.push(...fm.candidates);
+    fmUnresolved = fm.unresolved;
+  }
 
   // Within-page dedup: same (fromSlug, targetSlug, linkType, linkSource)
   // collapses to one entry. First occurrence wins.
+  // Issue #972 (codex P2d, decided): a qualified `[[companies/acme]]` (typed
+  // markdown edge) and a bare `[[acme]]` (wikilink-resolved edge) to the SAME
+  // target are KEPT as separate rows — they carry different provenance
+  // (link_source) and link_type, and the audit trail (which kind of reference
+  // created the edge) is worth more than collapsing them. graph-query callers
+  // that want a unique target set dedup on to_slug themselves.
   const seen = new Set<string>();
   const result: LinkCandidate[] = [];
   for (const c of candidates) {
@@ -417,15 +656,25 @@ export async function extractPageLinks(
     seen.add(key);
     result.push(c);
   }
-  return { candidates: result, unresolved: fm.unresolved };
+  return { candidates: result, unresolved: fmUnresolved };
 }
 
-/** Excerpt a window of `width` chars around `idx`, collapsed to one line. */
+/**
+ * Excerpt a window of `width` chars around `idx`, collapsed to one line.
+ *
+ * The window is sliced by raw UTF-16 index, so a boundary can land inside a
+ * surrogate pair (any non-BMP char — emoji, math alphanumerics, non-BMP CJK)
+ * and leave a lone surrogate half. That lone half flows into the link `context`
+ * field and, when the batch is serialized for the `jsonb_to_recordset` insert,
+ * makes Postgres reject the WHOLE batch on the `::jsonb` cast — aborting the
+ * entire `extract --stale` run (#2011). `ensureWellFormed` replaces any orphaned
+ * half with U+FFFD before the slice escapes this function.
+ */
 function excerpt(s: string, idx: number, width: number): string {
   const half = Math.floor(width / 2);
   const start = Math.max(0, idx - half);
   const end = Math.min(s.length, idx + half);
-  return s.slice(start, end).replace(/\s+/g, ' ').trim();
+  return ensureWellFormed(s.slice(start, end)).replace(/\s+/g, ' ').trim();
 }
 
 // ─── Relationship type inference (deterministic, zero LLM) ──────
@@ -487,6 +736,17 @@ const FOUNDED_RE = /\b(?:founded|co-?founded|started the company|incorporated|fo
 //     "security advisor to|at", "product advisor to|at", "industry advisor".
 const ADVISES_RE = /\b(?:advises|advised|advisor (?:to|at|for|of)|advisory (?:board|role|position|capacity|engagement|partnership|contract|relationship|work)|board advisor|on .{0,20} advisory board|joined .{0,20} advisory board|in an? advisory (?:capacity|role|position)|as an? (?:advisor|security advisor|technical advisor|strategic advisor|industry advisor|product advisor|board advisor|senior advisor)|(?:strategic|technical|security|product|industry|senior|board) advisor (?:to|at|for|of)|consults for|consulting role (?:at|with))\b/i;
 
+// Chinese link type patterns for CJK entity mentions.
+// NOTE: These patterns are Chinese-only (zh). Japanese and Korean link
+// type extraction is not yet implemented. Entity NAME extraction in
+// by-mention.ts covers all three scripts (CJK = Chinese/Japanese/Korean)
+// via Unicode-aware tokenization.
+const ZH_FOUNDED_RE = /(?:创立|创办|成立|创建|建立|开创|发起)(?:了|的)/;
+const ZH_INVESTED_RE = /(?:投资|入股|融资|注资|参股)(?:了|的|了?于)/;
+const ZH_ADVISES_RE = /(?:顾问|咨询|指导)(?:了|的)?/;
+const ZH_WORKS_AT_RE = /(?:任职|就职|担任|供职|在.{0,10}(?:工作|上班|负责))(?:于|在|的)?/;
+const ZH_CITED_RE = /(?:引用|援引|提到|提及|转述|摘录)(?:了|的|自)?/;
+
 // Page-role detection: if the source page describes a partner/investor at
 // page level, that's a strong prior for outbound company refs being
 // invested_in even when per-edge context lacks explicit investment verbs.
@@ -540,6 +800,12 @@ export function inferLinkType(pageType: PageType, context: string, globalContext
   if (INVESTED_RE.test(context)) return 'invested_in';
   if (ADVISES_RE.test(context)) return 'advises';
   if (WORKS_AT_RE.test(context)) return 'works_at';
+  // Chinese link type patterns
+  if (ZH_FOUNDED_RE.test(context)) return 'founded';
+  if (ZH_INVESTED_RE.test(context)) return 'invested_in';
+  if (ZH_ADVISES_RE.test(context)) return 'advises';
+  if (ZH_WORKS_AT_RE.test(context)) return 'works_at';
+  if (ZH_CITED_RE.test(context)) return 'cited';
   // Page-role prior: only fires for person -> company links. Concept pages
   // about VC topics naturally contain "venture capital" in their text, but
   // their company refs are mentions, not investments. Partner pages mentioning
@@ -640,6 +906,67 @@ export interface SlugResolver {
    * extract/put_page summary so the user can see the gap.
    */
   resolve(name: string, dirHint?: string | string[]): Promise<string | null>;
+  /**
+   * Issue #972: return every slug whose basename (final `/`-segment, or
+   * the whole slug if it has no `/`) matches `name`. Multi-match by
+   * design — `[[struktura]]` referencing both `projects/struktura` and
+   * `archive/struktura` returns both; the caller emits one graph edge
+   * per result. Returns `[]` when no matches.
+   *
+   * Optional so existing SlugResolver consumers (e.g. synthetic
+   * frontmatter-only resolvers) keep working without code changes.
+   * Implementations should make this cheap to call repeatedly within
+   * a single extract run (build the index once, reuse it).
+   */
+  resolveBasenameMatches?(name: string): Promise<string[]>;
+}
+
+/**
+ * Issue #972 (codex [P2] DRY): the ONE basename matcher. Before this, three
+ * surfaces (makeResolver, FS `resolveBasenameMatchesFromSlugs`, the doctor
+ * `link_resolution_opportunity` check) each hand-rolled their own key set +
+ * sort, and they drifted — the doctor omitted the slugified key, so its
+ * "N would resolve" estimate undercounted what extraction actually produces.
+ * All three now build/query through these two functions so they cannot drift.
+ *
+ * Keying: raw tail + lowercase tail + slugified tail. A slug's tail is its
+ * final `/`-segment (or the whole slug when it has no `/`).
+ */
+export function normalizeBasename(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9\s-]/g, '').trim().replace(/\s+/g, '-');
+}
+
+/** Stable order: shorter slug first (likely closer to brain root), then lexical. */
+function basenameSort(a: string, b: string): number {
+  return (a.length - b.length) || a.localeCompare(b);
+}
+
+/** Build a `key → slug[]` index over a slug collection. Keys: raw/lower/slugified tail. */
+export function buildBasenameIndex(slugs: Iterable<string>): Map<string, string[]> {
+  const idx = new Map<string, string[]>();
+  const addKey = (key: string, slug: string) => {
+    const existing = idx.get(key);
+    if (existing) { if (!existing.includes(slug)) existing.push(slug); }
+    else idx.set(key, [slug]);
+  };
+  for (const slug of slugs) {
+    const tail = slug.includes('/') ? slug.slice(slug.lastIndexOf('/') + 1) : slug;
+    addKey(tail, slug);
+    const lower = tail.toLowerCase();
+    if (lower !== tail) addKey(lower, slug);
+    const slugified = normalizeBasename(tail);
+    if (slugified && slugified !== tail && slugified !== lower) addKey(slugified, slug);
+  }
+  return idx;
+}
+
+/** Look a name up in a basename index (raw → lower → slugified), stable-sorted. */
+export function queryBasenameIndex(idx: Map<string, string[]>, name: string): string[] {
+  if (!name || typeof name !== 'string') return [];
+  const trimmed = name.trim();
+  if (!trimmed) return [];
+  const hit = idx.get(trimmed) ?? idx.get(trimmed.toLowerCase()) ?? idx.get(normalizeBasename(trimmed));
+  return hit ? [...hit].sort(basenameSort) : [];
 }
 
 /**
@@ -659,13 +986,52 @@ export interface SlugResolver {
  */
 export function makeResolver(
   engine: BrainEngine,
-  opts: { mode: 'batch' | 'live' } = { mode: 'live' },
+  opts: { mode: 'batch' | 'live'; sourceId?: string } = { mode: 'live' },
 ): SlugResolver {
   const cache = new Map<string, string | null>();
 
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s-]/g, '').trim().replace(/\s+/g, '-');
 
+  // Issue #972: lazy-built basename → slug[] index for global-basename
+  // resolution. Built on first call to `resolveBasenameMatches`; reused
+  // for the rest of the resolver instance's lifetime. Cost is bounded
+  // (one `engine.getAllSlugs()` call per extract run / put_page). The
+  // index keys BOTH the raw tail and the slugified-tail so a wikilink
+  // `[[Fast-Weigh]]` matches a page slugged `companies/fast-weigh` as
+  // well as `notes/Fast-Weigh`.
+  let basenameIndex: Map<string, string[]> | null = null;
+  async function ensureBasenameIndex(): Promise<Map<string, string[]>> {
+    if (basenameIndex !== null) return basenameIndex;
+    const idx = new Map<string, string[]>();
+    if (typeof engine.getAllSlugs !== 'function') {
+      basenameIndex = idx;
+      return idx;
+    }
+    try {
+      // Issue #972 (codex [P1]): scope the basename index to the resolver's
+      // source. getAllSlugs({sourceId}) keeps wikilink resolution from
+      // spanning unrelated sources — a bare [[name]] must NOT resolve to a
+      // same-tail page in a DIFFERENT source and create a cross-source edge.
+      // #972 is "global basename across folders," not "cross-source federation."
+      const all = await engine.getAllSlugs(opts.sourceId ? { sourceId: opts.sourceId } : undefined);
+      // Issue #972 (codex [P2] DRY): one shared index builder for all surfaces.
+      basenameIndex = buildBasenameIndex(all);
+      return basenameIndex;
+    } catch {
+      // Index build failed — empty map → resolveBasenameMatches finds
+      // nothing, resolver continues as if the flag was off. Never throw.
+    }
+    basenameIndex = idx;
+    return idx;
+  }
+
   return {
+    async resolveBasenameMatches(name: string): Promise<string[]> {
+      // Issue #972 (codex [P2] DRY): shared query so resolver + FS + doctor
+      // return the same matches in the same stable order.
+      return queryBasenameIndex(await ensureBasenameIndex(), name);
+    },
+
     async resolve(name: string, dirHint?: string | string[]): Promise<string | null> {
       if (!name || typeof name !== 'string') return null;
       const trimmed = name.trim();
@@ -676,8 +1042,17 @@ export function makeResolver(
 
       const hints = Array.isArray(dirHint) ? dirHint : (dirHint ? [dirHint] : []);
 
-      // Step 1: already a slug? (dir/name shape, lowercase, hyphenated)
-      if (/^[a-z][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/.test(trimmed)) {
+      // Step 1: already a slug? Try an exact page lookup for any slug-shaped
+      // value (contains '/', slug charset). Broadened beyond the original
+      // single-segment lowercase-leading form (`^[a-z][a-z0-9-]*\/[a-z0-9]...`)
+      // to also accept digit-leading folders (`90-people/nicolai`,
+      // `01-trading/...`) and nested paths (`a/b/c`) — common in PARA-numbered
+      // vaults. This is an EXACT getPage match only — no fuzzy — so it never
+      // produces a false positive; a non-existent slug just falls through to
+      // the steps below. Fixes frontmatter `related: [[dir/slug]]` values
+      // (unwrapped by unwrapWikilink) that name a real page the strict regex
+      // could not reach and whose full-path fuzzy score is below threshold.
+      if (/\//.test(trimmed) && /^[a-z0-9][a-z0-9/_-]*$/.test(trimmed)) {
         const page = await engine.getPage(trimmed);
         if (page) {
           cache.set(cacheKey, trimmed);
@@ -699,10 +1074,14 @@ export function makeResolver(
 
       // Step 3: pg_trgm fuzzy title match — both modes. Tries each hint in
       // order; first hint with a ≥0.55 similarity match wins. If no hints,
-      // try the whole pages table.
+      // try the whole pages table. When opts.sourceId is set, the fuzzy
+      // search is constrained to that source (and skips soft-deleted pages)
+      // so cross-source slug suggestions don't get silently dropped at the
+      // FK filter downstream. Mirrors the same scope fix `tryFuzzyMatch` got
+      // via #1436.
       const searchHints = hints.length > 0 ? hints : [undefined];
       for (const hint of searchHints) {
-        const match = await engine.findByTitleFuzzy(trimmed, hint, 0.55);
+        const match = await engine.findByTitleFuzzy(trimmed, hint, 0.55, opts.sourceId);
         if (match) {
           cache.set(cacheKey, match.slug);
           return match.slug;
@@ -737,6 +1116,25 @@ export function makeResolver(
 
 // ─── Frontmatter extractor ──────────────────────────────────────
 
+/**
+ * Unwrap an Obsidian `[[wikilink]]` frontmatter value to its bare link
+ * target so the resolver (which expects bare titles / dir slugs) can match
+ * it. Mainstream Obsidian authors frontmatter links as `related: ["[[Page]]"]`;
+ * without this, the resolver treats the brackets as part of the value and a
+ * `[[90-people/nicolai]]` is normalized into `90peoplenicolai`, so it never
+ * resolves. Strips a trailing `|alias`, `#heading`, or `^block` suffix — the
+ * link target only. The regex is anchored to a wholly-wrapped value
+ * (`^\s*\[\[…\]\]\s*$`), so bare titles and any value not fully wrapped pass
+ * through unchanged and existing behavior is preserved exactly.
+ */
+export function unwrapWikilink(value: string): string {
+  const match = /^\s*\[\[(.+?)\]\]\s*$/.exec(value);
+  if (!match) return value;
+  // Take the link target: drop |alias, then #heading / ^block suffixes.
+  const target = match[1].split('|')[0].split('#')[0].split('^')[0];
+  return target.trim();
+}
+
 export interface UnresolvedFrontmatterRef {
   /** The frontmatter field name. */
   field: string;
@@ -762,6 +1160,7 @@ export async function extractFrontmatterLinks(
   pageType: PageType,
   frontmatter: Record<string, unknown>,
   resolver: SlugResolver,
+  globalBasename = false,
 ): Promise<FrontmatterExtractResult> {
   const candidates: LinkCandidate[] = [];
   const unresolved: UnresolvedFrontmatterRef[] = [];
@@ -794,7 +1193,27 @@ export async function extractFrontmatterLinks(
         }
         if (!name) continue;   // skip numbers, nulls, malformed objects
 
-        const resolved = await resolver.resolve(name, mapping.dirHint);
+        // Accept Obsidian `[[wikilink]]` values in frontmatter link fields by
+        // unwrapping to the bare target before resolution. Bare titles pass
+        // through unchanged; the original `name` is preserved for the
+        // unresolved report and edge context.
+        const linkTarget = unwrapWikilink(name);
+        let resolved = await resolver.resolve(linkTarget, mapping.dirHint);
+        if (!resolved && globalBasename && typeof resolver.resolveBasenameMatches === 'function') {
+          // Issue #972 follow-up: extend global_basename resolution to
+          // frontmatter link fields. resolve() can't reach a bare-title
+          // wikilink value (e.g. `sources: "[[2025-12-25_mentor-extraction]]"`)
+          // — it has no '/', so the slug-direct getPage is skipped, and the
+          // field's dirHint may name folders that don't exist in this brain,
+          // so the dir-scoped exact + fuzzy steps miss too. When
+          // link_resolution.global_basename is on, fall back to the SAME
+          // basename index the body bare-wikilink pass uses. Unique-match-only:
+          // ambiguous basenames (e.g. archive duplicates, generic hubs like
+          // `_index`) stay unresolved rather than create a wrong edge.
+          const matches = (await resolver.resolveBasenameMatches(linkTarget))
+            .filter((s) => s !== slug);
+          if (matches.length === 1) resolved = matches[0];
+        }
         if (!resolved) {
           unresolved.push({ field, name });
           continue;
@@ -837,6 +1256,10 @@ export interface TimelineCandidate {
 // Match: `- **YYYY-MM-DD** | summary` or `- **YYYY-MM-DD** -- summary`
 // or `- **YYYY-MM-DD** - summary` or just `**YYYY-MM-DD** | summary`.
 const TIMELINE_LINE_RE = /^\s*-?\s*\*\*(\d{4}-\d{2}-\d{2})\*\*\s*[|\-–—]+\s*(.+?)\s*$/;
+// Chinese date lines: `- 2020年1月2日 | summary` (bold optional). Requires the
+// 年/月 markers so plain ASCII `- 2020-01-02 - text` does NOT match — non-bold
+// ASCII dates were never timeline entries and must stay that way.
+const TIMELINE_LINE_RE_CN = /^\s*-?\s*(?:\*\*)?(\d{4})年(\d{1,2})月(\d{1,2})日?(?:\*\*)?\s*[|\-–—]+\s*(.+?)\s*$/;
 
 /**
  * Parse timeline entries from content. Looks at:
@@ -853,18 +1276,21 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
 
   let i = 0;
   while (i < lines.length) {
+    // Try English format first, then Chinese
     const m = TIMELINE_LINE_RE.exec(lines[i]);
-    if (!m) {
-      i++;
-      continue;
+    let date: string;
+    let summary: string;
+    if (m) {
+      date = m[1];
+      summary = m[2].trim();
+    } else {
+      const cm = TIMELINE_LINE_RE_CN.exec(lines[i]);
+      if (!cm) { i++; continue; }
+      // Normalize Chinese date to YYYY-MM-DD
+      date = `${cm[1]}-${cm[2].padStart(2, '0')}-${cm[3].padStart(2, '0')}`;
+      summary = cm[4].trim();
     }
-    const date = m[1];
-    const summary = m[2].trim();
-    if (!isValidDate(date) || summary.length === 0) {
-      i++;
-      continue;
-    }
-
+    if (!isValidDate(date) || summary.length === 0) { i++; continue; }
     // Collect optional detail lines (indented, until next date or heading).
     const detailLines: string[] = [];
     let j = i + 1;
@@ -890,6 +1316,31 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
     result.push({ date, summary, detail: detailLines.join(' ').trim() });
     i = j;
   }
+
+  // Format 3: inline citation — [Source: <source>, YYYY-MM-DD]. The citation
+  // convention gbrain's own quality rules require on every brain write;
+  // until now this parser (the db-source extract + ingest path) could not
+  // see it, so a page whose dates all live in citations scored zero
+  // timeline coverage. Kept in sync with extractTimelineFromContent's
+  // Format 3 (the fs-source path). Lines already captured by the timeline
+  // bullet pass are skipped (a bullet often carries its own citation).
+  const citationRe = /\[Source:\s*([^\]]+?),\s*(\d{4}-\d{2}-\d{2})\s*\]/g;
+  for (const line of lines) {
+    if (TIMELINE_LINE_RE.test(line)) continue;
+    const matches = [...line.matchAll(citationRe)];
+    if (matches.length === 0) continue;
+    const summary = line
+      .replace(/\[Source:[^\]]*\]/g, '')
+      .replace(/^[-*>#\s]+/, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 300);
+    if (!summary) continue;
+    for (const m of matches) {
+      if (!isValidDate(m[2])) continue;
+      result.push({ date: m[2], summary, detail: `Source: ${m[1].trim().slice(0, 200)}` });
+    }
+  }
   return result;
 }
 
@@ -902,6 +1353,46 @@ function isValidDate(s: string): boolean {
   // Use Date object as final check (catches 2026-02-30 etc.)
   const dt = new Date(Date.UTC(y, mo - 1, d));
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
+}
+
+/** Input for {@link deriveTimelineAnchor}: a page's identity + its computed content date. */
+export interface TimelineAnchorInput {
+  slug: string;
+  title?: string | null;
+  effectiveDate?: Date | string | null;
+  effectiveDateSource?: EffectiveDateSource | null;
+}
+
+/**
+ * Anchor a single timeline entry from a page's computed content date, for pages
+ * whose body carries no parseable timeline line.
+ *
+ * Comms- and calendar-dominated brains keep the date in frontmatter or the
+ * filename (slug `2026-04-24-...`), not in the prose, so `parseTimelineEntries`
+ * returns nothing and the page-level `timeline` table stays empty even though
+ * the page is firmly dated — leaving `get_timeline` and the brain-score
+ * `timeline_coverage` component blind to it. This recovers that signal from the
+ * already-computed `effective_date` (no re-parsing). (It does NOT feed the
+ * facts-based `find_trajectory`, which reads the `facts` table by entity_slug.)
+ *
+ * Fires ONLY for a trustworthy content date — frontmatter (`event_date` / `date`
+ * / `published`) or the `filename` date — never the `fallback` source, which is
+ * `updated_at` (link-churn noise, not when the thing happened). Returns null
+ * when no trustworthy date is available. Callers MUST apply this only when body
+ * parsing yields zero entries, so it can never shadow a real in-body timeline.
+ */
+export function deriveTimelineAnchor(input: TimelineAnchorInput): TimelineCandidate | null {
+  const { slug, title, effectiveDate, effectiveDateSource } = input;
+  if (!effectiveDate) return null;
+  // 'fallback' === updated_at; the rest ('event_date'|'date'|'published'|'filename')
+  // are real content dates. null/undefined source is not trustworthy either.
+  if (effectiveDateSource == null || effectiveDateSource === 'fallback') return null;
+  const dt = typeof effectiveDate === 'string' ? new Date(effectiveDate) : effectiveDate;
+  if (!(dt instanceof Date) || Number.isNaN(dt.getTime())) return null;
+  const iso = dt.toISOString().slice(0, 10);
+  if (!isValidDate(iso)) return null;
+  const summary = (title ?? '').trim() || slug.split('/').pop() || slug;
+  return { date: iso, summary, detail: '' };
 }
 
 // ─── Auto-link config ───────────────────────────────────────────
@@ -932,4 +1423,32 @@ export async function isAutoTimelineEnabled(engine: BrainEngine): Promise<boolea
   if (val == null) return true;
   const normalized = val.trim().toLowerCase();
   return !['false', '0', 'no', 'off'].includes(normalized);
+}
+
+/**
+ * Read the `link_resolution.global_basename` config flag. Defaults to
+ * FALSE (opt-in only; existing brains keep ancestor-walk resolution).
+ *
+ * When TRUE: bare wikilinks like `[[struktura]]` (no DIR_PATTERN prefix)
+ * that don't resolve via the existing path are matched against every
+ * page's basename. Each unique match emits a graph edge tagged
+ * `linkType: 'wikilink_basename'`. Multiple matches emit multiple edges.
+ *
+ * Resolution order (highest → lowest):
+ *   1. Env var `GBRAIN_LINK_RESOLUTION_GLOBAL_BASENAME=1` (operator override)
+ *   2. DB plane via `engine.getConfig('link_resolution.global_basename')`
+ *   3. Default false
+ *
+ * Closes https://github.com/garrytan/gbrain/issues/972.
+ */
+export async function isGlobalBasenameEnabled(engine: BrainEngine): Promise<boolean> {
+  const envVal = process.env.GBRAIN_LINK_RESOLUTION_GLOBAL_BASENAME;
+  if (envVal != null) {
+    const normalized = envVal.trim().toLowerCase();
+    return ['1', 'true', 'yes', 'on'].includes(normalized);
+  }
+  const val = await engine.getConfig('link_resolution.global_basename');
+  if (val == null) return false;
+  const normalized = val.trim().toLowerCase();
+  return ['1', 'true', 'yes', 'on'].includes(normalized);
 }

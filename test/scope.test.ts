@@ -129,17 +129,19 @@ describe('F3 refresh-token subset semantics under hasScope', () => {
 // ---------------------------------------------------------------------------
 
 describe('ALLOWED_SCOPES — exact list pinned', () => {
-  test('contains the 5 canonical scopes', () => {
-    expect(ALLOWED_SCOPES.size).toBe(5);
+  test('contains the 6 canonical scopes (v0.38: agent added)', () => {
+    expect(ALLOWED_SCOPES.size).toBe(6);
     expect(ALLOWED_SCOPES.has('read')).toBe(true);
     expect(ALLOWED_SCOPES.has('write')).toBe(true);
     expect(ALLOWED_SCOPES.has('admin')).toBe(true);
     expect(ALLOWED_SCOPES.has('sources_admin')).toBe(true);
     expect(ALLOWED_SCOPES.has('users_admin')).toBe(true);
+    expect(ALLOWED_SCOPES.has('agent')).toBe(true);
   });
   test('list is sorted alphabetically (deterministic for wire/drift check)', () => {
     expect([...ALLOWED_SCOPES_LIST]).toEqual([
       'admin',
+      'agent',
       'read',
       'sources_admin',
       'users_admin',

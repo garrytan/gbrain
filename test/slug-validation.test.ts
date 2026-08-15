@@ -259,10 +259,10 @@ describe('SLUG_SEGMENT_PATTERN (v0.32.7)', () => {
     expect(SLUG_SEGMENT_PATTERN.test('icp-理想客户画像')).toBe(true);
   });
 
-  test('REGRESSION: rejects non-CJK Unicode (Vietnamese)', () => {
-    // Scope is CJK only; Vietnamese with combining diacritics stays rejected
-    // until we widen to Unicode property escapes in v0.33+.
-    const result = 'người-dùng'.match(new RegExp(`^${SLUG_SEGMENT_PATTERN.source}$`));
-    expect(result).toBeNull();
+  test('accepts non-CJK Unicode (Vietnamese) since the #3417 all-script widening', () => {
+    // Pre-#3417 this was rejected (scope was CJK only). The grammar now uses
+    // Unicode property escapes, so đ/ư/etc. are valid slug characters.
+    const result = 'người-dùng'.match(new RegExp(`^${SLUG_SEGMENT_PATTERN.source}$`, 'u'));
+    expect(result).not.toBeNull();
   });
 });

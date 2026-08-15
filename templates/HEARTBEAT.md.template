@@ -19,7 +19,12 @@ What the agent checks and when. Each job reads the relevant skill file and runs 
 - Brain sync: `gbrain sync --no-pull && gbrain embed --stale`
 
 ### Daily
-- Auto-update check: `gbrain check-update --json`
+- Self-upgrade check: read `skills/gbrain-upgrade/SKILL.md` and run it. It runs
+  `gbrain self-upgrade --check-only --json`, and if behind, surfaces what's new
+  and either prompts you (notify mode, the default) or applies silently (auto
+  mode). Every `gbrain` invocation also nudges via the stderr `UPGRADE_AVAILABLE`
+  marker; this daily beat is the backstop for agents (OpenClaw / Hermes) running
+  on a cron cadence rather than riding invocation frequency.
 
 ### Weekly
 - Brain health: `gbrain doctor --json`

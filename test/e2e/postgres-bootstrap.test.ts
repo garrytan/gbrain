@@ -25,6 +25,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { LATEST_VERSION } from '../../src/core/migrate.ts';
+import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const skip = !DATABASE_URL;
@@ -34,6 +35,7 @@ describe.skipIf(skip)('PostgresEngine forward-reference bootstrap (E2E)', () => 
 
   beforeAll(async () => {
     engine = new PostgresEngine();
+    assertSafeE2eDatabaseUrl(DATABASE_URL!);
     await engine.connect({ database_url: DATABASE_URL! });
   }, 30_000);
 
@@ -89,5 +91,96 @@ describe.skipIf(skip)('PostgresEngine forward-reference bootstrap (E2E)', () => 
     // not regress the version.
     await engine.initSchema();
     expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
+  });
+
+  test('pre-v121 timeline shape converges to full final shape on REAL Postgres (#2626 wedge class)', async () => {
+    // The v121 wedge was Postgres-visible in production (blob CREATE INDEX
+    // on a column migration v121 hadn't added yet); the PGLite twins live in
+    // test/bootstrap.test.ts. Rewind schema AND the version counter to the
+    // wedged cohort's true state, then assert full initSchema convergence:
+    // column + FK + BOTH partial indexes, ledger at LATEST.
+    await engine.initSchema();
+    const conn = (engine as any).sql;
+    await conn.unsafe(`
+      DROP INDEX IF EXISTS idx_timeline_event_dedup;
+      DROP INDEX IF EXISTS idx_timeline_event_page;
+      ALTER TABLE timeline_entries DROP CONSTRAINT IF EXISTS timeline_entries_event_page_id_fkey;
+      ALTER TABLE timeline_entries DROP COLUMN IF EXISTS event_page_id;
+    `);
+    await engine.setConfig('version', '120');
+
+    await engine.initSchema();
+
+    expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
+    const col = await conn`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'timeline_entries' AND column_name = 'event_page_id'
+    `;
+    expect(col).toHaveLength(1);
+    const fk = await conn`
+      SELECT conname FROM pg_constraint WHERE conname = 'timeline_entries_event_page_id_fkey'
+    `;
+    expect(fk).toHaveLength(1);
+    const idx = await conn`
+      SELECT indexname FROM pg_indexes
+      WHERE tablename = 'timeline_entries'
+        AND indexname IN ('idx_timeline_event_page', 'idx_timeline_event_dedup')
+    `;
+    expect(idx).toHaveLength(2);
+  }, 60_000);
+
+  test('pre-v7 minion_jobs shape (scanner-sweep wedge class) converges on REAL Postgres', async () => {
+    await engine.initSchema();
+    const conn = (engine as any).sql;
+    await conn.unsafe(`
+      DROP INDEX IF EXISTS idx_minion_jobs_timeout;
+      DROP INDEX IF EXISTS uniq_minion_jobs_idempotency;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS timeout_at;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS idempotency_key;
+    `);
+
+    await engine.initSchema();
+
+    const cols = await conn`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'minion_jobs'
+        AND column_name IN ('timeout_at', 'idempotency_key')
+    `;
+    expect(cols).toHaveLength(2);
+    const idx = await conn`
+      SELECT indexname FROM pg_indexes
+      WHERE tablename = 'minion_jobs'
+        AND indexname IN ('idx_minion_jobs_timeout', 'uniq_minion_jobs_idempotency')
+    `;
+    expect(idx).toHaveLength(2);
+  }, 60_000);
+
+  // Migration v120 — schema-lint hardening (#1647 / #171). Postgres-only
+  // assertions (security_invoker has no surface on embedded PGLite).
+  test('v120: page_links view runs with security_invoker=on (#1647b)', async () => {
+    await engine.initSchema();
+    const rows = await engine.executeRaw<{ reloptions: string[] | null }>(
+      `SELECT c.reloptions FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = 'page_links' AND c.relkind = 'v'`,
+    );
+    expect(rows.length).toBe(1);
+    expect(JSON.stringify(rows[0].reloptions ?? [])).toContain('security_invoker=on');
+  });
+
+  test('v120: trigger + event-trigger functions pin search_path, incl auto_enable_rls (#1647a/#171)', async () => {
+    await engine.initSchema();
+    const rows = await engine.executeRaw<{ proname: string; proconfig: unknown }>(
+      `SELECT p.proname, p.proconfig FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'public'
+          AND p.proname IN ('bump_page_generation_fn','bump_page_generation_clock_fn',
+                            'update_chunk_search_vector','update_page_search_vector',
+                            'notify_minion_job_change','auto_enable_rls')`,
+    );
+    expect(rows.length).toBeGreaterThanOrEqual(5);
+    for (const r of rows) {
+      expect(JSON.stringify(r.proconfig ?? [])).toContain('search_path=');
+    }
   });
 });

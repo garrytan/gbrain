@@ -66,7 +66,7 @@ export class SqlCoeEvidenceProjection implements CoeEvidenceProjection {
             object_key, normalizer_name, normalizer_version, normalizer_config_hash,
             record_hash, record_json, scope_json, warnings_json, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
-                 $10, $12::jsonb, $13::jsonb, $14::jsonb, $11::timestamptz)
+                 $10, $12::jsonb, $13::jsonb, ($14::jsonb)->'items', $11::timestamptz)
          ON CONFLICT (normalized_document_id) DO NOTHING`,
         [
           document.normalized_document_id,
@@ -84,7 +84,7 @@ export class SqlCoeEvidenceProjection implements CoeEvidenceProjection {
         [
           canonicalJsonValue(document),
           canonicalJsonValue(document.scope),
-          canonicalJsonValue(document.warnings),
+          { items: canonicalJsonValue(document.warnings) },
         ],
       );
       const documentRows = await tx.executeRaw<{ record_hash: string }>(

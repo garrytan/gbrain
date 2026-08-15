@@ -19,6 +19,8 @@ import { hasDatabase, setupDB, teardownDB, getEngine, getConn } from './helpers.
 // Mock embedBatch so embed phase doesn't call OpenAI.
 mock.module('../../src/core/embedding.ts', () => ({
   embedBatch: async (texts: string[]) => texts.map(() => new Float32Array(1536)),
+  // v0.41.31: embed phase reads the current signature to stamp provenance.
+  currentEmbeddingSignature: () => 'test:model:1536',
 }));
 
 const { runDream } = await import('../../src/commands/dream.ts');

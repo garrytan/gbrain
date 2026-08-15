@@ -44,12 +44,12 @@ Sharp technical leader. Under-appreciated internally. Watch for signs of burnout
 Ascending. Likely CTO track if the migration succeeds.
 
 ## Relationship
-Met through Pedro. Had coffee 3x. Last: discussed API architecture thesis.
+Met through alice-example. Had coffee 3x. Last: discussed API architecture thesis.
 
 ## Contact
 sarah@acmecorp.com | @sarahchen | linkedin.com/in/sarahchen
 
----
+<!-- timeline -->
 
 ## Timeline
 
@@ -58,7 +58,7 @@ sarah@acmecorp.com | @sarahchen | linkedin.com/in/sarahchen
   [Source: Meeting notes, 2026-04-07 2:00 PM PT]
 - **2026-04-03** | Mentioned in email re Q2 planning. Taking lead on ops.
   [Source: Gmail, sarah@acmecorp.com, 2026-04-03 10:30 AM PT]
-- **2026-03-15** | First meeting. Intro from Pedro. Strong technical background.
+- **2026-03-15** | First meeting. Intro from alice-example. Strong technical background.
   [Source: User, direct conversation, 2026-03-15 3:00 PM PT]
 ```
 
@@ -69,7 +69,7 @@ update_brain_page(slug, new_info, source):
   page = gbrain get {slug}
 
   // TIMELINE: always APPEND (never edit existing entries)
-  gbrain add_timeline_entry {slug} {
+  gbrain timeline-add {slug} {
     date: today,
     summary: new_info.summary,
     detail: new_info.detail,
@@ -113,9 +113,19 @@ support that claim.
    truth chunks with higher relevance than timeline chunks. This means the freshest
    synthesis surfaces first in search results.
 
-4. **The --- separator matters.** GBrain uses the first standalone `---` after
-   frontmatter to split compiled_truth from timeline. Everything above is compiled
-   truth, everything below is timeline.
+4. **The timeline sentinel matters — and a bare `---` is NOT one.** GBrain
+   splits compiled_truth from timeline at the first recognized sentinel, in
+   order of precedence:
+   1. `<!-- timeline -->` — preferred; unambiguous, and what GBrain itself
+      emits when it writes a page.
+   2. `--- timeline ---` — decorated separator.
+   3. `---` ONLY when the next non-empty line is `## Timeline` or
+      `## History` (backward-compat for older gbrain-written files).
+
+   A plain `---` line anywhere else is a markdown horizontal rule, not a
+   separator. Author new pages with `<!-- timeline -->` (as in the example
+   above); everything above it is compiled truth, everything below is
+   timeline.
 
 5. **Don't skip the Assessment section.** The assessment is the value. "Strong
    technical leader" is something no API can provide. It's YOUR read on this

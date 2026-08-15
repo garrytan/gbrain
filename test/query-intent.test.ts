@@ -33,6 +33,14 @@ describe('classifyQuery — entity / canonical queries → both axes off', () =>
     expect(r.suggestedSalience).toBe('off');
   });
 
+  test('"what do I know about widget-co" → entity, same as you/we phrasings', () => {
+    const r = classifyQuery('what do I know about widget-co');
+    expect(r.intent).toBe('entity');
+    expect(r.suggestedDetail).toBe('low');
+    expect(r.suggestedRecency).toBe('off');
+    expect(r.suggestedSalience).toBe('off');
+  });
+
   test('"history of X" → both off (canonical)', () => {
     const r = classifyQuery('history of acme corp');
     expect(r.suggestedRecency).toBe('off');

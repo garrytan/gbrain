@@ -23,7 +23,7 @@ def parse_index_md(index_path):
         line_strip = line.strip()
         if not line_strip.startswith("|") or ".pdf" not in line_strip:
             continue
-        
+
         # Parse table cells
         cells = [cell.strip() for cell in line_strip.split("|")]
         # Keep non-empty cells
@@ -69,7 +69,7 @@ def convert_pdf_to_md_pdfium(pdf_path, dest_path, metadata):
             text = text_page.get_text_range()
             if text:
                 text_parts.append(text)
-        
+
         md_text = "\n\n".join(text_parts)
 
         # Build clean frontmatter
@@ -83,7 +83,7 @@ def convert_pdf_to_md_pdfium(pdf_path, dest_path, metadata):
         fm_lines.append('type: "article"')
         fm_lines.append('tags: ["academic", "sociology", "misandry", "victimization"]')
         fm_lines.append("---")
-        
+
         fm = "\n".join(fm_lines)
         full_content = fm + "\n\n" + md_text
 

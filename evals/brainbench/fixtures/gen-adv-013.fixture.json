@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-adv-013",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "adversarial",
+  "seed_pages": [
+    {
+      "slug": "people/priya-duskfield",
+      "content": "---\ntitle: Priya Duskfield\ntype: person\naliases: [priya]\nsummary: Founder of Lichenloop; status updated 2026.\n---\n\nPriya Duskfield is the founder of Lichenloop.\nOUTDATED (2025): the round was on hold.\nCURRENT (2026): the round re-opened with a new lead.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Status check on Priya Duskfield before I reply to the thread?"
+    }
+  ],
+  "holdout": true
+}

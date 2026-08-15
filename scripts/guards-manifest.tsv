@@ -1,0 +1,63 @@
+# CI guard registry (W0 fix-wave, Tier-1 #11 / D5.14).
+# THE single registry of scripts/check-* guards. package.json's `check:all`
+# (a second, stale, hand-synced copy) was deleted; scripts/run-verify-parallel.sh
+# executes guards, and scripts/guard-self-test.sh consumes THIS file to
+# self-test every scanner guard against known-bad/known-good fixtures under
+# test/fixtures/guards/<guard>/{bad,good}/ (env: GBRAIN_GUARD_ROOT).
+#
+# class: scanner   = greps/parses repo sources; MUST eventually carry fixtures
+#                    (selftest yes|todo). A scanner guard with selftest=todo is
+#                    tracked debt — the class that produced two permanently-
+#                    green guards (check-no-double-retry, pcregrep-gated pass).
+#        buildfresh = runs builds/regenerators and diffs outputs; self-tests
+#                    don't apply (the build IS the test). exempt.
+#        repostate = checks repo/file state (modes, symlinks, VERSION stamps);
+#                    exempt with reason.
+#
+# guard	class	selftest	notes
+check-no-double-retry.sh	scanner	yes	regex hole fixed in W0 (could not match `() =>`); perl multi-line pass replaces never-installed pcregrep
+check-jsonb-pattern.sh	scanner	yes	nested-paren hole fixed in W0; safe ::text::jsonb spelling stays unflagged
+check-jsonb-params.mjs	scanner	yes	positional $N::jsonb AST-lite scanner; argv/env root override
+check-batch-audit-site.sh	scanner	todo
+check-bun-test-timeout.sh	scanner	todo
+check-fixture-privacy.sh	scanner	todo
+check-no-legacy-getconnection.sh	scanner	todo	was reachable from neither verify nor CI pre-W0 (check:all only)
+check-no-pii-in-agent-voice.sh	scanner	todo
+check-operations-filter-bypass.sh	scanner	todo
+check-pagetype-exhaustive.sh	scanner	todo
+check-pg-url-redaction.sh	scanner	todo
+check-privacy.sh	scanner	todo
+check-progress-to-stdout.sh	scanner	todo
+check-proposal-pii.sh	scanner	todo
+check-search-path.sh	scanner	todo
+check-skill-brain-first.sh	scanner	todo
+check-skill-refs.mjs	scanner	todo
+check-source-config-leak.sh	scanner	todo
+check-source-id-projection.sh	scanner	todo
+check-source-scope-onboard.sh	scanner	todo
+check-synthetic-corpus-privacy.sh	scanner	todo
+check-system-of-record.sh	scanner	todo
+check-test-real-names.sh	scanner	todo
+check-worker-lock-renewal-shape.sh	scanner	todo
+check-worker-pool-atomicity.sh	scanner	todo
+check-gateway-routed-no-direct-anthropic.sh	scanner	todo
+check-engine-dynamic-import.sh	scanner	todo	.ts companion is its implementation, not a separate guard
+check-key-files-current-state.sh	scanner	todo
+check-exports-count.sh	scanner	todo	was reachable from neither verify nor CI pre-W0 (check:all only)
+check-trailing-newline.sh	scanner	todo	was reachable from neither verify nor CI pre-W0 (check:all only)
+check-test-isolation.sh	scanner	todo	allowlist data file: check-test-isolation.allowlist
+check-admin-build.sh	buildfresh	exempt	runs the admin build; the build is the test
+check-admin-embedded.sh	buildfresh	exempt	embed freshness diff
+check-admin-scope-drift.sh	buildfresh	exempt	regenerates + diffs
+check-bootstrap-templates.sh	buildfresh	exempt	regenerates template tree + diffs
+check-eval-glossary-fresh.sh	buildfresh	exempt	regenerates + diffs
+check-fuzz-purity.sh	buildfresh	exempt	executes fuzz corpus
+check-image-decoders-embedded.sh	buildfresh	exempt	binary embed check
+check-pglite-embedded.sh	buildfresh	exempt	binary embed check
+check-skills-manifest-fresh.sh	buildfresh	exempt	regenerates + diffs
+check-tool-catalog-fresh.sh	buildfresh	exempt	regenerates + diffs
+check-wasm-embedded.sh	buildfresh	exempt	binary embed check
+check-bootstrap-tag.sh	repostate	exempt	VERSION stamp drift check
+check-cli-executable.sh	repostate	exempt	file-mode check
+check-no-tracked-symlinks.sh	repostate	exempt	git index state check
+check-grok-pin.sh	repostate	exempt	pin-stamp drift check (GROK-CLI-PIN.md stamps vs heavy-tests grok-door env); own bun guard tests in test/check-bootstrap-guards.test.ts

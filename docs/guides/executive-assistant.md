@@ -8,6 +8,11 @@ Without this: the agent triages email mechanically ("you have 12 unread"), preps
 
 ## Implementation
 
+Before hand-rolling these: gbrain bundles the morning-briefing half of this
+pattern as the `briefing` skill (`skills/briefing/`) and the task-prep half
+as `daily-task-prep` (`skills/daily-task-prep/`). Use the workflows below to
+extend or customize what those skills already ship.
+
 ```
 # WORKFLOW 1: Email Triage
 on email_batch(emails):
@@ -53,28 +58,28 @@ on upcoming_meeting(meeting):
                 "last_interaction": page.timeline[0],     # most recent
                 "open_threads": page.open_threads,
                 "relationship_temperature": page.relationship,
-                "relevant_deals": gbrain get_links <attendee_slug>,
+                "relevant_deals": gbrain call get_links '{"slug": "<attendee_slug>"}',
             }
         else:
             briefing[attendee] = "No brain page -- consider enriching"
 
     # Surface: shared history, what to follow up on, what to watch for
-    # "Last time you discussed the Series B timeline. Pedro was concerned
-    #  about burn rate. Here's the latest from his company page."
+    # "Last time you discussed the Series B timeline. alice-example was
+    #  concerned about burn rate. Here's the latest from her company page."
 
 # WORKFLOW 3: Post-Inbox Brain Updates
 on inbox_cleared():
     for email in processed_emails:
         if email.contained_new_information:
             # Update the sender's brain page with new signal
-            gbrain add_timeline_entry <sender_slug> \
-                --entry "Email re: {subject}. Key info: {extracted_signal}" \
+            gbrain timeline-add <sender_slug> {date} \
+                "Email re: {subject}. Key info: {extracted_signal}" \
                 --source "email from {sender} re {subject}, {date}"
 
             # Update any mentioned entity pages too
             for entity in email.mentioned_entities:
-                gbrain add_timeline_entry <entity_slug> \
-                    --entry "{what_was_said_about_them}" \
+                gbrain timeline-add <entity_slug> {date} \
+                    "{what_was_said_about_them}" \
                     --source "email from {sender}, {date}"
 
 # WORKFLOW 4: Scheduling Nudges
@@ -93,9 +98,9 @@ on schedule_request(meeting):
 
 1. **Search sender BEFORE reading the email.** This is counterintuitive but critical. Loading brain context first means you know who they are, what you're working on together, and what they care about -- before you even see the subject line. The triage is informed, not mechanical.
 2. **Unknown senders with no brain page are almost always noise.** If `gbrain search` returns nothing for a sender, they're probably not important. Classify as low priority unless the email content signals otherwise.
-3. **Meeting prep is the highest-leverage EA workflow.** The user walks into every meeting already briefed on each attendee: last interaction, open threads, relationship history. This is the difference between "you have a meeting at 3" and "you have a meeting at 3 with Pedro -- last time you discussed the Series B, he was concerned about burn rate."
+3. **Meeting prep is the highest-leverage EA workflow.** The user walks into every meeting already briefed on each attendee: last interaction, open threads, relationship history. This is the difference between "you have a meeting at 3" and "you have a meeting at 3 with alice-example -- last time you discussed the Series B, she was concerned about burn rate."
 4. **Post-inbox brain updates are where the brain compounds.** Every email is signal. If you clear the inbox without updating brain pages, the information is lost. This is the step most agents skip.
-5. **Scheduling nudges require timeline data.** "You haven't met with Diana in 6 weeks" only works if meeting pages have been ingested with proper entity propagation (see meeting-ingestion guide).
+5. **Scheduling nudges require timeline data.** "You haven't met with charlie-example in 6 weeks" only works if meeting pages have been ingested with proper entity propagation (see meeting-ingestion guide).
 
 ## How to Verify
 

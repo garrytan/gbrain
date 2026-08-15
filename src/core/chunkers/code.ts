@@ -20,6 +20,14 @@
 
 import { chunkText as recursiveChunk } from './recursive.ts';
 import { buildQualifiedName } from './qualified-names.ts';
+import { estimateTokens, estimateEmbedTokens, estimateEmbedTokensCeiling, DEFAULT_MAX_CHUNK_TOKENS } from './token-estimate.ts';
+import { safeSplitIndex } from '../text-safe.ts';
+
+// Both estimators moved to token-estimate.ts (#3477 follow-up) so
+// recursive.ts can share them without an import cycle. Re-exported here:
+// commands/sync.ts, commands/reindex-code.ts, and tests import them from
+// this module.
+export { estimateTokens, estimateEmbedTokens } from './token-estimate.ts';
 
 // Embed the tree-sitter runtime + per-language grammars as files.
 // `with { type: 'file' }` returns a path (string) at runtime. Bun bundles
@@ -75,6 +83,11 @@ import G_RUST from '../../assets/wasm/grammars/tree-sitter-rust.wasm' with { typ
 import G_SCALA from '../../assets/wasm/grammars/tree-sitter-scala.wasm' with { type: 'file' };
 // @ts-ignore
 import G_SOLIDITY from '../../assets/wasm/grammars/tree-sitter-solidity.wasm' with { type: 'file' };
+// @ts-ignore — DerekStride/tree-sitter-sql @ c2e1e08db1ea20dc23bdb8d228a81a8756e9c450,
+// built with tree-sitter-cli@v0.26.3 --abi 14 (matches web-tree-sitter 0.22.6).
+// 11 MB; substantially larger than peers because the grammar covers
+// PostgreSQL + MySQL + SQLite + T-SQL basics. See CHANGELOG for size notes.
+import G_SQL from '../../assets/wasm/grammars/tree-sitter-sql.wasm' with { type: 'file' };
 // @ts-ignore
 import G_SWIFT from '../../assets/wasm/grammars/tree-sitter-swift.wasm' with { type: 'file' };
 // @ts-ignore
@@ -122,7 +135,7 @@ export type SupportedCodeLanguage =
   | 'typescript' | 'tsx' | 'javascript' | 'python' | 'ruby' | 'go'
   | 'rust' | 'java' | 'c_sharp' | 'cpp' | 'c' | 'php' | 'swift' | 'kotlin'
   | 'scala' | 'lua' | 'elixir' | 'elm' | 'ocaml' | 'dart' | 'zig' | 'solidity'
-  | 'bash' | 'css' | 'html' | 'vue' | 'json' | 'yaml' | 'toml';
+  | 'bash' | 'css' | 'html' | 'vue' | 'json' | 'yaml' | 'toml' | 'sql';
 
 export interface CodeChunkMetadata {
   symbolName: string | null;
@@ -163,6 +176,15 @@ export interface CodeChunkOptions {
   largeChunkThresholdTokens?: number;
   fallbackChunkSizeWords?: number;
   fallbackOverlapWords?: number;
+  /**
+   * Hard upper bound (estimated tokens) on any single emitted chunk. A node
+   * the AST splitter can't break up (a giant object/array literal, a single
+   * huge assignment, a massive template literal) would otherwise be emitted
+   * whole and rejected by the embedder ("input exceeds context length").
+   * Chunks over this budget are recursively re-split. Default 2000 fits the
+   * smallest common embedder context (e.g. nomic-embed-text, 2048).
+   */
+  maxChunkTokens?: number;
 }
 
 /**
@@ -226,6 +248,7 @@ const LANGUAGE_MANIFEST: Record<SupportedCodeLanguage, LanguageEntry> = {
   json:       { displayName: 'JSON',       embeddedPath: G_JSON },
   yaml:       { displayName: 'YAML',       embeddedPath: G_YAML },
   toml:       { displayName: 'TOML',       embeddedPath: G_TOML },
+  sql:        { displayName: 'SQL',        embeddedPath: G_SQL },
 };
 
 /**
@@ -322,6 +345,12 @@ const TOP_LEVEL_TYPES: Partial<Record<SupportedCodeLanguage, Set<string>>> = {
   elixir: new Set(['call']),
   bash: new Set(['function_definition', 'variable_assignment']),
   solidity: new Set(['contract_declaration', 'function_definition', 'modifier_definition', 'event_definition']),
+  // SQL (DerekStride): every top-level node is `statement`, wrapping a single
+  // child whose type is the actual kind (create_table, create_function, etc).
+  // Catch-all `statement` here; extractSymbolName dives into the inner child
+  // to extract the schema target name (Step 0 inspection 2026-05-24 found
+  // all 9 fixtures produced `program > statement > <kind>` shape).
+  sql: new Set(['statement']),
 };
 
 const BODY_NODE_TYPES = new Set([
@@ -439,6 +468,7 @@ export function detectCodeLanguage(filePath: string, content?: string): Supporte
   if (lower.endsWith('.json')) return 'json';
   if (lower.endsWith('.yaml') || lower.endsWith('.yml')) return 'yaml';
   if (lower.endsWith('.toml')) return 'toml';
+  if (lower.endsWith('.sql')) return 'sql';
   // v0.20.0 Cathedral II Layer 1a fallback hook. Layer 9 (B2 Magika) wires
   // this in to detect extensionless files (Dockerfile, Makefile, shell
   // shebangs). try/catch because the fallback may itself fail on first-run
@@ -623,7 +653,13 @@ export async function chunkCodeTextFull(
       // so the header shows the `export` keyword for completeness.
       const nestableNode = findNestableParent(node, nestedConfig);
       const symbolName = extractSymbolName(nestableNode ?? node);
-      const symbolType = normalizeSymbolType((nestableNode ?? node).type);
+      // For SQL `statement` wrappers, the meaningful type lives on the inner
+      // child. extractSymbolName already dives in for the name; mirror that
+      // here so chunk headers say "table users" not "statement users".
+      const typeNode = (nestableNode ?? node);
+      const symbolType = (typeNode.type === 'statement' && typeNode.namedChildCount === 1)
+        ? normalizeSymbolType(typeNode.namedChild(0).type)
+        : normalizeSymbolType(typeNode.type);
 
       if (nestableNode && symbolName && nestedConfig) {
         const before = chunks.length;
@@ -689,7 +725,7 @@ export async function chunkCodeTextFull(
     if (chunks.length === 0) {
       return { chunks: fallbackChunks(source, filePath, language, opts), edges: rawEdges };
     }
-    return { chunks: mergeSmallSiblings(chunks, chunkTarget), edges: rawEdges };
+    return { chunks: capOversizedChunks(mergeSmallSiblings(chunks, chunkTarget), filePath, language, opts), edges: rawEdges };
   } catch {
     return { chunks: fallbackChunks(source, filePath, language, opts), edges: [] };
   } finally {
@@ -795,6 +831,133 @@ function buildMergedChunk(group: CodeChunk[], index: number): CodeChunk {
   };
 }
 
+/**
+ * Final safety net: guarantee no emitted chunk exceeds the embedder's context
+ * budget. tree-sitter splitting (splitLargeNode) can only break up a node that
+ * exposes a `body` with >= 2 named children. A node without one — a giant
+ * object/array literal, a single huge assignment, a massive template literal —
+ * is emitted whole, producing a chunk far larger than the embedder accepts.
+ * The embedder then rejects it ("input exceeds context length") and the chunk
+ * is never embedded. Recursively re-split any over-budget chunk; fall back to a
+ * hard character split for pathological no-whitespace content (e.g. a minified
+ * one-liner) where word/line splitting can't get under budget.
+ */
+function capOversizedChunks(
+  chunks: CodeChunk[],
+  filePath: string,
+  language: SupportedCodeLanguage,
+  opts: CodeChunkOptions,
+): CodeChunk[] {
+  const cap = opts.maxChunkTokens ?? DEFAULT_MAX_CHUNK_TOKENS;
+  if (!chunks.some((c) => estimateEmbedTokens(c.text) > cap)) return chunks;
+  const out: CodeChunk[] = [];
+  for (const c of chunks) {
+    if (estimateEmbedTokens(c.text) <= cap) {
+      out.push({ ...c, index: out.length });
+      continue;
+    }
+    // Strip the structured header ("[Lang] path:N-M symbol\n\n") so the splitter
+    // works on the raw body; buildChunk re-adds a header to each piece. The
+    // re-added header costs tokens too — budget for it, or every piece split
+    // to exactly `cap` re-emerges a header's-worth over it (measured: a 2,000
+    // cap emitted 2,011-token fence chunks when the body alone was capped).
+    // The reservation must be an UPPER bound on the header's contribution:
+    // estimateEmbedTokens is super-additive across a mixed-script join, so the
+    // header's standalone cl100k figure under-counts ~2.5x once the body
+    // contains CJK and the weighted branch takes over (see
+    // estimateEmbedTokensCeiling).
+    const headerMatch = c.text.match(/^\[[^\]]+\] [^\n]+\n\n/);
+    const body = headerMatch ? c.text.slice(headerMatch[0].length) : c.text;
+    const bodyCap = Math.max(1, cap - (headerMatch ? estimateEmbedTokensCeiling(headerMatch[0]) : 0));
+    for (const piece of splitToTokenBudget(body, bodyCap, opts)) {
+      if (!piece.trim()) continue;
+      out.push(buildChunk({
+        body: piece,
+        filePath,
+        language,
+        symbolName: c.metadata.symbolName,
+        symbolType: c.metadata.symbolType,
+        startLine: c.metadata.startLine,
+        endLine: c.metadata.endLine,
+        index: out.length,
+        parentSymbolPath: c.metadata.parentSymbolPath,
+      }));
+    }
+  }
+  return out;
+}
+
+/** Split `text` into pieces each estimated <= cap tokens. Word/line-aware
+ *  (recursiveChunk) first; a hard character split is the last resort for
+ *  content with no whitespace to break on. */
+function splitToTokenBudget(text: string, cap: number, opts: CodeChunkOptions): string[] {
+  const out: string[] = [];
+  const pieces = recursiveChunk(text, {
+    chunkSize: opts.fallbackChunkSizeWords ?? 300,
+    chunkOverlap: opts.fallbackOverlapWords ?? 50,
+  }).map((p) => p.text);
+  // Hard-split budget is derived from each piece's own measured density
+  // (chars per estimated token) scaled to the cap, not a fixed chars-per-
+  // token guess: the previous 3.5 chars/token ASCII assumption undercuts
+  // URL-dense JSON (~2.6 chars/token measured), leaving 2,070–2,095-token
+  // slices past a 2,000 cap. Slices are re-measured and re-derived (density
+  // varies within a piece), so the cap holds by construction.
+  const hardSplit = (p: string): void => {
+    const est = estimateEmbedTokens(p);
+    if (est <= cap) {
+      out.push(p);
+      return;
+    }
+    const charBudget = Math.max(1, Math.floor((p.length * cap) / est));
+    if (charBudget >= p.length) {
+      out.push(p); // 1-char floor on a tiny cap — nothing left to split
+      return;
+    }
+    // Even out the slice width instead of striding by charBudget and shedding
+    // `p.length mod charBudget` as a standalone piece at EVERY recursion
+    // level: buildChunk re-headers each remainder into its own embedding row,
+    // so a 14.4K fence emitted 5 chunks of 50-86 chars (and, deeper in the
+    // recursion, 3-char slivers) alongside its real content. Evening is free —
+    // the piece count is ceil(length / charBudget) either way, so the same
+    // content is spread over the same number of chunks — and width <=
+    // charBudget by construction, so the token budget still holds.
+    //
+    // The width is re-derived from what REMAINS on every step rather than
+    // fixed up front, because safeSplitIndex can back a cut off by up to two
+    // units and a fixed width lets that drift accumulate into a tail runt
+    // (measured on an all-astral blob: 4-unit chunks trailing 724-unit ones).
+    let i = 0;
+    while (i < p.length) {
+      const remaining = p.length - i;
+      const partsLeft = Math.ceil(remaining / charBudget);
+      // `i === 0` cannot recurse on the whole piece — charBudget < p.length is
+      // checked above, so partsLeft >= 2 on the first step. The guard keeps a
+      // degenerate budget from looping instead of terminating.
+      if (partsLeft <= 1) {
+        if (i === 0) out.push(p);
+        else hardSplit(p.slice(i));
+        return;
+      }
+      // The budget is derived from measured density, so it has arbitrary
+      // parity: a raw slice at `i + width` orphans a UTF-16 surrogate half.
+      // safeSplitIndex backs the cut off a pair (#2011 — a lone surrogate is
+      // rejected by Postgres inside a ::jsonb cast and aborts the whole batch).
+      const end = safeSplitIndex(p, i + Math.ceil(remaining / partsLeft));
+      if (end <= i) {
+        // Degenerate width (a 1-char budget backing off a surrogate pair) —
+        // emit rather than drop, and never re-enter on the same string.
+        if (i === 0) out.push(p);
+        else hardSplit(p.slice(i));
+        return;
+      }
+      hardSplit(p.slice(i, end));
+      i = end;
+    }
+  };
+  for (const piece of pieces) hardSplit(piece);
+  return out;
+}
+
 // ---------- Internals ----------
 
 function fallbackChunks(
@@ -805,7 +968,7 @@ function fallbackChunks(
 ): CodeChunk[] {
   const size = opts.fallbackChunkSizeWords ?? 300;
   const overlap = opts.fallbackOverlapWords ?? 50;
-  return recursiveChunk(source, { chunkSize: size, chunkOverlap: overlap }).map((chunk, index) =>
+  const chunks = recursiveChunk(source, { chunkSize: size, chunkOverlap: overlap }).map((chunk, index) =>
     buildChunk({
       body: chunk.text, filePath, language,
       symbolName: null, symbolType: 'module',
@@ -813,6 +976,14 @@ function fallbackChunks(
       index,
     }),
   );
+  // Route every fallback emission through the oversize net. Previously only
+  // the empty-AST branch wrapped its fallback in capOversizedChunks — the
+  // no-language, parse-timeout, no-semantic-nodes (every JSON/YAML fence:
+  // their node types aren't in TOP_LEVEL_TYPES) and parse-throw branches
+  // shipped word-counted chunks unchecked, and the word pipeline undercounts
+  // exactly the dense content (JSON, minified, CJK-mixed) that overflows
+  // embedders. Hoisting the cap here covers all five paths at once.
+  return capOversizedChunks(chunks, filePath, language, opts);
 }
 
 function buildChunk(input: {
@@ -1023,6 +1194,17 @@ function splitLargeNode(node: any, source: string, chunkTarget: number): SplitRa
 }
 
 function extractSymbolName(node: any): string | null {
+  // SQL (DerekStride): the chunk node is `statement` wrapping a single inner
+  // child whose type is the actual statement kind. Dive in to find the target
+  // identifier. DML statements (select/insert/update/delete) deliberately
+  // return null so their chunks emit unnamed — code-def is a DDL signal.
+  // The `statement` wrapper is unique to SQL among gbrain's 37 grammars
+  // (Step 0 inspection 2026-05-24); checking by node.type is safe.
+  if (node.type === 'statement' && node.namedChildCount === 1) {
+    const sqlName = extractSqlSymbolName(node.namedChild(0));
+    if (sqlName !== undefined) return sqlName;
+  }
+
   const directName = node.childForFieldName('name');
   if (directName?.text?.trim()) return sanitize(directName.text);
 
@@ -1041,6 +1223,45 @@ function extractSymbolName(node: any): string | null {
   return null;
 }
 
+// SQL-specific symbol extractor. Returns:
+//   string — DDL statement: extracted target name (table/function/view/index/etc).
+//   null   — DDL statement type, but name extraction failed (edge fixture).
+//   undefined — fall through to generic extractor (not a recognized SQL kind).
+//
+// DerekStride/tree-sitter-sql exposes the target identifier via the `name`
+// field on most create_* nodes; `alter_table` puts it in a separate field.
+// DML kinds (select/insert/update/delete) deliberately return null —
+// gbrain's code-def is a DDL retrieval signal, not a DML one.
+function extractSqlSymbolName(inner: any): string | null | undefined {
+  const t = inner.type;
+  // DDL: extract identifier name. Tried `name` field first (most common shape),
+  // then any `object_reference` / `identifier` child.
+  const DDL_KINDS = new Set([
+    'create_table', 'create_view', 'create_index', 'create_function',
+    'create_procedure', 'create_type', 'create_schema', 'create_database',
+    'create_trigger', 'alter_table', 'alter_view',
+  ]);
+  if (DDL_KINDS.has(t)) {
+    const nameField = inner.childForFieldName?.('name');
+    if (nameField?.text?.trim()) return sanitize(nameField.text);
+    // Fallback: first identifier-like named child.
+    for (let i = 0; i < (inner.namedChildCount || 0); i++) {
+      const c = inner.namedChild(i);
+      if (c.type === 'object_reference' || c.type === 'identifier' || c.type.endsWith('_identifier')) {
+        const v = sanitize(c.text);
+        if (v) return v;
+      }
+    }
+    return null;
+  }
+  // DML: explicitly null (chunk emits unnamed; code-def doesn't fire).
+  if (t === 'select' || t === 'insert' || t === 'update' || t === 'delete' ||
+      t === 'merge' || t === 'with') {
+    return null;
+  }
+  return undefined;
+}
+
 function normalizeSymbolType(type: string): string {
   if (type.includes('function') || type === 'method' || type === 'singleton_method') return 'function';
   if (type.includes('class')) return 'class';
@@ -1049,41 +1270,19 @@ function normalizeSymbolType(type: string): string {
   if (type.includes('enum')) return 'enum';
   if (type.includes('module')) return 'module';
   if (type.includes('import')) return 'import';
+  if (type === 'create_table' || type === 'alter_table') return 'table';
+  if (type === 'create_view' || type === 'alter_view') return 'view';
+  if (type === 'create_index') return 'index';
+  if (type === 'create_procedure') return 'procedure';
+  if (type === 'create_type') return 'type';
+  if (type === 'create_schema') return 'schema';
+  if (type === 'create_database') return 'database';
+  if (type === 'create_trigger') return 'trigger';
   return type.replace(/_/g, ' ');
 }
 
 function sanitize(name: string): string {
   return name.replace(/[\n\r\t]+/g, ' ').replace(/\s+/g, ' ').trim();
-}
-
-// v0.19.0 (Layer 5): accurate token count via @dqbd/tiktoken cl100k_base,
-// the same encoder text-embedding-3-large uses. The old len/4 heuristic was
-// 2-3x off for code. Lazy-init so dev and compiled-binary both only pay
-// the init cost once. Falls back to the heuristic if the encoder fails
-// to load (vanishingly unlikely but keeps the chunker available).
-let tiktokenEncoder: { encode: (s: string) => Uint32Array; free: () => void } | null = null;
-let tiktokenInitialized = false;
-
-// v0.20.0 Cathedral II Layer 8 (D1) — exported so commands/sync.ts can
-// estimate embed cost before a --all sync blows a surprise OpenAI bill.
-// Same cl100k_base tokenizer the embedding path actually uses, so cost
-// estimates match actual billing within tokenizer noise.
-export function estimateTokens(text: string): number {
-  if (!text) return 0;
-  if (!tiktokenInitialized) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const m = require('@dqbd/tiktoken');
-      tiktokenEncoder = m.get_encoding('cl100k_base');
-    } catch {
-      tiktokenEncoder = null;
-    }
-    tiktokenInitialized = true;
-  }
-  if (tiktokenEncoder) {
-    return tiktokenEncoder.encode(text).length;
-  }
-  return Math.max(1, Math.ceil(text.length / 4));
 }
 
 // v0.20.0 Cathedral II Layer 4: display name derived from the language

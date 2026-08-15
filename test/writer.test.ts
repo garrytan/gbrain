@@ -203,6 +203,17 @@ describe('SlugRegistry', () => {
     })).rejects.toThrow(SlugRegistryError);
   });
 
+  test('create accepts CJK slugs (#738)', async () => {
+    const reg = new SlugRegistry(engine);
+    const r = await reg.create({
+      desiredSlug: '知识/品牌圣经',
+      displayName: '品牌圣经',
+      type: 'note',
+    });
+    expect(r.slug).toBe('知识/品牌圣经');
+    expect(r.exact).toBe(true);
+  });
+
   test('create throws on invalid slug', async () => {
     const reg = new SlugRegistry(engine);
     await expect(reg.create({
@@ -641,6 +652,123 @@ describe('back-link validator', () => {
       engine,
     });
     expect(findings).toEqual([]);
+  });
+
+  async function seedDuplicateBacklinkPages(): Promise<void> {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('team-x', 'team-x') ON CONFLICT (id) DO NOTHING`,
+    );
+    for (const sourceId of ['default', 'team-x']) {
+      await engine.putPage('concepts/a', {
+        type: 'concept', title: `a@${sourceId}`, compiled_truth: 'a', frontmatter: {},
+      }, { sourceId });
+      await engine.putPage('people/b', {
+        type: 'person', title: `b@${sourceId}`, compiled_truth: 'b', frontmatter: {},
+      }, { sourceId });
+    }
+  }
+
+  async function validateTeamOrigin() {
+    return await backLinkValidator.validate({
+      slug: 'concepts/a',
+      sourceId: 'team-x',
+      type: 'concept',
+      compiledTruth: 'a',
+      timeline: '',
+      frontmatter: {},
+      engine,
+    });
+  }
+
+  test('wrong-source reverse does not satisfy an exact non-default backlink', async () => {
+    await seedDuplicateBacklinkPages();
+    await engine.addLink(
+      'concepts/a', 'people/b', 'forward', 'mentions', 'manual', undefined, undefined,
+      { fromSourceId: 'team-x', toSourceId: 'team-x' },
+    );
+    await engine.addLink(
+      'people/b', 'concepts/a', 'wrong-source reverse', 'mentions', 'manual', undefined, undefined,
+      { fromSourceId: 'team-x', toSourceId: 'default' },
+    );
+
+    const findings = await validateTeamOrigin();
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].message).toContain('people/b');
+  });
+
+  test('exact reverse satisfies a non-default backlink', async () => {
+    await seedDuplicateBacklinkPages();
+    await engine.addLink(
+      'concepts/a', 'people/b', 'forward', 'mentions', 'manual', undefined, undefined,
+      { fromSourceId: 'team-x', toSourceId: 'team-x' },
+    );
+    await engine.addLink(
+      'people/b', 'concepts/a', 'exact reverse', 'mentions', 'manual', undefined, undefined,
+      { fromSourceId: 'team-x', toSourceId: 'team-x' },
+    );
+
+    expect(await validateTeamOrigin()).toEqual([]);
+  });
+
+  test('legitimate explicit cross-source reverse pair passes', async () => {
+    await seedDuplicateBacklinkPages();
+    await engine.addLink(
+      'concepts/a', 'people/b', 'cross-source forward', 'mentions', 'manual', undefined, undefined,
+      { fromSourceId: 'team-x', toSourceId: 'default' },
+    );
+    await engine.addLink(
+      'people/b', 'concepts/a', 'cross-source reverse', 'mentions', 'manual', undefined, undefined,
+      { fromSourceId: 'default', toSourceId: 'team-x' },
+    );
+
+    expect(await validateTeamOrigin()).toEqual([]);
+  });
+
+  test('same-slug targets in different sources are validated independently', async () => {
+    await seedDuplicateBacklinkPages();
+    await engine.addLink(
+      'concepts/a', 'people/b', 'team target', 'mentions', 'manual', undefined, undefined,
+      { fromSourceId: 'team-x', toSourceId: 'team-x' },
+    );
+    await engine.addLink(
+      'concepts/a', 'people/b', 'default target', 'mentions', 'manual', undefined, undefined,
+      { fromSourceId: 'team-x', toSourceId: 'default' },
+    );
+    await engine.addLink(
+      'people/b', 'concepts/a', 'reverse only team target', 'mentions', 'manual', undefined, undefined,
+      { fromSourceId: 'team-x', toSourceId: 'team-x' },
+    );
+
+    const findings = await validateTeamOrigin();
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].message).toContain('people/b');
+  });
+
+  test('federated same-slug origins retain every expected reverse identity', async () => {
+    await seedDuplicateBacklinkPages();
+    await engine.addLink(
+      'concepts/a', 'people/b', 'default origin', 'mentions', 'manual', undefined, undefined,
+      { fromSourceId: 'default', toSourceId: 'team-x' },
+    );
+    await engine.addLink(
+      'concepts/a', 'people/b', 'team origin', 'mentions', 'manual', undefined, undefined,
+      { fromSourceId: 'team-x', toSourceId: 'team-x' },
+    );
+
+    const findings = await backLinkValidator.validate({
+      slug: 'concepts/a',
+      sourceId: 'missing-scalar-must-not-win',
+      sourceIds: ['default', 'team-x'],
+      type: 'concept',
+      compiledTruth: 'a',
+      timeline: '',
+      frontmatter: {},
+      engine,
+    });
+
+    expect(findings).toHaveLength(2);
   });
 });
 

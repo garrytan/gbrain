@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-kta-pos-021",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "kta-pos",
+  "seed_pages": [
+    {
+      "slug": "people/petra-moonstead",
+      "content": "---\ntitle: Petra Moonstead\ntype: person\naliases: [petra]\nsummary: Founder of Bramblevolt Co.\n---\n\nPetra Moonstead is the founder of Bramblevolt Co. Petra shipped the v2 launch two weeks ahead of plan.\n"
+    },
+    {
+      "slug": "companies/bramblevolt-co",
+      "content": "---\ntitle: Bramblevolt Co\ntype: company\nsummary: Seed-stage company. Founded by Petra Moonstead.\n---\n\nBramblevolt Co is a seed-stage company. Founded by Petra Moonstead. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "What did Petra Moonstead say about the Bramblevolt Co deal?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Great, thanks. That covers it."
+    }
+  ],
+  "holdout": true
+}

@@ -1,8 +1,8 @@
 # CoE Lite migration constraints
 
 Phase 1 introduces no DDL, data migration, backfill, dual write, or projection cursor. The files in
-`schemas/coe/v1` are contract artifacts, not database schemas. Phases 2 and 3 add migrations 67 and
-68 for rebuildable snapshot and evidence projections; the content-addressed filesystem remains the
+`schemas/coe/v1` are contract artifacts, not database schemas. Phases 2 and 3 add migrations 129 and
+130 for rebuildable snapshot and evidence projections; the content-addressed filesystem remains the
 system of record.
 
 All storage work must satisfy these constraints:
@@ -16,7 +16,7 @@ All storage work must satisfy these constraints:
 - legacy records enter as `imported_legacy` in `quarantined` or `needs_review`, not as verified;
 - hard deletion requires a separate retention/erasure design and approval.
 
-Migration 68 adds `coe_normalized_documents`, `coe_document_sections`,
+Migration 130 adds `coe_normalized_documents`, `coe_document_sections`,
 `coe_normalized_mappings`, and `coe_evidence_items`. Its foreign keys use `ON DELETE RESTRICT`, its
 projector validates a complete canonical bundle before opening a transaction, and PostgreSQL RLS is
 enabled fail-closed when the migration role has the required privilege.

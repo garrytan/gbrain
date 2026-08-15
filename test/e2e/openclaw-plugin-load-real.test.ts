@@ -18,7 +18,8 @@
  *      ship to ClawHub).
  *   2. `openclaw plugins install --link` against an isolated `--profile`
  *      directory.
- *   3. `openclaw plugins inspect <id> --json` reads our default-export shape
+ *   3. `openclaw plugins inspect <id> --runtime --json` imports the plugin and
+ *      reads our default-export shape
  *      back from the runtime registry (`status: 'loaded'`, `imported: true`,
  *      id/name/description match).
  *   4. `openclaw config set plugins.slots.contextEngine gbrain-context` →
@@ -167,7 +168,7 @@ describe('openclaw-plugin-load-real (Tier 2 e2e)', () => {
   it.skipIf(SKIP)(
     'openclaw imports the entry file and reports status=loaded',
     () => {
-      const r = runOpenclaw(['plugins', 'inspect', PLUGIN_ID, '--json'], { timeoutMs: 30_000 });
+      const r = runOpenclaw(['plugins', 'inspect', PLUGIN_ID, '--runtime', '--json'], { timeoutMs: 30_000 });
       expect(r.exitCode).toBe(0);
 
       const inspect = JSON.parse(r.stdout);
@@ -183,7 +184,7 @@ describe('openclaw-plugin-load-real (Tier 2 e2e)', () => {
   it.skipIf(SKIP)(
     'default export carries the expected id / name / description metadata',
     () => {
-      const r = runOpenclaw(['plugins', 'inspect', PLUGIN_ID, '--json'], { timeoutMs: 30_000 });
+      const r = runOpenclaw(['plugins', 'inspect', PLUGIN_ID, '--runtime', '--json'], { timeoutMs: 30_000 });
       expect(r.exitCode).toBe(0);
       const inspect = JSON.parse(r.stdout);
 
@@ -198,22 +199,15 @@ describe('openclaw-plugin-load-real (Tier 2 e2e)', () => {
   it.skipIf(SKIP)(
     'register(api) ran without producing error-level diagnostics',
     () => {
-      const r = runOpenclaw(['plugins', 'inspect', PLUGIN_ID, '--json'], { timeoutMs: 30_000 });
+      const r = runOpenclaw(['plugins', 'inspect', PLUGIN_ID, '--runtime', '--json'], { timeoutMs: 30_000 });
       expect(r.exitCode).toBe(0);
       const inspect = JSON.parse(r.stdout);
 
       const errors = (inspect.diagnostics ?? []).filter((d: { level: string }) => d.level === 'error');
       expect(errors).toEqual([]);
 
-      // The trust warning is expected for --link installs — it's openclaw
-      // telling the operator that --link bypasses install-record provenance.
-      // We assert it's there so a future openclaw change that elevates it to
-      // error-level surfaces here too.
-      const warns = (inspect.diagnostics ?? []).filter((d: { level: string }) => d.level === 'warn');
-      const hasTrustWarning = warns.some((d: { message: string }) =>
-        d.message.includes('install/load-path provenance'),
-      );
-      expect(hasTrustWarning).toBe(true);
+      // Linked installs may or may not emit provenance warnings depending on
+      // the OpenClaw version. Registration errors are the stable contract.
     },
   );
 
@@ -274,10 +268,23 @@ describe('openclaw-plugin-load-real (Tier 2 e2e)', () => {
       // level fixture proved openclaw is installed and reachable.
       let registerContextEngine: ((id: string, factory: () => unknown) => void) | undefined;
 
+      // Minimal structural shape of the openclaw plugin SDK surface this
+      // test uses. `openclaw` is deliberately NOT a declared dependency —
+      // the test probes whatever install is present at runtime — so the
+      // import result is cast to this local interface instead of letting
+      // TypeScript type-check against whichever openclaw version happens
+      // to be resolvable from an ancestor node_modules. That keeps
+      // `bunx tsc --noEmit` hermetic on a clean checkout (#2729); the
+      // export's presence/shape is still verified at runtime below.
+      interface OpenclawPluginSdk {
+        registerContextEngine?: (id: string, factory: () => unknown) => void;
+      }
+
       const importErrors: string[] = [];
       try {
-        // @ts-ignore — bare specifier resolution depends on node_modules.
-        const sdk = await import('openclaw/plugin-sdk');
+        // @ts-ignore — bare specifier; whether this resolves (TS2307 or not)
+        // depends on ambient node_modules, so @ts-expect-error would flip.
+        const sdk = (await import('openclaw/plugin-sdk')) as unknown as OpenclawPluginSdk;
         registerContextEngine = sdk.registerContextEngine;
       } catch (err) {
         importErrors.push(`bare 'openclaw/plugin-sdk': ${err instanceof Error ? err.message : String(err)}`);

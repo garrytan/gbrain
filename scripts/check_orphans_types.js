@@ -24,7 +24,7 @@ try {
 
   // Query count of all pages and all distinct timeline pages
   const statsRes = await db.query(`
-    SELECT 
+    SELECT
       (SELECT count(*) FROM pages) as total_pages,
       (SELECT count(DISTINCT page_id) FROM timeline_entries) as pages_with_timeline
   `);

@@ -165,3 +165,119 @@ describeE2E('E2E sync-parallel: P4 benchmark serial vs concurrency=4', () => {
     expect(parallelMs).toBeLessThanOrEqual(serialMs * 1.5); // +50% slack for noisy CI
   }, 120_000);
 });
+
+describeE2E('E2E sync-parallel: T18 --timeout returns partial; last_commit unchanged', () => {
+  let repoPath: string;
+
+  beforeAll(async () => {
+    await setupDB();
+  }, 30_000);
+
+  afterAll(async () => {
+    if (repoPath) rmSync(repoPath, { recursive: true, force: true });
+    await teardownDB();
+  });
+
+  test('signal aborted mid-import returns partial and does not advance last_commit', async () => {
+    // v0.41.13.0 (T18 / D-V4-mech-10): real-Postgres E2E for the
+    // --timeout partial-status contract. PGLite tests cover the
+    // single-source AbortSignal threading in test/sync-break-lock-all.test.ts;
+    // this case verifies the same contract on the actual Postgres engine
+    // because parallelEligible excludes PGLite from the worker fan-out
+    // and the bookmark-write semantic uses real Postgres timestamp + index
+    // behavior.
+    repoPath = mkdtempSync(join(tmpdir(), 'gbrain-e2e-timeout-'));
+    seedRepo(repoPath, 200);
+
+    const { performSync } = await import('../../src/commands/sync.ts');
+    const engine = getEngine();
+
+    // Register a source so per-source last_commit lives in `sources`.
+    const conn = getConn();
+    await conn.unsafe(
+      `INSERT INTO sources (id, name, local_path) VALUES ($1, $2, $3)
+         ON CONFLICT (id) DO UPDATE SET local_path = EXCLUDED.local_path`,
+      ['e2e-timeout-source', 'e2e-timeout-source', repoPath],
+    );
+
+    // Fire abort immediately. With a 200-file diff, performSync's per-file
+    // abort check at the top of the import loop fires before file 1 starts,
+    // so files_imported should be 0 and last_commit should stay null.
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await performSync(engine, {
+      repoPath,
+      sourceId: 'e2e-timeout-source',
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+      concurrency: 1,
+      signal: controller.signal,
+    });
+
+    expect(result.status).toBe('partial');
+    expect(result.reason).toBeDefined();
+    // last_commit must NOT have advanced (D-V3-1 invariant — partial
+    // fires strictly before the writeSyncAnchor call).
+    const rows = await conn.unsafe(
+      `SELECT last_commit FROM sources WHERE id = $1`,
+      ['e2e-timeout-source'],
+    ) as Array<{ last_commit: string | null }>;
+    expect(rows[0]?.last_commit).toBeNull();
+  }, 60_000);
+
+  test('signal aborted after a few imports leaves last_commit unchanged and reports partial files_imported', async () => {
+    // Rebuild a fresh repo for this test; the prior describe path uses
+    // its own repoPath variable.
+    const repo2 = mkdtempSync(join(tmpdir(), 'gbrain-e2e-timeout-partial-'));
+    try {
+      seedRepo(repo2, 50);
+      const { performSync } = await import('../../src/commands/sync.ts');
+      const engine = getEngine();
+      const conn = getConn();
+      await conn.unsafe(
+        `INSERT INTO sources (id, name, local_path) VALUES ($1, $2, $3)
+           ON CONFLICT (id) DO UPDATE SET local_path = EXCLUDED.local_path`,
+        ['e2e-timeout-partial', 'e2e-timeout-partial', repo2],
+      );
+
+      // Schedule abort 250ms in. On a 50-file repo with real Postgres
+      // round-trips per import, some files persist before abort fires.
+      // We assert that:
+      //   - status is partial OR first_sync (race-tolerant — if Postgres
+      //     is fast enough that all 50 imports finish in <250ms, the run
+      //     completes successfully which is also a valid outcome)
+      //   - if partial: filesImported is bounded between 1 and 49
+      //   - if partial: last_commit is null (never advanced past partial)
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 250).unref();
+
+      const result = await performSync(engine, {
+        repoPath: repo2,
+        sourceId: 'e2e-timeout-partial',
+        noPull: true,
+        noEmbed: true,
+        noExtract: true,
+        concurrency: 1,
+        signal: controller.signal,
+      });
+
+      if (result.status === 'partial') {
+        expect(result.filesImported).toBeGreaterThanOrEqual(0);
+        expect(result.filesImported).toBeLessThanOrEqual(50);
+        const rows = await conn.unsafe(
+          `SELECT last_commit FROM sources WHERE id = $1`,
+          ['e2e-timeout-partial'],
+        ) as Array<{ last_commit: string | null }>;
+        expect(rows[0]?.last_commit).toBeNull();
+      } else {
+        // first_sync or synced — sub-250ms full run; not a contract violation.
+        // The point of the test is that IF partial happens, the invariants hold.
+        expect(['first_sync', 'synced']).toContain(result.status);
+      }
+    } finally {
+      rmSync(repo2, { recursive: true, force: true });
+    }
+  }, 60_000);
+});

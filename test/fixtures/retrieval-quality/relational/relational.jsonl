@@ -1,0 +1,42 @@
+// Relational benchmark — graph-relationship family. GENERATED from
+// test/fixtures/retrieval-quality/relational/corpus.ts (canonical source).
+// Answers are lexically unrecoverable — only the typed edge connects
+// query to answer. Regenerate: bun run scripts/_gen_relational_jsonl.ts
+{"family":"graph-relationship","kind":"who_rel","seed":"companies/widget-co","linkTypes":["invested_in","led_round"],"query":"who invested in widget-co","relevant":["people/alice-example","people/bob-example","funds/fund-a"]}
+{"family":"graph-relationship","kind":"who_rel","seed":"companies/acme-co","linkTypes":["invested_in","led_round"],"query":"who invested in acme-co","relevant":["people/carol-example","people/alice-example","funds/fund-b"]}
+{"family":"graph-relationship","kind":"who_rel","seed":"companies/novapay","linkTypes":["invested_in","led_round"],"query":"who invested in novapay","relevant":["people/bob-example","funds/fund-a"]}
+{"family":"graph-relationship","kind":"who_rel","seed":"companies/mindbridge","linkTypes":["invested_in","led_round"],"query":"who invested in mindbridge","relevant":["people/dave-example","people/carol-example"]}
+{"family":"graph-relationship","kind":"who_rel","seed":"companies/helio","linkTypes":["invested_in","led_round"],"query":"who invested in helio","relevant":["people/erin-example","funds/fund-b"]}
+{"family":"graph-relationship","kind":"who_rel","seed":"companies/quanta","linkTypes":["invested_in","led_round"],"query":"who invested in quanta","relevant":["people/frank-example","people/alice-example"]}
+{"family":"graph-relationship","kind":"who_rel","seed":"companies/zenith","linkTypes":["invested_in","led_round"],"query":"who invested in zenith","relevant":["people/grace-example","people/heidi-example"]}
+{"family":"graph-relationship","kind":"who_rel","seed":"companies/orbital","linkTypes":["invested_in","led_round"],"query":"who invested in orbital","relevant":["people/ivan-example","people/alice-example"]}
+{"family":"graph-relationship","kind":"who_rel","seed":"companies/widget-co","linkTypes":["works_at"],"query":"who works at widget-co","relevant":["people/erin-example","people/grace-example"]}
+{"family":"graph-relationship","kind":"who_rel","seed":"companies/acme-co","linkTypes":["works_at"],"query":"who works at acme-co","relevant":["people/dave-example","people/frank-example"]}
+{"family":"graph-relationship","kind":"who_rel","seed":"companies/novapay","linkTypes":["works_at"],"query":"who works at novapay","relevant":["people/grace-example"]}
+{"family":"graph-relationship","kind":"who_rel","seed":"companies/helio","linkTypes":["works_at"],"query":"who works at helio","relevant":["people/heidi-example"]}
+{"family":"graph-relationship","kind":"who_rel","seed":"companies/zenith","linkTypes":["works_at"],"query":"who works at zenith","relevant":["people/ivan-example"]}
+{"family":"graph-relationship","kind":"who_rel","seed":"companies/mindbridge","linkTypes":["founded"],"query":"who founded mindbridge","relevant":["people/carol-example"]}
+{"family":"graph-relationship","kind":"who_rel","seed":"companies/quanta","linkTypes":["founded"],"query":"who founded quanta","relevant":["people/frank-example"]}
+{"family":"graph-relationship","kind":"who_rel","seed":"companies/widget-co","linkTypes":["founded"],"query":"who founded widget-co","relevant":["people/ivan-example"]}
+{"family":"graph-relationship","kind":"who_rel","seed":"companies/orbital","linkTypes":["founded"],"query":"who founded orbital","relevant":["people/grace-example"]}
+{"family":"graph-relationship","kind":"who_rel","seed":"companies/novapay","linkTypes":["advises"],"query":"who advises novapay","relevant":["people/frank-example"]}
+{"family":"graph-relationship","kind":"who_rel","seed":"companies/helio","linkTypes":["advises"],"query":"who advises helio","relevant":["people/alice-example"]}
+{"family":"graph-relationship","kind":"connects","seed":"companies/widget-co ↔ companies/acme-co","query":"what connects widget-co and acme-co","relevant":["people/alice-example"]}
+{"family":"graph-relationship","kind":"connects","seed":"companies/widget-co ↔ companies/novapay","query":"what connects widget-co and novapay","relevant":["funds/fund-a","people/bob-example","people/grace-example"]}
+{"family":"graph-relationship","kind":"connects","seed":"companies/widget-co ↔ companies/helio","query":"what connects widget-co and helio","relevant":["people/alice-example","people/erin-example"]}
+{"family":"graph-relationship","kind":"connects","seed":"companies/widget-co ↔ companies/quanta","query":"what connects widget-co and quanta","relevant":["people/alice-example"]}
+{"family":"graph-relationship","kind":"connects","seed":"companies/widget-co ↔ companies/zenith","query":"what connects widget-co and zenith","relevant":["people/grace-example","people/ivan-example"]}
+{"family":"graph-relationship","kind":"connects","seed":"companies/widget-co ↔ companies/orbital","query":"what connects widget-co and orbital","relevant":["people/alice-example","people/grace-example","people/ivan-example"]}
+{"family":"graph-relationship","kind":"connects","seed":"companies/acme-co ↔ companies/novapay","query":"what connects acme-co and novapay","relevant":["people/frank-example"]}
+{"family":"graph-relationship","kind":"connects","seed":"companies/acme-co ↔ companies/mindbridge","query":"what connects acme-co and mindbridge","relevant":["people/carol-example","people/dave-example"]}
+{"family":"graph-relationship","kind":"connects","seed":"companies/acme-co ↔ companies/helio","query":"what connects acme-co and helio","relevant":["funds/fund-b","people/alice-example"]}
+{"family":"graph-relationship","kind":"connects","seed":"companies/acme-co ↔ companies/quanta","query":"what connects acme-co and quanta","relevant":["people/alice-example","people/frank-example"]}
+{"family":"graph-relationship","kind":"connects","seed":"companies/acme-co ↔ companies/orbital","query":"what connects acme-co and orbital","relevant":["people/alice-example"]}
+{"family":"graph-relationship","kind":"connects","seed":"companies/novapay ↔ companies/quanta","query":"what connects novapay and quanta","relevant":["people/frank-example"]}
+{"family":"graph-relationship","kind":"connects","seed":"companies/novapay ↔ companies/zenith","query":"what connects novapay and zenith","relevant":["people/grace-example"]}
+{"family":"graph-relationship","kind":"connects","seed":"companies/novapay ↔ companies/orbital","query":"what connects novapay and orbital","relevant":["people/grace-example"]}
+{"family":"graph-relationship","kind":"connects","seed":"companies/helio ↔ companies/quanta","query":"what connects helio and quanta","relevant":["people/alice-example"]}
+{"family":"graph-relationship","kind":"connects","seed":"companies/helio ↔ companies/zenith","query":"what connects helio and zenith","relevant":["people/heidi-example"]}
+{"family":"graph-relationship","kind":"connects","seed":"companies/helio ↔ companies/orbital","query":"what connects helio and orbital","relevant":["people/alice-example"]}
+{"family":"graph-relationship","kind":"connects","seed":"companies/quanta ↔ companies/orbital","query":"what connects quanta and orbital","relevant":["people/alice-example"]}
+{"family":"graph-relationship","kind":"connects","seed":"companies/zenith ↔ companies/orbital","query":"what connects zenith and orbital","relevant":["people/grace-example","people/ivan-example"]}

@@ -127,7 +127,7 @@ ${body}`;
     const tags = await callGemini(prompt);
     if (tags && Array.isArray(tags)) {
       console.log(`  -> Recommended tags: ${JSON.stringify(tags)}`);
-      
+
       let updatedFM = '';
       if (hasTags) {
         // Replace existing tags line
@@ -183,7 +183,7 @@ ${body}`;
     const timeline = await callGemini(prompt);
     if (timeline && Array.isArray(timeline) && timeline.length > 0) {
       console.log(`  -> Extracted ${timeline.length} timeline entries.`);
-      
+
       let appendText = '\n\n## Timeline\n\n';
       for (const entry of timeline) {
         if (entry.date && entry.summary) {

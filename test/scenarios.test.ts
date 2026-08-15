@@ -99,6 +99,76 @@ describe('loadScenario', () => {
   });
 });
 
+describe('loadScenario — oracle validation', () => {
+  const base = (oracle: string) =>
+    `{"kind":"fresh-install","expected_phases":[],"oracle":${oracle}}`;
+
+  test('happy path: query defaults minResults to 1; min_results overrides; files_exist parsed', () => {
+    scaffoldScenario('o-happy', base('{"query":"alice"}'));
+    expect(loadScenario('o-happy').oracle).toEqual({ query: 'alice', minResults: 1 });
+
+    scaffoldScenario('o-min', base('{"query":"alice","min_results":0,"files_exist":["skills/query/SKILL.md"]}'));
+    const cfg = loadScenario('o-min');
+    expect(cfg.oracle?.minResults).toBe(0);
+    expect(cfg.oracle?.filesExist).toEqual(['skills/query/SKILL.md']);
+  });
+
+  test('oracle must be a JSON object', () => {
+    scaffoldScenario('o-arr', base('["x"]'));
+    expect(() => loadScenario('o-arr')).toThrow(/oracle must be a JSON object/);
+    scaffoldScenario('o-str', base('"x"'));
+    expect(() => loadScenario('o-str')).toThrow(/oracle must be a JSON object/);
+  });
+
+  test('oracle.query must be a non-empty string and must not start with a dash', () => {
+    scaffoldScenario('o-empty', base('{"query":"  "}'));
+    expect(() => loadScenario('o-empty')).toThrow(/oracle\.query must be a non-empty string/);
+    scaffoldScenario('o-num', base('{"query":7}'));
+    expect(() => loadScenario('o-num')).toThrow(/oracle\.query must be a non-empty string/);
+    // The query lands in gbrain argv — a dash-leading value would parse as a flag.
+    scaffoldScenario('o-dash', base('{"query":"--json"}'));
+    expect(() => loadScenario('o-dash')).toThrow(/must not start with a dash/);
+  });
+
+  test('oracle.min_results requires query and must be a finite number >= 0', () => {
+    scaffoldScenario('o-orphan', base('{"min_results":1}'));
+    expect(() => loadScenario('o-orphan')).toThrow(/min_results requires oracle\.query/);
+    scaffoldScenario('o-neg', base('{"query":"alice","min_results":-1}'));
+    expect(() => loadScenario('o-neg')).toThrow(/min_results must be a number >= 0/);
+    scaffoldScenario('o-nan', base('{"query":"alice","min_results":"5"}'));
+    expect(() => loadScenario('o-nan')).toThrow(/min_results must be a number >= 0/);
+  });
+
+  test('oracle.files_exist must be workspace-relative strings', () => {
+    scaffoldScenario('o-files-str', base('{"files_exist":"skills"}'));
+    expect(() => loadScenario('o-files-str')).toThrow(/files_exist must be a string\[\]/);
+    scaffoldScenario('o-files-abs', base('{"files_exist":["/etc/passwd"]}'));
+    expect(() => loadScenario('o-files-abs')).toThrow(/workspace-relative/);
+    scaffoldScenario('o-files-dots', base('{"files_exist":["../outside.md"]}'));
+    expect(() => loadScenario('o-files-dots')).toThrow(/workspace-relative/);
+  });
+});
+
+describe('loadScenario — containment (adversarial-gate pins)', () => {
+  // Scenario packs load from arbitrary dirs via the scenarios-dir env
+  // override, and their content flows to an external agent — traversal in the
+  // name or the declared paths would expose arbitrary operator files.
+  test('traversal-shaped scenario names are rejected', () => {
+    expect(() => loadScenario('../outside')).toThrow(/not found/);
+    expect(() => loadScenario('a/b')).toThrow(/not found/);
+    expect(() => loadScenario('..')).toThrow(/not found/);
+  });
+
+  test('brief, brain, and seed paths escaping the scenario dir are rejected', () => {
+    scaffoldScenario('esc-brief', '{"kind":"fresh-install","expected_phases":[],"brief":"../outside.md"}');
+    expect(() => loadScenario('esc-brief')).toThrow(/inside the scenario dir/);
+    scaffoldScenario('esc-brain', '{"kind":"fresh-install","expected_phases":[],"brain":"../../brains"}');
+    expect(() => loadScenario('esc-brain')).toThrow(/inside the scenario dir/);
+    scaffoldScenario('esc-seed', '{"kind":"upgrade","expected_phases":[],"seed":"/etc"}');
+    expect(() => loadScenario('esc-seed')).toThrow(/inside the scenario dir/);
+  });
+});
+
 describe('readBrief', () => {
   test('returns BRIEF.md content', () => {
     scaffoldScenario('reads-brief', '{"kind":"fresh-install","expected_phases":[]}', '# Hello world');

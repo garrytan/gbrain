@@ -16,14 +16,14 @@ try {
 
   console.log("=== EXACT ORPHAN PAGES ===");
   console.log(`Found ${orphansRes.rows.length} orphan pages.`);
-  
+
   // Group by type
   const grouped = {};
   for (const row of orphansRes.rows) {
     grouped[row.type] = grouped[row.type] || [];
     grouped[row.type].push(row);
   }
-  
+
   for (const [type, list] of Object.entries(grouped)) {
     console.log(`\n--- Type: ${type} (${list.length}) ---`);
     for (const item of list.slice(0, 10)) {

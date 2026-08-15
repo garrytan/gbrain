@@ -1,0 +1,1 @@
+{"fixture_id":"irc-weechat-001","pattern":"irc-weechat","frontmatter":{"date":"2024-03-15"},"body":"18:37 <alice> hello\n18:38 <bob> hey\n18:39 <alice> how are you\n18:40 <bob> good","expected_messages":4,"expected_participants":["alice","bob"]}

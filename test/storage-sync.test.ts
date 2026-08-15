@@ -141,4 +141,100 @@ describe('manageGitignore', () => {
     manageGitignore(tmp);
     expect(warnings.some((w) => /Could not (read|update)/.test(w))).toBe(true);
   });
+
+  // ────────────────────────────────────────────────────────────────
+  // Worktree vs submodule discrimination (closes #889)
+  // ────────────────────────────────────────────────────────────────
+
+  test('REGRESSION: submodule with relative gitdir/modules/ → skip (D49 contract)', () => {
+    writeStorageConfig();
+    writeFileSync(join(tmp, '.git'), 'gitdir: ../.git/modules/sub\n');
+    manageGitignore(tmp);
+    expect(existsSync(join(tmp, '.gitignore'))).toBe(false);
+    expect(warnings.some((w) => /submodule/.test(w))).toBe(true);
+  });
+
+  test('absorbed submodule with absolute gitdir/modules/ → skip (closes edge case)', () => {
+    writeStorageConfig();
+    // After `git submodule absorbgitdirs`, the gitdir path becomes absolute.
+    writeFileSync(join(tmp, '.git'), 'gitdir: /home/user/parent/.git/modules/sub\n');
+    manageGitignore(tmp);
+    expect(existsSync(join(tmp, '.gitignore'))).toBe(false);
+    expect(warnings.some((w) => /submodule/.test(w))).toBe(true);
+  });
+
+  test('CRITICAL: worktree with absolute gitdir/worktrees/ → MANAGE (closes #889)', () => {
+    writeStorageConfig();
+    writeFileSync(join(tmp, '.git'), 'gitdir: /home/user/repo/.git/worktrees/feature-branch\n');
+    manageGitignore(tmp);
+    expect(existsSync(join(tmp, '.gitignore'))).toBe(true);
+    expect(warnings.filter((w) => /submodule/.test(w))).toEqual([]);
+  });
+
+  test('worktree with relative gitdir/worktrees/ → MANAGE', () => {
+    writeStorageConfig();
+    writeFileSync(join(tmp, '.git'), 'gitdir: ../.git/worktrees/feature-branch\n');
+    manageGitignore(tmp);
+    expect(existsSync(join(tmp, '.gitignore'))).toBe(true);
+    expect(warnings.filter((w) => /submodule/.test(w))).toEqual([]);
+  });
+
+  test('malformed .git file (no gitdir: prefix) → MANAGE (preserves catch behavior)', () => {
+    writeStorageConfig();
+    writeFileSync(join(tmp, '.git'), 'garbage content\n');
+    manageGitignore(tmp);
+    // No gitdir prefix → not a submodule → MANAGE.
+    expect(existsSync(join(tmp, '.gitignore'))).toBe(true);
+    expect(warnings.filter((w) => /submodule/.test(w))).toEqual([]);
+  });
+});
+
+// #2788: collector-output vs db_only collision warning at .gitignore-write time.
+describe('manageGitignore collector/db_only collision warning (#2788)', () => {
+  let recipesDir: string;
+  const SECRET_ENV_KEYS = ['CLAWVISOR_URL', 'CLAWVISOR_AGENT_TOKEN', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'];
+  let savedEnv: Record<string, string | undefined>;
+
+  beforeEach(() => {
+    recipesDir = mkdtempSync(join(tmpdir(), 'gbrain-recipes-'));
+    savedEnv = {};
+    // Make embedded recipes (calendar-to-brain) deterministically unconfigured
+    // and point recipe discovery at our temp dir.
+    for (const k of [...SECRET_ENV_KEYS, 'GBRAIN_RECIPES_DIR', 'GBRAIN_HOME']) {
+      savedEnv[k] = process.env[k];
+    }
+    for (const k of SECRET_ENV_KEYS) delete process.env[k];
+    process.env.GBRAIN_RECIPES_DIR = recipesDir;
+    process.env.GBRAIN_HOME = recipesDir; // heartbeat reads stay hermetic
+    writeFileSync(
+      join(recipesDir, 'test-collector.md'),
+      '---\nid: test-collector\nname: Test Collector\noutput_paths:\n  - media/x/inbox/\n---\nBody.\n',
+    );
+  });
+
+  afterEach(() => {
+    for (const [k, v] of Object.entries(savedEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    rmSync(recipesDir, { recursive: true, force: true });
+  });
+
+  test('warns when a configured collector output dir sits inside a db_only path', () => {
+    writeStorageConfig(); // db_only includes media/x/
+    manageGitignore(tmp);
+    const hit = warnings.find((w) => /collector 'test-collector'/.test(w));
+    expect(hit).toBeDefined();
+    expect(hit).toContain("'media/x/inbox/'");
+    expect(hit).toContain("db_only path 'media/x/'");
+    expect(hit).toContain('silently skip');
+    // .gitignore management still happens — the warning never blocks it.
+    expect(existsSync(join(tmp, '.gitignore'))).toBe(true);
+  });
+
+  test('no warning when the collector writes outside every db_only path', () => {
+    writeFileSync(join(tmp, 'gbrain.yml'), 'storage:\n  db_only:\n    - archive/\n');
+    manageGitignore(tmp);
+    expect(warnings.filter((w) => /collector 'test-collector'/.test(w))).toEqual([]);
+  });
 });

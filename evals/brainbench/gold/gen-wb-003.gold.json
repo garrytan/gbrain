@@ -1,0 +1,34 @@
+{
+  "fixture_id": "gen-wb-003",
+  "turns": {
+    "3": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "pricing / Skylarkift",
+          "fact": "Bastian Rookswood is worried the Skylarkift pricing model undercuts gross margin (round concern)",
+          "entity_slug": "people/bastian-rookswood",
+          "match_keywords": [
+            "pricing",
+            "Skylarkift"
+          ],
+          "kind": "belief"
+        }
+      ]
+    },
+    "4": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "async updates",
+          "fact": "Bastian Rookswood prefers async updates over standing calls",
+          "entity_slug": "people/bastian-rookswood",
+          "match_keywords": [
+            "async updates"
+          ],
+          "kind": "preference"
+        }
+      ]
+    }
+  }
+}

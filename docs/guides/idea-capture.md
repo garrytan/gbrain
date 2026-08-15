@@ -61,14 +61,13 @@ capture_idea(message_text, source_context):
 
 ### The Authorship Test
 
-| Signal | Destination |
-|--------|-------------|
-| User generated the idea | `brain/originals/{slug}.md` |
-| User's unique synthesis of others' ideas | `brain/originals/` (the synthesis is original) |
-| World concept someone else coined | `brain/concepts/{slug}.md` |
-| Product or business idea | `brain/ideas/{slug}.md` |
-| User's ghostwritten book/essay | `brain/originals/` (note ghostwriter in metadata) |
-| Article ABOUT user | `brain/media/writings/` |
+Who authored the idea determines where it files: user-generated ideas,
+syntheses, and ghostwritten work go to `brain/originals/`; borrowed world
+concepts to `brain/concepts/`; product ideas to `brain/ideas/`; articles
+ABOUT the user to `brain/media/writings/`. The full filing-rules table (and
+the what-counts-as-original-thinking criteria) lives in
+[entity-detection.md](entity-detection.md) — the single home for the capture
+taxonomy.
 
 ### Capture Standards
 
@@ -77,21 +76,6 @@ capture_idea(message_text, source_context):
 "The ambition-to-lifespan ratio has never been more broken" captures something that
 "tension between ambition and mortality" doesn't. Don't clean it up. Don't paraphrase.
 The vivid version is the real version.
-
-**What counts as worth capturing:**
-- Original observations about how the world works
-- Novel connections between disparate things
-- Frameworks and mental models
-- Pattern recognition moments ("I keep seeing X in every Y")
-- Hot takes with reasoning behind them
-- Metaphors that reveal new angles
-- Emotional/psychological insights about self or others
-
-**What does NOT count:**
-- Routine operational messages ("ok", "do it")
-- Pure questions without embedded observations
-- Echoing back something the agent said
-- Acknowledgments and reactions
 
 ### The Depth Test
 
@@ -137,21 +121,9 @@ Every original MUST link to:
 
 ### Notability Filtering
 
-Before creating any entity page, check notability:
-
-**Create a page for:**
-- People you know or discuss with specificity
-- Companies you're evaluating, working with, or investing in
-- Media you mention with personal reaction
-- Anyone you've explicitly engaged with
-
-**Don't create pages for:**
-- Generic references or passing examples
-- Low-engagement accounts who mentioned you once
-- Pure metaphors ("like the Roman Empire...")
-- One-off encounters with no follow-up
-
-**Decision:** If notable AND no page exists, create a full page with web
+Before creating any entity page, check notability — the full create/skip
+criteria live in [entity-detection.md](entity-detection.md#notability-filtering).
+The decision rule: if notable AND no page exists, create a FULL page with web
 search enrichment. No stubs. If you make a page, make it good.
 
 ## Tricky Spots
@@ -187,4 +159,6 @@ search enrichment. No stubs. If you make a page, make it good.
 
 ---
 
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*
+*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md). The bundled
+`idea-ingest` skill (`skills/idea-ingest/`) ships this workflow. See also:
+[Entity Detection](entity-detection.md).*

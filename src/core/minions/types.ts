@@ -90,6 +90,14 @@ export interface MinionJob {
   started_at: Date | null;
   finished_at: Date | null;
   updated_at: Date;
+
+  /** Submission metadata, NOT a DB column: set only by MinionQueue.add()
+   *  when it returned an EXISTING row instead of inserting (idempotency
+   *  fast-path, backpressure cap-hit, or the ON CONFLICT zero-row fallback).
+   *  rowToMinionJob never sets it; absent on fresh inserts and on rows read
+   *  back later. Surfaces in `jobs submit`'s JSON output — intended and
+   *  additive, so scripts can tell a real dispatch from a coalesce. */
+  coalesced?: boolean;
 }
 
 // --- Input Types ---
@@ -128,8 +136,29 @@ export interface MinionJobInput {
   max_spawn_depth?: number;
   /** Global dedup key. Same key returns the existing job, no second row created. */
   idempotency_key?: string;
-  /** Submission backpressure: cap waiting jobs with this name before inserting a new row. */
+  /** Submission backpressure: cap waiting jobs with this name before inserting
+   *  a new row. Scope is (name, queue, source), where source reads
+   *  data.sourceId ?? data.source_id; a submission with NO source key counts
+   *  ALL rows for (name, queue) — the NULL-as-wildcard arm is intentional and
+   *  relied on by existing rate-cap callers. For single-flight semantics see
+   *  maxPending (exact scoping, counts in-flight work too). */
   maxWaiting?: number;
+  /** Submission single-flight: cap PENDING jobs — waiting rows plus LIVE-LOCK
+   *  active rows (status='active' AND lock_until > now()) — for this
+   *  (name, queue, source) scope before inserting a new row. Expired-lock
+   *  actives belong to a dead/blocked worker and never count, so a wedged
+   *  worker cannot suppress dispatch (new waiting rows keep feeding the
+   *  waitingClaimable>0 wedge detectors); dead/cancelled/completed never
+   *  count either. Cap-hit returns the most-recent waiting row, else the
+   *  most-recent live-lock active row, stamped `coalesced: true`. Scope is
+   *  EXACT (unlike maxWaiting): COALESCE(data.sourceId, data.source_id)
+   *  compared with IS NOT DISTINCT FROM — a NULL-source submission matches
+   *  only NULL-source rows, never a wildcard. If both maxPending and
+   *  maxWaiting are supplied, both guards apply; maxPending is checked
+   *  first. Internal option (autopilot dispatch single-flight); not exposed
+   *  as a public submit flag yet — semantics exclude delayed/paused/
+   *  waiting-children rows deliberately. */
+  maxPending?: number;
 
   // v12: scheduler polish
   /**
@@ -200,6 +229,12 @@ export interface MinionJobContext {
   attempts_made: number;
   /** AbortSignal for cooperative cancellation (fires on timeout, cancel, pause, or lock loss). */
   signal: AbortSignal;
+  /** Absolute wall-clock deadline (epoch ms) from the claim-time `timeout_at` stamp,
+   *  or null when the job has no per-job timeout. This is the DB's ground truth —
+   *  the same instant handleTimeouts() dead-letters against — so handlers that
+   *  spawn bounded sub-work (e.g. autopilot-cycle's subagent phases) can budget
+   *  from the REMAINING time instead of a fixed constant that may exceed it. */
+  deadlineAtMs: number | null;
   /** AbortSignal that fires only on worker process SIGTERM/SIGINT. Handlers sensitive
    *  to deploy restarts (e.g. the shell handler, which must run a SIGTERM → 5s → SIGKILL
    *  sequence on its child) listen to this in addition to `signal`. Most handlers can
@@ -412,6 +447,12 @@ export interface SubagentHandlerData {
   /** Max assistant turns before the loop fails with stop_reason='max_turns'. */
   max_turns?: number;
   /**
+   * Per-turn max output tokens (#2778). Resolution: this field →
+   * `agent.max_output_tokens` config → 8192 default. The pre-#2778
+   * hardcoded 4096 made pages >~12KB unwritable via put_page.
+   */
+  max_tokens?: number;
+  /**
    * Whitelist of tool names the agent may call. MUST be a subset of the
    * derived registry names — invalid entries are rejected at tool-dispatch
    * time, not silently ignored. Empty array = no tools.
@@ -449,6 +490,49 @@ export interface SubagentHandlerData {
    * and direct CLI submitters set it.
    */
   allowed_slug_prefixes?: string[];
+  /**
+   * Brain source the subagent's tool calls are scoped to (#1586).
+   *
+   * When set, every tool-call `OperationContext.sourceId` uses this value
+   * instead of the legacy 'default', so put_page writes land in the cycle's
+   * resolved source. Same trust story as `allowed_slug_prefixes`:
+   * PROTECTED_JOB_NAMES gates subagent submission, so only cycle.ts and
+   * direct CLI submitters can set it. Validated via `validateSourceId` at
+   * tool-registry build time.
+   */
+  source_id?: string;
+  /**
+   * v0.41 Approach C: opt out of the auto-generated tool-usage preamble
+   * that `buildSystemPrompt()` splices into `system`. Default behavior
+   * (omitted or false) prepends a deterministic preamble listing each
+   * tool's name + usage_hint. Set to `true` to keep `system` byte-for-byte
+   * as provided.
+   *
+   * Use when the caller has hand-tuned a complete system prompt for a
+   * specific subagent (no benefit from auto-generated guidance, prompt
+   * cache hits ride entirely on the caller-supplied prefix).
+   */
+  system_no_tool_preamble?: boolean;
+  /**
+   * v0.41 E6 — opt OUT of classifier-gated auto-resubmit on terminal
+   * failures. Default behavior (omitted or false) runs the
+   * `RECOVERABLE_CLUSTERS` self-fix path when the failure classifies as
+   * one of {`prompt_too_long`, `tool_schema_mismatch`, `malformed_json`}.
+   * Set true to disable per-job (useful for graders / probes where a
+   * retry would muddy the signal).
+   */
+  no_self_fix?: boolean;
+  /**
+   * v0.41 E6 — internal marker set by `submitSelfFixChild` so the
+   * chain-depth walker can count self-fix ancestors. Counter starts at
+   * 0 on a fresh user-submitted job; increments by 1 per chain hop.
+   */
+  is_self_fix_child?: boolean;
+  /**
+   * v0.41 E6 — which classifier bucket triggered this self-fix child.
+   * Read by audit + diagnostic surfaces (jobs get / dashboard).
+   */
+  self_fix_cluster?: string;
 }
 
 /**
@@ -499,6 +583,20 @@ export interface ToolDef {
   input_schema: Record<string, unknown>;
   idempotent: boolean;
   execute(input: unknown, ctx: ToolCtx): Promise<unknown>;
+  /**
+   * v0.41 Approach C: one-line hint surfaced verbatim in the subagent
+   * system prompt's tool preamble. Tells the model WHEN to use this tool.
+   * The `description` tells the model HOW; the `usage_hint` tells WHEN.
+   *
+   * Field-report case: a `shell` tool sat in the registry and the subagent
+   * never used it because nothing told the model "to write a file, use
+   * shell." Per-tool hints surface that directly. Plugin authors get this
+   * affordance for free.
+   *
+   * Optional — omitted tools just don't get a hint line. Must be a single
+   * line (no embedded newlines) so the rendered preamble stays scannable.
+   */
+  usage_hint?: string;
 }
 
 /**
@@ -516,6 +614,7 @@ export type ContentBlock =
 export type SubagentStopReason =
   | 'end_turn'    // Anthropic says end_turn and last message has no tool_use
   | 'max_turns'   // hit max_turns budget before end_turn
+  | 'max_tokens'  // final turn hit the output-token cap — result text is TRUNCATED (#2778)
   | 'refusal'     // detected via stop_reason + content shape
   | 'error';      // unrecoverable (empty response retry exhausted, etc.)
 

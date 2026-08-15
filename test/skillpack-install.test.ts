@@ -14,7 +14,7 @@ import {
   utimesSync,
   writeFileSync,
 } from 'fs';
-import { dirname, join } from 'path';
+import { dirname, join, sep } from 'path';
 import { tmpdir } from 'os';
 
 import {
@@ -125,6 +125,23 @@ describe('findGbrainRoot', () => {
   it('returns null when no gbrain root above', () => {
     expect(findGbrainRoot('/tmp/definitely-not-a-gbrain-repo-XYZ')).toBeNull();
   });
+  it('falls back to the module location when cwd has no markers (#1917)', () => {
+    // Simulate a bun-global install: cwd is an unrelated directory with no
+    // gbrain markers anywhere above it. The no-arg call must still resolve
+    // via bundle.ts's own location (which lives in the real repo).
+    const elsewhere = mkdtempSync(join(tmpdir(), 'skillpack-elsewhere-'));
+    created.push(elsewhere);
+    const prevCwd = process.cwd();
+    try {
+      process.chdir(elsewhere);
+      const root = findGbrainRoot();
+      expect(root).not.toBeNull();
+      expect(existsSync(join(root!, 'openclaw.plugin.json'))).toBe(true);
+      expect(existsSync(join(root!, 'src', 'cli.ts'))).toBe(true);
+    } finally {
+      process.chdir(prevCwd);
+    }
+  });
 });
 
 describe('loadBundleManifest', () => {
@@ -152,13 +169,16 @@ describe('enumerateBundle (D-CX-10 dependency closure)', () => {
     const m = loadBundleManifest(gbrainRoot);
     const entries = enumerateBundle({ gbrainRoot, skillSlug: 'alpha', manifest: m });
     const targets = entries.map(e => e.relTarget).sort();
-    expect(targets).toContain('alpha/SKILL.md');
-    expect(targets).toContain('alpha/scripts/alpha.mjs');
+    // relTarget carries native separators — build expectations with join()/sep
+    // so the positives match and the `beta` exclusion below stays meaningful
+    // instead of passing vacuously on Windows.
+    expect(targets).toContain(join('alpha', 'SKILL.md'));
+    expect(targets).toContain(join('alpha', 'scripts', 'alpha.mjs'));
     // Shared deps pulled in despite single-skill scope.
-    expect(targets).toContain('conventions/quality.md');
+    expect(targets).toContain(join('conventions', 'quality.md'));
     expect(targets).toContain('_output-rules.md');
     // beta NOT included.
-    expect(targets.find(t => t.startsWith('beta/'))).toBeUndefined();
+    expect(targets.find(t => t.startsWith('beta' + sep))).toBeUndefined();
   });
   it('throws BundleError for unknown skill slug', () => {
     const { gbrainRoot } = scratchGbrain();
@@ -172,8 +192,8 @@ describe('enumerateBundle (D-CX-10 dependency closure)', () => {
     const m = loadBundleManifest(gbrainRoot);
     const entries = enumerateBundle({ gbrainRoot, manifest: m });
     const targets = entries.map(e => e.relTarget).sort();
-    expect(targets.some(t => t.startsWith('alpha/'))).toBe(true);
-    expect(targets.some(t => t.startsWith('beta/'))).toBe(true);
+    expect(targets.some(t => t.startsWith('alpha' + sep))).toBe(true);
+    expect(targets.some(t => t.startsWith('beta' + sep))).toBe(true);
   });
 });
 

@@ -13,6 +13,7 @@ import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import * as db from '../../src/core/db.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { parseMarkdown } from '../../src/core/markdown.ts';
+import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 
 // Load .env.testing if present
 const envPath = resolve(import.meta.dir, '../../.env.testing');
@@ -60,6 +61,9 @@ const ALL_TABLES = [
   'page_versions',
   'ingest_log',
   'files',
+  // v0.43 (#2095): volunteered-context feedback log — no FK to pages (slug
+  // join), but stale rows poison stats/count assertions across runs.
+  'context_volunteer_events',
   'pages',       // last because of foreign keys
   'config',
   'minion_attachments',
@@ -75,6 +79,13 @@ export function hasDatabase(): boolean {
 }
 
 /**
+ * Production guard, moved to test/helpers/db-guard.ts so test files outside
+ * test/e2e/ can import it without loading this module. Re-exported here for
+ * existing call sites (setupDB below, test/e2e/db-guard.test.ts).
+ */
+export { assertSafeE2eDatabaseUrl };
+
+/**
  * Connect to DB, run schema init, truncate all tables.
  * Call in beforeAll() of each test file.
  */
@@ -82,6 +93,7 @@ export async function setupDB(): Promise<PostgresEngine> {
   if (!DATABASE_URL) {
     throw new Error('DATABASE_URL not set. Copy .env.testing.example to .env.testing and configure it.');
   }
+  assertSafeE2eDatabaseUrl(DATABASE_URL);
 
   // Disconnect any prior connection (clean slate)
   await db.disconnect();

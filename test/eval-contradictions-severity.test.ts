@@ -25,6 +25,8 @@ function mkFinding(opts: {
       source_tier: 'curated',
       holder: null,
       text: 'A',
+      effective_date: null,
+      effective_date_source: null,
     },
     b: {
       slug: opts.slugB,
@@ -33,8 +35,11 @@ function mkFinding(opts: {
       source_tier: 'bulk',
       holder: null,
       text: 'B',
+      effective_date: null,
+      effective_date_source: null,
     },
     combined_score: 1,
+    verdict: 'contradiction',
     severity: opts.severity,
     axis: 'test',
     confidence: 0.9,
@@ -153,5 +158,58 @@ describe('buildHotPages', () => {
       findings.push(mkFinding({ slugA: `p/${i}`, slugB: `q/${i}`, severity: 'low' }));
     }
     expect(buildHotPages(findings, 5).length).toBe(5);
+  });
+});
+
+// ---- Lane D: R6 regression — contradiction severity unchanged ----
+// The v1 `verdict === 'contradiction'` semantics include severity coming from
+// the judge with a 'low' fallback (legacy). v2 must preserve this for the
+// contradiction verdict specifically: garbage severity → 'medium' (the new
+// per-verdict default for contradiction, NOT 'low' which would imply the
+// contradiction is naming-cosmetic).
+
+describe('R6 regression: contradiction verdict severity preserved', () => {
+  test('judge-set severity wins over defaultSeverityForVerdict', async () => {
+    const { normalizeVerdict } = await import('../src/core/eval-contradictions/judge.ts');
+    // Judge explicitly says 'high'. The v2 contract: that wins, even though
+    // defaultSeverityForVerdict('contradiction') is 'medium'.
+    const v = normalizeVerdict({
+      verdict: 'contradiction',
+      severity: 'high',
+      axis: 'CFO role',
+      confidence: 0.85,
+    });
+    expect(v.severity).toBe('high');
+  });
+
+  test('judge-set severity also wins when judge picks low (legacy behavior preserved)', async () => {
+    const { normalizeVerdict } = await import('../src/core/eval-contradictions/judge.ts');
+    const v = normalizeVerdict({
+      verdict: 'contradiction',
+      severity: 'low',
+      axis: 'name format',
+      confidence: 0.85,
+    });
+    expect(v.severity).toBe('low');
+  });
+
+  test('garbage severity on contradiction falls back to medium (NOT low — that would mask conflicts)', async () => {
+    const { normalizeVerdict } = await import('../src/core/eval-contradictions/judge.ts');
+    const v = normalizeVerdict({
+      verdict: 'contradiction',
+      severity: 'critical',
+      confidence: 0.85,
+    });
+    expect(v.severity).toBe('medium');
+  });
+
+  test('garbage severity on temporal_regression falls back to high (real signal)', async () => {
+    const { normalizeVerdict } = await import('../src/core/eval-contradictions/judge.ts');
+    const v = normalizeVerdict({
+      verdict: 'temporal_regression',
+      severity: 'critical',
+      confidence: 0.85,
+    });
+    expect(v.severity).toBe('high');
   });
 });

@@ -80,8 +80,7 @@ d('access_tokens.permissions.takes_holders end-to-end', () => {
 
     // Now dispatch with that allow-list, verify SQL filter applies
     const result = await dispatchToolCall(engine, 'takes_list', { page_slug: 'people/alice-example' }, {
-      remote: true,
-      takesHoldersAllowList: allowList,
+      remote: true, sourceId: 'default',      takesHoldersAllowList: allowList,
     });
     expect(result.isError).toBeFalsy();
     const takes = JSON.parse(result.content[0].text) as Array<{ holder: string }>;
@@ -100,8 +99,7 @@ d('access_tokens.permissions.takes_holders end-to-end', () => {
       [`tok-w-${Date.now()}`, hash, { takes_holders: ['world'] }],
     );
     const result = await dispatchToolCall(engine, 'takes_search', { query: 'founder' }, {
-      remote: true,
-      takesHoldersAllowList: ['world'],
+      remote: true, sourceId: 'default',      takesHoldersAllowList: ['world'],
     });
     const hits = JSON.parse(result.content[0].text) as Array<{ holder: string }>;
     expect(hits.every(h => h.holder === 'world')).toBe(true);
@@ -139,5 +137,36 @@ d('access_tokens.permissions.takes_holders end-to-end', () => {
       [hash],
     );
     expect(rows).toHaveLength(0);
+  });
+});
+
+d('mintLegacyToken parity on real Postgres (#4043 — PGLite hides positional-binding divergence)', () => {
+  test('scopes TEXT[] + permissions jsonb round-trip through the exact mint SQL shape', async () => {
+    const engine = getEngine();
+    const { mintLegacyToken, revokeLegacyTokenById } = await import('../../src/core/token-mint.ts');
+    const { sqlQueryForEngine } = await import('../../src/core/sql-query.ts');
+    const minted = await mintLegacyToken(engine, {
+      name: `parity-${Date.now()}`,
+      takesHolders: ['world'],
+      scopes: ['read', 'write'],
+      sourceGrant: ['wiki', 'essays'],
+    });
+    const rows = await engine.executeRaw<{ scopes: unknown; permissions: Record<string, unknown>; kind: string }>(
+      `SELECT scopes, permissions, jsonb_typeof(permissions) AS kind FROM access_tokens WHERE id = $1::uuid`,
+      [minted.id],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].kind).toBe('object'); // never a double-encoded string scalar
+    expect(rows[0].scopes).toEqual(['read', 'write']); // TEXT[] decodes as a JS array
+    expect(rows[0].permissions.takes_holders).toEqual(['world']);
+    expect(rows[0].permissions.source_id).toEqual(['wiki', 'essays']);
+
+    // And the verify-side normalizer sees exactly the granted scopes.
+    const { normalizeTokenScopes } = await import('../../src/core/legacy-token-scope.ts');
+    expect(normalizeTokenScopes(rows[0].scopes)).toEqual(['read', 'write']);
+
+    const sql = sqlQueryForEngine(engine);
+    expect(await revokeLegacyTokenById(sql, minted.id)).toBe(true);
+    expect(await revokeLegacyTokenById(sql, minted.id)).toBe(false); // already revoked
   });
 });

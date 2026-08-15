@@ -43,8 +43,9 @@ The Analysis section can interpret; the transcript section is sacred.
 
 The user sends an audio or voice message via any channel (Telegram, voice
 memo upload, openclaw audio attachment). The host agent typically provides
-the transcript text. If not, transcribe via `gbrain transcription` (Groq
-Whisper by default; OpenAI fallback for audio > 25MB segmented via ffmpeg).
+the transcript text. If not, transcribe it with your host's transcription
+tool (Groq Whisper is fast and cheap; OpenAI Whisper works too — segment
+audio > 25MB via ffmpeg first).
 
 ## The pipeline
 
@@ -52,8 +53,9 @@ Whisper by default; OpenAI fallback for audio > 25MB segmented via ffmpeg).
 1. STORE       → Upload original audio to gbrain storage backend
                  (S3 / Supabase Storage / local — pluggable per
                  src/core/storage.ts).
-2. TRANSCRIBE  → Use the agent-provided transcript verbatim, OR call
-                 gbrain transcription if no transcript was supplied.
+2. TRANSCRIBE  → Use the agent-provided transcript verbatim, OR
+                 transcribe the audio yourself (see "When to invoke")
+                 if no transcript was supplied.
 3. ROUTE       → Apply the decision tree (below) to find the right
                  destination directory.
 4. WRITE       → Create / update the destination brain page; preserve the

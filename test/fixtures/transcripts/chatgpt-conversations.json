@@ -1,0 +1,116 @@
+[
+  {
+    "title": "Widget launch naming",
+    "create_time": 1786080000,
+    "update_time": 1786080300,
+    "conversation_id": "cgpt-conv-0001",
+    "current_node": "n4",
+    "mapping": {
+      "root": { "id": "root", "parent": null, "children": ["n1"], "message": null },
+      "n1": {
+        "id": "n1",
+        "parent": "root",
+        "children": ["n2a", "n2b"],
+        "message": {
+          "author": { "role": "user" },
+          "create_time": 1786080005,
+          "content": { "content_type": "text", "parts": ["Suggest a name for the widget-co launcher."] }
+        }
+      },
+      "n2a": {
+        "id": "n2a",
+        "parent": "n1",
+        "children": [],
+        "message": {
+          "author": { "role": "assistant" },
+          "create_time": 1786080010,
+          "content": { "content_type": "text", "parts": ["BRANCH-A-ONLY-TEXT: an abandoned regeneration that must never be imported"] }
+        }
+      },
+      "n2b": {
+        "id": "n2b",
+        "parent": "n1",
+        "children": ["nt"],
+        "message": {
+          "author": { "role": "assistant" },
+          "create_time": 1786080015,
+          "content": { "content_type": "text", "parts": ["Call it LaunchPanel."] }
+        }
+      },
+      "nt": {
+        "id": "nt",
+        "parent": "n2b",
+        "children": ["n3"],
+        "message": {
+          "author": { "role": "tool" },
+          "create_time": 1786080017,
+          "content": { "content_type": "text", "parts": ["TOOL-ONLY-TEXT: never imported"] }
+        }
+      },
+      "n3": {
+        "id": "n3",
+        "parent": "nt",
+        "children": ["n4"],
+        "message": {
+          "author": { "role": "user" },
+          "create_time": 1786080020,
+          "content": { "content_type": "multimodal_text", "parts": ["LaunchPanel works. Ship it Friday.", { "asset_pointer": "file-service://ignored" }] }
+        }
+      },
+      "n4": {
+        "id": "n4",
+        "parent": "n3",
+        "children": [],
+        "message": {
+          "author": { "role": "assistant" },
+          "create_time": 1786080025,
+          "content": { "content_type": "text", "parts": ["LaunchPanel it is; shipping Friday."] }
+        }
+      }
+    }
+  },
+  {
+    "title": "Fallback thread",
+    "create_time": 1786166400,
+    "id": "cgpt-conv-0002",
+    "mapping": {
+      "m1": {
+        "id": "m1",
+        "parent": "gone-root",
+        "children": ["m2"],
+        "message": {
+          "author": { "role": "user" },
+          "create_time": 1786166405,
+          "content": { "content_type": "text", "parts": ["Where did we land on pricing?"] }
+        }
+      },
+      "m2": {
+        "id": "m2",
+        "parent": "m1",
+        "children": [],
+        "message": {
+          "author": { "role": "assistant" },
+          "create_time": 1786166410,
+          "content": { "content_type": "text", "parts": ["Pricing lands at 49."] }
+        }
+      }
+    }
+  },
+  {
+    "title": "Empty conversation",
+    "create_time": 1786252800,
+    "id": "cgpt-conv-0003",
+    "mapping": {
+      "s1": {
+        "id": "s1",
+        "parent": null,
+        "children": [],
+        "message": {
+          "author": { "role": "system" },
+          "create_time": 1786252805,
+          "content": { "content_type": "text", "parts": ["SYSTEM-ONLY-TEXT: never imported"] }
+        }
+      }
+    }
+  }
+]

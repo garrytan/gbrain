@@ -100,6 +100,22 @@ describe('searchTakes', () => {
     const worldHits = await engine.searchTakes('founder', { takesHoldersAllowList: ['world'] });
     expect(worldHits.every(h => h.holder === 'world')).toBe(true);
   });
+
+  // #3267: whole-string trigram % structurally can't match a short keyword
+  // against a long claim (similarity between the full strings stays under the
+  // 0.3 threshold). word_similarity (<%) matches the keyword against the
+  // best-matching word span instead.
+  test('single-word keyword matches a long claim containing it (#3267)', async () => {
+    await engine.addTakesBatch([
+      {
+        page_id: acmePageId, row_num: 50,
+        claim: 'Acme will consolidate the mid-market vertical SaaS landscape through disciplined acquisitions and a shared billing platform over the next five years',
+        kind: 'bet', holder: 'garry', weight: 0.6,
+      },
+    ]);
+    const hits = await engine.searchTakes('consolidate');
+    expect(hits.some(h => h.claim.includes('consolidate the mid-market'))).toBe(true);
+  });
 });
 
 describe('updateTake', () => {

@@ -1,0 +1,13 @@
+{
+  "_comment": "Skills in skills/manifest.json deliberately NOT bundled into openclaw.plugin.json (Tier B: host-repo only). This file is the machine-readable curation record: test/openclaw-plugin-manifest.test.ts asserts manifest = plugin + exclusions with no overlap. Removing a line here requires adding the slug to openclaw.plugin.json in the same commit (and vice versa). Seeded 2026-08-11 from the pre-wave state; each entry is a recorded decision, not an accident.",
+  "exclusions": {
+    "migrate": "host-side data-migration workflows; not useful to a downstream plugin install",
+    "setup": "host install/provisioning flow; plugin installs arrive already set up",
+    "frontmatter-guard": "pre-wave curation (recorded as-is; revisit individually)",
+    "schema-author": "schema-pack authoring is a brain-owner activity, not a client activity",
+    "smoke-test": "host-runtime health checks (container/daemon assumptions)",
+    "gbrain-upgrade": "host binary upgrade flow",
+    "schema-unify": "schema unification is a brain-owner migration activity",
+    "skill-optimizer": "requires host-side skillopt engine access and benchmark files"
+  }
+}

@@ -1,0 +1,6 @@
+{"intent": "after the call, summarize what we talked about", "expected_skill": "voice-post-call"}
+{"intent": "the voice call just ended", "expected_skill": "voice-post-call"}
+{"intent": "post call summary for the venus call", "expected_skill": "voice-post-call"}
+{"intent": "where is the transcript from the last call", "expected_skill": "voice-post-call"}
+{"intent": "venus, what's on my calendar", "expected_skill": "voice-persona-venus", "ambiguous_with": "voice-post-call"}
+{"intent": "ingest this voice memo", "expected_skill": "voice-note-ingest", "ambiguous_with": "voice-post-call"}

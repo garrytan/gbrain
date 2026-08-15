@@ -1,0 +1,10 @@
+# Roster for provision-scopes.sh — one line per channel / employee.
+# channel <slug>
+# employee <slug> [comma-separated channels they belong to]
+
+channel eng
+channel product
+
+employee alice-example eng,product
+employee bob-example eng
+employee carol-example

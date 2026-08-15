@@ -20,7 +20,19 @@
 
 set -euo pipefail
 
-ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+# Resolution order for the scan root:
+#   1. $GBRAIN_SCAN_ROOT explicit override — tests pass this so they
+#      don't depend on `git rev-parse` walking up to an unrelated parent
+#      .git/ on filesystems where `git init` silently fails under
+#      shard-concurrency load (v0.40.10 flake-hardening fix).
+#   2. `git rev-parse --show-toplevel` — production callers from inside
+#      the gbrain repo.
+#   3. $PWD — last-resort fallback for callers without git.
+if [ -n "${GBRAIN_SCAN_ROOT:-}" ]; then
+  ROOT="$GBRAIN_SCAN_ROOT"
+else
+  ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+fi
 cd "$ROOT"
 
 # Banned direct-call patterns. Each is a method on BrainEngine that

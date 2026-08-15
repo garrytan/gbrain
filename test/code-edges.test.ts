@@ -139,4 +139,40 @@ describe('Layer 5 (A1) — code-edges engine methods', () => {
     const inserted = await engine.addCodeEdges([]);
     expect(inserted).toBe(0);
   });
+
+  test('batches edge writes before PGLite parameter overflow poisons later writes', async () => {
+    // Six binds per unresolved edge. 5,462 rows require 32,772 binds, which
+    // crosses PGLite's signed-int16 ceiling. Before batching, addCodeEdges
+    // misleadingly returned success but every subsequent putPage produced no
+    // row until the process restarted.
+    const edgeCount = 5_462;
+    const inserted = await engine.addCodeEdges(
+      Array.from({ length: edgeCount }, (_, i) => ({
+        from_chunk_id: chunkA,
+        to_chunk_id: null,
+        from_symbol_qualified: 'run',
+        to_symbol_qualified: `overflow-target-${i}`,
+        edge_type: 'calls',
+      })),
+    );
+    expect(inserted).toBe(edgeCount);
+
+    const rows = await engine.executeRaw<{ count: number | string }>(
+      `SELECT COUNT(*) AS count
+         FROM code_edges_symbol
+        WHERE from_chunk_id = $1
+          AND to_symbol_qualified LIKE 'overflow-target-%'`,
+      [chunkA],
+    );
+    expect(Number(rows[0]!.count)).toBe(edgeCount);
+
+    const page = await engine.putPage('post-edge-batch-smoke', {
+      type: 'code', page_kind: 'code',
+      title: 'Post-edge batch smoke',
+      compiled_truth: 'export const stillWritable = true;',
+      timeline: '',
+    });
+    expect(page.slug).toBe('post-edge-batch-smoke');
+    expect((await engine.getPage('post-edge-batch-smoke'))?.slug).toBe(page.slug);
+  });
 });

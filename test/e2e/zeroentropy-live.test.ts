@@ -99,6 +99,14 @@ describe('ZE live — embed round-trip', () => {
   });
 });
 
+// ZE rerank API has multi-second cold-start latency on the first request
+// of a CI run (observed ~5-6s on Tier 2 runners; subsequent calls < 500ms).
+// The production DEFAULT_RERANK_TIMEOUT_MS in gateway.ts stays at 5s for the
+// search hot path; these E2E tests pass an explicit input.timeoutMs and a
+// longer bun:test per-test timeout so cold-start doesn't flake CI.
+const ZE_RERANK_TIMEOUT_MS = 25_000;
+const ZE_TEST_TIMEOUT_MS = 30_000;
+
 describe('ZE live — rerank round-trip', () => {
   test('rerank({query, documents}) returns sorted RerankResult[]', async () => {
     if (skipAll) {
@@ -112,6 +120,7 @@ describe('ZE live — rerank round-trip', () => {
         'My cat likes to eat tuna fish.',
         'Chlorophyll absorbs red and blue light during photosynthesis.',
       ],
+      timeoutMs: ZE_RERANK_TIMEOUT_MS,
     });
     expect(out.length).toBe(3);
     for (const r of out) {
@@ -128,7 +137,7 @@ describe('ZE live — rerank round-trip', () => {
     // the cat doc must NOT be at the top.
     const topIndex = out[0]!.index;
     expect(topIndex).not.toBe(1); // index 1 is the cat doc
-  });
+  }, ZE_TEST_TIMEOUT_MS);
 
   test('rerank with top_n=2 returns at most 2 results', async () => {
     if (skipAll) {
@@ -139,9 +148,10 @@ describe('ZE live — rerank round-trip', () => {
       query: 'photosynthesis',
       documents: ['photosynthesis a', 'cats b', 'photosynthesis c'],
       topN: 2,
+      timeoutMs: ZE_RERANK_TIMEOUT_MS,
     });
     expect(out.length).toBeLessThanOrEqual(2);
-  });
+  }, ZE_TEST_TIMEOUT_MS);
 });
 
 describe('ZE live — flexible dims', () => {

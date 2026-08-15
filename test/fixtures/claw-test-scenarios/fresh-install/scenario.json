@@ -6,5 +6,10 @@
     "extract.links_fs",
     "doctor.db_checks"
   ],
-  "brain": "brain"
+  "brain": "brain",
+  "oracle": {
+    "query": "alice",
+    "min_results": 1,
+    "files_exist": ["skills/query/SKILL.md"]
+  }
 }

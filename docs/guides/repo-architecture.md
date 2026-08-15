@@ -9,8 +9,9 @@ Separate agent behavior (replaceable) from world knowledge (permanent) into two 
 Without this: agent config and world knowledge are mixed together. Switch agents
 and you lose your knowledge. Switch knowledge tools and you lose your agent setup.
 
-With this: your brain (14,700+ files of people, companies, meetings, ideas)
-survives any agent swap. Your agent config survives any knowledge tool swap.
+With this: your brain (thousands of files of people, companies, meetings,
+ideas) survives any agent swap. Your agent config survives any knowledge
+tool swap.
 
 ## Implementation
 
@@ -119,7 +120,15 @@ without losing your agent setup.
 notes). The agent repo contains operational config. Different access controls.
 
 **GBrain indexes the brain repo.** Run `gbrain sync --repo ~/brain/` to keep
-the search index current. The agent repo is never indexed by GBrain.
+the search index current. The agent repo is not indexed by default.
+
+**Multi-source nuance.** With multi-source brains
+([multi-source-brains.md](multi-source-brains.md)), "the brain repo" means
+"each registered source." You CAN deliberately register a non-brain repo
+(e.g. `~/.gstack`) as its own isolated or federated source — that's a
+conscious registration with its own slug namespace, not a violation of the
+boundary. The rule below is about *unregistered, accidental* indexing of
+agent config.
 
 ## Tricky Spots
 
@@ -133,9 +142,12 @@ the search index current. The agent repo is never indexed by GBrain.
    belongs in the brain. Agent configs, skills, cron jobs, and operational
    state are replaceable. People, companies, ideas, and meetings are not.
 
-3. **Don't index the agent repo.** GBrain indexes the brain repo only.
-   Running `gbrain sync` against the agent repo pollutes search results
-   with operational config instead of world knowledge.
+3. **Don't casually index the agent repo.** Running `gbrain sync` against
+   the agent repo pollutes search results with operational config instead
+   of world knowledge. (Registering it deliberately as an isolated source
+   is different — see the multi-source nuance above. Pin the working
+   directory to the right source with a `.gbrain-source` dotfile via
+   `gbrain sources attach <id>`.)
 
 ## How to Verify
 

@@ -34,6 +34,17 @@ export interface ReindexFrontmatterOpts {
   yes?: boolean;
   json?: boolean;
   force?: boolean;
+  /**
+   * v0.41.15.0 (T12, D9): accepted for API consistency with the other
+   * `gbrain reindex --workers N` surfaces but currently INFORMATIONAL
+   * ONLY. reindex-frontmatter delegates to `backfillEffectiveDate`
+   * which has its own internal batching and doesn't expose a worker
+   * count. The work is pure CPU (date precedence resolution per row,
+   * no I/O), so parallelism gains would be marginal. Deep wiring is
+   * filed as a v0.42+ follow-up TODO. Pass `--workers N` today and
+   * the flag is recorded + ignored.
+   */
+  workers?: number;
 }
 
 export interface ReindexFrontmatterResult {
@@ -140,8 +151,17 @@ export async function runReindexFrontmatter(
   };
 }
 
-/** CLI entrypoint. Argv shape matches reindex-code for consistency. */
-export async function reindexFrontmatterCli(args: string[]): Promise<void> {
+/**
+ * CLI entrypoint. Argv shape matches reindex-code for consistency.
+ *
+ * #1963: takes the ALREADY-CONNECTED engine from cli.ts's dispatch instead of
+ * building its own. The old self-managed `createEngine()+connect()` here was a
+ * same-process double-connect: cli.ts's `connectEngine()` already held the
+ * PGLite data-dir lock, so the second `connect()` spun the full 30s lock
+ * timeout waiting on its own process and the command always exited 1 on
+ * PGLite. The engine lifecycle (connect + teardown) belongs to cli.ts.
+ */
+export async function reindexFrontmatterCli(engine: BrainEngine, args: string[]): Promise<void> {
   const opts: ReindexFrontmatterOpts = {};
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -151,36 +171,26 @@ export async function reindexFrontmatterCli(args: string[]): Promise<void> {
     else if (a === '--yes' || a === '-y') opts.yes = true;
     else if (a === '--json') opts.json = true;
     else if (a === '--force') opts.force = true;
+    else if (a === '--workers' || a === '--concurrency') {
+      // v0.41.15.0 (T12): accepted but informational only — see opts doc.
+      const v = parseInt(args[++i] ?? '', 10);
+      if (Number.isFinite(v) && v >= 1) opts.workers = v;
+    }
     else {
       console.error(`Unknown arg: ${a}`);
       process.exit(2);
     }
   }
 
-  const { createEngine } = await import('../core/engine-factory.ts');
-  const { loadConfig, toEngineConfig } = await import('../core/config.ts');
-  const cfg = loadConfig();
-  if (!cfg) {
-    console.error('No gbrain config; run `gbrain init` first.');
-    process.exit(1);
+  const result = await runReindexFrontmatter(engine, opts);
+  if (opts.json) {
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    const noun = result.status === 'dry_run' ? 'would update' : 'updated';
+    console.error(
+      `\nReindex ${result.status}: examined=${result.examined} ${noun}=${result.updated} ` +
+      `fallback=${result.fallback} dur=${result.durationSec.toFixed(1)}s`,
+    );
   }
-  const engine = await createEngine(toEngineConfig(cfg));
-
-  try {
-    const result = await runReindexFrontmatter(engine, opts);
-    if (opts.json) {
-      console.log(JSON.stringify(result, null, 2));
-    } else {
-      const noun = result.status === 'dry_run' ? 'would update' : 'updated';
-      console.error(
-        `\nReindex ${result.status}: examined=${result.examined} ${noun}=${result.updated} ` +
-        `fallback=${result.fallback} dur=${result.durationSec.toFixed(1)}s`,
-      );
-    }
-    if (result.status === 'cancelled') process.exit(1);
-  } finally {
-    if ('disconnect' in engine && typeof engine.disconnect === 'function') {
-      await engine.disconnect();
-    }
-  }
+  if (result.status === 'cancelled') process.exit(1);
 }

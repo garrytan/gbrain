@@ -14,8 +14,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { join, dirname } from 'path';
-import { execFileSync } from 'child_process';
+import { join } from 'path';
 import {
   CROSS_CUTTING_PATTERNS,
   DRY_PROXIMITY_LINES,
@@ -23,6 +22,17 @@ import {
   type CrossCuttingPattern,
 } from './check-resolvable.ts';
 import { loadOrDeriveManifest } from './skill-manifest.ts';
+import {
+  getWorkingTreeStatus as _getWorkingTreeStatus,
+  isInsideCodeFence as _isInsideCodeFence,
+  isWorkingTreeDirty as _isWorkingTreeDirty,
+  type WorkingTreeStatus as _WorkingTreeStatus,
+} from './skill-fix-gates.ts';
+import { parseSkillFrontmatter } from './skill-frontmatter.ts';
+import {
+  analyzeSkillBrainFirst,
+  CONVENTION_CALLOUT_RE,
+} from './skill-brain-first.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -59,6 +69,60 @@ export interface AutoFixReport {
   fixed: FixOutcome[];     // applied writes (or proposals in dryRun)
   skipped: FixOutcome[];   // skips and errors
 }
+
+// ---------------------------------------------------------------------------
+// MISSING_RULE pattern type — v0.36.x INSERT-new-callout flow (T2 + T4)
+// ---------------------------------------------------------------------------
+
+/**
+ * INSERT-missing-rule pattern type. Sibling of `CrossCuttingPattern` but
+ * with INSERT semantics instead of REPLACE:
+ *   - `detect`        decides whether THIS skill is missing the rule.
+ *   - `callout`       is the literal Convention-callout line to insert.
+ *   - `idempotentCheck` decides whether the rule is ALREADY present
+ *                     (so we don't double-insert on re-runs).
+ *
+ * Insertion site: `findInsertionLine(content)` (after frontmatter close
+ * `---`, after first H1 paragraph if present, before first H2). The
+ * shared safety gates (working-tree, code-fence, install-path) apply
+ * exactly the same way as for REPLACE patterns.
+ */
+export interface MissingRulePattern {
+  /** Stable label for reporting (e.g. 'brain-first compliance'). */
+  label: string;
+  /** Return true when the rule is MISSING for this skill (needs insert). */
+  detect: (content: string, skillName: string) => boolean;
+  /** Return true when this skill already declares the rule (skip insert). */
+  idempotentCheck: (content: string) => boolean;
+  /** The literal callout line to insert. */
+  callout: string;
+}
+
+/**
+ * v0.36.x missing-rule patterns. Currently one entry — the brain-first
+ * Convention callout, motivated by the 2026-05-19 tweet-shield incident
+ * (no model knew Garry built Palantir's Finance UI; brain did).
+ *
+ * The detector calls `analyzeSkillBrainFirst()` (the pure helper) so the
+ * detector here, the doctor check, and the skillify-check gate all share
+ * the same compliance ladder. One source of truth.
+ *
+ * The callout shape matches the existing compliant skills (brain-ops,
+ * perplexity-research, academic-verify) — `> **Convention:** see
+ * conventions/brain-first.md ...` with a brief explanation of the lookup
+ * chain so a reader landing on it knows what to do next.
+ */
+export const MISSING_RULE_PATTERNS: MissingRulePattern[] = [
+  {
+    label: 'brain-first compliance',
+    detect: (content, skillName) => {
+      const fm = parseSkillFrontmatter(content);
+      return analyzeSkillBrainFirst(content, skillName, fm).status === 'warn';
+    },
+    idempotentCheck: (content) => CONVENTION_CALLOUT_RE.test(content),
+    callout: '> **Convention:** see [conventions/brain-first.md](../conventions/brain-first.md) for the lookup chain (search → query → get_page → external).',
+  },
+];
 
 // ---------------------------------------------------------------------------
 // Block-expansion strategy map
@@ -146,46 +210,20 @@ export const expanders: Record<BlockShape, (lines: string[], lineIdx: number) =>
 };
 
 // ---------------------------------------------------------------------------
-// Guards
+// Guards (re-exported from src/core/skill-fix-gates.ts for back-compat)
 // ---------------------------------------------------------------------------
 
-/** True when the match offset sits inside a fenced code block (``` ... ```).
- *  Counts triple-backtick fences at line starts. Odd count = inside. */
-export function isInsideCodeFence(content: string, offset: number): boolean {
-  const before = content.slice(0, offset);
-  const fenceRe = /^```/gm;
-  const fenceCount = (before.match(fenceRe) || []).length;
-  return fenceCount % 2 === 1;
-}
-
-export type WorkingTreeStatus = 'clean' | 'dirty' | 'not_a_repo';
-
-/** Check the git state of a skill file. Three distinct outcomes — callers
- *  must NOT conflate "not a repo" with "clean", because the auto-fix
- *  contract is "git is the backup" and writing to a file outside any repo
- *  destroys user data with no recovery path.
- *
- *  `execFileSync` with array args bypasses the shell entirely, so paths
- *  with odd characters from a manifest can't inject commands. */
-export function getWorkingTreeStatus(skillPath: string): WorkingTreeStatus {
-  try {
-    const out = execFileSync('git', ['status', '--porcelain', '--', skillPath], {
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      cwd: dirname(skillPath),
-    });
-    return out.trim().length > 0 ? 'dirty' : 'clean';
-  } catch {
-    // git exits 128 when not inside a repo; treat any non-zero the same.
-    return 'not_a_repo';
-  }
-}
-
-/** Legacy wrapper. Callers that need to distinguish not_a_repo from clean
- *  should use getWorkingTreeStatus() directly. */
-export function isWorkingTreeDirty(skillPath: string): boolean {
-  return getWorkingTreeStatus(skillPath) === 'dirty';
-}
+/**
+ * v0.36.x extracted the working-tree + code-fence safety primitives to
+ * `src/core/skill-fix-gates.ts` so both REPLACE (CROSS_CUTTING_PATTERNS)
+ * and INSERT (MISSING_RULE_PATTERNS) auto-fix flows can share them. The
+ * re-exports below preserve the public symbol names for tests + external
+ * callers that imported these from `dry-fix.ts` directly.
+ */
+export const isInsideCodeFence = _isInsideCodeFence;
+export const getWorkingTreeStatus = _getWorkingTreeStatus;
+export const isWorkingTreeDirty = _isWorkingTreeDirty;
+export type WorkingTreeStatus = _WorkingTreeStatus;
 
 // ---------------------------------------------------------------------------
 // Manifest loading delegated to src/core/skill-manifest.ts. Using the
@@ -256,9 +294,177 @@ export function autoFixDryViolations(
         skipped.push(outcome);
       }
     }
+
+    // v0.36.x INSERT-missing-rule patterns. Run AFTER REPLACE so a
+    // freshly-inserted Convention callout from REPLACE doesn't get a
+    // second INSERT layered on top by the brain-first detector.
+    // (Belt + suspenders: brain-first's detect() reads the current file
+    // content and calls analyzeSkillBrainFirst, which already short-
+    // circuits on CONVENTION_CALLOUT_RE match.)
+    for (const mrp of MISSING_RULE_PATTERNS) {
+      const outcome = attemptInsertFix(skill.name, skillPath, content, mrp, opts);
+      if (!outcome) continue;
+      if (outcome.status === 'applied' || outcome.status === 'proposed') {
+        fixed.push(outcome);
+        if (outcome.status === 'applied') {
+          try {
+            content = readFileSync(skillPath, 'utf-8');
+          } catch {
+            break;
+          }
+        }
+      } else {
+        skipped.push(outcome);
+      }
+    }
   }
 
   return { fixed, skipped };
+}
+
+// ---------------------------------------------------------------------------
+// INSERT expander — v0.36.x missing-rule auto-fix
+// ---------------------------------------------------------------------------
+
+/**
+ * Find the line index at which to insert a new Convention callout.
+ *
+ * Insertion strategy `after-h1-paragraph`:
+ *   1. After frontmatter closing `---`
+ *   2. After the first `# Title` H1 if present
+ *   3. After the leading paragraph following the H1 if present
+ *   4. Before the first `## H2` heading
+ *   5. Fallback: append at body end if no H2 exists
+ *
+ * Returns a 0-indexed line number where the new callout should be
+ * inserted. Callers splice `[callout, ''] + ` at this position.
+ *
+ * Exported for unit tests.
+ */
+export function findInsertionLine(content: string): number {
+  const lines = content.split('\n');
+  let cursor = 0;
+
+  // Step 1: Skip leading frontmatter fence if present.
+  if (lines[0] === '---') {
+    for (let i = 1; i < lines.length; i++) {
+      if (lines[i] === '---') {
+        cursor = i + 1;
+        break;
+      }
+    }
+  }
+
+  // Step 2: Skip blank lines after frontmatter.
+  while (cursor < lines.length && lines[cursor].trim() === '') cursor++;
+
+  // Step 3: If there's a leading H1, advance past it.
+  if (cursor < lines.length && /^#\s+/.test(lines[cursor])) {
+    cursor++;
+    // Step 4: Skip blank lines + the leading paragraph following the H1.
+    while (cursor < lines.length && lines[cursor].trim() === '') cursor++;
+    // Paragraph: contiguous non-blank, non-heading, non-fence lines.
+    while (
+      cursor < lines.length &&
+      lines[cursor].trim() !== '' &&
+      !/^##+\s+/.test(lines[cursor]) &&
+      !/^---\s*$/.test(lines[cursor])
+    ) {
+      cursor++;
+    }
+    // Skip the trailing blank lines after the leading paragraph.
+    while (cursor < lines.length && lines[cursor].trim() === '') cursor++;
+  }
+
+  // Step 5: Cursor is now at first H2 OR end of file. Either way, insert here.
+  return cursor;
+}
+
+/**
+ * Attempt an INSERT-missing-rule fix for one skill+pattern.
+ *
+ * Mirrors `attemptFix()` (the REPLACE-in-place path) for safety gates but
+ * applies INSERT semantics: refuses when the rule is already present,
+ * inserts at `findInsertionLine(content)` otherwise.
+ *
+ * Returns:
+ *   - null            when the detector decides this skill doesn't need
+ *                     the rule (skip silently — not every skill needs every
+ *                     missing-rule pattern).
+ *   - 'skipped' outcome with reason when a safety gate blocks the write.
+ *   - 'proposed' outcome (dryRun) with before/after preview.
+ *   - 'applied' outcome on successful write.
+ *   - 'error' outcome on write failure.
+ */
+function attemptInsertFix(
+  skillName: string,
+  skillPath: string,
+  content: string,
+  mrp: MissingRulePattern,
+  opts: AutoFixOptions
+): FixOutcome | null {
+  const base = {
+    skill: skillName,
+    skillPath,
+    patternLabel: mrp.label,
+  };
+
+  // Detector gate: does this skill NEED the rule inserted?
+  if (!mrp.detect(content, skillName)) return null;
+
+  // Idempotency: is the rule already declared somehow? Belt+suspenders;
+  // detect() should already short-circuit, but double-check at the
+  // insertion gate so a future detector that misses callout cases doesn't
+  // produce double-inserts.
+  if (mrp.idempotentCheck(content)) {
+    return { ...base, status: 'skipped', reason: 'already_delegated' };
+  }
+
+  // Safety gates (shared with REPLACE path).
+  const treeStatus = getWorkingTreeStatus(skillPath);
+  if (treeStatus === 'dirty') {
+    return { ...base, status: 'skipped', reason: 'working_tree_dirty' };
+  }
+  if (treeStatus === 'not_a_repo') {
+    return { ...base, status: 'skipped', reason: 'no_git_backup' };
+  }
+
+  // Compute insertion site.
+  const insertAt = findInsertionLine(content);
+  const lines = content.split('\n');
+
+  // Build the new file content: splice [callout, ''] at insertAt.
+  // The blank line after the callout keeps the surrounding block
+  // structure readable.
+  const before = lines.slice(0, insertAt);
+  const after = lines.slice(insertAt);
+  const inserted = [...before, mrp.callout, '', ...after];
+  let next = inserted.join('\n');
+  if (content.endsWith('\n') && !next.endsWith('\n')) {
+    next += '\n';
+  }
+
+  if (opts.dryRun) {
+    return {
+      ...base,
+      status: 'proposed',
+      before: '(no prior block — inserting new callout)',
+      after: mrp.callout,
+    };
+  }
+
+  try {
+    writeFileSync(skillPath, next, 'utf-8');
+  } catch {
+    return { ...base, status: 'error', reason: 'write_error' };
+  }
+
+  return {
+    ...base,
+    status: 'applied',
+    before: '(no prior block — inserted new callout)',
+    after: mrp.callout,
+  };
 }
 
 function attemptFix(

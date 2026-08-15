@@ -186,17 +186,6 @@ async function phaseBFenceFacts(
     const localPathById = new Map<string, string | null>();
     for (const s of sources) localPathById.set(s.id, s.local_path);
 
-    // Dirty-tree refusal: check every source's local_path before writing.
-    for (const [id, localPath] of localPathById) {
-      if (localPath && isLocalPathDirty(localPath)) {
-        return {
-          name: 'fence_facts',
-          status: 'failed',
-          detail: `source "${id}" has uncommitted changes in ${localPath}. Commit or stash, then re-run.`,
-        };
-      }
-    }
-
     // Walk legacy rows in (source_id, entity_slug) groups for per-page
     // atomic writes.
     const legacy = await engine.executeRaw<LegacyFactRow>(
@@ -233,6 +222,21 @@ async function phaseBFenceFacts(
       const list = groups.get(key) ?? [];
       list.push(row);
       groups.set(key, list);
+    }
+
+    // Dirty-tree refusal: check ONLY the sources we are about to write
+    // into. A dirty tree in an unrelated source (or zero fenceable rows
+    // at all) must not block a no-op or a targeted backfill (#927).
+    const targetSourceIds = new Set([...groups.keys()].map(k => k.split('\0')[0]));
+    for (const id of targetSourceIds) {
+      const localPath = localPathById.get(id);
+      if (localPath && isLocalPathDirty(localPath)) {
+        return {
+          name: 'fence_facts',
+          status: 'failed',
+          detail: `source "${id}" has uncommitted changes in ${localPath}. Commit or stash, then re-run.`,
+        };
+      }
     }
 
     for (const [key, group] of groups) {

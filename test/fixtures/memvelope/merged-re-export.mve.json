@@ -1,0 +1,62 @@
+{
+  "memvelope": "envelope-v0",
+  "meta": {
+    "source_provider": "chatgpt",
+    "conversation_count": 2,
+    "message_count": 6
+  },
+  "conversations": [
+    {
+      "id": "6f1c9d2e-4b7a-4c15-9e38-2a5d81f0b3c7",
+      "title": "Pricing the beta",
+      "created_at": "2025-11-02T14:22:51.000Z",
+      "updated_at": "2026-06-09T10:13:20.000Z",
+      "messages": [
+        {
+          "id": "m1",
+          "role": "user",
+          "ts": "2025-11-02T14:22:51.000Z",
+          "text": "walk me through the beta pricing options again"
+        },
+        {
+          "id": "m2",
+          "role": "assistant",
+          "ts": "2025-11-02T14:23:04.000Z",
+          "text": "STALE_COPY_MARKER: three tiers came out of last week's call."
+        },
+        {
+          "id": "m3",
+          "role": "user",
+          "ts": "2026-06-09T09:56:40.000Z",
+          "text": "who was pushing for the annual option — was that Dana?"
+        },
+        {
+          "id": "m4",
+          "role": "assistant",
+          "ts": "2026-06-09T10:13:20.000Z",
+          "text": "FRESH_COPY_MARKER: Dana Okafor argued the annual prepay covers the import cost."
+        }
+      ]
+    },
+    {
+      "id": "6f1c9d2e-4b7a-4c15-9e38-2a5d81f0b3c7",
+      "title": "Pricing the beta",
+      "created_at": "2025-11-02T14:22:51.000Z",
+      "updated_at": "2026-03-09T23:46:40.000Z",
+      "messages": [
+        {
+          "id": "m1",
+          "role": "user",
+          "ts": "2025-11-02T14:22:51.000Z",
+          "text": "walk me through the beta pricing options again"
+        },
+        {
+          "id": "m2",
+          "role": "assistant",
+          "ts": "2025-11-02T14:23:04.000Z",
+          "text": "STALE_COPY_MARKER: three tiers came out of last week's call."
+        }
+      ]
+    }
+  ]
+}

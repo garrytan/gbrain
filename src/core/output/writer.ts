@@ -93,6 +93,10 @@ export interface PageValidationContext {
   timeline: string;
   frontmatter: Record<string, unknown>;
   engine: BrainEngine;
+  /** Exact scalar source for source-qualified validation reads. */
+  sourceId?: string;
+  /** Federated read scope; when non-empty, takes precedence over sourceId. */
+  sourceIds?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -249,7 +253,9 @@ export class BrainWriter {
 
       // Validators run before the outer transaction commits.
       if (strict !== 'off') {
-        report = await runValidators(txEngine, validators, tx.touchedSlugs);
+        report = await runValidators(txEngine, validators, tx.touchedSlugs, {
+          sourceId: 'default',
+        });
         // `ctx.logger.info` would be nice but keep validator behavior uniform
         // regardless of strict/lint mode. Caller inspects the report.
         if (strict === 'strict' && report.errorCount > 0) {
@@ -281,11 +287,17 @@ async function runValidators(
   engine: BrainEngine,
   validators: PageValidator[],
   touchedSlugs: Set<string>,
+  scope: { sourceId?: string; sourceIds?: string[] } = {},
 ): Promise<ValidationReport> {
   const findings: ValidationFinding[] = [];
+  const sourceOpts = scope.sourceIds && scope.sourceIds.length > 0
+    ? { sourceIds: scope.sourceIds }
+    : scope.sourceId
+      ? { sourceId: scope.sourceId }
+      : undefined;
 
   for (const slug of touchedSlugs) {
-    const page = await engine.getPage(slug);
+    const page = await engine.getPage(slug, sourceOpts);
     if (!page) continue; // could have been deleted in this tx
 
     // Grandfather opt-out
@@ -298,6 +310,8 @@ async function runValidators(
       timeline: page.timeline,
       frontmatter: page.frontmatter ?? {},
       engine,
+      sourceId: scope.sourceId,
+      sourceIds: scope.sourceIds,
     };
 
     for (const v of validators) {

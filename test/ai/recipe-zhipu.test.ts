@@ -69,6 +69,45 @@ describe('recipe: zhipu', () => {
     expect(sql.toLowerCase()).toContain('hnsw');
   });
 
+  test('chat touchpoint declares GLM models with tool + subagent-loop support (#1157)', () => {
+    const r = getRecipe('zhipu')!;
+    expect(r.touchpoints.chat).toBeDefined();
+    expect(r.touchpoints.chat!.models).toContain('glm-5.1');
+    expect(r.touchpoints.chat!.supports_tools).toBe(true);
+    expect(r.touchpoints.chat!.supports_subagent_loop).toBe(true);
+    expect(r.touchpoints.chat!.supports_prompt_cache).toBe(false);
+  });
+
+  test('zhipu:glm-5.1 passes the subagent capability gate (degraded:no_caching, not refused)', async () => {
+    // Pre-fix: getProviderCapabilities threw "does not offer a chat touchpoint"
+    // and classifyCapabilities returned 'unknown' → subagent submit refused.
+    const { getProviderCapabilities, classifyCapabilities } =
+      await import('../../src/core/ai/capabilities.ts');
+    const caps = getProviderCapabilities('zhipu:glm-5.1');
+    expect(caps.supportsToolCalling).toBe(true);
+    expect(classifyCapabilities('zhipu:glm-5.1')).toBe('degraded:no_caching');
+  });
+
+  test('no-chat-touchpoint error hint lists only providers that actually have chat', async () => {
+    // The hint is computed from the registry; every provider it names must
+    // really carry a chat touchpoint (pre-fix it hardcoded zhipu/dashscope/
+    // minimax, all embedding-only at the time).
+    const { getProviderCapabilities } = await import('../../src/core/ai/capabilities.ts');
+    const { listRecipes } = await import('../../src/core/ai/recipes/index.ts');
+    let hint = '';
+    try {
+      getProviderCapabilities('voyage:voyage-3');
+      throw new Error('expected AIConfigError for embedding-only provider');
+    } catch (e) {
+      hint = (e as { fix?: string }).fix ?? String(e);
+    }
+    const listed = hint.match(/chat: ([^.]+)\./)?.[1]?.split(', ') ?? [];
+    expect(listed.length).toBeGreaterThan(0);
+    const withChat = new Set(listRecipes().filter(r => r.touchpoints.chat).map(r => r.id));
+    for (const id of listed) expect(withChat.has(id)).toBe(true);
+    expect(listed).toContain('zhipu');
+  });
+
   test('dimsProviderOptions threads dimensions for embedding-3 (Matryoshka)', async () => {
     // Codex finding #1: Zhipu embedding-3 is Matryoshka 256-2048. Without
     // `dimensions` on the wire, user-selected non-default dims are

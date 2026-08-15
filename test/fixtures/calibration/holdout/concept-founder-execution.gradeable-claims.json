@@ -1,0 +1,59 @@
+{
+  "_meta": {
+    "fixture_version": "v0.36.1.0",
+    "page": "concept-founder-execution.md",
+    "synthetic": true,
+    "holdout": true,
+    "notes": "Blind holdout per plan D19. F1 target >= 0.8 (slightly relaxed vs training)."
+  },
+  "claims": [
+    {
+      "claim_text": "Best founders ship a working version within first 4 weeks of starting",
+      "kind": "judgment",
+      "domain": "founder-patterns",
+      "conviction": 0.8,
+      "since_date": "2024-03-04",
+      "rationale": "Strong conviction explicit"
+    },
+    {
+      "claim_text": "Shipping velocity in first weeks correlates with eventual scale outcomes",
+      "kind": "judgment",
+      "domain": "founder-patterns",
+      "conviction": 0.7,
+      "since_date": "2024-07-11",
+      "rationale": "Pattern claim with data anchor"
+    },
+    {
+      "claim_text": "charlie-example will struggle with the widget-co rebuild due to perfectionism",
+      "kind": "prediction",
+      "domain": "founder-execution",
+      "conviction": 0.6,
+      "since_date": "2024-11-19",
+      "rationale": "Explicit moderate conviction"
+    },
+    {
+      "claim_text": "fund-c portfolio will re-rate down at next mark-to-market due to slow TTC",
+      "kind": "prediction",
+      "domain": "fund-performance",
+      "conviction": 0.7,
+      "since_date": "2025-02-28",
+      "rationale": "'I bet' = bet language"
+    },
+    {
+      "claim_text": "alice-example outperforms seed projections by year 2",
+      "kind": "bet",
+      "domain": "company-specific",
+      "conviction": 0.7,
+      "since_date": "2026-04-22",
+      "rationale": "Bet under ## Bets heading"
+    },
+    {
+      "claim_text": "At least one fund-c company hits revenue milestone by mid-2026",
+      "kind": "bet",
+      "domain": "fund-portfolio",
+      "conviction": 0.65,
+      "since_date": "2026-04-22",
+      "rationale": "Bet under ## Bets heading; mild hedge ('despite slow start')"
+    }
+  ]
+}

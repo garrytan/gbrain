@@ -40,6 +40,7 @@ function ctxWithInbox(
     data,
     attempts_made: 0,
     signal: new AbortController().signal,
+    deadlineAtMs: null,
     shutdownSignal: new AbortController().signal,
     async updateProgress(p: unknown) { progress.push(p); },
     async updateTokens() {},

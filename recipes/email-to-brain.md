@@ -104,76 +104,32 @@ Every email gets a baked-in Gmail link: `[Open in Gmail](https://mail.google.com
 3. **Gmail access** via one of:
    - ClawVisor (recommended: E2E encrypted credential gateway)
    - Google OAuth credentials (direct API access)
-   - Hermes Gateway (built-in Gmail connector)
+   - Your harness's own Gmail connector, if it ships one (e.g. Hermes Gateway) —
+     this recipe carries no setup steps for that path; follow your harness's docs,
+     then continue at Step 2
 
 ## Setup Flow
 
-### Step 1: Validate Credential Gateway
+### Step 1: Configure Gmail Access (via credential-gateway)
 
-Ask the user: "How do you access Gmail programmatically? Options:
-1. ClawVisor (recommended, handles OAuth and encryption)
-2. Google OAuth credentials (you manage tokens yourself)
-3. Hermes Gateway (if you're using Hermes Agent)"
+Credential setup (ClawVisor vs direct Google OAuth, consent screen, validation
+commands) lives in ONE place: run the **[credential-gateway](credential-gateway.md)**
+recipe first — this recipe declares `requires: [credential-gateway]` for exactly
+that reason. Then apply the two Gmail-specific details:
 
-#### Option A: ClawVisor (recommended)
+- **Option A (ClawVisor):** activate the **Gmail** service and use a task purpose
+  like: "Full executive assistant email management including inbox triage,
+  searching by any criteria, reading emails, tracking threads."
+  (Be EXPANSIVE — narrow purposes like "email triage" cause legitimate requests
+  to fail verification; see credential-gateway's Tricky Spots.)
+- **Option B (direct OAuth):** the scope is
+  `https://www.googleapis.com/auth/gmail.readonly`, and the collector script's
+  OAuth flow stores tokens in `~/.gbrain/google-tokens.json` (auto-refreshes on
+  expiry). Also enable the Gmail API at
+  https://console.cloud.google.com/apis/library/gmail.googleapis.com
 
-Tell the user:
-"I need your ClawVisor URL and agent token.
-1. Go to https://clawvisor.com
-2. Create an agent (or use existing)
-3. Activate the Gmail service
-4. Create a standing task with purpose: 'Full executive assistant email management
-   including inbox triage, searching by any criteria, reading emails, tracking threads'
-   IMPORTANT: Be EXPANSIVE in the task purpose. Narrow purposes like 'email triage'
-   will cause legitimate requests to fail verification.
-5. Copy the gateway URL and agent token"
-
-Validate:
-```bash
-curl -sf "$CLAWVISOR_URL/health" && echo "PASS: ClawVisor reachable" || echo "FAIL"
-```
-
-**STOP until ClawVisor validates.**
-
-#### Option B: Google OAuth2 directly
-
-Tell the user:
-"I need Google OAuth2 credentials for Gmail access. Here's how:
-
-1. Go to https://console.cloud.google.com/apis/credentials
-   (create a Google Cloud project if you don't have one)
-2. Click **'+ CREATE CREDENTIALS'** > **'OAuth client ID'**
-3. If prompted, configure the OAuth consent screen:
-   - User type: **External** (or Internal for Google Workspace)
-   - App name: 'GBrain Email' (anything works)
-   - Scopes: add **'Gmail API .../auth/gmail.readonly'**
-   - Test users: add your own email address
-4. Create the OAuth client ID:
-   - Application type: **Desktop app**
-   - Name: 'GBrain'
-5. Copy the **Client ID** and **Client Secret**
-6. Also enable the Gmail API:
-   Go to https://console.cloud.google.com/apis/library/gmail.googleapis.com
-   Click **'Enable'**"
-
-Validate:
-```bash
-[ -n "$GOOGLE_CLIENT_ID" ] && [ -n "$GOOGLE_CLIENT_SECRET" ] \
-  && echo "PASS: Google OAuth credentials set" \
-  || echo "FAIL: Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET"
-```
-
-Then run the OAuth flow to get tokens:
-```bash
-# The collector script handles the OAuth flow:
-# 1. Opens browser to Google consent URL with gmail.readonly scope
-# 2. User grants access
-# 3. Script receives auth code, exchanges for access + refresh token
-# 4. Stores tokens in ~/.gbrain/google-tokens.json
-# 5. Auto-refreshes on expiry
-```
-
-**STOP until OAuth flow completes and tokens are stored.**
+**STOP until credential-gateway's validation passes** (ClawVisor `/health` OK,
+or OAuth tokens stored).
 
 ### Step 2: Set Up the Email Collector
 

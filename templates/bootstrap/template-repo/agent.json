@@ -1,0 +1,8 @@
+{
+  "format_version": 1,
+  "initialized": false,
+  "agent_name": "{{AGENT_NAME}}",
+  "created_by": "template",
+  "created_at": "1970-01-01T00:00:00.000Z",
+  "source_id": "workspace"
+}

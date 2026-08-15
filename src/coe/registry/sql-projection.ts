@@ -130,7 +130,7 @@ export class SqlCoeSnapshotProjection implements CoeSnapshotProjection {
            (event_id, source_id, snapshot_id, requested_uri, final_uri, acquisition_method,
             outcome, expected_hash, actual_hash, error_code, quarantine_reasons,
             record_hash, record_json, started_at, finished_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $14::jsonb,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, ($14::jsonb)->'items',
                  $11, $15::jsonb, $12::timestamptz, $13::timestamptz)
          ON CONFLICT (event_id) DO NOTHING`,
         [
@@ -148,7 +148,7 @@ export class SqlCoeSnapshotProjection implements CoeSnapshotProjection {
           acquisition.started_at,
           acquisition.finished_at,
         ],
-        [canonicalJsonValue(acquisition.quarantine_reasons), canonicalJsonValue(acquisition)],
+        [{ items: canonicalJsonValue(acquisition.quarantine_reasons) }, canonicalJsonValue(acquisition)],
       );
       const acquisitionRows = await tx.executeRaw<{ record_hash: string }>(
         "SELECT record_hash FROM public.coe_acquisitions WHERE event_id = $1",

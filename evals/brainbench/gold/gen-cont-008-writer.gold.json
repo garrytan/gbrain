@@ -1,0 +1,20 @@
+{
+  "fixture_id": "gen-cont-008-writer",
+  "turns": {
+    "3": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "lead Saplingrove Works",
+          "fact": "Decided to lead the Saplingrove Works round at standard terms",
+          "entity_slug": "companies/saplingrove-works",
+          "match_keywords": [
+            "lead",
+            "Saplingrove Works"
+          ],
+          "kind": "commitment"
+        }
+      ]
+    }
+  }
+}

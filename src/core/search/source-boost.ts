@@ -37,15 +37,33 @@ export const DEFAULT_SOURCE_BOOSTS: Record<string, number> = {
   'media/x/': 0.7,
   // Chat transcripts — massive, noisy, swamp keyword queries
   'openclaw/chat/': 0.5,
+  // Archived historical content — findable by default but ranked below curated
+  // content (issue #1777). NOT hard-excluded: archive/ routinely holds high-signal
+  // history (conversation exports, prior-system logs, older notes) users expect to
+  // retrieve. Demote-not-exclude keeps it findable without letting it dominate. The
+  // 0.5 is a prior applied in the SQL/fusion layer; the cross-encoder reranker can
+  // still PROMOTE a strongly-matching archive page that survives the demote into the
+  // rerank candidate window.
+  'archive/': 0.5,
+  // v0.42 extract_receipt pages — surface when relevant (extraction
+  // questions, audit trail) but never dominate user content. Per plan
+  // D-EXTRACT-42. Receipts stamp `type: extract_receipt` AND
+  // `dream_generated: true` in their frontmatter; demote here keeps them
+  // findable but ranked below all curated user content.
+  'extracts/': 0.3,
 };
 
 /**
  * Hard-excludes — slug prefixes that should never enter search results
  * (unless explicitly opted-in via include_slug_prefixes).
+ *
+ * These are genuine noise: test fixtures, binary attachments, raw sidecars.
+ * `archive/` is deliberately NOT here (issue #1777) — it holds high-signal
+ * historical content users expect to find, so it is DEMOTED via
+ * DEFAULT_SOURCE_BOOSTS (`archive/`: 0.5) instead of hidden.
  */
 export const DEFAULT_HARD_EXCLUDES: string[] = [
   'test/',
-  'archive/',
   'attachments/',
   '.raw/',
 ];

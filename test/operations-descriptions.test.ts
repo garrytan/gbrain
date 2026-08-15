@@ -6,6 +6,10 @@ import {
   LIST_PAGES_DESCRIPTION,
   QUERY_DESCRIPTION,
   SEARCH_DESCRIPTION,
+  LIST_SKILLS_DESCRIPTION,
+  GET_SKILL_DESCRIPTION,
+  SKILL_CATALOG_INSTRUCTIONS,
+  SKILL_CLIENT_GUIDANCE,
 } from '../src/core/operations-descriptions.ts';
 import { operations, operationsByName } from '../src/core/operations.ts';
 import { BRAIN_TOOL_ALLOWLIST } from '../src/core/minions/tools/brain-allowlist.ts';
@@ -105,6 +109,28 @@ describe('v0.29 — redirect hints on existing ops', () => {
   });
 });
 
+describe('#2416 — concept/landscape routing between search and query', () => {
+  test('search describes the cheap-hybrid default, not the keyword-era model', () => {
+    expect(SEARCH_DESCRIPTION).toContain("Cheap hybrid search");
+    expect(SEARCH_DESCRIPTION).toContain("no LLM expansion");
+    expect(SEARCH_DESCRIPTION).not.toContain("Keyword search using full-text search");
+  });
+
+  test('search declares the completeness boundary and both escape routes', () => {
+    expect(SEARCH_DESCRIPTION).toContain("NOT proof of coverage");
+    expect(SEARCH_DESCRIPTION).toContain("landscape");
+    expect(SEARCH_DESCRIPTION).toContain("list_pages");
+  });
+
+  test('query owns concept/landscape questions but does not oversell coverage', () => {
+    expect(QUERY_DESCRIPTION).toContain("landscape");
+    expect(QUERY_DESCRIPTION).toContain("expansion recovers synonym");
+    expect(QUERY_DESCRIPTION).toContain("Still top-K");
+    expect(QUERY_DESCRIPTION).toContain("list_pages");
+    expect(QUERY_DESCRIPTION).toContain("cheaper");
+  });
+});
+
 describe('v0.29 — subagent allow-list', () => {
   test('includes get_recent_salience and find_anomalies', () => {
     expect(BRAIN_TOOL_ALLOWLIST.has('get_recent_salience')).toBe(true);
@@ -139,5 +165,47 @@ describe('v0.29 — operations array carries the three new ops', () => {
     expect(names).toContain('get_recent_salience');
     expect(names).toContain('find_anomalies');
     expect(names).toContain('get_recent_transcripts');
+  });
+});
+
+describe('PR1 — skill catalog descriptions', () => {
+  test('list_skills / get_skill match the operation registration', () => {
+    expect(operationsByName['list_skills'].description).toBe(LIST_SKILLS_DESCRIPTION);
+    expect(operationsByName['get_skill'].description).toBe(GET_SKILL_DESCRIPTION);
+  });
+
+  test('descriptions teach "prose, not executable code" + the follow-the-prose protocol', () => {
+    expect(LIST_SKILLS_DESCRIPTION).toContain('NOT executable code');
+    expect(LIST_SKILLS_DESCRIPTION).toContain('get_skill');
+    expect(GET_SKILL_DESCRIPTION).toContain('nothing to');
+    expect(GET_SKILL_DESCRIPTION).toContain('same-named MCP tool');
+  });
+
+  test('descriptions surface usable/unavailable tool honesty', () => {
+    expect(LIST_SKILLS_DESCRIPTION).toContain('usable_tools');
+    expect(LIST_SKILLS_DESCRIPTION).toContain('unavailable_tools');
+    expect(GET_SKILL_DESCRIPTION).toContain('unavailable_tools');
+  });
+
+  test('both ops are read-scope, non-localOnly (thin clients reach them over HTTP)', () => {
+    for (const n of ['list_skills', 'get_skill']) {
+      expect(operationsByName[n].scope).toBe('read');
+      expect(operationsByName[n].localOnly).toBeFalsy();
+      expect(operationsByName[n].mutating).toBeFalsy();
+    }
+  });
+
+  test('instructions envelope is shaped + load-bearing', () => {
+    expect(SKILL_CATALOG_INSTRUCTIONS.summary).toContain('not executable tools');
+    expect(SKILL_CATALOG_INSTRUCTIONS.how_to_use.length).toBeGreaterThanOrEqual(3);
+    expect(SKILL_CATALOG_INSTRUCTIONS.how_to_use.join(' ')).toContain('get_skill');
+    expect(SKILL_CLIENT_GUIDANCE.nature).toContain('not code to execute');
+    expect(SKILL_CLIENT_GUIDANCE.protocol.length).toBeGreaterThanOrEqual(3);
+  });
+
+  test('operations array carries both new ops', () => {
+    const names = operations.map(o => o.name);
+    expect(names).toContain('list_skills');
+    expect(names).toContain('get_skill');
   });
 });

@@ -82,12 +82,15 @@ describe('findRepoRoot', () => {
     expect(found.source).toBe('openclaw_workspace_home');
   });
 
-  it('auto-detect: falls back to ./skills as final candidate', () => {
+  it('auto-detect: cwd has ./skills directory → cwd_walk_up tier (v0.33)', () => {
+    // Behavior unchanged from pre-v0.33 except for the reported source
+    // — cwd_walk_up fires first now that the broader tier exists.
+    // cwd_skills (resolver-gated) is functionally subsumed.
     const cwd = scratch();
     seedSkillsDir(join(cwd, 'skills'));
     const found = autoDetectSkillsDir(cwd, {});
     expect(found.dir).toBe(join(cwd, 'skills'));
-    expect(found.source).toBe('cwd_skills');
+    expect(found.source).toBe('cwd_walk_up');
   });
 
   it('D-CX-4: $OPENCLAW_WORKSPACE wins over repo-root walk when explicitly set', () => {
@@ -106,14 +109,18 @@ describe('findRepoRoot', () => {
     expect(found.source).toBe('openclaw_workspace_env');
   });
 
-  it('D-CX-4: repo-root walk still wins when OPENCLAW_WORKSPACE is NOT set', () => {
+  it('D-CX-4 + v0.33: walk-up from nested finds the repo skills/ via cwd_walk_up', () => {
+    // Pre-v0.33: this returned source='repo_root' via findRepoRoot's
+    // isGbrainRepoRoot gate. v0.33 added a broader cwd_walk_up tier
+    // ahead of repo_root — same dir matched, different source name.
+    // Behavior preserved; source label changed.
     const root = scratch();
     seedRepo(root);
     const nested = join(root, 'a', 'b');
     mkdirSync(nested, { recursive: true });
     const found = autoDetectSkillsDir(nested, {});
     expect(found.dir).toBe(join(root, 'skills'));
-    expect(found.source).toBe('repo_root');
+    expect(found.source).toBe('cwd_walk_up');
   });
 
   it('W1: AGENTS.md at skills dir is accepted (OpenClaw skills-subdir variant)', () => {
@@ -255,6 +262,53 @@ describe('findRepoRoot', () => {
     // And must include everything from the base hint.
     expect(AUTO_DETECT_HINT_READ_ONLY).toContain('$GBRAIN_SKILLS_DIR');
     expect(AUTO_DETECT_HINT_READ_ONLY).toContain('$OPENCLAW_WORKSPACE');
+  });
+
+  // ─── v0.33 cwd_walk_up tier (D3) ──────────────────────────────
+  // Non-OpenClaw hosts (any agent repo with a bare skills/ dir) own
+  // their skills/ directly. The new tier resolves these without
+  // requiring a resolver file or gbrain-shape `src/cli.ts`.
+
+  it('v0.33 cwd_walk_up: cwd has skills/ but no resolver, no src/cli.ts (bare-skills-dir shape)', () => {
+    const agentRepo = scratch();
+    mkdirSync(join(agentRepo, 'skills'));
+    // Intentionally: no RESOLVER.md / AGENTS.md, no src/cli.ts.
+    const found = autoDetectSkillsDir(agentRepo, {});
+    expect(found.dir).toBe(join(agentRepo, 'skills'));
+    expect(found.source).toBe('cwd_walk_up');
+  });
+
+  it('v0.33 cwd_walk_up: walks up from nested cwd to first ancestor with skills/', () => {
+    const agentRepo = scratch();
+    mkdirSync(join(agentRepo, 'skills'));
+    const nested = join(agentRepo, 'src', 'commands');
+    mkdirSync(nested, { recursive: true });
+    const found = autoDetectSkillsDir(nested, {});
+    expect(found.dir).toBe(join(agentRepo, 'skills'));
+    expect(found.source).toBe('cwd_walk_up');
+  });
+
+  it('R5 regression: $OPENCLAW_WORKSPACE still wins when both env and cwd-skills exist', () => {
+    // Pre-v0.33 R5: explicit env beats implicit cwd. The new cwd_walk_up
+    // tier MUST NOT regress this — explicit operator intent always wins.
+    const agentRepo = scratch();
+    mkdirSync(join(agentRepo, 'skills'));
+    const openclawWs = scratch();
+    mkdirSync(join(openclawWs, 'skills'));
+    writeFileSync(join(openclawWs, 'skills', 'AGENTS.md'), '# agents\n');
+
+    const found = autoDetectSkillsDir(agentRepo, { OPENCLAW_WORKSPACE: openclawWs });
+    expect(found.dir).toBe(join(openclawWs, 'skills'));
+    expect(found.source).toBe('openclaw_workspace_env');
+  });
+
+  it('v0.33 cwd_walk_up: no skills/ anywhere up to root → returns null', () => {
+    const empty = scratch();
+    const nested = join(empty, 'deep', 'nested', 'dir');
+    mkdirSync(nested, { recursive: true });
+    const found = autoDetectSkillsDir(nested, {});
+    expect(found.dir).toBeNull();
+    expect(found.source).toBeNull();
   });
 
   it('v0.31.7 D5 regression guard: autoDetectSkillsDir does NOT install-path-fallback', () => {

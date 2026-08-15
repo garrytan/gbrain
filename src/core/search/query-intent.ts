@@ -29,6 +29,20 @@ export type QueryIntent = 'entity' | 'temporal' | 'event' | 'general';
 export type SalienceMode = 'off' | 'on' | 'strong';
 export type RecencyMode = 'off' | 'on' | 'strong';
 
+/**
+ * v0.36 cross-modal wave: modality axis (D6).
+ *
+ * - 'text' (default): existing text-embedding path, no behavior change
+ * - 'image': route through the multimodal model + embedding_image column
+ *   (visually-similar matching + image OCR text)
+ * - 'both': run text + image searches in parallel and merge via
+ *   weighted RRF (recall-leaning when the query is ambiguous)
+ *
+ * Parallel axis to intent/detail/salience/recency. Returned by
+ * classifyQuery from one regex pass over the query.
+ */
+export type ModalityMode = 'text' | 'image' | 'both';
+
 export interface QuerySuggestions {
   intent: QueryIntent;
   /** v0.29.0 detail mapping. entity→low, temporal/event→high, general→undefined. */
@@ -37,6 +51,8 @@ export interface QuerySuggestions {
   suggestedSalience: SalienceMode;
   /** v0.29.1 — per-prefix age-decay boost. */
   suggestedRecency: RecencyMode;
+  /** v0.36 — cross-modal routing axis. Defaults to 'text' when nothing matches. */
+  suggestedModality: ModalityMode;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -80,7 +96,7 @@ const ENTITY_PATTERNS = [
   /\boverview\b/i,
   /\bbackground\b/i,
   /\bprofile\b/i,
-  /\bwhat\s+do\s+(you|we)\s+know\b/i,
+  /\bwhat\s+do\s+(i|you|we)\s+know\b/i,
 ];
 
 const FULL_CONTEXT_PATTERNS = [
@@ -164,6 +180,46 @@ const SALIENCE_ON_PATTERNS = [
   /\bwhat'?s\s+important\b/i,
 ];
 
+// v0.36 cross-modal wave — modality-axis patterns (D6).
+//
+// CROSS_MODAL_PATTERNS fires the 'image' modality when the query explicitly
+// names visual artifacts ("show me photos", "find images of", "screenshot of",
+// "what does X look like", "diagram of"). Module-scope const so regexes
+// compile once at module load (D15).
+//
+// Conservative on purpose — false positives cost "one cheaper image search
+// where text might have worked." False negatives cost nothing (the legacy
+// text path still runs). The LLM-intent escalation in Commit 4 catches
+// genuinely ambiguous phrasings.
+const CROSS_MODAL_PATTERNS: RegExp[] = [
+  /\b(show|find|get|pull)\s+(me\s+)?(the\s+)?(photos?|images?|pictures?|pics?|screenshots?)\b/i,
+  /\b(photos?|images?|pictures?|pics?|screenshots?)\s+(of|from|at|with|showing|featuring)\b/i,
+  /\bwhat\s+does\s+[\w\s']{1,40}?\s+look\s+like\b/i,
+  /\b(whiteboard|diagram|slide|screenshot|infographic|chart)s?\s+(of|from|about|showing)\b/i,
+  /\bdiagram\s+(of|for|showing)\b/i,
+  /\bvisual(s|ly)?\s+(of|from|about|showing|representation)\b/i,
+];
+
+// v0.36 cross-modal wave (Commit 4 prep): visual nouns that combined with
+// ambiguous-pronoun phrasings ("any pics from last week's offsite?") trigger
+// the optional LLM intent escalation. Subset of cross-modal patterns plus
+// looser noun-form matches.
+const AMBIGUOUS_MODALITY_NOUNS: RegExp[] = [
+  /\b(photo|image|picture|pic|screenshot|diagram|whiteboard|slide|chart)s?\b/i,
+  /\blook(s|ed)?\s+like\b/i,
+  /\bvisual(s|ly)?\b/i,
+];
+
+// Pronoun + filler markers that signal "the user is referencing something
+// they can't quite name" — combined with AMBIGUOUS_MODALITY_NOUNS, triggers
+// the LLM tie-break in Commit 4.
+const AMBIGUOUS_REFERENCE_MARKERS: RegExp[] = [
+  // Match all the visual nouns (pic/pics, picture/pictures, photo/photos, image/images,
+  // screenshot/screenshots, diagram/diagrams, whiteboard/whiteboards, slide/slides, chart/charts).
+  /\b(any|some|that|those|these|the)\s+(pic|pics|picture|pictures|photo|photos|image|images|screenshot|screenshots|diagram|diagrams|whiteboard|whiteboards|slide|slides|chart|charts)\b/i,
+  /\bfrom\s+(last|this|the)\s+(week|month|year|offsite|meeting|hackathon|deck)\b/i,
+];
+
 // ─────────────────────────────────────────────────────────
 // Classifier
 // ─────────────────────────────────────────────────────────
@@ -221,7 +277,40 @@ export function classifyQuery(query: string): QuerySuggestions {
     suggestedSalience = 'off';
   }
 
-  return { intent, suggestedDetail, suggestedSalience, suggestedRecency };
+  // v0.36 cross-modal — modality axis. Independent of intent/detail/salience/recency.
+  // Conservative default 'text'; only flips to 'image' on explicit cross-modal regex match.
+  // 'both' is reserved for explicit per-call opts (LLM-intent escalation in Commit 4
+  // can also produce 'both' via tie-break).
+  const suggestedModality: ModalityMode = matches(CROSS_MODAL_PATTERNS, query) ? 'image' : 'text';
+
+  return { intent, suggestedDetail, suggestedSalience, suggestedRecency, suggestedModality };
+}
+
+/**
+ * v0.36 — heuristic gate for the optional LLM intent escalation (Commit 4).
+ *
+ * Fires when the query contains a visual noun ("any pics", "the diagram",
+ * "what does it look like") combined with an ambiguous reference marker
+ * ("from last week's offsite"). These are the phrasings the conservative
+ * regex misses but a Haiku tie-break catches.
+ *
+ * Returns false for unambiguous text queries (no LLM call burned). Returns
+ * false for queries the regex ALREADY caught (no need to tie-break a
+ * confident classification). Returns true only for the narrow band where
+ * the LLM call earns its $0.0001 cost.
+ *
+ * Pure function. No LLM call. No DB access. Used by hybridSearch's
+ * escalation branch only when `search.cross_modal.llm_intent: true`.
+ */
+export function isAmbiguousModalityQuery(query: string): boolean {
+  // Already-confident classification → no LLM needed.
+  if (matches(CROSS_MODAL_PATTERNS, query)) return false;
+
+  const hasVisualNoun = matches(AMBIGUOUS_MODALITY_NOUNS, query);
+  if (!hasVisualNoun) return false;
+
+  const hasReferenceMarker = matches(AMBIGUOUS_REFERENCE_MARKERS, query);
+  return hasReferenceMarker;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -250,4 +339,65 @@ export function intentToDetail(intent: QueryIntent): 'low' | 'medium' | 'high' |
 /** v0.29.0 helper. Routes through classifyQuery internally. */
 export function autoDetectDetail(query: string): 'low' | 'medium' | 'high' | undefined {
   return classifyQuery(query).suggestedDetail;
+}
+
+// ─────────────────────────────────────────────────────────
+// #2416 — concept-shaped query detection (CLI nudge)
+// ─────────────────────────────────────────────────────────
+
+// Fuzzy-quantifier / landscape cues. A concept-shaped question asks for a
+// SET defined by meaning ("all the X that do Y", "the landscape of Z") —
+// exactly where `query`'s multi-query expansion recovers synonym- and
+// outcome-phrased matches that the expansion-off `search` op can miss.
+//
+// Deliberately EXCLUDED cues (owned by other routers — a nudge toward
+// `query` on these would fight their descriptions):
+//   - "who are the …"        → find_experts
+//   - bare "anything …"      → get_recent_salience / find_anomalies
+const CONCEPT_CUE_PATTERNS: RegExp[] = [
+  /\b(all|every)\b.+\b(that|who|which|doing|with|about|related to)\b/i,
+  /\b(find|list|show)\s+(all|every|everything)\b/i,
+  /\beverything\s+(about|on|matching|related)\b/i,
+  /\bthe\s+(landscape|ecosystem|space|universe)\s+of\b/i,
+  /\b(landscape|ecosystem)\s+(of|around)\b/i,
+  /\bwhich\s+\w+[\w\s]*\b(do|does|are|have|use|work)\b/i,
+];
+
+// Exact-identifier anti-signals: the query names a specific thing, so the
+// cheap `search` op is the right tool and a nudge would be noise.
+const CONCEPT_ANTI_PATTERNS: RegExp[] = [
+  /["'“”][^"'“”]+["'“”]/,               // quoted phrase — exact-match intent
+  /\b[a-z0-9]+(?:-[a-z0-9]+){1,}\b/,    // slug-like token (kebab-case)
+];
+
+/**
+ * True when a query is concept-shaped: it carries a fuzzy-quantifier or
+ * landscape cue AND no exact-identifier anti-signal. Tuned to favor
+ * false-negatives (silence) over false-positives (noise): short queries,
+ * quoted phrases, slugs, and entity lookups (per classifyQueryIntent)
+ * never trigger. Pure function; no LLM, no DB.
+ */
+export function looksConceptShaped(query: string): boolean {
+  const q = query.trim();
+  if (q.split(/\s+/).length < 3) return false; // bare token / proper-noun lookup
+  if (!matches(CONCEPT_CUE_PATTERNS, q)) return false;
+  if (matches(CONCEPT_ANTI_PATTERNS, q)) return false;
+  if (classifyQueryIntent(q) === 'entity') return false;
+  return true;
+}
+
+/**
+ * One-line CLI hint steering a concept-shaped `search` toward `query`.
+ * Returns null when the query is not concept-shaped. Message generation
+ * lives here (not in cli.ts) so the full string is unit-testable; the CLI
+ * wiring is a two-liner per dispatch path, stderr only, `--quiet`-gated.
+ */
+export function conceptNudge(query: string): string | null {
+  if (!looksConceptShaped(query)) return null;
+  const preview = query.length > 60 ? `${query.slice(0, 57)}...` : query;
+  return (
+    `hint: concept-shaped question — try \`gbrain query "${preview}"\` ` +
+    `(adds multi-query expansion; recovers synonym-phrased matches search can miss). ` +
+    `A nonzero search count is not proof of completeness.`
+  );
 }

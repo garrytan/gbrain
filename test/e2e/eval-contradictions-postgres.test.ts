@@ -24,6 +24,7 @@ import { writeRunRow, loadTrend } from '../../src/core/eval-contradictions/trend
 import { JudgeCache, buildCacheKey } from '../../src/core/eval-contradictions/cache.ts';
 import type { ProbeReport } from '../../src/core/eval-contradictions/types.ts';
 import { operationsByName, type OperationContext } from '../../src/core/operations.ts';
+import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 
@@ -35,6 +36,7 @@ beforeAll(async () => {
     return;
   }
   engine = new PostgresEngine();
+  assertSafeE2eDatabaseUrl(DATABASE_URL!);
   await engine.connect({ database_url: DATABASE_URL });
   await engine.initSchema();
 });
@@ -60,7 +62,16 @@ function mkReport(opts: Partial<ProbeReport> = {}): ProbeReport {
     sampling: 'deterministic',
     queries_evaluated: 50,
     queries_with_contradiction: 12,
+    queries_with_any_finding: 18,
     total_contradictions_flagged: 18,
+    verdict_breakdown: {
+      no_contradiction: 282,
+      contradiction: 12,
+      temporal_supersession: 4,
+      temporal_regression: 1,
+      temporal_evolution: 1,
+      negation_artifact: 0,
+    },
     calibration: {
       queries_total: 50,
       queries_judged_clean: 38,
@@ -160,11 +171,11 @@ describe('E2E: P2 persistent cache with real now()', () => {
     const cache = new JudgeCache({ engine, modelId: 'haiku-pg-test' });
     expect(await cache.lookup('text-a', 'text-b')).toBeNull();
     await cache.store('text-a', 'text-b', {
-      contradicts: true, severity: 'high', axis: 'pg-test', confidence: 0.9, resolution_kind: 'dream_synthesize',
+      verdict: 'contradiction', severity: 'high', axis: 'pg-test', confidence: 0.9, resolution_kind: 'dream_synthesize',
     });
     const hit = await cache.lookup('text-a', 'text-b');
     expect(hit).not.toBeNull();
-    expect(hit?.contradicts).toBe(true);
+    expect(hit?.verdict).toBe('contradiction');
     expect(hit?.severity).toBe('high');
   });
 
@@ -172,7 +183,7 @@ describe('E2E: P2 persistent cache with real now()', () => {
     if (!engine) return;
     const cache = new JudgeCache({ engine, modelId: 'haiku-pg-test', ttlSeconds: 60 });
     await cache.store('expire-me-a', 'expire-me-b', {
-      contradicts: false, severity: 'low', axis: '', confidence: 0.3, resolution_kind: null,
+      verdict: 'no_contradiction', severity: 'info', axis: '', confidence: 0.3, resolution_kind: null,
     });
     // Backdate expires_at by 1 second.
     const key = buildCacheKey({ textA: 'expire-me-a', textB: 'expire-me-b', modelId: 'haiku-pg-test' });
@@ -191,7 +202,7 @@ describe('E2E: P2 persistent cache with real now()', () => {
     if (!engine) return;
     const cache1 = new JudgeCache({ engine, modelId: 'haiku-pg-test' });
     await cache1.store('shared-a', 'shared-b', {
-      contradicts: true, severity: 'medium', axis: '', confidence: 0.85, resolution_kind: 'manual_review',
+      verdict: 'contradiction', severity: 'medium', axis: '', confidence: 0.85, resolution_kind: 'manual_review',
     });
     // Direct engine call with a different prompt_version should miss.
     const wrong = await engine.getContradictionCacheEntry({
@@ -262,9 +273,10 @@ describe('E2E: find_contradictions MCP op on Postgres', () => {
         contradictions: [
           {
             kind: 'cross_slug_chunks',
-            a: { slug: 'companies/acme-example', chunk_id: 1, take_id: null, source_tier: 'curated', holder: null, text: 'a' },
-            b: { slug: 'openclaw/chat/x', chunk_id: 2, take_id: null, source_tier: 'bulk', holder: null, text: 'b' },
+            a: { slug: 'companies/acme-example', chunk_id: 1, take_id: null, source_tier: 'curated', holder: null, text: 'a', effective_date: null, effective_date_source: null },
+            b: { slug: 'openclaw/chat/x', chunk_id: 2, take_id: null, source_tier: 'bulk', holder: null, text: 'b', effective_date: null, effective_date_source: null },
             combined_score: 1.5,
+            verdict: 'contradiction',
             severity: 'high',
             axis: 'MRR figure',
             confidence: 0.9,
@@ -273,9 +285,10 @@ describe('E2E: find_contradictions MCP op on Postgres', () => {
           },
           {
             kind: 'cross_slug_chunks',
-            a: { slug: 'people/alice-example', chunk_id: 3, take_id: null, source_tier: 'curated', holder: null, text: 'c' },
-            b: { slug: 'people/alice-smith-example', chunk_id: 4, take_id: null, source_tier: 'curated', holder: null, text: 'd' },
+            a: { slug: 'people/alice-example', chunk_id: 3, take_id: null, source_tier: 'curated', holder: null, text: 'c', effective_date: null, effective_date_source: null },
+            b: { slug: 'people/alice-smith-example', chunk_id: 4, take_id: null, source_tier: 'curated', holder: null, text: 'd', effective_date: null, effective_date_source: null },
             combined_score: 1.2,
+            verdict: 'contradiction',
             severity: 'low',
             axis: 'name format',
             confidence: 0.75,

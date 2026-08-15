@@ -108,6 +108,81 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // created_at DESC)`. Old brains have ingest_log without source_id; bootstrap
   // adds the column before SCHEMA_SQL replay creates the index.
   { kind: 'column', table: 'ingest_log', column: 'source_id' },
+  // v0.18 (v18) — forward-referenced by `CREATE INDEX idx_files_source_id ON
+  // files(source_id)` and `CREATE INDEX idx_files_page_id ON files(page_id)`.
+  // Pre-v18 brains have files without these columns; bootstrap adds them
+  // before SCHEMA_SQL replay creates the indexes.
+  { kind: 'column', table: 'files', column: 'source_id' },
+  { kind: 'column', table: 'files', column: 'page_id' },
+  // v0.34.1 (v60+v61+v65) — forward-referenced by the FK
+  // `oauth_clients.source_id REFERENCES sources(id)` and the GIN index
+  // `idx_oauth_clients_federated_read ON oauth_clients USING GIN (federated_read)`.
+  // Pre-v60 brains have oauth_clients without these columns; bootstrap adds
+  // them before SCHEMA_SQL replay creates the FK + index.
+  { kind: 'column', table: 'oauth_clients', column: 'source_id' },
+  { kind: 'column', table: 'oauth_clients', column: 'federated_read' },
+  // WP4 (v127) — per-client MCP tool surface + operator-lock marker. Not
+  // indexed, but migration-added AND present in the blob's CREATE TABLE (the
+  // v121 mask class), so the bootstrap adds them on pre-v127 brains.
+  { kind: 'column', table: 'oauth_clients', column: 'surface' },
+  { kind: 'column', table: 'oauth_clients', column: 'surface_set_by' },
+  // v0.26.5 (v34) — promotes archive lifecycle from JSONB config to real
+  // columns on sources. CREATE TABLE IF NOT EXISTS is a no-op on existing
+  // sources tables, so the visibility filters in search/list_pages that
+  // reference these columns trip on pre-v34 brains. Bootstrap adds them
+  // before any visibility-filter SQL runs.
+  { kind: 'column', table: 'sources', column: 'archived' },
+  { kind: 'column', table: 'sources', column: 'archived_at' },
+  { kind: 'column', table: 'sources', column: 'archive_expires_at' },
+  // v0.37.0 (v79) — forward-referenced by `CREATE INDEX
+  // pages_last_retrieved_at_idx ON pages (last_retrieved_at)`. Pre-v79 brains
+  // have pages without this column; bootstrap adds it before SCHEMA_SQL
+  // replay creates the index.
+  { kind: 'column', table: 'pages', column: 'last_retrieved_at' },
+  // v0.38.0 (v81) — pages_provenance_columns adds four nullable columns
+  // (ingested_via, ingested_at, source_uri, source_kind) to track WHERE
+  // every page came from (capture-cli, webhook, put_page, dream, etc.).
+  // No SCHEMA_SQL index/FK references them today, but bootstrap probes
+  // are added defense-in-depth so future schema work that does reference
+  // them doesn't wedge pre-v81 brains. Renumbered v80→v81 during master
+  // merge with v0.37.2.0 takes_unresolvable_quality hotfix.
+  { kind: 'column', table: 'pages', column: 'ingested_via' },
+  { kind: 'column', table: 'pages', column: 'ingested_at' },
+  { kind: 'column', table: 'pages', column: 'source_uri' },
+  { kind: 'column', table: 'pages', column: 'source_kind' },
+  // v0.40.3.0 (v90, renumbered from v0.40.3.0 v81 on master merge) —
+  // contextual_retrieval_columns adds five additive columns wiring the
+  // three-tier wrapper ladder. Bootstrap probes added defense-in-depth
+  // for future schema work.
+  { kind: 'column', table: 'pages', column: 'contextual_retrieval_mode' },
+  { kind: 'column', table: 'pages', column: 'corpus_generation' },
+  { kind: 'column', table: 'sources', column: 'contextual_retrieval_mode' },
+  { kind: 'column', table: 'sources', column: 'trust_frontmatter_overrides' },
+  // v0.40.3.0 (v91) — pages.generation BIGINT bumped by the
+  // bump_page_generation_fn trigger. Forward-referenced by
+  // pages_generation_idx (CREATE INDEX ON pages (generation)) so bootstrap
+  // probes guard pre-v91 brains.
+  { kind: 'column', table: 'pages', column: 'generation' },
+  // v0.41.31 (v108) — pages.embedding_signature TEXT for real stale
+  // semantics. No SCHEMA_SQL index references it; bootstrap probe is
+  // defense-in-depth (and satisfies the MIGRATIONS ADD COLUMN coverage gate).
+  { kind: 'column', table: 'pages', column: 'embedding_signature' },
+  // v0.42.7 (v112) — forward-referenced by `CREATE INDEX
+  // pages_links_extracted_at_idx ON pages (source_id, links_extracted_at)`.
+  // Pre-v112 brains have pages without this column; bootstrap adds it before
+  // SCHEMA_SQL replay creates the index. Powers `gbrain extract --stale` + the
+  // `links_extraction_lag` doctor check.
+  { kind: 'column', table: 'pages', column: 'links_extracted_at' },
+  // v121 — referenced by the timeline event lookup and dedup indexes before
+  // the numbered migration can add the column on an existing brain.
+  { kind: 'column', table: 'timeline_entries', column: 'event_page_id' },
+  // v7-era — surfaced by the #2626-class scanner sweep: both columns are
+  // migration-added (v7) AND referenced by blob indexes
+  // (`idx_minion_jobs_timeout` partial on timeout_at, the partial UNIQUE
+  // `uniq_minion_jobs_idempotency` on idempotency_key). A pre-v7 minion_jobs
+  // wedges the blob replay exactly like the v121 incident.
+  { kind: 'column', table: 'minion_jobs', column: 'timeout_at' },
+  { kind: 'column', table: 'minion_jobs', column: 'idempotency_key' },
 ];
 
 test('applyForwardReferenceBootstrap covers every forward reference declared in REQUIRED_BOOTSTRAP_COVERAGE', async () => {
@@ -168,7 +243,62 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
       ALTER TABLE pages DROP COLUMN IF EXISTS import_filename;
       ALTER TABLE pages DROP COLUMN IF EXISTS salience_touched_at;
       ALTER TABLE pages DROP COLUMN IF EXISTS emotional_weight;
+
+      DROP INDEX IF EXISTS idx_ingest_log_source_type_created;
+      ALTER TABLE ingest_log DROP COLUMN IF EXISTS source_id;
+
+      DROP INDEX IF EXISTS idx_files_source_id;
+      DROP INDEX IF EXISTS idx_files_page_id;
+      ALTER TABLE files DROP COLUMN IF EXISTS source_id;
+      ALTER TABLE files DROP COLUMN IF EXISTS page_id;
+
+      DROP INDEX IF EXISTS idx_oauth_clients_federated_read;
+      ALTER TABLE oauth_clients DROP COLUMN IF EXISTS source_id;
+      ALTER TABLE oauth_clients DROP COLUMN IF EXISTS federated_read;
+      -- WP4 (v127) strip: surface columns are migration-added; bootstrap
+      -- must re-add them.
+      ALTER TABLE oauth_clients DROP COLUMN IF EXISTS surface;
+      ALTER TABLE oauth_clients DROP COLUMN IF EXISTS surface_set_by;
+
+      -- v0.40.3.0 v90 + v91 column strips so applyForwardReferenceBootstrap
+      -- has work to do. Only strip pages columns + the trigger; sources
+      -- columns were already nuked by the earlier DROP TABLE IF EXISTS
+      -- sources CASCADE, and the bootstrap needsPagesBootstrap branch
+      -- recreates sources from schema-embedded.ts (which now includes the
+      -- CR columns inline). Same convention as the sources.archived note.
+      DROP TRIGGER IF EXISTS bump_page_generation_trg ON pages;
+      DROP FUNCTION IF EXISTS bump_page_generation_fn;
+      DROP INDEX IF EXISTS pages_generation_idx;
+      ALTER TABLE pages DROP COLUMN IF EXISTS generation;
+      ALTER TABLE pages DROP COLUMN IF EXISTS contextual_retrieval_mode;
+      ALTER TABLE pages DROP COLUMN IF EXISTS corpus_generation;
+
+      DROP INDEX IF EXISTS idx_timeline_event_dedup;
+      DROP INDEX IF EXISTS idx_timeline_event_page;
+      ALTER TABLE timeline_entries DROP CONSTRAINT IF EXISTS timeline_entries_event_page_id_fkey;
+      ALTER TABLE timeline_entries DROP COLUMN IF EXISTS event_page_id;
+
+      -- v7 minion_jobs strip (#2626 class sweep): timeout_at + idempotency_key
+      -- are migration-added and blob-indexed; strip so bootstrap must re-add.
+      DROP INDEX IF EXISTS idx_minion_jobs_timeout;
+      DROP INDEX IF EXISTS uniq_minion_jobs_idempotency;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS timeout_at;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS idempotency_key;
     `);
+
+    // Note: we don't strip sources.archived* here because they're inline in the
+    // sources CREATE TABLE definition (no separate ALTER TABLE), and the
+    // earlier `DROP TABLE IF EXISTS sources CASCADE` already nuked them.
+    // The bootstrap's needsPagesBootstrap branch recreates sources without the
+    // archive columns; the new needsSourcesArchive probe adds them.
+
+    const { rows: preBootstrapTimelineEventPageId } = await db.query(`
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'timeline_entries'
+        AND column_name = 'event_page_id'
+    `);
+    expect(preBootstrapTimelineEventPageId).toHaveLength(0);
 
     // Run bootstrap in isolation (NOT initSchema). This is what we're testing.
     await (engine as any).applyForwardReferenceBootstrap();
@@ -234,6 +364,25 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
       ALTER TABLE pages DROP COLUMN IF EXISTS import_filename;
       ALTER TABLE pages DROP COLUMN IF EXISTS salience_touched_at;
       ALTER TABLE pages DROP COLUMN IF EXISTS emotional_weight;
+
+      DROP INDEX IF EXISTS idx_timeline_event_dedup;
+      DROP INDEX IF EXISTS idx_timeline_event_page;
+      ALTER TABLE timeline_entries DROP CONSTRAINT IF EXISTS timeline_entries_event_page_id_fkey;
+      ALTER TABLE timeline_entries DROP COLUMN IF EXISTS event_page_id;
+
+      -- v7 minion_jobs strip (#2626 class sweep): the SCHEMA_SQL replay would
+      -- crash on idx_minion_jobs_timeout / uniq_minion_jobs_idempotency
+      -- without the bootstrap re-adding these migration-added columns.
+      DROP INDEX IF EXISTS idx_minion_jobs_timeout;
+      DROP INDEX IF EXISTS uniq_minion_jobs_idempotency;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS timeout_at;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS idempotency_key;
+
+      -- WP4 (v127) strip: surface columns + the wedge-signal index; replay
+      -- must succeed from the pre-v127 shape.
+      DROP INDEX IF EXISTS idx_minion_jobs_queue_status_updated;
+      ALTER TABLE oauth_clients DROP COLUMN IF EXISTS surface;
+      ALTER TABLE oauth_clients DROP COLUMN IF EXISTS surface_set_by;
     `);
 
     // Bootstrap, then schema replay. Either step crashing fails the test.
@@ -311,7 +460,15 @@ function parseBaseTableColumns(sql: string): Map<string, Set<string>> {
     parts.push(body.slice(start));
 
     for (const partRaw of parts) {
-      const part = partRaw.trim();
+      // Strip SQL line comments (`-- ...` to end of line) and block
+      // comments (`/* ... */`) before identifying the column name.
+      // Without this, a column definition preceded by a comment inside
+      // the CREATE TABLE body is silently dropped (the comment is the
+      // "first identifier" and the parser bails out).
+      const stripped = partRaw
+        .replace(/--[^\n]*/g, '')
+        .replace(/\/\*[\s\S]*?\*\//g, '');
+      const part = stripped.trim();
       if (!part) continue;
       // Skip constraint lines.
       if (/^(CONSTRAINT|PRIMARY|UNIQUE|CHECK|FOREIGN|EXCLUDE)\b/i.test(part)) continue;
@@ -479,16 +636,72 @@ function parseAlterAddColumns(sql: string): Array<{ table: string; column: strin
   return result;
 }
 
+/**
+ * The coverage predicate for blob index-column references, extracted so the
+ * v121-regression unit test below can exercise it with synthetic inputs.
+ *
+ * v0.42.58 (#2626 class): CREATE TABLE presence must NOT count as coverage
+ * for a column that ANY migration also adds via ALTER TABLE ADD COLUMN. The
+ * migration's existence proves pre-existing tables can lack the column, and
+ * on those brains `CREATE TABLE IF NOT EXISTS` no-ops — so the blob's
+ * CREATE INDEX crashes initSchema before runMigrations can help. For such
+ * columns, only an applyForwardReferenceBootstrap ALTER counts. This is
+ * exactly how `timeline_entries.event_page_id` (v121, Life Chronicle) shipped
+ * a P0 upgrade wedge past the old predicate: it was in the current CREATE
+ * TABLE body, so the check passed while every pre-v121 brain wedged.
+ */
+function buildIndexRefCoveragePredicate(
+  tableColumns: Map<string, Set<string>>,
+  bootstrapAdds: Array<{ table: string; column: string }>,
+  migrationAddedKeys: Set<string>,
+): (table: string, column: string) => boolean {
+  return (table: string, column: string): boolean => {
+    const inBootstrap = bootstrapAdds.some(a => a.table === table && a.column === column);
+    if (inBootstrap) return true;
+    // Migration-added columns are forward references by definition —
+    // CREATE TABLE presence is exactly the mask that hid the v121 wedge.
+    if (migrationAddedKeys.has(`${table}.${column}`)) return false;
+    const cols = tableColumns.get(table);
+    return Boolean(cols && cols.has(column));
+  };
+}
+
+test('buildIndexRefCoveragePredicate: CREATE TABLE presence does not mask migration-added columns (v121 regression shape)', () => {
+  const tableColumns = new Map([['timeline_entries', new Set(['id', 'event_page_id'])]]);
+  const migrationAdded = new Set(['timeline_entries.event_page_id']);
+
+  // The exact pre-fix v121 shape: column in CREATE TABLE, added by migration,
+  // NO bootstrap probe → must be UNCOVERED (old predicate said covered).
+  const withoutProbe = buildIndexRefCoveragePredicate(tableColumns, [], migrationAdded);
+  expect(withoutProbe('timeline_entries', 'event_page_id')).toBe(false);
+  // Plain blob-native column (not migration-added) stays covered by CREATE TABLE.
+  expect(withoutProbe('timeline_entries', 'id')).toBe(true);
+
+  // With the bootstrap probe present, the same column is covered.
+  const withProbe = buildIndexRefCoveragePredicate(
+    tableColumns,
+    [{ table: 'timeline_entries', column: 'event_page_id' }],
+    migrationAdded,
+  );
+  expect(withProbe('timeline_entries', 'event_page_id')).toBe(true);
+});
+
 test('every CREATE INDEX column in PGLITE_SCHEMA_SQL is covered by CREATE TABLE or bootstrap (A2 static check)', async () => {
   // The structural test that closes the 11-incident wedge class. Static
   // contract: every column referenced by a CREATE INDEX in PGLITE_SCHEMA_SQL
-  // must be either (a) declared in the current CREATE TABLE body, or
-  // (b) added by `applyForwardReferenceBootstrap` in pglite-engine.ts.
+  // must be either (a) declared in the current CREATE TABLE body AND not
+  // added by any migration (see buildIndexRefCoveragePredicate — migration-
+  // added columns are forward references even when the CREATE TABLE body has
+  // them), or (b) added by `applyForwardReferenceBootstrap` in
+  // pglite-engine.ts.
   //
   // Codex outside-voice review caught the 11th wedge: composite-index second
   // columns (`provider_id` in `(job_id, provider_id)`) are forward references
   // that earlier extractors missed. This parser walks the full column list
   // of every index — composite or not — and asserts each one is covered.
+  // The 12th wedge (v121 `timeline_entries.event_page_id`, #2626 #2594 #2579
+  // #2537 #2536) slipped through because CREATE TABLE presence masked the
+  // forward reference; the predicate now cross-references MIGRATIONS.
   //
   // Self-updating: when a future migration adds a CREATE INDEX in
   // PGLITE_SCHEMA_SQL on a column that bootstrap doesn't yet provide, this
@@ -496,6 +709,7 @@ test('every CREATE INDEX column in PGLITE_SCHEMA_SQL is covered by CREATE TABLE 
   const { readFileSync } = await import('fs');
   const { resolve: resolvePath } = await import('path');
   const { PGLITE_SCHEMA_SQL } = await import('../src/core/pglite-schema.ts');
+  const { extractAddedColumnsFromMigrations } = await import('./helpers/extract-added-columns.ts');
 
   const enginePath = resolvePath(process.cwd(), 'src/core/pglite-engine.ts');
   const engineSrc = readFileSync(enginePath, 'utf-8');
@@ -503,20 +717,22 @@ test('every CREATE INDEX column in PGLITE_SCHEMA_SQL is covered by CREATE TABLE 
   const tableColumns = parseBaseTableColumns(PGLITE_SCHEMA_SQL);
   const indexRefs = parseIndexColumnReferences(PGLITE_SCHEMA_SQL);
   const bootstrapAdds = parseAlterAddColumns(engineSrc);
+  const migrationAddedKeys = new Set(
+    extractAddedColumnsFromMigrations().map(a => `${a.table}.${a.column}`),
+  );
 
-  // Build the "covered" set: for each (table, column) pair, true iff it's in
-  // the table's CREATE TABLE columns OR added by an ALTER TABLE in the
-  // bootstrap function.
-  const covered = (table: string, column: string): boolean => {
-    const cols = tableColumns.get(table);
-    if (cols && cols.has(column)) return true;
-    return bootstrapAdds.some(a => a.table === table && a.column === column);
-  };
+  const covered = buildIndexRefCoveragePredicate(tableColumns, bootstrapAdds, migrationAddedKeys);
 
   // Sanity checks: parser caught the codex case AND bootstrap provides it.
   expect(indexRefs).toContainEqual({ table: 'subagent_messages', column: 'provider_id' });
   expect(bootstrapAdds).toContainEqual({ table: 'subagent_messages', column: 'provider_id' });
   expect(covered('subagent_messages', 'provider_id')).toBe(true);
+
+  // Direct pin of the v121 incident: the column is migration-added, blob-
+  // indexed, and MUST be bootstrap-covered.
+  expect(migrationAddedKeys.has('timeline_entries.event_page_id')).toBe(true);
+  expect(indexRefs.some(r => r.table === 'timeline_entries' && r.column === 'event_page_id')).toBe(true);
+  expect(bootstrapAdds).toContainEqual({ table: 'timeline_entries', column: 'event_page_id' });
 
   // The actual contract: every index column reference must be covered.
   const uncovered: Array<{ table: string; column: string }> = [];
@@ -530,10 +746,263 @@ test('every CREATE INDEX column in PGLITE_SCHEMA_SQL is covered by CREATE TABLE 
     const list = uncovered.map(u => `  ${u.table}.${u.column}`).join('\n');
     throw new Error(
       `PGLITE_SCHEMA_SQL has ${uncovered.length} CREATE INDEX column reference(s) ` +
-      `that are neither in the table's CREATE TABLE body nor added by ` +
-      `applyForwardReferenceBootstrap:\n${list}\n\n` +
+      `that are not safely covered (in the CREATE TABLE body AND not migration-added, ` +
+      `or added by applyForwardReferenceBootstrap):\n${list}\n\n` +
       `Fix: extend applyForwardReferenceBootstrap in src/core/pglite-engine.ts ` +
-      `(and the matching Postgres engine) with the missing ALTER TABLE ADD COLUMN.`,
+      `(and the matching Postgres engine) with the missing ALTER TABLE ADD COLUMN. ` +
+      `A column that is BOTH in the blob's CREATE TABLE AND added by a migration ` +
+      `is a forward reference for pre-existing tables — CREATE TABLE presence ` +
+      `does not cover it (that mask shipped the v121 upgrade wedge).`,
     );
   }
 }, 30000);
+
+// ─────────────────────────────────────────────────────────────────
+// v0.36+ — MIGRATIONS introspection: catch the column-only forward-ref class.
+// ─────────────────────────────────────────────────────────────────
+// The CREATE INDEX parser above kills the column-with-index forward-ref class.
+// v0.26.5 (v34) introduced a column-ONLY class: `sources.archived` +
+// `sources.archived_at` + `sources.archive_expires_at` aren't indexed but
+// `CREATE TABLE IF NOT EXISTS sources` is a no-op on pre-v34 brains. The
+// schema-blob replay never adds the archive columns, so downstream visibility
+// filters trip immediately.
+//
+// This test walks every `ALTER TABLE ... ADD COLUMN` in the MIGRATIONS array
+// (our own structured code, not arbitrary Postgres DDL) and asserts every
+// (table, column) pair is also added by `applyForwardReferenceBootstrap`.
+// Future contributors who add a migration with ALTER TABLE ADD COLUMN AND
+// forget to extend the bootstrap will see this test fail at PR time with a
+// paste-ready `Add probe for <table>.<column>` message.
+//
+// Why regex-on-our-own-SQL is safe vs regex-on-prod-Postgres-DDL: every
+// migration's SQL string is authored by us with consistent shape. The
+// ALTER TABLE ADD COLUMN pattern is stable across all 60+ existing
+// migrations. We control the input, not Postgres.
+//
+// Exemption mechanism: some migrations add columns that are intentionally
+// not in the schema blob (one-off transition columns later dropped, etc.).
+// Those go in the COLUMN_EXEMPTIONS set below with a brief rationale.
+// ─────────────────────────────────────────────────────────────────
+
+const COLUMN_EXEMPTIONS = new Set<string>([
+  // T7 — search_telemetry rank-1 drift columns (migration v111). search_telemetry
+  // is created entirely by migration v57 (not in the schema blob), so the v57+v111
+  // chain handles fresh + upgrade; no CREATE INDEX references these columns, so
+  // there's no forward reference for the bootstrap to cover.
+  'search_telemetry.sum_rank1_score',
+  'search_telemetry.count_rank1',
+  'search_telemetry.rank1_lt_solid',
+  'search_telemetry.rank1_solid',
+  'search_telemetry.rank1_high',
+  // Schema-blob-not-yet-refreshed: each of these columns is added by a
+  // migration but NOT (yet) referenced by `PGLITE_SCHEMA_SQL` (neither in a
+  // CREATE TABLE body nor in any CREATE INDEX). Bootstrap doesn't need to
+  // add them because there's no forward reference for the schema blob's
+  // replay to trip on. The migration handles every upgrade path correctly:
+  //   - fresh install: schema blob replays, then migration adds the column.
+  //   - pre-existing brain missing the column: migration adds it via ALTER.
+  //   - pre-existing brain already on this column: ALTER ... IF NOT EXISTS no-ops.
+  // If a future migration adds a CREATE INDEX that references one of these
+  // columns, the existing v0.28.5 CREATE-INDEX parser will catch it and
+  // force a bootstrap probe (and the exemption should be removed).
+  //
+  // Refreshing PGLITE_SCHEMA_SQL is a separate concern handled by
+  // `bun run build:schema` from src/schema.sql; not gated by this test.
+  'minion_jobs.quiet_hours',
+  'minion_jobs.stagger_key',
+  'sources.chunker_version',
+  'access_tokens.permissions',
+  'takes.resolved_quality',
+  'pages.emotional_weight_recomputed_at',
+  'facts.notability',
+  'facts.row_num',
+  'facts.source_markdown_slug',
+  'pages.chunker_version',
+  'pages.source_path',
+  'content_chunks.edges_backfilled_at',
+  'query_cache.knobs_hash',
+  // v0.40.3.0 (migration v90, renumbered from v0.40.3.0 v81 on master merge)
+  // — query_cache is migration-only (added in v55), not in PGLITE_SCHEMA_SQL.
+  // The v90 ALTER TABLE query_cache ADD COLUMN page_generations runs after
+  // v55 in the migration sequence, so fresh installs get it correctly. No
+  // forward-reference exists for PGLITE_SCHEMA_SQL to trip on because
+  // query_cache isn't in the schema blob to begin with. Same exemption
+  // rationale as knobs_hash.
+  'query_cache.page_generations',
+  // v0.40.3.0 (migration v91) — same exemption rationale: query_cache is
+  // migration-only; max_generation_at_store is added by v91 ALTER and never
+  // forward-referenced by PGLITE_SCHEMA_SQL.
+  'query_cache.max_generation_at_store',
+  // v0.35.6 (migration v67) — typed-claim columns + facts_typed_claim_idx
+  // partial index are co-defined in the same migration, so the schema-blob
+  // forward-reference path isn't tripped. Bootstrap is only required when an
+  // index in PGLITE_SCHEMA_SQL references a column added by a later migration.
+  'facts.claim_metric',
+  'facts.claim_value',
+  'facts.claim_unit',
+  'facts.claim_period',
+  // v0.40.2.0 (migration v89) — event_type column. Same precedent as
+  // facts.claim_metric et al: no forward-reference index in
+  // PGLITE_SCHEMA_SQL, no downstream filter breaks on old brains
+  // (existing callers — founder-scorecard, eval-trajectory,
+  // gbrain think trajectory injection — all defensively skip
+  // NULL-metric rows in per-metric math, so event_type=NULL on old
+  // brains is invisible to them). Migration is column-only, no FK,
+  // no index — bootstrap probe would be pure overhead.
+  'facts.event_type',
+  // v0.42.56.0 (migration v122, #2390) — Life Chronicle ontology columns.
+  // Same precedent as facts.claim_metric et al: the `facts` table itself is
+  // migration-created (absent from PGLITE_SCHEMA_SQL), so no schema-blob
+  // forward reference can exist; the partial indexes (idx_facts_dimension,
+  // idx_facts_ontology_dedup) live INSIDE the same v122 migration. Every
+  // reader filters `dimension IS NOT NULL`, so NULL on old brains is
+  // invisible. Column-only, no bootstrap probe needed.
+  'facts.dimension',
+  'facts.value',
+  'facts.value_hash',
+  'facts.dim_status',
+  // v0.39.1.0 (migration v88) — schema-pack provenance per-source captured as
+  // inline canonical closure snapshot on every eval_candidates row. NULL by
+  // default; no index in PGLITE_SCHEMA_SQL references it. Migration handles
+  // both fresh installs and pre-existing brains via ADD COLUMN IF NOT EXISTS.
+  // Schema-pack codegen (scripts/generate-gbrain-base.ts) consumes the value
+  // only via the eval-replay CLI, not via SQL filters that would force a
+  // bootstrap probe.
+  'eval_candidates.schema_pack_per_source',
+  // v0.41 (migration v94) — minions cathedral budget columns. Same precedent
+  // as facts.claim_metric and friends: column-only additions on `minion_jobs`,
+  // no forward-reference index in PGLITE_SCHEMA_SQL (the partial indexes
+  // `minion_jobs_budget_owner_idx` + `minion_jobs_budget_root_owner_idx`
+  // live INSIDE the same v93 migration, not in the schema blob), and
+  // downstream callers explicitly handle NULL via the Eng D10 NULL-bypass
+  // branch in budget-tracker (jobs without `budget_owner_job_id` skip
+  // reservation entirely). Old brains pre-v93 silently get NULL on these
+  // columns; the budget enforcement path treats NULL as "no budget."
+  'minion_jobs.budget_remaining_cents',
+  'minion_jobs.budget_owner_job_id',
+  'minion_jobs.budget_root_owner_id',
+]);
+
+test('every ALTER TABLE ADD COLUMN in MIGRATIONS is covered by applyForwardReferenceBootstrap (column-only class)', async () => {
+  const { extractAddedColumnsFromMigrations } = await import('./helpers/extract-added-columns.ts');
+  const { readFileSync } = await import('fs');
+  const { resolve: resolvePath } = await import('path');
+  const { PGLITE_SCHEMA_SQL } = await import('../src/core/pglite-schema.ts');
+
+  const enginePath = resolvePath(process.cwd(), 'src/core/pglite-engine.ts');
+  const engineSrc = readFileSync(enginePath, 'utf-8');
+  const bootstrapAdds = parseAlterAddColumns(engineSrc);
+
+  // Bootstrap's own CREATE TABLE statements (e.g. needsPagesBootstrap inlines
+  // `archived BOOLEAN ...` inside the CREATE TABLE sources block). Those
+  // count as covered without a separate ALTER TABLE ADD COLUMN.
+  const bootstrapCreateTableCols = parseBaseTableColumns(engineSrc);
+
+  // PGLITE_SCHEMA_SQL's CREATE TABLE definitions. The schema blob defines
+  // every modern table inline; columns added by migrations are typically
+  // ALSO updated in the schema blob so fresh installs get them natively.
+  // The bootstrap is only needed when: (a) the table existed before the
+  // migration ran (so CREATE TABLE IF NOT EXISTS is a no-op on old brains)
+  // AND (b) the column has a forward-reference index OR a downstream filter
+  // that breaks on old brains. Schema-blob coverage handles the fresh case.
+  const schemaCreateTableCols = parseBaseTableColumns(PGLITE_SCHEMA_SQL);
+
+  const migrationAdds = extractAddedColumnsFromMigrations();
+
+  const covered = (table: string, column: string): boolean => {
+    if (COLUMN_EXEMPTIONS.has(`${table}.${column}`)) return true;
+    if (bootstrapAdds.some(a => a.table === table && a.column === column)) return true;
+    const bootstrapCols = bootstrapCreateTableCols.get(table);
+    if (bootstrapCols && bootstrapCols.has(column)) return true;
+    const schemaCols = schemaCreateTableCols.get(table);
+    if (schemaCols && schemaCols.has(column)) return true;
+    return false;
+  };
+
+  const uncovered: typeof migrationAdds = [];
+  for (const ref of migrationAdds) {
+    if (!covered(ref.table, ref.column)) {
+      uncovered.push(ref);
+    }
+  }
+
+  if (uncovered.length > 0) {
+    const list = uncovered
+      .map(u => `  ${u.table}.${u.column}`)
+      .join('\n');
+    throw new Error(
+      `MIGRATIONS file (src/core/migrate.ts) adds ${uncovered.length} (table, column) pair(s) that ` +
+      `applyForwardReferenceBootstrap does NOT cover:\n${list}\n\n` +
+      `Fix one of:\n` +
+      `  1. Add a probe + ALTER TABLE ADD COLUMN in applyForwardReferenceBootstrap ` +
+      `(src/core/pglite-engine.ts AND src/core/postgres-engine.ts), OR\n` +
+      `  2. If the column is intentionally not in the schema blob ` +
+      `(transitional / handler-only / later-dropped), add the (table, column) ` +
+      `to COLUMN_EXEMPTIONS in test/schema-bootstrap-coverage.test.ts with a ` +
+      `brief rationale comment.`,
+    );
+  }
+});
+
+test('extractAddedColumnsFromMigrations sanity-checks against known migration column additions', async () => {
+  // Lightweight sanity test that the helper extracts the columns we expect
+  // for a few well-known v34 / v60 / v61 migrations. Catches regex
+  // regressions in the helper itself.
+  const { extractAddedColumnsFromMigrations } = await import('./helpers/extract-added-columns.ts');
+  const refs = extractAddedColumnsFromMigrations();
+  const has = (table: string, column: string) =>
+    refs.some(r => r.table === table && r.column === column);
+  // v34 sources.archived* (the codex C1 case)
+  expect(has('sources', 'archived')).toBe(true);
+  expect(has('sources', 'archived_at')).toBe(true);
+  expect(has('sources', 'archive_expires_at')).toBe(true);
+  // v60+v61 oauth_clients.*
+  expect(has('oauth_clients', 'source_id')).toBe(true);
+  expect(has('oauth_clients', 'federated_read')).toBe(true);
+  // v18 files.*
+  expect(has('files', 'source_id')).toBe(true);
+  expect(has('files', 'page_id')).toBe(true);
+});
+
+test('extractAlterAddColumnsFromSql handles representative migration SQL shapes', async () => {
+  const { __internal } = await import('./helpers/extract-added-columns.ts');
+  const fn = __internal.extractAlterAddColumnsFromSql;
+
+  // Standard shape (with IF NOT EXISTS)
+  expect(fn('ALTER TABLE sources ADD COLUMN IF NOT EXISTS archived BOOLEAN')).toEqual([
+    { table: 'sources', column: 'archived' },
+  ]);
+  // No IF NOT EXISTS (older migrations)
+  expect(fn('ALTER TABLE pages ADD COLUMN deleted_at TIMESTAMPTZ;')).toEqual([
+    { table: 'pages', column: 'deleted_at' },
+  ]);
+  // Multi-statement, mixed
+  expect(fn(`
+    CREATE INDEX foo ON bar(x);
+    ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS source_id TEXT REFERENCES sources(id);
+    ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS federated_read TEXT[] NOT NULL DEFAULT '{}';
+    UPDATE oauth_clients SET source_id = 'default';
+  `)).toEqual([
+    { table: 'oauth_clients', column: 'source_id' },
+    { table: 'oauth_clients', column: 'federated_read' },
+  ]);
+  // Quoted identifiers
+  expect(fn('ALTER TABLE "pages" ADD COLUMN "effective_date" TIMESTAMPTZ')).toEqual([
+    { table: 'pages', column: 'effective_date' },
+  ]);
+  // ALTER TABLE IF EXISTS / ONLY variants
+  expect(fn('ALTER TABLE IF EXISTS ONLY content_chunks ADD COLUMN language TEXT')).toEqual([
+    { table: 'content_chunks', column: 'language' },
+  ]);
+});
+
+test('planted-bug: simulated unprovided column produces a clear failure message', async () => {
+  // Negative case — regression guard. If the contract test silently passes
+  // on uncovered columns, the gate is fake. This test plants a fake column
+  // in a fake SQL string and verifies the helper extracts it (proving the
+  // gate would catch it in the real contract test).
+  const { __internal } = await import('./helpers/extract-added-columns.ts');
+  const fn = __internal.extractAlterAddColumnsFromSql;
+  const planted = fn('ALTER TABLE pages ADD COLUMN IF NOT EXISTS planted_test_col TEXT');
+  expect(planted).toEqual([{ table: 'pages', column: 'planted_test_col' }]);
+});

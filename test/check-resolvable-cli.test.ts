@@ -17,21 +17,6 @@ import {
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
 const REPO_ROOT = resolve(import.meta.dir, '..');
 
-function withoutSkillsAutodetectEnv<T>(fn: () => T): T {
-  const keys = ['GBRAIN_SKILLS_DIR', 'OPENCLAW_WORKSPACE', 'HOME'] as const;
-  const previous = new Map(keys.map(key => [key, process.env[key]]));
-  for (const key of keys) delete process.env[key];
-  try {
-    return fn();
-  } finally {
-    for (const key of keys) {
-      const value = previous.get(key);
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Fixture builders
 // ---------------------------------------------------------------------------
@@ -148,7 +133,8 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
 
   it('resolves relative --skills-dir against cwd', () => {
     const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: 'skills' });
-    expect(r.dir).toMatch(/\/skills$/);
+    // r.dir is join()/resolve()-built, so the separator is '\' on win32.
+    expect(r.dir).toMatch(/[\\/]skills$/);
     expect(r.error).toBeNull();
     expect(r.source).toBe('explicit');
   });
@@ -167,10 +153,11 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
     const original = process.cwd();
     try {
       process.chdir(empty);
-      const r = withoutSkillsAutodetectEnv(() => resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: null }));
+      const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: null });
       // Install-path fallback succeeds when test runs inside the gbrain repo.
       expect(r.error).toBeNull();
-      expect(r.dir).toMatch(/\/skills$/);
+      // r.dir is join()/resolve()-built, so the separator is '\' on win32.
+      expect(r.dir).toMatch(/[\\/]skills$/);
       expect(r.source).toBe('install_path');
     } finally {
       process.chdir(original);
@@ -178,12 +165,18 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
     }
   });
 
-  it('finds skills via findRepoRoot when cwd is inside a repo (no --skills-dir)', () => {
+  it('finds skills via cwd_walk_up when cwd is inside a repo (no --skills-dir)', () => {
     // Running from this test file — we're inside the real gbrain repo.
-    const r = withoutSkillsAutodetectEnv(() => resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: null }));
+    // v0.33 added the cwd_walk_up tier ahead of repo_root, so the same
+    // skills/ dir is matched via the broader (no gbrain-shape gate)
+    // path. Behavior unchanged — source label updated. The repo_root
+    // tier is now functionally subsumed; kept in the type union for
+    // back-compat. See src/core/repo-root.ts.
+    const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: null });
     expect(r.error).toBeNull();
-    expect(r.dir).toMatch(/\/skills$/);
-    expect(r.source).toBe('repo_root');
+    // r.dir is join()/resolve()-built, so the separator is '\' on win32.
+    expect(r.dir).toMatch(/[\\/]skills$/);
+    expect(r.source).toBe('cwd_walk_up');
   });
 
   it('REGRESSION-GATE: --skills-dir override takes precedence over OpenClaw env auto-detection', () => {
@@ -329,9 +322,13 @@ describe('gbrain check-resolvable CLI — integration', () => {
   });
 
   it('exits 1 when fixture has an error-level unreachable skill', () => {
-    // "alpha" is in manifest but not resolver → unreachable (error)
+    // v0.41.11 contract change: a skill is unreachable only when BOTH
+    // surfaces are empty — no frontmatter `triggers:` AND no RESOLVER.md
+    // row. The prior fixture (`triggers: ['alpha']`, `inResolver: false`)
+    // is now reachable via frontmatter auto-registration, so we drop
+    // triggers and the resolver row to genuinely simulate unreachable.
     const skillsDir = makeFixture(
-      [{ name: 'alpha', triggers: ['alpha'], inResolver: false }],
+      [{ name: 'alpha', inResolver: false }],
       created,
     );
     const r = run(['--json', '--skills-dir', skillsDir]);
@@ -379,7 +376,8 @@ describe('gbrain check-resolvable CLI — integration', () => {
     const r = run([]);
     expect(r.status === 0 || r.status === 1).toBe(true);
     expect(r.stdout).toContain('Auto-detected skills directory');
-    expect(r.stdout).toContain('/skills');
+    // The logged path is native-format — '\skills' on win32.
+    expect(r.stdout).toMatch(/[\\/]skills/);
   });
 
   // v0.31.7 D6 regression guard: --fix must refuse install-path fallback.
@@ -393,7 +391,7 @@ describe('gbrain check-resolvable CLI — integration', () => {
       // Pass --fix; expect refusal exit + clear error message.
       const r = spawnSync('bun', ['run', CLI, 'check-resolvable', '--fix'], {
         cwd: empty,
-        env: { ...process.env, HOME: empty, OPENCLAW_WORKSPACE: '', GBRAIN_SKILLS_DIR: '' },
+        env: { ...process.env, OPENCLAW_WORKSPACE: '', GBRAIN_SKILLS_DIR: '' },
         encoding: 'utf-8',
       });
       expect(r.status).toBe(1);

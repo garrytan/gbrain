@@ -3,6 +3,11 @@
 Read this entire file, then follow the steps. Ask the user for API keys when needed.
 Target: ~30 minutes to a fully working brain.
 
+> **Scope note:** this guide installs the BRAIN (for agent platforms like OpenClaw
+> and Hermes, or a standalone brain). If you are Claude Code or Codex and the human
+> asked you to become their persistent personal agent — identity + memory + private
+> repo — follow `BOOTSTRAP_FOR_AGENTS.md` instead.
+
 ## Step 0: If you are not Claude Code
 
 Read `AGENTS.md` at the repo root first. It's the non-Claude-agent operating
@@ -16,32 +21,53 @@ If you fetched this file by URL without cloning yet, the companion files live at
 
 ## Step 1: Install GBrain
 
+<!-- npm-trap + #218 recovery: canonical copy lives in README.md ("Install" warning) — sync edits. -->
+> **NEVER install from the npm registry.** GBrain is not distributed on npm; the npm
+> package named `gbrain` is an unrelated package. Do NOT run `npm install -g gbrain` or
+> `bun add -g gbrain` (note the missing `github:` prefix — that's the trap). The only
+> supported sources are `github:garrytan/gbrain` (optionally pinned as
+> `github:garrytan/gbrain#latest-stable`, the form the bootstrap flow mandates) and a
+> git clone, exactly as shown below.
+> If an unrelated npm install is already present, remove it first
+> (`npm uninstall -g gbrain` / `bun remove -g gbrain`); `gbrain doctor` also detects this.
+
+Default path (Bun is required — gbrain is a Bun + TypeScript runtime):
+
 ```bash
-git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain
 curl -fsSL https://bun.sh/install | bash
 export PATH="$HOME/.bun/bin:$PATH"
-bun install && bun link
+bun install -g github:garrytan/gbrain
 ```
 
 Verify: `gbrain --version` should print a version number. If `gbrain` is not found,
 restart the shell or add the PATH export to the shell profile.
 
-> **Do NOT use `bun install -g github:garrytan/gbrain`.** Bun blocks the top-level
-> postinstall hook on global installs, so schema migrations never run and the CLI
-> aborts with `Aborted()` when it opens PGLite. Use the `git clone + bun link` path
-> above. Tracking issue: [#218](https://github.com/garrytan/gbrain/issues/218).
+> **If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`** (Bun
+> occasionally blocks the top-level postinstall hook on global installs, so schema
+> migrations don't run automatically), the CLI prints a recovery hint pointing at
+> [#218](https://github.com/garrytan/gbrain/issues/218). Run `gbrain apply-migrations --yes`
+> to recover. If that doesn't work, fall back to the deterministic install path:
+>
+> ```bash
+> git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain
+> bun install && bun link
+> ```
 
 ## Step 2: API Keys
 
-Ask the user for these:
+Ask the user for these. gbrain defaults to the ZeroEntropy embedding + reranker stack
+(as of v0.36.2.0); OpenAI/Voyage are still supported as fallbacks via `gbrain config
+set embedding_model <provider:model>`.
 
 ```bash
-export OPENAI_API_KEY=sk-...          # required for vector search
-export ANTHROPIC_API_KEY=sk-ant-...   # optional, improves search quality
+export ZEROENTROPY_API_KEY=ze-...     # default embedding + reranker (v0.36.2.0+)
+export OPENAI_API_KEY=sk-...          # fallback for vector search; also used for chat models
+export ANTHROPIC_API_KEY=sk-ant-...   # optional, improves search quality via query expansion
 ```
 
-Save to shell profile or `.env`. Without OpenAI, keyword search still works.
-Without Anthropic, search works but skips query expansion.
+Save to shell profile or `.env`. Keys are picked up by `gbrain config set` automatically
+or can be stored in `~/.gbrain/config.json` (file plane). Without any embedding provider,
+keyword search still works. Without Anthropic, search works but skips query expansion.
 
 ## Step 3: Create the Brain
 
@@ -64,12 +90,14 @@ NOT inside ~/gbrain.
 ## Step 3.5: Confirm search mode with the user (DO NOT SKIP)
 
 `gbrain init` auto-applied a default search mode (`tokenmax` unless your subagent
-tier is Haiku-class or no OpenAI key is configured). The init output included the
-cost matrix below preceded by `[AGENT]` markers. You must NOT silently accept the
-default. Stop and ask the operator.
+tier is Haiku-class or no expansion-capable API key — Anthropic, OpenAI, or
+Google — is configured). The init output included the cost matrix below preceded
+by `[AGENT]` markers. You must NOT silently accept the default. Stop and ask the
+operator.
 
 **Present this matrix verbatim:**
 
+<!-- Cost matrix: three verbatim homes — CLAUDE.md "Search Mode", src/commands/init-mode-picker.ts, and this block. Sync all three when refreshing. -->
 ```
 Per-query cost @ 10K queries/mo (typical single-user volume):
 
@@ -150,10 +178,72 @@ After this step:
 If a user has a very large brain (>10K pages), `extract --source db` is idempotent
 and supports `--since YYYY-MM-DD` for incremental runs.
 
+### Obsidian-style bare wikilinks (opt-in)
+
+If the user imported an Obsidian or Notion vault that uses **bare** `[[note-name]]`
+wikilinks — where `[[struktura]]` written in one folder means the page that lives
+at `projects/struktura.md` in another — GBrain does NOT connect those by default.
+Out of the box it only resolves path-qualified refs like `[[projects/struktura]]`,
+so a vault full of bare links shows up as a thin, broken graph. Turn on basename
+resolution so the cross-folder links connect:
+
+```bash
+gbrain config set link_resolution.global_basename true
+gbrain extract links --source db          # re-run so the new edges land
+```
+
+`gbrain doctor` surfaces a `link_resolution_opportunity` hint with the exact count
+("47 of 60 bare wikilinks would resolve") so you know whether it's worth enabling
+before you flip it. When a bare name matches more than one page (`[[struktura]]` →
+both `projects/struktura` and `archive/struktura`), GBrain emits one edge to each
+rather than guessing a winner — review and prune the duplicates with
+`gbrain graph-query <slug>`. The mode is also honored on the filesystem-walk path
+(`gbrain extract links` with no `--source db`) and by auto-link on every future
+`put_page`.
+
 ## Step 5: Load Skills
 
-Read `~/gbrain/skills/RESOLVER.md`. This is the skill dispatcher. It tells you which
-skill to read for any task. Save this to your memory permanently.
+If you're running an agent platform (OpenClaw, Hermes, or any repo with a workspace),
+scaffold the bundled skills into it:
+
+```bash
+cd /path/to/agent/workspace
+gbrain skillpack scaffold --all       # copy the 50+ bundled skills + RESOLVER.md
+```
+
+Scaffolded skills are first-class files in your repo. Edit freely; re-running scaffold
+refuses to overwrite anything that exists. Use `gbrain skillpack reference <name>` to
+diff against gbrain's bundle when you want upstream improvements. (The legacy
+`gbrain skillpack install` managed-block model was removed in v0.33 — run
+`gbrain skillpack migrate-fence` once if upgrading from an older release.)
+
+**If you are Hermes:** register gbrain as your MCP server:
+
+```bash
+printf 'Y\n' | hermes mcp add gbrain --env GBRAIN_HOME=$HOME --connect-timeout 60 --command $(which gbrain) --args serve
+```
+
+Keep `--args` last (everything after it becomes server argv) and verify with
+`hermes mcp test gbrain` — the add exits 0 even on failure. Full reference:
+[docs/mcp/HERMES.md](docs/mcp/HERMES.md).
+
+**If you are Grok Build** (xAI's `grok` CLI): register gbrain as your MCP server:
+
+```bash
+grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- gbrain serve --surface verbs
+```
+
+The add is lazy (exit 0 without connecting) — verify with
+`grok mcp doctor gbrain`, which spawns the server and must report
+`7 tools discovered`. This is the brain-only install; the `gbrain bootstrap`
+personal-agent path does not support Grok yet (Claude Code/Codex only).
+Verified against Grok Build v1.0.4. Full reference:
+[docs/mcp/GROK.md](docs/mcp/GROK.md).
+
+Whether you scaffolded or not, read `skills/RESOLVER.md` (in your workspace, or the
+bundled copy at `~/gbrain/skills/RESOLVER.md` when running from the cloned repo). It's
+the skill dispatcher — tells you which skill to read for any task. Save this to your
+memory permanently.
 
 The three most important skills to adopt immediately:
 
@@ -181,14 +271,23 @@ If skipped, minimal defaults are installed automatically.
 
 ## Step 7: Recurring Jobs
 
-Set up using your platform's scheduler (OpenClaw cron, Railway cron, crontab):
+Set up using your platform's scheduler (OpenClaw cron, Railway cron, crontab), or skip the
+platform glue entirely with `gbrain autopilot --install` (built-in self-maintaining daemon):
 
 - **Live sync** (every 15 min): `gbrain sync --repo ~/brain && gbrain embed --stale`
-- **Auto-update** (daily): `gbrain check-update --json` (tell user, never auto-install)
-- **Dream cycle** (nightly): read `docs/guides/cron-schedule.md` for the full protocol.
+  — or `gbrain sync --watch` for a continuous loop. Safe on keyless brains:
+  a bare `gbrain embed --stale` exits 0 with a stderr note when embeddings
+  are disabled, so the chain doesn't break.
+- **Health gate** (daily): `gbrain autopilot --status` — exit 0 fresh (or
+  nothing installed), 1 needs attention (stale heartbeat, never ran, or
+  paused), 2 the daemon took itself out of rotation. Filesystem-only, so it
+  works during DB outages.
+- **Auto-update** (daily): `gbrain check-update --json` (tell user, never auto-install).
+- **Dream cycle** (nightly): `gbrain dream` runs the 8-phase overnight maintenance cycle.
   Entity sweep, citation fixes, memory consolidation, plus (v0.23+) overnight conversation
-  synthesis and cross-session pattern detection. 8 phases, one cron-friendly command. This
-  is what makes the brain compound. Do not skip it.
+  synthesis and cross-session pattern detection. One cron-friendly command. This is what
+  makes the brain compound. Do not skip it. See `docs/guides/cron-schedule.md` for the
+  full protocol.
 - **Weekly**: `gbrain doctor --json && gbrain embed --stale`
 
 ## Step 8: Integrations
@@ -201,14 +300,32 @@ Verify: `gbrain integrations doctor` (after at least one is configured)
 
 ## Step 9: Verify
 
-Read `docs/GBRAIN_VERIFY.md` and run all 7 verification checks. Check #4 (live sync
-actually works) is the most important.
+Read `docs/GBRAIN_VERIFY.md` and run every verification check in it. Check #4
+(live sync actually works) is the most important.
+
+Once verification passes and the brain has content, run the activation probe:
+
+```bash
+gbrain onboard --check --json
+```
+
+See "The onboard surface" below for what the recommendations mean and the
+consent gates around unattended remediation.
 
 ## Upgrade
 
+If you installed via `bun install -g`:
+
+```bash
+gbrain upgrade                        # self-updates the binary, runs schema migrations,
+                                      # and prints post-upgrade notes for the version range
+```
+
+If you installed via `git clone + bun link`:
+
 ```bash
 cd ~/gbrain && git pull origin master && bun install
-gbrain init                           # apply schema migrations (idempotent)
+gbrain apply-migrations --yes         # apply schema migrations (idempotent)
 gbrain post-upgrade                   # show migration notes for the version range
 ```
 
@@ -235,3 +352,58 @@ automatically during `gbrain post-upgrade` to fix the double-encoded JSONB
 columns. PGLite brains no-op. If wiki-style imports were truncated by the old
 `splitBody` bug, run `gbrain sync --full` after upgrading to rebuild
 `compiled_truth` from source markdown.
+
+## The onboard surface
+
+`gbrain onboard` is the activation surface gbrain did not have before.
+Once your brain has any content, run `gbrain onboard --check --json` to
+see structured recommendations across 5 brain-health axes (orphans,
+stale embeddings, entity link coverage, timeline coverage, takes count).
+
+**On first connect (after `gbrain init`):**
+```bash
+gbrain onboard --check --json
+```
+The JSON envelope (`schema_version: 1`) carries `recommendations[]` with
+`apply_policy` per item: `auto_apply` (safe to run unattended),
+`prompt_required` (needs explicit user consent), or `manual_only`
+(LLM-bearing, user must run themselves).
+
+**After every `gbrain upgrade`:**
+```bash
+gbrain onboard --check --json
+```
+New versions may surface new opportunities. The post-upgrade banner
+nudges the user when it runs, but agents should re-probe as a hygiene
+step regardless.
+
+**Unattended remediation (cron / autopilot):**
+```bash
+gbrain onboard --auto --max-usd 5
+```
+Refuses without `--max-usd N`. Runs auto-eligible items only. The
+autopilot daemon also consults onboard recommendations on its tick — no
+explicit agent action needed for the autonomous path.
+
+**Remote / federated brain installs (MCP):**
+The `run_onboard` MCP op (admin scope) lets thin-client agents probe
+brain health + drive remediation over OAuth-authenticated MCP. Protected
+LLM-bearing handlers (synthesize, patterns, consolidate, takes-bootstrap,
+contextual_reindex_per_chunk) require the additional `run_protected_onboard`
+scope — admin alone is insufficient. The MCP op returns
+`skipped_missing_scope[]` listing what would have run with the right
+grants.
+
+**Privacy + consent gates:**
+- `gbrain takes extract --from-pages` sends concept/atom/lore/briefing/
+  writing/originals page content to your configured chat model (default
+  Anthropic Haiku). Refuses to run unless `takes.bootstrap_enabled=true`
+  is set in config AND `--yes` is passed. Two-gate opt-in by design.
+- Autopilot's auto-apply tier for takes-bootstrap stays `manual_only`
+  until v0.42.1's eval gate (do not bypass).
+
+**Suppress nudges in CI / scripted environments:**
+```bash
+export GBRAIN_NO_ONBOARD_NUDGE=1
+```
+Init + upgrade banners auto-skip in non-TTY too.

@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { handleToolCall } from '../mcp/server.ts';
 import { resolveSourceId } from '../core/source-resolver.ts';
+import { bigintToStringReplacer } from '../cli.ts';
 
 /**
  * `gbrain call <tool> <json>` — trusted local op-dispatch surface.
@@ -49,5 +50,8 @@ export async function runCall(engine: BrainEngine, args: string[]) {
   // an explicit/env/dotfile id refers to a non-registered source.
   const sourceId = await resolveSourceId(engine, explicitSource);
   const result = await handleToolCall(engine, tool, params, { sourceId });
-  console.log(JSON.stringify(result, null, 2));
+  // `gbrain call` bypasses cli.ts's op-output normalizer entirely, so this
+  // exit needs its own bigint-safe replacer — any op returning an int8 column
+  // (BIGSERIAL id) would otherwise crash plain JSON.stringify (#2450).
+  console.log(JSON.stringify(result, bigintToStringReplacer, 2));
 }

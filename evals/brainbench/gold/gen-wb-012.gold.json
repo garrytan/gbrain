@@ -1,0 +1,49 @@
+{
+  "fixture_id": "gen-wb-012",
+  "turns": {
+    "3": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "pricing / Junipergrid Labs",
+          "fact": "Anouk Mirelez is worried the Junipergrid Labs pricing model undercuts gross margin (round concern)",
+          "entity_slug": "people/anouk-mirelez",
+          "match_keywords": [
+            "pricing",
+            "Junipergrid Labs"
+          ],
+          "kind": "belief"
+        }
+      ]
+    },
+    "4": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "diligence checklist / Friday",
+          "fact": "Committed to sending Anouk Mirelez the diligence checklist by Friday",
+          "entity_slug": "people/anouk-mirelez",
+          "match_keywords": [
+            "diligence checklist",
+            "Friday"
+          ],
+          "kind": "commitment"
+        }
+      ]
+    },
+    "5": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "async updates",
+          "fact": "Anouk Mirelez prefers async updates over standing calls",
+          "entity_slug": "people/anouk-mirelez",
+          "match_keywords": [
+            "async updates"
+          ],
+          "kind": "preference"
+        }
+      ]
+    }
+  }
+}

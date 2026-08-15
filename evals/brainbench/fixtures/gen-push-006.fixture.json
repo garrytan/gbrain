@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-push-006",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "push",
+  "seed_pages": [
+    {
+      "slug": "people/kenji-briarcliffe",
+      "content": "---\ntitle: Kenji Briarcliffe\ntype: person\naliases: [kenji]\nsummary: Founder of Skylarkift.\n---\n\nKenji Briarcliffe is the founder of Skylarkift. Kenji is exploring a pivot toward the enterprise segment.\n"
+    },
+    {
+      "slug": "people/marisol-novalis",
+      "content": "---\ntitle: Marisol Novalis\ntype: person\naliases: [marisol]\nsummary: Founder of Windrose.\n---\n\nMarisol Novalis is the founder of Windrose. Marisol is exploring a pivot toward the enterprise segment.\n"
+    },
+    {
+      "slug": "companies/skylarkift",
+      "content": "---\ntitle: Skylarkift\ntype: company\nsummary: Seed-stage company. Founded by Kenji Briarcliffe.\n---\n\nSkylarkift is a seed-stage company. Founded by Kenji Briarcliffe. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "funds/tidepool-partners",
+      "content": "---\ntitle: Tidepool Partners\ntype: org\nsummary: Early-stage fund that co-invests on seed rounds.\n---\n\nTidepool Partners is an early-stage fund that co-invests on seed rounds.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Draft a memo for the partner meeting: Kenji Briarcliffe and Marisol Novalis both want Tidepool Partners in the Skylarkift round."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Drafting now."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Make the memo lead with traction, then risks, then the ask."
+    }
+  ]
+}

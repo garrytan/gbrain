@@ -78,7 +78,7 @@ describePostgres("CoE snapshot and evidence ledger PostgreSQL projections", () =
     await rm(root, { recursive: true, force: true });
   }, 30_000);
 
-  test("migration 68 exposes every constrained CoE projection table with RLS", async () => {
+  test("migration 130 exposes every constrained CoE projection table with RLS", async () => {
     const tables = await engine.executeRaw<{ table_name: string }>(
       `SELECT table_name FROM information_schema.tables
         WHERE table_schema = current_schema() AND table_name LIKE 'coe_%'

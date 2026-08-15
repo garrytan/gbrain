@@ -1,0 +1,27 @@
+{
+  "fixture_id": "cont-001-widget-pass-writer",
+  "turns": {
+    "3": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "pass decision on widget-co seed",
+          "fact": "Decided to pass on the widget-co seed round because pricing is too rich",
+          "entity_slug": "companies/widget-co",
+          "match_keywords": ["pass", "widget-co"],
+          "kind": "commitment"
+        }
+      ]
+    }
+  },
+  "continuity": {
+    "pair_id": "cont-001",
+    "decisions": [
+      {
+        "decision_id": "d1",
+        "expected_slugs": ["companies/widget-co"],
+        "match_keywords": ["pass", "widget-co"]
+      }
+    ]
+  }
+}

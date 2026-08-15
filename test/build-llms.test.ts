@@ -96,3 +96,52 @@ describe("build-llms generator", () => {
     ).toBeLessThan(FULL_SIZE_BUDGET);
   });
 });
+
+// Content contracts for the CLAUDE.md resolver restructure. The restructure moved
+// the per-file index + testing discipline into on-demand docs and (per codex
+// outside-voice) keeps the ship-critical IRON RULES inline. These pin that the
+// safety-relevant content did NOT silently move out of CLAUDE.md, and that the
+// new docs are wired into the bundle the way intended (KEY_FILES link-only,
+// not inlined).
+describe("CLAUDE.md restructure content contracts", () => {
+  const claude = () => readFileSync(join(repoRoot, "CLAUDE.md"), "utf8");
+
+  test("CLAUDE.md keeps the inline ship IRON RULES (must NOT move to a doc)", () => {
+    const c = claude();
+    // Version format — the table stays inline (CI version-gate depends on it).
+    expect(c).toContain("MAJOR.MINOR.PATCH.MICRO");
+    // Post-ship discipline — /document-release stays referenced inline.
+    expect(c.toLowerCase()).toContain("document-release");
+    // Never hand-roll ship.
+    expect(c.toLowerCase()).toMatch(/hand-roll ship/);
+  });
+
+  test("CLAUDE.md carries the resolver + cross-cutting invariants (orientation survived)", () => {
+    const c = claude();
+    expect(c).toContain("## Reference map");
+    expect(c).toContain("docs/architecture/KEY_FILES.md");
+    // Invariants that used to live in the per-file index now load here.
+    expect(c).toContain("sourceScopeOpts");
+    expect(c).toContain("JSON.stringify"); // the JSONB trap rule
+  });
+
+  test("AGENTS.md keeps its boot order + points at the new docs (not reduced to a pointer)", () => {
+    const agents = readFileSync(join(repoRoot, "AGENTS.md"), "utf8");
+    expect(agents).toContain("Read this order");
+    expect(agents).toContain("docs/architecture/KEY_FILES.md");
+    expect(agents).toContain("docs/TESTING.md");
+  });
+
+  test("llms.txt indexes the relocated docs", () => {
+    const { llmsTxt } = buildLlmsFiles();
+    expect(llmsTxt).toContain("docs/architecture/KEY_FILES.md");
+    expect(llmsTxt).toContain("docs/TESTING.md");
+    expect(llmsTxt).toContain("docs/architecture/thin-client.md");
+  });
+
+  test("llms-full.txt does NOT inline KEY_FILES.md (link-only; keeps the bundle lean)", () => {
+    const { llmsFullTxt } = buildLlmsFiles();
+    // This H1 appears only in KEY_FILES.md; if it were inlined the bundle would carry it.
+    expect(llmsFullTxt).not.toContain("# Key files — per-file index (gbrain repo)");
+  });
+});

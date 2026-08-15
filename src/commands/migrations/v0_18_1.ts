@@ -16,15 +16,15 @@
  * fires on upgrade, because doctor + connectEngine never call initSchema().
  */
 
-import { execSync } from 'child_process';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
 
 // ── Phase A — Schema ────────────────────────────────────────
 
-function phaseASchema(opts: OrchestratorOpts): OrchestratorPhaseResult {
+async function phaseASchema(opts: OrchestratorOpts): Promise<OrchestratorPhaseResult> {
   if (opts.dryRun) return { name: 'schema', status: 'skipped', detail: 'dry-run' };
   try {
-    execSync('gbrain init --migrate-only', { stdio: 'inherit', timeout: 600_000, env: process.env });
+    const { runMigrateOnlyCore } = await import('./in-process.ts');
+    await runMigrateOnlyCore();
     return { name: 'schema', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -36,7 +36,7 @@ function phaseASchema(opts: OrchestratorOpts): OrchestratorPhaseResult {
 
 async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult> {
   const phases: OrchestratorPhaseResult[] = [];
-  phases.push(phaseASchema(opts));
+  phases.push(await phaseASchema(opts));
 
   const anyFailed = phases.some(p => p.status === 'failed');
   const status: OrchestratorResult['status'] = anyFailed ? 'partial' : 'complete';

@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-kta-neg-003",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "kta-neg",
+  "seed_pages": [
+    {
+      "slug": "people/noor-wrenhaven",
+      "content": "---\ntitle: Noor Wrenhaven\ntype: person\naliases: [noor]\nsummary: Founder of Windrose.\n---\n\nNoor Wrenhaven is the founder of Windrose. Noor wants a technical co-founder intro before committing.\n"
+    },
+    {
+      "slug": "companies/windrose",
+      "content": "---\ntitle: Windrose\ntype: company\nsummary: Seed-stage company. Founded by Noor Wrenhaven.\n---\n\nWindrose is a seed-stage company. Founded by Noor Wrenhaven. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Can you clean up the formatting in that last doc?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "By the way, someone named Jorin Cobblewick emailed about partnerships. Never heard of them."
+    }
+  ],
+  "holdout": true
+}

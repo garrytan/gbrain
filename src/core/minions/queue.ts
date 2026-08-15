@@ -11,11 +11,20 @@
 import type { BrainEngine } from '../engine.ts';
 import type {
   MinionJob, MinionJobInput, MinionJobStatus, InboxMessage, TokenUpdate,
-  MinionQueueOpts, ChildDoneMessage, Attachment, AttachmentInput,
+  MinionQueueOpts, ChildDoneMessage, ChildOutcome, Attachment, AttachmentInput,
 } from './types.ts';
 import { rowToMinionJob, rowToInboxMessage, rowToAttachment } from './types.ts';
 import { validateAttachment } from './attachments.ts';
 import { isProtectedJobName } from './protected-names.ts';
+import { defaultTimeoutMsFor, HANDLER_DEFAULT_TIMEOUT_MS } from './handler-timeouts.ts';
+import {
+  withRetry, BULK_RETRY_OPTS, resolveBulkRetryOpts, computeNextDelay,
+  isRetryableConnError,
+} from '../retry.ts';
+import {
+  logBatchRetry as auditLogBatchRetry,
+  logBatchExhausted as auditLogBatchExhausted,
+} from '../audit/batch-retry-audit.ts';
 
 /** Options for opting into protected-job-name submission. Passed as a separate
  *  4th arg to `MinionQueue.add()` (NOT folded into `opts`) so user-spread
@@ -32,6 +41,33 @@ const DEFAULT_MAX_SPAWN_DEPTH = 5;
 const DEFAULT_MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024; // 5 MiB
 
 const TERMINAL_STATUSES = ['completed', 'failed', 'dead', 'cancelled'] as const;
+
+/** Audit payload deferred from inside the submission transaction. */
+type CoalesceAuditEvent = {
+  queue: string; name: string; returned_job_id: number;
+  waiting_count?: number; max_waiting?: number;
+  pending_count?: number; max_pending?: number;
+};
+
+/** Shared cap-hit coalesce return for the backpressure guards: hydrate the
+ *  existing row, stamp the non-persisted `coalesced` marker, hand the audit
+ *  payload to the caller's sink, return. Both maxWaiting and maxPending route
+ *  through here so the coalesce contract cannot drift between them.
+ *
+ *  The sink DEFERS the audit write to after the transaction commits: the
+ *  audit append is filesystem I/O, and doing it while holding the advisory
+ *  lock + a pool connection would let a hung audit volume serialize every
+ *  submission for the scope (adversarial-review finding). */
+function coalesceReturn(
+  row: Record<string, unknown>,
+  audit: Omit<CoalesceAuditEvent, 'returned_job_id'>,
+  sink: (ev: CoalesceAuditEvent) => void,
+): MinionJob {
+  const coalesced = rowToMinionJob(row);
+  coalesced.coalesced = true;
+  sink({ ...audit, returned_job_id: coalesced.id });
+  return coalesced;
+}
 
 export class MinionQueue {
   readonly maxSpawnDepth: number;
@@ -84,25 +120,34 @@ export class MinionQueue {
         `(pass {allowProtectedSubmit: true} as the 4th arg to MinionQueue.add)`,
       );
     }
-    // v0.31.12 subagent runtime enforcement (Layer 1 of 3 — Codex F1+F2 in
-    // plan review). The subagent loop in handlers/subagent.ts uses Anthropic's
-    // Messages API with prompt caching on system + tools. Routing it elsewhere
-    // silently breaks. Reject non-Anthropic data.model at the queue boundary
-    // so the job never enters waiting state.
+    // v0.38 (S1.7 + D6) — capability-based gate replaces the v0.31.12 Anthropic
+    // pin. The subagent loop now routes through `gateway.toolLoop()` so any
+    // provider with native tool calling works. Only refuse-at-submit when
+    // the requested model literally cannot run a tool loop. The handler
+    // (`subagent.ts`) does a defense-in-depth check at dispatch time too.
     if (jobName === 'subagent' && data && typeof data === 'object') {
       const submittedModel = (data as { model?: unknown }).model;
       if (typeof submittedModel === 'string' && submittedModel.length > 0) {
-        // Lazy import to avoid pulling model-config (which imports engine types)
-        // into the queue module's eager-load surface.
-        const { isAnthropicProvider } = await import('../model-config.ts');
-        if (!isAnthropicProvider(submittedModel)) {
+        const { classifyCapabilities } = await import('../ai/capabilities.ts');
+        const verdict = classifyCapabilities(submittedModel);
+        if (verdict === 'unusable:no_tools') {
           throw new Error(
-            `subagent job rejected: data.model "${submittedModel}" is non-Anthropic. ` +
-            `The subagent loop is Anthropic-only (Messages API + prompt caching). ` +
-            `Pass an Anthropic model id (e.g. claude-sonnet-4-6) or omit data.model ` +
-            `to use the configured default.`,
+            `subagent job rejected: data.model "${submittedModel}" lacks native tool calling. ` +
+            `The subagent loop dispatches brain ops via tool calls — without tool support the loop has no way to run. ` +
+            `Pick a provider that supports tools (anthropic, openai, google, openrouter, litellm-proxy, deepseek, groq, together, azure-openai).`,
           );
         }
+        if (verdict === 'unknown') {
+          throw new Error(
+            `subagent job rejected: data.model "${submittedModel}" references an unknown provider. ` +
+            `Use format provider:model where provider matches a recipe in src/core/ai/recipes/. ` +
+            `Known providers: anthropic, openai, google, openrouter, litellm-proxy, ollama, llama-server, ` +
+            `together, azure-openai, deepseek, groq, dashscope, minimax, zhipu, voyage, zeroentropyai.`,
+          );
+        }
+        // 'degraded:no_caching' and 'degraded:no_parallel' pass through — the
+        // gateway prints a once-per-(source, model) cost warning at first
+        // dispatch. 'ok' passes through silently.
       }
     }
     await this.ensureSchema();
@@ -111,72 +156,146 @@ export class MinionQueue {
     const delayUntil = opts?.delay ? new Date(Date.now() + opts.delay) : null;
     const maxSpawnDepth = opts?.max_spawn_depth ?? this.maxSpawnDepth;
 
-    return this.engine.transaction(async (tx) => {
+    // Set inside the transaction by a cap-hit coalesce; flushed AFTER commit
+    // so audit filesystem I/O never runs while holding the advisory lock.
+    let coalesceAudit: CoalesceAuditEvent | null = null;
+
+    const result = await this.engine.transaction(async (tx) => {
       // 1. Idempotency fast path — if a row already exists for this key, return it
       //    without doing any other work. The unique partial index guarantees
       //    no second row can be inserted with the same non-null key.
+      //
+      //    Dead/cancelled jobs represent permanently-failed work whose
+      //    idempotency slot must be freed so a fresh attempt can be inserted.
+      //    We NULL the key (preserving the row for audit) and fall through
+      //    to the INSERT path below.
       if (opts?.idempotency_key) {
         const existing = await tx.executeRaw<Record<string, unknown>>(
           `SELECT * FROM minion_jobs WHERE idempotency_key = $1`,
           [opts.idempotency_key]
         );
-        if (existing.length > 0) return rowToMinionJob(existing[0]);
+        if (existing.length > 0) {
+          const existingJob = rowToMinionJob(existing[0]);
+          if (existingJob.status === 'dead' || existingJob.status === 'cancelled') {
+            await tx.executeRaw(
+              `UPDATE minion_jobs SET idempotency_key = NULL WHERE id = $1`,
+              [existingJob.id]
+            );
+          } else {
+            existingJob.coalesced = true;
+            return existingJob;
+          }
+        }
       }
 
       // 1b. Submission-time backpressure for high-frequency named jobs.
-      // If waiting jobs for this (name, queue) already hit maxWaiting, return
-      // the most-recent waiting row instead of inserting another slot.
+      // Two guards share the advisory-lock machinery but differ in what they
+      // count and how they scope:
+      //   - maxWaiting (rate cap): counts status='waiting' only. Source scope
+      //     is NULL-as-wildcard — a submission with no source key counts ALL
+      //     rows for (name, queue). Intentional; existing callers rely on it.
+      //   - maxPending (single-flight): counts waiting rows PLUS live-lock
+      //     active rows (lock_until > now()). An expired-lock active belongs
+      //     to a dead/blocked worker and must NOT suppress dispatch — the
+      //     fresh waiting row keeps feeding the waitingClaimable>0 wedge
+      //     detectors (supervisor watchdog, jobs stats) that a suppressed
+      //     queue would otherwise starve. Source scope is EXACT (NULL matches
+      //     only NULL-source rows), so a legacy no-source dispatch can never
+      //     coalesce into an arbitrary per-source row.
       //
-      // Correctness: two concurrent submitters could both see waitingCount <
-      // maxWaiting and both insert, violating the cap. `pg_advisory_xact_lock`
-      // keyed on (name, queue) serializes concurrent count+insert decisions
-      // for the SAME key while leaving different keys fully parallel. The
-      // lock releases on txn commit/rollback automatically — no cleanup path
-      // to leak. Cost: one no-op SELECT on the hot path per coalesce-guarded
-      // submission; trivial compared to the protection.
+      // Correctness: two concurrent submitters could both see count < cap and
+      // both insert, violating the cap. `pg_advisory_xact_lock` keyed on
+      // (name, queue, source) serializes concurrent count+insert decisions
+      // for the SAME scope while leaving other scopes fully parallel; both
+      // guards share the key namespace so maxWaiting and maxPending
+      // submitters for one scope serialize against each other. The lock
+      // releases on txn commit/rollback automatically — no cleanup path to
+      // leak.
       //
-      // Queue scope: the filter includes `queue=$2` so a waiting
+      // Queue scope: the filters include `queue=$2` so a waiting
       // 'autopilot-cycle' in queue 'default' does NOT suppress submissions
-      // to queue 'shell' with the same name. Pre-D2 code filtered on `name`
-      // alone — a real cross-queue bleed that sequential tests missed.
+      // to queue 'shell' with the same name (pre-D2 cross-queue bleed).
       //
       // Engine compatibility: PGLite (WASM Postgres 17) supports
       // pg_advisory_xact_lock, so this works on both engines without branching.
-      if (opts?.maxWaiting !== undefined) {
-        const maxWaiting = Math.max(1, Math.floor(opts.maxWaiting));
+      if (opts?.maxWaiting !== undefined || opts?.maxPending !== undefined) {
         const backpressureQueue = opts?.queue ?? 'default';
+        // Multi-source scope: jobs of the same (name, queue) but different
+        // source are independent workstreams (per-source sync/cycle). Counting
+        // them together made a waiting default-source sync swallow every other
+        // source's freshness sync. Both payload spellings are read: sync/
+        // webhook payloads carry camelCase sourceId; per-source autopilot
+        // payloads carry snake_case source_id.
+        const d = data as Record<string, unknown> | undefined;
+        const bpSourceId = typeof d?.sourceId === 'string' ? d.sourceId as string
+          : typeof d?.source_id === 'string' ? d.source_id as string
+          : null;
         await tx.executeRaw(
-          `SELECT pg_advisory_xact_lock(hashtext('minion_maxwaiting:' || $1 || ':' || $2))`,
-          [jobName, backpressureQueue]
+          `SELECT pg_advisory_xact_lock(hashtext('minion_maxwaiting:' || $1 || ':' || $2 || ':' || coalesce($3, '')))`,
+          [jobName, backpressureQueue, bpSourceId]
         );
-        const waitingCountRows = await tx.executeRaw<{ count: string }>(
-          `SELECT count(*)::text AS count
-           FROM minion_jobs
-           WHERE name = $1 AND queue = $2 AND status = 'waiting'`,
-          [jobName, backpressureQueue]
-        );
-        const waitingCount = parseInt(waitingCountRows[0]?.count ?? '0', 10);
-        if (waitingCount >= maxWaiting) {
-          const existingWaiting = await tx.executeRaw<Record<string, unknown>>(
-            `SELECT * FROM minion_jobs
-             WHERE name = $1 AND queue = $2 AND status = 'waiting'
-             ORDER BY created_at DESC, id DESC
-             LIMIT 1`,
-            [jobName, backpressureQueue]
+        const scopeExact = `COALESCE(data->>'sourceId', data->>'source_id') IS NOT DISTINCT FROM $3`;
+        const scopeWildcard = `($3::text IS NULL OR ${scopeExact})`;
+
+        // maxPending first: the stricter, in-flight-aware guard.
+        if (opts?.maxPending !== undefined) {
+          const maxPending = Math.max(1, Math.floor(opts.maxPending));
+          const pendingCond = `(status = 'waiting' OR (status = 'active' AND lock_until > now()))`;
+          const pendingCountRows = await tx.executeRaw<{ count: string }>(
+            `SELECT count(*)::text AS count
+             FROM minion_jobs
+             WHERE name = $1 AND queue = $2 AND ${pendingCond}
+               AND ${scopeExact}`,
+            [jobName, backpressureQueue, bpSourceId]
           );
-          if (existingWaiting.length > 0) {
-            const coalesced = rowToMinionJob(existingWaiting[0]);
-            try {
-              const { logBackpressureCoalesce } = await import('./backpressure-audit.ts');
-              logBackpressureCoalesce({
+          const pendingCount = parseInt(pendingCountRows[0]?.count ?? '0', 10);
+          if (pendingCount >= maxPending) {
+            const existingPending = await tx.executeRaw<Record<string, unknown>>(
+              `SELECT * FROM minion_jobs
+               WHERE name = $1 AND queue = $2 AND ${pendingCond}
+                 AND ${scopeExact}
+               ORDER BY CASE WHEN status = 'waiting' THEN 0 ELSE 1 END, created_at DESC, id DESC
+               LIMIT 1`,
+              [jobName, backpressureQueue, bpSourceId]
+            );
+            if (existingPending.length > 0) {
+              return coalesceReturn(existingPending[0], {
+                queue: backpressureQueue,
+                name: jobName,
+                pending_count: pendingCount,
+                max_pending: maxPending,
+              }, ev => { coalesceAudit = ev; });
+            }
+          }
+        }
+
+        if (opts?.maxWaiting !== undefined) {
+          const maxWaiting = Math.max(1, Math.floor(opts.maxWaiting));
+          const waitingCountRows = await tx.executeRaw<{ count: string }>(
+            `SELECT count(*)::text AS count
+             FROM minion_jobs
+             WHERE name = $1 AND queue = $2 AND status = 'waiting'
+               AND ${scopeWildcard}`,
+            [jobName, backpressureQueue, bpSourceId]
+          );
+          const waitingCount = parseInt(waitingCountRows[0]?.count ?? '0', 10);
+          if (waitingCount >= maxWaiting) {
+            const existingWaiting = await tx.executeRaw<Record<string, unknown>>(
+              `SELECT * FROM minion_jobs
+               WHERE name = $1 AND queue = $2 AND status = 'waiting'
+                 AND ${scopeWildcard}
+               ORDER BY created_at DESC, id DESC
+               LIMIT 1`,
+              [jobName, backpressureQueue, bpSourceId]
+            );
+            if (existingWaiting.length > 0) {
+              return coalesceReturn(existingWaiting[0], {
                 queue: backpressureQueue,
                 name: jobName,
                 waiting_count: waitingCount,
                 max_waiting: maxWaiting,
-                returned_job_id: coalesced.id,
-              });
-            } catch { /* audit failures never block submission */ }
-            return coalesced;
+              }, ev => { coalesceAudit = ev; });
+            }
           }
         }
       }
@@ -261,7 +380,10 @@ export class MinionQueue {
         opts?.on_child_fail ?? 'fail_parent',
         depth,
         opts?.max_children ?? null,
-        opts?.timeout_ms ?? null,
+        // #1737: long handlers (subagent, embed-backfill, autopilot-cycle) get a
+        // sane long wall-clock default stamped at submit when the caller didn't
+        // pass one, so they aren't killed mid-progress by the short null-default.
+        opts?.timeout_ms ?? defaultTimeoutMsFor(jobName),
         opts?.remove_on_complete ?? false,
         opts?.remove_on_fail ?? false,
         opts?.idempotency_key ?? null,
@@ -282,7 +404,9 @@ export class MinionQueue {
         if (existing.length === 0) {
           throw new Error(`idempotency_key ${opts.idempotency_key} insert returned no row and no existing row found`);
         }
-        return rowToMinionJob(existing[0]);
+        const raced = rowToMinionJob(existing[0]);
+        raced.coalesced = true; // third coalesce path: lost the insert race
+        return raced;
       }
 
       const child = rowToMinionJob(inserted[0]);
@@ -299,6 +423,18 @@ export class MinionQueue {
 
       return child;
     });
+
+    // Deferred audit flush — after commit, advisory lock released, connection
+    // returned to the pool. A hung/slow audit volume degrades only this one
+    // submission's latency, never the queue.
+    if (coalesceAudit) {
+      try {
+        const { logBackpressureCoalesce } = await import('./backpressure-audit.ts');
+        logBackpressureCoalesce(coalesceAudit);
+      } catch { /* audit failures never block submission */ }
+    }
+
+    return result;
   }
 
   /** Get a job by ID. Returns null if not found. */
@@ -434,7 +570,7 @@ export class MinionQueue {
       // waiting-children whose last open child we just cancelled.
       for (const parentId of parentIds) {
         await tx.executeRaw(
-          `UPDATE minion_jobs SET status = 'waiting', updated_at = now()
+          `UPDATE minion_jobs SET status = 'waiting', started_at = NULL, updated_at = now()
            WHERE id = $1 AND status = 'waiting-children'
              AND NOT EXISTS (
                SELECT 1 FROM minion_jobs
@@ -450,12 +586,34 @@ export class MinionQueue {
     });
   }
 
-  /** Re-queue a failed or dead job for retry. */
+  /**
+   * Re-queue a failed or dead job for retry.
+   *
+   * #2783: an explicit `jobs retry` is an operator asserting "run this
+   * fresh" — so it clears `started_at` (re-stamped on re-claim via
+   * `claim()`'s `COALESCE(started_at, now())`, `queue.ts:620`) and resets
+   * `attempts_made`/`attempts_started` to 0. Without this, `started_at`
+   * kept the ORIGINAL first-claim time, so `handleWallClockTimeouts()`
+   * (anchored on `now() - started_at`, `queue.ts:729-749`) could measure
+   * from long before the retry — a retry issued more than `timeout_ms * 2`
+   * after the original claim was dead-lettered again in under a second,
+   * with `attempts_made` already past `max_attempts`. This made retry
+   * useless for exactly the case it exists for: recovering work after an
+   * outage that outlasted the job's timeout.
+   *
+   * Also resets `stalled_counter` (Codex review): `handleStalled()`
+   * dead-letters once `stalled_counter + 1 >= max_stalled` (`queue.ts:1190`).
+   * A job dead-lettered BY stall exhaustion, left un-reset, would hit that
+   * same threshold on its very first lock expiry after retry — a job
+   * killed by 3 stalls doesn't get a fresh stall budget, contradicting
+   * "run this fresh" the same way the unreset attempt counters did.
+   */
   async retryJob(id: number): Promise<MinionJob | null> {
     const rows = await this.engine.executeRaw<Record<string, unknown>>(
       `UPDATE minion_jobs SET status = 'waiting', error_text = NULL,
         lock_token = NULL, lock_until = NULL, delay_until = NULL,
-        finished_at = NULL, updated_at = now()
+        finished_at = NULL, started_at = NULL, attempts_made = 0,
+        attempts_started = 0, stalled_counter = 0, updated_at = now()
        WHERE id = $1 AND status IN ('failed', 'dead')
        RETURNING *`,
       [id]
@@ -464,9 +622,20 @@ export class MinionQueue {
   }
 
   /** Prune old jobs in terminal statuses. Returns count of deleted rows. */
-  async prune(opts?: { olderThan?: Date; status?: MinionJobStatus[] }): Promise<number> {
+  async prune(opts?: { olderThan?: Date; status?: MinionJobStatus[]; dryRun?: boolean }): Promise<number> {
     const statuses = opts?.status ?? ['completed', 'dead', 'cancelled'];
     const olderThan = opts?.olderThan ?? new Date(Date.now() - 30 * 86400000);
+
+    // #2712: dryRun counts the would-be-pruned rows without deleting.
+    // Silent-ignoring a safety flag on a delete path is data loss.
+    if (opts?.dryRun) {
+      const rows = await this.engine.executeRaw<{ count: string }>(
+        `SELECT count(*)::text as count FROM minion_jobs
+         WHERE status = ANY($1) AND updated_at < $2`,
+        [statuses, olderThan.toISOString()]
+      );
+      return parseInt(rows[0]?.count ?? '0', 10);
+    }
 
     const rows = await this.engine.executeRaw<{ count: string }>(
       `WITH pruned AS (
@@ -481,12 +650,28 @@ export class MinionQueue {
   }
 
   /** Get job statistics. */
-  async getStats(opts?: { since?: Date }): Promise<{
+  async getStats(opts?: { since?: Date; queue?: string }): Promise<{
     by_status: Record<string, number>;
     by_type: Array<{ name: string; total: number; completed: number; failed: number; dead: number; avg_duration_ms: number | null }>;
     queue_health: { waiting: number; active: number; stalled: number };
+    /**
+     * issue #1801 — QUEUE-SCOPED wedge signature for the `jobs stats` WEDGED
+     * line. by_status/by_type/queue_health above stay GLOBAL (dashboard
+     * overview); this block is scoped to one queue (default 'default') because
+     * a wedge is per-queue — a healthy worker on one queue must not mask a
+     * wedged one (Codex #14/#15). `active_healthy` counts only live-lock active
+     * rows so an expired-lock row (worker died mid-job) does NOT mask the wedge.
+     */
+    wedge: {
+      queue: string;
+      active_healthy: number;
+      waiting: number;
+      last_completed_at: string | null;
+      minutes_since_completion: number | null;
+    };
   }> {
     const since = opts?.since ?? new Date(Date.now() - 86400000);
+    const wedgeQueue = opts?.queue ?? 'default';
 
     // Status counts
     const statusRows = await this.engine.executeRaw<{ status: string; count: string }>(
@@ -522,6 +707,23 @@ export class MinionQueue {
     );
     const stalled = parseInt(stalledRows[0]?.count ?? '0', 10);
 
+    // issue #1801 — queue-scoped wedge signature (one query, one queue).
+    const wedgeRows = await this.engine.executeRaw<{
+      active_healthy: string;
+      waiting: string;
+      last_completed: string | null;
+    }>(
+      `SELECT
+         count(*) FILTER (WHERE status = 'active' AND lock_until > now())::text AS active_healthy,
+         count(*) FILTER (WHERE status = 'waiting')::text AS waiting,
+         max(updated_at) FILTER (WHERE status = 'completed')::text AS last_completed
+       FROM minion_jobs
+       WHERE queue = $1`,
+      [wedgeQueue],
+    );
+    const wr = wedgeRows[0] ?? { active_healthy: '0', waiting: '0', last_completed: null };
+    const wedgeLastCompleted = wr.last_completed ? new Date(wr.last_completed) : null;
+
     return {
       by_status,
       by_type,
@@ -529,6 +731,15 @@ export class MinionQueue {
         waiting: by_status['waiting'] ?? 0,
         active: by_status['active'] ?? 0,
         stalled,
+      },
+      wedge: {
+        queue: wedgeQueue,
+        active_healthy: parseInt(wr.active_healthy ?? '0', 10),
+        waiting: parseInt(wr.waiting ?? '0', 10),
+        last_completed_at: wr.last_completed,
+        minutes_since_completion: wedgeLastCompleted
+          ? Math.round((Date.now() - wedgeLastCompleted.getTime()) / 60_000)
+          : null,
       },
     };
   }
@@ -538,17 +749,33 @@ export class MinionQueue {
    *
    * Sets timeout_at = now() + timeout_ms when the job has a per-job deadline,
    * so handleTimeouts() can dead-letter expired jobs without rereading timeout_ms.
+   *
+   * Claim-time budget fallback: rows inserted before the submit-time stamping
+   * (or by any writer that bypasses add()) carry timeout_ms = NULL and used to
+   * fall through to the minutes-scale null-default wall-clock sweep — a 30-min
+   * handler died at ~5 min purely because of WHEN its row was inserted. The
+   * COALESCE below resolves HANDLER_DEFAULT_TIMEOUT_MS at claim as the durable
+   * invariant (the v128 migration is the one-shot repair for rows already in
+   * flight). Names outside the map stay NULL — exactly today's behavior.
+   * Postgres evaluates SET expressions against the OLD row, so the timeout_at
+   * CASE must repeat the COALESCE rather than reference the assigned column.
+   * The map binds as a RAW object (never JSON.stringify into ::jsonb — the
+   * postgres.js double-encode trap; PGLite hides it, real PG does not).
    */
   async claim(lockToken: string, lockDurationMs: number, queue: string, registeredNames: string[]): Promise<MinionJob | null> {
     if (registeredNames.length === 0) return null;
 
-    const rows = await this.engine.executeRaw<Record<string, unknown>>(
+    // Direct (session-mode) pool: claim opens the lock that renewLock then
+    // heartbeats. Both must live on a connection the transaction-mode pooler
+    // won't recycle mid-hold, or the lock orphans and the worker wedges.
+    const rows = await this.engine.executeRawDirect<Record<string, unknown>>(
       `UPDATE minion_jobs SET
         status = 'active',
         lock_token = $1,
         lock_until = now() + ($2::double precision * interval '1 millisecond'),
-        timeout_at = CASE WHEN timeout_ms IS NOT NULL
-                          THEN now() + (timeout_ms::double precision * interval '1 millisecond')
+        timeout_ms = COALESCE(timeout_ms, ($5::jsonb ->> name)::int),
+        timeout_at = CASE WHEN COALESCE(timeout_ms, ($5::jsonb ->> name)::int) IS NOT NULL
+                          THEN now() + (COALESCE(timeout_ms, ($5::jsonb ->> name)::int)::double precision * interval '1 millisecond')
                           ELSE NULL END,
         attempts_started = attempts_started + 1,
         started_at = COALESCE(started_at, now()),
@@ -561,7 +788,7 @@ export class MinionQueue {
          LIMIT 1
        )
        RETURNING *`,
-      [lockToken, lockDurationMs, queue, registeredNames]
+      [lockToken, lockDurationMs, queue, registeredNames, HANDLER_DEFAULT_TIMEOUT_MS]
     );
     return rows.length > 0 ? rowToMinionJob(rows[0]) : null;
   }
@@ -580,66 +807,132 @@ export class MinionQueue {
    */
   async handleTimeouts(): Promise<MinionJob[]> {
     return this.engine.transaction(async (tx) => {
+      // #1737: count the timed-out run as a spent attempt (terminal, no retry).
+      // Safe against double-count: the worker sweep runs handleStalled ->
+      // handleTimeouts -> handleWallClockTimeouts sequentially and awaited, and
+      // each guards on `status = 'active'`, so the first to set status='dead'
+      // excludes the row from the later sweeps.
+      //
+      // W0 (D5.12): candidates are discovered with a plain read, PARENTS are
+      // locked first in sorted order (matching failJob's parent-before-child
+      // order), and the child UPDATE re-checks every predicate under a
+      // SKIP LOCKED subselect — see killJobs() for the shared tail.
+      const candidates = await tx.executeRaw<{ id: number; parent_job_id: number | null }>(
+        `SELECT id, parent_job_id FROM minion_jobs
+          WHERE status = 'active'
+            AND timeout_at IS NOT NULL
+            AND timeout_at < now()
+            AND lock_until > now()`
+      );
+      if (candidates.length === 0) return [];
+      await this.lockParentsOrdered(tx, candidates);
       const rows = await tx.executeRaw<Record<string, unknown>>(
         `UPDATE minion_jobs SET
           status = 'dead',
           error_text = 'timeout exceeded',
+          attempts_made = attempts_made + 1,
           lock_token = NULL,
           lock_until = NULL,
           finished_at = now(),
           updated_at = now()
-         WHERE status = 'active'
-           AND timeout_at IS NOT NULL
-           AND timeout_at < now()
-           AND lock_until > now()
-         RETURNING *`
+         WHERE id IN (
+           SELECT id FROM minion_jobs
+            WHERE id = ANY($1::bigint[])
+              AND status = 'active'
+              AND timeout_at IS NOT NULL
+              AND timeout_at < now()
+              AND lock_until > now()
+            FOR UPDATE SKIP LOCKED
+         )
+         RETURNING *`,
+        [candidates.map(c => c.id)]
       );
-
-      // v0.15: emit child_done(outcome='timeout') for every timed-out job that
-      // had a parent. Without this, an aggregator waiting for N child_done
-      // messages hangs forever when a child times out (codex iteration 3).
-      // Outcome 'timeout' is distinct from 'dead' so consumers can distinguish
-      // "timed out during run" from "died via max-stall".
-      const parentIds = new Set<number>();
-      for (const r of rows) {
-        const parentJobId = r.parent_job_id as number | null;
-        if (parentJobId == null) continue;
-        parentIds.add(parentJobId);
-        const childDone: ChildDoneMessage = {
-          type: 'child_done',
-          child_id: r.id as number,
-          job_name: r.name as string,
-          result: null,
-          outcome: 'timeout',
-          error: 'timeout exceeded',
-        };
-        await tx.executeRaw(
-          `INSERT INTO minion_inbox (job_id, sender, payload)
-           SELECT $1, 'minions', $2::jsonb
-           WHERE EXISTS (
-             SELECT 1 FROM minion_jobs
-             WHERE id = $1 AND status NOT IN ('completed','failed','dead','cancelled')
-           )`,
-          [parentJobId, childDone]
-        );
-      }
-
-      // Unblock any aggregator parents whose last open child we just killed.
-      for (const parentId of parentIds) {
-        await tx.executeRaw(
-          `UPDATE minion_jobs SET status = 'waiting', updated_at = now()
-           WHERE id = $1 AND status = 'waiting-children'
-             AND NOT EXISTS (
-               SELECT 1 FROM minion_jobs
-               WHERE parent_job_id = $1
-                 AND status NOT IN ('completed', 'failed', 'dead', 'cancelled')
-             )`,
-          [parentId]
-        );
-      }
-
+      await this.killJobs(tx, rows, 'timeout', 'timeout exceeded');
       return rows.map(rowToMinionJob);
     });
+  }
+
+  /**
+   * W0 fix-wave (Tier-1 #4, D5.12): the ONE parent-notification tail shared
+   * by every reaper that terminally kills active jobs. Pre-fix this ~45-line
+   * block was hand-copied between handleTimeouts and handleWallClockTimeouts
+   * (differing only in the error string), and handleStalled's dead-letter
+   * branch had NO copy at all — a child that died via max-stall left its
+   * aggregator parent in 'waiting-children' forever (the exact hang the v0.15
+   * comment says was fixed for timeouts).
+   *
+   * Runs inside the caller's transaction, AFTER the child transitions.
+   * Callers must have locked the parents first via lockParentsOrdered() —
+   * parents-before-children is the queue-wide lock order (failJob locks the
+   * parent before touching the child), so the reapers can never deadlock
+   * against a concurrent failJob/completeJob.
+   *
+   * Emits child_done(outcome) to each non-terminal parent's inbox, then flips
+   * any 'waiting-children' parent whose last open child we just killed back
+   * to 'waiting'.
+   */
+  private async killJobs(
+    tx: Pick<BrainEngine, 'executeRaw'>,
+    rows: Array<Record<string, unknown>>,
+    outcome: ChildOutcome,
+    errorText: string,
+  ): Promise<void> {
+    const parentIds = new Set<number>();
+    for (const r of rows) {
+      const parentJobId = r.parent_job_id as number | null;
+      if (parentJobId == null) continue;
+      parentIds.add(parentJobId);
+      const childDone: ChildDoneMessage = {
+        type: 'child_done',
+        child_id: r.id as number,
+        job_name: r.name as string,
+        result: null,
+        outcome,
+        error: errorText,
+      };
+      await tx.executeRaw(
+        `INSERT INTO minion_inbox (job_id, sender, payload)
+         SELECT $1, 'minions', $2::jsonb
+         WHERE EXISTS (
+           SELECT 1 FROM minion_jobs
+           WHERE id = $1 AND status NOT IN ('completed','failed','dead','cancelled')
+         )`,
+        [parentJobId, childDone]
+      );
+    }
+
+    // Unblock any aggregator parents whose last open child we just killed.
+    for (const parentId of [...parentIds].sort((a, b) => a - b)) {
+      await tx.executeRaw(
+        `UPDATE minion_jobs SET status = 'waiting', started_at = NULL, updated_at = now()
+         WHERE id = $1 AND status = 'waiting-children'
+           AND NOT EXISTS (
+             SELECT 1 FROM minion_jobs
+             WHERE parent_job_id = $1
+               AND status NOT IN ('completed', 'failed', 'dead', 'cancelled')
+           )`,
+        [parentId]
+      );
+    }
+  }
+
+  /**
+   * W0 (D5.12): take parent row locks in ASCENDING id order before any child
+   * transition. Matches failJob's parent-first order so the three reapers and
+   * failJob can never deadlock each other on parent/child lock acquisition.
+   */
+  private async lockParentsOrdered(
+    tx: Pick<BrainEngine, 'executeRaw'>,
+    candidates: Array<{ parent_job_id: number | null }>,
+  ): Promise<void> {
+    const parentIds = [...new Set(
+      candidates.map(c => c.parent_job_id).filter((p): p is number => p != null),
+    )].sort((a, b) => a - b);
+    if (parentIds.length === 0) return;
+    await tx.executeRaw(
+      `SELECT id FROM minion_jobs WHERE id = ANY($1::bigint[]) ORDER BY id FOR UPDATE`,
+      [parentIds]
+    );
   }
 
   /**
@@ -653,62 +946,46 @@ export class MinionQueue {
    */
   async handleWallClockTimeouts(lockDurationMs: number): Promise<MinionJob[]> {
     return this.engine.transaction(async (tx) => {
+      // W0 (D5.12): same parents-first discover/lock/kill shape as
+      // handleTimeouts; shared tail in killJobs().
+      const candidates = await tx.executeRaw<{ id: number; parent_job_id: number | null }>(
+        `SELECT id, parent_job_id FROM minion_jobs
+          WHERE status = 'active'
+            AND started_at IS NOT NULL
+            AND EXTRACT(EPOCH FROM (now() - started_at)) * 1000 >
+              CASE
+                WHEN timeout_ms IS NOT NULL THEN timeout_ms * 2
+                ELSE $1::double precision * 2 * GREATEST(max_stalled, 1)
+              END`,
+        [lockDurationMs]
+      );
+      if (candidates.length === 0) return [];
+      await this.lockParentsOrdered(tx, candidates);
       const rows = await tx.executeRaw<Record<string, unknown>>(
         `UPDATE minion_jobs SET
           status = 'dead',
           error_text = 'wall-clock timeout exceeded',
+          attempts_made = attempts_made + 1,
           lock_token = NULL,
           lock_until = NULL,
           finished_at = now(),
           updated_at = now()
-         WHERE status = 'active'
-           AND started_at IS NOT NULL
-           AND EXTRACT(EPOCH FROM (now() - started_at)) * 1000 >
-             CASE
-               WHEN timeout_ms IS NOT NULL THEN timeout_ms * 2
-               ELSE $1::double precision * 2 * GREATEST(max_stalled, 1)
-             END
+         WHERE id IN (
+           SELECT id FROM minion_jobs
+            WHERE id = ANY($2::bigint[])
+              AND status = 'active'
+              AND started_at IS NOT NULL
+              AND EXTRACT(EPOCH FROM (now() - started_at)) * 1000 >
+                CASE
+                  WHEN timeout_ms IS NOT NULL THEN timeout_ms * 2
+                  ELSE $1::double precision * 2 * GREATEST(max_stalled, 1)
+                END
+            FOR UPDATE SKIP LOCKED
+         )
          RETURNING *`,
-        [lockDurationMs]
+        [lockDurationMs, candidates.map(c => c.id)]
       );
-
-      const parentIds = new Set<number>();
-      for (const r of rows) {
-        const parentJobId = r.parent_job_id as number | null;
-        if (parentJobId == null) continue;
-        parentIds.add(parentJobId);
-        const childDone: ChildDoneMessage = {
-          type: 'child_done',
-          child_id: r.id as number,
-          job_name: r.name as string,
-          result: null,
-          outcome: 'timeout',
-          error: 'wall-clock timeout exceeded',
-        };
-        await tx.executeRaw(
-          `INSERT INTO minion_inbox (job_id, sender, payload)
-           SELECT $1, 'minions', $2::jsonb
-           WHERE EXISTS (
-             SELECT 1 FROM minion_jobs
-             WHERE id = $1 AND status NOT IN ('completed','failed','dead','cancelled')
-           )`,
-          [parentJobId, childDone]
-        );
-      }
-
-      for (const parentId of parentIds) {
-        await tx.executeRaw(
-          `UPDATE minion_jobs SET status = 'waiting', updated_at = now()
-           WHERE id = $1 AND status = 'waiting-children'
-             AND NOT EXISTS (
-               SELECT 1 FROM minion_jobs
-               WHERE parent_job_id = $1
-                 AND status NOT IN ('completed', 'failed', 'dead', 'cancelled')
-             )`,
-          [parentId]
-        );
-      }
-
+      await this.killJobs(tx, rows, 'timeout', 'wall-clock timeout exceeded');
       return rows.map(rowToMinionJob);
     });
   }
@@ -797,7 +1074,7 @@ export class MinionQueue {
         // child with on_child_fail='continue'/'ignore' doesn't strand the
         // parent in waiting-children forever (v0.15 aggregator fix).
         await tx.executeRaw(
-          `UPDATE minion_jobs SET status = 'waiting', updated_at = now()
+          `UPDATE minion_jobs SET status = 'waiting', started_at = NULL, updated_at = now()
            WHERE id = $1 AND status = 'waiting-children'
              AND NOT EXISTS (
                SELECT 1 FROM minion_jobs
@@ -864,6 +1141,7 @@ export class MinionQueue {
           stacktrace = COALESCE(stacktrace, '[]'::jsonb) || to_jsonb($3::text),
           delay_until = CASE WHEN $1 = 'delayed' THEN now() + ($4::double precision * interval '1 millisecond') ELSE NULL END,
           finished_at = CASE WHEN $1 IN ('failed', 'dead') THEN now() ELSE NULL END,
+          started_at = CASE WHEN $1 = 'delayed' THEN NULL ELSE started_at END,
           lock_token = NULL, lock_until = NULL, updated_at = now()
          WHERE id = $5 AND status = 'active' AND lock_token = $6
          RETURNING *`,
@@ -914,7 +1192,7 @@ export class MinionQueue {
           // After dropping the dep, try to resolve the parent if all OTHER
           // kids are terminal. Terminal set includes 'failed' (v0.15).
           await tx.executeRaw(
-            `UPDATE minion_jobs SET status = 'waiting', updated_at = now()
+            `UPDATE minion_jobs SET status = 'waiting', started_at = NULL, updated_at = now()
              WHERE id = $1 AND status = 'waiting-children'
                AND NOT EXISTS (
                  SELECT 1 FROM minion_jobs
@@ -932,7 +1210,7 @@ export class MinionQueue {
           // remain. Run the resolve check here so the last child transitioning
           // via THIS code path still unblocks the parent.
           await tx.executeRaw(
-            `UPDATE minion_jobs SET status = 'waiting', updated_at = now()
+            `UPDATE minion_jobs SET status = 'waiting', started_at = NULL, updated_at = now()
              WHERE id = $1 AND status = 'waiting-children'
                AND NOT EXISTS (
                  SELECT 1 FROM minion_jobs
@@ -956,6 +1234,52 @@ export class MinionQueue {
     });
   }
 
+  /**
+   * v0.41 Bug 2 — release a job back to `delayed` after a
+   * `RateLeaseUnavailableError` bounce, WITHOUT incrementing `attempts_made`.
+   *
+   * The field-report bug: pre-v0.41, lease-full bounces routed through
+   * `failJob` which bumps `attempts_made`. After 3 bounces the job hit
+   * `max_attempts` (default 3) and dead-lettered with message
+   * `rate lease "anthropic:messages" full (8/8)`. Operators saw a dead
+   * job and assumed a real failure.
+   *
+   * This method is the workhorse fix: status → `delayed`, jittered backoff
+   * via `delay_until`, `attempts_made` UNCHANGED. The handler comment at
+   * `src/core/minions/handlers/subagent.ts:425` ("treat as renewable
+   * error so the worker re-claims") is now actually true.
+   *
+   * Audit row write to `minion_lease_pressure_log` is the caller's
+   * responsibility (the worker has the model/queue context); this method
+   * stays focused on the state-machine flip. Same `lock_token + status='active'`
+   * idempotency guard as `failJob` so a racing stall sweep / cancel still
+   * wins. Returns `null` on lock_token mismatch.
+   *
+   * Returns the updated `MinionJob` row on success so the caller can stamp
+   * the audit row with provenance from the SAME row that just flipped.
+   */
+  async releaseLeaseFullJob(
+    id: number,
+    lockToken: string,
+    errorText: string,
+    backoffMs: number,
+  ): Promise<MinionJob | null> {
+    const rows = await this.engine.executeRaw<Record<string, unknown>>(
+      `UPDATE minion_jobs SET
+        status = 'delayed',
+        error_text = $1,
+        stacktrace = COALESCE(stacktrace, '[]'::jsonb) || to_jsonb($1::text),
+        delay_until = now() + ($2::double precision * interval '1 millisecond'),
+        started_at = NULL,
+        lock_token = NULL, lock_until = NULL, updated_at = now()
+       WHERE id = $3 AND status = 'active' AND lock_token = $4
+       RETURNING *`,
+      [errorText, backoffMs, id, lockToken],
+    );
+    if (rows.length === 0) return null;
+    return rowToMinionJob(rows[0]);
+  }
+
   /** Update job progress (token-fenced). */
   async updateProgress(id: number, lockToken: string, progress: unknown): Promise<boolean> {
     const rows = await this.engine.executeRaw<Record<string, unknown>>(
@@ -969,7 +1293,10 @@ export class MinionQueue {
 
   /** Renew lock (token-fenced). Returns false if token mismatch (job was reclaimed). */
   async renewLock(id: number, lockToken: string, lockDurationMs: number): Promise<boolean> {
-    const rows = await this.engine.executeRaw<Record<string, unknown>>(
+    // Direct (session-mode) pool — see claim(). The heartbeat that keeps a job
+    // alive for minutes cannot run on the transaction pooler without periodic
+    // CONNECTION_ENDED drops that look like lock-expiry and orphan the job.
+    const rows = await this.engine.executeRawDirect<Record<string, unknown>>(
       `UPDATE minion_jobs SET lock_until = now() + ($1::double precision * interval '1 millisecond'), updated_at = now()
        WHERE id = $2 AND lock_token = $3 AND status = 'active'
        RETURNING id`,
@@ -978,52 +1305,135 @@ export class MinionQueue {
     return rows.length > 0;
   }
 
+  /**
+   * issue #1678 — self-healing retry for the Minion hot-path lock SQL.
+   * ONLY promoteDelayed routes through this: it's idempotent (re-running the
+   * same UPDATE on already-promoted rows is a no-op), so a retry after a
+   * reaped pooler socket can't cause double-work. `claim` and `renewLock`
+   * deliberately do NOT use this — see their call sites for why (Codex #1/#2):
+   * blind-retrying claim can double-claim a job, and retrying renewLock races
+   * the renewal-tick's own timeout. The reconnect callback rebuilds the
+   * instance pool between attempts when the engine supports it (Postgres);
+   * PGLite has no pooler reaping so reconnect is absent and the retry is a
+   * cheap pass-through.
+   */
+  private async lockRetry<T>(fn: () => Promise<T>): Promise<T> {
+    const reconnect = (this.engine as { reconnect?: () => Promise<void> }).reconnect;
+    const opts = resolveBulkRetryOpts();
+    let prevDelay = 0;
+    try {
+      return await withRetry(fn, {
+        maxRetries: opts.maxRetries,
+        delayMs: opts.delayMs,
+        delayMaxMs: opts.delayMaxMs,
+        jitter: BULK_RETRY_OPTS.jitter,
+        auditSite: 'minion-lock',
+        onRetry: (attempt, err) => {
+          const delay = computeNextDelay(attempt - 1, prevDelay, opts.delayMs, opts.delayMaxMs, BULK_RETRY_OPTS.jitter);
+          prevDelay = delay;
+          auditLogBatchRetry('minion-lock', 1, attempt, delay, err);
+        },
+        reconnect: reconnect ? () => reconnect.call(this.engine) : undefined,
+      });
+    } catch (err) {
+      if (err instanceof Error && err.name === 'RetryAbortError') throw err;
+      if (isRetryableConnError(err)) auditLogBatchExhausted('minion-lock', 1, opts.maxRetries + 1, err);
+      throw err;
+    }
+  }
+
   /** Promote delayed jobs whose delay_until has passed. Returns promoted jobs. */
   async promoteDelayed(): Promise<MinionJob[]> {
-    const rows = await this.engine.executeRaw<Record<string, unknown>>(
+    const rows = await this.lockRetry(() => this.engine.executeRaw<Record<string, unknown>>(
       `UPDATE minion_jobs SET status = 'waiting', delay_until = NULL,
+        started_at = NULL,
         lock_token = NULL, lock_until = NULL, updated_at = now()
        WHERE status = 'delayed' AND delay_until <= now()
        RETURNING *`
-    );
+    ));
     return rows.map(rowToMinionJob);
   }
 
   /** Detect and handle stalled jobs. Single CTE, no off-by-one. Returns affected jobs. */
   async handleStalled(): Promise<{ requeued: MinionJob[]; dead: MinionJob[] }> {
-    const rows = await this.engine.executeRaw<Record<string, unknown> & { action: string }>(
-      `WITH stalled AS (
-        SELECT id, stalled_counter, max_stalled
-        FROM minion_jobs
-        WHERE status = 'active' AND lock_until < now()
-        FOR UPDATE SKIP LOCKED
-      ),
-      requeued AS (
-        UPDATE minion_jobs SET
+    // W0 fix-wave (Tier-1 #4): the dead-letter branch previously emitted NO
+    // child_done and never unblocked aggregator parents — a child that died
+    // via max-stall stranded its parent in 'waiting-children' forever (the
+    // exact hang the v0.15 comment says was fixed for timeouts; there was no
+    // compensating sweep anywhere). Restructured into the parents-first
+    // discover/lock/kill shape (D5.12) with the shared killJobs() tail.
+    return this.engine.transaction(async (tx) => {
+      const candidates = await tx.executeRaw<{ id: number; parent_job_id: number | null; stalled_counter: number; max_stalled: number }>(
+        `SELECT id, parent_job_id, stalled_counter, max_stalled
+           FROM minion_jobs
+          WHERE status = 'active' AND lock_until < now()`
+      );
+      if (candidates.length === 0) return { requeued: [], dead: [] };
+      const ids = candidates.map(c => c.id);
+      // Only the dead-letter branch touches parents; lock just those, sorted.
+      await this.lockParentsOrdered(
+        tx,
+        candidates.filter(c => Number(c.stalled_counter) + 1 >= Number(c.max_stalled)),
+      );
+
+      const requeuedRows = await tx.executeRaw<Record<string, unknown>>(
+        `UPDATE minion_jobs SET
           status = 'waiting', stalled_counter = stalled_counter + 1,
+          started_at = NULL,
           lock_token = NULL, lock_until = NULL, updated_at = now()
-        WHERE id IN (SELECT id FROM stalled WHERE stalled_counter + 1 < max_stalled)
-        RETURNING *, 'requeued' as action
-      ),
-      dead_lettered AS (
-        UPDATE minion_jobs SET
+         WHERE id IN (
+           SELECT id FROM minion_jobs
+            WHERE id = ANY($1::bigint[])
+              AND status = 'active' AND lock_until < now()
+              AND stalled_counter + 1 < max_stalled
+            FOR UPDATE SKIP LOCKED
+         )
+         RETURNING *`,
+        [ids]
+      );
+      const deadRows = await tx.executeRaw<Record<string, unknown>>(
+        `UPDATE minion_jobs SET
           status = 'dead', stalled_counter = stalled_counter + 1,
+          attempts_made = attempts_made + 1,
           error_text = 'max stalled count exceeded',
           lock_token = NULL, lock_until = NULL, finished_at = now(), updated_at = now()
-        WHERE id IN (SELECT id FROM stalled WHERE stalled_counter + 1 >= max_stalled)
-        RETURNING *, 'dead' as action
-      )
-      SELECT * FROM requeued UNION ALL SELECT * FROM dead_lettered`
-    );
-
-    const requeued: MinionJob[] = [];
-    const dead: MinionJob[] = [];
-    for (const r of rows) {
-      const job = rowToMinionJob(r);
-      if (r.action === 'requeued') requeued.push(job);
-      else dead.push(job);
-    }
-    return { requeued, dead };
+         WHERE id IN (
+           SELECT id FROM minion_jobs
+            WHERE id = ANY($1::bigint[])
+              AND status = 'active' AND lock_until < now()
+              AND stalled_counter + 1 >= max_stalled
+            FOR UPDATE SKIP LOCKED
+         )
+         RETURNING *`,
+        [ids]
+      );
+      // THE FIX: stall-death now notifies + unblocks parents like every
+      // other terminal kill. Outcome 'dead' (not 'timeout') so consumers can
+      // distinguish "died via max-stall" from "timed out during run".
+      await this.killJobs(tx, deadRows, 'dead', 'max stalled count exceeded');
+      return { requeued: requeuedRows.map(rowToMinionJob), dead: deadRows.map(rowToMinionJob) };
+    }).then(async (result) => {
+      // W0 ship-review (data-migration): the per-kill unblock above is
+      // forward-only — parents stranded in 'waiting-children' by PRE-upgrade
+      // stall-deaths (children already status='dead') are never revisited by
+      // any per-event unblock site. This idempotent sweep self-heals ALL
+      // stranding classes, retroactive included, once per stall tick: any
+      // waiting-children parent with zero non-terminal children flips back to
+      // 'waiting'. Cheap (single UPDATE, NOT EXISTS on an indexed FK) at the
+      // 30s sweep cadence.
+      try {
+        await this.engine.executeRaw(
+          `UPDATE minion_jobs SET status = 'waiting', started_at = NULL, updated_at = now()
+            WHERE status = 'waiting-children'
+              AND NOT EXISTS (
+                SELECT 1 FROM minion_jobs c
+                WHERE c.parent_job_id = minion_jobs.id
+                  AND c.status NOT IN ('completed', 'failed', 'dead', 'cancelled')
+              )`
+        );
+      } catch { /* best-effort backstop; the per-kill unblock is the primary path */ }
+      return result;
+    });
   }
 
   /**
@@ -1035,7 +1445,7 @@ export class MinionQueue {
    */
   async resolveParent(parentId: number): Promise<MinionJob | null> {
     const rows = await this.engine.executeRaw<Record<string, unknown>>(
-      `UPDATE minion_jobs SET status = 'waiting', updated_at = now()
+      `UPDATE minion_jobs SET status = 'waiting', started_at = NULL, updated_at = now()
        WHERE id = $1 AND status = 'waiting-children'
          AND NOT EXISTS (
            SELECT 1 FROM minion_jobs

@@ -53,6 +53,34 @@ Every cron job MUST be idempotent:
 
 Job configuration saved. Report: "Job '{name}' scheduled at {cron expression}. Next run: {time}."
 
+## Multi-source brains: use `sync --all`, not per-source entries
+
+When the brain has 2+ active sources (anything `gbrain sources list` shows
+with a non-null `local_path` that isn't archived), use one consolidated
+cron line instead of N per-source entries.
+
+**Preferred (multi-source)**:
+
+```cron
+*/5 * * * * gbrain sync --all --parallel 4 --workers 4 --skip-failed
+```
+
+This replaces N per-source lines AND auto-picks-up future sources without
+a crontab edit. Concurrency budget: `parallel × workers × 2 ≈ 32`
+connections during the wave (each per-file worker opens its own
+2-connection pool). Stay under your Postgres `max_connections` setting.
+
+**Avoid (legacy)**: separate `gbrain sync --source default` and
+`gbrain sync --source zion-brain` entries staggered by 5 minutes. They
+require manual deconfliction every time a new source is added, and a
+slow source can race a fast source on the legacy global `gbrain-sync`
+lock (v0.40.3.0+ uses per-source `gbrain-sync:<sourceId>` locks but the
+per-source cron pattern doesn't benefit from the parallelism that
+`--all --parallel` actually delivers).
+
+`gbrain doctor` surfaces the recommended line as a `sync_consolidation`
+check whenever it detects 2+ active sources. Paste-ready from there.
+
 ## Anti-Patterns
 
 - Scheduling jobs at the same minute (:00 for everything)
@@ -60,3 +88,6 @@ Job configuration saved. Report: "Job '{name}' scheduled at {cron expression}. N
 - Running cron jobs without testing on 3-5 items first
 - Jobs that produce different output on re-run (not idempotent)
 - Sending notifications during quiet hours (save to held queue instead)
+- Separate per-source `gbrain sync --source <id>` cron entries when
+  `gbrain sync --all --parallel N --workers N` would replace them with
+  one line that auto-picks-up future sources.

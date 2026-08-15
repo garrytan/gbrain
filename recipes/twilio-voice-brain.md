@@ -1,8 +1,8 @@
 ---
 id: twilio-voice-brain
-name: Voice-to-Brain
-version: 0.8.1
-description: Phone calls create brain pages via Twilio + voice pipeline + GBrain MCP. Two architectures -- OpenAI Realtime (turnkey) or DIY STT+LLM+TTS (full control). Callers talk, brain pages appear.
+name: Voice-to-Brain (DEPRECATED — see agent-voice)
+version: 0.8.2
+description: "DEPRECATED. New installs use `gbrain integrations install agent-voice` — the copy-into-host-repo paradigm with WebRTC-first browser client + Mars/Venus personas + read-only tool router. This recipe stays as a redirect for existing Twilio installs; it is frozen (no longer updated) and will be removed in a future release."
 category: sense
 requires: [ngrok-tunnel]
 secrets:
@@ -32,6 +32,26 @@ cost_estimate: "$15-25/mo (Twilio number $1-2 + voice $0.01/min, OpenAI Realtime
 ---
 
 # Voice-to-Brain: Phone Calls That Create Brain Pages
+
+> **⚠️ DEPRECATED.** New installs should use the [agent-voice](agent-voice.md)
+> recipe — a WebRTC-first voice agent with Mars + Venus personas, copy-into-host-repo
+> install paradigm, and read-only tool router. This recipe stays as a redirect for
+> operators with existing Twilio installs. It is **frozen**: no longer updated, and
+> will be removed in a future release once existing installs have migrated.
+>
+> **Migration:** `gbrain integrations install agent-voice --target <your-repo>` copies a
+> working reference into your host agent repo where you own the edits. The new recipe
+> includes a Twilio bridge in `code/lib/twilio-bridge.mjs` for operators who still want
+> phone inbound, but the WebRTC `/call?test=1` flow is the headline experience.
+>
+> **Where this recipe's content now lives (canonical homes):**
+> - ngrok tunnel setup + watchdog → [ngrok-tunnel.md](ngrok-tunnel.md)
+> - post-call transcript pipeline → the `voice-post-call` skill in the [agent-voice](agent-voice.md) bundle
+> - voice production patterns (unicode sanitize, PII scrub, identity-first prompt, conversation timing) → shipped as code in the agent-voice bundle
+>
+> The copies below are kept only so existing installs have a self-contained runbook;
+> they may drift from current gbrain behavior. Treat the homes above as authoritative.
+
 
 Call a phone number. Talk. A structured brain page appears with entity detection,
 cross-references, and a summary posted to your messaging app.
@@ -467,7 +487,7 @@ fi
 
 ```bash
 mkdir -p ~/.gbrain/integrations/twilio-voice-brain
-echo '{"ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","event":"setup_complete","source_version":"0.8.1","status":"ok","details":{"phone":"TWILIO_NUMBER","deployment":"local+ngrok"}}' >> ~/.gbrain/integrations/twilio-voice-brain/heartbeat.jsonl
+echo '{"ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","event":"setup_complete","source_version":"0.8.2","status":"ok","details":{"phone":"TWILIO_NUMBER","deployment":"local+ngrok"}}' >> ~/.gbrain/integrations/twilio-voice-brain/heartbeat.jsonl
 ```
 
 Tell the user: "Voice-to-brain is fully set up. Your number is [NUMBER]. Here's

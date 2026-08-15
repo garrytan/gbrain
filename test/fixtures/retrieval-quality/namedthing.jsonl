@@ -1,0 +1,10 @@
+{"family":"title-substring","query":"greek amphitheater","relevant":["projects/example-amphitheater"],"notes":"the direct incident regression: query is a phrase in the title"}
+{"family":"title-substring","query":"civic feedback platform","relevant":["projects/example-civic-platform"]}
+{"family":"alias-synonym","query":"hall of light","relevant":["projects/example-amphitheater"],"notes":"declared alias -> canonical"}
+{"family":"alias-synonym","query":"the widget tracker","relevant":["projects/example-civic-platform"],"notes":"alias romanization/synonym"}
+{"family":"generic-to-named","query":"indoor amphitheater for debate","relevant":["projects/example-amphitheater"]}
+{"family":"multi-chunk-dilution","query":"ceiling treatment acoustics amphitheater","relevant":["projects/example-amphitheater"],"notes":"strong chunk among many weak ones"}
+{"family":"short-vs-rich","query":"amphitheater","relevant":["projects/example-amphitheater"]}
+{"family":"short-vs-rich","query":"indoor greek amphitheater for adversarial debate in the city","relevant":["projects/example-amphitheater"]}
+{"family":"graph-relationship","query":"who works on the civic platform","relevant":["people/alice-example"]}
+{"family":"hard-negative","query":"quarterly tax filing checklist","forbidden":["projects/example-amphitheater","projects/example-civic-platform"],"notes":"must NOT return the named projects"}

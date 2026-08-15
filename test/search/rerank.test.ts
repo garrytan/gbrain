@@ -11,10 +11,16 @@
  *  - rerankerFn test seam used over gateway.rerank
  */
 
-import { describe, test, expect, beforeAll } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { applyReranker, type RerankerOpts } from '../../src/core/search/rerank.ts';
 import { RerankError, type RerankResult } from '../../src/core/ai/gateway.ts';
+import { BudgetExhausted } from '../../src/core/budget/budget-tracker.ts';
+import { readRecentRerankFailures } from '../../src/core/rerank-audit.ts';
 import type { SearchResult } from '../../src/core/types.ts';
+import { withEnv } from '../helpers/with-env.ts';
 
 function makeResult(slug: string, score: number, chunk: string): SearchResult {
   return {
@@ -33,11 +39,23 @@ function makeResult(slug: string, score: number, chunk: string): SearchResult {
 
 // Setup: gateway must be configured so the rerank-audit logger doesn't
 // trip on missing env. We can call configureGateway with a minimal stub.
+// NOTE: this stub omits embedding_model, so the gateway falls back to the
+// v0.37 default (zeroentropyai:zembed-1 / 1280-d). Without the afterAll
+// reset below it would LEAK that default to the next file in the shard
+// process — a sibling that runs initSchema in beforeAll would build a
+// vector(1280) column and then mismatch on 1536-d fixtures. resetGateway
+// in afterAll restores the empty slot so the legacy-embedding preload
+// re-pins OpenAI/1536 for the next file.
 beforeAll(async () => {
   const { configureGateway } = await import('../../src/core/ai/gateway.ts');
   configureGateway({
     env: { ZEROENTROPY_API_KEY: 'test-key' },
   });
+});
+
+afterAll(async () => {
+  const { resetGateway } = await import('../../src/core/ai/gateway.ts');
+  resetGateway();
 });
 
 describe('applyReranker — happy path', () => {
@@ -148,6 +166,36 @@ describe('applyReranker — fail-open on every RerankError reason', () => {
     expect(out).toEqual(results);
   });
 
+  test('missing gateway reranker API key fail-opens and audits auth', async () => {
+    const { configureGateway } = await import('../../src/core/ai/gateway.ts');
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-rerank-search-'));
+    try {
+      await withEnv({ GBRAIN_AUDIT_DIR: tmpDir }, async () => {
+        configureGateway({
+          reranker_model: 'zeroentropyai:zerank-2',
+          env: {},
+        });
+
+        const results = [makeResult('a', 1.0, 'doc a')];
+        const out = await applyReranker('q', results, {
+          enabled: true,
+          topNIn: 1,
+          topNOut: null,
+          model: 'zeroentropyai:zerank-2',
+        });
+
+        expect(out).toEqual(results);
+        const failures = readRecentRerankFailures(1);
+        expect(failures).toHaveLength(1);
+        expect(failures[0]!.reason).toBe('auth');
+        expect(failures[0]!.error_summary).toContain('ZEROENTROPY_API_KEY');
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      configureGateway({ env: { ZEROENTROPY_API_KEY: 'test-key' } });
+    }
+  });
+
   test('fail-open on non-RerankError throw too', async () => {
     const results = [makeResult('a', 1.0, 'a')];
     const opts: RerankerOpts = {
@@ -160,6 +208,37 @@ describe('applyReranker — fail-open on every RerankError reason', () => {
     };
     const out = await applyReranker('q', results, opts);
     expect(out).toEqual(results);
+  });
+
+  test('#3628: BudgetExhausted fail-opens and audits budget instead of unknown', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-rerank-budget-'));
+    try {
+      await withEnv({ GBRAIN_AUDIT_DIR: tmpDir }, async () => {
+        const results = [makeResult('a', 1.0, 'a')];
+        const out = await applyReranker('q', results, {
+          enabled: true,
+          topNIn: 1,
+          topNOut: null,
+          model: 'acmecorp:unpriced-reranker-v9',
+          rerankerFn: async () => {
+            throw new BudgetExhausted('rerank budget missing pricing', {
+              reason: 'no_pricing',
+              spent: 0,
+              cap: 1,
+              modelId: 'acmecorp:unpriced-reranker-v9',
+            });
+          },
+        });
+
+        expect(out).toEqual(results);
+        const failures = readRecentRerankFailures(1);
+        expect(failures).toHaveLength(1);
+        expect(failures[0]!.reason).toBe('budget');
+        expect(failures[0]!.error_summary).toContain('missing pricing');
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   test('fail-open on malformed reranker response (empty results array)', async () => {

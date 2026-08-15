@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-push-020",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "push",
+  "seed_pages": [
+    {
+      "slug": "people/orlando-lanternby",
+      "content": "---\ntitle: Orlando Lanternby\ntype: person\naliases: [orlando]\nsummary: Founder of Nettleray Co.\n---\n\nOrlando Lanternby is the founder of Nettleray Co. Orlando is exploring a pivot toward the enterprise segment.\n"
+    },
+    {
+      "slug": "people/ingrid-stargazer",
+      "content": "---\ntitle: Ingrid Stargazer\ntype: person\naliases: [ingrid]\nsummary: Founder of Quartzbloom Systems.\n---\n\nIngrid Stargazer is the founder of Quartzbloom Systems. Ingrid flagged churn as the top risk in the latest update.\n"
+    },
+    {
+      "slug": "companies/nettleray-co",
+      "content": "---\ntitle: Nettleray Co\ntype: company\nsummary: Seed-stage company. Founded by Orlando Lanternby.\n---\n\nNettleray Co is a seed-stage company. Founded by Orlando Lanternby. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "funds/brightmoor-ventures",
+      "content": "---\ntitle: Brightmoor Ventures\ntype: org\nsummary: Early-stage fund that co-invests on seed rounds.\n---\n\nBrightmoor Ventures is an early-stage fund that co-invests on seed rounds.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Draft a memo for the partner meeting: Orlando Lanternby and Ingrid Stargazer both want Brightmoor Ventures in the Nettleray Co round."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Drafting now."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Make the memo lead with traction, then risks, then the ask."
+    }
+  ]
+}

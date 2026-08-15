@@ -1,14 +1,28 @@
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
 import {
   configureGateway,
   resetGateway,
+  __unconfigureGatewayForTests,
   isAvailable,
   embed,
+  embedOne,
+  __setEmbedTransportForTests,
   getEmbeddingModel,
   getEmbeddingDimensions,
   getExpansionModel,
   VoyageResponseTooLargeError,
 } from '../../src/core/ai/gateway.ts';
+
+// v0.39.x ship-wave fix: gateway module is process-scoped. Without an
+// afterAll cleanup, the last test's configureGateway({env: {OPENAI_API_KEY:
+// 'openai-fake'}}) state leaked into sibling files in the same bun shard
+// (capture / ingest-capture tests), where it produced "Incorrect API key
+// provided: openai-fake" against the real OpenAI endpoint and wedged
+// the shard. Reset once at file teardown so no caller sees the residue.
+afterAll(() => {
+  resetGateway();
+  __setEmbedTransportForTests(null);
+});
 import { parseModelId, resolveRecipe } from '../../src/core/ai/model-resolver.ts';
 import {
   dimsProviderOptions,
@@ -32,11 +46,43 @@ describe('gateway configuration', () => {
     expect(getExpansionModel()).toBe('anthropic:claude-haiku-4-5-20251001');
   });
 
-  test('defaults preserve v0.13 OpenAI behavior', () => {
+  test('defaults are ZE 1280d as of v0.36.0.0 (D3)', () => {
+    // The default flipped from openai:text-embedding-3-large 1536d to
+    // zeroentropyai:zembed-1 1280d in v0.36.0.0. The cost story is in
+    // CHANGELOG.md; the rationale lives in src/core/ai/gateway.ts:45-54.
     configureGateway({ env: {} });
-    expect(getEmbeddingModel()).toBe('openai:text-embedding-3-large');
-    expect(getEmbeddingDimensions()).toBe(1536);
+    expect(getEmbeddingModel()).toBe('zeroentropyai:zembed-1');
+    expect(getEmbeddingDimensions()).toBe(1280);
     expect(getExpansionModel()).toBe('anthropic:claude-haiku-4-5-20251001');
+  });
+});
+
+describe('gateway.embedOne options', () => {
+  beforeEach(() => {
+    resetGateway();
+    __setEmbedTransportForTests(null);
+  });
+
+  test('passes maxRetries=0 to the provider transport for health probes', async () => {
+    let observedMaxRetries: number | undefined;
+    configureGateway({
+      embedding_model: 'google:gemini-embedding-001',
+      embedding_dimensions: 3,
+      env: { GOOGLE_GENERATIVE_AI_API_KEY: 'fake-google' },
+    });
+    __setEmbedTransportForTests(async (args: any) => {
+      observedMaxRetries = args.maxRetries;
+      return {
+        embeddings: [new Array(3).fill(0.1)],
+        usage: { tokens: 1 },
+      } as any;
+    });
+
+    const vector = await embedOne('health probe', { maxRetries: 0 });
+
+    expect(observedMaxRetries).toBe(0);
+    expect(vector.length).toBe(3);
+    __setEmbedTransportForTests(null);
   });
 });
 
@@ -44,6 +90,9 @@ describe('gateway.isAvailable (silent-drop regression surface)', () => {
   beforeEach(() => resetGateway());
 
   test('returns false when gateway not configured', () => {
+    // resetGateway() restores the preload's test baseline (#3554); go
+    // genuinely unconfigured for this one assertion.
+    __unconfigureGatewayForTests();
     expect(isAvailable('embedding')).toBe(false);
   });
 
@@ -108,6 +157,23 @@ describe('gateway.isAvailable (silent-drop regression surface)', () => {
       env: { ANTHROPIC_API_KEY: 'fake' },
     });
     expect(isAvailable('expansion')).toBe(true);
+  });
+
+  // #1135 — an explicit expansion_model pointed at a chat-capable
+  // OpenAI-compatible provider used to silently yield no expansion because
+  // the recipe declared no expansion touchpoint.
+  test('expansion available for chat-capable openai-compat providers (deepseek/groq/together/openrouter)', () => {
+    const cases: Array<[string, Record<string, string>]> = [
+      ['deepseek:deepseek-chat', { DEEPSEEK_API_KEY: 'fake' }],
+      ['groq:llama-3.1-8b-instant', { GROQ_API_KEY: 'fake' }],
+      ['together:meta-llama/Llama-3.3-70B-Instruct-Turbo', { TOGETHER_API_KEY: 'fake' }],
+      ['openrouter:google/gemini-3-flash-preview', { OPENROUTER_API_KEY: 'fake' }],
+    ];
+    for (const [model, env] of cases) {
+      resetGateway();
+      configureGateway({ expansion_model: model, env });
+      expect(isAvailable('expansion'), `${model} expansion should be available`).toBe(true);
+    }
   });
 });
 
@@ -386,5 +452,76 @@ describe('Voyage flexible-dim runtime validation', () => {
     expect(caught?.fix).toContain('embedding_dimensions');
     expect(caught?.fix).toContain('256');
     expect(caught?.fix).toContain('2048');
+  });
+});
+
+describe('embedding response integrity', () => {
+  beforeEach(() => resetGateway());
+
+  test('rejects partial embedding responses instead of silently dropping rows', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      object: 'list',
+      data: [
+        {
+          object: 'embedding',
+          index: 0,
+          embedding: new Array(1536).fill(0.01),
+        },
+      ],
+      model: 'text-embedding-3-large',
+      usage: { prompt_tokens: 3, total_tokens: 3 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as unknown as typeof fetch;
+
+    try {
+      configureGateway({
+        embedding_model: 'openai:text-embedding-3-large',
+        embedding_dimensions: 1536,
+        env: { OPENAI_API_KEY: 'openai-fake' },
+      });
+
+      await expect(embed(['first', 'second'])).rejects.toThrow('1 embedding(s) for 2 input(s)');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('checks every returned vector dimension, not just the first one', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      object: 'list',
+      data: [
+        {
+          object: 'embedding',
+          index: 0,
+          embedding: new Array(1536).fill(0.01),
+        },
+        {
+          object: 'embedding',
+          index: 1,
+          embedding: new Array(768).fill(0.01),
+        },
+      ],
+      model: 'text-embedding-3-large',
+      usage: { prompt_tokens: 3, total_tokens: 3 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as unknown as typeof fetch;
+
+    try {
+      configureGateway({
+        embedding_model: 'openai:text-embedding-3-large',
+        embedding_dimensions: 1536,
+        env: { OPENAI_API_KEY: 'openai-fake' },
+      });
+
+      await expect(embed(['first', 'second'])).rejects.toThrow('returned 768 but schema expects 1536');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

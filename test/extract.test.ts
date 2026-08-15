@@ -8,11 +8,11 @@ import {
 
 describe('extractMarkdownLinks', () => {
   it('extracts relative markdown links', () => {
-    const content = 'Check [Pedro](../people/pedro-franceschi.md) and [Brex](../../companies/brex.md).';
+    const content = 'Check [Alice](../people/alice-example.md) and [Acme](../../companies/acme-example.md).';
     const links = extractMarkdownLinks(content);
     expect(links).toHaveLength(2);
-    expect(links[0].name).toBe('Pedro');
-    expect(links[0].relTarget).toBe('../people/pedro-franceschi.md');
+    expect(links[0].name).toBe('Alice');
+    expect(links[0].relTarget).toBe('../people/alice-example.md');
   });
 
   it('skips external URLs ending in .md', () => {
@@ -34,12 +34,12 @@ describe('extractMarkdownLinks', () => {
 
 describe('extractLinksFromFile', () => {
   it('resolves relative paths to slugs', async () => {
-    const content = '---\ntitle: Test\n---\nSee [Pedro](../people/pedro.md).';
-    const allSlugs = new Set(['people/pedro', 'deals/test-deal']);
+    const content = '---\ntitle: Test\n---\nSee [Alice](../people/alice.md).';
+    const allSlugs = new Set(['people/alice', 'deals/test-deal']);
     const links = await extractLinksFromFile(content, 'deals/test-deal.md', allSlugs);
     expect(links.length).toBeGreaterThanOrEqual(1);
     expect(links[0].from_slug).toBe('deals/test-deal');
-    expect(links[0].to_slug).toBe('people/pedro');
+    expect(links[0].to_slug).toBe('people/alice');
   });
 
   it('skips links to non-existent pages', async () => {
@@ -50,15 +50,15 @@ describe('extractLinksFromFile', () => {
   });
 
   it('extracts frontmatter company links (v0.13, includeFrontmatter opt-in)', async () => {
-    const content = '---\ncompany: brex\ntype: person\n---\nContent.';
+    const content = '---\ncompany: acme-example\ntype: person\n---\nContent.';
     // v0.13 canonical: person page with company: X → person → company works_at (outgoing).
-    // Resolver needs companies/brex to exist in allSlugs to emit the edge.
-    const allSlugs = new Set(['people/test', 'companies/brex']);
+    // Resolver needs companies/acme-example to exist in allSlugs to emit the edge.
+    const allSlugs = new Set(['people/test', 'companies/acme-example']);
     const links = await extractLinksFromFile(content, 'people/test.md', allSlugs, { includeFrontmatter: true });
     const companyLinks = links.filter(l => l.link_type === 'works_at');
     expect(companyLinks.length).toBeGreaterThanOrEqual(1);
     expect(companyLinks[0].from_slug).toBe('people/test');
-    expect(companyLinks[0].to_slug).toBe('companies/brex');
+    expect(companyLinks[0].to_slug).toBe('companies/acme-example');
   });
 
   it('extracts frontmatter investors array (v0.13: incoming direction)', async () => {
@@ -76,25 +76,50 @@ describe('extractLinksFromFile', () => {
     }
   });
 
+  it('resolves wrapped [[wikilink]] digit-leading slug-path in frontmatter (fs resolver, broadened step 1)', async () => {
+    // Same bug class as makeResolver step 1 (#1983): the fs resolver's strict
+    // `^[a-z]…` slug regex rejected digit-leading / nested paths, so a PARA-vault
+    // `related: "[[90-people/nicolai]]"` never resolved even though the page exists.
+    const content = '---\nrelated: "[[90-people/nicolai]]"\ntype: concept\n---\nContent.';
+    const allSlugs = new Set(['wiki/note', '90-people/nicolai']);
+    const links = await extractLinksFromFile(content, 'wiki/note.md', allSlugs, { includeFrontmatter: true });
+    const related = links.filter(l => l.link_type === 'related_to');
+    expect(related).toHaveLength(1);
+    expect(related[0].to_slug).toBe('90-people/nicolai');
+  });
+
   it('frontmatter extraction is default OFF (back-compat)', async () => {
     // Without includeFrontmatter, fs-source no longer auto-extracts frontmatter.
     // Matches db-source behavior. User opts in with --include-frontmatter flag.
-    const content = '---\ncompany: brex\ntype: person\n---\nContent.';
-    const allSlugs = new Set(['people/test', 'companies/brex']);
+    const content = '---\ncompany: acme-example\ntype: person\n---\nContent.';
+    const allSlugs = new Set(['people/test', 'companies/acme-example']);
     const links = await extractLinksFromFile(content, 'people/test.md', allSlugs);
     expect(links).toEqual([]);
   });
 
-  it('infers link type from directory structure', async () => {
+  it('people -> companies adjacency without evidence infers mentions, not works_at (#3466)', async () => {
+    // The content carries no employment language, so the directory pair alone
+    // must not assert a specific employment claim. Evidence-based works_at
+    // still flows through the company: frontmatter path (covered above) and
+    // prose inference in link-extraction.ts.
     const content = 'See [Brex](../companies/brex.md).';
     const allSlugs = new Set(['people/pedro', 'companies/brex']);
     const links = await extractLinksFromFile(content, 'people/pedro.md', allSlugs);
-    expect(links[0].link_type).toBe('works_at');
+    expect(links).toHaveLength(1);
+    expect(links[0].link_type).toBe('mentions');
+  });
+
+  it('people -> companies with founded frontmatter infers founded', async () => {
+    const content = '---\nfounded: [brex]\n---\nSee [Brex](../companies/brex.md).';
+    const allSlugs = new Set(['people/pedro', 'companies/brex']);
+    const links = await extractLinksFromFile(content, 'people/pedro.md', allSlugs);
+    expect(links).toHaveLength(1);
+    expect(links[0].link_type).toBe('founded');
   });
 
   it('infers deal_for type for deals -> companies', async () => {
-    const content = 'See [Brex](../companies/brex.md).';
-    const allSlugs = new Set(['deals/seed', 'companies/brex']);
+    const content = 'See [Acme](../companies/acme-example.md).';
+    const allSlugs = new Set(['deals/seed', 'companies/acme-example']);
     const links = await extractLinksFromFile(content, 'deals/seed.md', allSlugs);
     expect(links[0].link_type).toBe('deal_for');
   });
@@ -134,6 +159,88 @@ describe('extractTimelineFromContent', () => {
     const content = `- **2025-03-18** | Meeting – Discussed partnership`;
     const entries = extractTimelineFromContent(content, 'test');
     expect(entries).toHaveLength(1);
+  });
+
+  it('does not split on hyphens inside markdown link targets', () => {
+    const content = `- **2025-03-18** | Referenced in [Alice](../people/alice-example.md)`;
+    const entries = extractTimelineFromContent(content, 'companies/acme-example');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('markdown');
+    expect(entries[0].summary).toBe('Referenced in [Alice](../people/alice-example.md)');
+  });
+
+  it('does not split on spaced dashes inside link labels', () => {
+    const content = `- **2025-03-18** | Referenced in [Deals — Q1 Review](../deals/q1-review.md)`;
+    const entries = extractTimelineFromContent(content, 'companies/acme-example');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('markdown');
+    expect(entries[0].summary).toBe('Referenced in [Deals — Q1 Review](../deals/q1-review.md)');
+  });
+
+  it('splits on the first spaced dash outside links', () => {
+    const content = `- **2025-03-18** | [Board notes](../meetings/2025-03-18-board.md) — Approved the hire`;
+    const entries = extractTimelineFromContent(content, 'test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('[Board notes](../meetings/2025-03-18-board.md)');
+    expect(entries[0].summary).toBe('Approved the hire');
+  });
+
+  it('keeps delimiterless bullet lines whole instead of dropping them', () => {
+    const content = `- **2025-03-18** | Imported from legacy tracker`;
+    const entries = extractTimelineFromContent(content, 'test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('markdown');
+    expect(entries[0].summary).toBe('Imported from legacy tracker');
+  });
+
+  it('extracts inline citation format entries', () => {
+    const content = `Closed the seed round with fund-a leading. [Source: board meeting notes, 2025-04-02]`;
+    const entries = extractTimelineFromContent(content, 'deals/acme-seed');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].date).toBe('2025-04-02');
+    expect(entries[0].source).toBe('board meeting notes');
+    expect(entries[0].summary).toBe('Closed the seed round with fund-a leading.');
+  });
+
+  it('keeps commas inside the citation source', () => {
+    const content = `Alice joined as CTO. [Source: email from alice-example re: offer, signed, 2025-05-10]`;
+    const entries = extractTimelineFromContent(content, 'people/alice-example');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].date).toBe('2025-05-10');
+    expect(entries[0].source).toBe('email from alice-example re: offer, signed');
+  });
+
+  it('extracts one entry per citation when a line carries several', () => {
+    const content = `Both sides confirmed the partnership. [Source: call with widget-co, 2025-06-01] [Source: follow-up email, 2025-06-03]`;
+    const entries = extractTimelineFromContent(content, 'companies/widget-co');
+    expect(entries).toHaveLength(2);
+    expect(entries[0].date).toBe('2025-06-01');
+    expect(entries[1].date).toBe('2025-06-03');
+    expect(entries[0].summary).toBe(entries[1].summary);
+  });
+
+  it('does not double-extract a timeline bullet that carries its own citation', () => {
+    const content = `- **2025-03-18** | Meeting — Discussed partnership [Source: meeting notes, 2025-03-18]`;
+    const entries = extractTimelineFromContent(content, 'test');
+    expect(entries).toHaveLength(1); // Format 1 only
+    expect(entries[0].source).toBe('Meeting');
+  });
+
+  it('skips a bare citation with no surrounding text', () => {
+    const content = `[Source: import batch, 2025-07-01]`;
+    expect(extractTimelineFromContent(content, 'test')).toHaveLength(0);
+  });
+
+  it('ignores citations without a date', () => {
+    const content = `Some claim here. [Source: undated memo]`;
+    expect(extractTimelineFromContent(content, 'test')).toHaveLength(0);
+  });
+
+  it('strips list markers from the citation summary', () => {
+    const content = `- Landed the enterprise pilot with acme-example. [Source: CRM update, 2025-08-15]`;
+    const entries = extractTimelineFromContent(content, 'companies/acme-example');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].summary).toBe('Landed the enterprise pilot with acme-example.');
   });
 });
 

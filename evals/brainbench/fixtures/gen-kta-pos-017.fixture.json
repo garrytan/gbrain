@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-kta-pos-017",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "kta-pos",
+  "seed_pages": [
+    {
+      "slug": "people/marisol-novalis",
+      "content": "---\ntitle: Marisol Novalis\ntype: person\naliases: [marisol]\nsummary: Founder of Windrose.\n---\n\nMarisol Novalis is the founder of Windrose. Marisol pushed back on the proposed valuation during diligence.\n"
+    },
+    {
+      "slug": "companies/windrose",
+      "content": "---\ntitle: Windrose\ntype: company\nsummary: Seed-stage company. Founded by Marisol Novalis.\n---\n\nWindrose is a seed-stage company. Founded by Marisol Novalis. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Can you pull up my notes on Windrose before the call?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Great, thanks. That covers it."
+    }
+  ]
+}

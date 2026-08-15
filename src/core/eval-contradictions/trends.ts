@@ -95,5 +95,24 @@ export function renderTrendChart(rows: readonly TrendRow[]): string {
     const bar = '#'.repeat(fill) + '.'.repeat(barWidth - fill);
     lines.push(`${date}   ${model}  ${q}  ${withCx}  ${flag}  ${ci}  ${bar}`);
   }
+  // v0.34 / Lane A2: append the per-verdict breakdown from the most recent
+  // run so operators can see which kinds of finding the probe is generating.
+  // Older runs without `verdict_breakdown` populated (cache rows from before
+  // A2) emit a `(no breakdown)` placeholder.
+  const latest = rows[0];
+  if (latest && latest.report_json && latest.report_json.verdict_breakdown) {
+    const b = latest.report_json.verdict_breakdown;
+    lines.push('');
+    lines.push(`Latest run verdict breakdown (${latest.ran_at.slice(0, 10)}):`);
+    lines.push(`  contradiction:         ${b.contradiction}`);
+    lines.push(`  temporal_supersession: ${b.temporal_supersession}`);
+    lines.push(`  temporal_regression:   ${b.temporal_regression}`);
+    lines.push(`  temporal_evolution:    ${b.temporal_evolution}`);
+    lines.push(`  negation_artifact:     ${b.negation_artifact}`);
+    lines.push(`  no_contradiction:      ${b.no_contradiction}`);
+  } else if (latest) {
+    lines.push('');
+    lines.push(`Latest run verdict breakdown: (no breakdown — predates v0.34 prompt_version=2)`);
+  }
   return lines.join('\n');
 }

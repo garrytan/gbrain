@@ -1,0 +1,2 @@
+{"type":"session","version":3,"id":"agent-fixture-session-1","timestamp":"2026-08-03T14:00:00.000Z","cwd":"/home/alice-example/agent-workspace"}
+{"type":"message","id":"m-1","parentId":null,"timestamp":"2026-08-03T14:00:03.000Z","message":{"role":"user","timestamp":"2026-08-03T14:00:03.000Z","content":[{"type":"text","text":"CHECKPOINT-ONLY-TEXT: snapshot copy that must never be imported"}]}}

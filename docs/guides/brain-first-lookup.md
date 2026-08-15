@@ -51,22 +51,25 @@ The brain has context no external API can provide:
 - Timeline (what changed recently, what's trending)
 
 A LinkedIn scrape gives you their job title. The brain gives you: "co-founded
-Brex, you had coffee with him 3 times, last discussed the payments infrastructure
-thesis, he's interested in your take on AI agents."
+widget-co, you had coffee with her 3 times, last discussed the payments
+infrastructure thesis, she's interested in your take on AI agents."
 
 ## Tricky Spots
 
 1. **Try keyword first, then hybrid.** Keyword search works without embeddings
-   (day one). Hybrid search needs embeddings but finds semantic matches. Try
-   both in sequence.
+   (day one — and it's ALL you get in keyless mode, see
+   [bootstrap.md](bootstrap.md)). Hybrid search needs embeddings but finds
+   semantic matches. Try both in sequence.
 
-2. **Fuzzy slug matching.** `gbrain get` supports fuzzy matching. If the exact
-   slug doesn't exist, it suggests alternatives. Use this for name variants
-   ("Pedro" → "pedro-franceschi").
+2. **Fuzzy slug matching is opt-in.** Pass `--fuzzy` (the `fuzzy: true` param
+   on `get_page`) and a near-miss slug resolves to the unique candidate, or
+   returns an `ambiguous_slug` error listing the candidates. WITHOUT the flag
+   a miss just throws `page_not_found` (with a hint to retry with
+   `fuzzy: true`). Use it for name variants ("Alice" → "alice-example").
 
 3. **Don't skip for "simple" questions.** Even "what's Acme Corp's address?"
-   should check the brain first. The brain might have it, and the lookup adds
-   no latency (< 100ms for keyword search).
+   should check the brain first. The brain might have it, and a keyword
+   lookup is fast enough to be effectively free.
 
 4. **Load compiled truth + recent timeline.** The compiled truth gives you the
    state of play in 30 seconds. The timeline gives you what changed recently.

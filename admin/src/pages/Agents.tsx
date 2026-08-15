@@ -18,12 +18,20 @@ interface Agent {
   client_name?: string; // compat
   grant_types: string[];
   scope: string;
+  source_id: string | null;
+  federated_read: string[];
   created_at: string;
   last_used_at: string | null;
   total_requests: number;
   requests_today: number;
   token_ttl: number | null;
   status: 'active' | 'revoked';
+}
+
+interface Source {
+  id: string;
+  name: string;
+  federated: boolean;
 }
 
 interface ApiKey {
@@ -36,6 +44,7 @@ interface ApiKey {
 
 export function AgentsPage() {
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [sources, setSources] = useState<Source[]>([]);
   const [hideRevoked, setHideRevoked] = useState(true);
   const [showRegister, setShowRegister] = useState(false);
   const [showCredentials, setShowCredentials] = useState<{ clientId: string; clientSecret: string; name: string } | null>(null);
@@ -43,7 +52,10 @@ export function AgentsPage() {
   const [showApiKeyToken, setShowApiKeyToken] = useState<{ name: string; token: string } | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
 
-  useEffect(() => { loadAgents(); }, []);
+  useEffect(() => {
+    loadAgents();
+    api.sources().then(setSources).catch(() => {});
+  }, []);
 
   const loadAgents = () => { api.agents().then(setAgents).catch(() => {}); };
 
@@ -88,6 +100,7 @@ export function AgentsPage() {
                 <th>Name</th>
                 <th>Type</th>
                 <th>Scopes</th>
+                <th>Sources</th>
                 <th>Status</th>
                 <th>Requests</th>
                 <th>Last Used</th>
@@ -107,6 +120,11 @@ export function AgentsPage() {
                     {(a.scope || '').split(' ').filter(Boolean).map(s => (
                       <span key={s} className={`badge badge-${s}`} style={{ marginRight: 4 }}>{s}</span>
                     ))}
+                  </td>
+                  <td style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+                    {a.auth_type === 'oauth'
+                      ? `${a.source_id || 'none'} · ${(a.federated_read || []).length} readable`
+                      : 'Unscoped'}
                   </td>
                   <td>
                     <span className={`badge ${a.status === 'active' ? 'badge-success' : 'badge-danger'}`}>{a.status}</span>
@@ -144,7 +162,21 @@ export function AgentsPage() {
       )}
 
       {selectedAgent && (
-        <AgentDrawer agent={selectedAgent} onClose={() => setSelectedAgent(null)} onRevoked={loadAgents} />
+        <AgentDrawer
+          key={selectedAgent.id}
+          agent={selectedAgent}
+          sources={sources}
+          onClose={() => setSelectedAgent(null)}
+          onRevoked={loadAgents}
+          onRescoped={({ sourceId, federatedRead }) => {
+            setSelectedAgent(current => current ? {
+              ...current,
+              source_id: sourceId,
+              federated_read: federatedRead,
+            } : current);
+            loadAgents();
+          }}
+        />
       )}
 
       {showApiKeyCreate && (
@@ -381,7 +413,127 @@ function CredentialsModal({ credentials, onClose }: {
   );
 }
 
-function AgentDrawer({ agent, onClose, onRevoked }: { agent: Agent; onClose: () => void; onRevoked: () => void }) {
+function SourceAccessEditor({ clientId, agent, sources, onRescoped }: {
+  clientId: string;
+  agent: Agent;
+  sources: Source[];
+  onRescoped: (scope: { sourceId: string; federatedRead: string[] }) => void;
+}) {
+  const [writeSource, setWriteSource] = useState(agent.source_id || 'default');
+  const [readSources, setReadSources] = useState<string[]>(agent.federated_read || []);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+  const readableSet = new Set(readSources);
+  const activeSourceIds = new Set(sources.map(source => source.id));
+  const unavailableReadSources = readSources.filter(sourceId => !activeSourceIds.has(sourceId));
+  const primaryUnavailable = !activeSourceIds.has(writeSource);
+
+  const save = async () => {
+    if (readSources.length === 0) {
+      setError('Select at least one readable source.');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    setSaved(false);
+    try {
+      const result = await api.rescopeClient(clientId, writeSource, readSources) as {
+        sourceId: string;
+        federatedRead: string[];
+      };
+      setWriteSource(result.sourceId);
+      setReadSources(result.federatedRead);
+      setSaved(true);
+      onRescoped(result);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save source access');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="section-title">Source Access</div>
+      <div style={{ color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.5, marginBottom: 12 }}>
+        The primary source is the write destination. Read access is an explicit allowlist and does not widen automatically.
+      </div>
+      <div style={{ marginBottom: 14 }}>
+        <label htmlFor="agent-write-source">Primary / write source</label>
+        <select
+          id="agent-write-source"
+          value={writeSource}
+          onChange={e => { setWriteSource(e.target.value); setSaved(false); }}
+          style={{ width: '100%', background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px', fontSize: 14 }}
+        >
+          {primaryUnavailable && (
+            <option value={writeSource} disabled>{writeSource} · unavailable</option>
+          )}
+          {sources.map(source => (
+            <option key={source.id} value={source.id}>{source.name} ({source.id})</option>
+          ))}
+        </select>
+      </div>
+      <fieldset style={{ border: 0, padding: 0, margin: '0 0 14px' }}>
+        <legend>Readable sources</legend>
+        <div className="checkbox-group" style={{ marginTop: 6 }}>
+          {sources.map(source => (
+            <label key={source.id} className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={readableSet.has(source.id)}
+                onChange={e => {
+                  setSaved(false);
+                  setReadSources(current => e.target.checked
+                    ? [...current, source.id]
+                    : current.filter(id => id !== source.id));
+                }}
+              />
+              {source.name} ({source.id}){source.federated ? ' · federated' : ' · private'}
+            </label>
+          ))}
+          {unavailableReadSources.map(sourceId => (
+            <label key={sourceId} className="checkbox-label" style={{ color: 'var(--warning)' }}>
+              <input
+                type="checkbox"
+                checked
+                onChange={() => {
+                  setSaved(false);
+                  setReadSources(current => current.filter(id => id !== sourceId));
+                }}
+              />
+              {sourceId} · unavailable (clear to remove grant)
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      {(primaryUnavailable || unavailableReadSources.length > 0) && (
+        <div style={{ color: 'var(--warning)', fontSize: 13, marginBottom: 10 }}>
+          This client references unavailable or archived sources. Choose an active primary source and clear unavailable read grants before saving.
+        </div>
+      )}
+      {error && <div style={{ color: 'var(--error)', fontSize: 13, marginBottom: 10 }}>{error}</div>}
+      {saved && <div style={{ color: 'var(--success)', fontSize: 13, marginBottom: 10 }}>Source access saved.</div>}
+      <button
+        type="button"
+        className="btn btn-primary"
+        disabled={saving || readSources.length === 0 || sources.length === 0 || primaryUnavailable || unavailableReadSources.length > 0}
+        onClick={save}
+      >
+        {saving ? 'Saving...' : 'Save Source Access'}
+      </button>
+    </>
+  );
+}
+
+function AgentDrawer({ agent, sources, onClose, onRevoked, onRescoped }: {
+  agent: Agent;
+  sources: Source[];
+  onClose: () => void;
+  onRevoked: () => void;
+  onRescoped: (scope: { sourceId: string; federatedRead: string[] }) => void;
+}) {
   const [tab, setTab] = useState<'claude-code' | 'chatgpt' | 'claude-cowork' | 'perplexity' | 'cursor' | 'json'>('claude-code');
   const copy = (text: string) => navigator.clipboard.writeText(text);
   const serverUrl = window.location.origin;
@@ -553,6 +705,15 @@ function AgentDrawer({ agent, onClose, onRevoked }: { agent: Agent; onClose: () 
           <span>{agent.token_ttl ? (agent.token_ttl >= 31536000 ? 'No expiry' : agent.token_ttl >= 86400 ? `${Math.floor(agent.token_ttl / 86400)}d` : agent.token_ttl >= 3600 ? `${Math.floor(agent.token_ttl / 3600)}h` : `${agent.token_ttl}s`) : '1h (default)'}</span>
         </div>
 
+        {isOAuth && (
+          <SourceAccessEditor
+            clientId={cid}
+            agent={agent}
+            sources={sources}
+            onRescoped={onRescoped}
+          />
+        )}
+
         {/*
           Config Export visible for both auth_type=oauth AND auth_type=api_key.
           Claude Code + Cursor + JSON tabs render real snippets regardless
@@ -579,7 +740,11 @@ function AgentDrawer({ agent, onClose, onRevoked }: { agent: Agent; onClose: () 
         {(() => {
           const oauthOnlyTabs = new Set(['chatgpt', 'claude-cowork', 'perplexity']);
           if (!isOAuth && oauthOnlyTabs.has(tab)) {
-            const clientName = { chatgpt: 'ChatGPT', 'claude-cowork': 'Claude.ai', perplexity: 'Perplexity' }[tab] || tab;
+            const clientName = tab === 'chatgpt'
+              ? 'ChatGPT'
+              : tab === 'claude-cowork'
+                ? 'Claude.ai'
+                : 'Perplexity';
             return (
               <div style={{
                 background: 'rgba(255, 200, 100, 0.08)',

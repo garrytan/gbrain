@@ -12,6 +12,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
+import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const describePostgres = DATABASE_URL ? describe : describe.skip;
@@ -21,6 +22,7 @@ describePostgres('Postgres CJK keyword fallback', () => {
 
   beforeAll(async () => {
     engine = new PostgresEngine();
+    assertSafeE2eDatabaseUrl(DATABASE_URL!);
     await engine.connect({ database_url: DATABASE_URL! });
     await engine.initSchema();
   }, 30_000);

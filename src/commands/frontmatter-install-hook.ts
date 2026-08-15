@@ -39,7 +39,7 @@ if ! command -v gbrain >/dev/null 2>&1; then
   exit 0
 fi
 
-staged=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\\\\.mdx?$' || true)
+staged=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\\.mdx?$' || true)
 [ -z "$staged" ] && exit 0
 
 failed=0

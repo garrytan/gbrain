@@ -16,6 +16,47 @@ benefit-focused bullets, waits for explicit permission, then runs the full
 upgrade flow including re-reading skills, running migrations, and syncing
 schema. The user gets new capabilities automatically.
 
+## Self-upgrade modes
+
+gbrain stays current the way gstack does: it rides invocation frequency. A
+throttled, cache-read-only check runs at the start of every `gbrain` invocation
+(CLI and MCP) and emits an `UPGRADE_AVAILABLE <old> <new>` marker on stderr. The
+raw marker line is suppressed when stderr is an interactive TTY (a human sees
+only the plain `gbrain X -> Y available` sentence, not the machine token); set
+`GBRAIN_FORCE_UPGRADE_MARKER=1` if an agent harness parses the token but runs
+under a PTY. `<old>` is always the RUNNING binary's version, so a stale or
+foreign-written cache never nags about an upgrade this binary already has. No
+host cron required — every agent kind (Claude Code, Codex, OpenClaw, Hermes, the
+`gbrain serve` host behind a Perplexity thin client) converges to current by
+construction. The behavior is governed by one file-plane config key,
+`self_upgrade.mode`:
+
+| Mode | Behavior | Who it's for |
+|------|----------|--------------|
+| `notify` (default) | Emit the marker + a 4-option prompt; never apply without confirmation. | Interactive installs / anyone with a human in the loop. |
+| `auto` (opt-in) | Apply silently, but ONLY during quiet hours, ONLY when the brain is idle, doctor-gated, and never re-trying a known-bad version. | Headless / always-on installs (autopilot daemon, the `gbrain serve` host). |
+| `off` | Never check. | Air-gapped / pinned installs. |
+
+Enable hands-off upgrades on an always-on install with one line:
+
+```bash
+gbrain config set self_upgrade.mode auto
+```
+
+`auto` is deliberately NOT a default anywhere — it's an explicit autonomy grant,
+because applying code from GitHub unattended is, by design, remote code
+execution. The trust model is TLS + GitHub (same as `gbrain upgrade`);
+signature verification is a tracked follow-up. Apply manually any time with
+`gbrain self-upgrade`.
+
+The `auto` quiet-hours window is configured via the
+`self_upgrade.quiet_hours` config key
+(`gbrain config set self_upgrade.quiet_hours '{"start":23,"end":8,"tz":"US/Pacific"}'`).
+The quiet-hours *pattern* itself — gating any notification or background
+action on the user's local sleep window — is owned by
+[quiet-hours.md](quiet-hours.md); this doc only covers the self-upgrade
+hook into it.
+
 ## Implementation
 
 ### The Check (cron-initiated)
@@ -66,7 +107,11 @@ what they can DO now that they couldn't before, not what files changed.
 | daily | Store preference, switch cron back to daily |
 | stop / unsubscribe / no more | Disable the cron. Tell user how to resume |
 
-**Never auto-upgrade.** Always wait for explicit confirmation.
+**In `notify` mode (the default), never auto-upgrade — always wait for explicit
+confirmation.** The `auto` mode (opt-in, see "Self-upgrade modes" above) is the
+only path that applies without a prompt, and only under its conservative gates
+(quiet hours + idle + doctor-gate). This per-cron-prompt flow is the `notify`
+experience.
 
 ### The Full Upgrade Flow (after user says yes)
 
@@ -131,22 +176,28 @@ Also persist in `~/.gbrain/update-state.json` so it survives agent context reset
 
 If you loaded this SKILLPACK directly (copied or read from GitHub) without
 installing gbrain, you can still stay current. Both GBRAIN_SKILLPACK.md and
-GBRAIN_RECOMMENDED_SCHEMA.md have version markers:
+GBRAIN_RECOMMENDED_SCHEMA.md carry a `<!-- source: ... -->` header pointing
+at their canonical copies, and GBRAIN_RECOMMENDED_SCHEMA.md also carries a
+version marker:
 
 ```bash
-curl -s https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_SKILLPACK.md | head -1
-# Returns: <!-- skillpack-version: X.Y.Z -->
+curl -s https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_RECOMMENDED_SCHEMA.md | head -1
+# Returns: <!-- schema-version: X.Y.Z -->
 ```
 
-If the remote version is newer, fetch the full file and replace your local
-copy. Set up a weekly cron to check automatically.
+If the remote version is newer (or the remote SKILLPACK content differs from
+your local copy), fetch the full file and replace your local copy. Set up a
+weekly cron to check automatically.
 
 ## Tricky Spots
 
-1. **Never auto-install.** The upgrade must always wait for the user's explicit
-   "yes." Even if the cron detects an update at 9 AM and the changelog looks
-   great, the agent messages the user and waits. Auto-installing can break
-   workflows, introduce breaking changes, or interrupt work in progress.
+1. **In `notify` mode, never auto-install.** The upgrade waits for the user's
+   explicit "yes." Even if the check detects an update and the changelog looks
+   great, the agent messages the user and waits. The `auto` mode (opt-in) exists
+   for headless/always-on installs where there's no human to prompt — it applies
+   only during quiet hours, only when idle, doctor-gated, never retrying a
+   known-bad version. Don't enable `auto` on an interactive workstation; the
+   prompt-first `notify` flow is the right default there.
 
 2. **Migration files are agent instructions, not scripts.** They tell the agent
    what to do step by step in plain language. They are NOT bash scripts to

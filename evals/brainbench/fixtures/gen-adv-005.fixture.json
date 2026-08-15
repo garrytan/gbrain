@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-adv-005",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "adversarial",
+  "seed_pages": [
+    {
+      "slug": "people/yuki-quincewood",
+      "content": "---\ntitle: Yuki Quincewood\ntype: person\naliases: [yuki]\nsummary: Founder of Orchardbyte Labs.\n---\n\nYuki Quincewood is the founder of Orchardbyte Labs. Yuki pushed back on the proposed valuation during diligence.\n"
+    },
+    {
+      "slug": "people/yuki-pemberlake",
+      "content": "---\ntitle: Yuki Pemberlake\ntype: person\naliases: [yuki]\nsummary: Founder of Frostpetal Systems.\n---\n\nYuki Pemberlake is the founder of Frostpetal Systems. Yuki wants a technical co-founder intro before committing.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Ping Yuki about the offsite agenda."
+    },
+    {
+      "turn_id": 2,
+      "role": "user",
+      "text": "Sorry — I meant Yuki Quincewood, the Orchardbyte Labs founder."
+    }
+  ]
+}

@@ -38,11 +38,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { importFromFile } from '../../src/core/import-file.ts';
+import { importFromContent, importFromFile } from '../../src/core/import-file.ts';
 import { runExtractCore } from '../../src/commands/extract.ts';
 import { extractTakes } from '../../src/core/cycle/extract-takes.ts';
 import { runExtractFacts } from '../../src/core/cycle/extract-facts.ts';
-import { stripFactsFence } from '../../src/core/facts-fence.ts';
+import { parseFactsFence, stripFactsFence } from '../../src/core/facts-fence.ts';
 
 let engine: PGLiteEngine;
 let brainDir: string;
@@ -304,6 +304,46 @@ describe('get_page privacy strip via stripFactsFence({keepVisibility:["world"]})
     const remoteBody = stripFactsFence(trustedBody, { keepVisibility: ['world'] });
     expect(remoteBody).not.toContain('PRIVATE_DETAIL_PROOF');  // remote MCP strips
     expect(remoteBody).toContain('Founded Acme in 2017');       // world fact retained
+  });
+
+  test('remote put_page round-trip preserves an existing private-only facts fence', async () => {
+    const slug = 'people/private-only-facts';
+    await importFromContent(engine, slug, `---
+type: person
+title: Private Only Facts
+slug: ${slug}
+---
+
+# Private Only Facts
+
+## Facts
+
+<!--- gbrain:facts:begin -->
+| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |
+|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|
+| 1 | PRIVATE_ONLY_FACT | preference | 0.9 | private | medium | 2026-07-30 |  | meeting |  |
+<!--- gbrain:facts:end -->
+`, { noEmbed: true, sourceId: 'default' });
+
+    const trusted = await engine.getPage(slug, { sourceId: 'default' });
+    expect(trusted).not.toBeNull();
+    if (!trusted) return;
+
+    const remoteBody = stripFactsFence(trusted.compiled_truth ?? '', { keepVisibility: ['world'] });
+    expect(remoteBody).toContain('gbrain:facts:begin');
+    expect(remoteBody).not.toContain('PRIVATE_ONLY_FACT');
+
+    await importFromContent(engine, slug, `---
+type: person
+title: Private Only Facts
+slug: ${slug}
+---
+
+${remoteBody}`, { noEmbed: true, sourceId: 'default', remote: true });
+
+    const after = await engine.getPage(slug, { sourceId: 'default' });
+    expect(after?.compiled_truth).toContain('PRIVATE_ONLY_FACT');
+    expect(parseFactsFence(after?.compiled_truth ?? '').facts).toHaveLength(1);
   });
 });
 

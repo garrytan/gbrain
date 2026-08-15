@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-wb-016",
+  "suites": [
+    "write-back"
+  ],
+  "category": "write-back",
+  "seed_pages": [
+    {
+      "slug": "people/marisol-novalis",
+      "content": "---\ntitle: Marisol Novalis\ntype: person\naliases: [marisol]\nsummary: Founder of Windrose.\n---\n\nMarisol Novalis is the founder of Windrose. Marisol pushed back on the proposed valuation during diligence.\n"
+    },
+    {
+      "slug": "companies/windrose",
+      "content": "---\ntitle: Windrose\ntype: company\nsummary: Seed-stage company. Founded by Marisol Novalis.\n---\n\nWindrose is a seed-stage company. Founded by Marisol Novalis. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Just wrapped the Windrose call with Marisol Novalis.",
+      "ts": "2026-06-25T12:47:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "How did it go?",
+      "ts": "2026-06-25T12:48:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Marisol said Windrose hit their growth target a month early. Ahead of plan.",
+      "ts": "2026-06-25T13:34:00Z"
+    },
+    {
+      "turn_id": 4,
+      "role": "user",
+      "text": "I committed to sending Marisol the diligence checklist by Friday.",
+      "ts": "2026-06-25T13:35:00Z"
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Marisol prefers async updates over standing calls. Noted for next time.",
+      "ts": "2026-06-25T13:36:00Z"
+    }
+  ]
+}

@@ -2,7 +2,7 @@
   "name": "gbrain",
   "version": "0.32.3.0",
   "conformance_version": "1.0.0",
-  "description": "Personal knowledge brain with hybrid RAG search \u2014 GStack mod for agent platforms",
+  "description": "Personal knowledge brain with hybrid RAG search — GStack mod for agent platforms",
   "skills": [
     {
       "name": "ingest",
@@ -58,6 +58,11 @@
       "name": "brain-ops",
       "path": "brain-ops/SKILL.md",
       "description": "Brain-first lookup, read-enrich-write loop, source attribution, ambient enrichment. The core read/write cycle."
+    },
+    {
+      "name": "capture",
+      "path": "capture/SKILL.md",
+      "description": "Single human-facing entrypoint for ingestion. Routes through put_page (local) or MCP (thin-client); replaces put-page-vs-commit-vs-autopilot confusion with one verb."
     },
     {
       "name": "idea-ingest",
@@ -122,7 +127,7 @@
     {
       "name": "soul-audit",
       "path": "soul-audit/SKILL.md",
-      "description": "6-phase interactive interview generating SOUL.md, USER.md, ACCESS_POLICY.md, HEARTBEAT.md."
+      "description": "Re-run/deepen the identity interview via the shared bootstrap answer bank (interview --set/--show/--confirm), then re-render SOUL.md/USER.md/ACCESS_POLICY.md/HEARTBEAT.md with render --only."
     },
     {
       "name": "webhook-transforms",
@@ -140,6 +145,11 @@
       "description": "Unified Minions skill for deterministic shell jobs and LLM subagent orchestration. Submit, monitor, steer, pause/resume, replay. Replaces the older gbrain-jobs routing intent and sessions_spawn for durable observable background work."
     },
     {
+      "name": "schema-author",
+      "path": "schema-author/SKILL.md",
+      "description": "Evolve the active schema pack. Add page types, propose new types from a corpus scan, backfill page.type via sync. Wraps the 14 gbrain schema CLI verbs + 9 MCP ops shipped in v0.40.7.0."
+    },
+    {
       "name": "skillify",
       "path": "skillify/SKILL.md",
       "description": "Meta skill. Turn any raw feature into a properly-skilled, tested, resolvable, evaled unit. Paired with gbrain check-resolvable gives user-controllable auto-skill-creation."
@@ -150,9 +160,19 @@
       "description": "Agent-readable gbrain health report. Wraps doctor + apply-migrations --list into one JSON blob with exit codes. Cron-friendly for morning-briefing pipelines."
     },
     {
+      "name": "skillpack-harvest",
+      "path": "skillpack-harvest/SKILL.md",
+      "description": "Editorial workflow for lifting a proven skill from a host repo back into gbrain. Pairs with `gbrain skillpack harvest` CLI. Drives the genericization checklist that scrubs fork-specific names + real entities before files land in gbrain core."
+    },
+    {
       "name": "smoke-test",
       "path": "smoke-test/SKILL.md",
       "description": "Post-restart smoke tests + auto-fix for gbrain and OpenClaw environments"
+    },
+    {
+      "name": "gbrain-upgrade",
+      "path": "gbrain-upgrade/SKILL.md",
+      "description": "Keep gbrain current: act on the UPGRADE_AVAILABLE marker per self_upgrade.mode (notify prompt or silent auto)"
     },
     {
       "name": "book-mirror",
@@ -173,6 +193,11 @@
       "name": "concept-synthesis",
       "path": "concept-synthesis/SKILL.md",
       "description": "Deduplicate and synthesize raw concept stubs into a tiered intellectual map (T1 Canon to T4 Riff), tracing idea evolution across sources over time."
+    },
+    {
+      "name": "idea-lineage",
+      "path": "idea-lineage/SKILL.md",
+      "description": "Trace one idea's evolution through the brain: first mention, best articulation, reversals, contradictions, abandoned branches, related concepts, and current live version."
     },
     {
       "name": "perplexity-research",
@@ -213,6 +238,116 @@
       "name": "functional-area-resolver",
       "path": "functional-area-resolver/SKILL.md",
       "description": "Compress an agent's routing file (RESOLVER.md or AGENTS.md) by replacing skill-per-row tables with functional-area dispatcher entries. Two-layer dispatch keeps every sub-skill reachable at ~50% of the file size."
+    },
+    {
+      "name": "gbrain-advisor",
+      "path": "gbrain-advisor/SKILL.md",
+      "description": "Proactive 'make the most of gbrain' coaching. Runs gbrain advisor on a cadence and pings the user with the top high-leverage actions for their brain. Read-only; always asks before fixing."
+    },
+    {
+      "name": "brain-taxonomist",
+      "path": "brain-taxonomist/SKILL.md",
+      "description": "Filing gate consulted before every brain page write. Reads the active schema pack via `gbrain schema show --json`; emits a recommended filing path with reasoning."
+    },
+    {
+      "name": "eiirp",
+      "path": "eiirp/SKILL.md",
+      "description": "Everything In Its Right Place — post-work organizer. 7-phase audit: inventory, taxonomy, schema check (via cathedral CLI), file, skill graph audit, verify, report."
+    },
+    {
+      "name": "schema-unify",
+      "path": "schema-unify/SKILL.md",
+      "description": "Migrate a brain off a noisy 24+-type pack onto gbrain-base-v2 (15 canonical types). 7-phase workflow: brain → assess → propose → apply → sync → verify → commit. Wraps the v0.41.22 unify-types PROTECTED Minion handler."
+    },
+    {
+      "name": "skill-optimizer",
+      "path": "skill-optimizer/SKILL.md",
+      "description": "Self-evolving skill optimization via gbrain skillopt — SkillOpt-paper-grounded text-space optimizer with validation gating (median-of-3 + epsilon=0.05), bundled-skill safety, bootstrap review sentinel, per-skill DB lock, and atomic versioned writes."
+    },
+    {
+      "name": "measure-before-you-fix",
+      "path": "measure-before-you-fix/SKILL.md",
+      "description": "Before fixing a slow/stale/timeout alert, measure the step yourself. Kill the theory with a stopwatch, not a code change. Measure-first ops triage for temporal alerts (stale, timeout, freshness, wedged, N hours behind)…"
+    },
+    {
+      "name": "data-loss-gate",
+      "path": "data-loss-gate/SKILL.md",
+      "description": "Confirmation gate before any bulk delete, cleanup, or destructive operation that could result in data loss — shell-level (rm -rf, git rm, bulk sed) or brain-level (bulk forget, delete sweeps, purge-deleted, source…"
+    },
+    {
+      "name": "fact-check",
+      "path": "fact-check/SKILL.md",
+      "description": "Systematic claim-by-claim verification for any content before it ships. Modeled on professional fact-checking desks (The New Yorker, ProPublica, IFCN standards): extract every verifiable claim, check each against live…"
+    },
+    {
+      "name": "resolve-before-asking",
+      "path": "resolve-before-asking/SKILL.md",
+      "description": "Gate on identity questions to the user. Before any \"who is X?\" (or role / relationship question) reaches the user, exhaust the brain's lookup chain: think → search + page read → mounted sources → timeline/graph → web."
+    },
+    {
+      "name": "brain-ingest-gate",
+      "path": "brain-ingest-gate/SKILL.md",
+      "description": "Pre-write quality gate for content entering the brain. No raw copies: a bare cp/mv into the brain repo is a bug. Before any new page lands, resolve named entities registry-first (a vector score is a floor for prose…"
+    },
+    {
+      "name": "correction-pipeline",
+      "path": "correction-pipeline/SKILL.md",
+      "description": "When the user corrects a factual error, root-cause it immediately. Don't just note the correction — trace the error to its source, fix the source, and prevent recurrence."
+    },
+    {
+      "name": "company-brainify",
+      "path": "company-brainify/SKILL.md",
+      "description": "Extract a sanitized shared team/company brain from a personal brain. Strips internal ratings, compensation, performance assessments, retention and political dynamics from pages, takes, and facts across the full scan…"
+    },
+    {
+      "name": "citation-graph-ingest",
+      "path": "citation-graph-ingest/SKILL.md",
+      "description": "Build a TYPED citation/reference graph over an ingested corpus — not just embeddings. Flat similarity retrieval cannot tell you that document A *overrules* B, *distinguishes* C, or *relies_on* D."
+    },
+    {
+      "name": "two-tier-extraction",
+      "path": "two-tier-extraction/SKILL.md",
+      "description": "Tiered LLM extraction pattern for large corpus processing (email archives, document dumps, transcript libraries). A utility-tier model triages and classifies at speed; the reasoning tier does the default deep read; the…"
+    },
+    {
+      "name": "brain-link-discipline",
+      "path": "brain-link-discipline/SKILL.md",
+      "description": "When you report a brain page to the user — created, edited, committed, or relayed from a subagent — a working link is part of the deliverable, in the SAME message."
+    },
+    {
+      "name": "draft-in-voice",
+      "path": "draft-in-voice/SKILL.md",
+      "description": "Ghostwrite content in a specific person's voice from a VALIDATED voice profile — tweets, replies, short posts, launch copy, recruiting blurbs, emails."
+    },
+    {
+      "name": "bulk-ingestion",
+      "path": "bulk-ingestion/SKILL.md",
+      "description": "End-to-end discipline for turning any large data source (audio libraries, email takeouts, document corpora, chat exports, API dumps) into brain pages at scale."
+    },
+    {
+      "name": "research-compendium",
+      "path": "research-compendium/SKILL.md",
+      "description": "Deep-research a topic end to end and produce a permanent, reusable knowledge asset: archive every primary source verbatim (gated by the user's privacy/retention posture), write one 1:1 summary per source, then…"
+    },
+    {
+      "name": "context-audit",
+      "path": "context-audit/SKILL.md",
+      "description": "Token-hygiene audit of the always-loaded context stack — CLAUDE.md, AGENTS.md, auto-memory MEMORY.md, and the bootstrap-rendered identity files (SOUL.md, USER.md, ACCESS_POLICY.md, HEARTBEAT.md) or their harness…"
+    },
+    {
+      "name": "blog-ingest",
+      "path": "blog-ingest/SKILL.md",
+      "description": "Feed and whole-publication ingestion: turn an entire blog, newsletter, or RSS/Atom archive into brain source pages. Covers feed discovery, pagination walking, normalization to a common article shape, canonical-URL…"
+    },
+    {
+      "name": "conversation-archive",
+      "path": "conversation-archive/SKILL.md",
+      "description": "Import AI-assistant chat exports (ChatGPT, Claude, Perplexity) and agent session transcripts into the brain as one dated page per conversation under conversations/, validate each page against the native conversation…"
+    },
+    {
+      "name": "skill-autobench",
+      "path": "skill-autobench/SKILL.md",
+      "description": "Author an eval for an existing skill from its REAL usage history, not its spec. Mine invocations from the brain's conversation archive (conversations/) and per-harness session transcripts — a user correction after an…"
     }
   ],
   "dependencies": {

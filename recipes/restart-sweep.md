@@ -569,8 +569,9 @@ tail -20 ~/.gbrain/integrations/restart-sweep/cron.log
 
 ## Step 6: Verification
 
-1. `gbrain integrations doctor restart-sweep` — should pass all three
-   health checks
+1. `gbrain integrations doctor` — restart-sweep's three health checks
+   should pass (the command runs checks for ALL configured integrations;
+   it takes no per-recipe filter, so look for the restart-sweep rows)
 2. `~/.gbrain/integrations/restart-sweep/sweep.log.jsonl` exists and
    gets a new entry every 5 minutes
 3. `~/.gbrain/integrations/restart-sweep/cron.log` shows successful

@@ -50,6 +50,12 @@ export interface WhoknowsOpts {
    * this undefined and accept the default; surface is here so future ops
    * (find_experts_in_companies, find_advisors, etc.) can reuse the
    * ranking function without redefining the type filter.
+   *
+   * v0.39 T1.5: callers with an `activePack` should derive `types` via
+   * `expertTypesFromPack(pack)` from `src/core/schema-pack/expert-types.ts`
+   * and pass the result here. This honors user-defined `expert_routing:`
+   * declarations in the active pack. Backward compatible: undefined types
+   * falls back to DEFAULT_TYPES (person/company).
    */
   types?: PageType[];
   /**
@@ -86,6 +92,8 @@ export interface WhoknowsResult {
   };
 }
 
+// v0.39 T1.5 — DEFAULT_TYPES preserved for parity when no activePack is
+// threaded. Pack-aware callers go through expertTypesFromPack().
 const DEFAULT_TYPES: PageType[] = ['person', 'company'];
 const DEFAULT_LIMIT = 5;
 const RECENCY_HALF_LIFE_DAYS = 180; // 6 months
@@ -323,10 +331,19 @@ export async function runWhoknows(
     }, { timeoutMs: 30_000 });
     results = unpackToolResult<WhoknowsResult[]>(raw);
   } else {
+    // v0.40.6.0 T1.5 wiring (D4): consult the active pack for expert
+    // types. Pack-load failure → empty filter (NOT hardcoded defaults
+    // per the silent-violation bug class Finding 1.3 closed). Local
+    // CLI: ctx.remote=false so the trust gate accepts the resolution.
+    const { loadActivePackBestEffort, expertTypesFromPack } = await import('../core/schema-pack/index.ts');
+    const fakeCtx = { engine, config: {}, logger: console, dryRun: false, remote: false, sourceId: undefined } as unknown as import('../core/operations.ts').OperationContext;
+    const pack = await loadActivePackBestEffort(fakeCtx);
+    const types = pack ? (expertTypesFromPack(pack.manifest) as PageType[]) : [];
     results = await findExperts(engine, {
       topic: parsed.topic,
       limit: parsed.limit,
       explain: parsed.explain,
+      types,
     });
   }
 

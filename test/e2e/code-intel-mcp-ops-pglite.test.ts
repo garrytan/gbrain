@@ -169,6 +169,61 @@ describe('v0.34 W3 — code_def finds definition sites', () => {
   });
 });
 
+describe('#1780 Gap 1 — readiness envelope on code_* ops', () => {
+  test('code_callers carries status:ready when callers are found', async () => {
+    await seedTwoFileGraph(engine);
+    const ctx = makeCtx(engine, 'source-a');
+    const result = (await operationsByName.code_callers!.handler(ctx, { symbol: 'parseMarkdown' })) as {
+      count: number; status: string; ready: boolean;
+    };
+    expect(result.count).toBeGreaterThanOrEqual(1);
+    expect(result.status).toBe('ready');
+    expect(result.ready).toBe(true);
+  });
+
+  test('code_callers → indexing when code exists but edges unresolved + no callers', async () => {
+    // callerInA has no callers; seeded chunks have edges_backfilled_at = NULL.
+    await seedTwoFileGraph(engine);
+    const ctx = makeCtx(engine, 'source-a');
+    const result = (await operationsByName.code_callers!.handler(ctx, { symbol: 'callerInA' })) as {
+      count: number; status: string; ready: boolean;
+    };
+    expect(result.count).toBe(0);
+    expect(result.status).toBe('indexing');
+    expect(result.ready).toBe(false);
+  });
+
+  test('code_def → not_built on an empty brain', async () => {
+    const ctx = makeCtx(engine, 'source-a');
+    const result = (await operationsByName.code_def!.handler(ctx, { symbol: 'anything' })) as {
+      count: number; status: string; ready: boolean;
+    };
+    expect(result.count).toBe(0);
+    expect(result.status).toBe('not_built');
+    expect(result.ready).toBe(false);
+  });
+
+  test('code_def → ready when a definition exists (brain-wide)', async () => {
+    await seedDefSite(engine);
+    const ctx = makeCtx(engine, 'source-a');
+    const result = (await operationsByName.code_def!.handler(ctx, { symbol: 'parseMarkdown' })) as {
+      count: number; status: string; ready: boolean;
+    };
+    expect(result.count).toBe(1);
+    expect(result.status).toBe('ready');
+    expect(result.ready).toBe(true);
+  });
+
+  test('code_refs → not_built on an empty brain', async () => {
+    const ctx = makeCtx(engine, 'source-a');
+    const result = (await operationsByName.code_refs!.handler(ctx, { symbol: 'anything' })) as {
+      count: number; status: string; ready: boolean;
+    };
+    expect(result.status).toBe('not_built');
+    expect(result.ready).toBe(false);
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────
 // Fixtures
 // ─────────────────────────────────────────────────────────────────

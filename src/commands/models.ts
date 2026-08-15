@@ -34,10 +34,20 @@ import {
   resolveModel,
   type ModelTier,
 } from '../core/model-config.ts';
+import { maybeAttachVersionSuffixHint } from '../core/ai/base-url-probe.ts';
+import type { AIGatewayConfig } from '../core/ai/types.ts';
 
 const TIERS: ModelTier[] = ['utility', 'reasoning', 'deep', 'subagent'];
 
-const PER_TASK_KEYS: Array<{ key: string; tier: ModelTier; description: string }> = [
+interface PerTaskModelRoute {
+  key: string;
+  tier: ModelTier;
+  description: string;
+  deprecatedConfigKey?: string;
+  envVar?: string;
+}
+
+const PER_TASK_KEYS: PerTaskModelRoute[] = [
   { key: 'models.dream.synthesize',         tier: 'reasoning', description: 'Dream synthesis (conversation → brain pages)' },
   { key: 'models.dream.synthesize_verdict', tier: 'utility',   description: 'Dream synthesis verdict (Haiku judge)' },
   { key: 'models.dream.patterns',           tier: 'reasoning', description: 'Pattern discovery (cross-take themes)' },
@@ -47,7 +57,15 @@ const PER_TASK_KEYS: Array<{ key: string; tier: ModelTier; description: string }
   { key: 'models.subagent',                 tier: 'subagent',  description: '`gbrain agent run` subagent loop' },
   { key: 'facts.extraction_model',          tier: 'reasoning', description: 'Real-time facts extraction during sync' },
   { key: 'models.eval.longmemeval',         tier: 'reasoning', description: 'LongMemEval benchmark answer-gen' },
+  { key: 'models.eval.contradictions_judge', tier: 'utility',  description: 'Contradiction probe judge (v0.34 temporal-aware)' },
   { key: 'models.expansion',                tier: 'utility',   description: 'Query expansion for hybrid search' },
+  {
+    key: 'models.contextual_synopsis',
+    tier: 'utility',
+    description: 'Per-chunk contextual synopsis generation',
+    deprecatedConfigKey: 'contextual_retrieval.haiku_model',
+    envVar: 'GBRAIN_CONTEXTUAL_SYNOPSIS_MODEL',
+  },
   { key: 'models.chat',                     tier: 'reasoning', description: 'Default `gateway.chat()` model' },
 ];
 
@@ -65,12 +83,26 @@ interface ModelsReport {
   aliases: { defaults: Record<string, string>; user: Record<string, string> };
 }
 
-async function probeSource(engine: BrainEngine, configKey: string, envVar: string): Promise<string | null> {
+async function probeSource(
+  engine: BrainEngine,
+  route: Pick<PerTaskModelRoute, 'key' | 'tier' | 'deprecatedConfigKey' | 'envVar'>,
+): Promise<string | null> {
   // For per-task probes, return the source the resolver USED (config / env /
-  // tier default / hardcoded). The resolver itself is the source of truth;
-  // we re-walk a subset of its precedence here to attribute the value.
-  const configVal = await engine.getConfig(configKey);
-  if (configVal && configVal.trim()) return `config: ${configKey}`;
+  // tier default / hardcoded). Keep this walk in the same order as
+  // resolveModel so dedicated task env vars and compatibility keys are
+  // attributed truthfully in `gbrain models` output.
+  const configVal = await engine.getConfig(route.key);
+  if (configVal && configVal.trim()) return `config: ${route.key}`;
+  if (route.deprecatedConfigKey) {
+    const deprecated = await engine.getConfig(route.deprecatedConfigKey);
+    if (deprecated && deprecated.trim()) return `config: ${route.deprecatedConfigKey}`;
+  }
+  const globalDefault = await engine.getConfig('models.default');
+  if (globalDefault && globalDefault.trim()) return 'config: models.default';
+  const tierKey = `models.tier.${route.tier}`;
+  const tierValue = await engine.getConfig(tierKey);
+  if (tierValue && tierValue.trim()) return `config: ${tierKey}`;
+  const envVar = route.envVar ?? 'GBRAIN_MODEL';
   if (process.env[envVar] && process.env[envVar]!.trim()) return `env: ${envVar}`;
   return null;
 }
@@ -95,9 +127,16 @@ async function buildReport(engine: BrainEngine): Promise<ModelsReport> {
   }
 
   const per_task: ModelsReport['per_task'] = [];
-  for (const { key, tier, description } of PER_TASK_KEYS) {
-    const resolved = await resolveModel(engine, { configKey: key, tier, fallback: TIER_DEFAULTS[tier] });
-    const explicit = await probeSource(engine, key, 'GBRAIN_MODEL');
+  for (const route of PER_TASK_KEYS) {
+    const { key, tier, description, deprecatedConfigKey, envVar } = route;
+    const resolved = await resolveModel(engine, {
+      configKey: key,
+      deprecatedConfigKey,
+      envVar,
+      tier,
+      fallback: TIER_DEFAULTS[tier],
+    });
+    const explicit = await probeSource(engine, route);
     const source = explicit ?? `tier.${tier}`;
     per_task.push({ key, tier, resolved, source, description });
   }
@@ -150,7 +189,7 @@ function formatText(report: ModelsReport): string {
     }
   }
   lines.push('');
-  lines.push('Tip: probe reachability with `gbrain models doctor` (opt-in; spends ~1 token per model).');
+  lines.push('Tip: probe reachability with `gbrain models doctor` (opt-in; spends a minimal request per configured chat/embed/rerank surface).');
   return lines.join('\n');
 }
 
@@ -160,7 +199,7 @@ type ProbeStatus = 'ok' | 'model_not_found' | 'auth' | 'rate_limit' | 'network' 
 
 interface ProbeResult {
   model: string;
-  touchpoint: 'chat' | 'expansion' | 'embedding_config' | 'reranker_config';
+  touchpoint: 'chat' | 'expansion' | 'embedding_config' | 'embedding_reachability' | 'reranker_config';
   status: ProbeStatus;
   message: string;
   elapsed_ms: number;
@@ -183,6 +222,35 @@ function classifyError(err: unknown): { status: ProbeStatus; message: string } {
     return { status: 'network', message: msg };
   }
   return { status: 'unknown', message: msg };
+}
+
+/** Injectable transport + per-run hint cache for the doctor probes. */
+interface ProbeDeps {
+  chat?: typeof import('../core/ai/gateway.ts').chat;
+  embed?: typeof import('../core/ai/gateway.ts').embed;
+  rerank?: typeof import('../core/ai/gateway.ts').rerank;
+  cfg?: AIGatewayConfig;
+  fetchImpl?: typeof fetch;
+  cache?: Map<string, string | undefined>;
+}
+
+/**
+ * Build a failed-probe ProbeResult and attach the base-URL version hint. Shared
+ * by the three reachability-probe catch blocks. `resultTouchpoint` names the
+ * result row; `hintTouchpoint` is the auth-resolution touchpoint the hint uses.
+ */
+async function failedProbe(
+  err: unknown,
+  modelStr: string,
+  resultTouchpoint: ProbeResult['touchpoint'],
+  hintTouchpoint: 'embedding' | 'expansion' | 'chat' | 'reranker',
+  start: number,
+  deps: ProbeDeps,
+): Promise<ProbeResult> {
+  const { status, message } = classifyError(err);
+  const result: ProbeResult = { model: modelStr, touchpoint: resultTouchpoint, status, message, elapsed_ms: Date.now() - start };
+  await maybeAttachVersionSuffixHint(result, modelStr, hintTouchpoint, deps);
+  return result;
 }
 
 /**
@@ -269,6 +337,54 @@ async function probeEmbeddingConfig(): Promise<ProbeResult> {
 }
 
 /**
+ * v0.40.6.1: resolve the reranker model the same way live search does, so
+ * doctor doesn't drift from the live path. Pre-v0.40.6.1 the probe read
+ * `getRerankerModel()` from the gateway, which is fed from
+ * `GBrainConfig.reranker_model` — a file-plane field nothing currently
+ * writes. Meanwhile live search resolves `search.reranker.model` via
+ * `resolveSearchMode()` (per-call > config-key > recipe > bundle default).
+ * The two paths could disagree silently: doctor says "not configured"
+ * while every `gbrain search` call is using a mode default. This helper
+ * walks the same chain live search does so doctor's verdict matches.
+ *
+ * Falls back to `getRerankerModel()` (gateway value) when the engine path
+ * fails, so doctor stays useful in degraded states.
+ */
+export async function resolveLiveRerankerModel(engine: BrainEngine): Promise<string | undefined> {
+  try {
+    const { loadSearchModeConfig, resolveSearchMode } = await import('../core/search/mode.ts');
+    const input = await loadSearchModeConfig(engine);
+    const resolved = resolveSearchMode(input);
+    return resolved.reranker_enabled ? resolved.reranker_model : undefined;
+  } catch {
+    const { getRerankerModel } = await import('../core/ai/gateway.ts');
+    return getRerankerModel();
+  }
+}
+
+/**
+ * Resolve the reranker timeout the same way live search does, via
+ * `loadSearchModeConfig` + `resolveSearchMode`. Precedence chain:
+ *   per-call > `search.reranker.timeout_ms` config > recipe `default_timeout_ms` > mode bundle.
+ *
+ * Codex outside-voice (Pass 9 of the wave) caught the probe lying either way
+ * when the operator sets `search.reranker.timeout_ms`: the probe used the
+ * recipe default (30s for llama) while production search used the (lower)
+ * config value, so doctor reported reachable while production always
+ * timed out. Same fix shape as `resolveLiveRerankerModel`.
+ */
+export async function resolveLiveRerankerTimeoutMs(engine: BrainEngine): Promise<number> {
+  try {
+    const { loadSearchModeConfig, resolveSearchMode } = await import('../core/search/mode.ts');
+    const input = await loadSearchModeConfig(engine);
+    const resolved = resolveSearchMode(input);
+    return resolved.reranker_timeout_ms ?? 5000;
+  } catch {
+    return 5000;
+  }
+}
+
+/**
  * v0.35.0.0+: zero-network reranker config probe. Validates that the
  * configured reranker model resolves through the recipe registry, that the
  * recipe declares a `reranker` touchpoint, and that the model is in the
@@ -279,16 +395,19 @@ async function probeEmbeddingConfig(): Promise<ProbeResult> {
  * this, `search.reranker.model=zeroentropyai:made-up-name` would silently
  * pass config probes and fail at first rerank call.
  *
+ * v0.40.6.1: resolves via `resolveLiveRerankerModel(engine)` so probe and
+ * live search read the same value (closes the file-plane / DB-plane
+ * divergence flagged in plan review).
+ *
  * Returns 'ok' when reranker is unconfigured (default state — opt-in
  * feature). Surfaces `status: 'config'` with paste-ready fix hint when
  * model is invalid.
  */
-async function probeRerankerConfig(): Promise<ProbeResult> {
+async function probeRerankerConfig(engine: BrainEngine): Promise<ProbeResult> {
   const start = Date.now();
-  const { getRerankerModel } = await import('../core/ai/gateway.ts');
   const { resolveRecipe } = await import('../core/ai/model-resolver.ts');
 
-  const modelStr = getRerankerModel();
+  const modelStr = await resolveLiveRerankerModel(engine);
   if (!modelStr) {
     // Reranker not configured. Default state for fresh installs and any
     // brain that hasn't opted in. Not an error; doctor reports 'ok' so the
@@ -297,7 +416,7 @@ async function probeRerankerConfig(): Promise<ProbeResult> {
       model: '(none)',
       touchpoint: 'reranker_config',
       status: 'ok',
-      message: 'reranker not configured (set GBRAIN_RERANKER_MODEL or `gbrain config set search.reranker.enabled true`)',
+      message: 'reranker not configured (set `gbrain config set search.reranker.model <provider:model>` and `search.reranker.enabled true`)',
       elapsed_ms: Date.now() - start,
     };
   }
@@ -345,29 +464,45 @@ async function probeRerankerConfig(): Promise<ProbeResult> {
 }
 
 /**
- * v0.35.0.0+: 1-token-equivalent reranker reachability probe. Sends a minimal
- * `{query, documents: [doc]}` request to verify auth + URL. Uses the same
- * AbortController + 5s timeout pattern as probeModel.
+ * v0.35.0.0+: 1-doc reachability probe. Sends a real `POST <recipe path>`
+ * with `{query, documents: [doc]}` so the probe actually verifies the
+ * server is in reranking mode (not just alive). For llama.cpp specifically,
+ * `--reranking` is mutually exclusive with `--embeddings`, and a server in
+ * embedding mode would 404/501 the rerank path — which this probe catches
+ * via classifyError().
  *
  * Returns 'ok' silently when reranker is unconfigured (no probe needed) —
  * probeRerankerConfig already surfaced the missing-config state.
+ *
+ * v0.40.6.1: uses the resolved live model (same path live search uses),
+ * and reads the per-call timeout from the recipe's `default_timeout_ms`
+ * when set — so a CPU-only local reranker's cold-start warmup doesn't
+ * cause the probe to false-fail with `network`/timeout.
  */
-async function probeRerankerReachability(): Promise<ProbeResult | null> {
-  const { getRerankerModel } = await import('../core/ai/gateway.ts');
-  const modelStr = getRerankerModel();
+export async function probeRerankerReachability(engine: BrainEngine, deps: ProbeDeps = {}): Promise<ProbeResult | null> {
+  const modelStr = await resolveLiveRerankerModel(engine);
   if (!modelStr) return null;
+
+  // Use the same timeout resolution live search uses: per-call > config >
+  // recipe > bundle. Pre-fix the probe read only the recipe default, so an
+  // operator who set `search.reranker.timeout_ms=1000` would see doctor wait
+  // 30s and report reachable while production search timed out at 1s
+  // (codex Pass-9 finding). resolveLiveRerankerTimeoutMs reuses the full
+  // precedence chain via mode.ts.
+  const probeTimeoutMs = await resolveLiveRerankerTimeoutMs(engine);
 
   const start = Date.now();
   try {
-    const { rerank } = await import('../core/ai/gateway.ts');
+    const rerank = deps.rerank ?? (await import('../core/ai/gateway.ts')).rerank;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(new Error('probe timed out after 5s')), 5000);
+    const timeoutId = setTimeout(() => controller.abort(new Error(`probe timed out after ${probeTimeoutMs}ms`)), probeTimeoutMs);
     try {
       await rerank({
+        model: modelStr,
         query: 'probe',
         documents: ['probe document'],
         signal: controller.signal,
-        timeoutMs: 5000,
+        timeoutMs: probeTimeoutMs,
       });
       return {
         model: modelStr,
@@ -380,21 +515,52 @@ async function probeRerankerReachability(): Promise<ProbeResult | null> {
       clearTimeout(timeoutId);
     }
   } catch (err) {
-    const { status, message } = classifyError(err);
-    return {
-      model: modelStr,
-      touchpoint: 'reranker_config',
-      status,
-      message,
-      elapsed_ms: Date.now() - start,
-    };
+    return failedProbe(err, modelStr, 'reranker_config', 'reranker', start, deps);
   }
 }
 
-async function probeModel(modelStr: string, touchpoint: 'chat' | 'expansion'): Promise<ProbeResult> {
+/**
+ * v0.40.x: embedding reachability probe. Mirrors probeRerankerReachability —
+ * sends a real 1-input `embed(['probe'])` to verify the configured embedding
+ * provider actually answers (auth + URL + model loaded). probeEmbeddingConfig
+ * is zero-network and only validates dims/recipe shape; for LOCAL providers
+ * (ollama, llama-server) it can't tell whether the server is up, so a dead or
+ * embedding-mode-off endpoint was previously only discovered at first real
+ * embed. Caller gates this on probeEmbeddingConfig returning 'ok' so a config
+ * failure isn't reported twice.
+ *
+ * Cold-start note: a local CPU embedder loading a model on first call can take
+ * several seconds; the 5s timeout may trip on the very first probe. Re-run if so.
+ */
+export async function probeEmbeddingReachability(deps: ProbeDeps = {}): Promise<ProbeResult | null> {
+  const gw = await import('../core/ai/gateway.ts');
+  const modelStr = gw.getEmbeddingModel();
+  if (!modelStr) return null;
+  const embed = deps.embed ?? gw.embed;
+
+  const start = Date.now();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(new Error('probe timed out after 5s')), 5000);
+  try {
+    await embed(['probe'], { inputType: 'query', abortSignal: controller.signal });
+    return {
+      model: modelStr,
+      touchpoint: 'embedding_reachability',
+      status: 'ok',
+      message: 'reachable',
+      elapsed_ms: Date.now() - start,
+    };
+  } catch (err) {
+    return failedProbe(err, modelStr, 'embedding_reachability', 'embedding', start, deps);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+export async function probeModel(modelStr: string, touchpoint: 'chat' | 'expansion', deps: ProbeDeps = {}): Promise<ProbeResult> {
   const start = Date.now();
   try {
-    const { chat } = await import('../core/ai/gateway.ts');
+    const chat = deps.chat ?? (await import('../core/ai/gateway.ts')).chat;
     // Use AbortController so the 5s timeout doesn't hang on a stuck network.
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(new Error('probe timed out after 5s')), 5000);
@@ -410,8 +576,7 @@ async function probeModel(modelStr: string, touchpoint: 'chat' | 'expansion'): P
       clearTimeout(timeoutId);
     }
   } catch (err) {
-    const { status, message } = classifyError(err);
-    return { model: modelStr, touchpoint, status, message, elapsed_ms: Date.now() - start };
+    return failedProbe(err, modelStr, touchpoint, touchpoint, start, deps);
   }
 }
 
@@ -424,7 +589,20 @@ function shouldSkipProvider(modelStr: string, skip: string[]): boolean {
 
 export async function runModels(engine: BrainEngine, args: string[]): Promise<void> {
   const json = args.includes('--json');
-  const sub = args[1] === 'doctor' ? 'doctor' : args[1] === 'help' || args.includes('--help') || args.includes('-h') ? 'help' : 'read';
+  // args is `subArgs` from cli.ts `handleCliOnly` — the leading 'models'
+  // token has already been stripped. The subcommand is at args[0], NOT
+  // args[1]. Pre-fix this check was `args[1]`, so `gbrain models doctor`
+  // silently fell through to the read view. The doctor probe path was
+  // unreachable from the CLI.
+  //
+  // --help honored FIRST so `gbrain models doctor --help` shows usage
+  // instead of running network probes (which would spend tokens or
+  // exit nonzero when the user only asked for help). Pre-fix the
+  // args[1] ternary happened to dodge this by always falling through
+  // to the args.includes('--help') branch; the args[0] rewrite needs
+  // explicit ordering to preserve that behavior.
+  const hasHelp = args.includes('--help') || args.includes('-h') || args[0] === 'help';
+  const sub = hasHelp ? 'help' : args[0] === 'doctor' ? 'doctor' : 'read';
 
   if (sub === 'help') {
     process.stdout.write(
@@ -471,23 +649,39 @@ Tiers: utility (haiku-class) | reasoning (sonnet) | deep (opus) | subagent (Anth
   // Config-only probe runs first: zero tokens, catches the bug class where a
   // brain misconfigured for Voyage with the wrong embedding_dimensions would
   // 400 on first embed. Fast feedback before we spend a single token.
-  results.push(await probeEmbeddingConfig());
+  const embeddingConfig = await probeEmbeddingConfig();
+  results.push(embeddingConfig);
   // v0.35.0.0+ reranker config probe — same zero-network model as embedding.
-  results.push(await probeRerankerConfig());
+  // v0.40.6.1: takes the engine so it can read the same `search.reranker.*`
+  // config keys live search reads (closes file-plane / DB-plane divergence).
+  results.push(await probeRerankerConfig(engine));
+
+  // Per-run cache so several probe sites sharing a base URL run the base-URL
+  // /models sweep once, not once per site.
+  const hintCache = new Map<string, string | undefined>();
 
   for (const [modelStr, touchpoint] of [[chatModel, 'chat'], [expansionModel, 'expansion']] as const) {
     if (shouldSkipProvider(modelStr, skip)) {
       if (!json) process.stderr.write(`[skip] ${touchpoint}: ${modelStr} (provider in --skip)\n`);
       continue;
     }
-    results.push(await probeModel(modelStr, touchpoint));
+    results.push(await probeModel(modelStr, touchpoint, { cache: hintCache }));
   }
 
-  // v0.35.0.0+: reranker reachability (only when configured + provider not in --skip).
-  const { getRerankerModel } = await import('../core/ai/gateway.ts');
-  const rerankerModel = getRerankerModel();
-  if (rerankerModel && !shouldSkipProvider(rerankerModel, skip)) {
-    const r = await probeRerankerReachability();
+  // v0.40.x: embedding reachability — only when the config probe passed
+  // (codex #8: a config failure shouldn't be reported twice) AND the provider
+  // isn't in --skip. Catches a dead/misconfigured LOCAL embed server early.
+  if (embeddingConfig.status === 'ok' && !shouldSkipProvider(embeddingConfig.model, skip)) {
+    const er = await probeEmbeddingReachability({ cache: hintCache });
+    if (er) results.push(er);
+  }
+
+  // v0.40.6.1: reranker reachability uses the live-search resolution path
+  // (file-plane / DB-plane divergence fix); only fires when reranker is
+  // actually enabled per the resolved mode bundle.
+  const liveRerankerModel = await resolveLiveRerankerModel(engine);
+  if (liveRerankerModel && !shouldSkipProvider(liveRerankerModel, skip)) {
+    const r = await probeRerankerReachability(engine, { cache: hintCache });
     if (r) results.push(r);
   }
 

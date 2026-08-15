@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-ms-006",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "multi-source",
+  "sources": [
+    "teambrain"
+  ],
+  "active_source": "default",
+  "seed_pages": [
+    {
+      "slug": "people/emrys-galewright",
+      "content": "---\ntitle: Emrys Galewright\ntype: person\naliases: [emrys]\nsummary: Founder of Glintworks Co.\n---\n\nEmrys Galewright is the founder of Glintworks Co. Emrys is exploring a pivot toward the enterprise segment.\n"
+    },
+    {
+      "slug": "people/emrys-galewright",
+      "content": "---\ntitle: Emrys Galewright\ntype: person\naliases: [emrys]\nsummary: Founder of Glintworks Co.\n---\n\nEmrys Galewright is the founder of Glintworks Co. Emrys is exploring a pivot toward the enterprise segment.\n",
+      "source_id": "teambrain"
+    },
+    {
+      "slug": "companies/mosslight",
+      "content": "---\ntitle: Mosslight\ntype: company\nsummary: Seed-stage company.\n---\n\nMosslight is a seed-stage company. The seed conversation started in 2025.\n",
+      "source_id": "teambrain"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "What do I have on Emrys Galewright?"
+    },
+    {
+      "turn_id": 2,
+      "role": "user",
+      "text": "Anything on Mosslight in here?"
+    }
+  ]
+}

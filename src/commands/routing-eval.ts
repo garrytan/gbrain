@@ -14,7 +14,6 @@
  * layer only. A future release will implement the tie-break layer.
  */
 
-import { readFileSync } from 'fs';
 import { resolve as resolvePath, isAbsolute } from 'path';
 
 import {
@@ -25,9 +24,13 @@ import {
   type RoutingReport,
   type FixtureLintIssue,
 } from '../core/routing-eval.ts';
-import { findAllResolverFiles, RESOLVER_FILENAMES_LABEL } from '../core/resolver-filenames.ts';
+import { RESOLVER_FILENAMES_LABEL } from '../core/resolver-filenames.ts';
 import { autoDetectSkillsDirReadOnly } from '../core/repo-root.ts';
-import { join } from 'path';
+import {
+  entriesToResolverContent,
+  findPrimaryResolverPath,
+  loadSkillTriggerIndex,
+} from '../core/skill-trigger-index.ts';
 
 interface Flags {
   help: boolean;
@@ -140,18 +143,19 @@ export async function runRoutingEvalCli(args: string[]): Promise<void> {
   }
 
   const skillsDir = dir!;
-  // v0.31.7 D6 fix: collect entries from ALL resolver files across both the
-  // skills directory and its parent, matching the multi-file merge behavior
-  // in src/core/check-resolvable.ts. Without this, OpenClaw deployments
-  // (thin skills/RESOLVER.md + rich ../AGENTS.md) would have routing-eval
-  // see only the thin file's triggers and report false misses/ambiguity
-  // while doctor and check-resolvable see the full merged index.
-  const allResolverPaths = [
-    ...findAllResolverFiles(skillsDir),
-    ...findAllResolverFiles(join(skillsDir, '..')),
-  ];
-  const resolverFile = allResolverPaths[0] ?? null;
-  if (!resolverFile) {
+  // v0.41.11: route through the shared `loadSkillTriggerIndex` primitive
+  // so this CLI sees the same merged index that `checkResolvable` and
+  // `mounts-cache` see. The unified index folds frontmatter `triggers:`
+  // declarations into RESOLVER.md / AGENTS.md rows with UNION semantics.
+  // Before this fix, this CLI built its own resolver-content string from
+  // RESOLVER.md files only — closing the v0.41 drift bug class where
+  // doctor said "fine" but `gbrain routing-eval --strict` still failed.
+  const triggerEntries = loadSkillTriggerIndex(skillsDir);
+  const resolverFile = findPrimaryResolverPath(skillsDir);
+  // Allow operation when frontmatter triggers populate the index even
+  // if no RESOLVER.md / AGENTS.md exists. Only fail when BOTH surfaces
+  // are empty.
+  if (!resolverFile && triggerEntries.length === 0) {
     const env: RoutingEvalEnvelope = {
       ok: false,
       skillsDir,
@@ -160,18 +164,19 @@ export async function runRoutingEvalCli(args: string[]): Promise<void> {
       lintIssues: [],
       malformedFixtures: [],
       error: 'no_resolver',
-      message: `${RESOLVER_FILENAMES_LABEL} not found in ${skillsDir} or its parent.`,
+      message: `${RESOLVER_FILENAMES_LABEL} not found in ${skillsDir} or its parent (and no SKILL.md frontmatter declares triggers:).`,
     };
     if (flags.json) console.log(JSON.stringify(env, null, 2));
     else console.error(env.message);
     process.exit(2);
   }
 
-  // Build combined resolverContent across all matched files (RESOLVER.md +
-  // ../AGENTS.md, etc.), so indexResolverTriggers sees the union.
-  const resolverContent = allResolverPaths
-    .map(p => readFileSync(p, 'utf-8'))
-    .join('\n\n');
+  // Synthesize a single resolver-content string from the unified entry
+  // list. parseResolverEntries (which `indexResolverTriggers` calls
+  // internally) re-parses it cleanly; this keeps `runRoutingEval`'s
+  // public string-content API unchanged so the 9+ test files that
+  // depend on it don't need touch.
+  const resolverContent = entriesToResolverContent(triggerEntries);
   const index = indexResolverTriggers(resolverContent);
 
   const loaded = loadRoutingFixtures(skillsDir);

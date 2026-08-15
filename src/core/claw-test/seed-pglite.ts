@@ -67,6 +67,34 @@ export async function seedPgliteFromFile(opts: { dbPath: string; sqlPath: string
 }
 
 /**
+ * Non-mutating schema-version probe for the live-mode upgrade oracle.
+ *
+ * The migration runner records its position via setConfig('version', …), i.e.
+ * `config.key = 'version'`. Reading it through the normal CLI is NOT valid as
+ * an upgrade oracle: every CLI connect routes through connectEngine → initSchema,
+ * which auto-applies pending migrations — the verifier would perform the very
+ * upgrade a do-nothing agent skipped. This probe opens PGLite directly (same
+ * path as the seeder) and reads the row without touching the migration chain.
+ *
+ * Returns the recorded version, or null when the db/table/row doesn't exist.
+ */
+export async function readPgliteSchemaVersion(dbPath: string): Promise<number | null> {
+  if (!existsSync(dbPath)) return null;
+  const engine = new PGLiteEngine();
+  try {
+    await engine.connect({ engine: 'pglite', database_path: dbPath });
+    const rows = await (engine as any).db.query(`SELECT value FROM config WHERE key = 'version'`);
+    const value = rows?.rows?.[0]?.value;
+    const n = typeof value === 'string' ? Number.parseInt(value, 10) : typeof value === 'number' ? value : NaN;
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  } finally {
+    try { await engine.disconnect(); } catch { /* best effort */ }
+  }
+}
+
+/**
  * Split a SQL dump into individual statements. Naïve `;` split that respects
  * single-quoted strings and `--` line comments. Sufficient for canonical
  * pg_dump output; intentionally NOT a full SQL parser.

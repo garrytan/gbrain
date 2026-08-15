@@ -87,6 +87,11 @@ function walkMarkdownAndMdxFiles(
     for (const entry of entries) {
       if (truncated) return;
       if (entry.startsWith('.')) continue;
+      // Skip heavy non-content dirs so the walk doesn't exhaust the time
+      // budget on dependency/build trees (node_modules can be 50k+ files
+      // with zero .md). These are never gbrain page sources.
+      if (entry === 'node_modules' || entry === 'dist' || entry === 'build' ||
+          entry === '.next' || entry === 'vendor' || entry === 'target') continue;
       const full = join(d, entry);
       let isDir = false;
       try {
@@ -95,6 +100,9 @@ function walkMarkdownAndMdxFiles(
         continue;
       }
       if (isDir) {
+        // Time check on directory descent too, so a deep dependency-free
+        // tree still respects the deadline even before any .md is found.
+        if (Date.now() >= deadlineMs) { truncated = true; return; }
         walk(full);
         continue;
       }

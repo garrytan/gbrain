@@ -4,6 +4,11 @@
 # CI runs both; bun run ci:local skips slow tests via run-unit-shard.sh.
 
 set -euo pipefail
+
+# #3485: unit/slow tests need no database — strip ambient DB URLs at this
+# wrapper boundary so the bunfig preload guard passes and nothing can reach a
+# real brain. The e2e wrapper (run-e2e.sh) is the only lane that keeps them.
+unset DATABASE_URL GBRAIN_DATABASE_URL
 cd "$(dirname "$0")/.."
 
 slow_files=()
@@ -17,4 +22,9 @@ if [ "${#slow_files[@]}" -eq 0 ]; then
 fi
 
 echo "[run-slow-tests] running ${#slow_files[@]} slow files (CI runs these as part of bun run test)"
-exec bun test --timeout=60000 "${slow_files[@]}"
+# v0.40.10 flake-hardening: bump per-test timeout 60s → 120s. Slow tests
+# legitimately approach 60s in isolation (longmemeval E2E suite is ~50s);
+# when bun runs slow files in parallel, CPU contention pushes them past
+# 60s and individual tests timeout even though they'd pass solo. Slow
+# tests are explicit by-name — generous per-test budget is correct.
+exec bun test --timeout=120000 "${slow_files[@]}"

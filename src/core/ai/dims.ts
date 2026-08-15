@@ -65,6 +65,87 @@ export function isValidZeroEntropyDim(dims: number): boolean {
   return (ZEROENTROPY_VALID_DIMS as readonly number[]).includes(dims);
 }
 
+// v0.36.0.0 (D13): OpenAI text-embedding-3-* accepts arbitrary truncation via
+// Matryoshka — any positive integer up to the model's native size. When a
+// brain is configured with `embedding_dimensions` OUTSIDE that range, OpenAI
+// returns HTTP 400 at first embed. We catch it locally with a paste-ready
+// fix so users don't see opaque "vector dimension mismatch" errors after
+// `gbrain ze-switch --undo` lands them on OpenAI at the wrong dim.
+const OPENAI_TEXT3_MAX_DIMS: Record<string, number> = {
+  'text-embedding-3-small': 1536,
+  'text-embedding-3-large': 3072,
+};
+
+export function isOpenAITextEmbedding3Model(modelId: string): boolean {
+  return modelId in OPENAI_TEXT3_MAX_DIMS;
+}
+
+export function maxOpenAITextEmbedding3Dim(modelId: string): number | undefined {
+  return OPENAI_TEXT3_MAX_DIMS[modelId];
+}
+
+export function isValidOpenAITextEmbedding3Dim(modelId: string, dims: number): boolean {
+  const max = OPENAI_TEXT3_MAX_DIMS[modelId];
+  if (max === undefined) return false;
+  return Number.isInteger(dims) && dims >= 1 && dims <= max;
+}
+
+// Perplexity hosted embeddings (#1046): Matryoshka-style flexible dims,
+// any integer from 128 up to the model's native size. `dimensions` is the
+// native wire field (no translation needed); output encoding divergence
+// (base64 int8) is handled by perplexityCompatFetch in gateway.ts.
+const PERPLEXITY_EMBEDDING_MAX_DIMS: Record<string, number> = {
+  'pplx-embed-v1-0.6b': 1024,
+  'pplx-embed-v1-4b': 2560,
+};
+export const PERPLEXITY_MIN_DIMS = 128;
+
+export function isPerplexityEmbeddingModel(modelId: string): boolean {
+  return modelId in PERPLEXITY_EMBEDDING_MAX_DIMS;
+}
+
+export function maxPerplexityEmbeddingDim(modelId: string): number | undefined {
+  return PERPLEXITY_EMBEDDING_MAX_DIMS[modelId];
+}
+
+export function isValidPerplexityDim(modelId: string, dims: number): boolean {
+  const max = PERPLEXITY_EMBEDDING_MAX_DIMS[modelId];
+  if (max === undefined) return false;
+  return Number.isInteger(dims) && dims >= PERPLEXITY_MIN_DIMS && dims <= max;
+}
+
+// NVIDIA NIM hosted embedding models use asymmetric input_type values. Most
+// emit fixed natural dimensions, but llama-nemotron-embed-1b-v2 accepts
+// Matryoshka-style dimension overrides (e.g. matching an existing 1280d
+// brain column without re-embedding through another provider).
+const NVIDIA_EMBEDDING_DIMS: Record<string, number> = {
+  'nvidia/nv-embedqa-e5-v5': 1024,
+  'nvidia/llama-nemotron-embed-1b-v2': 2048,
+  'nvidia/nv-embed-v1': 4096,
+  'nvidia/nv-embedcode-7b-v1': 4096,
+};
+
+const NVIDIA_EMBEDDING_DIM_OPTIONS: Record<string, number[]> = {
+  'nvidia/llama-nemotron-embed-1b-v2': [1024, 1280, 1536, 2048],
+};
+
+export function isNvidiaEmbeddingModel(modelId: string): boolean {
+  return modelId in NVIDIA_EMBEDDING_DIMS;
+}
+
+export function nvidiaEmbeddingDim(modelId: string): number | undefined {
+  return NVIDIA_EMBEDDING_DIMS[modelId];
+}
+
+export function nvidiaEmbeddingDimOptions(modelId: string): number[] | undefined {
+  return NVIDIA_EMBEDDING_DIM_OPTIONS[modelId];
+}
+
+export function supportsNvidiaEmbeddingDimension(modelId: string, dims: number): boolean {
+  const options = nvidiaEmbeddingDimOptions(modelId);
+  return !!options && options.includes(dims);
+}
+
 /**
  * Build the providerOptions blob for embedMany() that pins output dimensions.
  *
@@ -93,11 +174,19 @@ export function dimsProviderOptions(
   switch (implementation) {
     case 'native-openai': {
       // text-embedding-3-* supports dimensions; text-embedding-ada-002 does not.
-      // Qwen3-Embedding-* also supports dimensions (MRL) when routed through
-      // the native-openai adapter via OpenAI-compatible endpoints (OpenRouter).
-      // Use includes() because modelId may carry a vendor prefix (e.g. "qwen/qwen3-embedding-8b").
       // OpenAI embeddings are symmetric — inputType ignored.
-      if (modelId.startsWith('text-embedding-3') || modelId.includes('qwen3-embedding')) {
+      if (modelId.startsWith('text-embedding-3')) {
+        // v0.36.0.0 (D13): fail-loud when configured dim is outside the
+        // model's Matryoshka range. OpenAI returns HTTP 400 otherwise with
+        // a generic message that misroutes as a network blip.
+        if (isOpenAITextEmbedding3Model(modelId) && !isValidOpenAITextEmbedding3Dim(modelId, dims)) {
+          const max = maxOpenAITextEmbedding3Dim(modelId)!;
+          throw new AIConfigError(
+            `OpenAI model "${modelId}" supports embedding_dimensions in 1..${max}, got ${dims}.`,
+            `Set \`embedding_dimensions\` to a value between 1 and ${max} ` +
+            `(\`gbrain config set embedding_dimensions ${Math.min(1024, max)}\` is a common default).`,
+          );
+        }
         return { openai: { dimensions: dims } };
       }
       return undefined;
@@ -161,13 +250,51 @@ export function dimsProviderOptions(
           },
         };
       }
+      // Perplexity pplx-embed-v1-* — flexible dims via the native
+      // `dimensions` field. Fail-loud when the configured dim is outside
+      // the model's range (same rationale as the Voyage/ZE guards: the
+      // upstream HTTP 400 misroutes as a transient network error).
+      // Symmetric retrieval — inputType is never emitted.
+      if (isPerplexityEmbeddingModel(modelId)) {
+        if (!isValidPerplexityDim(modelId, dims)) {
+          const max = maxPerplexityEmbeddingDim(modelId)!;
+          throw new AIConfigError(
+            `Perplexity model "${modelId}" supports embedding_dimensions in ` +
+            `${PERPLEXITY_MIN_DIMS}..${max}, got ${dims}.`,
+            `Set \`embedding_dimensions\` to a value between ${PERPLEXITY_MIN_DIMS} and ${max} ` +
+            `in your gbrain config.`,
+          );
+        }
+        return { openaiCompatible: { dimensions: dims } };
+      }
+      // NVIDIA NIM hosted embeddings are OpenAI-compatible but require
+      // asymmetric input_type. Use passage for indexing/document-side vectors
+      // and query for search-side vectors. Only llama-nemotron-embed-1b-v2
+      // supports a dimensions override; fixed-dim models reject it.
+      if (isNvidiaEmbeddingModel(modelId)) {
+        const opts: Record<string, any> = {
+          input_type: inputType === 'query' ? 'query' : 'passage',
+        };
+        if (supportsNvidiaEmbeddingDimension(modelId, dims)) opts.dimensions = dims;
+        return { openaiCompatible: opts };
+      }
       // OpenAI text-embedding-3 family on the openai-compatible adapter
       // (Azure OpenAI hosts these via its OpenAI-compatible /embeddings
       // endpoint). The provider defaults to the model's native size (3072
       // for `-large`, 1536 for `-small`); without `dimensions`, brains
       // configured for a smaller width (e.g. 1536) hard-fail at first embed.
       // Azure/OpenAI-compat embeddings are symmetric — inputType ignored.
-      if (modelId.startsWith('text-embedding-3')) {
+      // v0.36.0.0 (D13): same range validation as native-openai path.
+      const bareModelId = modelId.includes('/') ? modelId.split('/').pop()! : modelId;
+      if (bareModelId.startsWith('text-embedding-3')) {
+        if (isOpenAITextEmbedding3Model(bareModelId) && !isValidOpenAITextEmbedding3Dim(bareModelId, dims)) {
+          const max = maxOpenAITextEmbedding3Dim(bareModelId)!;
+          throw new AIConfigError(
+            `OpenAI model "${modelId}" supports embedding_dimensions in 1..${max}, got ${dims}.`,
+            `Set \`embedding_dimensions\` to a value between 1 and ${max} ` +
+            `(\`gbrain config set embedding_dimensions ${Math.min(1024, max)}\` is a common default).`,
+          );
+        }
         return { openaiCompatible: { dimensions: dims } };
       }
       // DashScope text-embedding-v3 (Matryoshka 64-1024) and Zhipu
@@ -178,12 +305,32 @@ export function dimsProviderOptions(
       if (modelId === 'text-embedding-v3' || modelId === 'embedding-3') {
         return { openaiCompatible: { dimensions: dims } };
       }
-      // Qwen3-Embedding family (0.6B/4B/8B) — Matryoshka (MRL) supports
-      // reduced dims via the `dimensions` parameter on the OpenAI-compat
-      // path. Without this, litellm/openrouter returns native 4096d for
-      // 8B, which mismatches a brain configured for 2000d and hard-fails.
-      // Symmetric retrieval — inputType ignored.
-      if (modelId.includes('qwen3-embedding')) {
+      // Qwen3-Embedding family on Ollama (and any other openai-compatible
+      // provider serving it) supports Matryoshka truncation via `dimensions`.
+      // Native sizes: 0.6B=1024, 4B=2560, 8B=4096. Without `dimensions`,
+      // Ollama returns the native size and brains configured for narrower
+      // widths hard-fail with a dim-mismatch error. Two naming schemes reach
+      // this path: Ollama's colon-tag form (`qwen3-embedding:4b`) and the
+      // hyphenated hub form used by OpenRouter/HF-style routers
+      // (`qwen/qwen3-embedding-8b` — org prefix stripped to
+      // `qwen3-embedding-8b` above). Match both.
+      if (bareModelId === 'qwen3-embedding' || bareModelId.startsWith('qwen3-embedding:') || bareModelId.startsWith('qwen3-embedding-')) {
+        // Only send `dimensions` when it actually differs from the model's
+        // native width. Fixed-dim OpenAI-compatible backends serving this
+        // family (e.g. vLLM) reject the parameter outright with HTTP 400
+        // ("does not support matryoshka representation") even when the
+        // requested value equals the native size; omitting it in the equal
+        // case is semantically identical for Ollama and keeps vLLM working.
+        const QWEN3_EMBEDDING_NATIVE_DIMS: Record<string, number> = {
+          'qwen3-embedding': 1024,
+          'qwen3-embedding:0.6b': 1024,
+          'qwen3-embedding:4b': 2560,
+          'qwen3-embedding:8b': 4096,
+          'qwen3-embedding-0.6b': 1024,
+          'qwen3-embedding-4b': 2560,
+          'qwen3-embedding-8b': 4096,
+        };
+        if (QWEN3_EMBEDDING_NATIVE_DIMS[bareModelId] === dims) return undefined;
         return { openaiCompatible: { dimensions: dims } };
       }
       // MiniMax embo-01 takes a `type: 'db' | 'query'` field for asymmetric

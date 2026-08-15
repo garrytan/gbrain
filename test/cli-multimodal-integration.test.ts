@@ -8,13 +8,15 @@
 //
 // PGLite-only: in-memory engine, no DATABASE_URL needed.
 
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { loadConfigWithEngine, type GBrainConfig } from '../src/core/config.ts';
 import {
+  __setRerankTransportForTests,
   configureGateway,
   getEmbeddingModel,
   getMultimodalModel,
+  rerank,
   resetGateway,
 } from '../src/core/ai/gateway.ts';
 import type { AIGatewayConfig } from '../src/core/ai/types.ts';
@@ -33,6 +35,7 @@ function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
     chat_model: c.chat_model,
     chat_fallback_chain: c.chat_fallback_chain,
     base_urls: c.provider_base_urls,
+    provider_chat_options: c.provider_chat_options,
     env: { ...process.env },
   };
 }
@@ -51,10 +54,16 @@ afterAll(async () => {
 
 beforeEach(async () => {
   resetGateway();
+  __setRerankTransportForTests(null);
   // Clear any prior config rows so tests are independent. setConfig with
   // empty string is treated as undefined by loadConfigWithEngine (per
   // dbStr semantics), so this is safe to call between tests.
   await engine.setConfig('embedding_multimodal_model', '');
+  await engine.setConfig('provider_base_urls.llama-server-reranker', '');
+});
+
+afterEach(() => {
+  __setRerankTransportForTests(null);
 });
 
 describe('cli connectEngine — embedding_multimodal_model DB→gateway plumbing', () => {
@@ -120,5 +129,35 @@ describe('cli connectEngine — embedding_multimodal_model DB→gateway plumbing
     // semantic no-op for these fields.
     expect(getEmbeddingModel()).toBe('openai:text-embedding-3-large');
     expect(getMultimodalModel()).toBeUndefined();
+  });
+
+  test('DB-set provider_base_urls.llama-server-reranker flows to gateway.rerank URL', async () => {
+    await engine.setConfig('provider_base_urls.llama-server-reranker', 'http://127.0.0.1:8091/v1');
+
+    const baseConfig: GBrainConfig = {
+      engine: 'pglite',
+      embedding_model: 'openai:text-embedding-3-large',
+      embedding_dimensions: 1536,
+    };
+
+    const merged = await loadConfigWithEngine(engine, baseConfig);
+    configureGateway(buildGatewayConfig(merged!));
+
+    let capturedUrl = '';
+    __setRerankTransportForTests(async (url) => {
+      capturedUrl = url;
+      return new Response(JSON.stringify({ results: [{ index: 0, relevance_score: 0.9 }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+
+    await rerank({
+      query: 'q',
+      documents: ['d'],
+      model: 'llama-server-reranker:qwen3-reranker-4b',
+    });
+
+    expect(capturedUrl).toBe('http://127.0.0.1:8091/v1/rerank');
   });
 });

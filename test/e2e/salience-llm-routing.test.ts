@@ -158,3 +158,29 @@ describeIfKey('v0.29 — LLM routes personal queries to v0.29 ops, not query() /
     }, 30_000);
   }
 });
+
+// #2416 — concept/landscape questions must route to `query` (hybrid +
+// expansion), not `search` (cheap-hybrid, expansion off). This block is the
+// feature assertion for the #2416 description edits; the block above is the
+// regression guard (the new "prefer query for concept questions" copy must
+// NOT pull personal queries away from the salience ops).
+const CONCEPT_QUERY_PHRASINGS = [
+  'find all the companies doing offshore wind',
+  'the landscape of agent memory startups',
+  'every investor that focuses on climate tech',
+  'all the projects that use vector databases',
+  'everything about my fundraising strategy discussions',
+  'which portfolio companies have shipped AI features',
+  'the ecosystem of MCP server implementations',
+  'all the people that work on developer tools',
+];
+
+describeIfKey('#2416 — LLM routes concept/landscape questions to query, not search', () => {
+  for (const prompt of CONCEPT_QUERY_PHRASINGS) {
+    test(`routes "${prompt}" to query`, async () => {
+      const { tool } = await callClaudeWithTools(prompt);
+      expect(tool).not.toBeNull();
+      expect(tool).toBe('query');
+    }, 30_000);
+  }
+});

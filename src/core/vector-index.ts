@@ -17,6 +17,7 @@
 import type { BrainEngine } from './engine.ts';
 
 export const PGVECTOR_HNSW_VECTOR_MAX_DIMS = 2000;
+export const PGVECTOR_HNSW_HALFVEC_MAX_DIMS = 4000;
 
 const CHUNK_EMBEDDING_HNSW_INDEX =
   'CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);';
@@ -29,8 +30,39 @@ export function chunkEmbeddingIndexSql(dims: number): string {
   ].join('\n');
 }
 
+export function hnswMaxDimsForType(columnType: 'vector' | 'halfvec'): number {
+  return columnType === 'halfvec' ? PGVECTOR_HNSW_HALFVEC_MAX_DIMS : PGVECTOR_HNSW_VECTOR_MAX_DIMS;
+}
+
+/** Whether pgvector can build an HNSW index for this exact column shape. */
+export function hnswIndexExpected(columnType: 'vector' | 'halfvec', dims: number): boolean {
+  return dims <= hnswMaxDimsForType(columnType);
+}
+
 export function applyChunkEmbeddingIndexPolicy(sql: string, dims: number): string {
   return sql.replaceAll(CHUNK_EMBEDDING_HNSW_INDEX, chunkEmbeddingIndexSql(dims));
+}
+
+/** pgvector defaults hnsw.ef_search to 40; the GUC's hard ceiling is 1000. */
+export const HNSW_EF_SEARCH_DEFAULT = 40;
+export const HNSW_EF_SEARCH_MAX = 1000;
+
+/**
+ * `hnsw.ef_search` value for a vector search that wants `candidateLimit`
+ * candidates back.
+ *
+ * An HNSW index scan returns at most `hnsw.ef_search` rows (default 40)
+ * no matter what the query's LIMIT asks for — the GUC sizes the scan's
+ * candidate list, so it caps the row count before LIMIT is even applied.
+ * Both engines' searchVector ask the inner CTE for
+ * `offset + max(limit*5, 100)` candidates; without raising the GUC the
+ * pool silently truncates at ~40 and everything downstream (per-page
+ * collapse, RRF fusion, rerankers) operates on a fraction of the pool it
+ * was designed for. Shared helper keeps postgres + pglite in lockstep.
+ */
+export function hnswEfSearchFor(candidateLimit: number): number {
+  const wanted = Math.ceil(candidateLimit);
+  return Math.min(Math.max(wanted, HNSW_EF_SEARCH_DEFAULT), HNSW_EF_SEARCH_MAX);
 }
 
 // ---------------------------------------------------------------------------

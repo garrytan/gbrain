@@ -12,7 +12,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync } from 'fs';
-import { join } from 'path';
+import { join, sep, dirname } from 'path';
 import { tmpdir } from 'os';
 
 import { __testing, type PendingHostWorkEntry } from '../src/commands/migrations/v0_11_0.ts';
@@ -55,8 +55,6 @@ function writeCronJson(dir: string, jobs: unknown[]) {
   writeFileSync(path, JSON.stringify({ jobs }, null, 2) + '\n');
   return path;
 }
-// Re-export dirname so writeCronJson can use it without another import
-const dirname = (p: string) => p.substring(0, p.lastIndexOf('/'));
 
 const DEFAULT_OPTS = {
   yes: true,
@@ -277,13 +275,17 @@ describe('findAgentsMdFiles + findCronManifests scoping', () => {
   test('does NOT walk $PWD unless --host-dir is passed', () => {
     mkdirSync(join(tmp, 'project'), { recursive: true });
     writeFileSync(join(tmp, 'project', 'AGENTS.md'), '# project\n');
+    // findAgentsMdFiles returns join()-built native paths, so a '/project/'
+    // literal matches nothing on win32 and the negative assertion below would
+    // pass vacuously. Only the separator comes from `path`; the directory name
+    // being probed stays hand-written.
     // No --host-dir
     const found = findAgentsMdFiles(DEFAULT_OPTS);
-    expect(found.some(p => p.includes('/project/'))).toBe(false);
+    expect(found.some(p => p.includes(`${sep}project${sep}`))).toBe(false);
 
     // With --host-dir
     const foundWithHostDir = findAgentsMdFiles({ ...DEFAULT_OPTS, hostDir: join(tmp, 'project') });
-    expect(foundWithHostDir.some(p => p.includes('/project/'))).toBe(true);
+    expect(foundWithHostDir.some(p => p.includes(`${sep}project${sep}`))).toBe(true);
   });
 
   test('findCronManifests picks up cron/jobs.json under scoped roots', () => {

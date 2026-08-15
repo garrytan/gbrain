@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-kta-neg-005",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "kta-neg",
+  "seed_pages": [
+    {
+      "slug": "people/verity-thornquist",
+      "content": "---\ntitle: Verity Thornquist\ntype: person\naliases: [verity]\nsummary: Founder of Fernwheel.\n---\n\nVerity Thornquist is the founder of Fernwheel. Verity shipped the v2 launch two weeks ahead of plan.\n"
+    },
+    {
+      "slug": "companies/fernwheel",
+      "content": "---\ntitle: Fernwheel\ntype: company\nsummary: Seed-stage company. Founded by Verity Thornquist.\n---\n\nFernwheel is a seed-stage company. Founded by Verity Thornquist. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Quick one — does Tuesday work for the sync?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "By the way, someone named Ingrid Felbrook emailed about partnerships. Never heard of them."
+    }
+  ]
+}

@@ -12,7 +12,7 @@ try {
 
   const pagesRes = await db.query("SELECT id, slug, title, type FROM pages WHERE deleted_at IS NULL");
   const linksRes = await db.query(`
-    SELECT 
+    SELECT
       l.id,
       l.link_type,
       p_from.slug as from_slug,
@@ -242,14 +242,14 @@ try {
       const id = node.id();
       const label = node.data('label');
       const type = node.data('type');
-      
+
       const outgoing = node.outgoers().edges();
       const incoming = node.incomers().edges();
-      
+
       let html = '<h3>' + label + '</h3>';
       html += '<p><strong>Slug :</strong> <code style="background-color: #2e3440; padding: 2px 4px; border-radius: 3px;">' + id + '</code></p>';
       html += '<p><strong>Type :</strong> <span style="text-transform: capitalize; color: #81a1c1;">' + type + '</span></p>';
-      
+
       if (outgoing.length > 0) {
         html += '<p><strong>Références sortantes (' + outgoing.length + ') :</strong></p><ul>';
         outgoing.forEach(e => {
@@ -257,7 +257,7 @@ try {
         });
         html += '</ul>';
       }
-      
+
       if (incoming.length > 0) {
         html += '<p><strong>Backlinks (' + incoming.length + ') :</strong></p><ul>';
         incoming.forEach(e => {
@@ -265,7 +265,7 @@ try {
         });
         html += '</ul>';
       }
-      
+
       document.getElementById('details').innerHTML = html;
     });
 
@@ -275,7 +275,7 @@ try {
         cy.elements().removeClass('highlighted');
         return;
       }
-      
+
       cy.elements().forEach(el => {
         if (el.isNode() && el.data('label').toLowerCase().includes(q)) {
           el.addClass('highlighted');

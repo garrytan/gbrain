@@ -44,6 +44,7 @@ These require manual setup (no self-installing recipe yet):
 |-------|-------------|
 | [Credential Gateway](credential-gateway.md) | Set up ClawVisor or Hermes for Gmail, Calendar, Contacts access |
 | [Meeting & Call Webhooks](meeting-webhooks.md) | Circleback meeting transcripts + Quo/OpenPhone SMS/calls |
+| [qm Harness](qm-harness.md) | gbrain as the company brain for a qm (multi-user agent harness) deployment — central HTTP MCP, per-scope clients, roster provisioning, write fencing |
 
 ## How to Read a Recipe
 
@@ -69,6 +70,12 @@ health_checks:                  # typed DSL to verify the integration is working
     auth_user: "$TWILIO_ACCOUNT_SID"
     auth_token: "$TWILIO_AUTH_TOKEN"
     label: "Twilio account"
+  - type: heartbeat_max_age     # staleness gate: FAILS `integrations doctor`
+    max_age: 48h                # when the newest heartbeat event is older.
+    label: "Data freshness"     # The other types are point-in-time and stay
+                                # green even when a sense stops producing data.
+output_paths:                   # repo-relative dirs the collector writes files to;
+  - daily/voice/                # lets doctor/sync warn if one lands in db_only
 setup_time: 30 min              # estimated time to complete setup
 ---
 
@@ -86,7 +93,8 @@ a source install, or the global install copy) are trusted. Recipes discovered at
 runtime from `$GBRAIN_RECIPES_DIR` or a cwd-local `./recipes/` are marked untrusted:
 they cannot run `command` health checks, cannot run `http` health checks (SSRF
 defense), and cannot use the deprecated string health_check form. Untrusted recipes
-can still use `env_exists` and `any_of` compositions. To ship a recipe that runs
+can still use `env_exists`, `heartbeat_max_age` (reads only the local heartbeat
+file — no exec, no network), and `any_of` compositions. To ship a recipe that runs
 live checks, contribute it upstream so it becomes package-bundled.
 
 ## The Deterministic Collector Pattern

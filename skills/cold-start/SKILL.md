@@ -12,6 +12,7 @@ triggers:
   - "cold start"
   - "fill my brain"
   - "bootstrap brain"
+  - "bootstrap my data"
   - "import my data"
   - "day one"
   - "get started"
@@ -105,18 +106,20 @@ them at request time, enforces policies, and logs everything.
 **Setup (15 min):**
 1. Sign up at [app.clawvisor.com](https://app.clawvisor.com)
 2. Create an agent in the dashboard, copy the agent token
-3. Set environment variables:
+3. Set environment variables (in the host agent's environment — shell profile
+   or harness config; gbrain itself has no ClawVisor config keys, these are
+   consumed by the host's ClawVisor integration):
    ```bash
-   gbrain config set clawvisor_url "https://app.clawvisor.com"
-   gbrain config set clawvisor_agent_token "<token>"
+   export CLAWVISOR_URL="https://app.clawvisor.com"
+   export CLAWVISOR_AGENT_TOKEN="<token>"
    ```
 4. Activate Google services (Gmail, Calendar, Contacts) in the dashboard
 5. Create a standing task with expansive scope:
    > "Full brain bootstrapping: read emails, calendar events, and contacts to
    > populate knowledge base. List, read, and search across all connected accounts."
-6. Save the standing task ID:
+6. Save the standing task ID the same way:
    ```bash
-   gbrain config set clawvisor_task_id "<task_id>"
+   export CLAWVISOR_TASK_ID="<task_id>"
    ```
 
 **Critical scoping rule:** Be expansive in task purposes. "Email triage" gets
@@ -168,8 +171,10 @@ done
 ### Import
 
 ```bash
-# For Obsidian vaults, use the migrate skill for proper wikilink handling
-gbrain migrate --from obsidian --path /path/to/vault
+# Obsidian vaults are markdown directories — import directly, then wire wikilinks
+# (full flow: skills/migrate/SKILL.md)
+gbrain import /path/to/vault --no-embed --workers 4
+gbrain extract links --source db      # parses [[wikilinks]] natively
 
 # For plain markdown directories
 gbrain import /path/to/dir --no-embed --workers 4
@@ -380,12 +385,11 @@ Delegate to the `archive-crawler` skill. It handles:
 - Text extraction from PDFs, images (OCR), documents
 - Entity extraction and brain page creation
 
-> **Safety gate:** Archive crawling can be slow and create many pages. Always start
-> with a scan-only pass:
-> ```bash
-> gbrain archive-crawler --scan-only --path /path/to/archive
-> ```
-> Show the user the manifest before proceeding with full ingestion.
+> **Safety gate:** Archive crawling can be slow and create many pages.
+> archive-crawler is a skill, not a CLI command — it refuses to run without an
+> explicit `archive-crawler.scan_paths:` allow-list in `gbrain.yml`. Add the
+> archive path to the allow-list, run the skill's scan pass first, and show the
+> user the manifest before proceeding with full ingestion.
 
 **Supported sources:**
 - Local directories (Dropbox sync folder, Google Drive, old hard drives)

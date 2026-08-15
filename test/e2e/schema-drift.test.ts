@@ -75,11 +75,51 @@ describe.skipIf(skip)('schema drift: PGLite ↔ Postgres post-initSchema parity 
     await pglite.connect({});
     await pglite.initSchema();
 
-    // Postgres side: connect to the test database, run the canonical initSchema.
-    // The test container at `bun run ci:local` provides a fresh DB; outside that
-    // path we rely on the caller having set DATABASE_URL to a fresh DB.
+    // Postgres side: ensure the test database is FRESH before initSchema.
+    // v0.37.2.0 fix: previously the test trusted the caller to pass a fresh
+    // DATABASE_URL, but `gbrain doctor` (used by the CLAUDE.md E2E bootstrap
+    // ritual) populates `content_chunks.model DEFAULT` from the configured
+    // gateway model. On a re-run, `CREATE TABLE IF NOT EXISTS` is a no-op so
+    // the stale default sticks while PGLite (always fresh-in-memory) gets the
+    // engine fallback. That produced a phantom drift unrelated to schema
+    // parity.
+    //
+    // SAFETY GATE (codex P0, tightened in v0.37.2.0): DROP SCHEMA public CASCADE is
+    // destructive. The db name MUST always look test-shaped — no env-var override
+    // bypasses that floor. GBRAIN_TEST_DB=1 only relaxes the localhost requirement
+    // so CI environments where the host is a service name (e.g. "postgres") can
+    // still reset. If the db name doesn't match the test pattern, nothing nukes it.
     pg = new PostgresEngine();
     await pg.connect({ database_url: DATABASE_URL! });
+    const pgConnPre = (pg as any).sql;
+
+    const url = new URL(DATABASE_URL!);
+    const dbName = url.pathname.replace(/^\//, '');
+    const host = url.hostname;
+    const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local');
+    // db-name pattern is the floor: gbrain_test, *_test, test_*, *_e2e.
+    // Required REGARDLESS of any override — a production db named "production_data"
+    // cannot be reset even with GBRAIN_TEST_DB=1.
+    const looksLikeTestDb = /^(gbrain_test|.*_test|test_.*|.*_e2e)$/i.test(dbName);
+    const ciOptIn = process.env.GBRAIN_TEST_DB === '1';
+    // resetAllowed semantics: db name is test-shaped AND (localhost OR ci-opt-in).
+    // Neither host nor env-var alone is sufficient.
+    const resetAllowed = looksLikeTestDb && (isLocalhost || ciOptIn);
+
+    if (resetAllowed) {
+      await pgConnPre.unsafe('DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;');
+    } else {
+      // Surface a loud, paste-ready hint. The test will still try initSchema;
+      // if the caller already had a fresh DB the parity check passes anyway.
+      const reason = !looksLikeTestDb
+        ? `db name "${dbName}" doesn't match the test pattern (gbrain_test, *_test, test_*, *_e2e). ` +
+          `GBRAIN_TEST_DB=1 does NOT override this — db name is the hard floor.`
+        : `host="${host}" is non-local AND GBRAIN_TEST_DB=1 is not set. ` +
+          `Set GBRAIN_TEST_DB=1 to allow non-local hosts (e.g. CI service names) — ` +
+          `but only when the db name is already test-shaped.`;
+      console.warn(`[schema-drift] Skipping DROP SCHEMA — ${reason}`);
+    }
+
     await pg.initSchema();
 
     // Snapshot both. PGLite returns `{rows}`, postgres.js returns the array.

@@ -56,8 +56,6 @@ async function loadConfig(engine: BrainEngine): Promise<AutoThinkConfig> {
   const enabledStr = await engine.getConfig('dream.auto_think.enabled');
   const questionsStr = await engine.getConfig('dream.auto_think.questions');
   const maxPerStr = await engine.getConfig('dream.auto_think.max_per_cycle');
-  const budgetStr = await engine.getConfig('dream.auto_think.budget');
-  const cooldownStr = await engine.getConfig('dream.auto_think.cooldown_days');
   const autoCommitStr = await engine.getConfig('dream.auto_think.auto_commit');
 
   let questions: string[] = [];
@@ -68,14 +66,28 @@ async function loadConfig(engine: BrainEngine): Promise<AutoThinkConfig> {
     } catch { /* ignore */ }
   }
 
+  // getNumberConfig (not `parse* || N`) so a configured 0 is honored — a bare
+  // `|| N` coerces an explicit 0 back to the default (budget 0 = "spend nothing",
+  // cooldown 0 = "no cooldown"). max_per_cycle stays inline: its Math.max(1, ...)
+  // floor already makes 0 invalid there, so no configured value is lost.
+  const budgetUsd = Math.max(0, await getNumberConfig(engine, 'dream.auto_think.budget', 2.0));
+  const cooldownDays = Math.max(0, await getNumberConfig(engine, 'dream.auto_think.cooldown_days', 30));
+
   return {
     enabled: enabledStr === 'true',
     questions,
     maxPerCycle: maxPerStr ? Math.max(1, parseInt(maxPerStr, 10) || 5) : 5,
-    budgetUsd: budgetStr ? Math.max(0, parseFloat(budgetStr) || 2.0) : 2.0,
-    cooldownDays: cooldownStr ? Math.max(0, parseInt(cooldownStr, 10) || 30) : 30,
+    budgetUsd,
+    cooldownDays,
     autoCommit: autoCommitStr === 'true',
   };
+}
+
+async function getNumberConfig(engine: BrainEngine, key: string, fallback: number): Promise<number> {
+  const raw = await engine.getConfig(key);
+  if (raw === undefined || raw === null) return fallback;
+  const value = Number(raw);
+  return Number.isNaN(value) ? fallback : value;
 }
 
 async function isCoolingDown(engine: BrainEngine, days: number): Promise<boolean> {
@@ -152,16 +164,26 @@ export async function runPhaseAutoThink(
         client: opts.client,
         model: modelId,
       });
+      // #1698: an empty synthesis (no LLM available / malformed output / empty-JSON answer)
+      // must NOT count as complete or advance the cooldown — that is the same silent-success
+      // the CLI + MCP think paths now guard against. runThink sets synthesisOk=false; the
+      // empty page is never written, and persistSynthesis returns slug '' + the
+      // SYNTHESIS_EMPTY_NOT_PERSISTED warning. Mark these 'partial' so `anyComplete` below
+      // stays false on empty-only runs and the cooldown timestamp isn't advanced (so the
+      // next cycle retries) — and surface the warning instead of dropping it.
+      const emptySynthesis = result.synthesisOk === false;
+      const warnings = [...result.warnings];
       let slug: string | undefined;
       if (config.autoCommit) {
         const persisted = await persistSynthesis(engine, result);
-        slug = persisted.slug;
+        slug = persisted.slug || undefined;  // '' = persist-skip signal (#1698)
+        warnings.push(...persisted.warnings);
       }
       results.push({
         question: q,
-        status: 'complete',
+        status: emptySynthesis ? 'partial' : 'complete',
         slug,
-        warnings: result.warnings.length ? result.warnings : undefined,
+        warnings: warnings.length ? warnings : undefined,
       });
     } catch (e) {
       results.push({
@@ -191,3 +213,6 @@ export async function runPhaseAutoThink(
     duration_ms: Date.now() - start,
   };
 }
+
+// Test-only export: pin config-resolution behavior at function granularity.
+export const __testing = { loadConfig };

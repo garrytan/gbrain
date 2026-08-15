@@ -2,6 +2,7 @@ import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { isAbsolute, join, resolve as resolvePath } from 'path';
 import { RESOLVER_FILENAMES, hasResolverFile } from './resolver-filenames.ts';
+import { isPathContained } from './path-confine.ts';
 
 /**
  * Walk up from `startDir` looking for a `skills/` directory that
@@ -42,6 +43,7 @@ export type SkillsDirSource =
   | 'openclaw_workspace_env_root'
   | 'openclaw_workspace_home'
   | 'openclaw_workspace_home_root'
+  | 'cwd_walk_up'
   | 'repo_root'
   | 'cwd_skills'
   | 'install_path';
@@ -65,17 +67,23 @@ function resolveWorkspaceSkillsDir(
   sourceSubdir: SkillsDirSource,
   sourceRoot: SkillsDirSource,
 ): SkillsDirDetection | null {
-  // Preferred: workspace/skills with a resolver file inside it (gbrain-native).
   const subdir = join(workspace, 'skills');
+  // Refuse a `skills/` that escapes the declared workspace via symlink (#419).
+  // isPathContained realpaths both ends, so `workspace/skills` → /etc is
+  // rejected, while a legit in-workspace symlink (`workspace/skills` →
+  // `workspace/_real-skills`) stays contained and is allowed. A non-contained
+  // candidate returns null so lower tiers can try, rather than trusting an escape.
+  const contained = isPathContained(subdir, workspace);
+  // Preferred: workspace/skills with a resolver file inside it (gbrain-native).
   if (hasResolverFile(subdir)) {
-    return { dir: subdir, source: sourceSubdir };
+    return contained ? { dir: subdir, source: sourceSubdir } : null;
   }
   // Fallback: resolver file at workspace root (OpenClaw-native layout).
   // The skills/ subtree still governs file layout even when routing lives
   // at workspace root. Return the skills subdir so downstream file lookups
   // work; the resolver parser knows how to look one level up.
   if (hasResolverFile(workspace) && existsSync(subdir)) {
-    return { dir: subdir, source: sourceRoot };
+    return contained ? { dir: subdir, source: sourceRoot } : null;
   }
   return null;
 }
@@ -138,6 +146,33 @@ export function autoDetectSkillsDir(
     if (resolved) return resolved;
   }
 
+  // 1b. (v0.33) Walk up from cwd looking for any `skills/` dir. No
+  //     resolver-file gating — this is for non-OpenClaw hosts (any
+  //     agent repo with a bare `skills/` directory, before a resolver
+  //     file is written). Stops at the first ancestor with a `skills/`
+  //     subdirectory. Comes after $OPENCLAW_WORKSPACE so R5
+  //     (precedence regression) holds: explicit env still wins. Comes
+  //     before ~/.openclaw/workspace so that `cd ~/git/your-agent-repo
+  //     && gbrain skillpack scaffold X` finds the agent repo, not an
+  //     implicit fallback to OpenClaw's default install.
+  {
+    let dir = startDir;
+    for (let i = 0; i < 10; i++) {
+      const candidate = join(dir, 'skills');
+      // Only accept a `skills/` contained within the ancestor it was found under
+      // (#419). An escaping symlink is skipped, and the walk continues upward
+      // rather than trusting a dir that resolves outside the boundary.
+      if (existsSync(candidate) && isPathContained(candidate, dir)) {
+        return { dir: candidate, source: 'cwd_walk_up' };
+      }
+      const parent = join(dir, '..');
+      const resolvedParent = resolvePath(parent);
+      const resolvedDir = resolvePath(dir);
+      if (resolvedParent === resolvedDir) break;
+      dir = resolvedParent;
+    }
+  }
+
   // 2. ~/.openclaw/workspace as the default user-level OpenClaw deployment.
   if (env.HOME) {
     const workspace = join(env.HOME, '.openclaw', 'workspace');
@@ -152,12 +187,20 @@ export function autoDetectSkillsDir(
   // 3. gbrain repo walk from cwd.
   const repoRoot = findRepoRoot(startDir);
   if (repoRoot && isGbrainRepoRoot(repoRoot)) {
-    return { dir: join(repoRoot, 'skills'), source: 'repo_root' };
+    const skillsDir = join(repoRoot, 'skills');
+    if (isPathContained(skillsDir, repoRoot)) {
+      return { dir: skillsDir, source: 'repo_root' };
+    }
   }
 
-  // 4. ./skills fallback.
+  // 4. ./skills fallback (with hasResolverFile gate). Functionally
+  // subsumed by tier 1b's `cwd_walk_up` (broader, no resolver gate),
+  // but kept for callers that explicitly want to distinguish a
+  // resolver-bearing fallback from a plain skills-dir match.
+  // In practice this tier never fires after 1b — cwd_walk_up matches
+  // the same path first. Kept in the type union for back-compat.
   const cwdSkills = join(startDir, 'skills');
-  if (hasResolverFile(cwdSkills)) {
+  if (hasResolverFile(cwdSkills) && isPathContained(cwdSkills, startDir)) {
     return { dir: cwdSkills, source: 'cwd_skills' };
   }
 
@@ -207,7 +250,10 @@ export function autoDetectSkillsDirReadOnly(
     const moduleDir = fileURLToPath(import.meta.url);
     const installRoot = findRepoRoot(moduleDir);
     if (installRoot && isGbrainRepoRoot(installRoot)) {
-      return { dir: join(installRoot, 'skills'), source: 'install_path' };
+      const skillsDir = join(installRoot, 'skills');
+      if (isPathContained(skillsDir, installRoot)) {
+        return { dir: skillsDir, source: 'install_path' };
+      }
     }
   } catch {
     // fileURLToPath can throw on malformed import.meta.url (rare; some
@@ -227,9 +273,10 @@ export const AUTO_DETECT_HINT = [
   `  1. --skills-dir flag`,
   `  2. $GBRAIN_SKILLS_DIR (explicit operator override)`,
   `  3. $OPENCLAW_WORKSPACE/{skills/,}{${RESOLVER_FILENAMES.join(',')}}`,
-  `  4. ~/.openclaw/workspace/{skills/,}{${RESOLVER_FILENAMES.join(',')}}`,
-  `  5. repo root with skills/${RESOLVER_FILENAMES.join(' or skills/')}`,
-  `  6. ./skills/${RESOLVER_FILENAMES.join(' or ./skills/')}`,
+  `  4. cwd + walk-up for any skills/ directory (v0.33; for non-OpenClaw hosts)`,
+  `  5. ~/.openclaw/workspace/{skills/,}{${RESOLVER_FILENAMES.join(',')}}`,
+  `  6. repo root with skills/${RESOLVER_FILENAMES.join(' or skills/')}`,
+  `  7. ./skills/${RESOLVER_FILENAMES.join(' or ./skills/')}`,
 ].join('\n');
 
 /**

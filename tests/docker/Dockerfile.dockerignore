@@ -1,0 +1,12 @@
+# BuildKit per-Dockerfile ignore (applies when building with
+# -f tests/docker/Dockerfile under DOCKER_BUILDKIT=1). Keeps the build
+# context small and reproducible — the image installs its own node_modules.
+node_modules
+**/node_modules
+.git
+bin
+dist
+.gbrain-evals
+.claude
+**/*.log
+tmp

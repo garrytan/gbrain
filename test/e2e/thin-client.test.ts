@@ -74,8 +74,11 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
     hostHome = mkdtempSync(join(tmpdir(), 'gbrain-thin-host-'));
     clientHome = mkdtempSync(join(tmpdir(), 'gbrain-thin-client-'));
 
-    // 1. Init host with a real Postgres.
-    const init = await spawn(['init', '--non-interactive', '--url', DATABASE_URL!], hostHome);
+    // 1. Init host with a real Postgres. `--no-embedding` defers embedding
+    //    setup (v0.37.10.0+ requires an explicit embedding provider OR the
+    //    deferral flag); thin-client tests exercise the routing surface, not
+    //    embedding, so no provider is needed.
+    const init = await spawn(['init', '--non-interactive', '--no-embedding', '--url', DATABASE_URL!], hostHome);
     if (init.exitCode !== 0) throw new Error(`host init failed: ${init.stderr || init.stdout}`);
 
     // 2. Pick a random free port for serve --http.

@@ -40,7 +40,9 @@ Show the user the results. Get feedback.
 - Revise the process based on what you learned.
 
 **Step 4: Codify into a Skill.**
-Write the SKILL.md. Either:
+Write the SKILL.md (`gbrain skillify scaffold <name>` scaffolds the tree for
+you; `gbrain skillopt` optimizes an existing skill against a benchmark).
+Either:
 - **New skill** -- genuinely new capability
 - **Add to existing skill** -- variation of something that exists (parameterize it)
 
@@ -63,7 +65,8 @@ Skills should be **Mutually Exclusive, Collectively Exhaustive**:
 - Each signal source has exactly ONE owner skill
 - Two skills creating the same brain page = MECE violation
 
-**Example ownership (no overlap):**
+**Example ownership (no overlap — illustrative; your skill roster will
+differ):**
 
 | Signal Source | Owner Skill | Creates |
 |--------------|-------------|---------|

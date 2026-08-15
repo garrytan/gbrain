@@ -232,12 +232,96 @@ describe('readSearchStats — read-time derived averages', () => {
   });
 
   test('missing search_telemetry table → empty stats (graceful)', async () => {
-    // Drop the table to simulate a pre-v0.32.3 brain.
-    await engine.executeRaw('DROP TABLE IF EXISTS search_telemetry');
+    // Simulate a pre-v0.32.3 brain by HIDING the table — a rename preserves
+    // the full column shape for the tests that follow. (The prior
+    // DROP + initSchema() restore was a silent no-op: the migration ledger
+    // already records v57, so initSchema never recreated the table.)
+    await engine.executeRaw('ALTER TABLE search_telemetry RENAME TO search_telemetry_hidden');
+    try {
+      const s = await readSearchStats(engine, { days: 7 });
+      expect(s.total_calls).toBe(0);
+      expect(s.cache_hit_rate).toBe(0);
+      expect(s.empty_results).toEqual({ total: 0, by_cause: {} });
+    } finally {
+      await engine.executeRaw('ALTER TABLE search_telemetry_hidden RENAME TO search_telemetry');
+    }
+  });
+});
+
+// WP2/T3 — empty-result cause rollup. Rides the reserved
+// (date, EMPTY_RESULT_MODE, cause) rows with zero new DDL; readSearchStats
+// diverts them out of the call/intent/mode aggregates.
+describe('empty_result bucket keyed by cause (WP2/T3)', () => {
+  test('vector down + empty response → vector_disabled cause', async () => {
+    const w = getTelemetryWriter();
+    w.setEngine(engine);
+    recordSearchTelemetry(engine, makeMeta({ vector_enabled: false }), { results_count: 0 });
+    await w.flush();
     const s = await readSearchStats(engine, { days: 7 });
-    expect(s.total_calls).toBe(0);
-    expect(s.cache_hit_rate).toBe(0);
-    // Restore for subsequent tests in this describe block.
-    await engine.initSchema();
+    expect(s.empty_results.total).toBe(1);
+    expect(s.empty_results.by_cause).toEqual({ vector_disabled: 1 });
+  });
+
+  test('budget dropped everything → budget_dropped_all cause (beats vector_disabled)', async () => {
+    const w = getTelemetryWriter();
+    w.setEngine(engine);
+    recordSearchTelemetry(
+      engine,
+      makeMeta({
+        vector_enabled: false,
+        token_budget: { budget: 100, used: 0, kept: 0, dropped: 5 },
+      }),
+      { results_count: 0 },
+    );
+    await w.flush();
+    const s = await readSearchStats(engine, { days: 7 });
+    expect(s.empty_results.by_cause).toEqual({ budget_dropped_all: 1 });
+  });
+
+  test('degraded budget_dropped_all stage classifies the same way', async () => {
+    const w = getTelemetryWriter();
+    w.setEngine(engine);
+    recordSearchTelemetry(
+      engine,
+      makeMeta({ degraded: [{ stage: 'budget_dropped_all' }] }),
+      { results_count: 0 },
+    );
+    await w.flush();
+    const s = await readSearchStats(engine, { days: 7 });
+    expect(s.empty_results.by_cause).toEqual({ budget_dropped_all: 1 });
+  });
+
+  test('healthy pipeline + zero hits → keyword_zero cause', async () => {
+    const w = getTelemetryWriter();
+    w.setEngine(engine);
+    recordSearchTelemetry(engine, makeMeta(), { results_count: 0 });
+    await w.flush();
+    const s = await readSearchStats(engine, { days: 7 });
+    expect(s.empty_results.by_cause).toEqual({ keyword_zero: 1 });
+  });
+
+  test('empty cache HIT (offset artifact) is NOT counted as an empty-result cause', async () => {
+    const w = getTelemetryWriter();
+    w.setEngine(engine);
+    recordSearchTelemetry(engine, makeMeta({ cache: { status: 'hit' } }), { results_count: 0 });
+    await w.flush();
+    const s = await readSearchStats(engine, { days: 7 });
+    expect(s.empty_results.total).toBe(0);
+  });
+
+  test('reserved rows never skew total_calls or the distributions', async () => {
+    const w = getTelemetryWriter();
+    w.setEngine(engine);
+    recordSearchTelemetry(engine, makeMeta(), { results_count: 5 });
+    recordSearchTelemetry(engine, makeMeta({ vector_enabled: false }), { results_count: 0 });
+    await w.flush();
+    const s = await readSearchStats(engine, { days: 7 });
+    // Both calls count as calls (the empty one still ran); the reserved
+    // cause row does NOT add a third.
+    expect(s.total_calls).toBe(2);
+    expect(Object.keys(s.mode_distribution)).toEqual(['balanced']);
+    expect(Object.keys(s.intent_distribution)).toEqual(['general']);
+    expect(s.empty_results.total).toBe(1);
+    expect(s.avg_results).toBeCloseTo(2.5, 5); // 5 / 2 calls — reserved row excluded
   });
 });

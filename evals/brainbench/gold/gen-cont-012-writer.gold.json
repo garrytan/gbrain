@@ -1,0 +1,20 @@
+{
+  "fixture_id": "gen-cont-012-writer",
+  "turns": {
+    "3": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "wait on Tidecraft Systems",
+          "fact": "Decided to wait on the Tidecraft Systems round until next quarter's numbers",
+          "entity_slug": "companies/tidecraft-systems",
+          "match_keywords": [
+            "wait",
+            "Tidecraft Systems"
+          ],
+          "kind": "commitment"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-kta-neg-010",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "kta-neg",
+  "seed_pages": [
+    {
+      "slug": "people/tobias-cindergate",
+      "content": "---\ntitle: Tobias Cindergate\ntype: person\naliases: [tobias]\nsummary: Founder of Mosslight.\n---\n\nTobias Cindergate is the founder of Mosslight. Tobias raised concerns about gross margin at the last board sync.\n"
+    },
+    {
+      "slug": "companies/mosslight",
+      "content": "---\ntitle: Mosslight\ntype: company\nsummary: Seed-stage company. Founded by Tobias Cindergate.\n---\n\nMosslight is a seed-stage company. Founded by Tobias Cindergate. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Quick one — does Friday work for the sync?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "By the way, someone named Soren Cobblewick emailed about partnerships. Never heard of them."
+    }
+  ],
+  "holdout": true
+}
