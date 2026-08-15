@@ -283,7 +283,20 @@ export async function runReindexCode(
               reporter.tick();
               return;
             }
-            if (!row.compiled_truth) {
+            // `!row.compiled_truth` here counted every EMPTY file as a
+            // failure — every `__init__.py` in every Python package — and
+            // skipped it, so the page never received its `source_path` and the
+            // full-sync reconcile could never match it against the tree. The
+            // page for a deleted empty file was therefore served forever: the
+            // exact defect the source_path write exists to close, surviving
+            // inside the command written to backfill it. Measured on two real
+            // sources: 3 pages, all `__init__.py`, all reported as `missing
+            // compiled_truth` by a backfill that reported success.
+            //
+            // `pages.compiled_truth` is NOT NULL, so the value cannot actually
+            // be missing and this branch has no reachable subject; it is kept
+            // as a type-level guard only, because the row type admits null.
+            if (row.compiled_truth == null) {
               failed++;
               failures.push({ slug: row.slug, error: 'missing compiled_truth' });
               reporter.tick();
