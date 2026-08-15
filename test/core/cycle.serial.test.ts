@@ -127,6 +127,7 @@ mock.module('../../src/core/cycle/schema-suggest.ts', () => ({
 
 // Import after mocks.
 const { runCycle, ALL_PHASES } = await import('../../src/core/cycle.ts');
+const { gbrainPath } = await import('../../src/core/config.ts');
 const { PGLiteEngine } = await import('../../src/core/pglite-engine.ts');
 
 // Shared PGLite engine per describe block. Each block does its own
@@ -307,7 +308,7 @@ describe('runCycle — cycle_already_running skip', () => {
 // ─── Engine null path ─────────────────────────────────────────────
 
 describe('runCycle — engine = null (filesystem-only mode)', () => {
-  const lockFile = require('path').join(require('os').homedir(), '.gbrain', 'cycle.lock');
+  const lockFile = gbrainPath('cycle.lock');
 
   afterEach(() => {
     if (existsSync(lockFile)) { try { unlinkSync(lockFile); } catch { /* */ } }

@@ -1,0 +1,134 @@
+[
+  {
+    "case_id": "reject-ambiguous-confidence-field",
+    "schema_name": "claim",
+    "expected_code": "unknown_field",
+    "mutations": [
+      { "operation": "set", "path": ["confidence"], "value": "0.9" }
+    ]
+  },
+  {
+    "case_id": "derived-recommendation-must-be-typed",
+    "schema_name": "claim",
+    "expected_code": "invalid_contract",
+    "mutations": [
+      { "operation": "set", "path": ["origin"], "value": "derived_recommendation" }
+    ]
+  },
+  {
+    "case_id": "evidence-span-must-not-be-empty",
+    "schema_name": "evidence_item",
+    "expected_code": "invalid_contract",
+    "mutations": [
+      { "operation": "set", "path": ["normalized_span", "end"], "value": 0 }
+    ]
+  },
+  {
+    "case_id": "llm-verification-requires-model-trace",
+    "schema_name": "verification_run",
+    "expected_code": "invalid_contract",
+    "mutations": [
+      { "operation": "set", "path": ["method"], "value": "llm" }
+    ]
+  },
+  {
+    "case_id": "retrieval-selection-must-match-candidates",
+    "schema_name": "retrieval_run",
+    "expected_code": "invalid_contract",
+    "mutations": [
+      { "operation": "set", "path": ["selected_evidence_ids"], "value": [] }
+    ]
+  },
+  {
+    "case_id": "released-answer-must-have-supported-claims",
+    "schema_name": "answer",
+    "expected_code": "invalid_contract",
+    "mutations": [
+      { "operation": "set", "path": ["answer_claims", 0, "support_status"], "value": "unsupported" }
+    ]
+  },
+  {
+    "case_id": "unknown-version-is-not-read",
+    "schema_name": "source",
+    "expected_code": "unsupported_schema_version",
+    "mutations": [
+      { "operation": "set", "path": ["schema_version"], "value": "0.9.0" }
+    ]
+  },
+  {
+    "case_id": "nested-unknown-field-is-rejected",
+    "schema_name": "source",
+    "expected_code": "unknown_field",
+    "mutations": [
+      { "operation": "set", "path": ["scope", "extra_reader_mode"], "value": "implicit" }
+    ]
+  },
+  {
+    "case_id": "legacy-import-cannot-arrive-verified",
+    "schema_name": "claim",
+    "expected_code": "invalid_contract",
+    "mutations": [
+      { "operation": "set", "path": ["origin"], "value": "imported_legacy" },
+      { "operation": "set", "path": ["status"], "value": "verified" }
+    ]
+  },
+  {
+    "case_id": "raw-line-range-must-be-ordered",
+    "schema_name": "evidence_item",
+    "expected_code": "invalid_contract",
+    "mutations": [
+      { "operation": "set", "path": ["raw_locator", "start_line"], "value": 2 }
+    ]
+  },
+  {
+    "case_id": "passing-verification-cannot-have-blocking-findings",
+    "schema_name": "verification_run",
+    "expected_code": "invalid_contract",
+    "mutations": [
+      {
+        "operation": "set",
+        "path": ["findings"],
+        "value": [
+          {
+            "code": "example_blocker",
+            "severity": "blocking",
+            "message": "Synthetic blocking finding",
+            "evidence_ids": []
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": "event-id-prefix-must-match-aggregate",
+    "schema_name": "lifecycle_event",
+    "expected_code": "invalid_contract",
+    "mutations": [
+      {
+        "operation": "set",
+        "path": ["aggregate_id"],
+        "value": "ans_9999999999999999999999999999999999999999999999999999999999999999"
+      }
+    ]
+  },
+  {
+    "case_id": "scope-requires-a-source-anchor",
+    "schema_name": "source",
+    "expected_code": "invalid_contract",
+    "mutations": [
+      { "operation": "set", "path": ["scope", "source_ids"], "value": [] }
+    ]
+  },
+  {
+    "case_id": "evidence-text-hash-must-match-content",
+    "schema_name": "evidence_item",
+    "expected_code": "hash_mismatch",
+    "mutations": [
+      {
+        "operation": "set",
+        "path": ["text_hash"],
+        "value": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      }
+    ]
+  }
+]

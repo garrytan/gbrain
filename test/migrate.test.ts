@@ -3,8 +3,9 @@ import { LATEST_VERSION, runMigrations, MIGRATIONS, getIdleBlockers, hasPendingM
 import type { IdleBlocker } from '../src/core/migrate.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
+import { mkdtempSync, readFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join, resolve } from 'path';
 
 describe('migrate', () => {
   test('LATEST_VERSION is a number >= 1', () => {
@@ -50,12 +51,14 @@ describe('hasPendingMigrations', () => {
   }, 30000);
 
   test('returns true when version config is missing entirely (defensive default)', async () => {
-    // W0: opt out of the default-on snapshot — this test's premise is an
-    // empty PGlite with no config table at all.
+    // A persistent path deliberately bypasses the suite-wide in-memory
+    // snapshot, preserving the empty pre-initSchema state under CI. Remove
+    // the snapshot env explicitly as a second isolation layer.
+    const freshDir = mkdtempSync(join(tmpdir(), 'gbrain-migrate-fresh-'));
     const priorSnapshot = process.env.GBRAIN_PGLITE_SNAPSHOT;
     delete process.env.GBRAIN_PGLITE_SNAPSHOT;
     const engine = new PGLiteEngine();
-    await engine.connect({});
+    await engine.connect({ database_path: freshDir });
     if (priorSnapshot !== undefined) process.env.GBRAIN_PGLITE_SNAPSHOT = priorSnapshot;
     try {
       // Don't call initSchema. Probe against an empty PGlite — getConfig should
@@ -64,6 +67,7 @@ describe('hasPendingMigrations', () => {
       expect(await hasPendingMigrations(engine)).toBe(true);
     } finally {
       await engine.disconnect();
+      rmSync(freshDir, { recursive: true, force: true });
     }
   }, 30000);
 });

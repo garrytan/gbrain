@@ -11,6 +11,9 @@
  */
 
 import { test, expect, describe, beforeAll, afterAll } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { withEnv } from './helpers/with-env.ts';
 import {
@@ -72,13 +75,14 @@ describe('readContentChunksEmbeddingDim', () => {
   }, 30000);
 
   test('returns { exists: false, dims: null } on a fresh brain (no initSchema)', async () => {
-    // One-off engine for the fresh-brain case. Never call initSchema so
-    // content_chunks doesn't exist yet. Cleaned up at end of test.
-    // W0: the default-on snapshot loads a fully-migrated schema at connect,
-    // which breaks this test's truly-empty-DB premise — opt out for this boot.
+    // Use a persistent temporary path so the suite-wide in-memory snapshot
+    // acceleration cannot pre-populate this deliberately unmigrated brain.
+    // Also opt out explicitly so the test remains isolated if snapshot
+    // bootstrap behavior changes for persistent paths.
+    const freshDir = mkdtempSync(join(tmpdir(), 'gbrain-embedding-dim-fresh-'));
     const fresh = new PGLiteEngine();
     await withEnv({ GBRAIN_PGLITE_SNAPSHOT: undefined }, async () => {
-      await fresh.connect({});
+      await fresh.connect({ database_path: freshDir });
     });
     try {
       const result = await readContentChunksEmbeddingDim(fresh);
@@ -86,6 +90,7 @@ describe('readContentChunksEmbeddingDim', () => {
       expect(result.dims).toBeNull();
     } finally {
       await fresh.disconnect();
+      rmSync(freshDir, { recursive: true, force: true });
     }
   }, 30000);
 });

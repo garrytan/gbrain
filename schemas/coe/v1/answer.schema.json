@@ -1,0 +1,235 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gbrain.example/schemas/coe/v1/answer.schema.json",
+  "title": "CoE Lite v1 answer",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "answer_id": {
+      "$ref": "#/$defs/__schema1"
+    },
+    "retrieval_run_id": {
+      "$ref": "#/$defs/__schema2"
+    },
+    "query_hash": {
+      "$ref": "#/$defs/__schema3"
+    },
+    "text": {
+      "$ref": "#/$defs/__schema4"
+    },
+    "answer_claims": {
+      "$ref": "#/$defs/__schema5"
+    },
+    "lifecycle_status": {
+      "$ref": "#/$defs/__schema6"
+    },
+    "release_decision": {
+      "$ref": "#/$defs/__schema7"
+    },
+    "policy_id": {
+      "$ref": "#/$defs/__schema8"
+    },
+    "policy_version": {
+      "$ref": "#/$defs/__schema4"
+    },
+    "scope": {
+      "$ref": "#/$defs/__schema9"
+    },
+    "created_at": {
+      "$ref": "#/$defs/__schema14"
+    },
+    "released_at": {
+      "$ref": "#/$defs/__schema15"
+    },
+    "retraction_reason": {
+      "$ref": "#/$defs/__schema16"
+    }
+  },
+  "required": [
+    "schema_version",
+    "answer_id",
+    "retrieval_run_id",
+    "query_hash",
+    "text",
+    "answer_claims",
+    "lifecycle_status",
+    "release_decision",
+    "policy_id",
+    "policy_version",
+    "scope",
+    "created_at"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "__schema1": {
+      "type": "string",
+      "pattern": "^ans_[0-9a-f]{64}$"
+    },
+    "__schema2": {
+      "type": "string",
+      "pattern": "^ret_[0-9a-f]{64}$"
+    },
+    "__schema3": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "__schema4": {
+      "type": "string",
+      "minLength": 1
+    },
+    "__schema5": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "answer_claim_id": {
+            "type": "string",
+            "pattern": "^acm_[0-9a-f]{64}$"
+          },
+          "claim_id": {
+            "type": "string",
+            "pattern": "^clm_[0-9a-f]{64}$"
+          },
+          "claim_text": {
+            "$ref": "#/$defs/__schema4"
+          },
+          "support_status": {
+            "type": "string",
+            "enum": [
+              "supported",
+              "unsupported",
+              "contested",
+              "abstained"
+            ]
+          },
+          "evidence_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^evd_[0-9a-f]{64}$"
+            }
+          },
+          "citation_markers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "marker": {
+                  "$ref": "#/$defs/__schema4"
+                },
+                "evidence_id": {
+                  "type": "string",
+                  "pattern": "^evd_[0-9a-f]{64}$"
+                }
+              },
+              "required": [
+                "marker",
+                "evidence_id"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "answer_claim_id",
+          "claim_text",
+          "support_status",
+          "evidence_ids",
+          "citation_markers"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "__schema6": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "quarantined",
+        "released",
+        "retracted"
+      ]
+    },
+    "__schema7": {
+      "type": "string",
+      "enum": [
+        "not_evaluated",
+        "pass",
+        "fail"
+      ]
+    },
+    "__schema8": {
+      "type": "string",
+      "pattern": "^pol_[0-9a-f]{64}$"
+    },
+    "__schema9": {
+      "type": "object",
+      "properties": {
+        "brain_id": {
+          "$ref": "#/$defs/__schema4"
+        },
+        "visibility": {
+          "$ref": "#/$defs/__schema10"
+        },
+        "owner_principal": {
+          "$ref": "#/$defs/__schema4"
+        },
+        "reader_principals": {
+          "$ref": "#/$defs/__schema11"
+        },
+        "source_ids": {
+          "$ref": "#/$defs/__schema12"
+        }
+      },
+      "required": [
+        "brain_id",
+        "visibility",
+        "owner_principal",
+        "reader_principals",
+        "source_ids"
+      ],
+      "additionalProperties": false
+    },
+    "__schema10": {
+      "type": "string",
+      "enum": [
+        "private",
+        "workspace",
+        "public"
+      ]
+    },
+    "__schema11": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema4"
+      }
+    },
+    "__schema12": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema13"
+      }
+    },
+    "__schema13": {
+      "type": "string",
+      "pattern": "^src_[0-9a-f]{64}$"
+    },
+    "__schema14": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+    },
+    "__schema15": {
+      "$ref": "#/$defs/__schema14"
+    },
+    "__schema16": {
+      "$ref": "#/$defs/__schema4"
+    }
+  }
+}

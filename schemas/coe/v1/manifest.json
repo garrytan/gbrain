@@ -1,0 +1,68 @@
+{
+  "schema_version": "1.0.0",
+  "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
+  "canonicalization_profile": "coe-c14n-json-v1",
+  "generated_from": "src/coe/contracts/v1.ts",
+  "artifacts": [
+    {
+      "name": "answer",
+      "file": "answer.schema.json",
+      "sha256": "sha256:b6c289f58ad8ed6d3111ec8722b148b2ca3aff1c5c7499de656c4b967d8b1374"
+    },
+    {
+      "name": "claim",
+      "file": "claim.schema.json",
+      "sha256": "sha256:13623f114319deaa422fe37ec7b33d39b69443506e755c9ab91feed82c6ee58f"
+    },
+    {
+      "name": "claim_evidence_edge",
+      "file": "claim_evidence_edge.schema.json",
+      "sha256": "sha256:b156206f26744f64e406b582afb71d07a11bf1e512f92e70cde460e2e96b05d2"
+    },
+    {
+      "name": "contradiction",
+      "file": "contradiction.schema.json",
+      "sha256": "sha256:de466a5de7699c659675e186bd742639ac2754bc58d9bbae81cae67831f4f1f1"
+    },
+    {
+      "name": "evidence_item",
+      "file": "evidence_item.schema.json",
+      "sha256": "sha256:1b6fce70e0cbd0daf21c5fcbb48ba061168a8d0773886c76b9a558d625a5c46c"
+    },
+    {
+      "name": "lifecycle_event",
+      "file": "lifecycle_event.schema.json",
+      "sha256": "sha256:a66daf0bc52bbd0966eb31990a67df4ba9348441c2a6df4c1f65912f8aa1dfb5"
+    },
+    {
+      "name": "normalized_document",
+      "file": "normalized_document.schema.json",
+      "sha256": "sha256:7ba75d7db6da8be5aa1d2cf5a594c56e34e3a7d273fc84c672bce47f2dc6314b"
+    },
+    {
+      "name": "policy",
+      "file": "policy.schema.json",
+      "sha256": "sha256:d9379de51edb93c4f94a6ca61a2897a426e5b6e35478795f15a64c441545f365"
+    },
+    {
+      "name": "retrieval_run",
+      "file": "retrieval_run.schema.json",
+      "sha256": "sha256:73feb78f6f9f494af0ae5c270c7c94e14d302c6e0d00d827e421375afe2781a8"
+    },
+    {
+      "name": "source",
+      "file": "source.schema.json",
+      "sha256": "sha256:b1f0c7e3429703119913184019abd60cdfef7043cd2e91d4c28d176f42c0c8ef"
+    },
+    {
+      "name": "source_snapshot",
+      "file": "source_snapshot.schema.json",
+      "sha256": "sha256:4c66e43e19cc77d6190c31e10f0e7cfd270817b59f70c6071ce4ca2563da4523"
+    },
+    {
+      "name": "verification_run",
+      "file": "verification_run.schema.json",
+      "sha256": "sha256:b19d4b143472bf5534794c6cef862d11db2ab12b650a056b5e8484114d904cc7"
+    }
+  ]
+}

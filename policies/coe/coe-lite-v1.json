@@ -1,0 +1,89 @@
+{
+  "schema_version": "1.0.0",
+  "policy_id": "pol_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "policy_version": "1.0.0",
+  "name": "coe-lite-v1",
+  "fail_closed": true,
+  "unknown_fields": "reject",
+  "release": {
+    "require_verified_claims": true,
+    "block_on_contradiction": true,
+    "block_on_retracted_evidence": true,
+    "require_complete_citations": true
+  },
+  "llm_judge": {
+    "enabled": true,
+    "can_release": false
+  },
+  "claim_policies": [
+    {
+      "claim_type": "bibliographic",
+      "required_verifiers": ["bibliographic", "source_alignment"],
+      "minimum_direct_support": 1,
+      "human_review_required": false
+    },
+    {
+      "claim_type": "numeric",
+      "required_verifiers": ["numeric_recompute", "source_alignment"],
+      "minimum_direct_support": 1,
+      "human_review_required": false
+    },
+    {
+      "claim_type": "methodological",
+      "required_verifiers": ["source_alignment", "consistency"],
+      "minimum_direct_support": 1,
+      "human_review_required": false
+    },
+    {
+      "claim_type": "process",
+      "required_verifiers": ["source_alignment", "consistency"],
+      "minimum_direct_support": 1,
+      "human_review_required": false
+    },
+    {
+      "claim_type": "descriptive",
+      "required_verifiers": ["source_alignment"],
+      "minimum_direct_support": 1,
+      "human_review_required": false
+    },
+    {
+      "claim_type": "conclusion",
+      "required_verifiers": ["source_alignment", "consistency"],
+      "minimum_direct_support": 1,
+      "human_review_required": true
+    },
+    {
+      "claim_type": "recommendation",
+      "required_verifiers": ["source_alignment", "consistency", "human_review"],
+      "minimum_direct_support": 1,
+      "human_review_required": true
+    },
+    {
+      "claim_type": "inference",
+      "required_verifiers": ["source_alignment", "consistency"],
+      "minimum_direct_support": 1,
+      "human_review_required": true
+    },
+    {
+      "claim_type": "contradiction",
+      "required_verifiers": ["source_alignment", "consistency", "human_review"],
+      "minimum_direct_support": 2,
+      "human_review_required": true
+    },
+    {
+      "claim_type": "software_artifact",
+      "required_verifiers": ["code", "source_alignment"],
+      "minimum_direct_support": 1,
+      "human_review_required": false
+    }
+  ],
+  "retention": {
+    "preserve_tombstones": true,
+    "preserve_verification_runs": true
+  },
+  "compatibility": {
+    "readable_versions": ["1.0.0"],
+    "writable_version": "1.0.0"
+  },
+  "created_at": "2026-08-04T00:00:00Z"
+}

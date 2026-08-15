@@ -13,7 +13,7 @@ Every non-localOnly operation on the MCP surface: 104 tools across 22 areas. **S
 | `get_health` | Brain health dashboard (embed coverage, stale pages, orphans) | admin |  |  |
 | `get_stats` | Brain statistics (page count, chunk count, etc.) | admin |  |  |
 | `get_status_snapshot` | Snapshot for `gbrain status` thin-client mode: sync freshness + last cycle + queue depths + worker liveness. | admin |  |  |
-| `run_doctor` | Run brain health checks and return a structured DoctorReport (thin-client doctor surface). | admin |  |  |
+| `run_doctor` | Run brain health checks, including a bounded live embedding + vector-search probe, and return a structured DoctorReport. | admin |  |  |
 | `run_onboard` | Probe brain health + optionally submit onboard remediations. | admin |  |  |
 | `run_skillopt` | Run SkillOpt against a single skill. | admin |  |  |
 

@@ -774,6 +774,8 @@ export async function applyAliasHop(
 
 export interface HybridSearchOpts extends SearchOpts {
   expansion?: boolean;
+  /** Internal cache-miss seam: reuse the exact embedding paid for by cache lookup. */
+  _precomputedQueryEmbedding?: Float32Array;
   /** v0.43 — observability sink for the relational recall arm (fired/no-op,
    *  kind, seeds resolved, candidates, errored). Best-effort. */
   onRelationalMeta?: (meta: import('./relational-recall.ts').RelationalArmMeta) => void;
@@ -826,6 +828,38 @@ export interface HybridSearchOpts extends SearchOpts {
    * public contract.
    */
   _telemetryCacheStatus?: 'miss' | 'disabled';
+}
+
+
+/** Testable no-double-embed seam for the original query plus expansion variants. */
+export async function embedQueryVariants(
+  queries: string[],
+  originalQuery: string,
+  precomputed: Float32Array | undefined,
+  embedFn: (query: string) => Promise<Float32Array> = embedQuery,
+  timeoutMs = 5_000,
+): Promise<Float32Array[]> {
+  const tryEmbed = async (value: string): Promise<Float32Array | null> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        embedFn(value),
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), timeoutMs);
+        }),
+      ]);
+    } catch {
+      return null;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+  const original = precomputed ?? await tryEmbed(originalQuery);
+  if (!original) return [];
+  const variants = await Promise.all(
+    queries.filter((query) => query !== originalQuery).map(tryEmbed),
+  );
+  return [original, ...variants.filter((value): value is Float32Array => value !== null)];
 }
 
 /**
@@ -1507,7 +1541,11 @@ export async function hybridSearch(
       // all-or-nothing fan-outs — one variant's failure abandons every
       // embedding and falls back to keyword-only.
       try {
-        const embeddings = await Promise.all(queries.map(q => embedQueryBounded(q, embedOpts, embedDl)));
+        const embeddings = await Promise.all(queries.map((q, index) =>
+          index === 0 && opts?._precomputedQueryEmbedding
+            ? Promise.resolve(opts._precomputedQueryEmbedding)
+            : embedQueryBounded(q, embedOpts, embedDl)
+        ));
         queryEmbedding = embeddings[0];
         const textLists = await Promise.all(
           embeddings.map(emb => engine.searchVector(emb, searchOpts)),
@@ -1537,7 +1575,11 @@ export async function hybridSearch(
       // WP2/T3 (ENG-15) salvage fan-outs: allSettled on BOTH the embed
       // fan-out and the searchVector fan-out so one variant's failure no
       // longer abandons the survivors (the query-vs-search asymmetry fix).
-      const settled = await Promise.allSettled(queries.map(q => embedQueryBounded(q, embedOpts, embedDl)));
+      const settled = await Promise.allSettled(queries.map((q, index) =>
+        index === 0 && opts?._precomputedQueryEmbedding
+          ? Promise.resolve(opts._precomputedQueryEmbedding)
+          : embedQueryBounded(q, embedOpts, embedDl)
+      ));
       const okEmbeds: Float32Array[] = [];
       const embedFailures: unknown[] = [];
       for (const s of settled) {
@@ -2170,6 +2212,7 @@ export async function hybridSearchCached(
   const userOnMeta = opts?.onMeta;
   const results = await hybridSearch(engine, query, {
     ...opts,
+    _precomputedQueryEmbedding: queryEmbedding ?? undefined,
     // v0.42.20.0 (Fix 3) — share the query-embed deadline so the inner embed
     // doesn't start a fresh 6s budget after the cache-lookup already spent it.
     _queryEmbedDeadline: queryEmbedDl,

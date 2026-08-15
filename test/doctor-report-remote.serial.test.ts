@@ -3,7 +3,7 @@
  * powers the run_doctor MCP op.
  *
  * Strategy: build a fresh PGLite engine + initSchema, run the report, assert
- * all 5 checks present + healthy. Uses the canonical PGLite test pattern
+ * the focused checks (including live vector retrieval) present + healthy.
  * (beforeAll + afterAll, not beforeEach) per CLAUDE.md test-isolation rules.
  */
 
@@ -12,11 +12,21 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { doctorReportRemote, computeDoctorReport, type DoctorReport, type Check } from '../src/commands/doctor.ts';
+import {
+  doctorReportRemote,
+  computeDoctorReport,
+  type DoctorReport,
+  type Check,
+} from '../src/commands/doctor.ts';
 
 let engine: PGLiteEngine;
 let tmpHome: string;
 let priorHome: string | undefined;
+
+const healthyVectorProbe = {
+  embedQuery: async () => new Float32Array(1536),
+  expectedDimensions: 1536,
+};
 
 beforeAll(async () => {
   // v0.37.10.0: doctorReportRemote reads from ~/.gbrain audit files
@@ -39,20 +49,87 @@ afterAll(async () => {
 });
 
 describe('doctorReportRemote', () => {
-  test('runs all 5 checks on a fresh PGLite brain', async () => {
-    const report = await doctorReportRemote(engine);
+  test('remote doctor is unhealthy when live vector retrieval is unavailable', async () => {
+    const report = await doctorReportRemote(engine, {
+      vectorProbe: {
+        embedQuery: async () => { throw new Error('provider unavailable'); },
+        expectedDimensions: 1536,
+      },
+    });
+
+    expect(report.checks.find(c => c.name === 'vector_retrieval')?.code).toBe('embedding_probe_failed');
+    expect(report.status).toBe('unhealthy');
+  });
+
+  test('runs focused checks including live vector retrieval', async () => {
+    const report = await doctorReportRemote(engine, { vectorProbe: healthyVectorProbe });
     expect(report.schema_version).toBe(2);
     expect(report.checks.length).toBeGreaterThanOrEqual(5);
     const names = report.checks.map(c => c.name);
     expect(names).toContain('connection');
+    expect(names).toContain('vector_retrieval');
     expect(names).toContain('schema_version');
     expect(names).toContain('brain_score');
     expect(names).toContain('sync_failures');
     expect(names).toContain('queue_health');
   });
 
+  test('fails closed when corpus stats report embeddings but vector search returns empty', async () => {
+    const originalGetStats = engine.getStats.bind(engine);
+    const probeEngine = new Proxy(engine, {
+      get(target, property, receiver) {
+        if (property === 'getStats') {
+          return async () => ({
+            ...(await originalGetStats()),
+            chunk_count: 1,
+            embedded_count: 1,
+          });
+        }
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+
+    const report = await doctorReportRemote(probeEngine, { vectorProbe: healthyVectorProbe });
+
+    expect(report.status).toBe('unhealthy');
+    expect(report.checks.find(c => c.name === 'vector_retrieval')?.code).toBe('vector_probe_no_results');
+  });
+
+  test('fails before the provider call when corpus chunks have no embeddings', async () => {
+    const originalGetStats = engine.getStats.bind(engine);
+    const probeEngine = new Proxy(engine, {
+      get(target, property, receiver) {
+        if (property === 'getStats') {
+          return async () => ({
+            ...(await originalGetStats()),
+            chunk_count: 1,
+            embedded_count: 0,
+          });
+        }
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    let embeddingCalls = 0;
+
+    const report = await doctorReportRemote(probeEngine, {
+      vectorProbe: {
+        ...healthyVectorProbe,
+        embedQuery: async () => {
+          embeddingCalls++;
+          return new Float32Array(1536);
+        },
+      },
+    });
+
+    expect(report.status).toBe('unhealthy');
+    expect(report.checks.find(c => c.name === 'vector_retrieval')?.code).toBe('vector_corpus_unembedded');
+    expect(embeddingCalls).toBe(0);
+  });
+
   test('connection check passes against a healthy engine', async () => {
-    const report = await doctorReportRemote(engine);
+    const report = await doctorReportRemote(engine, { vectorProbe: healthyVectorProbe });
     const conn = report.checks.find(c => c.name === 'connection');
     expect(conn).toBeDefined();
     expect(conn!.status).toBe('ok');
@@ -60,7 +137,7 @@ describe('doctorReportRemote', () => {
   });
 
   test('schema_version check shows the latest version', async () => {
-    const report = await doctorReportRemote(engine);
+    const report = await doctorReportRemote(engine, { vectorProbe: healthyVectorProbe });
     const sv = report.checks.find(c => c.name === 'schema_version');
     expect(sv).toBeDefined();
     // Fresh PGLite at LATEST_VERSION → status ok with "(latest)"
@@ -69,7 +146,7 @@ describe('doctorReportRemote', () => {
   });
 
   test('queue_health is informational on PGLite', async () => {
-    const report = await doctorReportRemote(engine);
+    const report = await doctorReportRemote(engine, { vectorProbe: healthyVectorProbe });
     const q = report.checks.find(c => c.name === 'queue_health');
     expect(q).toBeDefined();
     expect(q!.status).toBe('ok');
@@ -78,7 +155,7 @@ describe('doctorReportRemote', () => {
   });
 
   test('full report on healthy brain is "healthy" status', async () => {
-    const report = await doctorReportRemote(engine);
+    const report = await doctorReportRemote(engine, { vectorProbe: healthyVectorProbe });
     expect(report.status).toMatch(/healthy|warnings/);
     expect(report.health_score).toBeGreaterThanOrEqual(70);
   });

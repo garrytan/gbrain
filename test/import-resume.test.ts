@@ -20,7 +20,7 @@
  *     `afterAll`) per CLAUDE.md test-isolation rules R3 + R4.
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync, realpathSync, chmodSync } from 'fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync, realpathSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -159,21 +159,27 @@ describe('runImport checkpoint resume — v0.33.2 path-based', () => {
     // converges under repeated kills.
     await withEnv({ GBRAIN_HOME: workspace }, async () => {
       // Three small good files (well under the 100-boundary) plus one that
-      // exceeds the content-sanity block threshold. That throws, so `errors`
-      // is non-zero and the checkpoint is PRESERVED rather than cleared —
+      // deterministically trips the content-sanity reject path. That throws,
+      // so `errors` is non-zero and the checkpoint is PRESERVED rather than cleared —
       // note a SLUG_MISMATCH would NOT work here: it is a soft `failures`
       // entry that leaves `errors` at 0, so upstream clears the checkpoint.
       writeBrainFile('people/alice.md', validMarkdown('people/alice'));
       writeBrainFile('people/carol.md', validMarkdown('people/carol'));
       writeBrainFile('people/dave.md', validMarkdown('people/dave'));
-      // A file the reader cannot open raises inside importFile, which is the
-      // path that increments `errors` (a SLUG_MISMATCH would NOT work: it is
-      // a soft `failures` entry leaving `errors` at 0, so upstream clears the
-      // checkpoint rather than preserving it).
-      writeBrainFile('people/unreadable.md', validMarkdown('people/unreadable'));
-      chmodSync(join(brainDir, 'people/unreadable.md'), 0o000);
-
-      const result = await runImport(engine, [brainDir, '--no-embed']);
+      // chmod(000) is not a valid failure fixture when tests run as root.
+      // Opt into the fail-closed junk disposition and use a built-in pattern
+      // so importFile throws on every supported OS/user.
+      writeBrainFile(
+        'people/unreadable.md',
+        validMarkdown('people/unreadable') + '\n\nCloudflare Ray ID: checkpoint-fixture',
+      );
+      await engine.setConfig('content_sanity.junk_disposition', 'reject');
+      let result;
+      try {
+        result = await runImport(engine, [brainDir, '--no-embed']);
+      } finally {
+        await engine.unsetConfig('content_sanity.junk_disposition');
+      }
       expect(result.errors).toBeGreaterThan(0);
 
       // The checkpoint exists AND carries the successful files, even though

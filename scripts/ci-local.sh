@@ -10,6 +10,7 @@
 #   bash scripts/ci-local.sh --no-pull    # skip docker compose pull (offline / debug)
 #   bash scripts/ci-local.sh --clean      # nuke named volumes for cold debug
 #   bash scripts/ci-local.sh --no-shard   # debug: run E2E sequentially against postgres-1 only
+#   GBRAIN_CI_PARALLELISM=1 ...           # serialize shards on memory-constrained hosts
 #
 # 4-way E2E sharding: 4 pgvector services on host ports 5434-5437. The 36 E2E
 # files split N/4 per shard; shards run in parallel. Within a shard, files run
@@ -41,6 +42,12 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+CI_PARALLELISM="${GBRAIN_CI_PARALLELISM:-4}"
+if ! [[ "$CI_PARALLELISM" =~ ^[1-4]$ ]]; then
+  echo "[ci-local] ERROR: GBRAIN_CI_PARALLELISM must be an integer from 1 to 4." >&2
+  exit 1
+fi
 
 cleanup() {
   echo ""
@@ -246,9 +253,9 @@ export GBRAIN_PGLITE_SNAPSHOT=test/fixtures/pglite-snapshot.tar
 echo \"[runner] resolving E2E file selection (--diff aware)\"
 ${DIFF_E2E_PREP}
 mkdir -p /tmp/shard-logs
-echo \"[runner] Tier 1: 4-shard parallel unit + E2E (xargs -P4)\"
+echo \"[runner] Tier 1: 4 unit + E2E shards (xargs -P${CI_PARALLELISM})\"
 set +e
-printf '%s\\n' 1 2 3 4 | xargs -P4 -I{} sh -c '
+printf '%s\\n' 1 2 3 4 | xargs -P${CI_PARALLELISM} -I{} sh -c '
   shard=\$1
   log=/tmp/shard-logs/shard-\${shard}.log
   echo \"[shard \${shard}] start\" > \$log
@@ -325,6 +332,10 @@ fi
 __RUN_PHASES__
 EOF
 )
+# Bash 5.2 can expand '&' in parameter-substitution replacements to the
+# matched text. Without disabling that behavior, shell redirections such as
+# `2>&1` become `2>__RUN_PHASES__1` and leak a generated file into the repo.
+shopt -u patsub_replacement 2>/dev/null || true
 INNER_CMD="${INNER_CMD/__RUN_PHASES__/$RUN_PHASES_CMD}"
 
 # Conductor / git-worktree support: when `.git` is a file (not a directory),

@@ -3227,7 +3227,7 @@ const get_status_snapshot: Operation = {
  */
 const run_doctor: Operation = {
   name: 'run_doctor',
-  description: 'Run brain health checks and return a structured DoctorReport (thin-client doctor surface).',
+  description: 'Run brain health checks, including a bounded live embedding + vector-search probe, and return a structured DoctorReport.',
   params: {},
   handler: async (ctx) => {
     const { doctorReportRemote } = await import('../commands/doctor.ts');

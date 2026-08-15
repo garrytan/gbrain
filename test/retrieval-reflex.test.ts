@@ -293,9 +293,8 @@ describe('v0.43 (#2095) — rolling window extraction through assemble()', () =>
 describe('ambient-channel event logging (codex D11 — accept-side logDeliveredReflexPointers)', () => {
   test('logDeliveredReflexPointers logs channel=reflex events through the drained sink', async () => {
     const { logDeliveredReflexPointers } = await import('../src/core/context/retrieval-reflex.ts');
-    const { awaitPendingVolunteerEventWrites, _resetPendingVolunteerEventWritesForTests } =
+    const { awaitPendingVolunteerEventWrites } =
       await import('../src/core/context/volunteer-events.ts');
-    _resetPendingVolunteerEventWritesForTests();
     await engine.executeRaw('DELETE FROM context_volunteer_events').catch(() => {});
     await seed('people/alice-example', 'Alice Example', 'A founder.');
 
@@ -350,13 +349,13 @@ describe('serve IPC wiring — suppression passthrough + reflex-channel logging 
   test('the IPC round-trip honors slug-only suppression and logs channel=reflex', async () => {
     const { startResolveIpcServer, resolveViaIpc, resolveSocketPath, IPC_UNAVAILABLE } =
       await import('../src/core/context/resolve-ipc.ts');
-    const { awaitPendingVolunteerEventWrites, _resetPendingVolunteerEventWritesForTests } =
+    const { awaitPendingVolunteerEventWrites } =
       await import('../src/core/context/volunteer-events.ts');
     const { mkdtempSync, rmSync } = await import('fs');
     const { join } = await import('path');
     const { tmpdir } = await import('os');
 
-    _resetPendingVolunteerEventWritesForTests();
+
     await engine.executeRaw('DELETE FROM context_volunteer_events').catch(() => {});
     await seed('people/alice-example', 'Alice Example', 'A founder.');
 

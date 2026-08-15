@@ -155,10 +155,9 @@ describe('runThink (with stub client)', () => {
         content: [{
           type: 'text',
           text: JSON.stringify({
-            answer: 'Alice [people/alice-example#1] is the CEO of Acme. Garry has a take that she is a strong technical founder [people/alice-example#2].',
+            answer: 'Garry has a take that Alice is a strong technical founder [people/alice-example#2].',
             citations: [
-              { page_slug: 'people/alice-example', row_num: 1, citation_index: 1 },
-              { page_slug: 'people/alice-example', row_num: 2, citation_index: 2 },
+              { page_slug: 'people/alice-example', row_num: 2, citation_index: 1 },
             ],
             gaps: ['no info on funding history'],
           }),
@@ -171,8 +170,8 @@ describe('runThink (with stub client)', () => {
       client: stubClient,
     });
 
-    expect(result.answer).toContain('CEO of Acme');
-    expect(result.citations).toHaveLength(2);
+    expect(result.answer).toContain('strong technical founder');
+    expect(result.citations).toHaveLength(1);
     expect(result.citations[0].page_slug).toBe('people/alice-example');
     expect(result.gaps).toEqual(['no info on funding history']);
     expect(result.takesGathered).toBeGreaterThan(0);
@@ -256,19 +255,142 @@ describe('runThink (with stub client)', () => {
         content: [{
           type: 'text',
           // No JSON wrapper — just inline citations in prose. Tests the fallback path.
-          text: 'Alice [people/alice-example#1] is CEO. Strong [people/alice-example#2].',
+          text: 'Strong [people/alice-example#2].',
         }],
       }),
     };
 
     const result = await runThink(engine, {
-      question: 'malformed test',
+      question: 'technical founder',
       client: stubClient,
     });
 
     expect(result.warnings).toContain('LLM_OUTPUT_NOT_JSON');
-    // Falls back to regex scan of body and finds the inline markers
-    expect(result.citations.length).toBeGreaterThanOrEqual(2);
+    // Falls back to regex scan of body and finds the grounded inline marker
+    expect(result.citations.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('anti-hallucination guard drops unsupported citations and refuses ungrounded answer', async () => {
+    const stubClient: ThinkLLMClient = {
+      create: async () => ({
+        id: 'msg_unsupported',
+        type: 'message',
+        role: 'assistant',
+        model: 'stub',
+        stop_reason: 'end_turn',
+        stop_sequence: null,
+        usage: { input_tokens: 10, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: null, service_tier: null },
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            answer: 'Bob is secretly the CEO [people/bob-example#9].',
+            citations: [{ page_slug: 'people/bob-example', row_num: 9, citation_index: 1 }],
+            gaps: [],
+          }),
+        }],
+      }),
+    };
+
+    const result = await runThink(engine, {
+      question: 'technical founder',
+      client: stubClient,
+    });
+
+    expect(result.citations).toHaveLength(0);
+    expect(result.answer).toContain('Not found in the current brain evidence');
+    expect(result.warnings).toContain('DROPPED_1_UNSUPPORTED_CITATIONS');
+    expect(result.warnings).toContain('NO_GROUNDED_CITATIONS');
+  });
+
+  test('anti-hallucination guard refuses mixed grounded and unsupported citations', async () => {
+    const stubClient: ThinkLLMClient = {
+      create: async () => ({
+        id: 'msg_mixed_unsupported',
+        type: 'message',
+        role: 'assistant',
+        model: 'stub',
+        stop_reason: 'end_turn',
+        stop_sequence: null,
+        usage: { input_tokens: 10, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: null, service_tier: null },
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            answer: 'Alice is a strong technical founder [people/alice-example#2]. Bob is secretly the CEO [people/bob-example#9].',
+            citations: [
+              { page_slug: 'people/alice-example', row_num: 2, citation_index: 1 },
+              { page_slug: 'people/bob-example', row_num: 9, citation_index: 2 },
+            ],
+            gaps: [],
+          }),
+        }],
+      }),
+    };
+
+    const result = await runThink(engine, { question: 'technical founder', client: stubClient });
+
+    expect(result.citations).toHaveLength(0);
+    expect(result.answer).not.toContain('Bob is secretly the CEO');
+    expect(result.answer).toContain('Not found in the current brain evidence');
+    expect(result.warnings).toContain('DROPPED_1_UNSUPPORTED_CITATIONS');
+    expect(result.warnings).toContain('UNSUPPORTED_CITATIONS_IN_ANSWER');
+  });
+
+  test('anti-hallucination guard validates inline citations even when structured list omits them', async () => {
+    const stubClient: ThinkLLMClient = {
+      create: async () => ({
+        id: 'msg_inline_hidden',
+        type: 'message',
+        role: 'assistant',
+        model: 'stub',
+        stop_reason: 'end_turn',
+        stop_sequence: null,
+        usage: { input_tokens: 10, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: null, service_tier: null },
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            answer: 'Alice is a strong technical founder [people/alice-example#2]. Bob is secretly the CEO [people/bob-example#9].',
+            citations: [{ page_slug: 'people/alice-example', row_num: 2, citation_index: 1 }],
+            gaps: [],
+          }),
+        }],
+      }),
+    };
+
+    const result = await runThink(engine, { question: 'technical founder', client: stubClient });
+
+    expect(result.citations).toHaveLength(0);
+    expect(result.answer).not.toContain('Bob is secretly the CEO');
+    expect(result.warnings).toContain('CITATION_STRUCTURED_INLINE_MISMATCH');
+    expect(result.warnings).toContain('DROPPED_1_UNSUPPORTED_CITATIONS');
+    expect(result.warnings).toContain('UNSUPPORTED_CITATIONS_IN_ANSWER');
+  });
+
+  test('anti-hallucination guard refuses answers without inline grounded citations', async () => {
+    const stubClient: ThinkLLMClient = {
+      create: async () => ({
+        id: 'msg_no_inline',
+        type: 'message',
+        role: 'assistant',
+        model: 'stub',
+        stop_reason: 'end_turn',
+        stop_sequence: null,
+        usage: { input_tokens: 10, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: null, service_tier: null },
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            answer: 'Alice is a strong technical founder.',
+            citations: [{ page_slug: 'people/alice-example', row_num: 2, citation_index: 1 }],
+            gaps: [],
+          }),
+        }],
+      }),
+    };
+
+    const result = await runThink(engine, { question: 'technical founder', client: stubClient });
+
+    expect(result.citations).toHaveLength(0);
+    expect(result.answer).toContain('Not found in the current brain evidence');
+    expect(result.warnings).toContain('NO_INLINE_GROUNDED_CITATIONS');
   });
 
   test('degrades gracefully without ANTHROPIC_API_KEY', async () => {
@@ -322,9 +444,9 @@ describe('runThink (with stub client)', () => {
       }),
     };
 
-    const result = await runThink(engine, { question: 'persist test', client: stubClient });
+    const result = await runThink(engine, { question: 'technical founder', client: stubClient });
     const saved = await persistSynthesis(engine, result);
-    expect(saved.slug).toContain('synthesis/persist-test');
+    expect(saved.slug).toContain('synthesis/technical-founder');
     expect(saved.evidenceInserted).toBe(1);
 
     // Verify the page was written

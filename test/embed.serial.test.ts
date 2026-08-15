@@ -14,6 +14,7 @@ let lastEmbedBatchOpts: unknown = undefined;
 let embedBatchBehavior: ((texts: string[], opts?: unknown) => Promise<Float32Array[]>) | null = null;
 
 mock.module('../src/core/embedding.ts', () => ({
+  getEmbeddingModelName: () => 'text-embedding-3-large',
   embedBatch: async (texts: string[], opts?: unknown) => {
     activeEmbedCalls++;
     totalEmbedCalls++;
@@ -66,6 +67,11 @@ function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
     },
   });
   return engine;
+}
+
+function staleCountOnce(count: number): () => Promise<number> {
+  let calls = 0;
+  return async () => calls++ === 0 ? count : 0;
 }
 
 beforeEach(() => {
@@ -237,7 +243,7 @@ describe('runEmbed --all (parallel)', () => {
     ];
 
     const engine = mockEngine({
-      countStaleChunks: async () => 1,
+      countStaleChunks: staleCountOnce(1),
       listStaleChunks: async () => stale,
       getChunks: async (slug: string) => chunksBySlug.get(slug) || [],
       upsertChunks: async () => {},
@@ -409,7 +415,7 @@ describe('runEmbedCore --dry-run never calls the embedding model', () => {
     ];
 
     const engine = mockEngine({
-      countStaleChunks: async () => 3,
+      countStaleChunks: staleCountOnce(3),
       listStaleChunks: async () => stale,
       getChunks: async (slug: string) => chunksBySlug.get(slug) || [],
       upsertChunks: async () => {},
@@ -480,7 +486,7 @@ describe('runEmbedCore --stale egress fix (SQL-side filter)', () => {
     };
     const upsertCalls: Array<{ slug: string; chunks: any[] }> = [];
     const engine = mockEngine({
-      countStaleChunks: async () => 3,
+      countStaleChunks: staleCountOnce(3),
       listStaleChunks: async () => stale,
       listPages: async () => { listPagesCalled = true; return []; },
       getChunks: async (slug: string) => fullChunks[slug] || [],

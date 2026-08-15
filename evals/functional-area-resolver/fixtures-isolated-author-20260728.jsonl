@@ -1,0 +1,34 @@
+// Frozen isolated-author corpus generated from baseline.md catalog entries only.
+// The author session did not receive candidate variants or prior eval results.
+// 24 positive targets (24 distinct skills) + 6 abstention cases.
+// Raw author output: /root/audit-artifacts/gbrain-consolidation-20260728/blind-author-2026-07-28T18-04-58-358Z.txt
+{"intent":"Remind me what the local time will be in Tokyo in 45 minutes.","expected_skill":"context-now"}
+{"intent":"I need to add a new customer profile file; determine the correct directory and naming convention before creating it.","expected_skill":"repo-architecture"}
+{"intent":"Expand Ada Lovelace's existing page with reliable biographical details and relevant connections.","expected_skill":"enrich"}
+{"intent":"The notes mention @patio11 but never identify the person; resolve that account to a real identity.","expected_skill":"x-handle-enrich"}
+{"intent":"Rate this founder using our standard rubric and explain the evidence behind each component of the rating.","expected_skill":"person-score"}
+{"intent":"An unfamiliar person emailed me out of the blue; identify who they are and why they might be contacting me.","expected_skill":"cold-email-lookup"}
+{"intent":"A startup sent its investor presentation, financial forecast, and document folder; assess the investment opportunity and flag unanswered questions.","expected_skill":"diligence"}
+{"intent":"Several references on this knowledge page lead to missing or incorrect sources; repair them without rewriting the article.","expected_skill":"citation-fixer"}
+{"intent":"Turn this private knowledge-base page into a shareable URL that I can send externally.","expected_skill":"brain-publish"}
+{"intent":"Render this knowledge-base page as a downloadable PDF and send me the resulting file.","expected_skill":"brain-pdf"}
+{"intent":"Read this management article specifically for lessons about reducing executive bottlenecks, then extract a practical playbook.","expected_skill":"strategic-reading"}
+{"intent":"Analyze The Hard Thing About Hard Things in light of my own leadership patterns and tell me where its advice fits or conflicts with how I operate.","expected_skill":"book-mirror"}
+{"intent":"Run a smoke test on our external data feeds and report which sources have exceeded their update SLA.","expected_skill":"freshness-monitor"}
+{"intent":"Draft a blog post in the owner's established writing style about why small teams can outperform large organizations.","expected_skill":"garry-voice"}
+{"intent":"Critique my essay draft for argument strength, clarity, pacing, and weak transitions; do not rewrite it yet.","expected_skill":"essay-review"}
+{"intent":"Search my past ChatGPT chats for the discussion where I designed a founder-reference rubric.","expected_skill":"conversation-history"}
+{"intent":"Mine my old local documents for useful material that never made it into the knowledge base.","expected_skill":"archive-crawler"}
+{"intent":"Do an exhaustive, deep-retrieval analysis of this book, connecting obscure passages to my prior notes and surfacing non-obvious personal patterns.","expected_skill":"book-mirror-extreme"}
+{"intent":"Look through my past schedule and tell me when I last met with Sarah Chen.","expected_skill":"calendar-recall"}
+{"intent":"Prepare me for tomorrow's meeting with Acme's CEO using our history, open questions, and likely negotiation points.","expected_skill":"meeting-prep"}
+{"intent":"Help me prepare for a product-management job interview with likely questions, tailored answers, and a mock interview plan.","expected_skill":"interview-prep"}
+{"intent":"Review tomorrow's schedule for overlapping appointments, impossible travel gaps, and meetings that lack preparation time.","expected_skill":"calendar-check"}
+{"intent":"Monitor UA117 and alert me if its departure time, gate, or arrival estimate changes.","expected_skill":"flight-tracker"}
+{"intent":"Infer which city the owner is currently in from recent travel and calendar evidence, and correct the stored travel state if needed.","expected_skill":"location-inference"}
+{"intent":"Translate this paragraph from Portuguese into English while preserving its informal tone.","expected_skill":null}
+{"intent":"Give me a vegetarian lasagna recipe for six people.","expected_skill":null}
+{"intent":"Explain why the quadratic formula works using a completing-the-square derivation.","expected_skill":null}
+{"intent":"Write a short poem about rain on a greenhouse roof.","expected_skill":null}
+{"intent":"Suggest three opening principles for a beginner learning chess.","expected_skill":null}
+{"intent":"Convert 72 degrees Fahrenheit to Celsius.","expected_skill":null}

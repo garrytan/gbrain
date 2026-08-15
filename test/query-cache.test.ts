@@ -148,6 +148,16 @@ describe('SemanticQueryCache \u2014 store + lookup', () => {
     expect(hit.results).toHaveLength(2);
     expect(hit.results?.[0].slug).toBe('a');
     expect(hit.similarity).toBeGreaterThan(0.99);
+
+    const [stored] = await engine.executeRaw<{ results_type: string; meta_type: string }>(
+      `SELECT jsonb_typeof(results) AS results_type,
+              jsonb_typeof(meta) AS meta_type
+         FROM query_cache
+        WHERE query_text = $1`,
+      ['what is foo'],
+    );
+    expect(stored.results_type).toBe('array');
+    expect(stored.meta_type).toBe('object');
   });
 
   test('similar embedding (cosine > 0.92) is a hit', async () => {

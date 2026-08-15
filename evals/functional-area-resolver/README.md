@@ -29,6 +29,14 @@ clause** on Sonnet (100% vs 41.7% training, lenient).
 - `variants/resolver-of-resolvers.md` — derived mechanically from
   functional-areas by stripping `(dispatcher for: ...)` clauses. The ablation
   case: same structure, no sub-skill visibility. ~10KB.
+- `variants/yaml-compressed.md` — candidate with non-routing overhead
+  stripped. Retains 14 area entries with full dispatcher clauses and adds
+  `reports`, `cron-scheduler`, and `migrate`. 5,398 bytes. Configured-CLI
+  development score: 57/60 strict calls (95.0%).
+- `variants/hierarchical.md` — 2-level area-of-areas: 3 top-level groups
+  (Knowledge, Operations, Communications) → 14 area entries with dispatcher
+  clauses. Tests whether extra hierarchy preserves routing accuracy. 5,485
+  bytes. Configured-CLI development score: 53/60 strict calls (88.3%).
 
 ### Corpora
 
@@ -38,6 +46,9 @@ clause** on Sonnet (100% vs 41.7% training, lenient).
 - `fixtures-held-out.jsonl` — 5 fixtures authored BEFORE the variants and
   not adjusted afterward. Held-out is the canonical claim, but small n means
   it saturates near 100% for most cells.
+- `fixtures-compression-validation.jsonl` — 20 development cases (15 positive,
+  5 abstention). The candidate variants were reviewed against this corpus, so
+  it is regression input, not blind held-out evidence.
 
 ### Scoring
 
@@ -67,8 +78,9 @@ Both matter:
 
 Each run writes one JSONL with:
 - Header row: `{kind:'receipt', model, prompt_template_hash, fixtures_hash,
-  fixtures_held_out_hash, harness_sha, ts, cmd_args}` — binds the run to a
-  specific harness version and inputs so re-runs are auditable.
+  fixtures_held_out_hash, fixtures_held_out_path, harness_sha, ts, cmd_args}`
+  — binds the run to a specific harness version and inputs so re-runs are
+  auditable.
 - One row per (fixture × variant × seed): full row schema in `harness-runner.ts`.
 
 Baseline receipts committed in `baseline-runs/` after the v0.32.3.0
@@ -94,6 +106,120 @@ Held-out corpus (n=5, 3 seeds, LENIENT scoring):
 
 Strict numbers and the per-fixture failure traces are in the receipts.
 
+## Configured-CLI candidate run (2026-07-28)
+
+The two compression candidates were also evaluated through the operator's
+configured Hermes CLI:
+
+- model: `gpt-5.6-sol`;
+- provider: `openai-codex`;
+- 20 non-blind compression-development fixtures;
+- 3 independent repeats per fixture and variant (120 calls);
+- rules and persistent memory injection disabled with `--ignore-rules`;
+- exact-slug scoring, with `none` required for abstention.
+
+| Variant | Strict calls | Positive cases | Abstentions | Per-repeat |
+|---|---:|---:|---:|---|
+| `functional-areas` reference | 42/60 (70.0%) | 28/45 | 14/15 | 14/20, 13/20, 15/20 |
+| `yaml-compressed` | **57/60 (95.0%)** | 42/45 | **15/15** | 18/20, 19/20, 20/20 |
+| `hierarchical` | **53/60 (88.3%)** | 40/45 | 13/15 | 19/20, 17/20, 17/20 |
+
+The receipt contains 120 unique run keys and zero CLI errors. Its input hashes
+match the committed fixture and variant files. It lives outside the repository
+at:
+
+```text
+/root/audit-artifacts/gbrain-consolidation-20260728/resolver-cli-eval-2026-07-28T16-33-00-226Z.jsonl
+sha256 4596afe48eefbda8d6d225ef0dd15c6fbbe10679c66048753d581c095a6b1334
+```
+
+Ten strict-call failures cluster around overlapping same-area choices:
+`cron-scheduler` vs `recurring-jobs`, `concept-synthesis` vs `query`,
+`brain-pdf` vs `pdf-ingest`, plus two hierarchical failures to abstain on a
+generic knowledge-base question. These are real exact-target failures, while
+also showing that some fixture expectations need sharper intent wording.
+
+This run is useful candidate evidence, not a replacement for the canonical
+Anthropic baseline: it uses a different model/CLI, a development corpus
+reviewed while authoring the candidates, and repeated calls rather than a
+provider-controlled seed.
+
+The same configured-CLI protocol was then run against the
+`functional-areas` reference (60 additional calls, zero CLI errors):
+
+```text
+/root/audit-artifacts/gbrain-consolidation-20260728/resolver-cli-eval-2026-07-28T17-50-26-637Z.jsonl
+sha256 88752b150d3f6fcf9d4350d67b55f4c094015eda1555053af59029c47194c023
+```
+
+YAML is +25.0pp and hierarchical +18.3pp over that reference on strict calls.
+This delta is not an unbiased compression estimate: 9/18 reference failures
+are on `cron-scheduler`, `reports`, and `migrate`, three targets added to the
+candidate dispatcher lists after this development corpus was reviewed.
+
+## Isolated-author comparison (2026-07-28)
+
+A separate Hermes session authored a frozen corpus from baseline catalog
+descriptions common to all three variants. It received neither candidate
+content nor prior results. The corpus has 30 cases: 24 distinct positive
+skills and 6 abstentions.
+
+The same configured CLI then scored all three frozen variants over three
+independent repeats (270 calls):
+
+| Variant | Strict calls | Positive | Abstention | Per-repeat |
+|---|---:|---:|---:|---|
+| `functional-areas` | 82/90 (91.1%) | 64/72 | **18/18** | 27/30, 27/30, 28/30 |
+| **`yaml-compressed`** | **83/90 (92.2%)** | **65/72** | **18/18** | 28/30, 28/30, 27/30 |
+| `hierarchical` | 81/90 (90.0%) | 63/72 | **18/18** | 27/30, 27/30, 27/30 |
+
+Paired against the reference, YAML fixes two calls and regresses one;
+hierarchical fixes none and regresses one. These tiny disagreement counts do
+not establish superiority, but YAML passes the predeclared non-inferiority
+gate (no worse than -3pp, abstention no worse), is smallest, and is therefore
+the preferred candidate. No production resolver was changed.
+
+Evidence:
+
+```text
+fixtures-isolated-author-20260728.jsonl
+sha256 6c8205a114409ea385da29ffc4652731278000ffa075e942e9f17b9595b39820
+
+/root/audit-artifacts/gbrain-consolidation-20260728/resolver-cli-eval-2026-07-28T18-07-15-894Z.jsonl
+sha256 e724372dd99d1f4d9e30750246c2a6889a6acaef8e221bef34a6bef2409dad26
+```
+
+This is stronger than the development comparison but not perfectly blind:
+the author and scorer were isolated sessions of the same configured model.
+
+## Independent Kimi K3 validation (2026-07-28)
+
+The frozen isolated-author corpus was then scored with the independently
+configured Hermes route `kimi-coding:k3` (Kimi K3/OpenCode). The authoring
+session used `gpt-5.6-sol`, so this removes the same-model author/scorer
+limitation for the completed comparison.
+
+| Variant | Strict calls | Positive | Abstention | Per-repeat |
+|---|---:|---:|---:|---|
+| `functional-areas` | **85/90 (94.4%)** | 67/72 | **18/18** | 28/30, 29/30, 28/30 |
+| `yaml-compressed` | 83/90 (92.2%) | 65/72 | **18/18** | 27/30, 28/30, 28/30 |
+| `hierarchical` | **incomplete** | — | — | quota exhausted |
+
+YAML is -2.2pp against the reference and therefore passes the predeclared
+-3pp non-inferiority gate, with identical abstention. Paired calls show one
+reference failure fixed by YAML and three reference successes regressed by
+YAML. This supports non-inferiority, not superiority.
+
+Kimi/OpenCode reached its billing-cycle usage limit after 219 successful
+responses. The remaining 51 hierarchical calls returned HTTP 403, so no
+hierarchical score is reported. No fallback model or paid quota upgrade was
+used.
+
+```text
+/root/audit-artifacts/gbrain-consolidation-20260728/resolver-cli-eval-2026-07-28T18-21-27-460Z.jsonl
+sha256 94c074f5af5b266811f537b7cf0898fa6208572d50e6ac631066881557ed9e4c
+```
+
 ## How to reproduce
 
 From the gbrain repo root with `ANTHROPIC_API_KEY` set:
@@ -110,6 +236,12 @@ node harness.mjs --model opus --parallel 3 --yes
 # Cross-model
 node harness.mjs --model sonnet --parallel 3 --yes      # ~$1.00
 node harness.mjs --model haiku --parallel 3 --yes       # ~$0.30
+
+# Compression candidates against the development corpus (240 paid calls)
+node harness.mjs --model haiku \
+  --variants yaml-compressed,hierarchical \
+  --held-out-fixtures fixtures-compression-validation.jsonl \
+  --parallel 3 --yes
 
 # Re-score an existing run without spending more API budget
 node rescore.mjs baseline-runs/2026-05-11-opus-4-7.jsonl
@@ -142,17 +274,23 @@ If you adopt the pattern in your own agent, the SKILL.md guidance applies
 to your harness prompt. Lift the PROMPT_TEMPLATE from this harness or write
 your own instruction explaining the dispatcher list.
 
-## Limitations and v0.33.x follow-ups
+## Limitations and follow-ups
 
-1. Held-out corpus is small (n=5). Saturated at 100% across most cells. Grow
-   to >=20 in v0.33.x.
-2. Single vendor (Anthropic). Cross-vendor (Gemini, GPT) is v0.33.x.
+1. Held-out corpus is small (n=5). The separate 20-case compression corpus is
+   non-blind development data and does not close this limitation.
+2. Single vendor (Anthropic). Cross-vendor (Gemini, GPT) is pending (~$3).
 3. No description-length sweep yet. Anthropic Agent Skills median is ~80
    tokens of frontmatter; we haven't measured the per-row description length
-   sweet spot. v0.33.x.
+   sweet spot.
 4. Same-author training corpus + variants. Held-out mitigates partially.
-5. No adversarial fixtures (e.g., "I want to do something brain-related"
-   without specifying what). v0.33.x.
+5. Five vague-intent abstention cases exist in the compression development
+   corpus, but independent blind adversarial fixtures are still pending.
+6. **Compression follow-up:** configured-CLI development evidence now compares
+   the reference (70.0%), YAML (95.0%), and hierarchical (88.3%). The
+   unsupported prior `20/20` statement remains withdrawn; the observed gains
+   are partly contaminated by corpus-driven dispatcher additions. Blind and
+   canonical-harness confirmation is still pending. See
+   `compression-followup-2026-07-24.md`.
 
 See `TODOS.md` for the full list.
 
@@ -172,15 +310,20 @@ hierarchy into a single-LLM-pass dispatcher list.
 ```
 evals/functional-area-resolver/
 ├── README.md                                       # this file
+├── compression-followup-2026-07-24.md              # candidates, evidence limits, validation command
 ├── fixtures.jsonl                                  # 20 training fixtures
-├── fixtures-held-out.jsonl                         # 5 held-out blind fixtures
+├── fixtures-held-out.jsonl                         # 5 historical held-out fixtures
+├── fixtures-compression-validation.jsonl           # 20 non-blind development fixtures
+├── fixtures-isolated-author-20260728.jsonl          # 30 frozen isolated-author fixtures
 ├── variants/
 │   ├── baseline.md                                 # 25KB, PII-scrubbed from production
 │   ├── functional-areas.md                         # 13KB, PII-scrubbed from production
-│   └── resolver-of-resolvers.md                    # 10KB, derived ablation
+│   ├── resolver-of-resolvers.md                    # 10KB, derived ablation
+│   ├── yaml-compressed.md                          # 5,398-byte unmeasured candidate
+│   └── hierarchical.md                             # 5,485-byte unmeasured candidate
 ├── harness.mjs                                     # thin Node CLI shim
 ├── harness-runner.ts                               # TS runner via gbrain gateway
-├── harness-runner.test.ts                          # 45 unit tests (no API key)
+├── harness-runner.test.ts                          # unit tests (no API key)
 ├── rescore.mjs                                     # zero-cost lenient re-score
 └── baseline-runs/
     ├── 2026-05-11-opus-4-7.jsonl                   # 225-row Opus baseline

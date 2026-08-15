@@ -1,0 +1,308 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gbrain.example/schemas/coe/v1/verification_run.schema.json",
+  "title": "CoE Lite v1 verification_run",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "verification_run_id": {
+      "$ref": "#/$defs/__schema1"
+    },
+    "claim_id": {
+      "$ref": "#/$defs/__schema2"
+    },
+    "verifier_type": {
+      "$ref": "#/$defs/__schema3"
+    },
+    "method": {
+      "$ref": "#/$defs/__schema4"
+    },
+    "policy_id": {
+      "$ref": "#/$defs/__schema5"
+    },
+    "policy_version": {
+      "$ref": "#/$defs/__schema6"
+    },
+    "status": {
+      "$ref": "#/$defs/__schema7"
+    },
+    "input_hash": {
+      "$ref": "#/$defs/__schema8"
+    },
+    "output_hash": {
+      "$ref": "#/$defs/__schema8"
+    },
+    "command": {
+      "$ref": "#/$defs/__schema9"
+    },
+    "model": {
+      "$ref": "#/$defs/__schema10"
+    },
+    "reviewer": {
+      "$ref": "#/$defs/__schema11"
+    },
+    "metrics": {
+      "$ref": "#/$defs/__schema12"
+    },
+    "findings": {
+      "$ref": "#/$defs/__schema13"
+    },
+    "scope": {
+      "$ref": "#/$defs/__schema14"
+    },
+    "started_at": {
+      "$ref": "#/$defs/__schema19"
+    },
+    "finished_at": {
+      "$ref": "#/$defs/__schema19"
+    }
+  },
+  "required": [
+    "schema_version",
+    "verification_run_id",
+    "claim_id",
+    "verifier_type",
+    "method",
+    "policy_id",
+    "policy_version",
+    "status",
+    "input_hash",
+    "output_hash",
+    "metrics",
+    "findings",
+    "scope",
+    "started_at",
+    "finished_at"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "__schema1": {
+      "type": "string",
+      "pattern": "^vrf_[0-9a-f]{64}$"
+    },
+    "__schema2": {
+      "type": "string",
+      "pattern": "^clm_[0-9a-f]{64}$"
+    },
+    "__schema3": {
+      "type": "string",
+      "enum": [
+        "numeric_recompute",
+        "bibliographic",
+        "source_alignment",
+        "table",
+        "code",
+        "consistency",
+        "human_review",
+        "llm_judge"
+      ]
+    },
+    "__schema4": {
+      "type": "string",
+      "enum": [
+        "deterministic",
+        "manual",
+        "llm",
+        "hybrid"
+      ]
+    },
+    "__schema5": {
+      "type": "string",
+      "pattern": "^pol_[0-9a-f]{64}$"
+    },
+    "__schema6": {
+      "type": "string",
+      "minLength": 1
+    },
+    "__schema7": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "fail",
+        "inconclusive",
+        "error"
+      ]
+    },
+    "__schema8": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "__schema9": {
+      "$ref": "#/$defs/__schema6"
+    },
+    "__schema10": {
+      "type": "object",
+      "properties": {
+        "provider_id": {
+          "$ref": "#/$defs/__schema6"
+        },
+        "model_id": {
+          "$ref": "#/$defs/__schema6"
+        },
+        "prompt_template_id": {
+          "$ref": "#/$defs/__schema6"
+        },
+        "prompt_hash": {
+          "$ref": "#/$defs/__schema8"
+        },
+        "response_hash": {
+          "$ref": "#/$defs/__schema8"
+        }
+      },
+      "required": [
+        "provider_id",
+        "model_id",
+        "prompt_template_id",
+        "prompt_hash",
+        "response_hash"
+      ],
+      "additionalProperties": false
+    },
+    "__schema11": {
+      "type": "object",
+      "properties": {
+        "actor_type": {
+          "type": "string",
+          "enum": [
+            "human",
+            "service",
+            "system",
+            "llm"
+          ]
+        },
+        "actor_id": {
+          "$ref": "#/$defs/__schema6"
+        }
+      },
+      "required": [
+        "actor_type",
+        "actor_id"
+      ],
+      "additionalProperties": false
+    },
+    "__schema12": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "$ref": "#/$defs/__schema6"
+          },
+          "value": {
+            "type": "string",
+            "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"
+          },
+          "unit": {
+            "$ref": "#/$defs/__schema6"
+          }
+        },
+        "required": [
+          "name",
+          "value"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "__schema13": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "$ref": "#/$defs/__schema6"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "info",
+              "warning",
+              "error",
+              "blocking"
+            ]
+          },
+          "message": {
+            "$ref": "#/$defs/__schema6"
+          },
+          "evidence_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^evd_[0-9a-f]{64}$"
+            }
+          }
+        },
+        "required": [
+          "code",
+          "severity",
+          "message",
+          "evidence_ids"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "__schema14": {
+      "type": "object",
+      "properties": {
+        "brain_id": {
+          "$ref": "#/$defs/__schema6"
+        },
+        "visibility": {
+          "$ref": "#/$defs/__schema15"
+        },
+        "owner_principal": {
+          "$ref": "#/$defs/__schema6"
+        },
+        "reader_principals": {
+          "$ref": "#/$defs/__schema16"
+        },
+        "source_ids": {
+          "$ref": "#/$defs/__schema17"
+        }
+      },
+      "required": [
+        "brain_id",
+        "visibility",
+        "owner_principal",
+        "reader_principals",
+        "source_ids"
+      ],
+      "additionalProperties": false
+    },
+    "__schema15": {
+      "type": "string",
+      "enum": [
+        "private",
+        "workspace",
+        "public"
+      ]
+    },
+    "__schema16": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema6"
+      }
+    },
+    "__schema17": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema18"
+      }
+    },
+    "__schema18": {
+      "type": "string",
+      "pattern": "^src_[0-9a-f]{64}$"
+    },
+    "__schema19": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+    }
+  }
+}

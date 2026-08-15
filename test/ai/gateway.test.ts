@@ -132,6 +132,16 @@ describe('gateway.isAvailable (silent-drop regression surface)', () => {
     expect(isAvailable('embedding')).toBe(true);
   });
 
+  test('embedding AVAILABLE for user-provided LiteLLM models (Qwen/OpenRouter)', () => {
+    configureGateway({
+      embedding_model: 'litellm:qwen/qwen3-embedding-8b',
+      embedding_dimensions: 4096,
+      base_urls: { litellm: 'https://openrouter.ai/api/v1' },
+      env: { LITELLM_API_KEY: 'sk-fake' },
+    });
+    expect(isAvailable('embedding')).toBe(true);
+  });
+
   test('anthropic rejects embedding touchpoint (has no embedding model)', () => {
     configureGateway({
       embedding_model: 'anthropic:claude-haiku-4-5-20251001',

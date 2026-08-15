@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
-import { join } from 'path';
-import { tmpdir } from 'os';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { dirname, join, resolve } from 'path';
+import { homedir, tmpdir } from 'os';
 import { spawnSync } from 'child_process';
 
 const fence = '---';
@@ -13,6 +13,16 @@ function runValidate(path: string): { stdout: string; code: number } {
     env: process.env,
   });
   return { stdout: r.stdout ?? '', code: r.status ?? -1 };
+}
+
+function hasGitAncestor(path: string): boolean {
+  let candidate = resolve(path);
+  while (true) {
+    if (existsSync(join(candidate, '.git'))) return true;
+    const parent = dirname(candidate);
+    if (parent === candidate) return false;
+    candidate = parent;
+  }
 }
 
 // Regression for #565. Single-file `frontmatter validate` derived the expected
@@ -55,11 +65,21 @@ describe('frontmatter validate single-file slug (#565)', () => {
   });
 
   test('file with no .git ancestor falls back to basename (no crash, no abs-path slug)', () => {
-    rmSync(join(brain, '.git'), { recursive: true, force: true });
-    const f = join(brain, 'note.md');
-    writeFileSync(f, `${fence}\ntype: note\ntitle: Note\nslug: note\n${fence}\n\nbody`);
-    const { stdout, code } = runValidate(f);
-    expect(stdout).not.toContain('SLUG_MISMATCH');
-    expect(code).toBe(0);
+    // Common temporary roots may themselves be Git worktrees on developer
+    // machines. Select a writable fixture root whose ancestor chain is
+    // genuinely marker-free, otherwise the premise of this test is false.
+    const fixtureRoot = [tmpdir(), homedir(), '/dev/shm', '/var/tmp']
+      .find(candidate => existsSync(candidate) && !hasGitAncestor(candidate));
+    expect(fixtureRoot).toBeDefined();
+    const noGitBrain = mkdtempSync(join(fixtureRoot!, 'fm-565-no-git-'));
+    try {
+      const f = join(noGitBrain, 'note.md');
+      writeFileSync(f, `${fence}\ntype: note\ntitle: Note\nslug: note\n${fence}\n\nbody`);
+      const { stdout, code } = runValidate(f);
+      expect(stdout).not.toContain('SLUG_MISMATCH');
+      expect(code).toBe(0);
+    } finally {
+      rmSync(noGitBrain, { recursive: true, force: true });
+    }
   });
 });

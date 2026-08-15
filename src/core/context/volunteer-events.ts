@@ -20,7 +20,7 @@
 
 import type { BrainEngine } from './../engine.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
-import { reflexPointerRationale } from './retrieval-reflex.ts';
+import { reflexPointerRationale } from './reflex-rationale.ts';
 
 export const VOLUNTEER_EVENTS_TTL_DAYS = 90;
 

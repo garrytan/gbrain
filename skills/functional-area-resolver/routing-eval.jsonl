@@ -21,3 +21,15 @@
 {"intent":"Create a skill that compacts a routing file using AI","expected_skill":"skill-creator","ambiguous_with":["functional-area-resolver"]}
 {"intent":"Personalized version of this book about resolver and dispatcher design","expected_skill":"book-mirror","ambiguous_with":["functional-area-resolver"]}
 {"intent":"Synthesize my concepts about how routing files grow over time","expected_skill":"concept-synthesis","ambiguous_with":["functional-area-resolver"]}
+// Adversarial-intent fixtures (v0.35): vague intents with no actionable
+// specifics should abstain unless they still match an explicit live trigger.
+{"intent":"I want to do something brain-related but I'm not sure what","expected_skill":null}
+{"intent":"Tell me about my knowledge base","expected_skill":"query"}
+{"intent":"Do the thing we usually do on Mondays","expected_skill":null}
+{"intent":"Make my setup better","expected_skill":null}
+{"intent":"I need help with something work-related","expected_skill":null}
+{"intent":"Can you do something useful with my notes","expected_skill":null}
+{"intent":"I have a vague idea about organizing things","expected_skill":null}
+{"intent":"What should I work on next","expected_skill":null}
+{"intent":"Help me be more productive","expected_skill":null}
+{"intent":"Do whatever you think is best for my workflow","expected_skill":null}

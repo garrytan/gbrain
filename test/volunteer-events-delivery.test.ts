@@ -4,12 +4,11 @@
  * the isVolunteerChannel runtime guard. Hermetic: stub engine captures the
  * multi-row INSERT; the fire-and-forget sink is drained per test.
  */
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { describe, test, expect } from 'bun:test';
 import {
   isVolunteerChannel,
   logTurnContextDeliveryFireAndForget,
   awaitPendingVolunteerEventWrites,
-  _resetPendingVolunteerEventWritesForTests,
 } from '../src/core/context/volunteer-events.ts';
 import { logDeliveredReflexPointers, type ReflexPointer } from '../src/core/context/retrieval-reflex.ts';
 import type { VolunteeredPage } from '../src/core/context/volunteer.ts';
@@ -34,10 +33,6 @@ const PAGE: VolunteeredPage = {
 const POINTER: ReflexPointer = {
   display: 'Alice', slug: 'people/alice', source_id: 'default', synopsis: 'x', arm: 'alias', confidence: 0.9,
 };
-
-beforeEach(() => {
-  _resetPendingVolunteerEventWritesForTests();
-});
 
 describe('isVolunteerChannel', () => {
   test('accepts exactly the five known channels; rejects everything else', () => {
@@ -76,7 +71,6 @@ describe('logTurnContextDeliveryFireAndForget — the shipped serve wiring', () 
     expect(captured[0].params).toContain('claude-code');
 
     captured.length = 0;
-    _resetPendingVolunteerEventWritesForTests();
     logTurnContextDeliveryFireAndForget(stubEngine(captured), { volunteered: [PAGE] }, { channel: 'not-a-channel' });
     await awaitPendingVolunteerEventWrites(2000);
     expect(captured[0].params).toContain('claude-code');

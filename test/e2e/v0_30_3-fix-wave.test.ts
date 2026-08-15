@@ -28,6 +28,11 @@ import { describe, test, expect } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { LATEST_VERSION } from '../../src/core/migrate.ts';
 
+// These cases deliberately rewind and re-run initSchema. The CI snapshot marks
+// an engine as already initialized, so leaving it enabled would make the second
+// initSchema call return early and invalidate the upgrade-path scenarios.
+delete process.env.GBRAIN_PGLITE_SNAPSHOT;
+
 describe('v0.30.3 wave — pre-v39/v40/v41 forward-reference bootstrap (#741)', () => {
   test('pre-v39 brain (missing modality + embedding_image) re-runs initSchema cleanly', async () => {
     const engine = new PGLiteEngine();

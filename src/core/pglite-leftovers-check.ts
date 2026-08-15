@@ -85,6 +85,18 @@ function walkSize(root: string, budget: { entries: number }): { bytes: number; i
   const stack: string[] = [root];
   while (stack.length > 0) {
     const dir = stack.pop() as string;
+    try {
+      // Root can bypass mode checks. Honor an explicitly unreadable directory
+      // so doctor never reports a false exact byte count in privileged CI or
+      // operator sessions.
+      if ((lstatSync(dir).mode & 0o444) === 0) {
+        incomplete = true;
+        continue;
+      }
+    } catch {
+      incomplete = true;
+      continue;
+    }
     let handle: ReturnType<typeof opendirSync>;
     try {
       handle = opendirSync(dir);
