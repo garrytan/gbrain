@@ -20,7 +20,7 @@
  */
 
 import { realpathSync, existsSync, type Stats } from 'fs';
-import { resolve as resolvePath, relative, isAbsolute, dirname, basename, join } from 'path';
+import { resolve as resolvePath, relative, isAbsolute, dirname, basename, join, sep } from 'path';
 
 /**
  * Symlink-safe path confinement: realpath BOTH sides, then a separator-aware
@@ -41,9 +41,13 @@ export function isPathContained(child: string, parent: string): boolean {
   } catch {
     return false; // missing / unresolvable path → not contained
   }
-  // Append a separator so /foo doesn't match /foobar.
-  const parentWithSep = resolvedParent.endsWith('/') ? resolvedParent : resolvedParent + '/';
-  return resolvedChild === resolvedParent || resolvedChild.startsWith(parentWithSep);
+  // Platform-aware containment via path.relative (not string prefix): a bare
+  // `startsWith(parent + '/')` hardcodes the POSIX separator, so on Windows
+  // (realpath returns `C:\...`) every child failed the check and the boundary
+  // rejected legitimate paths. `relative()` also handles case-insensitive
+  // drive letters and keeps /foo from matching /foobar.
+  const rel = relative(resolvedParent, resolvedChild);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
 /**
