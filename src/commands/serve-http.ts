@@ -2234,13 +2234,12 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // legacy bearer tokens with no operator source grant (oauth-provider);
       // granted tokens and OAuth clients never widen. Best-effort: a resolver
       // failure keeps the scalar scope.
-      let localFederated: string[] | undefined;
-      if (authInfo.hasSourceGrant === false && tokenSourceId) {
-        try {
-          const { localFederatedSourceIds } = await import('../core/source-resolver.ts');
-          localFederated = await localFederatedSourceIds(engine, tokenSourceId, 'seed_default');
-        } catch { /* scalar scope stands */ }
-      }
+      const { noGrantFederatedScope } = await import('../core/source-resolver.ts');
+      const localFederated = await noGrantFederatedScope(
+        engine,
+        authInfo.hasSourceGrant,
+        tokenSourceId,
+      );
 
       let toolResult: Awaited<ReturnType<typeof dispatchToolCall>>;
       try {

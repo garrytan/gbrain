@@ -425,6 +425,35 @@ export async function resolveSourceWithTier(
  * brains. Callers put the result on `OperationContext.localFederatedSourceIds`
  * — consumed only by `federatedSearchScope` and only when `remote === false`.
  */
+/**
+ * #3242 parity: the widening set a TRANSPORT should attach for a caller that
+ * carries no operator source grant, or `undefined` when the caller must keep
+ * its scalar scope.
+ *
+ * The gate is deliberately `hasSourceGrant === false` rather than falsy.
+ * `false` is set only for a legacy bearer token whose
+ * `access_tokens.permissions.source_id` is absent — the historical no-grant
+ * floor. `true` is an operator-set scope and `undefined` is an OAuth client,
+ * and neither may widen, so a falsy check would hand OAuth clients the
+ * federated set.
+ *
+ * Resolution is best-effort by design: a source table that cannot be read
+ * leaves the scalar scope standing rather than failing the request, matching
+ * the surrounding transport behaviour.
+ */
+export async function noGrantFederatedScope(
+  engine: BrainEngine,
+  hasSourceGrant: boolean | undefined,
+  sourceId: string | undefined,
+): Promise<string[] | undefined> {
+  if (hasSourceGrant !== false || !sourceId) return undefined;
+  try {
+    return await localFederatedSourceIds(engine, sourceId, 'seed_default');
+  } catch {
+    return undefined;
+  }
+}
+
 export async function localFederatedSourceIds(
   engine: BrainEngine,
   sourceId: string,
