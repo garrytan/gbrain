@@ -115,6 +115,55 @@ export function resolvePoolSize(explicit?: number): number {
   return DEFAULT_POOL_SIZE_FALLBACK;
 }
 
+let warnedBadMaxLifetime = false;
+/** Test-only: reset the warn-once latch. */
+export function _resetMaxLifetimeWarningForTests(): void {
+  warnedBadMaxLifetime = false;
+}
+
+/**
+ * Client-pool connection max lifetime for every postgres() call site
+ * (module singleton, engine instance pool, ConnectionManager read + direct
+ * pools).
+ *
+ * postgres.js already defaults to `60 * (30 + Math.random() * 30)` — and
+ * critically that built-in default is a FUNCTION, re-evaluated PER
+ * CONNECTION (connection.js: `typeof seconds === 'function' ? seconds() :
+ * seconds`), so each connection gets its own 30–60min deadline. A
+ * pre-evaluated number would make every connection in a pool share ONE
+ * recycle deadline — a warm-up burst then reconnects simultaneously
+ * (data-migration specialist finding). The default here is therefore the
+ * same per-connection jitter function; only the env override returns a
+ * fixed number (the explicit escape hatch):
+ *
+ *   GBRAIN_POOL_MAX_LIFETIME_S=900   # recycle after 15 min
+ *   GBRAIN_POOL_MAX_LIFETIME_S=0     # disable recycling entirely
+ *
+ * max_lifetime only recycles connections as they are RETURNED to the pool;
+ * it cannot reclaim a leaked checkout — this is explicitness + a knob, not
+ * a starvation fix. Invalid values warn once on stderr and fall back to the
+ * default. The env param is injectable so tests never mutate process.env.
+ */
+export function resolveMaxLifetimeSeconds(
+  env: Record<string, string | undefined> = process.env,
+): number | null | (() => number) {
+  const raw = env.GBRAIN_POOL_MAX_LIFETIME_S;
+  if (raw !== undefined && raw !== '') {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && Number.isInteger(parsed) && parsed >= 0) {
+      return parsed === 0 ? null : parsed;
+    }
+    if (!warnedBadMaxLifetime) {
+      warnedBadMaxLifetime = true;
+      process.stderr.write(
+        `[gbrain] Ignoring invalid GBRAIN_POOL_MAX_LIFETIME_S=${JSON.stringify(raw)} (want a non-negative integer of seconds; 0 disables); using the jittered 30-60min default\n`,
+      );
+    }
+  }
+  // Per-connection jitter, matching the postgres.js built-in default shape.
+  return () => Math.floor(60 * (30 + Math.random() * 30));
+}
+
 /**
  * Session-level GUCs applied to every new backend connection. Prevents
  * orphan pgbouncer sessions from holding locks or running queries
@@ -240,6 +289,8 @@ export async function connect(config: EngineConfig): Promise<boolean> {
       max: resolvePoolSize(),
       idle_timeout: 20,
       connect_timeout: 10,
+      // Explicit (matches the postgres.js implicit default; GBRAIN_POOL_MAX_LIFETIME_S overrides).
+      max_lifetime: resolveMaxLifetimeSeconds(),
       types: {
         // Register pgvector type
         bigint: postgres.BigInt,

@@ -218,6 +218,16 @@ export interface MinionWorkerOpts {
    *  hung probe would wedge the recursive setTimeout chain forever and
    *  silently disable the health monitor. Default: 10000 (10 seconds). */
   dbProbeTimeoutMs?: number;
+  /** issue #5: 'process' runs each claimed job in a SIGKILL-able child
+   *  process (blast radius = 1 job). Default 'inline' (today's behavior).
+   *  Requires childCliInvocation; the CLI layer resolves + validates it. */
+  jobIsolation?: 'inline' | 'process';
+  /** How to invoke the gbrain CLI for job children (resolved fail-fast at
+   *  worker startup by the CLI layer; structurally ChildCliInvocation from
+   *  job-isolation.ts — kept inline here to avoid an import cycle). */
+  childCliInvocation?: { cmd: string; argsPrefix: string[] } | null;
+  /** tini path for wrapping job children ('' = absent, direct spawn). */
+  childTiniPath?: string;
 }
 
 // --- Job Context (passed to handlers) ---
@@ -371,6 +381,20 @@ export type TranscriptEntry =
   | { type: 'tool_call'; tool: string; args_size: number; result_size: number; ts: string }
   | { type: 'llm_turn'; model: string; tokens_in: number; tokens_out: number; ts: string }
   | { type: 'error'; message: string; stack?: string; ts: string };
+
+// --- Abort-reason literals (single source of truth) ---
+//
+// Per-job abort sites construct `new Error(REASON)`; classification sites
+// (worker.ts INFRASTRUCTURE_ABORT_REASONS, child-job-runner.ts
+// PER_JOB_ABORT_REASONS) match on the message. Deriving both sets from these
+// constants keeps a rename at an abort site from silently flipping child
+// classification (maintainability review).
+
+/** Infrastructure faults: released, no attempt burned; stall sweeper requeues. */
+export const ABORT_REASON_LOCK_RENEWAL_FAILED = 'lock-renewal-failed';
+export const ABORT_REASON_LOCK_LOST = 'lock-lost';
+/** Job-targeted aborts: keep their existing attempt semantics. */
+export const ABORT_REASON_TIMEOUT = 'timeout';
 
 // --- Errors ---
 

@@ -569,3 +569,50 @@ describe('runLockRenewalTick: reconnect-once dep (issue #1678)', () => {
     expect(reconnectCalls).toBe(0); // pointless to reconnect when we're giving up the lock
   });
 });
+
+describe('runLockRenewalTick: per-call cancellation signal (issue #6)', () => {
+  test('renewLock receives a live AbortSignal; not aborted on the happy path', async () => {
+    const audit = freshAudit();
+    const timer = makeFakeTimer();
+    let seenSignal: AbortSignal | undefined;
+    const deps: LockRenewalDeps = {
+      renewLock: async (_id, _tok, _dur, opts) => {
+        seenSignal = opts?.signal;
+        return true;
+      },
+      audit: audit.sink,
+      now: () => 1000,
+      setTimeout: timer.setTimeout,
+    };
+    const result = await runLockRenewalTick(deps, makeState());
+    expect(result.kind).toBe('ok');
+    expect(seenSignal).toBeInstanceOf(AbortSignal);
+    expect(seenSignal!.aborted).toBe(false);
+  });
+
+  test('hung renewLock: the timeout aborts the per-call signal so the query is cancelled, not orphaned', async () => {
+    const audit = freshAudit();
+    const timer = makeFakeTimer();
+    let seenSignal: AbortSignal | undefined;
+    const deps: LockRenewalDeps = {
+      renewLock: (_id, _tok, _dur, opts) => {
+        seenSignal = opts?.signal;
+        return new Promise<boolean>(() => { /* hangs forever — abandoned racer */ });
+      },
+      audit: audit.sink,
+      now: () => 1000,
+      setTimeout: timer.setTimeout,
+    };
+    // Renewed recently: the timeout counts as failure #1, not a give-up.
+    const state = makeState({ lastSuccessfulRenewalAt: 1000 });
+    const tick = runLockRenewalTick(deps, state);
+    // The race installs the timeout synchronously; firing it must abort the
+    // per-call signal (this is what releases the checked-out pool slot).
+    timer.runAll();
+    const result = await tick;
+    expect(result.kind).toBe('ok'); // counter bumped, deadline not yet crossed
+    expect(state.consecutiveFailures).toBe(1);
+    expect(seenSignal).toBeInstanceOf(AbortSignal);
+    expect(seenSignal!.aborted).toBe(true);
+  });
+});
