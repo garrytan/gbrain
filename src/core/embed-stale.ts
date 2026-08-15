@@ -18,11 +18,43 @@
  */
 
 import type { BrainEngine } from './engine.ts';
-import type { ChunkInput } from './types.ts';
+import type { Chunk, ChunkInput } from './types.ts';
 import { embedBatchWithBackoff, restampIfDemotedToTitleTier } from '../commands/embed.ts';
 import { wrapChunkTextsForStoredMode } from './embedding-context.ts';
 import { type DbPacer, createNoopPacer, observed } from './db-pacer.ts';
 import { AbortError } from './abort-check.ts';
+
+/**
+ * W0 fix-wave (Tier-1 #3, CONFIRMED): the ONE carry-through field list for
+ * re-embed upserts. upsertChunks writes these columns as EXCLUDED.<col>
+ * (overwrite, not COALESCE), so any re-embed path that omits a field resets
+ * it — omitting `modality` flipped every image chunk to modality='text',
+ * silently zeroing the image search arm (filter `cc.modality = 'image'`).
+ * Pre-fix this list existed twice: here (correct, with modality) and in
+ * commands/embed.ts preserveCodeMetadata (missing modality — the bug). Both
+ * consumers now share THIS list; embedding_image is deliberately NOT carried
+ * (the upsert COALESCEs it, and getChunks returns the pgvector as a string
+ * which upsertChunks would mis-serialize).
+ */
+export function carryChunkMetadata(
+  loaded: Pick<Partial<Chunk>,
+    'modality' | 'language' | 'symbol_name' | 'symbol_type' | 'start_line'
+    | 'end_line' | 'parent_symbol_path' | 'doc_comment' | 'symbol_name_qualified'>,
+  base: ChunkInput,
+): ChunkInput {
+  return {
+    ...base,
+    modality: loaded.modality ?? undefined,
+    language: loaded.language ?? undefined,
+    symbol_name: loaded.symbol_name ?? undefined,
+    symbol_type: loaded.symbol_type ?? undefined,
+    start_line: loaded.start_line ?? undefined,
+    end_line: loaded.end_line ?? undefined,
+    parent_symbol_path: loaded.parent_symbol_path ?? undefined,
+    doc_comment: loaded.doc_comment ?? undefined,
+    symbol_name_qualified: loaded.symbol_name_qualified ?? undefined,
+  };
+}
 
 /** Last visited (page_id, chunk_index) for keyset-resume across runs. */
 export interface StaleCursor {
@@ -208,28 +240,12 @@ export async function embedStaleForSource(
         for (let j = 0; j < stale.length; j++) {
           staleIdxToEmbedding.set(stale[j].chunk_index, embeddings[j]);
         }
-        const merged: ChunkInput[] = existing.map((c) => ({
+        const merged: ChunkInput[] = existing.map((c) => carryChunkMetadata(c, {
           chunk_index: c.chunk_index,
           chunk_text: c.chunk_text,
           chunk_source: c.chunk_source,
           embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
           token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
-          // Carry through per-chunk metadata. upsertChunks writes these as
-          // EXCLUDED.<col> (not COALESCE), so omitting them here resets image
-          // rows to modality='text' (breaking the image search arm's
-          // modality='image' filter) and wipes code-chunk symbol metadata on
-          // every embed-stale pass. embedding_image is deliberately NOT
-          // carried: the upsert COALESCEs it, and getChunks returns the
-          // pgvector as a string which upsertChunks would mis-serialize.
-          modality: c.modality ?? undefined,
-          language: c.language ?? undefined,
-          symbol_name: c.symbol_name ?? undefined,
-          symbol_type: c.symbol_type ?? undefined,
-          start_line: c.start_line ?? undefined,
-          end_line: c.end_line ?? undefined,
-          parent_symbol_path: c.parent_symbol_path ?? undefined,
-          doc_comment: c.doc_comment ?? undefined,
-          symbol_name_qualified: c.symbol_name_qualified ?? undefined,
         }));
         await observed(pacer, () => engine.upsertChunks(slug, merged, { sourceId: keySourceId }));
         // v0.41.31: stamp provenance only when EVERY chunk was stale (fully

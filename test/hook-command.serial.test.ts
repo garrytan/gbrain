@@ -135,6 +135,103 @@ describe('dispatch', () => {
     expect(await runHook(['--help'], out.io)).toBe(0);
     expect(out.get()).toContain('session-start');
   });
+
+  test('harness lane yields to a workspace bootstrap install: exit 0, no output, no heartbeat (#4043 C6)', async () => {
+    // Claude Code merges user- and project-scope hook settings; a harness
+    // (user-scope) entry plus a workspace bootstrap-v1 entry would fire the
+    // same event twice. The workspace install wins — the harness lane must
+    // yield SILENTLY on every event.
+    process.env.GBRAIN_HOOK_LANE = 'harness';
+    try {
+      const ws = mkdtempSync(join(tmpdir(), 'gb-lane-ws-'));
+      mkdirSync(join(ws, '.claude'), { recursive: true });
+      // A real workspace install wires all five events — the guard is now
+      // PER-EVENT (an event the workspace does not wire must run normally),
+      // so the fixture mirrors the full install.
+      const entry = (sub: string) => [
+        { hooks: [{ type: 'command', command: `env GBRAIN_SOURCE=ws /opt/g hook ${sub}`, _gbrain: 'bootstrap-v1' }] },
+      ];
+      writeFileSync(
+        join(ws, '.claude', 'settings.local.json'),
+        JSON.stringify({
+          hooks: {
+            SessionStart: entry('session-start'),
+            UserPromptSubmit: entry('user-prompt'),
+            Stop: entry('stop'),
+            SessionEnd: entry('session-end'),
+            PreCompact: entry('compact'),
+          },
+        }),
+      );
+      for (const event of ['session-start', 'user-prompt', 'stop', 'session-end', 'compact']) {
+        const out = collectStdout();
+        expect(await runHook([event], { ...out.io, stdin: '{}', cwd: ws })).toBe(0);
+        expect(out.get()).toBe('');
+      }
+      expect(existsSync(join(home(), 'integrations', 'hooks', 'heartbeat.jsonl'))).toBe(false);
+    } finally {
+      delete process.env.GBRAIN_HOOK_LANE;
+    }
+  });
+
+  test('harness lane runs normally when the cwd has no workspace install (fail-open both ways)', async () => {
+    process.env.GBRAIN_HOOK_LANE = 'harness';
+    try {
+      // plain dir: no .claude/settings.local.json at all
+      const plain = mkdtempSync(join(tmpdir(), 'gb-lane-plain-'));
+      const out = collectStdout();
+      // session-start in a plain dir runs the normal handler (exit 0, and it
+      // WRITES a heartbeat — proof the guard did not swallow the event).
+      expect(await runHook(['session-start'], { ...out.io, stdin: '', cwd: plain })).toBe(0);
+      expect(existsSync(join(home(), 'integrations', 'hooks', 'heartbeat.jsonl'))).toBe(true);
+
+      // harness-marker-only settings (its OWN entries) must NOT trigger the
+      // yield — only the workspace bootstrap-v1 marker does.
+      const harnessOnly = mkdtempSync(join(tmpdir(), 'gb-lane-harness-'));
+      mkdirSync(join(harnessOnly, '.claude'), { recursive: true });
+      writeFileSync(
+        join(harnessOnly, '.claude', 'settings.local.json'),
+        JSON.stringify({
+          hooks: {
+            SessionStart: [{ hooks: [{ type: 'command', command: 'env GBRAIN_SOURCE=default /opt/g hook session-start', _gbrain: 'bootstrap-harness-v1' }] }],
+          },
+        }),
+      );
+      const out2 = collectStdout();
+      expect(await runHook(['session-start'], { ...out2.io, stdin: '', cwd: harnessOnly })).toBe(0);
+      // still ran: a fresh heartbeat line was appended for this invocation
+      const hb = readFileSync(join(home(), 'integrations', 'hooks', 'heartbeat.jsonl'), 'utf8').trim().split('\n');
+      expect(hb.length).toBeGreaterThanOrEqual(2);
+    } finally {
+      delete process.env.GBRAIN_HOOK_LANE;
+    }
+  });
+
+  test('harness lane yields to the COMMITTED settings.json carrier too ([D12] — local strips carried events)', async () => {
+    // A D12 workspace can carry its bootstrap-v1 hooks ONLY in the committed
+    // .claude/settings.json (the local writer skips carried events). Checking
+    // settings.local.json alone would double-fire those events against the
+    // user-scope harness wiring.
+    process.env.GBRAIN_HOOK_LANE = 'harness';
+    try {
+      const ws = mkdtempSync(join(tmpdir(), 'gb-lane-committed-'));
+      mkdirSync(join(ws, '.claude'), { recursive: true });
+      writeFileSync(
+        join(ws, '.claude', 'settings.json'),
+        JSON.stringify({
+          hooks: {
+            SessionStart: [{ hooks: [{ type: 'command', command: 'gbrain hook session-start', _gbrain: 'bootstrap-v1' }] }],
+          },
+        }),
+      );
+      const out = collectStdout();
+      expect(await runHook(['session-start'], { ...out.io, stdin: '{}', cwd: ws })).toBe(0);
+      expect(out.get()).toBe('');
+      expect(existsSync(join(home(), 'integrations', 'hooks', 'heartbeat.jsonl'))).toBe(false);
+    } finally {
+      delete process.env.GBRAIN_HOOK_LANE;
+    }
+  });
 });
 
 // ── user-prompt [ENG-1, S3#8, A9] ───────────────────────────────────────────

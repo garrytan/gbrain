@@ -142,14 +142,19 @@ describe('autopilot-cycle handler contract (v0.20.5)', () => {
       'utf8',
     );
 
-    // Count checkAborted calls in the runCycle function body
+    // Count checkAborted calls in the runCycle function body. W0 fix-wave:
+    // boundaries check `cycleSignal` — the combined external-caller +
+    // lock-steal signal — so a stolen lock aborts at the same seams an
+    // external abort always did.
     const runCycleBody = cycleSource.slice(
       cycleSource.indexOf('export async function runCycle'),
     );
-    const checkCalls = (runCycleBody.match(/checkAborted\(opts\.signal\)/g) || []).length;
+    const checkCalls = (runCycleBody.match(/checkAborted\(cycleSignal\)/g) || []).length;
 
     // Should have at least 6 (one per phase)
     expect(checkCalls).toBeGreaterThanOrEqual(6);
+    // And the combined signal must actually fold BOTH sources.
+    expect(runCycleBody).toContain('anyAbortSignal([externalSignal, stolen.signal])');
   });
 });
 
@@ -174,11 +179,12 @@ describe('#1972 — complete cooperative-abort coverage', () => {
     const fs = await import('fs');
     const src = fs.readFileSync(new URL('../src/core/cycle.ts', import.meta.url), 'utf8');
     const body = src.slice(src.indexOf('export async function runCycle'));
-    // Each long phase receives the signal.
-    expect(body).toContain('runPhaseExtract(engine, brainDir, dryRun, syncPagesAffected, opts.signal, cycleSourceId)');
-    expect(body).toMatch(/runPhaseExtractFacts\([^)]*opts\.signal\)/);
-    expect(body).toContain('signal: opts.signal'); // consolidate opts
-    expect(body).toContain('runPhaseLint(brainDir, dryRun, engine, opts.signal)');
+    // Each long phase receives the signal (W0: the combined cycleSignal, so
+    // phases also stop on lock-steal, not just external aborts).
+    expect(body).toContain('runPhaseExtract(engine, brainDir, dryRun, syncPagesAffected, cycleSignal, cycleSourceId)');
+    expect(body).toMatch(/runPhaseExtractFacts\([^)]*cycleSignal\)/);
+    expect(body).toContain('signal: cycleSignal'); // consolidate opts
+    expect(body).toContain('runPhaseLint(brainDir, dryRun, engine, cycleSignal)');
     // Reaper runs at cycle start.
     expect(body).toContain('reapDeadHolderLocks(engine)');
     // Terminal guard: the success stamp is gated on !aborted, and the report

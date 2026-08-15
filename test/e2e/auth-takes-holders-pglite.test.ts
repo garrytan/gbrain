@@ -83,11 +83,13 @@ describe('auth takes-holders + mcp_request_log JSONB on PGLite (v0.31)', () => {
       [{ takes_holders: ['world'] }],
     );
 
-    // The exact shape auth.ts:permissions uses (set-takes-holders).
+    // The exact shape auth.ts:permissions uses (set-takes-holders) — a
+    // MERGE, never a whole-object replace (#4043 grant-wipe fix), with a
+    // jsonb_typeof guard that resets damaged non-object rows.
     const result = await executeRawJsonb(
       engine,
       `UPDATE access_tokens
-          SET permissions = $2::jsonb
+          SET permissions = (CASE WHEN jsonb_typeof(permissions) = 'object' THEN permissions ELSE '{}'::jsonb END) || $2::jsonb
           WHERE name = $1
           RETURNING id`,
       [name],
@@ -101,6 +103,62 @@ describe('auth takes-holders + mcp_request_log JSONB on PGLite (v0.31)', () => {
     `;
     const perms = (rows[0] as { permissions: { takes_holders: string[] } }).permissions;
     expect(perms.takes_holders).toEqual(['world', 'garry', 'brain']);
+  });
+
+  test('set-takes-holders MERGES: the source_id federation grant survives the edit (#4043 grant-wipe fix)', async () => {
+    const sql = sqlQueryForEngine(engine);
+    const name = `tok-merge-${Math.random().toString(36).slice(2, 8)}`;
+    const hash = `hash-${name}`;
+    await executeRawJsonb(
+      engine,
+      `INSERT INTO access_tokens (name, token_hash, permissions)
+       VALUES ($1, $2, $3::jsonb)`,
+      [name, hash],
+      [{ takes_holders: ['world'], source_id: ['wiki', 'essays'] }],
+    );
+    await executeRawJsonb(
+      engine,
+      `UPDATE access_tokens
+          SET permissions = (CASE WHEN jsonb_typeof(permissions) = 'object' THEN permissions ELSE '{}'::jsonb END) || $2::jsonb
+          WHERE name = $1
+          RETURNING id`,
+      [name],
+      [{ takes_holders: ['world', 'garry'] }],
+    );
+    const rows = await sql`SELECT permissions FROM access_tokens WHERE token_hash = ${hash}`;
+    const perms = (rows[0] as { permissions: { takes_holders: string[]; source_id: string[] } }).permissions;
+    expect(perms.takes_holders).toEqual(['world', 'garry']);
+    expect(perms.source_id).toEqual(['wiki', 'essays']); // the grant the old whole-replace silently wiped
+  });
+
+  test('set-takes-holders on a DAMAGED (string-scalar) permissions row repairs to a clean object', async () => {
+    // The historical #2339 double-encode class: jsonb string scalar. A bare
+    // `scalar || object` would produce a jsonb ARRAY — the CASE guard resets
+    // the damaged operand so the edit lands as a real object.
+    const name = `tok-damaged-${Math.random().toString(36).slice(2, 8)}`;
+    const hash = `hash-${name}`;
+    await engine.executeRaw(
+      `INSERT INTO access_tokens (name, token_hash, permissions)
+       VALUES ($1, $2, to_jsonb($3::text))`,
+      [name, hash, JSON.stringify({ takes_holders: ['world'] })],
+    );
+    await executeRawJsonb(
+      engine,
+      `UPDATE access_tokens
+          SET permissions = (CASE WHEN jsonb_typeof(permissions) = 'object' THEN permissions ELSE '{}'::jsonb END) || $2::jsonb
+          WHERE name = $1
+          RETURNING id`,
+      [name],
+      [{ takes_holders: ['world', 'garry'] }],
+    );
+    const typed = await engine.executeRaw<{ kind: string; first_holder: string }>(
+      `SELECT jsonb_typeof(permissions) AS kind,
+              permissions->'takes_holders'->>0 AS first_holder
+       FROM access_tokens WHERE token_hash = $1`,
+      [hash],
+    );
+    expect(typed[0].kind).toBe('object');
+    expect(typed[0].first_holder).toBe('world');
   });
 
   test('mcp_request_log.params: object writes round-trip as JSONB object', async () => {

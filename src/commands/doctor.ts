@@ -72,7 +72,7 @@ import { escapeLikePattern, buildVisibilityClause } from '../core/search/sql-ran
 import { unverifiedExtractionFragment } from '../core/extraction-review.ts';
 import { hnswIndexExpected, hnswMaxDimsForType } from '../core/vector-index.ts';
 // Agent-bootstrap doctor group (plan B2/B4/ENG-4 + one-live-serve note).
-import { readReceipt } from '../core/bootstrap/format.ts';
+import { readHarnessReceiptState, readReceipt } from '../core/bootstrap/format.ts';
 import { probeLivePgliteHolder, resolveBrainDataDir } from '../core/bootstrap/uninstall.ts';
 import { readRunbookStamp, hooksInstalled, listVerifyRuns } from '../core/bootstrap/status.ts';
 import { resolveGbrainHome } from '../core/gbrain-home.ts';
@@ -8774,10 +8774,83 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
   const pushStatuses = readPushStatuses();
   const statusFilesOnDisk = pushStatusFilesExist();
   const heartbeatFile = join(home, 'integrations', 'hooks', 'heartbeat.jsonl');
-  const hasBootstrapState = receipt !== null || statusFilesOnDisk || existsSync(heartbeatFile);
+  // #4043: a harness-only box (bootstrap harness, no workspace install) is
+  // bootstrap state too — without this, such a machine gets ZERO checks.
+  const harnessState = readHarnessReceiptState(home);
+  const hasBootstrapState =
+    receipt !== null || statusFilesOnDisk || existsSync(heartbeatFile) || harnessState.state !== 'absent';
   if (!hasBootstrapState) return [];
 
   const ws = receipt?.workspace_dir ?? null;
+
+  // 0. Harness registration health (#4043): three states so it neither cries
+  // wolf nor goes silent — skip (not a harness box) / warn (serve unreachable,
+  // a normal transient; or receipt unreadable) / fail (a target failed, or a
+  // prior rotation never converged). Token liveness needs the bearer (only
+  // recoverable from host config) — that's `gbrain bootstrap harness
+  // --status`'s job; doctor stays offline-cheap.
+  if (harnessState.state === 'ok') {
+    const hr = harnessState.receipt;
+    const failed = hr.targets.filter((t) => t.state === 'failed');
+    const pending = hr.targets.filter((t) => t.state === 'pending');
+    if (failed.length > 0 || pending.length > 0) {
+      checks.push({
+        name: 'bootstrap_harness_health',
+        status: 'fail',
+        message:
+          `harness wiring incomplete: ${failed.length} failed / ${pending.length} pending target(s)` +
+          ` — re-run \`gbrain bootstrap harness\` to converge (details: gbrain bootstrap harness --status).`,
+      });
+    } else if (hr.token.previous_ids && hr.token.previous_ids.length > 0) {
+      checks.push({
+        name: 'bootstrap_harness_health',
+        status: 'fail',
+        message: `${hr.token.previous_ids.length} previous harness token(s) were never revoked (ids ${hr.token.previous_ids.join(', ')}) — re-run \`gbrain bootstrap harness\`, or run \`gbrain auth revoke\` with the id flag per id.`,
+      });
+    } else if (hr.targets.length === 0 && hr.token.minted && hr.token.id !== undefined) {
+      // Half-removed state: a remove under a live PGLite serve strips every
+      // host target but defers the revoke — the wiring is gone yet the minted
+      // token stays ACTIVE. A vacuous all-confirmed must not read green.
+      // (Flag names spelled without dashes here: the flag-registry generator
+      // harvests bare flag tokens from comments one import level deep.)
+      checks.push({
+        name: 'bootstrap_harness_health',
+        status: 'fail',
+        message: `harness removal pending: host wiring removed but the minted token (id ${hr.token.id}) is not yet revoked — stop the serve and re-run \`gbrain bootstrap harness\` with the remove flag, or run \`gbrain auth revoke\` with the id flag.`,
+      });
+    } else {
+      try {
+        const base = hr.url.replace(/\/mcp$/, '');
+        const res = await fetch(`${base}/health`, { signal: AbortSignal.timeout(3000) });
+        const body = res.ok ? ((await res.json()) as { status?: string }) : null;
+        if (body?.status === 'ok') {
+          checks.push({
+            name: 'bootstrap_harness_health',
+            status: 'ok',
+            message: `harness wired to ${hr.url} (serve healthy; token check: gbrain bootstrap harness --status)`,
+          });
+        } else {
+          checks.push({
+            name: 'bootstrap_harness_health',
+            status: 'warn',
+            message: `harness wired to ${hr.url} but the serve is not answering /health — start \`gbrain serve\` in http mode (a down serve is a normal transient, sessions just lose brain access until it returns).`,
+          });
+        }
+      } catch {
+        checks.push({
+          name: 'bootstrap_harness_health',
+          status: 'warn',
+          message: `harness wired to ${hr.url} but the serve is unreachable — start \`gbrain serve\` in http mode.`,
+        });
+      }
+    }
+  } else if (harnessState.state !== 'absent') {
+    checks.push({
+      name: 'bootstrap_harness_health',
+      status: 'warn',
+      message: `the harness receipt is unreadable (${harnessState.state}) — see \`gbrain bootstrap harness --status\`.`,
+    });
+  }
 
   // 1. Hook heartbeat failure rate [B3 read side]. Hard errors only —
   // degraded entries are DESIGNED fallbacks (pull-mode, no serve).

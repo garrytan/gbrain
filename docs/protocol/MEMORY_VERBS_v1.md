@@ -64,6 +64,11 @@ If `claude` is not found: install Claude Code first, or use a block below.
 codex mcp add gbrain -- gbrain serve --surface verbs
 ```
 
+**Grok Build** (verify with `grok mcp doctor gbrain` — the add is lazy)
+```bash
+grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- gbrain serve --surface verbs
+```
+
 **OpenClaw / any stdio MCP host** — register the server command
 `gbrain serve --surface verbs`. Remote brains: `gbrain serve --http` on the
 host, then `gbrain connect https://host/mcp --token gbrain_xxx --install` on

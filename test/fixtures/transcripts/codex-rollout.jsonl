@@ -1,0 +1,16 @@
+{"timestamp":"2026-08-02T09:00:00.000Z","type":"session_meta","payload":{"id":"rollout-1","session_id":"codex-fixture-session-1","timestamp":"2026-08-02T09:00:00.000Z","cwd":"/home/alice-example/agent-workspace","cli_version":"0.99.0","model_provider":"provider-example","source":"cli","git":{"branch":"main"}}}
+{"timestamp":"2026-08-02T09:00:01.000Z","type":"response_item","payload":{"type":"message","role":"developer","id":"ri-1","content":[{"type":"input_text","text":"PREAMBLE-ONLY-TEXT: injected app context that must never reach the archive"}]}}
+{"timestamp":"2026-08-02T09:00:01.500Z","type":"response_item","payload":{"type":"message","role":"user","id":"ri-2","content":[{"type":"input_text","text":"PLUGIN-LIST-ONLY-TEXT: recommended plugin preamble that must never reach the archive"}]}}
+{"timestamp":"2026-08-02T09:00:02.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t-1"}}
+{"timestamp":"2026-08-02T09:00:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"Remind me: which fund led the widget-co seed round?","images":[],"text_elements":[]}}
+{"timestamp":"2026-08-02T09:00:04.000Z","type":"event_msg","payload":{"type":"agent_reasoning","text":"REASONING-ONLY-TEXT: never extracted"}}
+{"timestamp":"2026-08-02T09:00:05.000Z","type":"response_item","payload":{"type":"reasoning","id":"ri-3","summary":[]}}
+{"timestamp":"2026-08-02T09:00:06.000Z","type":"response_item","payload":{"type":"custom_tool_call","id":"ri-4","name":"search_brain","input":"{\"query\":\"widget-co seed\"}"}}
+{"timestamp":"2026-08-02T09:00:07.000Z","type":"response_item","payload":{"type":"custom_tool_call_output","id":"ri-5","output":"TOOL-OUTPUT-ONLY-TEXT: 3 pages found"}}
+{"timestamp":"2026-08-02T09:00:08.000Z","type":"response_item","payload":{"type":"message","role":"assistant","id":"ri-6","content":[{"type":"output_text","text":"fund-a led the widget-co seed; fund-b participated. charlie-example made the intro."}]}}
+{"timestamp":"2026-08-02T09:00:09.000Z","type":"event_msg","payload":{"type":"agent_message","message":"fund-a led the widget-co seed; fund-b participated. charlie-example made the intro.","phase":"final"}}
+{"timestamp":"2026-08-02T09:00:10.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total":123}}}
+{"timestamp":"2026-08-02T09:00:11.000Z","type":"event_msg","payload":{"type":"user_message","message":"Great. Note that the bridge check-in is every Thursday."}}
+{"timestamp":"2026-08-02T09:00:12.000Z","type":"response_item","payload":{"type":"message","role":"assistant","id":"ri-7","content":[{"type":"output_text","text":"Noted: bridge check-in every Thursday."},{"type":"output_text","text":"I will keep that in the plan."}]}}
+{"timestamp":"2026-08-02T09:00:13.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t-1","duration_ms":10000}}
+{malformed rollout line — parser must count it as skipped and continue

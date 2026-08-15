@@ -25,6 +25,7 @@ import { loadCorpusPages } from '../helpers/bootstrap-corpus.ts';
 import { runEmbedCore } from '../../src/commands/embed.ts';
 import { hybridSearch } from '../../src/core/search/hybrid.ts';
 import { runSchemaTransition } from '../../src/core/retrieval-upgrade-planner.ts';
+import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 import { extractTakesFromPages } from '../../src/core/extract-takes-from-pages.ts';
 import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 import {
@@ -282,6 +283,7 @@ describe.skipIf(!DATABASE_URL)('Postgres bootstrap verify (real Postgres)', () =
     process.env.GBRAIN_HOME = root;
 
     engine = new PostgresEngine();
+    assertSafeE2eDatabaseUrl(DATABASE_URL!);
     await engine.connect({ database_url: DATABASE_URL! });
     await engine.initSchema();
     await addSource(engine, { id: 'workspace', localPath: join(ws, 'brain'), force: true });

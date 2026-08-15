@@ -211,6 +211,51 @@ export async function runHook(args: string[], io: HookIo = {}): Promise<number> 
   // for silence, and a disabled hook writing telemetry would be a lie).
   if (process.env.GBRAIN_HOOKS === '0') return 0;
 
+  // #4043 harness-lane defer guard: Claude Code MERGES user- and
+  // project-scope hook settings, so a machine wired by `bootstrap harness`
+  // (user scope) plus a real workspace bootstrap install (settings.local.json,
+  // bootstrap-v1 marker) would fire the same event twice. The workspace
+  // install wins; the harness lane yields silently (exit 0, no output, no
+  // heartbeat). Same cwd resolution as the handlers (io.cwd is the test
+  // seam; the harness runs hooks in the session's working dir). Fail-open:
+  // any read hiccup means run normally.
+  if (process.env.GBRAIN_HOOK_LANE === 'harness') {
+    try {
+      // BOTH workspace carriers count: settings.local.json (local installs)
+      // and the committed .claude/settings.json ([D12] — an event owned by
+      // the committed carrier is stripped from local, so checking only local
+      // would double-fire it against the user-scope harness wiring). The
+      // check PARSES the settings and requires a live bootstrap-v1 hook entry
+      // wiring THIS event — a raw substring match would let any repo disable
+      // the machine-wide capture lane by committing the two marker strings in
+      // an unrelated field (ship-review P1), and would over-yield events the
+      // workspace does not actually wire.
+      const eventKey = {
+        'session-start': 'SessionStart',
+        'user-prompt': 'UserPromptSubmit',
+        stop: 'Stop',
+        'session-end': 'SessionEnd',
+        compact: 'PreCompact',
+      }[event];
+      const dotClaude = join(io.cwd ?? process.cwd(), '.claude');
+      for (const file of ['settings.local.json', 'settings.json']) {
+        const p = join(dotClaude, file);
+        if (!existsSync(p)) continue;
+        const settings = JSON.parse(readFileSync(p, 'utf8')) as {
+          hooks?: Record<string, Array<{ hooks?: Array<Record<string, unknown>> }>>;
+        };
+        const groups = settings.hooks?.[eventKey ?? ''];
+        if (!Array.isArray(groups)) continue;
+        for (const g of groups) {
+          if (!Array.isArray(g?.hooks)) continue;
+          if (g.hooks.some((e) => e?._gbrain === 'bootstrap-v1')) return 0;
+        }
+      }
+    } catch {
+      /* fail-open */
+    }
+  }
+
   switch (event) {
     case 'session-start':
       return hookSessionStart(io);

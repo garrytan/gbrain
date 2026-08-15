@@ -12,6 +12,7 @@
 
 import { test, expect, describe, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { withEnv } from './helpers/with-env.ts';
 import {
   readContentChunksEmbeddingDim,
   embeddingMismatchMessage,
@@ -73,8 +74,12 @@ describe('readContentChunksEmbeddingDim', () => {
   test('returns { exists: false, dims: null } on a fresh brain (no initSchema)', async () => {
     // One-off engine for the fresh-brain case. Never call initSchema so
     // content_chunks doesn't exist yet. Cleaned up at end of test.
+    // W0: the default-on snapshot loads a fully-migrated schema at connect,
+    // which breaks this test's truly-empty-DB premise — opt out for this boot.
     const fresh = new PGLiteEngine();
-    await fresh.connect({});
+    await withEnv({ GBRAIN_PGLITE_SNAPSHOT: undefined }, async () => {
+      await fresh.connect({});
+    });
     try {
       const result = await readContentChunksEmbeddingDim(fresh);
       expect(result.exists).toBe(false);

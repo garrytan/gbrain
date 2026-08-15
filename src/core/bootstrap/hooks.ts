@@ -24,12 +24,16 @@
  * (and GBRAIN_HOME when isolated) ride the registration itself.
  */
 
+import { randomBytes } from 'node:crypto';
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
@@ -52,6 +56,12 @@ export interface ClaudeHookEnv {
   GBRAIN_SOURCE: string;
   /** Set only for --isolated installs (PARENT dir; config appends `.gbrain`). */
   GBRAIN_HOME?: string;
+  /**
+   * 'harness' on #4043 harness-mode wiring: `gbrain hook` yields when the
+   * lane is harness AND the cwd carries a workspace bootstrap install, so
+   * the same event never fires twice (Claude Code merges settings scopes).
+   */
+  GBRAIN_HOOK_LANE?: string;
 }
 
 export interface WriteClaudeHooksOpts {
@@ -60,8 +70,40 @@ export interface WriteClaudeHooksOpts {
   env: ClaudeHookEnv;
   /** Per-event timeout override (SECONDS — the settings-file unit). */
   timeoutSecs?: Partial<Record<ClaudeHookEvent, number>>;
-  /** Subset of events to wire; default all four. */
+  /** Subset of events to wire; default every event in CLAUDE_HOOK_EVENTS. */
   events?: ClaudeHookEvent[];
+  /**
+   * Marker VALUE stamped on (and stripped from) our entries. Default is the
+   * workspace-install marker; harness mode passes GBRAIN_HARNESS_MARKER_VALUE
+   * so the two installs coexist and each removal strips only its own.
+   */
+  marker?: string;
+  /**
+   * [D12] Events already owned by the COMMITTED settings carrier — the writer
+   * strips stale local copies of these but re-adds nothing for them, so one
+   * event never fires from both files. The workspace wrapper derives it from
+   * committedHookEvents(ws); path-parameterized callers pass their own.
+   */
+  carriedEvents?: Set<ClaudeHookEvent>;
+  /**
+   * Backup strategy for the pre-write copy. 'fixed' (default) keeps the
+   * historical `.bak` sibling; 'timestamped' avoids the shared-slot problem
+   * when two writers touch the same file in one transaction.
+   */
+  backupStrategy?: 'fixed' | 'timestamped';
+  /**
+   * Refuse when a gbrain entry with a DIFFERENT marker already wires one of
+   * our target events in this file (harness lane: a workspace install or a
+   * differently-scoped harness install owns it — double-wiring would fire the
+   * same hook twice per event) [C6].
+   */
+  refuseOnForeignGbrainMarker?: boolean;
+  /**
+   * Mode for a FRESHLY-CREATED settings file (existing files keep their mode
+   * via the atomic writer). Harness user-scope writes pass 0o600 to match
+   * Claude Code's own convention for that file [X11].
+   */
+  freshMode?: number;
 }
 
 export interface WriteClaudeHooksResult {
@@ -125,6 +167,7 @@ export function buildClaudeHookCommand(
 ): string {
   const assignments: string[] = [`GBRAIN_SOURCE=${env.GBRAIN_SOURCE}`];
   if (env.GBRAIN_HOME) assignments.push(`GBRAIN_HOME=${env.GBRAIN_HOME}`);
+  if (env.GBRAIN_HOOK_LANE) assignments.push(`GBRAIN_HOOK_LANE=${env.GBRAIN_HOOK_LANE}`);
   const parts = ['env', ...assignments, gbrainBin, 'hook', CLAUDE_HOOK_SUBCOMMAND[event]];
   return parts.map(shellQuote).join(' ');
 }
@@ -197,20 +240,30 @@ export function committedHookEvents(workspaceDir: string): Set<ClaudeHookEvent> 
   return carried;
 }
 
-function isOurs(entry: unknown): boolean {
+function isOurs(entry: unknown, marker: string = GBRAIN_HOOK_MARKER_VALUE): boolean {
   return (
     typeof entry === 'object' &&
     entry !== null &&
-    (entry as Record<string, unknown>)[GBRAIN_HOOK_MARKER_KEY] === GBRAIN_HOOK_MARKER_VALUE
+    (entry as Record<string, unknown>)[GBRAIN_HOOK_MARKER_KEY] === marker
   );
+}
+
+/** True when the entry carries the gbrain marker KEY with any OTHER value. */
+function isForeignGbrainMarked(entry: unknown, marker: string): boolean {
+  if (typeof entry !== 'object' || entry === null) return false;
+  const v = (entry as Record<string, unknown>)[GBRAIN_HOOK_MARKER_KEY];
+  return typeof v === 'string' && v !== marker;
 }
 
 /**
  * Strip marker-carrying command entries from one event's matcher-group array.
  * Groups EMPTIED by the removal are dropped; groups that were already empty
  * (foreign) survive untouched. Returns the surviving groups + removal count.
+ * The group-drop rule is marker-independent: it fires only when THIS call's
+ * filter emptied a previously non-empty group, so it can never drop a group a
+ * different marker still owns.
  */
-function stripOurEntries(groups: unknown[]): { kept: unknown[]; removed: number } {
+function stripOurEntries(groups: unknown[], marker: string = GBRAIN_HOOK_MARKER_VALUE): { kept: unknown[]; removed: number } {
   const kept: unknown[] = [];
   let removed = 0;
   for (const group of groups) {
@@ -220,7 +273,7 @@ function stripOurEntries(groups: unknown[]): { kept: unknown[]; removed: number 
     }
     const g = group as HookMatcherGroup;
     const before = g.hooks!.length;
-    const filtered = g.hooks!.filter((h) => !isOurs(h));
+    const filtered = g.hooks!.filter((h) => !isOurs(h, marker));
     removed += before - filtered.length;
     if (filtered.length === 0 && before > 0 && filtered.length !== before) {
       continue; // we emptied it → drop the husk
@@ -234,12 +287,33 @@ function stripOurEntries(groups: unknown[]): { kept: unknown[]; removed: number 
   return { kept, removed };
 }
 
-/** Atomic write (tmp + rename), creating parent dirs. */
-function atomicWriteJson(path: string, value: unknown): void {
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp-${process.pid}`;
-  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-  renameSync(tmp, path);
+/**
+ * Atomic write (tmp + rename), creating parent dirs. Hardened for shared
+ * user-scope targets [C10]: the SYMLINK TARGET is resolved first so a
+ * dotfile-manager-linked settings file survives as a link (a bare rename
+ * would replace the link with a regular file); the tmp file uses a random
+ * suffix and inherits the existing file's mode (a 0600 file stays 0600 —
+ * the pid-suffixed umask-default tmp was fine for gitignored workspace files
+ * but not for user-global config).
+ */
+function atomicWriteJson(path: string, value: unknown, freshMode?: number): void {
+  const target = existsSync(path) ? realpathSync(path) : path;
+  mkdirSync(dirname(target), { recursive: true });
+  let mode: number | undefined;
+  try {
+    mode = statSync(target).mode & 0o777;
+  } catch {
+    mode = freshMode; // fresh file: caller's convention (user-scope → 0600) [X11]
+  }
+  const tmp = `${target}.tmp-${randomBytes(6).toString('hex')}`;
+  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', ...(mode !== undefined ? { mode } : {}) });
+  if (mode !== undefined) chmodSync(tmp, mode); // writeFileSync mode applies only on create
+  renameSync(tmp, target);
+}
+
+/** Pre-write backup path per strategy; timestamped avoids the shared-slot loss. */
+function backupPathFor(settingsPath: string, strategy: 'fixed' | 'timestamped'): string {
+  return strategy === 'timestamped' ? `${settingsPath}.bak-${Date.now()}` : `${settingsPath}.bak`;
 }
 
 interface LoadedSettings {
@@ -291,13 +365,15 @@ function loadSettings(path: string): LoadedSettings {
 // ── Writers [G5, CX2-17] ────────────────────────────────────────────────────
 
 /**
- * Structural-merge gbrain's hook entries into `<ws>/.claude/settings.local.json`.
- * Idempotent: prior marker-carrying entries are removed before the fresh set
- * is appended (run twice → one entry per event). Foreign hooks, permissions,
- * and every other key survive byte-for-byte at the structural level.
+ * Structural-merge gbrain's hook entries into an EXPLICIT settings file
+ * (workspace settings.local.json or user-scope ~/.claude/settings.json).
+ * Idempotent: prior same-marker entries are removed before the fresh set is
+ * appended (run twice → one entry per event). Foreign hooks, other-marker
+ * gbrain entries, permissions, and every other key survive byte-for-byte at
+ * the structural level.
  */
-export function writeClaudeHooks(
-  workspaceDir: string,
+export function writeClaudeHooksAt(
+  settingsPath: string,
   opts: WriteClaudeHooksOpts,
 ): WriteClaudeHooksResult {
   if (!isAbsolute(opts.gbrainBin)) {
@@ -308,8 +384,9 @@ export function writeClaudeHooks(
       throw new Error(`env ${k} contains control characters — refusing to embed in a hook command`);
     }
   }
+  const marker = opts.marker ?? GBRAIN_HOOK_MARKER_VALUE;
+  const backupStrategy = opts.backupStrategy ?? 'fixed';
 
-  const settingsPath = claudeSettingsPath(workspaceDir);
   const { settings, existed, brokenBackupPath, notes } = loadSettings(settingsPath);
 
   // hooks key: merge into an object; a structurally-foreign value is backed
@@ -326,13 +403,56 @@ export function writeClaudeHooks(
   }
 
   const events = opts.events ?? [...CLAUDE_HOOK_EVENTS];
+
+  // [C6] Same command double-fire guard: refuse when a gbrain entry carrying a
+  // DIFFERENT marker already wires one of our target events in this file —
+  // Claude Code would run both.
+  if (opts.refuseOnForeignGbrainMarker) {
+    for (const event of events) {
+      const groups = hooks[event];
+      if (!Array.isArray(groups)) continue;
+      for (const group of groups) {
+        const g = group as HookMatcherGroup;
+        if (!Array.isArray(g?.hooks)) continue;
+        for (const entry of g.hooks) {
+          if (isForeignGbrainMarked(entry, marker)) {
+            const foreign = (entry as Record<string, unknown>)[GBRAIN_HOOK_MARKER_KEY];
+            throw new Error(
+              `${settingsPath} already wires hooks.${event} under gbrain marker "${String(foreign)}" — ` +
+                `refusing to double-wire the same hook (both entries would fire every event). ` +
+                `Remove the other install first (gbrain bootstrap harness --remove, or gbrain bootstrap uninstall).`,
+            );
+          }
+        }
+      }
+    }
+  }
+
   // [D12] Dedupe invariant: an event carried by the COMMITTED settings file
-  // never also fires from the local file. The local writer still strips its
-  // own prior entries for carried events (removing stale local copies), but
-  // re-adds nothing for them.
-  const carried = committedHookEvents(workspaceDir);
+  // never also fires from the local file. The caller supplies the carried set
+  // (the workspace wrapper reads it from committedHookEvents(ws); the harness
+  // --project lane does the same for its dirs) — this path-parameterized
+  // writer has no workspace to derive it from.
+  const carried = opts.carriedEvents ?? new Set<ClaudeHookEvent>();
   let removedPrior = 0;
   const installed: Array<{ event: ClaudeHookEvent; command: string }> = [];
+
+  // [X3] Convergence: strip OUR marker from EVERY event in the file first —
+  // not just the requested subset — so a re-run with fewer events (e.g.
+  // --no-capture dropping Stop/SessionEnd) removes the ones no longer wanted
+  // instead of leaving them live. Foreign and other-marker entries survive.
+  for (const event of Object.keys(hooks)) {
+    const groups = hooks[event];
+    if (!Array.isArray(groups)) continue; // structurally foreign — never touch
+    const { kept, removed } = stripOurEntries(groups, marker);
+    removedPrior += removed;
+    if (removed === 0) continue;
+    if (kept.length === 0) {
+      delete hooks[event]; // emptied by OUR removal — drop the key
+    } else {
+      hooks[event] = kept;
+    }
+  }
 
   for (const event of events) {
     let groups = hooks[event];
@@ -344,8 +464,7 @@ export function writeClaudeHooks(
       }
       groups = [];
     }
-    const { kept, removed } = stripOurEntries(groups as unknown[]);
-    removedPrior += removed;
+    const kept = [...(groups as unknown[])];
 
     if (carried.has(event)) {
       notes.push(`${event}: carried by the committed .claude/settings.json — local entry skipped [D12]`);
@@ -360,7 +479,7 @@ export function writeClaudeHooks(
       type: 'command',
       command,
       timeout,
-      [GBRAIN_HOOK_MARKER_KEY]: GBRAIN_HOOK_MARKER_VALUE,
+      [GBRAIN_HOOK_MARKER_KEY]: marker,
     };
     kept.push({ hooks: [entry] });
     hooks[event] = kept;
@@ -370,13 +489,28 @@ export function writeClaudeHooks(
   settings.hooks = hooks;
 
   let backupPath: string | null = null;
-  if (existed) {
-    backupPath = `${settingsPath}.bak`;
+  if (existed && brokenBackupPath === null) {
+    backupPath = backupPathFor(settingsPath, backupStrategy);
     copyFileSync(settingsPath, backupPath);
   }
-  atomicWriteJson(settingsPath, settings);
+  atomicWriteJson(settingsPath, settings, opts.freshMode);
 
   return { settingsPath, installed, removedPrior, backupPath, brokenBackupPath, notes };
+}
+
+/**
+ * Workspace-lane wrapper (historical signature: `<ws>/.claude/settings.local.json`,
+ * bootstrap-v1 marker, fixed `.bak`). Supplies the [D12] carried-events set so
+ * an event owned by the committed carrier never also fires locally.
+ */
+export function writeClaudeHooks(
+  workspaceDir: string,
+  opts: WriteClaudeHooksOpts,
+): WriteClaudeHooksResult {
+  return writeClaudeHooksAt(claudeSettingsPath(workspaceDir), {
+    carriedEvents: committedHookEvents(workspaceDir),
+    ...opts,
+  });
 }
 
 /**
@@ -449,7 +583,7 @@ export function writeCommittedClaudeHooks(
 
   // [D12] dedupe: the committed carrier now owns these events — remove any
   // local copies so nothing double-fires on this machine.
-  const localCleanup = removeHooksFromFile(claudeSettingsPath(workspaceDir));
+  const localCleanup = removeClaudeHooksAt(claudeSettingsPath(workspaceDir));
   if (localCleanup.removed > 0) {
     notes.push(
       `removed ${localCleanup.removed} local settings.local.json entr${localCleanup.removed === 1 ? 'y' : 'ies'} — the committed carrier owns the events now [D12]`,
@@ -460,31 +594,16 @@ export function writeCommittedClaudeHooks(
 }
 
 /**
- * Remove ONLY marker-carrying entries [G5]. A parse-broken file is left
- * untouched (removal must never destroy what it cannot read) — the note says
- * so. Event arrays we emptied lose their key; an emptied hooks object loses
- * its key; foreign structure survives. Cleans BOTH carriers (local +
- * committed [D12]); the returned settingsPath/backup describe the local one,
- * with committed-file actions reported via notes.
+ * Remove ONLY entries carrying the given marker [G5]. A parse-broken file is
+ * left untouched (removal must never destroy what it cannot read) — the note
+ * says so. Event arrays we emptied lose their key; an emptied hooks object
+ * loses its key; foreign structure (including other-marker gbrain entries)
+ * survives.
  */
-export function removeClaudeHooks(workspaceDir: string): RemoveClaudeHooksResult {
-  const local = removeHooksFromFile(claudeSettingsPath(workspaceDir));
-  const committed = removeHooksFromFile(claudeCommittedSettingsPath(workspaceDir));
-  const notes = [...local.notes];
-  if (committed.removed > 0) {
-    notes.push(`also removed ${committed.removed} entr${committed.removed === 1 ? 'y' : 'ies'} from the committed ${committed.settingsPath} [D12]`);
-  } else {
-    notes.push(...committed.notes.map((n) => `(committed carrier) ${n}`));
-  }
-  return {
-    settingsPath: local.settingsPath,
-    removed: local.removed + committed.removed,
-    backupPath: local.backupPath,
-    notes,
-  };
-}
-
-function removeHooksFromFile(settingsPath: string): RemoveClaudeHooksResult {
+export function removeClaudeHooksAt(
+  settingsPath: string,
+  marker: string = GBRAIN_HOOK_MARKER_VALUE,
+): RemoveClaudeHooksResult {
   const notes: string[] = [];
   if (!existsSync(settingsPath)) {
     return { settingsPath, removed: 0, backupPath: null, notes: ['no settings file — nothing to remove'] };
@@ -521,7 +640,7 @@ function removeHooksFromFile(settingsPath: string): RemoveClaudeHooksResult {
   for (const event of Object.keys(hooks)) {
     const groups = hooks[event];
     if (!Array.isArray(groups)) continue; // structurally foreign — never touch
-    const { kept, removed: n } = stripOurEntries(groups);
+    const { kept, removed: n } = stripOurEntries(groups, marker);
     removed += n;
     if (n === 0) continue;
     if (kept.length === 0) {
@@ -540,6 +659,156 @@ function removeHooksFromFile(settingsPath: string): RemoveClaudeHooksResult {
     copyFileSync(settingsPath, backupPath);
     atomicWriteJson(settingsPath, settings);
   }
+  return { settingsPath, removed, backupPath, notes };
+}
+
+/**
+ * Workspace-lane removal — cleans BOTH carriers (local + committed [D12]);
+ * the returned settingsPath/backup describe the local one, with
+ * committed-file actions reported via notes.
+ */
+export function removeClaudeHooks(workspaceDir: string): RemoveClaudeHooksResult {
+  const local = removeClaudeHooksAt(claudeSettingsPath(workspaceDir));
+  const committed = removeClaudeHooksAt(claudeCommittedSettingsPath(workspaceDir));
+  const notes = [...local.notes];
+  if (committed.removed > 0) {
+    notes.push(`also removed ${committed.removed} entr${committed.removed === 1 ? 'y' : 'ies'} from the committed ${committed.settingsPath} [D12]`);
+  } else {
+    notes.push(...committed.notes.map((n) => `(committed carrier) ${n}`));
+  }
+  return {
+    settingsPath: local.settingsPath,
+    removed: local.removed + committed.removed,
+    backupPath: local.backupPath,
+    notes,
+  };
+}
+
+// ── permissions.allow writers (harness lane, #4043) ────────────────────────
+
+export interface PermissionsAllowResult {
+  settingsPath: string;
+  /** add: entry appended this run. remove: number of occurrences removed. */
+  added?: boolean;
+  removed?: number;
+  backupPath: string | null;
+  notes: string[];
+}
+
+/**
+ * Append one entry to `permissions.allow` (set semantics — present means
+ * no-op). Stamps NO marker: permissions.allow is an array of plain strings,
+ * so ownership is recorded on the harness receipt (exact-string removal),
+ * never in the file — and a marker object here would false-positive
+ * status.ts's whole-file `hooksInstalled` substring probe. Foreign entries
+ * and every other settings key survive. Broken JSON aborts (user-scope
+ * discipline — this writer only ever targets user-scope files).
+ */
+export function addPermissionsAllowEntry(
+  settingsPath: string,
+  entry: string,
+): PermissionsAllowResult {
+  const { settings, existed, notes } = loadSettings(settingsPath);
+
+  let permissions = settings.permissions as Record<string, unknown> | undefined;
+  if (typeof permissions !== 'object' || permissions === null || Array.isArray(permissions)) {
+    if (permissions !== undefined) {
+      // Fail CLOSED (same stance as broken JSON): "permissions" is the host's
+      // security policy — replacing a shape we don't understand could erase
+      // deny/ask rules or a future settings schema (ship-review P2).
+      throw new Error(
+        `${settingsPath}: existing "permissions" key is not an object ` +
+          `(${JSON.stringify(permissions).slice(0, 80)}) — refusing to rewrite security policy this writer ` +
+          `does not understand. Fix the file by hand, then re-run.`,
+      );
+    }
+    permissions = {};
+  }
+  let allow = permissions.allow as unknown[] | undefined;
+  if (!Array.isArray(allow)) {
+    if (allow !== undefined) {
+      throw new Error(
+        `${settingsPath}: existing permissions.allow is not an array — refusing to rewrite security policy ` +
+          `this writer does not understand. Fix the file by hand, then re-run.`,
+      );
+    }
+    allow = [];
+  }
+
+  if (allow.some((e) => e === entry)) {
+    return { settingsPath, added: false, backupPath: null, notes: [...notes, `${entry} already allowed — no change`] };
+  }
+
+  allow.push(entry);
+  permissions.allow = allow;
+  settings.permissions = permissions;
+
+  let backupPath: string | null = null;
+  if (existed) {
+    backupPath = backupPathFor(settingsPath, 'timestamped');
+    copyFileSync(settingsPath, backupPath);
+  }
+  atomicWriteJson(settingsPath, settings, 0o600); // user-scope-only writer [X11]
+  return { settingsPath, added: true, backupPath, notes };
+}
+
+/**
+ * Remove EXACTLY the given string from `permissions.allow`. Parse-broken file
+ * is left untouched (the removeClaudeHooks precedent — removal never destroys
+ * what it cannot read). Keys are dropped only when OUR removal emptied them.
+ * Honest edge (stated in consent copy): if the user had independently allowed
+ * the same string, this removes it too — set semantics carry no provenance.
+ */
+export function removePermissionsAllowEntry(
+  settingsPath: string,
+  entry: string,
+): PermissionsAllowResult {
+  if (!existsSync(settingsPath)) {
+    return { settingsPath, removed: 0, backupPath: null, notes: ['no settings file — nothing to remove'] };
+  }
+  let loaded: LoadedSettings;
+  try {
+    loaded = loadSettings(settingsPath);
+  } catch (e) {
+    return {
+      settingsPath,
+      removed: 0,
+      backupPath: null,
+      notes: [
+        `WARNING: ${settingsPath} is not valid JSON (${(e as Error).message}); ` +
+          `left untouched — remove the "${entry}" permissions.allow entry by hand or fix the JSON and re-run.`,
+      ],
+    };
+  }
+  const { settings, notes } = loaded;
+
+  const permissions = settings.permissions as Record<string, unknown> | undefined;
+  if (typeof permissions !== 'object' || permissions === null || Array.isArray(permissions)) {
+    return { settingsPath, removed: 0, backupPath: null, notes: ['no permissions object — nothing to remove'] };
+  }
+  const allow = permissions.allow as unknown[] | undefined;
+  if (!Array.isArray(allow)) {
+    return { settingsPath, removed: 0, backupPath: null, notes: ['no permissions.allow array — nothing to remove'] };
+  }
+
+  const kept = allow.filter((e) => e !== entry);
+  const removed = allow.length - kept.length;
+  if (removed === 0) {
+    return { settingsPath, removed: 0, backupPath: null, notes: [...notes, `${entry} not present — nothing to remove`] };
+  }
+
+  if (kept.length > 0) {
+    permissions.allow = kept;
+  } else {
+    delete permissions.allow; // emptied by OUR removal — drop the key
+  }
+  if (Object.keys(permissions).length === 0) {
+    delete settings.permissions;
+  }
+
+  const backupPath = backupPathFor(settingsPath, 'timestamped');
+  copyFileSync(settingsPath, backupPath);
+  atomicWriteJson(settingsPath, settings, 0o600); // user-scope-only writer [X11]
   return { settingsPath, removed, backupPath, notes };
 }
 

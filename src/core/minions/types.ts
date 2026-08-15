@@ -90,6 +90,14 @@ export interface MinionJob {
   started_at: Date | null;
   finished_at: Date | null;
   updated_at: Date;
+
+  /** Submission metadata, NOT a DB column: set only by MinionQueue.add()
+   *  when it returned an EXISTING row instead of inserting (idempotency
+   *  fast-path, backpressure cap-hit, or the ON CONFLICT zero-row fallback).
+   *  rowToMinionJob never sets it; absent on fresh inserts and on rows read
+   *  back later. Surfaces in `jobs submit`'s JSON output — intended and
+   *  additive, so scripts can tell a real dispatch from a coalesce. */
+  coalesced?: boolean;
 }
 
 // --- Input Types ---
@@ -128,8 +136,29 @@ export interface MinionJobInput {
   max_spawn_depth?: number;
   /** Global dedup key. Same key returns the existing job, no second row created. */
   idempotency_key?: string;
-  /** Submission backpressure: cap waiting jobs with this name before inserting a new row. */
+  /** Submission backpressure: cap waiting jobs with this name before inserting
+   *  a new row. Scope is (name, queue, source), where source reads
+   *  data.sourceId ?? data.source_id; a submission with NO source key counts
+   *  ALL rows for (name, queue) — the NULL-as-wildcard arm is intentional and
+   *  relied on by existing rate-cap callers. For single-flight semantics see
+   *  maxPending (exact scoping, counts in-flight work too). */
   maxWaiting?: number;
+  /** Submission single-flight: cap PENDING jobs — waiting rows plus LIVE-LOCK
+   *  active rows (status='active' AND lock_until > now()) — for this
+   *  (name, queue, source) scope before inserting a new row. Expired-lock
+   *  actives belong to a dead/blocked worker and never count, so a wedged
+   *  worker cannot suppress dispatch (new waiting rows keep feeding the
+   *  waitingClaimable>0 wedge detectors); dead/cancelled/completed never
+   *  count either. Cap-hit returns the most-recent waiting row, else the
+   *  most-recent live-lock active row, stamped `coalesced: true`. Scope is
+   *  EXACT (unlike maxWaiting): COALESCE(data.sourceId, data.source_id)
+   *  compared with IS NOT DISTINCT FROM — a NULL-source submission matches
+   *  only NULL-source rows, never a wildcard. If both maxPending and
+   *  maxWaiting are supplied, both guards apply; maxPending is checked
+   *  first. Internal option (autopilot dispatch single-flight); not exposed
+   *  as a public submit flag yet — semantics exclude delayed/paused/
+   *  waiting-children rows deliberately. */
+  maxPending?: number;
 
   // v12: scheduler polish
   /**

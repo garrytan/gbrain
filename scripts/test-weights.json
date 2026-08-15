@@ -103,7 +103,6 @@
   "test/cli-help-discoverability.test.ts": 1670,
   "test/cli-multimodal-integration.test.ts": 26677,
   "test/cli-options.test.ts": 1658,
-  "test/cli-pty-runner.test.ts": 16,
   "test/cli-query-image.test.ts": 56,
   "test/cli.test.ts": 2633,
   "test/code-callers-cli.test.ts": 2,

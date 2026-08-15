@@ -1,0 +1,189 @@
+/**
+ * W0 fix-wave (Tier-1 #1, D5.10) — per-acquisition lock fencing.
+ *
+ * The refresh/release predicates require (id, holder_pid, acquired_at::text),
+ * so a handle from a PREVIOUS acquisition — a PID-reuse impostor, or this
+ * process after its row was stolen — can never refresh or delete a
+ * successor's row. Pre-fix the predicates were (id, holder_pid) only, and an
+ * expired holder could refresh a successor's lock while reporting success
+ * (Codex eng-review #1 on the fix-wave plan).
+ */
+
+import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { tryAcquireDbLock, LockStolenError } from '../src/core/db-lock.ts';
+import { startCycleLockRefresher, buildYieldDuringPhase, type LockHandle } from '../src/core/cycle.ts';
+
+let engine: PGLiteEngine;
+
+beforeAll(async () => {
+  engine = new PGLiteEngine();
+  await engine.connect({ database_url: '' });
+  await engine.initSchema();
+});
+
+afterAll(async () => {
+  await engine.disconnect();
+});
+
+beforeEach(async () => {
+  await engine.executeRaw(`DELETE FROM gbrain_cycle_locks WHERE id LIKE 'test-fence-%'`);
+});
+
+/** Simulate a successor stealing the row: rewrite acquisition identity in place. */
+async function stealRow(lockId: string): Promise<void> {
+  await engine.executeRaw(
+    `UPDATE gbrain_cycle_locks
+        SET holder_pid = holder_pid,
+            acquired_at = acquired_at + INTERVAL '1 millisecond',
+            ttl_expires_at = NOW() + INTERVAL '5 minutes',
+            last_refreshed_at = NOW()
+      WHERE id = $1`,
+    [lockId],
+  );
+}
+
+describe('fenced refresh/release (D5.10)', () => {
+  test('handle carries its acquisition fence and refresh() returns true while owned', async () => {
+    const handle = await tryAcquireDbLock(engine, 'test-fence-own', 5);
+    expect(handle).not.toBeNull();
+    expect(typeof handle!.acquiredAt).toBe('string');
+    expect(handle!.acquiredAt.length).toBeGreaterThan(0);
+    expect(await handle!.refresh()).toBe(true);
+    // Refresh must not change the acquisition identity.
+    expect(await handle!.refresh()).toBe(true);
+    await handle!.release();
+  });
+
+  test('after a steal, the old handle refresh() returns false and cannot re-take the row', async () => {
+    const handle = await tryAcquireDbLock(engine, 'test-fence-steal', 5);
+    expect(handle).not.toBeNull();
+    await stealRow('test-fence-steal');
+
+    expect(await handle!.refresh()).toBe(false);
+    // The failed refresh must not have bumped the successor's TTL under the
+    // OLD identity — i.e. the row still exists and refresh stays false.
+    expect(await handle!.refresh()).toBe(false);
+  });
+
+  test("release() after a steal is a fenced no-op — the successor's row survives", async () => {
+    const handle = await tryAcquireDbLock(engine, 'test-fence-release', 5);
+    expect(handle).not.toBeNull();
+    await stealRow('test-fence-release');
+
+    await handle!.release(); // must NOT delete the successor's row
+    const rows = await engine.executeRaw<{ id: string }>(
+      `SELECT id FROM gbrain_cycle_locks WHERE id = $1`,
+      ['test-fence-release'],
+    );
+    expect(rows.length).toBe(1);
+  });
+
+  test('release() while still owned deletes the row (normal path unchanged)', async () => {
+    const handle = await tryAcquireDbLock(engine, 'test-fence-normal', 5);
+    expect(handle).not.toBeNull();
+    await handle!.release();
+    const rows = await engine.executeRaw<{ id: string }>(
+      `SELECT id FROM gbrain_cycle_locks WHERE id = $1`,
+      ['test-fence-normal'],
+    );
+    expect(rows.length).toBe(0);
+  });
+});
+
+describe('startCycleLockRefresher (Tier-1 #1 + D5.11)', () => {
+  const fakeLock = (impl: () => Promise<boolean>): LockHandle => ({
+    refresh: impl,
+    release: async () => {},
+  });
+
+  test('aborts the controller with LockStolenError when a fenced refresh returns false', async () => {
+    const controller = new AbortController();
+    const stop = startCycleLockRefresher(fakeLock(async () => false), controller, 'test-lock', 15);
+    try {
+      // Poll instead of a fixed sleep: under full-suite shard load, timer
+      // ticks can be starved well past the nominal interval.
+      const deadline = Date.now() + 5_000;
+      while (!controller.signal.aborted && Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 25));
+      }
+      expect(controller.signal.aborted).toBe(true);
+      expect(controller.signal.reason).toBeInstanceOf(LockStolenError);
+    } finally {
+      stop();
+    }
+  });
+
+  test('serializes refreshes — a slow refresh never overlaps the next tick', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const controller = new AbortController();
+    const stop = startCycleLockRefresher(fakeLock(async () => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise(r => setTimeout(r, 60));
+      inFlight--;
+      return true;
+    }), controller, 'test-lock', 15);
+    try {
+      await new Promise(r => setTimeout(r, 250));
+      expect(maxInFlight).toBe(1);
+      expect(controller.signal.aborted).toBe(false);
+    } finally {
+      stop();
+    }
+  });
+
+  test('a THROWN refresh error is transient — logged, retried, never treated as a steal', async () => {
+    let calls = 0;
+    const controller = new AbortController();
+    const stop = startCycleLockRefresher(fakeLock(async () => {
+      calls++;
+      throw new Error('pooler blip');
+    }), controller, 'test-lock', 15);
+    try {
+      await new Promise(r => setTimeout(r, 120));
+      expect(calls).toBeGreaterThan(1); // kept retrying
+      expect(controller.signal.aborted).toBe(false);
+    } finally {
+      stop();
+    }
+  });
+
+  test('stop() halts ticking', async () => {
+    let calls = 0;
+    const controller = new AbortController();
+    const stop = startCycleLockRefresher(fakeLock(async () => { calls++; return true; }), controller, 'test-lock', 15);
+    await new Promise(r => setTimeout(r, 50));
+    stop();
+    const after = calls;
+    await new Promise(r => setTimeout(r, 60));
+    expect(calls).toBe(after);
+  });
+});
+
+describe('buildYieldDuringPhase steal reporting', () => {
+  test('invokes onStolen when refresh() returns false, still fires the outer hook', async () => {
+    let stolenErr: LockStolenError | undefined;
+    let outerRan = false;
+    const fn = buildYieldDuringPhase(
+      { refresh: async () => false, release: async () => {} },
+      async () => { outerRan = true; },
+      (e) => { stolenErr = e; },
+    );
+    await fn!();
+    expect(stolenErr).toBeInstanceOf(LockStolenError);
+    expect(outerRan).toBe(true);
+  });
+
+  test('does NOT invoke onStolen on a thrown (transient) refresh error', async () => {
+    let stolen = false;
+    const fn = buildYieldDuringPhase(
+      { refresh: async () => { throw new Error('blip'); }, release: async () => {} },
+      undefined,
+      () => { stolen = true; },
+    );
+    await fn!();
+    expect(stolen).toBe(false);
+  });
+});

@@ -10,7 +10,7 @@
 #   - new logging APIs that may show up later (the regex matches the URL,
 #     not the consumer; any leak will trip)
 #
-# Wired into bun run check:all and bun run verify.
+# Wired into bun run verify (single guard registry: scripts/guards-manifest.tsv).
 #
 # Exit codes: 0 = clean, 1 = found at least one suspect line.
 set -euo pipefail

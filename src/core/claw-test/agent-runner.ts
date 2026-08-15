@@ -1,8 +1,9 @@
 /**
  * AgentRunner — pluggable contract for invoking external agents (openclaw,
- * hermes, codex, …) inside the claw-test harness. Two implementations ship
- * (openclaw, hermes); the interface stays narrow and concrete so adding
- * another runner is a ~100-line file.
+ * hermes, grok, …) inside the claw-test harness. Three implementations ship
+ * (openclaw, hermes, grok); the interface stays narrow and concrete — with
+ * the shared detect/env helpers below, adding another runner is a ~50-line
+ * file plus one registerAgentRunner line.
  *
  * The harness wraps spawn/timeout/transcript-capture; runners only have to
  * answer "where's your binary?" and "how do I invoke it with this prompt?".
@@ -14,6 +15,9 @@
  *  │  ─ invoke(...)    ─▶│  runner spawns child, harness captures via TranscriptSink
  *  └────────────────────┘
  */
+
+import { execFileSync } from 'child_process';
+import { statSync } from 'fs';
 
 export interface AgentRunner {
   /** Stable agent name used by --agent flag and friction `agent` field. */
@@ -124,6 +128,67 @@ export function validateBinPathEnv(envName: string, p: string): string | null {
   if (p.split('/').includes('..')) return `${envName} must not contain '..' segments; got ${p}`;
   if (/['"`$\\\n\r]/.test(p)) return `${envName} must not contain quotes, backslashes, dollar signs, backticks, or newlines; got ${p}`;
   return null;
+}
+
+/**
+ * Shared binary resolution for runners: `$<envName>` (validated) > `which
+ * <binName>` > unavailable, then a regular-file + executable-bit stat. The
+ * three runners previously carried byte-identical copies of this body; the
+ * extraction is behavior-preserving (same reason strings, same ordering).
+ */
+export function detectBinary(envName: string, binName: string): DetectResult {
+  const fromEnv = process.env[envName]?.trim();
+  let binPath: string | undefined;
+
+  if (fromEnv) {
+    const validation = validateBinPathEnv(envName, fromEnv);
+    if (validation) return { available: false, reason: validation };
+    binPath = fromEnv;
+  } else {
+    try {
+      // execFileSync, not a shell string: binName comes from callers today
+      // (constants), but this helper is exported — interpolating it into a
+      // shell would make a future metachar-bearing name become code.
+      const out = execFileSync('which', [binName], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] });
+      const found = out.trim();
+      if (!found || !found.startsWith('/')) {
+        return { available: false, reason: `${binName} not on PATH` };
+      }
+      binPath = found;
+    } catch {
+      return { available: false, reason: `${binName} not on PATH` };
+    }
+  }
+
+  if (!binPath) return { available: false, reason: 'no binary resolved' };
+
+  try {
+    const s = statSync(binPath);
+    if (!s.isFile()) return { available: false, reason: `not a regular file: ${binPath}` };
+    // eslint-disable-next-line no-bitwise
+    if (!(s.mode & 0o111)) return { available: false, reason: `not executable: ${binPath}` };
+  } catch (e) {
+    return { available: false, reason: `stat failed: ${e instanceof Error ? e.message : String(e)}` };
+  }
+
+  return { available: true, binPath };
+}
+
+/**
+ * Build the child env for a runner spawn: process.env filtered to the
+ * runner's allowlist, then caller overrides merged on top (overrides win —
+ * the live lane's PATH-shim prepend depends on this precedence).
+ */
+export function filterAllowlistEnv(
+  allowlist: readonly string[],
+  overrides: Record<string, string>,
+): Record<string, string> {
+  const baseEnv: Record<string, string> = {};
+  for (const key of allowlist) {
+    const v = process.env[key];
+    if (typeof v === 'string') baseEnv[key] = v;
+  }
+  return { ...baseEnv, ...overrides };
 }
 
 // ---------------------------------------------------------------------------

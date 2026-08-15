@@ -28,7 +28,7 @@ import { hashToken, generateToken, isUndefinedColumnError } from './utils.ts';
 import { assertValidSourceId } from './source-id.ts';
 import { hasScope, assertAllowedScopes, parseScopeString, InvalidScopeError } from './scope.ts';
 import type { AuthInfo as CoreAuthInfo } from './operations.ts';
-import { parseLegacyTokenScope, parseTakesHoldersAllowList, coerceLegacyPermissions } from './legacy-token-scope.ts';
+import { parseLegacyTokenScope, parseTakesHoldersAllowList, coerceLegacyPermissions, normalizeTokenScopes } from './legacy-token-scope.ts';
 
 /**
  * A slug-prefix write binding is only meaningful if every entry actually
@@ -903,22 +903,36 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     let legacyRows: Record<string, unknown>[];
     try {
       legacyRows = await this.sql`
-        SELECT name, permissions FROM access_tokens
+        SELECT name, permissions, scopes FROM access_tokens
         WHERE token_hash = ${tokenHash} AND revoked_at IS NULL
       `;
     } catch (err) {
       if (isUndefinedColumnError(err, 'permissions')) {
-        legacyRows = await this.sql`
-          SELECT name FROM access_tokens
-          WHERE token_hash = ${tokenHash} AND revoked_at IS NULL
-        `;
+        // Pre-v38 brain: no permissions column. scopes is ORIGINAL schema, so
+        // it must stay in the degraded SELECT — dropping it here would route
+        // normalizeTokenScopes(undefined) into the grandfather branch and
+        // silently promote a scoped token to full admin on any brain whose
+        // permissions projection fails (ship-review P1). Only if scopes
+        // ITSELF is missing (out-of-tree schema) does the ladder fall to
+        // name-only — and that brain predates scoped minting entirely.
+        try {
+          legacyRows = await this.sql`
+            SELECT name, scopes FROM access_tokens
+            WHERE token_hash = ${tokenHash} AND revoked_at IS NULL
+          `;
+        } catch (err2) {
+          if (!isUndefinedColumnError(err2, 'scopes')) throw err2;
+          legacyRows = await this.sql`
+            SELECT name FROM access_tokens
+            WHERE token_hash = ${tokenHash} AND revoked_at IS NULL
+          `;
+        }
       } else {
         throw err;
       }
     }
 
     if (legacyRows.length > 0) {
-      // Legacy tokens get full admin access (grandfather in).
       // For legacy tokens, name = clientId = clientName (single identifier).
       // Update last_used_at
       await this.sql`
@@ -934,11 +948,16 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       // dispatch site defaults to the fail-closed ['world']. An explicit []
       // grant is preserved as deny-all.
       const takesHoldersAllowList = parseTakesHoldersAllowList(permissions?.takes_holders);
+      // #4043 least-privilege: the original-schema `scopes TEXT[]` column is
+      // the scope store. NULL/absent (every token minted before this feature)
+      // → grandfathered full access, byte-identical behavior. An array is
+      // filtered to known scopes and honored as-is — including [] as deny.
+      const grantedScopes = normalizeTokenScopes(legacyRows[0].scopes);
       return {
         token,
         clientId: name,
         clientName: name,
-        scopes: ['read', 'write', 'admin'],
+        scopes: grantedScopes ?? ['read', 'write', 'admin'],
         expiresAt: Math.floor(Date.now() / 1000) + 365 * 24 * 3600, // Legacy tokens never expire — set 1yr future
         // Legacy tokens without an explicit permissions.source_id grant keep
         // the historical 'default' source floor. Array grants become

@@ -354,20 +354,61 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     expect(parsed.pending.length).toBe(2);
   });
 
-  test('per-source submit MUST NOT pass maxWaiting (regression — coalesces all sources to one job)', async () => {
-    // Direct unit-stub queues can't enforce maxWaiting semantics (the
+  test('per-source submit MUST NOT pass maxWaiting, MUST pass maxPending: 1 (fan-out preserved + single-flight)', async () => {
+    // Direct unit-stub queues can't enforce backpressure semantics (the
     // production MinionQueue implementation does), so this catches the
     // regression by inspecting the submit opts at the dispatch boundary.
-    // If a future refactor re-adds maxWaiting:1 to the per-source path,
-    // the production fan-out would silently coalesce N sources to ONE
-    // waiting job per tick — killing the entire feature. The e2e test
-    // also catches this against a real queue, but this guard fires in
-    // unit tests too so the bug surfaces 100x faster.
+    // maxWaiting's NULL-as-wildcard source scope would coalesce N per-source
+    // jobs sharing name='autopilot-cycle' down to ONE waiting job — killing
+    // the fan-out. maxPending is required instead: its EXACT source scope
+    // keeps N independent per-source caps while suppressing cross-slot
+    // re-dispatch when a source's cycle is still in flight (upstream
+    // issue #2). The e2e test also pins both against a real queue.
     const { engine, queue, added, fanoutOpts } = makeStubs([src('a'), src('b'), src('c')]);
     await dispatchPerSource(engine, queue, fanoutOpts);
+    expect(added.length).toBe(3);
     for (const job of added) {
       expect(job.opts.maxWaiting).toBeUndefined();
+      expect(job.opts.maxPending).toBe(1);
     }
+  });
+
+  test('legacy fallback submit passes maxPending: 1 (cross-slot single-flight) and no maxWaiting', async () => {
+    const { engine, queue, added, fanoutOpts } = makeStubs([]);
+    await dispatchPerSource(engine, queue, fanoutOpts);
+    expect(added.length).toBe(1);
+    expect(added[0].opts.maxPending).toBe(1);
+    expect(added[0].opts.maxWaiting).toBeUndefined();
+  });
+
+  test('coalesced submissions are reported separately and emit dispatch_coalesced', async () => {
+    // Stub queue marks the second source's job as coalesced (already in
+    // flight) — the fanout must not claim it as a dispatch.
+    const added: Array<{ name: string; data: Record<string, unknown>; opts: Record<string, unknown> }> = [];
+    const events: string[] = [];
+    let nextId = 200;
+    const engine = {
+      kind: 'postgres' as const,
+      listAllSources: async () => [src('a'), src('b')],
+      getConfig: async () => null,
+      executeRaw: async () => [],
+    } as unknown as BrainEngine;
+    const queue = {
+      add: async (name: string, data: Record<string, unknown>, addOpts: Record<string, unknown>) => {
+        added.push({ name, data, opts: addOpts });
+        const coalesce = data.source_id === 'b';
+        return { id: nextId++, ...(coalesce ? { coalesced: true } : {}) };
+      },
+    } as unknown as Parameters<typeof dispatchPerSource>[1];
+    const result = await dispatchPerSource(engine, queue, {
+      repoPath: '/tmp/brain', slot: 's', timeoutMs: 1, fanoutMax: 4, jsonMode: true,
+      emit: (l: string) => events.push(l), log: () => {},
+    });
+    expect(result.dispatched).toEqual(['a']);
+    expect(result.coalesced).toEqual(['b']);
+    const kinds = events.map(e => JSON.parse(e).event);
+    expect(kinds).toContain('dispatched');
+    expect(kinds).toContain('dispatch_coalesced');
   });
 
   test('all-fresh tick dispatches nothing (no jobs added)', async () => {

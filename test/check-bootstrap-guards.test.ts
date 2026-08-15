@@ -484,3 +484,204 @@ describe('verify + workflow wiring', () => {
     expect(wf).toContain('tests/docker/bootstrap-e2e.sh');
   });
 });
+
+// ── check-grok-pin.sh ────────────────────────────────────────────────────────
+
+const GROK_PIN_GUARD = join(ROOT, 'scripts/check-grok-pin.sh');
+
+function runGrokPinGuard(fixtureRoot: string): { status: number | null; out: string } {
+  const r = spawnSync('bash', [GROK_PIN_GUARD], {
+    cwd: ROOT,
+    encoding: 'utf-8',
+    env: { ...process.env, GBRAIN_GROK_PIN_GUARD_ROOT: fixtureRoot },
+  });
+  return { status: r.status, out: `${r.stdout}\n${r.stderr}` };
+}
+
+const GROK_PIN_STAMPS_NPM = [
+  '<!-- grok-pin: distribution_kind=npm -->',
+  '<!-- grok-pin: npm_package=@example/grok -->',
+  '<!-- grok-pin: npm_version=1.0.4 -->',
+  '<!-- grok-pin: npm_integrity=sha512-AAA= -->',
+  '<!-- grok-pin: grok_version=1.0.4 -->',
+  '<!-- grok-pin: installer_sha256=abc123 -->',
+].join('\n');
+
+function grokDoorWorkflow(envLines: string[]): string {
+  return [
+    'jobs:',
+    '  other-job:',
+    '    steps: []',
+    '  grok-door:',
+    '    env:',
+    ...envLines.map((l) => `      ${l}`),
+    '    steps: []',
+    '  trailing-job:',
+    '    env:',
+    '      GROK_VERSION: "9.9.9"', // outside the grok-door block — must be ignored
+    '    steps: []',
+    '',
+  ].join('\n');
+}
+
+const GROK_NPM_ENV_OK = [
+  'GROK_VERSION: "1.0.4"',
+  'GROK_NPM_PACKAGE: "@example/grok"',
+  'GROK_NPM_INTEGRITY: "sha512-AAA="',
+];
+
+describe('check-grok-pin.sh', () => {
+  test('ok: npm mode with matching workflow pins (anchored to the grok-door block)', () => {
+    withFixture({
+      'docs/mcp/GROK-CLI-PIN.md': `# pin\n${GROK_PIN_STAMPS_NPM}\n`,
+      '.github/workflows/heavy-tests.yml': grokDoorWorkflow(GROK_NPM_ENV_OK),
+    }, (dir) => {
+      const r = runGrokPinGuard(dir);
+      expect(r.out).toContain('check-grok-pin: ok');
+      expect(r.status).toBe(0);
+    });
+  });
+
+  test('SKIP-graceful pre-landing; FAIL-closed once the door job exists without the pin doc', () => {
+    // Door job present + pin doc MISSING = the gate's source of truth was
+    // deleted — that must fail, not skip (post-landing fail-closed rule).
+    withFixture({
+      '.github/workflows/heavy-tests.yml': grokDoorWorkflow(GROK_NPM_ENV_OK),
+    }, (dir) => {
+      const r = runGrokPinGuard(dir);
+      expect(r.status).toBe(1);
+      expect(r.out).toContain('pin doc is the gate');
+    });
+    // No door job yet: pin doc alone is fine to skip (pre-landing posture).
+    withFixture({
+      'docs/mcp/GROK-CLI-PIN.md': `# pin\n${GROK_PIN_STAMPS_NPM}\n`,
+      '.github/workflows/heavy-tests.yml': 'jobs:\n  other-job:\n    steps: []\n',
+    }, (dir) => {
+      const r = runGrokPinGuard(dir);
+      expect(r.out).toContain('SKIP');
+      expect(r.status).toBe(0);
+    });
+  });
+
+  test('FAIL: npm_version stamp disagreeing with grok_version can never pass green', () => {
+    const stamps = GROK_PIN_STAMPS_NPM.replace(
+      '<!-- grok-pin: npm_version=1.0.4 -->',
+      '<!-- grok-pin: npm_version=1.0.5 -->',
+    );
+    withFixture({
+      'docs/mcp/GROK-CLI-PIN.md': `# pin\n${stamps}\n`,
+      '.github/workflows/heavy-tests.yml': grokDoorWorkflow(GROK_NPM_ENV_OK),
+    }, (dir) => {
+      const r = runGrokPinGuard(dir);
+      expect(r.status).toBe(1);
+      expect(r.out).toContain('npm_version stamp');
+    });
+  });
+
+  test('single-quoted workflow env values are not read as drift', () => {
+    withFixture({
+      'docs/mcp/GROK-CLI-PIN.md': `# pin\n${GROK_PIN_STAMPS_NPM}\n`,
+      '.github/workflows/heavy-tests.yml': grokDoorWorkflow([
+        "GROK_VERSION: '1.0.4'",
+        "GROK_NPM_PACKAGE: '@example/grok'",
+        "GROK_NPM_INTEGRITY: 'sha512-AAA='",
+      ]),
+    }, (dir) => {
+      const r = runGrokPinGuard(dir);
+      expect(r.out).toContain('check-grok-pin: ok');
+      expect(r.status).toBe(0);
+    });
+  });
+
+  test('FAIL: workflow GROK_VERSION drifts from the grok_version stamp', () => {
+    withFixture({
+      'docs/mcp/GROK-CLI-PIN.md': `# pin\n${GROK_PIN_STAMPS_NPM}\n`,
+      '.github/workflows/heavy-tests.yml': grokDoorWorkflow([
+        'GROK_VERSION: "1.0.5"',
+        'GROK_NPM_PACKAGE: "@example/grok"',
+        'GROK_NPM_INTEGRITY: "sha512-AAA="',
+      ]),
+    }, (dir) => {
+      const r = runGrokPinGuard(dir);
+      expect(r.status).toBe(1);
+      expect(r.out).toContain('GROK_VERSION drift');
+    });
+  });
+
+  test('FAIL: npm mode with a missing workflow integrity pin', () => {
+    withFixture({
+      'docs/mcp/GROK-CLI-PIN.md': `# pin\n${GROK_PIN_STAMPS_NPM}\n`,
+      '.github/workflows/heavy-tests.yml': grokDoorWorkflow([
+        'GROK_VERSION: "1.0.4"',
+        'GROK_NPM_PACKAGE: "@example/grok"',
+      ]),
+    }, (dir) => {
+      const r = runGrokPinGuard(dir);
+      expect(r.status).toBe(1);
+      expect(r.out).toContain('missing GROK_NPM_INTEGRITY');
+    });
+  });
+
+  test('FAIL: mode exclusivity — npm mode must not also pin GROK_INSTALL_SHA256 in the workflow', () => {
+    withFixture({
+      'docs/mcp/GROK-CLI-PIN.md': `# pin\n${GROK_PIN_STAMPS_NPM}\n`,
+      '.github/workflows/heavy-tests.yml': grokDoorWorkflow([
+        ...GROK_NPM_ENV_OK,
+        'GROK_INSTALL_SHA256: "abc123"',
+      ]),
+    }, (dir) => {
+      const r = runGrokPinGuard(dir);
+      expect(r.status).toBe(1);
+      expect(r.out).toContain('mode exclusivity');
+    });
+  });
+
+  test('FAIL: duplicate stamps in the pin doc', () => {
+    withFixture({
+      'docs/mcp/GROK-CLI-PIN.md': `# pin\n${GROK_PIN_STAMPS_NPM}\n<!-- grok-pin: grok_version=1.0.5 -->\n`,
+      '.github/workflows/heavy-tests.yml': grokDoorWorkflow(GROK_NPM_ENV_OK),
+    }, (dir) => {
+      const r = runGrokPinGuard(dir);
+      expect(r.status).toBe(1);
+      expect(r.out).toContain('duplicate grok-pin stamp');
+    });
+  });
+
+  test('installer mode: matching sha passes; npm-integrity co-pin fails exclusivity', () => {
+    const installerStamps = [
+      '<!-- grok-pin: distribution_kind=installer -->',
+      '<!-- grok-pin: grok_version=1.0.4 -->',
+      '<!-- grok-pin: installer_sha256=abc123 -->',
+    ].join('\n');
+    withFixture({
+      'docs/mcp/GROK-CLI-PIN.md': `# pin\n${installerStamps}\n`,
+      '.github/workflows/heavy-tests.yml': grokDoorWorkflow([
+        'GROK_VERSION: "1.0.4"',
+        'GROK_INSTALL_SHA256: "abc123"',
+      ]),
+    }, (dir) => {
+      const r = runGrokPinGuard(dir);
+      expect(r.out).toContain('check-grok-pin: ok (installer mode');
+      expect(r.status).toBe(0);
+    });
+    withFixture({
+      'docs/mcp/GROK-CLI-PIN.md': `# pin\n${installerStamps}\n`,
+      '.github/workflows/heavy-tests.yml': grokDoorWorkflow([
+        'GROK_VERSION: "1.0.4"',
+        'GROK_INSTALL_SHA256: "abc123"',
+        'GROK_NPM_INTEGRITY: "sha512-AAA="',
+      ]),
+    }, (dir) => {
+      const r = runGrokPinGuard(dir);
+      expect(r.status).toBe(1);
+      expect(r.out).toContain('mode exclusivity');
+    });
+  });
+
+  test('verify wiring: run-verify-parallel CHECKS + package.json both carry check:grok-pin', () => {
+    const verify = require('node:fs').readFileSync(join(ROOT, 'scripts/run-verify-parallel.sh'), 'utf-8');
+    expect(verify).toContain('"check:grok-pin"');
+    const pkg = require('node:fs').readFileSync(join(ROOT, 'package.json'), 'utf-8');
+    expect(pkg).toContain('"check:grok-pin": "bash scripts/check-grok-pin.sh"');
+  });
+});

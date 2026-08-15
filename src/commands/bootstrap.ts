@@ -62,11 +62,23 @@ import {
 } from '../core/bootstrap/hooks.ts';
 import {
   guardReceiptOverwrite,
+  readHarnessReceiptState,
   readManifest,
   readReceipt,
   writeReceipt,
   type InstallReceipt,
 } from '../core/bootstrap/format.ts';
+import {
+  applyHarness,
+  codexBlockOwnsName,
+  ensureHarnessHome,
+  parseHarnessArgs,
+  removeHarness,
+  statusHarness,
+  type HarnessDeps,
+} from '../core/bootstrap/harness.ts';
+import { codexConfigPath } from '../core/bootstrap/host-specs.ts';
+import { promptLine } from '../core/cli-util.ts';
 import {
   appendInstallLog,
   gitOriginUrl,
@@ -102,6 +114,15 @@ Subcommands (run \`gbrain bootstrap status\` first — it is the resume entrypoi
   verify [--json]                 The whole install contract (round-trip, graph floor,
                                   magic moment, scans, hooks smoke). Exit 0 or not done.
   attach [--harness H]            Machine two: adopt a cloned agent workspace.
+  harness [--harness claude-code|codex|all] [--url U | --port N] [--source ID]
+          [--token-name NAME | --token TOK] [--name MCPNAME] [--project DIR]...
+          [--no-hooks] [--no-capture] [--force] [--status] [--remove] [--yes] [--json]
+                                  Wire framework-spawned Claude Code / Codex sessions to a
+                                  RUNNING \`gbrain serve --http\` on this box (#4043): scoped
+                                  bearer token, user-scope MCP + headless pre-approval,
+                                  lifecycle hooks (user scope, or per --project dir), codex
+                                  config block. No agent.json needed. Idempotent; --remove
+                                  tears it down. (--local is an accepted no-op alias.)
   cloud-setup-script              Print the paste-ready cloud environment setup
                                   script (installs the gbrain binary into the
                                   environment snapshot; npm-based — bun fetching
@@ -812,6 +833,19 @@ async function runHooks(ws: string, rest: string[], home: string, runner: ExecRu
   const hooksConsent = !noHooks && (consentAnswer(ws, 'HOOKS_CONSENT') ?? 'yes').toLowerCase() === 'yes';
   const gbrainHome = process.env.GBRAIN_HOME?.trim() || undefined;
 
+  // One owner per codex server name: if the harness lane's managed TOML block
+  // owns [mcp_servers.gbrain], this stdio registration must not fight it —
+  // the FIX7 mismatch path would `codex mcp remove` the harness's server and
+  // strand orphan marker comments (#4043 ownership rule).
+  if (harness === 'codex' && codexBlockOwnsName(codexConfigPath(), 'gbrain')) {
+    console.log(
+      "the 'gbrain' codex MCP server is managed by `gbrain bootstrap harness` (marker block in the codex " +
+        'config) — skipping the stdio registration. Run `gbrain bootstrap harness --remove` first if you ' +
+        'want this workspace-lane stdio registration instead.',
+    );
+    return 0;
+  }
+
   return withLock(ws, async () => {
     // 0. source_id visibility seam: `hooks` is the last ENGINE-FREE phase
     // before `verify` (which alone can detect a source_id collision — the
@@ -1011,7 +1045,7 @@ async function runHooks(ws: string, rest: string[], home: string, runner: ExecRu
         );
       }
     } else {
-      console.log('Codex has no hook system — per-turn context is the AGENTS.md pull protocol (stated plainly, not a bug).');
+      console.log('gbrain does not wire Codex hooks yet — per-turn context is the AGENTS.md pull protocol (stated plainly; the codex hook lane is a filed follow-up).');
     }
 
     // 4. Receipt registration record [CX2-12]. Detail records what actually
@@ -1111,11 +1145,74 @@ export function workspaceBrainStats(ws: string): { sources: string[]; pages: num
   return { sources, pages };
 }
 
+/** `gbrain bootstrap harness` (#4043) — machine-level, no workspace, no
+ * agent.json. Locks on the gbrain HOME (there is no workspace to lock). */
+async function runHarness(rest: string[], home: string, runner: ExecRunner): Promise<number> {
+  const flags = parseHarnessArgs(rest);
+  if (flags.error) {
+    console.error(flags.error);
+    return 2;
+  }
+  const deps: HarnessDeps = {
+    runner,
+    gbrainHome: home,
+    // Fallback only — the flag itself is parsed (and error-checked) once, by
+    // parseHarnessArgs; flags.gbrainBin wins inside applyHarness.
+    gbrainBin: resolveGbrainBin(),
+    isTTY: process.stdout.isTTY === true,
+    prompt: promptLine,
+  };
+  // [X12] --status is READ-ONLY: no home mkdir, no lock — it must work (and
+  // stay side-effect-free) even while an apply/remove holds the mutex.
+  if (flags.status) {
+    return statusHarness(flags, deps);
+  }
+  ensureHarnessHome(home);
+  return withLock(home, async () => {
+    if (flags.remove) {
+      const code = await removeHarness(flags, deps);
+      abortIfInjected('harness');
+      return code;
+    }
+    const code = await applyHarness(flags, deps);
+    abortIfInjected('harness');
+    return code;
+  });
+}
+
 async function runUninstall(ws: string, rest: string[], home: string, runner: ExecRunner): Promise<number> {
   const deleteBrain = rest.includes('--delete-brain');
   const yes = rest.includes('--yes');
   const homeFlag = flagValue(rest, '--home');
+  const effectiveHome = homeFlag ? resolve(homeFlag) : home;
   return withLock(ws, async () => {
+    // The HOME lock (runHarness's mutex) is held across the ENTIRE uninstall
+    // body — not just the harness-removal step — so a concurrent
+    // `bootstrap harness` apply can never mint+wire in the window between
+    // harness removal and the workspace teardown's rm of <home>/bootstrap
+    // (which would strand a fresh receipt + live wiring). Consistent order
+    // (ws → home), distinct dirs, so no deadlock; same-dir configs skip the
+    // nested acquire (the lock is non-reentrant).
+    const body = async (): Promise<number> => {
+    // Harness wiring is removed FIRST (#4043 ordering, load-bearing twice
+    // over: the token revoke needs the DB alive, and --delete-brain rmSyncs
+    // <home>/bootstrap — which would destroy harness.json unconsumed).
+    const harnessState = readHarnessReceiptState(effectiveHome);
+    let harnessRemoved = false;
+    if (harnessState.state !== 'absent') {
+      console.log('harness wiring detected — removing it first (token revoke needs the brain alive).');
+      const flags = parseHarnessArgs(['--remove', ...(yes ? ['--yes'] : [])]);
+      const code = await removeHarness(flags, { runner, gbrainHome: effectiveHome });
+      if (code !== 0) {
+        console.error(
+          'harness removal did not fully converge — stopping BEFORE workspace teardown so the harness ' +
+            'receipt is never stranded. Fix the reported issue (or stop the live serve) and re-run.',
+        );
+        return 1;
+      }
+      harnessRemoved = true;
+    }
+
     if (deleteBrain) {
       // Facts-export offer BEFORE any deletion can run — facts are user
       // knowledge, not derived state; after the rm there is nothing to export.
@@ -1127,13 +1224,31 @@ async function runUninstall(ws: string, rest: string[], home: string, runner: Ex
     // the durability teardown below needs it and the manifest may not survive.
     const preState = readManifest(ws);
     const durabilitySourceId = preState.state === 'initialized' ? preState.manifest.source_id : 'workspace';
-    const result = await uninstallWorkspace(ws, {
-      deleteBrain,
-      ...(yes ? { confirm: async () => true } : {}),
-      gbrainHomeDir: homeFlag ? resolve(homeFlag) : home,
-      homeExplicit: homeFlag !== undefined,
-      brainStats: async () => workspaceBrainStats(ws),
-    });
+    let result;
+    try {
+      result = await uninstallWorkspace(ws, {
+        deleteBrain,
+        ...(yes ? { confirm: async () => true } : {}),
+        gbrainHomeDir: effectiveHome,
+        homeExplicit: homeFlag !== undefined,
+        brainStats: async () => workspaceBrainStats(ws),
+      });
+    } catch (e) {
+      // A harness-only box has machine-level wiring but no workspace install:
+      // the pre-teardown refusals that mean "this workspace isn't the
+      // bootstrapped one" end the run as success once harness removal ran.
+      // LIVE_SERVE and everything else stay hard refusals.
+      if (
+        harnessRemoved &&
+        e instanceof BootstrapError &&
+        (e.code === 'NO_RECEIPT' || e.code === 'HOME_GUARD' || e.code === 'RECEIPT_MISMATCH')
+      ) {
+        console.log(`no workspace install on this machine (naming the refusal: ${e.code}); harness wiring removed.`);
+        abortIfInjected('uninstall');
+        return 0;
+      }
+      throw e;
+    }
 
     // Execute the structured host-registration removals the module returned.
     for (const reg of result.registration_removals) {
@@ -1196,6 +1311,8 @@ async function runUninstall(ws: string, rest: string[], home: string, runner: Ex
     console.log('The workspace repo and its files remain yours — the body is portable by design.');
     abortIfInjected('uninstall');
     return 0;
+    };
+    return resolve(effectiveHome) === resolve(ws) ? body() : withLock(effectiveHome, body);
   });
 }
 
@@ -1221,7 +1338,7 @@ export async function runBootstrap(args: string[], opts: RunBootstrapOpts = {}):
   const logCtx: LogCtx = { home, ws, ...(harnessForLog ? { harness: harnessForLog } : {}) };
   const t0 = Date.now();
 
-  const KNOWN = new Set(['status', 'interview', 'render', 'repo', 'hooks', 'verify', 'attach', 'uninstall', 'cloud-setup-script']);
+  const KNOWN = new Set(['status', 'interview', 'render', 'repo', 'hooks', 'verify', 'attach', 'uninstall', 'harness', 'cloud-setup-script']);
   if (!KNOWN.has(sub)) {
     console.error(`unknown subcommand: ${sub}`);
     console.error(BOOTSTRAP_HELP);
@@ -1233,13 +1350,17 @@ export async function runBootstrap(args: string[], opts: RunBootstrapOpts = {}):
   // interview) never falls through into the real operation, regardless of
   // what other flags/values precede it in `rest`. No install-log entry
   // either — this isn't a phase run.
-  if (SUBCOMMAND_HELP[sub] && hasHelpToken(rest, sub !== 'interview')) {
+  if (Object.hasOwn(SUBCOMMAND_HELP, sub) && hasHelpToken(rest, sub !== 'interview')) {
+    // Object.hasOwn: a plain-object lookup resolves inherited keys, so
+    // `bootstrap constructor --help` would print Object.prototype.constructor.
     console.log(SUBCOMMAND_HELP[sub]);
     return 0;
   }
 
   // The install log records the PHASE name, and the hooks subcommand is the
   // 'wire' phase (status.ts phase list) — one mapping, used at every log site.
+  // 'harness' is its own log phase (NOT a status.ts phase — that list is
+  // CI-pinned; install.jsonl phase names are free-form telemetry).
   const logPhaseName = sub === 'hooks' ? 'wire' : sub;
 
   try {
@@ -1275,6 +1396,9 @@ export async function runBootstrap(args: string[], opts: RunBootstrapOpts = {}):
         break;
       case 'uninstall':
         code = await runUninstall(ws, rest, home, runner);
+        break;
+      case 'harness':
+        code = await runHarness(rest, home, runner);
         break;
       default:
         return 2; // unreachable

@@ -21,7 +21,15 @@ import { join } from 'node:path';
 import { runBootstrap, workspaceBrainStats } from '../src/commands/bootstrap.ts';
 import type { ExecRunner } from '../src/core/bootstrap/repo.ts';
 import { attachWorkspace } from '../src/core/bootstrap/attach.ts';
-import { readReceipt, receiptPath, writeManifest, type InstallReceipt } from '../src/core/bootstrap/format.ts';
+import {
+  harnessReceiptPath,
+  readReceipt,
+  receiptPath,
+  writeHarnessReceipt,
+  writeManifest,
+  type HarnessReceipt,
+  type InstallReceipt,
+} from '../src/core/bootstrap/format.ts';
 import { GBRAIN_HOOK_MARKER_KEY, GBRAIN_HOOK_MARKER_VALUE } from '../src/core/bootstrap/host-specs.ts';
 import { deriveWorkspaceSourceId } from '../src/core/bootstrap/verify.ts';
 import { initState, setAnswer, skipAnswer, confirm, readBackHash } from '../src/core/bootstrap/interview.ts';
@@ -887,6 +895,99 @@ describe('uninstall --delete-brain ordering + engine-free stats', () => {
       if (savedHome === undefined) delete process.env.HOME;
       else process.env.HOME = savedHome;
       rmSync(ws2, { recursive: true, force: true });
+    }
+  }, 30_000);
+});
+
+describe('uninstall × harness receipt (#4043 harness-first composition)', () => {
+  function harnessReceiptFor(overrides: Partial<HarnessReceipt> = {}): HarnessReceipt {
+    return {
+      harness_receipt_version: 1,
+      created_at: new Date().toISOString(),
+      created_by: 'gbrain@test',
+      url: 'http://127.0.0.1:19999/mcp',
+      source_id: 'default',
+      token: { name: 'bootstrap-harness', minted: false },
+      targets: [{ host: 'claude-code', kind: 'mcp', state: 'confirmed', scope: 'user', name: 'gbrain' }],
+      ...overrides,
+    };
+  }
+
+  test('harness-only box: harness removed FIRST, NO_RECEIPT tolerated, exit 0', async () => {
+    const ws3 = mkdtempSync(join(tmpdir(), 'gb-harness-only-ws-'));
+    const isoHome = join(ws3, '.gbrain');
+    mkdirSync(join(isoHome, 'bootstrap'), { recursive: true });
+    // removeHarness locks the user-settings dir [X11] — sandbox it so the
+    // test never touches (or contends on) the operator's real ~/.claude.
+    const savedCfgDir = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = join(ws3, 'claude-cfg');
+    try {
+      writeHarnessReceipt(isoHome, harnessReceiptFor());
+      const { runner } = makeRunner();
+      const r = await capture(() =>
+        runBootstrap(['uninstall', '--workspace', ws3, '--yes', '--home', isoHome], { runner }),
+      );
+      expect(r.result).toBe(0);
+      expect(r.out).toContain('harness wiring detected — removing it first');
+      // GBRAIN_HOME points elsewhere in this suite, so the refusal lands as
+      // HOME_GUARD here; NO_RECEIPT fires when homes align. Both are in the
+      // tolerated set — pin that one of them is named.
+      expect(r.out).toMatch(/no workspace install on this machine \(naming the refusal: (NO_RECEIPT|HOME_GUARD)\)/);
+      // Ordering: harness removal output precedes the no-workspace message.
+      expect(r.out.indexOf('harness wiring detected')).toBeLessThan(r.out.indexOf('no workspace install'));
+      expect(existsSync(harnessReceiptPath(isoHome))).toBe(false); // receipt consumed
+    } finally {
+      if (savedCfgDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = savedCfgDir;
+      rmSync(ws3, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test('harness removal that does not converge ABORTS before workspace teardown (exit 1)', async () => {
+    const ws4 = mkdtempSync(join(tmpdir(), 'gb-harness-abort-ws-'));
+    const isoHome = join(ws4, '.gbrain');
+    mkdirSync(join(isoHome, 'bootstrap'), { recursive: true });
+    const savedCfgDir = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = join(ws4, 'claude-cfg');
+    try {
+      // A hooks target whose settings file is parse-broken: the remove path
+      // refuses to touch what it cannot read → target stays failed → exit 1.
+      const brokenSettings = join(ws4, 'settings.json');
+      writeFileSync(brokenSettings, '{ not json', 'utf8');
+      writeHarnessReceipt(
+        isoHome,
+        harnessReceiptFor({
+          targets: [
+            { host: 'claude-code', kind: 'hooks', state: 'confirmed', scope: 'user', path: brokenSettings, marker: 'bootstrap-harness-v1' },
+          ],
+        }),
+      );
+      // A workspace receipt that WOULD be torn down if the abort failed.
+      const receipt: InstallReceipt = {
+        receipt_version: 1,
+        workspace_dir: ws4,
+        source_id: 'workspace',
+        agent_name: 'Dispatch',
+        created_at: new Date().toISOString(),
+        created_by: 'test',
+        brain_created_by_bootstrap: false,
+        created_paths: [],
+        registrations: [],
+      };
+      writeFileSync(receiptPath(isoHome), JSON.stringify(receipt), 'utf8');
+      const { runner } = makeRunner();
+      const r = await capture(() =>
+        runBootstrap(['uninstall', '--workspace', ws4, '--yes', '--home', isoHome], { runner }),
+      );
+      expect(r.result).toBe(1);
+      expect(r.err).toContain('harness removal did not fully converge');
+      // Aborted BEFORE teardown: both receipts survive for the retry.
+      expect(existsSync(harnessReceiptPath(isoHome))).toBe(true);
+      expect(existsSync(receiptPath(isoHome))).toBe(true);
+    } finally {
+      if (savedCfgDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = savedCfgDir;
+      rmSync(ws4, { recursive: true, force: true });
     }
   }, 30_000);
 });

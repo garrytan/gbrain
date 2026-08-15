@@ -49,9 +49,11 @@ upstream: conversation-history+transcript-save@fc834ee
 
 Two halves of one loop:
 
-1. **IMPORT** — raw export or session log → one dated markdown page per
-   conversation under `conversations/` → `gbrain import`/`gbrain sync` →
-   parser validation → fact extraction → gap check.
+1. **IMPORT** — raw export or session log → dated markdown pages under
+   `conversations/` (the native importer writes them directly and splits
+   long sessions into parts; the manual path converts one page per
+   conversation, then `gbrain import`/`gbrain sync`) → parser validation →
+   fact extraction → gap check.
 2. **RETRIEVE** — search the archive, pull threads, build timelines, and
    answer "when did I first discuss X".
 
@@ -59,11 +61,29 @@ Years of AI-assistant history is one of the largest personal corpora most
 users own. This skill makes it first-class brain content instead of a JSON
 blob in a downloads folder.
 
-**No native raw-export importer exists.** `gbrain import <dir>` ingests
-markdown directories; nothing in the CLI parses a provider's raw
-`conversations.json` directly. The conversion step below is agent work.
-(A native `gbrain import --format chatgpt|claude` is a filed follow-up; until
-it lands, this procedure is the supported path.)
+**A native importer now exists: `gbrain transcripts ingest`.** It parses
+agent session logs (Claude Code, Codex, OpenClaw, Hermes) AND extracted
+consumer exports (ChatGPT `conversations.json`, Claude.ai export) directly:
+detection, secret redaction, imessage-slack rendering, long-session
+splitting, and idempotent re-runs are all native. Prefer it over the manual
+procedure whenever the source is one of those six formats:
+
+```
+gbrain transcripts ingest ~/Downloads/conversations.json   # unzip first
+gbrain transcripts ingest                                  # discover harness logs
+gbrain transcripts status                                  # found vs imported gaps
+```
+
+Native-vs-manual delta to know: the native lane redacts SECRETS (key
+patterns) plus your `~/.gbrain/harvest-private-patterns.txt` regexes and
+counts agent-directed imperatives into frontmatter, but broad PII detection
+(names, phones, addresses) remains YOUR review pass — the manual procedure's
+human scrub step still applies to sensitive corpora. Two more deltas: the
+native lane caps each message at ~4K characters in the page body (readable
+archive, not verbatim — the session file named in `source_uri` stays the
+verbatim record), and tool/thinking traffic appears only as one-line
+placeholders. Providers without a native adapter (e.g. Perplexity) keep
+using the manual conversion below.
 
 ## Where Conversations Live
 

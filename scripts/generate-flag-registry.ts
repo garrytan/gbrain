@@ -156,6 +156,12 @@ export function renderRegistryModule(registry: Record<string, string[]>): string
 // Regenerate: bun run build:flag-registry
 // Freshness + drift pinned by test/cli-flag-validation.test.ts (#2185).
 //
+// Merge conflict here? Do not hand-merge it. This file is regenerated on most
+// upstream waves, so a branch that also regenerates it conflicts on the whole
+// body. Take the base branch's copy wholesale, then re-run the command above —
+// the freshness test named above fails loudly if that regeneration was done
+// against the wrong base.
+//
 // Per-command legal flags for CLI_ONLY commands, derived from each command's
 // source (case block + imported modules + one level of relative imports +
 // scripts/generate-flag-registry.ts EXTRA_FLAGS). Deliberately over-inclusive

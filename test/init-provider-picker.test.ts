@@ -1,10 +1,10 @@
 /**
  * Picker unit tests — exercise the pure paths (env filtering, caveat
- * messaging, null returns on bad input). TTY-input flows (numbered
- * selection happy path, Ctrl-D, timeout) are covered E2E via
- * cli-pty-runner.ts because mocking readLineSafe at the unit boundary
- * leaks across files in the shard process per CLAUDE.md test-isolation
- * rules.
+ * messaging, null returns on bad input). The real TTY-input flow (menu
+ * rendering, typed selection, persistence) is covered by the real-PTY
+ * serial test at test/init-picker-pty.serial.test.ts; mocking readLineSafe
+ * at the unit boundary would leak across files in the shard process per
+ * CLAUDE.md test-isolation rules.
  */
 
 import { describe, test, expect } from 'bun:test';

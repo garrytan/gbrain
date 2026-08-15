@@ -19,8 +19,8 @@
  *    manifest but not the receipt.
  */
 
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 export const FORMAT_VERSION = 1;
 export const AGENT_MANIFEST_FILENAME = 'agent.json';
@@ -201,4 +201,144 @@ export function writeReceipt(gbrainHomeDir: string, receipt: InstallReceipt): vo
   const tmp = `${path}.tmp-${process.pid}`;
   writeFileSync(tmp, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
   renameSync(tmp, path);
+}
+
+// ---------------------------------------------------------------------------
+// Machine-level harness receipt (#4043 `gbrain bootstrap harness`)
+//
+// A SEPARATE file from receipt.json on purpose: the install receipt is
+// workspace-keyed (workspace_dir/source_id/agent_name are required — a
+// harness-only box has none of those), and the two lifecycles differ
+// (workspace uninstall vs harness --remove). Same CX2-12 discipline: typed
+// read states, newer-format refusal, broken-file backup-aside, atomic write.
+//
+// WRITE-AHEAD contract [F1/C7]: the apply path persists this receipt right
+// after minting — every planned target starts `pending` and flips to
+// `confirmed` (or records its failure) as the wiring lands, and
+// `token.previous_ids` carries every not-yet-revoked prior token until rotation
+// completes. A crash at any step leaves a receipt --remove can consume.
+// ---------------------------------------------------------------------------
+
+export type HarnessTargetKind = 'mcp' | 'permission' | 'hooks';
+export type HarnessTargetState = 'pending' | 'confirmed' | 'failed';
+
+export interface HarnessTarget {
+  host: 'claude-code' | 'codex';
+  kind: HarnessTargetKind;
+  state: HarnessTargetState;
+  /** user scope or a --project dir (hooks); user for mcp/permission. */
+  scope: string;
+  /** Settings/config file the target writes (absent for CLI-mediated mcp). */
+  path?: string;
+  /** MCP server name (mcp targets). */
+  name?: string;
+  /** permissions.allow entry (permission targets). */
+  entry?: string;
+  /** Hook marker value (hooks targets). */
+  marker?: string;
+  /** Write mechanism note, e.g. 'toml-block' vs 'claude-cli'. */
+  mechanism?: string;
+  /** One-line failure reason when state === 'failed'. */
+  error?: string;
+}
+
+export interface HarnessReceipt {
+  harness_receipt_version: 1;
+  created_at: string;
+  created_by: string;
+  /** Normalized MCP endpoint the box is wired to. */
+  url: string;
+  /** Engine reported by /health at apply time (postgres → degraded per-turn). */
+  engine?: string;
+  /** Serve version at apply time — --status re-checks for skew [F7]. */
+  serve_version?: string;
+  source_id: string;
+  token: {
+    name: string;
+    /** Row id — the only safe revocation key. */
+    id?: string;
+    /** False when --token supplied a pre-minted token (never revoke those). */
+    minted: boolean;
+    /**
+     * EVERY prior minted-token id still awaiting revocation (mint-first
+     * rotation [C7]). An array, not a slot [X4]: a failed rotation must not
+     * forget the token before last, and a --token re-run must keep carrying
+     * ids minted by earlier runs until they are revoked.
+     */
+    previous_ids?: string[];
+  };
+  targets: HarnessTarget[];
+}
+
+export function harnessReceiptPath(gbrainHomeDir: string): string {
+  return join(gbrainHomeDir, 'bootstrap', 'harness.json');
+}
+
+export type HarnessReceiptReadState =
+  | { state: 'absent' }
+  | { state: 'ok'; receipt: HarnessReceipt }
+  | { state: 'newer'; receiptVersion: number }
+  | { state: 'invalid' };
+
+export function readHarnessReceiptState(gbrainHomeDir: string): HarnessReceiptReadState {
+  const path = harnessReceiptPath(gbrainHomeDir);
+  if (!existsSync(path)) return { state: 'absent' };
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as HarnessReceipt;
+    if (parsed.harness_receipt_version === 1) {
+      // Version alone is not enough: every consumer dereferences targets[]
+      // and token.name unchecked, so a hand-damaged version-1 receipt must
+      // take the designed 'invalid' → backup-aside path, not a TypeError.
+      const shapeOk =
+        Array.isArray(parsed.targets) &&
+        typeof parsed.token === 'object' &&
+        parsed.token !== null &&
+        typeof parsed.token.name === 'string' &&
+        typeof parsed.url === 'string';
+      return shapeOk ? { state: 'ok', receipt: parsed } : { state: 'invalid' };
+    }
+    if (typeof parsed.harness_receipt_version === 'number' && parsed.harness_receipt_version > 1) {
+      return { state: 'newer', receiptVersion: parsed.harness_receipt_version };
+    }
+    return { state: 'invalid' };
+  } catch {
+    return { state: 'invalid' };
+  }
+}
+
+/**
+ * Pre-write guard (mirror of guardReceiptOverwrite): newer-format refuses
+ * with an upgrade-first error; an unreadable receipt is backed up loudly so
+ * the recorded targets remain recoverable.
+ */
+export function guardHarnessReceiptOverwrite(gbrainHomeDir: string): { brokenBackupPath?: string } {
+  const state = readHarnessReceiptState(gbrainHomeDir);
+  if (state.state === 'newer') {
+    throw new Error(
+      `the harness receipt at ${harnessReceiptPath(gbrainHomeDir)} was written by a newer gbrain ` +
+        `(harness_receipt_version ${state.receiptVersion}) — upgrade gbrain before re-running bootstrap harness.`,
+    );
+  }
+  if (state.state === 'invalid') {
+    const path = harnessReceiptPath(gbrainHomeDir);
+    const backup = `${path}.broken-${Date.now()}`;
+    renameSync(path, backup);
+    return { brokenBackupPath: backup };
+  }
+  return {};
+}
+
+/** Atomic write, 0600 (records wiring topology + token ids, not plaintext). */
+export function writeHarnessReceipt(gbrainHomeDir: string, receipt: HarnessReceipt): void {
+  const path = harnessReceiptPath(gbrainHomeDir);
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = `${path}.tmp-${process.pid}`;
+  writeFileSync(tmp, `${JSON.stringify(receipt, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  renameSync(tmp, path);
+}
+
+/** Consume (delete) the harness receipt after a fully successful --remove. */
+export function deleteHarnessReceipt(gbrainHomeDir: string): void {
+  const path = harnessReceiptPath(gbrainHomeDir);
+  if (existsSync(path)) rmSync(path);
 }

@@ -9,7 +9,7 @@
  *      get gbrain` + the temp config.toml carry our server + GBRAIN_SOURCE),
  *      `gbrain bootstrap verify` exits 0, and the rendered AGENTS.md carries the
  *      Gate-3 brain-first pull protocol — Codex's ONLY per-turn mechanism (it
- *      has no hook system).
+ *      hooks are not wired by gbrain yet).
  *
  *   2. SMOKE — a live `codex exec` turn. gbrain is registered as a Codex stdio
  *      MCP server (`bun run <repo>/src/cli.ts serve --surface full`) pinned to a
@@ -200,7 +200,7 @@ async function interviewAndRender(ws: string): Promise<void> {
 }
 
 // ── 0. RENDERED PROTOCOL PIN (always runs — needs NO codex binary) ──────────
-// Codex has no hook system, so ambient recall (v0.45.7) reaches it ONLY via
+// gbrain does not wire Codex hooks yet, so ambient recall (v0.45.7) reaches it ONLY via
 // the rendered pull protocol. Pin the WORKSPACE-RENDERED chain the codex door
 // reads: AGENTS.md's session startup routes through HEARTBEAT.md's due-job
 // list, and the rendered ambient-delta row binds both boundary verbs to their
@@ -308,7 +308,7 @@ describe.skipIf(!CAN_RUN)('bootstrap real-codex door (serial e2e)', () => {
       expect(readManifest(ws).state).toBe('initialized');
 
       // AGENTS.md carries the Gate-3 brain-first pull protocol (Codex's only
-      // per-turn mechanism — it has no hook system).
+      // per-turn mechanism — gbrain does not wire Codex hooks yet).
       const agents = readFileSync(join(ws, 'AGENTS.md'), 'utf8');
       expect(agents).toContain('Gate 3');
       expect(agents.toLowerCase()).toContain('brain first');
@@ -322,7 +322,7 @@ describe.skipIf(!CAN_RUN)('bootstrap real-codex door (serial e2e)', () => {
       );
       expect(hooksCode).toBe(0);
       // Codex has no hooks — the pull protocol is the per-turn seam, stated plainly.
-      expect(hooksOut).toContain('Codex has no hook system');
+      expect(hooksOut).toContain('gbrain does not wire Codex hooks yet');
 
       // Real `codex mcp get gbrain` shows our server (env values are masked in
       // the human view, so the source binding is asserted on config.toml below).

@@ -381,6 +381,55 @@ describe('MinionQueue: #1737 per-handler default timeout', () => {
   });
 });
 
+// --- Claim-time budget fallback (jobs fix wave, upstream issue #3) ---
+//
+// Rows inserted before submit-time stamping existed (or by writers that
+// bypass add()) carry timeout_ms = NULL and used to fall to the minutes-scale
+// null-default wall-clock sweep. claim() now COALESCEs the budget from
+// HANDLER_DEFAULT_TIMEOUT_MS and derives timeout_at from the coalesced value.
+// Seeding NULL requires a direct UPDATE because add() stamps at submit.
+
+describe('MinionQueue: claim-time timeout fallback', () => {
+  test('legacy NULL-timeout long-handler row gets the map budget stamped at claim', async () => {
+    const job = await queue.add('subagent', {}, undefined, { allowProtectedSubmit: true });
+    await engine.executeRaw(
+      `UPDATE minion_jobs SET timeout_ms = NULL, timeout_at = NULL WHERE id = $1`,
+      [job.id],
+    );
+    const before = Date.now();
+    const claimed = await queue.claim('tok-fallback', 30_000, 'default', ['subagent']);
+    expect(claimed).not.toBeNull();
+    expect(claimed!.id).toBe(job.id);
+    expect(claimed!.timeout_ms).toBe(30 * 60 * 1000);
+    expect(claimed!.timeout_at).toBeInstanceOf(Date);
+    const deadline = claimed!.timeout_at!.getTime();
+    // timeout_at ≈ claim time + 30min (generous 60s slop for slow CI).
+    expect(deadline).toBeGreaterThan(before + 30 * 60 * 1000 - 60_000);
+    expect(deadline).toBeLessThan(before + 30 * 60 * 1000 + 60_000);
+    // Persisted, not just returned — a restarted worker sees the same budget.
+    const rows = await engine.executeRaw<{ timeout_ms: number | null }>(
+      `SELECT timeout_ms FROM minion_jobs WHERE id = $1`, [job.id],
+    );
+    expect(Number(rows[0].timeout_ms)).toBe(30 * 60 * 1000);
+  });
+
+  test('name outside the map keeps NULL budget at claim (fail-open, todays behavior)', async () => {
+    const job = await queue.add('noop', {});
+    expect(job.timeout_ms).toBeNull();
+    const claimed = await queue.claim('tok-nomap', 30_000, 'default', ['noop']);
+    expect(claimed).not.toBeNull();
+    expect(claimed!.timeout_ms).toBeNull();
+    expect(claimed!.timeout_at).toBeNull();
+  });
+
+  test('explicit timeout_ms is never overridden at claim', async () => {
+    await queue.add('embed-backfill', { sourceId: 'x' }, { timeout_ms: 5000 });
+    const claimed = await queue.claim('tok-explicit', 30_000, 'default', ['embed-backfill']);
+    expect(claimed).not.toBeNull();
+    expect(claimed!.timeout_ms).toBe(5000);
+  });
+});
+
 // --- v0.13.1 #219 — max_stalled default + input surface ---
 
 describe('MinionQueue: v0.13.1 max_stalled schema default (#219)', () => {
@@ -2089,6 +2138,167 @@ describe('MinionQueue: v0.19.1 maxWaiting — cap correctness + race (D2/H2)', (
     const b = await queue.add('uncapped', {});
     const c = await queue.add('uncapped', {});
     expect(new Set([a.id, b.id, c.id]).size).toBe(3);
+  });
+
+  // REGRESSION (jobs fix wave): the backpressure scope now reads BOTH payload
+  // spellings. A snake_case source_id submission previously fell into the
+  // NULL-wildcard arm (counted ALL rows for name+queue); it now scopes
+  // exactly like camelCase sourceId. Pin the new arm for maxWaiting too —
+  // the maxPending tests below cover it for the new option only.
+  test('maxWaiting + snake_case source_id: scoped per source, not wildcard', async () => {
+    const a1 = await queue.add('srcsync2', { source_id: 'src-a' }, { maxWaiting: 1 });
+    // Different source: must NOT be swallowed by src-a's waiting row.
+    const b1 = await queue.add('srcsync2', { source_id: 'src-b' }, { maxWaiting: 1 });
+    expect(b1.id).not.toBe(a1.id);
+    // Same source coalesces.
+    const a2 = await queue.add('srcsync2', { source_id: 'src-a' }, { maxWaiting: 1 });
+    expect(a2.id).toBe(a1.id);
+    expect(a2.coalesced).toBe(true);
+  });
+});
+
+// --- maxPending — single-flight counting waiting + LIVE-LOCK active rows ---
+//
+// Jobs fix wave (upstream issue #2): the autopilot dispatch guards failed once
+// a job sat in 'active' — maxWaiting counts only waiting rows and the slot
+// idempotency key rotates every baseInterval, so a stalled cycle accumulated
+// unbounded byte-identical duplicates. maxPending counts waiting rows PLUS
+// live-lock actives (lock_until > now()); an expired-lock active belongs to a
+// dead/blocked worker and must NOT suppress dispatch — the fresh waiting row
+// keeps feeding the waitingClaimable>0 wedge detectors. Scope is EXACT on
+// COALESCE(data.sourceId, data.source_id): NULL matches only NULL.
+//
+// NOTE: the Promise.all race here runs on single-writer PGLite — a smoke
+// check. The advisory-lock guarantee under real concurrency is pinned by the
+// DATABASE_URL-gated e2e (concurrent same-scope submissions on Postgres).
+
+describe('MinionQueue: maxPending — single-flight (waiting + live-lock active)', () => {
+  async function forceActive(id: number, lockUntilSql: string): Promise<void> {
+    await engine.executeRaw(
+      `UPDATE minion_jobs SET status = 'active', lock_token = 'tok-mp',
+              lock_until = ${lockUntilSql}, started_at = now() - interval '5 minutes'
+        WHERE id = $1`,
+      [id],
+    );
+  }
+
+  test('cap 1: second submission coalesces onto the waiting row (coalesced metadata set)', async () => {
+    const a = await queue.add('single-flight', {}, { maxPending: 1 });
+    expect(a.coalesced).toBeUndefined(); // fresh insert carries no metadata
+    const b = await queue.add('single-flight', {}, { maxPending: 1 });
+    expect(b.id).toBe(a.id);
+    expect(b.coalesced).toBe(true);
+  });
+
+  test('LIVE-LOCK active row suppresses dispatch (the issue-#2 fix)', async () => {
+    const a = await queue.add('single-flight', {}, { maxPending: 1 });
+    await forceActive(a.id, `now() + interval '5 minutes'`);
+    const b = await queue.add('single-flight', {}, { maxPending: 1 });
+    expect(b.id).toBe(a.id); // coalesced onto the in-flight ACTIVE row
+    expect(b.coalesced).toBe(true);
+    expect(b.status).toBe('active');
+  });
+
+  test('EXPIRED-lock active row does NOT suppress — fresh insert (wedge detectors stay fed)', async () => {
+    const a = await queue.add('single-flight', {}, { maxPending: 1 });
+    await forceActive(a.id, `now() - interval '1 second'`);
+    const b = await queue.add('single-flight', {}, { maxPending: 1 });
+    expect(b.id).not.toBe(a.id);
+    expect(b.status).toBe('waiting');
+    expect(b.coalesced).toBeUndefined();
+  });
+
+  test('waiting row preferred over live active on cap-hit', async () => {
+    const active = await queue.add('single-flight', {}, { maxPending: 2 });
+    await forceActive(active.id, `now() + interval '5 minutes'`);
+    const waiting = await queue.add('single-flight', {}, { maxPending: 2 });
+    expect(waiting.status).toBe('waiting');
+    const c = await queue.add('single-flight', {}, { maxPending: 2 });
+    expect(c.id).toBe(waiting.id); // most-recent WAITING wins the coalesce
+    expect(c.coalesced).toBe(true);
+  });
+
+  test('dead row frees the cap', async () => {
+    const a = await queue.add('single-flight', {}, { maxPending: 1 });
+    await engine.executeRaw(
+      `UPDATE minion_jobs SET status = 'dead', finished_at = now() WHERE id = $1`, [a.id],
+    );
+    const b = await queue.add('single-flight', {}, { maxPending: 1 });
+    expect(b.id).not.toBe(a.id);
+    expect(b.status).toBe('waiting');
+  });
+
+  test('EXACT source scope: NULL-source submission never coalesces onto a per-source row (and vice versa)', async () => {
+    const perSource = await queue.add('single-flight', { source_id: 'src-a' }, { maxPending: 1 });
+    // NULL-source submission: per-source row must not count for it.
+    const legacy = await queue.add('single-flight', {}, { maxPending: 1 });
+    expect(legacy.id).not.toBe(perSource.id);
+    // And a second NULL-source submission coalesces onto the legacy row only.
+    const legacy2 = await queue.add('single-flight', {}, { maxPending: 1 });
+    expect(legacy2.id).toBe(legacy.id);
+    // A second per-source submission coalesces onto the per-source row only.
+    const perSource2 = await queue.add('single-flight', { source_id: 'src-a' }, { maxPending: 1 });
+    expect(perSource2.id).toBe(perSource.id);
+  });
+
+  test('snake_case source_id scoping: two sources keep independent caps; same source coalesces', async () => {
+    const a1 = await queue.add('single-flight', { source_id: 'src-a' }, { maxPending: 1 });
+    const b1 = await queue.add('single-flight', { source_id: 'src-b' }, { maxPending: 1 });
+    expect(b1.id).not.toBe(a1.id);
+    const a2 = await queue.add('single-flight', { source_id: 'src-a' }, { maxPending: 1 });
+    expect(a2.id).toBe(a1.id);
+  });
+
+  test('camelCase sourceId scoping parity', async () => {
+    const a1 = await queue.add('single-flight', { sourceId: 'src-a' }, { maxPending: 1 });
+    const b1 = await queue.add('single-flight', { sourceId: 'src-b' }, { maxPending: 1 });
+    expect(b1.id).not.toBe(a1.id);
+    const a2 = await queue.add('single-flight', { sourceId: 'src-a' }, { maxPending: 1 });
+    expect(a2.id).toBe(a1.id);
+  });
+
+  test('clamp: maxPending 0 → 1; floor: 1.7 → 1', async () => {
+    const a = await queue.add('single-flight', {}, { maxPending: 0 });
+    const b = await queue.add('single-flight', {}, { maxPending: 0 });
+    expect(b.id).toBe(a.id); // 0 clamps to 1 → coalesce
+    await engine.executeRaw('DELETE FROM minion_jobs');
+    const c = await queue.add('single-flight', {}, { maxPending: 1.7 });
+    const d = await queue.add('single-flight', {}, { maxPending: 1.7 });
+    expect(d.id).toBe(c.id); // floor(1.7)=1 → coalesce
+  });
+
+  test('race: concurrent submissions hold the cap (PGLite smoke; PG e2e pins the real guarantee)', async () => {
+    const results = await Promise.all(
+      Array.from({ length: 4 }, () => queue.add('single-flight', {}, { maxPending: 1 })),
+    );
+    const ids = new Set(results.map(r => r.id));
+    expect(ids.size).toBe(1);
+  });
+
+  test('both guards supplied: maxPending checked first, both enforced', async () => {
+    // One waiting row. maxPending: 2 passes (1 pending < 2) but
+    // maxWaiting: 1 must still coalesce — both guards apply.
+    const a = await queue.add('single-flight', {}, { maxPending: 2, maxWaiting: 1 });
+    const b = await queue.add('single-flight', {}, { maxPending: 2, maxWaiting: 1 });
+    expect(b.id).toBe(a.id);
+    expect(b.coalesced).toBe(true);
+    // Now force it ACTIVE (live lock): maxWaiting alone would let a new row
+    // in (waiting=0), but maxPending: 1 fires FIRST and coalesces onto the
+    // in-flight row.
+    await forceActive(a.id, `now() + interval '5 minutes'`);
+    const c = await queue.add('single-flight', {}, { maxPending: 1, maxWaiting: 1 });
+    expect(c.id).toBe(a.id);
+    expect(c.coalesced).toBe(true);
+  });
+
+  test('ON CONFLICT idempotency race fallback also carries coalesced metadata', async () => {
+    // Same idempotency_key twice: the fast-path SELECT returns the existing
+    // row with coalesced: true (first coalesce path).
+    const a = await queue.add('single-flight', {}, { idempotency_key: 'sf-key-1' });
+    expect(a.coalesced).toBeUndefined();
+    const b = await queue.add('single-flight', {}, { idempotency_key: 'sf-key-1' });
+    expect(b.id).toBe(a.id);
+    expect(b.coalesced).toBe(true);
   });
 });
 

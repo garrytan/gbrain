@@ -28,11 +28,13 @@ import { parseProgressEvents, verifyExpectedPhases } from '../core/claw-test/pro
 import { resolveAgentRunner, listRegisteredAgents, registerAgentRunner, validateBinPathEnv } from '../core/claw-test/agent-runner.ts';
 import { OpenClawRunner } from '../core/claw-test/runners/openclaw.ts';
 import { HermesRunner } from '../core/claw-test/runners/hermes.ts';
+import { GrokRunner } from '../core/claw-test/runners/grok.ts';
 import { createTranscriptSink } from '../core/claw-test/transcript-capture.ts';
 
 // Ensure built-in runners are registered.
 registerAgentRunner('openclaw', () => new OpenClawRunner());
 registerAgentRunner('hermes', () => new HermesRunner());
+registerAgentRunner('grok', () => new GrokRunner());
 
 interface HarnessOpts {
   scenario: string;
@@ -412,6 +414,9 @@ async function runScripted(
 const AGENT_INSTALL_HINTS: Record<string, string> = {
   openclaw: 'install openclaw or set OPENCLAW_BIN',
   hermes: 'install hermes (https://hermes-agent.nousresearch.com) or set HERMES_BIN',
+  // Official xAI CLI only — the community superagent-ai grok-cli ships a
+  // colliding `grok` binary (docs/mcp/GROK-CLI-PIN.md).
+  grok: 'install grok (npm: @xai-official/grok, or https://x.ai/cli/install.sh) or set GROK_BIN',
 };
 
 /**
@@ -998,5 +1003,6 @@ Examples:
   gbrain claw-test --scenario fresh-install
   gbrain claw-test --scenario upgrade-from-v0.18 --keep-tempdir
   gbrain claw-test --live --agent openclaw
-  gbrain claw-test --live --agent hermes`);
+  gbrain claw-test --live --agent hermes
+  gbrain claw-test --live --agent grok`);
 }

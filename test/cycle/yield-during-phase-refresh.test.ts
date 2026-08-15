@@ -15,7 +15,7 @@ import type { LockHandle } from '../../src/core/cycle.ts';
 function makeMockLock(): { lock: LockHandle; refreshCount: number; releaseCount: number } {
   const state = { refreshCount: 0, releaseCount: 0 };
   const lock: LockHandle = {
-    refresh: async () => { state.refreshCount++; },
+    refresh: async () => { state.refreshCount++; return true; },
     release: async () => { state.releaseCount++; },
   };
   return {
@@ -60,7 +60,7 @@ describe('buildYieldDuringPhase (T3 codex fix)', () => {
     const outer = async () => { callOrder.push('outer'); };
     const fn = buildYieldDuringPhase({
       ...tracker.lock,
-      refresh: async () => { callOrder.push('refresh'); tracker.lock.refresh(); },
+      refresh: async () => { callOrder.push('refresh'); return tracker.lock.refresh(); },
     }, outer);
     await fn!();
     expect(callOrder).toEqual(['refresh', 'outer']);

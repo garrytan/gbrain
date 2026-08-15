@@ -85,8 +85,20 @@ gbrain jobs smoke --wedge-rescue
 
 - **stalled-forever** — A worker claimed a job, started executing, and has
   held the row for over an hour. The wall-clock sweep evicts jobs past
-  2× `timeout_ms`; if one's still active, either no `timeout_ms` was set
-  or the sweep is newly deployed and this job predates it. Cancel it.
+  2× `timeout_ms`. Long-lane handlers (subagent, autopilot-cycle,
+  embed-backfill, …) always have a budget now: it stamps at submit, is
+  COALESCEd from `HANDLER_DEFAULT_TIMEOUT_MS` at claim for legacy NULL rows,
+  and migration v128 backfilled rows that predate both. `gbrain jobs get <id>`
+  prints the effective budget and which kill path applies. If a short-lane
+  job is still active with no budget, the null-default sweep
+  (2 × lock-duration × max_stalled) evicts it within minutes. Cancel it if
+  you can't wait.
+- **duplicate cycles** — Historic brains could accumulate byte-identical
+  waiting `autopilot-cycle` rows when a job stalled in `active`. v128
+  cancelled that backlog (newest ticker-keyed row per source survives), and
+  the `maxPending` dispatch guard prevents new accumulation. Suppressed
+  dispatches are visible in `jobs stats` (Backpressure line) and the
+  backpressure audit JSONL.
 - **waiting-depth** — Submitters are piling up jobs faster than workers
   drain them. Set `--max-waiting N` on the submission or on the programmatic
   `queue.add()` call. If you want a taller pile, raise the threshold via

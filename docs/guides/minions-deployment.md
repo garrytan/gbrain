@@ -140,7 +140,7 @@ Three-command pattern an agent can drive without shell archaeology:
 ```bash
 # Start (returns PIDs + pid_file on stdout as JSON, then detaches)
 gbrain jobs supervisor start --detach --json
-# → {"event":"started","supervisor_pid":1234,"worker_pid":1235,"pid_file":"/Users/you/.gbrain/supervisor.pid"}
+# → {"event":"started","supervisor_pid":1234,"pid_file":"/Users/you/.gbrain/supervisor-<brain-id>.pid","detached":true}
 
 # Check health (machine-parseable JSON, no log scraping)
 gbrain jobs supervisor status --json

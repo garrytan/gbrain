@@ -4,7 +4,9 @@
  * These tests exercise the exported pure helpers (groupReadyByProvider,
  * findEnvKeyTypos) with hermetic env injections. The resolveAIOptions
  * orchestration itself is exercised end-to-end via T12's
- * test/e2e/init-fresh-pglite.test.ts (PTY-based, real CLI).
+ * test/e2e/init-fresh-pglite.test.ts (piped-stdin, real CLI — non-TTY
+ * branches) and test/init-picker-pty.serial.test.ts (real PTY — the
+ * interactive picker branches).
  *
  * Per CLAUDE.md test isolation rules: env mutations would normally need
  * `withEnv`, but these helpers accept env as an argument — purer DI, no

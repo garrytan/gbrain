@@ -15,8 +15,15 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { createHash } from 'crypto';
 import { hasDatabase } from './helpers.ts';
+import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 
 const skip = !hasDatabase();
+// #3485 name floor: this suite opens raw postgres() clients on the ambient URL
+// and runs DROP TRIGGER/FUNCTION + DELETE cleanups — refuse non-test-shaped
+// database names before any connection is made.
+if (!skip) {
+  assertSafeE2eDatabaseUrl(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL || '');
+}
 const describeE2E = skip ? describe.skip : describe;
 
 if (skip) {

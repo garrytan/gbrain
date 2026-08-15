@@ -15,9 +15,10 @@
  *   1. DX-exploration runs (`scripts/dx-explore.ts`) — capture the fresh-user
  *      install funnel as timestamped transcripts for Don't-Make-Me-Think
  *      audits (stall report + verbatim rendered copy per step).
- *   2. Future PTY e2e tests — the same waitFor/sendKey primitives the gstack
- *      plan-mode PTY suite uses (pattern adapted from gstack's
- *      test/helpers/claude-pty-runner.ts; no node-pty, no native modules).
+ *   2. PTY e2e tests — test/init-picker-pty.serial.test.ts and future
+ *      siblings use the same waitFor/sendKey primitives (pattern adapted from
+ *      gstack's test/helpers/claude-pty-runner.ts; no node-pty, no native
+ *      modules).
  *
  * Hermeticity matches agent-harness.ts: every spawn goes through
  * hermeticChildEnv, so a DX run can NEVER see (or mutate) the operator's real
@@ -25,8 +26,9 @@
  * temp-dir override in.
  *
  * Pure helpers (stripAnsi, computeStalls, parseDriveCommand,
- * renderStallsReport, buildClaudeTuiSeed) are exported for the zero-subprocess
- * unit suite (test/tty-harness.test.ts).
+ * renderStallsReport, buildClaudeTuiSeed) are exported for the unit suite
+ * (test/tty-harness.test.ts) — mostly pure describes, plus a
+ * ptySupported()-gated live block that spawns real sh children.
  */
 
 import * as fs from 'node:fs';
@@ -463,7 +465,14 @@ export function launchTty(argv: string[], opts: TtyLaunchOpts = {}): TtySession 
     const since = waitOpts?.since;
     const start = Date.now();
     for (;;) {
-      const visible = since !== undefined ? stripAnsi(buffer.slice(since)) : stripAnsi(buffer);
+      // Bounded per-poll strip: under a repaint-heavy TUI the (since-scoped)
+      // buffer grows by MBs, and re-stripping all of it every poll is the
+      // quadratic hot loop this harness's consumers keep re-finding. A 256KB
+      // tail caps per-poll work while staying far wider than any single
+      // screen repaint; a pattern would have to scroll >256KB past between
+      // two 200ms polls to be missed.
+      const windowStart = Math.max(since ?? 0, buffer.length - 262_144);
+      const visible = stripAnsi(buffer.slice(windowStart));
       for (let i = 0; i < patterns.length; i++) {
         const p = patterns[i]!;
         const idx = typeof p === 'string' ? visible.indexOf(p) : visible.search(p);
@@ -561,6 +570,93 @@ export interface TranscriptMeta {
 }
 
 /**
+ * Minimum secret-value length the redaction machinery acts on. Shorter values
+ * are too collision-prone to blank out (a 3-char "key" would redact innocent
+ * substrings across the transcript). Shared by redactSecrets, dx-explore's
+ * buildRedactMap, and assertNoSecrets — one constant so the layers can never
+ * disagree about what counts as a redactable secret.
+ */
+export const MIN_REDACT_SECRET_LEN = 8;
+
+/**
+ * Replace every occurrence of each secret VALUE with `[REDACTED:<name>]`.
+ * Pure, single pass per secret over the whole string. NOTE: this only
+ * catches CONTIGUOUS occurrences — a value split across PTY frame records
+ * stays split in the serialized frames.jsonl (every frame boundary is a JSON
+ * record boundary), which is why saveTranscript coalesces straddling frames
+ * BEFORE serialization (coalesceSecretStraddles below).
+ */
+export function redactSecrets(text: string, redact?: Record<string, string>): string {
+  if (!redact) return text;
+  let out = text;
+  for (const [name, value] of Object.entries(redact)) {
+    if (!value || value.length < MIN_REDACT_SECRET_LEN) continue;
+    out = out.split(value).join(`[REDACTED:${name}]`);
+  }
+  return out;
+}
+
+/**
+ * Merge any run of frames that a secret value straddles into one frame, so a
+ * subsequent per-string redaction pass sees the value contiguously. Without
+ * this, a key split across two output bursts survives frames.jsonl as two
+ * innocent-looking halves that are trivially joinable (verified empirically
+ * in review). Pure: returns a new array; timing of the merged frame is the
+ * first covered frame's tMs.
+ */
+export function coalesceSecretStraddles(
+  frames: readonly PtyFrame[],
+  redact?: Record<string, string>,
+): PtyFrame[] {
+  const values = Object.values(redact ?? {}).filter((v) => v && v.length >= MIN_REDACT_SECRET_LEN);
+  if (values.length === 0 || frames.length === 0) return [...frames];
+
+  // Frame start offsets in the joined stream.
+  const starts: number[] = new Array(frames.length);
+  let acc = 0;
+  for (let i = 0; i < frames.length; i++) {
+    starts[i] = acc;
+    acc += frames[i]!.data.length;
+  }
+  const joined = frames.map((f) => f.data).join('');
+
+  // Mark every frame boundary that falls INSIDE a secret occurrence:
+  // mergeWithNext[i] = the boundary between frame i and i+1 must go away.
+  const mergeWithNext = new Array<boolean>(frames.length - 1).fill(false);
+  let anyMerge = false;
+  for (const value of values) {
+    let idx = joined.indexOf(value);
+    while (idx >= 0) {
+      const end = idx + value.length; // exclusive
+      for (let b = 0; b < mergeWithNext.length; b++) {
+        const boundary = starts[b + 1]!;
+        if (boundary > idx && boundary < end) {
+          mergeWithNext[b] = true;
+          anyMerge = true;
+        }
+      }
+      idx = joined.indexOf(value, idx + 1);
+    }
+  }
+  if (!anyMerge) return [...frames];
+
+  const out: PtyFrame[] = [];
+  let i = 0;
+  while (i < frames.length) {
+    let data = frames[i]!.data;
+    const tMs = frames[i]!.tMs;
+    let j = i;
+    while (j < mergeWithNext.length && mergeWithNext[j]) {
+      data += frames[j + 1]!.data;
+      j++;
+    }
+    out.push({ tMs, data });
+    i = j + 1;
+  }
+  return out;
+}
+
+/**
  * Write a transcript bundle into `dir`:
  *   meta.json     — scenario, argv, timing, exit code, notes
  *   raw.txt       — full output with ANSI (replayable)
@@ -570,16 +666,29 @@ export interface TranscriptMeta {
  */
 export function saveTranscript(
   dir: string,
-  data: { frames: readonly PtyFrame[]; raw: string; meta: TranscriptMeta },
+  data: {
+    frames: readonly PtyFrame[];
+    raw: string;
+    meta: TranscriptMeta;
+    /** Secret values to redact (name → value) from EVERY written artifact.
+     *  The explicit seam: callers own which values are secret. */
+    redact?: Record<string, string>;
+  },
 ): void {
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify(data.meta, null, 2));
-  fs.writeFileSync(path.join(dir, 'raw.txt'), data.raw);
-  fs.writeFileSync(path.join(dir, 'visible.txt'), stripAnsi(data.raw));
+  const r = (s: string) => redactSecrets(s, data.redact);
+  fs.writeFileSync(path.join(dir, 'meta.json'), r(JSON.stringify(data.meta, null, 2)));
+  fs.writeFileSync(path.join(dir, 'raw.txt'), r(data.raw));
+  fs.writeFileSync(path.join(dir, 'visible.txt'), r(stripAnsi(data.raw)));
+  // A secret split across PTY frames is two innocent halves in frames.jsonl
+  // (every frame boundary is a JSON record boundary — the serialized string
+  // never contains the contiguous value). Coalesce straddling frames FIRST,
+  // then redact; per-frame timing granularity is lost only for the merged run.
+  const coalesced = coalesceSecretStraddles(data.frames, data.redact);
   fs.writeFileSync(
     path.join(dir, 'frames.jsonl'),
-    data.frames.map((f) => JSON.stringify(f)).join('\n') + (data.frames.length ? '\n' : ''),
+    r(coalesced.map((f) => JSON.stringify(f)).join('\n') + (coalesced.length ? '\n' : '')),
   );
   const stalls = computeStalls(data.frames, { endMs: data.meta.durationMs });
-  fs.writeFileSync(path.join(dir, 'stalls.md'), renderStallsReport(stalls, data.meta.durationMs));
+  fs.writeFileSync(path.join(dir, 'stalls.md'), r(renderStallsReport(stalls, data.meta.durationMs)));
 }

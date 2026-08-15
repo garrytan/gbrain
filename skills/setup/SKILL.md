@@ -19,7 +19,10 @@ Set up GBrain from scratch. Target: working brain in under 5 minutes.
 
 > **Installing into an agent harness?** (Claude Code, Codex, OpenClaw, etc.)
 > `gbrain bootstrap` is the paste-in install path — it wires hooks, the
-> maintenance sweep, and harness config in one command. See
+> maintenance sweep, and harness config in one command. On a box that already
+> hosts a brain + a running `gbrain serve --http` (agent-framework boxes),
+> `gbrain bootstrap harness --yes` wires framework-spawned Claude Code/Codex
+> sessions instead — no agent workspace needed. See
 > `docs/guides/bootstrap.md`. This skill covers the brain-side setup
 > (database, sync, first import); the two are complementary.
 

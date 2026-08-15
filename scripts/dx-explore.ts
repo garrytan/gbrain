@@ -69,6 +69,10 @@ import {
   saveTranscript,
   seedClaudeTuiConfig,
   parseDriveCommand,
+  ptySupported,
+  redactSecrets,
+  stripAnsi,
+  MIN_REDACT_SECRET_LEN,
   type TtySession,
 } from '../test/helpers/tty-harness.ts';
 
@@ -118,11 +122,14 @@ interface CliArgs {
   driveArgv: string[];
 }
 
-/** Provider keys the hermetic base allows through; --keyless drops them. */
+/** Provider keys the hermetic base allows through; --keyless drops them.
+ *  Also the redaction-map source: every non-empty value here is scrubbed
+ *  from every written artifact. */
 const PROVIDER_KEY_NAMES = [
   'ANTHROPIC_API_KEY',
   'ANTHROPIC_AUTH_TOKEN',
   'OPENAI_API_KEY',
+  'XAI_API_KEY',
   'GSTACK_ANTHROPIC_API_KEY',
   'GSTACK_OPENAI_API_KEY',
 ];
@@ -202,8 +209,23 @@ interface ScenarioCtx {
    *  suffixes). ALWAYS deleted at cleanup — --keep keeps transcripts and
    *  hermetic dirs for forensics, never credentials. */
   secretPaths: string[];
+  /** Secret VALUES (name → value) redacted from every written artifact —
+   *  transcripts, the live screen mirror, events.jsonl. Structural, not
+   *  checklist: writes go through redactSecrets at the write site. */
+  redact: Record<string, string>;
   events: Array<{ tMs: number; kind: 'input' | 'note' | 'screen'; data: string }>;
   t0: number;
+}
+
+/** Non-empty provider-key VALUES currently in the environment — the redaction
+ *  map for every artifact write. */
+function buildRedactMap(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const name of PROVIDER_KEY_NAMES) {
+    const v = process.env[name];
+    if (v && v.trim().length >= MIN_REDACT_SECRET_LEN) out[name] = v;
+  }
+  return out;
 }
 
 function newCtx(args: CliArgs, needsGbrain: boolean): ScenarioCtx {
@@ -217,6 +239,7 @@ function newCtx(args: CliArgs, needsGbrain: boolean): ScenarioCtx {
     keep: args.keep,
     cleanups: [],
     secretPaths: [],
+    redact: buildRedactMap(),
     events: [],
     t0: Date.now(),
   };
@@ -266,7 +289,10 @@ function finishCtx(ctx: ScenarioCtx): void {
   scrubSecrets(ctx);
   fs.writeFileSync(
     path.join(ctx.outDir, 'events.jsonl'),
-    ctx.events.map((e) => JSON.stringify(e)).join('\n') + (ctx.events.length ? '\n' : ''),
+    redactSecrets(
+      ctx.events.map((e) => JSON.stringify(e)).join('\n') + (ctx.events.length ? '\n' : ''),
+      ctx.redact,
+    ),
   );
   if (ctx.keep && ctx.secretPaths.length > 0) {
     log(`--keep: retained hermetic dirs, but scrubbed ${ctx.secretPaths.length} credential file(s)`);
@@ -290,13 +316,20 @@ function finishCtx(ctx: ScenarioCtx): void {
 }
 
 /** Live session mirror so a watcher (or a Conductor agent) can follow along:
- *  session/screen.txt (latest visible tail) + session/status.json. */
-function mirrorSession(dir: string, session: TtySession): () => void {
+ *  session/screen.txt (latest visible tail) + session/status.json. Each tick
+ *  strips only a bounded RAW tail (a full-buffer stripAnsi every 500ms is
+ *  quadratic on a 25-minute session) and redacts before writing — the mirror
+ *  is a live artifact that outlives an interrupted run, so it must never
+ *  carry a raw key even transiently. */
+function mirrorSession(dir: string, session: TtySession, redact?: Record<string, string>): () => void {
   const sessDir = path.join(dir, 'session');
   fs.mkdirSync(sessDir, { recursive: true });
   const timer = setInterval(() => {
     try {
-      fs.writeFileSync(path.join(sessDir, 'screen.txt'), session.visible().slice(-8000));
+      fs.writeFileSync(
+        path.join(sessDir, 'screen.txt'),
+        redactSecrets(stripAnsi(session.raw().slice(-131_072)).slice(-8000), redact),
+      );
       fs.writeFileSync(
         path.join(sessDir, 'status.json'),
         JSON.stringify(
@@ -322,6 +355,7 @@ function saveSession(ctx: ScenarioCtx, name: string, session: TtySession, extraM
   saveTranscript(dir, {
     frames: session.frames(),
     raw: session.raw(),
+    redact: ctx.redact,
     meta: {
       scenario: name || path.basename(ctx.outDir),
       argv: session.argv,
@@ -331,6 +365,53 @@ function saveSession(ctx: ScenarioCtx, name: string, session: TtySession, extraM
       ...extraMeta,
     },
   });
+  assertNoSecrets(dir, ctx.redact, ctx.t0);
+}
+
+/** Independent double-check of the structural redaction above: grep every
+ *  written artifact for each raw secret value and HARD-FAIL on a hit (delete
+ *  the leaking file, mark the run failed). A leak here means redactSecrets
+ *  missed a rendering (e.g. ANSI-interleaved) — that is a bug to fix, never
+ *  a warning to scroll past. */
+function assertNoSecrets(dir: string, redact: Record<string, string>, sinceMs: number): void {
+  const values = Object.entries(redact).filter(([, v]) => v && v.length >= MIN_REDACT_SECRET_LEN);
+  if (values.length === 0) return;
+  const walk = (d: string): string[] =>
+    fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+      const p = path.join(d, e.name);
+      return e.isDirectory() ? walk(p) : e.isFile() ? [p] : [];
+    });
+  let leaked = false;
+  for (const file of walk(dir)) {
+    // NEVER touch files that predate this run: --dir can point anywhere
+    // (repo root, even $HOME) and deleting a pre-existing .env that happens
+    // to contain the key would be data loss, not leak containment.
+    try { if (fs.statSync(file).mtimeMs < sinceMs - 1000) continue; } catch { continue; }
+    let body: string;
+    try { body = fs.readFileSync(file, 'utf8'); } catch { continue; }
+    // Joined-data pass for frame records: a secret split across JSONL
+    // records never appears contiguously in the file body.
+    let joinedData = '';
+    if (file.endsWith('.jsonl')) {
+      for (const line of body.split('\n')) {
+        try { joinedData += String(JSON.parse(line)?.data ?? ''); } catch { /* not a data record */ }
+      }
+    }
+    for (const [name, value] of values) {
+      const hit =
+        body.includes(value) ||
+        stripAnsi(body).includes(value) || // ANSI-interleaved rendering
+        (joinedData !== '' && (joinedData.includes(value) || stripAnsi(joinedData).includes(value)));
+      if (hit) {
+        leaked = true;
+        fs.rmSync(file, { force: true });
+        log(`SECRET LEAK: ${file} contained ${name} despite structural redaction — file deleted; fix redactSecrets coverage before trusting transcripts`);
+      }
+    }
+  }
+  if (leaked) {
+    process.exitCode = 1;
+  }
 }
 
 // ── scenario: help ───────────────────────────────────────────────────────────
@@ -376,7 +457,7 @@ async function scenarioInit(ctx: ScenarioCtx, args: CliArgs): Promise<void> {
     dropEnv: args.keyless ? PROVIDER_KEY_NAMES : undefined,
     timeoutMs: 600_000,
   });
-  const stopMirror = mirrorSession(ctx.outDir, session);
+  const stopMirror = mirrorSession(ctx.outDir, session, ctx.redact);
 
   const steps: string[] = [];
   let lastMarkPos = 0;
@@ -429,7 +510,10 @@ async function settlePastBootDialogs(
   while (Date.now() < deadline) {
     await session.waitForQuiet({ quietMs: 2000, timeoutMs: 30_000 });
     if (session.exited()) return;
-    const tail = session.visible().slice(-2500);
+    // Bounded strip: a repaint-heavy TUI (observed: grok's splash animation)
+    // grows the raw buffer by MBs — stripping the FULL buffer every
+    // iteration is the quadratic hot loop; strip a raw tail instead.
+    const tail = stripAnsi(session.raw().slice(-131_072)).slice(-2500);
     if (!handled.has('trust') && /trust this ?folder/i.test(tail.replace(/\s+/g, ' '))) {
       handled.add('trust');
       event(ctx, 'note', 'boot dialog: workspace trust — accepted (option 1)');
@@ -456,8 +540,118 @@ async function settlePastBootDialogs(
       session.sendKey('Enter');
       continue;
     }
+    // Grok Build sign-in screen (observed keyless copy: "Not signed in").
+    // No unattended path exists past it — record the friction and stop
+    // settling; the caller's wall clock must not burn on a login dialog.
+    if (/not signed in/i.test(tail)) {
+      event(ctx, 'note', 'boot dialog: grok sign-in required — no unattended path; stopping settle');
+      return;
+    }
+    // Quiet with no KNOWN dialog: if the tail still LOOKS like a prompt
+    // (numbered options / y-n / picker glyph), note it — a silently
+    // mis-settled boot is otherwise invisible in the audit trail.
+    if (/(?:^|\n)\s*(?:\d+\.\s|[❯›]\s)|\((?:y\/n|Y\/n)\)/m.test(tail.slice(-400))) {
+      event(ctx, 'note', 'settle: quiet with an unmatched dialog-shaped tail — proceeding (note-only; check the transcript if the paste lands oddly)');
+    }
     return; // quiet + no dialog = at the input prompt
   }
+}
+
+/** Stage the compiled gbrain into a fresh bin dir (PATH-prepend target) so
+ *  the agent's bare `gbrain` runs this checkout. */
+function stageBinDir(ctx: ScenarioCtx): string {
+  const binDir = tmp(ctx, 'gb-dx-bin-');
+  fs.copyFileSync(ctx.gbrainBin, path.join(binDir, 'gbrain'));
+  fs.chmodSync(path.join(binDir, 'gbrain'), 0o755);
+  return binDir;
+}
+
+interface InstallSessionOpts {
+  argv: string[];
+  cwd: string;
+  env: Record<string, string | undefined>;
+  extraAllow?: string[];
+  dropEnv?: string[];
+  /** The pasted prompt. Per-agent: the bootstrap runbook block for
+   *  claude/codex, a brain-only GROK.md-driven block for grok. */
+  prompt: string;
+  /** Success copy to race against (default: the bootstrap verify patterns).
+   *  Brain-only scenarios pass their own — grok's is the doctor banner. */
+  successPatterns?: Array<RegExp | string>;
+  timeoutMs?: number;
+  meta: Record<string, unknown>;
+}
+
+/** The shared install-session tail the claude/codex/grok scenarios all run:
+ *  launch → mirror → settle boot dialogs → paste the prompt → race
+ *  verify-success copy vs exit → let trailing output land → save. Per-agent
+ *  PREPARATION (TUI seeds, auth copies, git init) deliberately stays in each
+ *  scenario — the loop is what was duplicated, the prep genuinely differs. */
+async function runInstallSession(ctx: ScenarioCtx, opts: InstallSessionOpts): Promise<void> {
+  const timeoutMs = opts.timeoutMs ?? 1_800_000;
+  let earlyTerminal: string | undefined;
+  log(`watch live: cat ${path.join(ctx.outDir, 'session', 'screen.txt')}`);
+  const session = launchTty(opts.argv, {
+    cwd: opts.cwd,
+    env: opts.env,
+    extraAllow: opts.extraAllow,
+    dropEnv: opts.dropEnv,
+    timeoutMs,
+  });
+  const stopMirror = mirrorSession(ctx.outDir, session, ctx.redact);
+  try {
+    await settlePastBootDialogs(ctx, session);
+    // Sign-in wall / textless splash: no unattended path exists past either.
+    // Observed (grok v1.0.4 keyless): headless prints "Not signed in"; the
+    // TUI loops a full-screen glyph animation with NO textual prompt for 8+
+    // minutes. Try one Enter (the common skip-splash gesture), then if the
+    // screen still carries no meaningful text — or shows the sign-in copy —
+    // record the friction (that IS the keyless measurement) and end early
+    // instead of pasting into a wall for the full wall clock.
+    const tailText = () => stripAnsi(session.raw().slice(-131_072)).slice(-2500);
+    // Sign-in copy, both surfaces observed (GROK-CLI-PIN.md): headless prints
+    // "Not signed in"; the TUI settles (~6s, after an intro animation) onto
+    // "Approve in your browser to finish signing in" + a device code.
+    const signInWall = () =>
+      /not signed in|approve in your browser|finish signing in|sign in with/i.test(tailText());
+    // Word-like text only: splash/spinner screens render Braille-pattern
+    // glyphs (U+2800 range, observed) with scattered digits/SGR residue but
+    // ZERO 3+-letter runs, while any real prompt/sign-in screen carries
+    // words. Counting letter runs beats enumerating glyph exceptions.
+    const meaningfulLen = (s: string) => (s.match(/[A-Za-z]{3,}/g) ?? []).join('').length;
+    if (!session.exited() && (signInWall() || meaningfulLen(tailText()) < 40)) {
+      event(ctx, 'note', 'sign-in wall or textless splash — sending one Enter (skip-splash attempt)');
+      session.sendKey('Enter');
+      await Bun.sleep(3000);
+      if (!session.exited() && (signInWall() || meaningfulLen(tailText()) < 40)) {
+        event(ctx, 'note', 'sign-in wall / no textual prompt persists — ending session early (keyless friction recorded)');
+        earlyTerminal = 'sign-in-wall-or-splash';
+        return; // finally owns cleanup; save happens after it
+      }
+    }
+    event(ctx, 'input', 'paste install prompt');
+    // Scope the verify match to output AFTER the paste: the pasted prompt
+    // itself contains verify-adjacent copy, and matching the full buffer
+    // re-scans a growing transcript every poll.
+    const pasteMark = session.mark();
+    session.send(opts.prompt);
+    await Bun.sleep(1500);
+    session.sendKey('Enter');
+    const raceBudget = Math.max(timeoutMs - 300_000, Math.floor(timeoutMs * 0.8));
+    const done = await Promise.race([
+      session
+        .waitForAny(opts.successPatterns ?? VERIFY_SUCCESS_PATTERNS, { timeoutMs: raceBudget, since: pasteMark })
+        .then(() => 'verify-signal')
+        .catch(() => 'no-signal'),
+      session.waitForExit(raceBudget).then(() => 'exited'),
+    ]);
+    event(ctx, 'note', `terminal condition: ${done}`);
+    await session.waitForQuiet({ quietMs: 5000, timeoutMs: 60_000 });
+  } finally {
+    stopMirror();
+    await session.close();
+  }
+  saveSession(ctx, '', session, earlyTerminal ? { ...opts.meta, terminal: earlyTerminal } : opts.meta);
 }
 
 /** The README paste block, pointed at THIS repo's runbook, plus a persona
@@ -481,14 +675,12 @@ function installPrompt(): string {
   );
 }
 
-async function scenarioClaudeInstall(ctx: ScenarioCtx): Promise<void> {
+async function scenarioClaudeInstall(ctx: ScenarioCtx, args: CliArgs): Promise<void> {
   const home = tmp(ctx, 'gb-dx-home-');
   const cfg = tmp(ctx, 'gb-dx-ccfg-');
   const gbHome = tmp(ctx, 'gb-dx-gbhome-');
   const ws = tmp(ctx, 'gb-dx-ws-');
-  const binDir = tmp(ctx, 'gb-dx-bin-');
-  fs.copyFileSync(ctx.gbrainBin, path.join(binDir, 'gbrain'));
-  fs.chmodSync(path.join(binDir, 'gbrain'), 0o755);
+  const binDir = stageBinDir(ctx);
 
   seedClaudeTuiConfig(cfg, {
     apiKey: process.env.ANTHROPIC_API_KEY ?? process.env.GSTACK_ANTHROPIC_API_KEY,
@@ -501,61 +693,33 @@ async function scenarioClaudeInstall(ctx: ScenarioCtx): Promise<void> {
   ctx.secretPaths.push(path.join(cfg, '.claude.json'));
 
   log('REAL interactive claude running the paste-in bootstrap (10-25 min, real API cost)');
-  log(`watch live: cat ${path.join(ctx.outDir, 'session', 'screen.txt')}`);
-  const session = launchTty(
-    // --dangerously-skip-permissions: v1 measures flow + copy + stalls without
-    // permission-dialog babysitting. Permission-prompt COUNT is a separate
-    // drive-mode pass (the dialogs are Claude Code's chrome, not gbrain copy).
-    ['claude', '--dangerously-skip-permissions'],
-    {
-      cwd: ws,
-      env: {
-        HOME: home,
-        CLAUDE_CONFIG_DIR: cfg,
-        GBRAIN_HOME: gbHome,
-        PATH: `${binDir}:${process.env.PATH ?? ''}`,
-      },
-      timeoutMs: 1_800_000,
+  await runInstallSession(ctx, {
+    // dangerously-skip-permissions (spelled dash-free here): v1 measures flow
+    // + copy + stalls without permission-dialog babysitting. Permission-prompt
+    // COUNT is a separate drive-mode pass (the dialogs are Claude Code's
+    // chrome, not gbrain copy).
+    argv: ['claude', '--dangerously-skip-permissions'],
+    cwd: ws,
+    env: {
+      HOME: home,
+      CLAUDE_CONFIG_DIR: cfg,
+      GBRAIN_HOME: gbHome,
+      PATH: `${binDir}:${process.env.PATH ?? ''}`,
     },
-  );
-  const stopMirror = mirrorSession(ctx.outDir, session);
-  try {
-    // Get past first-run chrome (trust dialog, bypass warning), then paste.
-    await settlePastBootDialogs(ctx, session);
-    event(ctx, 'input', 'paste install prompt');
-    session.send(installPrompt());
-    await Bun.sleep(1500);
-    session.sendKey('Enter');
-    // Run until verify-success copy or exit or wall clock.
-    const done = await Promise.race([
-      session
-        .waitForAny(VERIFY_SUCCESS_PATTERNS, {
-          timeoutMs: 1_500_000,
-        })
-        .then(() => 'verify-signal')
-        .catch(() => 'no-signal'),
-      session.waitForExit(1_500_000).then(() => 'exited'),
-    ]);
-    event(ctx, 'note', `terminal condition: ${done}`);
-    // Let trailing output land.
-    await session.waitForQuiet({ quietMs: 5000, timeoutMs: 60_000 });
-  } finally {
-    stopMirror();
-    await session.close();
-  }
-  saveSession(ctx, '', session, {
-    promptDeviation: 'unattended persona appendix + local runbook path + preinstalled binary',
-    runbook: 'BOOTSTRAP_FOR_AGENTS.md (local)',
+    dropEnv: args.keyless ? PROVIDER_KEY_NAMES : undefined,
+    prompt: installPrompt(),
+    meta: {
+      promptDeviation: 'unattended persona appendix + local runbook path + preinstalled binary',
+      runbook: 'BOOTSTRAP_FOR_AGENTS.md (local)',
+    },
   });
 }
 
-async function scenarioCodexInstall(ctx: ScenarioCtx): Promise<void> {
+async function scenarioCodexInstall(ctx: ScenarioCtx, args: CliArgs): Promise<void> {
   const home = tmp(ctx, 'gb-dx-home-');
   const gbHome = tmp(ctx, 'gb-dx-gbhome-');
   const ws = tmp(ctx, 'gb-dx-ws-');
-  const binDir = tmp(ctx, 'gb-dx-bin-');
-  fs.copyFileSync(ctx.gbrainBin, path.join(binDir, 'gbrain'));
-  fs.chmodSync(path.join(binDir, 'gbrain'), 0o755);
+  const binDir = stageBinDir(ctx);
 
   // Hermetic ~/.codex with ONLY the operator's auth (same posture as the
   // codex door test). codex refuses untrusted cwds — a git repo satisfies it.
@@ -573,46 +737,99 @@ async function scenarioCodexInstall(ctx: ScenarioCtx): Promise<void> {
   spawnSync('git', ['-C', ws, 'config', 'user.name', 'DX Explore']);
 
   log('REAL interactive codex running the paste-in bootstrap (10-25 min, real API cost)');
-  log(`watch live: cat ${path.join(ctx.outDir, 'session', 'screen.txt')}`);
-  const session = launchTty(
-    ['codex', '--sandbox', 'workspace-write', '--ask-for-approval', 'never'],
-    {
-      cwd: ws,
-      env: {
-        HOME: home,
-        CODEX_HOME: codexHome,
-        GBRAIN_HOME: gbHome,
-        PATH: `${binDir}:${process.env.PATH ?? ''}`,
-      },
-      extraAllow: ['OPENAI_API_KEY', 'CODEX_*'],
-      timeoutMs: 1_800_000,
+  await runInstallSession(ctx, {
+    argv: ['codex', '--sandbox', 'workspace-write', '--ask-for-approval', 'never'],
+    cwd: ws,
+    env: {
+      HOME: home,
+      CODEX_HOME: codexHome,
+      GBRAIN_HOME: gbHome,
+      PATH: `${binDir}:${process.env.PATH ?? ''}`,
     },
+    extraAllow: ['OPENAI_API_KEY', 'CODEX_*'],
+    dropEnv: args.keyless ? PROVIDER_KEY_NAMES : undefined,
+    prompt: installPrompt(),
+    meta: {
+      promptDeviation: 'unattended persona appendix + local runbook path + preinstalled binary',
+      runbook: 'BOOTSTRAP_FOR_AGENTS.md (local)',
+    },
+  });
+}
+
+// ── scenario: grok-install ───────────────────────────────────────────────────
+
+/** Brain-only success copy for the grok scenario: the doctor banner proves
+ *  the registration handshook (observed, docs/mcp/GROK-CLI-PIN.md) — grok has
+ *  NO bootstrap path, so the bootstrap verify patterns must not be its bar. */
+const GROK_INSTALL_SUCCESS_PATTERNS: Array<RegExp | string> = [
+  /7 tools discovered/i,
+  /handshake OK/i,
+];
+
+/** GROK.md-driven brain-only prompt — deliberately NOT the bootstrap paste
+ *  block: the docs classify grok as brain-only install (no `gbrain bootstrap`
+ *  support), so the scenario must not test an unsupported flow. */
+function grokInstallPrompt(): string {
+  const guide = path.join(REPO_ROOT, 'docs', 'mcp', 'GROK.md');
+  return (
+    `Read and follow: ${guide}\n` +
+    `Goal: wire the gbrain memory brain into you (Grok Build) over stdio MCP — ` +
+    `brain-only install, no bootstrap. Steps: ` +
+    `1) run \`gbrain init --pglite --no-embedding --non-interactive\`; ` +
+    `2) register gbrain exactly as the guide's Register section shows; ` +
+    `3) verify with \`grok mcp doctor gbrain\` — you are not done until it reports ` +
+    `the tools-discovered check passing; ` +
+    `4) one recall round-trip: use the gbrain remember tool to store ` +
+    `"${PERSONA.AGENT_NAME} prefers ${PERSONA.VOICE_REGISTER}" and then recall it.\n\n` +
+    `[Unattended-run appendix — I am stepping away; do not wait for my input. ` +
+    `gbrain is already installed and on PATH. If a step needs auth that is ` +
+    `unavailable, note the exact error and stop.]`
   );
-  const stopMirror = mirrorSession(ctx.outDir, session);
-  try {
-    await settlePastBootDialogs(ctx, session);
-    event(ctx, 'input', 'paste install prompt');
-    session.send(installPrompt());
-    await Bun.sleep(1500);
-    session.sendKey('Enter');
-    const done = await Promise.race([
-      session
-        .waitForAny(VERIFY_SUCCESS_PATTERNS, {
-          timeoutMs: 1_500_000,
-        })
-        .then(() => 'verify-signal')
-        .catch(() => 'no-signal'),
-      session.waitForExit(1_500_000).then(() => 'exited'),
-    ]);
-    event(ctx, 'note', `terminal condition: ${done}`);
-    await session.waitForQuiet({ quietMs: 5000, timeoutMs: 60_000 });
-  } finally {
-    stopMirror();
-    await session.close();
-  }
-  saveSession(ctx, '', session, {
-    promptDeviation: 'unattended persona appendix + local runbook path + preinstalled binary',
-    runbook: 'BOOTSTRAP_FOR_AGENTS.md (local)',
+}
+
+async function scenarioGrokInstall(ctx: ScenarioCtx, args: CliArgs): Promise<void> {
+  const home = tmp(ctx, 'gb-dx-home-');
+  const gbHome = tmp(ctx, 'gb-dx-gbhome-');
+  const ws = tmp(ctx, 'gb-dx-ws-');
+  const binDir = stageBinDir(ctx);
+
+  // Hermetic ~/.grok seeded with the auto-update kill-switch (config-only
+  // mechanism, default ON — observed v1.0.4). Auth travels via XAI_API_KEY
+  // env only; grok MAY persist derived credentials after an authed session,
+  // so the known candidate is pre-registered for the scrub (rm of a file
+  // that never appears is a no-op).
+  const grokHome = path.join(home, '.grok');
+  fs.mkdirSync(grokHome, { recursive: true });
+  // Verbatim kill-switch homes (update together): seedGrokConfig in
+  // test/helpers/agent-harness.ts and the grok-door auth-preflight printf
+  // in .github/workflows/heavy-tests.yml.
+  fs.writeFileSync(path.join(grokHome, 'config.toml'), '[cli]\nauto_update = false\n');
+  ctx.secretPaths.push(path.join(grokHome, 'mcp_credentials.json'));
+
+  log('REAL interactive grok running the GROK.md brain-only install (real API cost when authed)');
+  log('keyless runs stop at the observed sign-in screen — that friction IS the measurement');
+  await runInstallSession(ctx, {
+    argv: ['grok'],
+    cwd: ws,
+    env: {
+      HOME: home,
+      GROK_HOME: grokHome,
+      GBRAIN_HOME: gbHome,
+      PATH: `${binDir}:${process.env.PATH ?? ''}`,
+      // Never let a keyless first-run bounce the OPERATOR's browser for
+      // sign-in; the settle loop stops at the observed "Not signed in" copy.
+      BROWSER: '/usr/bin/false',
+    },
+    extraAllow: ['XAI_API_KEY'],
+    // --keyless drops provider keys AFTER extraAllow re-admission — a keyless
+    // grok-install must measure the sign-in wall, not silently run authed.
+    dropEnv: args.keyless ? PROVIDER_KEY_NAMES : undefined,
+    prompt: grokInstallPrompt(),
+    successPatterns: GROK_INSTALL_SUCCESS_PATTERNS,
+    meta: {
+      promptDeviation: 'unattended appendix + local GROK.md path + preinstalled binary',
+      runbook: 'docs/mcp/GROK.md (local, brain-only — grok has no bootstrap path)',
+    },
   });
 }
 
@@ -650,7 +867,7 @@ async function scenarioDrive(ctx: ScenarioCtx, args: CliArgs): Promise<void> {
     env,
     timeoutMs: 3_600_000,
   });
-  const stopMirror = mirrorSession(ctx.outDir, session);
+  const stopMirror = mirrorSession(ctx.outDir, session, ctx.redact);
 
   let offset = 0;
   let stopping = false;
@@ -701,10 +918,15 @@ const SCENARIOS: Record<string, { needsGbrain: boolean; run: (ctx: ScenarioCtx, 
   init: { needsGbrain: true, run: scenarioInit },
   'claude-install': { needsGbrain: true, run: scenarioClaudeInstall },
   'codex-install': { needsGbrain: true, run: scenarioCodexInstall },
+  'grok-install': { needsGbrain: true, run: scenarioGrokInstall },
   drive: { needsGbrain: true, run: scenarioDrive },
 };
 
 async function main(): Promise<void> {
+  if (!ptySupported()) {
+    log('this Bun lacks PTY (terminal:) support — upgrade Bun (engines.bun in package.json) before running dx scenarios');
+    process.exit(2);
+  }
   const args = parseArgs(process.argv.slice(2));
   const scenario = SCENARIOS[args.scenario];
   if (!scenario) {

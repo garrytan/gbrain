@@ -12,6 +12,7 @@ import type { PaceKeyOverrides } from '../core/pace-mode.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 import { parseNiceValue, applyNiceness, getEffectiveNiceness, formatNice } from '../core/minions/niceness.ts';
+import { defaultTimeoutMsFor } from '../core/minions/handler-timeouts.ts';
 
 function parseFlag(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
@@ -163,6 +164,7 @@ export function resolveWorkerConcurrency(args: string[], env: NodeJS.ProcessEnv 
  */
 const JOB_DATE_FIELDS = [
   'created_at', 'updated_at', 'started_at', 'finished_at', 'lock_until', 'delay_until',
+  'timeout_at',
 ] as const;
 
 export function rehydrateJobDates<T>(job: T): T {
@@ -187,12 +189,41 @@ function formatJob(job: MinionJob): string {
   return `  ${String(job.id).padEnd(6)} ${job.name.padEnd(14)} ${(job.status + stalled).padEnd(20)} ${job.queue.padEnd(10)} ${dur.padEnd(8)} ${job.created_at.toISOString().slice(0, 19)}`;
 }
 
-function formatJobDetail(job: MinionJob): string {
+/** Render a timestamp that is a Date locally but may arrive as an ISO string
+ *  on the thin-client path against an OLDER server (rehydrateJobDates only
+ *  converts fields it knows about; a field the peer predates stays a string).
+ *  Never call .toISOString() unguarded on wire-shaped job fields. */
+function formatWhen(v: Date | string | null | undefined): string {
+  if (v instanceof Date) return v.toISOString();
+  return String(v ?? '');
+}
+
+/** The effective wall-clock budget line for `jobs get`. Wording matters: the
+ *  1x deadline (handleTimeouts, stamped at claim) is the NORMAL kill; the 2x
+ *  wall-clock sweep is the lock-state-agnostic backstop. */
+function formatTimeoutLines(job: MinionJob): string[] {
+  const lines: string[] = [];
+  if (job.timeout_ms != null) {
+    lines.push(`  Timeout: ${job.timeout_ms}ms (deadline kill at 1x when claimed; wall-clock backstop at 2x)`);
+    if (job.timeout_at) lines.push(`  Deadline: ${formatWhen(job.timeout_at)}`);
+  } else {
+    const d = defaultTimeoutMsFor(job.name);
+    if (d != null) {
+      lines.push(`  Timeout: (unset) — handler default ${d}ms stamps at claim`);
+    } else {
+      lines.push(`  Timeout: (unset) — null-default wall-clock sweep applies (2 x lock-duration x max_stalled, ~5m at defaults)`);
+    }
+  }
+  return lines;
+}
+
+export function formatJobDetail(job: MinionJob): string {
   const lines = [
     `Job #${job.id}: ${job.name} (${job.status.toUpperCase()}${job.status === 'dead' ? ` after ${job.attempts_made} attempts` : ''})`,
     `  Queue: ${job.queue} | Priority: ${job.priority}`,
     `  Attempts: ${job.attempts_made}/${job.max_attempts} (started: ${job.attempts_started}, stalled: ${job.stalled_counter}/${job.max_stalled})`,
     `  Backoff: ${job.backoff_type} ${job.backoff_delay}ms (jitter: ${job.backoff_jitter})`,
+    ...formatTimeoutLines(job),
   ];
   if (job.started_at) lines.push(`  Started: ${job.started_at.toISOString()}`);
   if (job.finished_at) lines.push(`  Finished: ${job.finished_at.toISOString()}`);
@@ -210,25 +241,13 @@ function formatJobDetail(job: MinionJob): string {
   return lines.join('\n');
 }
 
-export async function runJobs(engineOrNull: BrainEngine | null, args: string[]): Promise<void> {
-  const sub = args[0];
-
-  // Thin-client dispatch (cli.ts) passes engine=null for the subcommands
-  // with remote MCP routing (`list`, `get`) so no scratch local engine is
-  // ever built. Any other subcommand arriving with a null engine is a
-  // routing bug upstream of this function — refuse instead of crashing
-  // inside MinionQueue.
-  if (!engineOrNull && sub !== 'list' && sub !== 'get') {
-    console.error(`\`gbrain jobs ${sub ?? ''}\` needs a local engine and cannot run on a thin client.`);
-    process.exit(1);
-  }
-  // Null only ever reaches the MCP-routed `list`/`get` branches, which
-  // never touch the engine — narrowed once here so the host-only cases
-  // below typecheck unchanged.
-  const engine = engineOrNull as BrainEngine;
-
-  if (!sub || sub === '--help' || sub === '-h') {
-    console.log(`gbrain jobs — Minions job queue
+/**
+ * The full jobs help block. Hoisted to a constant so `gbrain jobs --help`
+ * (routed engine-free via cli.ts SELF_HELP_WITHOUT_ENGINE) and bare
+ * `gbrain jobs` print the same text. Issue: jobs --help used to print the
+ * generic CLI stub because 'jobs' was missing from CLI_ONLY_SELF_HELP.
+ */
+const JOBS_HELP = `gbrain jobs — Minions job queue
 
 USAGE
   gbrain jobs submit <name> [--params JSON] [--follow] [--priority N]
@@ -245,8 +264,9 @@ USAGE
   gbrain jobs retry <id>
   gbrain jobs prune [--older-than 30d] [--dry-run]
   gbrain jobs delete <id>
-  gbrain jobs stats
-  gbrain jobs smoke
+  gbrain jobs stats [--queue Q] [--cluster-errors]
+  gbrain jobs smoke [--sigkill-rescue] [--wedge-rescue]
+  gbrain jobs watch [--json] [--follow] [--refresh-ms=N]
   gbrain jobs work [--queue Q] [--concurrency N] [--max-rss MB]
                    [--health-interval MS] [--nice N]
   gbrain jobs supervisor [start] [--detach] [--json]
@@ -266,8 +286,9 @@ USAGE
 
     Auto-restarting wrapper around 'gbrain jobs work'. Spawns the worker
     as a child process and restarts on crash with exponential backoff
-    (1s -> 60s cap). Writes a PID file to ~/.gbrain/supervisor.pid by
-    default (override via --pid-file or GBRAIN_SUPERVISOR_PID_FILE env).
+    (1s -> 60s cap). Writes a brain-scoped PID file to
+    ~/.gbrain/supervisor-<brain-id>.pid by default (override via
+    --pid-file or GBRAIN_SUPERVISOR_PID_FILE env).
     Lifecycle events are appended to
       \${GBRAIN_AUDIT_DIR:-~/.gbrain/audit}/supervisor-YYYY-Www.jsonl
 
@@ -305,9 +326,169 @@ HANDLER TYPES (built in)
   shell             Run a command or argv. Requires GBRAIN_ALLOW_SHELL_JOBS=1
                     on the worker. Params: {cmd?, argv?, cwd, env?}.
                     See: docs/guides/minions-shell-jobs.md
-`);
+
+Detailed help: gbrain jobs {work|supervisor|submit|watch|prune} --help
+Other subcommands are fully described above.
+`;
+
+/**
+ * Per-subcommand help for the flag-heavy / side-effectful subcommands.
+ * Pattern from bootstrap.ts SUBCOMMAND_HELP: the guard below prints these
+ * BEFORE the switch, so \`jobs work --help\` can never start a worker
+ * daemon (the defect class this record exists to prevent). Subcommands
+ * without an entry fall back to JOBS_HELP, which documents them fully.
+ */
+const JOBS_SUBCOMMAND_HELP: Record<string, string> = {
+  work: `gbrain jobs work — start a worker daemon (Postgres only)
+
+USAGE
+  gbrain jobs work [--queue Q] [--concurrency N] [--max-rss MB]
+                   [--health-interval MS] [--nice N]
+
+OPTIONS
+  --queue Q            Queue to claim from (default: default)
+  --concurrency N      Max jobs in flight. Resolution: flag, then
+                       GBRAIN_WORKER_CONCURRENCY env, then 1. Values < 1
+                       are clamped to 1 with a loud stderr note.
+  --max-rss MB         RSS watchdog. Absent: auto-sized to 50% of
+                       min(cgroup limit, host RAM), capped at 16384 MB,
+                       raised to a 4096 MB floor when the basis allows.
+                       0 disables the watchdog. Values 1-255 are rejected
+                       (megabytes, not gigabytes — unit-confusion guard).
+  --health-interval MS Health probe cadence (default 60000). 0 disables.
+                       Values 1-999 are rejected as unit confusion.
+                       Under GBRAIN_SUPERVISED=1 stall detection is off;
+                       the DB probe stays.
+  --nice N             OS scheduling priority, -20 (highest) to 19
+                       (nicest). Env fallback: GBRAIN_NICE; flag wins.
+                       Negative values need root.
+
+NOTES
+  Requires the Postgres engine — PGLite's exclusive file lock cannot host
+  a long-lived daemon. For crash-resilient operation prefer:
+    gbrain jobs supervisor start --detach --json
+`,
+  supervisor: `gbrain jobs supervisor — auto-restarting wrapper around 'gbrain jobs work'
+
+USAGE
+  gbrain jobs supervisor [start] [--detach] [--json]
+                         [--concurrency N] [--queue Q] [--pid-file PATH]
+                         [--max-crashes N] [--health-interval N]
+                         [--allow-shell-jobs] [--cli-path PATH]
+                         [--max-rss MB] [--nice N]
+  gbrain jobs supervisor status [--json] [--pid-file PATH]
+  gbrain jobs supervisor stop [--json] [--pid-file PATH]
+
+OPTIONS (start)
+  --detach             Fork and print {event, supervisor_pid, pid_file} JSON
+  --json               JSONL lifecycle events on stdout
+  --concurrency N      Worker concurrency (default 2)
+  --queue Q            Queue to claim from (default: default)
+  --pid-file PATH      PID file (default: brain-scoped
+                       ~/.gbrain/supervisor-<brain-id>.pid;
+                       env GBRAIN_SUPERVISOR_PID_FILE)
+  --max-crashes N      Soft crash threshold (default 10): past N crashes in
+                       24h the supervisor reports degraded and keeps backing
+                       off. It only STOPS permanently at the hard ceiling —
+                       default 10 x N; override or disable (0 = never) via
+                       GBRAIN_SUPERVISOR_HARD_STOP_CRASHES.
+  --health-interval N  Worker health probe cadence in ms
+  --allow-shell-jobs   Enable the shell handler on the spawned worker
+  --cli-path PATH      Explicit gbrain binary for the worker child
+  --max-rss MB         RSS watchdog for the worker (same rules as jobs work)
+  --nice N             OS priority for supervisor + worker children
+
+EXIT CODES (start)
+  0 clean shutdown   1 max crashes exceeded
+  2 another supervisor holds the PID lock   3 PID file unwritable
+  4 DB queue lock lost (repeated refresh failures; restart re-acquires)
+`,
+  submit: `gbrain jobs submit — enqueue a background job
+
+USAGE
+  gbrain jobs submit <name> [--params JSON] [--follow] [--priority N]
+                            [--delay Nms] [--max-attempts N] [--max-stalled N]
+                            [--max-waiting N]
+                            [--backoff-type fixed|exponential] [--backoff-delay Nms]
+                            [--backoff-jitter 0..1] [--timeout-ms Nms]
+                            [--idempotency-key K] [--queue Q] [--dry-run]
+                            [--redact-secrets]
+
+OPTIONS
+  --params JSON        Job payload (handler-specific; see HANDLER TYPES in
+                       'gbrain jobs --help')
+  --follow             Run inline and stream progress (constructs a real
+                       worker; works on both engines)
+  --priority N         Lower runs first (default 0)
+  --delay Nms          Delay before the job becomes claimable (default 0)
+  --max-attempts N     Retry budget (default 3)
+  --max-stalled N      Stall-requeue budget before dead-letter (default 5)
+  --max-waiting N      Backpressure: cap waiting jobs with this name/queue/
+                       source before coalescing new submissions ([1,100])
+  --timeout-ms Nms     Per-job wall-clock budget. Long-lane handlers get a
+                       default from HANDLER_DEFAULT_TIMEOUT_MS when omitted.
+  --idempotency-key K  At-most-one row per key (dead/cancelled free the key)
+  --queue Q            Target queue (default: default)
+  --dry-run            Print what would be submitted, submit nothing
+  --redact-secrets     (shell jobs) scrub inherited env values from output
+`,
+  watch: `gbrain jobs watch — live queue dashboard
+
+USAGE
+  gbrain jobs watch [--json] [--follow] [--refresh-ms=N]
+
+OPTIONS
+  --json           JSON snapshots instead of the human dashboard
+  --follow         Keep refreshing (default: on for TTY, off otherwise)
+  --refresh-ms=N   Refresh cadence in ms (default 1000). Equals form only —
+                   'watch' does not accept a space-separated value.
+`,
+  prune: `gbrain jobs prune — delete old terminal jobs
+
+USAGE
+  gbrain jobs prune [--older-than 30d] [--dry-run]
+
+OPTIONS
+  --older-than AGE  Delete completed/failed/dead/cancelled jobs older than
+                    AGE in days (default 30d; bare N or Nd — hour forms
+                    are not supported)
+  --dry-run         Report what would be deleted without deleting
+`,
+};
+
+export async function runJobs(engineOrNull: BrainEngine | null, args: string[]): Promise<void> {
+  const sub = args[0];
+
+  // Help guards run BEFORE the thin-client refusal below: cli.ts routes
+  // `jobs … --help` here engine-free (SELF_HELP_WITHOUT_ENGINE), and help
+  // must never require an engine — or worse, fall through to a subcommand
+  // body and start a real daemon. Only --help/-h are recognized; the bare
+  // word 'help' is NOT (e.g. `jobs submit help` is a legitimate job name).
+  if (!sub || sub === '--help' || sub === '-h') {
+    console.log(JOBS_HELP);
     return;
   }
+  if (args.slice(1).includes('--help') || args.slice(1).includes('-h')) {
+    // Object.hasOwn: a plain-object lookup resolves inherited keys, so
+    // `jobs constructor --help` (toString/valueOf/…) would print the
+    // Object.prototype function instead of falling back to the full help.
+    console.log(Object.hasOwn(JOBS_SUBCOMMAND_HELP, sub) ? JOBS_SUBCOMMAND_HELP[sub] : JOBS_HELP);
+    return;
+  }
+
+  // Thin-client dispatch (cli.ts) passes engine=null for the subcommands
+  // with remote MCP routing (`list`, `get`) so no scratch local engine is
+  // ever built. Any other subcommand arriving with a null engine is a
+  // routing bug upstream of this function — refuse instead of crashing
+  // inside MinionQueue.
+  if (!engineOrNull && sub !== 'list' && sub !== 'get') {
+    console.error(`\`gbrain jobs ${sub ?? ''}\` needs a local engine and cannot run on a thin client.`);
+    process.exit(1);
+  }
+  // Null only ever reaches the MCP-routed `list`/`get` branches, which
+  // never touch the engine — narrowed once here so the host-only cases
+  // below typecheck unchanged.
+  const engine = engineOrNull as BrainEngine;
 
   // The constructor just stores the reference; on the null (thin-client
   // list/get) paths no queue method is ever reached.
@@ -719,6 +900,67 @@ HANDLER TYPES (built in)
             `       gbrain jobs supervisor stop && gbrain jobs supervisor start   # rebuild a fresh pool\n` +
             `       gbrain jobs retry <id>                                        # for dead-lettered jobs`,
           );
+        }
+
+        // Backpressure visibility: maxPending suppression keeps `waiting` at 0
+        // while a job is in flight, which silences the waiting>0 wedge line
+        // above — the exact operator-confusion cost of the duplicate-cycle
+        // incident. Surface the last 24h of coalesce events (per name, this
+        // queue) from the backpressure audit JSONL, plus a hint naming the
+        // in-flight job when a name shows suppression with zero waiting rows
+        // and a stale live-lock active. Best-effort: unreadable audit files
+        // simply omit the line.
+        try {
+          const { readRecentCoalesceCounts } = await import('../core/minions/backpressure-audit.ts');
+          const coalesceCounts = readRecentCoalesceCounts({ queue: statsQueue, windowMs: 24 * 3600_000 });
+          if (coalesceCounts.size > 0) {
+            // Sort once, reuse for the summary AND the hint slice — slicing
+            // insertion order would let low-volume early-in-file names crowd
+            // out the highest-volume (most likely wedged) ones the summary
+            // line just highlighted.
+            const sortedCoalesces = [...coalesceCounts.entries()]
+              .sort((a, b) => b[1].count - a[1].count);
+            const parts = sortedCoalesces.map(([name, s]) => `${name}: ${s.count}`);
+            console.log(`\n  Backpressure (24h): submissions coalesced onto in-flight jobs — ${parts.join(', ')}`);
+            // Hint loop is bounded: names come from the 24h audit window
+            // (normally a handful), capped defensively — this is an
+            // operator-invoked diagnostic, not a hot path. Each hint is
+            // driven by the LATEST coalesce target for the name (the audit's
+            // returned_job_id), scoped to that job's source — a name-wide
+            // aggregate would let source A's waiting row mask source B's
+            // wedge, or name A's job for B's coalesce (multi-source brains).
+            const hints = sortedCoalesces.slice(0, 10);
+            for (const [name, summary] of hints) {
+              if (summary.last_returned_job_id == null) continue;
+              // The target CTE re-checks name+queue: the audit dir is shared
+              // across brains in one GBRAIN_HOME, so an id from another
+              // brain's audit trail must fail the match here rather than
+              // name an unrelated job as the suppressor.
+              const rows = await engine.executeRaw<{ waiting: string; live_id: string | null; age_min: string | null }>(
+                `WITH target AS (
+                   SELECT id, started_at, status, lock_until,
+                          COALESCE(data->>'sourceId', data->>'source_id') AS scope
+                     FROM minion_jobs WHERE id = $3 AND name = $1 AND queue = $2
+                 )
+                 SELECT (SELECT count(*)::text FROM minion_jobs m, target t
+                          WHERE m.name = $1 AND m.queue = $2 AND m.status = 'waiting'
+                            AND COALESCE(m.data->>'sourceId', m.data->>'source_id') IS NOT DISTINCT FROM t.scope) AS waiting,
+                        (SELECT id::text FROM target WHERE status = 'active' AND lock_until > now()) AS live_id,
+                        (SELECT floor(EXTRACT(EPOCH FROM (now() - started_at)) / 60)::text FROM target
+                          WHERE status = 'active' AND lock_until > now()) AS age_min`,
+                [name, statsQueue, summary.last_returned_job_id],
+              );
+              const r = rows[0];
+              const ageMin = r?.age_min != null ? parseInt(r.age_min, 10) : null;
+              if (r && parseInt(r.waiting ?? '0', 10) === 0 && r.live_id != null && ageMin != null && ageMin > wedgeMins) {
+                console.log(
+                  `     ${name}: dispatch suppressed by in-flight job #${r.live_id} (age ${ageMin}m) — check \`gbrain jobs get ${r.live_id}\``,
+                );
+              }
+            }
+          }
+        } catch {
+          // Audit read is advisory; never break stats.
         }
       }
 
@@ -1707,10 +1949,11 @@ export async function registerBuiltinHandlers(
   });
 
   worker.register('import', async (job) => {
-    // import.ts Core extraction deferred to v0.12.0 (import has parallel
-    // workers + checkpointing). Keep the CLI wrapper call but note the
-    // worker-kill risk is bounded: import's only process.exit fires on
-    // a missing dir arg, which this handler always passes.
+    // import.ts Core extraction deferred (import has parallel workers +
+    // checkpointing; the typed-API split lands in W7 of the fix-wave).
+    // W0 (Tier-1 #5): runImport no longer contains ANY process.exit — all
+    // five preflight sites throw typed ImportAbortError, which this
+    // handler's catch converts to a normal failJob. No worker-kill risk.
     const { runImport } = await import('./import.ts');
     const importArgs: string[] = [];
     if (job.data.dir) importArgs.push(String(job.data.dir));

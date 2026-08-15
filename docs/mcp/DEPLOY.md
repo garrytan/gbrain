@@ -4,9 +4,11 @@
 > PKCE, refresh rotation, optional DCR), an embedded React admin dashboard at
 > `/admin`, scoped operations, and a live SSE activity feed. Legacy bearer
 > tokens still work — `verifyAccessToken` falls back to the `access_tokens`
-> table and grandfathers tokens to `read+write+admin`. Both the legacy fallback
-> and the OAuth tables work on PGLite and Postgres (both engine schemas carry
-> `access_tokens`). See [SECURITY.md](../../SECURITY.md) for env vars and
+> table; tokens with no `scopes` grant are grandfathered to `read+write+admin`,
+> while tokens minted with `gbrain auth create --scopes …` (or by
+> `gbrain bootstrap harness`) are honored at exactly their granted scopes.
+> Both the legacy fallback and the OAuth tables work on PGLite and Postgres
+> (both engine schemas carry `access_tokens`). See [SECURITY.md](../../SECURITY.md) for env vars and
 > tunable defaults.
 
 Access your brain from any device, any AI client. GBrain ships two transports:
@@ -68,8 +70,9 @@ This requires:
 2. A public tunnel (ngrok, Tailscale, or cloud host)
 3. A bearer token created via `gbrain auth create <name>`
 
-Existing bearer tokens are grandfathered as `read+write+admin` scopes on the
-OAuth-capable HTTP server, so no migration is required.
+Existing bearer tokens (no `scopes` grant) are grandfathered as
+`read+write+admin` on the OAuth-capable HTTP server, so no migration is
+required; `gbrain auth create --scopes read,write` mints narrowed tokens.
 
 ## OAuth 2.1 Setup
 
@@ -223,7 +226,8 @@ Write ops can additionally be fenced per client with `--bound-slug-prefixes`
 ## Legacy Bearer Token Setup
 
 Bearer tokens are the simple path when you don't need per-client scoping.
-They grandfather to `read+write+admin` scopes on the HTTP server.
+Without a `--scopes` grant they grandfather to `read+write+admin` on the
+HTTP server; pass `--scopes read,write` at creation to narrow one.
 
 ### 1. Set up the tunnel
 
@@ -249,8 +253,11 @@ gbrain auth list
 gbrain auth revoke "claude-desktop"
 ```
 
-Tokens are per-client. Create one for each device/app. Revoke individually
-if compromised. Tokens are stored SHA-256 hashed in your database.
+Tokens are per-client. Create one for each device/app. Names are not
+unique: `gbrain auth revoke "<name>"` revokes EVERY active token carrying
+that name — use `gbrain auth list` (shows each token's id and scopes) and
+`gbrain auth revoke --id <uuid>` to revoke exactly one. Tokens are stored
+SHA-256 hashed in your database.
 
 ### 3. Connect your AI client
 

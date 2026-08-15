@@ -76,21 +76,32 @@ export const TARGETS: Record<string, HostSpecTarget> = {
   },
   [CODEX_SPEC_ID]: {
     id: CODEX_SPEC_ID,
-    status: 'provisional',
-    verifiedAt: '2026-08-08',
+    status: 'verified',
+    verifiedAt: '2026-08-12',
     references: [
       'docs/mcp/CODEX.md',
       'https://developers.openai.com/codex/mcp',
+      'codex-cli 0.147.0 (binary serde field scan + live inline bearer_token wiring, issue #4043)',
     ],
     note:
-      'Codex has NO hook system — the pull-protocol AGENTS.md gates are the ' +
-      'per-turn seam (plan D5). Local stdio MCP registration: ' +
-      '`codex mcp add <name> [--env K=V]... -- <command> [args...]`, which ' +
-      'writes [mcp_servers.<name>] into ~/.codex/config.toml. A TOML-aware ' +
-      'config.toml writer [CX2-17] is deliberately NOT needed in v1: ' +
-      '`codex mcp add` owns the config.toml write end-to-end, so gbrain never ' +
-      'edits the file directly. Revisit only if a v1.1 feature (notify ' +
-      'sweeper, FF2) must write keys `codex mcp add` cannot express.',
+      'Local stdio MCP registration: `codex mcp add <name> [--env K=V]... -- ' +
+      '<command> [args...]`, which writes [mcp_servers.<name>] into ' +
+      '(CODEX_HOME || ~/.codex)/config.toml — codex resolves CODEX_HOME as ' +
+      'the config dir itself. Streamable-HTTP servers are configured with ' +
+      '`url` plus `bearer_token` (inline) or `bearer_token_env_var`; the ' +
+      'config parser uses deny-unknown-fields, so writers must emit ONLY ' +
+      'verified keys and `KEY = "value"` spacing. The CX2-17 revisit trigger ' +
+      'FIRED (#4043): `codex mcp add` cannot express an inline bearer_token ' +
+      '(verified against codex-cli 0.147.0 --help), so the harness lane owns ' +
+      'a managed marker-delimited TOML block (codex-toml.ts) — the ONE ' +
+      'direct config.toml writer. One owner per server name: `codex mcp ' +
+      'remove` rewrites config.toml wholesale and drops comments, so the ' +
+      'stdio lane (runHooks) must never manage a name the harness block ' +
+      'owns, and vice versa. Codex 0.147.0 also ships a real hook system ' +
+      '(hooks.json; PreToolUse…SessionEnd) — CODEX_HAS_HOOKS=false means ' +
+      '"gbrain does not wire codex hooks yet" (follow-up filed), NOT "codex ' +
+      'has no hooks". Some codex builds gate HTTP MCP servers behind ' +
+      '`experimental_use_rmcp_client = true` — probe at wiring time.',
   },
 };
 
@@ -163,6 +174,36 @@ export const CLAUDE_HOOK_DEFAULT_TIMEOUT_SECS: Record<ClaudeHookEvent, number> =
 export const GBRAIN_HOOK_MARKER_KEY = '_gbrain';
 export const GBRAIN_HOOK_MARKER_VALUE = 'bootstrap-v1';
 
+/**
+ * Marker VALUE for harness-mode installs (`gbrain bootstrap harness`, #4043).
+ * Same `_gbrain` key, distinct value: a box can carry a workspace bootstrap
+ * install (bootstrap-v1 in settings.local.json) AND a harness install
+ * (bootstrap-harness-v1 in user settings.json or a project settings.local.json)
+ * — each removal path strips only its own entries.
+ */
+export const GBRAIN_HARNESS_MARKER_VALUE = 'bootstrap-harness-v1';
+
+/**
+ * User-scope Claude Code settings file (harness-mode hook + permissions
+ * target). Resolution mirrors Claude Code itself: CLAUDE_CONFIG_DIR (its
+ * documented config-dir override, which the real-claude e2e harness sets)
+ * else $HOME/.claude — checked explicitly because Bun's homedir() reads the
+ * password database, NOT the HOME env var, so a sandboxed test that remaps
+ * HOME would otherwise write into the operator's REAL settings file (this
+ * bit us; the write-ahead receipt's remove path self-healed it).
+ */
+export function claudeUserSettingsPath(): string {
+  const configDir = process.env.CLAUDE_CONFIG_DIR?.trim();
+  if (configDir) return join(configDir, 'settings.json');
+  const home = process.env.HOME?.trim();
+  return join(home || homedir(), '.claude', 'settings.json');
+}
+
+/** permissions.allow entry that pre-approves an MCP server's tools for headless runs. */
+export function mcpPermissionEntry(serverName: string): string {
+  return `mcp__${serverName}`;
+}
+
 /** Where Claude Code stores session transcripts — the confinement root [S3#8]. */
 export function claudeProjectsDir(): string {
   return join(homedir(), '.claude', 'projects');
@@ -170,10 +211,32 @@ export function claudeProjectsDir(): string {
 
 // ── Codex shapes ────────────────────────────────────────────────────────────
 
-/** Codex CLI config file (user-global; written by `codex mcp add`, never by us). */
+/**
+ * Codex CLI config file (user-global). Real codex resolves CODEX_HOME as the
+ * config DIRECTORY itself (config.toml sits directly inside it) — pinned by
+ * test/e2e/bootstrap-real-codex.serial.test.ts and connect-bearer.test.ts,
+ * which set CODEX_HOME to a temp dir and assert the real binary wrote there.
+ * A homedir-only resolution here would make any CODEX_HOME-isolated test
+ * clobber the operator's real ~/.codex/config.toml.
+ */
 export function codexConfigPath(): string {
-  return join(homedir(), '.codex', 'config.toml');
+  const codexHome = process.env.CODEX_HOME?.trim();
+  return join(codexHome || join(homedir(), '.codex'), 'config.toml');
 }
 
-/** Codex has no hook system — per-turn context is pull-protocol (plan D5). */
+/**
+ * Whether gbrain WIRES codex hooks. False = not yet: codex 0.147.0 ships a
+ * real hook system (hooks.json; PreToolUse…SessionEnd — see the TARGETS
+ * note), but gbrain's codex hook lane is a filed follow-up; per-turn context
+ * on codex remains the pull-protocol AGENTS.md gates (plan D5).
+ */
 export const CODEX_HAS_HOOKS = false;
+
+/**
+ * Managed-block markers for the harness lane's direct config.toml writes
+ * (codex-toml.ts — the CX2-17 revisit, fired by #4043). Full-line exact
+ * match at column 0; the writer requires exactly one begin/end pair.
+ */
+export const CODEX_TOML_BLOCK_BEGIN =
+  `# gbrain:${GBRAIN_HARNESS_MARKER_VALUE} begin - managed by \`gbrain bootstrap harness\`; do not edit inside`;
+export const CODEX_TOML_BLOCK_END = `# gbrain:${GBRAIN_HARNESS_MARKER_VALUE} end`;

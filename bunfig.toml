@@ -23,4 +23,8 @@ timeout = 60_000
 # were appending rows into the operator's real ~/.gbrain/sync-failures.jsonl,
 # which `gbrain doctor` reads and warns on. See
 # test/helpers/sync-failures-preload.ts.
-preload = ["./test/helpers/legacy-embedding-preload.ts", "./test/helpers/audit-dir-preload.ts", "./test/helpers/sync-failures-preload.ts"]
+# #3485: database-url-guard-preload runs FIRST — it refuses to start the run
+# while DATABASE_URL/GBRAIN_DATABASE_URL is ambient without the explicit
+# GBRAIN_TEST_ALLOW_DATABASE_URL=1 opt-in that the e2e wrappers set at their
+# own subprocess boundary. See test/helpers/database-url-guard-preload.ts.
+preload = ["./test/helpers/database-url-guard-preload.ts", "./test/helpers/legacy-embedding-preload.ts", "./test/helpers/audit-dir-preload.ts", "./test/helpers/sync-failures-preload.ts"]

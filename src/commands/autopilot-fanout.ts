@@ -69,8 +69,13 @@ export interface FanoutOpts {
 }
 
 export interface FanoutResult {
-  /** Source ids dispatched this tick. */
+  /** Source ids whose submission INSERTED a fresh job this tick. */
   dispatched: string[];
+  /** Source ids whose submission coalesced onto an existing pending job
+   *  (maxPending single-flight or same-slot idempotency) — work is in
+   *  flight, but no new row was created. Kept separate so no surface
+   *  claims a dispatch that didn't insert. */
+  coalesced: string[];
   /** Source ids skipped because their last_full_cycle_at is still fresh. */
   skipped_fresh: string[];
   /** Source ids beyond the fanoutMax cap (will retry next tick). */
@@ -400,19 +405,32 @@ export async function dispatchPerSource(
       { repoPath: opts.repoPath },
       {
         queue: 'default',
+        // Slot key dedups repeats within one slot; maxPending: 1 is the
+        // cross-slot guard — an in-flight (waiting or live-lock active)
+        // cycle suppresses re-dispatch even after the slot rotates. This
+        // closes the unbounded-duplicate loop: slot rotation used to mint
+        // a fresh key every baseInterval while maxWaiting ignored the
+        // active row, growing the queue forever when a cycle stalled.
         idempotency_key: `autopilot-cycle:${opts.slot}`,
         max_attempts: 2,
         timeout_ms: opts.timeoutMs,
-        maxWaiting: 1,
+        maxPending: 1,
       },
     );
-    if (opts.jsonMode) {
+    if (job.coalesced) {
+      if (opts.jsonMode) {
+        emit(JSON.stringify({ event: 'dispatch_coalesced', job_id: job.id, mode: 'legacy', slot: opts.slot }));
+      } else {
+        log(`[dispatch] coalesced onto job #${job.id} autopilot-cycle (legacy single-source; already in flight)`);
+      }
+    } else if (opts.jsonMode) {
       emit(JSON.stringify({ event: 'dispatched', job_id: job.id, mode: 'legacy', slot: opts.slot }));
     } else {
       log(`[dispatch] job #${job.id} autopilot-cycle (legacy single-source)`);
     }
     return {
       dispatched: [],
+      coalesced: [],
       skipped_fresh: [],
       skipped_cap: [],
       skipped_cooldown: [],
@@ -448,6 +466,7 @@ export async function dispatchPerSource(
     );
 
   const dispatched: string[] = [];
+  const coalesced: string[] = [];
   for (const src of dispatch) {
     try {
       const shouldPull = sourceConfigHasRemoteUrl(src.config);
@@ -470,26 +489,43 @@ export async function dispatchPerSource(
           idempotency_key: `autopilot-cycle:${src.id}:${opts.slot}`,
           max_attempts: 2,
           timeout_ms: opts.timeoutMs,
-          // DELIBERATELY no maxWaiting: 1 here. maxWaiting is per
-          // (name, queue), so it would coalesce all N per-source jobs
-          // sharing name='autopilot-cycle' down to ONE waiting job —
-          // killing the fan-out. The per-source idempotency_key
-          // already provides the right dedup granularity (one job per
-          // source per slot, regardless of how many ticks try).
+          // Still DELIBERATELY no maxWaiting here (its NULL-as-wildcard
+          // source scope would coalesce N per-source jobs down to one).
+          // maxPending is safe: its scope is EXACT on
+          // COALESCE(data.sourceId, data.source_id), so each source keeps
+          // an independent single-flight cap — and unlike the slot key, it
+          // suppresses cross-slot re-dispatch while THIS source's cycle is
+          // still in flight (waiting or live-lock active).
+          maxPending: 1,
         },
       );
-      dispatched.push(src.id);
-      if (opts.jsonMode) {
-        emit(JSON.stringify({
-          event: 'dispatched',
-          job_id: job.id,
-          mode: 'per_source',
-          source_id: src.id,
-          pull: shouldPull,
-          slot: opts.slot,
-        }));
+      if (job.coalesced) {
+        coalesced.push(src.id);
+        if (opts.jsonMode) {
+          emit(JSON.stringify({
+            event: 'dispatch_coalesced',
+            job_id: job.id,
+            mode: 'per_source',
+            source_id: src.id,
+            slot: opts.slot,
+          }));
+        } else {
+          log(`[dispatch] coalesced onto job #${job.id} autopilot-cycle source=${src.id} (already in flight)`);
+        }
       } else {
-        log(`[dispatch] job #${job.id} autopilot-cycle source=${src.id}${shouldPull ? ' pull=yes' : ''}`);
+        dispatched.push(src.id);
+        if (opts.jsonMode) {
+          emit(JSON.stringify({
+            event: 'dispatched',
+            job_id: job.id,
+            mode: 'per_source',
+            source_id: src.id,
+            pull: shouldPull,
+            slot: opts.slot,
+          }));
+        } else {
+          log(`[dispatch] job #${job.id} autopilot-cycle source=${src.id}${shouldPull ? ' pull=yes' : ''}`);
+        }
       }
     } catch (e) {
       // Per-source submit failure does NOT abort the tick (codex E1 F1
@@ -524,6 +560,7 @@ export async function dispatchPerSource(
 
   return {
     dispatched,
+    coalesced,
     skipped_fresh: skippedFresh.map(s => s.id),
     skipped_cap: skippedCap.map(s => s.id),
     skipped_cooldown: skippedCooldown.map(s => s.id),
@@ -546,16 +583,18 @@ export function isGlobalMaintenanceStale(lastGlobalAtIso: string | null, now = D
  * #2194 fix #3 / #2227 bug #3 — dispatch the single brain-wide maintenance job
  * that runs the `global` cycle phases (embed, orphans, purge, …) ONCE per
  * window, instead of N per-source cycles each running them concurrently (the
- * RSS blowout). Single-flight is structural: one `idempotency_key` +
- * `maxWaiting:1`, so a slow run never stacks. Gated on `autopilot.last_global_at`
- * (stamped by the handler on success). Postgres-only fan-out concern; on PGLite
- * the file lock already serializes, but the job is still correct there.
+ * RSS blowout). Single-flight is structural: one `idempotency_key` per slot +
+ * `maxPending:1` (an in-flight waiting/live-lock-active run suppresses
+ * re-dispatch even across slot rotation), so a slow run never stacks. Gated on
+ * `autopilot.last_global_at` (stamped by the handler on success). Postgres-only
+ * fan-out concern; on PGLite the file lock already serializes, but the job is
+ * still correct there.
  */
 export async function dispatchGlobalMaintenance(
   engine: BrainEngine,
   queue: MinionQueue,
   opts: { repoPath: string; slot: string; timeoutMs: number; jsonMode: boolean; emit?: (l: string) => void; log?: (l: string) => void },
-): Promise<{ dispatched: boolean; reason: 'stale' | 'fresh' }> {
+): Promise<{ dispatched: boolean; coalesced?: boolean; reason: 'stale' | 'fresh' }> {
   const emit = opts.emit ?? ((line) => process.stderr.write(line + '\n'));
   const log = opts.log ?? ((line) => console.log(line));
 
@@ -575,14 +614,26 @@ export async function dispatchGlobalMaintenance(
     { repoPath: opts.repoPath, phases: GLOBAL_PHASES },
     {
       queue: 'default',
-      // Structural single-flight: one global job per slot; maxWaiting:1 coalesces
-      // any surplus so a slow brain-wide pass never stacks duplicates.
+      // Structural single-flight: one global job per slot; maxPending:1
+      // coalesces any surplus — including across slot rotation while a slow
+      // brain-wide pass is still in flight — so duplicates never stack.
       idempotency_key: `autopilot-global:${opts.slot}`,
       max_attempts: 2,
       timeout_ms: opts.timeoutMs,
-      maxWaiting: 1,
+      maxPending: 1,
     },
   );
+  if (job.coalesced) {
+    if (opts.jsonMode) {
+      emit(JSON.stringify({ event: 'dispatch_coalesced', job_id: job.id, mode: 'global_maintenance', slot: opts.slot }));
+    } else {
+      log(`[dispatch] coalesced onto job #${job.id} autopilot-global-maintenance (already in flight)`);
+    }
+    // dispatched: false — no row was inserted (same honest-dispatch contract
+    // as dispatchPerSource, where coalesced sources are excluded from
+    // `dispatched`). The coalesced flag says work is already in flight.
+    return { dispatched: false, coalesced: true, reason: 'stale' };
+  }
   if (opts.jsonMode) {
     emit(JSON.stringify({ event: 'dispatched', job_id: job.id, mode: 'global_maintenance', slot: opts.slot }));
   } else {

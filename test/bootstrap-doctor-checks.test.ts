@@ -20,6 +20,7 @@ import { join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 
 import { bootstrapDoctorChecks, type Check } from '../src/commands/doctor.ts';
+import { writeHarnessReceipt } from '../src/core/bootstrap/format.ts';
 import { LATEST_VERSION } from '../src/core/migrate.ts';
 import { VERSION } from '../src/version.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -134,6 +135,84 @@ describe('no-bootstrap-state gate', () => {
     writeHeartbeat(home, [{ outcome: 'ok' }]);
     const checks = await run(parent);
     expect(byName(checks, 'bootstrap_hooks_heartbeat')?.status).toBe('ok');
+  }, T);
+
+  test('a harness receipt ALONE opens the gate (#4043 — harness-only boxes get checks)', async () => {
+    const { parent, home } = makeHome();
+    writeHarnessReceipt(home, harnessReceiptFixture([]));
+    const checks = await run(parent);
+    expect(checks.length).toBeGreaterThan(0);
+    expect(byName(checks, 'bootstrap_harness_health')).toBeDefined();
+  }, T);
+});
+
+// ── 0. harness registration health (#4043) ─────────────────────────────────
+
+function harnessReceiptFixture(
+  targets: Array<{ state: 'pending' | 'confirmed' | 'failed' }>,
+  extra: Record<string, unknown> = {},
+): never {
+  return {
+    harness_receipt_version: 1,
+    created_at: new Date().toISOString(),
+    created_by: `gbrain@${VERSION}`,
+    // an unroutable TEST-NET address so the /health probe fails fast + offline
+    url: 'http://192.0.2.1:9/mcp',
+    source_id: 'default',
+    token: { name: 'bootstrap-harness', id: '33333333-3333-3333-3333-333333333333', minted: true },
+    targets: targets.map((t) => ({ host: 'claude-code', kind: 'mcp', scope: 'user', name: 'gbrain', ...t })),
+    ...extra,
+  } as never;
+}
+
+describe('bootstrap_harness_health (#4043)', () => {
+  test('failed/pending targets → fail with the converge instruction', async () => {
+    const { parent, home } = makeHome();
+    writeHarnessReceipt(home, harnessReceiptFixture([{ state: 'failed' }, { state: 'pending' }]));
+    const checks = await run(parent);
+    const c = byName(checks, 'bootstrap_harness_health');
+    expect(c?.status).toBe('fail');
+    expect(c?.message).toMatch(/1 failed \/ 1 pending/);
+  }, T);
+
+  test('unconverged rotation (previous_id) → fail naming the revoke command', async () => {
+    const { parent, home } = makeHome();
+    const receipt = harnessReceiptFixture([{ state: 'confirmed' }]) as Record<string, unknown>;
+    (receipt.token as Record<string, unknown>).previous_ids = ['44444444-4444-4444-4444-444444444444'];
+    writeHarnessReceipt(home, receipt as never);
+    const checks = await run(parent);
+    const c = byName(checks, 'bootstrap_harness_health');
+    expect(c?.status).toBe('fail');
+    expect(c?.message).toMatch(/never revoked/);
+  }, T);
+
+  test('healthy receipt + unreachable serve → WARN (normal transient), never fail', async () => {
+    const { parent, home } = makeHome();
+    writeHarnessReceipt(home, harnessReceiptFixture([{ state: 'confirmed' }]));
+    const checks = await run(parent);
+    const c = byName(checks, 'bootstrap_harness_health');
+    expect(c?.status).toBe('warn');
+    expect(c?.message).toMatch(/serve is unreachable|not answering/);
+  }, T);
+
+  test('half-removed receipt (zero targets, minted token still live) → FAIL, never a vacuous green (red-team)', async () => {
+    const { parent, home } = makeHome();
+    writeHarnessReceipt(home, harnessReceiptFixture([]));
+    const checks = await run(parent);
+    const c = byName(checks, 'bootstrap_harness_health');
+    expect(c?.status).toBe('fail');
+    expect(c?.message).toMatch(/removal pending/);
+    expect(c?.message).toContain('33333333-3333-3333-3333-333333333333');
+  }, T);
+
+  test('unreadable harness receipt → warn, never a throw (fail-soft umbrella)', async () => {
+    const { parent, home } = makeHome();
+    mkdirSync(join(home, 'bootstrap'), { recursive: true });
+    writeFileSync(join(home, 'bootstrap', 'harness.json'), 'not json{{{');
+    const checks = await run(parent);
+    const c = byName(checks, 'bootstrap_harness_health');
+    expect(c?.status).toBe('warn');
+    expect(c?.message).toMatch(/unreadable/);
   }, T);
 });
 

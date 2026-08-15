@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { embedBatch, currentEmbeddingSignature } from '../core/embedding.ts';
 import type { ChunkInput } from '../core/types.ts';
+import { carryChunkMetadata } from '../core/embed-stale.ts';
 import { chunkText } from '../core/chunkers/recursive.ts';
 import { createProgress, type ProgressReporter } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -784,9 +785,11 @@ async function embedPage(
 }
 
 /**
- * Carry code-chunk metadata (language, symbol_name, symbol_type, line range,
- * parent scope, doc comment, qualified name) from a loaded Chunk back into a
- * ChunkInput destined for upsertChunks.
+ * Carry per-chunk metadata — modality (the W0 fix: its omission flipped
+ * image chunks to text) plus the code fields (language, symbol_name,
+ * symbol_type, line range, parent scope, doc comment, qualified name) — from
+ * a loaded Chunk back into a ChunkInput destined for upsertChunks. The
+ * shared carryChunkMetadata list (core/embed-stale.ts) is authoritative.
  *
  * Issue #769: every re-embed used to strip these fields, and upsertChunks
  * overwrites (does not COALESCE) the metadata columns from EXCLUDED, so
@@ -795,17 +798,13 @@ async function embedPage(
  * (embedPage, embedAll non-stale, embedAllStale) in lock-step.
  */
 function preserveCodeMetadata(loaded: any, base: ChunkInput): ChunkInput {
-  return {
-    ...base,
-    language: loaded.language ?? undefined,
-    symbol_name: loaded.symbol_name ?? undefined,
-    symbol_type: loaded.symbol_type ?? undefined,
-    start_line: loaded.start_line ?? undefined,
-    end_line: loaded.end_line ?? undefined,
-    parent_symbol_path: loaded.parent_symbol_path ?? undefined,
-    doc_comment: loaded.doc_comment ?? undefined,
-    symbol_name_qualified: loaded.symbol_name_qualified ?? undefined,
-  };
+  // W0 fix-wave (Tier-1 #3, CONFIRMED): delegate to the single shared carry
+  // list. This local copy was missing `modality`, so every CLI re-embed path
+  // (embedPage, embedAll, embedAllStale) flipped image chunks to
+  // modality='text' — upsertChunks overwrites from EXCLUDED — silently
+  // zeroing image retrieval until the next full import. The minion twin in
+  // core/embed-stale.ts carried it correctly; one list now serves both.
+  return carryChunkMetadata(loaded, base);
 }
 
 async function embedAll(

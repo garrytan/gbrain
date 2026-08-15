@@ -99,6 +99,10 @@ Per-client setup guides live in [`docs/mcp/`](mcp/):
 - [`docs/mcp/CLAUDE_DESKTOP.md`](mcp/CLAUDE_DESKTOP.md)
 - [`docs/mcp/CHATGPT.md`](mcp/CHATGPT.md)
 - [`docs/mcp/PERPLEXITY.md`](mcp/PERPLEXITY.md)
+- [`docs/mcp/HERMES.md`](mcp/HERMES.md) — Hermes (Nous Research CLI)
+- [`docs/mcp/GROK.md`](mcp/GROK.md) — Grok Build (xAI CLI)
+- [`docs/mcp/OPENCLAW.md`](mcp/OPENCLAW.md) — OpenClaw (bundle plugin or stdio)
+- [`docs/mcp/CLAUDE_COWORK.md`](mcp/CLAUDE_COWORK.md) — Claude Cowork (team plan)
 - [`docs/mcp/DEPLOY.md`](mcp/DEPLOY.md) — production deploy patterns
 
 The HTTP server ships with an admin SPA at `/admin`, an SSE activity feed at `/admin/events`, DCR-style client registration, scope-gated `read`/`write`/`admin` access, and rate limiting.

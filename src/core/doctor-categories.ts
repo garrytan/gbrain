@@ -150,6 +150,7 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'autopilot_fanout_concurrency',
   'autopilot_lock_scope',
   'bootstrap_hook_schema_pairing',
+  'bootstrap_harness_health',
   'bootstrap_hooks_heartbeat',
   'bootstrap_last_verify',
   'bootstrap_push_health',

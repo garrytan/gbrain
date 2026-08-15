@@ -11,7 +11,12 @@
 
 Recent versions of the Codex CLI (`@openai/codex`) support remote
 streamable-HTTP MCP servers with a bearer token read from an environment
-variable. The token lives in your shell env, not in Codex's config file.
+variable. On THIS page's `gbrain connect` path the token lives in your shell
+env, not in Codex's config file. The exception is `gbrain bootstrap harness`
+(local agent-framework boxes): framework-spawned codex inherits no shell
+profile, so that lane writes the token INLINE into a managed, 0600
+`[mcp_servers.gbrain]` block in the codex config — stated in its consent
+block, removable with `gbrain bootstrap harness --remove`.
 
 ## Fastest path: `gbrain connect`
 

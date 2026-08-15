@@ -1,0 +1,10 @@
+{"type":"session","version":3,"id":"agent-fixture-session-1","timestamp":"2026-08-03T14:00:00.000Z","cwd":"/home/alice-example/agent-workspace"}
+{"type":"model_change","id":"mc-1","parentId":null,"provider":"provider-example","modelId":"model-example","timestamp":"2026-08-03T14:00:01.000Z"}
+{"type":"thinking_level_change","id":"tl-1","parentId":"mc-1","thinkingLevel":"high","timestamp":"2026-08-03T14:00:02.000Z"}
+{"type":"message","id":"m-1","parentId":"tl-1","timestamp":"2026-08-03T14:00:03.000Z","message":{"role":"user","timestamp":"2026-08-03T14:00:03.000Z","content":[{"type":"text","text":"The acme-seed deal memo is due Friday. Who is drafting it?"}]}}
+{"type":"custom","id":"c-1","parentId":"m-1","customType":"telemetry","data":{"CUSTOM-ONLY-TEXT":"never imported"},"timestamp":"2026-08-03T14:00:04.000Z"}
+{"type":"message","id":"m-2","parentId":"m-1","timestamp":"2026-08-03T14:00:05.000Z","message":{"role":"assistant","timestamp":"2026-08-03T14:00:05.000Z","content":[{"type":"text","text":"alice-example is drafting the acme-seed memo; charlie-example reviews Thursday."},{"type":"toolCall","id":"tc-1","name":"search_brain"}]}}
+{"type":"compaction","id":"cp-1","parentId":"m-2","summary":"COMPACTION-ONLY-TEXT: never imported","firstKeptEntryId":"m-1","tokensBefore":1000,"timestamp":"2026-08-03T14:00:06.000Z"}
+{"type":"message","id":"m-3","parentId":"m-2","timestamp":"2026-08-03T14:00:07.000Z","message":{"role":"user","timestamp":"2026-08-03T14:00:07.000Z","content":[{"type":"text","text":"Good. And confirm the bridge check-in stays on Thursday."}]}}
+{"type":"message","id":"m-4","parentId":"m-3","timestamp":"2026-08-03T14:00:08.000Z","message":{"role":"assistant","timestamp":"2026-08-03T14:00:08.000Z","content":[{"type":"text","text":"Confirmed: the bridge check-in stays on Thursday."}]}}
+{another malformed line — counted as skipped, never fatal

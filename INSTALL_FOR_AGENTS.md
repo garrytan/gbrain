@@ -227,6 +227,19 @@ Keep `--args` last (everything after it becomes server argv) and verify with
 `hermes mcp test gbrain` — the add exits 0 even on failure. Full reference:
 [docs/mcp/HERMES.md](docs/mcp/HERMES.md).
 
+**If you are Grok Build** (xAI's `grok` CLI): register gbrain as your MCP server:
+
+```bash
+grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- gbrain serve --surface verbs
+```
+
+The add is lazy (exit 0 without connecting) — verify with
+`grok mcp doctor gbrain`, which spawns the server and must report
+`7 tools discovered`. This is the brain-only install; the `gbrain bootstrap`
+personal-agent path does not support Grok yet (Claude Code/Codex only).
+Verified against Grok Build v1.0.4. Full reference:
+[docs/mcp/GROK.md](docs/mcp/GROK.md).
+
 Whether you scaffolded or not, read `skills/RESOLVER.md` (in your workspace, or the
 bundled copy at `~/gbrain/skills/RESOLVER.md` when running from the cloned repo). It's
 the skill dispatcher — tells you which skill to read for any task. Save this to your

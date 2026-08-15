@@ -36,6 +36,16 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# #3485: this wrapper IS the e2e boundary — opt in to running with a database
+# URL present. The bunfig test preload (database-url-guard-preload.ts) refuses
+# bare `bun test` runs while DATABASE_URL/GBRAIN_DATABASE_URL is ambient; the
+# per-file name floor (test/helpers/db-guard.ts) still applies after this.
+export GBRAIN_TEST_ALLOW_DATABASE_URL=1
+# The e2e suite runs on DATABASE_URL only; an ambient GBRAIN_DATABASE_URL
+# would pass the opt-in yet reach CLI-subprocess paths with no name floor —
+# drop it here so only the floored variable crosses the boundary.
+unset GBRAIN_DATABASE_URL
+
 # --- HOME isolation: snapshot real user config before switching ---
 # Tolerate unset HOME (minimal containers, exotic CI shells) without tripping set -u.
 REAL_HOME="${HOME:-/tmp}"
@@ -76,13 +86,18 @@ mkdir -p "$E2E_TMP_HOME/.gbrain"
 # (not an allowlist rebuild), so PATH, HOME, TMPDIR, CI, DATABASE_URL, and bun
 # internals survive untouched. We keep GBRAIN_HOME (just set above for HOME
 # isolation); everything else GBRAIN_* is an operator override the suite must
-# not inherit — which also scrubs GBRAIN_REAL_HERMES_E2E, so the paid hermes
-# door suite structurally cannot fire under this runner (its venue is
-# heavy-tests.yml's direct bun test). Adapts GStack's buildHermeticEnv()
-# allowlist to gbrain's shell E2E runner.
-for _e2e_var in $(env | grep -oE '^(CONDUCTOR_|MCP_|OPENCLAW_|HERMES_|GBRAIN_)[A-Za-z0-9_]*' | sort -u); do
+# not inherit — which also scrubs GBRAIN_REAL_HERMES_E2E and
+# GBRAIN_REAL_GROK_E2E, so the paid hermes/grok door suites structurally
+# cannot fire under this runner (their venue is heavy-tests.yml's direct bun
+# test). GROK_ also drops an operator's GROK_BIN/GROK_HOME. Adapts GStack's
+# buildHermeticEnv() allowlist to gbrain's shell E2E runner.
+for _e2e_var in $(env | grep -oE '^(CONDUCTOR_|MCP_|OPENCLAW_|HERMES_|GROK_|GBRAIN_)[A-Za-z0-9_]*' | sort -u); do
   case "$_e2e_var" in
     GBRAIN_HOME) ;;  # required for HOME isolation (set above) — keep
+    GBRAIN_TEST_ALLOW_DATABASE_URL) ;;  # #3485 preload opt-in (set above) — keep
+    GBRAIN_E2E_ALLOW_DB) ;;  # #3485 name-floor opt-in — the guard's own error
+                             # message tells operators to set it; stripping it
+                             # here would make that escape hatch a dead end
     *) unset "$_e2e_var" || true ;;
   esac
 done
@@ -99,7 +114,10 @@ fi
 if [ "$#" -gt 0 ]; then
   files=("$@")
 else
-  files=(test/e2e/*.test.ts)
+  # phantom-redirect lives in test/ (its PGLite arm runs in the unit suite) but
+  # its Postgres arm is only reachable through a DATABASE_URL-bearing lane —
+  # the unit wrappers strip the URL (#3485), so this lane must carry it.
+  files=(test/e2e/*.test.ts test/phantom-redirect-engine-parity.test.ts)
 fi
 
 # SHARD env (e.g. SHARD=1/4) keeps every M-th file starting at index N (1-indexed).

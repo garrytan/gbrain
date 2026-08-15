@@ -590,6 +590,51 @@ describe('verifyAccessToken', () => {
 });
 
 // ---------------------------------------------------------------------------
+// #4043 — legacy access_tokens honor the scopes TEXT[] column (least
+// privilege). NULL (every pre-feature token) grandfathers to full access —
+// pinned above by 'legacy access_tokens fallback works'.
+// ---------------------------------------------------------------------------
+
+describe('#4043 legacy token scopes column', () => {
+  async function insertLegacyTokenWithScopes(name: string, scopesLiteral: string | null): Promise<string> {
+    const token = generateToken('gbrain_');
+    const hash = hashToken(token);
+    await sql`
+      INSERT INTO access_tokens (id, name, token_hash, scopes)
+      VALUES (${crypto.randomUUID()}, ${name}, ${hash}, ${scopesLiteral}::text[])
+    `;
+    return token;
+  }
+
+  test("scopes ['read','write'] verifies with exactly those scopes (no admin)", async () => {
+    const token = await insertLegacyTokenWithScopes('scoped-harness-agent', '{read,write}');
+    const authInfo = await provider.verifyAccessToken(token) as CoreAuthInfo;
+    expect(authInfo.scopes).toEqual(['read', 'write']);
+  });
+
+  test('explicit empty scopes array is preserved as deny-all', async () => {
+    const token = await insertLegacyTokenWithScopes('deny-all-agent', '{}');
+    const authInfo = await provider.verifyAccessToken(token) as CoreAuthInfo;
+    expect(authInfo.scopes).toEqual([]);
+  });
+
+  test('unknown scope strings are filtered; all-unknown collapses to deny, not grandfather', async () => {
+    const token = await insertLegacyTokenWithScopes('typo-agent', '{reed,write}');
+    const authInfo = await provider.verifyAccessToken(token) as CoreAuthInfo;
+    expect(authInfo.scopes).toEqual(['write']);
+    const token2 = await insertLegacyTokenWithScopes('all-typo-agent', '{reed,wright}');
+    const authInfo2 = await provider.verifyAccessToken(token2) as CoreAuthInfo;
+    expect(authInfo2.scopes).toEqual([]);
+  });
+
+  test('NULL scopes keeps the grandfathered full-access grant (byte-identical legacy behavior)', async () => {
+    const token = await insertLegacyTokenWithScopes('null-scopes-agent', null);
+    const authInfo = await provider.verifyAccessToken(token) as CoreAuthInfo;
+    expect(authInfo.scopes).toEqual(['read', 'write', 'admin']);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Token Revocation
 // ---------------------------------------------------------------------------
 

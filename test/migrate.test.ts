@@ -50,8 +50,13 @@ describe('hasPendingMigrations', () => {
   }, 30000);
 
   test('returns true when version config is missing entirely (defensive default)', async () => {
+    // W0: opt out of the default-on snapshot — this test's premise is an
+    // empty PGlite with no config table at all.
+    const priorSnapshot = process.env.GBRAIN_PGLITE_SNAPSHOT;
+    delete process.env.GBRAIN_PGLITE_SNAPSHOT;
     const engine = new PGLiteEngine();
     await engine.connect({});
+    if (priorSnapshot !== undefined) process.env.GBRAIN_PGLITE_SNAPSHOT = priorSnapshot;
     try {
       // Don't call initSchema. Probe against an empty PGlite — getConfig should
       // either return null (treated as version=1) or throw on missing config

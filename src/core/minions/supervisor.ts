@@ -839,7 +839,22 @@ export class MinionSupervisor {
   private async refreshDbLock(): Promise<void> {
     if (!this.dbLock || this.stopping) return;
     try {
-      await this.dbLock.refresh();
+      const stillOwned = await this.dbLock.refresh();
+      if (stillOwned === false) {
+        // W0 fix-wave (D5.10): the fenced refresh matched 0 rows — the lock
+        // was stolen or force-cleared. That is CERTAIN loss, not a blip:
+        // counting it toward the failure threshold (or worse, resetting the
+        // counter as a "success") would let two supervisors drain the same
+        // queue for up to two more refresh windows. Exit immediately; the
+        // process manager restarts a single clean supervisor.
+        this.emit('health_error', {
+          reason: 'supervisor_lock_lost',
+          detail: 'fenced refresh matched 0 rows (stolen or force-cleared)',
+          queue: this.opts.queue,
+        });
+        await this.shutdown('supervisor_lock_lost', ExitCodes.LOCK_LOST);
+        return;
+      }
       this.lockRefreshFailures = 0;
     } catch (e) {
       this.lockRefreshFailures++;

@@ -4,6 +4,11 @@
 # CI runs both; bun run ci:local skips slow tests via run-unit-shard.sh.
 
 set -euo pipefail
+
+# #3485: unit/slow tests need no database — strip ambient DB URLs at this
+# wrapper boundary so the bunfig preload guard passes and nothing can reach a
+# real brain. The e2e wrapper (run-e2e.sh) is the only lane that keeps them.
+unset DATABASE_URL GBRAIN_DATABASE_URL
 cd "$(dirname "$0")/.."
 
 slow_files=()
