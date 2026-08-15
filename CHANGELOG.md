@@ -2,6 +2,33 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.45.16.0] - 2026-08-14
+
+**Google chat works again, OpenAI defaults are current, and every model a default can resolve to is now verified live — with a guard so a dead default can never ship again.**
+
+**The Google recipe is alive again.** Google shut down the Gemini 2.0 Flash family on 2026-06-01, and every model in the recipe's chat and expansion lists was in that family — a Google-only install could not chat at all, and the `gemini` alias pointed at a preview id that was also shut down. The recipe now carries the current GA line (`gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.5-flash-lite`), the alias follows it, and the soon-to-retire 2.5 family is deliberately not listed anywhere a default resolves. The same sweep moved OpenAI's defaults to the GPT-5.6 family (`gpt-5.6-terra` leads; the `gpt` alias tracks OpenAI's own alias to Sol) after `gpt-5.2` dropped off the live price sheet, and refreshed OpenRouter's first-listed model — the one `gbrain init` auto-picks — to a live route. All prices were verified against the providers' live sheets on 2026-08-08; retired model ids stay in the pricing table so historical usage and audit rows keep pricing, including the exact spelling older Google-initialized brains persisted, which would otherwise have tripped the fail-closed budget gate.
+
+**A dead default can't ship again.** A new structural guard requires every alias and tier default to point at a model that is provider-qualified, listed in its recipe's chat touchpoint, tool-capable, and priced in the canonical table. The `gemini` alias sat on a dead model for a month because only a symbolic test existed; that class is closed.
+
+**If your brain was initialized on Google or OpenAI a while ago,** it may have persisted a now-retired model as its chat model. gbrain validates configured models leniently on purpose, so the failure would only surface at the provider. After upgrading, point it at a live model:
+
+```bash
+gbrain config set models.chat google:gemini-3.6-flash    # or openai:gpt-5.6-terra
+```
+
+**Ollama models you can actually pull.** The catalog's larger embedders now use the real Ollama library tags — `qwen3-embedding:8b` (4096d) and `snowflake-arctic-embed2` (1024d). The previous spellings never matched a pullable tag, so following the docs ended in a 404; the docs are fixed too. Colon-bearing tags must be passed provider-qualified (`ollama:qwen3-embedding:8b`), and the tests pin that path.
+
+**Custom base URLs reach the native providers.** `provider_base_urls.openai` / `.anthropic` (config plane) now applies to the native OpenAI and Anthropic clients — previously these two were the only providers whose base URL could only be set through the environment. Config wins over env, matching how every other provider behaves. Two guards ship with it: a present-but-empty entry fails loudly instead of silently masking a set env var (an env-mandated egress proxy can no longer be bypassed by an empty row), and a config-plane native override must be https or loopback before gbrain will route key-carrying traffic through it. If you set `provider_base_urls.openai` in the past and it did nothing, note that it takes effect after this upgrade.
+
+**LiteLLM and Together keys work from config.json.** `litellm_api_key` and `together_api_key` are now typed config fields folded into the gateway environment, so daemon, launchd, and MCP contexts work without a shell export — the same seam voyage and dashscope already use. `gbrain config set` refuses these two keys with a paste-ready file-plane instruction instead of silently writing a value nothing reads.
+
+### Changed
+
+- The `gemini` alias now resolves to `google:gemini-3.6-flash` and the `gpt` alias to `openai:gpt-5.6-sol`; both previous targets were retired or removed upstream.
+- `gpt-4o-mini` left the OpenAI chat list (its 128K window would be misreported by the touchpoint-wide 1M context setting) but remains the expansion fallback.
+- The default evaluation panels (cross-modal slot A, takes-quality) follow the refresh to `openai:gpt-5.6-terra` and `google:gemini-3.6-flash`.
+
+### To take advantage of v0.45.16.0
 ## [0.45.14.0] - 2026-08-14
 
 **The box that already has a brain: framework-spawned coding agents get brain access by default.** The bootstrap door built in v0.45.0.0 was for a human at a laptop. A growing share of Claude Code and Codex sessions are spawned by an agent framework — your OpenClaw, or anything that shells out to headless sessions — on a machine that already hosts a brain and a running `gbrain serve --http`. Until now those sessions got nothing unless someone hand-replicated settings writers across every project directory. One command fixes that:

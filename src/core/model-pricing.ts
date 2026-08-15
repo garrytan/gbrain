@@ -76,23 +76,44 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   'openai:gpt-4o':                        { input:  2.50, output: 10.00 },
   'openai:gpt-4o-mini':                   { input:  0.15, output:  0.60 },
   'openai:gpt-5':                         { input:  5.00, output: 20.00 },
-  // gpt-5.2: rates from the OpenAI recipe chat touchpoint (verified
-  // 2026-04-20). Needed here because it's the cross-modal DEFAULT_SLOTS
+  // gpt-5.2 dropped off OpenAI's live price sheet with the GPT-5.6 family
+  // GA (2026-07-09); kept so historical usage/audit rows still price. Not
+  // a valid default — removed from the openai recipe's chat list.
+  'openai:gpt-5.2':                       { input:  1.25, output: 10.00 },
+  // gpt-5.5: $5/$30 on the live sheet (verified 2026-08-08). Reconciled
+  // from a stale $4/$16 entry recorded before the GPT-5.6 launch repriced
+  // the previous flagship to match Sol.
+  'openai:gpt-5.5':                       { input:  5.00, output: 30.00 },
+  // GPT-5.6 family (GA 2026-07-09; Terra/Luna rates reflect the 2026-07-30
+  // price cut, verified 2026-08-08). Terra is the cross-modal DEFAULT_SLOTS
   // slot-A model — without a canonical entry estimateCost silently drops
   // slot A from the --max-usd pre-flight and est_cost_usd audit rows.
-  'openai:gpt-5.2':                       { input:  1.25, output: 10.00 },
-  'openai:gpt-5.5':                       { input:  4.00, output: 16.00 },
+  'openai:gpt-5.6-sol':                   { input:  5.00, output: 30.00 },
+  'openai:gpt-5.6-terra':                 { input:  2.00, output: 12.00 },
+  'openai:gpt-5.6-luna':                  { input:  0.20, output:  1.20 },
 
   // ── Google ─────────────────────────────────────────────────────────────
   // `gemini-1.5-pro` was retired by Google (#3510); kept so historical
   // usage/audit rows still price. Not a valid default — it's deliberately
   // absent from the google recipe's chat list.
   'google:gemini-1.5-pro':                { input:  1.25, output:  5.00 },
-  // Gemini 2.0 Flash: $0.10 in / $0.40 out (verified 2026-06-03). Reconciled
-  // from a stale $0.30/$1.20 entry that had drifted in takes-quality-eval.
-  // `gemini-2-flash` kept as an alias for the legacy id spelling.
+  // The Gemini 2.0 Flash family was shut down by Google 2026-06-01; kept so
+  // historical usage/audit rows still price ($0.10/$0.40 verified
+  // 2026-06-03 while live). `gemini-2-flash` kept as an alias for the
+  // legacy id spelling; `gemini-2.0-flash-exp` was the google recipe's
+  // models[0] before this refresh, so it's the exact string env-auto-inited
+  // brains persisted as chat_model — without a row, the budget tracker's
+  // fail-closed no_pricing path blocks those brains under any cost cap.
   'google:gemini-2.0-flash':              { input:  0.10, output:  0.40 },
   'google:gemini-2-flash':                { input:  0.10, output:  0.40 },
+  'google:gemini-2.0-flash-exp':          { input:  0.10, output:  0.40 },
+  // Gemini 3.x Flash line (verified 2026-08-08). 3.6-flash is the google
+  // recipe's chat baseline; 3.5-flash-lite is the expansion default. The
+  // 2.5 family is live until 2026-10-16 but deliberately unlisted as a
+  // default anywhere, so it needs no row until historical usage appears.
+  'google:gemini-3.6-flash':              { input:  1.50, output:  7.50 },
+  'google:gemini-3.5-flash':              { input:  1.50, output:  9.00 },
+  'google:gemini-3.5-flash-lite':         { input:  0.30, output:  2.50 },
 
   // ── Together / DeepSeek (cross-modal-eval panel) ───────────────────────
   'together:meta-llama/Llama-3.3-70B-Instruct-Turbo': { input: 0.88, output: 0.88 },

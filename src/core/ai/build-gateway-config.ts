@@ -50,6 +50,12 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   // despite config.json looking complete. process.env still wins via the
   // later spread.
   if (c.dashscope_api_key) envFromConfig.DASHSCOPE_API_KEY = c.dashscope_api_key;
+  // Same seam for LiteLLM + Together, closed alongside the litellm chat
+  // touchpoint (v0.42.61.0 made litellm a full chat provider, so the
+  // config-plane gap started biting daemon/launchd/MCP contexts the same
+  // way voyage's #2662 did). process.env still wins via the later spread.
+  if (c.litellm_api_key) envFromConfig.LITELLM_API_KEY = c.litellm_api_key;
+  if (c.together_api_key) envFromConfig.TOGETHER_API_KEY = c.together_api_key;
   // #3500: same seam for Google Gemini. The google recipe reads
   // GOOGLE_GENERATIVE_AI_API_KEY; before this fold, the ONLY way to
   // configure Gemini was exporting that exact env var. (This closes the

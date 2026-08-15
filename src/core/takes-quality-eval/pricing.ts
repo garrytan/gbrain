@@ -36,16 +36,26 @@ const SUPPORTED_MODELS = [
   'openai:gpt-5',
   'openai:gpt-5.2',
   'openai:gpt-5.5',
+  // GPT-5.6 family (GA 2026-07-09); Terra replaces gpt-5.2 in
+  // DEFAULT_MODEL_PANEL after gpt-5.2 dropped off the live price sheet.
+  'openai:gpt-5.6-sol',
+  'openai:gpt-5.6-terra',
+  'openai:gpt-5.6-luna',
   'anthropic:claude-opus-5',
   'anthropic:claude-opus-4-8',
   'anthropic:claude-opus-4-7',
   'anthropic:claude-sonnet-5',
   'anthropic:claude-sonnet-4-6',
   'anthropic:claude-haiku-4-5',
-  // gemini-1.5-pro was retired by Google (#3510); gemini-2.0-flash replaces
-  // it in DEFAULT_MODEL_PANEL. `gemini-2-flash` stays as the legacy alias.
+  // gemini-1.5-pro was retired by Google (#3510) and the 2.0-flash family
+  // shut down 2026-06-01; the dead ids stay listed so historical eval rows
+  // still price (`gemini-2-flash` is the legacy alias spelling).
+  // gemini-3.6-flash replaces 2.0-flash in DEFAULT_MODEL_PANEL.
   'google:gemini-2.0-flash',
   'google:gemini-2-flash',
+  'google:gemini-3.6-flash',
+  'google:gemini-3.5-flash',
+  'google:gemini-3.5-flash-lite',
 ] as const;
 
 export const MODEL_PRICING: Record<string, ModelPricing> = Object.fromEntries(

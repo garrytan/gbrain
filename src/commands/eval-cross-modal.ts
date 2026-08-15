@@ -76,9 +76,9 @@ FLAGS:
                            dimensions (goal, depth, sourcing, specificity, useful).
   --cycles N               1-3. Default: 3 in TTY, 1 in non-TTY (T11). Each
                            cycle is 3 model calls; verdict aggregates over them.
-  --slot-a-model <id>      Override default 'openai:gpt-5.2'.
-  --slot-b-model <id>      Override default 'anthropic:claude-opus-4-7'.
-  --slot-c-model <id>      Override default 'deepseek:deepseek-v4-pro'.
+  --slot-a-model <id>      Override default '${DEFAULT_SLOTS[0]!.model}'.
+  --slot-b-model <id>      Override default '${DEFAULT_SLOTS[1]!.model}'.
+  --slot-c-model <id>      Override default '${DEFAULT_SLOTS[2]!.model}'.
   --receipt-dir <path>     Default: gbrainPath('eval-receipts').
   --max-tokens N           Output token budget per call. Default: 4000.
   --json                   Emit final aggregate as JSON to stdout (progress to stderr).

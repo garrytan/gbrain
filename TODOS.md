@@ -1,5 +1,40 @@
 # TODOS
 
+## Provider-freshness follow-ups (filed with the Wave 2 recipe refresh, 2026-08)
+
+Deferred from the provider-compat freshness wave (review army + red team).
+None block the wave; all are consumers of retirement/override knowledge the
+wave already encodes.
+
+- [ ] **P2 — Doctor check: configured model delisted from its recipe.**
+  `registerExtendedModel` (gateway.ts, v0.31.12) keeps a persisted
+  `chat_model`/`expansion_model` locally valid after its recipe delists it, so
+  existing brains fail only at the provider with no gbrain-side hint. Add a
+  doctor check: configured model resolves to a native recipe but is absent
+  from the touchpoint's models list → warn with the replacement `config set`
+  command. The retirement facts (models + dates) are already in the recipes.
+- [ ] **P2 — Notice when config-plane base_urls overrides a set native env var.**
+  `resolveNativeBaseUrl` now honors `provider_base_urls.openai/anthropic`
+  (config wins). A pre-existing row that was a no-op before the fix activates
+  silently on upgrade and out-prioritizes a working
+  OPENAI_BASE_URL/ANTHROPIC_BASE_URL. When both planes are set and disagree,
+  emit a one-shot stderr note naming the winner (doctor or gateway-configure).
+  (The https-or-loopback gate on config-plane native overrides shipped with
+  the wave; what remains here is only the disagreement notice.)
+- [ ] **P3 — `gbrain config set *_api_key` writes a dead plane.** The DB-plane
+  config row is never read by the gateway (loadConfigWithEngine deliberately
+  skips `*_api_key` merges), so e.g. `config set voyage_api_key X` stores a
+  secret at rest with zero functional effect — pre-existing class shared by
+  voyage/dashscope/google keys. `litellm_api_key` + `together_api_key` now
+  refuse with a paste-ready file-plane instruction (shipped with the wave);
+  extend that honesty across the rest of the class, or route `*_api_key` sets
+  to the file plane (~/.gbrain/config.json). docs/INSTALL.md's `config set
+  <key>_api_key` examples inherit whichever resolution lands.
+- [ ] **P3 — models[0]-liveness guard for init auto-pick recipes.** `gbrain
+  init` persists `models[0]` as chat_model (init.ts:608). The dead-alias
+  liveness guard covers DEFAULT_ALIASES/TIER_DEFAULTS; extend the idea so
+  every recipe consumed by init auto-pick keeps a live models[0] (openrouter's
+  quarterly-refresh note is currently the only defense).
 ## Truthful-surface wave follow-ups (filed with T14, amendment 35 + D14.5)
 
 Deferred from the MCP consumer-feedback wave (plan at
@@ -594,9 +629,12 @@ The eng-review + Codex outside-voice narrowed the wave to these deferrals:
   covers anthropic + openai; Google was deferred because Gemini's native suffix is unproven
   (its OpenAI-compat route is `/v1beta/openai`). Verify the correct `@ai-sdk/google` suffix,
   then add `google` to the helper. Where: `src/core/ai/gateway.ts:resolveNativeBaseUrl`.
-- [ ] **P3 — Fold Voyage/Google/LiteLLM/OpenRouter API keys into `buildGatewayConfig`.**
-  It folds only OPENAI/ANTHROPIC/ZEROENTROPY file-plane keys today, so `config.json`-set keys
-  for other providers only work if also in `process.env`. Extend the mapping. Where:
+- [x] **P3 — Fold Voyage/Google/LiteLLM/OpenRouter API keys into `buildGatewayConfig`.**
+  It folded only OPENAI/ANTHROPIC/ZEROENTROPY file-plane keys when filed. Voyage (#2662),
+  DashScope, Google (#3500), and OpenRouter folds landed in follow-up waves;
+  `litellm_api_key` + `together_api_key` landed in the v0.42.77.0 provider-freshness
+  wave, completing the list. (The DB-plane `config set *_api_key` dead-plane class is a
+  separate open P3 under "Provider-freshness follow-ups" above.) Where:
   `src/core/ai/build-gateway-config.ts`.
 - [ ] **P3 — OpenRouter per-model custom-dim handling.** OpenRouter declares recipe-wide
   `dims_options` and mixes fixed-dim + arbitrary models, so it's excluded from `trust_custom_dims`.

@@ -3541,7 +3541,7 @@ export async function checkSubagentCapability(engine: BrainEngine): Promise<Chec
           message:
             `${source} is "${resolved}" but that provider/model lacks native tool calling. ` +
             `The subagent loop cannot run on this model — runtime will fall back to claude-sonnet-4-6. ` +
-            `Fix: \`gbrain config set ${source} <provider>:<model-with-tools>\` (e.g. anthropic:claude-sonnet-4-6 or openai:gpt-5.2).`,
+            `Fix: \`gbrain config set ${source} <provider>:<model-with-tools>\` (e.g. anthropic:claude-sonnet-4-6 or openai:gpt-5.6-terra).`,
         };
       }
       if (verdict === 'unknown') {

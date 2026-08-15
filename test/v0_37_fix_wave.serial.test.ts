@@ -223,6 +223,8 @@ describe('v0.37 Lane C.3 — ZE key reaches buildGatewayConfig', () => {
       expect(gwCfg.env?.OPENAI_API_KEY).toBe('test-oai');
       expect(gwCfg.env?.ANTHROPIC_API_KEY).toBe('test-anth');
       expect(gwCfg.env?.OPENROUTER_API_KEY).toBe('test-or');
+      // LiteLLM/Together key-fold pins live in test/ai/build-gateway-config.test.ts
+      // (the canonical per-key fold + env-wins home), not this wave-named file.
     } finally {
       if (savedZe !== undefined) process.env.ZEROENTROPY_API_KEY = savedZe;
       if (savedOai !== undefined) process.env.OPENAI_API_KEY = savedOai;

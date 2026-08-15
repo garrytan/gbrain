@@ -49,7 +49,9 @@ export const DEFAULT_SLOTS: SlotConfig[] = [
   // the OpenAI recipe dropped it, so slot A errored "not listed for OpenAI
   // chat" on every install and the 3-slot panel could never reach its
   // 2-model quorum without a Google key (verdict: permanently inconclusive).
-  { id: 'A', model: 'openai:gpt-5.2' },
+  // gpt-5.2 dropped off OpenAI's live price sheet with the GPT-5.6 family
+  // GA (2026-07-09); Terra is the balanced successor in the same price class.
+  { id: 'A', model: 'openai:gpt-5.6-terra' },
   { id: 'B', model: 'anthropic:claude-opus-4-7' },
   // gemini-1.5-pro was retired by Google (#3510), so slot C failed even with
   // a Google key configured. deepseek:deepseek-v4-pro preserves the

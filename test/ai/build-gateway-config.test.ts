@@ -152,6 +152,47 @@ describe('buildGatewayConfig config-plane API-key folding', () => {
     });
   });
 
+  // Same seam for LiteLLM + Together, closed alongside litellm's chat
+  // touchpoint (v0.42.61.0): once litellm became a full chat provider,
+  // daemon/launchd/MCP contexts hit the same config-plane gap voyage did
+  // (#2662). Canonical home for future key-fold pins — one fold test + one
+  // env-wins companion per key, in this file (not a wave-named one).
+  test('litellm_api_key folds into gateway env as LITELLM_API_KEY', async () => {
+    await withEnv({ LITELLM_API_KEY: undefined }, async () => {
+      const cfg = buildGatewayConfig({
+        litellm_api_key: 'sk-llm-config-plane',
+      } as unknown as GBrainConfig);
+      expect(cfg.env.LITELLM_API_KEY).toBe('sk-llm-config-plane');
+    });
+  });
+
+  test('a real LITELLM_API_KEY process.env value wins over the config-plane fallback', async () => {
+    await withEnv({ LITELLM_API_KEY: 'sk-llm-env-plane' }, async () => {
+      const cfg = buildGatewayConfig({
+        litellm_api_key: 'sk-llm-config-plane',
+      } as unknown as GBrainConfig);
+      expect(cfg.env.LITELLM_API_KEY).toBe('sk-llm-env-plane');
+    });
+  });
+
+  test('together_api_key folds into gateway env as TOGETHER_API_KEY', async () => {
+    await withEnv({ TOGETHER_API_KEY: undefined }, async () => {
+      const cfg = buildGatewayConfig({
+        together_api_key: 'sk-tg-config-plane',
+      } as unknown as GBrainConfig);
+      expect(cfg.env.TOGETHER_API_KEY).toBe('sk-tg-config-plane');
+    });
+  });
+
+  test('a real TOGETHER_API_KEY process.env value wins over the config-plane fallback', async () => {
+    await withEnv({ TOGETHER_API_KEY: 'sk-tg-env-plane' }, async () => {
+      const cfg = buildGatewayConfig({
+        together_api_key: 'sk-tg-config-plane',
+      } as unknown as GBrainConfig);
+      expect(cfg.env.TOGETHER_API_KEY).toBe('sk-tg-env-plane');
+    });
+  });
+
   test('a real DASHSCOPE_API_KEY process.env value wins over the config-plane fallback', async () => {
     await withEnv({ DASHSCOPE_API_KEY: 'sk-ds-env-plane' }, async () => {
       const cfg = buildGatewayConfig({

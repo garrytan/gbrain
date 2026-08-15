@@ -161,8 +161,8 @@ describe('chat touchpoint — model resolver + aliases (Codex F-OV-5)', () => {
 
   test('assertTouchpoint accepts chat for chat-capable native + openai-compat providers', () => {
     expect(() => assertTouchpoint(getRecipe('anthropic')!, 'chat', 'claude-opus-4-7')).not.toThrow();
-    expect(() => assertTouchpoint(getRecipe('openai')!, 'chat', 'gpt-5.2')).not.toThrow();
-    expect(() => assertTouchpoint(getRecipe('google')!, 'chat', 'gemini-2.0-flash')).not.toThrow();
+    expect(() => assertTouchpoint(getRecipe('openai')!, 'chat', 'gpt-5.6-terra')).not.toThrow();
+    expect(() => assertTouchpoint(getRecipe('google')!, 'chat', 'gemini-3.6-flash')).not.toThrow();
     expect(() => assertTouchpoint(getRecipe('deepseek')!, 'chat', 'deepseek-v4-flash')).not.toThrow();
     // Legacy id retired by DeepSeek 2026-07-24 (#1255): still passes local
     // validation (openai-compat tier), rejection surfaces at the provider.

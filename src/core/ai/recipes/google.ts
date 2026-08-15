@@ -29,22 +29,28 @@ export const google: Recipe = {
       safety_factor: 0.8,
     },
     expansion: {
-      models: ['gemini-2.0-flash', 'gemini-2.0-flash-lite'],
-      cost_per_1m_tokens_usd: 0.10,
-      price_last_verified: '2026-04-20',
+      // gemini-3.5-flash-lite is the cheapest live GA tier ($0.30/M input).
+      // The 2.5-flash-lite floor ($0.10/M) is cheaper but Google set the 2.5
+      // family's retirement for 2026-10-16 — listing it here would re-create
+      // the dead-default class two months out.
+      models: ['gemini-3.5-flash-lite', 'gemini-3.5-flash'],
+      cost_per_1m_tokens_usd: 0.30,
+      price_last_verified: '2026-08-08',
     },
     chat: {
-      // gemini-1.5-pro was retired by Google (#3510) — deliberately NOT
-      // listed. Default-slot guard tests validate hardcoded defaults against
-      // this list, so re-adding a dead model here masks dead defaults.
-      models: ['gemini-2.0-flash-exp', 'gemini-2.0-flash'],
+      // gemini-1.5-pro was retired by Google (#3510) and the 2.0-flash
+      // family was shut down 2026-06-01 — deliberately NOT listed.
+      // Default-slot guard tests validate hardcoded defaults against this
+      // list, so re-adding a dead model here masks dead defaults. The 2.5
+      // family is live but retires 2026-10-16, so the list is 3.x-only.
+      models: ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite'],
       supports_tools: true,
       supports_subagent_loop: true,
       supports_prompt_cache: false,
-      max_context_tokens: 1000000, // Gemini 2.0 Flash
-      cost_per_1m_input_usd: 0.30,
-      cost_per_1m_output_usd: 1.20,
-      price_last_verified: '2026-04-20',
+      max_context_tokens: 1000000, // Gemini 3.x Flash family
+      cost_per_1m_input_usd: 1.50, // gemini-3.6-flash baseline
+      cost_per_1m_output_usd: 7.50,
+      price_last_verified: '2026-08-08',
     },
   },
   setup_hint: 'Get an API key at https://aistudio.google.com/apikey, then `export GOOGLE_GENERATIVE_AI_API_KEY=...`',

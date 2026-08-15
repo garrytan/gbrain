@@ -299,7 +299,7 @@ new receipt, so every iteration leaves its own baseline).
 
 | Slot | Default | Provider |
 |------|---------|----------|
-| A | `openai:gpt-5.2` | OpenAI |
+| A | `openai:gpt-5.6-terra` | OpenAI |
 | B | `anthropic:claude-opus-4-7` | Anthropic |
 | C | `deepseek:deepseek-v4-pro` | DeepSeek |
 

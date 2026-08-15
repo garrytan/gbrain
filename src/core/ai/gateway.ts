@@ -417,7 +417,42 @@ export function resolveNativeBaseUrl(
   cfg: AIGatewayConfig,
 ): string | undefined {
   const envKey = provider === 'anthropic' ? 'ANTHROPIC_BASE_URL' : 'OPENAI_BASE_URL';
-  const raw = cfg.env[envKey];
+  // Config plane first: `provider_base_urls.<provider>` reaches here via
+  // cfg.base_urls, matching buildGatewayConfig's "config wins over env"
+  // contract for the openai-compat providers. Before this fallback, the
+  // native providers were the only recipes whose base URL could ONLY be
+  // set through the environment.
+  const configRaw = cfg.base_urls?.[provider];
+  if (configRaw !== undefined && !configRaw.trim()) {
+    // Present-but-empty is an explicit misconfiguration, and it would mask a
+    // set env var — for an operator who mandates an egress proxy via
+    // OPENAI_BASE_URL/ANTHROPIC_BASE_URL, silently returning undefined here
+    // would route traffic (key attached) straight to the provider. The
+    // openai-compat plane fails loud on the same shape ("requires a base
+    // URL"); mirror it.
+    throw new AIConfigError(
+      `provider_base_urls.${provider} is set but empty`,
+      `Remove the empty entry — \`gbrain config unset provider_base_urls.${provider}\` if it lives in the DB plane, or delete it from provider_base_urls in ~/.gbrain/config.json — or give it a real URL.`,
+    );
+  }
+  if (configRaw !== undefined) {
+    // Config-plane native overrides must be https or loopback. The config
+    // dict merges the DB plane (`provider_base_urls.` rows), so this entry
+    // is writable by anything with brain-DB write access — and it redirects
+    // traffic carrying the native OPENAI/ANTHROPIC key. The env plane keeps
+    // its historical no-scheme-check behavior (operator-controlled,
+    // per-machine); the config plane gets the tighter gate because it's the
+    // newly-opened, more-reachable channel.
+    const candidate = configRaw.trim();
+    const isLoopback = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])([:/]|$)/i.test(candidate);
+    if (!/^https:\/\//i.test(candidate) && !isLoopback) {
+      throw new AIConfigError(
+        `provider_base_urls.${provider} must be https (or http://localhost) — got "${candidate}"`,
+        `Native ${provider} traffic carries your API key; a plaintext or non-local override is refused. Use an https URL, or set ${envKey} in the environment if you really need this.`,
+      );
+    }
+  }
+  const raw = configRaw ?? cfg.env[envKey];
   if (!raw || !raw.trim()) return undefined;
   const trimmed = raw.trim().replace(/\/+$/, '');
   return /\/v1$/.test(trimmed) ? trimmed : `${trimmed}/v1`;

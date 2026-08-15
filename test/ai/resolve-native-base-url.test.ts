@@ -60,4 +60,55 @@ describe('resolveNativeBaseUrl (#1250)', () => {
     expect(resolveNativeBaseUrl('openai', cfgWith({ ANTHROPIC_BASE_URL: 'https://x' }))).toBeUndefined();
     expect(resolveNativeBaseUrl('anthropic', cfgWith({ OPENAI_BASE_URL: 'https://x' }))).toBeUndefined();
   });
+
+  test('config-plane base_urls reaches native providers, same normalization', () => {
+    // provider_base_urls.openai / .anthropic flow into cfg.base_urls via
+    // buildGatewayConfig; before the fallback, native providers ignored the
+    // config plane entirely (env-only).
+    const cfg = { env: {}, base_urls: { openai: 'https://proxy.example' } } as unknown as AIGatewayConfig;
+    expect(resolveNativeBaseUrl('openai', cfg)).toBe('https://proxy.example/v1');
+    expect(resolveNativeBaseUrl('anthropic', cfg)).toBeUndefined();
+  });
+
+  test('config-plane base_urls wins over the env var (matches buildGatewayConfig contract)', () => {
+    const cfg = {
+      env: { OPENAI_BASE_URL: 'https://env.example' },
+      base_urls: { openai: 'https://config.example/v1' },
+    } as unknown as AIGatewayConfig;
+    expect(resolveNativeBaseUrl('openai', cfg)).toBe('https://config.example/v1');
+  });
+
+  test('anthropic reads config-plane base_urls with the same /v1 normalization', () => {
+    const cfg = { env: {}, base_urls: { anthropic: 'https://a.example' } } as unknown as AIGatewayConfig;
+    expect(resolveNativeBaseUrl('anthropic', cfg)).toBe('https://a.example/v1');
+    expect(resolveNativeBaseUrl('openai', cfg)).toBeUndefined();
+  });
+
+  test('config-plane native override must be https or loopback (DB-plane redirection guard)', () => {
+    // provider_base_urls merges DB-plane rows; a plaintext non-local entry
+    // would redirect key-carrying native traffic. Env plane keeps its
+    // historical behavior (operator-controlled, per-machine).
+    const bad = { env: {}, base_urls: { openai: 'http://evil.example' } } as unknown as AIGatewayConfig;
+    expect(() => resolveNativeBaseUrl('openai', bad)).toThrow(/must be https/);
+    const local = { env: {}, base_urls: { openai: 'http://localhost:8080' } } as unknown as AIGatewayConfig;
+    expect(resolveNativeBaseUrl('openai', local)).toBe('http://localhost:8080/v1');
+    const envHttp = { env: { OPENAI_BASE_URL: 'http://proxy.internal' }, base_urls: {} } as unknown as AIGatewayConfig;
+    expect(resolveNativeBaseUrl('openai', envHttp)).toBe('http://proxy.internal/v1');
+  });
+
+  test('present-but-empty config entry fails loud instead of silently masking the env var', () => {
+    // An empty `provider_base_urls.openai` would otherwise mask a set
+    // OPENAI_BASE_URL and return undefined — routing traffic (key attached)
+    // straight to the provider past an env-mandated egress proxy, silently.
+    // The openai-compat plane throws on the same shape ("requires a base
+    // URL"); the native plane mirrors that loud contract.
+    const cfg = {
+      env: { OPENAI_BASE_URL: 'https://env.example' },
+      base_urls: { openai: '' },
+    } as unknown as AIGatewayConfig;
+    expect(() => resolveNativeBaseUrl('openai', cfg)).toThrow(/set but empty/);
+    // Absent entry (undefined) still falls through to the env var.
+    const cfg2 = { env: { OPENAI_BASE_URL: 'https://env.example' }, base_urls: {} } as unknown as AIGatewayConfig;
+    expect(resolveNativeBaseUrl('openai', cfg2)).toBe('https://env.example/v1');
+  });
 });

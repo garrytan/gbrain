@@ -218,6 +218,30 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       process.exit(1);
     }
 
+    // Silent-no-op guard for the api keys whose DB plane NOTHING reads:
+    // loadConfigWithEngine never merges `*_api_key` DB rows and
+    // buildGatewayConfig folds only the file plane, so a DB-plane write
+    // stores a secret at rest with zero functional effect (and auth keeps
+    // failing with no hint). Scoped to litellm/together — before they
+    // joined KNOWN_CONFIG_KEYS, `config set` refused them loudly; this
+    // keeps that honesty with a paste-ready file-plane instruction instead
+    // of a silent accept. Deliberately NOT the whole `*_api_key` class:
+    // docs/INSTALL.md documents `config set` for the older keys and
+    // autopilot/ze-switch/think consult those DB rows as presence checks
+    // (the broader plane unification is a filed TODO). No --force escape
+    // for the same reason as the schema-sizing fields above.
+    if (key === 'litellm_api_key' || key === 'together_api_key') {
+      const { gbrainPath } = await import('../core/config.ts');
+      const cfgPath = gbrainPath('config.json');
+      console.error(`[config] ${key} is a file-plane secret; nothing reads it from the DB config table.`);
+      console.error(`[config] Setting it here would store the key at rest with no effect (silent no-op).`);
+      console.error(`[config]`);
+      console.error(`[config] Set it in ${cfgPath} instead:`);
+      console.error(`[config]   {"${key}": "<your key>"}`);
+      console.error(`[config] or export ${key === 'litellm_api_key' ? 'LITELLM_API_KEY' : 'TOGETHER_API_KEY'} for this shell/daemon.`);
+      process.exit(1);
+    }
+
     // v0.37.10.0 (D6): strict unknown-key rejection with --force escape hatch.
     // Catches the silent-no-op class for namespaced typos like `embedding.provider`,
     // `embedding.model`, `embedding.dimensions` — Levenshtein suggests the canonical

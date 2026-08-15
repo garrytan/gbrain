@@ -67,7 +67,7 @@ The doctor distinguishes two repair paths:
 - **Code-heavy brain (gstack per-worktree, source repos)**: Voyage `voyage-code-3` (1024 default; supports 256/512/1024/2048). Tuned on programming languages. Voyage publishes head-to-head numbers showing it outperforms their general flagships on code retrieval ([voyageai.com/blog](https://voyageai.com/blog)). For gstack's per-worktree pglite-backed code brain, this is the right default — see Topology 3 in `docs/architecture/topologies.md`.
 - **Reranking pair**: ZeroEntropy `zerank-2` is the hosted default in `tokenmax` mode (see [`docs/ai-providers/zeroentropy.md`](../ai-providers/zeroentropy.md)). Voyage `rerank-2.5` pairs cleanly with Voyage embeddings.
 - **Local reranking (no API spend)**: `llama-server-reranker` recipe (v0.40.6.1) — point gbrain at your own `llama-server --reranking` instance running Qwen3-Reranker or self-hosted ZeroEntropy weights. Same `gateway.rerank()` seam, $0 per call. Walkthrough in [`docs/ai-providers/llama-server-reranker.md`](../ai-providers/llama-server-reranker.md).
-- **One key for many hosted models**: OpenRouter. Set `OPENROUTER_API_KEY` and use `openrouter:<provider>/<model>` for chat against GPT-5.2, Claude 4.x, Gemini 3, DeepSeek, and dozens more without juggling per-provider keys. Embedding catalog includes OpenAI, Google, Qwen, BGE-M3.
+- **One key for many hosted models**: OpenRouter. Set `OPENROUTER_API_KEY` and use `openrouter:<provider>/<model>` for chat against GPT-5.6, Claude 4.x, Gemini 3, DeepSeek, and dozens more without juggling per-provider keys. Embedding catalog includes OpenAI, Google, Qwen, BGE-M3.
 - **Enterprise compliance**: Azure OpenAI (data residency + private endpoints) or self-hosted via llama-server / Ollama.
 - **China region**: DashScope (Alibaba) or Zhipu (BigModel). DashScope's international endpoint at `dashscope-intl.aliyuncs.com`; override `provider_base_urls.dashscope` for the China endpoint.
 - **OSS local, full control**: llama-server (`llama.cpp`) for any GGUF model; Ollama for the curated catalog.
@@ -79,7 +79,7 @@ The doctor distinguishes two repair paths:
 
 Default. Set `OPENAI_API_KEY`. Models: `text-embedding-3-large` (3072 max, 1536 default), `text-embedding-3-small` (1536). Matryoshka via the `dimensions` field — gbrain pins it from `embedding_dimensions` config so existing 1536-dim brains stay aligned across SDK upgrades.
 
-Optional `OPENAI_BASE_URL` — point the native OpenAI provider at an OpenAI-compatible gateway. A bare host is normalized to carry the `/v1` suffix automatically (so `https://gw.example.com` and `https://gw.example.com/v1` both work); when unset, the SDK's default endpoint is untouched. `ANTHROPIC_BASE_URL` gets the same normalization for Anthropic chat/expansion calls.
+Optional `OPENAI_BASE_URL` — point the native OpenAI provider at an OpenAI-compatible gateway. A bare host is normalized to carry the `/v1` suffix automatically (so `https://gw.example.com` and `https://gw.example.com/v1` both work); when unset, the SDK's default endpoint is untouched. `ANTHROPIC_BASE_URL` gets the same normalization for Anthropic chat/expansion calls. The config plane works here too: `provider_base_urls.openai` / `provider_base_urls.anthropic` reach the native providers and win over the env vars, matching every other provider. Config-plane entries must be https or `http://localhost` (a plaintext remote override of key-carrying native traffic is refused), and a present-but-empty entry fails loudly instead of silently masking a set env var.
 
 ### Voyage AI
 
@@ -105,11 +105,11 @@ For GCP service-account / Vertex AI auth (production deployments), see the v0.32
 
 ### OpenRouter
 
-Single OpenAI-compatible API for fan-out to OpenAI, Anthropic, Google, DeepSeek, Meta Llama, Qwen, and dozens of other hosted providers. One key, many models. Set `OPENROUTER_API_KEY` or `openrouter_api_key` in `~/.gbrain/config.json`, then use `openrouter:<provider>/<model>` (e.g. `openrouter:openai/gpt-5.2`, `openrouter:anthropic/claude-sonnet-4.6`).
+Single OpenAI-compatible API for fan-out to OpenAI, Anthropic, Google, DeepSeek, Meta Llama, Qwen, and dozens of other hosted providers. One key, many models. Set `OPENROUTER_API_KEY` or `openrouter_api_key` in `~/.gbrain/config.json`, then use `openrouter:<provider>/<model>` (e.g. `openrouter:openai/gpt-5.6-terra`, `openrouter:anthropic/claude-sonnet-4.6`).
 
 **Embedding**: `openai/text-embedding-3-small` (1536d default, Matryoshka shrink to 512/768/1024). OR's embedding catalog also includes `text-embedding-3-large`, `google/gemini-embedding-2-preview`, `qwen/qwen3-embedding-8b`, `bge-m3` — opt in via `--embedding-model openrouter:<id>`. Pricing matches the upstream provider (OR adds a small markup).
 
-**Chat**: every chat model OR proxies works through `/v1/chat/completions`. The recipe lists 8 curated entry points (GPT-5.2 family, Claude 4.5/4.6/4.7, Gemini 3 Flash Preview, DeepSeek); any other OR catalog ID also works. Tool-calling envelope is supported by the OR endpoint, but per-model capability varies — check https://openrouter.ai/models before counting on tools for a specific slug.
+**Chat**: every chat model OR proxies works through `/v1/chat/completions`. The recipe lists 7 curated entry points (GPT-5.6 Terra, GPT-5.5, Claude 4.5/4.6/4.7, Gemini 3 Flash Preview, DeepSeek); any other OR catalog ID also works. Tool-calling envelope is supported by the OR endpoint, but per-model capability varies — check https://openrouter.ai/models before counting on tools for a specific slug.
 
 **Optional env**:
 - `OPENROUTER_BASE_URL` — point at a self-hosted OR-compatible proxy.
@@ -145,7 +145,7 @@ Set `ZHIPUAI_API_KEY`. Models: `embedding-3` (current; Matryoshka 256-2048 dims)
 
 No env required — Ollama runs unauthenticated locally. Optional `OLLAMA_BASE_URL` (default `http://localhost:11434/v1`) and `OLLAMA_API_KEY` (for auth-enabled deployments).
 
-Recipe ships with `nomic-embed-text` (768d, recommended), `mxbai-embed-large` (1024d), `all-minilm` (384d), plus the larger modern embedders `qwen3-embed-8b` (4096d) and `snowflake-arctic-embed-l-v2` (1024d). `gbrain providers test --model ollama:nomic-embed-text` smoke-tests the local install.
+Recipe ships with `nomic-embed-text` (768d, recommended), `mxbai-embed-large` (1024d), `all-minilm` (384d), plus the larger modern embedders `qwen3-embedding:8b` (4096d) and `snowflake-arctic-embed2` (1024d) — use these pullable Ollama library tags, and always pass them provider-qualified (`ollama:qwen3-embedding:8b`) since the tag itself contains a colon. `gbrain providers test --model ollama:nomic-embed-text` smoke-tests the local install.
 
 The recipe default is `nomic-embed-text`'s 768 dims. If you run one of the larger models, declare its native dimension with `--embedding-dimensions <N>` at init — gbrain trusts the value you declare for local recipes instead of rejecting a non-768 width.
 

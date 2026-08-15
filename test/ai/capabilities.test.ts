@@ -11,17 +11,17 @@ describe('getProviderCapabilities (v0.38 Slice 1 — D6/D7 recipe-driven capabil
   });
 
   it('returns capabilities for OpenAI (no prompt caching field set as true)', () => {
-    const caps = getProviderCapabilities('openai:gpt-5.2');
+    const caps = getProviderCapabilities('openai:gpt-5.6-terra');
     expect(caps.supportsToolCalling).toBe(true);
     expect(caps.supportsPromptCaching).toBe(false); // OpenAI implicit caching doesn't get marked
-    expect(caps.maxContext).toBe(200000);
+    expect(caps.maxContext).toBe(1000000); // GPT-5.6 advertises 1.05M; recipe pins 1.0M as a conservative floor
   });
 
   it('returns capabilities for Google Gemini', () => {
-    const caps = getProviderCapabilities('google:gemini-1.5-pro');
+    const caps = getProviderCapabilities('google:gemini-3.6-flash');
     expect(caps.supportsToolCalling).toBe(true);
     expect(caps.supportsPromptCaching).toBe(false);
-    expect(caps.maxContext).toBe(1000000); // Gemini 1.5 Pro
+    expect(caps.maxContext).toBe(1000000); // Gemini 3.x Flash family
   });
 
   it('marks OpenRouter OpenAI/Anthropic routes as cache-capable (per-model predicate)', () => {

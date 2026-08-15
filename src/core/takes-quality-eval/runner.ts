@@ -41,9 +41,9 @@ import { DEFAULT_CYCLES_NONTTY } from '../eval/cycle-default.ts';
  * the OpenAI recipe's chat list) sat here dead until #3510.
  */
 export const DEFAULT_MODEL_PANEL = [
-  'openai:gpt-5.2',
+  'openai:gpt-5.6-terra',
   'anthropic:claude-opus-4-7',
-  'google:gemini-2.0-flash',
+  'google:gemini-3.6-flash',
 ] as const;
 
 export interface RunOpts {
