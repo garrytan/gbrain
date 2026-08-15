@@ -551,7 +551,13 @@ export async function queryAgentClientSpend(engine: BrainEngine): Promise<AgentC
         SELECT SUM(spend_cents)::text
           FROM mcp_spend_log
          WHERE client_id = c.client_id
-           AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC')
+           -- Double AT TIME ZONE: the inner one yields NAIVE UTC-midnight;
+           -- the outer one converts it back to a timestamptz INSTANT. Without
+           -- it, the naive value is reinterpreted in the SESSION timezone, so
+           -- any non-UTC session (host-tz PGLite, a tz-configured Postgres
+           -- role) shifts the day boundary by the offset and today's spend
+           -- underreports every evening.
+           AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
       ), '0') AS spent_cents_today,
       COALESCE((
         SELECT SUM(estimated_cents)::text

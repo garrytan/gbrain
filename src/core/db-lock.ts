@@ -26,8 +26,43 @@ import type { BrainEngine } from './engine.ts';
 
 export interface DbLockHandle {
   id: string;
+  /**
+   * Per-acquisition fencing identity (W0 fix-wave, D5.10): the row's
+   * acquired_at rendered as epoch-seconds text (GUC-independent — timestamptz::text
+   * would vary with per-session TimeZone/DateStyle across pools), captured at
+   * acquire time. refresh()
+   * and release() require an exact match, so a PID-reuse impostor (or this
+   * handle after a steal) can never refresh or delete a successor's row.
+   * `(id, holder_pid)` alone is NOT identity — PIDs recycle.
+   */
+  acquiredAt: string;
   release: () => Promise<void>;
-  refresh: () => Promise<void>;
+  /**
+   * Bump ttl_expires_at + last_refreshed_at. Returns true when this handle
+   * still owns the row (exactly one row matched the fenced predicate);
+   * false means the lock was stolen or released — the caller must stop
+   * relying on mutual exclusion. Transient DB errors still THROW (they are
+   * not evidence of a steal; the TTL is the backstop).
+   *
+   * `opts.signal` cancels the in-flight UPDATE when the caller's heartbeat
+   * timeout gives up on it (issue #6 — an abandoned refresh otherwise holds
+   * a checked-out pool slot for its full server-side duration). PGLite
+   * ignores the signal (single embedded connection, no pool to starve).
+   */
+  refresh: (opts?: { signal?: AbortSignal }) => Promise<boolean>;
+}
+
+/**
+ * W0 fix-wave: thrown (or used as an AbortSignal reason) when a fenced
+ * refresh discovers the lock row no longer belongs to this acquisition.
+ */
+export class LockStolenError extends Error {
+  readonly lockId: string;
+  constructor(lockId: string) {
+    super(`lock '${lockId}' was stolen or released out from under this holder (fenced refresh matched 0 rows)`);
+    this.name = 'LockStolenError';
+    this.lockId = lockId;
+  }
 }
 
 /** Default TTL: 30 minutes, same as cycle lock. */
@@ -205,7 +240,7 @@ export async function tryAcquireDbLock(
     // `gbrain sync --break-lock --max-age <s>` uses last_refreshed_at (not
     // acquired_at) to identify wedged-but-alive holders without stealing
     // healthy long-running holders that are actively refreshing.
-    const rows: Array<{ id: string }> = await sql`
+    const rows: Array<{ id: string; fence: string }> = await sql`
       INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at)
       VALUES (${lockId}, ${pid}, ${host}, NOW(), NOW() + ${ttl}::interval, NOW())
       ON CONFLICT (id) DO UPDATE
@@ -217,35 +252,48 @@ export async function tryAcquireDbLock(
         WHERE gbrain_cycle_locks.ttl_expires_at < NOW()
           AND (gbrain_cycle_locks.last_refreshed_at IS NULL
                OR gbrain_cycle_locks.last_refreshed_at < NOW() - ${stealGraceSeconds} * INTERVAL '1 second')
-      RETURNING id
+      RETURNING id, extract(epoch from acquired_at)::text AS fence
     `;
     if (rows.length === 0) return null;
+    // Fencing identity (D5.10): acquired_at is written fresh on INSERT and on
+    // every steal, so it uniquely names THIS acquisition. Rendered as
+    // extract(epoch ...)::text — GUC-INDEPENDENT (ship-review catch, 3
+    // specialists): plain timestamptz::text varies with per-session
+    // TimeZone/DateStyle, and the fence is captured on the acquire pool but
+    // compared on the direct pool; a GUC divergence would turn every fenced
+    // refresh into a false steal. Epoch text is stable across sessions and
+    // keeps microsecond precision.
+    const fence = rows[0].fence;
     const deregister = registerCleanup(`db-lock:${lockId}`, async () => {
       await sql`
         DELETE FROM gbrain_cycle_locks
-        WHERE id = ${lockId} AND holder_pid = ${pid}
+        WHERE id = ${lockId} AND holder_pid = ${pid} AND extract(epoch from acquired_at)::text = ${fence}
       `;
     });
     return {
       id: lockId,
-      refresh: async () => {
+      acquiredAt: fence,
+      refresh: async (refreshOpts?: { signal?: AbortSignal }) => {
         // v0.41.13.0: bump BOTH ttl_expires_at AND last_refreshed_at.
         // v0.42.x (#1794): route through the DIRECT session pool, not the
         // transaction pool, so a Supavisor pooler exhaustion (EMAXCONNSESSION)
         // can't kill the heartbeat and let the live lock get stolen.
-        await engine.executeRawDirect(
+        const updated = await engine.executeRawDirect<{ id: string }>(
           `UPDATE gbrain_cycle_locks
               SET ttl_expires_at = NOW() + ($1)::interval,
                   last_refreshed_at = NOW()
-            WHERE id = $2 AND holder_pid = $3`,
-          [ttl, lockId, pid],
+            WHERE id = $2 AND holder_pid = $3 AND extract(epoch from acquired_at)::text = $4
+            RETURNING id`,
+          [ttl, lockId, pid, fence],
+          refreshOpts,
         );
+        return updated.length > 0;
       },
       release: async () => {
         deregister();
         await sql`
           DELETE FROM gbrain_cycle_locks
-          WHERE id = ${lockId} AND holder_pid = ${pid}
+          WHERE id = ${lockId} AND holder_pid = ${pid} AND extract(epoch from acquired_at)::text = ${fence}
         `;
       },
     };
@@ -266,32 +314,37 @@ export async function tryAcquireDbLock(
          WHERE gbrain_cycle_locks.ttl_expires_at < NOW()
            AND (gbrain_cycle_locks.last_refreshed_at IS NULL
                 OR gbrain_cycle_locks.last_refreshed_at < NOW() - $5 * INTERVAL '1 second')
-       RETURNING id`,
+       RETURNING id, extract(epoch from acquired_at)::text AS fence`,
       [lockId, pid, host, ttl, stealGraceSeconds],
     );
     if (rows.length === 0) return null;
+    // Fencing identity (D5.10) — see the postgres branch for rationale.
+    const fence = String((rows[0] as { fence: string }).fence);
     const deregister = registerCleanup(`db-lock:${lockId}`, async () => {
       await db.query(
-        `DELETE FROM gbrain_cycle_locks WHERE id = $1 AND holder_pid = $2`,
-        [lockId, pid],
+        `DELETE FROM gbrain_cycle_locks WHERE id = $1 AND holder_pid = $2 AND extract(epoch from acquired_at)::text = $3`,
+        [lockId, pid, fence],
       );
     });
     return {
       id: lockId,
+      acquiredAt: fence,
       refresh: async () => {
-        await db.query(
+        const res = await db.query(
           `UPDATE gbrain_cycle_locks
               SET ttl_expires_at = NOW() + $1::interval,
                   last_refreshed_at = NOW()
-            WHERE id = $2 AND holder_pid = $3`,
-          [ttl, lockId, pid],
+            WHERE id = $2 AND holder_pid = $3 AND extract(epoch from acquired_at)::text = $4
+            RETURNING id`,
+          [ttl, lockId, pid, fence],
         );
+        return res.rows.length > 0;
       },
       release: async () => {
         deregister();
         await db.query(
-          `DELETE FROM gbrain_cycle_locks WHERE id = $1 AND holder_pid = $2`,
-          [lockId, pid],
+          `DELETE FROM gbrain_cycle_locks WHERE id = $1 AND holder_pid = $2 AND extract(epoch from acquired_at)::text = $3`,
+          [lockId, pid, fence],
         );
       },
     };
@@ -835,8 +888,13 @@ export async function withRefreshingLock<T>(
   if (!handle) throw new LockUnavailableError(lockId);
 
   let healthOk = true;
+  // Re-entrancy guard: with a 15s minimum cadence and a 30s default timeout,
+  // two ticks can overlap on a slow pool — one refresh in flight at a time.
+  let refreshTickInFlight = false;
 
   const interval = setInterval(() => {
+    if (refreshTickInFlight) return;
+    refreshTickInFlight = true;
     void (async () => {
       try {
         // v0.42.x (#1794, V1): the refresh IS the heartbeat. handle.refresh()
@@ -849,15 +907,43 @@ export async function withRefreshingLock<T>(
         // health, and we do NOT clearInterval on a transient failure: a blip
         // self-heals on the next tick; the TTL is the backstop if the pool stays
         // genuinely dead (at which point a steal is correct).
-        const timeout = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('refresh_timeout')), heartbeatTimeoutMs)
-        );
-        await Promise.race([handle.refresh(), timeout]);
+        // issue #6: abort the per-tick signal when the timeout wins so the
+        // losing UPDATE is cancelled (slot released), not orphaned on the
+        // direct pool for its full server-side duration.
+        const tickAbort = new AbortController();
+        let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+        const timeout = new Promise<never>((_, reject) => {
+          timeoutTimer = setTimeout(() => {
+            tickAbort.abort();
+            reject(new Error('refresh_timeout'));
+          }, heartbeatTimeoutMs);
+        });
+        let stillOwned: boolean;
+        try {
+          stillOwned = await Promise.race([handle.refresh({ signal: tickAbort.signal }), timeout]);
+        } finally {
+          if (timeoutTimer != null) clearTimeout(timeoutTimer);
+        }
+        if (stillOwned === false) {
+          // W0 (D5.10): the fenced refresh matched 0 rows — the lock was
+          // stolen or force-cleared. Further refreshes are pointless (and a
+          // fenced refresh can never re-take the successor's row). Stop the
+          // heartbeat and shout; the work itself keeps running (this wrapper
+          // has no cancellation seam — W7 threads one through its consumers),
+          // but mutual exclusion is GONE and the degraded-heartbeat exit
+          // message names it.
+          clearInterval(interval);
+          healthOk = false;
+          process.stderr.write(`[lock-refresh] ${lockId}: ${new LockStolenError(lockId).message} — heartbeat stopped, mutual exclusion lost\n`);
+          return;
+        }
         healthOk = true;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         process.stderr.write(`[lock-refresh] ${lockId}: ${msg}; will retry next tick\n`);
         healthOk = false;
+      } finally {
+        refreshTickInFlight = false;
       }
     })();
   }, refreshIntervalMs);

@@ -36,4 +36,18 @@ describe('buildWorkerArgs', () => {
     expect(buildWorkerArgs({ concurrency: 1, queue: 'q', maxRssMb: 0 }))
       .not.toContain('--nice');
   });
+
+  // issue #5 — conditional pass-through: inline/omitted keeps existing
+  // deployments' argv byte-identical (the pinned arrays above never change).
+  test('appends --job-isolation process when set', () => {
+    expect(buildWorkerArgs({ concurrency: 2, queue: 'default', maxRssMb: 0, jobIsolation: 'process' }))
+      .toEqual(['jobs', 'work', '--concurrency', '2', '--queue', 'default', '--job-isolation', 'process']);
+  });
+
+  test('omits --job-isolation when inline or undefined', () => {
+    expect(buildWorkerArgs({ concurrency: 1, queue: 'q', maxRssMb: 0, jobIsolation: 'inline' }))
+      .not.toContain('--job-isolation');
+    expect(buildWorkerArgs({ concurrency: 1, queue: 'q', maxRssMb: 0 }))
+      .not.toContain('--job-isolation');
+  });
 });

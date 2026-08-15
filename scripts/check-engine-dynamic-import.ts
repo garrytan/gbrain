@@ -49,7 +49,16 @@ for (const file of files) {
   }
 
   function visit(node: ts.Node): void {
-    if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+    // W0 ship-review catch: match BOTH lazy-loading forms. The guard
+    // previously matched only `import(...)` call expressions, so a
+    // `require(...)` on an engine-live path passed silently and its
+    // engine-dynamic-import-ok marker was decorative.
+    const isDynamicImport = ts.isCallExpression(node)
+      && node.expression.kind === ts.SyntaxKind.ImportKeyword;
+    const isRequireCall = ts.isCallExpression(node)
+      && ts.isIdentifier(node.expression)
+      && node.expression.text === 'require';
+    if (isDynamicImport || isRequireCall) {
       const { line } = sourceFile.getLineAndCharacterOfPosition(node.expression.getStart(sourceFile));
       const sourceLine = lines[line] ?? '';
       if (!markerLines.has(line)) {

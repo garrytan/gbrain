@@ -13,6 +13,7 @@ import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import * as db from '../../src/core/db.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { parseMarkdown } from '../../src/core/markdown.ts';
+import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 
 // Load .env.testing if present
 const envPath = resolve(import.meta.dir, '../../.env.testing');
@@ -67,38 +68,11 @@ export function hasDatabase(): boolean {
 }
 
 /**
- * Production guard: setupDB() TRUNCATEs every data table on whatever
- * DATABASE_URL points at, and run-e2e.sh deliberately preserves an exported
- * DATABASE_URL — so a developer with a production URL in their environment
- * would wipe their real brain by running the suite. Refuse unless the
- * database name identifies itself as a test database ("test" as a word
- * segment, e.g. gbrain_test — the CI/.env.testing.example convention), or
- * the operator explicitly opts the exact name in via GBRAIN_E2E_ALLOW_DB.
- *
- * Exported for unit testing; pure — no connection is made.
+ * Production guard, moved to test/helpers/db-guard.ts so test files outside
+ * test/e2e/ can import it without loading this module. Re-exported here for
+ * existing call sites (setupDB below, test/e2e/db-guard.test.ts).
  */
-export function assertSafeE2eDatabaseUrl(
-  url: string,
-  env: Record<string, string | undefined> = process.env,
-): void {
-  let dbName: string;
-  try {
-    dbName = decodeURIComponent(new URL(url).pathname.replace(/^\//, ''));
-  } catch {
-    throw new Error(`E2E guard: DATABASE_URL is not a parseable URL; refusing to run destructive setup.`);
-  }
-  if (!dbName) {
-    throw new Error(`E2E guard: DATABASE_URL has no database name; refusing to run destructive setup.`);
-  }
-  if (/(^|[_-])test([_-]|$)/i.test(dbName)) return;
-  if (env.GBRAIN_E2E_ALLOW_DB && env.GBRAIN_E2E_ALLOW_DB === dbName) return;
-  throw new Error(
-    `E2E guard: database "${dbName}" does not look like a test database ` +
-    `(expected "test" as a name segment, e.g. gbrain_test). setupDB() would ` +
-    `TRUNCATE every data table in it. If this is intentional, set ` +
-    `GBRAIN_E2E_ALLOW_DB=${dbName} to opt in explicitly.`,
-  );
-}
+export { assertSafeE2eDatabaseUrl };
 
 /**
  * Connect to DB, run schema init, truncate all tables.

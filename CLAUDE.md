@@ -70,7 +70,11 @@ Per-file detail is in `docs/architecture/KEY_FILES.md`.
 - **Engine-live paths avoid runtime dynamic `import()` for helper dependencies.** In
   `src/core/pglite-engine.ts`, `src/core/postgres-engine.ts`, and
   `src/core/migrate.ts`, dependencies previously reached through runtime dynamic
-  imports use static top-level imports. The only current dynamic-`import()` exceptions
+  imports use static top-level imports. Besides the snapshot loader's lazy
+  `require()` cluster in `pglite-engine.ts:tryLoadSnapshot` (fs/crypto/
+  migrate/pglite-schema + one gateway shape lookup — lazy so production
+  builds without the test-fixture path don't eager-load; the guard now
+  matches `require()` calls too), the only dynamic-`import()` exceptions
   are the four `ai/gateway.ts` lookups in both engines'
   `initSchema()` and `_upsertChunksOnce()` methods; each remains lazy inside a
   local `try/catch` because the gateway has a large provider/config closure and,

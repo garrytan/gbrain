@@ -44,7 +44,31 @@
 
 set -uo pipefail
 
+# #3485: unit tests need no database — strip ambient DB URLs at this wrapper
+# boundary so the bunfig preload guard passes and nothing can reach a real
+# brain. The e2e wrapper (run-e2e.sh) is the only lane that keeps them.
+unset DATABASE_URL GBRAIN_DATABASE_URL
+
 cd "$(dirname "$0")/.."
+
+# ──────────────────────────────────────────────────────────────────────────
+# W0 fix-wave (Tier-1 #16): PGLite schema snapshot, DEFAULT-ON for the plain
+# `bun run test` loop. 500+ test files each cold-boot PGLite + replay 126
+# migrations without it; the fixture was previously enabled ONLY inside
+# scripts/ci-local.sh, so the everyday loop paid the full cost. The build
+# script is idempotent (hash short-circuit) and concurrency-safe (mkdir
+# lock, D5.8), and its hash folds handler-migration source (D5.13), so an
+# unconditional call here is cheap and always current. Runs BEFORE the shard
+# fan-out — shards inherit a finished fixture. Opt out: GBRAIN_NO_SNAPSHOT=1
+# (the migration-replay canary tests clear the env themselves regardless).
+# ──────────────────────────────────────────────────────────────────────────
+if [ "${GBRAIN_NO_SNAPSHOT:-0}" != "1" ]; then
+  if bun run build:pglite-snapshot >/dev/null 2>&1; then
+    export GBRAIN_PGLITE_SNAPSHOT=test/fixtures/pglite-snapshot.tar
+  else
+    echo "[run-unit-parallel] snapshot build failed (non-fatal) — tests run with cold init" >&2
+  fi
+fi
 
 # ──────────────────────────────────────────────────────────────────────────
 # CPU detection: Apple Silicon perf cores → Mac total physical → nproc → 4.

@@ -68,10 +68,19 @@ CHECKS=(
   "check:no-double-retry"
   "check:batch-audit-site"
   "check:engine-dynamic-import"
+  "check:grok-pin"
   "check:worker-lock-renewal-shape"
   "check:bootstrap-tag"
   "check:bootstrap-templates"
   "check:skill-refs"
+  # W0 fix-wave (Tier-1 #11): guard self-tests — every scanner guard proves it
+  # can fail (bad fixture → exit 1) before it counts as coverage. Registry:
+  # scripts/guards-manifest.tsv (package.json's stale `check:all` copy deleted).
+  "check:guard-self-test"
+  # Previously reachable ONLY from the deleted check:all (i.e. never run):
+  "check:newlines"
+  "check:exports-count"
+  "check:no-legacy-getconnection"
   "typecheck"
 )
 

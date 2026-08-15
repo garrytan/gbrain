@@ -671,6 +671,205 @@ export async function hermesOneShotTurn(opts: HermesTurnOpts): Promise<HermesTur
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// 5a-grok. Grok Build (xAI) — all shapes observed against v1.0.4
+//          (docs/mcp/GROK-CLI-PIN.md). grok ≠ groq ≠ ngrok.
+// ────────────────────────────────────────────────────────────────────────────
+
+/** Locate the real `grok` binary (xAI Grok Build). $GROK_BIN (absolute,
+ *  executable — same override the claw-test runner honors) first, then
+ *  Bun.which, then the npm-global and installer landing spots. Collision
+ *  note: the community superagent-ai grok-cli ships a colliding `grok`
+ *  binary — the door's version-shape pin (T1) is the discriminator. */
+export function resolveGrokBinary(): string | null {
+  // FAIL-CLOSED on a set-but-invalid GROK_BIN (matching the runner's
+  // detectBinary posture): silently falling through to `which grok` could
+  // bind the colliding community grok-cli binary DESPITE the operator's
+  // explicit pin — the exact mis-bind the pin exists to prevent.
+  const fromEnv = process.env.GROK_BIN?.trim();
+  if (fromEnv) {
+    if (!fromEnv.startsWith('/') || fromEnv.split('/').includes('..')) return null;
+    return firstExecutable([fromEnv]);
+  }
+  const which = whichBin('grok');
+  if (which) return which;
+  const home = process.env.HOME ?? os.homedir();
+  const candidates = [
+    '/opt/homebrew/bin/grok',
+    '/usr/local/bin/grok',
+    `${home}/.local/bin/grok`,
+    `${home}/.npm-global/bin/grok`,
+    `${home}/.bun/bin/grok`,
+  ];
+  for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
+    if (dir) candidates.push(path.join(dir, 'grok'));
+  }
+  return firstExecutable(candidates);
+}
+
+/**
+ * Grok is usable BY THE PAID TIER if a NON-EMPTY XAI_API_KEY is exported.
+ * Env-only on purpose: the keyless one-shot exits 1 with "Not signed in …
+ * set the XAI_API_KEY environment variable" (observed v1.0.4), and no
+ * credential file was observed keyless — if the authed observation finds one
+ * under ~/.grok, add it here as a second probe (GROK-CLI-PIN.md marks that
+ * item pending auth). Blank CI secret ⇒ skip, never a paid failing test.
+ */
+export function hasGrokAuth(): boolean {
+  return Boolean(process.env.XAI_API_KEY?.trim());
+}
+
+/**
+ * Hermetic env for spawning grok itself: standard scrub + HOME/GROK_HOME
+ * overrides; XAI_API_KEY re-admitted EXPLICITLY (it is deliberately not in
+ * ALLOW_EXACT — default-deny stays intact for every other child). Deletes:
+ *  - other providers' keys (defensive; grok is single-provider, but scrubbing
+ *    is free and keeps the door single-auth-source like the hermes lane), and
+ *  - GITHUB_ENV/GITHUB_PATH/GITHUB_OUTPUT/GITHUB_STATE — the GITHUB_ prefix
+ *    rule would forward these CI step-metadata files to an UNTRUSTED agent
+ *    child, which could append to them and poison later workflow steps.
+ */
+export function grokChildEnv(home: string, opts?: { binDir?: string }): NodeJS.ProcessEnv {
+  const env = hermeticChildEnv({
+    HOME: home,
+    GROK_HOME: path.join(home, '.grok'),
+    XAI_API_KEY: process.env.XAI_API_KEY?.trim() || undefined,
+  });
+  for (const k of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'OPENAI_API_KEY']) delete env[k];
+  // Writable step-metadata files the GITHUB_ prefix rule would otherwise
+  // forward: appending to any of them poisons later workflow steps (ENV/
+  // PATH/OUTPUT/STATE) or the run summary UI (STEP_SUMMARY).
+  for (const k of ['GITHUB_ENV', 'GITHUB_PATH', 'GITHUB_OUTPUT', 'GITHUB_STATE', 'GITHUB_STEP_SUMMARY', 'GITHUB_ACTION_PATH']) delete env[k];
+  // PATH-prepend the staged gbrain bin dir when given — the MCP registration
+  // uses the DOCUMENTED bare `gbrain` command, so EVERY grok spawn that may
+  // start the server (doctor probes AND the paid turn) must resolve it.
+  if (opts?.binDir) env.PATH = `${opts.binDir}:${env.PATH ?? ''}`;
+  return env;
+}
+
+/**
+ * Seed a hermetic <home>/.grok/config.toml BEFORE any grok spawn:
+ *  - `[cli] auto_update = false` — auto-update is config-only and defaults ON
+ *    (observed); without this seed a door run can self-update mid-suite and
+ *    break the version pin.
+ *  - `[models] default = <model>` when given — `grok mcp add` PRESERVES
+ *    pre-existing sections (observed), so the seed survives registration.
+ * No credentials are written: auth travels via XAI_API_KEY env only.
+ */
+export function seedGrokConfig(home: string, opts?: { defaultModel?: string }): string {
+  const grokHome = path.join(home, '.grok');
+  fs.mkdirSync(grokHome, { recursive: true });
+  const model = opts?.defaultModel;
+  const doc = `[cli]\nauto_update = false\n${model ? `\n[models]\ndefault = "${model}"\n` : ''}`;
+  fs.writeFileSync(path.join(grokHome, 'config.toml'), doc, 'utf-8');
+  return grokHome;
+}
+
+/**
+ * Stage a `gbrain` binary into a fresh bin dir so the DOCUMENTED registration
+ * shape (`grok mcp add gbrain -- gbrain serve --surface verbs`, bare command
+ * resolved via PATH — observed working v1.0.4) is what the door exercises.
+ * Compiled binary copy when available; otherwise an executable sh wrapper
+ * exec'ing `bun run src/cli.ts` so the fallback lane survives staging.
+ */
+export function stageGbrainBinDir(repoRoot: string, dir: string): { kind: 'compiled' | 'bun-run' } {
+  fs.mkdirSync(dir, { recursive: true });
+  const target = path.join(dir, 'gbrain');
+  const { binPath } = ensureCompiledGbrain(repoRoot);
+  if (binPath) {
+    fs.copyFileSync(binPath, target);
+    fs.chmodSync(target, 0o755);
+    return { kind: 'compiled' };
+  }
+  const cli = path.join(repoRoot, 'src', 'cli.ts');
+  // The path is interpolated single-quoted into an sh shim — reject the same
+  // metachar set validateBinPathEnv guards, rather than trying to escape.
+  if (/['"`$\\\n\r]/.test(cli)) {
+    throw new Error(`stageGbrainBinDir: repo path contains shell-active characters unsafe for the shim: ${cli}`);
+  }
+  fs.writeFileSync(target, `#!/bin/sh\nexec bun run '${cli}' "$@"\n`, { mode: 0o755 });
+  return { kind: 'bun-run' };
+}
+
+export interface GrokTurnOpts {
+  prompt: string;
+  cwd: string;
+  home: string;
+  timeoutMs?: number;
+  /** Per-call model pin (authoritative — immune to config rewrites). */
+  model?: string;
+  /** Disable grok's built-in web search + fetch tools (observed flag). */
+  disableWebSearch?: boolean;
+  /** Staged gbrain bin dir — PATH-prepended so the bare-`gbrain` MCP
+   *  registration resolves when grok spawns the server DURING the turn
+   *  (without this the doctor preflight passes but the paid turn cannot
+   *  start the server on a clean runner). */
+  binDir?: string;
+}
+
+export interface GrokTurnResult {
+  /** plain output format: stdout is the final response text. */
+  finalText: string;
+  exitCode: number | null;
+  timedOut: boolean;
+  stderrText: string;
+}
+
+/**
+ * Drive one `grok -p` turn against a hermetic HOME + GROK_HOME. Plain output
+ * format (final text on stdout — observed). The permission posture is
+ * deliberately unset pending the authed observation (GROK-CLI-PIN.md); the
+ * JSON event-stream shapes are also unobserved, so there is no parseGrokJson
+ * yet — the door's tool-call assertion stays gated on that observation.
+ */
+export async function grokOneShotTurn(opts: GrokTurnOpts): Promise<GrokTurnResult> {
+  const bin = resolveGrokBinary();
+  if (!bin) throw new Error('grokOneShotTurn: grok binary not found');
+  const timeoutMs = opts.timeoutMs ?? 240_000;
+
+  const argv = [
+    bin, '-p', opts.prompt, '--output-format', 'plain',
+    ...(opts.model ? ['-m', opts.model] : []),
+    ...(opts.disableWebSearch ? ['--disable-web-search'] : []),
+  ];
+  const proc = Bun.spawn(argv, {
+    cwd: opts.cwd,
+    env: grokChildEnv(opts.home, { binDir: opts.binDir }),
+    stdout: 'pipe',
+    stderr: 'pipe',
+    stdin: 'ignore',
+  });
+
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    try { proc.kill(); } catch { /* already dead */ }
+    // grok may leave its leader daemon / MCP server child holding the pipes
+    // open past the parent's death — escalate so the stream drain below
+    // cannot hang the retry loop indefinitely.
+    setTimeout(() => { try { proc.kill(9); } catch { /* already dead */ } }, 5_000);
+  }, timeoutMs);
+
+  // Bounded drain: even a SIGKILLed parent can leave a grandchild holding
+  // the pipe fds; cap the post-timeout wait instead of awaiting EOF forever.
+  const drainCap = timeoutMs + 30_000;
+  const bounded = <T>(p: Promise<T>, fallback: T): Promise<T> =>
+    Promise.race([p, new Promise<T>((r) => setTimeout(() => r(fallback), drainCap))]);
+  const [stdout, stderrText] = await Promise.all([
+    bounded(new Response(proc.stdout).text(), ''),
+    bounded(new Response(proc.stderr).text().catch(() => ''), ''),
+  ]);
+  const exitCode = await bounded(proc.exited, 124);
+  clearTimeout(timer);
+
+  return {
+    finalText: stdout.trim(),
+    exitCode: timedOut ? 124 : exitCode,
+    timedOut,
+    stderrText,
+  };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // 5b. Fast gbrain MCP server command (compiled binary, cached; bun-run fallback)
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -754,6 +953,16 @@ function probeCompiledPglite(binPath: string): { ok: boolean; reason: string } {
  * bun-run fallback instead of hard-failing the door suite.
  */
 export function ensureCompiledGbrain(repoRoot: string): { binPath: string | null; reason: string } {
+  // CI short-circuit: a workflow can compile ONCE in a dedicated step and
+  // export GBRAIN_COMPILED_BIN — the module-global cache below is per-process,
+  // so two `bun test` invocations in one job would otherwise compile twice.
+  const prebuilt = process.env.GBRAIN_COMPILED_BIN?.trim();
+  if (prebuilt && prebuilt.startsWith('/')) {
+    try {
+      fs.accessSync(prebuilt, fs.constants.X_OK);
+      return { binPath: prebuilt, reason: '' };
+    } catch { /* fall through to the normal compile path */ }
+  }
   if (_compileTried) return { binPath: _compiledBin, reason: _compileReason };
   _compileTried = true;
   try {
@@ -882,12 +1091,20 @@ export interface SeededBrain {
  * restores it — the door test sets GBRAIN_HOME on the spawned child via the
  * MCP config's env block, not on this process.
  */
-export async function seedBrainForAgent(home: string, sourceId: string): Promise<SeededBrain> {
+export async function seedBrainForAgent(
+  home: string,
+  sourceId: string,
+  opts?: { entity?: string; fact?: string; query?: string; slug?: string },
+): Promise<SeededBrain> {
   if (!put_page) throw new Error('seedBrainForAgent: put_page op not registered');
 
-  const entity = 'Summit Robotics';
-  const fact = 'Summit Robotics runs the Rivermouth fulfillment center.';
-  const query = 'Where does Summit Robotics run its fulfillment center?';
+  // Defaults are the committed synthetic fact (hermes/claude doors). Callers
+  // whose agent has filesystem/shell tools in reach pass a PER-RUN nonce fact
+  // instead — the committed string is greppable in the checkout, so recall of
+  // it proves nothing against an agent that can read the repo (grok door).
+  const entity = opts?.entity ?? 'Summit Robotics';
+  const fact = opts?.fact ?? 'Summit Robotics runs the Rivermouth fulfillment center.';
+  const query = opts?.query ?? 'Where does Summit Robotics run its fulfillment center?';
 
   const savedHome = process.env.GBRAIN_HOME;
   process.env.GBRAIN_HOME = home;
@@ -918,8 +1135,8 @@ export async function seedBrainForAgent(home: string, sourceId: string): Promise
         sourceId,
       };
       await put_page.handler(ctx, {
-        slug: 'companies/summit-robotics',
-        content: `# Summit Robotics\n\n${fact}\n`,
+        slug: opts?.slug ?? 'companies/summit-robotics',
+        content: `# ${entity}\n\n${fact}\n`,
       });
     } finally {
       // Release the PGLite lock so the spawned `gbrain serve` can open the

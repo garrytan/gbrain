@@ -64,6 +64,27 @@ function defaultWorkers(): number {
   return Math.min(byPool, byCpu, byMem);
 }
 
+/**
+ * W0 fix-wave (Tier-1 #5): typed abort for runImport's preflight/argv
+ * failures. Pre-fix these five sites called process.exit(1) directly —
+ * correct for the CLI, but runImport is ALSO invoked in-process by the
+ * sync_brain MCP op (via performFullSync), the autopilot daemon, and the
+ * minion sync handler, so a first sync with unconfigured embedding
+ * credentials TERMINATED the MCP server / daemon / worker mid-call. The
+ * user-facing messages are printed BEFORE the throw (byte-identical CLI
+ * output); the CLI dispatch site maps this error back to exit(exitCode).
+ */
+export class ImportAbortError extends Error {
+  readonly exitCode: number;
+  /** True: the user-facing message was already printed at the throw site. */
+  readonly alreadyReported = true;
+  constructor(reason: string, exitCode = 1) {
+    super(`import aborted: ${reason}`);
+    this.name = 'ImportAbortError';
+    this.exitCode = exitCode;
+  }
+}
+
 /** Bug 9 — surface per-file failures so callers (performFullSync) can gate state advances. */
 export interface RunImportResult {
   imported: number;
@@ -129,7 +150,7 @@ export async function runImport(
     } catch (e) {
       console.error(`\n${e instanceof Error ? e.message : e}`);
       console.error('Tip: run `gbrain import <dir> --no-embed` to import without embedding now.');
-      process.exit(1);
+      throw new ImportAbortError('embedding disabled (deferred-setup sentinel)');
     }
 
     // v0.41.6.0 D1: preflight embedding credentials. Closes the bug class
@@ -147,7 +168,7 @@ export async function runImport(
           console.error(e.userMessage);
           console.error('');
         }
-        process.exit(1);
+        throw new ImportAbortError('embedding credentials missing');
       }
       throw e;
     }
@@ -221,7 +242,7 @@ export async function runImport(
     workerCount = parseWorkers(workersArg ?? undefined) ?? 1;
   } catch (e) {
     console.error(e instanceof Error ? e.message : String(e));
-    process.exit(1);
+    throw new ImportAbortError('invalid --workers value');
   }
   // Find dir: first non-flag arg that isn't a value for --workers
   const flagValues = new Set<number>();
@@ -231,7 +252,7 @@ export async function runImport(
 
   if (!dirArg) {
     console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--source-id <id>] [--include-gitignored] [--json]');
-    process.exit(1);
+    throw new ImportAbortError('no import directory given');
   }
   // #1728: capture the import target ONCE as an absolute real path. Every
   // downstream consumer of `dir` (collection, checkpoint load/save, resume
@@ -244,7 +265,7 @@ export async function runImport(
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`Import target is not readable: ${dirArg} (${msg})`);
-    process.exit(1);
+    throw new ImportAbortError(`import target not readable: ${dirArg}`);
   }
 
   // v0.31.2: collect under the right strategy. Pre-fix this called

@@ -8,15 +8,21 @@
  * inherit that short null-default and get wall-clock-killed mid-progress —
  * one half of #1737's thrash.
  *
- * Fix: known long handlers get a sane long default STAMPED ONTO THE JOB ROW
- * at submit time (see `MinionQueue.add`). Stamping at submit (not mutating at
- * claim) keeps the wall-clock behavior stable across worker restart — the
- * value lives in `minion_jobs.timeout_ms`, not in worker memory.
+ * Three layers apply the default (an explicit `opts.timeout_ms` always wins):
  *
- * Existing already-queued jobs are NOT backfilled: they keep whatever
- * `timeout_ms` they were inserted with (usually NULL → the old behavior).
- * Only NEW submissions pick up the default. An explicit `opts.timeout_ms`
- * always wins.
+ *   1. SUBMIT — `MinionQueue.add` stamps the default onto the row. The value
+ *      lives in `minion_jobs.timeout_ms`, not worker memory, so wall-clock
+ *      behavior is stable across worker restart.
+ *   2. CLAIM — `MinionQueue.claim` COALESCEs a NULL `timeout_ms` from this
+ *      map (and derives `timeout_at` from the coalesced value). This is the
+ *      durable invariant: it covers rows inserted before layer 1 existed and
+ *      any writer that bypasses add(). Persisted by the claim UPDATE, so the
+ *      restart-stability property holds here too.
+ *   3. ONE-SHOT — migration v128 backfilled `timeout_ms` for non-terminal
+ *      rows that predate both layers (they would otherwise never re-claim
+ *      or die at the short null-default first). v128's values are a
+ *      deliberate authoring-time SNAPSHOT of this map — do NOT sync v128
+ *      when editing the map below; layer 2 owns all future drift.
  *
  * The 30-min anchor matches the explicit value cycle/patterns.ts already
  * passes for subagent jobs, so this generalizes an existing convention

@@ -1350,7 +1350,9 @@ export async function runBootstrap(args: string[], opts: RunBootstrapOpts = {}):
   // interview) never falls through into the real operation, regardless of
   // what other flags/values precede it in `rest`. No install-log entry
   // either — this isn't a phase run.
-  if (SUBCOMMAND_HELP[sub] && hasHelpToken(rest, sub !== 'interview')) {
+  if (Object.hasOwn(SUBCOMMAND_HELP, sub) && hasHelpToken(rest, sub !== 'interview')) {
+    // Object.hasOwn: a plain-object lookup resolves inherited keys, so
+    // `bootstrap constructor --help` would print Object.prototype.constructor.
     console.log(SUBCOMMAND_HELP[sub]);
     return 0;
   }

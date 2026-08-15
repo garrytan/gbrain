@@ -13,10 +13,10 @@
  *  - `--no-embedding` D9 opt-in: init succeeds with sentinel; gbrain import refuses
  *  - D11 preflight: explicit bad --embedding-dimensions refuses BEFORE touching disk
  *
- * Picker interactive flow (multi-key TTY) needs the real-PTY harness from
- * test/helpers/cli-pty-runner.ts — that path is exercised by the unit tests
- * for `init-provider-picker.ts` (T4) plus the env-detection helpers (T5).
- * Adding PTY here is mostly orthogonal scope.
+ * Picker interactive flow (real TTY) is covered by the real-PTY serial test
+ * at test/init-picker-pty.serial.test.ts (keyless provider choice plus a
+ * non-default search mode, driven through a true pseudo-terminal). This file
+ * stays piped-stdin on purpose: it exercises the NON-TTY branches.
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';

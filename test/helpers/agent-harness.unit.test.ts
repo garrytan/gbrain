@@ -24,13 +24,17 @@ import {
   parseCodexJsonl,
   hermeticChildEnv,
   hermesChildEnv,
+  grokChildEnv,
   promotedEnv,
   resolveClaudeBinary,
   resolveCodexBinary,
   resolveHermesBinary,
+  resolveGrokBinary,
   hasHermesAuth,
+  hasGrokAuth,
   parseDotenvFile,
   seedHermesHome,
+  seedGrokConfig,
 } from './agent-harness.ts';
 import { withEnv } from './with-env.ts';
 
@@ -329,6 +333,136 @@ describe('seedHermesHome single-key copy (injectable source — never the operat
         OPENAI_API_KEY: undefined, GSTACK_OPENAI_API_KEY: undefined, OPENROUTER_API_KEY: undefined,
       }, () => seedHermesHome(home, { sourceEnvPath: join(dir, 'missing.env') }));
       expect(existsSync(join(home, '.hermes', '.env'))).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('hasGrokAuth truth table (env-only — pins the non-empty-value gate)', () => {
+  // Env-only on purpose: keyless grok exits 1 with "Not signed in … set the
+  // XAI_API_KEY environment variable" (observed v1.0.4); no credential file
+  // was observed keyless (GROK-CLI-PIN.md marks the authed inventory pending).
+  test('non-empty XAI_API_KEY → true', async () => {
+    await withEnv({ XAI_API_KEY: 'xai-sentinel' }, () => {
+      expect(hasGrokAuth()).toBe(true);
+    });
+  });
+
+  test('blank XAI_API_KEY (empty CI secret) → false, never a paid failure', async () => {
+    await withEnv({ XAI_API_KEY: '   ' }, () => {
+      expect(hasGrokAuth()).toBe(false);
+    });
+  });
+
+  test('unset XAI_API_KEY → false', async () => {
+    await withEnv({ XAI_API_KEY: undefined }, () => {
+      expect(hasGrokAuth()).toBe(false);
+    });
+  });
+});
+
+describe('grokChildEnv — explicit key re-admission + CI metadata scrub', () => {
+  test('XAI_API_KEY survives via explicit override; HOME/GROK_HOME point at the temp home', async () => {
+    await withEnv({ XAI_API_KEY: 'xai-child-sentinel' }, () => {
+      const env = grokChildEnv('/tmp/grok-child-test');
+      // Not in ALLOW_EXACT — only the explicit override carries it through.
+      expect(env.XAI_API_KEY).toBe('xai-child-sentinel');
+      expect(env.HOME).toBe('/tmp/grok-child-test');
+      expect(env.GROK_HOME).toBe('/tmp/grok-child-test/.grok');
+    });
+  });
+
+  test('other provider keys and GITHUB_* step-metadata files are deleted', async () => {
+    await withEnv({
+      XAI_API_KEY: 'xai-x',
+      ANTHROPIC_API_KEY: 'ant-must-not-leak',
+      OPENAI_API_KEY: 'oai-must-not-leak',
+      GITHUB_ENV: '/tmp/gh-env-file',
+      GITHUB_PATH: '/tmp/gh-path-file',
+      GITHUB_OUTPUT: '/tmp/gh-output-file',
+      GITHUB_STATE: '/tmp/gh-state-file',
+      GITHUB_ACTIONS: 'true',
+    }, () => {
+      const env = grokChildEnv('/tmp/grok-child-test');
+      expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+      expect(env.OPENAI_API_KEY).toBeUndefined();
+      // The GITHUB_ prefix rule would forward these writable step-metadata
+      // files to an untrusted agent child — poisoning later workflow steps.
+      expect(env.GITHUB_ENV).toBeUndefined();
+      expect(env.GITHUB_PATH).toBeUndefined();
+      expect(env.GITHUB_OUTPUT).toBeUndefined();
+      expect(env.GITHUB_STATE).toBeUndefined();
+      // Read-only CI metadata stays allowed (prefix rule intact).
+      expect(env.GITHUB_ACTIONS).toBe('true');
+    });
+  });
+});
+
+describe('seedGrokConfig — the auto-update kill-switch seed', () => {
+  test('writes [cli] auto_update=false, optional model pin, never credentials', () => {
+    const home = mkdtempSync(join(tmpdir(), 'grok-seed-'));
+    try {
+      const grokHome = seedGrokConfig(home, { defaultModel: 'grok-4.5' });
+      const doc = readFileSync(join(grokHome, 'config.toml'), 'utf-8');
+      expect(doc).toContain('[cli]');
+      expect(doc).toContain('auto_update = false');
+      expect(doc).toContain('default = "grok-4.5"');
+      expect(doc).not.toMatch(/XAI|api[_-]?key/i);
+      // Parseable by the same parser the door reads with.
+      expect(() => (Bun as unknown as { TOML: { parse(s: string): unknown } }).TOML.parse(doc)).not.toThrow();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('without a model opt, only the [cli] section is written', () => {
+    const home = mkdtempSync(join(tmpdir(), 'grok-seed-'));
+    try {
+      seedGrokConfig(home);
+      const doc = readFileSync(join(home, '.grok', 'config.toml'), 'utf-8');
+      expect(doc).toContain('auto_update = false');
+      expect(doc).not.toContain('[models]');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('resolveGrokBinary — fail-closed GROK_BIN handling', () => {
+  test('returns a string-or-null; a string is an absolute path', () => {
+    const p = resolveGrokBinary();
+    if (p !== null) expect(p.startsWith('/')).toBe(true);
+    else expect(p).toBeNull();
+  });
+
+  test('valid executable GROK_BIN is returned verbatim', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'grok-resolve-'));
+    const shim = join(dir, 'grok');
+    try {
+      writeFileSync(shim, '#!/bin/sh\n', { mode: 0o755 });
+      await withEnv({ GROK_BIN: shim }, () => {
+        expect(resolveGrokBinary()).toBe(shim);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('set-but-invalid GROK_BIN fails CLOSED — never falls through to PATH (community-binary mis-bind guard)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'grok-resolve-'));
+    const notExec = join(dir, 'grok-noexec');
+    try {
+      writeFileSync(notExec, '#!/bin/sh\n', { mode: 0o644 });
+      await withEnv({ GROK_BIN: notExec }, () => {
+        expect(resolveGrokBinary()).toBeNull();
+      });
+      await withEnv({ GROK_BIN: 'relative/grok' }, () => {
+        expect(resolveGrokBinary()).toBeNull();
+      });
+      await withEnv({ GROK_BIN: '/tmp/foo/../grok' }, () => {
+        expect(resolveGrokBinary()).toBeNull();
+      });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

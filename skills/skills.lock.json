@@ -58,7 +58,7 @@
   "conventions/subagent-routing.md": "8b8830b815a9a8581a12b489f966c0b0a39eb9b5f66e905a691a03653eef348d",
   "conventions/test-before-bulk.md": "6b2c52cda9e2cd5f04c15152b3d92aeb7187ab193a15082be0f8a3991a6a5725",
   "conventions/untrusted-content.md": "259384d490892cd0e1e8e054decf752d7354f516c83aee57b332c1a96aac6a6e",
-  "conversation-archive/SKILL.md": "867d3a202ce500027ed2ab85edd9d3359d677aa7a180105f2b7db12ad3492701",
+  "conversation-archive/SKILL.md": "4e1dea00f5e1e16e749a42f295fdccf556199d4400a2ba1b891aa91839e37214",
   "conversation-archive/routing-eval.jsonl": "ae087a84b1fd5b108b7cdab8d035a09b3ccecd8aad53ba5f71e463059108cfca",
   "correction-pipeline/SKILL.md": "caf1264b7afec46569d30f6d92b07f37ae375e3f4e6aeddd58866aec327053de",
   "correction-pipeline/routing-eval.jsonl": "7f8d96606a8d7bed3d79fdcee6904764c8abb9fa0b506adb414b5c4805b69d0b",

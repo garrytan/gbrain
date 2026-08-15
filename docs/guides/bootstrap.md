@@ -294,12 +294,16 @@ bun test test/e2e/bootstrap-real-codex.serial.test.ts
 ## DX exploration harness (developer instrument, not a test)
 
 The door tests prove the install WORKS; they say nothing about how it FEELS.
-`test/helpers/tty-harness.ts` spawns any CLI (gbrain, `claude`, `codex`) under a
+`test/helpers/tty-harness.ts` spawns any CLI (gbrain, `claude`, `codex`, `grok`) under a
 real pseudo-terminal (Bun's `terminal:` spawn option) and records every output
 burst with a millisecond timestamp, so unnecessary pauses become a measurable
 artifact (`computeStalls` → `stalls.md`) instead of a vibe. Same hermetic env as
 `agent-harness.ts`; pure helpers are unit-tested in `test/tty-harness.test.ts`
 (zero subprocesses, PTY smokes self-skip where `terminal:` is unavailable).
+The harness itself also backs one required-CI test: `test/init-picker-pty.serial.test.ts`
+asserts the interactive `gbrain init` pickers under a real PTY (see the
+TTY decision table in `docs/TESTING.md`). The DX-exploration layer below stays
+an instrument — nothing in it asserts.
 
 `scripts/dx-explore.ts` drives it to capture the fresh-user funnel as timestamped
 transcripts under `.context/dx-runs/` (gitignored — nothing asserts, no CI):
@@ -309,6 +313,7 @@ bun run scripts/dx-explore.ts help              # comprehension surfaces (no key
 bun run scripts/dx-explore.ts init [--keyless]  # interactive init, naive-user autopilot
 bun run scripts/dx-explore.ts claude-install    # REAL claude running the paste-in bootstrap
 bun run scripts/dx-explore.ts codex-install     # REAL codex, same
+bun run scripts/dx-explore.ts grok-install      # REAL grok, brain-only GROK.md install (no bootstrap path)
 bun run scripts/dx-explore.ts drive -- gbrain init   # manual: steer a live TUI via a file channel
 ```
 

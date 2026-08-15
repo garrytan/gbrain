@@ -331,18 +331,29 @@ function fail(jsonOutput: boolean, reason: string, message: string): never {
 }
 
 async function promptYesNo(question: string): Promise<boolean> {
-  // Minimal TTY prompt — no external deps. Bun's process.stdin reads
-  // a single line synchronously via the async iterator.
-  process.stdout.write(`${question} (y/N): `);
+  // W0 fix-wave (Tier-1 #15): non-interactive stdin (CI, pipes, spawned
+  // agents) resolves to the safe default instead of hanging — this prompt
+  // had no TTY guard and no end/EOF path, so a closed stdin parked the
+  // process permanently. This command wipes the store; decline-by-default
+  // is the only safe non-interactive answer (--yes stays the escape hatch).
+  if (!process.stdin.isTTY) return false;
+  // Prompt on stderr so stdout stays clean for --json payloads.
+  process.stderr.write(`${question} (y/N): `);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const stdin = process.stdin as any;
   stdin.setEncoding?.('utf8');
   return new Promise<boolean>((resolve) => {
+    const cleanup = () => {
+      stdin.off?.('data', onData);
+      stdin.off?.('end', onEnd);
+    };
+    const onEnd = () => { cleanup(); resolve(false); }; // EOF = decline
     const onData = (chunk: string) => {
       const answer = chunk.trim().toLowerCase();
-      stdin.off?.('data', onData);
+      cleanup();
       resolve(answer === 'y' || answer === 'yes');
     };
     stdin.on?.('data', onData);
+    stdin.on?.('end', onEnd);
   });
 }

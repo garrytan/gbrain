@@ -40,6 +40,10 @@ if [ -z "${DATABASE_URL:-}" ]; then
   exit 2
 fi
 
+# #3485 name floor (shared): this script DROPs the public schema of whatever
+# DATABASE_URL names — refuse non-test-shaped names without an explicit opt-in.
+source "$(dirname "$0")/_db_floor.sh"
+
 SQL_FILE="tests/heavy/fixtures/down-mutate-${SHAPE}.sql"
 if [ ! -f "$SQL_FILE" ]; then
   echo "[build_legacy_fixtures] no fixture for shape '$SHAPE' at $SQL_FILE" >&2

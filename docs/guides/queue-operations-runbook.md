@@ -71,7 +71,10 @@ gbrain jobs get <id>
 ## Rescue actions (in order of escalation)
 
 ```bash
-# Force-kill a single stuck job:
+# Cancel a single stuck job (inline mode: cooperative — the handler must
+# observe its abort signal, and after 30s it is force-evicted from tracking
+# but the promise keeps running; with --job-isolation process the child is
+# actually SIGTERM→SIGKILLed once cancellation is detected):
 gbrain jobs cancel <id>
 
 # Clear a specific job entirely (last resort):
@@ -85,8 +88,20 @@ gbrain jobs smoke --wedge-rescue
 
 - **stalled-forever** — A worker claimed a job, started executing, and has
   held the row for over an hour. The wall-clock sweep evicts jobs past
-  2× `timeout_ms`; if one's still active, either no `timeout_ms` was set
-  or the sweep is newly deployed and this job predates it. Cancel it.
+  2× `timeout_ms`. Long-lane handlers (subagent, autopilot-cycle,
+  embed-backfill, …) always have a budget now: it stamps at submit, is
+  COALESCEd from `HANDLER_DEFAULT_TIMEOUT_MS` at claim for legacy NULL rows,
+  and migration v128 backfilled rows that predate both. `gbrain jobs get <id>`
+  prints the effective budget and which kill path applies. If a short-lane
+  job is still active with no budget, the null-default sweep
+  (2 × lock-duration × max_stalled) evicts it within minutes. Cancel it if
+  you can't wait.
+- **duplicate cycles** — Historic brains could accumulate byte-identical
+  waiting `autopilot-cycle` rows when a job stalled in `active`. v128
+  cancelled that backlog (newest ticker-keyed row per source survives), and
+  the `maxPending` dispatch guard prevents new accumulation. Suppressed
+  dispatches are visible in `jobs stats` (Backpressure line) and the
+  backpressure audit JSONL.
 - **waiting-depth** — Submitters are piling up jobs faster than workers
   drain them. Set `--max-waiting N` on the submission or on the programmatic
   `queue.add()` call. If you want a taller pile, raise the threshold via
@@ -106,6 +121,29 @@ claiming. Start one:
 ```bash
 GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs work --concurrency 4
 ```
+
+## Reading the DB-probe verdicts (pool starved vs server unreachable)
+
+When the worker's health probe fails repeatedly, the terminal
+`[health] DB probe failed N consecutive times (verdict: ...)` line — and the
+`unhealthy` payload the supervisor sees — carries a verdict that names the
+failing LAYER (the intermediate `(N/3)` lines log only the failure detail).
+Read it before touching anything — the historical failure mode here was
+hours spent evaluating a database instance upgrade while the server sat at
+10% of max_connections.
+
+| Verdict | What it means | What to do |
+|---|---|---|
+| `pool_starved` | The read-pool probe failed but the DIRECT-lane probe succeeded — the database server is reachable; the fault is in the transaction-pooler path (client pool exhaustion or a pooler-layer fault; the probe deliberately does not distinguish the two). | Look at client-side load: long-running handler queries holding slots, `GBRAIN_POOL_SIZE` too small for the workload, or a pooler-layer incident. Do NOT resize the database. The worker exit is correct recovery — it frees every client-held slot. |
+| `server_unreachable` | Both the pooler lane and the direct lane failed. | Check connectivity/capacity first: network, DNS, the database itself. Both-lanes-failed is the evidence — credential/config errors or a saturated direct lane can also land here, so glance at the probe detail text before concluding the server is down. |
+| `unknown` | The read probe failed and no direct lane exists to disambiguate (single-pool mode: non-Supabase, kill switch active, or no derivable direct URL). | Check the startup log for the single-pool warning; consider `GBRAIN_DIRECT_DATABASE_URL` so future incidents self-diagnose. |
+
+The `gbrain-tracked in flight` counts in the message are a tracked SUBSET
+(raw/direct/reserved/transaction seams only) — most template-path queries are
+untracked, so `0 in flight` next to a `pool_starved` verdict means the
+saturation lives in that untracked traffic or at the pooler layer itself,
+not that the pool is idle. The verdict, not the counts, is the
+authoritative signal.
 
 ## Related
 

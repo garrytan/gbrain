@@ -4,7 +4,7 @@
 # scopes to admin/src/ so we can't import the source list directly; instead
 # this script extracts both lists and diffs them.
 #
-# Wired into `bun run verify` and `bun run check:all`.
+# Wired into `bun run verify` (single guard registry: scripts/guards-manifest.tsv).
 #
 # Exits 0 on match, 1 on drift, 2 on internal error (file missing, parse fail).
 #

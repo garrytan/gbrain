@@ -150,6 +150,41 @@ describe('queryAgentClientSpend (v0.38 Slice 4 — /admin/api/agents/spend SQL)'
     expect(rows[0].spent_cents_today).toBe(50);
   });
 
+  it('day boundary is a UTC INSTANT, independent of the session timezone', async () => {
+    // Regression pin for the snapshot-timezone incident: the old predicate
+    // compared created_at against a NAIVE date_trunc result, which the
+    // session timezone reinterpreted — a non-UTC session (host-tz PGLite,
+    // tz-configured Postgres role, snapshot-restored engine pre-parity-fix)
+    // shifted the day boundary by its offset and underreported evening spend.
+    //
+    // Deterministic at ANY wall-clock hour: rows exactly AT UTC midnight and
+    // 1s BEFORE it must classify identically under sessions ±12h from UTC.
+    // Under the old predicate, Etc/GMT+12 excluded the midnight row and
+    // Etc/GMT-12 included the pre-midnight row — one of the two always broke.
+    await seedClient({ id: 'tz-edge', scope: 'read agent' });
+    await engine.executeRaw(
+      `INSERT INTO mcp_spend_log (client_id, operation, spend_cents, created_at)
+       VALUES
+         ('tz-edge', 'subagent_loop', 7,
+          date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'),
+         ('tz-edge', 'subagent_loop', 999,
+          (date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') - interval '1 second')`,
+    );
+    const original = (await engine.executeRaw<{ TimeZone: string }>(`SHOW timezone`))[0].TimeZone;
+    for (const zone of ['Etc/GMT+12', 'Etc/GMT-12', 'UTC']) {
+      await engine.executeRaw(`SELECT set_config('TimeZone', '${zone}', false)`);
+      try {
+        const rows = await queryAgentClientSpend(engine);
+        const edge = rows.find(r => r.client_id === 'tz-edge')!;
+        // Only the exactly-at-midnight row (7¢) counts as today — never the
+        // 1s-before row (999¢) — regardless of session zone.
+        expect(`${zone}:${edge.spent_cents_today}`).toBe(`${zone}:7`);
+      } finally {
+        await engine.executeRaw(`SELECT set_config('TimeZone', $1, false)`, [original]);
+      }
+    }
+  });
+
   it('isolates spend by client_id (no cross-client leakage)', async () => {
     await seedClient({ id: 'alice', scope: 'read agent' });
     await seedClient({ id: 'bob', scope: 'read agent' });

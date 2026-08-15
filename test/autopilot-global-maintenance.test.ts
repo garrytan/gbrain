@@ -86,7 +86,11 @@ describe('dispatchGlobalMaintenance — single-flight gate', () => {
     expect(added.length).toBe(1);
     expect(added[0].name).toBe('autopilot-global-maintenance');
     expect(added[0].opts.idempotency_key).toBe('autopilot-global:s1');
-    expect(added[0].opts.maxWaiting).toBe(1); // structural single-flight
+    // Structural single-flight: maxPending (waiting + live-lock active),
+    // NOT maxWaiting — an in-flight active run must suppress re-dispatch
+    // across slot rotation (upstream issue #2).
+    expect(added[0].opts.maxPending).toBe(1);
+    expect(added[0].opts.maxWaiting).toBeUndefined();
     expect(added[0].data.phases).toEqual(GLOBAL_PHASES);
   });
 
@@ -95,6 +99,27 @@ describe('dispatchGlobalMaintenance — single-flight gate', () => {
     const r = await dispatchGlobalMaintenance(engine, queue, { repoPath: '/tmp', slot: 's1', timeoutMs: 1, jsonMode: true, emit: () => {} });
     expect(r.dispatched).toBe(false);
     expect(added.length).toBe(0);
+  });
+
+  test('coalesced submission → coalesced-aware return + dispatch_coalesced event (never claims a dispatch that did not insert)', async () => {
+    const events: string[] = [];
+    const engine = {
+      kind: 'postgres' as const,
+      getConfig: async (k: string) => (k === LAST_GLOBAL_AT_KEY ? null : null),
+    } as unknown as BrainEngine;
+    const queue = {
+      add: async () => ({ id: 7, coalesced: true }),
+    } as any;
+    const r = await dispatchGlobalMaintenance(engine, queue, {
+      repoPath: '/tmp', slot: 's1', timeoutMs: 1, jsonMode: true, emit: (l: string) => events.push(l),
+    });
+    // Honest-dispatch contract: nothing was inserted, so dispatched is false;
+    // coalesced says the work is already in flight.
+    expect(r.dispatched).toBe(false);
+    expect(r.coalesced).toBe(true);
+    const kinds = events.map(e => JSON.parse(e).event);
+    expect(kinds).toContain('dispatch_coalesced');
+    expect(kinds).not.toContain('dispatched');
   });
 });
 

@@ -16,6 +16,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# #3485: the heavy lane runs destructive shell scripts against DATABASE_URL —
+# apply the shared name floor once here for every script it dispatches.
+source tests/heavy/_db_floor.sh
+
 PATTERN="${1:-}"
 
 heavy_files=()

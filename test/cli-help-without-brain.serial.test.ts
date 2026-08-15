@@ -25,6 +25,8 @@ const HELP_WITHOUT_BRAIN = [
   'skillopt',
   'maintain',
   'extract-conversation-facts',
+  'transcripts',
+  'jobs',
 ];
 
 /**

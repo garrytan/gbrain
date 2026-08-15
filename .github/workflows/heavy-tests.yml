@@ -18,6 +18,11 @@ on:
     # label so we don't fan out on unrelated label changes.
     types: [labeled, synchronize, reopened]
   workflow_dispatch:
+    inputs:
+      run_grok_door:
+        description: 'Run the grok-door job (pre-secret posture: label or this input only)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -64,6 +69,8 @@ jobs:
       - name: Run heavy tests
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
+          # #3485 preload guard: this job intentionally tests against a DB.
+          GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
         run: bun run test:heavy
 
       # Agent-bootstrap offline Docker e2e [A7] — placeholder registration.
@@ -120,11 +127,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      # Open the hermes opt-in door here so binary/auth absence — not the
-      # opt-in var — is what skips (same posture as the claude/codex doors).
+      # Open the hermes/grok opt-in doors here so binary/auth absence — not
+      # the opt-in var — is what skips (same posture as the claude/codex
+      # doors). The grok door's keyless tier additionally self-skips without
+      # a grok binary, which a stock runner does not have.
       GBRAIN_REAL_HERMES_E2E: '1'
+      GBRAIN_REAL_GROK_E2E: '1'
+      # Pin so a provisioned runner's grok version-shape test asserts against
+      # the supported version (and a colliding community `grok` binary fails
+      # loud instead of running the keyless tier confusingly).
+      GROK_VERSION: "1.0.4"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.3.13
@@ -139,7 +155,8 @@ jobs:
           for f in \
             test/e2e/bootstrap-real-claude.serial.test.ts \
             test/e2e/bootstrap-real-codex.serial.test.ts \
-            test/e2e/install-real-hermes.serial.test.ts; do
+            test/e2e/install-real-hermes.serial.test.ts \
+            test/e2e/install-real-grok.serial.test.ts; do
             [ -f "$f" ] && files+=("$f")
           done
           if [ "${#files[@]}" -eq 0 ]; then
@@ -182,6 +199,8 @@ jobs:
       GBRAIN_REAL_HERMES_E2E: '1'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.3.13
@@ -275,11 +294,13 @@ jobs:
           EXIT=0
           bun test --timeout=600000 test/e2e/install-real-hermes.serial.test.ts > door.txt 2>&1 || EXIT=$?
           tail -40 door.txt
+          # Preserve the FULL bun output UNCONDITIONALLY (upload stays
+          # failure-gated): the zero-pass failure class below exits with the
+          # summary as its only trace, and bun prints failure details before
+          # the summary, so the 40-line tail can drop exactly the lines a
+          # paid-CI triage needs.
+          cp door.txt "$GBRAIN_E2E_EVIDENCE_DIR/" 2>/dev/null || true
           if [ "$EXIT" -ne 0 ]; then
-            # Preserve the FULL bun output for the failure artifact — bun
-            # prints failure details before the summary, so the 40-line tail
-            # above can drop exactly the lines a paid-CI triage needs.
-            cp door.txt "$GBRAIN_E2E_EVIDENCE_DIR/" 2>/dev/null || true
             exit "$EXIT"
           fi
           # This job provisions the binary + auth above, so the door must
@@ -334,3 +355,243 @@ jobs:
       - name: Remove hermes credentials (unconditional)
         if: always()
         run: rm -f ~/.hermes/.env
+
+  # Grok door e2e (xAI Grok Build): PROVISIONS the real grok binary via the
+  # pinned npm package (registry integrity verified — stronger than the
+  # curl-installer path; both pins live in docs/mcp/GROK-CLI-PIN.md, enforced
+  # against this file by scripts/check-grok-pin.sh in `bun run verify`).
+  # KEYLESS-FIRST ordering (deliberate divergence from hermes-door): grok's
+  # mcp add/list/doctor run keyless, so the compat tier runs and banks its
+  # coverage BEFORE the secret precondition — a missing XAI_API_KEY still
+  # fails this job loudly, but only after the free tier proved the install
+  # surface, so pre-secret runs are diagnostic instead of pure red.
+  #
+  # PRE-SECRET GATING POSTURE: `real-agent-e2e` label or the run_grok_door
+  # dispatch input ONLY — deliberately NOT `schedule` and NOT the generic
+  # `heavy-tests` label, so an absent XAI_API_KEY secret cannot paint nightly
+  # heavy runs (or unrelated heavy-labeled PRs) red. The commit that lands
+  # AFTER an admin creates the XAI_API_KEY secret (an external prerequisite,
+  # not a code change) re-adds: the schedule leg, the heavy-tests label leg,
+  # a default-on dispatch, and a latest-version canary matrix leg
+  # (continue-on-error, schedule-scoped, own timeout) so the pinned lane
+  # stays deterministic while the canary tracks what users actually run.
+  grok-door:
+    name: Grok door e2e (real binary, keyless-first)
+    if: |
+      (github.event_name == 'pull_request' &&
+        contains(github.event.pull_request.labels.*.name, 'real-agent-e2e')) ||
+      (github.event_name == 'workflow_dispatch' &&
+        inputs.run_grok_door == true)
+    runs-on: ubuntu-latest
+    # Measured local door wall-time: keyless tier ~29s + one-time compiled
+    # gbrain build (~2-4 min) + npm install (~10s); paid SMOKE turn budget
+    # 2 x 240s. 20 min = measured + >50% headroom (GROK-CLI-PIN.md).
+    timeout-minutes: 20
+    env:
+      # Pin values documented in docs/mcp/GROK-CLI-PIN.md — update them
+      # together, deliberately, after reviewing upstream changes
+      # (scripts/check-grok-pin.sh fails `bun run verify` on drift).
+      GROK_VERSION: "1.0.4"
+      GROK_NPM_PACKAGE: "@xai-official/grok"
+      GROK_NPM_INTEGRITY: "sha512-Nu3SFXTqwvCQr/LQFwrQYgngJhUQwX2h9ZSgzW4HowidjbPBWtMVO0xI88d2z6/zlDSNaT5YP/uk+2DthKQMsg=="
+      # Per-platform payload pins: the wrapper's integrity covers only the
+      # wrapper tarball; the binary that EXECUTES is the platform sub-package.
+      GROK_NPM_LINUX_X64_INTEGRITY: "sha512-Dan2LfKcFBiabuDGHaGgMT8Ndzibo2ljvSjh4MlpV5117JL+S/0KMbdyYpk+13d7t+4znniW1cm+rRwUGSAvtw=="
+      GROK_NPM_LINUX_ARM64_INTEGRITY: "sha512-zGK42Eq3ZmIa7cSVnl6CiJ4cxTCMsNLQCmCoLJhy5eZXfAvZ1DA3K3HXmKCj4OScX8SalYlp7mx8HWl9Y6gytw=="
+      GBRAIN_REAL_GROK_E2E: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.3.13
+      - run: bun install
+
+      - name: Prepare evidence dir
+        run: |
+          echo "GBRAIN_E2E_EVIDENCE_DIR=$RUNNER_TEMP/grok-door-evidence" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/grok-door-evidence"
+
+      # Compile gbrain ONCE for both bun test invocations below —
+      # ensureCompiledGbrain's cache is per-process, so without this the
+      # keyless and paid runs each pay the 2-4 min compile.
+      - name: Build gbrain (compile once for both door runs)
+        run: |
+          bun build --compile --outfile "$RUNNER_TEMP/gbrain-door-bin" src/cli.ts
+          echo "GBRAIN_COMPILED_BIN=$RUNNER_TEMP/gbrain-door-bin" >> "$GITHUB_ENV"
+
+      # SECRETLESS provisioning: the npm registry verifies the per-platform
+      # payload against its integrity metadata; the pre-check pins that the
+      # registry still serves the SAME integrity we observed (a re-published
+      # 1.0.4 becomes a loud re-pin decision, not silently different code
+      # running next to secrets in later steps). Version assert lives here
+      # too — before any secret-bearing step.
+      - name: Install grok (pinned npm package)
+        timeout-minutes: 10
+        run: |
+          served=$(npm view "$GROK_NPM_PACKAGE@$GROK_VERSION" dist.integrity 2>/dev/null || true)
+          if [ "$served" != "$GROK_NPM_INTEGRITY" ]; then
+            echo "::error::grok npm integrity drift for $GROK_NPM_PACKAGE@$GROK_VERSION — registry serves '$served', pinned '$GROK_NPM_INTEGRITY'. Re-pin deliberately: update the stamps in docs/mcp/GROK-CLI-PIN.md + this workflow after reviewing upstream (see the pin doc's re-observation checklist)." >&2
+            exit 1
+          fi
+          # The platform sub-package is the binary that actually runs — pin it
+          # too (per-arch; ubuntu-latest is x64 today, arm64 pinned for a
+          # future runner switch).
+          arch=$(uname -m)
+          case "$arch" in
+            x86_64) plat_pkg="$GROK_NPM_PACKAGE-linux-x64"; plat_pin="$GROK_NPM_LINUX_X64_INTEGRITY" ;;
+            aarch64|arm64) plat_pkg="$GROK_NPM_PACKAGE-linux-arm64"; plat_pin="$GROK_NPM_LINUX_ARM64_INTEGRITY" ;;
+            *) echo "::error::unsupported runner arch for the grok payload pin: $arch" >&2; exit 1 ;;
+          esac
+          plat_served=$(npm view "$plat_pkg@$GROK_VERSION" dist.integrity 2>/dev/null || true)
+          if [ "$plat_served" != "$plat_pin" ]; then
+            echo "::error::grok platform payload integrity drift for $plat_pkg@$GROK_VERSION — registry serves '$plat_served', pinned '$plat_pin'. Re-pin deliberately (GROK-CLI-PIN.md stamps + this workflow)." >&2
+            exit 1
+          fi
+          npm install -g "$GROK_NPM_PACKAGE@$GROK_VERSION"
+          if ! command -v grok >/dev/null 2>&1; then
+            echo "::error::grok did not resolve on PATH after npm install" >&2
+            exit 1
+          fi
+          version_output=$(grok --version)
+          echo "$version_output"
+          # Observed shape: `grok 1.0.4 (buildhash)` (GROK-CLI-PIN.md).
+          if ! printf '%s' "$version_output" | grep -qF "grok $GROK_VERSION"; then
+            echo "::error::grok version drift — expected 'grok $GROK_VERSION' in: $version_output (see docs/mcp/GROK-CLI-PIN.md triage table)" >&2
+            exit 1
+          fi
+
+      # KEYLESS TIER FIRST — banks the free compat coverage (documented-shape
+      # registration, TOML schema, doctor handshake proving the seven-verb
+      # surface) before anything needs the secret. XAI_API_KEY is absent from
+      # this step by construction, so the paid describe self-skips.
+      - name: Run grok door tests (keyless tier)
+        run: |
+          EXIT=0
+          bun test --timeout=600000 test/e2e/install-real-grok.serial.test.ts > door-keyless.txt 2>&1 || EXIT=$?
+          tail -40 door-keyless.txt
+          cp door-keyless.txt "$GBRAIN_E2E_EVIDENCE_DIR/" 2>/dev/null || true
+          if [ "$EXIT" -ne 0 ]; then
+            exit "$EXIT"
+          fi
+          # Exact expected shape for this tier: 4 keyless tests pass, the
+          # 1 paid test skips. Zero-pass or partial-pass refuses green.
+          pass_count=$(grep -Eo '[0-9]+ pass' door-keyless.txt | tail -1 | grep -Eo '^[0-9]+' || true)
+          if [ -z "$pass_count" ] || [ "$pass_count" -lt 4 ]; then
+            echo "::error::grok door keyless tier expected 4 passing tests, summary shows '${pass_count:-none}' — refusing to go green (see docs/mcp/GROK-CLI-PIN.md triage table)" >&2
+            exit 1
+          fi
+
+      - name: Preconditions (secret present)
+        env:
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+        run: |
+          if [ -z "$XAI_API_KEY" ]; then
+            echo "::error::XAI_API_KEY secret is empty — the keyless tier above already ran (its coverage is banked); the paid SMOKE needs the secret. Admin: create the XAI_API_KEY repo/environment secret (console.x.ai), then re-run. Fork PRs get no secrets from GitHub." >&2
+            exit 1
+          fi
+
+      # Named bad-key preflight: key-rot fails HERE, at a step named for it,
+      # instead of surfacing as a confusing SMOKE failure (GROK-CLI-PIN.md
+      # triage table). One minimal paid probe.
+      - name: Auth preflight (bad-key tripwire)
+        env:
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+        run: |
+          export GROK_HOME="$RUNNER_TEMP/grok-preflight-home"
+          mkdir -p "$GROK_HOME"
+          # Verbatim kill-switch homes (update together): seedGrokConfig in
+          # test/helpers/agent-harness.ts and scenarioGrokInstall in
+          # scripts/dx-explore.ts.
+          printf '[cli]\nauto_update = false\n' > "$GROK_HOME/config.toml"
+          # This step runs the third-party agent binary directly: never hand
+          # it the WRITABLE step-metadata files (appending to GITHUB_ENV/PATH
+          # poisons the later secret-bearing steps — the same channel
+          # grokChildEnv scrubs for test-spawned children), and kill its web
+          # tools like the door SMOKE does.
+          out=$(env -u GITHUB_ENV -u GITHUB_PATH -u GITHUB_OUTPUT -u GITHUB_STATE -u GITHUB_STEP_SUMMARY \
+            grok -p "reply with exactly: PREFLIGHT-OK" --output-format plain --disable-web-search 2>&1) || {
+            echo "::error::grok auth preflight failed — the XAI_API_KEY secret is present but rejected (rotate it at console.x.ai; see GROK-CLI-PIN.md triage table). Output: ${out:0:300}" >&2
+            exit 1
+          }
+          echo "auth preflight ok"
+
+      - name: Run grok door tests (full — paid SMOKE included)
+        env:
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+        run: |
+          EXIT=0
+          bun test --timeout=600000 test/e2e/install-real-grok.serial.test.ts > door.txt 2>&1 || EXIT=$?
+          tail -40 door.txt
+          cp door.txt "$GBRAIN_E2E_EVIDENCE_DIR/" 2>/dev/null || true
+          if [ "$EXIT" -ne 0 ]; then
+            exit "$EXIT"
+          fi
+          # PAID-SENTINEL: with the key present, a skipping paid tier must
+          # never read as green (the split-gating false-green class). The
+          # grep target is the suite's literal skip log — mirrored in
+          # test/e2e/install-real-grok.serial.test.ts (change together).
+          if grep -q 'SKIP paid tier' door.txt; then
+            echo "::error::grok door paid tier skipped despite a present XAI_API_KEY — hasGrokAuth() gate drift; refusing to go green" >&2
+            exit 1
+          fi
+          pass_count=$(grep -Eo '[0-9]+ pass' door.txt | tail -1 | grep -Eo '^[0-9]+' || true)
+          if [ -z "$pass_count" ] || [ "$pass_count" -lt 5 ]; then
+            echo "::error::grok door full run expected 5 passing tests (6 once the JSON tool-call test lands), summary shows '${pass_count:-none}'" >&2
+            exit 1
+          fi
+
+      # Auto-update tripwire: the seeded [cli] auto_update=false is the whole
+      # kill-switch (no env form observed) — a version that MOVED mid-job
+      # means it failed and the pins above are no longer what just ran.
+      - name: Version re-check (mid-job drift tripwire)
+        if: always()
+        run: |
+          if command -v grok >/dev/null 2>&1; then
+            version_output=$(grok --version || true)
+            if ! printf '%s' "$version_output" | grep -qF "grok $GROK_VERSION"; then
+              echo "::error::grok version moved mid-job — auto-update kill-switch failed (expected 'grok $GROK_VERSION', got: $version_output)" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Scrub credentials from evidence (defensive)
+        if: failure() && env.GBRAIN_E2E_EVIDENCE_DIR != ''
+        env:
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+        run: |
+          # Same triple as hermes-door: filenames, symlinks, content. Auth is
+          # env-only here (the job never writes the key to disk — stronger
+          # than the hermes .env posture), so the content grep is the layer
+          # that matters for grok-written logs on the failure path.
+          find "$GBRAIN_E2E_EVIDENCE_DIR" -type f \( -name '.env' -o -name '*.env' -o -name 'mcp_credentials.json' \) -exec rm -f {} + 2>/dev/null || true
+          find "$GBRAIN_E2E_EVIDENCE_DIR" -type l -delete 2>/dev/null || true
+          if [ -n "$XAI_API_KEY" ]; then
+            grep -rlF "$XAI_API_KEY" "$GBRAIN_E2E_EVIDENCE_DIR" 2>/dev/null | while IFS= read -r f; do
+              echo "::warning::removing evidence file containing the API key: ${f#"$GBRAIN_E2E_EVIDENCE_DIR"/}" >&2
+              rm -f "$f"
+            done
+          fi
+      - name: Upload grok door evidence
+        if: failure() && env.GBRAIN_E2E_EVIDENCE_DIR != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: grok-door-evidence
+          path: ${{ env.GBRAIN_E2E_EVIDENCE_DIR }}
+          retention-days: 14
+          if-no-files-found: ignore
+
+      # Auth travels env-only, but grok MAY persist derived credentials after
+      # an authed turn (the inventory is pending — GROK-CLI-PIN.md); remove
+      # the known candidate unconditionally so nothing outlives the job even
+      # on a future self-hosted runner.
+      - name: Remove grok credentials (unconditional)
+        if: always()
+        run: |
+          rm -f ~/.grok/mcp_credentials.json
+          rm -rf "$RUNNER_TEMP/grok-preflight-home"
+          # Cancellation/timeout bypasses the suite's afterAll cleanup — the
+          # hermetic homes carry no key file (env-only auth) but may hold
+          # grok-derived credentials once the authed inventory lands.
+          rm -rf /tmp/gb-grok-* 2>/dev/null || true

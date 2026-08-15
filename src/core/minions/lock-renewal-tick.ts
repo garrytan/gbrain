@@ -147,7 +147,19 @@ function warnAndFallback(name: string, raw: string, fallback: number): number {
  * `runLockRenewalTick` is pure and trivially testable.
  */
 export interface LockRenewalDeps {
-  renewLock: (jobId: number, lockToken: string, lockDurationMs: number) => Promise<boolean>;
+  /**
+   * The optional `opts.signal` is aborted when this call loses the tick's
+   * timeout race, so the underlying UPDATE is CANCELLED (postgres.js
+   * `.cancel()` via executeRawDirect) instead of orphaned on a checked-out
+   * pool slot for its full server-side duration — the #6 starvation class.
+   * Optional-param widening keeps the legacy 3-arg test mocks compiling.
+   */
+  renewLock: (
+    jobId: number,
+    lockToken: string,
+    lockDurationMs: number,
+    opts?: { signal?: AbortSignal },
+  ) => Promise<boolean>;
   audit: LockRenewalAuditSinkLike;
   /** Injectable for hermetic time-based tests. Production: `Date.now`. */
   now: () => number;
@@ -155,8 +167,9 @@ export interface LockRenewalDeps {
    * Injectable for hermetic Promise.race tests. Production:
    * `globalThis.setTimeout`. The function must return a value that
    * `clearTimeout` accepts, but this seam doesn't expose clearTimeout
-   * because the timeout race fires-and-forgets (the lost race is
-   * harmless — at worst we have a dangling reject that no one awaits).
+   * because the timeout race fires-and-forgets. The losing renewLock is no
+   * longer merely abandoned: the timeout callback also aborts the per-call
+   * signal so the query releases its pool slot.
    */
   setTimeout: (cb: () => void, ms: number) => unknown;
   /**
@@ -228,11 +241,19 @@ export async function runLockRenewalTick(
   if (state.cancelled()) return { kind: 'cancelled' };
 
   let renewed: boolean;
+  // Per-call cancellation: when the timeout wins the race, abort the signal
+  // so the losing UPDATE releases its pool slot instead of holding it until
+  // the server finishes (issue #6 — an abandoned racer under a saturated
+  // pooler pinned a checked-out connection for minutes). On the win path the
+  // late-firing timer aborts an already-settled query, which runUnsafe
+  // ignores (abort listener removed in its .finally).
+  const callAbort = new AbortController();
   try {
     renewed = await Promise.race([
-      deps.renewLock(state.jobId, state.lockToken, state.lockDurationMs),
+      deps.renewLock(state.jobId, state.lockToken, state.lockDurationMs, { signal: callAbort.signal }),
       new Promise<never>((_, reject) => {
         deps.setTimeout(() => {
+          callAbort.abort();
           reject(new Error(`renewLock timed out after ${state.knobs.callTimeoutMs}ms`));
         }, state.knobs.callTimeoutMs);
       }),

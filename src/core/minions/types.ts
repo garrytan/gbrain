@@ -90,6 +90,14 @@ export interface MinionJob {
   started_at: Date | null;
   finished_at: Date | null;
   updated_at: Date;
+
+  /** Submission metadata, NOT a DB column: set only by MinionQueue.add()
+   *  when it returned an EXISTING row instead of inserting (idempotency
+   *  fast-path, backpressure cap-hit, or the ON CONFLICT zero-row fallback).
+   *  rowToMinionJob never sets it; absent on fresh inserts and on rows read
+   *  back later. Surfaces in `jobs submit`'s JSON output — intended and
+   *  additive, so scripts can tell a real dispatch from a coalesce. */
+  coalesced?: boolean;
 }
 
 // --- Input Types ---
@@ -128,8 +136,29 @@ export interface MinionJobInput {
   max_spawn_depth?: number;
   /** Global dedup key. Same key returns the existing job, no second row created. */
   idempotency_key?: string;
-  /** Submission backpressure: cap waiting jobs with this name before inserting a new row. */
+  /** Submission backpressure: cap waiting jobs with this name before inserting
+   *  a new row. Scope is (name, queue, source), where source reads
+   *  data.sourceId ?? data.source_id; a submission with NO source key counts
+   *  ALL rows for (name, queue) — the NULL-as-wildcard arm is intentional and
+   *  relied on by existing rate-cap callers. For single-flight semantics see
+   *  maxPending (exact scoping, counts in-flight work too). */
   maxWaiting?: number;
+  /** Submission single-flight: cap PENDING jobs — waiting rows plus LIVE-LOCK
+   *  active rows (status='active' AND lock_until > now()) — for this
+   *  (name, queue, source) scope before inserting a new row. Expired-lock
+   *  actives belong to a dead/blocked worker and never count, so a wedged
+   *  worker cannot suppress dispatch (new waiting rows keep feeding the
+   *  waitingClaimable>0 wedge detectors); dead/cancelled/completed never
+   *  count either. Cap-hit returns the most-recent waiting row, else the
+   *  most-recent live-lock active row, stamped `coalesced: true`. Scope is
+   *  EXACT (unlike maxWaiting): COALESCE(data.sourceId, data.source_id)
+   *  compared with IS NOT DISTINCT FROM — a NULL-source submission matches
+   *  only NULL-source rows, never a wildcard. If both maxPending and
+   *  maxWaiting are supplied, both guards apply; maxPending is checked
+   *  first. Internal option (autopilot dispatch single-flight); not exposed
+   *  as a public submit flag yet — semantics exclude delayed/paused/
+   *  waiting-children rows deliberately. */
+  maxPending?: number;
 
   // v12: scheduler polish
   /**
@@ -189,6 +218,16 @@ export interface MinionWorkerOpts {
    *  hung probe would wedge the recursive setTimeout chain forever and
    *  silently disable the health monitor. Default: 10000 (10 seconds). */
   dbProbeTimeoutMs?: number;
+  /** issue #5: 'process' runs each claimed job in a SIGKILL-able child
+   *  process (blast radius = 1 job). Default 'inline' (today's behavior).
+   *  Requires childCliInvocation; the CLI layer resolves + validates it. */
+  jobIsolation?: 'inline' | 'process';
+  /** How to invoke the gbrain CLI for job children (resolved fail-fast at
+   *  worker startup by the CLI layer; structurally ChildCliInvocation from
+   *  job-isolation.ts — kept inline here to avoid an import cycle). */
+  childCliInvocation?: { cmd: string; argsPrefix: string[] } | null;
+  /** tini path for wrapping job children ('' = absent, direct spawn). */
+  childTiniPath?: string;
 }
 
 // --- Job Context (passed to handlers) ---
@@ -342,6 +381,20 @@ export type TranscriptEntry =
   | { type: 'tool_call'; tool: string; args_size: number; result_size: number; ts: string }
   | { type: 'llm_turn'; model: string; tokens_in: number; tokens_out: number; ts: string }
   | { type: 'error'; message: string; stack?: string; ts: string };
+
+// --- Abort-reason literals (single source of truth) ---
+//
+// Per-job abort sites construct `new Error(REASON)`; classification sites
+// (worker.ts INFRASTRUCTURE_ABORT_REASONS, child-job-runner.ts
+// PER_JOB_ABORT_REASONS) match on the message. Deriving both sets from these
+// constants keeps a rename at an abort site from silently flipping child
+// classification (maintainability review).
+
+/** Infrastructure faults: released, no attempt burned; stall sweeper requeues. */
+export const ABORT_REASON_LOCK_RENEWAL_FAILED = 'lock-renewal-failed';
+export const ABORT_REASON_LOCK_LOST = 'lock-lost';
+/** Job-targeted aborts: keep their existing attempt semantics. */
+export const ABORT_REASON_TIMEOUT = 'timeout';
 
 // --- Errors ---
 

@@ -101,9 +101,15 @@ function emitError(jsonOutput: boolean, code: string, message: string): void {
 }
 
 async function promptYesNo(question: string): Promise<boolean> {
+  // W0 fix-wave (Tier-1 #15): non-interactive stdin (CI, pipes, spawned
+  // agents) must resolve to the safe default instead of hanging forever —
+  // this prompt had no TTY guard and no close/EOF handler, so a piped or
+  // closed stdin parked the process permanently.
+  if (!process.stdin.isTTY) return false;
   // Prompt on stderr: stdout stays clean for --json payloads.
   const rl = createInterface({ input: process.stdin, output: process.stderr });
   return new Promise((resolve) => {
+    rl.on('close', () => resolve(false)); // EOF (^D) = decline, never hang
     rl.question(`${question} [y/N] `, (answer) => {
       rl.close();
       resolve(/^y(es)?$/i.test(answer.trim()));

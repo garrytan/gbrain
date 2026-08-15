@@ -284,6 +284,80 @@ function entryToTurn(entry: unknown): WindowTurn | null {
   return { role, text };
 }
 
+// ── Session parse for the import lane (cathedral-4, ADDITIVE) ───────────────
+
+/**
+ * A turn WITH its source timestamp, for the transcripts-import lane. The
+ * hook lane keeps consuming `parseTranscript` (WindowTurn, no timestamps) —
+ * this function is additive and MUST NOT change that behavior (pinned by the
+ * regression test in test/transcript-adapters.test.ts).
+ */
+export interface TimedTurn {
+  role: WindowTurn['role'];
+  text: string;
+  /** ISO 8601 from the line's `timestamp` field; '' when the line lacks one. */
+  timestamp: string;
+}
+
+export interface ParsedClaudeSession {
+  /** From the first line carrying one. */
+  sessionId: string;
+  cwd?: string;
+  /** ISO of the first turn's timestamp ('' when absent). */
+  startedAt: string;
+  turns: TimedTurn[];
+  bytesRead: number;
+  skippedLines: number;
+}
+
+/**
+ * Full-file parse for imports: unlike `parseTranscript`, this NEVER
+ * tail-reads (the slug date needs the session start) — a file over
+ * `maxBytes` throws so the caller can reject it loudly. One .jsonl file is
+ * one Claude Code session.
+ */
+export function parseClaudeSessionFile(
+  path: string,
+  opts: { maxBytes?: number } = {},
+): ParsedClaudeSession {
+  const cap = Math.max(1, Math.floor(opts.maxBytes ?? TRANSCRIPT_HARD_CAP_BYTES));
+  const size = statSync(path).size;
+  if (size > cap) {
+    throw new Error(`transcript too large for import: ${size} bytes (cap ${cap})`);
+  }
+  const raw = readFileSync(path, 'utf8');
+  const turns: TimedTurn[] = [];
+  let sessionId = '';
+  let cwd: string | undefined;
+  let skippedLines = 0;
+  for (const line of raw.split('\n')) {
+    const t = line.trim();
+    if (!t) continue;
+    let entry: unknown;
+    try {
+      entry = JSON.parse(t);
+    } catch {
+      skippedLines++;
+      continue;
+    }
+    const e = entry as Record<string, unknown>;
+    if (!sessionId && typeof e.sessionId === 'string' && e.sessionId) sessionId = e.sessionId;
+    if (!cwd && typeof e.cwd === 'string' && e.cwd) cwd = e.cwd;
+    const turn = entryToTurn(entry);
+    if (!turn) continue;
+    const timestamp = typeof e.timestamp === 'string' ? e.timestamp : '';
+    turns.push({ role: turn.role, text: turn.text, timestamp });
+  }
+  return {
+    sessionId,
+    cwd,
+    startedAt: turns.find((t) => t.timestamp)?.timestamp ?? '',
+    turns,
+    bytesRead: size,
+    skippedLines,
+  };
+}
+
 // ── Corpus rendering [S3#2 consumer] ────────────────────────────────────────
 
 /**

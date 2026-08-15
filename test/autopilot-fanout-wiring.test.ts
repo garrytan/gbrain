@@ -73,6 +73,28 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     );
   });
 
+  test('lastFullCycleAt advance-gate counts coalesced ticks (parity with pre-split dispatched)', () => {
+    // Before the dispatched/coalesced split, a coalesced submission advanced
+    // the local full-cycle clock via result.dispatched. Without this arm, an
+    // all-coalesced tick (maxPending single-flight suppression) retakes the
+    // full-cycle branch every tick and starves the targeted-plan path for the
+    // whole in-flight window.
+    expect(AUTOPILOT_SRC).toMatch(
+      /result\.dispatched\.length > 0 \|\| result\.coalesced\.length > 0 \|\| result\.legacy_fallback \|\| result\.all_sources_fresh/,
+    );
+  });
+
+  test('fanout_summary reports coalesced separately from dispatched (honest surfaces)', () => {
+    expect(AUTOPILOT_SRC).toMatch(/event: 'fanout_summary',[\s\S]{0,200}coalesced: result\.coalesced/);
+  });
+
+  test('targeted-plan dispatch honors the honest-dispatch contract (red-team finding)', () => {
+    // The targeted remediation loop submits with maxWaiting:1 and expects
+    // coalesces when a handler outlives one interval — its events must split
+    // on job.coalesced like every other dispatch surface in this file.
+    expect(AUTOPILOT_SRC).toMatch(/event: 'dispatch_coalesced',[\s\S]{0,80}mode: 'targeted'/);
+  });
+
   test('freshness sync dispatch uses the parsed source config for pull policy', () => {
     const freshnessIdx = AUTOPILOT_SRC.indexOf('idempotency_key: `autopilot-sync:');
     expect(freshnessIdx).toBeGreaterThan(-1);
@@ -111,8 +133,10 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
   test('updates lastFullCycleAt after dispatch or an all-fresh restart check', () => {
     // After the dispatchPerSource call, the lastFullCycleAt module var
     // must update so the next tick doesn't immediately re-fan-out.
+    // Coalesced counts as work-in-flight (see the dedicated advance-gate
+    // test below for the full condition).
     expect(AUTOPILOT_SRC).toMatch(
-      /result\.dispatched\.length > 0 \|\| result\.legacy_fallback \|\| result\.all_sources_fresh/,
+      /result\.dispatched\.length > 0 \|\| result\.coalesced\.length > 0 \|\| result\.legacy_fallback \|\| result\.all_sources_fresh/,
     );
     expect(AUTOPILOT_SRC).toMatch(/lastFullCycleAt\s*=\s*Date\.now\(\)/);
   });
