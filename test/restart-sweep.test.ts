@@ -13,13 +13,35 @@
  * touch the developer's real `~/.gbrain/`.
  */
 
-import { describe, test, expect } from 'bun:test';
-import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'fs';
+import { afterAll, describe, test, expect } from 'bun:test';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { withEnv } from './helpers/with-env.ts';
 
 const RECIPE_PATH = join(import.meta.dir, '../recipes/restart-sweep.md');
+const tempDirs = new Set<string>();
+
+function makeTempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.add(dir);
+  return dir;
+}
+
+afterAll(() => {
+  for (const dir of tempDirs) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  tempDirs.clear();
+});
 
 /**
  * Sentinel-anchored extractor (C6). Future doc edits adding example
@@ -36,7 +58,7 @@ async function loadDetector(): Promise<any> {
         'Did you remove the sentinel from recipes/restart-sweep.md?',
     );
   }
-  const dir = mkdtempSync(join(tmpdir(), 'restart-sweep-test-'));
+  const dir = makeTempDir('restart-sweep-test-');
   // Salt filename per call so ESM cache returns fresh module — required for
   // the constructor-time env tests where each construction needs to see the
   // env mutation we just made.
@@ -48,7 +70,7 @@ async function loadDetector(): Promise<any> {
 }
 
 function makeStateDir(): string {
-  return mkdtempSync(join(tmpdir(), 'restart-sweep-state-'));
+  return makeTempDir('restart-sweep-state-');
 }
 
 // ─── Sentinel + recipe-shape guards ───────────────────────────────────
