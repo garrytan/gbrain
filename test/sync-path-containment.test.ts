@@ -31,6 +31,10 @@ describe('isWithinRoot path containment (#774 NAV-1/NAV-2)', () => {
     expect(isWithinRoot(join(root, 'page.md'), root)).toBe(true);
   });
 
+  test('accepts the root with a trailing separator', () => {
+    expect(isWithinRoot(root + sep, root)).toBe(true);
+  });
+
   test('accepts a nested descendant (the case a hardcoded "/" broke on win32)', () => {
     expect(isWithinRoot(join(root, 'wiki', 'notes', 'page.md'), root)).toBe(true);
   });
