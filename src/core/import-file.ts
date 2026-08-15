@@ -1556,6 +1556,14 @@ export async function importCodeFile(
       timeline: '',
       frontmatter: { language: lang, file: relativePath },
       content_hash: hash,
+      // A code page MUST carry its path. The full-sync reconcile finds a
+      // deleted file's page by matching `source_path` against the git tree;
+      // with the column NULL the page is invisible to it and is served
+      // forever. Markdown pages already set it, which is why only the code
+      // walk grew ghosts. Written on every import, not just the first:
+      // putPage COALESCEs, so a NULL here would never overwrite a good value
+      // but would also never backfill a row imported before this line existed.
+      source_path: relativePath,
       // `content` is authoritative source text (disk file, or the row's own
       // body via reindex-code): an emptied file is a deliberate clear.
     }, { ...txOpts, allowEmptyOverwrite: true });
