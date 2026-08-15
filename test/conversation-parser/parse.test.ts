@@ -469,7 +469,7 @@ describe('scorePatternFull — full-body scoring (v0.41.18+ Codex P1 #1)', () =>
     const im = BUILTIN_PATTERNS.find((p) => p.id === 'imessage-slack')!;
     expect(scorePatternFull('', im)).toBe(0);
   });
-  test('preamble + 20 matching lines scores 20/(preamble + 20)', () => {
+  test('multi-line format ignores preamble after multiple anchors establish a transcript', () => {
     const im = BUILTIN_PATTERNS.find((p) => p.id === 'imessage-slack')!;
     const preamble = ['## Summary', 'Three sentences.', '> Source: ref', '## Transcript'];
     const matches = Array.from(
@@ -477,8 +477,9 @@ describe('scorePatternFull — full-body scoring (v0.41.18+ Codex P1 #1)', () =>
       (_, i) => `**Garry Tan** (2026-01-29 12:00 PM): message ${i}`,
     );
     const body = [...preamble, ...matches].join('\n');
-    // 24 total non-blank, 20 match → 20/24 ≈ 0.833
-    expect(scorePatternFull(body, im)).toBeCloseTo(20 / 24, 5);
+    // Once two anchors establish a real multi-line transcript, unrelated
+    // preamble/continuation lines no longer dilute the format score.
+    expect(scorePatternFull(body, im)).toBe(1);
   });
   test('preamble-only-no-match scores 0', () => {
     const im = BUILTIN_PATTERNS.find((p) => p.id === 'imessage-slack')!;
