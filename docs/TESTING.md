@@ -115,7 +115,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-});
+}, 60_000); // PGLite full-migration-chain init needs breathing room (house pattern)
 
 afterAll(async () => {
   await engine.disconnect();
@@ -126,7 +126,7 @@ beforeEach(async () => {
 });
 ```
 
-Why this exact shape: `beforeAll` creates a single engine per file (PGLite WASM cold-start + initSchema is ~20s); `beforeEach` truncates user data via `resetPgliteState` ("two orders of magnitude faster" than fresh-engine-per-test); `afterAll` disconnects so the engine doesn't leak across file boundaries within a shard process.
+Why this exact shape: `beforeAll` creates a single engine per file (PGLite WASM cold-start + initSchema is ~20s); the explicit `60_000` hook timeout matters — bun's default is 5s, which the full migration chain regularly exceeds on cold start, and a timed-out `beforeAll` fails every test in the file with a misleading error; `beforeEach` truncates user data via `resetPgliteState` ("two orders of magnitude faster" than fresh-engine-per-test); `afterAll` disconnects so the engine doesn't leak across file boundaries within a shard process.
 
 #### `withEnv` pattern (R1 fix)
 

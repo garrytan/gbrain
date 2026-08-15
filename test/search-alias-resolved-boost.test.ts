@@ -89,7 +89,7 @@ describe('alias_resolved boost stage', () => {
 });
 
 describe('KNOBS_HASH_VERSION', () => {
-  it('is 17 (15→16 detail fold #3515; 16→17 degradation-stamp epoch: pre-stamp cache rows become unreachable)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(17);
+  it('is 18 (17→18 autocut weak-top floor acmts=; 15→16 detail fold #3515; 16→17 degradation-stamp epoch: pre-stamp cache rows become unreachable)', () => {
+    expect(KNOBS_HASH_VERSION).toBe(18);
   });
 });

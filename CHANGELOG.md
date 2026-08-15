@@ -2,6 +2,28 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.45.17.0] - 2026-08-14
+
+**Search stops collapsing rich result pools on weak matches, cross-source wikilinks stop vanishing silently, and the remote-access rules are written down in one place.**
+
+**The rare-term search collapse is fixed.** Autocut sizes results by looking for a cliff in the reranker's scores — but it normalized that cliff test by the top score, so when the best match was itself weak (a rare term, a cross-source query), an ordinary score decay masqueraded as a confident cliff and a 32-result pool collapsed to 1. A weak-top floor (default 0.5; the default reranker's scores are bimodal, so 0.5 sits in the empty middle) makes autocut stand down when the top result isn't a trustworthy anchor — recall is preserved instead of amputated. Local raw-logit rerankers (llama-server/Qwen3) are exempted automatically since their scores aren't on a 0–1 scale. Tunable via `search.autocut_min_top_score` (0 disables); the search cache key accounts for the floor, so a one-time cache cold-miss follows the upgrade. This fix passed review in a community pull request whose merge never happened — it lands here with credit.
+
+**Cross-source wikilinks: no more silent zero-edge drops.** In a multi-source brain, a wikilink whose target page lives only in *another* source produced no edge and no diagnostic — indistinguishable from a dead link, with the dead-link counter stuck at 0 (a maintainer repro escalated this to P1). Two changes: with the new opt-in `link_resolution.cross_source` config, the edge is created with a deterministic source pick; with it off (the default), the drop is *counted* — the extract summary names how many candidates were skipped and how to enable the flag, and the machine-readable output carries `skipped_cross_source`. This covers the batch extract paths (`extract links --source db`, `extract --stale`); the file-walk path can't resolve cross-source targets by construction and says so in the docs.
+
+**What confines remote callers is now documented in one place.** `docs/architecture/brains-and-sources.md` lists the four real enforcement surfaces (source isolation, facts visibility, takes holders, write-side slug fences) — and states explicitly that a page-level `visibility:` frontmatter key is inert metadata, not an access control. If a page must not be readable remotely, source-level confinement is the supported boundary.
+
+### To take advantage of v0.45.17.0
+
+```bash
+gbrain upgrade
+```
+
+Nothing to configure for the search fix. Multi-source brains that want cross-source link edges: `gbrain config set link_resolution.cross_source true`, then run `gbrain extract links --source db` once (a `--stale` re-run will not revisit already-stamped pages).
+
+### For contributors
+
+The autocut floor re-lands community PR #3131 (@time-attack), the rebase of #1863 (@rayers) — reviewed, approved, and then lost to a merge that never happened; adapted here across three intervening cache-key versions with the bump history restored. Review army + red team ran: the notable catches were a dead-end enable-hint on the `--stale` path, a per-call reranker-override cache seam (closed), and PGLite-init hook timeouts sitting at bun's 5s default (house-pattern 60s applied to four serial test files). Follow-ups filed in TODOS.md: FS-walk parity for cross-source links, cross-source edge reconciliation, backlink-count source scoping, reranker score-scale as a recipe property.
+
 ## [0.45.14.0] - 2026-08-14
 
 **The box that already has a brain: framework-spawned coding agents get brain access by default.** The bootstrap door built in v0.45.0.0 was for a human at a laptop. A growing share of Claude Code and Codex sessions are spawned by an agent framework — your OpenClaw, or anything that shells out to headless sessions — on a machine that already hosts a brain and a running `gbrain serve --http`. Until now those sessions got nothing unless someone hand-replicated settings writers across every project directory. One command fixes that:

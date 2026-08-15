@@ -1123,9 +1123,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Misc
   'artifacts_sync_mode',
   'cross_project_learnings',
-  // Link resolution (issue #972)
+  // Link resolution (issue #972; cross_source is issue #2589)
   'link_resolution',
   'link_resolution.global_basename',
+  'link_resolution.cross_source',
   // Spend controls (v0.42.42.0, issue #2139). Previously `--force`-only — the
   // operator had to discover these by reading source. Registered so `config
   // set` accepts them directly. See docs/operations/spend-controls.md.

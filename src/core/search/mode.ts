@@ -274,6 +274,16 @@ export interface ModeBundle {
   relationalRetrieval: boolean;
   /** v0.43 — max hops for relational traversal. Default 2, hard-capped at 3. */
   relational_retrieval_depth: number;
+  /**
+   * v0.42.x — autocut weak-top floor: the minimum top cross-encoder rerank
+   * score for the cliff cut to be trusted. autocut normalizes the cliff test by
+   * the top score, so a weak top (e.g. 0.317 on a rare-term cross-source query)
+   * rescales to 1.0 and fabricates a confident cliff — collapsing a rich pool to
+   * 1 (the `--source __all__` collapse). Below this floor autocut no-ops (recall
+   * preserved). Default 0.5 (zerank-2 is bimodal: real ≈0.95+, weak ≈0.3). 0
+   * disables the floor. Override: `search.autocut_min_top_score` config → bundle.
+   */
+  autocut_min_top_score: number;
 }
 
 /**
@@ -327,6 +337,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     relationalRetrieval: false,
     relational_retrieval_depth: 2,
     autocut_jump: 0.2,
+    autocut_min_top_score: 0.5,
   }),
   balanced: Object.freeze({
     cache_enabled: true,
@@ -385,6 +396,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     relationalRetrieval: true,
     relational_retrieval_depth: 2,
     autocut_jump: 0.2,
+    autocut_min_top_score: 0.5,
   }),
   tokenmax: Object.freeze({
     cache_enabled: true,
@@ -436,6 +448,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     relationalRetrieval: true,
     relational_retrieval_depth: 2,
     autocut_jump: 0.2,
+    autocut_min_top_score: 0.5,
   }),
 });
 
@@ -490,6 +503,8 @@ export interface SearchKeyOverrides {
   relationalRetrieval?: boolean;
   relational_retrieval_depth?: number;
   autocut_jump?: number;
+  // v0.42.x — autocut weak-top floor override.
+  autocut_min_top_score?: number;
 }
 
 /**
@@ -539,6 +554,8 @@ export interface SearchPerCallOpts {
   // v0.43 — relational recall per-call overrides.
   relationalRetrieval?: boolean;
   relational_retrieval_depth?: number;
+  // v0.42.x — autocut weak-top floor per-call override.
+  autocut_min_top_score?: number;
 }
 
 /**
@@ -634,6 +651,8 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     // v0.43 — relational recall resolved via the same pick chain.
     relationalRetrieval: pick('relationalRetrieval'),
     relational_retrieval_depth: pick('relational_retrieval_depth'),
+    // v0.42.x — autocut weak-top floor resolved via the same pick chain.
+    autocut_min_top_score: pick('autocut_min_top_score'),
     resolved_mode,
     mode_valid: valid,
   };
@@ -800,7 +819,15 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // degraded:[{stage:'cache_prestamp'}] at hit time (belt-and-braces).
 // (Merge note: both this wave and master's #3515 wave claimed v=16 in
 // flight; the merge sequences them as 16 then 17.)
-export const KNOBS_HASH_VERSION = 17;
+//
+// bump 17→18 (autocut weak-top floor, re-land of #3131): adds `acmts`
+// (autocut_min_top_score). The floor changes WHETHER autocut cuts at all — a
+// write made with one floor must NOT be served to a lookup at a different
+// floor (the trimmed-vs-full set differs). Same one-time global cold-miss
+// pattern; fills within cache.ttl.
+// (Merge note: this wave authored the floor as v=16 before master claimed
+// 16 and 17 in flight; the merge sequences it as 18.)
+export const KNOBS_HASH_VERSION = 18;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -958,6 +985,13 @@ export function knobsHash(
     // a low write (compiled-truth-only set) must never be served to a
     // medium/high lookup. Undefined falls back to 'medium' (the default).
     `det=${ctx?.detail ?? 'medium'}`,
+    // v=18 addition (append-only) — autocut weak-top floor shifts whether
+    // autocut cuts at all, so an autocut-cut write must not be served to a
+    // different-floor lookup. `?? 0.5` mirrors the module default for
+    // partial-knobs callers. 4 decimals (vs acj's 2): the floor is compared
+    // directly against raw rerank scores, so nearby config values (0.501 vs
+    // 0.504) can flip trim-vs-no-op and must not collide on the cache key.
+    `acmts=${(knobs.autocut_min_top_score ?? 0.5).toFixed(4)}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));
@@ -1124,6 +1158,13 @@ export function loadOverridesFromConfig(
     const n = parseFloat(acj);
     if (Number.isFinite(n) && n > 0 && n <= 1) out.autocut_jump = n;
   }
+  // v0.42.x — autocut weak-top floor. [0, 1]: 0 disables, 1 pins at ceiling;
+  // out-of-range falls through to the bundle.
+  const acmts = get('search.autocut_min_top_score');
+  if (acmts !== undefined) {
+    const n = parseFloat(acmts);
+    if (Number.isFinite(n) && n >= 0 && n <= 1) out.autocut_min_top_score = n;
+  }
 
   // v0.43 — relational recall arm.
   const rel = get('search.relational_retrieval');
@@ -1178,6 +1219,8 @@ export const SEARCH_MODE_CONFIG_KEYS: ReadonlyArray<string> = Object.freeze([
   'search.relational_retrieval',
   'search.relational_retrieval_depth',
   'search.autocut_jump',
+  // v0.42.x autocut weak-top floor
+  'search.autocut_min_top_score',
 ]);
 
 /**

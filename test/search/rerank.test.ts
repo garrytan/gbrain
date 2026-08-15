@@ -15,7 +15,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { applyReranker, type RerankerOpts } from '../../src/core/search/rerank.ts';
+import { applyReranker, rerankerEmitsNormalizedScores, type RerankerOpts } from '../../src/core/search/rerank.ts';
 import { RerankError, type RerankResult } from '../../src/core/ai/gateway.ts';
 import { BudgetExhausted } from '../../src/core/budget/budget-tracker.ts';
 import { readRecentRerankFailures } from '../../src/core/rerank-audit.ts';
@@ -280,5 +280,24 @@ describe('applyReranker — pass-through cases', () => {
     const out = await applyReranker('q', [], opts);
     expect(out).toEqual([]);
     expect(called).toBe(false);
+  });
+});
+
+describe('rerankerEmitsNormalizedScores (autocut weak-top-floor gate)', () => {
+  test('cloud rerankers emit [0,1] scores → true', () => {
+    expect(rerankerEmitsNormalizedScores('zeroentropyai:zerank-2')).toBe(true);
+    expect(rerankerEmitsNormalizedScores('zeroentropyai:zerank-1-small')).toBe(true);
+    expect(rerankerEmitsNormalizedScores('cohere:rerank-v3.5')).toBe(true);
+    expect(rerankerEmitsNormalizedScores('voyage:rerank-2')).toBe(true);
+  });
+  test('undefined (default ZE reranker) → true', () => {
+    expect(rerankerEmitsNormalizedScores(undefined)).toBe(true);
+    expect(rerankerEmitsNormalizedScores('')).toBe(true);
+  });
+  test('raw-logit local rerankers (llama-server / Qwen3) → false', () => {
+    // These emit unbounded cross-encoder logits, so a [0,1] floor is meaningless.
+    expect(rerankerEmitsNormalizedScores('llama-server-reranker:Qwen3-Reranker-4B')).toBe(false);
+    expect(rerankerEmitsNormalizedScores('Qwen3-Reranker-0.6B')).toBe(false);
+    expect(rerankerEmitsNormalizedScores('LLAMA-SERVER-RERANKER:foo')).toBe(false); // case-insensitive
   });
 });

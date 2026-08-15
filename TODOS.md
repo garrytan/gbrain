@@ -1,5 +1,42 @@
 # TODOS
 
+## Source-federation follow-ups (filed with the Wave 3 fixes, 2026-08)
+
+- [ ] **P3 — FS-walk parity for `link_resolution.cross_source` (#2589 residual).**
+  The flag lives on the DB extract paths only; the FS-walk paths (dir-driven,
+  incl. the autopilot cycle's extract phase via runExtractCore) build their
+  slug set from one source's walked files, so cross-source targets are
+  neither resolvable nor counted there — the nightly cycle won't create the
+  edges a manual `extract links --source db` does. Parity needs a DB slug map
+  on the FS path (or routing the cycle's extract through the DB path).
+  Scope is documented in isCrossSourceLinksEnabled's docstring meanwhile.
+- [ ] **P3 — Cross-source edge reconciliation.** Wikilink-derived edges are
+  insert-only (ON CONFLICT DO NOTHING; no extract path deletes them):
+  (a) flipping `link_resolution.cross_source` OFF orphans existing A→B edges
+  indefinitely (still feed backlink counts/traversal; only target-page
+  deletion cascades); (b) adding a lexicographically smaller source that
+  carries the same slug makes the next extract ADD a second edge instead of
+  moving the first — backlink counts inflate. Needs a reconcile pass (e.g.
+  `reconcile-links` learns wikilink-derived cross-source rows) or a
+  documented once-picked-stays contract.
+
+- [ ] **P3 — Scope `getBacklinkCounts` by the caller's source grant.** The
+  backlink-count ranking boost (hybridSearch) counts referrers with no source
+  filter and groups by bare slug, so out-of-grant referrers nudge ranking as
+  a count-only signal (no slug/content disclosure — direct edge reads are
+  fully scoped in both engines). Pre-existing for A→'default' edges; the
+  opt-in `link_resolution.cross_source` flag widens the class to arbitrary
+  source pairs. Fix: accept `{sourceIds?}` and filter the referrer side in
+  BOTH engines, threaded from hybridSearch's existing scope; engine-parity
+  pin. Documented as a known soft edge in
+  docs/architecture/brains-and-sources.md meanwhile.
+- [ ] **P4 — Reranker score-scale as a recipe property.**
+  `rerankerEmitsNormalizedScores` (rerank.ts) hardcodes raw-logit reranker
+  name substrings; a future raw-logit recipe must remember to join the list
+  or the autocut floor misapplies. Prefer `scoreScale: 'unit' | 'logit'` on
+  reranker recipes, consulted at the hybrid.ts gate. (Kept verbatim from the
+  reviewed #3131 re-land; changing the seam belongs to its own change.)
+
 ## Truthful-surface wave follow-ups (filed with T14, amendment 35 + D14.5)
 
 Deferred from the MCP consumer-feedback wave (plan at

@@ -378,6 +378,10 @@ async function runLinksTimelinePass(
       for (const c of candidates) {
         const resolved = resolveCandidateSources(c, slug, sourceId, allSlugs, slugToSources);
         if (!resolved) continue;
+        // #2589: target exists only in other sources and cross-source links
+        // are off — the sweep skips it exactly like the extract paths do
+        // (extract.ts counts these; the sweep has no drop ledger).
+        if (resolved === 'cross-source-only') continue;
         linkBatch.push({
           from_slug: resolved.fromSlug,
           to_slug: c.targetSlug,
