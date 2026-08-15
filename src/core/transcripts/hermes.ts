@@ -49,8 +49,8 @@ export const HERMES_SPEC_TARGET: HostSpecTarget = {
     'context window). PROVISIONAL: no populated production sample verified.',
 };
 
-/** Hard cap for the store copy (FTS indexes make legitimate stores large). */
-export const HERMES_DB_HARD_CAP = 512 * 1024 * 1024;
+/** Default cap for the store copy — Infinity removes the limit. Pass maxBytes via opts to override. */
+export const HERMES_DB_HARD_CAP = Infinity;
 
 const SQLITE_MAGIC = 'SQLite format 3\u0000';
 
@@ -113,16 +113,16 @@ export const hermesAdapter: TranscriptAdapter = {
   async *parse(path: string, opts: ParseSessionsOpts = {}): AsyncGenerator<ParsedSession, FileDiagnostics> {
     const cap = opts.maxBytes ?? HERMES_DB_HARD_CAP;
     const size = statSync(path).size;
-    // The cap bounds the TOTAL copied (db + sidecars) — a runaway WAL can
-    // dwarf the main file, and only capping the db would let the copy blow
-    // through temp storage while advertising a 512MB bound.
+    // The cap bounds the TOTAL copied (db + sidecars). Default is Infinity
+    // (no limit) since the adapter reads sessions incrementally. Pass
+    // maxBytes via opts to cap when temp disk space is constrained.
     let totalBytes = size;
     for (const suffix of ['-wal', '-shm']) {
       if (existsSync(path + suffix)) totalBytes += statSync(path + suffix).size;
     }
     if (totalBytes > cap) {
       throw new Error(
-        `hermes store too large for import: ${totalBytes} bytes incl. sidecars (cap ${cap})`,
+        `hermes store too large for import: ${totalBytes} bytes incl. sidecars (cap ${cap}) — pass a higher maxBytes or omit the cap`,
       );
     }
 
