@@ -16,6 +16,7 @@ import {
   matchesAnyGlob,
   pruneDir,
   isPathPruned,
+  pruneDirForStrategy,
   SYNC_SKIP_FILES,
   type SyncStrategy,
 } from '../core/sync.ts';
@@ -1050,9 +1051,15 @@ function isCollectibleForWalker(
   // sync excludes. Full and incremental must agree on the exclusion set.
   // (In the FS-walk route `path` is a basename, so `includeHidden` has no
   // segment to waive there — that route's directory-level prune already ran
-  // via unmodified `pruneDir` before a file entry is ever reached; see
+  // via `pruneDirForStrategy` before a file entry is ever reached; see
   // `isPathPruned`'s doc comment for that scope note.)
-  if (isPathPruned(path, includeHidden)) return false;
+  //
+  // `strategy` is what lets a CODE source's `.github/`, `.claude/`, `.vscode/`
+  // through here. This is the git-fast-path's only dot-dir gate —
+  // `collectSyncableFiles` returns from `gitListSyncableFiles` before the FS
+  // walk ever runs on a git repo, so relaxing only the walker below would have
+  // changed nothing for every real source.
+  if (isPathPruned(path, includeHidden, strategy)) return false;
 
   // Malformed filenames (brackets / control chars — markdown-link syntax as a
   // literal filename) are rejected on BOTH collection routes, same as
@@ -1186,7 +1193,12 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
       // in core/sync.ts) instead of a hand-maintained inline list that drifted
       // from it. Skips hidden dirs (`.git`, `.raw`, etc.), `node_modules`,
       // `vendor`, `dist`, `build`, `venv` (#2020), `ops`, and git submodules.
-      if (!pruneDir(entry, d)) continue;
+      // Strategy-aware: pruneDirForStrategy delegates to pruneDir for every
+      // strategy except code/auto, so upstream's canonical-gate property is
+      // preserved; for code it admits `.github/`, `.claude/`, `.vscode/`, which
+      // `pruneDir` refuses outright. Keeping the plain pruneDir call here is
+      // what made a code source unable to see its own dot-directories.
+      if (!pruneDirForStrategy(entry, strategy, d)) continue;
       // Control-char SEGMENT check at descent time (never legitimate). The
       // bracket check moved to the per-file RELATIVE-path test below: a
       // bracket-named DIRECTORY must still be descended for code strategies

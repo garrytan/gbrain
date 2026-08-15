@@ -79,6 +79,15 @@ async function ensureSetup(): Promise<void> {
     // reconcile would delete a LIVE page. That shows up here as `missing`.
     writeFileSync(join(repo, 'lib/MixedCase.dart'), 'class MixedCase {}\n');
     writeFileSync(join(repo, 'lib/été.dart'), 'class Ete {}\n');
+    // Dot-DIRECTORIES. A code source must see its own CI and agent config;
+    // `.gbrain/` is the control that must stay out. Asserted explicitly below
+    // rather than through drift alone: `drift()` builds `expected` from the
+    // same collector the sync uses, so a collector that prunes `.github` makes
+    // both sides agree and the drift check passes on a broken tree.
+    mkdirSync(join(repo, '.github/workflows'), { recursive: true });
+    mkdirSync(join(repo, '.gbrain'), { recursive: true });
+    writeFileSync(join(repo, '.github/workflows/ci.yml'), 'name: ci\non: push\n');
+    writeFileSync(join(repo, '.gbrain/state.json'), '{"internal":true}\n');
     commit('init');
   })();
   await setupPromise;
@@ -113,13 +122,31 @@ describe('index matches tree at every lifecycle stage', () => {
     const { performSync } = await import('../src/commands/sync.ts');
     const r = await performSync(engine!, { repoPath: repo, ...OPTS });
     expect(r.status).toBe('first_sync');
+    const indexed = new Set(
+      (await engine!.executeRaw<{ slug: string }>(
+        `SELECT slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL`,
+        [SID],
+      )).map((x) => x.slug),
+    );
+    // Goes RED when the importer prunes dot-directories at descent, which is
+    // where the rule actually bites: `classifySync` alone admitted the path
+    // while `isCollectibleForWalker` never offered it, so the index stayed
+    // empty of it and every symptom looked like the sync was simply "caught up".
+    expect(indexed.has(resolveSlugForPath('.github/workflows/ci.yml'))).toBe(true);
+    expect(indexed.has(resolveSlugForPath('.gbrain/state.json'))).toBe(false);
     expect(await drift()).toEqual({ missing: [], ghosts: [] });
     const rows = await engine!.executeRaw<{ slug: string }>(
       `SELECT slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL`,
       [SID],
     );
     expect(rows.map((r2) => r2.slug).sort()).toEqual(
-      ['docs/a', 'lib-a-dart', 'lib-mixedcase-dart', 'lib-ete-dart'].sort(),
+      [
+        'docs/a', 'lib-a-dart', 'lib-mixedcase-dart', 'lib-ete-dart',
+        // derived, not typed out: the slug for a dot-dir path is exactly what
+        // the resolver produces, and hardcoding a guess here would assert my
+        // spelling rather than the index.
+        resolveSlugForPath('.github/workflows/ci.yml'),
+      ].sort(),
     );
   }, 120_000);
 
