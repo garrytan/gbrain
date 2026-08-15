@@ -45,14 +45,15 @@ describe('chat touchpoint — recipe registry', () => {
     }
   });
 
-  test('only Anthropic and model-family-gated OpenRouter claim supports_prompt_cache', () => {
+  test('only Anthropic claims supports_prompt_cache outright; others gate per model', () => {
     for (const r of listRecipes()) {
       if (!r.touchpoints.chat) continue;
       if (r.id === 'anthropic') {
         expect(r.touchpoints.chat.supports_prompt_cache).toBe(true);
-      } else if (r.id === 'openrouter') {
-        // Family-scoped predicate (openai/* + anthropic/claude-*), never a
-        // blanket true — see recipe-openrouter.test.ts for the model matrix.
+      } else if (r.id === 'openrouter' || r.id === 'google') {
+        // Scoped predicates, never a blanket true: OpenRouter by routed model
+        // family (openai/* + anthropic/claude-*), Google by Gemini version
+        // (implicit caching is 2.5+). Matrices live in each recipe's test.
         expect(typeof r.touchpoints.chat.supports_prompt_cache).toBe('function');
       } else {
         expect(r.touchpoints.chat.supports_prompt_cache ?? false).toBe(false);
