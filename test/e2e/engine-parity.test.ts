@@ -150,6 +150,57 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     expect(pgResults[0]?.slug).toBe(pgliteResults[0]?.slug);
   });
 
+  test('#4152 dream verdict triage-v1 round-trip: identical shape on both engines (jsonb path)', async () => {
+    // The postgres path binds segments/entities via sql.json(); PGLite via
+    // $N::jsonb + JSON.stringify. A double-encode regression on the postgres
+    // side would come back as a jsonb STRING scalar — the parity assert on
+    // the parsed arrays catches exactly that class (#2339).
+    const input = {
+      worth_processing: true,
+      reasons: ['thesis articulated', 'names a pattern'],
+      score: 0.83,
+      content_type: 'reflection',
+      segments: [
+        { quote: 'a verbatim line with "quotes" and unicode — 🤖', note: 'why it matters' },
+        { quote: 'second segment' },
+      ],
+      entities: ['acme-example', 'fund-a'],
+      model: 'anthropic:claude-haiku-4-5-20251001',
+      triage_version: 1,
+    };
+    for (const eng of [pgEngine, pgliteEngine]) {
+      await eng.putDreamVerdict('/corpus/parity.txt', 'parity-hash-0001', input);
+      // Upsert path: overwrite with a new score, same PK.
+      await eng.putDreamVerdict('/corpus/parity.txt', 'parity-hash-0001', { ...input, score: 0.31 });
+    }
+    const pg = await pgEngine.getDreamVerdict('/corpus/parity.txt', 'parity-hash-0001');
+    const lite = await pgliteEngine.getDreamVerdict('/corpus/parity.txt', 'parity-hash-0001');
+    expect(pg).not.toBeNull();
+    expect(lite).not.toBeNull();
+    for (const v of [pg!, lite!]) {
+      expect(v.score).toBe(0.31);
+      expect(v.content_type).toBe('reflection');
+      expect(Array.isArray(v.segments)).toBe(true); // NOT a double-encoded string scalar
+      expect(v.segments).toEqual(input.segments);
+      expect(v.entities).toEqual(input.entities);
+      expect(v.model).toBe(input.model);
+      expect(v.triage_version).toBe(1);
+    }
+    // Legacy-row semantics: a boolean-era row reads back with null triage fields.
+    for (const eng of [pgEngine, pgliteEngine]) {
+      await eng.executeRaw(
+        `INSERT INTO dream_verdicts (file_path, content_hash, worth_processing, reasons)
+         VALUES ('/corpus/legacy.txt', 'legacy-hash-0001', true, '["old"]'::jsonb)
+         ON CONFLICT (file_path, content_hash) DO NOTHING`,
+      );
+      const legacy = await eng.getDreamVerdict('/corpus/legacy.txt', 'legacy-hash-0001');
+      expect(legacy!.score).toBeNull();
+      expect(legacy!.triage_version).toBeNull();
+      expect(legacy!.segments).toEqual([]);
+      expect(legacy!.entities).toEqual([]);
+    }
+  });
+
   test('email citation metadata projects identically across engines', async () => {
     const slug = 'mail/example-citation';
     const page = {

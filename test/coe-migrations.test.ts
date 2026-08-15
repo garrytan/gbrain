@@ -9,8 +9,8 @@ import {
 } from "../src/core/migrate.ts";
 
 const EXPECTED_RLS_TABLES = new Map([
-  [129, 6],
-  [130, 4],
+  [130, 6],
+  [131, 4],
 ]);
 
 describe("CoE migrations fail closed on RLS", () => {
@@ -52,20 +52,20 @@ describe("CoE migrations fail closed on RLS", () => {
     expect(tail.match(/ALTER TABLE coe_[a-z_]+ ENABLE ROW LEVEL SECURITY;/g)).toHaveLength(10);
   });
 
-  test("migration 129 enforces source/snapshot and content-addressed SQL invariants", () => {
-    const sql = MIGRATIONS.find((migration) => migration.version === 129)?.sql ?? "";
+  test("migration 130 enforces source/snapshot and content-addressed SQL invariants", () => {
+    const sql = MIGRATIONS.find((migration) => migration.version === 130)?.sql ?? "";
     expect(sql).toContain("UNIQUE (snapshot_id, source_id)");
     expect(sql).toContain("FOREIGN KEY (snapshot_id, source_id)");
     expect(sql.match(/object_key = 'objects\/sha256\/'/g)).toHaveLength(2);
   });
 
-  test("migration 130 binds normalized-document object keys to their hashes", () => {
-    const sql = MIGRATIONS.find((migration) => migration.version === 130)?.sql ?? "";
+  test("migration 131 binds normalized-document object keys to their hashes", () => {
+    const sql = MIGRATIONS.find((migration) => migration.version === 131)?.sql ?? "";
     expect(sql).toContain("object_key = 'objects/sha256/'");
   });
 
   test("Postgres RLS handlers stamp their own migration version", async () => {
-    for (const version of [129, 130]) {
+    for (const version of [130, 131]) {
       const seen: number[] = [];
       const migration = MIGRATIONS.find((candidate) => candidate.version === version);
       await migration?.handler?.({
@@ -76,7 +76,7 @@ describe("CoE migrations fail closed on RLS", () => {
     }
   });
 
-  test("an idempotent retry that still fails verification never advances schema version", async () => {
+  test("an idempotent retry that still fails verification never advances past the last verified migration", async () => {
     const configuredVersions: string[] = [];
     const engine = {
       kind: "pglite",
@@ -88,6 +88,6 @@ describe("CoE migrations fail closed on RLS", () => {
     engine.transaction = async (operation: (transaction: unknown) => Promise<unknown>) => operation(engine);
 
     await expect(runMigrations(engine as never)).rejects.toBeInstanceOf(MigrationDriftError);
-    expect(configuredVersions).toEqual([]);
+    expect(configuredVersions).toEqual(["129"]);
   });
 });

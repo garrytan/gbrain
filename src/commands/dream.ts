@@ -32,6 +32,7 @@ import {
   type CycleReport,
 } from '../core/cycle.ts';
 import { resolveSourceId } from '../core/source-resolver.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { fetchSource } from '../core/sources-load.ts';
 import { existsSync } from 'fs';
 import { resolve } from 'node:path';
@@ -346,6 +347,7 @@ async function resolveBrainDir(
 
 function printHelp() {
   console.log(`Usage: gbrain dream [options]
+       gbrain dream retriage [flags]   (see: gbrain dream retriage --help)
 
 Run one brain maintenance cycle. Eight phases:
   lint -> backlinks -> sync -> synthesize -> extract -> patterns -> embed -> orphans
@@ -354,10 +356,17 @@ The synthesize + patterns phases (v0.21) consolidate yesterday's
 conversation transcripts into reflections, originals, and cross-session
 pattern pages. Designed for cron (exits when done).
 
+The synthesize phase (#4152) runs a two-stage cascade: a cheap scored triage
+(model: models.dream.triage, gate: dream.triage.threshold, default 0.5) gates
+the expensive per-transcript synthesis subagents (turn budget:
+dream.synthesize.max_turns, default 16). Retune the threshold any time —
+scores are cached, so re-gating costs zero new LLM calls. \`dream retriage\`
+re-scores the corpus and reconciles the queued synthesis backlog.
+
 Options:
   --dry-run           Preview all fixes without writing. Note: synthesize
-                      runs the cheap Haiku significance filter (caches
-                      verdicts), but skips the Sonnet synthesis pass.
+                      runs the cheap scored triage pass (caches verdicts),
+                      but skips the synthesis subagents.
                       "--dry-run" does NOT mean "zero LLM calls."
   --json              Emit the CycleReport as JSON (agent-readable)
   --phase <name>      Run a single phase: ${ALL_PHASES.join(' | ')}
@@ -569,6 +578,33 @@ async function runDrain(
 }
 
 export async function runDream(engine: BrainEngine | null, args: string[]): Promise<CycleReport | void> {
+  // ─── `dream retriage` subverb (#4152) — dispatched BEFORE parseArgs so its
+  // flag set never collides with the cycle flags. `dream --help` never reaches
+  // here (args[0] is '--help'); `dream retriage --help` prints subcommand help
+  // inside runDreamRetriage without touching the engine (same IRON RULE).
+  if (args[0] === 'retriage') {
+    const { runDreamRetriage } = await import('./dream-retriage.ts');
+    await runDreamRetriage(engine, args.slice(1));
+    return;
+  }
+  // Fail-loud guard (structured-review r3 P1): the CLI flag registry unions
+  // retriage's flags into `dream`, so the pre-dispatch validator accepts
+  // `gbrain dream --reconcile-queue` — but without the `retriage` positional,
+  // parseArgs would ignore the flag and silently run the full (paid, writing)
+  // maintenance cycle instead of the reconciliation the user asked for.
+  {
+    const RETRIAGE_ONLY_FLAGS = ['--reconcile-queue', '--cancel-unmatched', '--audit-rejects'];
+    const stray = args.find(a => RETRIAGE_ONLY_FLAGS.includes(a));
+    if (stray) {
+      console.error(
+        `gbrain dream: ${stray} belongs to the 'retriage' subcommand — ` +
+        `did you mean: gbrain dream retriage ${args.join(' ')}`,
+      );
+      setCliExitVerdict(2);
+      return;
+    }
+  }
+
   const opts = parseArgs(args);
 
   // ─── IRON RULE: --help short-circuits BEFORE any engine-bearing work ─

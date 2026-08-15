@@ -9,7 +9,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
-import { runPhaseSynthesize } from '../src/core/cycle/synthesize.ts';
+import { runPhaseSynthesize, TRIAGE_VERSION } from '../src/core/cycle/synthesize.ts';
+import { TIER_DEFAULTS } from '../src/core/model-config.ts';
 
 let engine: PGLiteEngine;
 let schemaVersion: string;
@@ -37,9 +38,17 @@ async function seedWorthProcessingVerdict(
   content: string,
 ): Promise<void> {
   const contentHash = createHash('sha256').update(content, 'utf8').digest('hex');
+  // Triage-v1 cache validity requires score + matching (model, triage_version);
+  // TIER_DEFAULTS.utility is what loadSynthConfig resolves in a bare test env.
   await engine.putDreamVerdict(filePath, contentHash, {
     worth_processing: true,
     reasons: ['seeded for timeout config test'],
+    score: 0.9,
+    content_type: null,
+    segments: [],
+    entities: [],
+    model: TIER_DEFAULTS.utility,
+    triage_version: TRIAGE_VERSION,
   });
 }
 

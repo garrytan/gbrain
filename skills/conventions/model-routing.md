@@ -12,7 +12,7 @@ Four tiers:
 
 | Tier | Purpose | Default | Examples |
 |---|---|---|---|
-| `utility` | fast classification, expansion, verdict, dedup | `claude-haiku-4-5-20251001` | query expansion, facts contradiction classifier, dream synthesize verdict |
+| `utility` | fast classification, expansion, verdict, dedup | `claude-haiku-4-5-20251001` | query expansion, facts contradiction classifier, dream triage judge (prefers `models.dream.triage`) |
 | `reasoning` | default chat, synthesis, generation | `claude-sonnet-4-6` | gateway chat, dream synthesize, patterns, facts extraction |
 | `deep` | slow, expensive reasoning | `claude-opus-4-7` | `gbrain think`, auto-think, cross-modal eval slot B |
 | `subagent` | Anthropic-only multi-turn tool loop | `claude-sonnet-4-6` | `gbrain agent run` |
@@ -27,6 +27,10 @@ Override priority (highest first):
 6. Env var (`GBRAIN_MODEL=opus`)
 7. Tier default (the table above)
 8. Hardcoded caller fallback
+
+One exception: the dream triage judge pre-reads `models.dream.triage` first —
+when that key is set, it wins over this entire chain (`gbrain models` reports
+it as the effective route).
 
 Power-user recipes:
 

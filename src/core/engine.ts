@@ -444,17 +444,40 @@ export interface SynthesisEvidenceInput {
   citation_index: number;
 }
 
-/** Dream-cycle Haiku verdict on whether a transcript is worth processing. */
+/** One candidate segment extracted by triage: a verbatim quote plus why it matters. */
+export interface TriageSegment {
+  quote: string;
+  note?: string;
+}
+
+/**
+ * Dream-cycle triage verdict on a transcript (#4152 two-stage cascade).
+ * Triage-v1 fields (`score` .. `triage_version`) are null/[] on legacy rows
+ * written by the boolean-era judge — callers treat those rows as cache misses.
+ */
 export interface DreamVerdict {
   worth_processing: boolean;
   reasons: string[];
   judged_at: string;
+  /** Ordinal salience score in [0,1]; comparable only within (model, triage_version). */
+  score: number | null;
+  content_type: string | null;
+  segments: TriageSegment[];
+  entities: string[];
+  model: string | null;
+  triage_version: number | null;
 }
 
 /** Input shape for putDreamVerdict — judged_at defaults to now() server-side. */
 export interface DreamVerdictInput {
   worth_processing: boolean;
   reasons: string[];
+  score: number;
+  content_type: string | null;
+  segments: TriageSegment[];
+  entities: string[];
+  model: string;
+  triage_version: number;
 }
 
 // ============================================================

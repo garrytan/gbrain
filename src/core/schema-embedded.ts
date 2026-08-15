@@ -1118,6 +1118,15 @@ CREATE TABLE IF NOT EXISTS dream_verdicts (
   worth_processing BOOLEAN     NOT NULL,
   reasons          JSONB,
   judged_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- #4152 triage-v1 (migration v129): ordinal salience score in [0,1],
+  -- content type, candidate segments/entities, judging model + prompt
+  -- version. NULL on boolean-era rows — readers treat those as cache misses.
+  score            DOUBLE PRECISION,
+  content_type     TEXT,
+  segments         JSONB,
+  entities         JSONB,
+  model            TEXT,
+  triage_version   INT,
   PRIMARY KEY (file_path, content_hash)
 );
 

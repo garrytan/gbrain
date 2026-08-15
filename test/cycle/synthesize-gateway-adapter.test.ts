@@ -32,8 +32,13 @@ afterEach(() => {
 
 // Canned "worth processing" LLM text used by the parsed-verdict parity tests.
 // Mirrors what a well-tuned Haiku would emit for a substantive transcript.
+// Triage-v1 (#4152): the judge emits a scored verdict; worth_processing is
+// derived from `score >= DEFAULT_TRIAGE_THRESHOLD`.
 const WORTH_PROCESSING_JSON = JSON.stringify({
-  worth_processing: true,
+  score: 0.85,
+  content_type: 'strategy',
+  segments: [],
+  entities: [],
   reasons: ['user reflects on portfolio framework', 'concrete strategic call'],
 });
 

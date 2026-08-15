@@ -305,11 +305,14 @@ describe('judgeSignificance', () => {
     };
   }
 
+  /** Triage-v1 mock output — the judge now emits a scored verdict. */
+  const TRIAGE_JSON = '{"score": 0.9, "content_type": "reflection", "segments": [{"quote": "a memorable line", "note": "names a pattern"}], "entities": ["acme-example"], "reasons": ["test"]}';
+
   function mockClient(captured: { model?: string }): JudgeClient {
     return {
       create: async (p: any) => {
         captured.model = p.model;
-        return { content: [{ type: 'text', text: '{"worth_processing": true, "reasons": ["test"]}' }] } as any;
+        return { content: [{ type: 'text', text: TRIAGE_JSON }] } as any;
       },
     };
   }
@@ -326,24 +329,39 @@ describe('judgeSignificance', () => {
     expect(captured.model).toBe('claude-haiku-4-5-20251001');
   });
 
-  test('returns worth_processing=false when judge returns unparseable text', async () => {
+  test('parses a scored triage verdict: score, content_type, segments, entities', async () => {
+    const client: JudgeClient = {
+      create: async () => ({ content: [{ type: 'text', text: TRIAGE_JSON }], stop_reason: 'end_turn' } as any),
+    };
+    const r = await judgeSignificance(client, makeTranscript());
+    expect(r.score).toBe(0.9);
+    expect(r.content_type).toBe('reflection');
+    expect(r.segments).toEqual([{ quote: 'a memorable line', note: 'names a pattern' }]);
+    expect(r.entities).toEqual(['acme-example']);
+    expect(r.worth_processing).toBe(true); // derived: score >= DEFAULT_TRIAGE_THRESHOLD
+    expect(r.unreliable).toBeUndefined();
+  });
+
+  test('derived worth_processing uses the fixed constant: 0.5 passes, 0.49 does not', async () => {
+    const at = await judgeSignificance({
+      create: async () => ({ content: [{ type: 'text', text: '{"score": 0.5, "reasons": []}' }], stop_reason: 'end_turn' } as any),
+    }, makeTranscript());
+    expect(at.worth_processing).toBe(true);
+    const below = await judgeSignificance({
+      create: async () => ({ content: [{ type: 'text', text: '{"score": 0.49, "reasons": []}' }], stop_reason: 'end_turn' } as any),
+    }, makeTranscript());
+    expect(below.worth_processing).toBe(false);
+    expect(below.unreliable).toBeUndefined(); // a low score is a VALID verdict, not degenerate
+  });
+
+  test('returns score 0 + unparseable when judge returns non-JSON text', async () => {
     const client: JudgeClient = {
       create: async () => ({ content: [{ type: 'text', text: 'no json here' }] } as any),
     };
     const r = await judgeSignificance(client, makeTranscript());
     expect(r.worth_processing).toBe(false);
+    expect(r.score).toBe(0);
     expect(r.reasons[0]).toContain('unparseable');
-  });
-
-  test('marks unparseable output unreliable so the caller never caches it', async () => {
-    const client: JudgeClient = {
-      create: async () => ({
-        content: [{ type: 'text', text: 'no json here' }],
-        stop_reason: 'end_turn',
-      } as any),
-    };
-    const r = await judgeSignificance(client, makeTranscript());
-    expect(r.worth_processing).toBe(false);
     expect(r.unreliable).toBe('unparseable');
   });
 
@@ -353,7 +371,7 @@ describe('judgeSignificance', () => {
     // stop_reason is 'max_tokens'.
     const client: JudgeClient = {
       create: async () => ({
-        content: [{ type: 'text', text: '{"worth_process' }],
+        content: [{ type: 'text', text: '{"scor' }],
         stop_reason: 'max_tokens',
       } as any),
     };
@@ -366,12 +384,13 @@ describe('judgeSignificance', () => {
   test('marks truncated response unreliable even when a parseable JSON object survives the cut', async () => {
     const client: JudgeClient = {
       create: async () => ({
-        content: [{ type: 'text', text: '{"worth_processing": true, "reasons": ["r1"]}' }],
+        content: [{ type: 'text', text: '{"score": 0.8, "reasons": ["r1"]}' }],
         stop_reason: 'max_tokens',
       } as any),
     };
     const r = await judgeSignificance(client, makeTranscript());
     // The parsed values still drive THIS cycle...
+    expect(r.score).toBe(0.8);
     expect(r.worth_processing).toBe(true);
     expect(r.reasons).toEqual(['r1']);
     // ...but the verdict must not be banked as permanent.
@@ -381,7 +400,7 @@ describe('judgeSignificance', () => {
   test('clean parse with stop_reason=end_turn stays cacheable (no unreliable marker)', async () => {
     const client: JudgeClient = {
       create: async () => ({
-        content: [{ type: 'text', text: '{"worth_processing": true, "reasons": ["r1"]}' }],
+        content: [{ type: 'text', text: '{"score": 0.8, "reasons": ["r1"]}' }],
         stop_reason: 'end_turn',
       } as any),
     };
@@ -393,7 +412,7 @@ describe('judgeSignificance', () => {
   test('marks refused/content-filtered response (stop_reason=refusal) unreliable', async () => {
     const client: JudgeClient = {
       create: async () => ({
-        content: [{ type: 'text', text: '{"worth_processing": false, "reasons": ["blocked"]}' }],
+        content: [{ type: 'text', text: '{"score": 0.1, "reasons": ["blocked"]}' }],
         stop_reason: 'refusal',
       } as any),
     };
@@ -401,7 +420,7 @@ describe('judgeSignificance', () => {
     expect(r.unreliable).toBe('refusal');
   });
 
-  test('JSON object without worth_processing key is unparseable, not a cacheable false', async () => {
+  test('JSON object without a score is unparseable, not a cacheable rejection', async () => {
     const client: JudgeClient = {
       create: async () => ({
         content: [{ type: 'text', text: '{}' }],
@@ -413,10 +432,10 @@ describe('judgeSignificance', () => {
     expect(r.unreliable).toBe('unparseable');
   });
 
-  test('non-boolean worth_processing ("true") is unparseable, not a cacheable false', async () => {
+  test('non-numeric score ("0.7") is unparseable, not a cacheable rejection', async () => {
     const client: JudgeClient = {
       create: async () => ({
-        content: [{ type: 'text', text: '{"worth_processing": "true", "reasons": ["r1"]}' }],
+        content: [{ type: 'text', text: '{"score": "0.7", "reasons": ["r1"]}' }],
         stop_reason: 'end_turn',
       } as any),
     };
@@ -425,19 +444,101 @@ describe('judgeSignificance', () => {
     expect(r.unreliable).toBe('unparseable');
   });
 
-  test('judge max_tokens budget is exactly 1024 (reasoning-model headroom, cost-capped)', async () => {
+  test('score outside [0,1] is unparseable — never clamped into a cacheable verdict', async () => {
+    for (const bad of ['1.5', '-0.2', '42']) {
+      const r = await judgeSignificance({
+        create: async () => ({
+          content: [{ type: 'text', text: `{"score": ${bad}, "reasons": []}` }],
+          stop_reason: 'end_turn',
+        } as any),
+      }, makeTranscript());
+      expect(r.unreliable).toBe('unparseable');
+      expect(r.reasons[0]).toContain('score out of range');
+    }
+  });
+
+  test('non-finite score (Infinity via 1e999) is unparseable', async () => {
+    const r = await judgeSignificance({
+      create: async () => ({
+        content: [{ type: 'text', text: '{"score": 1e999, "reasons": []}' }],
+        stop_reason: 'end_turn',
+      } as any),
+    }, makeTranscript());
+    expect(r.unreliable).toBe('unparseable');
+  });
+
+  test('lenient optional fields: bad segments/entities/content_type drop, never degenerate', async () => {
+    const r = await judgeSignificance({
+      create: async () => ({
+        content: [{ type: 'text', text: '{"score": 0.6, "content_type": 42, "segments": [{"note": "no quote"}, "junk"], "entities": [1, "", "  real-entity  "], "reasons": ["ok"]}' }],
+        stop_reason: 'end_turn',
+      } as any),
+    }, makeTranscript());
+    expect(r.unreliable).toBeUndefined();
+    expect(r.content_type).toBeNull();
+    expect(r.segments).toEqual([]);
+    expect(r.entities).toEqual(['real-entity']);
+  });
+
+  test('segment/entity clipping: ≤8 segments, quotes ≤300 chars; ≤12 entities, each ≤80 chars', async () => {
+    const segments = Array.from({ length: 12 }, (_, i) => ({ quote: `q${i}-` + 'x'.repeat(400), note: 'n'.repeat(300) }));
+    const entities = Array.from({ length: 20 }, (_, i) => `e${i}-` + 'y'.repeat(100));
+    const r = await judgeSignificance({
+      create: async () => ({
+        content: [{ type: 'text', text: JSON.stringify({ score: 0.7, segments, entities, reasons: [] }) }],
+        stop_reason: 'end_turn',
+      } as any),
+    }, makeTranscript());
+    expect(r.segments).toHaveLength(8);
+    expect(r.segments.every(s => s.quote.length <= 300)).toBe(true);
+    expect(r.segments.every(s => (s.note ?? '').length <= 200)).toBe(true);
+    expect(r.entities).toHaveLength(12);
+    expect(r.entities.every(e => e.length <= 80)).toBe(true);
+  });
+
+  test('judge max_tokens budget defaults to 2048 and honors the opts override', async () => {
     let captured: number | undefined;
     const client: JudgeClient = {
       create: async (p: any) => {
         captured = p.max_tokens;
         return {
-          content: [{ type: 'text', text: '{"worth_processing": false, "reasons": []}' }],
+          content: [{ type: 'text', text: '{"score": 0.1, "reasons": []}' }],
           stop_reason: 'end_turn',
         } as any;
       },
     };
     await judgeSignificance(client, makeTranscript());
-    expect(captured).toBe(1024);
+    expect(captured).toBe(2048);
+    await judgeSignificance(client, makeTranscript(), 'claude-haiku-4-5-20251001', { maxTokens: 512 });
+    expect(captured).toBe(512);
+  });
+
+  test('sampled marker appended to reasons when the transcript exceeds maxChars', async () => {
+    const longTranscript = { ...makeTranscript(), content: 'z'.repeat(30_000) };
+    const r = await judgeSignificance({
+      create: async () => ({
+        content: [{ type: 'text', text: '{"score": 0.6, "reasons": ["r1"]}' }],
+        stop_reason: 'end_turn',
+      } as any),
+    }, longTranscript, 'claude-haiku-4-5-20251001', { maxChars: 24_000 });
+    expect(r.reasons.some(x => x.startsWith('sampled:'))).toBe(true);
+  });
+
+  test('three-window sampling: mid-transcript content reaches the judge prompt', async () => {
+    // 100K-char transcript with a unique marker dead-center — a head+tail
+    // sample would miss it; the head/middle/tail sample must include it.
+    const half = 'a'.repeat(50_000);
+    const content = half + 'MIDDLE-SIGNAL-MARKER' + half;
+    let prompt = '';
+    await judgeSignificance({
+      create: async (p: any) => {
+        prompt = p.messages[0].content;
+        return { content: [{ type: 'text', text: '{"score": 0.5, "reasons": []}' }], stop_reason: 'end_turn' } as any;
+      },
+    }, { ...makeTranscript(), content }, 'claude-haiku-4-5-20251001', { maxChars: 24_000 });
+    expect(prompt).toContain('MIDDLE-SIGNAL-MARKER');
+    // And the sample is bounded: prompt stays well under the raw 100K.
+    expect(prompt.length).toBeLessThan(30_000);
   });
 });
 
@@ -523,41 +624,48 @@ describe('judgeSignificance — UTF-16 safety (v0.41.13)', () => {
     };
   }
 
-  // ─── Head-boundary cases (offset around 4000) ──────────────────────
+  // Triage-v1 note: the default sample window moved to 24K with three
+  // windows (head 50% / middle 20% / tail 30%). These fixtures pass
+  // `{ maxChars: 8000 }` to keep the 8001-char content on the slicing path;
+  // at 8000 the window boundaries are head end = 4000, middle = [4000, 5600),
+  // tail start = 5601. Every boundary routes through safeSplitIndex, so the
+  // unpaired-surrogate scan is the invariant regardless of exact offsets.
+  const SAMPLE_OPTS = { maxChars: 8000 };
+
+  // ─── Head-boundary cases (offset around 4000, also the middle-window start) ──
 
   test.each([3998, 3999, 4000, 4001])(
     'emoji at head offset %i: captured prompt has zero unpaired surrogates',
     async (offset) => {
       const content = buildContentWithEmojiAt(8001, offset);
       const { client, captured } = makeCapturingClient();
-      await judgeSignificance(client, makeLongTranscript(content));
+      await judgeSignificance(client, makeLongTranscript(content), 'claude-haiku-4-5-20251001', SAMPLE_OPTS);
       expect(captured.userMessage).not.toBeNull();
       const result = scanForUnpairedSurrogates(captured.userMessage!);
       expect(result).toBeNull();
     },
   );
 
-  // ─── Tail-boundary cases (offset around length-4000 = 4001) ────────
+  // ─── Middle-end + tail-boundary cases (5600 = middle end, 5601 = tail start) ──
 
-  test.each([3999, 4000, 4001, 4002])(
+  test.each([5599, 5600, 5601, 5602])(
     'emoji at tail offset %i: captured prompt has zero unpaired surrogates',
     async (offset) => {
-      // 8001 - 4000 = 4001 is the tail boundary; we test around it.
       const content = buildContentWithEmojiAt(8001, offset);
       const { client, captured } = makeCapturingClient();
-      await judgeSignificance(client, makeLongTranscript(content));
+      await judgeSignificance(client, makeLongTranscript(content), 'claude-haiku-4-5-20251001', SAMPLE_OPTS);
       expect(captured.userMessage).not.toBeNull();
       const result = scanForUnpairedSurrogates(captured.userMessage!);
       expect(result).toBeNull();
     },
   );
 
-  // ─── Sub-8000 short-content branch: no slicing, no risk ────────────
+  // ─── Sub-window short-content branch: no slicing, no risk ────────────
 
-  test('content <= 8000 chars: no slicing applied, emoji passes through unchanged', async () => {
+  test('content <= maxChars: no slicing applied, emoji passes through unchanged', async () => {
     const content = 'a'.repeat(100) + ROBOT + 'b'.repeat(100); // 202 chars total
     const { client, captured } = makeCapturingClient();
-    await judgeSignificance(client, makeLongTranscript(content));
+    await judgeSignificance(client, makeLongTranscript(content), 'claude-haiku-4-5-20251001', SAMPLE_OPTS);
     expect(captured.userMessage).not.toBeNull();
     expect(scanForUnpairedSurrogates(captured.userMessage!)).toBeNull();
     // Emoji's full pair must appear at least once.

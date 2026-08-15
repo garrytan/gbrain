@@ -86,7 +86,7 @@ the repo. The architectural rule still holds — these aren't
 | `mcp_request_log` | Audit trail. Volatile by design. |
 | `minion_jobs` / `minion_inbox` / `minion_attachments` | Job queue. Restarts re-enqueue or drop. |
 | `eval_candidates` / `eval_capture_failures` | Contributor-mode dev loop; opt-in capture. |
-| `dream_verdicts` | Cheap verdict cache. Rebuildable by re-running Haiku. |
+| `dream_verdicts` | Scored triage cache (salience score, quotes, entities, judging model + prompt version). Rebuildable via `gbrain dream retriage --force`. |
 | `gbrain_cycle_locks` / migration ledger | Infrastructure. |
 | `op_checkpoint_paths` | Sync-resume checkpoint. Append-only progress banking; a completed sync makes it irrelevant. |
 | `config` (some keys) | Site-local routing config (e.g. `sync.repo_path`). |
