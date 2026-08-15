@@ -25,6 +25,7 @@ import {
   type BatchAuditSite,
 } from './retry.ts';
 import { isConnectionEndedError } from './retry-matcher.ts';
+import { CheckoutGauge, type PoolGaugeSnapshot } from './pool-gauge.ts';
 import {
   valueHash,
   normalizeDimension,
@@ -82,7 +83,7 @@ import { GBrainError, PAGE_SORT_SQL, ENRICH_ORDER_SQL } from './types.ts';
 import { finalizeLastSeen } from './chronicle/last-seen.ts';
 import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import * as db from './db.ts';
-import { ConnectionManager } from './connection-manager.ts';
+import { ConnectionManager, DEFAULT_DIRECT_POOL_SIZE } from './connection-manager.ts';
 import { logConnectionEvent } from './connection-audit.ts';
 import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, takeRowToTake, takeHitRowToHit, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
@@ -132,6 +133,13 @@ export class PostgresEngine implements BrainEngine {
   private _savedConfig: (EngineConfig & { poolSize?: number; parentConnectionManager?: ConnectionManager }) | null = null;
   /** Whether a reconnect is in progress (prevents concurrent reconnects). */
   private _reconnecting = false;
+  /**
+   * Approximate in-flight counters for the health probe's diagnostics
+   * (issue #6). Tracks the raw/direct/reserved/tx seams ONLY — see the
+   * honesty contract in pool-gauge.ts. Shared by tx-scoped engine clones
+   * via the prototype chain (same process, same pools). Fail-open.
+   */
+  private checkoutGauge = new CheckoutGauge();
   /**
    * #1471: module-singleton OWNERSHIP token. `true` only for the engine whose
    * connect() actually created the shared db.ts `sql` singleton (returned
@@ -297,6 +305,8 @@ export class PostgresEngine implements BrainEngine {
         max: size,
         idle_timeout: 20,
         connect_timeout: 10,
+        // Explicit (matches the postgres.js implicit default; GBRAIN_POOL_MAX_LIFETIME_S overrides).
+        max_lifetime: db.resolveMaxLifetimeSeconds(),
         types: { bigint: postgres.BigInt },
         // Silence postgres NOTICE-level messages by default. See db.ts for
         // rationale (stdout-parsing callers like jobs-submit --json break when
@@ -1059,18 +1069,83 @@ export class PostgresEngine implements BrainEngine {
 
   async transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
     const conn = this.sql;
-    return conn.begin(async (tx) => {
-      // Create a scoped engine with tx as its connection, no shared state mutation
-      const txEngine = Object.create(this) as PostgresEngine;
-      Object.defineProperty(txEngine, 'sql', { get: () => tx });
-      Object.defineProperty(txEngine, '_sql', { value: tx as unknown as ReturnType<typeof postgres>, writable: false });
-      return fn(txEngine);
-    }) as Promise<T>;
+    // try/finally, not .finally on the chained promise: begin() can throw
+    // SYNCHRONOUSLY (e.g. nested transaction on a tx clone whose conn has no
+    // .begin), which would skip a chained .finally and leak the counter.
+    this.checkoutGauge.acquire('tx');
+    try {
+      return await (conn.begin(async (tx) => {
+        // Create a scoped engine with tx as its connection, no shared state mutation
+        const txEngine = Object.create(this) as PostgresEngine;
+        Object.defineProperty(txEngine, 'sql', { get: () => tx });
+        Object.defineProperty(txEngine, '_sql', { value: tx as unknown as ReturnType<typeof postgres>, writable: false });
+        return fn(txEngine);
+      }) as Promise<T>);
+    } finally {
+      this.checkoutGauge.release('tx');
+    }
   }
 
+  /**
+   * issue #6 (reserved-connection routing): concurrent DIRECT-pool reserves
+   * are capped at directPoolSize - 1 so the claim/renewLock heartbeats always
+   * keep >= 1 direct slot; overflow falls back to the READ pool — exactly the
+   * pre-routing behavior, so this change is strictly never-worse than the
+   * status quo (deliberate rejection of queue-for-a-permit: that would block
+   * migrations behind multi-minute CREATE INDEX holds). Per-process by
+   * design: each process owns its own direct pool, so a CLI migration's
+   * reserves cannot starve a worker's heartbeats.
+   */
+  private _reservedDirectInFlight = 0;
+
   async withReservedConnection<T>(fn: (conn: ReservedConnection) => Promise<T>): Promise<T> {
-    const pool = this.sql;
-    const reserved = await pool.reserve();
+    // Long-hold reserved work (CREATE INDEX CONCURRENTLY, transaction:false
+    // migration DDL, backfill BEGIN..COMMIT batches) belongs on the DIRECT
+    // session lane: 30-min statement_timeout + maintenance_work_mem GUCs and
+    // it stops pinning the worker's shared read pool (the observed 353s
+    // COMMIT in issue #6 was a reserved read-pool slot). Never reroute inside
+    // an open transaction (same guard shape as executeRawDirect).
+    const inTransaction = this._sql !== null && this.connectionManager?.peekReadPool() !== this._sql;
+    let pool = this.sql;
+    let fromDirect = false;
+    if (!inTransaction && this.connectionManager?.isDualPoolActive()) {
+      const size = this.connectionManager.describeMode().direct_pool_size ?? DEFAULT_DIRECT_POOL_SIZE;
+      // NO floor on the cap (red-team finding): at direct_pool_size=1 a
+      // Math.max(1, ...) floor would let a multi-minute reserve consume the
+      // ONLY direct session and starve claim/renewLock heartbeats — the
+      // exact #6 class, reintroduced on the direct pool. cap <= 0 means the
+      // direct lane has no spare capacity for reserves: use the read pool
+      // (the true status quo).
+      const cap = size - 1;
+      if (cap >= 1 && this._reservedDirectInFlight < cap) {
+        // Take the permit in the SAME synchronous frame as the check — a
+        // check-then-increment spanning `await ddl()` is a TOCTOU that lets
+        // same-tick concurrent reserves overshoot the cap and starve the
+        // heartbeat slot the cap exists to protect (adversarial-review P2).
+        this._reservedDirectInFlight += 1;
+        fromDirect = true;
+        try {
+          pool = await this.connectionManager.ddl();
+        } catch {
+          // ddl() failure flips its own kill switch; fall back to the read
+          // pool (status quo) rather than failing the caller.
+          this._reservedDirectInFlight -= 1;
+          fromDirect = false;
+          pool = this.sql;
+        }
+      }
+    }
+    // Gauge BEFORE reserve(): a reserve() stuck waiting for a free slot is
+    // exactly the in-flight pressure the probe diagnostics should surface.
+    this.checkoutGauge.acquire('reserved');
+    let reserved: Awaited<ReturnType<typeof pool.reserve>>;
+    try {
+      reserved = await pool.reserve();
+    } catch (e) {
+      this.checkoutGauge.release('reserved');
+      if (fromDirect) this._reservedDirectInFlight -= 1;
+      throw e;
+    }
     try {
       const conn: ReservedConnection = {
         async executeRaw<R = Record<string, unknown>>(
@@ -1091,7 +1166,34 @@ export class PostgresEngine implements BrainEngine {
       };
       return await fn(conn);
     } finally {
-      reserved.release();
+      // Counter/gauge decrements run regardless of release() throwing
+      // (double-release or socket error must not permanently leak a permit
+      // of the small direct-reserve budget — data-migration review).
+      try {
+        reserved.release();
+      } catch {
+        // best-effort; the pool's own lifecycle handles a broken reservation
+      }
+      this.checkoutGauge.release('reserved');
+      if (fromDirect) this._reservedDirectInFlight -= 1;
+    }
+  }
+
+  /**
+   * Health-probe diagnostics (issue #6). Duck-typed — deliberately NOT on the
+   * BrainEngine interface (PGLite has no pool to diagnose; the worker reads
+   * it optionally, same pattern as `engine.reconnect`). Fail-open: returns
+   * null instead of throwing.
+   */
+  getPoolDiagnostics(): { tracked: PoolGaugeSnapshot; poolMax: number | null } | null {
+    try {
+      const max = (this.sql as unknown as { options?: { max?: number } }).options?.max;
+      return {
+        tracked: this.checkoutGauge.snapshot(),
+        poolMax: typeof max === 'number' ? max : null,
+      };
+    } catch {
+      return null;
     }
   }
 
@@ -6150,7 +6252,15 @@ export class PostgresEngine implements BrainEngine {
     params?: unknown[],
     opts?: { signal?: AbortSignal },
   ): Promise<T[]> {
-    return this.runUnsafe<T>(this.sql, sql, params, opts);
+    // try/finally (not .finally on the promise): runUnsafe throws
+    // SYNCHRONOUSLY on a pre-aborted signal, which would skip a chained
+    // .finally and leak the counter.
+    this.checkoutGauge.acquire('raw');
+    try {
+      return await this.runUnsafe<T>(this.sql, sql, params, opts);
+    } finally {
+      this.checkoutGauge.release('raw');
+    }
     // Pre-#406 behavior: throw on any error including connection death.
     // Per-call auto-retry is not safe here because executeRaw is also used
     // for non-transactional mutations (DELETE/UPDATE/INSERT in sources.ts,
@@ -6186,7 +6296,13 @@ export class PostgresEngine implements BrainEngine {
     const conn = (!inTransaction && this.connectionManager?.isDualPoolActive())
       ? await this.connectionManager.ddl()
       : this.sql;
-    return this.runUnsafe<T>(conn, sql, params, opts);
+    // try/finally, not .finally — see executeRaw (sync throw on pre-aborted signal).
+    this.checkoutGauge.acquire('direct');
+    try {
+      return await this.runUnsafe<T>(conn, sql, params, opts);
+    } finally {
+      this.checkoutGauge.release('direct');
+    }
   }
 
   // ============================================================

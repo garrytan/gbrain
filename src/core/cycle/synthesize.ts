@@ -241,6 +241,55 @@ export function rewriteChunkedSlug(slug: string, hash6: string, idx: number): st
 
 // ── Public entry ──────────────────────────────────────────────────────
 
+/**
+ * One drain-loop lock-renewal tick, extracted for hermetic tests (worker.ts
+ * parity is `runLockRenewalTick`; this is the deliberately simpler best-effort
+ * variant — no audit channel, no reconnect, no time-based give-up).
+ *
+ * Fixes the issue #6 abandoned-racer class in the cycle drain: the previous
+ * inline tick had no per-call timeout, so a hung renewLock stacked one
+ * checked-out pool slot per interval firing forever. Now each call carries an
+ * AbortSignal that is aborted when the timeout wins the race (the query is
+ * cancelled and its slot released), and callers guard re-entrancy so at most
+ * one renewal is in flight.
+ *
+ * Returns after the renewal settles or times out; a `false` renewal invokes
+ * `onLost` (token fence lost — caller aborts the handler). Errors and
+ * timeouts are swallowed: best-effort, the next tick retries.
+ */
+export async function runDrainRenewalTick(
+  renewLock: (
+    id: number,
+    lockToken: string,
+    lockMs: number,
+    opts?: { signal?: AbortSignal },
+  ) => Promise<boolean>,
+  jobId: number,
+  lockToken: string,
+  lockMs: number,
+  onLost: () => void,
+  callTimeoutMs: number,
+): Promise<void> {
+  const callAbort = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const ok = await Promise.race([
+      renewLock(jobId, lockToken, lockMs, { signal: callAbort.signal }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          callAbort.abort();
+          reject(new Error(`renewLock timed out after ${callTimeoutMs}ms`));
+        }, callTimeoutMs);
+      }),
+    ]);
+    if (!ok) onLost();
+  } catch {
+    /* best-effort; next tick retries */
+  } finally {
+    if (timer != null) clearTimeout(timer);
+  }
+}
+
 export interface SynthesizePhaseOpts {
   brainDir: string;
   dryRun: boolean;
@@ -433,12 +482,25 @@ export async function runSubagentsInline(
     // just its own) can't requeue a live child. A false return means the row
     // was cancelled or reclaimed — abort the handler. Errors are swallowed
     // (best-effort; the next tick retries), never an unhandledRejection.
+    // Re-entrancy guard + per-call cancellation via runDrainRenewalTick: a
+    // hung renewLock no longer stacks a fresh checked-out pool slot per
+    // interval firing (issue #6 abandoned-racer class).
+    let drainTickInFlight = false;
     const renewTimer = setInterval(() => {
-      queue.renewLock(job.id, lockToken, lockMs)
-        .then((ok) => {
-          if (!ok && !abort.signal.aborted) abort.abort(new Error('lock-renewal-failed'));
-        })
-        .catch(() => { /* best-effort; next tick retries */ });
+      if (drainTickInFlight) return;
+      drainTickInFlight = true;
+      void runDrainRenewalTick(
+        (id, tok, ms, opts) => queue.renewLock(id, tok, ms, opts),
+        job.id,
+        lockToken,
+        lockMs,
+        () => {
+          if (!abort.signal.aborted) abort.abort(new Error('lock-renewal-failed'));
+        },
+        Math.max(1000, Math.floor(lockMs / 3)),
+      ).finally(() => {
+        drainTickInFlight = false;
+      });
     }, Math.max(50, Math.floor(lockMs / 3)));
     // Run, then record — separated so a completeJob connection error can't
     // masquerade as a handler failure, and a failJob connection error can't

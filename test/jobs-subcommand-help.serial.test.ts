@@ -74,6 +74,9 @@ describe('jobs --help and jobs <subcommand> --help print real help, never the st
     expect(out).toContain('--max-rss');
     expect(out).toContain('--health-interval');
     expect(out).toContain('GBRAIN_WORKER_CONCURRENCY');
+    // issue #5 process isolation: flag + env fallback documented.
+    expect(out).toContain('--job-isolation');
+    expect(out).toContain('GBRAIN_JOB_ISOLATION');
     expect(out).not.toContain(STUB_MARKER);
     // A real `jobs work` on this fixture would refuse (thin-client/engine
     // path) or start a daemon; either output would differ from the help.

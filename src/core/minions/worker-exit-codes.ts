@@ -22,3 +22,17 @@
 
 /** Worker drained itself because RSS crossed the watchdog cap. */
 export const WORKER_EXIT_RSS_WATCHDOG = 12;
+
+// --- `gbrain jobs run-child` exit codes (issue #5 process isolation) -------
+//
+// The parent (child-job-runner.ts) classifies a child by RESULT-FILE PRESENCE
+// first: a written outcome file + exit 0 is the normal path even for handler
+// FAILURE (a reported error outcome is a successful report). Non-zero codes
+// mean "could not run or could not report":
+
+/** run-child misuse: bad/missing argv or env, or a PGLite engine (no isolation there). */
+export const JOB_CHILD_EXIT_USAGE = 13;
+/** Job row validation failed: not 'active' or lock-token mismatch (reclaimed). */
+export const JOB_CHILD_EXIT_NOT_CLAIMED = 14;
+/** Handler finished but the outcome file could not be written. */
+export const JOB_CHILD_EXIT_RESULT_WRITE_FAILED = 15;

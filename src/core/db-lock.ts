@@ -43,8 +43,13 @@ export interface DbLockHandle {
    * false means the lock was stolen or released — the caller must stop
    * relying on mutual exclusion. Transient DB errors still THROW (they are
    * not evidence of a steal; the TTL is the backstop).
+   *
+   * `opts.signal` cancels the in-flight UPDATE when the caller's heartbeat
+   * timeout gives up on it (issue #6 — an abandoned refresh otherwise holds
+   * a checked-out pool slot for its full server-side duration). PGLite
+   * ignores the signal (single embedded connection, no pool to starve).
    */
-  refresh: () => Promise<boolean>;
+  refresh: (opts?: { signal?: AbortSignal }) => Promise<boolean>;
 }
 
 /**
@@ -268,7 +273,7 @@ export async function tryAcquireDbLock(
     return {
       id: lockId,
       acquiredAt: fence,
-      refresh: async () => {
+      refresh: async (refreshOpts?: { signal?: AbortSignal }) => {
         // v0.41.13.0: bump BOTH ttl_expires_at AND last_refreshed_at.
         // v0.42.x (#1794): route through the DIRECT session pool, not the
         // transaction pool, so a Supavisor pooler exhaustion (EMAXCONNSESSION)
@@ -280,6 +285,7 @@ export async function tryAcquireDbLock(
             WHERE id = $2 AND holder_pid = $3 AND extract(epoch from acquired_at)::text = $4
             RETURNING id`,
           [ttl, lockId, pid, fence],
+          refreshOpts,
         );
         return updated.length > 0;
       },
@@ -882,8 +888,13 @@ export async function withRefreshingLock<T>(
   if (!handle) throw new LockUnavailableError(lockId);
 
   let healthOk = true;
+  // Re-entrancy guard: with a 15s minimum cadence and a 30s default timeout,
+  // two ticks can overlap on a slow pool — one refresh in flight at a time.
+  let refreshTickInFlight = false;
 
   const interval = setInterval(() => {
+    if (refreshTickInFlight) return;
+    refreshTickInFlight = true;
     void (async () => {
       try {
         // v0.42.x (#1794, V1): the refresh IS the heartbeat. handle.refresh()
@@ -896,10 +907,23 @@ export async function withRefreshingLock<T>(
         // health, and we do NOT clearInterval on a transient failure: a blip
         // self-heals on the next tick; the TTL is the backstop if the pool stays
         // genuinely dead (at which point a steal is correct).
-        const timeout = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('refresh_timeout')), heartbeatTimeoutMs)
-        );
-        const stillOwned = await Promise.race([handle.refresh(), timeout]);
+        // issue #6: abort the per-tick signal when the timeout wins so the
+        // losing UPDATE is cancelled (slot released), not orphaned on the
+        // direct pool for its full server-side duration.
+        const tickAbort = new AbortController();
+        let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+        const timeout = new Promise<never>((_, reject) => {
+          timeoutTimer = setTimeout(() => {
+            tickAbort.abort();
+            reject(new Error('refresh_timeout'));
+          }, heartbeatTimeoutMs);
+        });
+        let stillOwned: boolean;
+        try {
+          stillOwned = await Promise.race([handle.refresh({ signal: tickAbort.signal }), timeout]);
+        } finally {
+          if (timeoutTimer != null) clearTimeout(timeoutTimer);
+        }
         if (stillOwned === false) {
           // W0 (D5.10): the fenced refresh matched 0 rows — the lock was
           // stolen or force-cleared. Further refreshes are pointless (and a
@@ -918,6 +942,8 @@ export async function withRefreshingLock<T>(
         const msg = err instanceof Error ? err.message : String(err);
         process.stderr.write(`[lock-refresh] ${lockId}: ${msg}; will retry next tick\n`);
         healthOk = false;
+      } finally {
+        refreshTickInFlight = false;
       }
     })();
   }, refreshIntervalMs);

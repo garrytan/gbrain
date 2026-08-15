@@ -1291,8 +1291,18 @@ export class MinionQueue {
     return rows.length > 0;
   }
 
-  /** Renew lock (token-fenced). Returns false if token mismatch (job was reclaimed). */
-  async renewLock(id: number, lockToken: string, lockDurationMs: number): Promise<boolean> {
+  /**
+   * Renew lock (token-fenced). Returns false if token mismatch (job was reclaimed).
+   * `opts.signal` cancels the in-flight UPDATE (postgres.js `.cancel()`) when the
+   * caller's timeout race gives up on it — otherwise the abandoned query holds a
+   * checked-out pool slot for its full server-side duration (issue #6).
+   */
+  async renewLock(
+    id: number,
+    lockToken: string,
+    lockDurationMs: number,
+    opts?: { signal?: AbortSignal },
+  ): Promise<boolean> {
     // Direct (session-mode) pool — see claim(). The heartbeat that keeps a job
     // alive for minutes cannot run on the transaction pooler without periodic
     // CONNECTION_ENDED drops that look like lock-expiry and orphan the job.
@@ -1300,7 +1310,8 @@ export class MinionQueue {
       `UPDATE minion_jobs SET lock_until = now() + ($1::double precision * interval '1 millisecond'), updated_at = now()
        WHERE id = $2 AND lock_token = $3 AND status = 'active'
        RETURNING id`,
-      [lockDurationMs, id, lockToken]
+      [lockDurationMs, id, lockToken],
+      opts
     );
     return rows.length > 0;
   }

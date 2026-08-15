@@ -1,5 +1,87 @@
 # TODOS
 
+## Issues #5+#6 follow-ups (pool starvation + process isolation; plan: ~/.claude/plans/system-instruction-you-are-working-witty-moore.md)
+
+- [ ] **P1-companion — nested-checkout audit + dev-mode detection.** **What:**
+  `transaction()` callers that invoke parent-engine methods (or module helpers
+  taking `engine` not `tx`) take a SECOND read-pool slot while holding the tx
+  slot — e.g. the `operations.ts` advisory-lock loop around `tx.addLink`. Under
+  a saturated pool this is a client-side self-deadlock class. Audit call sites;
+  add a dev-mode warning (e.g. a tx-depth counter consulted by `runUnsafe`).
+  **Why:** the #6 incident's exact 240s-idle sessions were never reproduced
+  under a debugger; this is the strongest remaining candidate — the shipped
+  wave mitigates the starvation class but does not close this path. **Effort:**
+  M. **Priority:** P1-companion.
+- [ ] **P2 — per-handler isolation policy.** **What:** a per-handler-name set
+  (e.g. long-running LLM-bound handlers isolate, sub-second `lint`/`backlinks`
+  stay inline) instead of the all-or-nothing `--job-isolation process`.
+  **Why:** spawn cost (~0.3–1s) is noise for 644s subagent jobs, meaningful
+  for sub-second handlers; one worker should be able to mix. **Context:**
+  `worker.ts` executeJob's `isolated` gate is the seam. **Effort:** M.
+  **Priority:** P2.
+- [ ] **P2 — per-child --max-rss caps.** **What:** RSS watchdog for isolation
+  children (the worker-level watchdog covers the worker only in process mode;
+  a startup note ships today). **Context:** child-job-runner.ts owns the child
+  lifecycle; a poll of the child's RSS + group-kill on breach mirrors the
+  worker watchdog. **Effort:** M. **Priority:** P2.
+- [ ] **P2 — jobs-side connection-budget clamp for isolated workers.** **What:**
+  warn/clamp concurrency when `concurrency × (child pool + 1) + parent pools`
+  exceeds a configured budget (GBRAIN_MAX_CONNECTIONS-style; precedent
+  `sync-concurrency.ts:clampWorkersForConnectionBudget`). **Why:** isolation
+  multiplies pooler CLIENT connections (~73 at concurrency 15); today the
+  budget lives only in docs math. **Effort:** S. **Priority:** P2.
+- [ ] **P3 — --job-isolation pass-through for the autopilot's embedded
+  supervisor.** **What:** `autopilot.ts` builds its own worker args; add the
+  conditional flag there (jobs supervisor already passes through). **Effort:**
+  S. **Priority:** P3.
+- [ ] **P3 — runLockRenewalTick adoption in the cycle drain.** **What:**
+  `synthesize.ts` now uses the minimal `runDrainRenewalTick` (per-call signal +
+  guard); adopting the full tick would add the audit channel + bounded
+  reconnect. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — streaming child progress.** **What:** isolation children report
+  progress via their own token-fenced DB writes today (identical to inline);
+  an IPC stream would only add parent-side visibility (e.g. lifecycle events
+  in `jobs watch`). **Effort:** M. **Priority:** P3.
+- [ ] **P3 — connection-audit release events + plain-idle visibility.**
+  **What:** `logConnectionEvent` never emits `release`, so the JSONL cannot
+  answer "who holds a slot"; and `getIdleBlockers` filters
+  `state='idle in transaction'` only — the #6 incident's plain-`idle` sessions
+  were invisible to it. **Effort:** M. **Priority:** P3.
+- [ ] **P3 — doctor connection_routing check.** **What:** wire
+  `ConnectionManager.describeMode()` + `healthCheck()` (both currently
+  zero-caller outside tests) into a doctor check naming the routing mode,
+  kill-switch state, and per-pool probe latency. Comments in four files
+  already reference this check as if it existed. **Effort:** S.
+  **Priority:** P3.
+- [ ] **P3 — isolation test-gap follow-ups (pre-landing review).** **What:**
+  (a) spawned-CLI negative tests for `jobs run-child` bootstrap guards (PGLite
+  → exit 13; missing job-id/env → exit 13) and for `jobs work` with
+  isolation on + an unresolvable child CLI (fail-fast exit 1) — both need a
+  real engine bootstrap so they live in the e2e lane; (b) a behavioral (not
+  structural) test driving `withRefreshingLock` with a hung injected
+  `handle.refresh` (signal aborted at timeout, no overlapping ticks); (c) a
+  force-evict-skip test for isolation mode (needs the 30s evict window made
+  injectable); (d) operator-flow message tests (verdict-tailored FATAL text,
+  single-pool startup banner). **Why:** the ship coverage audit scored the
+  wave 82% — these are the surviving gaps. **Effort:** M. **Priority:** P3.
+- [ ] **P3 — raceWithAbortTimeout shared helper.** **What:** the
+  "Promise.race a query vs a setTimeout that aborts an AbortController,
+  clearTimeout in finally" pattern now exists at five sites (db-probe
+  withDeadline, synthesize runDrainRenewalTick, lock-renewal-tick callAbort,
+  db-lock tickAbort, supervisor probeAbort), each re-deriving the same
+  invariants. Extract one helper and adopt it. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — lazy handler resolution in run-child.** **What:** every isolation
+  child runs full registerBuiltinHandlers (incl. plugin discovery) to resolve
+  ONE handler; the job name is known from the row — a resolve-by-name path
+  would skip discovery for builtins. Matters only if isolation is ever used
+  for short jobs (documented as not the target). **Effort:** S. **Priority:** P3.
+- [ ] **P3 — full checkout instrumentation via a Sql proxy.** **What:** the
+  CheckoutGauge covers raw/direct/reserved/tx seams only; tagged-template
+  traffic (most engine load) is untracked. A proxy around the postgres.js Sql
+  callable could count real checkouts — investigate cost/fragility before
+  building. **Why:** would turn the probe's "tracked subset" caveat into full
+  coverage. **Effort:** M. **Priority:** P3.
+
 ## Security-process follow-ups (filed with Wave −1 of the fix-wave campaign, 2026-08-14)
 
 - [ ] **P2 — Vulnerability disclosure policy.** **What:** a written disclosure
@@ -254,14 +336,6 @@ fix-now findings landed on the branch; these four are the review-deferred tail.
   `requestToolsPersistLimiter`; the surface_change audit rows already give
   a DB-side count to enforce against if needed. **Effort:** medium.
   **Priority:** P3.
-- [ ] **P3 — cancel (not just abandon) timed-out submit-time queue probes.**
-  **What:** the WP5 wedge/pause probes time-bound via Promise.race, but the
-  losing query keeps running on the pool after the race resolves. Wire
-  AbortSignal / statement_timeout so a slow probe releases its slot. **Why:**
-  under pool exhaustion (the exact regime the probes exist to detect) an
-  abandoned probe query holds a pooler slot and makes the exhaustion worse.
-  **Context:** `src/core/minion/supervisor.ts` queryWedgeSignals callers in
-  `src/core/operations.ts` submit paths. **Effort:** small. **Priority:** P3.
 - [ ] **P3 — document the status --json snapshot union under schema_version.**
   **What:** a short protocol note (docs/progress-events.md sibling) pinning
   the `get_status_snapshot` v2 shape as a discriminated union on
