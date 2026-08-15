@@ -76,6 +76,7 @@ const CODE_EXTENSIONS = new Set<string>([
   '.sh', '.bash',
   '.css',
   '.html', '.htm',
+  '.astro', '.svelte',
   '.vue',
   '.json',
   '.yaml', '.yml',

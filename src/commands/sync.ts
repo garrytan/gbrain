@@ -1247,10 +1247,23 @@ export function createSyncBaselineCommit(repoPath: string): void {
  * never match one. A sibling (`root-evil`) is rejected because `relative`
  * yields `../root-evil`, and a cross-drive path because it yields an absolute.
  */
-export function isWithinRoot(childReal: string, rootReal: string): boolean {
+interface PathContainmentOps {
+  relative(from: string, to: string): string;
+  isAbsolute(path: string): boolean;
+  sep: string;
+}
+
+const nativePathContainmentOps: PathContainmentOps = { relative, isAbsolute, sep };
+
+export function isWithinRoot(
+  childReal: string,
+  rootReal: string,
+  pathOps: PathContainmentOps = nativePathContainmentOps,
+): boolean {
   if (childReal === rootReal) return true;
-  const rel = relative(rootReal, childReal);
-  return rel !== '' && rel !== '..' && !rel.startsWith('..' + sep) && !isAbsolute(rel);
+  const rel = pathOps.relative(rootReal, childReal);
+  if (rel === '') return true;
+  return rel !== '..' && !rel.startsWith('..' + pathOps.sep) && !pathOps.isAbsolute(rel);
 }
 
 /**
