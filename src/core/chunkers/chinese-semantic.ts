@@ -123,7 +123,7 @@ function splitByMarkdownBlocks(text: string): ChineseTextChunk[] {
     const isQuote = trimmed.startsWith('>');
     const isEmpty = trimmed.length === 0;
 
-    let lineType: typeof currentType = 'normal';
+    let lineType: 'normal' | 'list' | 'table' | 'code' | 'quote' | 'heading' = 'normal';
     if (isHeading) lineType = 'heading';
     else if (isList) lineType = 'list';
     else if (isTable) lineType = 'table';
