@@ -4524,15 +4524,22 @@ export class PostgresEngine implements BrainEngine {
     return rows as FileRow[];
   }
 
-  // Dream-cycle significance verdict cache (v0.23).
+  // Dream-cycle triage verdict cache (v0.23 boolean era; widened by #4152 triage-v1).
   async getDreamVerdict(filePath: string, contentHash: string): Promise<DreamVerdict | null> {
     const sql = this.sql;
     const rows = await sql<Array<{
       worth_processing: boolean;
       reasons: string[] | null;
       judged_at: Date;
+      score: number | null;
+      content_type: string | null;
+      segments: Array<{ quote: string; note?: string }> | null;
+      entities: string[] | null;
+      model: string | null;
+      triage_version: number | null;
     }>>`
-      SELECT worth_processing, reasons, judged_at
+      SELECT worth_processing, reasons, judged_at,
+             score, content_type, segments, entities, model, triage_version
       FROM dream_verdicts
       WHERE file_path = ${filePath} AND content_hash = ${contentHash}
     `;
@@ -4542,17 +4549,32 @@ export class PostgresEngine implements BrainEngine {
       worth_processing: r.worth_processing,
       reasons: r.reasons ?? [],
       judged_at: r.judged_at instanceof Date ? r.judged_at.toISOString() : String(r.judged_at),
+      score: r.score ?? null,
+      content_type: r.content_type ?? null,
+      segments: r.segments ?? [],
+      entities: r.entities ?? [],
+      model: r.model ?? null,
+      triage_version: r.triage_version ?? null,
     };
   }
 
   async putDreamVerdict(filePath: string, contentHash: string, verdict: DreamVerdictInput): Promise<void> {
     const sql = this.sql;
     await sql`
-      INSERT INTO dream_verdicts (file_path, content_hash, worth_processing, reasons)
-      VALUES (${filePath}, ${contentHash}, ${verdict.worth_processing}, ${sql.json(verdict.reasons as Parameters<typeof sql.json>[0])})
+      INSERT INTO dream_verdicts (file_path, content_hash, worth_processing, reasons,
+                                  score, content_type, segments, entities, model, triage_version)
+      VALUES (${filePath}, ${contentHash}, ${verdict.worth_processing}, ${sql.json(verdict.reasons as Parameters<typeof sql.json>[0])},
+              ${verdict.score}, ${verdict.content_type}, ${sql.json(verdict.segments as unknown as Parameters<typeof sql.json>[0])},
+              ${sql.json(verdict.entities as Parameters<typeof sql.json>[0])}, ${verdict.model}, ${verdict.triage_version})
       ON CONFLICT (file_path, content_hash) DO UPDATE SET
         worth_processing = EXCLUDED.worth_processing,
         reasons = EXCLUDED.reasons,
+        score = EXCLUDED.score,
+        content_type = EXCLUDED.content_type,
+        segments = EXCLUDED.segments,
+        entities = EXCLUDED.entities,
+        model = EXCLUDED.model,
+        triage_version = EXCLUDED.triage_version,
         judged_at = now()
     `;
   }

@@ -32,6 +32,7 @@ import {
   DEFAULT_ALIASES,
   TIER_DEFAULTS,
   resolveModel,
+  resolveAlias,
   type ModelTier,
 } from '../core/model-config.ts';
 import { maybeAttachVersionSuffixHint } from '../core/ai/base-url-probe.ts';
@@ -45,11 +46,23 @@ interface PerTaskModelRoute {
   description: string;
   deprecatedConfigKey?: string;
   envVar?: string;
+  /**
+   * #4152 (2A): an explicit pre-read key that wins over the whole
+   * resolveModel chain when set — mirrors loadSynthConfig's triage-model
+   * resolution so the dashboard reports the ACTUAL spending route.
+   */
+  overrideKey?: string;
 }
 
 const PER_TASK_KEYS: PerTaskModelRoute[] = [
   { key: 'models.dream.synthesize',         tier: 'reasoning', description: 'Dream synthesis (conversation → brain pages)' },
-  { key: 'models.dream.synthesize_verdict', tier: 'utility',   description: 'Dream synthesis verdict (Haiku judge)' },
+  {
+    key: 'models.dream.synthesize_verdict',
+    tier: 'utility',
+    description: 'Dream triage judge (scored gate; models.dream.triage preferred)',
+    deprecatedConfigKey: 'dream.synthesize.verdict_model',
+    overrideKey: 'models.dream.triage',
+  },
   { key: 'models.dream.patterns',           tier: 'reasoning', description: 'Pattern discovery (cross-take themes)' },
   { key: 'models.drift',                    tier: 'reasoning', description: 'Drift LLM judge (v0.29 scaffold)' },
   { key: 'models.auto_think',               tier: 'deep',      description: 'Auto-think question answering' },
@@ -128,7 +141,15 @@ async function buildReport(engine: BrainEngine): Promise<ModelsReport> {
 
   const per_task: ModelsReport['per_task'] = [];
   for (const route of PER_TASK_KEYS) {
-    const { key, tier, description, deprecatedConfigKey, envVar } = route;
+    const { key, tier, description, deprecatedConfigKey, envVar, overrideKey } = route;
+    // Explicit pre-read override (loadSynthConfig 2A parity): when set, it IS
+    // the effective spending route and must be reported as such.
+    const overrideValue = overrideKey ? await engine.getConfig(overrideKey) : null;
+    if (overrideKey && overrideValue?.trim()) {
+      const resolved = await resolveAlias(engine, overrideValue.trim());
+      per_task.push({ key, tier, resolved, source: `config: ${overrideKey}`, description });
+      continue;
+    }
     const resolved = await resolveModel(engine, {
       configKey: key,
       deprecatedConfigKey,

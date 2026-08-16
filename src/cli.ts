@@ -162,6 +162,11 @@ const CLI_ONLY_SELF_HELP = new Set([
   // so `jobs work --help` prints help instead of starting a worker daemon.
   // Without this entry the generic stub hid the worker entry point entirely.
   'jobs',
+  // #4152: dream ships its own printHelp AND the `dream retriage --help`
+  // subverb help (dispatched engine-free before parseArgs). The generic stub
+  // would hide both — `gbrain dream retriage --help` printed the one-line
+  // dream stub instead of the retriage contract (outside-voice CX9).
+  'dream',
 ]);
 
 /**
@@ -184,6 +189,9 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, () => Promise<(engine: never, arg
   // runJobs accepts BrainEngine | null and its help guard returns before any
   // engine (or subcommand body) is touched.
   jobs: async () => (await import('./commands/jobs.ts')).runJobs as never,
+  // runDream accepts BrainEngine | null; --help (and `retriage --help`) is
+  // answered before any engine-bearing work per the dream.ts IRON RULE.
+  dream: async () => (await import('./commands/dream.ts')).runDream as never,
 };
 
 /** Returns true when the command's own help was printed. */

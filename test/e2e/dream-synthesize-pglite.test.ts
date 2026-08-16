@@ -18,7 +18,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { runPhaseSynthesize, renderPageToMarkdown, __testing as synthTesting } from '../../src/core/cycle/synthesize.ts';
+import { runPhaseSynthesize, renderPageToMarkdown, TRIAGE_VERSION, __testing as synthTesting } from '../../src/core/cycle/synthesize.ts';
+import { TIER_DEFAULTS } from '../../src/core/model-config.ts';
 
 interface TestRig {
   engine: PGLiteEngine;
@@ -201,6 +202,46 @@ describe('E2E synthesize — no API key skip path', () => {
         // string was 'no ANTHROPIC_API_KEY for significance judge'; post-
         // rework is 'no configured provider for verdict model: <model>'.
         expect(verdicts[0].reasons[0]).toMatch(/no configured provider for verdict model/);
+        // CX7: a provider outage is DEGRADED, never "below threshold" — an
+        // all-outage run must say so in both the counters and the headline.
+        const triage = (result.details as { triage: { degraded: number; below_threshold: number } }).triage;
+        expect(triage.degraded).toBe(1);
+        expect(triage.below_threshold).toBe(0);
+        expect(result.summary).toContain('triage degraded');
+        expect(result.summary).not.toContain('below triage threshold');
+      });
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+
+  test('3A: a time-boxed cold pass labels deferred files "not yet triaged" in the headline', async () => {
+    const rig = await setupRig();
+    try {
+      await rig.engine.setConfig('dream.synthesize.enabled', 'true');
+      await rig.engine.setConfig('dream.synthesize.session_corpus_dir', rig.corpusDir);
+      // A 1ms budget + 25 uncached files: the budget check runs after each
+      // per-file cache lookup, and 25 PGLite roundtrips take well over 1ms,
+      // so at least the tail of the corpus is guaranteed to defer (exact
+      // count depends on wall-clock — assert >= 1, not equality).
+      await rig.engine.setConfig('dream.triage.max_ms', '1');
+      for (let i = 0; i < 25; i++) {
+        writeFileSync(
+          join(rig.corpusDir, `2026-04-26-cold-${String(i).padStart(2, '0')}.txt`),
+          `an untriaged conversation ${i}\n`.repeat(200),
+        );
+      }
+      await withoutAnthropicKey(async () => {
+        const result = await runPhaseSynthesize(rig.engine, {
+          brainDir: rig.brainDir,
+          dryRun: true,
+        });
+        expect(result.status).toBe('ok');
+        const triage = (result.details as { triage: { deferred: number; degraded: number } }).triage;
+        expect(triage.deferred).toBeGreaterThanOrEqual(1);
+        expect(triage.deferred + triage.degraded).toBe(25);
+        expect(result.summary).toContain('not yet triaged');
+        expect(result.summary).toContain('dream retriage');
       });
     } finally {
       await rig.cleanup();
@@ -499,9 +540,17 @@ describe('E2E synthesize — verdict cache (Q-2)', () => {
         await runPhaseSynthesize(rig.engine, { brainDir: rig.brainDir, dryRun: false });
         const { createHash } = await import('node:crypto');
         const hash = createHash('sha256').update(body, 'utf8').digest('hex');
+        // Triage-v1 cache validity: a below-threshold score with matching
+        // (model, triage_version) is a HIT that gates the file out.
         await rig.engine.putDreamVerdict(filePath, hash, {
           worth_processing: false,
           reasons: ['cached test verdict'],
+          score: 0.1,
+          content_type: null,
+          segments: [],
+          entities: [],
+          model: TIER_DEFAULTS.utility,
+          triage_version: TRIAGE_VERSION,
         });
         const result = await runPhaseSynthesize(rig.engine, {
           brainDir: rig.brainDir,
@@ -600,11 +649,11 @@ describe('E2E synthesize — degenerate verdicts are NOT cached in dream_verdict
 
   test('truncated judge response (stop_reason=length) → no dream_verdicts row + warning', async () => {
     const { verdictRow, stderr } = await runWithStubbedJudge({
-      text: '{"worth_process', // reasoning ate the budget; partial JSON
+      text: '{"scor', // reasoning ate the budget; partial JSON
       stopReason: 'length',
     });
     expect(verdictRow).toBeNull();
-    expect(stderr).toMatch(/\[dream\] verdict for 2026-05-01-session was truncated/);
+    expect(stderr).toMatch(/\[dream\] triage for 2026-05-01-session was truncated/);
     expect(stderr).toMatch(/not caching in dream_verdicts/);
   }, 30_000);
 
@@ -614,18 +663,73 @@ describe('E2E synthesize — degenerate verdicts are NOT cached in dream_verdict
       stopReason: 'end',
     });
     expect(verdictRow).toBeNull();
-    expect(stderr).toMatch(/\[dream\] verdict for 2026-05-01-session was unparseable/);
+    expect(stderr).toMatch(/\[dream\] triage for 2026-05-01-session was unparseable/);
     expect(stderr).toMatch(/not caching in dream_verdicts/);
   }, 30_000);
 
-  test('control: clean parseable verdict is still cached', async () => {
+  test('boolean-era judge output (no score) is unparseable — never cached', async () => {
+    // The old `{"worth_processing": ...}` shape has no score; under triage-v1
+    // it must NOT become a cacheable rejection.
     const { verdictRow, stderr } = await runWithStubbedJudge({
       text: '{"worth_processing": false, "reasons": ["routine ops"]}',
       stopReason: 'end',
     });
+    expect(verdictRow).toBeNull();
+    expect(stderr).toMatch(/\[dream\] triage for 2026-05-01-session was unparseable/);
+  }, 30_000);
+
+  test('control: clean scored verdict is cached with score + model + triage_version', async () => {
+    const { verdictRow, stderr } = await runWithStubbedJudge({
+      text: '{"score": 0.1, "content_type": "routine", "segments": [], "entities": [], "reasons": ["routine ops"]}',
+      stopReason: 'end',
+    });
     expect(verdictRow).not.toBeNull();
-    expect((verdictRow as { worth_processing: boolean }).worth_processing).toBe(false);
+    const row = verdictRow as { worth_processing: boolean; score: number | null; content_type: string | null; model: string | null; triage_version: number | null };
+    expect(row.worth_processing).toBe(false); // derived: 0.1 < DEFAULT_TRIAGE_THRESHOLD
+    expect(row.score).toBe(0.1);
+    expect(row.content_type).toBe('routine');
+    expect(row.model).toBe(TIER_DEFAULTS.utility);
+    expect(row.triage_version).toBe(TRIAGE_VERSION);
     expect(stderr).not.toMatch(/not caching in dream_verdicts/);
+  }, 30_000);
+
+  test('legacy boolean-era cached row (score NULL) is a MISS — re-judged and overwritten', async () => {
+    const rig = await setupRig();
+    try {
+      await rig.engine.setConfig('dream.synthesize.enabled', 'true');
+      await rig.engine.setConfig('dream.synthesize.session_corpus_dir', rig.corpusDir);
+      const filePath = join(rig.corpusDir, '2026-05-02-legacy.txt');
+      const body = 'a meaningful conversation\n'.repeat(200);
+      writeFileSync(filePath, body);
+      const { createHash } = await import('node:crypto');
+      const hash = createHash('sha256').update(body, 'utf8').digest('hex');
+      // Seed a boolean-era row directly (score NULL — pre-v129 shape).
+      await rig.engine.executeRaw(
+        `INSERT INTO dream_verdicts (file_path, content_hash, worth_processing, reasons)
+         VALUES ($1, $2, true, '["legacy row"]'::jsonb)`,
+        [filePath, hash],
+      );
+      __setChatTransportForTests(async () => ({
+        text: '{"score": 0.9, "content_type": "reflection", "segments": [], "entities": [], "reasons": ["re-judged"]}',
+        blocks: [],
+        stopReason: 'end',
+        usage: { input_tokens: 10, output_tokens: 200, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'test:stub',
+        providerId: 'test',
+      }));
+      await withFakeAnthropicKey(() =>
+        runPhaseSynthesize(rig.engine, { brainDir: rig.brainDir, dryRun: true }),
+      );
+      const row = await rig.engine.getDreamVerdict(filePath, hash);
+      expect(row).not.toBeNull();
+      expect(row!.score).toBe(0.9);
+      expect(row!.triage_version).toBe(TRIAGE_VERSION);
+      expect(row!.reasons).toEqual(['re-judged']);
+    } finally {
+      __setChatTransportForTests(null);
+      resetGateway();
+      await rig.cleanup();
+    }
   }, 30_000);
 });
 
