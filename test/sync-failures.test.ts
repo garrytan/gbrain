@@ -18,6 +18,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from 'fs';
+import { doctorSource } from './helpers/doctor-source.ts';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -135,7 +136,7 @@ describe('Bug 9 — sync-failures JSONL helpers', () => {
 
 describe('Bug 9 — doctor surfaces sync failures', () => {
   test('doctor source contains sync_failures check', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const source = doctorSource();
     expect(source).toContain('sync_failures');
     expect(source).toContain('unacknowledgedSyncFailures');
     expect(source).toContain("'gbrain sync --skip-failed'");
@@ -146,7 +147,7 @@ describe('Bug 9 — doctor surfaces sync failures', () => {
   // they can never drift. The remote surface must no longer hand-roll an
   // `acknowledged_at` count (the old field-split that caused drift).
   test('both doctor surfaces use the shared decideSyncFailureSeverity', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const source = doctorSource();
     const occurrences = source.split('decideSyncFailureSeverity').length - 1;
     expect(occurrences).toBeGreaterThanOrEqual(2); // local + remote
     // remote no longer counts `!entry.acknowledged_at` by hand.

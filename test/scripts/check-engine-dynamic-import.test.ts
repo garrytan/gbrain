@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, setDefaultTimeout } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -21,6 +21,23 @@ function fixture(name: string, content: string): string {
   const path = join(dir, name);
   writeFileSync(path, content, 'utf8');
   return path;
+}
+
+/**
+ * The guard's default scan set = the 3 engine-live façades PLUS every .ts
+ * file peeled into src/core/{pglite,postgres}-engine/ (the guard resolves its
+ * ROOT from its own script path, so the count always reflects the REAL repo
+ * regardless of cwd). Derived, not hardcoded, so adding an engine module
+ * doesn't break this test.
+ */
+function expectedDefaultScanCount(): number {
+  let count = 3;
+  for (const dir of ['src/core/pglite-engine', 'src/core/postgres-engine']) {
+    const full = join(REPO_ROOT, dir);
+    if (!existsSync(full)) continue;
+    count += readdirSync(full).filter((f) => f.endsWith('.ts')).length;
+  }
+  return count;
 }
 
 function runGuard(files: string[] = [], cwd = REPO_ROOT) {
@@ -286,7 +303,9 @@ describe('check-engine-dynamic-import.sh', () => {
 
     const result = runGuard([], foreign);
     expect(result.code).toBe(0);
-    expect(result.stdout).toContain('check-engine-dynamic-import: ok (3 file(s) scanned)');
+    expect(result.stdout).toContain(
+      `check-engine-dynamic-import: ok (${expectedDefaultScanCount()} file(s) scanned)`,
+    );
   }, 30_000);
 
   it('still catches a violation in CRLF input', () => {
@@ -299,7 +318,9 @@ describe('check-engine-dynamic-import.sh', () => {
   it('passes on the reconciled repository sources', () => {
     const result = runGuard();
     expect(result.code).toBe(0);
-    expect(result.stdout).toContain('check-engine-dynamic-import: ok (3 file(s) scanned)');
+    expect(result.stdout).toContain(
+      `check-engine-dynamic-import: ok (${expectedDefaultScanCount()} file(s) scanned)`,
+    );
   }, 30_000);
 });
 

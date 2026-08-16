@@ -21,6 +21,7 @@ import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import { runUnifyTypes } from '../../src/core/schema-pack/unify-types-handler.ts';
 import { runAllOnboardChecks } from '../../src/core/onboard/checks.ts';
 import { _resetPackCacheForTests } from '../../src/core/schema-pack/registry.ts';
+import { withEnv, emptyHome } from '../helpers/with-env.ts';
 
 let engine: PGLiteEngine;
 
@@ -142,8 +143,14 @@ describe('v0.42 type-unification E2E (IRON RULE)', () => {
     const preDistinct = parseInt(preTypes[0].cnt, 10);
     expect(preDistinct).toBeGreaterThanOrEqual(20);
 
-    // Onboard surfaces pack_upgrade_available
-    const checks = await runAllOnboardChecks(engine);
+    // Onboard surfaces pack_upgrade_available. checkPackUpgradeAvailable
+    // honors tier-6 file-plane config (v0.42.66.0, #3396), so hide the dev
+    // machine's real ~/.gbrain/config.json schema_pack for this assertion —
+    // otherwise the check reports 'ok' locally while 'warn' in CI.
+    const checks = await withEnv(
+      { GBRAIN_HOME: emptyHome(), GBRAIN_SCHEMA_PACK: undefined },
+      () => runAllOnboardChecks(engine),
+    );
     const packUpgrade = checks.find(c => c.check.name === 'pack_upgrade_available');
     expect(packUpgrade?.check.status).toBe('warn');
     expect(packUpgrade?.remediations[0]?.job).toBe('unify-types');

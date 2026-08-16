@@ -8,6 +8,8 @@ import { loadConfig, gbrainPath } from '../core/config.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import {
+  hasMalformedPathSegment,
+  sanitizePathForDisplay,
   isCodeFilePath,
   isMarkdownFilePath,
   isImageFilePath as isImageFilePathFromSync,
@@ -92,6 +94,10 @@ export interface RunImportResult {
   errors: number;
   chunksCreated: number;
   failures: Array<{ path: string; error: string }>;
+  /** Files dropped by the malformed-filename gate (walker + per-file defense). */
+  malformedSkipped?: number;
+  /** Aggregated alias/undeclared explicit-type warnings (schema.type_warnings). */
+  type_warnings?: Array<{ kind: 'alias_of' | 'undeclared'; type: string; canonical?: string; directory?: string; count: number }>;
 }
 
 export async function runImport(
@@ -175,7 +181,7 @@ export async function runImport(
   }
   // v0.39 T1.5: load active pack ONCE at runImport entry; thread to every
   // per-file importFile call below. Codex perf finding #7 — never per-file.
-  let importActivePack: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> } | undefined;
+  let importActivePack: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string>; aliases?: ReadonlyArray<string> }> } | undefined;
   try {
     const { loadActivePack } = await import('../core/schema-pack/load-active.ts');
     const { loadConfig } = await import('../core/config.ts');
@@ -275,10 +281,22 @@ export async function runImport(
   const strategy: SyncStrategy = opts.strategy ?? 'markdown';
   const _walkT0 = Date.now();
   console.error(`[gbrain phase] import.collect_files start dir=${dir} strategy=${strategy}`);
-  let allFiles = collectSyncableFiles(dir, { strategy, includeGitignored });
+  const malformedExcluded: string[] = [];
+  let allFiles = collectSyncableFiles(dir, {
+    strategy, includeGitignored,
+    onExcluded: (rel) => { malformedExcluded.push(rel); },
+  });
   console.error(
     `[gbrain phase] import.collect_files done ${Date.now() - _walkT0}ms files=${allFiles.length}`,
   );
+  if (malformedExcluded.length > 0) {
+    console.error(
+      `[gbrain import] ${malformedExcluded.length} file(s) skipped: malformed filename ` +
+      `(brackets/control chars; rename to import): ` +
+      malformedExcluded.slice(0, 20).map(sanitizePathForDisplay).join(', ') +
+      (malformedExcluded.length > 20 ? `, … (+${malformedExcluded.length - 20} more)` : ''),
+    );
+  }
   const fileTypeLabel = strategy === 'code' ? 'code'
     : strategy === 'auto' ? 'syncable' : 'markdown';
   // #753/#774: apply --exclude glob patterns (threaded by performFullSync).
@@ -327,6 +345,9 @@ export async function runImport(
   let imported = 0;
   let skipped = 0;
   let errors = 0;
+  // Per-file malformed skips (defense-in-depth hits inside importFromFile);
+  // the walker-level exclusions are counted separately via malformedExcluded.
+  let malformedFileSkips = 0;
   let processed = 0;
   // Time-based checkpoint floor (see the save site below). Chunking cost scales
   // with paragraph count, not bytes, so a single reference-style file can take
@@ -339,6 +360,16 @@ export async function runImport(
   const errorCounts: Record<string, number> = {};
   const errorSamples: Record<string, string> = {};
   const failures: Array<{ path: string; error: string }> = []; // Bug 9
+  // Alias-footgun visibility: aggregate per-file type_warning results once
+  // per distinct type per run (same surface `gbrain sync` carries).
+  const typeWarningCounts = new Map<string, import('../core/schema-pack/type-usage.ts').TypeWarningCount>();
+  const noteTypeWarning = (w: { kind: 'alias_of' | 'undeclared'; type: string; canonical?: string; directory?: string } | undefined): void => {
+    if (!w) return;
+    const key = `${w.kind}\t${w.type}`;
+    const cur = typeWarningCounts.get(key);
+    if (cur) cur.count++;
+    else typeWarningCounts.set(key, { ...w, count: 1 });
+  };
   // #3839: paths that succeeded (imported OR unchanged) this run, keyed the
   // same way as `failures` above (importRelPath) so a path that failed on a
   // prior run and now succeeds clears its ledger row instead of staying
@@ -373,6 +404,7 @@ export async function runImport(
       const result = isImageFilePath(relativePath) && process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true'
         ? await importImageFile(eng, filePath, importRelPath, { noEmbed, sourceId })
         : await importFile(eng, filePath, importRelPath, { noEmbed, sourceId, activePack: importActivePack });
+      noteTypeWarning((result as { type_warning?: Parameters<typeof noteTypeWarning>[0] }).type_warning);
       const _fileMs = Date.now() - _fileT0;
       if (_fileMs > 5000) {
         console.error(`[gbrain phase] import.process_file slow ${_fileMs}ms ${relativePath}`);
@@ -386,7 +418,13 @@ export async function runImport(
         succeededPaths.push(importRelPath); // #3839
       } else {
         skipped++;
-        if (result.error && result.error !== 'unchanged') {
+        if (result.skip_reason === 'malformed_path') {
+          // Informational skip (bracket/control-char filename): never a
+          // failure-ledger row, and stable across runs — checkpoint as done.
+          console.error(`  Skipped (malformed filename — rename to import): ${sanitizePathForDisplay(relativePath)}`);
+          malformedFileSkips++;
+          completed.add(relativePath);
+        } else if (result.error && result.error !== 'unchanged') {
           console.error(`  Skipped ${relativePath}: ${result.error}`);
           // Bug 9 — non-"unchanged" skips carry a real error reason.
           // #774: ledger paths use the slug base so an incremental sync's
@@ -591,6 +629,22 @@ export async function runImport(
     }
   }
 
+  // Alias/undeclared explicit-type warnings (schema.type_warnings, default on).
+  let typeWarningsEnabled = true;
+  if (typeWarningCounts.size > 0) {
+    try {
+      const v = await engine.getConfig('schema.type_warnings');
+      typeWarningsEnabled = !(v === 'false' || v === '0' || v === 'off');
+    } catch { /* config unavailable → default on */ }
+    if (typeWarningsEnabled) {
+      const { renderTypeWarningSummary } = await import('../core/schema-pack/type-usage.ts');
+      for (const line of renderTypeWarningSummary([...typeWarningCounts.values()])) {
+        console.error(`  ${line}`);
+      }
+      console.error(`  (silence with: gbrain config set schema.type_warnings false)`);
+    }
+  }
+
   // Log the ingest
   await engine.logIngest({
     source_type: 'directory',
@@ -670,7 +724,14 @@ export async function runImport(
     // this import's to move (its sync anchors live on the `sources` row).
   }
 
-  return { imported, skipped, errors, chunksCreated, failures };
+  const totalMalformed = malformedExcluded.length + malformedFileSkips;
+  return {
+    imported, skipped, errors, chunksCreated, failures,
+    ...(totalMalformed > 0 ? { malformedSkipped: totalMalformed } : {}),
+    ...(typeWarningCounts.size > 0 && typeWarningsEnabled
+      ? { type_warnings: [...typeWarningCounts.values()] }
+      : {}),
+  };
 }
 
 /**
@@ -692,6 +753,13 @@ function resolveMaxWalkDepth(): number {
 interface CollectOpts {
   strategy?: SyncStrategy;
   includeGitignored?: boolean;
+  /**
+   * Invoked (with the repo-relative path) for each file dropped by the
+   * malformed-filename gate, on BOTH collection routes. Without this,
+   * directory imports and full syncs silently succeed while omitting the
+   * file — no rename guidance, no skipped count (structured-review finding).
+   */
+  onExcluded?: (relPath: string) => void;
 }
 
 /**
@@ -726,6 +794,11 @@ function isCollectibleForWalker(
   // check pruneDir already applied there — no behavior change on that route.)
   const segments = path.split('/');
   if (segments.some((seg) => !pruneDir(seg))) return false;
+
+  // Malformed filenames (brackets / control chars — markdown-link syntax as a
+  // literal filename) are rejected on BOTH collection routes, same as
+  // incremental sync's classifySync. Full and incremental must agree.
+  if (hasMalformedPathSegment(path)) return false;
 
   // Metafiles are directory scaffolding (READMEs / index / log / schema /
   // resolver), not typed brain pages — same exclusion `sync`'s `isSyncable`
@@ -764,6 +837,7 @@ function gitListSyncableFiles(
   dir: string,
   strategy: SyncStrategy,
   multimodalOn: boolean,
+  onExcluded?: (relPath: string) => void,
 ): string[] | null {
   let stdout: string;
   try {
@@ -778,6 +852,10 @@ function gitListSyncableFiles(
   const files: string[] = [];
   for (const rel of stdout.split('\0')) {
     if (!rel) continue;
+    // Malformed check FIRST (separately from the collectible gate) so the
+    // exclusion is reportable — other filters (strategy, prune, metafile)
+    // are silent by design; this one hides renameable content.
+    if (hasMalformedPathSegment(rel)) { onExcluded?.(rel); continue; }
     if (!isCollectibleForWalker(rel, strategy, multimodalOn)) continue;
     const full = join(dir, rel);
     let st;
@@ -823,7 +901,7 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
   // PLUS untracked-not-ignored, so uncommitted source is still indexed. Non-git
   // dirs (or git unavailable) fall through to the FS walk below.
   if (!opts.includeGitignored) {
-    const gitFiles = gitListSyncableFiles(dir, strategy, multimodalOn);
+    const gitFiles = gitListSyncableFiles(dir, strategy, multimodalOn, opts.onExcluded);
     if (gitFiles) return gitFiles;
   }
 
@@ -848,6 +926,14 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
       // from it. Skips hidden dirs (`.git`, `.raw`, etc.), `node_modules`,
       // `vendor`, `dist`, `build`, `venv` (#2020), `ops`, and git submodules.
       if (!pruneDir(entry, d)) continue;
+      // Control-char SEGMENT check at descent time (never legitimate). The
+      // bracket check moved to the per-file RELATIVE-path test below: a
+      // bracket-named DIRECTORY must still be descended for code strategies
+      // (`app/[id]/page.tsx` is ubiquitous framework layout), while markdown
+      // files under it are excluded per-file — mirroring classifySync so full
+      // and incremental sync agree (cross-model adversarial finding).
+      // eslint-disable-next-line no-control-regex
+      if (/[\x00-\x1f]/.test(entry)) continue;
 
       const full = join(d, entry);
       let stat;
@@ -872,6 +958,11 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
         visitedInodes.set(inodeKey, true);
         walk(full, depth + 1);
       } else if (stat.isFile()) {
+        // Malformed check on the RELATIVE path (this route's
+        // isCollectibleForWalker only sees the basename, which can't catch a
+        // bracket directory segment above a clean-named markdown file).
+        const rel = relative(dir, full);
+        if (hasMalformedPathSegment(rel)) { opts.onExcluded?.(rel); continue; }
         if (!isCollectibleForWalker(entry, strategy, multimodalOn)) continue;
         files.push(full);
       }

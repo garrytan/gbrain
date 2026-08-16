@@ -12,9 +12,13 @@ The persistent worker can die silently from:
 - Bun process crashes with no automatic restart.
 - Internal event-loop death (PID alive, worker loop stopped).
 
-When the worker dies, submitted jobs sit in `waiting` forever. The
-canonical answer is `gbrain jobs supervisor` — a first-class CLI that
-spawns `gbrain jobs work` as a child and auto-restarts it on crash.
+When the worker dies, submitted jobs sit in `waiting` — indefinitely for
+most types; types with a waiting-TTL (`subagent` defaults to 48h, see the
+[queue operations runbook](queue-operations-runbook.md)) are eventually
+cancelled with an auditable reason rather than queueing forever. Either
+way the work doesn't happen. The canonical answer is
+`gbrain jobs supervisor` — a first-class CLI that spawns `gbrain jobs work`
+as a child and auto-restarts it on crash.
 
 ## Worker supervision
 

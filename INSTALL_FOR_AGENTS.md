@@ -31,6 +31,13 @@ If you fetched this file by URL without cloning yet, the companion files live at
 > If an unrelated npm install is already present, remove it first
 > (`npm uninstall -g gbrain` / `bun remove -g gbrain`); `gbrain doctor` also detects this.
 
+> **On Codex or Claude Code?** After the CLI install below, the plugin is the
+> fastest way to wire the MCP server + curated skills:
+> `codex plugin marketplace add garrytan/gbrain@codex-plugin` +
+> `codex plugin add gbrain@gbrain` (Claude Code: `/plugin marketplace add
+> garrytan/gbrain` + `/plugin install gbrain@gbrain`). Details:
+> docs/mcp/CODEX.md and docs/mcp/CLAUDE_CODE.md.
+
 Default path (Bun is required — gbrain is a Bun + TypeScript runtime):
 
 ```bash
@@ -59,7 +66,9 @@ Ask the user for these. gbrain defaults to the Voyage embedding + reranker stack
 (`voyage:voyage-4` @ 1024d + `voyage:rerank-2.5` — one key covers both); OpenAI is the
 main alternative, chosen at init via `--embedding-model <provider:model>`. ZeroEntropy
 is deprecated (its hosted API shuts down 2026-09-04): init auto-pick and the picker
-exclude it, and every ZE embed/rerank prints a deprecation warning.
+exclude it, and every ZE embed/rerank prints a deprecation warning. **Existing brain
+still on ZeroEntropy (or any need to switch embedding/reranker models later)?** Follow
+the playbook at `skills/migrations/v0.46.3.0.md` — one command migrates both.
 
 ```bash
 export VOYAGE_API_KEY=pa-...          # default embedding + reranker (one key covers both)

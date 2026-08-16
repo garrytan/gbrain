@@ -62,11 +62,29 @@ export async function loadRecommendationContext(
     const fromCfg = cfgField ? (fileCfg as Record<string, unknown> | null)?.[cfgField] : undefined;
     return !!(process.env[envVar] || fromCfg);
   });
+  // D12: NULL-signature cohort (embedded chunks on pages with no recorded
+  // embedding signature — pre-v108 or never stamped). computeRecommendations
+  // is sync/engine-less, so the ENGINE-holding upstream probes it and threads
+  // it through the context. Fail OPEN to 0: a probe bug must never kill
+  // remediation (it just falls back to the plain stale run).
+  let nullSignatureCohort = 0;
+  try {
+    const { currentEmbeddingSignature } = await import('../embedding.ts');
+    const sig = currentEmbeddingSignature();
+    if (sig) {
+      const wide = await engine.countStaleChunks({ signature: sig, includeNullSignature: true });
+      const narrow = await engine.countStaleChunks({ signature: sig });
+      nullSignatureCohort = Math.max(0, wide - narrow);
+    }
+  } catch {
+    nullSignatureCohort = 0;
+  }
   return {
     repoPath: repoPath ?? undefined,
     embeddingModel,
     embeddingDimensions,
     embeddingProviderConfigured: embeddingConfigured,
     hasChatApiKey: !!(process.env.ANTHROPIC_API_KEY || fileCfg?.anthropic_api_key),
+    nullSignatureCohort,
   };
 }

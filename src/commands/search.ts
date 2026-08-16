@@ -301,7 +301,7 @@ interface GraphSignalsStatsSection {
 
 async function readGraphSignalsStats(engine: BrainEngine, days: number): Promise<GraphSignalsStatsSection> {
   // Resolve graph_signals on/off. Mirrors the resolution chain in
-  // src/commands/doctor.ts:checkGraphSignalsCoverage.
+  // src/commands/doctor/checks/graph-embedding.ts:checkGraphSignalsCoverage.
   // v0.40.4 codex F1: case-insensitive + trim parity with
   // loadOverridesFromConfig (mode.ts). Without this, search-stats would
   // silently report the opposite of what the parser actually enables on

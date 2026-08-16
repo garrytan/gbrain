@@ -44,7 +44,7 @@ mock.module('../../src/commands/backlinks.ts', () => ({
   hasBacklink: () => false,
   buildBacklinkEntry: () => '',
   findBacklinkGaps: () => [],
-  fixBacklinkGaps: () => 0,
+  fixBacklinkGaps: async () => ({ fixed: 0, skipped: [] }),
   runBacklinks: async () => {},
 }));
 
@@ -307,7 +307,13 @@ describe('runCycle — cycle_already_running skip', () => {
 // ─── Engine null path ─────────────────────────────────────────────
 
 describe('runCycle — engine = null (filesystem-only mode)', () => {
-  const lockFile = require('path').join(require('os').homedir(), '.gbrain', 'cycle.lock');
+  // Resolve the lock path the way production does (gbrainPath honors
+  // GBRAIN_HOME — which the test preload points at per-run scratch). The
+  // old homedir()-based literal wrote lock files into the operator's REAL
+  // ~/.gbrain and stopped matching the code's path once tests were
+  // home-isolated.
+  const { gbrainPath } = require('../../src/core/config.ts') as typeof import('../../src/core/config.ts');
+  const lockFile = gbrainPath('cycle.lock');
 
   afterEach(() => {
     if (existsSync(lockFile)) { try { unlinkSync(lockFile); } catch { /* */ } }

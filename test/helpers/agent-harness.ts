@@ -365,16 +365,25 @@ export interface ParsedCodexJsonl {
   toolCalls: string[];
   /** reasoning item text blocks, in order. */
   reasoning: string[];
+  /**
+   * MCP tool invocations, in order (EV12: previously discarded, forcing
+   * e2e assertions onto raw-line regexes). `server` is the MCP server name
+   * (e.g. 'gbrain'), `tool` the invoked tool. Fields are best-effort across
+   * codex versions (`tool` falls back to `name`/`invocation.tool`).
+   */
+  mcpToolCalls: Array<{ server: string; tool: string }>;
 }
 
 /**
  * Parse `codex exec --json` JSONL. Extracts agent_message → finalText,
- * command_execution → toolCalls, reasoning → reasoning. Skips malformed lines.
+ * command_execution → toolCalls, reasoning → reasoning, mcp_tool_call →
+ * mcpToolCalls. Skips malformed lines.
  */
 export function parseCodexJsonl(lines: string[]): ParsedCodexJsonl {
   const outputParts: string[] = [];
   const toolCalls: string[] = [];
   const reasoning: string[] = [];
+  const mcpToolCalls: Array<{ server: string; tool: string }> = [];
 
   for (const line of lines) {
     if (!line.trim()) continue;
@@ -390,10 +399,16 @@ export function parseCodexJsonl(lines: string[]): ParsedCodexJsonl {
       if (item.type === 'reasoning' && text) reasoning.push(text);
       else if (item.type === 'agent_message' && text) outputParts.push(text);
       else if (item.type === 'command_execution' && item.command) toolCalls.push(item.command);
+      else if (item.type === 'mcp_tool_call') {
+        mcpToolCalls.push({
+          server: item.server ?? item.invocation?.server ?? '',
+          tool: item.tool ?? item.name ?? item.invocation?.tool ?? '',
+        });
+      }
     }
   }
 
-  return { finalText: outputParts.join('\n'), toolCalls, reasoning };
+  return { finalText: outputParts.join('\n'), toolCalls, reasoning, mcpToolCalls };
 }
 
 export interface ParsedOpencodeJsonl {
@@ -470,6 +485,8 @@ export interface ClaudeTurnOpts {
   mcpConfigPath?: string;
   model?: string;
   timeoutMs?: number;
+  /** Extra env for the child (spread LAST — wins). See CodexTurnOpts.extraEnv. */
+  extraEnv?: Record<string, string>;
 }
 
 export interface ClaudeTurnResult {
@@ -498,9 +515,13 @@ export async function claudeHeadlessTurn(opts: ClaudeTurnOpts): Promise<ClaudeTu
     ...(opts.mcpConfigPath ? ['--mcp-config', opts.mcpConfigPath, '--strict-mcp-config'] : []),
   ];
 
-  const proc = Bun.spawn(['claude', ...args], {
+  // EV12: spawn the RESOLVED binary — the hermetic child env strips PATH
+  // customizations, so a bare 'claude' can resolve differently (or not at
+  // all) inside the child than the resolver reported to the skip-gate.
+  const claudeBin = resolveClaudeBinary() ?? 'claude';
+  const proc = Bun.spawn([claudeBin, ...args], {
     cwd: opts.cwd,
-    env: hermeticChildEnv({ HOME: opts.home, CLAUDE_CONFIG_DIR: opts.claudeConfigDir }),
+    env: hermeticChildEnv({ HOME: opts.home, CLAUDE_CONFIG_DIR: opts.claudeConfigDir, ...opts.extraEnv }),
     stdin: 'pipe',
     stdout: 'pipe',
     stderr: 'pipe',
@@ -535,12 +556,18 @@ export interface CodexTurnOpts {
   home: string;
   timeoutMs?: number;
   sandbox?: string;
+  /** Extra env for the child (spread LAST — wins). The plugin doors use this
+   *  to thread GBRAIN_BIN/GBRAIN_HOME/GBRAIN_SOURCE through codex's env_vars
+   *  passthrough into the plugin-launched MCP server. */
+  extraEnv?: Record<string, string>;
 }
 
 export interface CodexTurnResult {
   finalText: string;
   toolCalls: string[];
   reasoning: string[];
+  /** MCP tool invocations ({server, tool}) — see ParsedCodexJsonl.mcpToolCalls. */
+  mcpToolCalls: Array<{ server: string; tool: string }>;
   rawLines: string[];
   exitCode: number | null;
   timedOut: boolean;
@@ -571,9 +598,11 @@ export async function codexExecTurn(opts: CodexTurnOpts): Promise<CodexTurnResul
     }
   }
 
-  const proc = Bun.spawn(['codex', 'exec', opts.prompt, '--json', '-s', sandbox], {
+  // EV12: spawn the RESOLVED binary (see claudeHeadlessTurn).
+  const codexBin = resolveCodexBinary() ?? 'codex';
+  const proc = Bun.spawn([codexBin, 'exec', opts.prompt, '--json', '-s', sandbox], {
     cwd: opts.cwd,
-    env: hermeticChildEnv({ HOME: opts.home }, { extraAllow: ['OPENAI_API_KEY', 'CODEX_*'] }),
+    env: hermeticChildEnv({ HOME: opts.home, ...opts.extraEnv }, { extraAllow: ['OPENAI_API_KEY', 'CODEX_*'] }),
     stdout: 'pipe',
     stderr: 'pipe',
   });
@@ -598,6 +627,7 @@ export async function codexExecTurn(opts: CodexTurnOpts): Promise<CodexTurnResul
     finalText: parsed.finalText,
     toolCalls: parsed.toolCalls,
     reasoning: parsed.reasoning,
+    mcpToolCalls: parsed.mcpToolCalls,
     rawLines,
     exitCode: timedOut ? 124 : exitCode,
     timedOut,
@@ -1380,4 +1410,102 @@ export async function seedBrainForAgent(
   }
 
   return { fact, entity, query };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Plugin-lane probes (EV11/EV12)
+// ────────────────────────────────────────────────────────────────────────────
+
+/** True when the codex binary supports the plugin/marketplace subcommands. */
+export function codexSupportsPlugins(bin: string): boolean {
+  try {
+    const r = spawnSync(bin, ['plugin', '--help'], { encoding: 'utf8', timeout: 15_000 });
+    return r.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+/** True when the claude binary supports the plugin subcommands. */
+export function claudeSupportsPlugins(bin: string): boolean {
+  try {
+    const r = spawnSync(bin, ['plugin', '--help'], { encoding: 'utf8', timeout: 15_000 });
+    return r.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Deterministic MCP surface oracle (EV12): spawn an MCP stdio server command,
+ * run the initialize handshake, and return the advertised tool names via a
+ * real `tools/list` — never an LLM-output assertion. Used by the plugin e2e
+ * to pin "the snapshot launcher serves exactly the starter surface".
+ */
+export async function mcpToolsListProbe(opts: {
+  command: string;
+  args: string[];
+  cwd?: string;
+  env?: Record<string, string | undefined>;
+  timeoutMs?: number;
+}): Promise<{ tools: string[]; stderr: string }> {
+  const timeoutMs = opts.timeoutMs ?? 60_000;
+  const proc = Bun.spawn([opts.command, ...opts.args], {
+    cwd: opts.cwd,
+    env: opts.env as Record<string, string>,
+    stdin: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+
+  const frames = [
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'gbrain-e2e-probe', version: '0' } } },
+    { jsonrpc: '2.0', method: 'notifications/initialized' },
+    { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
+  ];
+  proc.stdin.write(frames.map((f) => JSON.stringify(f)).join('\n') + '\n');
+  try { await proc.stdin.end(); } catch { /* already closed */ }
+
+  const stderrDone = new Response(proc.stderr).text();
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let tools: string[] | null = null;
+  const deadline = Date.now() + timeoutMs;
+  // Race each read against the remaining deadline: a child that opens stdout
+  // but never writes would otherwise block `reader.read()` forever, past the
+  // deadline the while-condition can only check between reads.
+  const readOrTimeout = () => Promise.race([
+    reader.read(),
+    new Promise<{ done: true; value: undefined }>((res) =>
+      setTimeout(() => res({ done: true, value: undefined }), Math.max(0, deadline - Date.now())),
+    ),
+  ]);
+  try {
+    while (tools === null && Date.now() < deadline) {
+      const { done, value } = await readOrTimeout();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const parts = buf.split('\n');
+      buf = parts.pop() || '';
+      for (const line of parts) {
+        if (!line.trim()) continue;
+        try {
+          const obj = JSON.parse(line);
+          if (obj.id === 2 && obj.result?.tools) {
+            tools = obj.result.tools.map((t: { name: string }) => t.name);
+          }
+        } catch {
+          /* non-JSON stderr leakage or partial frame — skip */
+        }
+      }
+    }
+  } finally {
+    try { proc.kill(); } catch { /* already dead */ }
+  }
+  const stderr = await stderrDone.catch(() => '');
+  if (tools === null) {
+    throw new Error(`mcpToolsListProbe: no tools/list response within ${timeoutMs}ms — stderr:\n${stderr.slice(0, 2000)}`);
+  }
+  return { tools, stderr };
 }

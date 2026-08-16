@@ -6,7 +6,7 @@
  * different provider. This test ensures all three sites now check
  * gateway.isAvailable('embedding') instead of hardcoded OPENAI_API_KEY.
  *
- *   1. src/core/operations.ts:237 (put_page handler)
+ *   1. src/core/ops/pages.ts (put_page handler; operations.ts is the façade)
  *   2. src/core/search/hybrid.ts:81 (vector search gate)
  *   3. src/core/import-file.ts:112 (chunk embedding in import pipeline)
  *
@@ -15,17 +15,31 @@
  */
 
 import { test, expect } from 'bun:test';
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
+import { readFileSync, readdirSync } from 'fs';
+import { resolve, join } from 'path';
 
 // Resolve relative to this test file so it works on any machine + in CI.
 const REPO_ROOT = resolve(import.meta.dir, '../..');
-const OPS = resolve(REPO_ROOT, 'src/core/operations.ts');
+// The put_page handler lives in the ops domain modules (operations.ts is the
+// assembly façade) — scan the whole ops surface so the negative pin is
+// strictly stronger and a future move can't escape it.
+const OPS_DIR = resolve(REPO_ROOT, 'src/core/ops');
 const HYBRID = resolve(REPO_ROOT, 'src/core/search/hybrid.ts');
 const IMPORT_FILE = resolve(REPO_ROOT, 'src/core/import-file.ts');
 
-test('operations.ts put_page does not gate embedding on OPENAI_API_KEY alone', () => {
-  const src = readFileSync(OPS, 'utf-8');
+function opsSurface(): string {
+  const files = [
+    resolve(REPO_ROOT, 'src/core/operations.ts'),
+    ...readdirSync(OPS_DIR)
+      .filter((f) => f.endsWith('.ts'))
+      .sort()
+      .map((f) => join(OPS_DIR, f)),
+  ];
+  return files.map((f) => readFileSync(f, 'utf-8')).join('\n');
+}
+
+test('ops surface put_page does not gate embedding on OPENAI_API_KEY alone', () => {
+  const src = opsSurface();
   // The forbidden pattern from v0.13
   expect(src).not.toMatch(/!\s*process\.env\.OPENAI_API_KEY/);
   // The fix MUST reference isAvailable from the gateway

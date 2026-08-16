@@ -90,6 +90,8 @@ BANNED_PATH_PATTERNS=(
   'src/core/engine.ts'
   'src/core/postgres-engine.ts'
   'src/core/pglite-engine.ts'
+  'src/core/postgres-engine/'
+  'src/core/pglite-engine/'
   'src/core/db.ts'
   'src/core/engine-factory.ts'
 )

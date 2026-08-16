@@ -198,4 +198,31 @@ describe('installSignalHandlers', () => {
     expect(process.listenerCount('SIGHUP')).toBe(before.sighup + 1);
     expect(process.listenerCount('SIGPIPE')).toBe(before.sigpipe + 1);
   });
+
+  test('_resetForTests DETACHES every listener installSignalHandlers attached', () => {
+    // Regression pin for the suite-wide-kill class: a flags-only reset left
+    // a live SIGTERM→exit(143) listener on the shared bun test runner, so a
+    // later synthetic process.emit('SIGTERM') from any test killed the whole
+    // suite. Counts must return to the pre-install BASELINE, not baseline+1.
+    _resetForTests();
+    const before = {
+      sigterm: process.listenerCount('SIGTERM'),
+      sighup: process.listenerCount('SIGHUP'),
+      sigpipe: process.listenerCount('SIGPIPE'),
+      uncaught: process.listenerCount('uncaughtException'),
+      rejection: process.listenerCount('unhandledRejection'),
+      stdoutErr: process.stdout.listenerCount('error'),
+      stderrErr: process.stderr.listenerCount('error'),
+    };
+    installSignalHandlers();
+    expect(process.listenerCount('SIGTERM')).toBe(before.sigterm + 1);
+    _resetForTests();
+    expect(process.listenerCount('SIGTERM')).toBe(before.sigterm);
+    expect(process.listenerCount('SIGHUP')).toBe(before.sighup);
+    expect(process.listenerCount('SIGPIPE')).toBe(before.sigpipe);
+    expect(process.listenerCount('uncaughtException')).toBe(before.uncaught);
+    expect(process.listenerCount('unhandledRejection')).toBe(before.rejection);
+    expect(process.stdout.listenerCount('error')).toBe(before.stdoutErr);
+    expect(process.stderr.listenerCount('error')).toBe(before.stderrErr);
+  });
 });

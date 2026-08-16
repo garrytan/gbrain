@@ -1,0 +1,10 @@
+// Routing eval additions for skills/daily-task-manager v2.0.0 backport
+// (stable IDs, deterministic action routing). "what's on my plate" stays owned
+// by daily-task-prep (morning prep); task lifecycle phrasing routes here.
+// Each line: {intent, expected_skill, ambiguous_with?}. Intent paraphrases the
+// trigger, never copies it (D-CX-6).
+{"intent":"What are my tasks looking like today?","expected_skill":"daily-task-manager"}
+{"intent":"Add task: renew the acme-example contract next week","expected_skill":"daily-task-manager"}
+{"intent":"Complete task: quarterly report — mark it off","expected_skill":"daily-task-manager"}
+{"intent":"Defer task: website redesign, push it to next Monday","expected_skill":"daily-task-manager","ambiguous_with":["daily-task-prep"]}
+{"intent":"What did I get done across the brain last week?","expected_skill":null}

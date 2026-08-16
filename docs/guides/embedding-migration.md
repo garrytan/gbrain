@@ -112,10 +112,16 @@ ingestion — not just new content.
 3. **Live probe.** One tiny embed against the TARGET provider before any
    mutation — validates the API key, model id, and dimension support in a
    single call. A bad key fails here, with nothing changed.
-4. **Env-override gate.** Refuses when `GBRAIN_EMBEDDING_MODEL` /
-   `GBRAIN_EMBEDDING_DIMENSIONS` would silently defeat the switch at
-   runtime (the same guard `ze-switch` uses). `--ignore-env-override` for
-   people running deliberate experiments.
+4. **Env-override gate.** When `GBRAIN_EMBEDDING_MODEL` /
+   `GBRAIN_EMBEDDING_DIMENSIONS` are set and DISAGREE with the target, the
+   live run refuses (config-says-new / runtime-embeds-old is the #1421 damage
+   class); `--ignore-env-override` for deliberate experiments. When they
+   AGREE with the target the run proceeds with a loud notice (env-first
+   deployments are legitimate; keep the env in sync everywhere gbrain runs).
+   Nothing load-bearing trusts the env either way: the "nothing to migrate"
+   decision verifies the DATABASE (column widths, NULL censuses, signature
+   census, the un-merged file plane), so a pre-set env var cannot fake a
+   completed migration.
 5. **Apply.** When the target width differs from the actual column width,
    runs the same atomic schema transition `ze-switch` uses, in one
    transaction. It rebuilds **all three dim-pinned text-embedding-space
@@ -153,7 +159,10 @@ pages fail to embed), re-run the **same command**: chunks already embedded on
 the target are never re-embedded, the schema/config steps no-op, and the run
 continues where it stopped. An in-flight marker (`embedding_migration.state`
 in DB config) records the target; it is cleared only when the backlog drains
-to zero.
+to zero. Re-running with a DIFFERENT `--to` target while a migration is in
+flight refuses and names both options: the exact resume command for the
+original target, or the same command with `--retarget` to abandon it
+deliberately (the marker records the superseded target in its history).
 
 One caveat after a HARD kill (SIGKILL, crash, power loss — not Ctrl-C): the
 run's per-source single-flight embed lock is left behind, and an immediate
@@ -197,12 +206,31 @@ vector spaces in one index, degrading retrieval with nothing in the logs.
 
 ## Reranker
 
-Migrating embeddings does not touch the reranker. If
-`search.reranker.model` (or the mode-bundle fallback) resolves to the
-outgoing provider, the plan prints a warning; point it at the recommended
-replacement — `gbrain config set search.reranker.model voyage:rerank-2.5`
-(needs `VOYAGE_API_KEY`) — or disable it
-(`gbrain config set search.reranker.enabled false`).
+The migration handles the reranker in the same run (`--reranker auto` is the
+default): when the ACTIVE reranker — resolved through the mode bundles, so
+the common no-explicit-config case counts — is on the outgoing provider or a
+sunsetting one, and the target provider ships a reranker, the run probes it
+live and switches `search.reranker.model` under the same consent gate (config
+write + query-cache purge in one transaction). Overrides: `--reranker off`
+disables reranking, `--reranker keep` leaves it, `--reranker
+<provider:model>` picks explicitly (validated before anything runs). When the
+target provider has no reranker (OpenAI), the run prints an ACTION line with
+the exact commands instead of silently enabling a third provider:
+`gbrain config set search.reranker.model voyage:rerank-2.5` (needs
+`VOYAGE_API_KEY`) or `gbrain config set search.reranker.enabled false`. A
+failed reranker probe keeps the previous config and is reported as
+`switch_failed` — never silent, never fatal to the migration.
+
+## Status (read-only, spend-free)
+
+`gbrain migrate embeddings --status [--json]` reports every config plane (env
+presence, file, DB — API keys as presence booleans only), actual column
+widths (including `facts` / `query_cache`), NULL and chunkless censuses, the
+page-signature census, the in-flight marker with the exact resume command,
+and the last completion record including its smoke-check outcome. It is the
+mid-incident "where am I?" surface; `gbrain doctor`'s
+`embedding_migration_state` check surfaces the same marker on every doctor
+run.
 
 ## Custom embedding columns
 

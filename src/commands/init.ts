@@ -392,13 +392,18 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
   // proceed (D3: hide + warn, allow explicit).
   if (out.embedding_model) {
     const { getRecipe } = await import('../core/ai/recipes/index.ts');
+    const { NEW_INSTALL_DEFAULT_EMBEDDING_MODEL, renderCanonicalMigrationCommands } =
+      await import('../core/ai/defaults.ts');
     const sunsetRecipe = getRecipe(out.embedding_model.split(':')[0]);
     if (sunsetRecipe?.sunset) {
       const rep = sunsetRecipe.sunset.replacement?.embedding;
+      const initMigrateCmd = rep === NEW_INSTALL_DEFAULT_EMBEDDING_MODEL || !rep
+        ? renderCanonicalMigrationCommands().recommendedDryRun
+        : `gbrain migrate embeddings --to ${rep} --dry-run`;
       console.error(
         `WARNING: ${sunsetRecipe.name} stops working on ${sunsetRecipe.sunset.date}. ` +
         `Proceeding because you asked explicitly${rep ? `, but the recommended provider is ${rep}` : ''}. ` +
-        `Migrate before that date: gbrain migrate embeddings --to ${rep ?? '<provider:model>'} --dry-run`,
+        `Migrate before that date: ${initMigrateCmd}`,
       );
     }
   }
@@ -718,7 +723,8 @@ async function resolveEmbeddingByEnv(out: ResolvedAIOptions, nonInteractive: boo
         const tp = r.touchpoints.embedding!;
         const model = tp.default_model ?? tp.models[0];
         const fullModel = `${r.id}:${model}`;
-        const { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } =
+        const { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS,
+          NEW_INSTALL_DEFAULT_EMBEDDING_MODEL, renderCanonicalMigrationCommands } =
           await import('../core/ai/defaults.ts');
         const { embeddingDimsForModel } = await import('../core/ai/model-resolver.ts');
         // Legacy brains ride the legacy width (their stored vectors live there).
@@ -727,11 +733,14 @@ async function resolveEmbeddingByEnv(out: ResolvedAIOptions, nonInteractive: boo
           : embeddingDimsForModel(r, model);
         out.embedding_model = fullModel;
         out.embedding_dimensions = dims;
+        const keepMigrateCmd = r.sunset!.replacement?.embedding === NEW_INSTALL_DEFAULT_EMBEDDING_MODEL
+          || !r.sunset!.replacement?.embedding
+          ? renderCanonicalMigrationCommands({ colDims: dims }).recommendedDryRun
+          : `gbrain migrate embeddings --to ${r.sunset!.replacement.embedding} --dry-run`;
         console.error(
           `WARNING: this brain currently embeds via ${r.name}, which stops working on ` +
           `${r.sunset!.date}. Keeping ${fullModel} (${dims}d) so nothing breaks today — ` +
-          `migrate before that date: gbrain migrate embeddings --to ` +
-          `${r.sunset!.replacement?.embedding ?? '<provider:model>'} --dry-run`,
+          `migrate before that date: ${keepMigrateCmd}`,
         );
         return;
       }

@@ -602,6 +602,13 @@ export interface Chunk {
    * image search arm.
    */
   modality?: 'text' | 'image';
+  /**
+   * True when the stored vector is NULL. Cheap boolean (no vector egress) so
+   * non-embedding readers can tell "vector missing" apart from `embedded_at`,
+   * which a schema rebuild leaves stale. Present only on paths that select it
+   * (getChunks).
+   */
+  embedding_is_null?: boolean;
 }
 
 /**

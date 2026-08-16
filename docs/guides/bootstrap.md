@@ -156,6 +156,7 @@ you'd apply to any journal: write what you'd be comfortable persisting.
 | Hooks (Claude Code) | pull protocol via AGENTS.md gates | automatic per-turn context + session-end persistence |
 | Codex (no wired hooks, no MCP scope flag) | pull protocol + MCP tools | per-turn push (stated plainly; not oversold — codex 0.147+ ships a hook system, but gbrain does not wire it yet) + the ability to confine MCP reach to one folder (`codex mcp add` is always user-global) |
 | opencode (no wired hooks; scope INVERTED: user-global by default) | pull protocol (opencode reads AGENTS.md natively) + MCP tools; project scope available as an explicit opt-in | per-turn push (opencode ships a plugin/event system, but gbrain does not wire it yet). The project-scope default is deliberately NOT offered: opencode spawns project-config servers with no trust prompt, so a committed entry would auto-execute on every collaborator machine |
+| Bootstrap at all (plugin-only install) | MCP tools (`starter` surface, `--source-guard`) + the curated skill set via the codex/claude plugin (docs/mcp/CODEX.md) | identity files, hooks/push protocol, the private-repo body — the plugin is the lightweight lane; bootstrap is the full agent |
 | Second simultaneous session | first session unaffected | second session's brain tools fail politely (one live serve per brain — v1 contract) |
 | Postgres brain (incl. harness mode) | MCP tools every session + pull protocol | per-turn hook injection (`no_pglite_path`: the hook IPC socket is PGLite-only today; hooks stay pre-wired and light up when the engine-uniform listener lands) |
 
@@ -188,7 +189,11 @@ mode wires them in one command, with no `agent.json` and no interview:
 - Codex: one managed `[mcp_servers.gbrain]` block with the bearer token
   INLINE in the codex config (0600) — framework-spawned codex inherits no
   shell profile, so the env-var lane the `connect` path uses would never
-  reach it.
+  reach it. One owner per server name: if the gbrain codex PLUGIN is
+  also enabled, two `gbrain` servers exist in different layers — the wire
+  proceeds with a loud WARNING and `gbrain doctor` reports the collision
+  (`plugin_lane_collision`); keep one (`codex plugin remove gbrain@gbrain`, or
+  `--remove` here).
 - opencode: one managed `mcp.gbrain` remote entry with the bearer header
   INLINE in the user-global JSONC config (0600), written by the same
   comment-preserving editor the workspace lane uses — the `{env:…}`

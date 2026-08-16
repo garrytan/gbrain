@@ -110,6 +110,25 @@ describe('renderWorkspace — happy path', () => {
     expect(third.manifest.source_id).toBe('explicit-id');
   });
 
+  test('rapid forced re-renders never collide on the backup stamp (same-millisecond EEXIST)', () => {
+    // Regression pin (CI 2026-08-16, shard 7): the backup stamp has
+    // MILLISECOND granularity, so two forced renders inside the same ms
+    // collided on the exclusive `wx` backup write with EEXIST. The stamp
+    // dir is now claimed atomically per render call (numeric suffix on
+    // collision). Ten back-to-back renders reliably land several in one
+    // millisecond on any modern machine.
+    const ws = answeredWs();
+    renderWorkspace(ws);
+    const stamps = new Set<string>();
+    for (let i = 0; i < 10; i++) {
+      const res = renderWorkspace(ws, { force: true });
+      expect(res.backups.length).toBeGreaterThan(0);
+      for (const b of res.backups) stamps.add(b.split('/')[1]);
+    }
+    // Every forced render owned a distinct backup dir.
+    expect(stamps.size).toBe(10);
+  });
+
   test('re-render with force preserves the manifest created_at (first render wins)', () => {
     const ws = answeredWs();
     renderWorkspace(ws);

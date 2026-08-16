@@ -96,14 +96,16 @@ beforeAll(() => {
   delete runEnv.OPENAI_API_KEY;
   delete runEnv.ANTHROPIC_API_KEY;
   delete runEnv.GOOGLE_API_KEY;
-  // Strip DB-URL env vars: since v0.31.3 (9c60b3a06, #801) an env
-  // DATABASE_URL deliberately overrides a file-backed PGLite engine
-  // selection in loadConfig(). This whole file is a hermetic-PGLite
-  // suite; when run under the DATABASE_URL-bearing e2e wrapper, an
-  // inherited URL would silently retarget every subprocess (including
-  // the torn-WAL fixture below) at the shared Postgres test DB.
+  // This file is PGLite-only, but the e2e lane deliberately exports
+  // DATABASE_URL (scripts/run-e2e.sh). An inherited env URL overrides the
+  // fixture's `engine: 'pglite'` config (env > file precedence), silently
+  // rerouting every spawned CLI to the healthy shared Postgres — the
+  // corrupt-WAL case then exits 0 against the wrong engine. Strip all
+  // DB-routing vars so the spawned CLIs honor the PGLite fixture homes.
   delete runEnv.DATABASE_URL;
   delete runEnv.GBRAIN_DATABASE_URL;
+  delete runEnv.GBRAIN_PGBOUNCER_URL;
+  delete runEnv.GBRAIN_PGBOUNCER_DIRECT_URL;
 
   // NOTE: init grew strict flag validation (#2201); `--repo`/`--yes` were
   // never real init flags (previously silently ignored). The repo is wired

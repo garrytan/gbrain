@@ -512,3 +512,10 @@ flipping the repo-wide "send secrets to fork PRs" toggle, both broaden
 secret distribution to every fork PR from that account or any fork. Moving
 the branch keeps secret scope tight to just the one PR being shipped.
 
+## Plugin dist tree (codex/claude lanes)
+
+The committed `plugin/` tree embeds the VERSION stamp, so a release bump drifts
+it. After bumping VERSION/package.json, run `bun run
+scripts/generate-plugin-tree.ts --out plugin` and stage `plugin/` +
+`skills/plugin-lanes.json`. `scripts/check-plugin-tree.sh` (in `bun run
+verify`) and the release `publish-codex-plugin` job both fail on drift.

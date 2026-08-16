@@ -1,5 +1,167 @@
 # TODOS
 
+## Five-issue fix wave follow-ups (backlinks corruption / malformed paths / type warnings / getPage scoping / queue admission)
+
+- [ ] **P2 — migrate the remaining fs writers to core/atomic-write.** **What:**
+  `src/core/skillopt/apply-edits.ts` (atomicWrite, leaks tmp on write error),
+  `src/core/write-through.ts` (own tmp+rename), `src/commands/lint.ts:~526`
+  (bare writeFileSync in runLintCore) move onto `src/core/atomic-write.ts`
+  (unique tmp + fsync + mode preservation + optional on-disk verify). Include
+  page-lock unification: write-through's render does NOT take withPageLock, so
+  the backlinks-vs-render lost-update race is only half-closed (backlinks
+  locks; render doesn't). **Why:** four hand-rolled copies drift; the shared
+  helper is strictly stronger. **Effort:** M. **Priority:** P2.
+- [ ] **P3 — relocate/retire skillopt's splitFrontmatter.** **What:** either
+  move it to core/markdown.ts next to frontmatterBodyOffset or port its one
+  SKILL.md caller onto the canonical helper (skillopt's regex is LF-at-byte-0
+  only; the canonical one handles leading blanks + CRLF). **Effort:** S.
+  **Priority:** P3.
+- [ ] **P3 — admission/stats indexes if hot.** **What:** expression index on
+  `(name, (data->>'__param_hash')) WHERE status='waiting'` for the coalesce
+  probe + `(name, created_at)` for the per-type stats aggregates, when
+  minion_jobs exceeds ~100k rows. Same family as the buildQueueDepths perf
+  note (status.ts) and the completed-recency probe TODO below. **Effort:** S.
+  **Priority:** P3.
+- [ ] **P2 — getPage type-boundary redesign (the durable fix behind the
+  guard).** **What:** make source scope explicit at the TYPE level — required
+  scope param or an explicit ALL_SOURCES sentinel on `engine.getPage`, so an
+  unscoped read is unrepresentable instead of merely linted
+  (check-getpage-scoped-write.mjs is the interim guard; the default-first
+  ORDER BY makes today's unscoped reads deterministic). ~78 call sites.
+  **Effort:** L. **Priority:** P2.
+- [ ] **P2 — per-name claim fairness / lane isolation.** **What:** the
+  admission wave (coalescing/TTL/quota) is deliberately submit-side only;
+  claim order remains global FIFO per queue (`queue.ts` claim ORDER BY), so
+  one divergent type still starves same-queue siblings until TTL/quota bites.
+  A per-name claim budget or weighted claim is the drain-side primitive.
+  **Effort:** L. **Priority:** P2.
+- [ ] **P3 — jobs stats divergence: per-queue scoping option.** **What:**
+  the DIVERGENT scream computes name-global (matches quota semantics); a
+  `--queue`-scoped variant would help multi-queue operators localize the
+  producer. **Effort:** S. **Priority:** P3.
+- [ ] **P2 — requeue surface for waiting-TTL-cancelled jobs.** **What:**
+  `jobs retry` targets failed/dead only; a TTL-cancelled row (error_text
+  prefix `waiting_ttl_expired`) that turns out to have been wanted needs a
+  `jobs requeue` (or a retry carve-out gated on that prefix) instead of
+  hand-resubmitting. The data survives (cancelled rows keep payloads +
+  free their idempotency keys), so this is purely a CLI surface. **Effort:**
+  S. **Priority:** P2. (Pre-landing data-migration review, five-issue wave.)
+- [ ] **P2 — dream-path quota-degradation integration tests.** **What:**
+  live-queue integration tests for the QueueQuotaExceededError consumers:
+  cycle patterns → `skipped('admission_quota')`, synthesize → quota latch
+  (one skip per remaining transcript, stop submitting), agent fanout →
+  whole-tree cancel + exit 1. Unit seams exist (isQueueQuotaExceededError
+  is pinned); what's missing is the end-to-end phase behavior under a
+  1-quota config. **Effort:** M. **Priority:** P2.
+- [ ] **P3 — coalesce advisory-lock concurrency e2e.** **What:** real-PG
+  e2e slamming N concurrent identical parentless submits → exactly one row
+  (the advisory lock serializes (name, queue, hash)); PGLite can't prove
+  this (single connection). Home: the DATABASE_URL-gated e2e lane.
+  **Effort:** S. **Priority:** P3.
+- [ ] **P3 — consolidate the stable-stringify triplets.** **What:**
+  `admission.ts` (param hash), plus the two earlier canonical-JSON copies
+  (op-checkpoint hashing, cli-options) each roll their own sorted-key
+  stringify; one `core/canonical-json.ts` would do. Hash-compat note: the
+  admission copy feeds persisted `__param_hash` values — a behavior-change
+  regression there just disables old-row coalescing (forward-safe), but
+  keep the sorted-key semantics bit-identical anyway. **Effort:** S.
+  **Priority:** P3.
+- [ ] **P3 — reconcile lane: quarantine-not-delete option for malformed-path
+  rows + doctor hint nuance.** **What:** full-sync reconcile hard-deletes
+  poisoned rows (consistent with 'strategy' semantics); a
+  `--quarantine-malformed` alternative would preserve rows for triage. Also
+  the malformed_path_pages doctor hint could distinguish rows whose FILE
+  still exists on disk (rename rescues content) from never-committed DB-only
+  rows (delete is the only option). **Effort:** S. **Priority:** P3.
+- [ ] **P3 — thread source scope into `schema lint --with-db`.** **What:**
+  the stored-type data-plane rules accept `LintOpts.sourceId` (multi-source
+  brains can resolve different packs per source; comparing another source's
+  rows against this manifest yields false alias/undeclared warnings), but
+  neither `src/commands/schema.ts` (`runAllLintRules(pack, { engine })`) nor
+  MCP `schema_lint` passes it — the CLI runs a global scan. Add
+  `--source-id` / honor the worktree pin, and expose `[--json]` in the
+  `jobs stats` usage line while in the area (`src/commands/jobs.ts:309`
+  documents `--queue`/`--cluster-errors` but not the shipped `--json`).
+  Also: the interactive coalesce hint suggests "pass a fresh idempotency
+  key", which `gbrain agent run` has no flag for (raw `jobs submit` does).
+  Surfaced by the v0.46.11.0 post-ship doc review. **Effort:** S.
+  **Priority:** P3.
+- [ ] **P3 — one-time cross-source clobber audit.** **What:** the
+  pre-guard unscoped-check/scoped-write class could have historically
+  written 'default'-source rows that shadow same-slug rows in other sources.
+  A one-shot integrity probe (`SELECT slug FROM pages GROUP BY slug HAVING
+  count(DISTINCT source_id) > 1` + updated_at ordering heuristics) would
+  surface survivors for review. **Effort:** S. **Priority:** P3.
+
+## Containment-sprint follow-ups (coverage truth + module peels; plan: ~/.claude/plans/system-instruction-you-are-working-serialized-forest.md)
+
+- [ ] **P1 — Graduate the diff-coverage gate to blocking (time-boxed 2 weeks from merge).**
+  **What:** flip `COVERAGE_GATE_ENFORCE` to `'1'` in test.yml's coverage-report job, add
+  coverage-report to test-status's required-success set and cache-write's needs, and replace
+  the provisional `scripts/coverage-baseline.json` corpus sections with CI-derived values via
+  `scripts/update-coverage-baseline.ts --promote`. **Criteria:** 10 consecutive green
+  coverage-report runs on PRs (master runs are structurally cache-skipped — a squash-merged
+  tree equals its green PR tree, so the ci-pass marker hits; never count master runs) plus 3
+  green nightly fullCorpus merges and zero merge-infrastructure failures. **Why:** the 80%
+  diff gate is built and reporting on every PR; blocking is a one-line flip once the
+  measurement machinery has receipts. Review `scripts/coverage-gate-exemptions.txt` against
+  report-only-window data in the same PR (shrink what gained unit coverage, add only what
+  repeatedly false-positives). **Adversarial acceptance items for the same PR:** decide the
+  enforce-mode degraded posture (today degraded -> report-only, which post-graduation is a
+  bypass channel - fail loud, or require explicit re-run); set a baseline re-seed cadence so
+  serial sub-threshold drops (<=0.49pp) cannot compound unboundedly. **Effort:** S. **Priority:** P1.
+- [ ] **P2 — Wave 4a: decompose performSyncInner (own plan).** **What:** the 1,923-line
+  procedure inside src/commands/sync.ts → sync-phase-{deletes,renames,imports} modules.
+  **Why:** the six pure clusters are peeled (sync.ts 5,991→4,121); the remaining bulk is one
+  function. **Blocked by:** re-pointing the two positional source-text guards
+  (test/sync.test.ts #132 prelude scan, test/redos-hardening.test.ts ordering) at the phase
+  modules — needs its own plan. **Effort:** L→M with CC. **Priority:** P2.
+- [ ] **P2 — Wave 4b: hoist buildChecks' ~220 inline checks.push literals into named
+  functions, then finish the doctor split (own plan).** **What:** doctor.ts is 4,177 lines,
+  ~3,240 of them buildChecks. Hoisting the inline literals into named check functions makes
+  them movable into the checks/ bundles. **Why:** completes the assessment's #1 named peel
+  target. **Effort:** L→M with CC. **Priority:** P2.
+- [ ] **P2 — CLI subprocess coverage.** **What:** investigate an in-process CLI-invocation
+  harness for a coverage lane (import cli.ts main instead of spawning) and track bun
+  child-process coverage support upstream. **Why:** E2E-spawned `bun src/cli.ts` children are
+  invisible to bun's coverage (the documented 15.2% cli.ts undercount);
+  src/cli.ts sits in the gate exemption list until this closes. **Effort:** M. **Priority:** P2.
+- [ ] **P3 — Migrate-runner extraction (revisit only on evidence).** **What:** the ~668
+  region-guarded runner lines in src/core/migrate.ts could move to migrate-runner.ts.
+  **Why deferred:** 9 slice-window source-text assertions in test/migrate.test.ts pin
+  locality; the region-exempt ratchet already forbids logic growth. Revisit if the region
+  guard starts failing on legitimate runner work. **Effort:** M. **Priority:** P3.
+- [ ] **P3 — Shrink coverage-gate-exemptions.txt as engine unit coverage rises.** **What:**
+  the engine files + dirs are exempt because the PR corpus can't see their e2e coverage;
+  nightly fullCorpus data shows their true numbers (postgres-engine 40% merged). As narrow-deps
+  modules gain unit tests, delist them. **Effort:** S per file. **Priority:** P3.
+- [ ] **P3 — Branch coverage when bun ships it.** **What:** bun 1.3.x emits line+function
+  lcov only (and JSC omits function names). When branch records (BRDA) land upstream, extend
+  merge-lcov.ts and report branch coverage. **Effort:** S. **Priority:** P3.
+- [ ] **P2 — Local shard-1 SIGTERM self-kill under load (master-inherited).** **What:** the
+  local fast loop's shard 1/4 dies rc=143 with ZERO test failures ~50–85s in when the machine
+  carries concurrent bun-test load: an `extract.stale` abort observes SIGTERM and the parent
+  bun process dies (`[run-child] job ... not claimed` lines adjacent). Reproduced
+  byte-identically on a clean master worktree (`SHARD=1/4 bash scripts/run-unit-shard.sh
+  --max-concurrency=2`), so it predates the containment sprint — most plausibly a
+  process-group signal escaping a per-job isolation test (#4151 landed the process-isolation
+  lane). **Why:** a self-killing shard reads as CI/local flake and poisons full-suite runs.
+  **Where to start:** the shard-1 file set's isolation/lifecycle tests
+  (test/run-child-entry.test.ts, test/worker-job-isolation.test.ts, test/extract-stale.test.ts)
+  — audit for kill(0)/process-group signals under contention. **Effort:** M. **Priority:** P2.
+- [ ] **P3 — Evidence-gated engine-core dedup.** **What:** the narrow-deps engine modules
+  (facts/takes/code-edges/salience × both engines) are the stepping stone toward a shared
+  engine core, NOT the substitute. The prior proposal drew 15 substantive review objections
+  (see the earlier module-singleton TODO) — pull this in only when parity maintenance costs
+  demonstrably recur. **Effort:** XL→L with CC. **Priority:** P3.
+## Codex/Claude plugin lane follow-ups (filed from the plugin packaging wave)
+
+- [ ] **Plugin-lane receipt provenance: re-run bootstrap after plugin install can strand a hand-wired registration.** `appendReceiptRegistration` dedups by (host, scope), so wiring via bootstrap (detail:`mcp`) → enabling the plugin → re-running `bootstrap hooks` overwrites the record with `plugin-mcp`; the plugin-owned uninstall guard then skips `mcp remove` forever, stranding the registration bootstrap itself created. Narrow sequence (plugin enabled AFTER a hand-wired bootstrap). Fix: on the plugin-owned skip, don't downgrade an existing `mcp`-detail record for the same (host,scope), or offer to remove the stale hand-wired entry. Priority: P3. Surfaced by the ship-stage red-team review of the codex-plugin wave.
+
+- [ ] **Windows launcher support.** `.agents/gbrain-launcher` is `/bin/sh` + exec-bit + `command -v` — Unix-only by declaration. A cross-platform launcher (or a Bun-compiled shim) would open the plugin lanes to native Windows. Start: the launcher's header comment + test/codex-plugin-manifest.test.ts behavioral cases. Priority: P3.
+- [ ] **Keyless cold-home auto-init (FIRST-LIGHT Act 1).** A plugin user with the binary but no brain gets an actionable "No brain configured. Run: gbrain init" fast-fail from the plugin's MCP server (pinned in the codex plugin door). A `serve --auto-init-pglite` opt-in (or manifest-level flag) could make the first session keyless-magic instead — weigh against the silent-DB-creation consent question. Start: src/cli.ts connectEngine + the plugin manifests' args. Priority: P2.
+- [ ] **Additional harness plugin lanes (E6).** The manifest + lockstep-test + coexistence-detector + real-binary-door pattern is established; candidate next lanes: Gemini CLI extensions, Cursor. Start: mirror .codex-plugin/ + the plugin-doors CI job. Priority: P3.
+- [ ] **Marketplace upgrade re-resolution probe (EV13 residue).** The slim `codex-plugin` branch is force-advanced per release (release.yml publish-codex-plugin). Whether `codex plugin marketplace upgrade` re-resolves a force-moved branch ref (vs needing remove+re-add) must be verified against the REAL remote after the first release ships, and docs/mcp/CODEX.md's upgrade section adjusted if sticky. Priority: P2 (post-first-release check).
 ## #4145 lock-renewal wave follow-ups (filed 2026-08-15)
 
 - [ ] **P2 — Kill or reap the force-evicted handler process.** **What:** when the
@@ -93,6 +255,33 @@ Staged-deletion discipline (ship replacements → migrate call sites → update 
   zerank-2) for users who want max rerank quality on a dedicated key. Wire shape
   differs from the ZE/voyage dialect — needs its own `top_param`/response mapping
   audit. Filed from the v0.46.3 CEO review (deferred cherry-pick).
+- [ ] **P3 — Standalone reranker config-set should purge the query cache.**
+  `gbrain config set search.reranker.model ...` (the playbook's manual path)
+  changes rank order but leaves cached result sets until the 3600s TTL expires.
+  The in-migration path (`migrate embeddings --reranker`) already purges in the
+  same transaction — mirror that on the bare config-set path (or fold the
+  reranker model into the knobs hash, the same contamination class as
+  graph_signals/relational). Filed from the migration-hardening wave review.
+- [ ] **P2 — Facts re-embed backfill command.** A dimension transition drops
+  `facts.embedding`; facts regenerate only on their next write/`gbrain extract`
+  pass. `migrate embeddings --status` + the completion output now report the
+  pending census, but there is no command to proactively re-embed the backlog.
+  Filed from the migration-hardening wave (outside-voice C5).
+- [ ] **P2 — Tier-preserving re-embed.** A bulk stale re-embed (embedding
+  migration included) lands per_chunk_synopsis pages at the TITLE context tier
+  (embedding-context.ts:211, embed.ts restamp) — a retrieval-quality downgrade
+  the migration now REPORTS (plan consent line + completion count) but cannot
+  avoid. A tier-preserving mode needs its own LLM-spend consent design (synopsis
+  regeneration costs per page). Filed from the migration-hardening wave
+  (outside-voice C6).
+- [ ] **P3 — `gbrain config set embedding_model` refusal still prescribes
+  wipe-and-reinit.** The v0.37.11.0 hard-refuse in `src/commands/config.ts`
+  prints `mv brain.pglite` + re-init (PGLite) / "see docs/embedding-migrations.md"
+  (Postgres) as the switch recipe. The supported path is now `gbrain migrate
+  embeddings --to <provider:model> --dim <N>` on both engines — render this
+  surface via `renderCanonicalMigrationCommands` (`src/core/ai/defaults.ts`) and
+  add it to `test/canonical-migration-command.test.ts`'s sweep so it can't drift
+  again. Filed from the v0.46.9.0 /document-release audit.
 
 ## Issues #5+#6 follow-ups (pool starvation + process isolation; plan: ~/.claude/plans/system-instruction-you-are-working-witty-moore.md)
 
@@ -285,10 +474,15 @@ Each was explicitly deferred in the pass's CEO/eng/outside-voice reviews.
 - [ ] **P2 — `jobs submit --max-pending` public flag.** maxPending stays an
   internal submit option this wave (Codex C4): its semantics exclude
   delayed/paused/waiting-children rows, and identity is (name, queue, source)
-  so distinct payloads collapse. Decide the public contract (include delayed?
-  explicit scope key?) after the primitive soaks in autopilot, then mirror
-  parseMaxWaitingFlag (clamp [1,100]) + help + flag-registry regen + optional
-  submit_job MCP param. Where: src/commands/jobs.ts, src/core/operations.ts.
+  so distinct payloads collapse. NOTE (five-issue fix wave): the
+  payload-DISTINCT dedupe primitive now exists — admission param-coalescing
+  (`coalesce_params` / minions.coalesce_params.<name>, hash of the full
+  payload incl. owner lane) covers the "identical submits collapse, distinct
+  ones don't" case; --max-pending remains the single-flight-per-scope story.
+  Decide the public contract (include delayed? explicit scope key?) after the
+  primitive soaks in autopilot, then mirror parseMaxWaitingFlag (clamp
+  [1,100]) + help + flag-registry regen + optional submit_job MCP param.
+  Where: src/commands/jobs.ts, src/core/operations.ts.
 - [ ] **P2 — maxPending at the other single-flight dispatch sites.** The
   freshness sync submit (src/commands/autopilot.ts freshness loop) and the
   targeted remediation steps (autopilot.ts targeted-submit loop) still use
@@ -6410,3 +6604,36 @@ covers DEAD logs; go-forward capture beyond Claude Code is deliberately absent.
   are heavy machinery for a benign-cost race; the retriage help documents
   the behavior. Context: outside-voice CX5 on the #4152 ship review.
   Effort: M.
+
+## Local-lane green wave follow-ups (filed at build time)
+
+- [ ] **P2 — Gate `installSigchldHandler()` on `import.meta.main` too.** Same
+  class as the process-cleanup SIGTERM leak fixed in this wave (cli.ts:3-4):
+  a process-wide SIGCHLD reaper installs into any process that merely imports
+  cli.ts — in a bun test runner it could race Bun's own child reaping and
+  steal spawn exit statuses. No observed failure yet; move it inside the
+  import.meta.main seam with a soak run of the full suite before landing.
+  Effort: S.
+- [ ] **P2 — CI e2e lane runs only 8 of ~187 e2e files.** The other ~179 run
+  only via local `bun run test:e2e`, which is how 13 files rotted undetected
+  across v0.42–v0.46 waves (this wave's fix list). Options: a nightly
+  heavy-tests job running the full run-e2e.sh list against the compose
+  postgres, or fold the full lane into ci-local + a required weekly schedule.
+  Decide venue, then wire `scripts/e2e-test-map.ts` coverage accordingly.
+  Effort: M.
+- [ ] **P3 — run-unit-parallel external-kill reporting contradicts itself.**
+  A shard killed by an in-suite exit(143) prints `pass=N fail=0` +
+  `oom_rescue_failed=0real` in the final banner yet exits 1, and the
+  oom-rescue summary line says "real failures confirmed" with fail=0. Make
+  the banner name the killed shard + rescue outcome explicitly so the next
+  mystery kill is a 1-minute diagnosis instead of a bisect. Effort: S.
+- [ ] **P2 — skills.test.ts e2e leaks a git commit into the HOST repo.** During
+  the v0.46.8.0 ship gate, the e2e ingest-skill run created a real commit
+  ("ingest NovaMind board update transcript") with fixture pages
+  (companies/, people/, meetings/) at the WORKSPACE repo root — the test's
+  write-through/commit path resolved the host cwd instead of its tmp fixture
+  repo, despite run-e2e.sh's HOME isolation. Caught only because a soft reset
+  surfaced the staged files. Find the cwd-resolving path in the ingest skill
+  lane (likely repo-root fallback when the source local_path isn't threaded),
+  fix it to fail closed, and add a run-e2e.sh post-run guard that fails the
+  lane if `git status` at the host root gained tracked-file changes. Effort: M.

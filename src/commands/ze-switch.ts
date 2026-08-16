@@ -117,13 +117,12 @@ export async function runZeSwitch(args: string[], engine: BrainEngine): Promise<
   if (!flags.undo && !flags.dryRun) {
     const {
       ZEROENTROPY_SUNSET_DATE,
-      NEW_INSTALL_DEFAULT_EMBEDDING_MODEL,
-      NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS,
+      renderCanonicalMigrationCommands,
     } = await import('../core/ai/defaults.ts');
     const msg =
       `ze-switch is disabled: ZeroEntropy shuts down its hosted API on ${ZEROENTROPY_SUNSET_DATE}.\n` +
       'Switching onto it (or resuming a half-applied switch) would strand this brain.\n' +
-      `To LEAVE ZeroEntropy: gbrain migrate embeddings --to ${NEW_INSTALL_DEFAULT_EMBEDDING_MODEL} --dim ${NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS} --dry-run\n` +
+      `To LEAVE ZeroEntropy: ${renderCanonicalMigrationCommands().recommendedDryRun}\n` +
       'To undo a prior switch: gbrain ze-switch --undo';
     if (flags.json) {
       console.log(JSON.stringify({ status: 'refused', reason: 'provider_sunset', message: msg }));

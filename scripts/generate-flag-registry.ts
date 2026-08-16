@@ -22,7 +22,7 @@
  * Hand-tuning lane: EXTRA_FLAGS below, for flags that live deeper than the
  * one-level scan (add with a comment naming the deep module).
  */
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { dirname, resolve as resolvePath, join } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -59,7 +59,45 @@ function relativeImports(src: string, fromDir: string): string[] {
   for (const m of src.matchAll(/import\('(\.\.?\/[^']+\.ts)'\)/g)) paths.add(m[1]);
   return [...paths]
     .map(p => resolvePath(fromDir, p))
-    .filter(p => existsSync(p));
+    .filter(p => existsSync(p))
+    .flatMap(p => [p, ...facadeExpansion(p)]);
+}
+
+/**
+ * Peeled façade files (containment sprint) whose flag-bearing text moved into
+ * sibling module dirs. Before the peels, that text lived inside the façade
+ * itself and rode the one-level walk; scanning the façade now pulls its
+ * modules back in so a peel can never silently shrink a command's flag set.
+ */
+function facadeExpansion(p: string): string[] {
+  const rel = p.startsWith(ROOT) ? p.slice(ROOT.length + 1) : p;
+  const collect = (dir: string): string[] => {
+    if (!existsSync(dir)) return [];
+    const out: string[] = [];
+    for (const entry of readdirSync(dir).sort()) {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) out.push(...collect(full));
+      else if (entry.endsWith('.ts')) out.push(full);
+    }
+    return out;
+  };
+  if (rel === 'src/core/operations.ts') return collect(join(ROOT, 'src/core/ops'));
+  if (rel === 'src/commands/doctor.ts') return collect(join(ROOT, 'src/commands/doctor'));
+  if (rel === 'src/commands/sync.ts') {
+    // Only the modules PEELED OUT of sync.ts (their text used to live inside
+    // it). Pre-existing sync-* siblings were always ordinary deps — sweeping
+    // them in here would widen surfaces that never saw their text.
+    const peeled = [
+      'sync-cost-gate.ts',
+      'sync-git.ts',
+      'sync-anchor.ts',
+      'sync-lock.ts',
+      'sync-reconcile.ts',
+      'sync-status-report.ts',
+    ];
+    return peeled.map(f => join(ROOT, 'src/core', f)).filter(p => existsSync(p));
+  }
+  return [];
 }
 
 export function buildFlagRegistry(): Record<string, string[]> {
@@ -130,11 +168,17 @@ export function buildFlagRegistry(): Record<string, string[]> {
       .map(mm => resolvePath(join(ROOT, 'src'), mm[1]))
       .filter(p => existsSync(p));
     for (const modPath of commandModules) {
-      const modSrc = readFileSync(modPath, 'utf-8');
-      depthZeroText += modSrc;
-      for (const f of flagsInText(modSrc)) { flags.add(f); depthZero.add(f); }
-      for (const dep of relativeImports(modSrc, dirname(modPath))) {
-        for (const f of flagsInText(readFileSync(dep, 'utf-8'))) flags.add(f);
+      // A command module that IS a peeled façade counts its module files as
+      // part of itself: their text scans at module depth and THEIR relative
+      // imports scan at dep depth — exactly the pre-peel walk.
+      const surface = [modPath, ...facadeExpansion(modPath)];
+      for (const sfPath of surface) {
+        const sfSrc = readFileSync(sfPath, 'utf-8');
+        depthZeroText += sfSrc;
+        for (const f of flagsInText(sfSrc)) { flags.add(f); depthZero.add(f); }
+        for (const dep of relativeImports(sfSrc, dirname(sfPath))) {
+          for (const f of flagsInText(readFileSync(dep, 'utf-8'))) flags.add(f);
+        }
       }
     }
 

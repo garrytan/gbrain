@@ -11,8 +11,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
-import { readFileSync } from 'fs';
-import { join } from 'path';
+import { doctorSource } from './helpers/doctor-source.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { computeQueueHealthCheck, computeWedgedQueueCheck } from '../src/commands/doctor.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -172,10 +171,7 @@ describe('Minions-visibility wave — computeQueueHealthCheck structured details
 
 describe('issue #1801 fix #3 — remote queue_health state→status regression', () => {
   it('doctor.ts no longer queries the non-existent `state` column', () => {
-    const src = readFileSync(
-      join(import.meta.dir, '..', 'src', 'commands', 'doctor.ts'),
-      'utf8',
-    );
+    const src = doctorSource();
     // The column is `status`; the pre-fix `WHERE state = 'active'` errored every
     // run and the catch silently returned "No queue activity".
     expect(src).not.toContain("state = 'active'");

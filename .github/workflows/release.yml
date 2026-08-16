@@ -262,3 +262,70 @@ jobs:
           GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 \
             git push --force "https://github.com/${TEMPLATE_REPO}.git" HEAD:main
           rm -f "$ASKPASS"
+
+  # ── Slim plugin distribution (EV4): the codex-plugin orphan branch ─────────
+  # `codex plugin marketplace add garrytan/gbrain@codex-plugin` should download
+  # the PLUGIN, not the 90+MiB dev repo. Each release force-publishes a
+  # single history-less commit to the `codex-plugin` branch carrying exactly
+  # the plugin artifacts: the manifests (.agents/, .codex-plugin/,
+  # .claude-plugin/), the shared launcher, and the curated plugin/ tree. All
+  # plugin paths are repo-root-relative, so the slim branch is self-consistent
+  # by construction. The repo-root source form keeps working for from-source
+  # installs. Same trust model as the force-advanced latest-stable tag.
+  publish-codex-plugin:
+    needs: [version, release]
+    if: needs.version.outputs.exists == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # force-push the codex-plugin branch of THIS repo
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          # This job holds contents:write; bun install + the generator run
+          # before the push, so the checkout token must not persist into
+          # .git/config — the push step supplies GH_TOKEN explicitly.
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.3.13
+      - run: bun install
+      - name: Drift gate — committed plugin tree matches the generator
+        run: bash scripts/check-plugin-tree.sh
+      - name: Assemble the plugin dist tree
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/plugin-dist
+          cp -R .agents .codex-plugin .claude-plugin plugin /tmp/plugin-dist/
+          # Both plugin manifests declare "license": "MIT"; the slim branch is
+          # exactly the artifact whose consumers never see the repo root, so
+          # it must carry the license text.
+          cp LICENSE /tmp/plugin-dist/ 2>/dev/null || cp LICENSE.md /tmp/plugin-dist/LICENSE
+          test -f /tmp/plugin-dist/LICENSE
+          # Keep the launcher's exec bit explicit (cp -R preserves it, but the
+          # branch contract is load-bearing — assert it).
+          test -x /tmp/plugin-dist/.agents/gbrain-launcher
+      - name: Force-push the codex-plugin branch
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cd /tmp/plugin-dist
+          git init -q -b codex-plugin
+          git config user.name "gbrain-release-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "gbrain v${RELEASE_VERSION} codex/claude plugin dist (history-less; source: the release commit)"
+          # Out-of-band credential (mirrors the publish-template job): the PAT
+          # rides GIT_ASKPASS at prompt time, never the push URL / argv (where
+          # a same-user process could read it from the process table).
+          ASKPASS="$RUNNER_TEMP/git-askpass-plugin.sh"
+          # shellcheck disable=SC2016  # $GH_TOKEN is literal on purpose — it
+          # must expand when /bin/sh runs the askpass script at prompt time,
+          # not now (same pattern as the publish-template job above).
+          printf '#!/bin/sh\nexec echo "$GH_TOKEN"\n' > "$ASKPASS"
+          chmod +x "$ASKPASS"
+          GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 \
+            git -c credential.username=x-access-token \
+            push --force "https://github.com/${GITHUB_REPOSITORY}.git" codex-plugin
+          rm -f "$ASKPASS"

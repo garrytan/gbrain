@@ -14,7 +14,7 @@ replay captured real-world queries as a BrainBench-Real fixture.
 MCP / CLI / subagent tool-bridge caller
      │
      ▼
-src/core/operations.ts — query + search op handlers
+src/core/ops/search.ts — query + search op handlers
      │
      │ (hybridSearch or searchKeyword)
      │

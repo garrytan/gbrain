@@ -163,7 +163,7 @@ async function runScan(
     );
     process.exit(2);
   }
-  const page = await engine.getPage(slug);
+  const page = await engine.getPage(slug); // gbrain-allow-unscoped-getpage: read-only scan CLI with no source parameter; first-match semantics documented
   if (!page) {
     process.stderr.write(
       `[conversation-parser scan] page not found: ${slug}\n`,
