@@ -2,6 +2,27 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.46.6.5] - 2026-08-15
+
+**Page-retrieval metrics can no longer exceed their mathematical bounds when
+search returns multiple chunks from one page.** All native page-level
+evaluators now preserve only the first/best occurrence of each ranked page
+before applying a cutoff. One relevant page therefore contributes one hit or
+gain, not one per matching chunk.
+
+### Fixed
+- Recall@k and nDCG@k remain in `[0, 1]` under duplicate chunk results.
+- Precision@k, Recall@k, MRR, nDCG@k, NamedThingBench, and the qrels
+  correctness gate now share one unique-page ranking primitive.
+- Duplicate non-relevant chunks no longer consume page-level ranks.
+- Qrels ground-truth duplicates are treated as one relevant page.
+
+Historical retrieval baselines that included duplicate page hits may decrease
+after this correction and should be reviewed before changing quality
+thresholds. Precision retains its existing fixed-`k` denominator when fewer
+than `k` unique pages are returned. No migration or configuration change is
+required.
+
 ## [0.46.6.0] - 2026-08-15
 
 **A busy machine can no longer make the job queue evict its own healthy
