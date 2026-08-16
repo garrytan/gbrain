@@ -153,13 +153,17 @@ export interface ThinkResult {
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 4000;
 
-// Thinking-by-default Claude 5 models (`anthropic:claude-*-5`) spend a large
-// share of the output budget on internal reasoning before emitting any answer,
-// so the 4000 default leaves `think` with empty or truncated text. Give those
-// models headroom; providers bill actual tokens, not the cap. Everything else
-// keeps 4000.
+// Thinking-by-default models spend a large share of the output budget on
+// internal reasoning before emitting any answer, so the 4000 default leaves
+// `think` with empty or truncated text (the root cause of LLM_OUTPUT_NOT_JSON
+// when the JSON response is cut mid-object). Give these models headroom;
+// providers bill actual tokens, not the cap. Everything else keeps 4000.
+//
+// Known reasoning model families (2026-08):
+//   - Anthropic Claude 5   — `anthropic:claude-*-5`
+//   - DashScope DeepSeek   — `dashscope:deepseek-*` (reasoning_content eats max_tokens)
 const THINKING_DEFAULT_MAX_OUTPUT_TOKENS = 16000;
-const THINKING_BY_DEFAULT_MODEL_RE = /^anthropic[:/]claude-[a-z0-9]+-5(?:[.-]|$)/i;
+const THINKING_BY_DEFAULT_MODEL_RE = /^(?:anthropic[:/]claude-[a-z0-9]+-5(?:[.-]|$)|dashscope[:/]deepseek)/i;
 export function maxOutputTokensFor(modelStr: string): number {
   return THINKING_BY_DEFAULT_MODEL_RE.test(modelStr)
     ? THINKING_DEFAULT_MAX_OUTPUT_TOKENS
