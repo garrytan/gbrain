@@ -50,6 +50,53 @@ export function formatFileSizeKb(rawSizeBytes: number | bigint | string | null):
     : '?';
 }
 
+/**
+ * The message every storage-dependent `files` subcommand prints when there is
+ * no backend. Exported so tests assert the contract without spawning a CLI.
+ */
+export function noStorageBackendMessage(op: string): string {
+  return (
+    `gbrain files ${op}: no storage backend configured — refusing to continue.\n` +
+    `  The files table records metadata only (there is no blob column), so without a\n` +
+    `  backend the bytes go nowhere while the DB claims they are stored.\n` +
+    `  Fix: configure storage (see gbrain init storage settings), or keep the binary\n` +
+    `  outside the brain and capture its extracted text instead.`
+  );
+}
+
+/**
+ * Single precondition for every storage-dependent `files` subcommand.
+ *
+ * Class fix (see `noStorageBackendMessage`): `upload`, `sync`, and `redirect`
+ * each tested storage permissively (`if (config?.storage)`) and then carried on
+ * when the answer was "no" — inserting rows, printing "uploaded", and in
+ * `redirect` unlinking local originals whose bytes had never left the machine.
+ * Storage-dependent work must refuse up front rather than half-succeed, so this
+ * exits BEFORE any DB write or local mutation.
+ */
+async function requireStorageBackend(
+  op: string,
+): Promise<{ storage: StorageBackend; storageConfig: { bucket?: string } }> {
+  const { loadConfig } = await import('../core/config.ts');
+  const config = loadConfig();
+  if (!config?.storage) {
+    console.error(noStorageBackendMessage(op));
+    process.exit(1);
+  }
+  const { createStorage } = await import('../core/storage.ts');
+  return {
+    storage: (await createStorage(config.storage as any)) as StorageBackend,
+    storageConfig: config.storage as { bucket?: string },
+  };
+}
+
+/** The subset of the storage driver these commands rely on. */
+interface StorageBackend {
+  upload(path: string, data: Buffer, mime?: string): Promise<unknown>;
+  exists(path: string): Promise<boolean>;
+  getUrl(path: string): Promise<string>;
+}
+
 export async function runFiles(engine: BrainEngine, args: string[]) {
   const subcommand = args[0];
 
@@ -138,6 +185,11 @@ async function uploadFile(engine: BrainEngine, args: string[]) {
     process.exit(1);
   }
 
+  // Precondition first: a backend-less upload can only produce a phantom row
+  // (metadata for bytes that were never stored), so refuse before touching the
+  // DB or reporting anything as uploaded.
+  const { storage } = await requireStorageBackend('upload');
+
   const stat = statSync(filePath);
   const hash = fileHash(filePath);
   const filename = basename(filePath);
@@ -153,17 +205,10 @@ async function uploadFile(engine: BrainEngine, args: string[]) {
     return;
   }
 
-  // Upload to storage backend if configured
-  const { loadConfig } = await import('../core/config.ts');
-  const config = loadConfig();
-  if (config?.storage) {
-    const { createStorage } = await import('../core/storage.ts');
-    const storage = await createStorage(config.storage as any);
-    const content = readFileSync(filePath);
-    const method = content.length >= SIZE_THRESHOLD ? 'TUS resumable' : 'standard';
-    console.log(`Uploading ${humanSize(stat.size)} via ${method}...`);
-    await storage.upload(storagePath, content, mimeType || undefined);
-  }
+  const content = readFileSync(filePath);
+  const method = content.length >= SIZE_THRESHOLD ? 'TUS resumable' : 'standard';
+  console.log(`Uploading ${humanSize(stat.size)} via ${method}...`);
+  await storage.upload(storagePath, content, mimeType || undefined);
 
   await sql`
     INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
@@ -313,6 +358,11 @@ async function syncFiles(engine: BrainEngine, dir?: string) {
     process.exit(1);
   }
 
+  // Pre-fix this command inserted a `files` row per file and reported them as
+  // "uploaded" without ever calling the storage backend — every row it produced
+  // was a phantom, even on a brain WITH storage configured.
+  const { storage } = await requireStorageBackend('sync');
+
   const files = collectFiles(dir);
   console.log(`Found ${files.length} files to sync`);
 
@@ -345,6 +395,9 @@ async function syncFiles(engine: BrainEngine, dir?: string) {
     const pathParts = relativePath.split('/');
     const pageSlug = pathParts.length > 1 ? pathParts.slice(0, -1).join('/') : null;
 
+    // Actually put the bytes in storage before recording them as stored.
+    await storage.upload(storagePath, readFileSync(filePath), mimeType || undefined);
+
     await sql`
       INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
       VALUES (${pageSlug}, ${filename}, ${storagePath}, ${mimeType}, ${stat.size}, ${hash}, ${'{}'}::jsonb)
@@ -371,24 +424,58 @@ async function verifyFiles(engine: BrainEngine) {
     return;
   }
 
+  // Pre-fix this loop asked only "does the ROW carry a hash and a path" — true
+  // for any row an INSERT produced — and then printed a hardcoded
+  // "0 mismatches, 0 missing". `missing` was declared and never incremented.
+  // So the one command whose job is catching un-stored files reported phantom
+  // rows as "verified". The check that matters is byte existence at
+  // storage_path, which requires the backend.
+  const { loadConfig } = await import('../core/config.ts');
+  const config = loadConfig();
+  if (!config?.storage) {
+    console.error(
+      `gbrain files verify: ${rows.length} file row(s) recorded, but no storage backend is configured.\n` +
+      `  Byte existence cannot be checked and these rows cannot be retrieved, so they are\n` +
+      `  reported as UNVERIFIABLE rather than "verified" — almost certainly phantoms left by\n` +
+      `  a backend-less upload/sync. Configure storage, or delete the rows.`,
+    );
+    process.exit(1);
+  }
+  const { createStorage } = await import('../core/storage.ts');
+  const storage = (await createStorage(config.storage as any)) as StorageBackend;
+
   let verified = 0;
   let mismatches = 0;
   let missing = 0;
 
   for (const row of rows) {
-    // Note: full verification would check Supabase Storage hash
-    // For now, verify the DB record exists and has valid data
-    if (!row.content_hash || !row.storage_path) {
+    const storagePath = row.storage_path as string | null;
+    if (!row.content_hash || !storagePath) {
       mismatches++;
-      console.error(`  MISMATCH: ${row.storage_path} (missing hash or path)`);
-    } else {
+      console.error(`  MISMATCH: ${storagePath || '(no path)'} (missing hash or path)`);
+      continue;
+    }
+    let exists: boolean;
+    try {
+      exists = await storage.exists(storagePath);
+    } catch (e) {
+      mismatches++;
+      console.error(
+        `  MISMATCH: ${storagePath} (storage check failed: ${e instanceof Error ? e.message : String(e)})`,
+      );
+      continue;
+    }
+    if (exists) {
       verified++;
+    } else {
+      missing++;
+      console.error(`  MISSING: ${storagePath} (row recorded, no bytes in storage)`);
     }
   }
 
-  if (mismatches === 0 && missing === 0) {
-    console.log(`${verified} files verified, 0 mismatches, 0 missing`);
-  } else {
+  // Always report the real counts — never a hardcoded pair.
+  console.log(`${verified} files verified, ${mismatches} mismatches, ${missing} missing`);
+  if (mismatches > 0 || missing > 0) {
     console.error(`VERIFY FAILED: ${mismatches} mismatches, ${missing} missing.`);
     console.error(`Run: gbrain files sync --retry-failed`);
     process.exit(1);
@@ -404,13 +491,8 @@ async function mirrorFiles(args: string[]) {
   const dryRun = args.includes('--dry-run');
   if (!dir || !existsSync(dir)) { console.error('Usage: gbrain files mirror <dir> [--dry-run]'); process.exit(1); }
 
-  const { createStorage } = await import('../core/storage.ts');
-  const { loadConfig } = await import('../core/config.ts');
   const { stringify } = await import('../core/yaml-lite.ts');
-  const config = loadConfig();
-  if (!config?.storage) { console.error('No storage backend configured. Run gbrain init with storage settings.'); process.exit(1); }
-
-  const storage = await createStorage(config.storage as any);
+  const { storage, storageConfig } = await requireStorageBackend('mirror');
   const files = collectFiles(dir);
   console.log(`Found ${files.length} files to mirror`);
 
@@ -432,7 +514,7 @@ async function mirrorFiles(args: string[]) {
   // Write .supabase marker
   const marker = stringify({
     synced_at: new Date().toISOString(),
-    bucket: (config.storage as { bucket?: string })?.bucket || 'brain-files',
+    bucket: storageConfig?.bucket || 'brain-files',
     prefix: basename(dir) + '/',
     file_count: uploaded,
   });
@@ -475,14 +557,16 @@ async function redirectFiles(args: string[]) {
     return;
   }
 
-  // Verify remote files exist before deleting locals
-  const { loadConfig } = await import('../core/config.ts');
-  const config = loadConfig();
-  let storage: any = null;
-  if (config?.storage) {
-    const { createStorage } = await import('../core/storage.ts');
-    storage = await createStorage(config.storage as any);
-  }
+  // Verify remote files exist before deleting locals.
+  //
+  // This is the destructive path: it unlinks the local original and leaves a
+  // `supabase://` pointer behind. Pre-fix, `storage` was only built when a
+  // backend happened to be configured (`if (config?.storage)`) and the
+  // existence check was correspondingly conditional (`if (storage)`) — so with
+  // no backend the guard was skipped entirely and the loop deleted originals
+  // while writing pointers to bytes that had never been uploaded. Data loss,
+  // not a phantom row. The backend is now mandatory here.
+  const { storage } = await requireStorageBackend('redirect');
 
   let redirected = 0;
   let skippedMissing = 0;
@@ -490,14 +574,13 @@ async function redirectFiles(args: string[]) {
     const relPath = relative(dir, filePath);
     const hash = fileHash(filePath);
 
-    // Verify remote exists before deleting local
-    if (storage) {
-      const remoteExists = await storage.exists(relPath);
-      if (!remoteExists) {
-        console.error(`  Skipping ${relPath}: not found in remote storage (would lose data)`);
-        skippedMissing++;
-        continue;
-      }
+    // Unconditional: never unlink a local original we have not confirmed
+    // exists remotely.
+    const remoteExists = await storage.exists(relPath);
+    if (!remoteExists) {
+      console.error(`  Skipping ${relPath}: not found in remote storage (would lose data)`);
+      skippedMissing++;
+      continue;
     }
 
     const stat = statSync(filePath);
