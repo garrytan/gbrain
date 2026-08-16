@@ -10,8 +10,8 @@ import { describe, test, expect } from 'bun:test';
 import { chunkCodeText, detectCodeLanguage, CHUNKER_VERSION } from '../../src/core/chunkers/code.ts';
 
 describe('CHUNKER_VERSION', () => {
-  test('v0.20.0 Cathedral II Layer 12 bumped to 4', () => {
-    expect(CHUNKER_VERSION).toBe(4);
+  test('decorated Python definition support bumped to 5', () => {
+    expect(CHUNKER_VERSION).toBe(5);
   });
 });
 
@@ -271,6 +271,95 @@ def pet_the_dog():
     expect(result.length).toBeGreaterThanOrEqual(1);
     const allLanguages = result.map(c => c.metadata.language);
     for (const lang of allLanguages) expect(lang).toBe('python');
+  });
+
+  test('extracts decorated top-level functions', async () => {
+    const src = `@route("/health")
+def decorated_health_check(request):
+    if request is None:
+        raise ValueError("request required")
+    status = {"ok": True, "service": "gbrain"}
+    status["request_id"] = request.get("request_id", "unknown")
+    status["timestamp"] = request.get("timestamp", 0)
+    return status
+`;
+    const result = await chunkCodeText(src, 'health.py');
+    const chunk = result.find(c => c.metadata.symbolName === 'decorated_health_check');
+    expect(chunk).toBeDefined();
+    expect(chunk!.metadata.symbolType).toBe('function');
+    expect(chunk!.text).toContain('@route("/health")');
+  });
+
+  test('extracts decorated methods with class scope', async () => {
+    const src = `class UserService:
+    @staticmethod
+    def normalize_user_record(record):
+        if not isinstance(record, dict):
+            raise TypeError("record must be a dict")
+        normalized = dict(record)
+        normalized["name"] = normalized.get("name", "").strip()
+        normalized["email"] = normalized.get("email", "").lower()
+        normalized["active"] = bool(normalized.get("active", True))
+        return normalized
+`;
+    const result = await chunkCodeText(src, 'service.py');
+    const method = result.find(c => c.metadata.symbolName === 'normalize_user_record');
+    expect(method).toBeDefined();
+    expect(method!.metadata.symbolType).toBe('function');
+    expect(method!.metadata.parentSymbolPath).toEqual(['UserService']);
+    expect(method!.text).toContain('@staticmethod');
+  });
+
+  test('retains decorators on decorated class scope headers', async () => {
+    const src = `@dataclass
+class UserRecord:
+    name: str
+
+    def display_name(self):
+        return self.name.strip()
+`;
+    const result = await chunkCodeText(src, 'models.py');
+    const classChunk = result.find(c => c.metadata.symbolName === 'UserRecord');
+    expect(classChunk).toBeDefined();
+    expect(classChunk!.metadata.symbolType).toBe('class');
+    expect(classChunk!.text).toContain('@dataclass');
+  });
+
+  test('recurses through nested decorated classes', async () => {
+    const src = `class Outer:
+    @dataclass
+    class Inner:
+        value: str
+
+        def normalized_value(self):
+            return self.value.strip().lower()
+`;
+    const result = await chunkCodeText(src, 'nested.py');
+    const method = result.find(c => c.metadata.symbolName === 'normalized_value');
+    expect(method).toBeDefined();
+    expect(method!.metadata.parentSymbolPath).toEqual(['Outer', 'Inner']);
+    const inner = result.find(c => c.metadata.symbolName === 'Inner');
+    expect(inner).toBeDefined();
+    expect(inner!.text).toContain('@dataclass');
+  });
+
+  test('splits large decorated functions without dropping the decorator', async () => {
+    const statements = Array.from(
+      { length: 12 },
+      (_, i) => `    value_${i} = payload.get("field_${i}", "")`,
+    ).join('\n');
+    const src = `@trace_calls
+def normalize_payload(payload):
+${statements}
+    return payload
+`;
+    const result = await chunkCodeText(src, 'large.py', {
+      largeChunkThresholdTokens: 20,
+      chunkSizeTokens: 20,
+    });
+    const chunks = result.filter(c => c.metadata.symbolName === 'normalize_payload');
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks[0]!.text).toContain('@trace_calls');
   });
 });
 

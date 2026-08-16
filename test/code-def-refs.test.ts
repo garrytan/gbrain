@@ -144,6 +144,16 @@ export async function performDump(engine: BrainEngine, slug: string): Promise<Br
 `;
   await importCodeFile(engine, 'src/engine.ts', brainEngineSrc, { noEmbed: true });
   await importCodeFile(engine, 'src/sync.ts', consumerSrc, { noEmbed: true });
+  await importCodeFile(engine, 'src/routes.py', `@app.route("/health")
+def decorated_health_check(request):
+    if request is None:
+        raise ValueError("request required")
+    status = {"ok": True, "service": "gbrain"}
+    status["request_id"] = request.get("request_id", "unknown")
+    status["timestamp"] = request.get("timestamp", 0)
+    status["path"] = request.get("path", "/health")
+    return status
+`, { noEmbed: true });
 });
 
 afterAll(async () => {
@@ -181,6 +191,14 @@ describe('findCodeDef', () => {
   test('language filter with non-matching language returns empty', async () => {
     const results = await findCodeDef(engine, 'BrainEngine', { language: 'python' });
     expect(results).toEqual([]);
+  });
+
+  test('finds a decorated Python function definition', async () => {
+    const results = await findCodeDef(engine, 'decorated_health_check', { language: 'python' });
+    expect(results.length).toBe(1);
+    expect(results[0]!.slug).toBe('src-routes-py');
+    expect(results[0]!.symbol_type).toBe('function');
+    expect(results[0]!.snippet).toContain('@app.route("/health")');
   });
 });
 
