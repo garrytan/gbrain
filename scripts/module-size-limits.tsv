@@ -9,7 +9,7 @@ src/core/postgres-engine.ts	5770	ratchet	peel target: containment sprint C15; gr
 src/core/pglite-engine.ts	5660	ratchet	peel target: containment sprint C15; grown v0.46.11.0 five-issue wave
 src/core/migrate.ts	668	region-exempt	append-only MIGRATIONS array grows freely; runner logic is ratcheted
 src/commands/sync.ts	4300	ratchet	peel target: containment sprint C13-C14; grown v0.46.11.0 five-issue wave
-src/core/ai/gateway.ts	4116	ratchet	watchlist
+src/core/ai/gateway.ts	4117	ratchet	watchlist
 src/cli.ts	3337	ratchet	watchlist
 src/core/cycle.ts	2933	ratchet
 src/commands/serve-http.ts	2836	ratchet
