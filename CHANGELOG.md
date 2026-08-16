@@ -2,6 +2,72 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.46.2.0] - 2026-08-15
+
+**Dream synthesis now triages before it spends.**
+([#4152](https://github.com/garrytan/gbrain/issues/4152)) The synthesize
+phase used to point its most expensive model at every transcript that
+cleared a yes/no check — on a busy brain that meant an unbounded queue of
+long frontier-model jobs grinding through logistics and small talk. It is
+now a two-stage cascade: a cheap scored triage reads every file first, and
+only what scores above your threshold reaches the synthesis model, which
+starts from a map of the noteworthy passages instead of hunting through raw
+transcript.
+
+### Added
+- **Scored triage gate.** Every transcript gets a 0–1 salience score,
+  content type, candidate quotes, and entity candidates from the utility-tier
+  model (one call per new file, cached in `dream_verdicts` with the judging
+  model + prompt version — migration v129). The gate
+  (`dream.triage.threshold`, default 0.5) is applied at read time: retune it
+  any time and re-gating costs **zero** new LLM calls. Provider hiccups
+  (truncation, refusal, unparseable output) are never cached as rejections —
+  those files are re-judged next cycle, and an outage reports as "triage
+  degraded", never as "everything scored low".
+- **`gbrain dream retriage`** — re-score the corpus and reconcile the queued
+  synthesis backlog. `--dry-run` previews from cached scores with zero LLM
+  calls; `--reconcile-queue` cancels queued jobs that score below the gate
+  AND converts jobs stranded in dead per-run queues so the next cycle
+  actually re-submits them; `--audit-rejects <n>` gets a frontier-model
+  second opinion on a sample of rejects (the threshold-calibration loop).
+  Every sweep prints an upfront cost estimate and asks before spending more
+  than a few dollars (`--yes` to skip, `--max-usd` for an estimate-based
+  budget stop that counts every paid call, including unreliable ones — it
+  can overshoot by up to the configured triage concurrency). Guardrails: queues
+  younger than an hour are treated as possibly-live and never touched;
+  `--cancel-unmatched` refuses to run off a truncated or empty corpus scan.
+- **Triage map in the synthesis prompt.** Passing files hand the synthesis
+  subagent their pre-extracted quotes and entities (verbatim-verified against
+  the chunk text) so it works from signal instead of re-scanning sludge.
+- **Cost knobs.** `dream.synthesize.max_turns` (default now 16, was a
+  hardcoded 30 — set it back via config if your written-page counts drop;
+  `details.synthesis.avg_turns` shows cap pressure),
+  `dream.triage.max_ms` (per-cycle triage time budget, default 5 min — a big
+  cold corpus triages across a few cycles, with deferred files labeled "not
+  yet triaged", never silently rejected), and an opt-in per-source daily
+  synthesis cap (`dream.synthesize.max_submissions_per_source_per_day`,
+  default off; 200/day is a sane value for busy deployments). The intended
+  pairing is the shipped mid-tier synthesis default — frontier-model
+  overrides are unnecessary with triage doing the reading.
+
+### Fixed
+- A run whose submissions were all skipped (cap, already-synthesized) no
+  longer starts the 12-hour cooldown, so the skipped files retry on the next
+  cycle instead of waiting half a day.
+- Synthesis jobs stranded in a dead per-run queue by a killed cycle are
+  self-healed on the next run (cancelled and re-submitted into the live
+  queue) instead of stalling the phase for the full 35-minute wait.
+- `gbrain dream retriage --help` (and richer `gbrain dream --help`) now
+  print real usage instead of the generic one-line stub, with no brain
+  configured.
+
+To take advantage of v0.46.2.0: upgrade and run `gbrain dream` as usual —
+existing verdicts are re-scored automatically on the next cycle (cheap,
+utility-tier). If you have a queued synthesis backlog, run
+`gbrain dream retriage --dry-run` to preview, then
+`gbrain dream retriage --reconcile-queue` to drain it for pennies. Tune
+`dream.triage.threshold` freely; re-gating is free.
+
 ## [0.46.1.0] - 2026-08-15
 
 **A stuck job can no longer take down your whole worker.** Field reports from

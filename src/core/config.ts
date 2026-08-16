@@ -1048,6 +1048,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'cycle.extract_atoms.budget_usd',
   'models.dream.patterns',
   'models.dream.synthesize_verdict',
+  // #4152: preferred triage-model key (explicit pre-read in loadSynthConfig;
+  // wins over models.dream.synthesize_verdict + dream.synthesize.verdict_model).
+  'models.dream.triage',
   'models.drift',
   'models.auto_think',
   'models.think',
@@ -1079,6 +1082,19 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'dream.synthesize.output_root',
   'dream.synthesize.subagent_timeout_ms',
   'dream.synthesize.subagent_wait_timeout_ms',
+  // #4152 two-stage cascade: subagent turn budget (default 16) + opt-in
+  // per-source daily submission cap (default 0 = disabled; 200 recommended
+  // for busy deployments).
+  'dream.synthesize.max_turns',
+  'dream.synthesize.max_submissions_per_source_per_day',
+  // #4152 triage knobs. The triage model's preferred key is
+  // `models.dream.triage` (models.* prefix, registered via the models.dream.*
+  // family); these tune the gate + sampling + pass budget.
+  'dream.triage.threshold',
+  'dream.triage.max_chars',
+  'dream.triage.max_tokens',
+  'dream.triage.max_ms',
+  'dream.triage.concurrency',
   'dream.patterns.lookback_days',
   'dream.patterns.min_evidence',
   // #2782-family: patterns-phase subagent timeouts (mirror of the

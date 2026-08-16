@@ -6080,3 +6080,66 @@ covers DEAD logs; go-forward capture beyond Claude Code is deliberately absent.
   carry verbatim observation transcripts; consider extending check-privacy.sh
   (or a dedicated check) to assert pin docs use `<tmp>`/placeholder paths and
   never carry key material or account ids. Effort: S.
+
+## Dream triage cascade follow-ups (#4152, filed at implementation)
+
+- [ ] **P2 — Incremental submit-drain + deadline threading in synthesize
+  fan-out.** What: restructure the fan-out to submit bounded batches and
+  drain each before submitting more, stopping against the parent job's
+  `deadlineAtMs`. Why: today the phase bulk-submits every accepted child
+  then drains sequentially inside `autopilot-cycle`'s 30-min wall clock
+  (`handler-timeouts.ts:44`); a timeout mid-drain strands the remainder in
+  the run's private queue (the C1 self-heal + retriage conversion now
+  recover them, but not creating strands beats recovering them). Blocked
+  by: `runCycle` does not thread deadline/abort into phases (verified
+  absent at the synthesize call site, cycle.ts ~2030). Context: outside
+  voice C2 on the #4152 eng review; the triage `max_ms` budget bounds the
+  cheap half, this bounds the expensive half. Effort: M/L.
+- [ ] **P2 — Scheduled reject sample-audit with spend-posture
+  integration.** What: automate `dream retriage --audit-rejects N` on a
+  cadence (weekly cron or post-cycle sampling) writing disagreement-rate
+  telemetry, gated by `spend.posture`. Why: the threshold is an
+  intuition-set 0.5 until real false-negative data exists; the cascade
+  literature is unanimous that unaudited gates drift (eng-review search
+  check). The manual flag ships with #4152; this files the loop that runs
+  without an operator remembering. Depends on: a few weeks of production
+  score distributions. Effort: M.
+- [ ] **P3 — Borderline-band routing (0.30–0.49 → mid-tier model or batch
+  digest).** What: a second lane where near-threshold files get a cheaper
+  treatment instead of the binary keep/drop. Why: the issue marked it
+  optional; it adds a third model lane + a second threshold pair, which
+  should be tuned from `details.triage` score distributions rather than
+  guessed. Blocked by: production calibration data (see the audit TODO
+  above). Effort: M.
+- [ ] **P3 — Source×corpus multiplier: per-source corpus mapping or
+  explicit fan-out consent.** What: `dream.synthesize.session_corpus_dir`
+  is GLOBAL config while synth idempotency keys are SOURCE-namespaced, so
+  N registered sources each re-fan the same corpus (a live deployment saw
+  3 × ~1,250 jobs/day of the same files). Triage verdicts are
+  source-agnostic (judged once) and the cascade cuts each source's fanout
+  by the pass rate, but total synthesis is still N× the corpus. Why
+  deferred: pages land per-source, so per-source synthesis may be intended
+  semantics for some operators — needs its own issue + design (per-source
+  corpus config keys vs an explicit multi-source consent flag). Diagnostic:
+  `dream retriage --reconcile-queue --json` reports `queue.by_source`.
+  Context: outside voice C3 argued root-cause-first; scoped out twice
+  during the #4152 review. Comment on #4152 after ship. Effort: M.
+- [ ] **P3 — Dream triage perf follow-ups (from the #4152 ship review).**
+  What: (a) batch the per-file `getDreamVerdict` PK probes in `runTriagePass`
+  into one prefetch (unnest join on (file_path, content_hash)) and reuse it
+  for retriage's spend-estimate loop (currently 2×N sequential roundtrips on
+  the operator sweep); (b) a partial index for `countRecentSynthSubmissions`
+  (`(created_at) WHERE name='subagent' AND idempotency_key LIKE
+  'dream:synth-v2:%'`) so the opt-in daily cap's count is index-served on
+  busy brains; (c) a shared `seedTriageVerdict` test helper to collapse the
+  five hand-rolled triage-v1 seed blocks. Why: all flagged by the ship
+  review's performance/maintainability specialists; none block — cache
+  probes are ~0.1% of adjacent LLM latency and the cap is default-off.
+  Effort: M.
+- [ ] **P3 — Per-file single-flight for triage cache misses.** What:
+  concurrent passes (retriage while a cycle runs) can double-judge the same
+  uncached file (~1¢/file, last-write-wins converges — benign but untidy);
+  a per-(file,hash) advisory claim would dedupe. Why deferred: real locks
+  are heavy machinery for a benign-cost race; the retriage help documents
+  the behavior. Context: outside-voice CX5 on the #4152 ship review.
+  Effort: M.

@@ -4620,14 +4620,21 @@ export class PGLiteEngine implements BrainEngine {
     return result.rows as FileRow[];
   }
 
-  // Dream-cycle significance verdict cache (v0.23).
+  // Dream-cycle triage verdict cache (v0.23 boolean era; widened by #4152 triage-v1).
   async getDreamVerdict(filePath: string, contentHash: string): Promise<DreamVerdict | null> {
     const result = await this.db.query<{
       worth_processing: boolean;
       reasons: string[] | null;
       judged_at: Date | string;
+      score: number | null;
+      content_type: string | null;
+      segments: Array<{ quote: string; note?: string }> | null;
+      entities: string[] | null;
+      model: string | null;
+      triage_version: number | null;
     }>(
-      `SELECT worth_processing, reasons, judged_at
+      `SELECT worth_processing, reasons, judged_at,
+              score, content_type, segments, entities, model, triage_version
        FROM dream_verdicts
        WHERE file_path = $1 AND content_hash = $2`,
       [filePath, contentHash]
@@ -4638,18 +4645,35 @@ export class PGLiteEngine implements BrainEngine {
       worth_processing: r.worth_processing,
       reasons: r.reasons ?? [],
       judged_at: r.judged_at instanceof Date ? r.judged_at.toISOString() : String(r.judged_at),
+      score: r.score ?? null,
+      content_type: r.content_type ?? null,
+      segments: r.segments ?? [],
+      entities: r.entities ?? [],
+      model: r.model ?? null,
+      triage_version: r.triage_version ?? null,
     };
   }
 
   async putDreamVerdict(filePath: string, contentHash: string, verdict: DreamVerdictInput): Promise<void> {
+    // $N::jsonb + JSON.stringify is legal ONLY on PGLite (its db.query parses
+    // text→jsonb natively); the postgres.js twin must use sql.json().
     await this.db.query(
-      `INSERT INTO dream_verdicts (file_path, content_hash, worth_processing, reasons)
-       VALUES ($1, $2, $3, $4::jsonb)
+      `INSERT INTO dream_verdicts (file_path, content_hash, worth_processing, reasons,
+                                   score, content_type, segments, entities, model, triage_version)
+       VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7::jsonb, $8::jsonb, $9, $10)
        ON CONFLICT (file_path, content_hash) DO UPDATE SET
          worth_processing = EXCLUDED.worth_processing,
          reasons = EXCLUDED.reasons,
+         score = EXCLUDED.score,
+         content_type = EXCLUDED.content_type,
+         segments = EXCLUDED.segments,
+         entities = EXCLUDED.entities,
+         model = EXCLUDED.model,
+         triage_version = EXCLUDED.triage_version,
          judged_at = now()`,
-      [filePath, contentHash, verdict.worth_processing, JSON.stringify(verdict.reasons)]
+      [filePath, contentHash, verdict.worth_processing, JSON.stringify(verdict.reasons),
+       verdict.score, verdict.content_type, JSON.stringify(verdict.segments),
+       JSON.stringify(verdict.entities), verdict.model, verdict.triage_version]
     );
   }
 

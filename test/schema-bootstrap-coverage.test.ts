@@ -881,6 +881,19 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   'minion_jobs.budget_remaining_cents',
   'minion_jobs.budget_owner_job_id',
   'minion_jobs.budget_root_owner_id',
+  // #4152 (migration v129) — triage-v1 columns on dream_verdicts. Same
+  // precedent as facts.dimension et al: dream_verdicts is migration-created
+  // on PGLite (v30, absent from PGLITE_SCHEMA_SQL), so no schema-blob
+  // forward reference can exist; no index references these columns; and
+  // every reader (runTriagePass cache-validity check) treats NULL as a
+  // legacy-era cache miss, so pre-v129 rows are invisible-by-design until
+  // re-judged. Column-only, no bootstrap probe needed.
+  'dream_verdicts.score',
+  'dream_verdicts.content_type',
+  'dream_verdicts.segments',
+  'dream_verdicts.entities',
+  'dream_verdicts.model',
+  'dream_verdicts.triage_version',
 ]);
 
 test('every ALTER TABLE ADD COLUMN in MIGRATIONS is covered by applyForwardReferenceBootstrap (column-only class)', async () => {
