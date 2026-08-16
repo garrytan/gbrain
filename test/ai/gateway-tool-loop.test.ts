@@ -271,7 +271,7 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
     ).rejects.toThrow(/non-idempotent.*pending/i);
   });
 
-  it('defaults max output tokens per model: 4096 for non-thinking, 32000 for Claude 5', async () => {
+  it('defaults max output tokens per model: 4096 for non-thinking, 32000 for routed Claude 5', async () => {
     const seen: Array<number | undefined> = [];
     __setChatTransportForTests(async (opts) => {
       seen.push(opts.maxTokens);
@@ -289,10 +289,13 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
     await toolLoop({ model: 'anthropic:claude-sonnet-4-6', initialMessages: [{ role: 'user', content: 'hi' }], tools: [], toolHandlers: new Map() });
     await toolLoop({ model: 'anthropic:claude-sonnet-5', initialMessages: [{ role: 'user', content: 'hi' }], tools: [], toolHandlers: new Map() });
     await toolLoop({ model: 'anthropic:claude-fable-5', initialMessages: [{ role: 'user', content: 'hi' }], tools: [], toolHandlers: new Map() });
+    await toolLoop({ model: 'openrouter:anthropic/claude-sonnet-5', initialMessages: [{ role: 'user', content: 'hi' }], tools: [], toolHandlers: new Map() });
+    await toolLoop({ model: 'openrouter:openai/gpt-5.2', initialMessages: [{ role: 'user', content: 'hi' }], tools: [], toolHandlers: new Map() });
 
     // Non-thinking / non-Claude-5 stay 4096 (safe under openai-compat caps);
-    // thinking-by-default Claude 5 models get 32000 headroom.
-    expect(seen).toEqual([4096, 4096, 32000, 32000]);
+    // thinking-by-default Claude 5 models get 32000 headroom, even when
+    // reached through an OpenRouter provider prefix.
+    expect(seen).toEqual([4096, 4096, 32000, 32000, 32000, 4096]);
   });
 
   it('hits max_turns when the model keeps calling tools', async () => {
