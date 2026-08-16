@@ -115,7 +115,7 @@ describeE2E('v0.41.6.0 — sync lock recovery scenarios', () => {
     expect(handle).not.toBeNull();
 
     try {
-      const result = runCli(['sync', '--repo', repoDir, '--full', '--yes']);
+      const result = runCli(['sync', '--repo', repoDir, '--full', '--yes', '--no-embed']);
       expect(result.code).not.toBe(0);
       const msg = result.stderr + result.stdout;
       expect(msg).toMatch(new RegExp(`pid ${process.pid}`));
