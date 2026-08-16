@@ -7,6 +7,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { withEnv } from './helpers/with-env.ts';
 import { logRerankFailure } from '../src/core/rerank-audit.ts';
+import { doctorSource, doctorFileSource } from './helpers/doctor-source.ts';
 
 describe('doctor command', () => {
   test('doctor module exports runDoctor', async () => {
@@ -30,8 +31,7 @@ describe('doctor command', () => {
   });
 
   test('frontmatter_integrity subcheck added in v0.22.4', async () => {
-    const fs = await import('fs');
-    const src = fs.readFileSync('src/commands/doctor.ts', 'utf8');
+    const src = doctorSource();
     // Subcheck name and call into shared scanner are present.
     expect(src).toContain("name: 'frontmatter_integrity'");
     expect(src).toContain('scanBrainSources');
@@ -206,7 +206,7 @@ describe('doctor command', () => {
   });
 
   test('doctor --fast emits source-specific message when URL present', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const source = doctorSource();
     // The source-aware message must reference the variable name so users
     // know where their URL is coming from.
     expect(source).toContain('Skipping DB checks (--fast mode, URL present from');
@@ -218,14 +218,14 @@ describe('doctor command', () => {
   // bodies and points users at the standalone `gbrain repair-jsonb` command.
   // Detection only; repair lives in src/commands/repair-jsonb.ts.
   test('doctor source contains jsonb_integrity and markdown_body_completeness checks', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const source = doctorSource();
     expect(source).toContain('jsonb_integrity');
     expect(source).toContain('markdown_body_completeness');
     expect(source).toContain('gbrain repair-jsonb');
   });
 
   test('jsonb_integrity check covers the four JSONB sites fixed in v0.12.1', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const source = doctorSource();
     expect(source).toMatch(/table:\s*'pages'.*col:\s*'frontmatter'/);
     expect(source).toMatch(/table:\s*'raw_data'.*col:\s*'data'/);
     expect(source).toMatch(/table:\s*'ingest_log'.*col:\s*'pages_updated'/);
@@ -328,12 +328,13 @@ describe('doctor command', () => {
   // pair exceeds the configurable threshold (facts.absorb_warn_threshold,
   // default 10).
   test('doctor source contains facts_extraction_health check that iterates sources', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
-    expect(source).toContain('facts_extraction_health');
+    const doctorAll = doctorSource();
+    expect(doctorAll).toContain('facts_extraction_health');
     // The check must group by source_id, not hardcode 'default'.
-    const block = source.slice(
-      source.indexOf('// 11a-bis-2. facts_extraction_health'),
-      source.indexOf('// 11a-2. effective_date_health'),
+    const doctorTs = doctorFileSource('doctor.ts');
+    const block = doctorTs.slice(
+      doctorTs.indexOf('// 11a-bis-2. facts_extraction_health'),
+      doctorTs.indexOf('// 11a-2. effective_date_health'),
     );
     expect(block.length).toBeGreaterThan(0);
     expect(block).toContain('GROUP BY source_id');
@@ -353,7 +354,7 @@ describe('doctor command', () => {
   // These are structural assertions on the source string so a silent revert
   // of the severity or the IN-filter removal fails loudly without a live DB.
   test('RLS check scans ALL public tables (no hardcoded tablename IN list near the RLS block)', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const source = doctorFileSource('doctor.ts');
     const rlsBlock = source.slice(
       source.indexOf('// 5. RLS'),
       source.indexOf('// 6. Schema version'),
@@ -367,7 +368,7 @@ describe('doctor command', () => {
   });
 
   test('RLS check raises status=fail with quoted-identifier remediation SQL', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const source = doctorFileSource('doctor.ts');
     const rlsBlock = source.slice(
       source.indexOf('// 5. RLS'),
       source.indexOf('// 6. Schema version'),
@@ -381,7 +382,7 @@ describe('doctor command', () => {
   });
 
   test('RLS check skips on PGLite (no PostgREST, not applicable)', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const source = doctorFileSource('doctor.ts');
     const rlsBlock = source.slice(
       source.indexOf('// 5. RLS'),
       source.indexOf('// 6. Schema version'),
@@ -391,7 +392,7 @@ describe('doctor command', () => {
   });
 
   test('RLS check reads pg_description and recognizes the GBRAIN:RLS_EXEMPT escape hatch', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const source = doctorFileSource('doctor.ts');
     const rlsBlock = source.slice(
       source.indexOf('// 5. RLS'),
       source.indexOf('// 6. Schema version'),
@@ -407,7 +408,7 @@ describe('doctor command', () => {
   // Lives AFTER `// 6. Schema version` so the existing `// 5. RLS` slice
   // tests stay intact (codex correction).
   test('rls_event_trigger check exists, scoped after schema_version, healthy on (O,A) only', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const source = doctorFileSource('doctor.ts');
     const idx7 = source.indexOf('// 7. RLS event trigger');
     const idx8 = source.indexOf('// 8. Embedding health');
     expect(idx7).toBeGreaterThan(0);
@@ -436,8 +437,7 @@ describe('doctor command', () => {
   // with the canonical `gbrain extract all`. Pin the user-facing copy so a
   // future edit can't silently re-regress to a stale verb.
   test('graph_coverage hint uses canonical `gbrain extract all`, not removed verbs', async () => {
-    const fs = await import('fs');
-    const src = fs.readFileSync('src/commands/doctor.ts', 'utf8');
+    const src = doctorSource();
     // Canonical form (post-v0.16 single-verb consolidation).
     expect(src).toContain('Run: gbrain extract all');
     // Stale verb names removed in v0.16 must not return.
@@ -600,23 +600,24 @@ describe('doctor command', () => {
 // ─────────────────────────────────────────────────────────────────────────
 describe('v0.31.8 — wedge migration force-retry hint (D19)', () => {
   test('local doctor source contains wedge detection alongside the existing stuck path', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const doctorAll = doctorSource();
     // The existing forward-progress override stays intact. Both branches
     // must be present and live next to each other; replacing the override
     // with statusForVersion() would re-open stale wedge alerts (codex OV11).
-    expect(source).toContain('Forward-progress override');
-    expect(source).toContain('partialCount >= 3');
+    expect(doctorAll).toContain('Forward-progress override');
+    expect(doctorAll).toContain('partialCount >= 3');
     // Both branches must coexist. Wedged path builds the command list with
     // --force-retry; partial path falls back to plain --yes. Order varies
     // between the local + remote doctor blocks, so just assert presence.
-    expect(source).toContain('WEDGED MIGRATION(s)');
-    expect(source).toContain('MINIONS HALF-INSTALLED');
-    expect(source).toContain('--force-retry');
-    expect(source).toMatch(/MINIONS HALF-INSTALLED[\s\S]{0,400}--yes/);
+    expect(doctorAll).toContain('WEDGED MIGRATION(s)');
+    expect(doctorAll).toContain('MINIONS HALF-INSTALLED');
+    expect(doctorAll).toContain('--force-retry');
+    const doctorTs = doctorFileSource('doctor.ts');
+    expect(doctorTs).toMatch(/MINIONS HALF-INSTALLED[\s\S]{0,400}--yes/);
   });
 
   test('wedge detection is local to doctor — no statusForVersion import (D19 anti-regression)', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const source = doctorSource();
     // D19 explicitly chose to extend the existing block in place rather than
     // import statusForVersion, because statusForVersion is per-version only
     // and doesn't encode the cross-version forward-progress override. If a
@@ -627,7 +628,7 @@ describe('v0.31.8 — wedge migration force-retry hint (D19)', () => {
   });
 
   test('multiple wedged versions chain force-retry calls with &&', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const source = doctorSource();
     // The local doctor block uses `.join(' && ')` so multiple wedged
     // versions render as a single copy-pasteable command line. Match BOTH
     // engine.ts blocks (local doctor + remote doctor) — the regex finds
@@ -636,15 +637,18 @@ describe('v0.31.8 — wedge migration force-retry hint (D19)', () => {
   });
 
   test('remote doctor (doctorReportRemote) also emits the force-retry hint (D14)', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    // doctorReportRemote was peeled into its own module (containment
+    // sprint); the positional guard follows the code to its new file per
+    // the doctorFileSource contract.
+    const source = doctorFileSource('doctor/report-remote.ts');
     // Check that the wedge detection is duplicated in the remote doctor
     // path so thin-client operators see it. Find the doctorReportRemote
-    // function span and verify the wedge-hint code lives inside it.
+    // function span and verify the wedge-hint code lives inside it
+    // (doctorReportRemote is the last declaration in its file, so
+    // slice-to-end covers exactly the function span).
     const remoteStart = source.indexOf('export async function doctorReportRemote(');
     expect(remoteStart).toBeGreaterThan(0);
-    const remoteEnd = source.indexOf('\nexport async function runDoctor(', remoteStart);
-    expect(remoteEnd).toBeGreaterThan(remoteStart);
-    const remoteBlock = source.slice(remoteStart, remoteEnd);
+    const remoteBlock = source.slice(remoteStart);
     expect(remoteBlock).toContain('--force-retry');
     expect(remoteBlock).toContain('partialCount >= 3');
     expect(remoteBlock).toMatch(/WEDGED MIGRATION\(s\) on brain host/);
@@ -1215,7 +1219,7 @@ describe('v0.41.32.0 — commit-relative staleness', () => {
 // status` (jobs.ts:805) cannot drift: both go through `summarizeCrashes`.
 describe('supervisor crash classifier wiring (v0.35.x)', () => {
   test('doctor.ts uses summarizeCrashes — no ad-hoc worker_exited filter', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const source = doctorSource();
     // Wired to the shared helper.
     expect(source).toContain('summarizeCrashes');
     // The pre-fix ad-hoc filter pattern must NOT survive. The exact buggy
@@ -1227,7 +1231,7 @@ describe('supervisor crash classifier wiring (v0.35.x)', () => {
   });
 
   test('doctor.ts warn threshold dropped from >3 to >=1', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const source = doctorSource();
     // The pre-fix `crashes24h > 3` threshold made sense only because the
     // counter was over-counting clean exits. Under accurate counts, any real
     // crash is signal — threshold lands at `>=1`.
@@ -1237,7 +1241,7 @@ describe('supervisor crash classifier wiring (v0.35.x)', () => {
   });
 
   test('doctor.ts ok + warn messages include per-cause breakdown and clean_exits_24h', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const source = doctorSource();
     // Per-cause breakdown surfaces qualitative signal (oom vs runtime vs unknown
     // vs legacy) so operators can triage without grep'ing JSONL.
     expect(source).toContain('runtime=');
@@ -1269,25 +1273,25 @@ describe('supervisor crash classifier wiring (v0.35.x)', () => {
 // signal that prefix-expansion in resolveEntitySlug is missing a case.
 describe('stub_guard_24h check (v0.34.5)', () => {
   test('doctor source defines the stub_guard_24h check', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const source = doctorSource();
     expect(source).toContain("name: 'stub_guard_24h'");
   });
 
   test('WARN threshold is >10 hits/24h', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const source = doctorSource();
     // The WARN gate must fire above 10, not at or below — that's the threshold
     // the v0.36 sunset criterion is calibrated against.
     expect(source).toMatch(/events\.length\s*>\s*10/);
   });
 
   test('fix hint points operators at the audit log', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const source = doctorSource();
     expect(source).toContain('stub-guard-*.jsonl');
     expect(source).toContain('prefix-expansion in resolveEntitySlug');
   });
 
   test('check reads via the dual-week-aware reader (NOT supervisor-audit pattern)', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const source = doctorSource();
     // The point of the divergence from supervisor-audit.ts is this reader
     // reads both current and previous ISO-week files. If the check ever
     // gets re-pointed at readSupervisorEvents-style single-week, this test
@@ -1297,7 +1301,7 @@ describe('stub_guard_24h check (v0.34.5)', () => {
   });
 
   test('zero hits emits no check (keeps doctor output clean on healthy brains)', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const source = doctorSource();
     // The implementation falls through silently when events.length === 0.
     // Codify this in source-grep form so a future refactor doesn't add an
     // "ok: 0 hits" line that pollutes every doctor run.
@@ -1402,7 +1406,7 @@ describe('v0.40.4 — graph_signals_coverage check', () => {
   });
 
   test('check is wired into runDoctor (source-grep)', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const source = doctorSource();
     // Local engine path.
     expect(source).toMatch(/await checkGraphSignalsCoverage\(engine\)/);
     // Remote/JSON path heartbeat.
@@ -1552,9 +1556,7 @@ describe('issue #972 — link_resolution_opportunity check', () => {
   });
 
   test('check is wired into runDoctor AND doctorReportRemote (source-grep)', async () => {
-    const source = await Bun.file(
-      new URL('../src/commands/doctor.ts', import.meta.url),
-    ).text();
+    const source = doctorSource();
     // Local buildChecks path.
     expect(source).toMatch(/await checkLinkResolutionOpportunity\(engine, progress\)/);
     // Thin-client doctorReportRemote path.
@@ -1570,7 +1572,7 @@ describe('issue #972 — link_resolution_opportunity check', () => {
 
 describe('v0.42 (#1699) — quarantined_pages + flagged_pages checks', () => {
   test('both checks are wired into buildChecks (source-grep)', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const source = doctorSource();
     expect(source).toContain("progress.heartbeat('quarantined_pages')");
     expect(source).toContain("progress.heartbeat('flagged_pages')");
     // quarantine HIDES (JSONB existence scan), content_flag WARNS.

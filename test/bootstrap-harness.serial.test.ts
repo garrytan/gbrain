@@ -887,6 +887,33 @@ describe('parse helpers', () => {
   });
 });
 
+describe('plugin-lane collision WARN on the codex wire (never a refusal)', () => {
+  test('pre-existing enabled gbrain plugin → loud WARNING, managed block still written', async () => {
+    const f = makeFake();
+    // Seed the codex config with an ENABLED gbrain plugin BEFORE the wire —
+    // the harness lane (HTTP, framework-spawned sessions) may legitimately
+    // coexist with the plugin's stdio serve, so the wire proceeds.
+    writeFileSync(f.codexConfig, '[plugins."gbrain@gbrain"]\nenabled = true\n');
+    const code = await applyHarness(flags(['--harness', 'codex']), f.deps);
+    expect(code).toBe(0);
+    const warn = f.err.find((l) => l.includes('codex plugin also provides an MCP server'));
+    expect(warn).toBeDefined();
+    expect(warn).toContain("'gbrain@gbrain'");
+    expect(warn).toContain('codex plugin remove gbrain');
+    // Write proceeded: the managed block landed next to the plugin entry.
+    const toml = readFileSync(f.codexConfig, 'utf8');
+    expect(toml).toContain(CODEX_TOML_BLOCK_BEGIN);
+    expect(toml).toContain('[plugins."gbrain@gbrain"]');
+  }, 30_000);
+
+  test('no plugin entry → no collision WARNING (zero noise)', async () => {
+    const f = makeFake();
+    const code = await applyHarness(flags(['--harness', 'codex']), f.deps);
+    expect(code).toBe(0);
+    expect(f.err.some((l) => l.includes('plugin also provides'))).toBe(false);
+  }, 30_000);
+});
+
 describe('opencode harness target (managed JSONC entry)', () => {
   test('apply --harness opencode: inline-bearer remote entry written 0600, receipt confirmed, exit 0', async () => {
     const f = makeFake();

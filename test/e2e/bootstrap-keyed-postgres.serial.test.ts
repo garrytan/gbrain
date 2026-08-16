@@ -321,12 +321,21 @@ describe.skipIf(!DATABASE_URL)('Postgres bootstrap verify (real Postgres)', () =
     const magic = res.checks.find((c) => c.id === 'magic_moment');
     expect(magic?.ok).toBe(true);
 
-    // Probe cleanup [G13] must hold on the Postgres DDL path too.
+    // Probe cleanup [G13] must hold on the Postgres DDL path too. Verify
+    // cleans up through the real delete_page op, which is a SOFT delete
+    // (deleted_at stamp) — so assert no ACTIVE probe rows remain, and pin
+    // that the probes went through the soft-delete path rather than never
+    // being cleaned at all.
     const probePages = await engine.executeRaw<{ n: number }>(
-      `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1 AND slug IN ($2, $3)`,
+      `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1 AND slug IN ($2, $3) AND deleted_at IS NULL`,
       ['workspace', VERIFY_PROBE_SLUG, VERIFY_PROBE_ENTITY_SLUG],
     );
     expect(probePages[0].n).toBe(0);
+    const probeTombstones = await engine.executeRaw<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1 AND slug IN ($2, $3) AND deleted_at IS NOT NULL`,
+      ['workspace', VERIFY_PROBE_SLUG, VERIFY_PROBE_ENTITY_SLUG],
+    );
+    expect(probeTombstones[0].n).toBe(2);
     const probeFacts = await engine.executeRaw<{ n: number }>(
       `SELECT COUNT(*)::int AS n FROM facts WHERE source_id = $1 AND source_markdown_slug = $2`,
       ['workspace', VERIFY_PROBE_SLUG],

@@ -94,15 +94,42 @@ async function runClear(engine: BrainEngine, args: string[]): Promise<void> {
   const json = args.includes('--json');
   const force = args.includes('--force');
   const noEmbed = args.includes('--no-embed');
-  // First non-flag positional after the subcommand is the slug.
-  const slug = args.find((a) => !a.startsWith('--'));
+  const srcIdx = args.indexOf('--source-id');
+  const sourceIdFlag = srcIdx >= 0 && args[srcIdx + 1] && !args[srcIdx + 1].startsWith('--')
+    ? args[srcIdx + 1]
+    : undefined;
+  // First non-flag positional after the subcommand is the slug (skip the
+  // --source-id value so it can't be mistaken for the slug).
+  const slug = args.find((a, i) => !a.startsWith('--') && !(srcIdx >= 0 && i === srcIdx + 1));
   if (!slug) {
-    console.error('Usage: gbrain quarantine clear <slug> [--force] [--no-embed]');
+    console.error('Usage: gbrain quarantine clear <slug> [--source-id <id>] [--force] [--no-embed]');
     process.exit(2);
   }
-  const page = await engine.getPage(slug);
+  // Deterministic source resolution: an unscoped getPage on a slug that
+  // exists in multiple sources returns an arbitrary row, and the re-import
+  // below writes to WHATEVER source that read happened to hit. Resolve the
+  // candidate sources explicitly; ambiguity is an error, not a coin flip.
+  let sourceId = sourceIdFlag;
+  if (!sourceId) {
+    const rows = await engine.executeRaw<{ source_id: string }>(
+      `SELECT source_id FROM pages WHERE slug = $1 AND deleted_at IS NULL ORDER BY source_id`,
+      [slug],
+    );
+    if (rows.length > 1) {
+      console.error(
+        `Slug "${slug}" exists in ${rows.length} sources: ${rows.map(r => r.source_id).join(', ')}.\n` +
+        `Pick one with: gbrain quarantine clear ${slug} --source-id <id>`,
+      );
+      process.exit(2);
+    }
+    sourceId = rows[0]?.source_id;
+  }
+  // sourceId is resolved above whenever ANY row exists; zero candidates means
+  // the page doesn't exist in any source, so the 'default' fallback read
+  // returns null and we error below either way.
+  const page = await engine.getPage(slug, { sourceId: sourceId ?? 'default' });
   if (!page) {
-    console.error(`No page found for slug "${slug}".`);
+    console.error(`No page found for slug "${slug}"${sourceIdFlag ? ` in source "${sourceIdFlag}"` : ''}.`);
     process.exit(2);
   }
   const fm = { ...((page.frontmatter ?? {}) as Record<string, unknown>) };

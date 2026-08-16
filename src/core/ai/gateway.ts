@@ -107,7 +107,12 @@ const MAX_CHARS = 8000;
 // Re-exported from the leaf `defaults.ts` so heavy schema/registry modules
 // don't transitively load every provider SDK just to read the defaults.
 export { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './defaults.ts';
-import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './defaults.ts';
+import {
+  DEFAULT_EMBEDDING_MODEL,
+  DEFAULT_EMBEDDING_DIMENSIONS,
+  NEW_INSTALL_DEFAULT_EMBEDDING_MODEL,
+  renderCanonicalMigrationCommands,
+} from './defaults.ts';
 const DEFAULT_EXPANSION_MODEL = 'anthropic:claude-haiku-4-5-20251001';
 const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
 // v0.35.0.0+: reranker default. Used only when search.reranker.enabled is set
@@ -1443,10 +1448,16 @@ function warnSunsetOnce(recipe: Recipe, touchpoint: 'embedding' | 'reranker'): v
     _sunsetWarned.add(key);
     const replacement =
       touchpoint === 'embedding' ? sunset.replacement?.embedding : sunset.replacement?.reranker;
+    // Canonical command (defaults.ts renderer) when the replacement IS the
+    // recommended default — always carries the valid --dim; a bespoke
+    // replacement falls back to the target's own declared width via --dim
+    // omission (the recipe default applies).
     const fix =
       touchpoint === 'embedding'
         ? replacement
-          ? ` Migrate: \`gbrain migrate embeddings --to ${replacement} --dry-run\``
+          ? replacement === NEW_INSTALL_DEFAULT_EMBEDDING_MODEL
+            ? ` Migrate: \`${renderCanonicalMigrationCommands().recommendedDryRun}\``
+            : ` Migrate: \`gbrain migrate embeddings --to ${replacement} --dry-run\``
           : ''
         : replacement
         ? ` Switch: \`gbrain config set search.reranker.model ${replacement}\``

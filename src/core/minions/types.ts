@@ -163,6 +163,17 @@ export interface MinionJobInput {
    *  as a public submit flag yet — semantics exclude delayed/paused/
    *  waiting-children rows deliberately. */
   maxPending?: number;
+  /**
+   * Admission param-coalescing override. When unset, the per-name default
+   * (admission.ts PARAM_COALESCE_DEFAULT, config-overridable via
+   * minions.coalesce_params.<name>) applies — on for 'subagent'. When
+   * active, a parentless submit whose payload hash (sha256 of
+   * stable-stringified data, __owner_client_id INCLUDED so owner lanes never
+   * cross) matches a WAITING row for the same (name, queue) returns that row
+   * with `coalesced: true` instead of inserting a duplicate. Parented
+   * submits never coalesce regardless of this flag.
+   */
+  coalesce_params?: boolean;
 
   // v12: scheduler polish
   /**

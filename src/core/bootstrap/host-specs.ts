@@ -243,6 +243,19 @@ export function mcpPermissionEntry(serverName: string): string {
   return `mcp__${serverName}`;
 }
 
+/**
+ * User-scope Claude Code MCP registration store (`claude mcp add` user scope
+ * writes here). Same HOME-env-first discipline as claudeUserSettingsPath —
+ * Bun's homedir() reads the password database, not $HOME, so a sandboxed
+ * test that remaps HOME would otherwise read the operator's REAL config.
+ */
+export function claudeUserMcpConfigPath(): string {
+  const configDir = process.env.CLAUDE_CONFIG_DIR?.trim();
+  if (configDir) return join(configDir, '.claude.json');
+  const home = process.env.HOME?.trim();
+  return join(home || homedir(), '.claude.json');
+}
+
 /** Where Claude Code stores session transcripts — the confinement root [S3#8]. */
 export function claudeProjectsDir(): string {
   return join(homedir(), '.claude', 'projects');

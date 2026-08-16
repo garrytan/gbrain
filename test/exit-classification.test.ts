@@ -2,6 +2,15 @@ import { describe, it, expect } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { classifyWorkerExit } from '../src/core/minions/exit-classification.ts';
+import { doctorSource } from './helpers/doctor-source.ts';
+
+// doctor.ts is being peeled into src/commands/doctor/ modules — containment
+// greps against the doctor site must read the whole doctor surface so a peel
+// can't silently move the target out of the guard's sight.
+const readSiteSource = (path: string): string =>
+  path === 'src/commands/doctor.ts'
+    ? doctorSource()
+    : readFileSync(join(import.meta.dir, '..', path), 'utf8');
 
 describe('classifyWorkerExit', () => {
   it('code=0 → clean_exit', () => {
@@ -47,21 +56,21 @@ describe('consumer wire-up — helper used by all 3 sites (no inline filters lef
 
   for (const site of SITES) {
     it(`${site.label} uses a shared classifier helper (${site.helper})`, () => {
-      const source = readFileSync(join(import.meta.dir, '..', site.path), 'utf8');
+      const source = readSiteSource(site.path);
       // Helper is either imported by name (top-level) or via dynamic import.
       const helperRe = new RegExp(`\\b${site.helper}\\b`);
       expect(source).toMatch(helperRe);
     });
 
     it(`${site.label} calls ${site.helper} at least once`, () => {
-      const source = readFileSync(join(import.meta.dir, '..', site.path), 'utf8');
+      const source = readSiteSource(site.path);
       const callRe = new RegExp(`\\b${site.helper}\\s*\\(`);
       expect(source).toMatch(callRe);
     });
   }
 
   it('doctor.ts no longer has the inline `code !== 0 && code !== undefined` filter', () => {
-    const source = readFileSync(join(import.meta.dir, '..', 'src/commands/doctor.ts'), 'utf8');
+    const source = doctorSource();
     // The pre-T7 inline filter; if this regex matches, the refactor leaked back.
     expect(source).not.toMatch(/code !== 0\s*&&\s*\(?\s*\w+\s+as\s+any\s*\)?\.\s*code !== undefined/);
   });

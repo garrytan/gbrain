@@ -1,8 +1,9 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, writeFileSync, symlinkSync, rmSync, mkdtempSync } from 'fs';
+import { execSync } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { collectMarkdownFiles } from '../src/commands/import.ts';
+import { collectMarkdownFiles, collectSyncableFiles } from '../src/commands/import.ts';
 
 // These tests exercise the filesystem walker that feeds `gbrain import`.
 // They target L002 (report/findings.md): a malicious symlink inside a shared
@@ -85,5 +86,49 @@ describe('collectMarkdownFiles — symlink containment', () => {
     const files = collectMarkdownFiles(root);
     expect(files).toContain(join(root, 'legit.md'));
     expect(files).not.toContain(join(root, 'dangling.md'));
+  });
+});
+
+describe('collectSyncableFiles — malformed-filename exclusion (both routes)', () => {
+  let root: string;
+  const JUNK = '[foo.md](https-example).md';
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'gbrain-walker-malformed-'));
+    writeFileSync(join(root, 'legit.md'), '# legit\n');
+    writeFileSync(join(root, JUNK), '# junk\n');
+    mkdirSync(join(root, 'notes'));
+    writeFileSync(join(root, 'notes', '[wip] draft.md'), '# wip\n');
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test('FS-walk route excludes bracket-named files', () => {
+    const files = collectSyncableFiles(root);
+    expect(files).toContain(join(root, 'legit.md'));
+    expect(files).not.toContain(join(root, JUNK));
+    expect(files).not.toContain(join(root, 'notes', '[wip] draft.md'));
+  });
+
+  test('FS-walk route never DESCENDS into a bracket-named directory (clean children stay out)', () => {
+    // The descent-time check is a separate carve-out from the per-file check:
+    // a clean-named .md INSIDE a bracket-named dir still has a malformed PATH.
+    mkdirSync(join(root, '[archive] 2026'));
+    writeFileSync(join(root, '[archive] 2026', 'clean-name.md'), '# hidden by dir\n');
+    const files = collectSyncableFiles(root);
+    expect(files).toContain(join(root, 'legit.md'));
+    expect(files).not.toContain(join(root, '[archive] 2026', 'clean-name.md'));
+  });
+
+  test('git fast-path route excludes bracket-named files', () => {
+    execSync('git init', { cwd: root, stdio: 'pipe' });
+    execSync('git config user.email "t@t.com" && git config user.name "T"', { cwd: root, stdio: 'pipe' });
+    execSync('git add -A && git commit -m x', { cwd: root, stdio: 'pipe' });
+    const files = collectSyncableFiles(root);
+    expect(files).toContain(join(root, 'legit.md'));
+    expect(files).not.toContain(join(root, JUNK));
+    expect(files).not.toContain(join(root, 'notes', '[wip] draft.md'));
   });
 });

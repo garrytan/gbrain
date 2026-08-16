@@ -24,6 +24,7 @@ import {
 import type { BrainEngine } from '../src/core/engine.ts';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
+import { doctorSource, doctorFileSource } from './helpers/doctor-source.ts';
 
 /**
  * Synthetic engine satisfying the slice of BrainEngine these helpers
@@ -205,32 +206,34 @@ describe('assertFactsEmbeddingDimMatchesConfig', () => {
 });
 
 describe('doctor checkFactsEmbeddingWidthConsistency wiring (T6)', () => {
-  const DOC_PATH = resolve(import.meta.dir, '..', 'src/commands/doctor.ts');
-  const DOC_SRC = readFileSync(DOC_PATH, 'utf-8');
+  // Containment greps read the whole doctor surface; the ordering assertion
+  // stays pinned to the single file that holds both call sites.
+  const DOC_ALL = doctorSource();
+  const DOC_TS = doctorFileSource('doctor.ts');
 
   test('doctor.ts exports the new check function', () => {
-    expect(DOC_SRC).toMatch(
+    expect(DOC_ALL).toMatch(
       /export\s+async\s+function\s+checkFactsEmbeddingWidthConsistency/,
     );
   });
 
   test('check is registered in runDoctor alongside the content_chunks check', () => {
-    expect(DOC_SRC).toMatch(/checkFactsEmbeddingWidthConsistency\(engine\)/);
+    expect(DOC_ALL).toMatch(/checkFactsEmbeddingWidthConsistency\(engine\)/);
     // Must appear AFTER the content_chunks check so a single
     // mismatch surface ordering is stable in the JSON envelope.
-    const widthIdx = DOC_SRC.indexOf('checkEmbeddingWidthConsistency(engine)');
-    const factsIdx = DOC_SRC.indexOf('checkFactsEmbeddingWidthConsistency(engine)');
+    const widthIdx = DOC_TS.indexOf('checkEmbeddingWidthConsistency(engine)');
+    const factsIdx = DOC_TS.indexOf('checkFactsEmbeddingWidthConsistency(engine)');
     expect(widthIdx).toBeGreaterThan(0);
     expect(factsIdx).toBeGreaterThan(0);
     expect(widthIdx).toBeLessThan(factsIdx);
   });
 
   test('doctor check uses readFactsEmbeddingDim from the shared helper', () => {
-    expect(DOC_SRC).toMatch(/readFactsEmbeddingDim/);
+    expect(DOC_ALL).toMatch(/readFactsEmbeddingDim/);
   });
 
   test('doctor check uses buildFactsAlterRecipe (NOT a hand-rolled ALTER string)', () => {
-    expect(DOC_SRC).toMatch(/buildFactsAlterRecipe/);
+    expect(DOC_ALL).toMatch(/buildFactsAlterRecipe/);
   });
 });
 

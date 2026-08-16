@@ -50,6 +50,7 @@ check-admin-build.sh	buildfresh	exempt	runs the admin build; the build is the te
 check-admin-embedded.sh	buildfresh	exempt	embed freshness diff; not in verify CHECKS: duplicates check:admin-build's build
 check-admin-scope-drift.sh	buildfresh	exempt	regenerates + diffs
 check-bootstrap-templates.sh	buildfresh	exempt	regenerates template tree + diffs
+check-plugin-tree.sh	buildfresh	exempt	regenerates the plugin tree + diffs (curation record validated by the generator)
 check-eval-glossary-fresh.sh	buildfresh	exempt	regenerates + diffs
 check-fuzz-purity.sh	buildfresh	exempt	executes fuzz corpus
 check-image-decoders-embedded.sh	buildfresh	exempt	binary embed check; not in verify CHECKS: own bun build --compile too heavy per-verify
@@ -61,5 +62,8 @@ check-bootstrap-tag.sh	repostate	exempt	VERSION stamp drift check
 check-cli-executable.sh	repostate	exempt	file-mode check
 check-no-tracked-symlinks.sh	repostate	exempt	git index state check
 check-grok-pin.sh	repostate	exempt	pin-stamp drift check (GROK-CLI-PIN.md stamps vs heavy-tests grok-door env); own bun guard tests in test/check-bootstrap-guards.test.ts
+check-module-size.sh	scanner	yes	committed per-file line ceilings (module-size-limits.tsv); growth + stale-ceiling + missing-row + new-file cap; region-exempt policy for migrate.ts
+check-structural-manifest.sh	buildfresh	exempt	regenerate+diff of structural-suites.tsv (classify-tests.ts); the diff IS the self-test
 check-opencode-pin.sh	repostate	exempt	pin-stamp drift check (OPENCODE-CLI-PIN.md stamps vs heavy-tests opencode-door env); own bun guard tests in test/check-bootstrap-guards.test.ts
 check-pin-doc-privacy.sh	repostate	exempt	PIN-doc placeholder discipline (no operator paths/key material/emails in docs/mcp/*-CLI-PIN.md); own bun guard tests in test/check-bootstrap-guards.test.ts
+check-getpage-scoped-write.mjs	scanner	yes	unscoped-getPage + write co-occurrence scanner (source-isolation bug class); argv root override; fixtures under test/fixtures/guards/; also in verify CHECKS

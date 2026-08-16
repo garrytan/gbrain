@@ -56,7 +56,7 @@ export OPENAI_API_KEY=sk-...          # alternative embeddings; also used for ch
 export ANTHROPIC_API_KEY=sk-ant-...   # optional, improves search via query expansion
 ```
 
-`ZEROENTROPY_API_KEY` is still honored but deprecated — the ZeroEntropy hosted API shuts down 2026-09-04 (see [`docs/ai-providers/zeroentropy.md`](ai-providers/zeroentropy.md) for the off-ramp).
+`ZEROENTROPY_API_KEY` is still honored but deprecated — the ZeroEntropy hosted API shuts down 2026-09-04. Off-ramp: the agent playbook at [`skills/migrations/v0.46.3.0.md`](../skills/migrations/v0.46.3.0.md) (one command migrates embeddings + reranker) with the full reference in [`docs/guides/embedding-migration.md`](guides/embedding-migration.md).
 
 Common follow-ups:
 

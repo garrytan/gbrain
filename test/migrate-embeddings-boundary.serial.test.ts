@@ -137,7 +137,9 @@ describe('migration across a stale-batch boundary', () => {
     // were correctly embedded — the boundary page was never stamped.
     expect(code).toBe(0);
 
-    expect(embeddedTexts.length).toBe(6); // all six chunks re-embedded once
+    // 6 chunk re-embeds + 3 completion smoke-check QUERY embeds (the smoke
+    // check runs only on the completed path).
+    expect(embeddedTexts.length).toBe(9);
     expect(await engine.countStaleChunks()).toBe(0);
 
     // Every page carries the TARGET signature, including the boundary page.

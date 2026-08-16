@@ -1,5 +1,16 @@
 # Switching embedding models or dimensions on an existing brain
 
+> **Use the command, not the recipes:** `gbrain migrate embeddings --to
+> <provider:model> --dim <N>` is the supported path — it handles the schema
+> transition (all three dim-pinned columns), NULL-signature pages, the
+> reranker companion switch, the query cache, locks, and resume-after-kill,
+> and verifies the database before declaring anything done. Preview with
+> `--dry-run`; inspect state with `--status`. Leaving ZeroEntropy: follow
+> `skills/migrations/v0.46.3.0.md`. The manual recipes below remain as the
+> appendix for unusual situations (they are what the dimension-mismatch
+> error messages link to).
+
+
 GBrain stores embeddings in a fixed-dimension `vector(N)` column on
 `content_chunks`. If you switch to a model with a different dimension
 (e.g. `openai:text-embedding-3-large` 1536 → `voyage:voyage-4` 1024, or

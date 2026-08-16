@@ -59,10 +59,15 @@ export const collectSetupSmells: AdvisorCollector = {
       };
       const keyMissing = !!keyName && !process.env[keyName] && !fileKeys[keyName];
       if (keyMissing) {
+        const { NEW_INSTALL_DEFAULT_EMBEDDING_MODEL, renderCanonicalMigrationCommands } =
+          await import('../ai/defaults.ts');
+        const rep = recipe?.sunset?.replacement?.embedding;
+        const migrateCmd = !rep || rep === NEW_INSTALL_DEFAULT_EMBEDDING_MODEL
+          ? renderCanonicalMigrationCommands().recommendedDryRun
+          : `gbrain migrate embeddings --to ${rep} --dry-run`;
         const sunsetNote = recipe?.sunset
           ? ` NOTE: ${recipe.name} shuts down ${recipe.sunset.date} — migrate instead of ` +
-            `setting its key: \`gbrain migrate embeddings --to ` +
-            `${recipe.sunset.replacement?.embedding ?? 'voyage:voyage-4'} --dry-run\`.`
+            `setting its key: \`${migrateCmd}\`.`
           : '';
         findings.push({
           id: 'embedding_key_missing',

@@ -52,7 +52,7 @@ describe('stdio MCP source resolution', () => {
         dir,
       );
 
-      expect(scope).toEqual({ sourceId: 'team-alpha' });
+      expect(scope).toEqual({ sourceId: 'team-alpha', tier: 'dotfile' });
     });
   });
 
@@ -67,7 +67,7 @@ describe('stdio MCP source resolution', () => {
         dir,
       );
 
-      expect(scope).toEqual({ sourceId: 'env-source' });
+      expect(scope).toEqual({ sourceId: 'env-source', tier: 'env' });
     });
   });
 });

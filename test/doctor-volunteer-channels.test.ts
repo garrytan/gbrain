@@ -16,6 +16,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { checkVolunteerChannels } from '../src/commands/doctor.ts';
+import { doctorSource } from './helpers/doctor-source.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -167,7 +168,7 @@ describe('checkVolunteerChannels', () => {
   });
 
   test('wiring pins: the check runs on BOTH doctor paths and serve registers the delivery callback (source greps)', () => {
-    const doctorSrc = readFileSync(join(import.meta.dir, '..', 'src', 'commands', 'doctor.ts'), 'utf8');
+    const doctorSrc = doctorSource();
     // Local path (buildChecks) AND remote path both push the check — the docs
     // point local operators at `gbrain doctor`, so remote-only is a doc lie.
     const pushes = doctorSrc.match(/checks\.push\(await checkVolunteerChannels\(engine/g) ?? [];

@@ -621,6 +621,83 @@ jobs:
           # grok-derived credentials once the authed inventory lands.
           rm -rf /tmp/gb-grok-* 2>/dev/null || true
 
+  # ── Plugin doors: the codex + claude PLUGIN packaging, non-vacuously ──────
+  # EV11 contract: never self-skip-green. The binaries are PROVISIONED (pinned
+  # npm versions + version-output asserts, refuse on drift), and the INSTALL
+  # tiers must execute their exact expected pass counts — zero-pass or
+  # partial-pass refuses green. The INSTALL tiers are secretless by design
+  # (marketplace/plugin ops are local); the paid SMOKE tiers need real agent
+  # auth (codex: ChatGPT-login auth.json; claude: Anthropic login), which CI
+  # does not hold — they self-skip INSIDE the suites and the pass-count gate
+  # below accounts for exactly that shape, so the skip is explicit, never
+  # silent. Integrity-metadata pinning (grok-door style) is deliberately not
+  # applied: this job carries no secrets, so version pinning is the right
+  # weight.
+  plugin-doors:
+    name: Plugin doors (codex + claude, install tier)
+    if: |
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'heavy-tests')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CODEX_NPM_VERSION: "0.147.0"
+      CLAUDE_NPM_VERSION: "2.1.233"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.3.13
+      - run: bun install
+
+      - name: Build gbrain (compile once for the doors)
+        run: |
+          bun build --compile --outfile "$RUNNER_TEMP/gbrain-door-bin" src/cli.ts
+          echo "GBRAIN_COMPILED_BIN=$RUNNER_TEMP/gbrain-door-bin" >> "$GITHUB_ENV"
+
+      - name: Install codex + claude (pinned npm versions, refuse on drift)
+        timeout-minutes: 10
+        run: |
+          npm install -g "@openai/codex@$CODEX_NPM_VERSION" "@anthropic-ai/claude-code@$CLAUDE_NPM_VERSION"
+          codex_v=$(codex --version)
+          echo "$codex_v"
+          printf '%s' "$codex_v" | grep -qF "$CODEX_NPM_VERSION" || { echo "::error::codex version drift — expected $CODEX_NPM_VERSION in: $codex_v (re-pin deliberately)" >&2; exit 1; }
+          claude_v=$(claude --version)
+          echo "$claude_v"
+          printf '%s' "$claude_v" | grep -qF "$CLAUDE_NPM_VERSION" || { echo "::error::claude version drift — expected $CLAUDE_NPM_VERSION in: $claude_v (re-pin deliberately)" >&2; exit 1; }
+          codex plugin --help >/dev/null || { echo "::error::pinned codex build lost the plugin subcommand" >&2; exit 1; }
+          claude plugin --help >/dev/null || { echo "::error::pinned claude build lost the plugin subcommand" >&2; exit 1; }
+
+      - name: Codex plugin door (install tier — expected shape enforced)
+        run: |
+          EXIT=0
+          bun test --timeout=600000 test/e2e/codex-plugin-install-real.serial.test.ts > codex-plugin-door.txt 2>&1 || EXIT=$?
+          tail -40 codex-plugin-door.txt
+          if [ "$EXIT" -ne 0 ]; then exit "$EXIT"; fi
+          # Exact expected shape (grok-door posture): exactly 1 INSTALL test
+          # passes; the auth-gated SMOKE self-skips (no codex auth.json in
+          # CI). Any other count — zero, partial, or a silently-skipped new
+          # test — refuses green. Update the pin deliberately with new tests.
+          pass_count=$(grep -Eo '[0-9]+ pass' codex-plugin-door.txt | tail -1 | grep -Eo '^[0-9]+' || true)
+          if [ "${pass_count:-0}" -ne 1 ]; then
+            echo "::error::codex plugin door expected exactly 1 passing INSTALL test, summary shows '${pass_count:-none}' — refusing to go green (re-pin deliberately when tests are added)" >&2
+            exit 1
+          fi
+
+      - name: Claude plugin door (install tier — expected shape enforced)
+        run: |
+          EXIT=0
+          bun test --timeout=600000 test/e2e/claude-plugin-install-real.serial.test.ts -t 'VALIDATE' > claude-plugin-door.txt 2>&1 || EXIT=$?
+          tail -40 claude-plugin-door.txt
+          if [ "$EXIT" -ne 0 ]; then exit "$EXIT"; fi
+          pass_count=$(grep -Eo '[0-9]+ pass' claude-plugin-door.txt | tail -1 | grep -Eo '^[0-9]+' || true)
+          if [ "${pass_count:-0}" -ne 1 ]; then
+            echo "::error::claude plugin door expected exactly 1 passing INSTALL test, summary shows '${pass_count:-none}' — refusing to go green (re-pin deliberately when tests are added)" >&2
+            exit 1
+          fi
+
   # opencode door e2e (SST opencode): PROVISIONS the real opencode binary via
   # the pinned npm package (wrapper + per-platform payload integrities
   # verified — both pins live in docs/mcp/OPENCODE-CLI-PIN.md, enforced

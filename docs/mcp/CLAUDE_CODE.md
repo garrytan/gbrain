@@ -11,6 +11,28 @@
 > Open a new empty folder (bootstrap creates the private repo for you), or make an
 > empty private repo under your own account and open the clone — bootstrap adopts it.
 
+## Option 0: Install as a Claude Code plugin
+
+gbrain ships as a native Claude Code plugin — MCP server + the curated
+brain-first skill set:
+
+```
+/plugin marketplace add garrytan/gbrain
+/plugin install gbrain@gbrain
+```
+
+(CLI form: `claude plugin marketplace add garrytan/gbrain` +
+`claude plugin install gbrain@gbrain`.) Prerequisites and behavior match the
+[Codex plugin](CODEX.md#install-as-a-codex-plugin-recommended): the gbrain CLI
+installed (`bun install -g github:garrytan/gbrain#latest-stable`), a brain
+(`gbrain init`), `starter` MCP surface with `--source-guard`, and the same
+routing rules (`GBRAIN_SOURCE`/`GBRAIN_BRAIN_ID` env — dotfiles don't apply
+to a plugin-launched serve). Positioning: the plugin is the lightweight
+brain+skills path; `gbrain bootstrap` remains the deep lane (identity, hooks,
+push protocol). One approval-UX difference: the bootstrap lane pre-approves
+`mcp__gbrain` via `permissions.allow` for headless runs; plugin-provided MCP
+tools use the plugin lane's own approval flow.
+
 ## Option 1: Local (recommended, zero server needed)
 
 ```bash
@@ -121,5 +143,7 @@ sub-second, world-visibility by default, and available on `--surface verbs`.
 ## Remove
 
 ```bash
-claude mcp remove gbrain
+claude mcp remove gbrain     # the Option 1 local/stdio registration
+# Installed as the Option 0 plugin instead? Remove it with:
+#   claude plugin uninstall gbrain@gbrain
 ```

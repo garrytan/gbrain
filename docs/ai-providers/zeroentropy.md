@@ -65,56 +65,45 @@ alongside OpenAI and Voyage.
    export ZEROENTROPY_API_KEY=<your-key>
    ```
 
-## Embedding switch — zembed-1
+## Leaving ZeroEntropy (the off-ramp)
 
-**Important:** `gbrain config set embedding_model …` is NOT a live
-gateway switch. `embedding_model` and `embedding_dimensions` size the
-schema and must be stable across engine connects, so they only resolve
-from the **file plane** (`~/.gbrain/config.json`) and the **env plane**
-(`GBRAIN_EMBEDDING_MODEL` / `GBRAIN_EMBEDDING_DIMENSIONS`). The DB plane
-is intentionally ignored for these two keys (same posture as today's
-Voyage setup).
-
-### Option A — file plane (recommended for stable installs)
-
-Edit `~/.gbrain/config.json`:
-
-```json
-{
-  "embedding_model": "zeroentropyai:zembed-1",
-  "embedding_dimensions": 2560
-}
-```
-
-Valid dims: `2560` (default), `1280`, `640`, `320`, `160`, `80`, `40`.
-Matryoshka-style — smaller trades quality for storage monotonically.
-Pick the largest that fits your column width.
-
-### Option B — env plane (CI / Docker)
+The switch-ONTO instructions that used to live here are gone — following
+them would strand a brain on a dead API. The maintained off-ramp is the
+agent playbook at `skills/migrations/v0.46.3.0.md`; the one command
+(embeddings + reranker in the same consented run):
 
 ```bash
-export GBRAIN_EMBEDDING_MODEL=zeroentropyai:zembed-1
-export GBRAIN_EMBEDDING_DIMENSIONS=2560
+gbrain migrate embeddings --to voyage:voyage-4 --dim 1024 --dry-run   # cost preview
+gbrain migrate embeddings --to voyage:voyage-4 --dim 1024 --yes
 ```
+
+Plane note (still true, and the reason NOT to hand-edit config for this):
+`embedding_model` / `embedding_dimensions` resolve from the **file plane**
+(`~/.gbrain/config.json`) and the **env plane** (`GBRAIN_EMBEDDING_MODEL` /
+`GBRAIN_EMBEDDING_DIMENSIONS`) — never the DB plane — because they size the
+schema. The migration command writes the right planes for you and verifies
+the database before claiming anything is done. Check state any time with
+`gbrain migrate embeddings --status`.
 
 ### Re-embed
 
-Switching embedding models invalidates the vector index. Re-embed:
-
-```bash
-gbrain embed --stale --limit 50    # smoke a small batch
-gbrain embed --stale               # full re-embed
-```
+The migration command drains the re-embed itself and refuses to declare
+completion until the database verifies — there is no separate embed step
+on the off-ramp path. If a run is killed mid-drain, `gbrain migrate
+embeddings --status` prints the exact resume command. Self-hosters keeping
+`zeroentropyai:zembed-1` via `provider_base_urls` re-embed nothing (the
+embedding signature is unchanged).
 
 ### Verify
 
 ```bash
-gbrain models doctor --json | jq '.probes[] | select(.touchpoint=="embedding_config")'
+gbrain migrate embeddings --status
 ```
 
-Expected: `status: "ok"`. Invalid dims (e.g. `1024`, `1536`, `3072`)
-surface as `status: "config"` with a paste-ready
-`gbrain config set embedding_dimensions <one of 2560|1280|640|320|160|80|40>` fix hint.
+Read-only and spend-free: reports every config plane, actual column
+widths, the NULL-vector and signature censuses, the in-flight marker, and
+the last completion's smoke-check outcome. Step 5 of the playbook
+(`skills/migrations/v0.46.3.0.md`) walks the full DB-verified check.
 
 ## Reranker switch — zerank-2
 

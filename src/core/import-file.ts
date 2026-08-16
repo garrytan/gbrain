@@ -4,12 +4,13 @@ import { createHash } from 'crypto';
 import { marked } from 'marked';
 import type { BrainEngine, FileSpec } from './engine.ts';
 import { parseMarkdown } from './markdown.ts';
+import { classifyStoredType } from './schema-pack/type-usage.ts';
 import { chunkText } from './chunkers/recursive.ts';
 import { chunkCodeText, chunkCodeTextFull, detectCodeLanguage, CHUNKER_VERSION } from './chunkers/code.ts';
 import { findChunkForOffset } from './chunkers/edge-extractor.ts';
 import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
 import { embedBatch, embedMultimodal, currentEmbeddingSignature } from './embedding.ts';
-import { slugifyPath, slugifyCodePath, isCodeFilePath } from './sync.ts';
+import { slugifyPath, slugifyCodePath, isCodeFilePath, hasMalformedPathSegment } from './sync.ts';
 import type { ChunkInput, PageInput, PageType } from './types.ts';
 import { computeEffectiveDate } from './effective-date.ts';
 import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
@@ -235,6 +236,21 @@ export interface ImportResult {
   flagged?: boolean;
   /** Which flag tier fired, when `flagged`. */
   flag_reason?: 'markup_heavy' | 'oversized';
+  /**
+   * Machine-readable skip class for status='skipped' rows that must NOT be
+   * treated as failures. 'malformed_path' = the FILENAME contains bracket or
+   * control characters (never importable; rename the file) — sync counts these
+   * in its malformed summary and keeps them OUT of failedFiles / the failure
+   * ledger so they can never gate bookmark advancement.
+   */
+  skip_reason?: 'malformed_path';
+  /**
+   * Advisory (schema.type_warnings): the page's explicit frontmatter `type:`
+   * is an alias of a canonical pack type or undeclared in the pack. The type
+   * is stored literally either way; sync/import aggregate these once per
+   * distinct type per run.
+   */
+  type_warning?: { kind: 'alias_of' | 'undeclared'; type: string; canonical?: string; directory?: string };
 }
 
 const MAX_FILE_SIZE = 5_000_000; // 5MB
@@ -295,7 +311,7 @@ export async function importFromContent(
      * Callers thread this from `loadActivePack(ctx)` once per command —
      * NEVER per file inside sync (codex perf finding #7).
      */
-    activePack?: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> };
+    activePack?: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string>; aliases?: ReadonlyArray<string> }> };
     /**
      * v0.39.3.0 provenance write-through (WARN-8). When set, threaded to
      * `tx.putPage` so the page's `source_kind`, `source_uri`,
@@ -583,7 +599,11 @@ export async function importFromContent(
   // #1035: fetch the existing page BEFORE the hash compute so (a) the type
   // preservation below participates in the hash (a no-op re-put stays a
   // hash-match skip) and (b) the hash short-circuit below reuses this row.
-  const existing = await engine.getPage(slug, sourceId ? { sourceId } : undefined);
+  // Scoped to the exact (source_id, slug) row the writes below target —
+  // engine.putPage defaults to 'default' when sourceId is unset, so the read
+  // mirrors that default instead of matching the slug in ANY source (the
+  // unscoped-check/scoped-write bug class).
+  const existing = await engine.getPage(slug, { sourceId: sourceId ?? 'default' });
 
   // #2044: remote get_page intentionally strips private facts rows. A
   // documented get_page -> edit -> put_page round-trip can therefore arrive
@@ -612,6 +632,22 @@ export async function importFromContent(
   // Explicit frontmatter type stays an override; new pages still infer.
   if (parsed.typeExplicit !== true && existing) {
     parsed.type = existing.type;
+  }
+
+  // Alias-footgun visibility: an explicit frontmatter `type:` that is an
+  // ALIAS of a canonical pack type (or entirely undeclared) is stored
+  // literally and never re-normalized — different agents can silently file
+  // the same concept under different types/directories. Classify it here
+  // (once per file, aggregated once per type per run by sync/import) so the
+  // misroute class is loud. Purely advisory: the type is still stored as-is.
+  let typeWarning: ImportResult['type_warning'];
+  if (parsed.typeExplicit === true && opts.activePack) {
+    const cls = classifyStoredType(parsed.type, opts.activePack);
+    if (cls.kind === 'alias_of') {
+      typeWarning = { kind: 'alias_of', type: parsed.type, canonical: cls.canonical, directory: cls.directory };
+    } else if (cls.kind === 'undeclared') {
+      typeWarning = { kind: 'undeclared', type: parsed.type };
+    }
   }
 
   const HASH_EPHEMERAL_FRONTMATTER_KEYS = [
@@ -647,7 +683,7 @@ export async function importFromContent(
   };
 
   if (existing?.content_hash === hash && !opts.forceRechunk) {
-    return { slug, status: 'skipped', chunks: 0, parsedPage };
+    return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}) };
   }
 
   // v0.41.13 (#1309) — identity-based cross-slug dedup pre-check.
@@ -689,7 +725,7 @@ export async function importFromContent(
     }
     if (dup && dup.slug !== slug) {
       // Look up the duplicate page so we can compare frontmatter.id.
-      const dupPage = await engine.getPage(dup.slug, sourceId ? { sourceId } : undefined);
+      const dupPage = await engine.getPage(dup.slug, { sourceId: sourceId ?? 'default' });
       const dupFmId = (dupPage?.frontmatter as Record<string, unknown> | undefined)?.id;
       const dupFmIdStr = typeof dupFmId === 'string' && dupFmId.length > 0 ? dupFmId : null;
       const sameExternalId = fmIdStr !== null && dupFmIdStr === fmIdStr;
@@ -820,7 +856,7 @@ export async function importFromContent(
   // caller's sourceId so writes target (sourceId, slug) rather than the
   // schema DEFAULT — required for multi-source brains; harmless ('default')
   // for single-source callers.
-  const txOpts = sourceId ? { sourceId } : undefined;
+  const txOpts = { sourceId: sourceId ?? 'default' };
   await engine.transaction(async (tx) => {
     if (existing) await tx.createVersion(slug, txOpts);
 
@@ -911,7 +947,12 @@ export async function importFromContent(
       // as stale via embed --stale. The deferred/backfill + per-slug embed
       // paths stamp too; this covers the inline import/sync path.
       if (!opts.noEmbed) {
-        await tx.setPageEmbeddingSignature(slug, { sourceId, signature: currentEmbeddingSignature() });
+        // D9: signature is null when the gateway is unconfigured — skip the
+        // stamp (a wrong signature is worse than none).
+        const importSig = currentEmbeddingSignature();
+        if (importSig) {
+          await tx.setPageEmbeddingSignature(slug, { sourceId, signature: importSig });
+        }
       }
     } else {
       // Content is empty — delete stale chunks so they don't ghost in search results
@@ -995,6 +1036,7 @@ export async function importFromContent(
     parsedPage,
     ...(pageQuarantined ? { quarantined: true } : {}),
     ...(pageFlagged ? { flagged: true, flag_reason: pageFlagReason } : {}),
+    ...(typeWarning ? { type_warning: typeWarning } : {}),
   };
 }
 
@@ -1016,7 +1058,7 @@ async function verifyPageReadable(
   sourceId: string | undefined,
   caller: string,
 ): Promise<void> {
-  const readBack = await engine.getPage(slug, sourceId ? { sourceId } : undefined);
+  const readBack = await engine.getPage(slug, { sourceId: sourceId ?? 'default' });
   if (!readBack) {
     // Log to ingest_log before throwing so the failure is durable and
     // agent-inspectable, not just a transient stderr message.
@@ -1082,7 +1124,7 @@ export async function importFromFile(
      * `parseMarkdown` uses pack-driven type inference. Load ONCE per command;
      * never per file (codex perf finding #7).
      */
-    activePack?: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> };
+    activePack?: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string>; aliases?: ReadonlyArray<string> }> };
   } = {},
 ): Promise<ImportResult> {
   // Defense-in-depth: reject symlinks before reading content.
@@ -1097,6 +1139,27 @@ export async function importFromFile(
   }
 
   let content = readFileSync(filePath, 'utf-8');
+
+  // Defense-in-depth for callers that bypass the sync/import classifiers
+  // (direct importFromFile, reindex, capture paths): a malformed filename is
+  // never importable. Checked BEFORE the code dispatch and BEFORE any YAML
+  // parsing (codex re-review P2: a control-char code path returned through
+  // importCodeFile, and broken-YAML junk returned a parse error instead of
+  // this informational skip). hasMalformedPathSegment is markdown-scoped for
+  // brackets, so legit bracketed code dirs (`app/[id]/`) still dispatch;
+  // control characters reject on every path. skip_reason marks this as
+  // informational so sync's failure gate never counts it.
+  if (hasMalformedPathSegment(relativePath)) {
+    return {
+      slug: '',
+      status: 'skipped',
+      skip_reason: 'malformed_path',
+      chunks: 0,
+      error:
+        `Path "${relativePath}" contains bracket or control characters and ` +
+        `cannot be imported. Rename the file to import it.`,
+    };
+  }
 
   // Route code files through the code import path
   if (isCodeFilePath(relativePath)) {
@@ -1144,6 +1207,10 @@ export async function importFromFile(
   // parsed.slug is `frontmatter.slug || inferSlug(filePath)` where inferSlug
   // falls back to slugifyPath(). So parsed.slug.length > 0 with empty
   // expectedSlug = frontmatter provided one; both empty = no usable slug.
+  // (The malformed-path defense runs earlier, before the code dispatch —
+  // slugifyPath must never see a junk filename: it would STRIP the brackets
+  // and mint a plausible-looking slug, the exact mechanism that polluted
+  // search in the poisoned-path incident.)
   const expectedSlug = slugifyPath(relativePath);
   let resolvedSlug = expectedSlug;
   let usedFrontmatterFallback = false;
@@ -1241,7 +1308,7 @@ export async function importCodeFile(
   const lang = detectCodeLanguage(relativePath) || 'unknown';
   const title = `${relativePath} (${lang})`;
   const sourceId = opts.sourceId;
-  const txOpts = sourceId ? { sourceId } : undefined;
+  const txOpts = { sourceId: sourceId ?? 'default' };
   // PostgreSQL text columns reject U+0000 even though source files may
   // legitimately contain it inside string/regex fixtures. Preserve a visible,
   // searchable representation instead of dropping the entire code page.
@@ -1274,7 +1341,11 @@ export async function importCodeFile(
     .update(JSON.stringify({ title, type: 'code', content, lang, chunker_version: CHUNKER_VERSION }))
     .digest('hex');
 
-  const existing = await engine.getPage(slug, sourceId ? { sourceId } : undefined);
+  // Scoped to the exact (source_id, slug) row the writes below target —
+  // engine.putPage defaults to 'default' when sourceId is unset, so the read
+  // mirrors that default instead of matching the slug in ANY source (the
+  // unscoped-check/scoped-write bug class).
+  const existing = await engine.getPage(slug, { sourceId: sourceId ?? 'default' });
   if (!opts.force && existing?.content_hash === hash) {
     return { slug, status: 'skipped', chunks: 0 };
   }
@@ -1312,7 +1383,7 @@ export async function importCodeFile(
   // OpenAI API. Order matters: our chunk_index is semantic (tree-sitter
   // order), so a matching (chunk_index, text_hash) means a verbatim
   // preserved symbol.
-  const existingChunks = existing ? await engine.getChunks(slug, sourceId ? { sourceId } : undefined) : [];
+  const existingChunks = existing ? await engine.getChunks(slug, { sourceId: sourceId ?? 'default' }) : [];
   const existingByKey = new Map<string, typeof existingChunks[number]>();
   for (const ec of existingChunks) {
     existingByKey.set(`${ec.chunk_index}:${ec.chunk_text}`, ec);
@@ -1372,7 +1443,11 @@ export async function importCodeFile(
       // falsely marked current; `reindex --code --force` / `embed --stale`
       // handle the swap for those.
       if (!opts.noEmbed && needsEmbedIndexes.length === chunks.length) {
-        await tx.setPageEmbeddingSignature(slug, { sourceId, signature: currentEmbeddingSignature() });
+        // D9: no stamp without a gateway (wrong signature is worse than none).
+        const codeSig = currentEmbeddingSignature();
+        if (codeSig) {
+          await tx.setPageEmbeddingSignature(slug, { sourceId, signature: codeSig });
+        }
       }
     } else {
       await tx.deleteChunks(slug, txOpts);
@@ -1766,7 +1841,11 @@ export async function importImageFile(
   // and slugifyPath would already preserve it). Recompute with the file
   // extension preserved so the page slug is stable + collision-free.
   const imageSlug = relativePath.replace(/[\\\/]/g, '/').toLowerCase();
-  const sourceOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
+  // Scoped to the exact (source_id, slug) row the write targets — same
+  // unscoped-check/scoped-write fix as importFromContent/importCodeFile
+  // above (the variable-bound ternary shape evaded the CI guard's inline
+  // heuristic; caught by adversarial review).
+  const sourceOpts = { sourceId: opts.sourceId ?? 'default' };
   const linkOpts = opts.sourceId
     ? { fromSourceId: opts.sourceId, toSourceId: opts.sourceId, originSourceId: opts.sourceId }
     : undefined;

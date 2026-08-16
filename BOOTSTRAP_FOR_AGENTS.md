@@ -1,4 +1,4 @@
-<!-- gbrain-runbook-stamp: 0.46.6.0 -->
+<!-- gbrain-runbook-stamp: 0.46.11.0 -->
 <!-- This stamp must equal the VERSION file at every release; CI enforces it
      (scripts/check-bootstrap-tag.sh). `gbrain bootstrap status` compares it to
      the installed binary and warns on skew. -->
@@ -70,6 +70,12 @@ approval to run install commands (bun, gh, gbrain) and to write in this folder �
 approve those prompts when they appear." If approvals are globally disabled, ask the
 human to enable workspace-write + network for this session. Count the approval taps
 you needed; report the count at the end (it feeds the install-time measurement).
+
+If the gbrain PLUGIN is already installed and enabled (codex: `[plugins."gbrain@…"]
+enabled = true`; Claude Code: `enabledPlugins["gbrain@…"] = true`), the hooks phase
+skips its own `mcp add` on that harness — the plugin already provides the MCP server
+(one owner per name). That skip is healthy, not an error; force the hand-wired
+registration only with `--mcp-even-if-plugin`.
 
 ## Phase walkthrough (commentary — the CLI's list wins)
 

@@ -37,6 +37,7 @@ import {
   NEW_INSTALL_DEFAULT_EMBEDDING_MODEL,
   NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS,
   NEW_INSTALL_DEFAULT_RERANKER_MODEL,
+  renderCanonicalMigrationCommands,
 } from './ai/defaults.ts';
 import { lookupEmbeddingPrice } from './embedding-pricing.ts';
 
@@ -282,10 +283,7 @@ export function renderZeActionRequired(exposure: ZeExposure): string {
           ? ` (${exposure.blastRadius.embeddedChunksCapped ? 'at least ' : ''}~$${exposure.blastRadius.estReembedUsd.toFixed(2)} to re-embed with ${NEW_INSTALL_DEFAULT_EMBEDDING_MODEL})`
           : ''),
     );
-    lines.push(
-      `Fix: gbrain migrate embeddings --to ${NEW_INSTALL_DEFAULT_EMBEDDING_MODEL} ` +
-        `--dim ${NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS} --dry-run`,
-    );
+    lines.push(`Fix: ${renderCanonicalMigrationCommands().recommendedDryRun}`);
     lines.push(
       `  (Voyage's valid widths are 256/512/1024/2048 — legacy default brains are ` +
         `1280d and get a one-time rebuild to ${NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS}.`,

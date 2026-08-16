@@ -23,6 +23,49 @@ touch `~/.gbrain` per the eval discipline — results land in
 `<repo>/.gbrain-evals/eval-results.jsonl`). Record the gate verdict + headline
 metrics here per run.
 
+## Containment sprint (2026-08-15, v0.46.9.1, branch garrytan/containment-sprint-coverage-modularity)
+
+God-file line counts AFTER the façade peels. Five of the six giants (all but
+migrate.ts) were peeled into focused module dirs; the peeled lines live in the sibling dirs
+listed below the table (count both when comparing against W0 — the façade
+number alone is not the receipt).
+
+| File | Lines |
+|---|---|
+| src/commands/doctor.ts | 4,177 |
+| src/core/operations.ts | 303 |
+| src/core/pglite-engine.ts | 5,546 |
+| src/core/postgres-engine.ts | 5,704 |
+| src/core/migrate.ts | 6,320 |
+| src/commands/sync.ts | 4,120 |
+| src/core/ai/gateway.ts | 4,049 |
+| src/cli.ts | 3,323 |
+| src/core/cycle.ts | 2,933 |
+| src/core/search/hybrid.ts | 2,453 |
+| src/core/engine.ts | 2,343 |
+| src/core/search/mode.ts | 1,232 |
+
+Peeled module dirs (where the moved lines live): `src/core/ops/*` 7,759;
+`src/commands/doctor/checks/*` 4,944 + four tail modules 1,321;
+`src/core/sync-{anchor,cost-gate,git,lock,reconcile,status-report}.ts` 2,030;
+`src/core/{pglite,postgres}-engine/*` 3,505. Every façade re-exports its full
+prior surface.
+
+Guards: 50 scripts/check-* files; 4 self-tested (harness 0s, budget 30s).
+Regrowth is now ratcheted: `check:module-size` (in `bun run verify`) pins
+per-file ceilings in `scripts/module-size-limits.tsv` — growth, stale slack,
+and unlisted >1,500-line src files all fail.
+
+Test infra: merged lcov coverage on every PR run (advisory), diff-coverage
+gate report-only at 80%, corpus-matched baseline gate vs origin/master's
+committed baseline, nightly unit+serial+E2E coverage-full pipeline;
+behavioral-vs-structural suite classification (`scripts/classify-tests.ts`)
+splits the headline test count.
+
+Retrieval canary: NOT RUN in this PR (structural refactor; behavior pinned by
+the engine-parity suite, now in CI on every PR and master push). The W1/W3/W9
+canary mandate is unchanged.
+
 ## W0 (2026-08-14, branch garrytan/code-smell-fix-wave @ post-hotfix)
 
 God-file line counts (the audit's structural targets, BEFORE the registry waves):

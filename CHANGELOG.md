@@ -2,6 +2,364 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.46.11.0] - 2026-08-16
+
+**Five operational failures from live production brains, fixed at the root.**
+A backlink auto-fix that could corrupt a page's frontmatter, a job queue that
+grew a multi-thousand-job backlog with no admission control and no alarm,
+junk filenames that imported as plausible-looking pages and polluted search,
+a read/write source-scoping asymmetry that misrouted pages in multi-source
+brains, and frontmatter types that silently filed into unexpected
+directories. Each fix ships with its regression pinned and a discovery
+surface so the same failure can't build up silently again.
+
+### Added
+- **Queue admission control for background agents.** Identical parentless
+  `subagent` submits now coalesce onto the existing waiting job (same owner
+  lane, payload, and execution options — the response carries `coalesced:
+  true` so callers can tell); jobs still waiting after 48 hours are cancelled
+  with an auditable reason instead of queueing forever (`gbrain config set
+  minions.ttl_waiting_hours.<name> <hours|0>` to tune or disable); and an
+  optional per-type waiting quota (`minions.quota_max_waiting.<name>`,
+  off by default) rejects new submits with a structured, retryable error once
+  a backlog cap is hit — exact even under concurrent submitters. Everything
+  disables at once with `GBRAIN_MINIONS_ADMISSION=0`.
+- **Warn-before-act for the new waiting-TTL.** The first sweep never fires
+  cold: the worker (and `gbrain upgrade`) print a one-time notice with the
+  affected-job count, then hold a one-hour grace window before the first
+  cancellation so there's real time to tune or opt out.
+- **Divergent-queue alarms.** `gbrain jobs stats` gains Drained/Waiting
+  columns, a per-type `DIVERGENT QUEUE` scream when intake structurally
+  exceeds completions (with the exact config command to cap it), a
+  waiting-TTL 24h cancellation line, and a `--json` document; `gbrain
+  doctor`'s queue health check surfaces the same findings for cron
+  topologies. TTL cancellations are never counted as useful drain.
+- **Stored-type visibility.** Sync and import now warn once per run when
+  explicit frontmatter types are aliases or undeclared in the active schema
+  pack (aggregated counts ride the sync result and the `--json` envelope for
+  worker topologies; silence with `schema.type_warnings false`), and `gbrain
+  schema lint` gains two data-plane rules that catch the existing corpus,
+  scoped per source.
+- **`gbrain quarantine clear --source-id`** — clearing a slug that exists in
+  multiple sources now errors with the source list instead of picking one
+  arbitrarily.
+- **`malformed_path_pages` doctor check** — finds previously ingested pages
+  backed by junk filenames and says exactly which are sweepable versus which
+  need a rename.
+- A shared atomic file writer (`src/core/atomic-write.ts`): unique temp
+  sibling, full-write loop, fsync, on-disk verification callback, mode
+  preservation past the umask, and parent-directory fsync after the rename.
+
+### Fixed
+- **`check-backlinks fix` can no longer corrupt frontmatter.** The timeline
+  inserter now computes the body offset from the canonical frontmatter
+  parser (never matching headings inside YAML), validates the page before
+  and after the edit, writes atomically with an on-disk verify, takes the
+  per-page lock, and isolates per-file errors so one bad page can't poison a
+  batch. Pages with pre-existing broken frontmatter are skipped and reported
+  instead of made worse.
+- **Junk filenames no longer import.** Markdown paths containing brackets or
+  any path containing control characters are rejected at sync, import, and
+  the direct file-import defense (before any slug is minted), with the skip
+  visibly reported on every route — including dry runs, directory imports,
+  and syncs whose only changes were malformed files. Previously ingested
+  junk rows are swept by the next full sync; legitimately bracket-named
+  markdown from older releases is preserved (rename to re-import), and
+  code-strategy sources keep indexing framework layouts like `app/[id]/`.
+- **Source-scoped reads now mirror their writes.** The existence-check/write
+  asymmetry that misrouted pages in multi-source brains is closed across the
+  writer transaction (pages, links, raw data, validators, slug registry),
+  file import, image import, code reindex, and integrity repair — enforced
+  going forward by a CI guard, with unscoped reads made deterministic
+  (default source first) in both engines.
+- Waiting-TTL cancellations flow through the canonical cancel path so
+  aggregator parents always resolve, reasons stamp only the jobs that
+  actually expired, and a cancelled child frees its idempotency slot.
+- Interactive `gbrain agent run` prints `coalesced` (with the matched job id)
+  instead of a false `submitted` when admission coalescing matched an
+  existing waiting job; the remote submit surface returns the same signal and
+  maps quota rejections to a structured `rate_limited` error.
+- Job names and frontmatter-derived type strings are sanitized before
+  terminal output, and copy-pasteable remediation hints only embed values
+  that are shell-safe tokens.
+- Page-lock acquisition is now exclusive-create, so two processes reclaiming
+  a stale lock can no longer both proceed and lose one side's writes.
+- The advisor's stalled-jobs recommendation and the schema-lint retype hint
+  now point at commands that exist.
+
+### To take advantage of v0.46.11.0
+Upgrade and restart the worker (`bun install -g github:garrytan/gbrain#latest-stable
+&& gbrain upgrade`). The one-time waiting-TTL notice will print with your
+affected-job count and hold a one-hour grace window — tune with `gbrain
+config set minions.ttl_waiting_hours.subagent <hours|0>` before the first
+sweep if 48h isn't right for you. Then check `gbrain jobs stats`: if you see
+a `DIVERGENT QUEUE` scream, the printed `minions.quota_max_waiting.<name>`
+command is the opt-in cap. Existing junk-filename pages are removed by your
+next full `gbrain sync` (files stay on disk; rename a file to re-import its
+content), and `gbrain doctor` will name anything that needs a manual rename.
+
+## [0.46.10.0] - 2026-08-16
+
+**Switching embedding and reranking providers is now one guess-free
+command.** `gbrain migrate embeddings` verifies against the database —
+column widths, stale censuses, config planes, and the migration marker —
+so a stale environment variable or config value can never fake a
+completed migration, and every surface that mentions migrating prints
+the same canonical, paste-ready command.
+
+### Added
+- **`gbrain migrate embeddings --status [--json]`** — read-only status:
+  per-plane model resolution (env presence, file, DB — API keys shown as
+  set/unset booleans only), actual column widths, NULL-vector and
+  signature censuses, the in-flight marker with the exact resume
+  command, and the last completion's smoke-check outcome. Never embeds,
+  never refuses on env.
+- **`--reranker auto|off|keep|<provider:model>`** — the reranker rides
+  the same migration flow. `auto` resolves the ACTIVE reranker through
+  the search-mode bundle defaults (not just explicitly-set keys), probes
+  the target reranker live before any write, and lands the config write
+  and query-cache purge in one transaction. When the target provider
+  ships no reranker, the plan prints the exact follow-up command instead
+  of silently enabling a third provider. Invalid values refuse with the
+  list of valid reranker recipes before anything runs.
+- **`--retarget`** — abandoning a different in-flight migration target
+  is an explicit decision; the refusal names both the resume and
+  retarget commands, and the marker keeps a history of superseded
+  targets.
+- **Post-migration smoke check.** Completion runs a self-retrieval probe
+  (sampled pages must find themselves; warn-only, never blocks or
+  re-bills) and stamps the outcome into the completion marker, where
+  `--status` reads it without re-spending.
+- **Doctor: `embedding_migration_state` check** — warns with the exact
+  resume + status commands while a migration is in flight or was
+  interrupted. Two companion notes land in existing checks: the
+  env-override check now notes when env vars agree with stored config
+  (they still override the file plane at runtime), and the embeddings
+  coverage check notes when the read path uses a custom embedding column.
+- **One canonical migration command.** Every surface that suggests
+  migrating (upgrade banner, init, doctor, advisor, sunset notices,
+  docs) renders through one shared helper, with a drift-guard test
+  sweeping src + docs.
+- **Migration plan honesty.** The plan header names the exact brain/DB
+  target (redacted) and scope; renders a DESTRUCTIVE warning whenever a
+  rebuild will drop stored vectors (including the absent-column case);
+  reports pages that will re-embed at a lower context tier; warns when
+  live workers or queued embed jobs could write outside the migration
+  locks; and notes when the target width exceeds the ANN-index cap
+  (search falls back to exact scan).
+
+### Changed
+- **The "nothing to migrate" skip is DB-verified.** Completion now
+  requires the column width, every dim-pinned companion column, the
+  wide stale census (pages with no recorded signature included), the
+  chunkless-page census, the marker, and the config planes to all agree
+  with the target. Config and env values alone can no longer produce a
+  false "Nothing to migrate".
+- **Coverage tells the truth.** `gbrain stats` embedded counts, health
+  embed-coverage, and doctor's embeddings check now key on the stored
+  vector itself rather than bookkeeping timestamps, and skip-marked
+  chunks are excluded from both sides of the ratio (an all-skip brain
+  reads 100%, not 0%-with-nothing-to-do).
+- **Env vars are handled honestly.** Env pinning the same target
+  proceeds with a loud keep-in-sync notice; env disagreeing still
+  refuses with the override box. On a brain with no config file, a fully
+  pinning env is accepted as canonical — and nothing env-sourced (keys,
+  URLs) is ever written into the config file.
+- **Background embed parity.** `gbrain embed --background` now carries
+  catch-up, include-null-signature, batch-size, and priority into the
+  job payload; the job handlers read all of them. The doc-recommended
+  migration follow-up command behaves identically foreground and
+  background.
+- **Schema transitions are safer.** Each dim-pinned column is checked
+  and repaired independently; a same-width re-run or resume never drops
+  stored vectors; targets above the ANN-index dimension cap skip index
+  creation cleanly instead of failing DDL.
+- **Migrations single-flight properly.** A brain-wide migration lock
+  plus per-source locks (sorted, archived included) are held across the
+  drain with a heartbeat; losing the lock aborts cleanly and resumably
+  instead of racing another writer. Completion bookkeeping is
+  transactional — a crash can't lose both the resume marker and the
+  receipt.
+- **`doctor --remediate`** includes the unsigned-page cohort in its
+  embed step and its cost estimate when that cohort is non-empty.
+- **Unknown-provenance honesty.** When the embedding gateway can't
+  resolve a model, nothing stamps a fabricated signature; those pages
+  are counted as unknown provenance and picked up by the widened
+  censuses.
+
+### Fixed
+- Five surfaces printed five different migration command strings — some
+  with unsubstituted placeholders or invalid widths for the suggested
+  model. All render the canonical command now.
+- Doctor's embeddings hint named a flag that doesn't exist; it now
+  prescribes the real remediation.
+- The migration playbook gained an env preflight, a quiesce step, a
+  recovery section, an exit-code table, and a DB-verified verify step
+  (skills/migrations/v0.46.3.0.md).
+
+**To take advantage of v0.46.10.0:** upgrade and re-run `gbrain doctor`.
+Embedding-coverage numbers become truthful on upgrade — a brain that
+previously reported inflated coverage may show lower numbers or a new
+doctor warning; that is the pre-existing state becoming visible, not a
+regression. The fix is one command: `gbrain embed --stale` (add
+`--include-null-signature` if doctor reports unsigned pages). If you are
+mid-migration off a sunsetting provider, `gbrain migrate embeddings
+--status` shows exactly where you are and the exact resume command.
+
+## [0.46.9.1] - 2026-08-16
+
+**Coverage is now measured, honestly, on every PR — and the six giant modules stopped growing.**
+
+### Added
+- **Merged code-coverage reporting in CI.** Every PR run now collects per-lane
+  lcov from the 10 unit shards, the serial lane, and the two slow jobs, merges
+  them (`scripts/merge-lcov.ts`), and renders one honest number to the run
+  summary — with lane-completeness manifests, a degraded banner when a lane is
+  missing, a never-loaded-file list instead of fake all-files math, and
+  behavioral-vs-structural test counts side by side. A nightly pipeline runs
+  every lane INCLUDING the full real-Postgres e2e glob inside one workflow for
+  the true unit+serial+E2E merged number.
+- **Diff-coverage gate (report-only, graduating).** New and changed source
+  lines are held to an 80% coverage bar with a per-file uncovered-line table on
+  every PR. It reports without blocking until the measurement machinery has two
+  weeks of receipts, then flips to enforcing via a one-line change. Escape
+  hatch: a `[coverage-exempt: reason]` commit trailer. A corpus-matched
+  baseline gate (brainbench-style governance against origin/master's committed
+  baseline) catches whole-repo regressions.
+- **Module-size ratchet.** `check:module-size` (in `bun run verify`) pins every
+  oversized file to a committed ceiling: growth fails, stale slack after a
+  shrink fails, and any unlisted src file over 1,500 lines fails. Growing a
+  giant now requires a reviewer-visible edit to
+  `scripts/module-size-limits.tsv`. The append-only migrations file is
+  region-aware: the migration array grows freely while the runner logic around
+  it is ratcheted.
+- **Test-intent classification.** `scripts/classify-tests.ts` separates suites
+  that execute product behavior from suites that assert on source/doc text
+  (wiring guards, drift pins), with a freshness-checked committed inventory —
+  so the headline test count stops conflating the two.
+- The 34-test behavioral engine-parity suite now runs in CI on every PR and
+  push to master (it previously only ran locally).
+
+### Changed
+- **The four biggest modules are now façades over focused modules** (~19,500
+  lines peeled, behavior unchanged and pinned by the existing parity/guard
+  suites): the operations contract assembles from `src/core/ops/*` domain
+  modules; doctor's check library lives in `src/commands/doctor/checks/*`
+  bundles plus four tail-cluster modules; sync's cost-gate/git/anchor/lock/
+  reconcile/status-report clusters live in `src/core/sync-*`; and both database
+  engines delegate their facts/takes/code-edges/salience method groups to
+  narrow-interface modules, moved in lockstep and verified against live
+  Postgres. Every façade re-exports its full prior surface, so imports and the
+  published package exports are unchanged.
+- The CLI flag-registry generator understands the new façade layout, so
+  command flag surfaces are byte-identical to before the split.
+
+### Fixed
+- Structural guard tests that pinned source text in the peeled files now read
+  the whole module surface (or the specific post-peel file), so a future move
+  can never silently blind a guard.
+
+To take advantage of v0.46.9.1: upgrade normally — no schema changes, no
+config changes, no action required. Contributors get the new guards
+automatically via `bun run verify`; coverage numbers appear in each CI run's
+summary. If `check:module-size` fails on your branch, the message names the
+exact ceiling to raise (a conscious, reviewer-visible TSV edit) or — better —
+the sibling module dir to put the new code in.
+## [0.46.8.0] - 2026-08-15
+
+**The full local test suite is trustworthy again.** `bun run test` and
+`bun run test:e2e` now pass on developer machines the same way they pass in
+CI — the two failure classes that made local runs lie are fixed at the root.
+
+### Fixed
+
+- **Test runs no longer die mid-suite with phantom "externally killed" shards.**
+  The CLI installed its shutdown signal handler at module load, so any test
+  that imported the CLI armed a process-wide SIGTERM handler inside the test
+  runner; one test's synthetic signal emission then killed the entire shard.
+  The handler now installs only in real CLI entrypoints (compiled binary,
+  spawned CLIs), never in importers — pinned by spawn-based regression tests.
+- **Unit tests are isolated from your real brain.** A new test preload points
+  `GBRAIN_HOME` at per-run scratch, so config-honoring code paths no longer
+  change behavior with whatever your live `~/.gbrain/config.json` says (27
+  cycle/dream tests flipped red whenever another workspace rewrote it), and
+  tests can no longer clobber real config, audit logs, or lock files. The
+  unit/slow wrappers also strip an ambient `GBRAIN_HOME` at their boundary,
+  matching the existing `DATABASE_URL` discipline.
+- **One canonical `GBRAIN_HOME` convention.** Preferences and the migration
+  ledger now resolve through the same path convention as engine config
+  (`GBRAIN_HOME` is a parent directory; `.gbrain` is appended) instead of a
+  divergent local rule that split one logical home across two roots. Installs
+  that run with `GBRAIN_HOME` set get a one-time, atomic, rollback-safe
+  copy-forward of their existing preferences and migration history — an
+  explicit `minion_mode: off` opt-out survives the upgrade, and completed
+  migrations are never silently re-run. Read-only homes degrade to reading
+  the legacy file in place.
+- **13 end-to-end test files repaired** after drifting from behavior that
+  changed in earlier releases (transport-scoped local-only ops, soft-delete
+  semantics, pack-manifest extractable types, halfvec embedding columns,
+  multi-asset compiled builds, environment leakage into hermetic fixtures,
+  a clock-skew-sensitive staleness assertion, and a driver array-binding
+  quirk). All were test-side fixes — no product behavior had regressed.
+- **`gbrain doctor` announces its filesystem-only fallback.** When the DB
+  connect (or the DB-backed check run) fails, doctor now says so on stderr
+  instead of silently degrading — with connection errors scrubbed through
+  the credential redactor (URL userinfo, libpq `password=` forms including
+  quoted values, hostnames/IPs) so pasted output doesn't leak credentials
+  into issues and CI logs.
+- **The e2e runner no longer false-kills its known-slow file.** `run-e2e.sh`'s
+  per-file wedge timeout (the hard-timeout backstop against wedged files, 180s) is
+  now overridable per file; the full ingest-skill e2e gets 420s — its runtime
+  grows with every migration master adds, and the flat cap had started killing
+  legitimately-passing runs on quiet machines.
+
+### Added
+
+- Regression pins for the new harness contracts: importing the CLI installs
+  no termination/cleanup signal handlers; the test-home preload sets-when-unset and respects
+  pre-set values; `_resetForTests` fully detaches listeners; free-text
+  credential redaction (`redactUrlsInText`).
+
+To take advantage of v0.46.8.0: `gbrain self-upgrade`, then `gbrain doctor`
+— no schema migration, no config changes. If you run tests locally,
+`bun run test` and `DATABASE_URL=<test-db> bun run test:e2e` should both
+exit 0 on a clean checkout; if they don't, the failure is real.
+## [0.46.7.0] - 2026-08-15
+
+**gbrain is now a proper Codex plugin — and a Claude Code plugin — from one repo.**
+Until now, wiring gbrain into Codex meant hand-editing MCP config and skills
+arrived through a separate channel. This release makes the plugin marketplace
+the front door: two commands install the MCP server AND a curated 65-skill
+brain-first set, in either harness, with the whole chain proven against the
+real codex and claude binaries (install, curated snapshot, a live brain answer
+through the plugin-provided server).
+
+### Added
+- **gbrain is now a native Codex plugin — and a Claude Code plugin — from one repo.** Two commands install the MCP server plus a curated brain-first skill set: `codex plugin marketplace add garrytan/gbrain@codex-plugin` + `codex plugin add gbrain@gbrain` (Claude Code: `/plugin marketplace add garrytan/gbrain` + `/plugin install gbrain@gbrain`). The plugin serves the `starter` MCP surface (the seven memory verbs + the daily-driver ops) through a bundled launcher that resolves your installed gbrain binary and fails with the exact install one-liner when it's missing. Each release also publishes a slim `codex-plugin` dist branch so the plugin download is the plugin, not the development repo. Verified end-to-end against the real codex and claude binaries (install, skills, a live brain answer through the plugin-provided server).
+- **`gbrain serve --source-guard`** — fail-closed write routing for user-global serves (the plugin lanes pass it): when a brain has multiple sources to choose from and no explicit `GBRAIN_SOURCE` binding, write and admin operations return an actionable error instead of landing in whatever source ambient resolution fell through to. A sole real source is unambiguous and unaffected; reads always pass.
+- **Plugin-lane coexistence.** `gbrain bootstrap hooks` skips its own MCP registration when the plugin already provides the server (healthy skip, exit 0, hooks still install; override with `--mcp-even-if-plugin`), the harness lane warns on a two-layer name collision, and `gbrain doctor` gains a `plugin_lane_collision` check that warns only on a real double-registration.
+- **Curated plugin skill tree.** `skills/plugin-lanes.json` records one publication decision per skill for the plugin lanes (the openclaw bundle's curation is untouched); `scripts/generate-plugin-tree.ts` emits the committed `plugin/` tree and `scripts/check-plugin-tree.sh` gates drift. Skills newly published to plugin consumers got a portability/consent/privacy sweep (50 fixes across 10 skills — sanctioned install commands, synthetic example names, first-fire consent for ambient capture, host-only assumptions labeled).
+
+- **Hardening that rode the review army:** the plugin-tree generator now uses the canonical frontmatter parser (inline `tools:` lists count) with negative-fixture proof that its curation gate can fail; the source-guard probe is a bounded, memoized single-row query; `--source-guard` warns loudly when combined with `--http` (it is stdio-only); the plugin-doors CI job pins exact pass counts and the release publish job drops persisted credentials; `check-plugin-tree` runs in `bun run verify`.
+
+### Fixed
+- The deprecated frontmatterless `skills/install/` tombstone is gone — harness skill scanners error on frontmatterless SKILL.md files.
+- Skills newly published to plugin consumers no longer carry a wrong install command, real-name examples, raw-OAuth-token snippets, or host-container paths (the 50-fix sweep), and ambient-capture skills now announce themselves on first fire with a per-user off switch.
+
+### To take advantage of v0.46.7.0
+Install the gbrain CLI once (`bun install -g github:garrytan/gbrain#latest-stable`)
+and create a brain (`gbrain init` — zero-config local PGLite). Then, in Codex:
+`codex plugin marketplace add garrytan/gbrain@codex-plugin` and
+`codex plugin add gbrain@gbrain`. In Claude Code: `/plugin marketplace add
+garrytan/gbrain` and `/plugin install gbrain@gbrain`. New sessions get the
+brain's memory verbs + daily ops as MCP tools and the curated skill set; say
+"fill my brain" to run cold-start. Existing bootstrap installs change nothing —
+if you later add the plugin, `gbrain bootstrap hooks` steps aside automatically
+and `gbrain doctor` flags any double-registration. Brains with multiple sources: set `GBRAIN_SOURCE=<source-id>` in the
+environment that launches your harness (the plugin serve is user-global and
+binds the source from the env, not a flag;
+ambiguous writes are guarded until a source is bound — a sole-source brain
+needs nothing).
 ## [0.46.6.0] - 2026-08-15
 
 **A busy machine can no longer make the job queue evict its own healthy

@@ -17,6 +17,14 @@ import { rowToMinionJob, rowToInboxMessage, rowToAttachment } from './types.ts';
 import { validateAttachment } from './attachments.ts';
 import { isProtectedJobName } from './protected-names.ts';
 import {
+  computeParamHash,
+  resolveAdmissionPolicy,
+  resolveTtlNames,
+  QueueQuotaExceededError,
+  PARAM_HASH_EXCLUDED_KEYS,
+  TTL_REASON_PREFIX,
+} from './admission.ts';
+import {
   defaultTimeoutMsFor, HANDLER_DEFAULT_TIMEOUT_MS,
   defaultLockDurationMsFor, HANDLER_DEFAULT_LOCK_DURATION_MS, clampLockDurationMs,
 } from './handler-timeouts.ts';
@@ -106,6 +114,8 @@ type CoalesceAuditEvent = {
   queue: string; name: string; returned_job_id: number;
   waiting_count?: number; max_waiting?: number;
   pending_count?: number; max_pending?: number;
+  /** Set when the coalesce matched on an identical payload hash (admission). */
+  param_hash?: string;
 };
 
 /** Shared cap-hit coalesce return for the backpressure guards: hydrate the
@@ -219,6 +229,53 @@ export class MinionQueue {
     const delayUntil = opts?.delay ? new Date(Date.now() + opts.delay) : null;
     const maxSpawnDepth = opts?.max_spawn_depth ?? this.maxSpawnDepth;
 
+    // Admission policy (param-coalescing + name-global quota). Resolved
+    // OUTSIDE the transaction (60s in-process cache; fail-open to defaults).
+    // Parented submits never coalesce: fanout children belong to their
+    // parent's bookkeeping/aggregator — returning some other child would
+    // corrupt child_done accounting. opts.coalesce_params overrides per call.
+    const policy = await resolveAdmissionPolicy(this.engine, jobName);
+    // An EMPTY payload (after excluding the hash key itself) carries no
+    // dedupe signal — two no-param submits are more likely distinct
+    // placeholder/scaffolding jobs than a runaway producer (which always
+    // carries a prompt). Never coalesce those.
+    // A caller-supplied idempotency_key also disables param-coalescing:
+    // producer-owned idempotency is the STRONGER contract ("this exact key
+    // maps to this exact row"), and a param-coalesce hit would return a row
+    // the key was never registered against — a later same-key submit would
+    // then insert fresh and run the work twice (adversarial-review finding).
+    const hashablePayload = Object.keys(data ?? {}).some(k => !PARAM_HASH_EXCLUDED_KEYS.has(k));
+    const coalesceActive =
+      (opts?.coalesce_params ?? policy.coalesceParams) &&
+      !opts?.parent_job_id &&
+      !opts?.idempotency_key &&
+      hashablePayload &&
+      childStatus === 'waiting';
+    let paramHash: string | null = null;
+    if (coalesceActive) {
+      // Execution options are part of the coalescing IDENTITY (codex re-review
+      // P1): identical payloads with different timeout/priority/attempt/
+      // quiet-hours semantics are NOT the same job — coalescing them would
+      // silently hand the second submitter the first's execution contract.
+      // Only DEFINED options fold in (conservative: an explicit value never
+      // coalesces onto an implicit-default row; forward-safe like any hash
+      // input change — old rows just stop matching).
+      const optIdentity: Record<string, unknown> = {};
+      for (const k of ['priority', 'timeout_ms', 'max_attempts', 'quiet_hours', 'lock_duration_ms', 'delay_ms', 'max_stalled'] as const) {
+        const v = (opts as Record<string, unknown> | undefined)?.[k];
+        if (v !== undefined) optIdentity[k] = v;
+      }
+      paramHash = computeParamHash(
+        Object.keys(optIdentity).length > 0
+          ? { ...(data ?? {}), __opts_identity: optIdentity }
+          : ((data ?? {}) as Record<string, unknown>),
+      );
+      // Clone rather than mutate the caller's object; the hash rides in the
+      // payload (the __-prefixed embedded-metadata convention) so the SQL
+      // match needs no DDL and `jobs get` shows what matched.
+      data = { ...(data ?? {}), __param_hash: paramHash };
+    }
+
     // Set inside the transaction by a cap-hit coalesce; flushed AFTER commit
     // so audit filesystem I/O never runs while holding the advisory lock.
     let coalesceAudit: CoalesceAuditEvent | null = null;
@@ -248,6 +305,75 @@ export class MinionQueue {
             existingJob.coalesced = true;
             return existingJob;
           }
+        }
+      }
+
+      // 1a. Param-coalescing (admission): an identical parentless submit —
+      // same (name, queue, payload hash, incl. __owner_client_id so owner
+      // lanes never cross) — returns the newest matching WAITING row instead
+      // of inserting a duplicate. Honest-dispatch contract holds (coalesced:
+      // true), and unlike the cap-hit coalesce below, returning this row to a
+      // result-consumer is semantically exact: identical params ⇒ identical
+      // result. Waiting-only by design (a RUNNING identical job does not
+      // suppress a re-run; maxPending exists for single-flight callers).
+      // Age-bounded to ttl/2: coalescing onto a nearly-TTL-expired row would
+      // silently kill the fresh intent an hour later (round-2 V7).
+      if (coalesceActive && paramHash) {
+        const admissionQueue = opts?.queue ?? 'default';
+        await tx.executeRaw(
+          `SELECT pg_advisory_xact_lock(hashtext('minion_admission:' || $1 || ':' || $2 || ':' || $3))`,
+          [jobName, admissionQueue, paramHash]
+        );
+        const ttlHours = policy.ttlWaitingHours;
+        // updated_at, matching the TTL sweep's key: a requeued row has a
+        // fresh TTL window and is a legitimate coalesce target again.
+        const ageCond = ttlHours != null
+          ? `AND updated_at > now() - ($4 * interval '1 hour')`
+          : '';
+        const matchParams: unknown[] = [jobName, admissionQueue, paramHash];
+        if (ttlHours != null) matchParams.push(ttlHours / 2);
+        const match = await tx.executeRaw<Record<string, unknown>>(
+          `SELECT * FROM minion_jobs
+            WHERE name = $1 AND queue = $2 AND status = 'waiting'
+              AND parent_job_id IS NULL
+              AND data->>'__param_hash' = $3
+              ${ageCond}
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1`,
+          matchParams
+        );
+        if (match.length > 0) {
+          return coalesceReturn(match[0], {
+            queue: admissionQueue,
+            name: jobName,
+            param_hash: paramHash,
+          }, ev => { coalesceAudit = ev; });
+        }
+      }
+
+      // 1a2. Name-global waiting quota (admission; config-only, no shipped
+      // default — user decision D2C). Counts the name across ALL queues:
+      // fanout producers use per-run private queues (dream-inline-*), so a
+      // queue-scoped count would reset per run and never bind. REJECTION,
+      // not coalesce — quota-coalescing would hand result-consumers an
+      // unrelated row. The name-global advisory lock below serializes
+      // check+insert across concurrent submitters (adversarial finding:
+      // without it, N parallel distinct-payload submits each observed
+      // capacity and inserted, so overshoot was bounded only by attacker
+      // concurrency — defeating the DoS backstop). Serialization cost only
+      // applies to names with a quota configured, i.e. the runaway ones.
+      if (policy.quotaMaxWaiting != null) {
+        await tx.executeRaw(
+          `SELECT pg_advisory_xact_lock(hashtext('minion_quota:' || $1))`,
+          [jobName]
+        );
+        const quotaRows = await tx.executeRaw<{ count: string }>(
+          `SELECT count(*)::text AS count FROM minion_jobs WHERE name = $1 AND status = 'waiting'`,
+          [jobName]
+        );
+        const waitingTotal = parseInt(quotaRows[0]?.count ?? '0', 10);
+        if (waitingTotal >= policy.quotaMaxWaiting) {
+          throw new QueueQuotaExceededError(jobName, waitingTotal, policy.quotaMaxWaiting);
         }
       }
 
@@ -578,10 +704,40 @@ export class MinionQueue {
    * Returns the *root* (the job matching id), not an arbitrary descendant.
    */
   async cancelJob(id: number): Promise<MinionJob | null> {
+    const cancelled = await this.cancelJobs([id]);
+    const root = cancelled.find(j => j.id === id);
+    return root ?? null;
+  }
+
+  /**
+   * Batch variant of cancelJob: cancels every root id AND its descendants in
+   * ONE transaction, with the full bookkeeping the single-id path carries
+   * (child_done inbox messages + aggregator-parent resolution). Callers that
+   * cancel in bulk (the waiting-TTL sweep) MUST use this — a raw set-based
+   * UPDATE would skip that bookkeeping and wedge parents in waiting-children
+   * forever (the exact wedge class this wave fights).
+   *
+   * `opts.reason` is written to error_text (COALESCE-preserved when a row
+   * already carries one). The single-id UPDATE never wrote error_text, so
+   * every surface keyed on a reason prefix (jobs stats, doctor) would
+   * silently report zero without this parameter.
+   */
+  async cancelJobs(ids: number[], opts?: { reason?: string; rootStatuses?: MinionJobStatus[] }): Promise<MinionJob[]> {
+    if (ids.length === 0) return [];
+    // opts.rootStatuses re-checks each ROOT id's status ATOMICALLY inside the
+    // cancel UPDATE's CTE seed. The waiting-TTL sweep passes ['waiting'] to
+    // close its SELECT→cancel race: claim() and the sweep both target the
+    // oldest waiting rows, so without this a job claimed between the sweep's
+    // SELECT and this UPDATE would be cancelled while ACTIVE (lock_token
+    // NULLed under the running handler). Operator cancels omit it — killing
+    // an active job is exactly what `jobs cancel` means.
+    const rootStatuses = opts?.rootStatuses ?? null;
     return this.engine.transaction(async (tx) => {
       const rows = await tx.executeRaw<Record<string, unknown>>(
         `WITH RECURSIVE descendants AS (
-          SELECT id, 0 AS d FROM minion_jobs WHERE id = $1
+          SELECT id, 0 AS d FROM minion_jobs
+           WHERE id = ANY($1::int[])
+             AND ($3::text[] IS NULL OR status = ANY($3::text[]))
           UNION ALL
           SELECT m.id, descendants.d + 1
             FROM minion_jobs m
@@ -592,14 +748,20 @@ export class MinionQueue {
           status = 'cancelled',
           lock_token = NULL,
           lock_until = NULL,
+          -- Reason stamps ROOT ids only: a descendant is bookkeeping-cancelled
+          -- because its parent went away, not because IT hit the caller's
+          -- reason (e.g. a waiting-TTL child would otherwise carry a factually
+          -- false 'waited > Nh' text AND inflate the LIKE-prefix stats the
+          -- alerting surfaces count).
+          error_text = CASE WHEN id = ANY($1::int[]) THEN COALESCE($2, error_text) ELSE error_text END,
           finished_at = now(),
           updated_at = now()
          WHERE id IN (SELECT id FROM descendants)
            AND status IN ('waiting','active','delayed','waiting-children','paused')
          RETURNING *`,
-        [id]
+        [ids, opts?.reason ?? null, rootStatuses]
       );
-      if (rows.length === 0) return null;
+      if (rows.length === 0) return [];
 
       // v0.15: emit child_done(outcome='cancelled') for every cancelled row
       // that had a parent. Without this, an aggregator waiting for N
@@ -652,9 +814,66 @@ export class MinionQueue {
         );
       }
 
-      const root = rows.find(r => (r.id as number) === id);
-      return root ? rowToMinionJob(root) : null;
+      return rows.map(rowToMinionJob);
     });
+  }
+
+  /**
+   * Waiting-TTL sweep (admission control, run from the worker's maintenance
+   * interval): cancel jobs still WAITING past their per-name TTL, via
+   * cancelJobs() so descendants cancel and aggregator parents resolve.
+   *
+   * `maxPerTick` bounds one tick's work (default 500) so the first
+   * post-upgrade tick against a large backlog can't stall the maintenance
+   * loop — the backlog drains over a few ticks. Oldest-first so FIFO
+   * fairness of what REMAINS is preserved.
+   *
+   * NOTE (warn-before-act, user requirement D1A): the worker gates this
+   * sweep behind the one-time `minions.ttl_notice_shown` flag — tick 1
+   * counts + warns, sweeping starts on tick 2. The gate lives in worker.ts
+   * (the channel where the notice prints); this method just sweeps.
+   */
+  async handleWaitingTTL(opts?: { maxPerTick?: number }): Promise<{ cancelled: number; by_name: Record<string, number> }> {
+    const maxPerTick = Math.max(1, Math.floor(opts?.maxPerTick ?? 500));
+    const ttlNames = await resolveTtlNames(this.engine);
+    const by_name: Record<string, number> = {};
+    let cancelled = 0;
+    for (const [name, hours] of ttlNames) {
+      if (cancelled >= maxPerTick) break;
+      const budget = maxPerTick - cancelled;
+      // Keyed on updated_at (last state transition), NOT created_at: every
+      // path that RETURNS a row to 'waiting' — handleStalled's requeue (sweep
+      // #1 of the SAME maintenance tick), retryJob, promoteDelayed, the
+      // parent-unblock flips — bumps updated_at but not created_at. Keying on
+      // created_at would cancel a job the same tick just requeued it, with a
+      // "waited > Nh" reason that is factually false. For rows that sat
+      // untouched in 'waiting' the two timestamps are equivalent, so the
+      // backlog-drain semantics are unchanged.
+      const stale = await this.engine.executeRaw<{ id: number }>(
+        `SELECT id FROM minion_jobs
+          WHERE name = $1 AND status = 'waiting'
+            AND updated_at < now() - ($2 * interval '1 hour')
+          ORDER BY updated_at ASC
+          LIMIT $3`,
+        [name, hours, budget]
+      );
+      if (stale.length === 0) continue;
+      const reason =
+        `${TTL_REASON_PREFIX}: waited > ${hours}h in queue ` +
+        `(minions.ttl_waiting_hours.${name}; set 0 to disable)`;
+      // rootStatuses:['waiting'] re-checks atomically inside the cancel — a
+      // job CLAIMED between the SELECT above and this UPDATE must not be
+      // cancelled mid-run (both the claimer and this sweep target the oldest
+      // waiting rows, so the race is systematic, not incidental).
+      const swept = await this.cancelJobs(stale.map(r => r.id), { reason, rootStatuses: ['waiting'] });
+      // Count only the requested roots — descendants of a swept parent are
+      // bookkeeping, not TTL victims of their own.
+      const rootIds = new Set(stale.map(r => r.id));
+      const rootCount = swept.filter(j => rootIds.has(j.id)).length;
+      by_name[name] = (by_name[name] ?? 0) + rootCount;
+      cancelled += rootCount;
+    }
+    return { cancelled, by_name };
   }
 
   /**
@@ -723,7 +942,19 @@ export class MinionQueue {
   /** Get job statistics. */
   async getStats(opts?: { since?: Date; queue?: string }): Promise<{
     by_status: Record<string, number>;
-    by_type: Array<{ name: string; total: number; completed: number; failed: number; dead: number; avg_duration_ms: number | null }>;
+    /**
+     * Per-type window stats. `total` counts rows CREATED in the window
+     * (intake). The `drained_*` fields count rows that reached a terminal
+     * status IN the window (`finished_at >= since`) regardless of when they
+     * were created — the true outflow. They are split by terminal status
+     * because a naive combined "drain" number self-inflates on TTL/manual
+     * cancellations while zero useful work happens; divergence alerting
+     * compares intake against drained_completed. `waiting_now` and
+     * `oldest_waiting_minutes` are point-in-time (not windowed).
+     */
+    by_type: Array<{ name: string; total: number; completed: number; failed: number; dead: number; avg_duration_ms: number | null;
+      drained_completed: number; drained_failed: number; drained_dead: number; drained_cancelled: number;
+      waiting_now: number; oldest_waiting_minutes: number | null }>;
     queue_health: { waiting: number; active: number; stalled: number };
     /**
      * issue #1801 — QUEUE-SCOPED wedge signature for the `jobs stats` WEDGED
@@ -763,14 +994,63 @@ export class MinionQueue {
        GROUP BY name ORDER BY total DESC`,
       [since.toISOString()]
     );
-    const by_type = typeRows.map(r => ({
-      name: r.name as string,
-      total: parseInt(r.total as string, 10),
-      completed: parseInt(r.completed as string, 10),
-      failed: parseInt(r.failed as string, 10),
-      dead: parseInt(r.dead as string, 10),
-      avg_duration_ms: r.avg_duration_ms != null ? Math.round(r.avg_duration_ms as number) : null,
-    }));
+    // True per-type outflow: rows that reached a terminal status IN the
+    // window, keyed on finished_at (a row created last week and finished
+    // today drained today). Split by status — cancellations (incl. the
+    // waiting-TTL sweep) are outflow but not useful work.
+    const drainRows = await this.engine.executeRaw<Record<string, unknown>>(
+      `SELECT name,
+        count(*) FILTER (WHERE status = 'completed')::text AS d_completed,
+        count(*) FILTER (WHERE status = 'failed')::text AS d_failed,
+        count(*) FILTER (WHERE status = 'dead')::text AS d_dead,
+        count(*) FILTER (WHERE status = 'cancelled')::text AS d_cancelled
+       FROM minion_jobs
+       WHERE finished_at IS NOT NULL AND finished_at >= $1
+         AND status IN ('completed','failed','dead','cancelled')
+       GROUP BY name`,
+      [since.toISOString()]
+    );
+    const drainByName = new Map(drainRows.map(r => [r.name as string, r]));
+
+    // Point-in-time per-type waiting depth + oldest wait age.
+    const depthRows = await this.engine.executeRaw<Record<string, unknown>>(
+      `SELECT name,
+        count(*)::text AS waiting_now,
+        EXTRACT(EPOCH FROM (now() - min(created_at)))::text AS oldest_waiting_seconds
+       FROM minion_jobs WHERE status = 'waiting'
+       GROUP BY name`,
+      []
+    );
+    const depthByName = new Map(depthRows.map(r => [r.name as string, r]));
+
+    // Union of names so a type with waiting rows but zero window intake (or
+    // vice versa) still gets a row — divergence alerting needs both sides.
+    const typeNames = new Set<string>([
+      ...typeRows.map(r => r.name as string),
+      ...drainRows.map(r => r.name as string),
+      ...depthRows.map(r => r.name as string),
+    ]);
+    const typeByName = new Map(typeRows.map(r => [r.name as string, r]));
+    const by_type = [...typeNames].map(name => {
+      const r = typeByName.get(name);
+      const d = drainByName.get(name);
+      const w = depthByName.get(name);
+      const oldest = w?.oldest_waiting_seconds != null ? Number(w.oldest_waiting_seconds) : null;
+      return {
+        name,
+        total: r ? parseInt(r.total as string, 10) : 0,
+        completed: r ? parseInt(r.completed as string, 10) : 0,
+        failed: r ? parseInt(r.failed as string, 10) : 0,
+        dead: r ? parseInt(r.dead as string, 10) : 0,
+        avg_duration_ms: r?.avg_duration_ms != null ? Math.round(r.avg_duration_ms as number) : null,
+        drained_completed: d ? parseInt(d.d_completed as string, 10) : 0,
+        drained_failed: d ? parseInt(d.d_failed as string, 10) : 0,
+        drained_dead: d ? parseInt(d.d_dead as string, 10) : 0,
+        drained_cancelled: d ? parseInt(d.d_cancelled as string, 10) : 0,
+        waiting_now: w ? parseInt(w.waiting_now as string, 10) : 0,
+        oldest_waiting_minutes: oldest != null && Number.isFinite(oldest) ? Math.round(oldest / 60) : null,
+      };
+    }).sort((a, b) => b.total - a.total);
 
     // Queue health: stalled = active with expired lock
     const stalledRows = await this.engine.executeRaw<{ count: string }>(

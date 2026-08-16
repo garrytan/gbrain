@@ -1,0 +1,16 @@
+{
+  "provisional": true,
+  "prCorpus": null,
+  "fullCorpus": null,
+  "watchlist": [
+    "src/commands/doctor.ts",
+    "src/core/operations.ts",
+    "src/core/postgres-engine.ts",
+    "src/core/pglite-engine.ts",
+    "src/core/migrate.ts",
+    "src/commands/sync.ts",
+    "src/core/ai/gateway.ts",
+    "src/cli.ts"
+  ],
+  "note": "seeded post-peel; corpus sections filled by update-coverage-baseline.ts from real runs"
+}

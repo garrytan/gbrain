@@ -78,6 +78,9 @@ const ESCAPE_HATCH_FILES = new Set([
 
 const ESCAPE_HATCH_PREFIXES = [
   "src/commands/migrations/",
+  // Operation domain modules peeled out of operations.ts (an escape-hatch
+  // file) carry the same blast radius as the contract itself.
+  "src/core/ops/",
   "test/e2e/fixtures/",
   "skills/",
   ".github/workflows/",

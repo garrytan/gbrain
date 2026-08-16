@@ -151,6 +151,9 @@ Stable phase names shipped in v0.15.2:
   writer adds chunks mid-run)
 - `repair_jsonb.run`, `repair_jsonb.<table>.<column>`
 - `backlinks.scan`
+- `backlinks.fix` — heartbeat-only (no total): the fix loop runs per-file
+  locking + parse-validation + atomic writes, so agents see forward progress
+  while it works through the gap list
 - `lint.pages`
 - `integrity.auto`
 - `eval.single`, `eval.ab`

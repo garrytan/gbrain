@@ -98,7 +98,31 @@ describe('parseCodexJsonl', () => {
   });
 
   test('empty input yields empty result, never throws', () => {
-    expect(parseCodexJsonl([])).toEqual({ finalText: '', toolCalls: [], reasoning: [] });
+    expect(parseCodexJsonl([])).toEqual({ finalText: '', toolCalls: [], reasoning: [], mcpToolCalls: [] });
+  });
+
+  test('mcp_tool_call items extract {server, tool} from top-level fields', () => {
+    const line = JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'mcp_tool_call', server: 'gbrain', tool: 'recall' },
+    });
+    expect(parseCodexJsonl([line]).mcpToolCalls).toEqual([{ server: 'gbrain', tool: 'recall' }]);
+  });
+
+  test('mcp_tool_call falls back to invocation.{server,tool} and name', () => {
+    const nested = JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'mcp_tool_call', invocation: { server: 'gbrain', tool: 'search' } },
+    });
+    const named = JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'mcp_tool_call', server: 'gbrain', name: 'context_pack' },
+    });
+    const parsed = parseCodexJsonl([nested, named]);
+    expect(parsed.mcpToolCalls).toEqual([
+      { server: 'gbrain', tool: 'search' },
+      { server: 'gbrain', tool: 'context_pack' },
+    ]);
   });
 });
 

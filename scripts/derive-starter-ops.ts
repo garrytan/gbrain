@@ -37,7 +37,10 @@ import { BRAIN_TOOL_ALLOWLIST } from '../src/core/minions/tools/brain-allowlist.
 /** Ops surface.ts always includes regardless of derivation (shared constant). */
 const ALWAYS_INCLUDED = ALWAYS_INCLUDED_STARTER_OPS;
 
-/** Target total STARTER_OPS size (the "~20-op daily-driver set"). */
+/**
+ * Default `--target` for this usage-driven recommendation tool (a tuning knob,
+ * not the shipped surface — the committed STARTER_OPS set is ~26 ops).
+ */
 const DEFAULT_TARGET_SIZE = 20;
 
 function parseArgs(argv: string[]): { days: number; target: number } {
