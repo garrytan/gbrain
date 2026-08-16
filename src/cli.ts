@@ -170,7 +170,7 @@ const CLI_ONLY_SELF_HELP = new Set([
  * answerable with no brain configured.
  *
  * Membership is behaviour, not taste: each entry is pinned by
- * test/cli-help-without-brain.test.ts, which runs the CLI with an empty
+ * test/cli-help-without-brain.serial.test.ts, which runs the CLI with an empty
  * GBRAIN_HOME and requires exit 0 plus real help output.
  */
 const SELF_HELP_WITHOUT_ENGINE: Record<string, () => Promise<(engine: never, args: string[]) => unknown>> = {
