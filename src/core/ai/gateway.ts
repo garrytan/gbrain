@@ -2688,8 +2688,23 @@ function estimateChatInputTokens(opts: { system?: string; messages?: Array<{ con
 export type ChatRole = 'system' | 'user' | 'assistant' | 'tool';
 
 export type ChatBlock =
-  | { type: 'text'; text: string }
-  | { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown }
+  // providerMetadata (text/tool-call only — never meaningful on a tool-result
+  // we authored) round-trips a provider's per-part signal that must be echoed
+  // back verbatim on the NEXT turn. Gemini's "thinking" models (3.x) reject a
+  // subsequent function call with "Function call is missing a
+  // thought_signature in functionCall parts" once this is dropped —
+  // @ai-sdk/google already reads/writes providerOptions[provider].
+  // thoughtSignature in both directions, so the gap was entirely here:
+  // ChatBlock had nowhere to carry it between capture (chat()'s response
+  // mapping) and replay (toModelMessages below).
+  | { type: 'text'; text: string; providerMetadata?: Record<string, unknown> }
+  | {
+      type: 'tool-call';
+      toolCallId: string;
+      toolName: string;
+      input: unknown;
+      providerMetadata?: Record<string, unknown>;
+    }
   | { type: 'tool-result'; toolCallId: string; toolName: string; output: unknown; isError?: boolean };
 
 export interface ChatMessage {
@@ -2800,8 +2815,22 @@ export function toModelMessages(messages: ChatMessage[]): unknown[] {
       content: blocks
         .filter((b) => b.type !== 'text' || typeof b.text === 'string')
         .map((b) => {
-          if (b.type === 'text') return { type: 'text' as const, text: b.text };
-          if (b.type === 'tool-call') return { type: 'tool-call' as const, toolCallId: b.toolCallId, toolName: b.toolName, input: b.input };
+          if (b.type === 'text') {
+            return {
+              type: 'text' as const,
+              text: b.text,
+              ...(b.providerMetadata ? { providerOptions: b.providerMetadata } : {}),
+            };
+          }
+          if (b.type === 'tool-call') {
+            return {
+              type: 'tool-call' as const,
+              toolCallId: b.toolCallId,
+              toolName: b.toolName,
+              input: b.input,
+              ...(b.providerMetadata ? { providerOptions: b.providerMetadata } : {}),
+            };
+          }
           return b;
         }),
     };
@@ -3453,13 +3482,15 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     const rawContent: any[] = (result as any).content ?? [];
     if (Array.isArray(rawContent) && rawContent.length > 0) {
       for (const part of rawContent) {
-        if (part.type === 'text') blocks.push({ type: 'text', text: part.text });
-        else if (part.type === 'tool-call') {
+        if (part.type === 'text') {
+          blocks.push({ type: 'text', text: part.text, providerMetadata: part.providerMetadata });
+        } else if (part.type === 'tool-call') {
           blocks.push({
             type: 'tool-call',
             toolCallId: part.toolCallId,
             toolName: part.toolName,
             input: part.input ?? part.args,
+            providerMetadata: part.providerMetadata,
           });
         }
       }

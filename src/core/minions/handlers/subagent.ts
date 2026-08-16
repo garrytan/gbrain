@@ -1340,8 +1340,18 @@ function adaptContentBlocksToChatBlocks(blocks: unknown): ChatBlock[] | string {
     if (!b || typeof b !== 'object') continue;
     const block = b as Record<string, unknown>;
     const t = block.type;
+    // providerMetadata is carried on the v2 shapes only (v1 Anthropic rows
+    // predate it). It MUST survive the read-time adaptation: the adapted
+    // blocks become the resumed loop's outgoing messages, and a Gemini 3.x
+    // turn whose persisted thoughtSignature is dropped here fails the very
+    // next call with "Function call is missing a thought_signature in
+    // functionCall parts".
+    const pm = block.providerMetadata;
+    const meta = pm !== null && typeof pm === 'object' && !Array.isArray(pm)
+      ? pm as Record<string, unknown>
+      : undefined;
     if (t === 'text' && typeof block.text === 'string') {
-      out.push({ type: 'text', text: block.text });
+      out.push({ type: 'text', text: block.text, ...(meta ? { providerMetadata: meta } : {}) });
     } else if (t === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string') {
       // v1 Anthropic shape
       out.push({
@@ -1357,6 +1367,7 @@ function adaptContentBlocksToChatBlocks(blocks: unknown): ChatBlock[] | string {
         toolCallId: block.toolCallId,
         toolName: block.toolName,
         input: block.input ?? {},
+        ...(meta ? { providerMetadata: meta } : {}),
       });
     } else if (t === 'tool_result' && typeof block.tool_use_id === 'string') {
       // v1 Anthropic shape — tool result block (no toolName in v1; synthesize)

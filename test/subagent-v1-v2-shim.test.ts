@@ -85,6 +85,24 @@ describe('adaptContentBlocksToChatBlocks (D5 — v1 Anthropic → v2 ChatBlock s
     expect(adaptContentBlocksToChatBlocks(blocks)).toEqual(blocks);
   });
 
+  // The adapted blocks become the RESUMED loop's outgoing messages, so a
+  // dropped providerMetadata makes the next call fail on providers that
+  // require their per-part signal echoed back (Gemini 3.x:
+  // "Function call is missing a thought_signature in functionCall parts").
+  it('preserves providerMetadata on v2 blocks (thought_signature survives resume)', () => {
+    const blocks = [
+      { type: 'text', text: 'thinking', providerMetadata: { google: { thoughtSignature: 'sig-t' } } },
+      {
+        type: 'tool-call',
+        toolCallId: 'gbrain-uuid-8',
+        toolName: 'get_page',
+        input: { slug: 'wiki/foo' },
+        providerMetadata: { google: { thoughtSignature: 'sig-c' } },
+      },
+    ];
+    expect(adaptContentBlocksToChatBlocks(blocks)).toEqual(blocks);
+  });
+
   it('adapts v1 Anthropic tool_result block → v2 tool-result (synthesizes __legacy__ toolName)', () => {
     // v1 tool_result blocks don't carry tool_name — they reference the
     // assistant turn's tool_use_id via tool_use_id. The shim synthesizes

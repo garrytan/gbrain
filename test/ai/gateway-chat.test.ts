@@ -26,6 +26,7 @@ import {
   recipeSupportsStructuredOutputs,
   parseExpansionResponse,
   chat,
+  toModelMessages,
   __setGenerateTextTransportForTests,
 } from '../../src/core/ai/gateway.ts';
 import { parseModelId, resolveRecipe, assertTouchpoint } from '../../src/core/ai/model-resolver.ts';
@@ -380,5 +381,74 @@ describe('chat touchpoint — provider_chat_options passthrough', () => {
         thinking: { type: 'disabled' },
       },
     });
+  });
+});
+
+// Gemini's "thinking" models (3.x) reject a subsequent function call with
+// "Function call is missing a thought_signature in functionCall parts" —
+// @ai-sdk/google already round-trips providerOptions[provider].thoughtSignature
+// in both directions, so the gap was ChatBlock having nowhere to carry it
+// between capture (chat()'s response mapping) and replay (toModelMessages).
+describe('ChatBlock providerMetadata round-trip (thought_signature)', () => {
+  beforeEach(() => {
+    resetGateway();
+    __setGenerateTextTransportForTests(null);
+  });
+
+  test('chat() captures a tool-call part\'s providerMetadata into the returned ChatBlock', async () => {
+    __setGenerateTextTransportForTests(async () => ({
+      content: [
+        {
+          type: 'tool-call',
+          toolCallId: 'call_1',
+          toolName: 'brain_search',
+          input: { query: 'x' },
+          providerMetadata: { google: { thoughtSignature: 'sig-abc' } },
+        },
+      ],
+      finishReason: 'tool-calls',
+      usage: { inputTokens: 1, outputTokens: 1 },
+    }) as any);
+    configureGateway({
+      chat_model: 'google:gemini-3-pro-preview',
+      env: { GOOGLE_GENERATIVE_AI_API_KEY: 'fake' },
+    });
+    const result = await chat({
+      model: 'google:gemini-3-pro-preview',
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+    const call = result.blocks.find((b) => b.type === 'tool-call');
+    expect(call).toBeDefined();
+    expect((call as any).providerMetadata).toEqual({ google: { thoughtSignature: 'sig-abc' } });
+  });
+
+  test('toModelMessages replays providerMetadata as providerOptions on the outgoing part', () => {
+    const messages = toModelMessages([
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            toolCallId: 'call_1',
+            toolName: 'brain_search',
+            input: { query: 'x' },
+            providerMetadata: { google: { thoughtSignature: 'sig-abc' } },
+          },
+        ],
+      },
+    ]);
+    const part = (messages[0] as any).content[0];
+    expect(part.providerOptions).toEqual({ google: { thoughtSignature: 'sig-abc' } });
+  });
+
+  test('toModelMessages omits providerOptions when there is no providerMetadata (no regression)', () => {
+    const messages = toModelMessages([
+      {
+        role: 'assistant',
+        content: [{ type: 'tool-call', toolCallId: 'call_1', toolName: 'brain_search', input: {} }],
+      },
+    ]);
+    const part = (messages[0] as any).content[0];
+    expect(part.providerOptions).toBeUndefined();
   });
 });
