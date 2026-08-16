@@ -217,23 +217,21 @@ describe('collectFiles (production import)', () => {
         mime_type: null, size_bytes: null, content_hash: 'h2',
         created_at: '2026-04-27' },
     ];
-    const fakeSql: any = (..._: unknown[]) => Promise.resolve(fakeRows);
-    const spy = spyOn(db, 'getConnection').mockReturnValue(fakeSql);
+    // file_list now routes through the connected OperationContext engine
+    // (sqlQueryForEngine) instead of the module-global db connection; pin the
+    // same BigInt invariant against the new seam.
+    const fakeEngine: any = { executeRaw: async () => fakeRows };
 
-    try {
-      const op = operationsByName['file_list'];
-      const ctx: any = { engine: null, config: {}, logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: true };
-      const result = await op.handler(ctx, {}) as Array<Record<string, unknown>>;
+    const op = operationsByName['file_list'];
+    const ctx: any = { engine: fakeEngine, config: {}, logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: true };
+    const result = await op.handler(ctx, {}) as Array<Record<string, unknown>>;
 
-      expect(result.length).toBe(2);
-      expect(typeof result[0].size_bytes).toBe('number');
-      expect(result[0].size_bytes).toBe(4096);
-      expect(result[1].size_bytes).toBeNull();
-      // The exact failure mode openclaw reported.
-      expect(() => JSON.stringify(result)).not.toThrow();
-    } finally {
-      spy.mockRestore();
-    }
+    expect(result.length).toBe(2);
+    expect(typeof result[0].size_bytes).toBe('number');
+    expect(result[0].size_bytes).toBe(4096);
+    expect(result[1].size_bytes).toBeNull();
+    // The exact failure mode openclaw reported.
+    expect(() => JSON.stringify(result)).not.toThrow();
   });
 
   test('collectFiles skips node_modules', () => {

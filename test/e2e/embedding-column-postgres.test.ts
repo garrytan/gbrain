@@ -20,6 +20,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { quoteIdentifier } from '../../src/core/search/embedding-column.ts';
 import type { ResolvedColumn } from '../../src/core/types.ts';
+import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 
 const dbUrl = process.env.DATABASE_URL;
 if (!dbUrl) {
@@ -33,6 +34,7 @@ if (!dbUrl) {
 
   beforeAll(async () => {
     engine = new PostgresEngine();
+    assertSafeE2eDatabaseUrl(dbUrl!);
     await engine.connect({ database_url: dbUrl } as never);
     await engine.initSchema();
 

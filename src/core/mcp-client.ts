@@ -384,6 +384,10 @@ export function unpackToolResult<T = unknown>(res: unknown): T {
   if (!Array.isArray(content) || content.length === 0) {
     throw new RemoteMcpError('parse', 'Remote tool returned no content');
   }
+  // Deliberately content[0]-only (D8 skew guard): new servers append a
+  // model-facing diagnosis block as content[1] on empty retrievals; the
+  // structured body contract stays in block 0 and this parser must never
+  // trip on the extra block. Pinned by test.
   const first = content[0] as { type?: string; text?: string };
   if (first.type !== 'text' || typeof first.text !== 'string') {
     throw new RemoteMcpError('parse', 'Remote tool returned unexpected content shape');
@@ -393,4 +397,17 @@ export function unpackToolResult<T = unknown>(res: unknown): T {
   } catch (e) {
     throw new RemoteMcpError('parse', `Remote tool result was not valid JSON: ${(e as Error).message}`);
   }
+}
+
+/**
+ * T15/FOV-1: read the response-level `_meta` from a tool-call envelope
+ * (see docs/protocol/MCP_META_CHANNELS.md). Old servers simply lack the
+ * field — callers must treat undefined as "no meta", never as an error.
+ */
+export function extractResponseMeta(res: unknown): Record<string, unknown> | undefined {
+  const meta = (res as { _meta?: unknown } | undefined)?._meta;
+  if (meta && typeof meta === 'object' && !Array.isArray(meta)) {
+    return meta as Record<string, unknown>;
+  }
+  return undefined;
 }

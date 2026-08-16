@@ -38,3 +38,28 @@ describe('qwen3-embedding native-width suppression', () => {
       .toEqual({ openaiCompatible: { dimensions: 1024 } });
   });
 });
+
+describe('qwen3-embedding hyphenated hub-form ids (OpenRouter et al.)', () => {
+  test('org-prefixed hub id requests Matryoshka truncation at non-native dim', () => {
+    expect(dimsProviderOptions('openai-compatible', 'qwen/qwen3-embedding-8b', 1536))
+      .toEqual({ openaiCompatible: { dimensions: 1536 } });
+    expect(dimsProviderOptions('openai-compatible', 'qwen/qwen3-embedding-4b', 1024))
+      .toEqual({ openaiCompatible: { dimensions: 1024 } });
+  });
+
+  test('hub id at native width emits no dimensions param', () => {
+    expect(dimsProviderOptions('openai-compatible', 'qwen/qwen3-embedding-8b', 4096)).toBeUndefined();
+    expect(dimsProviderOptions('openai-compatible', 'qwen/qwen3-embedding-4b', 2560)).toBeUndefined();
+    expect(dimsProviderOptions('openai-compatible', 'qwen/qwen3-embedding-0.6b', 1024)).toBeUndefined();
+  });
+
+  test('bare hyphenated id (no org prefix) also matches', () => {
+    expect(dimsProviderOptions('openai-compatible', 'qwen3-embedding-8b', 2000))
+      .toEqual({ openaiCompatible: { dimensions: 2000 } });
+  });
+
+  test('unknown hyphenated variant falls through to sending the configured dim', () => {
+    expect(dimsProviderOptions('openai-compatible', 'qwen3-embedding-32b', 1024))
+      .toEqual({ openaiCompatible: { dimensions: 1024 } });
+  });
+});

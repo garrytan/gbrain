@@ -52,3 +52,13 @@ gbrain sync --no-schema-pack --no-pull --no-embed --yes
 
 `gbrain schema lint` flags the classic nested-quantifier ReDoS shapes
 (`(a+)+`, `(a*)*`, …) in pack regexes as warnings.
+
+The manual diagnosis above has an automated cousin: the progress-aware stall
+watchdog. If the import drain makes no forward progress for
+`GBRAIN_SYNC_STALL_ABORT_SECONDS` (default 900; keyed on file-import
+progress, not the lock heartbeat), the run aborts with
+`reason: 'stall_timeout'` and releases the per-source lock so the next
+`gbrain sync` resumes from the checkpoint. It fires BETWEEN files — a hang
+inside one file's import runs until the wall-clock hard deadline. `0`
+disables it. The full sync-resumability knob table lives in CLAUDE.md
+("Sync resumability + lock tuning").

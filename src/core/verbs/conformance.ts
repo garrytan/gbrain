@@ -166,16 +166,26 @@ export async function runConformance(
     seededEntity = false;
   }
 
-  // List-level checks first: the five verbs are advertised, synthesize is
+  // List-level checks first: the CORE five verbs are advertised, synthesize is
   // marked expensive (description prefix is the load-bearing channel).
+  // v0.45.7: context_pack/delta are ADDITIVE — a v1 endpoint that predates them
+  // must still certify (the versioning policy this runner enforces), so their
+  // absence is a 'skip', never a 'fail'. When advertised, they are exercised
+  // like any other verb.
+  const CORE_VERBS: VerbName[] = ['recall', 'remember', 'entity', 'synthesize', 'forget'];
+  const advertised = new Set<string>();
   try {
     const tools = await client.listTools();
     const byName = new Map(tools.map(t => [t.name, t]));
+    for (const name of byName.keys()) advertised.add(name);
     for (const verb of Object.keys(RESPONSE_SCHEMAS) as VerbName[]) {
+      const required = CORE_VERBS.includes(verb);
       results.push(
         byName.has(verb)
           ? { name: `tools/list advertises ${verb}`, verb, status: 'pass', detail: '' }
-          : { name: `tools/list advertises ${verb}`, verb, status: 'fail', detail: 'not advertised' },
+          : required
+            ? { name: `tools/list advertises ${verb}`, verb, status: 'fail', detail: 'not advertised' }
+            : { name: `tools/list advertises ${verb}`, verb, status: 'skip', detail: 'optional additive verb (v0.45.7) not advertised by this endpoint' },
       );
     }
     const synth = byName.get('synthesize');
@@ -198,6 +208,11 @@ export async function runConformance(
   for (const c of CONFORMANCE_CASES) {
     if (c.requiresSynthesizeFlag && !opts.synthesize) {
       results.push({ name: c.name, verb: c.verb, status: 'skip', detail: 'costs money — pass --synthesize' });
+      continue;
+    }
+    // v0.45.7: cases for additive verbs run only where the verb is advertised.
+    if (!CORE_VERBS.includes(c.verb as VerbName) && advertised.size > 0 && !advertised.has(c.verb)) {
+      results.push({ name: c.name, verb: c.verb, status: 'skip', detail: 'optional additive verb not advertised by this endpoint' });
       continue;
     }
     if (c.requiresSeededEntity && !seededEntity) {

@@ -295,6 +295,7 @@ export function confineManifestPath(skillsDir: string, entry: ManifestEntry): st
 function opCallableByCaller(op: Operation, ctx: OperationContext): boolean {
   if (ctx.remote === false) return true; // local CLI — OS is the trust boundary
   if (op.localOnly) return false; // not reachable over a remote transport
+  if (ctx.transport === 'stdio') return true; // auth-less local pipe — dispatch enforces no scopes
   return hasScope(ctx.auth?.scopes ?? [], op.scope ?? 'read');
 }
 
@@ -567,9 +568,17 @@ export function getSkillDetail(
 export function assertPublishEnabled(ctx: OperationContext, publishSkills: boolean): void {
   if (ctx.remote === false) return;
   if (publishSkills) return;
-  throw new OperationError(
+  // Caller-facing wording + machine-readable detail (WP1). The k=v `detail`
+  // grammar (`config_key=<key>`) is THE machine-parseable denial format —
+  // future denial classes reuse it rather than inventing new string shapes.
+  // Honest catalogs hide this op at list time; reaching this throw means a
+  // caller guessed the name or the gate flipped between list and call.
+  const err = new OperationError(
     'permission_denied',
-    'Skill publishing is disabled by the brain owner.',
+    'This tool is not published by the brain owner, so it is hidden from your tool catalog. ' +
+      'Ask the owner to enable skill publishing if you need it.',
     'The owner can enable it with `gbrain config set mcp.publish_skills true`.',
   );
+  err.detail = 'config_key=mcp.publish_skills';
+  throw err;
 }

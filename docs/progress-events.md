@@ -28,6 +28,7 @@ Any of these commands stream events when `--progress-json` is set:
 - `gbrain eval`
 - `gbrain eval brainbench`
 - `gbrain apply-migrations` (the orchestrator + every child command)
+- `gbrain transcripts ingest` (per-file ticks + a per-session heartbeat over the import set)
 
 Non-bulk commands (`stats`, `graph-query`, `get`, `put`, etc.) don't emit
 events — they return in under a second.
@@ -135,6 +136,10 @@ sync that calls import emits `sync.import.<file>`, not `import.<file>`.
 Stable phase names shipped in v0.15.2:
 
 - `doctor.db_checks` (umbrella for all DB-side doctor checks)
+- `doctor.pglite_probe` (the #2674 scratch-store probe; only when PGLite init
+  failed with an unexplained/damage-class disk state or `--probe-pglite` was
+  passed — a cold start can take 5–20s, so the heartbeat is the only sign of
+  life)
 - `orphans.scan`
 - `embed.pages`
 - `extract.links_fs`, `extract.timeline_fs`, `extract.links_db`, `extract.timeline_db`
@@ -154,6 +159,9 @@ Stable phase names shipped in v0.15.2:
   fixture count and a percentage would lie
 - `export.pages`
 - `files.sync`
+- `transcripts.ingest` (one tick per session-log file; sessions inside a
+  multi-session file — the hermes store, consumer exports — don't get their
+  own ticks, so total = file count; each session emits a heartbeat instead)
 
 Sub-phases exposed via `child()`:
 

@@ -1,4 +1,11 @@
 import { test, expect, describe } from 'bun:test';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  parseOpencodeConfig,
+  writeOpencodeMcpEntry,
+} from '../src/core/bootstrap/opencode-json.ts';
 import {
   normalizeMcpUrl,
   isLinkLocalOrMetadata,
@@ -7,6 +14,7 @@ import {
   isValidName,
   buildClaudeMcpAddArgv,
   buildCodexMcpAddArgv,
+  buildOpencodeMcpAddArgv,
   cmdString,
   redactToken,
   buildConnectBlock,
@@ -186,6 +194,11 @@ describe('argv + command string', () => {
   test('claude argv shape', () => {
     expect(buildClaudeMcpAddArgv({ name: 'gbrain', url: 'https://h/mcp', headerToken: 'TOK' })).toEqual([
       'mcp', 'add', 'gbrain', '-t', 'http', 'https://h/mcp', '-H', 'Authorization: Bearer TOK',
+    ]);
+  });
+  test('claude argv with scope — inserted after the name (#4043 harness lane; claude default is local)', () => {
+    expect(buildClaudeMcpAddArgv({ name: 'gbrain', url: 'https://h/mcp', headerToken: 'TOK', scope: 'user' })).toEqual([
+      'mcp', 'add', 'gbrain', '--scope', 'user', '-t', 'http', 'https://h/mcp', '-H', 'Authorization: Bearer TOK',
     ]);
   });
   test('codex argv shape — env-var bearer, no token in argv', () => {
@@ -494,6 +507,7 @@ function installDeps(over: Partial<ConnectDeps> = {}): ConnectDeps {
     probe: async () => ({ ok: true, identity: 'brain: alice-example' }),
     env: () => undefined, // tests control the env; real GBRAIN_REMOTE_TOKEN must not leak in
     registerOAuthClient: () => ({ ok: true, clientId: 'gbrain_cl_minted', clientSecret: 'gbrain_cs_minted' }),
+    writeOpencodeRemoteEntry: (name) => ({ configPath: `/tmp/xdg/opencode/opencode.jsonc (${name})`, replacedPrior: false }),
     ...over,
   };
 }
@@ -614,7 +628,7 @@ describe('runConnect --install', () => {
       installDeps(),
     );
     expect(r.exitCode).toBe(1);
-    expect(r.err.join('\n')).toMatch(/--install supports claude-code and codex/);
+    expect(r.err.join('\n')).toMatch(/--install supports claude-code, codex, and opencode/);
   });
 
   test('--install with --agent perplexity is rejected (GUI connector)', async () => {
@@ -747,8 +761,8 @@ describe('runConnect print mode', () => {
 });
 
 describe('AGENT_IDS', () => {
-  test('exposes the four supported agents', () => {
-    expect(AGENT_IDS).toEqual(['claude-code', 'codex', 'perplexity', 'generic']);
+  test('exposes the five supported agents', () => {
+    expect(AGENT_IDS).toEqual(['claude-code', 'codex', 'opencode', 'perplexity', 'generic']);
   });
 });
 
@@ -857,5 +871,196 @@ describe('runConnect --oauth', () => {
     );
     expect(r.exitCode).toBe(1);
     expect(r.err.join('\n')).toMatch(/--install is not supported with --oauth/);
+  });
+});
+
+describe('opencode lane', () => {
+  test('buildOpencodeMcpAddArgv stores the literal {env:} interpolation — no token in argv', () => {
+    const argv = buildOpencodeMcpAddArgv({ name: 'gbrain', url: 'https://h.example/mcp', envVar: 'GBRAIN_REMOTE_TOKEN' });
+    expect(argv).toEqual([
+      'mcp', 'add', 'gbrain',
+      '--url', 'https://h.example/mcp',
+      '--header', 'Authorization=Bearer {env:GBRAIN_REMOTE_TOKEN}',
+    ]);
+  });
+
+  test('print block: export line + opencode mcp add one-liner + restart note; placeholder without token', async () => {
+    const cap = captureConsole();
+    try {
+      await runConnect(['https://brain.example.com/mcp', '--agent', 'opencode'], installDeps());
+    } finally {
+      cap.restore();
+    }
+    const out = cap.out.join('\n');
+    expect(out).toContain('# Paste into opencode:');
+    expect(out).toContain('export GBRAIN_REMOTE_TOKEN=');
+    expect(out).toContain('opencode mcp add gbrain --url https://brain.example.com/mcp --header');
+    expect(out).toContain('{env:GBRAIN_REMOTE_TOKEN}');
+    expect(out).toContain('Restart opencode');
+    expect(out).toContain('<paste-your-token>');
+    expect(out).toContain(LEARN_INSTRUCTION);
+  });
+
+  test('--json: command is the safe opencode one-liner (interpolation, not the token)', async () => {
+    const cap = captureConsole();
+    try {
+      await runConnect(['https://brain.example.com/mcp', '--agent', 'opencode', '--token', 'gbrain_tok', '--json'], installDeps());
+    } finally {
+      cap.restore();
+    }
+    const doc = JSON.parse(cap.out.join('\n')) as { agent: string; command: string; command_argv: string[]; token_redacted: boolean };
+    expect(doc.agent).toBe('opencode');
+    expect(doc.command).toContain('opencode mcp add gbrain');
+    expect(doc.command).toContain('{env:GBRAIN_REMOTE_TOKEN}');
+    expect(doc.command).not.toContain('gbrain_tok');
+    expect(doc.token_redacted).toBe(true);
+  });
+
+  test('--install writes through the injected deps member (no binary required) and smoke-tests', async () => {
+    const writes: Array<{ name: string; url: string }> = [];
+    const r = await runWithExitCapture(
+      ['https://brain.example.com/mcp', '--token', 'gbrain_tok', '--agent', 'opencode', '--install', '--yes'],
+      installDeps({
+        hasBinary: () => false, // opencode lane must not require any binary
+        writeOpencodeRemoteEntry: (name, url) => {
+          writes.push({ name, url });
+          return { configPath: '/tmp/xdg/opencode/opencode.jsonc', replacedPrior: false };
+        },
+      }),
+    );
+    expect(r.exitCode).toBeUndefined();
+    expect(writes).toEqual([{ name: 'gbrain', url: 'https://brain.example.com/mcp' }]);
+    const err = r.err.join('\n');
+    expect(err).toMatch(/Added MCP entry 'gbrain'/);
+    expect(err).toMatch(/Restart opencode/);
+    expect(err).toMatch(/export GBRAIN_REMOTE_TOKEN/); // env not set in fixture → profile note
+    expect(err).toMatch(/Verified/);
+  });
+
+  test('--install surfaces a foreign-entry refusal from the writer, token-redacted', async () => {
+    const r = await runWithExitCapture(
+      ['https://brain.example.com/mcp', '--token', 'gbrain_sekrit', '--agent', 'opencode', '--install', '--yes'],
+      installDeps({
+        writeOpencodeRemoteEntry: () => {
+          throw new Error('mcp.gbrain in /cfg is not a gbrain-managed entry — refusing (token gbrain_sekrit should never print)');
+        },
+      }),
+    );
+    expect(r.exitCode).toBe(1);
+    const all = [...r.out, ...r.err].join('\n');
+    expect(all).toMatch(/not a gbrain-managed entry/);
+    expect(all).not.toContain('gbrain_sekrit');
+  });
+
+  test('--install probe failure warns + exit 1 (entry stays; agent will 401 until fixed)', async () => {
+    const r = await runWithExitCapture(
+      ['https://brain.example.com/mcp', '--token', 'gbrain_tok', '--agent', 'opencode', '--install', '--yes'],
+      installDeps({ probe: async () => ({ ok: false, reason: 'auth', message: 'HTTP 401' }) }),
+    );
+    expect(r.exitCode).toBe(1);
+    expect([...r.out, ...r.err].join('\n')).toMatch(/did not verify \(auth\)/);
+  });
+
+  test('url rotation WITHOUT --force → exit 1 with the caller-appropriate refusal (url + --force, no GBRAIN_SOURCE)', async () => {
+    // Real-writer pass-through (mirrors the default deps minus the lock) so
+    // the test pins the ACTUAL refusal text and the --force mapping.
+    const dir = mkdtempSync(join(tmpdir(), 'gb-connect-ocforce-'));
+    const cfg = join(dir, 'opencode.jsonc');
+    try {
+      // Seed: connect-lane entry ({env:} interpolation = ours) at the OLD url.
+      writeOpencodeMcpEntry(cfg, { kind: 'remote', name: 'gbrain', url: 'https://old.example/mcp', tokenMode: 'env' });
+      const writeThrough: ConnectDeps['writeOpencodeRemoteEntry'] = (name, url, o) => {
+        const r = writeOpencodeMcpEntry(
+          cfg,
+          { kind: 'remote', name, url, tokenMode: 'env' },
+          { expect: { url }, ...(o?.allowReplaceOtherSource ? { allowReplaceOtherSource: true } : {}) },
+        );
+        return { configPath: r.configPath, replacedPrior: r.replacedPrior };
+      };
+      const r1 = await runWithExitCapture(
+        ['https://new.example/mcp', '--token', 'gbrain_tok', '--agent', 'opencode', '--install', '--yes'],
+        installDeps({ writeOpencodeRemoteEntry: writeThrough }),
+      );
+      expect(r1.exitCode).toBe(1);
+      const all1 = [...r1.out, ...r1.err].join('\n');
+      expect(all1).toContain('does not match this endpoint');
+      expect(all1).toContain('--force');
+      expect(all1).not.toContain('GBRAIN_SOURCE'); // remote path — no source involved
+      // Old entry untouched.
+      const before = parseOpencodeConfig(readFileSync(cfg, 'utf8'), cfg);
+      expect(((before.mcp as Record<string, unknown>).gbrain as { url: string }).url).toBe('https://old.example/mcp');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('url rotation WITH --force → replaced, note printed', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gb-connect-ocforce2-'));
+    const cfg = join(dir, 'opencode.jsonc');
+    try {
+      writeOpencodeMcpEntry(cfg, { kind: 'remote', name: 'gbrain', url: 'https://old.example/mcp', tokenMode: 'env' });
+      const writeThrough: ConnectDeps['writeOpencodeRemoteEntry'] = (name, url, o) => {
+        const r = writeOpencodeMcpEntry(
+          cfg,
+          { kind: 'remote', name, url, tokenMode: 'env' },
+          { expect: { url }, ...(o?.allowReplaceOtherSource ? { allowReplaceOtherSource: true } : {}) },
+        );
+        return { configPath: r.configPath, replacedPrior: r.replacedPrior };
+      };
+      const r = await runWithExitCapture(
+        ['https://new.example/mcp', '--token', 'gbrain_tok', '--agent', 'opencode', '--install', '--yes', '--force'],
+        installDeps({ writeOpencodeRemoteEntry: writeThrough }),
+      );
+      expect(r.exitCode).toBeUndefined();
+      expect(r.err.join('\n')).toContain('replaced the prior gbrain entry'); // the note
+      const after = parseOpencodeConfig(readFileSync(cfg, 'utf8'), cfg);
+      expect(((after.mcp as Record<string, unknown>).gbrain as { url: string }).url).toBe('https://new.example/mcp');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('--oauth is refused for opencode (bearer path only)', async () => {
+    const r = await runWithExitCapture(
+      ['https://brain.example.com/mcp', '--agent', 'opencode', '--oauth', '--register'],
+      installDeps(),
+    );
+    expect(r.exitCode).toBe(1);
+    expect(r.err.join('\n')).toMatch(/connector-style agents/);
+  });
+
+  test('--install non-TTY without --yes → exit 1, requires --yes, writer NEVER called', async () => {
+    let called = false;
+    const r = await runWithExitCapture(
+      ['https://brain.example.com/mcp', '--token', 'gbrain_tok', '--agent', 'opencode', '--install'],
+      installDeps({
+        isTTY: () => false,
+        writeOpencodeRemoteEntry: () => {
+          called = true;
+          return { configPath: '/tmp/xdg/opencode/opencode.jsonc', replacedPrior: false };
+        },
+      }),
+    );
+    expect(r.exitCode).toBe(1);
+    expect(r.err.join('\n')).toMatch(/requires --yes/);
+    expect(called).toBe(false);
+  });
+
+  test('--install TTY prompt declined → Aborted, writer NEVER called', async () => {
+    let called = false;
+    const r = await runWithExitCapture(
+      ['https://brain.example.com/mcp', '--token', 'gbrain_tok', '--agent', 'opencode', '--install'],
+      installDeps({
+        isTTY: () => true,
+        promptYesNo: async () => false,
+        writeOpencodeRemoteEntry: () => {
+          called = true;
+          return { configPath: '/tmp/xdg/opencode/opencode.jsonc', replacedPrior: false };
+        },
+      }),
+    );
+    expect(r.exitCode).toBe(1);
+    expect(r.err.join('\n')).toMatch(/Aborted/);
+    expect(called).toBe(false);
   });
 });

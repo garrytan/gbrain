@@ -51,3 +51,89 @@ describe('loadSynthConfig honors a configured 0', () => {
     expect(cfg.cooldownHours).toBe(0);
   });
 });
+
+// ── #4152 triage knobs: resolution chain, clamps, floors ──────────────────
+
+describe('loadSynthConfig — triage model resolution chain (#4152 2A)', () => {
+  test('models.dream.triage wins over models.dream.synthesize_verdict and the deprecated key', async () => {
+    const cfg = await __testing.loadSynthConfig(stubEngine({
+      'models.dream.triage': 'anthropic:claude-sonnet-4-6',
+      'models.dream.synthesize_verdict': 'anthropic:claude-haiku-4-5-20251001',
+      'dream.synthesize.verdict_model': 'anthropic:claude-3-5-haiku-20241022',
+    }));
+    expect(cfg.triage.model).toBe('anthropic:claude-sonnet-4-6');
+  });
+
+  test('models.dream.synthesize_verdict wins when models.dream.triage is unset', async () => {
+    const cfg = await __testing.loadSynthConfig(stubEngine({
+      'models.dream.synthesize_verdict': 'anthropic:claude-haiku-4-5-20251001',
+      'dream.synthesize.verdict_model': 'anthropic:claude-3-5-haiku-20241022',
+    }));
+    expect(cfg.triage.model).toBe('anthropic:claude-haiku-4-5-20251001');
+  });
+
+  test('deprecated dream.synthesize.verdict_model still resolves when both new keys are unset', async () => {
+    const cfg = await __testing.loadSynthConfig(stubEngine({
+      'dream.synthesize.verdict_model': 'anthropic:claude-3-5-haiku-20241022',
+    }));
+    expect(cfg.triage.model).toBe('anthropic:claude-3-5-haiku-20241022');
+  });
+
+  test('all keys unset → tier utility default', async () => {
+    const cfg = await __testing.loadSynthConfig(stubEngine({}));
+    expect(cfg.triage.model).toBe('anthropic:claude-haiku-4-5-20251001');
+  });
+});
+
+describe('loadSynthConfig — triage knob clamps and floors (#4152)', () => {
+  test('threshold outside [0,1] clamps with a stderr warning; 0 is honored as-is', async () => {
+    const chunks: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr as unknown as { write: (c: unknown) => boolean }).write = (c: unknown) => {
+      chunks.push(String(c));
+      return true;
+    };
+    try {
+      const over = await __testing.loadSynthConfig(stubEngine({ 'dream.triage.threshold': '1.5' }));
+      expect(over.triage.threshold).toBe(1);
+      const under = await __testing.loadSynthConfig(stubEngine({ 'dream.triage.threshold': '-0.5' }));
+      expect(under.triage.threshold).toBe(0);
+      const zero = await __testing.loadSynthConfig(stubEngine({ 'dream.triage.threshold': '0' }));
+      expect(zero.triage.threshold).toBe(0);
+    } finally {
+      (process.stderr as unknown as { write: typeof orig }).write = orig;
+    }
+    expect(chunks.join('')).toMatch(/dream\.triage\.threshold .* outside \[0,1\]/);
+  });
+
+  test('max_turns floors at 1 (a configured 0 clamps up); default is 16', async () => {
+    const zero = await __testing.loadSynthConfig(stubEngine({ 'dream.synthesize.max_turns': '0' }));
+    expect(zero.maxTurns).toBe(1);
+    const dflt = await __testing.loadSynthConfig(stubEngine({}));
+    expect(dflt.maxTurns).toBe(16);
+    const restored = await __testing.loadSynthConfig(stubEngine({ 'dream.synthesize.max_turns': '30' }));
+    expect(restored.maxTurns).toBe(30);
+  });
+
+  test('triage floors: max_chars >= 1000, max_tokens >= 256, concurrency clamped [1,16], max_ms 0 = unlimited', async () => {
+    const cfg = await __testing.loadSynthConfig(stubEngine({
+      'dream.triage.max_chars': '10',
+      'dream.triage.max_tokens': '5',
+      'dream.triage.concurrency': '99',
+      'dream.triage.max_ms': '0',
+    }));
+    expect(cfg.triage.maxChars).toBe(1000);
+    expect(cfg.triage.maxTokens).toBe(256);
+    expect(cfg.triage.concurrency).toBe(16);
+    expect(cfg.triage.maxMs).toBe(0);
+    const low = await __testing.loadSynthConfig(stubEngine({ 'dream.triage.concurrency': '0' }));
+    expect(low.triage.concurrency).toBe(1);
+  });
+
+  test('daily cap defaults to 0 (disabled, D2D); explicit positive value engages', async () => {
+    const dflt = await __testing.loadSynthConfig(stubEngine({}));
+    expect(dflt.maxSubmissionsPerSourcePerDay).toBe(0);
+    const set = await __testing.loadSynthConfig(stubEngine({ 'dream.synthesize.max_submissions_per_source_per_day': '200' }));
+    expect(set.maxSubmissionsPerSourcePerDay).toBe(200);
+  });
+});

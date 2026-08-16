@@ -48,6 +48,13 @@ export interface ThinkGatherResult {
   takes: TakeHit[];
   /** Graph nodes — slugs reachable from anchor within graphDepth. Empty when no anchor. */
   graphSlugs: string[];
+  /**
+   * Machine-stable warning codes for per-stream failures (D6: code-only on the
+   * wire; the raw error text goes to stderr/server logs). Lets MCP/remote
+   * callers distinguish "stream errored" from "stream legitimately returned 0"
+   * — the diagnostics counts alone can't. Empty when every stream succeeded.
+   */
+  warnings: string[];
   /** Diagnostics for telemetry / `--explain` path (Lane D follow-up). */
   diagnostics: {
     pagesFromHybrid: number;
@@ -116,12 +123,15 @@ export async function runGather(
   // (Direct DB search is fine — those are parameterized queries.)
   const sanitizedQuestion = sanitizeQueryForPrompt(opts.question);
 
+  const warnings: string[] = [];
+
   // Stream 1: hybrid page search (existing primitive).
   const pagesPromise = hybridSearch(engine, opts.question, {
     limit: gatherLimit,
     expansion: false,  // think provides its own anchor + graph context; no need for re-expansion
     ...sourceScope,
   }).catch((e) => {
+    warnings.push('GATHER_HYBRID_FAILED');
     process.stderr.write(`[think.gather] hybrid stream failed: ${(e as Error).message}\n`);
     return [] as SearchResult[];
   });
@@ -132,6 +142,7 @@ export async function runGather(
     takesHoldersAllowList: opts.takesHoldersAllowList,
     ...sourceScope,
   }).catch((e) => {
+    warnings.push('GATHER_TAKES_KEYWORD_FAILED');
     process.stderr.write(`[think.gather] takes-keyword stream failed: ${(e as Error).message}\n`);
     return [] as TakeHit[];
   });
@@ -143,6 +154,7 @@ export async function runGather(
         takesHoldersAllowList: opts.takesHoldersAllowList,
         ...sourceScope,
       }).catch((e) => {
+        warnings.push('GATHER_TAKES_VECTOR_FAILED');
         process.stderr.write(`[think.gather] takes-vector stream failed: ${(e as Error).message}\n`);
         return [] as TakeHit[];
       })
@@ -160,6 +172,7 @@ export async function runGather(
           return Array.from(slugs);
         })
         .catch((e) => {
+          warnings.push('GATHER_GRAPH_FAILED');
           process.stderr.write(`[think.gather] graph stream failed: ${(e as Error).message}\n`);
           return [] as string[];
         })
@@ -179,6 +192,7 @@ export async function runGather(
     pages: pages.slice(0, gatherLimit),
     takes: fusedTakes,
     graphSlugs,
+    warnings,
     diagnostics: {
       pagesFromHybrid: pages.length,
       takesFromKeyword: takesKw.length,
@@ -308,7 +322,7 @@ function excerptWindow(content: string, requestedStart: number, excerptLen: numb
 }
 
 /** Select the fixed-budget window containing the strongest unique query-term coverage. */
-function selectRelevantExcerpt(
+export function selectRelevantExcerpt(
   content: string,
   query: string,
   excerptLen: number,

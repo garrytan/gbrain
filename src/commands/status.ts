@@ -15,7 +15,7 @@
  *   - Workers    — supervisor health from the audit JSONL
  *   - Queue      — live minion_jobs counts BY status (NO time window —
  *                  old stuck jobs are exactly what status surfaces)
- *   - Autopilot  — daemon PID liveness via kill -0 probe
+ *   - Autopilot  — daemon PID liveness plus gbrain-autopilot identity probe
  *
  * Exit codes (kubectl-style):
  *   0  snapshot produced successfully (even if it carries warnings)
@@ -23,11 +23,12 @@
  *   2  usage error (bad --section value)
  *
  * Thin-client mode (isThinClient(cfg)):
- *   - Sync + Cycle route through `get_status_snapshot` MCP op (admin scope)
- *   - Locks/Workers/Queue/Autopilot render "local-only — N/A on remote brain"
- *     because they're host-local concerns; pretending the local install's
- *     local-host operational state is the remote brain's would lie to the
- *     operator.
+ *   - Sync + Cycle + Workers + Queue route through `get_status_snapshot`
+ *     MCP op (admin scope; workers/queue are snapshot-v2 sections — an old
+ *     server that omits them renders a graceful "upgrade the remote" line)
+ *   - Locks/Autopilot render "local-only — N/A on remote brain" because
+ *     they're host-local concerns; pretending the local install's local-host
+ *     operational state is the remote brain's would lie to the operator.
  *
  * --json emits a stable envelope:
  *   { schema_version: 1, sync, cycle, locks?, workers?, queue?, autopilot? }
@@ -40,6 +41,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import { gbrainPath, loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 import { VERSION } from '../version.ts';
+import {
+  classifyAutopilotLockHolder,
+  type AutopilotLockProbeDeps,
+} from '../core/autopilot-lock.ts';
 import {
   buildSyncStatusReport,
   type SyncStatusReport,
@@ -89,6 +94,47 @@ export interface QueueCounts {
   dead: number;
 }
 
+/** Per-queue waiting depth + oldest-waiting age (snapshot v2 `queue.by_queue`). */
+export interface QueueDepthRow {
+  queue: string;
+  depth: number;
+  oldest_waiting_age_seconds: number | null;
+}
+
+/** Snapshot v2 `queue` section: status counts + per-queue waiting depths. */
+export interface RemoteQueueSnapshot {
+  counts: QueueCounts;
+  by_queue: QueueDepthRow[];
+}
+
+/**
+ * Snapshot v2 `workers` section — composed like `gbrain jobs supervisor
+ * status` (pidfile first, queue-scoped DB singleton lock as the
+ * HOME-independent fallback authority, #2227).
+ */
+export interface RemoteWorkersSnapshot {
+  supervisor_alive: boolean;
+  detected_via: 'pidfile' | 'db_lock' | null;
+  live_lock_active: boolean;
+  last_completed_at: string | null;
+}
+
+/**
+ * Amendment 26: a snapshot v2 section that failed to compute degrades to this
+ * marker instead of failing the whole snapshot.
+ */
+export interface SectionUnavailable {
+  error: 'unavailable';
+}
+
+/**
+ * Thin-client skew marker: the remote server predates snapshot v2 (missing
+ * key / schema_version 1), so this section cannot be reported yet.
+ */
+export interface RemoteUnsupported {
+  remote_unsupported: true;
+}
+
 export interface WorkerSummary {
   crashes_24h: number;
   clean_exits_24h: number;
@@ -114,8 +160,8 @@ export interface StatusReport {
   sync?: SyncStatusReport;
   cycle?: CycleSnapshot;
   locks?: LockRow[] | { local_only_remote: true };
-  workers?: WorkerSummary | { local_only_remote: true };
-  queue?: QueueCounts | { local_only_remote: true };
+  workers?: WorkerSummary | RemoteWorkersSnapshot | SectionUnavailable | RemoteUnsupported | { local_only_remote: true };
+  queue?: QueueCounts | RemoteQueueSnapshot | SectionUnavailable | RemoteUnsupported | { local_only_remote: true };
   autopilot?: AutopilotStatus | { local_only_remote: true };
   warnings?: string[];
   /** #1984: true when a --deadline-ms budget elided one or more sections. */
@@ -256,7 +302,8 @@ async function buildLocks(engine: BrainEngine): Promise<LockRow[]> {
   }
 }
 
-async function buildQueueCounts(engine: BrainEngine): Promise<QueueCounts> {
+// Exported for `src/core/operations.ts:get_status_snapshot` (snapshot v2 queue section).
+export async function buildQueueCounts(engine: BrainEngine): Promise<QueueCounts> {
   type Row = { status: string; count: string | number };
   const counts: QueueCounts = { active: 0, waiting: 0, completed: 0, failed: 0, dead: 0 };
   try {
@@ -273,6 +320,87 @@ async function buildQueueCounts(engine: BrainEngine): Promise<QueueCounts> {
     /* PGLite without minion_jobs or pre-migration brain — return zeros */
   }
   return counts;
+}
+
+/**
+ * Per-queue waiting depth + oldest-waiting age. Generalizes the doctor's
+ * queue_health oldest-age SQL past its embed-backfill-only filter: EVERY
+ * queue with waiting work reports here, name-agnostic. Perf note: WHERE
+ * constrains only `status` — the SECOND column of the (queue, status,
+ * updated_at) wedge index — so no prefix access exists and this GROUP BY
+ * full-scans minion_jobs today. Acceptable at snapshot frequency over pruned
+ * waiting sets; a partial (queue, created_at) WHERE status='waiting' index
+ * is the fix if it becomes hot.
+ */
+export async function buildQueueDepths(engine: BrainEngine): Promise<QueueDepthRow[]> {
+  const rows = await engine.executeRaw<{
+    queue: string;
+    depth: number | string;
+    oldest_waiting_age_seconds: number | string | null;
+  }>(
+    `SELECT queue,
+            count(*)::int AS depth,
+            EXTRACT(EPOCH FROM (now() - min(created_at)))::int AS oldest_waiting_age_seconds
+       FROM minion_jobs
+      WHERE status = 'waiting'
+      GROUP BY queue
+      ORDER BY depth DESC`,
+  );
+  return rows.map((r) => ({
+    queue: r.queue,
+    depth: Number(r.depth),
+    oldest_waiting_age_seconds:
+      r.oldest_waiting_age_seconds === null ? null : Number(r.oldest_waiting_age_seconds),
+  }));
+}
+
+/**
+ * Snapshot v2 workers section. Same detection ladder as `gbrain jobs
+ * supervisor status` (src/commands/jobs.ts): the pidfile is HOME-derived and
+ * lies across split-$HOME deployments, so the queue-scoped DB singleton lock
+ * (#1849/#2227) is probed as the fallback authority. `last_completed_at` is
+ * the freshest completed-job timestamp — evidence a worker recently finished
+ * something, regardless of how it was launched.
+ *
+ * `opts` exists as a test seam (scratch pidFile) — production callers take
+ * the defaults.
+ */
+export async function buildWorkersSnapshot(
+  engine: BrainEngine,
+  opts: { pidFile?: string; queue?: string } = {},
+): Promise<RemoteWorkersSnapshot> {
+  const { readSupervisorPid } = await import('../core/minions/supervisor-pid.ts');
+  const { DEFAULT_PID_FILE, supervisorLockId, SUPERVISOR_LOCK_TTL_MIN } = await import(
+    '../core/minions/supervisor.ts'
+  );
+  const pidStatus = readSupervisorPid(opts.pidFile ?? DEFAULT_PID_FILE);
+
+  let lockLive = false;
+  try {
+    const { inspectLock, isLockHolderLive } = await import('../core/db-lock.ts');
+    const snap = await inspectLock(engine, supervisorLockId(opts.queue ?? 'default'));
+    lockLive = snap !== null && isLockHolderLive(snap, SUPERVISOR_LOCK_TTL_MIN);
+  } catch {
+    /* pre-migration brains lack the locks table — pidfile signal stands */
+  }
+
+  let lastCompleted: string | null = null;
+  try {
+    const rows = await engine.executeRaw<{ last_completed: string | Date | null }>(
+      `SELECT max(updated_at) AS last_completed FROM minion_jobs WHERE status = 'completed'`,
+    );
+    const v = rows[0]?.last_completed ?? null;
+    lastCompleted = v ? (v instanceof Date ? v.toISOString() : new Date(v).toISOString()) : null;
+  } catch {
+    /* no minion_jobs table — leave null */
+  }
+
+  return {
+    supervisor_alive: pidStatus.running || lockLive,
+    detected_via: pidStatus.running ? 'pidfile' : lockLive ? 'db_lock' : null,
+    live_lock_active: lockLive,
+    last_completed_at: lastCompleted,
+  };
 }
 
 function buildWorkerSummary(): WorkerSummary {
@@ -297,8 +425,10 @@ function buildWorkerSummary(): WorkerSummary {
   return { crashes_24h, clean_exits_24h, by_cause, last_event_ts };
 }
 
-function buildAutopilotStatus(): AutopilotStatus {
-  const lockPath = gbrainPath('autopilot.lock');
+export function buildAutopilotStatus(
+  lockPath: string = gbrainPath('autopilot.lock'),
+  deps: AutopilotLockProbeDeps = {},
+): AutopilotStatus {
   const lockfile_present = existsSync(lockPath);
   let pid: number | null = null;
   let running = false;
@@ -308,16 +438,8 @@ function buildAutopilotStatus(): AutopilotStatus {
       const parsed = parseInt(raw, 10);
       if (Number.isFinite(parsed) && parsed > 0) {
         pid = parsed;
-        try {
-          // kill -0 probes liveness without sending a real signal. Throws ESRCH
-          // if the PID is gone, EPERM if alive but owned by another user (which
-          // still tells us "something with that PID exists").
-          process.kill(parsed, 0);
-          running = true;
-        } catch (err) {
-          const code = (err as NodeJS.ErrnoException).code;
-          running = code === 'EPERM';
-        }
+        const holder = classifyAutopilotLockHolder(parsed, process.pid, deps);
+        running = holder.state === 'alive-autopilot' || holder.state === 'alive-unknown';
       }
     } catch {
       /* unreadable lockfile, leave pid=null/running=false */
@@ -427,7 +549,9 @@ async function buildThinClientReport(
     mode: 'thin-client',
   };
 
-  if (want('sync') || want('cycle')) {
+  // Snapshot v2 also backs workers + queue (locks/autopilot stay host-local).
+  const remoteBacked: Section[] = ['sync', 'cycle', 'workers', 'queue'];
+  if (remoteBacked.some((s) => want(s))) {
     try {
       const payload = await withSectionDeadline(
         (async () => {
@@ -440,50 +564,69 @@ async function buildThinClientReport(
             {},
             opts.deadlineMs && opts.deadlineMs > 0 ? { timeoutMs: opts.deadlineMs } : {},
           );
-          return unpackToolResult<{
-            schema_version: number;
-            version?: string;
-            sync: SyncStatusReport;
-            cycle: CycleSnapshot;
-          }>(raw);
+          return unpackToolResult<RemoteSnapshotPayload>(raw);
         })(),
         opts.deadlineMs && opts.deadlineMs > 0 ? opts.deadlineMs : undefined,
         () => {
           report.partial = true;
           // Only name the sections the caller actually requested; the remote
-          // fetch backs both sync+cycle, but `--section sync` must not report
-          // `cycle` (a section it excluded) as stale. Matches the local path.
-          const elided: Section[] = [
-            ...(want('sync') ? (['sync'] as Section[]) : []),
-            ...(want('cycle') ? (['cycle'] as Section[]) : []),
-          ];
+          // fetch backs sync+cycle+workers+queue, but `--section sync` must not
+          // report a section it excluded as stale. Matches the local path.
+          const elided = remoteBacked.filter((s) => want(s));
           report.stale_sections = [...(report.stale_sections ?? []), ...elided];
           warnings.push('remote snapshot exceeded the --deadline-ms budget (returned stale)');
         },
       );
-      if (payload) {
-        // #1984: surface the brain server's version for thin-client parity.
-        if (payload.version) report.remote_version = payload.version;
-        if (want('sync')) report.sync = payload.sync;
-        if (want('cycle')) report.cycle = payload.cycle;
-      }
+      if (payload) applyRemoteSnapshot(report, payload, want);
     } catch (err) {
       warnings.push(`remote snapshot failed: ${(err as Error).message}`);
     }
   }
   if (want('locks')) report.locks = { local_only_remote: true };
-  if (want('workers')) report.workers = { local_only_remote: true };
-  if (want('queue')) report.queue = { local_only_remote: true };
   if (want('autopilot')) report.autopilot = { local_only_remote: true };
   if (warnings.length > 0) report.warnings = warnings;
   return report;
+}
+
+/** Wire shape of the `get_status_snapshot` payload across server versions. */
+export interface RemoteSnapshotPayload {
+  schema_version: number;
+  version?: string;
+  sync: SyncStatusReport;
+  cycle: CycleSnapshot;
+  /** v2+ — absent on schema_version-1 servers. */
+  workers?: RemoteWorkersSnapshot | SectionUnavailable;
+  /** v2+ — absent on schema_version-1 servers. */
+  queue?: RemoteQueueSnapshot | SectionUnavailable;
+}
+
+/**
+ * Map a remote snapshot payload onto the thin-client report. Exported for the
+ * skew fixture test: a NEW thin-client against an OLD (schema_version 1)
+ * server must degrade the v2-only sections to a graceful marker, never crash
+ * or pretend local data is remote data.
+ */
+export function applyRemoteSnapshot(
+  report: StatusReport,
+  payload: RemoteSnapshotPayload,
+  want: (s: Section) => boolean,
+): void {
+  // #1984: surface the brain server's version for thin-client parity.
+  if (payload.version) report.remote_version = payload.version;
+  if (want('sync')) report.sync = payload.sync;
+  if (want('cycle')) report.cycle = payload.cycle;
+  // v2 sections: an old server omits the keys entirely (schema_version 1) —
+  // degrade to the skew marker rather than the misleading "N/A on remote".
+  if (want('workers')) report.workers = payload.workers ?? { remote_unsupported: true };
+  if (want('queue')) report.queue = payload.queue ?? { remote_unsupported: true };
 }
 
 // ---------------------------------------------------------------------------
 // Human render
 // ---------------------------------------------------------------------------
 
-function renderHuman(report: StatusReport): string {
+// Exported for the thin-client skew fixture test (old-server payload render).
+export function renderHuman(report: StatusReport): string {
   const lines: string[] = [];
   lines.push('');
   lines.push('GBrain Status');
@@ -556,6 +699,15 @@ function renderHuman(report: StatusReport): string {
     lines.push('Workers (last 24h):');
     if ('local_only_remote' in report.workers) {
       lines.push('  local-only — N/A on remote brain');
+    } else if ('remote_unsupported' in report.workers) {
+      lines.push('  not reported by this brain server (predates snapshot v2) — upgrade the remote gbrain to see workers');
+    } else if ('error' in report.workers) {
+      lines.push('  unavailable (remote section failed to compute)');
+    } else if ('supervisor_alive' in report.workers) {
+      const w = report.workers;
+      const via = w.detected_via ? ` (via ${w.detected_via})` : '';
+      lines.push(`  supervisor: ${w.supervisor_alive ? 'alive' : 'not detected'}${via}  db_lock=${w.live_lock_active ? 'live' : 'none'}`);
+      lines.push(`  last completed job: ${w.last_completed_at ?? 'never'}`);
     } else {
       const w = report.workers;
       lines.push(`  crashes=${w.crashes_24h}  clean_exits=${w.clean_exits_24h}`);
@@ -573,6 +725,21 @@ function renderHuman(report: StatusReport): string {
     lines.push('Queue (live):');
     if ('local_only_remote' in report.queue) {
       lines.push('  local-only — N/A on remote brain');
+    } else if ('remote_unsupported' in report.queue) {
+      lines.push('  not reported by this brain server (predates snapshot v2) — upgrade the remote gbrain to see queue depth');
+    } else if ('error' in report.queue) {
+      lines.push('  unavailable (remote section failed to compute)');
+    } else if ('counts' in report.queue) {
+      const q = report.queue.counts;
+      lines.push(
+        `  active=${q.active}  waiting=${q.waiting}  failed=${q.failed}  dead=${q.dead}  completed=${q.completed}`,
+      );
+      for (const row of report.queue.by_queue) {
+        const age = row.oldest_waiting_age_seconds != null
+          ? `  oldest_waiting=${Math.round(row.oldest_waiting_age_seconds / 60)}m`
+          : '';
+        lines.push(`  [${row.queue}] depth=${row.depth}${age}`);
+      }
     } else {
       const q = report.queue;
       lines.push(
@@ -592,7 +759,7 @@ function renderHuman(report: StatusReport): string {
       if (a.running) {
         lines.push(`  running (PID ${a.pid})`);
       } else if (a.lockfile_present) {
-        lines.push(`  stale lockfile (PID ${a.pid ?? '?'} not alive). Run \`gbrain autopilot --install\` to restart.`);
+        lines.push(`  stale lockfile (PID ${a.pid ?? '?'} is not a live autopilot process). Run \`gbrain autopilot --install\` to restart.`);
       } else {
         lines.push('  not running. Install with `gbrain autopilot --install`.');
       }

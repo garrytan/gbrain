@@ -10,14 +10,16 @@
 >   v0.36.1.0 historical comparison semantics). Migration renumbered v74→v79→v80
 >   during successive master merges — v0.37.0.0's autonomous-remediation wave
 >   claimed v68-v78, then v0.37.1.0 (brainstorm/lsd) claimed v79.
-> - **Follow-up minor** (forthcoming): falsifiability + category extraction at
->   `propose_takes`, SQL-side grade gate, per-category calibration scorecards,
->   pg_trgm-based proposal dedup. Wave-blocking on cat15 F1 re-validation
->   against the v0.36.1.0 fixtures.
+> - **Follow-up minor — NEVER IMPLEMENTED.** The falsifiability + category
+>   extraction at `propose_takes`, SQL-side grade gate, per-category
+>   calibration scorecards, and pg_trgm-based proposal dedup described in the
+>   sections below remain UNSHIPPED design. Do not read §§1–4 as current
+>   behavior; only the `unresolvable` hotfix above landed.
 >
 > Preserved here per the hotfix plan's PR #1191 close protocol so the
-> production context (96K-page brain, 6.8% falsifiability rate, category
-> breakdown) doesn't get lost in the CHANGELOG → release-notes condensation.
+> production context (falsifiability rate + category breakdown observed on a
+> large real brain) doesn't get lost in the CHANGELOG → release-notes
+> condensation.
 
 ## Problem
 

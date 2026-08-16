@@ -17,6 +17,10 @@
 
 set -euo pipefail
 
+# #3485: shared name floor — these scripts mutate whatever DATABASE_URL names
+# and are documented for direct invocation, so each sources the floor itself.
+source "$(dirname "$0")/_db_floor.sh"
+
 cd "$(dirname "$0")/../.."
 
 if [ -z "${DATABASE_URL:-}" ]; then

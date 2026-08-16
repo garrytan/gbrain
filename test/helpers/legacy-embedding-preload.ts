@@ -25,10 +25,9 @@ import {
 } from '../../src/core/ai/gateway.ts';
 import { beforeEach } from 'bun:test';
 
-const LEGACY_CONFIG = {
-  embedding_model: 'openai:text-embedding-3-large',
-  embedding_dimensions: 1536,
-} as const;
+// W0 fix-wave: shared with scripts/build-pglite-snapshot.ts so the snapshot
+// fixture is baked under the exact shape this preload pins.
+import { LEGACY_EMBEDDING_CONFIG as LEGACY_CONFIG } from './legacy-embedding-config.ts';
 
 function legacyGatewayConfig() {
   return {

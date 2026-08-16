@@ -29,6 +29,16 @@ export interface EmbeddingTouchpoint {
   models: string[];
   default_dims: number;
   /**
+   * v0.46.3: canonical model for this recipe's embedding touchpoint. Every
+   * "pick a model for the user" surface resolves `default_model ?? models[0]`:
+   * init auto-pick (single-key and multi-key canonical tiebreak), the
+   * `--embedding-model <provider>` shorthand expansion, and the interactive
+   * picker's selection + displayed row. Exists because array order is a bad
+   * carrier for "recommended": Voyage lists voyage-4-large first (quality
+   * order) but the canonical default is voyage-4 (price/quality balance).
+   */
+  default_model?: string;
+  /**
    * Per-model native dimensions, keyed by bare model id (no `provider:`
    * prefix). Consulted before `default_dims` when resolving schema width
    * for a specific model.
@@ -230,6 +240,15 @@ export interface RerankerTouchpoint {
    */
   path?: string;
   /**
+   * v0.46.3: request-body key for the "return top N" parameter. Named by wire
+   * shape, not provider. Defaults to 'top_n' (ZeroEntropy/llama-server/jina
+   * dialect); Voyage's /v1/rerank takes 'top_k'. Response parsing accepts
+   * both array keys (`results[]` for ZE/llama-server, `data[]` for Voyage's
+   * REST — live-wire verified) since the item shape
+   * `{index, relevance_score}` is shared.
+   */
+  top_param?: 'top_n' | 'top_k';
+  /**
    * Recipe-level timeout fallback for `gateway.rerank()` and search-mode
    * resolution. Caller's `input.timeoutMs` and `search.reranker.timeout_ms`
    * config still win when set. Used to give CPU-only local rerankers (e.g.
@@ -307,6 +326,27 @@ export interface Recipe {
   aliases?: Record<string, string>;
   /** One-line description of setup (shown in wizard + env subcommand). */
   setup_hint?: string;
+  /**
+   * v0.46.3: the provider announced a hosted-API shutdown. Drives, from one
+   * source: init picker/auto-pick exclusion, the once-per-process warn-on-use
+   * in the gateway, and the `gbrain providers` DEPRECATED annotation.
+   * (`provider_sunset` in doctor stays provider-specific until the removal
+   * release — this field does not make the doctor generic yet.)
+   * `replacement` is per-touchpoint: one provider can be replaced by different
+   * targets for embedding vs reranking.
+   */
+  sunset?: {
+    /** ISO date the hosted API stops working. */
+    date: string;
+    /** Optional extra context appended to warnings. */
+    message?: string;
+    replacement?: {
+      /** Recommended `provider:model` replacement for the embedding touchpoint. */
+      embedding?: string;
+      /** Recommended `provider:model` replacement for the reranker touchpoint. */
+      reranker?: string;
+    };
+  };
   /**
    * v0.32 (D12=A): unified auth resolver across embed / expansion / chat
    * touchpoints. Returns the header name (`Authorization`, `api-key`, etc.)

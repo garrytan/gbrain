@@ -50,8 +50,13 @@ describe('hasPendingMigrations', () => {
   }, 30000);
 
   test('returns true when version config is missing entirely (defensive default)', async () => {
+    // W0: opt out of the default-on snapshot — this test's premise is an
+    // empty PGlite with no config table at all.
+    const priorSnapshot = process.env.GBRAIN_PGLITE_SNAPSHOT;
+    delete process.env.GBRAIN_PGLITE_SNAPSHOT;
     const engine = new PGLiteEngine();
     await engine.connect({});
+    if (priorSnapshot !== undefined) process.env.GBRAIN_PGLITE_SNAPSHOT = priorSnapshot;
     try {
       // Don't call initSchema. Probe against an empty PGlite — getConfig should
       // either return null (treated as version=1) or throw on missing config
@@ -564,7 +569,7 @@ describe('migration v35 — auto_rls_event_trigger structural guards', () => {
 //   1. Structural — assert the migration SQL literally contains the helper
 //      CREATE INDEX + DROP INDEX (deterministic, fast, catches the regression
 //      even at 0-row scale where wall-clock can't distinguish O(n²) from O(1)).
-//   2. Behavioral — populate 1000 duplicates and assert the migration completes
+//   2. Behavioral — populate 200 duplicates and assert the migration completes
 //      under the wall-clock cap. Sanity check at small scale; the structural
 //      assertion is the real guard.
 
@@ -957,7 +962,7 @@ describe('migrate runner v67 — typed-claim columns materialized on PGLite', ()
   });
 });
 
-describe('migrate: v8 (links_dedup) regression — must be fast on 1K duplicate rows', () => {
+describe('migrate: v8 (links_dedup) regression — must be fast on 200 duplicate rows', () => {
   let engine: PGLiteEngine;
 
   beforeAll(async () => {
@@ -970,7 +975,7 @@ describe('migrate: v8 (links_dedup) regression — must be fast on 1K duplicate 
     await engine.disconnect();
   });
 
-  test('1000 duplicate links dedup completes in <90s and leaves table deduped', async () => {
+  test('200 duplicate links dedup completes in <90s and leaves table deduped', async () => {
     // Set up: drop BOTH the old (v8) and new (v11) unique constraints so
     // duplicates can be inserted, then reset version so v8 + v11 re-run.
     // v11 replaces the v8 constraint name; we drop whichever is present.
@@ -984,15 +989,19 @@ describe('migrate: v8 (links_dedup) regression — must be fast on 1K duplicate 
     const fromId = (await db.query(`SELECT id FROM pages WHERE slug = 'p/from'`)).rows[0].id;
     const toId = (await db.query(`SELECT id FROM pages WHERE slug = 'p/to'`)).rows[0].id;
 
-    // Insert 1000 duplicates of the same (from, to, type) row
-    for (let i = 0; i < 1000; i++) {
+    // Insert 200 duplicates of the same (from, to, type) row
+    // 200 rows, not 1000: the O(n²) shape this gate guards is still
+    // unmistakable at 200 (minutes vs sub-second dedup) and the insert loop
+    // stops burning ~15-25s of suite budget per test on row traffic that
+    // adds no discriminating power.
+    for (let i = 0; i < 200; i++) {
       await db.query(
         `INSERT INTO links (from_page_id, to_page_id, link_type, context) VALUES ($1, $2, $3, $4)`,
         [fromId, toId, 'mention', `dup-${i}`]
       );
     }
     const beforeCount = (await db.query(`SELECT COUNT(*)::int AS c FROM links`)).rows[0].c;
-    expect(beforeCount).toBe(1000);
+    expect(beforeCount).toBe(200);
 
     // Reset version to 7 so v8 + v9 + v10 + v11 re-run
     await engine.setConfig('version', '7');
@@ -1034,7 +1043,7 @@ describe('migrate: v8 (links_dedup) regression — must be fast on 1K duplicate 
   });
 });
 
-describe('migrate: v9 (timeline_dedup_index) regression — must be fast on 1K duplicate rows', () => {
+describe('migrate: v9 (timeline_dedup_index) regression — must be fast on 200 duplicate rows', () => {
   let engine: PGLiteEngine;
 
   beforeAll(async () => {
@@ -1047,22 +1056,26 @@ describe('migrate: v9 (timeline_dedup_index) regression — must be fast on 1K d
     await engine.disconnect();
   });
 
-  test('1000 duplicate timeline entries dedup completes in <90s and leaves table deduped', async () => {
+  test('200 duplicate timeline entries dedup completes in <90s and leaves table deduped', async () => {
     const db = (engine as any).db;
     await db.exec(`DROP INDEX IF EXISTS idx_timeline_dedup`);
 
     await engine.putPage('p/timeline', { type: 'concept', title: 'TL', compiled_truth: '', timeline: '' });
     const pageId = (await db.query(`SELECT id FROM pages WHERE slug = 'p/timeline'`)).rows[0].id;
 
-    // Insert 1000 duplicates of the same (page_id, date, summary) row
-    for (let i = 0; i < 1000; i++) {
+    // Insert 200 duplicates of the same (page_id, date, summary) row
+    // 200 rows, not 1000: the O(n²) shape this gate guards is still
+    // unmistakable at 200 (minutes vs sub-second dedup) and the insert loop
+    // stops burning ~15-25s of suite budget per test on row traffic that
+    // adds no discriminating power.
+    for (let i = 0; i < 200; i++) {
       await db.query(
         `INSERT INTO timeline_entries (page_id, date, source, summary, detail) VALUES ($1, $2::date, $3, $4, $5)`,
         [pageId, '2024-01-15', `src-${i}`, 'Founded NovaMind', `detail-${i}`]
       );
     }
     const beforeCount = (await db.query(`SELECT COUNT(*)::int AS c FROM timeline_entries`)).rows[0].c;
-    expect(beforeCount).toBe(1000);
+    expect(beforeCount).toBe(200);
 
     await engine.setConfig('version', '7');
 

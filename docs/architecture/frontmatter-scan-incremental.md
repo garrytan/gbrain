@@ -68,11 +68,13 @@ existing.
 ## Migration shape
 
 ```ts
-// src/core/migrate.ts — append after the v80 entry
+// src/core/migrate.ts — append after the CURRENT last entry in the
+// MIGRATIONS array (take the next unused version number at implementation
+// time; the numbers below are placeholders, not a reserved slot)
 const migrations = [
-  // ...existing v1-v80...
+  // ...existing entries...
   {
-    version: 81,
+    version: NEXT_VERSION, // next unused number in the MIGRATIONS array
     name: 'frontmatter_scan_state',
     sql: `
       CREATE TABLE IF NOT EXISTS frontmatter_scan_state (...);
@@ -194,7 +196,7 @@ stale data as authoritative.
 ```
 - [ ] Implement Phase 2: DB-backed frontmatter scan state.
       Design lives at docs/architecture/frontmatter-scan-incremental.md.
-      Schema migration v81 + sync-side UPSERT + incremental scan command
+      New schema migration + sync-side UPSERT + incremental scan command
       + autopilot cycle phase + doctor reader. Two-phase rollout: ship
       table + writes first; flip the reader one release later.
 ```

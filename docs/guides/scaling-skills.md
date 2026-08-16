@@ -127,9 +127,9 @@ you can use as a reference shape. The skillpack story for distributing
 your own resolvers across machines is covered in
 [skillpacks as scaffolding](skillpacks-as-scaffolding.md).
 
-## The compact list format (v0.41.7.0)
+## The compact list format
 
-GBrain's resolver parser used to require markdown tables:
+GBrain's resolver parser originally required markdown tables:
 
 ```markdown
 | Trigger | Skill |
@@ -146,14 +146,14 @@ format that scales better:
 - **flight-tracker**: track my flight | flight status | when does my flight land
 ```
 
-Before v0.41.7.0, `gbrain doctor` only spoke the table dialect. On a
-306-skill compact-format resolver, the doctor reported every skill as
-unreachable: **238 FAIL errors on every doctor run**. The parser was
-silently treating the compact dialect as zero skills.
+When `gbrain doctor` only spoke the table dialect, a 306-skill
+compact-format resolver reported every skill as unreachable: **238 FAIL
+errors on every doctor run**. The parser was silently treating the compact
+dialect as zero skills.
 
-v0.41.7.0 ships dual-format support. The same `parseResolverEntries`
-function reads both table rows and list rows in the same file, with the
-v0.31.7 multi-resolver merge (skillpack `skills/RESOLVER.md` + workspace
+Today the parser supports both. The same `parseResolverEntries`
+function reads table rows and list rows in the same file, with the
+multi-resolver merge (skillpack `skills/RESOLVER.md` + workspace
 `../AGENTS.md`) folding everything into one unified view. Run `gbrain doctor`
 and the 238 FAILs collapse to 0.
 
@@ -267,8 +267,7 @@ I initially converted my resolver from a clean list format to a table
 format because the validator only spoke tables. That was wrong. When a
 tool fails against valid data, the right move is to fix the tool, not
 reshape the data. The list format was correct, compact, readable, easy
-to maintain. The parser needed to support both shapes. v0.41.7.0 is
-that fix.
+to maintain. The parser needed to support both shapes — and now it does.
 
 The same principle applies everywhere in agent systems. Your SKILL.md is
 the source of truth. Your AGENTS.md is the source of truth. Your resolver
@@ -294,6 +293,40 @@ The architecture that gets you from 50 to 300 is different from the
 architecture that gets you from 10 to 50. That's normal. Systems that
 scale change shape. The important thing is that each tier preserves full
 capability. You're organizing, not deleting.
+
+## Plugin bundling is a curation decision
+
+Not every skill in `skills/` reaches downstream installs. The plugin
+manifest (`openclaw.plugin.json`) is the bundled set; everything else is a
+recorded exclusion in `skills/plugin-exclusions.json`, each with a reason.
+The two are test-pinned in both directions: every manifest skill is either
+bundled or a recorded exclusion, and no skill is both. Adding a skill to
+the tree does NOT ship it — bundling is an explicit decision, and an
+unbundled skill never reaches a downstream install. When you write a new
+skill, decide (and record) which side of that line it lives on.
+
+`bun run gate:skills` (`scripts/skills-commit-gate.sh`) is the per-commit gate
+for any change under `skills/`. It runs the conformance + resolver +
+plugin-manifest tests, `check-resolvable --strict`, the `skills.lock.json`
+regen + freshness check, and `check-skill-refs` in seconds — run it before
+committing a skills change so the membership/closure and `plugin.version`
+assertions fail locally instead of in CI.
+
+## When a skill misroutes
+
+Treat a misroute like a failing test, because it becomes one. First
+reproduce it as a fixture in the skill's `routing-eval.jsonl` — the utterance
+that misrouted, with the expected skill (or `null`). Rewrite the misrouted
+utterance onto placeholder entities (`alice-example`, `acme-example`) before
+committing the fixture — same rule as skill-autobench; a routing fixture is a
+public artifact and must not carry a real contact or company name. Only then
+fix the cause:
+usually a trigger in the skill's frontmatter or its row in
+`skills/RESOLVER.md`. Regenerate the lock (`bun run
+scripts/generate-skills-manifest.ts`) and the llms bundles (`bun run
+build:llms`), verify with `gbrain check-resolvable --strict`, and ship it as
+a MICRO release. Downstream installs heal on their next upgrade — the fix
+travels with the skillpack, not with a support thread.
 
 ## Related
 

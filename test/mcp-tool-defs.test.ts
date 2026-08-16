@@ -70,6 +70,12 @@ describe('buildToolDefs', () => {
     expect(JSON.stringify(extracted)).toBe(JSON.stringify(inline));
   });
 
+  test('explicit strictParams:false / empty opts stay byte-identical to the default emission (WP3)', () => {
+    const base = JSON.stringify(buildToolDefs(operations));
+    expect(JSON.stringify(buildToolDefs(operations, {}))).toBe(base);
+    expect(JSON.stringify(buildToolDefs(operations, { strictParams: false }))).toBe(base);
+  });
+
   test('ops without annotations keep the pre-annotations shape exactly (no annotations key)', () => {
     const extracted = buildToolDefs(operations);
     for (const def of extracted) {
@@ -102,6 +108,104 @@ describe('buildToolDefs', () => {
       expect(typeof def.inputSchema.properties).toBe('object');
       expect(Array.isArray(def.inputSchema.required)).toBe(true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WP3 (D14.1) — strictParams emission state.
+//
+// With mcp.strict_params = 'reject' the transports build schemas that CLOSE
+// the property set (`additionalProperties: false`); the two dispatch-level
+// passthrough keys (`_meta`, `dry_run`) must then be DECLARED so
+// schema-validating clients (Gemini strict, OpenAI structured outputs) don't
+// strip them from arguments. Both emission states are pinned here; the
+// default state's byte-identity is pinned above.
+// ---------------------------------------------------------------------------
+
+describe('buildToolDefs strictParams emission (WP3/D14.1)', () => {
+  const strictDefs = buildToolDefs(operations, { strictParams: true });
+
+  test('every strict def closes the schema and declares _meta + dry_run', () => {
+    for (const def of strictDefs) {
+      expect(def.inputSchema.additionalProperties).toBe(false);
+      const props = def.inputSchema.properties as Record<string, { type?: string }>;
+      expect(props._meta).toBeDefined();
+      expect(props._meta.type).toBe('object');
+      expect(props.dry_run).toBeDefined();
+      expect(props.dry_run.type).toBe('boolean');
+    }
+  });
+
+  test('an op with a REAL declared dry_run param keeps its own schema (no clobber)', () => {
+    const op = operations.find(o => 'dry_run' in o.params)!;
+    expect(op).toBeDefined();
+    const def = strictDefs.find(d => d.name === op.name)!;
+    const props = def.inputSchema.properties as Record<string, { description?: string }>;
+    // The declared param's own description survives; the injected fallback
+    // (bare {type:'boolean'}) is only used when the op doesn't declare one.
+    expect(props.dry_run.description).toBe(op.params.dry_run.description);
+  });
+
+  test('strict mode changes ONLY additionalProperties + the two passthrough keys', () => {
+    const base = buildToolDefs(operations);
+    for (let i = 0; i < base.length; i++) {
+      const strict = strictDefs[i];
+      const loose = base[i];
+      expect(strict.name).toBe(loose.name);
+      // Same declared params, byte-identical per-param schemas.
+      for (const [k, v] of Object.entries(loose.inputSchema.properties)) {
+        expect(JSON.stringify((strict.inputSchema.properties as Record<string, unknown>)[k])).toBe(JSON.stringify(v));
+      }
+      const extraKeys = Object.keys(strict.inputSchema.properties)
+        .filter(k => !(k in loose.inputSchema.properties));
+      expect(extraKeys.sort()).toEqual(['_meta', 'dry_run'].filter(k => !(k in loose.inputSchema.properties)).sort());
+      expect(strict.inputSchema.required).toEqual(loose.inputSchema.required);
+    }
+  });
+
+  test('default emission never carries additionalProperties', () => {
+    for (const def of buildToolDefs(operations)) {
+      expect('additionalProperties' in def.inputSchema).toBe(false);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WP3 (T6) — param-description completeness walker.
+//
+// Every param of every non-localOnly op is an agent-facing contract: a param
+// without a description is exactly the "unguessable arg names" consumer
+// complaint. localOnly ops are exempt (operator-facing CLI surface). Mirrors
+// the findArrayWithoutItems drift-guard pattern below.
+// ---------------------------------------------------------------------------
+
+describe('param description completeness (WP3)', () => {
+  test('every non-localOnly op param carries a non-empty description', () => {
+    const violations: string[] = [];
+    for (const op of operations) {
+      if (op.localOnly) continue;
+      for (const [key, def] of Object.entries(op.params)) {
+        if (typeof def.description !== 'string' || def.description.trim() === '') {
+          violations.push(`${op.name}.${key}`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  // WP4 (amendment 22): every non-localOnly op must carry an `area` — the
+  // request_tools catalog groups by it, and an op missing from the central
+  // OP_AREAS map in operations.ts would silently land in the 'other' bucket.
+  // Area NAMES are non-contractual; presence is not.
+  test('every non-localOnly op carries a non-empty area (WP4)', () => {
+    const violations: string[] = [];
+    for (const op of operations) {
+      if (op.localOnly) continue;
+      if (typeof op.area !== 'string' || op.area.trim() === '') {
+        violations.push(op.name);
+      }
+    }
+    expect(violations).toEqual([]);
   });
 });
 

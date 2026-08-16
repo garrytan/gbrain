@@ -210,6 +210,13 @@ async function cmdAdd(engine: BrainEngine, args: string[], sourceId?: string): P
   const brainDir = await resolveBrainDir(engine, dirArg ?? null);
 
   await withPageLock(slug, async () => {
+    // Resolve the page BEFORE touching the markdown. getPageId exits 1 when the
+    // page isn't in the brain; doing this after writeBody left a .md file
+    // carrying a take with no DB row — invisible to scorecard/calibration but
+    // present on disk, so a later `takes add` would number the next row past a
+    // take the DB never saw. update/supersede/resolve already resolve first.
+    const pageId = await getPageId(engine, slug, sourceId);
+
     const path = pageFilePath(brainDir, slug);
     const body = readBodyOrEmpty(path);
     const { body: nextBody, rowNum } = upsertTakeRow(body, {
@@ -217,8 +224,6 @@ async function cmdAdd(engine: BrainEngine, args: string[], sourceId?: string): P
     });
     writeBody(path, nextBody);
 
-    // Mirror to DB. Page may not be in DB yet if not synced — caller must run sync first.
-    const pageId = await getPageId(engine, slug, sourceId);
     await engine.addTakesBatch([{
       page_id: pageId, row_num: rowNum, claim, kind, holder, weight,
       since_date: since, source, active: true, superseded_by: null,
@@ -619,12 +624,13 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
   const sub = rest[0];
   if (sub !== '--from-pages') {
     process.stderr.write(
-      'Usage: gbrain takes extract --from-pages [--yes] [--dry-run] [--source-id <id>] [--max-pages N (clamped to 1000)] [--include-covered] [--holder <name>]\n' +
+      'Usage: gbrain takes extract --from-pages [--yes] [--dry-run] [--json] [--source-id <id>] [--max-pages N (clamped to 1000)] [--include-covered] [--holder <name>]\n' +
       'Runs progress: pages that already hold takes are skipped, so repeat runs sweep a large corpus in slices. --include-covered rescans everything (refresh).\n',
     );
     process.exit(1);
   }
   const dryRun = rest.includes('--dry-run');
+  const json = rest.includes('--json');
   const skipConfirm = rest.includes('--yes');
   const sourceIdx = rest.indexOf('--source-id');
   const sourceIdFilter = sourceIdx >= 0 ? rest[sourceIdx + 1] : undefined;
@@ -662,8 +668,16 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
     holder,
   });
   if (result.llm_unavailable) {
-    process.stderr.write(`[takes extract] chat gateway unavailable (no API key configured).\n`);
+    if (json) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    } else {
+      process.stderr.write(`[takes extract] chat gateway unavailable (no API key configured).\n`);
+    }
     process.exit(2);
+  }
+  if (json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
   }
   process.stdout.write(
     `takes extract --from-pages: ${result.claims_extracted} claim(s) from ${result.pages_scanned} page(s)` +

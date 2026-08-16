@@ -21,15 +21,17 @@ Every scoreboard row carries a `seam` column:
 | Harness | Seam | What the row actually measures |
 |---|---|---|
 | `openclaw` | **production** | The shipped OpenClaw context-engine pipeline, byte-for-byte (`extractCandidates` → `resolveEntitiesToPointers`, 3-pointer budget, prior-context suppression, markdown pointer block). |
-| `claude-code` | **contract** | gbrain's memory primitives driven through the UserPromptSubmit hook wire contract (`{prompt, session_id, cwd}` in → `{hookSpecificOutput.additionalContext}` out, exported from `src/eval/brainbench/adapters/claude-code.ts`). 2-pointer budget; NO conversation memory — a hook sees only the current prompt, so suppression is off and the re-injection cost is visible as `false_fire_rate`. |
+| `claude-code` | **contract** | gbrain's memory primitives driven through the UserPromptSubmit hook wire contract (`{prompt, session_id, cwd}` in → `{hookSpecificOutput.additionalContext}` out, exported from `src/eval/brainbench/adapters/claude-code.ts`). 2-pointer budget; NO conversation memory — this row deliberately models the memoryless wire contract (suppression off), so the re-injection cost is visible as `false_fire_rate`; the shipped `gbrain hook user-prompt` layers transcript-based cross-turn dedupe on top of this same contract. |
 | `codex` | **contract** | The fragments model: a static entity-index preamble (computed once, slugs not counted as injections) + at most ONE per-turn fragment. Measures how much push quality degrades when injection is mostly static. |
 
 **Contract rows do NOT measure third-party harness behavior.** They measure
 gbrain's primitives under each harness's injection-shape constraints. The rows
 are comparable because fixtures, brain, and gold are identical — only the seam
-contract varies. When a real integration lands (the hooks/fragments PR), its
-adapter swaps transport (exec the real hook) and flips to `production` with
-continuous numbers. Also not graded, by design: the production orchestrator's
+contract varies. The real Claude Code integration has landed (`gbrain hook
+user-prompt`, registered by `gbrain bootstrap`); flipping this adapter to exec
+the real hook and report `production` numbers is a filed follow-up (TODOS.md —
+"Flip contract adapters to production"). Same for codex fragments when that
+integration lands. Also not graded, by design: the production orchestrator's
 config gate, integration heartbeat, and 1500 ms timeout wrapper.
 
 All three adapters drive ONE shared pipeline (`adapters/shared.ts`) with

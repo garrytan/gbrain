@@ -2,9 +2,9 @@
 
 GBrain stores embeddings in a fixed-dimension `vector(N)` column on
 `content_chunks`. If you switch to a model with a different dimension
-(e.g. `openai:text-embedding-3-large` 1536 → `zeroentropyai:zembed-1`
-1280, or `voyage:voyage-4-large` 2048), the on-disk column type doesn't
-change automatically.
+(e.g. `openai:text-embedding-3-large` 1536 → `voyage:voyage-4` 1024, or
+`voyage:voyage-4-large` 2048), the on-disk column type doesn't change
+automatically.
 
 `gbrain init`, `gbrain doctor`, and `gbrain embed --stale` all detect
 this mismatch and refuse to silently proceed. This doc is the recipe
@@ -63,8 +63,8 @@ single-command wrapper:
 
 ```bash
 gbrain reinit-pglite \
-  --embedding-model zeroentropyai:zembed-1 \
-  --embedding-dimensions 1280
+  --embedding-model voyage:voyage-4 \
+  --embedding-dimensions 1024
 ```
 
 This backs up the existing brain to `<path>.bak`, runs `gbrain init`
@@ -84,8 +84,8 @@ mv ~/.gbrain/brain.pglite ~/.gbrain/brain.pglite.bak
 #    every other field in ~/.gbrain/config.json (chat model,
 #    expansion model, API keys).
 gbrain init --pglite \
-  --embedding-model zeroentropyai:zembed-1 \
-  --embedding-dimensions 1280
+  --embedding-model voyage:voyage-4 \
+  --embedding-dimensions 1024
 
 # 3. Re-import your brain repo. `gbrain sync` reads the brain repo
 #    from disk and re-creates the page rows.

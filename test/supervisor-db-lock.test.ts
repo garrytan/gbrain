@@ -216,6 +216,7 @@ describe('#1849 refresh-failure fails safe (F1A)', () => {
     let refreshCalls = 0;
     const failingLock: DbLockHandle = {
       id: 'x',
+      acquiredAt: 'test-fence',
       refresh: async () => { refreshCalls++; throw new Error('pooler down'); },
       release: async () => {},
     };
@@ -244,7 +245,8 @@ describe('#1849 refresh-failure fails safe (F1A)', () => {
     let mode: 'fail' | 'ok' = 'fail';
     const flakyLock: DbLockHandle = {
       id: 'x',
-      refresh: async () => { if (mode === 'fail') throw new Error('blip'); },
+      acquiredAt: 'test-fence',
+      refresh: async () => { if (mode === 'fail') throw new Error('blip'); return true; },
       release: async () => {},
     };
     sup._setDbLockForTests(flakyLock);
@@ -264,3 +266,31 @@ describe('#1849 refresh-failure fails safe (F1A)', () => {
     }
   });
 });
+
+  test('W0 (D5.10): fenced refresh returning false is CERTAIN loss — immediate LOCK_LOST, no threshold', async () => {
+    const sup = new MinionSupervisor(engine, { cliPath: '/bin/sh', healthInterval: 0, json: true });
+    const exitSpy = spyOn(process, 'exit').mockImplementation(((_code?: number) => {
+      throw new Error(`exit:${_code}`);
+    }) as never);
+
+    let refreshCalls = 0;
+    const stolenLock: DbLockHandle = {
+      id: 'x',
+      acquiredAt: 'test-fence',
+      refresh: async () => { refreshCalls++; return false; },
+      release: async () => {},
+    };
+    sup._setDbLockForTests(stolenLock);
+
+    try {
+      // FIRST tick exits — a fenced miss is proof of loss, not a blip to
+      // count toward SUPERVISOR_LOCK_REFRESH_MAX_FAILURES (pre-fix it was
+      // treated as SUCCESS and reset the failure counter while a second
+      // supervisor drained the same queue).
+      try { await sup._refreshDbLockForTests(); } catch { /* exit stub throws */ }
+      expect(exitSpy).toHaveBeenCalledWith(ExitCodes.LOCK_LOST);
+      expect(refreshCalls).toBe(1);
+    } finally {
+      exitSpy.mockRestore();
+    }
+  });

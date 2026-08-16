@@ -1,0 +1,118 @@
+{
+  "_comment": "Curation record for the Codex + Claude Code plugin lanes (the committed plugin/ tree). Lane set = (openclaw.plugin.json#skills minus base_exclusions) plus additions. Every entry is a recorded publication decision with a reason — scripts/generate-plugin-tree.ts validates this file and test/codex-plugin-manifest.test.ts pins membership. The openclaw lane's own curation (openclaw.plugin.json + skills/plugin-exclusions.json) is untouched: a skill can be openclaw-excluded and plugin-lane-included because plugin users ARE the brain host (the downstream-vs-host inversion). starter_gaps is a generated snapshot (refresh: bun run scripts/generate-plugin-tree.ts --out plugin --write-gaps): per-skill gbrain MCP ops declared in frontmatter tools: that sit beyond the starter serve surface — every one has a first-class gbrain CLI path (see plugin/README.md), and a change here is a review-visible curation event, not silent drift.",
+  "starter_policy": "cli-primary: bundled skills drive gbrain through the CLI when an op is beyond the starter MCP surface; users can widen a machine with GBRAIN_SURFACE=full (launcher-honored).",
+  "additions": {
+    "setup": "the plugin lane's own onboarding path (install + gbrain init + first import); swept 2026-08-15 — install command, privacy names, daemon-only prose, and repo-relative doc refs fixed for plugin consumers",
+    "gbrain-upgrade": "binary upgrade path — plugin users own the gbrain install; swept clean (one daemon-convention mention generalized)",
+    "smoke-test": "post-restart health checks; plugin users are the host — swept to make `gbrain smoke-test` the user entrypoint and label OpenClaw-service checks as conditional",
+    "migrate": "engine/data migration is a brain-owner activity and plugin users own their brain; swept clean",
+    "frontmatter-guard": "brain-page frontmatter hygiene applies to any brain owner; synthetic-name fix applied in sweep",
+    "schema-author": "schema-pack authoring is a brain-owner activity; repo-relative links converted for plugin consumers",
+    "schema-unify": "type unification is a brain-owner migration; PGLite --follow guidance + doc links fixed in sweep",
+    "skill-optimizer": "skillopt ships in the gbrain CLI; sweep added the read-only-snapshot note (optimize copies in your own skills dir)"
+  },
+  "base_exclusions": {
+    "testing": "gbrain-repo development skill — instructs running this repository's own test suite; meaningless-to-harmful in a plugin snapshot",
+    "skillify": "writes new skills into the host repo's skill tree — repo-dev workflow, not a plugin-consumer activity",
+    "skill-autobench": "benchmark infrastructure for gbrain skill development; requires repo-side harnesses",
+    "skillpack-harvest": "writes back to openclaw.plugin.json (host-repo curation surface) — repo-dev only"
+  },
+  "not_added": {},
+  "starter_gaps": {
+    "brain-ops": [
+      "add_link",
+      "sync_brain"
+    ],
+    "briefing": [
+      "get_timeline"
+    ],
+    "cold-start": [
+      "add_link",
+      "sync_brain"
+    ],
+    "daily-task-prep": [
+      "get_timeline"
+    ],
+    "data-research": [
+      "add_link",
+      "file_upload",
+      "put_raw_data"
+    ],
+    "eiirp": [
+      "add_link"
+    ],
+    "enrich": [
+      "add_link"
+    ],
+    "gbrain-advisor": [
+      "advisor"
+    ],
+    "idea-ingest": [
+      "add_link",
+      "file_upload"
+    ],
+    "idea-lineage": [
+      "find_contradictions",
+      "find_trajectory",
+      "takes_search"
+    ],
+    "ingest": [
+      "add_link",
+      "sync_brain"
+    ],
+    "maintain": [
+      "add_link",
+      "get_health"
+    ],
+    "media-ingest": [
+      "add_link",
+      "file_upload"
+    ],
+    "meeting-ingestion": [
+      "add_link",
+      "chronicle_day",
+      "get_timeline"
+    ],
+    "migrate": [
+      "add_link",
+      "add_tag",
+      "sync_brain"
+    ],
+    "minion-orchestrator": [
+      "cancel_job",
+      "get_job",
+      "get_job_progress",
+      "list_jobs",
+      "pause_job",
+      "replay_job",
+      "resume_job",
+      "send_job_message",
+      "submit_job"
+    ],
+    "query": [
+      "get_timeline"
+    ],
+    "schema-author": [
+      "get_active_schema_pack",
+      "list_schema_packs",
+      "reload_schema_pack",
+      "schema_apply_mutations",
+      "schema_explain_type",
+      "schema_graph",
+      "schema_lint",
+      "schema_review_orphans",
+      "schema_stats"
+    ],
+    "schema-unify": [
+      "run_onboard"
+    ],
+    "setup": [
+      "get_health",
+      "get_stats",
+      "sync_brain"
+    ],
+    "signal-detector": [
+      "add_link"
+    ]
+  }
+}

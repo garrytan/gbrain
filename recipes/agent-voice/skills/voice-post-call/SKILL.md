@@ -1,7 +1,7 @@
 ---
 name: voice-post-call
 version: 0.1.0
-description: Post-call handling for a voice session — turn the transcript into a brain page, post the summary to the operator's messaging surface, archive the audio. Belt-and-suspenders: fires both from a tool the voice persona can call mid-call AND from the automatic call-end handler in server.mjs.
+description: Post-call handling for a voice session — turn the transcript into a brain page, post the summary to the operator's messaging surface, archive the audio. The pipeline is the contract; the firing paths are operator-wired (see "Two firing paths" below for what ships today).
 triggers:
   - "after the call"
   - "call ended"
@@ -18,13 +18,11 @@ writes_to:
 
 # voice-post-call — Post-session transcript + summary handling
 
-> **Convention:** see [conventions/quality.md](../conventions/quality.md) for citation rules + back-link enforcement.
->
-> **Convention:** see [_brain-filing-rules.md](../_brain-filing-rules.md) for filing decision protocol.
+> **Convention:** see gbrain's `skills/conventions/quality.md` for citation rules + back-link enforcement, and `skills/_brain-filing-rules.md` for the filing decision protocol. (These are not copied by the install; the relative paths resolve only if your host repo mirrors gbrain's skills layout.)
 
 ## Iron Law
 
-**Every call gets processed, even on tool-call failure.** The voice persona MAY call a `log_call_summary` tool mid-session, OR the call may end without that tool firing (model forgot, WebRTC dropped, browser crashed). The automatic call-end handler in `services/voice-agent/code/server.mjs` posts a structured signal regardless so the brain still gets the transcript + audio reference.
+**Every call gets processed, even on tool-call failure.** The voice persona MAY log mid-session via an opted-in write tool, OR the call may end without that tool firing (model forgot, WebRTC dropped, browser crashed). A call-end handler should post a structured signal regardless so the brain still gets the transcript + audio reference — see "Two firing paths" below for which of these ships today and which the operator implements.
 
 If both paths fire (the tool call AND the call-end handler), the second one is idempotent — it sees the brain page already exists and updates instead of duplicating.
 
@@ -52,13 +50,13 @@ If both paths fire (the tool call AND the call-end handler), the second one is i
               Slack, Discord — whichever is wired in $TARGET_REPO/.env).
 ```
 
-## Two firing paths (belt + suspenders)
+## Two firing paths (both operator-wired today)
 
-**Path A — Persona-initiated mid-call:**
-The voice persona calls `log_call_summary` via the WebRTC data channel. The host-repo `/tool` endpoint dispatches to `tools.mjs`. Note: `log_call_summary` is in `OPTIONAL_OPS`, not `READ_ONLY_OPS`, so this only works if the operator's `tools-allowlist.local.json` opts in.
+**Path A — Persona-initiated mid-call (opt-in):**
+The voice persona calls `log_to_brain` via the WebRTC data channel; the host-repo `/tool` endpoint dispatches through `tools.mjs`. `log_to_brain` is in `OPTIONAL_OPS`, not `READ_ONLY_OPS`, so this only works if the operator's `tools-allowlist.local.json` opts in (there is no `log_call_summary` tool — the override can only enable ops listed in `OPTIONAL_OPS`).
 
-**Path B — Automatic call-end (default):**
-When the WebSocket / WebRTC connection closes, `server.mjs` fires a `call_end` event. The host repo's post-call handler (operator-implemented; the recipe ships a stub) reads the captured audio + transcript, runs the pipeline above. This path requires NO operator opt-in to work — the call-end handler is part of the shipped server.
+**Path B — Call-end handler (not yet shipped):**
+The shipped `server.mjs` has **no automatic call-end handler** — nothing fires when the WebSocket / WebRTC connection closes. To get the safety-net behavior, implement a post-call handler in your host repo that reads the captured audio + transcript on connection close and runs the pipeline above. Until you do, Path A (opt-in) is the only firing path, and calls where the persona never logs are NOT processed.
 
 ## Brain page format
 
@@ -116,10 +114,15 @@ created: 2026-05-17
 
 ## Related skills
 
+Ships with this bundle (sibling directories after install):
+
 - [voice-persona-mars](../voice-persona-mars/SKILL.md) — the persona that may invoke this
 - [voice-persona-venus](../voice-persona-venus/SKILL.md) — the other persona that may invoke this
-- [meeting-ingestion](../meeting-ingestion/SKILL.md) — analogous flow for multi-party meeting transcripts (different in that voice-call is typically 1:1)
-- [voice-note-ingest](../voice-note-ingest/SKILL.md) — for recorded one-way voice memos (different from live voice calls)
+
+Lives in gbrain's `skills/` (present on the host only if your repo mirrors gbrain's skills layout):
+
+- `meeting-ingestion` — analogous flow for multi-party meeting transcripts (different in that voice-call is typically 1:1)
+- `media-ingest` — for recorded one-way voice memos (different from live voice calls)
 
 ## Contract
 

@@ -36,6 +36,16 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# #3485: this wrapper IS the e2e boundary — opt in to running with a database
+# URL present. The bunfig test preload (database-url-guard-preload.ts) refuses
+# bare `bun test` runs while DATABASE_URL/GBRAIN_DATABASE_URL is ambient; the
+# per-file name floor (test/helpers/db-guard.ts) still applies after this.
+export GBRAIN_TEST_ALLOW_DATABASE_URL=1
+# The e2e suite runs on DATABASE_URL only; an ambient GBRAIN_DATABASE_URL
+# would pass the opt-in yet reach CLI-subprocess paths with no name floor —
+# drop it here so only the floored variable crosses the boundary.
+unset GBRAIN_DATABASE_URL
+
 # --- HOME isolation: snapshot real user config before switching ---
 # Tolerate unset HOME (minimal containers, exotic CI shells) without tripping set -u.
 REAL_HOME="${HOME:-/tmp}"
@@ -68,18 +78,29 @@ mkdir -p "$E2E_TMP_HOME/.gbrain"
 
 # --- Hermetic env scrub: operator/agent context must not bleed into E2E ---
 # A dev shell or a Conductor workspace exports CONDUCTOR_*, MCP_*, OPENCLAW_*,
-# and GBRAIN_* config overrides (e.g. a stray GBRAIN_BRAIN_ID, GBRAIN_SOURCE,
-# GBRAIN_*_THRESHOLD, GBRAIN_SUPERVISOR_PID_FILE) that would silently change
-# test behavior — making "hermetic" E2E non-hermetic and its failures
-# unreproducible across machines. Drop them before bun starts. This is a
-# DENYLIST of operator-context prefixes (not an allowlist rebuild), so PATH,
-# HOME, TMPDIR, CI, DATABASE_URL, and bun internals survive untouched. We keep
-# GBRAIN_HOME (just set above for HOME isolation); everything else GBRAIN_* is
-# an operator override the suite must not inherit. Adapts GStack's
+# HERMES_*, and GBRAIN_* config overrides (e.g. a stray GBRAIN_BRAIN_ID,
+# GBRAIN_SOURCE, GBRAIN_*_THRESHOLD, GBRAIN_SUPERVISOR_PID_FILE, an operator's
+# HERMES_BIN/HERMES_HOME) that would silently change test behavior — making
+# "hermetic" E2E non-hermetic and its failures unreproducible across machines.
+# Drop them before bun starts. This is a DENYLIST of operator-context prefixes
+# (not an allowlist rebuild), so PATH, HOME, TMPDIR, CI, DATABASE_URL, and bun
+# internals survive untouched. We keep GBRAIN_HOME (just set above for HOME
+# isolation); everything else GBRAIN_* is an operator override the suite must
+# not inherit — which also scrubs GBRAIN_REAL_HERMES_E2E and
+# GBRAIN_REAL_GROK_E2E / GBRAIN_REAL_OPENCODE_E2E, so the real-agent door
+# suites structurally
+# cannot fire under this runner (their venue is heavy-tests.yml's direct bun
+# test). GROK_ also drops an operator's GROK_BIN/GROK_HOME; OPENCODE_ drops
+# OPENCODE_BIN and the OPENCODE_CONFIG* trio. Adapts GStack's
 # buildHermeticEnv() allowlist to gbrain's shell E2E runner.
-for _e2e_var in $(env | grep -oE '^(CONDUCTOR_|MCP_|OPENCLAW_|GBRAIN_)[A-Za-z0-9_]*' | sort -u); do
+for _e2e_var in $(env | grep -oE '^(CONDUCTOR_|MCP_|OPENCLAW_|HERMES_|GROK_|OPENCODE_|GBRAIN_)[A-Za-z0-9_]*' | sort -u); do
   case "$_e2e_var" in
     GBRAIN_HOME) ;;  # required for HOME isolation (set above) — keep
+    GBRAIN_PGLITE_SNAPSHOT) ;;  # snapshot fast-path fixture (exported by ci-local.sh / runners) — keep
+    GBRAIN_TEST_ALLOW_DATABASE_URL) ;;  # #3485 preload opt-in (set above) — keep
+    GBRAIN_E2E_ALLOW_DB) ;;  # #3485 name-floor opt-in — the guard's own error
+                             # message tells operators to set it; stripping it
+                             # here would make that escape hatch a dead end
     *) unset "$_e2e_var" || true ;;
   esac
 done
@@ -96,7 +117,10 @@ fi
 if [ "$#" -gt 0 ]; then
   files=("$@")
 else
-  files=(test/e2e/*.test.ts)
+  # phantom-redirect lives in test/ (its PGLite arm runs in the unit suite) but
+  # its Postgres arm is only reachable through a DATABASE_URL-bearing lane —
+  # the unit wrappers strip the URL (#3485), so this lane must carry it.
+  files=(test/e2e/*.test.ts test/phantom-redirect-engine-parity.test.ts)
 fi
 
 # SHARD env (e.g. SHARD=1/4) keeps every M-th file starting at index N (1-indexed).
@@ -162,16 +186,32 @@ for f in "${files[@]}"; do
   if [ -n "${DATABASE_URL:-}" ]; then
     psql "$DATABASE_URL" -At -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid != pg_backend_pid() AND datname = current_database()" >/dev/null 2>&1 || true
   fi
-  # Hard outer timeout (180s per file). bun's --timeout covers tests AND
-  # hooks (measured on 1.3.14), but it's timer-based: a PGLite WASM call
-  # that blocks the event loop synchronously never lets the timer fire and
-  # the file wedges indefinitely. gtimeout/timeout SIGKILLs the file so the
-  # suite advances. gtimeout (macOS via coreutils) preferred; timeout (Linux)
-  # fallback; bare bun (no outer cap) if neither is installed.
+  # Hard outer timeout (default 180s per file; GBRAIN_E2E_FILE_TIMEOUT
+  # overrides). bun's --timeout covers tests AND hooks (measured on 1.3.14),
+  # but it's timer-based: a PGLite WASM call that blocks the event loop
+  # synchronously never lets the timer fire and the file wedges indefinitely.
+  # gtimeout/timeout SIGKILLs the file so the suite advances. gtimeout (macOS
+  # via coreutils) preferred; timeout (Linux) fallback; bare bun (no outer
+  # cap) if neither is installed.
+  #
+  # LLM-bound Tier-2 files (real provider round-trips when .env.testing
+  # carries keys) legitimately run past 180s — the ingest skill alone has
+  # been observed at ~131s — and were being SIGKILLed mid-run with no
+  # assertion output, which reads like a mystery failure. CI runs those
+  # files in their own job WITHOUT this wrapper (see .github/workflows/
+  # e2e.yml tier2), so the cap only ever bit local runs: give them 4x.
+  file_timeout="${GBRAIN_E2E_FILE_TIMEOUT:-180}"
+  # Digits-only validation (same strict positive-int posture as the TS env
+  # knobs): a malformed value falls back to the default instead of
+  # word-splitting into extra gtimeout arguments or breaking the 4x math.
+  case "$file_timeout" in ''|*[!0-9]*) file_timeout=180 ;; esac
+  case "$f" in
+    */skills.test.ts|*/zeroentropy-live.test.ts) file_timeout=$((file_timeout * 4)) ;;
+  esac
   if command -v gtimeout >/dev/null 2>&1; then
-    TIMEOUT_CMD="gtimeout 180"
+    TIMEOUT_CMD="gtimeout $file_timeout"
   elif command -v timeout >/dev/null 2>&1; then
-    TIMEOUT_CMD="timeout 180"
+    TIMEOUT_CMD="timeout $file_timeout"
   else
     TIMEOUT_CMD=""
   fi

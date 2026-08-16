@@ -12,6 +12,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { parseRegisterClientArgs } from '../src/commands/auth.ts';
+import { assertAllowedScopes, parseScopeString } from '../src/core/scope.ts';
 
 describe('parseRegisterClientArgs', () => {
   test('empty args → all defaults', () => {
@@ -38,6 +39,75 @@ describe('parseRegisterClientArgs', () => {
   test('--scopes preserves the whitespace-joined string', () => {
     const out = parseRegisterClientArgs(['--scopes', 'read write']);
     expect(out.scopes).toBe('read write');
+  });
+
+  // init.ts's own `gbrain auth register-client` hint (line ~730) recommends
+  // `--scopes read,write,admin`, but the parser previously only split on
+  // whitespace, so the comma-joined string fell through as a single
+  // unrecognized token and registerClientManual's assertAllowedScopes
+  // rejected it with `Unknown scope "read,write,admin"` — self-contradicting
+  // the hint it printed. These pin the comma form as accepted, alongside the
+  // pre-existing space form, without changing the shared OAuth-wire-format
+  // parseScopeString (RFC 6749 space-delimited) used for DCR/refresh/request
+  // scope parsing.
+  describe('--scopes comma-separated (matches init.ts hint)', () => {
+    test('comma-separated → normalized to the space-joined wire form', () => {
+      const out = parseRegisterClientArgs(['--scopes', 'read,write,admin']);
+      expect(out.scopes).toBe('read write admin');
+    });
+
+    test('mixed comma+space form normalizes the same way', () => {
+      const out = parseRegisterClientArgs(['--scopes', 'read, write ,admin']);
+      expect(out.scopes).toBe('read write admin');
+    });
+
+    test('single scope (no separators) is unaffected', () => {
+      const out = parseRegisterClientArgs(['--scopes', 'read']);
+      expect(out.scopes).toBe('read');
+    });
+
+    test('comma, space, and mixed forms all parse to the identical scope set downstream', () => {
+      const comma = parseRegisterClientArgs(['--scopes', 'read,write,admin']).scopes;
+      const spaced = parseRegisterClientArgs(['--scopes', 'read write admin']).scopes;
+      const mixed = parseRegisterClientArgs(['--scopes', 'read, write ,admin']).scopes;
+      const expected = ['read', 'write', 'admin'];
+      expect(parseScopeString(comma)).toEqual(expected);
+      expect(parseScopeString(spaced)).toEqual(expected);
+      expect(parseScopeString(mixed)).toEqual(expected);
+      // Control: all three forms also clear the registration-time allowlist
+      // gate that init.ts's hint promises works.
+      expect(() => assertAllowedScopes(parseScopeString(comma))).not.toThrow();
+      expect(() => assertAllowedScopes(parseScopeString(spaced))).not.toThrow();
+      expect(() => assertAllowedScopes(parseScopeString(mixed))).not.toThrow();
+    });
+
+    // Control: comma-splitting must not smuggle a genuinely unknown scope
+    // past the registration-time allowlist gate.
+    test('a genuinely unknown scope in comma form is still rejected downstream', () => {
+      const out = parseRegisterClientArgs(['--scopes', 'read,flying-unicorn']);
+      expect(out.scopes).toBe('read flying-unicorn');
+      expect(() => assertAllowedScopes(parseScopeString(out.scopes)))
+        .toThrow(/Unknown scope "flying-unicorn"/);
+    });
+
+    // Codex review finding (round 1): separator-only input (e.g. "," or
+    // ",,,") split to zero tokens under the comma/whitespace regex, which
+    // collapsed to `''` and would have passed assertAllowedScopes
+    // vacuously downstream (empty scope list silently accepted).
+    //
+    // Codex review finding (round 2, P1): an initial fix that forwarded the
+    // raw string only for comma-only input left whitespace-only (`"   "`)
+    // and empty-string (`""`) inputs unguarded — those also normalize to
+    // zero tokens under the same regex (whitespace is a supported
+    // separator too), so the same silent-empty-scope-set hole remained for
+    // them. The parser now rejects ANY input that normalizes to zero
+    // tokens, uniformly, with a clear CLI usage error.
+    test('zero-token --scopes input (commas, whitespace, or empty) is rejected at parse time', () => {
+      for (const raw of [',', ',,,', ' , ', '   ', '']) {
+        expect(() => parseRegisterClientArgs(['--scopes', raw]))
+          .toThrow(/--scopes requires at least one scope/);
+      }
+    });
   });
 
   test('--source scopes the OAuth client', () => {

@@ -10,8 +10,9 @@ import { clampSearchLimit } from './engine.ts';
 import type { GBrainConfig } from './config.ts';
 import type { PageType } from './types.ts';
 import { importFromContent } from './import-file.ts';
-import { writePageThrough } from './write-through.ts';
+import { writePageThrough, type WriteThroughResult } from './write-through.ts';
 import { hybridSearch, hybridSearchCached, stampContentFlags, stampUnverifiedExtractions } from './search/hybrid.ts';
+import { looksConceptShaped } from './search/query-intent.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from './eval-capture.ts';
@@ -19,6 +20,7 @@ import type { HybridSearchMeta } from './types.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, isGlobalBasenameEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
 import { isFactsBackstopEligible } from './facts/eligibility.ts';
 import { stripTakesFence } from './takes-fence.ts';
+import type { WriterLintPayload } from './output/post-write.ts';
 import { stripFactsFence } from './facts-fence.ts';
 import { getContentFlag } from './quarantine.ts';
 import { unverifiedExtractionFragment, isUnverifiedExtraction, EXTRACTION_STATUS_KEY, STATUS_VERIFIED } from './extraction-review.ts';
@@ -52,6 +54,15 @@ import {
   LIST_SKILLS_DESCRIPTION,
   GET_SKILL_DESCRIPTION,
 } from './operations-descriptions.ts';
+// WP4 (request_tools): all three are runtime leaves relative to this module
+// (no import cycles back into operations.ts). The cyclic dependencies —
+// src/mcp/surface.ts (→ brain-allowlist → operations) and
+// src/mcp/publish-gates.ts (→ operations) — are loaded via dynamic import
+// inside the handler instead (the verbs.ts house pattern).
+import { isUndefinedColumnError } from './utils.ts';
+import { hasScope } from './scope.ts';
+import { RateLimiter } from '../mcp/rate-limit.ts';
+import { writeSurfaceChangeAudit } from './surface-audit.ts';
 
 // --- Types ---
 
@@ -79,7 +90,9 @@ export type ErrorCode =
   // MEMORY_VERBS v1 protocol codes (frozen — docs/protocol/MEMORY_VERBS_v1.md).
   // Coarse on purpose: codes are for branching (configure/retry vs caller bug
   // vs server bug); the freeform `detail` field carries specifics.
-  | 'not_found'            // verb-level: unknown fact id (forget)
+  | 'not_found'            // unknown resource. Verb-level (forget: unknown fact id) AND
+                           // get_agent_job's uniform foreign-or-missing envelope (anti-enumeration:
+                           // a caller cannot distinguish another client's job from a nonexistent id)
   | 'scope_denied'         // verb-level: OAuth scope / trust-boundary refusal
   | 'provenance_required'  // remember: provenance missing or empty
   | 'unavailable'          // a required dependency cannot serve (no API key, gateway down, model refusal)
@@ -405,40 +418,86 @@ export const CLIENT_FENCED_WRITE_OPS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * WP4 (D9) — discovery meta-ops exempt from the bound-client fence's
+ * LISTING/dispatch denial. `request_tools` is `mutating: true` (its persist
+ * branch writes oauth_clients.surface), which would otherwise hide discovery
+ * from every slug-bound client. The exemption is safe because the persist
+ * branch SELF-ENFORCES its own guards — server ceiling (D2), operator lock
+ * (amendment 19), OAuth scopes, and a per-client rate limit (D14.5) — and it
+ * never touches a slug. Lives here (not inline in the predicate) so the
+ * tools/list filter and the dispatch fence consume the identical carve-out
+ * (ENG-3 drift-proofing).
+ */
+const BOUND_CLIENT_META_OPS: ReadonlySet<string> = new Set(['request_tools']);
+
+/**
+ * Single source of truth for "may a slug-bound client use this op" (ENG-3).
+ * Consumed by BOTH the dispatch-time fence below AND the tools/list filter
+ * in serve-http, so the advertised catalog and the deny behavior cannot
+ * drift — a bound client is never shown an op that will fence-deny at call
+ * time. Gate on "mutates, or carries any non-read scope" rather than on the
+ * two literal scope strings 'write'/'admin': `sources_add`/`sources_remove`
+ * carry the bespoke `sources_admin` scope and are `mutating: true`, so a
+ * scope-string check let a bound client DROP AN ENTIRE SOURCE — every page
+ * in it, far outside any prefix. Anything that isn't a plain read must be
+ * explicitly allow-listed. A degraded projection (binding unreadable) denies
+ * every non-read op — the unfenceable ops must not stay reachable precisely
+ * when the fence is unreadable. Exception: BOUND_CLIENT_META_OPS (D9) stay
+ * allowed even degraded — they are slug-free discovery ops whose only write
+ * self-enforces ceiling+lock+scopes+rate-limit (and a degraded projection
+ * also dropped the surface columns, so that write fails 'migration pending'
+ * rather than running unguarded).
+ */
+export function opAllowedForBoundClient(
+  auth: Pick<AuthInfo, 'boundSlugPrefixes' | 'fenceProjectionDegraded'> | undefined,
+  op: Pick<Operation, 'name' | 'scope' | 'mutating'>,
+): boolean {
+  const degraded = auth?.fenceProjectionDegraded === true;
+  if (!degraded && !auth?.boundSlugPrefixes) return true;
+  const isRead = op.scope === 'read' && op.mutating !== true;
+  if (isRead) return true;
+  if (BOUND_CLIENT_META_OPS.has(op.name)) return true;
+  if (degraded) return false;
+  return CLIENT_FENCED_WRITE_OPS.has(op.name);
+}
+
+/**
  * Fail-closed gate for slug-bound clients, applied at dispatch (the single
  * choke point both MCP transports share) so it cannot be forgotten per op.
  * Read ops are untouched — read scope is enforced by source federation.
+ * Allow/deny derives from `opAllowedForBoundClient`; this wrapper only owns
+ * the error envelopes.
  */
 export function enforceBoundClientOpAllowList(
   auth: AuthInfo | undefined,
   op: Pick<Operation, 'name' | 'scope' | 'mutating'>,
 ): void {
-  // A degraded projection means we could not read the binding, not that
-  // there isn't one. Deny every non-read op outright — otherwise the
-  // unfenceable ops stay reachable precisely when the fence is unreadable.
+  if (opAllowedForBoundClient(auth, op)) return;
   const degraded = auth?.fenceProjectionDegraded === true;
-  if (!degraded && !auth?.boundSlugPrefixes) return;
-  // Gate on "mutates, or carries any non-read scope" rather than on the two
-  // literal scope strings 'write'/'admin': `sources_add` / `sources_remove`
-  // carry the bespoke `sources_admin` scope and are `mutating: true`, so a
-  // scope-string check let a bound client DROP AN ENTIRE SOURCE — every page
-  // in it, far outside any prefix. Anything that isn't a plain read must be
-  // explicitly allow-listed.
-  const isRead = op.scope === 'read' && op.mutating !== true;
-  if (isRead) return;
   if (degraded) {
-    throw new OperationError(
+    const err = new OperationError(
       'permission_denied',
       `${op.name}: this brain's oauth_clients projection is missing bound_slug_prefixes, so client write bindings cannot be evaluated. Refusing every non-read operation rather than running unfenced.`,
       'Run `gbrain apply-migrations --yes` on the brain host.',
     );
+    // Amendment 33 / D10: OP-level fence denial — the tools/list filter
+    // (opAllowedForBoundClient, the same predicate) should have hidden this
+    // op, so serve-http counts it toward the honest-catalog metric
+    // (status='denied_after_list'). key=value detail grammar (WP1).
+    err.detail = 'fence=op';
+    throw err;
   }
-  if (CLIENT_FENCED_WRITE_OPS.has(op.name)) return;
-  throw new OperationError(
+  const err = new OperationError(
     'permission_denied',
     `${op.name} is not available to slug-bound clients: it can write outside client ${auth?.clientId ?? '(unknown)'}'s bound_slug_prefixes (${(auth?.boundSlugPrefixes ?? []).join(', ')}).`,
     'Use put_page / add_timeline_entry / add_link under your own prefixes, or ask an operator to clear the binding with `gbrain auth rescope-client <id> --bound-slug-prefixes none`.',
   );
+  // Amendment 33 / D10: op-level, not argument-level — see above. The
+  // slug-prefix ARGUMENT denials (enforceClientSlugFence) deliberately do
+  // NOT carry this marker: a listed write op denying an out-of-fence slug
+  // is legitimate and excluded from the metric.
+  err.detail = 'fence=op';
+  throw err;
 }
 
 /**
@@ -561,6 +620,24 @@ export interface AuthInfo {
    * unaffected — this axis alone fails closed.
    */
   fenceProjectionDegraded?: boolean;
+  /**
+   * WP4 (D2): per-client tool surface from `oauth_clients.surface`, threaded
+   * at token-verification time (same JOIN as sourceId/allowedSources). The
+   * serve-http transport resolves the request's effective surface as
+   * `min(server ceiling, this ?? config default)` — the row can narrow, never
+   * widen. Value space is OPEN (amendment 18: future client tiers write tier
+   * names into the same column); unrecognized values are ignored at
+   * resolution with a warn-log once per client. Undefined = column NULL,
+   * projection degraded, or the brain predates migration v127.
+   */
+  surface?: string;
+  /**
+   * WP4 (amendment 19) — who set `surface`: 'operator' (rescope CLI/admin
+   * endpoint; request_tools persist may NOT override it), 'self'
+   * (request_tools persist), or 'dcr_default'. Undefined when surface is
+   * unset or the projection degraded.
+   */
+  surfaceSetBy?: string;
 }
 
 export interface OperationContext {
@@ -594,9 +671,30 @@ export interface OperationContext {
    * untrusted) but has no per-token auth (local pipe), so identity ops like
    * whoami need a way to distinguish "known auth-less transport" from "a
    * transport bug forgot to thread ctx.auth". Trust decisions MUST NOT key
-   * off this field — only `ctx.remote === false` grants trust.
+   * off this field — only `ctx.remote === false` grants trust. It IS the
+   * transport-LOCALITY axis: localOnly ops dispatch on 'stdio' (a local
+   * pipe with the operator's own filesystem) and are denied on 'http'
+   * (network transports), independent of the remote trust flag.
    */
-  transport?: 'stdio';
+  transport?: 'stdio' | 'http';
+  /**
+   * WP2/D3: response-meta side channel. Handlers that compute out-of-band
+   * result metadata (retrieval degradation, strict-mode warnings) publish it
+   * here under a namespaced top-level key; the MCP dispatch layer merges the
+   * collected keys into `ToolResult._meta` (one producer per key — see
+   * docs/protocol/MCP_META_CHANNELS.md). Unset on CLI/local dispatch paths,
+   * which render the same meta directly; emissions are always optional-chained.
+   */
+  emitResponseMeta?: (key: string, value: unknown) => void;
+  /**
+   * WP4 (D2): the SERVER surface ceiling for this transport (force-clamped),
+   * threaded by the MCP dispatch layer. Consumed by `request_tools`: the
+   * catalog never names ops above the ceiling, and the persist branch
+   * rejects widening past it with a machine-readable denial
+   * (`detail: "ceiling=<surface>"`). Unset (local CLI / direct dispatch) is
+   * treated as 'full'.
+   */
+  surfaceCeiling?: 'verbs' | 'starter' | 'full';
   /**
    * Subagent runtime context (v0.16+). Set by the subagent tool dispatcher when
    * dispatching an op as a tool call from an LLM loop. Used to enforce per-op
@@ -689,6 +787,14 @@ export interface OperationContext {
    * satisfied even on single-source brains.
    */
   sourceId: string;
+  /**
+   * CX2-11 — opaque per-session identity, set from MCP `_meta.session_id`
+   * (clamped to 256 chars at the dispatch boundary). Cache/telemetry identity
+   * ONLY — never an auth or trust surface. The hot-memory meta hook keys its
+   * cache on (sourceId, sessionId, allowlist-hash); before this typed field
+   * existed every caller collapsed onto the null-session cache key.
+   */
+  sessionId?: string;
   /**
    * #2561 / #3242 — federated read scope for UNQUALIFIED reads.
    *
@@ -977,19 +1083,52 @@ export interface Operation {
    * transport. v0.28 added `sources_admin` (manage federated sources) and
    * `users_admin` (reserved). The hierarchy lives in src/core/scope.ts —
    * `admin` implies all, `write` implies `read`, the two `*_admin` scopes
-   * are siblings (different axes; neither implies the other).
+   * are siblings (different axes; neither implies the other). `agent` is
+   * also a sibling NOT implied by admin (v0.38 D13): admin tokens must be
+   * explicitly re-registered with bindings to touch the agent lane.
    *
    * Local CLI callers (ctx.remote === false) bypass scope enforcement
    * because the trust boundary there is the OS, not OAuth scopes.
    */
-  scope?: 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin';
+  scope?: 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent';
   localOnly?: boolean;
   /**
-   * MEMORY_VERBS v1: marks the five frozen protocol verbs (recall, remember,
-   * entity, synthesize, forget). `gbrain serve --surface verbs` exposes
-   * EXACTLY the ops with `verb: true`; `full` (default) exposes everything.
+   * WP1 honest catalog: the op is callable by remote callers only when this
+   * config gate resolves true (dual-plane, DB > file > absent=false). Network
+   * transports hide the op from tools/list while the gate is off — a listed
+   * tool that always denies reads as broken, not private. The in-handler
+   * gate (assertPublishEnabled / the advisor inline check) stays as the
+   * fail-closed call-time backstop; stdio (local pipe) bypasses publish
+   * gates entirely. Resolution lives in src/mcp/publish-gates.ts.
+   */
+  publishGateKey?: 'mcp.publish_skills' | 'mcp.publish_advisor';
+  /**
+   * MEMORY_VERBS v1: marks the seven frozen protocol verbs (recall, remember,
+   * entity, synthesize, forget, context_pack, delta). `gbrain serve --surface
+   * verbs` exposes EXACTLY the ops with `verb: true`; 'starter' (the ~20-op
+   * daily-driver tier) sits between verbs and `full` (default), which exposes
+   * everything.
    */
   verb?: boolean;
+  /**
+   * WP4 (amendment 22) — coarse grouping label consumed by the
+   * `request_tools` catalog and the generated tool-catalog doc. Area NAMES
+   * ARE NON-CONTRACTUAL: they exist so an agent can scan ~20 groups instead
+   * of ~100 flat names; renaming/regrouping is never a breaking change.
+   * Required (by the CI walker in test/mcp-tool-defs.test.ts) on every
+   * non-localOnly op; populated centrally via OP_AREAS at the bottom of
+   * this file.
+   */
+  area?: string;
+  /**
+   * WP4 (FOV-4) — marks a discovery meta-op callable by the `agent` scope
+   * IN ADDITION to its declared scope. `agent` deliberately implies only
+   * itself (v0.38 D13), which would strand agent-only tokens with zero
+   * discovery; the MCP scope checks (serve-http tools/list + tools/call)
+   * add a one-line carve-out for ops with this flag. Currently only
+   * `request_tools`.
+   */
+  agentCallable?: true;
   /**
    * MCP ToolAnnotations passthrough (SDK 1.29+). Emitted by buildToolDefs
    * ONLY when set — existing tools keep byte-identical definitions.
@@ -1323,7 +1462,10 @@ const put_page: Operation = {
     // Trust gating:
     //   - Subagent sandbox (viaSubagent without allowedSlugPrefixes) → DB-only.
     //   - All other writes → write-through.
-    let writeThrough: { written: boolean; path?: string; skipped?: string; error?: string } | undefined;
+    // put_page's own trust-gating produces two skip reasons ('subagent_sandbox',
+    // 'dry_run') that never come out of writePageThrough itself — widen the
+    // field rather than losing the commit/pushed/lastPushStatus typing.
+    let writeThrough: (Omit<WriteThroughResult, 'skipped'> & { skipped?: WriteThroughResult['skipped'] | 'subagent_sandbox' | 'dry_run' }) | undefined;
     const isSandboxSubagent = ctx.viaSubagent === true
       && !(Array.isArray(ctx.allowedSlugPrefixes) && ctx.allowedSlugPrefixes.length > 0);
     if (!ctx.dryRun && result.status !== 'error' && !isSandboxSubagent) {
@@ -1510,22 +1652,19 @@ const put_page: Operation = {
     // validators on the freshly-written page and logs findings to
     // ingest_log + ~/.gbrain/validator-lint.jsonl. Does NOT reject the
     // write — that's the deferred strict-mode flip after the 7-day soak.
-    let writerLint: { error_count: number; warning_count: number } | { skipped: string } | undefined;
+    // Response contract (T11): lint ran → full summary (counts, errors-first
+    // top_findings with hints, by_validator histogram) even at zero findings;
+    // lint crashed → {status: 'lint_error'}; lint off (flag / validate:false)
+    // → key absent.
+    let writerLint: WriterLintPayload | undefined;
     try {
-      const { runPostWriteLint } = await import('./output/post-write.ts');
-      const lint = await runPostWriteLint(ctx.engine, result.slug, {
+      const { writerLintForPutPage } = await import('./output/post-write.ts');
+      writerLint = await writerLintForPutPage(ctx.engine, result.slug, {
         sourceId: ctx.sourceId ?? 'default',
       });
-      if (lint.ran) {
-        writerLint = {
-          error_count: lint.findings.filter(f => f.severity === 'error').length,
-          warning_count: lint.findings.filter(f => f.severity === 'warning').length,
-        };
-      } else if (lint.skippedReason) {
-        writerLint = { skipped: lint.skippedReason };
-      }
     } catch {
-      // Non-fatal; never blocks put_page.
+      // Module-load failure gets the same crash marker; never blocks put_page.
+      writerLint = { status: 'lint_error' };
     }
 
     return {
@@ -1732,7 +1871,7 @@ const delete_page: Operation = {
   name: 'delete_page',
   description: 'Soft-delete a page. The row is hidden from search and from get_page/list_pages, but is recoverable via restore_page within 72h. The autopilot purge phase hard-deletes after the recovery window. Pass include_deleted: true to get_page to verify the soft-delete landed.',
   params: {
-    slug: { type: 'string', required: true },
+    slug: { type: 'string', required: true, description: "Slug of the page to soft-delete, e.g. 'people/alice-example'." },
   },
   mutating: true,
   scope: 'write',
@@ -1766,7 +1905,7 @@ const restore_page: Operation = {
   name: 'restore_page',
   description: 'v0.26.5 — restore a soft-deleted page (clear deleted_at). Returns success only if the page was actually soft-deleted. After this op, the page reappears in search and in get_page/list_pages without the include_deleted flag.',
   params: {
-    slug: { type: 'string', required: true },
+    slug: { type: 'string', required: true, description: "Slug of the soft-deleted page to restore, e.g. 'people/alice-example'." },
   },
   mutating: true,
   scope: 'write',
@@ -1931,11 +2070,44 @@ const list_pages: Operation = {
 
 // --- Search ---
 
+/**
+ * WP2/D3 + E1: the `retrieval` response-meta payload for the search/query
+ * ops. Carries the already-computed HybridSearchMeta signal (vector arm,
+ * cache, budget, degradation stages — populated by the search pipeline) plus
+ * the concept-shaped hint, so an MCP caller can distinguish "clean miss"
+ * from "the pipeline degraded" without a second call. The `hint` is
+ * non-contractual prose (agents read it; nothing should parse it).
+ */
+function buildRetrievalResponseMeta(
+  queryText: string,
+  results: unknown[],
+  meta: HybridSearchMeta | null,
+  opts: { conceptHint?: boolean } = {},
+): Record<string, unknown> {
+  const m = meta as (HybridSearchMeta & { degraded?: unknown; retrieved_count?: number }) | null;
+  const hint = opts.conceptHint && looksConceptShaped(queryText)
+    ? "concept-shaped question — the 'query' tool adds multi-query expansion and recovers " +
+      'synonym-phrased matches this keyword-leaning search can miss.'
+    : undefined;
+  return {
+    returned_count: results.length,
+    retrieved_count: m?.retrieved_count ?? results.length,
+    ...(m ? {
+      vector_enabled: m.vector_enabled,
+      expansion_applied: m.expansion_applied,
+      ...(m.cache ? { cache: m.cache.status } : {}),
+      ...(m.token_budget ? { token_budget: m.token_budget } : {}),
+      ...(m.degraded !== undefined ? { degraded: m.degraded } : {}),
+    } : {}),
+    ...(hint ? { hint } : {}),
+  };
+}
+
 const search: Operation = {
   name: 'search',
   description: SEARCH_DESCRIPTION,
   params: {
-    query: { type: 'string', required: true },
+    query: { type: 'string', required: true, description: "Search text. Exact tokens, names, and structured-field values work best here (e.g. 'acme-example series A'), since this op does no LLM expansion. This is the search text param — there is no `text` or `q` param." },
     limit: { type: 'number', description: 'Max results (default 20)' },
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
     mode: { type: 'string', description: 'Search mode (conservative|balanced|tokenmax). Local callers only.' },
@@ -1980,6 +2152,7 @@ const search: Operation = {
       await stampUnverifiedExtractions(ctx.engine, results);
       bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
       maybeCaptureSearch(ctx, queryText, results, Date.now() - startedAt, false);
+      ctx.emitResponseMeta?.('retrieval', buildRetrievalResponseMeta(queryText, results, null, { conceptHint: true }));
       return results;
     }
 
@@ -1997,6 +2170,7 @@ const search: Operation = {
     const latency_ms = Date.now() - startedAt;
     bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
     maybeCaptureSearch(ctx, queryText, results, latency_ms, true, capturedMeta);
+    ctx.emitResponseMeta?.('retrieval', buildRetrievalResponseMeta(queryText, results, capturedMeta, { conceptHint: true }));
     return results;
   },
   scope: 'read',
@@ -2012,7 +2186,7 @@ const query: Operation = {
     // validator at src/cli.ts honors `cliHints.altRequired` and admits the
     // image-only invocation. MCP / programmatic callers must still pass
     // `query` OR `image` (handler refuses if both are absent).
-    query: { type: 'string', required: false },
+    query: { type: 'string', required: false, description: "Question or topic text for hybrid retrieval with expansion (e.g. 'agents that do web research'). This is the search text param — there is no `text` or `q` param. Optional ONLY because `image` is the alternative entry point; a call with neither fails with invalid_params." },
     /** v0.27.1: image-similarity search. Path resolved on the CLI side
      *  before the op fires (the op receives raw bytes neither side; the
      *  CLI loads the file, base64-encodes, and passes through `image`). */
@@ -2078,7 +2252,7 @@ const query: Operation = {
     embedding_column: {
       type: 'string',
       description:
-        "v0.36: route vector search through a non-default embedding column. Defaults to 'embedding' (OpenAI 1536d) unless `search_embedding_column` config sets a different default. Per-call override for A/B benchmarking across providers (e.g. 'embedding_voyage', 'embedding_zeroentropy'). Column MUST be declared in the `embedding_columns` config registry — unknown names throw with a paste-ready hint listing valid columns.",
+        "v0.36: route vector search through a non-default embedding column. Defaults to 'embedding' (the brain's primary column) unless `search_embedding_column` config sets a different default. Per-call override for A/B benchmarking across providers (e.g. 'embedding_voyage', 'embedding_openai'). Column MUST be declared in the `embedding_columns` config registry — unknown names throw with a paste-ready hint listing valid columns.",
     },
     adaptive_return: {
       type: 'boolean',
@@ -2146,7 +2320,13 @@ const query: Operation = {
     }
 
     if (!queryText) {
-      throw new Error('query requires either `query` (text) or `image` (base64 bytes).');
+      // WP3: typed envelope — a caller mistake must classify as invalid_params
+      // over MCP, not the internal_error a plain throw produced.
+      throw new OperationError(
+        'invalid_params',
+        'query requires either `query` (text) or `image` (base64 bytes).',
+        'Pass `query` with your search text (e.g. {"query": "acme-example roadmap"}), or `image` with base64 image bytes.',
+      );
     }
 
     // v0.25.0 — capture meta side-channel. hybridSearch's return contract
@@ -2234,6 +2414,8 @@ const query: Operation = {
       );
     }
 
+    // WP2/D3: query never nudges toward itself — no concept hint here.
+    ctx.emitResponseMeta?.('retrieval', buildRetrievalResponseMeta(queryText, results, capturedMeta));
     return results;
   },
   scope: 'read',
@@ -2281,7 +2463,7 @@ const takes_search: Operation = {
   description: 'Keyword search across takes (pg_trgm similarity over claim text)',
   scope: 'read',
   params: {
-    query: { type: 'string', required: true },
+    query: { type: 'string', required: true, description: "Search text matched against take claim text via trigram similarity, e.g. 'valuation cap'. This is the search text param — there is no `text` param." },
     limit: { type: 'number', description: 'Max results (default 30, cap 100)' },
   },
   handler: async (ctx, p) => {
@@ -2428,8 +2610,8 @@ const add_tag: Operation = {
   name: 'add_tag',
   description: 'Add tag to page',
   params: {
-    slug: { type: 'string', required: true },
-    tag: { type: 'string', required: true },
+    slug: { type: 'string', required: true, description: "Slug of the page to tag, e.g. 'people/alice-example'." },
+    tag: { type: 'string', required: true, description: "Tag to add — a plain string like 'founder' or 'follow-up', not a slug." },
   },
   mutating: true,
   scope: 'write',
@@ -2448,8 +2630,8 @@ const remove_tag: Operation = {
   name: 'remove_tag',
   description: 'Remove tag from page',
   params: {
-    slug: { type: 'string', required: true },
-    tag: { type: 'string', required: true },
+    slug: { type: 'string', required: true, description: 'Slug of the page to untag.' },
+    tag: { type: 'string', required: true, description: 'Tag to remove (exact match against the tags get_tags returns).' },
   },
   mutating: true,
   scope: 'write',
@@ -2467,7 +2649,7 @@ const get_tags: Operation = {
   name: 'get_tags',
   description: 'List tags for a page',
   params: {
-    slug: { type: 'string', required: true },
+    slug: { type: 'string', required: true, description: 'Slug of the page whose tags to list.' },
   },
   handler: async (ctx, p) => {
     // #2200: route through sourceScopeOpts so a federated read grant
@@ -2499,8 +2681,8 @@ const add_link: Operation = {
   name: 'add_link',
   description: 'Create link between pages',
   params: {
-    from: { type: 'string', required: true },
-    to: { type: 'string', required: true },
+    from: { type: 'string', required: true, description: "Slug of the page the link originates from (the edge renders on this page), e.g. 'people/alice-example'. These are page slugs — there is no `source`/`target` pair." },
+    to: { type: 'string', required: true, description: "Slug of the page the link points to, e.g. 'companies/acme-example'." },
     link_type: { type: 'string', description: 'Link type (e.g., invested_in, works_at)' },
     context: { type: 'string', description: 'Context for the link' },
     link_source: { type: 'string', description: "Provenance tag (kebab-case, e.g. 'citation-graph'). Defaults to 'manual'. Reconciliation-managed built-ins (markdown/frontmatter/mentions/wikilink-resolved) are rejected." },
@@ -2544,8 +2726,8 @@ const remove_link: Operation = {
   name: 'remove_link',
   description: 'Remove link between pages',
   params: {
-    from: { type: 'string', required: true },
-    to: { type: 'string', required: true },
+    from: { type: 'string', required: true, description: 'Slug of the page the link originates from (same endpoint order as add_link).' },
+    to: { type: 'string', required: true, description: 'Slug of the page the link points to.' },
     link_type: { type: 'string', description: 'Only remove edges of this link type (omit = all types)' },
     link_source: { type: 'string', description: 'Only remove edges of this provenance (e.g. citation-graph); omit = any provenance' },
   },
@@ -2572,7 +2754,7 @@ const get_links: Operation = {
   name: 'get_links',
   description: 'List outgoing links from a page',
   params: {
-    slug: { type: 'string', required: true },
+    slug: { type: 'string', required: true, description: 'Slug of the page whose outgoing links to list.' },
   },
   handler: async (ctx, p) => {
     // #2200: linkReadScopeOpts so a federated grant — and an untrusted remote
@@ -2588,7 +2770,7 @@ const get_backlinks: Operation = {
   name: 'get_backlinks',
   description: 'List incoming links to a page',
   params: {
-    slug: { type: 'string', required: true },
+    slug: { type: 'string', required: true, description: 'Slug of the page whose incoming links to list.' },
   },
   handler: async (ctx, p) => {
     // #2200: linkReadScopeOpts — federated grant + untrusted remote scalar
@@ -2630,7 +2812,7 @@ const traverse_graph: Operation = {
   name: 'traverse_graph',
   description: 'Traverse link graph from a page. With link_type/direction, returns edges (GraphPath[]) instead of nodes.',
   params: {
-    slug: { type: 'string', required: true },
+    slug: { type: 'string', required: true, description: "Slug of the page to start the traversal from, e.g. 'people/alice-example'. This is the start-node param — there is no `start` or `root` param." },
     depth: { type: 'number', description: `Max traversal depth (default 5, capped at ${TRAVERSE_DEPTH_CAP})` },
     link_type: { type: 'string', description: 'Filter to one link type (per-edge filter, traversal only follows matching edges)' },
     direction: { type: 'string', enum: ['in', 'out', 'both'], description: 'Traversal direction (default out)' },
@@ -2666,11 +2848,11 @@ const add_timeline_entry: Operation = {
   name: 'add_timeline_entry',
   description: 'Add timeline entry to a page',
   params: {
-    slug: { type: 'string', required: true },
-    date: { type: 'string', required: true },
-    summary: { type: 'string', required: true },
-    detail: { type: 'string' },
-    source: { type: 'string' },
+    slug: { type: 'string', required: true, description: 'Slug of the page whose timeline to append to.' },
+    date: { type: 'string', required: true, description: "Entry date, strict YYYY-MM-DD (e.g. '2026-04-03'). Timestamps and non-calendar dates are rejected." },
+    summary: { type: 'string', required: true, description: 'One-line summary of what happened on that date.' },
+    detail: { type: 'string', description: 'Longer free-text detail behind the summary.' },
+    source: { type: 'string', description: "Provenance ref for the entry, e.g. a meeting slug like 'meetings/2026-04-03' or a URL." },
   },
   mutating: true,
   scope: 'write',
@@ -2715,7 +2897,7 @@ const get_timeline: Operation = {
   name: 'get_timeline',
   description: 'Get timeline entries for a page, optionally filtered by date window',
   params: {
-    slug: { type: 'string', required: true },
+    slug: { type: 'string', required: true, description: 'Slug of the page whose timeline entries to return.' },
     after: { type: 'string', description: 'Return entries on or after this date (YYYY-MM-DD)' },
     before: { type: 'string', description: 'Return entries on or before this date (YYYY-MM-DD)' },
     since: { type: 'string', description: 'Alias for after; accepted for agent callers' },
@@ -2789,10 +2971,12 @@ const get_brain_identity: Operation = {
     let latest_version: string | null = null;
     try {
       const su = await import('./self-upgrade.ts');
-      const entry = su.readUpdateCache();
-      if (entry && su.isCacheFresh(entry, Date.now()) && entry.marker.kind === 'upgrade_available') {
+      // Shared stale/foreign-cache guard (pendingUpgradeVersion): only an
+      // upgrade strictly newer than the RUNNING version counts.
+      const latest = su.pendingUpgradeVersion(VERSION, Date.now());
+      if (latest) {
         update_available = true;
-        latest_version = entry.marker.latest ?? null;
+        latest_version = latest;
       }
     } catch {
       /* never let the banner break the op */
@@ -2821,6 +3005,7 @@ const get_brain_identity: Operation = {
 const list_skills: Operation = {
   name: 'list_skills',
   description: LIST_SKILLS_DESCRIPTION,
+  publishGateKey: 'mcp.publish_skills',
   params: {
     section: {
       type: 'string',
@@ -2843,6 +3028,7 @@ const list_skills: Operation = {
 const get_skill: Operation = {
   name: 'get_skill',
   description: GET_SKILL_DESCRIPTION,
+  publishGateKey: 'mcp.publish_skills',
   params: {
     name: {
       type: 'string',
@@ -2883,6 +3069,7 @@ const list_brain_skillpack: Operation = {
     'one-line descriptions, the schema pack it targets + whether that matches this brain, and a ' +
     'git scaffold spec. Read-only; gated by mcp.publish_skills. After orienting, call this and ' +
     'ask the user whether to install any pack the brain offers (gbrain skillpack scaffold <spec>).',
+  publishGateKey: 'mcp.publish_skills',
   params: {},
   handler: async (ctx) => {
     const sc = await import('./skill-catalog.ts');
@@ -2903,6 +3090,7 @@ const advisor: Operation = {
     'severity, why-it-matters, and the exact fix command. Never mutates. Tell the user; ask ' +
     'before running any fix. Gated by mcp.publish_advisor (separate from mcp.publish_skills ' +
     'because diagnostics are not prose skills).',
+  publishGateKey: 'mcp.publish_advisor',
   params: {},
   handler: async (ctx) => {
     // Publish gate: a remote caller needs mcp.publish_advisor=true. Local
@@ -2916,11 +3104,16 @@ const advisor: Operation = {
         enabled = ctx.config?.mcp?.publish_advisor === true;
       }
       if (!enabled) {
-        throw new OperationError(
+        // Same k=v detail grammar as assertPublishEnabled (WP1): honest
+        // catalogs hide this op at list time; the throw is the backstop.
+        const err = new OperationError(
           'permission_denied',
-          'The advisor is not published over MCP by the brain owner.',
+          'The advisor is not published over MCP by the brain owner, so it is hidden from your ' +
+            'tool catalog. Ask the owner to enable it if you need it.',
           'The owner can enable it with `gbrain config set mcp.publish_advisor true`.',
         );
+        err.detail = 'config_key=mcp.publish_advisor';
+        throw err;
       }
     }
     const { runAdvisor } = await import('./advisor/run.ts');
@@ -2955,21 +3148,26 @@ const advisor: Operation = {
  *   - Scope: admin (NOT localOnly). The op exposes operational state
  *     including sync timestamps and cycle metadata. Locking it to admin
  *     matches the `run_doctor` posture and prevents future feature creep
- *     (adding locks/workers/queue counters) from quietly leaking ops state
- *     to read-scoped clients.
+ *     from quietly leaking ops state to read-scoped clients.
  *
- *   - Payload: `{schema_version: 1, sync, cycle}` ONLY. Locks, Workers,
- *     Queue, and Autopilot sections are deliberately omitted from the
- *     remote payload — they are local-host concerns that thin-client
- *     callers shouldn't see at all (and the local `gbrain status` renders
- *     them as "N/A on remote brain" instead of pretending they exist).
+ *   - Payload (schema_version 2, Minions-visibility wave): `{schema_version,
+ *     version, sync, cycle, queue, workers}`. `queue` (status counts +
+ *     per-queue waiting depth + oldest-waiting age) and `workers`
+ *     (supervisor liveness via pidfile/DB-lock + last completed job) were
+ *     added so a remote submitter can see whether the lane its job ids point
+ *     at is actually alive. Locks and Autopilot stay deliberately omitted —
+ *     host-local concerns the thin client renders as "N/A on remote brain".
+ *
+ *   - Fail-soft (amendment 26): each v2 section computes in its own
+ *     try/catch and degrades to `{error: 'unavailable'}` without failing
+ *     the whole snapshot.
  *
  *   - The local CLI composes the same data plus the local-only sections
  *     directly (no MCP round-trip when running against ~/.gbrain).
  */
 const get_status_snapshot: Operation = {
   name: 'get_status_snapshot',
-  description: 'Snapshot for `gbrain status` thin-client mode: sync freshness + last cycle. Admin-scope.',
+  description: 'Snapshot for `gbrain status` thin-client mode: sync freshness + last cycle + queue depths + worker liveness. Admin-scope.',
   params: {},
   handler: async (ctx) => {
     const { buildSyncStatusReport } = await import('../commands/sync.ts');
@@ -3008,10 +3206,27 @@ const get_status_snapshot: Operation = {
     }
     const sync = await buildSyncStatusReport(ctx.engine, sources);
     const cycle = await buildCycleSnapshot(ctx.engine);
+    // v2 sections, each fail-soft (amendment 26): a broken/pre-migration
+    // queue table must not take down the sync/cycle payload that v1 clients
+    // already depend on.
+    let queue: unknown;
+    try {
+      const { buildQueueCounts, buildQueueDepths } = await import('../commands/status.ts');
+      queue = { counts: await buildQueueCounts(ctx.engine), by_queue: await buildQueueDepths(ctx.engine) };
+    } catch {
+      queue = { error: 'unavailable' as const };
+    }
+    let workers: unknown;
+    try {
+      const { buildWorkersSnapshot } = await import('../commands/status.ts');
+      workers = await buildWorkersSnapshot(ctx.engine);
+    } catch {
+      workers = { error: 'unavailable' as const };
+    }
     // #1984: report the brain server's version so a thin-client `gbrain status`
     // can surface remote_version alongside its own local CLI version.
     const { VERSION } = await import('../version.ts');
-    return { schema_version: 1 as const, version: VERSION, sync, cycle };
+    return { schema_version: 2 as const, version: VERSION, sync, cycle, queue, workers };
   },
   scope: 'admin',
   localOnly: false,
@@ -3040,7 +3255,12 @@ const run_doctor: Operation = {
   params: {},
   handler: async (ctx) => {
     const { doctorReportRemote } = await import('../commands/doctor.ts');
-    return doctorReportRemote(ctx.engine);
+    // Source isolation (cross-model P1): a source-bound caller's report must
+    // not aggregate other sources' activity. Scope-aware checks (currently
+    // volunteer_channels) filter on these ids; unscoped ctx = brain-wide.
+    const scope = sourceScopeOpts(ctx);
+    const sourceIds = scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : undefined);
+    return doctorReportRemote(ctx.engine, { sourceIds });
   },
   scope: 'admin',
   localOnly: false,
@@ -3050,7 +3270,7 @@ const get_versions: Operation = {
   name: 'get_versions',
   description: 'Page version history',
   params: {
-    slug: { type: 'string', required: true },
+    slug: { type: 'string', required: true, description: 'Slug of the page whose version history to list.' },
   },
   handler: async (ctx, p) => {
     const versions = await ctx.engine.getVersions(p.slug as string, sourceScopeOpts(ctx));
@@ -3069,8 +3289,8 @@ const revert_version: Operation = {
   name: 'revert_version',
   description: 'Revert page to a previous version',
   params: {
-    slug: { type: 'string', required: true },
-    version_id: { type: 'number', required: true },
+    slug: { type: 'string', required: true, description: 'Slug of the page to revert.' },
+    version_id: { type: 'number', required: true, description: 'Numeric version id to revert to, as returned by get_versions. Not a version NUMBER offset — pass the id field.' },
   },
   mutating: true,
   scope: 'write',
@@ -3128,7 +3348,7 @@ const put_raw_data: Operation = {
   name: 'put_raw_data',
   description: 'Store raw API response data for a page',
   params: {
-    slug: { type: 'string', required: true },
+    slug: { type: 'string', required: true, description: 'Slug of the page to attach the raw data to.' },
     source: { type: 'string', required: true, description: 'Data source (e.g., crustdata, happenstance)' },
     data: { type: 'object', required: true, description: 'Raw data object' },
   },
@@ -3148,7 +3368,7 @@ const get_raw_data: Operation = {
   name: 'get_raw_data',
   description: 'Retrieve raw data for a page',
   params: {
-    slug: { type: 'string', required: true },
+    slug: { type: 'string', required: true, description: 'Slug of the page whose raw data to fetch.' },
     source: { type: 'string', description: 'Filter by source' },
   },
   handler: async (ctx, p) => {
@@ -3163,7 +3383,7 @@ const resolve_slugs: Operation = {
   name: 'resolve_slugs',
   description: 'Fuzzy-resolve a partial slug to matching page slugs',
   params: {
-    partial: { type: 'string', required: true },
+    partial: { type: 'string', required: true, description: "Partial slug or title text to match, e.g. 'alice-ex' or 'meeting notes'. This is the search text param — there is no `text` param." },
     source_id: {
       type: 'string',
       description:
@@ -3186,7 +3406,7 @@ const get_chunks: Operation = {
   name: 'get_chunks',
   description: 'Get content chunks for a page',
   params: {
-    slug: { type: 'string', required: true },
+    slug: { type: 'string', required: true, description: 'Slug of the page whose content chunks to return.' },
   },
   handler: async (ctx, p) => {
     // #2555: route through the canonical scope ladder (federated array >
@@ -3203,10 +3423,10 @@ const log_ingest: Operation = {
   name: 'log_ingest',
   description: 'Log an ingestion event',
   params: {
-    source_type: { type: 'string', required: true },
-    source_ref: { type: 'string', required: true },
-    pages_updated: { type: 'array', required: true, items: { type: 'string' } },
-    summary: { type: 'string', required: true },
+    source_type: { type: 'string', required: true, description: "Kind of ingest source, e.g. 'email', 'meeting', 'rss', 'api'." },
+    source_ref: { type: 'string', required: true, description: 'Identifier of the ingested item — a URL, message id, or file path.' },
+    pages_updated: { type: 'array', required: true, items: { type: 'string' }, description: 'Slugs of the pages this ingest created or updated.' },
+    summary: { type: 'string', required: true, description: 'One-line human-readable summary of what was ingested.' },
   },
   mutating: true,
   scope: 'write',
@@ -3264,8 +3484,9 @@ const file_list: Operation = {
   },
   scope: 'admin',
   localOnly: true,
-  handler: async (_ctx, p) => {
-    const sql = db.getConnection();
+  handler: async (ctx, p) => {
+    const { sqlQueryForEngine } = await import('./sql-query.ts');
+    const sql = sqlQueryForEngine(ctx.engine);
     const slug = p.slug as string | undefined;
     const rows = slug
       ? await sql`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at FROM files WHERE page_slug = ${slug} ORDER BY filename LIMIT ${FILE_LIST_LIMIT}`
@@ -3322,7 +3543,8 @@ const file_upload: Operation = {
     };
     const mimeType = MIME_TYPES[extname(filePath).toLowerCase()] || null;
 
-    const sql = db.getConnection();
+    const { sqlQueryForEngine } = await import('./sql-query.ts');
+    const sql = sqlQueryForEngine(ctx.engine);
     const existing = await sql`SELECT id FROM files WHERE content_hash = ${hash} AND storage_path = ${storagePath}`;
     if (existing.length > 0) {
       return { status: 'already_exists', storage_path: storagePath };
@@ -3372,8 +3594,9 @@ const file_url: Operation = {
   },
   scope: 'admin',
   localOnly: true,
-  handler: async (_ctx, p) => {
-    const sql = db.getConnection();
+  handler: async (ctx, p) => {
+    const { sqlQueryForEngine } = await import('./sql-query.ts');
+    const sql = sqlQueryForEngine(ctx.engine);
     const rows = await sql`SELECT storage_path, mime_type, size_bytes FROM files WHERE storage_path = ${p.storage_path as string}`;
     if (rows.length === 0) {
       throw new OperationError('storage_error', `File not found: ${p.storage_path}`);
@@ -3387,15 +3610,16 @@ const file_url: Operation = {
 
 const submit_job: Operation = {
   name: 'submit_job',
-  description: 'Submit a background job to the Minions queue. Built-in types: sync, embed, lint, import, extract, backlinks, autopilot-cycle. The `shell` type is CLI-only and rejected over MCP.',
+  description: 'Submit a background job to the Minions queue. Built-in types are registered by registerBuiltinHandlers (src/commands/jobs.ts) — e.g. sync, embed, lint, import, extract, backlinks, autopilot-cycle, subagent, and more; submitting an unknown name with --follow prints the full list. The `shell` type is CLI-only and rejected over MCP.',
   params: {
-    name: { type: 'string', required: true, description: 'Job type (sync, embed, lint, import, extract, backlinks, autopilot-cycle; shell is CLI-only)' },
+    name: { type: 'string', required: true, description: 'Job type (e.g. sync, embed, lint, import, extract, backlinks, autopilot-cycle; shell is CLI-only). Full registry: registerBuiltinHandlers in src/commands/jobs.ts.' },
     data: { type: 'object', description: 'Job payload (JSON)' },
     queue: { type: 'string', description: 'Queue name (default: "default")' },
     priority: { type: 'number', description: 'Priority (0 = highest, default: 0)' },
     max_attempts: { type: 'number', description: 'Max retry attempts (default: 3)' },
     delay: { type: 'number', description: 'Delay in ms before eligible' },
     timeout_ms: { type: 'number', description: 'Per-job wall-clock timeout in ms; aborted job goes to dead' },
+    lock_duration_ms: { type: 'number', description: 'Per-job lock lease in ms (#4145). Out-of-range values are clamped to [5000, 3600000] — remote writers cannot pin an immortal lock. Omit to use the handler-type default (300s for long LLM handlers) or the worker default (30s).' },
   },
   mutating: true,
   scope: 'admin',
@@ -3443,6 +3667,10 @@ const submit_job: Operation = {
       max_attempts: (p.max_attempts as number) || 3,
       delay: (p.delay as number) || undefined,
       timeout_ms: (p.timeout_ms as number) || undefined,
+      // #4145 [CEO-F7/R2-6]: range enforcement lives in queue.add's
+      // clampLockDurationMs (ParamDef has no min/max support; wrong TYPE is
+      // rejected by the shared number validation upstream of this handler).
+      lock_duration_ms: (p.lock_duration_ms as number) || undefined,
     }, trusted);
 
     // v0.35.8.0: submit_job audit-log parity with the CLI path (codex F-CDX-4).
@@ -3472,9 +3700,31 @@ const submit_job: Operation = {
       } catch { /* audit failures never block submission */ }
     }
 
-    return job;
+    // Amendments 24/25: post-enqueue queue-state probe (time-bounded,
+    // fail-open). The job is already persisted; a probe failure degrades to
+    // {probe_failed: true}, never an error on a successful submission.
+    return { ...job, queue_state: await probeQueueStateSafe(ctx, job.queue, [name]) };
   },
 };
+
+/**
+ * Wrapper around `probeQueueState` that also swallows module-load failures,
+ * so BOTH submit surfaces (submit_job, submit_agent) satisfy amendment 24's
+ * "probe failure NEVER errors a successful submission" — even when the
+ * supervisor module itself cannot load.
+ */
+async function probeQueueStateSafe(
+  ctx: OperationContext,
+  queue: string,
+  handlerNames: string[],
+): Promise<Record<string, unknown>> {
+  try {
+    const { probeQueueState } = await import('./minions/supervisor.ts');
+    return (await probeQueueState(ctx.engine, queue, handlerNames)) as unknown as Record<string, unknown>;
+  } catch {
+    return { probe_failed: true };
+  }
+}
 
 // v0.38 Slice 3 — D13 — remote-callable submit_agent with registration-time
 // binding enforcement. Distinct from `submit_job` because:
@@ -3496,7 +3746,7 @@ const submit_agent: Operation = {
     queue: { type: 'string', description: 'Queue name (default "default")' },
   },
   mutating: true,
-  scope: 'agent' as any,
+  scope: 'agent',
   handler: async (ctx, p) => {
     // Remote-callable but only when the OAuth client has scope=agent AND
     // a binding row. Local CLI callers (ctx.remote === false) skip the
@@ -3699,7 +3949,117 @@ const submit_agent: Operation = {
       });
     } catch { /* never block submission */ }
 
-    return { id: job.id, name: 'subagent', client_id: clientId };
+    // Amendments 24/25: the returned job id means nothing if the lane is
+    // dead — attach a time-bounded, fail-open queue-state probe.
+    return {
+      id: job.id,
+      name: 'subagent',
+      client_id: clientId,
+      queue_state: await probeQueueStateSafe(ctx, job.queue, ['subagent']),
+    };
+  },
+};
+
+/**
+ * Minions-visibility wave — ownership-fenced agent-job status (amendment 27).
+ *
+ * The companion read for `submit_agent`: an agent-scoped client can poll ONLY
+ * its own delegated jobs. Deliberate posture:
+ *   - `ctx.auth.clientId` is REQUIRED on EVERY transport — stdio and legacy
+ *     bearer callers carry no client identity and are refused
+ *     (permission_denied) rather than silently unfenced. This is stricter
+ *     than scope enforcement alone (which local/stdio callers bypass).
+ *   - The ownership filter is a fail-closed SQL WHERE on
+ *     `data->>'__owner_client_id'` (the JSONB predicate submit_agent already
+ *     uses for its concurrency cap — identical semantics on both engines),
+ *     never a post-fetch JS check.
+ *   - Foreign and missing ids return one uniform `not_found` envelope so the
+ *     op is not a job-id enumeration oracle (ENG-13; the ErrorCode comment
+ *     was widened accordingly). Shell/admin jobs stay on admin-scope
+ *     `get_job` — this op reads the agent lane (`name = 'subagent'`) only.
+ *   - `queue_position` = count of waiting jobs ahead in claim order
+ *     (priority ASC, created_at ASC — the exact ORDER BY of
+ *     `MinionQueue.claim`), computed only while status = 'waiting'.
+ */
+const get_agent_job: Operation = {
+  name: 'get_agent_job',
+  description: 'Poll an agent job submitted via submit_agent. Returns a trimmed status view (id, status, timestamps, error_text, result) plus queue_position (waiting jobs ahead in claim order; 0 = next) while the job is still waiting. Requires the `agent` OAuth scope; only jobs owned by the calling client are visible.',
+  params: {
+    id: { type: 'number', required: true, description: 'Job id returned by submit_agent' },
+  },
+  scope: 'agent',
+  handler: async (ctx, p) => {
+    const clientId = ctx.auth?.clientId;
+    if (!clientId || typeof clientId !== 'string') {
+      throw new OperationError(
+        'permission_denied',
+        'get_agent_job requires an authenticated OAuth client identity.',
+        'Call over HTTP MCP with an `agent`-scoped token. Transports without a per-client identity (stdio, legacy bearer) cannot read agent jobs; use admin-scope get_job from a trusted context instead.',
+      );
+    }
+    const id = p.id;
+    if (typeof id !== 'number' || !Number.isInteger(id)) {
+      throw new OperationError('invalid_params', 'id must be an integer job id');
+    }
+
+    // One round-trip: the ownership fence rides the WHERE, and the
+    // queue_position subselect mirrors MinionQueue.claim's candidate set
+    // (same queue, status='waiting') and ORDER BY (priority, created_at),
+    // with the row id as the deterministic tie-break. Perf: the outer lookup
+    // is a primary-key read; the subselect's (queue, status) filter is
+    // covered by the wave's wedge-index prefix once that migration (another
+    // lane) lands, and stays a small scan until then.
+    const rows = await ctx.engine.executeRaw<{
+      id: number;
+      status: string;
+      created_at: string | Date | null;
+      started_at: string | Date | null;
+      finished_at: string | Date | null;
+      error_text: string | null;
+      result: unknown;
+      queue_position: number | string | null;
+    }>(
+      `SELECT j.id, j.status, j.created_at, j.started_at, j.finished_at, j.error_text, j.result,
+              CASE WHEN j.status = 'waiting' THEN (
+                SELECT count(*)::int FROM minion_jobs q
+                 WHERE q.queue = j.queue AND q.status = 'waiting'
+                   AND (q.priority < j.priority
+                        OR (q.priority = j.priority AND q.created_at < j.created_at)
+                        OR (q.priority = j.priority AND q.created_at = j.created_at AND q.id < j.id))
+              ) ELSE NULL END AS queue_position
+         FROM minion_jobs j
+        WHERE j.id = $1
+          AND j.name = 'subagent'
+          AND j.data->>'__owner_client_id' = $2`,
+      [id, clientId],
+    );
+    if (rows.length === 0) {
+      // Uniform envelope: foreign-owned and nonexistent ids are
+      // indistinguishable by design (anti-enumeration).
+      throw new OperationError('not_found', `Job not found: ${id}`);
+    }
+    const row = rows[0];
+    const iso = (v: string | Date | null): string | null =>
+      v ? (v instanceof Date ? v.toISOString() : new Date(v).toISOString()) : null;
+    // PGLite may hand jsonb back as text; postgres.js parses it.
+    let result: unknown = row.result ?? null;
+    if (typeof result === 'string') {
+      try { result = JSON.parse(result); } catch { /* keep raw text */ }
+    }
+    return {
+      id: row.id,
+      status: row.status,
+      created_at: iso(row.created_at),
+      started_at: iso(row.started_at),
+      finished_at: iso(row.finished_at),
+      // Cap: error_text is an unbounded worker-written field (stack traces,
+      // provider dumps); a remote polling view shouldn't ship megabytes.
+      error_text: row.error_text ? row.error_text.slice(0, 2000) : null,
+      result,
+      ...(row.status === 'waiting' && row.queue_position !== null
+        ? { queue_position: Number(row.queue_position) }
+        : {}),
+    };
   },
 };
 
@@ -4026,12 +4386,12 @@ const volunteer_context: Operation = {
     // volunteer-events sink (drained at exit). Never fails the op.
     if (pages.length) {
       try {
-        const { logVolunteerEventsFireAndForget, volunteerEventRowsFrom } = await import('./context/volunteer-events.ts');
+        const { logVolunteerEventsFireAndForget, volunteerEventRowsFrom, SESSION_ID_MAX_LEN } = await import('./context/volunteer-events.ts');
         // Trust-boundary clamps (remote MCP callers): cap session_id length so
         // a read-scoped token can't bank unbounded TEXT per request, and only
         // log integer turns — a non-integer would throw inside the single
         // multi-row INSERT and silently drop the whole batch.
-        const sessionId = typeof p.session_id === 'string' ? p.session_id.slice(0, 256) : null;
+        const sessionId = typeof p.session_id === 'string' ? p.session_id.slice(0, SESSION_ID_MAX_LEN) : null;
         const turn =
           typeof p.turn === 'number' && Number.isInteger(p.turn) && Math.abs(p.turn) <= 2_147_483_647
             ? p.turn
@@ -4440,11 +4800,12 @@ const sources_add: Operation = {
     const isLocal = ctx.remote === false;
     const remotePath = isLocal ? (p.path as string | undefined) ?? null : null;
     const remoteCloneDir = isLocal ? (p.clone_dir as string | undefined) : undefined;
-    if (!isLocal && (p.path !== undefined || p.clone_dir !== undefined)) {
-      ctx.logger.warn(
-        '[sources_add] ignoring path/clone_dir overrides on HTTP MCP transport ' +
-          '(remote callers can only register a remote --url; the clone path is ' +
-          'fixed under $GBRAIN_HOME/clones/).',
+    if (!isLocal && p.path !== undefined) {
+      throw new OperationError(
+        'invalid_params',
+        'sources_add: path is not honored over MCP (security confinement). ' +
+          'Register with --url instead, or run `gbrain sources add --path ...` on the host CLI.',
+        'Use --url to register a remote source, or run the command locally with --path.',
       );
     }
 
@@ -4491,7 +4852,7 @@ const sources_remove: Operation = {
     'under $GBRAIN_HOME/clones/ (realpath+lstat — symlink-safe). For most ' +
     'workflows prefer sources_archive for the soft-delete path.',
   params: {
-    id: { type: 'string', required: true },
+    id: { type: 'string', required: true, description: "Source id to remove, as listed by sources_list (e.g. 'wiki'). A source id, not a page slug." },
     confirm_destructive: {
       type: 'boolean',
       description:
@@ -4525,7 +4886,7 @@ const sources_status: Operation = {
     'so a remote MCP caller can diagnose whether the on-disk clone is ' +
     'syncable without SSH access to the brain host.',
   params: {
-    id: { type: 'string', required: true },
+    id: { type: 'string', required: true, description: "Source id to diagnose, as listed by sources_list (e.g. 'wiki'). A source id, not a page slug." },
   },
   scope: 'read',
   handler: async (ctx, p) => {
@@ -4574,7 +4935,11 @@ const extract_facts: Operation = {
     }
 
     const sourceId = ctx.sourceId ?? 'default';
-    const visibility: 'private' | 'world' = p.visibility === 'world' ? 'world' : 'private';
+    // [ENG-8] Explicit caller value wins; UNSET resolves through the shared
+    // facts.default_visibility helper (the old ternary coerced unset →
+    // 'private' before any config default could run). Garbage stays 'private'.
+    const { resolveVisibilityParam } = await import('./facts/visibility.ts');
+    const visibility: 'private' | 'world' = await resolveVisibilityParam(ctx.engine, p.visibility);
 
     const r = await runFactsPipeline(p.turn_text as string, {
       engine: ctx.engine,
@@ -4779,6 +5144,307 @@ const recall: Operation = {
             ...(searchDegraded ? { search_degraded: searchDegraded } : {}),
           }
         : {}),
+      ...(budgetTokens !== null
+        ? { budget_tokens: budgetTokens, budget_used: budgetUsed, dropped_count: droppedCount }
+        : {}),
+    };
+  },
+};
+
+/** Parse an `entities` param (comma-string or array) to a trimmed name list. */
+function parseEntityList(v: unknown): string[] {
+  if (Array.isArray(v)) return v.filter((x) => typeof x === 'string' && x.trim()).map((x) => (x as string).trim());
+  if (typeof v === 'string') return v.split(',').map((s) => s.trim()).filter(Boolean);
+  return [];
+}
+
+const context_pack: Operation = {
+  name: 'context_pack',
+  description:
+    'MEMORY VERB (v1): budget-packed session-boundary bundle for a set of standing entities — entity cards + open threads + hot facts, zero-LLM, sub-second. Call at session start (warm cold context) and after compaction (rehydrate what the summary lost). WORLD-ONLY by default; pass include_private (honored for LOCAL trusted callers only) to widen all arms. budget_tokens packs server-side (response reports budget_used + dropped_count; cards pack first, then facts). Branch on structured fields, never prose. protocol_version rides every response.',
+  params: {
+    entities: { type: 'string', required: true, description: 'Comma-separated entity names/slugs to bundle. Capped at 8.' },
+    budget_tokens: { type: 'number', description: 'Server-side token budget (char/4). Cards pack first, then facts. Response adds budget_tokens, budget_used, dropped_count.' },
+    since: { type: 'string', description: 'ISO 8601 datetime. When set, open-thread events are filtered to those after this cursor.' },
+    session_id: { type: 'string', description: 'Opaque session id; keys the hot-memory cache and (on the push path) the session cursor.' },
+    include_private: { type: 'boolean', description: 'Local trusted callers only: widen ALL arms to include private facts. Ignored (world-only) for remote callers. Default false.' },
+  },
+  scope: 'read',
+  verb: true,
+  cliHints: { name: 'context-pack' },
+  annotations: { title: 'context_pack (boundary bundle)', readOnlyHint: true },
+  handler: async (ctx, p) => {
+    const { assembleContextPack, renderPack, isAfter, PACK_DEFAULT_MAX_ENTITIES } = await import('./context/turn-context.ts');
+    const sourceId = ctx.sourceId ?? 'default';
+    const rawSince = typeof p.since === 'string' && p.since.trim() ? p.since : undefined;
+    if (rawSince !== undefined && !Number.isFinite(Date.parse(rawSince))) {
+      throw verbError(
+        'invalid_params',
+        `context_pack: since is not a parseable timestamp: "${rawSince.slice(0, 60)}"`,
+        'Pass an ISO 8601 datetime, e.g. since: "2026-08-11T00:00:00Z".',
+      );
+    }
+    // Normalize to ISO (red-team F4): the filter + rendered text use it.
+    const since = rawSince !== undefined ? new Date(Date.parse(rawSince)).toISOString() : undefined;
+    // Echo the CAPPED list (pre-landing review): the assembler bundles at most
+    // PACK_DEFAULT_MAX_ENTITIES, so echoing more would claim entities were
+    // bundled that produced no cards.
+    const entities = parseEntityList(p.entities).slice(0, PACK_DEFAULT_MAX_ENTITIES);
+    // Fail-closed: private only when EXPLICITLY requested AND the caller is
+    // trusted-local (ctx.remote === false). A remote caller never widens.
+    const includePrivate = p.include_private === true && ctx.remote === false;
+    const budgetTokens =
+      typeof p.budget_tokens === 'number' && Number.isFinite(p.budget_tokens) && p.budget_tokens > 0
+        ? Math.floor(p.budget_tokens)
+        : null;
+    const res = await assembleContextPack(ctx.engine, {
+      sourceId,
+      entities,
+      since,
+      sessionId: typeof p.session_id === 'string' ? p.session_id : undefined,
+      includePrivate,
+      maxEntities: PACK_DEFAULT_MAX_ENTITIES,
+    });
+
+    let cards = res.cards ?? [];
+    let facts = res.facts ?? [];
+    let budgetUsed: number | undefined;
+    let droppedCount: number | undefined;
+    if (budgetTokens !== null) {
+      const cardCost = (c: (typeof cards)[number]) =>
+        estimateTokens(`${c.entity.title} ${c.summary} ${(c.open_threads ?? []).map((t) => t.text).join(' ')}`);
+      const cardPack = packToBudget(cards, cardCost, budgetTokens);
+      cards = cardPack.items;
+      const remaining = budgetTokens - cardPack.meta.used;
+      const factPack =
+        remaining > 0
+          ? packToBudget(facts, (f) => estimateTokens(f.fact), remaining)
+          : { items: [] as typeof facts, meta: { budget: 0, used: 0, dropped: facts.length, kept: 0 } };
+      facts = factPack.items;
+      budgetUsed = cardPack.meta.used + factPack.meta.used;
+      droppedCount = cardPack.meta.dropped + factPack.meta.dropped;
+    }
+    // Recompute open_threads with the SAME since filter the assembler applied
+    // (pre-landing review: the raw flatMap silently dropped the documented
+    // `since` contract from the structured array whenever budget packing ran).
+    const open_threads = cards
+      .flatMap((c) => c.open_threads ?? [])
+      .filter((t) => !since || (t.date !== null && isAfter(t.date, since)));
+    // Re-render the injectable block from the FINAL sets (adversarial review):
+    // `text` is what harnesses inject, so it must honor the same budget the
+    // structured arrays report — the assembler's pre-budget rendering would
+    // overrun the declared budget_tokens.
+    const text = budgetTokens !== null ? renderPack(cards, open_threads, facts) : res.text;
+
+    return {
+      protocol_version: MEMORY_VERBS_VERSION,
+      entities,
+      cards: cards.map((c) => ({
+        slug: c.entity.slug,
+        title: c.entity.title,
+        type: c.entity.type,
+        summary: c.summary,
+        open_threads: c.open_threads,
+        edges: c.edges,
+        backlink_count: c.backlink_count,
+      })),
+      open_threads,
+      facts: facts.map((f) => ({
+        fact: f.fact,
+        kind: f.kind,
+        entity_slug: f.entity_slug,
+        valid_from: f.valid_from,
+        confidence: f.confidence,
+      })),
+      text,
+      ...(res.degradedReason ? { degraded_reason: res.degradedReason } : {}),
+      ...(budgetTokens !== null
+        ? { budget_tokens: budgetTokens, budget_used: budgetUsed, dropped_count: droppedCount }
+        : {}),
+    };
+  },
+};
+
+const delta: Operation = {
+  name: 'delta',
+  description:
+    'MEMORY VERB (v1): "what changed since T" for heartbeats — pages updated after `since` + hot facts newer than `since` + open-thread events after `since`, zero-LLM. Lets a periodic wake maintain warm state in O(changes) instead of re-deriving. Optionally scope thread deltas to `entities`. WORLD-ONLY by default; include_private honored for local trusted callers only. budget_tokens packs server-side (pages first, then facts). protocol_version rides every response.',
+  params: {
+    since: { type: 'string', description: 'ISO 8601 cursor. Returns pages/facts/thread-events newer than this timestamp. Optional when session_id carries an established cursor.' },
+    since_slug: { type: 'string', description: 'Stateless keyset resume: pass back `next_cursor.slug` from the previous response (paired with `since`=next_cursor.since) to page through pages sharing one timestamp. Ignored when session_id is set (the session cursor carries it).' },
+    entities: { type: 'string', description: 'Optional comma-separated entity scope for thread-event deltas. Capped at 8.' },
+    budget_tokens: { type: 'number', description: 'Server-side token budget (char/4). Pages pack first, then facts. Response adds budget_tokens, budget_used, dropped_count.' },
+    session_id: { type: 'string', description: 'Opaque session id. Drives the per-session cursor: the first call establishes it, each call advances it to the newest DELIVERED change (at-least-once — with has_more:true the undelivered tail returns on the next wake). Without it, pass an explicit `since` for a stateless delta.' },
+    include_private: { type: 'boolean', description: 'Local trusted callers only: widen ALL arms to include private facts. Ignored (world-only) for remote callers. Default false.' },
+  },
+  scope: 'read',
+  verb: true,
+  cliHints: { name: 'delta' },
+  annotations: { title: 'delta (what changed since)', readOnlyHint: true },
+  handler: async (ctx, p) => {
+    const { assembleDeltaContext, renderDelta, PACK_DEFAULT_MAX_ENTITIES } = await import('./context/turn-context.ts');
+    const { getSessionContextState, upsertSessionContextState } = await import('./context/session-state.ts');
+    const sourceId = ctx.sourceId ?? 'default';
+    const rawSince = typeof p.since === 'string' && p.since.trim() ? p.since : null;
+    if (rawSince !== null && !Number.isFinite(Date.parse(rawSince))) {
+      throw verbError(
+        'invalid_params',
+        `delta: since is not a parseable timestamp: "${rawSince.slice(0, 60)}"`,
+        'Pass an ISO 8601 datetime, e.g. since: "2026-08-11T00:00:00Z".',
+      );
+    }
+    // NORMALIZE to ISO immediately (red-team F4): the raw string is echoed
+    // into the injectable `text` block, so an attacker-shaped-but-parseable
+    // `since` must never reach rendering verbatim.
+    const explicitSince = rawSince !== null ? new Date(Date.parse(rawSince)).toISOString() : null;
+    const sessionId = typeof p.session_id === 'string' && p.session_id.trim() ? p.session_id : null;
+    // Cursor namespace (pre-landing review, fail-closed): 'local' is RESERVED
+    // for the trusted CLI/hook lane, gated on STRICT ctx.remote === false —
+    // anything else (true, undefined via cast bypass) is remote. Remote callers
+    // use their auth client id; an auth-LESS or blank-id remote (stdio MCP)
+    // gets the shared 'remote' sentinel — never collapsed into 'local'.
+    const clientId = ctx.remote === false ? null : ctx.auth?.clientId?.trim() || 'remote';
+    const includePrivate = p.include_private === true && ctx.remote === false;
+    const budgetTokens =
+      typeof p.budget_tokens === 'number' && Number.isFinite(p.budget_tokens) && p.budget_tokens > 0
+        ? Math.floor(p.budget_tokens)
+        : null;
+
+    const state = sessionId ? await getSessionContextState(ctx.engine, sourceId, clientId, sessionId) : null;
+    const effectiveSince = explicitSince ?? state?.last_wake_at ?? null;
+
+    if (!effectiveSince) {
+      if (!sessionId) {
+        throw verbError(
+          'invalid_params',
+          'delta requires `since` (ISO 8601) or a `session_id` with an established cursor.',
+          'Pass since ("2026-08-11T00:00:00Z") for a stateless delta, or a stable session_id — the first call establishes the cursor and later calls return only newer changes.',
+        );
+      }
+      // First wake for this session: establish the cursor at now and report an
+      // empty delta (there is no prior point to diff against yet). Opportunistic
+      // GC on row creation bounds session-row accumulation on serve-less CLI
+      // lanes and remote read callers minting session ids (pre-landing review).
+      // AWAITED (v0.45.7): a floating engine promise here races the CLI lane's
+      // engine teardown and wedges the process — `gbrain delta --session-id`
+      // printed its response but never exited (the exact command the shipped
+      // HEARTBEAT.md ambient-delta row tells agents to run). GC is two fast
+      // DELETEs on a capped table and internally fail-open, so awaiting costs
+      // one first-wake round-trip, never an error. The serve-boot call site
+      // (src/mcp/server.ts) stays fire-and-forget — that process is long-lived.
+      const now = new Date().toISOString();
+      const { gcSessionContextState } = await import('./context/session-state.ts');
+      await upsertSessionContextState(ctx.engine, sourceId, clientId, sessionId, { lastWakeAt: now });
+      await gcSessionContextState(ctx.engine);
+      return {
+        protocol_version: MEMORY_VERBS_VERSION,
+        since: now, pages: [], facts: [], threads: [], text: '', has_more: false,
+        next_cursor: { since: now, slug: '' },
+        ...(budgetTokens !== null
+          ? { budget_tokens: budgetTokens, budget_used: 0, dropped_count: 0 }
+          : {}),
+      };
+    }
+
+    // Keyset cursor (red-team F1/F2 fix): pages page by (updated_at, slug), so
+    // a >limit cluster at one timestamp is reachable and a delivered page never
+    // re-appears unless it changes. The keyset slug lives in the session row
+    // (surfaced_slugs[0]); an explicit-`since` caller has no stored slug and
+    // resumes via the returned `next_cursor`.
+    const cursorSlug = sessionId ? state?.surfaced_slugs?.[0] : undefined;
+    const explicitSlug = typeof p.since_slug === 'string' ? p.since_slug : undefined;
+    const sinceSlug = explicitSlug ?? cursorSlug;
+
+    const res = await assembleDeltaContext(ctx.engine, {
+      sourceId,
+      since: effectiveSince,
+      ...(sinceSlug !== undefined ? { sinceSlug } : {}),
+      entities: parseEntityList(p.entities),
+      sessionId: sessionId ?? undefined,
+      includePrivate,
+      maxEntities: PACK_DEFAULT_MAX_ENTITIES,
+    });
+
+    // Pages arrive OLDEST first by (updated_at, slug) — no client-side dedup
+    // needed; the keyset already excludes everything at/before the cursor.
+    let pages = res.deltaPages ?? [];
+    let facts = res.facts ?? [];
+    const threads = res.openThreads ?? [];
+    let budgetUsed: number | undefined;
+    let droppedCount: number | undefined;
+    let factsDropped = 0;
+    const fetchedPages = pages.length;
+    if (budgetTokens !== null) {
+      // packToBudget keeps a contiguous PREFIX (order-preserving, stops at the
+      // first overflow) — with oldest-first pages the kept set stays contiguous
+      // from the cursor, which the advance logic below depends on.
+      const pagePack = packToBudget(pages, (pg) => estimateTokens(`${pg.title} ${pg.slug}`), budgetTokens);
+      pages = pagePack.items;
+      const remaining = budgetTokens - pagePack.meta.used;
+      const factPack =
+        remaining > 0
+          ? packToBudget(facts, (f) => estimateTokens(f.fact), remaining)
+          : { items: [] as typeof facts, meta: { budget: 0, used: 0, dropped: facts.length, kept: 0 } };
+      facts = factPack.items;
+      budgetUsed = pagePack.meta.used + factPack.meta.used;
+      droppedCount = pagePack.meta.dropped + factPack.meta.dropped;
+      factsDropped = factPack.meta.dropped;
+    }
+    const pagesDropped = fetchedPages - pages.length;
+    // has_more covers ALL undelivered content — fetch-limit overflow, budget-
+    // dropped pages, AND budget-dropped facts (pre-landing review: facts were
+    // silently lost when pages fit but facts overflowed).
+    const hasMore = res.deltaOverflow === true || pagesDropped > 0 || factsDropped > 0;
+
+    // Cursor advance (keyset, at-least-once): advance to the last DELIVERED
+    // (updated_at, slug). The keyset's strict `>` means the next wake starts
+    // exactly after it — a >limit same-timestamp cluster drains one page at a
+    // time across wakes (F1), and a delivered page never re-appears (F2). On a
+    // page-less wake with nothing dropped, advance the TIME cursor to now()
+    // minus a safety lag (in-flight write txns stamp updated_at at txn START)
+    // and clear the keyset slug. If nothing delivered but something dropped, do
+    // NOT advance (deliver-before-advance; a too-small budget must not eat it).
+    const nextCursor =
+      pages.length > 0
+        ? { since: pages[pages.length - 1].updated_at, slug: pages[pages.length - 1].slug }
+        : { since: effectiveSince, slug: sinceSlug ?? '' };
+    if (sessionId) {
+      if (pages.length > 0) {
+        await upsertSessionContextState(ctx.engine, sourceId, clientId, sessionId, {
+          lastWakeAt: nextCursor.since,
+          cursorSlug: nextCursor.slug,
+        });
+      } else if (!hasMore) {
+        await upsertSessionContextState(ctx.engine, sourceId, clientId, sessionId, {
+          lastWakeAt: new Date(Date.now() - 2000).toISOString(),
+          cursorSlug: '',
+        });
+      }
+    }
+
+    // Re-render the injectable block from the FINAL sets (adversarial review):
+    // `text` must honor the budget AND the boundary-tie exclusion the
+    // structured arrays reflect — the assembler's render predates both.
+    const text = renderDelta(pages, facts, threads, effectiveSince);
+
+    return {
+      protocol_version: MEMORY_VERBS_VERSION,
+      since: effectiveSince,
+      pages,
+      facts: facts.map((f) => ({
+        fact: f.fact,
+        kind: f.kind,
+        entity_slug: f.entity_slug,
+        valid_from: f.valid_from,
+        confidence: f.confidence,
+      })),
+      threads,
+      text,
+      has_more: hasMore,
+      // Stateless resume: a caller with no session_id passes these back as
+      // `since` + `since_slug` on the next call to page deterministically.
+      next_cursor: nextCursor,
+      ...(res.degradedReason ? { degraded_reason: res.degradedReason } : {}),
       ...(budgetTokens !== null
         ? { budget_tokens: budgetTokens, budget_used: budgetUsed, dropped_count: droppedCount }
         : {}),
@@ -6047,6 +6713,9 @@ const ontology_propose: Operation = {
     visibility: { type: 'string', enum: ['private', 'world'], description: 'Default private.' },
   },
   handler: async (ctx, p) => {
+    // [ENG-8] Same unset-vs-explicit ladder as extract_facts: explicit
+    // caller visibility wins; unset resolves facts.default_visibility.
+    const { resolveVisibilityParam } = await import('./facts/visibility.ts');
     return ctx.engine.mergeOntologyFact({
       entitySlug: String(p.entity),
       dimension: String(p.dimension),
@@ -6055,7 +6724,7 @@ const ontology_propose: Operation = {
       source: typeof p.source === 'string' && p.source ? p.source : 'manual',
       validFrom: typeof p.valid_from === 'string' ? p.valid_from : undefined,
       validTo: typeof p.valid_to === 'string' ? p.valid_to : undefined,
-      visibility: p.visibility === 'world' ? 'world' : 'private',
+      visibility: await resolveVisibilityParam(ctx.engine, p.visibility),
       sourceId: ctx.sourceId,
     });
   },
@@ -6380,10 +7049,259 @@ const extraction_review: Operation = {
   cliHints: { name: 'extraction-review', positional: ['action'] },
 };
 
+// --- WP4 (T9): request_tools — discovery + pull-based per-client unlock ---
+
+/**
+ * D14.5: per-client rate limit on the persist branch (~5 surface persists /
+ * hour / client). Module-level token bucket (bounded LRU — attacker-chosen
+ * client ids can't grow memory); `let` + reset seam so tests don't leak
+ * bucket state across files.
+ */
+let requestToolsPersistLimiter = new RateLimiter({ limit: 5, windowMs: 3_600_000, lruCap: 5_000 });
+
+/** Test seam: fresh persist-rate-limit buckets. */
+export function __resetRequestToolsPersistLimiterForTests(): void {
+  requestToolsPersistLimiter = new RateLimiter({ limit: 5, windowMs: 3_600_000, lruCap: 5_000 });
+}
+
+/**
+ * One-line catalog summary: the first sentence of an op description,
+ * capped. Non-contractual rendering — full schemas come from the
+ * `{tools: [...]}` branch.
+ */
+function firstSentenceOf(description: string): string {
+  const t = description.trim();
+  const m = t.match(/^.*?[.!?](?=\s|$)/);
+  const s = (m ? m[0] : t).trim();
+  return s.length > 160 ? `${s.slice(0, 157)}...` : s;
+}
+
+/**
+ * The set of ops VISIBLE to this caller (never leak hidden names — C8/
+ * amendment 11 class): bounded by the server ceiling (ops above it can
+ * never be served, so naming them would recreate listed-but-denied at the
+ * persist level), minus localOnly on network transports (stdio and the
+ * trusted local CLI keep them — D7), minus ops outside the caller's scopes
+ * (agent-callable carve-out per FOV-4), minus bound-client-fenced ops (same
+ * predicate as tools/list, ENG-3), minus publish-gated ops whose gate is off
+ * (stdio and the trusted local CLI bypass gates — the D7 local-surface
+ * posture, matching assertPublishEnabled's remote===false exemption; a
+ * failed gate read hides the gated ops, fail-closed).
+ */
+async function visibleOpsForCaller(
+  ctx: OperationContext,
+  ceiling: 'verbs' | 'starter' | 'full',
+): Promise<Operation[]> {
+  const { filterOpsForSurface } = await import('../mcp/surface.ts');
+  // Trusted local callers: the stdio pipe, or the local CLI (remote is
+  // strictly false — the fail-closed trust marker). Both CAN call localOnly
+  // and gated ops, so hiding them would make the catalog dishonest.
+  const isLocal = ctx.transport === 'stdio' || ctx.remote === false;
+
+  let gateDisabled: ReadonlySet<string> = new Set();
+  if (!isLocal) {
+    try {
+      const { disabledOpsForPublishGates } = await import('../mcp/publish-gates.ts');
+      gateDisabled = await disabledOpsForPublishGates(ctx.engine, ctx.config);
+    } catch {
+      // Fail-closed: if the resolver can't even load, hide every gated op.
+      gateDisabled = new Set(operations.filter(o => o.publishGateKey).map(o => o.name));
+    }
+  }
+
+  // Auth-less transports (stdio) and grandfathered legacy bearer tokens
+  // (empty scopes array — that transport does no call-time scope checks
+  // either) skip scope filtering: for them the whole surface IS callable,
+  // so hiding by scope would make the catalog LESS honest, not more.
+  const scopes = ctx.auth?.scopes && ctx.auth.scopes.length > 0 ? ctx.auth.scopes : null;
+
+  return filterOpsForSurface(operations, ceiling).filter(op =>
+    (isLocal || !op.localOnly)
+    && (scopes === null
+      || hasScope(scopes, op.scope ?? 'read')
+      || (op.agentCallable === true && hasScope(scopes, 'agent')))
+    && opAllowedForBoundClient(ctx.auth, op)
+    && !gateDisabled.has(op.name),
+  );
+}
+
+const request_tools: Operation = {
+  name: 'request_tools',
+  description:
+    'Discover this brain\'s tool catalog and optionally unlock a wider tool surface for your client. ' +
+    'No arguments → the catalog visible to YOUR credentials, grouped by area (tool names + one-line summaries). ' +
+    '{tools: ["name", ...]} → full read-only schemas for the visible subset of those names (unknown/hidden names are silently omitted). ' +
+    '{surface: "verbs"|"starter"|"full"} → persist that tool surface for this client (bounded by the server ceiling; denied when an operator pinned the surface; ~5 changes/hour), then re-issue tools/list to see the new catalog.',
+  area: 'discovery',
+  // FOV-4: callable by read OR agent scope — discovery for every token class.
+  agentCallable: true,
+  params: {
+    tools: {
+      type: 'array',
+      items: { type: 'string', description: 'A tool name from the catalog.' },
+      description: 'Fetch full read-only tool schemas for these names. Names outside your visible surface are silently omitted (D5).',
+    },
+    surface: {
+      type: 'string',
+      enum: ['verbs', 'starter', 'full'],
+      description: 'Persist this tool surface for your client. Must not exceed the server ceiling; ignored surfaces stay available via no-arg discovery. Takes effect on your next tools/list.',
+    },
+  },
+  scope: 'read',
+  // D9: mutating because the persist branch writes oauth_clients.surface.
+  // The bound-client fence exempts it via BOUND_CLIENT_META_OPS (see the
+  // carve-out comment at opAllowedForBoundClient); the persist branch
+  // self-enforces ceiling + operator lock + scopes + rate limit.
+  mutating: true,
+  handler: async (ctx, p) => {
+    const { surfaceWiderThan, isMcpSurface } = await import('../mcp/surface.ts');
+    // Unset ceiling (local CLI / direct dispatch) = 'full' — trusted-local
+    // callers were never surface-bounded.
+    const ceiling = ctx.surfaceCeiling ?? 'full';
+
+    // D5: the three branches are mutually exclusive. {surface, tools}
+    // together is ambiguous (persist vs descriptor fetch) — reject loudly
+    // rather than silently persisting and ignoring the tools list.
+    if (p.surface !== undefined && p.tools !== undefined) {
+      throw new OperationError(
+        'invalid_params',
+        'pass either {surface} (persist) or {tools} (descriptor fetch), not both.',
+      );
+    }
+
+    // ── persist branch (D5: accepts ONLY {surface}) ─────────────────────
+    if (p.surface !== undefined) {
+      const requested = p.surface as string;
+      if (!isMcpSurface(requested)) {
+        // Backstop for direct handler calls — MCP dispatch already rejects
+        // via the enum in validateParams (invalid_params naming the valid set).
+        throw new OperationError('invalid_params', `surface must be one of: verbs, starter, full (got an unrecognized value)`);
+      }
+      const clientId = ctx.auth?.clientId;
+      if (!clientId) {
+        // stdio has no per-token identity; a surface persist has nowhere to land.
+        return { persisted: false, reason: 'no per-client surface on this transport; use --surface' };
+      }
+      if (surfaceWiderThan(requested, ceiling)) {
+        const e = new OperationError(
+          'permission_denied',
+          `surface '${requested}' is above this server's ceiling '${ceiling}' (D2: per-client surfaces narrow, never widen).`,
+          `The operator caps this transport at --surface ${ceiling}; widening requires a server restart with a wider --surface.`,
+        );
+        e.detail = `ceiling=${ceiling}`; // amendment 4 key=value denial grammar; ENG-11 assign-after
+        throw e;
+      }
+      let rows: Record<string, unknown>[];
+      try {
+        rows = await ctx.engine.executeRaw(
+          `SELECT surface, surface_set_by FROM oauth_clients WHERE client_id = $1`,
+          [clientId],
+        );
+      } catch (err) {
+        if (isUndefinedColumnError(err, 'surface') || isUndefinedColumnError(err, 'surface_set_by')) {
+          // D5: a capability-negotiation op never returns internal_error for
+          // a pre-migration brain — report the gap and keep serving.
+          return { persisted: false, reason: 'migration pending' };
+        }
+        throw err;
+      }
+      if (rows.length === 0) {
+        // Legacy bearer tokens carry a clientId that is not an oauth_clients row.
+        return { persisted: false, reason: 'no per-client surface on this transport; use --surface' };
+      }
+      const current = rows[0] as { surface?: string | null; surface_set_by?: string | null };
+      const operatorLocked = () => {
+        const e = new OperationError(
+          'permission_denied',
+          "this client's surface is operator-pinned and cannot be self-changed (amendment 19).",
+          `Ask the brain operator to change it: gbrain auth rescope-client ${clientId} --surface ${requested}`,
+        );
+        e.detail = 'locked_by=operator';
+        return e;
+      };
+      if (current.surface_set_by === 'operator') throw operatorLocked();
+      // A dry-run preview exercises every denial above but must not consume
+      // the persist budget — the limiter meters actual writes only.
+      if (ctx.dryRun) {
+        return { persisted: false, dry_run: true, surface: requested, reason: 'dry_run' };
+      }
+      const rl = requestToolsPersistLimiter.check(clientId);
+      if (!rl.allowed) {
+        throw new OperationError(
+          'rate_limited',
+          'surface persistence is rate-limited to ~5 changes per hour per client (D14.5).',
+          `Retry after ~${rl.retryAfter ?? 60}s.`,
+        );
+      }
+      // Atomic re-check: a concurrent operator pin between the SELECT and
+      // this UPDATE must still win.
+      const updated = await ctx.engine.executeRaw(
+        `UPDATE oauth_clients SET surface = $1, surface_set_by = 'self'
+         WHERE client_id = $2 AND (surface_set_by IS DISTINCT FROM 'operator')
+         RETURNING client_id`,
+        [requested, clientId],
+      );
+      if (updated.length === 0) {
+        // Concurrent operator pin won the race: the denial must not consume
+        // the client's persist budget (the limiter meters actual writes).
+        requestToolsPersistLimiter.refund(clientId);
+        throw operatorLocked();
+      }
+      await writeSurfaceChangeAudit(ctx.engine, {
+        actor: clientId,
+        client_id: clientId,
+        old: (current.surface as string | null) ?? null,
+        new: requested,
+        via: 'request_tools',
+      });
+      return { persisted: true, surface: requested, note: 're-issue tools/list to see the new catalog' };
+    }
+
+    const visible = await visibleOpsForCaller(ctx, ceiling);
+
+    // ── descriptor branch (D5: read-only) ───────────────────────────────
+    if (p.tools !== undefined) {
+      const requested = (p.tools as unknown[]).filter((t): t is string => typeof t === 'string');
+      const byName = new Map(visible.map(o => [o.name, o]));
+      const picked: Operation[] = [];
+      const seen = new Set<string>();
+      for (const name of requested) {
+        if (seen.has(name)) continue;
+        seen.add(name);
+        const op = byName.get(name);
+        if (op) picked.push(op); // invisible names silently omitted (D5)
+      }
+      const { buildToolDefs } = await import('../mcp/tool-defs.ts');
+      const { resolveStrictParamsMode } = await import('../mcp/validate-params.ts');
+      const strictParams = (await resolveStrictParamsMode(ctx.engine, ctx.config)) === 'reject';
+      return { tools: buildToolDefs(picked, { strictParams }) };
+    }
+
+    // ── catalog branch (no args) ────────────────────────────────────────
+    const groups = new Map<string, Array<{ name: string; one_line: string }>>();
+    for (const op of visible) {
+      // Area names are non-contractual grouping labels (amendment 22).
+      const area = op.area ?? 'other';
+      const bucket = groups.get(area) ?? [];
+      bucket.push({ name: op.name, one_line: firstSentenceOf(op.description) });
+      groups.set(area, bucket);
+    }
+    const catalog = [...groups.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([area, tools]) => ({ area, tools }));
+    return {
+      catalog,
+      total_tools: visible.length,
+      note: 'Call request_tools {tools: ["name", ...]} for full schemas, or {surface: "starter"|"full"} to persist a wider tool surface (within the server ceiling), then re-issue tools/list.',
+    };
+  },
+};
+
 export const operations: Operation[] = [
   // MEMORY_VERBS v1 (Cathedral 1) — remember/entity/synthesize/forget live in
-  // verbs.ts; the fifth verb is the extended `recall` op below. Spread first
-  // so `--surface verbs` agents see them at the top of the tool list.
+  // verbs.ts; the remaining three of the seven verbs (the extended `recall`,
+  // plus the v0.45.x boundary verbs `context_pack`/`delta`) are defined below.
+  // Spread first so `--surface verbs` agents see them at the top of the list.
   ...verbOperations,
   // Page CRUD
   get_page, put_page, delete_page, list_pages,
@@ -6421,7 +7339,8 @@ export const operations: Operation[] = [
   submit_job, get_job, list_jobs, cancel_job, retry_job, get_job_progress,
   pause_job, resume_job, replay_job, send_job_message,
   // v0.38 Slice 3: remote-callable agent dispatch with OAuth-bound trust boundary
-  submit_agent,
+  // + Minions-visibility wave: ownership-fenced agent-job polling
+  submit_agent, get_agent_job,
   // Orphans
   find_orphans,
   // v0.36.1.0 (T7) — Hindsight calibration wave: read profile via MCP
@@ -6432,6 +7351,8 @@ export const operations: Operation[] = [
   takes_scorecard, takes_calibration,
   // v0.28: whoami + scoped sources management
   whoami, sources_add, sources_list, sources_remove, sources_status,
+  // WP4 (T9): discovery + pull-based per-client surface unlock (D4/D5/D9)
+  request_tools,
   // v0.29: Salience + anomalies + recent transcripts
   get_recent_salience, find_anomalies, get_recent_transcripts,
   // v0.42.x (#2390): Life Chronicle timeline reads
@@ -6443,7 +7364,7 @@ export const operations: Operation[] = [
   // Extraction quarantine lane (#160): gated entity extraction + review queue
   extract_entities, extraction_pending, extraction_review,
   // v0.31: hot memory (facts table)
-  extract_facts, recall, forget_fact,
+  extract_facts, recall, context_pack, delta, forget_fact,
   // v0.32.6: contradiction probe MCP surface (M3)
   find_contradictions,
   // v0.33: expertise + relationship-proximity routing
@@ -6474,6 +7395,100 @@ export const operations: Operation[] = [
   // can submit; CLI bypass via ctx.remote === false.
   run_skillopt,
 ];
+
+// ---------------------------------------------------------------------------
+// WP4 (amendment 22) — area taxonomy.
+//
+// One central map (single reviewable block) rather than 100+ scattered inline
+// fields. Area NAMES ARE NON-CONTRACTUAL: they group the request_tools
+// catalog and the generated tool-catalog doc; renaming or regrouping is never
+// a breaking change. Every non-localOnly op MUST have an area — enforced by
+// the CI walker in test/mcp-tool-defs.test.ts, so a future op missing from
+// this map fails at PR time. localOnly ops are covered too (harmless; the
+// walker only requires non-localOnly). Ops that declare `area` inline
+// (request_tools) win over this map.
+// ---------------------------------------------------------------------------
+const OP_AREAS: Record<string, string> = {
+  // memory verbs (the frozen protocol facade)
+  recall: 'memory-verbs', remember: 'memory-verbs', entity: 'memory-verbs',
+  synthesize: 'memory-verbs', forget: 'memory-verbs',
+  context_pack: 'memory-verbs', delta: 'memory-verbs',
+  // pages (CRUD, versions, raw payloads, resolution)
+  get_page: 'pages', put_page: 'pages', delete_page: 'pages', list_pages: 'pages',
+  restore_page: 'pages', purge_deleted_pages: 'pages',
+  get_versions: 'pages', revert_version: 'pages',
+  resolve_slugs: 'pages', get_chunks: 'pages',
+  put_raw_data: 'pages', get_raw_data: 'pages',
+  // search
+  search: 'search', query: 'search', search_by_image: 'search',
+  // tags
+  add_tag: 'tags', remove_tag: 'tags', get_tags: 'tags',
+  // links + graph
+  add_link: 'links', remove_link: 'links', get_links: 'links',
+  get_backlinks: 'links', list_link_sources: 'links', traverse_graph: 'links',
+  find_orphans: 'links',
+  // timeline
+  add_timeline_entry: 'timeline', get_timeline: 'timeline',
+  // life chronicle
+  chronicle_day: 'chronicle', chronicle_on_this_day: 'chronicle',
+  chronicle_since: 'chronicle', chronicle_last_seen: 'chronicle',
+  volunteer_chronicle: 'chronicle', chronicle_backfill: 'chronicle',
+  // ontology
+  ontology_get: 'ontology', ontology_propose: 'ontology',
+  ontology_dimensions: 'ontology', ontology_conflicts: 'ontology',
+  // admin + operations
+  get_stats: 'admin', get_health: 'admin', run_doctor: 'admin',
+  get_status_snapshot: 'admin', run_onboard: 'admin', run_skillopt: 'admin',
+  migrate_embeddings: 'admin', code_traversal_cache_clear: 'admin',
+  // identity
+  whoami: 'identity', get_brain_identity: 'identity',
+  // skills
+  list_skills: 'skills', get_skill: 'skills', list_brain_skillpack: 'skills',
+  // advisor
+  advisor: 'advisor',
+  // sources
+  sources_add: 'sources', sources_list: 'sources', sources_remove: 'sources',
+  sources_status: 'sources',
+  // sync (localOnly)
+  sync_brain: 'sync',
+  // ingest log
+  log_ingest: 'ingest', get_ingest_log: 'ingest',
+  // files (localOnly)
+  file_list: 'files', file_upload: 'files', file_url: 'files',
+  // jobs (Minions + agent lane)
+  submit_job: 'jobs', get_job: 'jobs', list_jobs: 'jobs', cancel_job: 'jobs',
+  retry_job: 'jobs', get_job_progress: 'jobs', pause_job: 'jobs',
+  resume_job: 'jobs', replay_job: 'jobs', send_job_message: 'jobs',
+  submit_agent: 'jobs', get_agent_job: 'jobs',
+  // takes + think
+  takes_list: 'takes', takes_search: 'takes', think: 'takes',
+  takes_scorecard: 'takes', takes_calibration: 'takes',
+  // hot memory (facts)
+  extract_facts: 'memory', forget_fact: 'memory',
+  // entity extraction lane
+  extract_entities: 'entities', extraction_pending: 'entities',
+  extraction_review: 'entities',
+  // insight / signal reads
+  get_recent_salience: 'insights', find_anomalies: 'insights',
+  find_contradictions: 'insights', find_experts: 'insights',
+  find_trajectory: 'insights', get_calibration_profile: 'insights',
+  volunteer_context: 'insights', get_recent_transcripts: 'insights',
+  // code intelligence
+  code_callers: 'code', code_callees: 'code', code_def: 'code',
+  code_refs: 'code', code_blast: 'code', code_flow: 'code',
+  // schema packs
+  get_active_schema_pack: 'schema', list_schema_packs: 'schema',
+  schema_stats: 'schema', schema_lint: 'schema', schema_graph: 'schema',
+  schema_explain_type: 'schema', schema_review_orphans: 'schema',
+  schema_apply_mutations: 'schema', reload_schema_pack: 'schema',
+  // discovery
+  request_tools: 'discovery',
+};
+for (const op of operations) {
+  if (op.area === undefined && OP_AREAS[op.name] !== undefined) {
+    op.area = OP_AREAS[op.name];
+  }
+}
 
 export const operationsByName = Object.fromEntries(
   operations.map(op => [op.name, op]),

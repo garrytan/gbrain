@@ -12,12 +12,14 @@
  * Run: bun test test/e2e/dream-synthesize-pglite.test.ts
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, afterEach } from 'bun:test';
+import { __setChatTransportForTests, resetGateway } from '../../src/core/ai/gateway.ts';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { runPhaseSynthesize, renderPageToMarkdown, __testing as synthTesting } from '../../src/core/cycle/synthesize.ts';
+import { runPhaseSynthesize, renderPageToMarkdown, TRIAGE_VERSION, __testing as synthTesting } from '../../src/core/cycle/synthesize.ts';
+import { TIER_DEFAULTS } from '../../src/core/model-config.ts';
 
 interface TestRig {
   engine: PGLiteEngine;
@@ -200,6 +202,46 @@ describe('E2E synthesize — no API key skip path', () => {
         // string was 'no ANTHROPIC_API_KEY for significance judge'; post-
         // rework is 'no configured provider for verdict model: <model>'.
         expect(verdicts[0].reasons[0]).toMatch(/no configured provider for verdict model/);
+        // CX7: a provider outage is DEGRADED, never "below threshold" — an
+        // all-outage run must say so in both the counters and the headline.
+        const triage = (result.details as { triage: { degraded: number; below_threshold: number } }).triage;
+        expect(triage.degraded).toBe(1);
+        expect(triage.below_threshold).toBe(0);
+        expect(result.summary).toContain('triage degraded');
+        expect(result.summary).not.toContain('below triage threshold');
+      });
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+
+  test('3A: a time-boxed cold pass labels deferred files "not yet triaged" in the headline', async () => {
+    const rig = await setupRig();
+    try {
+      await rig.engine.setConfig('dream.synthesize.enabled', 'true');
+      await rig.engine.setConfig('dream.synthesize.session_corpus_dir', rig.corpusDir);
+      // A 1ms budget + 25 uncached files: the budget check runs after each
+      // per-file cache lookup, and 25 PGLite roundtrips take well over 1ms,
+      // so at least the tail of the corpus is guaranteed to defer (exact
+      // count depends on wall-clock — assert >= 1, not equality).
+      await rig.engine.setConfig('dream.triage.max_ms', '1');
+      for (let i = 0; i < 25; i++) {
+        writeFileSync(
+          join(rig.corpusDir, `2026-04-26-cold-${String(i).padStart(2, '0')}.txt`),
+          `an untriaged conversation ${i}\n`.repeat(200),
+        );
+      }
+      await withoutAnthropicKey(async () => {
+        const result = await runPhaseSynthesize(rig.engine, {
+          brainDir: rig.brainDir,
+          dryRun: true,
+        });
+        expect(result.status).toBe('ok');
+        const triage = (result.details as { triage: { deferred: number; degraded: number } }).triage;
+        expect(triage.deferred).toBeGreaterThanOrEqual(1);
+        expect(triage.deferred + triage.degraded).toBe(25);
+        expect(result.summary).toContain('not yet triaged');
+        expect(result.summary).toContain('dream retriage');
       });
     } finally {
       await rig.cleanup();
@@ -498,9 +540,17 @@ describe('E2E synthesize — verdict cache (Q-2)', () => {
         await runPhaseSynthesize(rig.engine, { brainDir: rig.brainDir, dryRun: false });
         const { createHash } = await import('node:crypto');
         const hash = createHash('sha256').update(body, 'utf8').digest('hex');
+        // Triage-v1 cache validity: a below-threshold score with matching
+        // (model, triage_version) is a HIT that gates the file out.
         await rig.engine.putDreamVerdict(filePath, hash, {
           worth_processing: false,
           reasons: ['cached test verdict'],
+          score: 0.1,
+          content_type: null,
+          segments: [],
+          entities: [],
+          model: TIER_DEFAULTS.utility,
+          triage_version: TRIAGE_VERSION,
         });
         const result = await runPhaseSynthesize(rig.engine, {
           brainDir: rig.brainDir,
@@ -512,6 +562,172 @@ describe('E2E synthesize — verdict cache (Q-2)', () => {
         expect(verdicts[0].cached).toBe(true);
       });
     } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+});
+
+describe('E2E synthesize — degenerate verdicts are NOT cached in dream_verdicts', () => {
+  // A truncated (stop_reason=length) or unparseable judge response used to be
+  // banked as a permanent `worth_processing: false` row — a brain whose
+  // verdict model reliably truncates (e.g. a reasoning model whose reasoning
+  // tokens ate the old 200-token budget) silently rejected every transcript
+  // forever. These tests pin the fix: degenerate verdicts skip the cache
+  // write (with a stderr warning) so the next cycle re-judges.
+
+  afterEach(() => {
+    __setChatTransportForTests(null);
+    resetGateway();
+  });
+
+  async function captureStderr<T>(body: () => Promise<T>): Promise<{ result: T; stderr: string }> {
+    const chunks: string[] = [];
+    const original = process.stderr.write.bind(process.stderr);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (process.stderr as any).write = (chunk: any, ..._args: any[]): boolean => {
+      const s = typeof chunk === 'string' ? chunk : chunk.toString();
+      chunks.push(s);
+      return true;
+    };
+    try {
+      const result = await body();
+      return { result, stderr: chunks.join('') };
+    } finally {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (process.stderr as any).write = original;
+    }
+  }
+
+  /** Run body with a fake ANTHROPIC_API_KEY so makeJudgeClient constructs; the
+   * transport stub means no network call ever happens. */
+  async function withFakeAnthropicKey<T>(body: () => Promise<T>): Promise<T> {
+    const saved = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'sk-test-degenerate-verdict';
+    try {
+      return await body();
+    } finally {
+      if (saved === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = saved;
+    }
+  }
+
+  async function runWithStubbedJudge(opts: {
+    text: string;
+    stopReason: 'end' | 'length';
+  }): Promise<{ verdictRow: unknown; stderr: string }> {
+    const rig = await setupRig();
+    try {
+      await rig.engine.setConfig('dream.synthesize.enabled', 'true');
+      await rig.engine.setConfig('dream.synthesize.session_corpus_dir', rig.corpusDir);
+      const filePath = join(rig.corpusDir, '2026-05-01-session.txt');
+      const body = 'a meaningful conversation\n'.repeat(200);
+      writeFileSync(filePath, body);
+
+      __setChatTransportForTests(async () => ({
+        text: opts.text,
+        blocks: [],
+        stopReason: opts.stopReason,
+        usage: { input_tokens: 10, output_tokens: 200, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'test:stub',
+        providerId: 'test',
+      }));
+
+      const { stderr } = await withFakeAnthropicKey(() =>
+        captureStderr(() =>
+          runPhaseSynthesize(rig.engine, { brainDir: rig.brainDir, dryRun: true }),
+        ),
+      );
+
+      const { createHash } = await import('node:crypto');
+      const hash = createHash('sha256').update(body, 'utf8').digest('hex');
+      const verdictRow = await rig.engine.getDreamVerdict(filePath, hash);
+      return { verdictRow, stderr };
+    } finally {
+      await rig.cleanup();
+    }
+  }
+
+  test('truncated judge response (stop_reason=length) → no dream_verdicts row + warning', async () => {
+    const { verdictRow, stderr } = await runWithStubbedJudge({
+      text: '{"scor', // reasoning ate the budget; partial JSON
+      stopReason: 'length',
+    });
+    expect(verdictRow).toBeNull();
+    expect(stderr).toMatch(/\[dream\] triage for 2026-05-01-session was truncated/);
+    expect(stderr).toMatch(/not caching in dream_verdicts/);
+  }, 30_000);
+
+  test('unparseable judge response → no dream_verdicts row + warning', async () => {
+    const { verdictRow, stderr } = await runWithStubbedJudge({
+      text: 'not json at all',
+      stopReason: 'end',
+    });
+    expect(verdictRow).toBeNull();
+    expect(stderr).toMatch(/\[dream\] triage for 2026-05-01-session was unparseable/);
+    expect(stderr).toMatch(/not caching in dream_verdicts/);
+  }, 30_000);
+
+  test('boolean-era judge output (no score) is unparseable — never cached', async () => {
+    // The old `{"worth_processing": ...}` shape has no score; under triage-v1
+    // it must NOT become a cacheable rejection.
+    const { verdictRow, stderr } = await runWithStubbedJudge({
+      text: '{"worth_processing": false, "reasons": ["routine ops"]}',
+      stopReason: 'end',
+    });
+    expect(verdictRow).toBeNull();
+    expect(stderr).toMatch(/\[dream\] triage for 2026-05-01-session was unparseable/);
+  }, 30_000);
+
+  test('control: clean scored verdict is cached with score + model + triage_version', async () => {
+    const { verdictRow, stderr } = await runWithStubbedJudge({
+      text: '{"score": 0.1, "content_type": "routine", "segments": [], "entities": [], "reasons": ["routine ops"]}',
+      stopReason: 'end',
+    });
+    expect(verdictRow).not.toBeNull();
+    const row = verdictRow as { worth_processing: boolean; score: number | null; content_type: string | null; model: string | null; triage_version: number | null };
+    expect(row.worth_processing).toBe(false); // derived: 0.1 < DEFAULT_TRIAGE_THRESHOLD
+    expect(row.score).toBe(0.1);
+    expect(row.content_type).toBe('routine');
+    expect(row.model).toBe(TIER_DEFAULTS.utility);
+    expect(row.triage_version).toBe(TRIAGE_VERSION);
+    expect(stderr).not.toMatch(/not caching in dream_verdicts/);
+  }, 30_000);
+
+  test('legacy boolean-era cached row (score NULL) is a MISS — re-judged and overwritten', async () => {
+    const rig = await setupRig();
+    try {
+      await rig.engine.setConfig('dream.synthesize.enabled', 'true');
+      await rig.engine.setConfig('dream.synthesize.session_corpus_dir', rig.corpusDir);
+      const filePath = join(rig.corpusDir, '2026-05-02-legacy.txt');
+      const body = 'a meaningful conversation\n'.repeat(200);
+      writeFileSync(filePath, body);
+      const { createHash } = await import('node:crypto');
+      const hash = createHash('sha256').update(body, 'utf8').digest('hex');
+      // Seed a boolean-era row directly (score NULL — pre-v129 shape).
+      await rig.engine.executeRaw(
+        `INSERT INTO dream_verdicts (file_path, content_hash, worth_processing, reasons)
+         VALUES ($1, $2, true, '["legacy row"]'::jsonb)`,
+        [filePath, hash],
+      );
+      __setChatTransportForTests(async () => ({
+        text: '{"score": 0.9, "content_type": "reflection", "segments": [], "entities": [], "reasons": ["re-judged"]}',
+        blocks: [],
+        stopReason: 'end',
+        usage: { input_tokens: 10, output_tokens: 200, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'test:stub',
+        providerId: 'test',
+      }));
+      await withFakeAnthropicKey(() =>
+        runPhaseSynthesize(rig.engine, { brainDir: rig.brainDir, dryRun: true }),
+      );
+      const row = await rig.engine.getDreamVerdict(filePath, hash);
+      expect(row).not.toBeNull();
+      expect(row!.score).toBe(0.9);
+      expect(row!.triage_version).toBe(TRIAGE_VERSION);
+      expect(row!.reasons).toEqual(['re-judged']);
+    } finally {
+      __setChatTransportForTests(null);
+      resetGateway();
       await rig.cleanup();
     }
   }, 30_000);
@@ -532,7 +748,7 @@ describe('E2E synthesize — PGLite inline subagent drain (takeover of #2699)', 
       );
 
       let ticks = 0;
-      await synthTesting.runPgliteSubagentsInline(
+      await synthTesting.runSubagentsInline(
         rig.engine,
         queue,
         queueName,
@@ -573,7 +789,7 @@ describe('E2E synthesize — PGLite inline subagent drain (takeover of #2699)', 
         { allowProtectedSubmit: true },
       );
 
-      await synthTesting.runPgliteSubagentsInline(
+      await synthTesting.runSubagentsInline(
         rig.engine,
         queue,
         queueName,
@@ -607,7 +823,7 @@ describe('E2E synthesize — PGLite inline subagent drain (takeover of #2699)', 
       // Handler only ends when ctx.signal fires — like the real subagent
       // handler mid-LLM-call. Without the inline timeout timer this awaits
       // forever and the drain (and the whole cycle) wedges.
-      await synthTesting.runPgliteSubagentsInline(
+      await synthTesting.runSubagentsInline(
         rig.engine,
         queue,
         queueName,

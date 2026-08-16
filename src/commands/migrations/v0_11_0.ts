@@ -110,7 +110,7 @@ async function phaseCMode(opts: OrchestratorOpts): Promise<{
 
   // --yes / non-TTY: explicit pain_triggered default with a visible print.
   if (opts.yes || !process.stdin.isTTY) {
-    console.log('Defaulting minion_mode=pain_triggered (non-interactive). Change with `gbrain config set minion_mode <always|off>`.');
+    console.log('Defaulting minion_mode=pain_triggered (non-interactive). Change with `gbrain apply-migrations --mode <always|off>` (writes ~/.gbrain/preferences.json).');
     return { phase: { name: 'mode', status: 'complete', detail: 'mode=pain_triggered (default)' }, mode: 'pain_triggered' };
   }
 

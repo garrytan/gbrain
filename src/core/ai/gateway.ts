@@ -51,7 +51,7 @@ import {
   OPENROUTER_CACHE_HEADER,
   openrouterRequiresExplicitPromptCache,
 } from './recipes/openrouter.ts';
-import { resolveModel, TIER_DEFAULTS } from '../model-config.ts';
+import { resolveModel } from '../model-config.ts';
 import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
@@ -98,18 +98,12 @@ function withDefaultTimeout(caller: AbortSignal | undefined, timeoutMs: number):
 }
 
 const MAX_CHARS = 8000;
-// v0.36.0.0 (D3 + D4): ZeroEntropy zembed-1 at 1280d via Matryoshka is the
-// new default for embedding. Real-corpus benchmark across 20 queries:
-//   - ZE wins 11/20 (OpenAI 6, Voyage 4)
-//   - 442ms avg vs OpenAI 973ms (2.2x faster)
-//   - $0.05/M tokens vs OpenAI $0.13/M (2.6x cheaper at regular pricing)
-// ZE valid Matryoshka steps are {2560, 1280, 640, 320, 160, 80, 40}; 1280 is
-// the closest analog to current OpenAI 1536d (smaller -> smaller HNSW index
-// -> faster queries) while staying in the high-recall zone of the Matryoshka
-// curve. 1024 (Voyage's step) is NOT a valid ZE dim — see
-// src/core/ai/dims.ts:ZEROENTROPY_VALID_DIMS.
-// New installs without ZEROENTROPY_API_KEY size for 1280d anyway — the
-// AIConfigError surfaces at first embed with a paste-ready setup hint.
+// v0.46.3 SPLIT-DEFAULT: DEFAULT_EMBEDDING_MODEL / DEFAULT_EMBEDDING_DIMENSIONS
+// are now the LEGACY CONFIGLESS RUNTIME FALLBACK only (brains with no
+// `embedding_model` in file config, whose stored vectors live in ZE's 1280d
+// space). ZeroEntropy's hosted API shuts down on ZEROENTROPY_SUNSET_DATE; the
+// September removal release deletes this fallback. Every NEW-INSTALL surface
+// reads NEW_INSTALL_DEFAULT_* instead — full rationale in ./defaults.ts.
 // Re-exported from the leaf `defaults.ts` so heavy schema/registry modules
 // don't transitively load every provider SDK just to read the defaults.
 export { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './defaults.ts';
@@ -119,10 +113,29 @@ const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
 // v0.35.0.0+: reranker default. Used only when search.reranker.enabled is set
 // AND no explicit reranker_model is configured. Mode bundles' per-mode
 // `reranker_model` default to this same value but can be overridden.
+// v0.46.3: stays on the LEGACY zerank-2 until the September removal (reranker
+// split-default: existing ZE-keyed brains keep their working reranker until
+// the API dies; voyage-keyed NEW installs get an explicit
+// `search.reranker.model voyage:rerank-2.5` override written at init, and
+// keyed non-voyage installs get explicit `search.reranker.enabled false`).
 const DEFAULT_RERANKER_MODEL = 'zeroentropyai:zerank-2';
 
 let _config: AIGatewayConfig | null = null;
 const _modelCache = new Map<string, any>();
+
+/**
+ * Materialize `applyResolveAuth`'s SDK-shaped result ({apiKey}|{headers}) into
+ * raw HTTP headers: a Bearer-style apiKey becomes an Authorization header;
+ * custom/default headers ride alongside (they win on conflict, matching the
+ * SDK's header-after-apiKey ordering). Single source for the reranker wire path
+ * and the doctor's base-URL probe.
+ */
+export function authToHeaders(auth: { apiKey?: string; headers?: Record<string, string> }): Record<string, string> {
+  return {
+    ...(auth.apiKey ? { Authorization: `Bearer ${auth.apiKey}` } : {}),
+    ...(auth.headers ?? {}),
+  };
+}
 
 /**
  * Recover the process-global gateway for foreground command entrypoints that
@@ -134,71 +147,6 @@ export function configureGatewayIfUninitialized(): void {
   if (_config) return;
   const config = loadConfig();
   if (config) configureGateway(buildGatewayConfig(config));
-}
-
-/**
- * v0.31.12 recipe-models merge: per-gateway-instance set of model ids the
- * user opted into via config. Keyed by provider id (`anthropic`, `openai`,
- * etc.) AND touchpoint so a chat-only selection cannot silently authorize
- * expansion/embedding/reranker. Passed into `assertTouchpoint` so native-recipe
- * allowlist checks skip these models — provider 404s surface at HTTP call time
- * instead of config-build time.
- *
- * Replaces the earlier plan to soften `assertTouchpoint` from throw to
- * warn (Codex F4/F5 — too broad, removed fail-fast for chat/expand/embed
- * across all callers). This narrower approach preserves fail-fast for
- * source-code typos while allowing config-time model selection of any id.
- */
-const _extendedModels: Map<string, Map<TouchpointKind, Set<string>>> = new Map();
-
-/**
- * v0.31.12 — register a model id under its provider+touchpoint so
- * `assertTouchpoint` (called via the gateway's chat/embed/expand entry points)
- * permits it there even when it isn't in the recipe's declared `models:` array.
- *
- * Idempotent + safe to call before/after configureGateway. Exported only
- * for the `gbrain models doctor` probe path (where the operator may want
- * to probe any user-supplied id without re-running configure).
- */
-function registerExtendedModel(touchpoint: TouchpointKind, modelStr: string): void {
-  if (!modelStr) return;
-  try {
-    const { providerId, modelId } = parseModelId(modelStr);
-    let byTouchpoint = _extendedModels.get(providerId);
-    if (!byTouchpoint) {
-      byTouchpoint = new Map();
-      _extendedModels.set(providerId, byTouchpoint);
-    }
-    let set = byTouchpoint.get(touchpoint);
-    if (!set) {
-      set = new Set();
-      byTouchpoint.set(touchpoint, set);
-    }
-    set.add(modelId);
-  } catch {
-    // Malformed model strings will fail at parseModelId — ignore here;
-    // the actual chat/embed call will surface the error.
-  }
-}
-
-/**
- * Register a model that was selected through a DB/env config resolver for a
- * chat-backed call site outside the gateway's built-in chat/expansion defaults.
- *
- * This preserves `assertTouchpoint`'s native-provider fail-fast behavior for
- * hardcoded source models while allowing an explicit operator-selected chat
- * model (for example `models.contextual_synopsis`) to reach the provider even
- * when the recipe's curated model list has not yet learned the new id.
- */
-export function registerConfigSelectedChatModel(modelStr: string): void {
-  registerExtendedModel('chat', modelStr);
-}
-
-function getExtendedModelsForProvider(
-  providerId: string,
-  touchpoint: TouchpointKind,
-): ReadonlySet<string> | undefined {
-  return _extendedModels.get(providerId)?.get(touchpoint);
 }
 
 /**
@@ -516,17 +464,6 @@ export function configureGateway(config: AIGatewayConfig): void {
   };
   _modelCache.clear();
   _shrinkState.clear();
-  _extendedModels.clear();
-  // Register configured models so assertTouchpoint allows them even when
-  // they aren't in the recipe's declared models: array (v0.31.12).
-  if (_config.embedding_model) registerExtendedModel('embedding', _config.embedding_model);
-  if (_config.embedding_multimodal_model) registerExtendedModel('embedding', _config.embedding_multimodal_model);
-  if (_config.expansion_model) registerExtendedModel('expansion', _config.expansion_model);
-  if (_config.chat_model) registerExtendedModel('chat', _config.chat_model);
-  if (_config.reranker_model) registerExtendedModel('reranker', _config.reranker_model);
-  for (const m of _config.chat_fallback_chain ?? []) {
-    if (m) registerExtendedModel('chat', m);
-  }
   warnRecipesMissingBatchTokens();
 }
 
@@ -572,35 +509,9 @@ export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise
   const expansionFull = newExpansion.includes(':') ? newExpansion : prefixWithProviderFrom(cfg.expansion_model ?? DEFAULT_EXPANSION_MODEL, newExpansion);
   const chatFull = newChat.includes(':') ? newChat : prefixWithProviderFrom(cfg.chat_model ?? DEFAULT_CHAT_MODEL, newChat);
 
-  // ALSO resolve the four tier models and register them as extended models.
-  // assertTouchpoint's contract (model-resolver.ts) says config-chosen models —
-  // `models.default` and `models.tier.*` included — bypass the native recipe
-  // allowlist, but pre-fix only chat/expansion/embedding/reranker were
-  // registered. A model reachable ONLY through a tier (e.g. `models.tier.deep`
-  // set to an Opus newer than the recipe list) failed `probeChatModel` at call
-  // time and silently degraded think/auto_think to the gather-only stub.
-  // Resolving per-tier also honors `models.default` (it sits above tiers in
-  // the resolveModel chain).
-  const tierModels: string[] = [];
-  for (const tier of ['utility', 'reasoning', 'deep', 'subagent'] as const) {
-    tierModels.push(await resolveModel(engine, { tier, fallback: TIER_DEFAULTS[tier] }));
-  }
-
   _config = { ...cfg, expansion_model: expansionFull, chat_model: chatFull };
   _modelCache.clear();
   _shrinkState.clear();
-  _extendedModels.clear();
-  if (_config.embedding_model) registerExtendedModel('embedding', _config.embedding_model);
-  if (_config.embedding_multimodal_model) registerExtendedModel('embedding', _config.embedding_multimodal_model);
-  if (_config.expansion_model) registerExtendedModel('expansion', _config.expansion_model);
-  if (_config.chat_model) registerExtendedModel('chat', _config.chat_model);
-  if (_config.reranker_model) registerExtendedModel('reranker', _config.reranker_model);
-  for (const m of _config.chat_fallback_chain ?? []) {
-    if (m) registerExtendedModel('chat', m);
-  }
-  for (const m of tierModels) {
-    if (m) registerExtendedModel('chat', m);
-  }
   return _config;
 }
 
@@ -706,20 +617,19 @@ function clearGatewayState(): void {
   _embedTransportInstalled = false;
   _chatTransport = null;
   _warnedRecipes.clear();
-  _extendedModels.clear();
 }
 
 /**
  * Reset (for tests). Clears all module state (config, model cache, shrink
- * state, transports, warned recipes, extended models), then — if a test
- * baseline is registered — re-applies it so the gateway returns to the
- * process-wide test default instead of an unconfigured limbo (#3554).
+ * state, transports, warned recipes), then — if a test baseline is
+ * registered — re-applies it so the gateway returns to the process-wide
+ * test default instead of an unconfigured limbo (#3554).
  */
 export function resetGateway(): void {
   clearGatewayState();
-  // configureGateway re-clears _modelCache/_shrinkState/_extendedModels and
-  // registers the baseline's models; transports are NOT touched by it, so a
-  // stale test transport can never leak back in through this path.
+  // configureGateway re-clears _modelCache/_shrinkState; transports are NOT
+  // touched by it, so a stale test transport can never leak back in through
+  // this path.
   if (_resetBaseline) configureGateway(_resetBaseline());
 }
 
@@ -778,7 +688,10 @@ export function __setChatTransportForTests(
   _chatTransport = fn;
 }
 
-function requireConfig(): AIGatewayConfig {
+/** The live gateway config, or throw if unconfigured. Exported for the
+ *  `models doctor` base-URL probe (which reads the same merged config the
+ *  gateway calls with, inside its own fail-open guard). */
+export function requireConfig(): AIGatewayConfig {
   if (!_config) {
     throw new AIConfigError(
       'AI gateway is not configured. Call configureGateway() during engine connect.',
@@ -1503,9 +1416,54 @@ export const perplexityCompatFetch = (async (input: RequestInfo | URL, init?: Re
   }
 }) as unknown as typeof fetch;
 
+/**
+ * v0.46.3 once-per-(recipe,touchpoint) sunset warning. Fires when a recipe with
+ * `sunset` metadata is actually USED (embedding resolution / rerank call), so
+ * brains still riding a dying provider hear about it on every process, not
+ * only at upgrade time. Module-level memoization (same pattern as
+ * storage-config.ts's deprecation warn); `_resetSunsetWarningsForTest()` is
+ * the test seam. Never throws — a warning must not take down an embed.
+ */
+const _sunsetWarned = new Set<string>();
+export function _resetSunsetWarningsForTest(): void {
+  _sunsetWarned.clear();
+}
+function warnSunsetOnce(recipe: Recipe, touchpoint: 'embedding' | 'reranker'): void {
+  try {
+    const sunset = recipe.sunset;
+    if (!sunset) return;
+    // A base-URL override routes this provider id to a user-supplied endpoint
+    // (typically a self-hosted wire-compatible server) — the HOSTED shutdown
+    // doesn't apply, so a per-call deprecation warning would be a false
+    // positive. The removal-release continuity story is carried by the
+    // migration notice/banner instead.
+    if (_config?.base_urls?.[recipe.id]) return;
+    const key = `${recipe.id}:${touchpoint}`;
+    if (_sunsetWarned.has(key)) return;
+    _sunsetWarned.add(key);
+    const replacement =
+      touchpoint === 'embedding' ? sunset.replacement?.embedding : sunset.replacement?.reranker;
+    const fix =
+      touchpoint === 'embedding'
+        ? replacement
+          ? ` Migrate: \`gbrain migrate embeddings --to ${replacement} --dry-run\``
+          : ''
+        : replacement
+        ? ` Switch: \`gbrain config set search.reranker.model ${replacement}\``
+        : '';
+    process.stderr.write(
+      `[gbrain] DEPRECATED: ${recipe.name} ${touchpoint} stops working on ` +
+        `${sunset.date}.${sunset.message ? ` ${sunset.message}` : ''}${fix}\n`,
+    );
+  } catch {
+    // Cosmetic; never block the call path.
+  }
+}
+
 async function resolveEmbeddingProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
-  assertTouchpoint(recipe, 'embedding', parsed.modelId, getExtendedModelsForProvider(parsed.providerId, 'embedding'));
+  assertTouchpoint(recipe, 'embedding', parsed.modelId);
+  warnSunsetOnce(recipe, 'embedding');
   const cfg = requireConfig();
 
   const cacheKey = `emb:${recipe.id}:${parsed.modelId}:${cfg.base_urls?.[recipe.id] ?? ''}`;
@@ -2464,7 +2422,7 @@ export async function embedMultimodalSafe(
 
 async function resolveExpansionProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
-  assertTouchpoint(recipe, 'expansion', parsed.modelId, getExtendedModelsForProvider(parsed.providerId, 'expansion'));
+  assertTouchpoint(recipe, 'expansion', parsed.modelId);
   const cfg = requireConfig();
 
   const cacheKey = `exp:${recipe.id}:${parsed.modelId}:${cfg.base_urls?.[recipe.id] ?? ''}`;
@@ -2634,7 +2592,7 @@ export async function expand(query: string): Promise<string[]> {
 
 /**
  * Cherry-1: opt-in OCR pass for ingested images. Uses the configured
- * expansion model (default: openai:gpt-4o-mini) with a prompt explicitly
+ * expansion model (default: DEFAULT_EXPANSION_MODEL) with a prompt explicitly
  * instructing the model to NOT interpret instructions embedded in the
  * image (mitigation for OCR-as-prompt-injection).
  *
@@ -2949,14 +2907,18 @@ export interface ChatOpts {
  * (via `probeChatModel`) AND `makeJudgeClient` in `cycle/synthesize.ts`.
  *
  * Validates that a `provider:model` string resolves to a real recipe AND that the
- * recipe supports the chat touchpoint (catches typo'd native models like
- * `anthropic:claude-bogus-9`). Both checks read the recipe REGISTRY, not gateway
- * `_config`, so this works before `configureGateway()` has run — which is why
- * `makeJudgeClient` reuses this layer instead of the full `probeChatModel` (whose
- * `isAvailable` layer would reject non-Anthropic-no-key + unconfigured-gateway).
+ * recipe supports the chat touchpoint (catches chat-less providers like
+ * `voyage:*` / `ollama:*` embeddings-only recipes — NOT model-id typos: there
+ * is no runtime model allowlist, so an unlisted id passes here and a
+ * nonexistent one surfaces as the provider's own model_not_found at call
+ * time). Both checks read the recipe REGISTRY, not gateway `_config`, so this
+ * works before `configureGateway()` has run — which is why `makeJudgeClient`
+ * reuses this layer instead of the full `probeChatModel` (whose `isAvailable`
+ * layer would reject non-Anthropic-no-key + unconfigured-gateway).
  *
  * Order matters: `resolveRecipe` first (unknown_provider), then `assertTouchpoint`
- * (unknown_model). `isAvailable` alone collapses both into a bare `false`.
+ * (unknown_model = provider lacks the touchpoint). `isAvailable` alone collapses
+ * both into a bare `false`.
  */
 export type ModelIdValidity =
   | { ok: true; parsed: ParsedModelId; recipe: Recipe }
@@ -2975,7 +2937,7 @@ export function validateModelId(
     throw e;
   }
   try {
-    assertTouchpoint(recipe, touchpoint, parsed.modelId, getExtendedModelsForProvider(parsed.providerId, touchpoint));
+    assertTouchpoint(recipe, touchpoint, parsed.modelId);
   } catch (e) {
     if (e instanceof AIConfigError) return { ok: false, reason: 'unknown_model', detail: e.message, fix: e.fix };
     throw e;
@@ -3029,7 +2991,7 @@ function chatSupportsPromptCache(recipe: Recipe, modelId: string): boolean {
 
 async function resolveChatProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
-  assertTouchpoint(recipe, 'chat', parsed.modelId, getExtendedModelsForProvider(parsed.providerId, 'chat'));
+  assertTouchpoint(recipe, 'chat', parsed.modelId);
   const cfg = requireConfig();
 
   const cacheKey = `chat:${recipe.id}:${parsed.modelId}:${cfg.base_urls?.[recipe.id] ?? ''}`;
@@ -3942,9 +3904,10 @@ const DEFAULT_RERANK_TIMEOUT_MS = 5000;
  * the fail-open path so search never throws.
  *
  * Errors classified into RerankError.reason for the caller's fail-open
- * decision table. The model allowlist check is done HERE (not via
- * assertTouchpoint), because assertTouchpoint doesn't enforce allowlists for
- * openai-compatible recipes — CDX2-F11 in the plan.
+ * decision table. The model list check below is rerank-specific and
+ * deliberate (assertTouchpoint never checks model ids): each listed reranker
+ * model maps to a known request/response wire shape, so an unknown id could
+ * mis-parse a response rather than fail cleanly.
  */
 export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   if (!input.query) {
@@ -3988,15 +3951,17 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
       'unknown',
     );
   }
+  warnSunsetOnce(recipe, 'reranker');
 
   // Resolve base URL + auth from the recipe (same path Voyage/ZE embeddings use).
   const cfg = requireConfig();
   const compat = applyOpenAICompatConfig(recipe, cfg);
   // v0.40.6.1: rerank URL path is recipe-pluggable. Defaults to ZeroEntropy's
   // legacy `/models/rerank`; openai-style providers like llama.cpp's
-  // llama-server set `/v1/rerank`. Wire shape is unchanged — any provider
-  // whose request/response shape differs from ZE/llama.cpp (e.g. Voyage with
-  // `top_k` / `data[]`) needs separate adapter hooks in a follow-up plan.
+  // llama-server set `/v1/rerank`; Voyage sets `/rerank`. Response shape is
+  // shared across all current dialects ({results: [{index, relevance_score}]});
+  // the only request-side difference is the top-N key, declared per recipe via
+  // `top_param` (v0.46.3).
   const url = `${compat.baseURL.replace(/\/$/, '')}${tp.path ?? '/models/rerank'}`;
   let auth: { apiKey?: string; headers?: Record<string, string> };
   try {
@@ -4013,15 +3978,12 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   // through `auth.headers` alongside Bearer-style apiKey. The merge below
   // materializes both shapes so static-default-headers ride on the reranker
   // wire path the same way they ride the SDK paths.
-  const authHeaders: Record<string, string> = {
-    ...(auth.apiKey ? { Authorization: `Bearer ${auth.apiKey}` } : {}),
-    ...(auth.headers ?? {}),
-  };
+  const authHeaders = authToHeaders(auth);
   const body = JSON.stringify({
     model: parsed.modelId,
     query: input.query,
     documents: input.documents,
-    ...(input.topN !== undefined ? { top_n: input.topN } : {}),
+    ...(input.topN !== undefined ? { [tp.top_param ?? 'top_n']: input.topN } : {}),
   });
 
   // Pre-flight payload size guard (CDX1-F17 / plan Phase 3 cost guard). The
@@ -4093,10 +4055,20 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
       throw new RerankError(msg, reason, resp.status);
     }
     const json: any = await resp.json();
-    if (!json || !Array.isArray(json.results)) {
-      throw new RerankError('rerank: malformed response (no results array)', 'unknown');
+    // v0.46.3: two response dialects share the item shape {index,
+    // relevance_score} but differ in the array key — ZE/llama-server return
+    // `results[]`, Voyage's REST returns `data[]` ({object: "list", data:
+    // [...]}, live-wire verified 2026-08-15; Voyage's Python SDK renames it
+    // `results`, which is why docs-level checks get this wrong). Accept both.
+    const items: any[] | null = Array.isArray(json?.results)
+      ? json.results
+      : Array.isArray(json?.data)
+        ? json.data
+        : null;
+    if (!items) {
+      throw new RerankError('rerank: malformed response (no results/data array)', 'unknown');
     }
-    const mapped = json.results.map((r: any) => ({
+    const mapped = items.map((r: any) => ({
       index: typeof r.index === 'number' ? r.index : 0,
       relevanceScore: typeof r.relevance_score === 'number' ? r.relevance_score : 0,
     }));

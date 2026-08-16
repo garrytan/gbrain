@@ -174,6 +174,10 @@ export async function runFactsBackstop(
           .digest('hex')
           .slice(0, 16);
         const minions = new MinionQueue(ctx.engine);
+        // [ENG-8] Caller-unset visibility resolves the brain default HERE
+        // (not in the long-lived worker) so the durable payload carries the
+        // visibility that was in force at write time.
+        const { resolveDefaultVisibility } = await import('./visibility.ts');
         await minions.add(
           'facts-absorb',
           {
@@ -182,7 +186,7 @@ export async function runFactsBackstop(
             source: ctx.source,
             sessionId: ctx.sessionId,
             notabilityFilter: ctx.notabilityFilter ?? 'all',
-            visibility: ctx.visibility ?? 'private',
+            visibility: ctx.visibility ?? (await resolveDefaultVisibility(ctx.engine)),
             ...(ctx.model ? { model: ctx.model } : {}),
           },
           {
@@ -349,7 +353,10 @@ async function runPipelineWithBody(
   });
 
   const filter = ctx.notabilityFilter ?? 'all';
-  const visibility = ctx.visibility ?? 'private';
+  // [ENG-8] Explicit ctx.visibility wins; unset resolves the operator-set
+  // facts.default_visibility (fail-closed to 'private').
+  const { resolveDefaultVisibility } = await import('./visibility.ts');
+  const visibility = ctx.visibility ?? (await resolveDefaultVisibility(ctx.engine));
 
   let inserted = 0;
   let duplicate = 0;

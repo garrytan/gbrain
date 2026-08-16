@@ -58,6 +58,17 @@ describe('release.yml ↔ binary-self-update asset contract', () => {
     expect(topLevel).toContain('contents: read');
     expect(topLevel).not.toContain('contents: write');
   });
+
+  test('template-repo push keeps the PAT out of argv (askpass, not URL-embedded)', () => {
+    // The token must never ride the git command line: no
+    // `https://x-access-token:${TEMPLATE_REPO_PAT}@...` remote URLs.
+    expect(WORKFLOW).not.toContain('x-access-token:${TEMPLATE_REPO_PAT}@');
+    expect(WORKFLOW).not.toMatch(/git push[^\n]*TEMPLATE_REPO_PAT/);
+    // Credential travels out-of-band via a one-shot askpass reading env.
+    expect(WORKFLOW).toContain('GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0');
+    // Force-push semantics preserved (history-less template publish).
+    expect(WORKFLOW).toMatch(/git push --force "https:\/\/github\.com\/\$\{TEMPLATE_REPO\}\.git" HEAD:main/);
+  });
 });
 
 describe('scripts/changelog-entry.sh', () => {

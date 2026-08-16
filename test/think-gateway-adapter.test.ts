@@ -18,6 +18,7 @@
 import { describe, test, expect } from 'bun:test';
 import { __thinkAdapter } from '../src/core/think/index.ts';
 import { resetGateway } from '../src/core/ai/gateway.ts';
+import { AIConfigError } from '../src/core/ai/errors.ts';
 import { withEnv, emptyHome } from './helpers/with-env.ts';
 
 describe('think gateway adapter — response shape conversion', () => {
@@ -108,9 +109,11 @@ describe('think gateway adapter — #1698 slash form + explicit-model fork', () 
     ).rejects.toThrow(/not usable.*unknown_provider/);
   });
 
-  test('explicit typo native model THROWS (unknown_model)', async () => {
+  test('explicit chat-less-provider model THROWS (unknown_model)', async () => {
+    // voyage has no chat touchpoint. Unlisted ids on chat-capable providers
+    // pass local validation (no runtime allowlist) — the provider decides.
     await expect(
-      __thinkAdapter.tryBuildGatewayClient('anthropic:claude-bogus-9', { explicitModel: true }),
+      __thinkAdapter.tryBuildGatewayClient('voyage:voyage-3', { explicitModel: true }),
     ).rejects.toThrow(/not usable.*unknown_model/);
   });
 
@@ -214,5 +217,19 @@ describe('think gateway adapter — graceful fallback shape', () => {
     expect(m.usage.input_tokens).toBe(0);
     expect(m.usage.output_tokens).toBe(0);
     expect(m.stop_reason).toBe('end_turn');
+  });
+
+  test('the sentinel surfaces the AIConfigError cause, not generic key advice', () => {
+    // With no runtime model allowlist, a nonexistent model id reaches the
+    // provider and comes back as a 4xx wrapped in AIConfigError. The sentinel
+    // must name that cause — the generic text key-blamed model problems.
+    const err = new AIConfigError(
+      '[chat(openai:gpt-bogus)] The model `gpt-bogus` does not exist',
+      'Check your model id + provider options match the provider API.',
+    );
+    const m = __thinkAdapter.buildGracefulMessage('openai:gpt-bogus', err);
+    expect(m.content[0].text).toContain('does not exist');
+    expect(m.content[0].text).toContain('Check your model id');
+    expect(m.content[0].text).not.toContain('ANTHROPIC_API_KEY');
   });
 });

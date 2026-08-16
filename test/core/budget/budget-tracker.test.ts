@@ -305,6 +305,25 @@ describe('BudgetTracker.reserve', () => {
     expect((caught as BudgetExhausted).reason).toBe('no_pricing');
   });
 
+  test('#3628: unknown hosted rerank provider points no-pricing guidance at embedding-pricing', () => {
+    const t = new BudgetTracker({ maxCostUsd: 1.0, label: 'test', auditPath });
+    let caught: unknown = null;
+    try {
+      t.reserve({
+        modelId: 'acmecorp:unpriced-reranker-v9',
+        estimatedInputTokens: 100,
+        maxOutputTokens: 0,
+        kind: 'rerank',
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(BudgetExhausted);
+    expect((caught as BudgetExhausted).reason).toBe('no_pricing');
+    expect((caught as Error).message).toContain('embedding-pricing.ts');
+    expect((caught as Error).message).not.toContain('anthropic-pricing.ts');
+  });
+
   test('v0.40.x REGRESSION: known hosted embed (openai) still real-priced (trips a tiny cap)', () => {
     // 3-small is $0.02/1M tokens. 1M tokens projects $0.02 > $0.0001 cap, so a
     // real (nonzero) price trips the cost gate — proving it's NOT on the $0

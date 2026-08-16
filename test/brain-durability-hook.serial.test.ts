@@ -9,7 +9,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { execFileSync } from 'child_process';
-import { hardenBrainRepo } from '../src/core/brain-repo-durability.ts';
+import { hardenBrainRepo, unhardenBrainRepo } from '../src/core/brain-repo-durability.ts';
+import { runPull } from '../src/commands/sources-harden.ts';
 
 // #2943 root cause: `env: process.env` is REQUIRED here. Bun snapshots
 // process.env at startup, so without it the spawned git — and any post-commit
@@ -55,7 +56,7 @@ async function waitForOrigin(bare: string, expectSha: string, ms = 30_000): Prom
  * calls ("Unable to create '.../.git/index.lock': File exists"). Wait for the
  * detached push's terminal log line before handing the repo to the test. */
 async function waitForHookPushSettled(ms = 30_000): Promise<void> {
-  const log = join(process.env.GBRAIN_HOME!, 'brain-push.log');
+  const log = join(process.env.HOME!, '.gbrain', 'brain-push.log');
   const terminal = /\[push\] (ok|lock-timeout|LOCAL-ONLY)/;
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
@@ -72,7 +73,10 @@ beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'bdh-'));
   oldHome = process.env.HOME; oldGbrainHome = process.env.GBRAIN_HOME;
   process.env.HOME = mkdtempSync(join(root, 'home-'));
-  process.env.GBRAIN_HOME = join(process.env.HOME, '.gbrain');
+  // CX2-8: GBRAIN_HOME is a PARENT dir (config.ts semantics — `.gbrain` is
+  // appended by both the TS resolver and the bash template), so the
+  // effective home is $HOME/.gbrain.
+  process.env.GBRAIN_HOME = process.env.HOME;
   process.env.GBRAIN_GIT_ALLOW_FILE_TRANSPORT = '1';
   bare = mkdtempSync(join(root, 'origin-')) + '.git';
   execFileSync('git', ['init', '-q', '--bare', '-b', 'main', bare], { stdio: 'ignore', env: process.env });
@@ -179,7 +183,7 @@ describe('post-commit hook (D9 local, D7 self-contained)', () => {
     git(work, 'remote', 'set-url', 'origin', join(root, 'gone2.git'));
     writeFileSync(join(work, 'orphan.md'), 'o\n');
     git(work, 'add', 'orphan.md'); git(work, 'commit', '-qm', 'orphan');
-    const log = join(process.env.GBRAIN_HOME!, 'brain-push.log');
+    const log = join(process.env.HOME!, '.gbrain', 'brain-push.log');
     const deadline = Date.now() + 30_000;
     let found = false;
     while (Date.now() < deadline) {
@@ -187,5 +191,67 @@ describe('post-commit hook (D9 local, D7 self-contained)', () => {
       await new Promise(r => setTimeout(r, 150));
     }
     expect(found).toBe(true);
+  }, 60_000);
+});
+
+// The persistence schedule is the DB-free PULL cron (D2/D12) — the push side
+// is the post-commit hook proved above. beforeEach hardens with
+// installCron:false; this block re-hardens the SAME repo with installCron:true
+// and proves the scheduled job is registered with the right command + interval,
+// then invokes that exact command to prove it performs a real pull. It always
+// unregisters the launchd/cron job afterward so no scheduled job survives.
+describe('durability schedule (installCron:true) [D2/D12]', () => {
+  test('registers the DB-free pull job with the right command + interval, and the job performs a real pull', async () => {
+    const sourceId = 'wiki';
+    const report = await hardenBrainRepo({
+      repoPath: work, sourceId, pat: 'ghp_x', installCron: true, intervalSec: 900, verify: false,
+    });
+    const toplevel = git(work, 'rev-parse', '--show-toplevel');
+    try {
+      const cronStep = report.steps.find((s) => s.step === 'cron')!;
+      expect(cronStep).toBeDefined();
+      expect(cronStep.status).not.toBe('skipped'); // installCron:true → it ran
+
+      // The scheduled COMMAND: a DB-free `sources pull` wrapper for THIS repo,
+      // written to <home>/brain-pull-<sourceId>.sh regardless of platform.
+      const wrapper = join(process.env.HOME!, '.gbrain', `brain-pull-${sourceId}.sh`);
+      expect(existsSync(wrapper)).toBe(true);
+      const body = readFileSync(wrapper, 'utf-8');
+      expect(body).toContain(`sources pull --path '${toplevel}' --branch 'main'`);
+
+      // The REGISTERED job + its 15-minute INTERVAL. launchd (darwin) is
+      // deterministic — assert the plist directly; the step detail names the
+      // interval on the darwin path.
+      if (process.platform === 'darwin') {
+        const plist = join(process.env.HOME!, 'Library', 'LaunchAgents', `com.gbrain.brain-pull.${sourceId}.plist`);
+        expect(existsSync(plist)).toBe(true);
+        const xml = readFileSync(plist, 'utf-8');
+        expect(xml).toContain('<key>StartInterval</key><integer>900</integer>'); // 900s = 15m
+        expect(xml).toContain(wrapper); // ProgramArguments points at our wrapper
+        expect(cronStep.detail).toContain('900s');
+      }
+
+      // Invoke the scheduled command directly to PROVE it performs the pull.
+      // Advance origin from a second clone, then run the exact DB-free pull the
+      // wrapper execs (`gbrain sources pull --path <repo> --branch main`).
+      const other = mkdtempSync(join(root, 'other-'));
+      execFileSync('git', ['-c', 'protocol.file.allow=always', 'clone', '-q', bare, other], { stdio: 'ignore', env: process.env });
+      git(other, 'config', 'user.email', 'o@o.o'); git(other, 'config', 'user.name', 'other');
+      writeFileSync(join(other, 'from-remote.md'), 'landed via a second device\n');
+      git(other, 'add', 'from-remote.md'); git(other, 'commit', '-qm', 'remote advance'); git(other, 'push', '-q', 'origin', 'main');
+
+      const remoteHead = originHead(bare);
+      expect(git(work, 'rev-parse', 'HEAD')).not.toBe(remoteHead); // local is behind
+
+      await runPull(null, ['--path', work, '--branch', 'main']);
+
+      // The scheduled pull fast-forwarded the local checkout to the remote and
+      // the remote-authored file is now present locally.
+      expect(git(work, 'rev-parse', 'HEAD')).toBe(remoteHead);
+      expect(existsSync(join(work, 'from-remote.md'))).toBe(true);
+    } finally {
+      // Unregister while HOME is still the temp home (afterEach restores it).
+      await unhardenBrainRepo({ repoPath: work, sourceId });
+    }
   }, 60_000);
 });

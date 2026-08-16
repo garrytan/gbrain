@@ -88,6 +88,11 @@ describe('claude-cli recipe registration', () => {
     expect(recipe!.touchpoints.chat!.supports_tools).toBe(true);
     expect(recipe!.touchpoints.chat!.supports_subagent_loop).toBe(true);
     expect(recipe!.touchpoints.chat!.models).toContain('claude-sonnet-4-6');
+    // Wave rider for #3976: pin the Claude 5 family the CLI already serves.
+    expect(recipe!.touchpoints.chat!.models).toContain('claude-fable-5');
+    expect(recipe!.touchpoints.chat!.models).toContain('claude-opus-5');
+    expect(recipe!.touchpoints.chat!.models).toContain('claude-opus-4-8');
+    expect(recipe!.touchpoints.chat!.models).toContain('claude-sonnet-5');
     expect(recipe!.touchpoints.embedding).toBeUndefined();
     expect(recipe!.touchpoints.expansion).toBeUndefined();
   });

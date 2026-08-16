@@ -26,7 +26,7 @@ const ROTATE_BYTES = 10 * 1024 * 1024;
 export interface VerbUsageEvent {
   ts: string;
   verb: string;
-  surface: 'verbs' | 'full';
+  surface: 'verbs' | 'starter' | 'full';
   remote: boolean;
   ok: boolean;
   latency_ms: number;

@@ -19,6 +19,7 @@ import {
   isSkippablePath,
   resolveAutoSkipThreshold,
   DEFAULT_SOURCE_ID,
+  ownsGlobalSyncAnchor,
 } from '../core/sync.ts';
 import {
   computeSyncDelta,
@@ -1038,7 +1039,71 @@ export function discoverGitRoot(inputPath: string): string {
  * gbrain.yml, or a semantic overlap) propagates — better to leave this
  * self-heal wedged with a clear error than commit unknown content.
  */
-function createSyncBaselineCommit(repoPath: string): void {
+/**
+ * Classify a caught `git rev-parse --verify --quiet HEAD` failure for the
+ * baseline-commit guard. A genuinely UNBORN HEAD makes git exit with status
+ * EXACTLY 1 and nothing on stderr — precisely what `--verify --quiet` emits
+ * for an unresolvable HEAD (verified empirically: unborn => exit 1, empty
+ * stderr; born => exit 0). Every OTHER failure shape — a 30s timeout (killed
+ * by signal, so `status` is null), an index/ref lock (`fatal: Unable to
+ * create ...lock`, non-empty stderr), or any nonzero-but-not-1 exit — is NOT
+ * proof the repo is empty; it is the transient-probe-failure class that
+ * corrupted the live brain on 2026-08-10. Return 'unborn' ONLY for the clean
+ * signal so the caller fails CLOSED on 'ambiguous'. Pure (no I/O) so the
+ * distinction is unit-testable without fault injection.
+ */
+export function classifyHeadProbeError(err: unknown): 'unborn' | 'ambiguous' {
+  const e = (err ?? {}) as { status?: number | null; signal?: string | null; stderr?: unknown };
+  const stderr = e.stderr == null ? '' : String(e.stderr).trim();
+  return e.status === 1 && e.signal == null && stderr === '' ? 'unborn' : 'ambiguous';
+}
+
+export function createSyncBaselineCommit(repoPath: string): void {
+  // Fail-closed backstop (2026-08-10 auto-init incident). This function's
+  // ENTIRE contract is "snapshot an unborn/uninitialized repo as its FIRST
+  // commit". It must NEVER run on a repo that already has commits: doing so
+  // stacks a spurious `gbrain: initial commit (auto-init by sync)` commit ON
+  // TOP of real history and, on a case-insensitive filesystem, re-cases the
+  // whole tree (`projects` -> `Projects`) as a `git add -A` side effect.
+  //
+  // Both call sites are *supposed* to reach here only on an unborn/non-git
+  // repo, but each infers "unborn" from a FAILURE to observe git state
+  // (`discoverGitRoot` threw / `git rev-parse HEAD` threw), and those probes
+  // ALSO fail transiently — a 30s timeout on a large brain, or a concurrent
+  // `gbrain-sync` holding a git lock — against a fully-populated repo, which
+  // is exactly what corrupted the live brain on 2026-08-10. So we cannot
+  // trust "the caller said it's unborn"; verify POSITIVELY here — and, since
+  // this very probe is subject to the same transient failures, accept ONLY a
+  // CLEAN unborn signal. A born HEAD (exit 0) OR an ambiguous probe failure
+  // (timeout / lock / other) both REFUSE, so the backstop is fail-closed
+  // against every corruption path, not just the born-HEAD one.
+  // `classifyHeadProbeError` isolates that born/unborn/ambiguous distinction
+  // as a pure, unit-tested predicate.
+  //
+  // Known non-incident edge (B2, documented not fixed): an orphan branch
+  // (`git switch --orphan`) in a repo with history elsewhere probes as unborn
+  // and would still be baselined. A gbrain brain is never in that state; it is
+  // not the incident (no stacking on real history, no re-case of other
+  // branches), so it is left as a limitation rather than complicating the
+  // guard with a `rev-list --all` "commits anywhere" probe.
+  let headState: 'born' | 'unborn' | 'ambiguous';
+  try {
+    git(repoPath, ['rev-parse', '--verify', '--quiet', 'HEAD'], [], 30000, { silenceStderr: true });
+    headState = 'born';
+  } catch (err) {
+    headState = classifyHeadProbeError(err);
+  }
+  if (headState !== 'unborn') {
+    throw new Error(
+      `Refusing to create a sync baseline commit in ${repoPath}: HEAD probe is ` +
+        `'${headState}', expected a clean unborn HEAD. 'born' = the repo already ` +
+        `has commits (real history); 'ambiguous' = the HEAD check failed ` +
+        `transiently (30s timeout, or a concurrent gbrain-sync holding a git ` +
+        `lock), which is NOT proof the repo is empty. Committing either way ` +
+        `would stack a bogus auto-init commit on real history and re-case the ` +
+        `tree on a case-insensitive filesystem.`,
+    );
+  }
   // #2964: db_only exclusion is computed directly from loadStorageConfig
   // and passed to `git add` as pathspecs — deliberately NOT via
   // manageGitignore/.gitignore, for two independent reasons:
@@ -1311,7 +1376,7 @@ async function isAnchorOwnedSyncPath(
   }
 }
 
-async function writeSyncAnchor(
+export async function writeSyncAnchor(
   engine: BrainEngine,
   sourceId: string | undefined,
   which: 'repo_path' | 'last_commit',
@@ -1323,6 +1388,11 @@ async function writeSyncAnchor(
   // git-intrinsic committer time of the HEAD we just synced). `undefined` keeps
   // the legacy 2-column write; `null` clears the column (git unavailable).
   newestContentEpochMs?: number | null,
+  // #2114: the repo dir this anchor write is FOR. Required to guard the
+  // legacy branch's `last_commit` writes (where `value` is a hash, not a
+  // dir). `repo_path` writes self-describe via `value`. Callers that omit
+  // it on a legacy-path last_commit write keep pre-#2114 behavior.
+  repoDir?: string,
 ): Promise<void> {
   if (sourceId) {
     const col = which === 'repo_path' ? 'local_path' : 'last_commit';
@@ -1350,9 +1420,25 @@ async function writeSyncAnchor(
     }
     return;
   }
-  // Legacy no-sourceId path (pre-v0.18 global config). Modern sync always
-  // resolves a sourceId (incl. 'default'), so newest_content_at is written via
-  // the sourceId branch above; the default source is not stuck on NULL.
+  // Legacy no-sourceId path (pre-v0.18 global config; also reached when a
+  // caller could not resolve a source for the dir — dream --dir on an
+  // unregistered directory, minion sync with an unmatched repoPath). #2114:
+  // these globals describe THE brain repo, and this branch used to write
+  // them unconditionally — a full-sync fallback against a foreign directory
+  // silently repointed put_page write-through and poisoned the incremental
+  // anchor. Refuse to move them for a directory that isn't the brain repo.
+  const anchorDir = which === 'repo_path' ? value : repoDir;
+  if (anchorDir !== undefined) {
+    const { owns, configured } = await ownsGlobalSyncAnchor(engine, undefined, anchorDir);
+    if (!owns) {
+      serr(
+        `[sync] sync.${which} stays at ${configured ?? '(unset)'} — not moving the ` +
+        `global anchor for "${anchorDir}". To make that directory the brain repo: ` +
+        `gbrain config set sync.repo_path "${anchorDir}"`,
+      );
+      return;
+    }
+  }
   await engine.setConfig(`sync.${which}`, value);
 }
 
@@ -1953,10 +2039,41 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     ) {
       throw err;
     }
-    serr(`[gbrain] auto-recovery: git-initializing brain dir ${repoPath} (no git repo found).`);
-    git(repoPath, ['init', '--quiet']);
-    createSyncBaselineCommit(repoPath);
-    gitContextRoot = realpathSync(discoverGitRoot(repoPath));
+    // 2026-08-10 incident guard. `discoverGitRoot` is a 30s-bounded
+    // `git rev-parse --show-toplevel` that walks UP; it can throw for reasons
+    // OTHER than "no git repo" — a transient timeout on a large brain, or a
+    // concurrent `gbrain-sync` holding a git lock — on a directory that IS a
+    // git repo, whether the repo root is `repoPath` itself OR an ANCESTOR
+    // (subdir-anchored brain, the #753/#774 monorepo pattern). Trusting a
+    // single throw and running `git init` (a no-op reinit at repoPath, or a
+    // NEW nested repo shadowing the ancestor) + baseline-commit stacks a
+    // spurious auto-init commit and re-cases the tree on a case-insensitive
+    // filesystem. So do NOT self-heal on one throw — re-probe once:
+    //   - re-probe SUCCEEDS => the first throw was transient and the repo
+    //     (own or ancestor) is real; use it, never init/commit.
+    //   - re-probe THROWS but `.git` is present at repoPath => a real but
+    //     unreadable repo (corrupt, broken gitlink, or a persistent transient)
+    //     — NEVER init/commit over it; surface the original error.
+    //   - re-probe THROWS and no `.git` at repoPath => genuinely not a git
+    //     repo anywhere up the tree; self-heal.
+    // The createSyncBaselineCommit chokepoint is the fail-closed backstop if
+    // this ever reaches a baseline on a repo that turns out to have commits.
+    let reprobedRoot: string | null = null;
+    try {
+      reprobedRoot = discoverGitRoot(repoPath);
+    } catch {
+      reprobedRoot = null;
+    }
+    if (reprobedRoot !== null) {
+      gitContextRoot = realpathSync(reprobedRoot);
+    } else if (existsSync(join(repoPath, '.git'))) {
+      throw err;
+    } else {
+      serr(`[gbrain] auto-recovery: git-initializing brain dir ${repoPath} (no git repo found).`);
+      git(repoPath, ['init', '--quiet']);
+      createSyncBaselineCommit(repoPath);
+      gitContextRoot = realpathSync(discoverGitRoot(repoPath));
+    }
   }
   const rawScopeRoot = opts.srcSubpath ? join(repoPath, opts.srcSubpath) : repoPath;
   if (!existsSync(rawScopeRoot)) {
@@ -2493,7 +2610,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // (#1794): advance to the PINNED target, and clear any checkpoint (a resume
     // whose remaining range turned out to have no syncable changes still
     // completes cleanly here).
-    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(gitContextRoot, pin));
+    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(gitContextRoot, pin), gitContextRoot);
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
     await clearOpCheckpoint(engine, ckpt.paths);
@@ -3401,7 +3518,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // "fresh". The checkpoint rows clear here — CONVERGENCE CONTRACT: sync
     // convergence == IMPORT convergence; downstream extract/facts/embed is
     // decoupled (its own resumable stale sweeps).
-    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(gitContextRoot, pin));
+    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(gitContextRoot, pin), gitContextRoot);
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeSyncAnchor(engine, opts.sourceId, 'repo_path', anchorPath);
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
@@ -3530,10 +3647,68 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // covered regardless.
   const extractOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
   if (!opts.noExtract && totalChanges > 100 && pagesAffected.length > 0) {
+    // #2849: above the size gate the deferred extraction must be DURABLY
+    // QUEUED, not just hinted. The autopilot cycle's extract phase is
+    // slug-scoped (an up_to_date follow-up sync hands it an empty
+    // pagesAffected), so a webhook-driven large sync left
+    // `links_extracted_at` unstamped FOREVER unless an operator ran
+    // `gbrain extract --stale` by hand. Submit a source-scoped stale-sweep
+    // job bound to the consumed commit (idempotency key) so repeated
+    // webhook deliveries / sync retries of the same commit coalesce onto
+    // one job. The sweep itself is the watermark scan — it picks up the
+    // pages this run imported AND any banked across resumed runs.
+    // Best-effort: queue submission failure falls back to the hint-only
+    // behavior (the pages stay stale + visible to doctor, never mis-stamped).
+    let queuedJobId: number | string | null = null;
+    try {
+      const { MinionQueue } = await import('../core/minions/queue.ts');
+      const { STALE_TIME_BUDGET_MS } = await import('./extract.ts');
+      const queue = new MinionQueue(engine);
+      const payload = {
+        stale: true,
+        ...(opts.sourceId ? { sourceId: opts.sourceId } : {}),
+        reason: 'sync_size_gate',
+        // Bound to the PIN this run drained to (== headCommit unless resuming
+        // a stored target), not live HEAD — the sweep covers what we imported.
+        deferred_commit: pin,
+      };
+      // The stale sweep has its own internal wall-clock budget
+      // (GBRAIN_EXTRACT_TIME_BUDGET_MS-derived); without an explicit
+      // timeout_ms the job would inherit the tight null-default and get
+      // wall-clock-killed mid-sweep (#1737 class). 5-min headroom.
+      const timeoutMs = STALE_TIME_BUDGET_MS + 5 * 60 * 1000;
+      // NO maxWaiting here: with an unscoped (NULL-sourceId) payload the
+      // queue's coalesce filter matches ANY waiting 'extract' job (e.g. a
+      // remediation-submitted {mode:'links'} row) and returns THAT job —
+      // silently dropping the sweep while we log "queued". The idempotency
+      // key alone is the dedup for repeat submissions toward the same pin.
+      const key = `extract-stale:${opts.sourceId ?? 'default'}:${pin}`;
+      const isLiveSweep = (j: { status: string; data: Record<string, unknown> }): boolean =>
+        j.data?.stale === true && ['waiting', 'delayed', 'active'].includes(j.status);
+      let job = await queue.add('extract', payload, { idempotency_key: key, timeout_ms: timeoutMs });
+      if (!isLiveSweep(job)) {
+        // The key slot holds a FINISHED row: a prior sweep toward this pin
+        // that completed BEFORE this run's pages landed (checkpoint-resume /
+        // blocked-advance re-sync of the same target). Those pages went
+        // stale after that sweep's watermark pass, so coalescing onto the
+        // finished row would strand them — queue a fresh sweep under a
+        // run-unique key. (An 'active' sweep is safe to coalesce onto: its
+        // end-of-run staleRemaining re-count chains a continuation.)
+        job = await queue.add('extract', payload, {
+          idempotency_key: `${key}:${Date.now()}`,
+          timeout_ms: timeoutMs,
+        });
+      }
+      // Only claim "queued" once we verified the returned row IS a live
+      // stale sweep — never trust queue.add's row blind.
+      if (isLiveSweep(job)) queuedJobId = job.id;
+    } catch { /* best-effort — hint below still tells the operator */ }
     slog(
-      `  Large sync: deferring link/timeline extraction. ` +
-      `Run 'gbrain extract --stale${opts.sourceId ? ` --source-id ${opts.sourceId}` : ''}' ` +
-      `(or let the autopilot cycle's extract phase sweep it).`,
+      `  Large sync: deferring link/timeline extraction` +
+      (queuedJobId != null
+        ? ` — queued stale-sweep job #${queuedJobId} (source: ${opts.sourceId ?? 'default'}); a running jobs worker will consume it.`
+        : `.`) +
+      ` Run 'gbrain extract --stale${opts.sourceId ? ` --source-id ${opts.sourceId}` : ''}' to extract now.`,
     );
   }
   if (!opts.noExtract && totalChanges <= 100 && pagesAffected.length > 0) {
@@ -3752,7 +3927,7 @@ async function performFullSync(
   const advanceFull = async (): Promise<void> => {
     // Persist sync state so the next sync is incremental. Routed through
     // writeSyncAnchor so --source pins the right sources row.
-    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit, newestCommitMs(gitContextRoot));
+    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit, newestCommitMs(gitContextRoot), gitContextRoot);
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeSyncAnchor(engine, opts.sourceId, 'repo_path', anchorPath);
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
@@ -5271,6 +5446,14 @@ export interface SyncStatusReportSource {
   local_path: string | null;
   sync_enabled: boolean;
   last_sync_at: string | null;
+  /** Raw wall-clock hours since the last successful sync — the honest human
+   * number. Distinct from staleness_hours, which is threshold-relative. */
+  hours_since_last_sync: number | null;
+  /** Threshold-relative lag driving staleness_class. For a source whose
+   * content is OLDER than its last sync this is the ceiling-ramped value
+   * (see lagFromContentMs), which deliberately under-reads raw wall-clock so
+   * the warn tier fires before the fail tier — display hours_since_last_sync
+   * when a human asks "how long since we synced". */
   staleness_hours: number | null;
   staleness_class: 'fresh' | 'stale' | 'severe' | 'unknown';
   last_commit: string | null;
@@ -5446,6 +5629,9 @@ export async function buildSyncStatusReport(
       now,
     );
     const stalenessHours = lagSeconds === null ? null : lagSeconds / 3600;
+    const hoursSinceLastSync = lastSyncMs !== null && Number.isFinite(lastSyncMs)
+      ? Math.round(((now - lastSyncMs) / 3600_000) * 10) / 10
+      : null;
     let stalenessClass: 'fresh' | 'stale' | 'severe' | 'unknown' = 'unknown';
     if (stalenessHours !== null) {
       if (stalenessHours < 24) stalenessClass = 'fresh';
@@ -5464,6 +5650,7 @@ export async function buildSyncStatusReport(
       local_path: src.local_path,
       sync_enabled: cfgEntry.syncEnabled !== false,
       last_sync_at: lastSyncIso,
+      hours_since_last_sync: hoursSinceLastSync,
       staleness_hours: stalenessHours === null ? null : Math.round(stalenessHours * 10) / 10,
       staleness_class: stalenessClass,
       last_commit: row.last_commit,

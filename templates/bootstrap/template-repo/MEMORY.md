@@ -1,0 +1,53 @@
+# MEMORY.md
+
+Hot durable state for {{AGENT_NAME}}. Loaded in main sessions with
+{{PRINCIPAL_NAME}}. **Never loaded in shared or group contexts — that is a security
+boundary, not a preference.**
+
+Keep this file under one screen (~8KB). The session-start digest reads it every
+session; an unread memory file is not memory. When a section outgrows a screen, move
+the body to `memory/reference/` and leave a one-line pointer.
+
+---
+
+## Standing rules learned from corrections
+
+Format: one line, dated, imperative, with the bug it prevents:
+
+> - 2026-01-15 — Compute the day of week with `date`, never from memory. (Bug:
+>   asserted Tuesday on a Wednesday; the whole schedule downstream was wrong.)
+
+*(No corrections recorded yet.)*
+
+## What is always worth writing down
+
+- Corrections the principal makes (these become standing rules)
+- Commitments made in either direction, with dates
+- Preferences stated once that should never need restating
+- Facts about people and projects the principal works with
+
+## Active context
+
+*(Empty.)*
+
+## Open commitments
+
+Things {{AGENT_NAME}} said it would do and has not finished, and things others owe
+{{PRINCIPAL_NAME}}. A promise not in this file will be forgotten, and being
+forgotten is how an agent loses trust.
+
+*(Empty.)*
+
+## Critical events
+
+Append-only, ISO-timestamped. Never rewrite an entry — the old entry being wrong is
+itself information.
+
+*(Empty.)*
+
+## Maintenance
+
+Weekly (or when this file exceeds a screen): promote durable knowledge to the brain
+via `put_page`, demote cold detail to `memory/reference/`, cut what no longer earns
+its place. Promotion needs a quoted line from a daily note — if you cannot quote it,
+it does not go in. Memory that is never pruned stops being read.

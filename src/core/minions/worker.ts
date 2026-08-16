@@ -11,12 +11,18 @@
  *   await worker.start(); // polls until SIGTERM
  */
 
+import { existsSync } from 'fs';
+import { autopilotPausedMarkerPath } from '../autopilot-paths.ts';
 import type { BrainEngine } from '../engine.ts';
 import type {
   MinionJob, MinionJobContext, MinionHandler, MinionWorkerOpts,
   MinionQueueOpts, TokenUpdate,
 } from './types.ts';
-import { UnrecoverableError } from './types.ts';
+import {
+  UnrecoverableError,
+  ABORT_REASON_LOCK_RENEWAL_FAILED,
+  ABORT_REASON_LOCK_LOST,
+} from './types.ts';
 import { MinionQueue } from './queue.ts';
 import { calculateBackoff } from './backoff.ts';
 import { RateLeaseUnavailableError } from './handlers/subagent.ts';
@@ -24,11 +30,31 @@ import { logLeasePressure } from './lease-pressure-audit.ts';
 import {
   runLockRenewalTick,
   resolveLockRenewalKnobs,
+  renewalIntervalFor,
   type LockRenewalDeps,
   type LockRenewalState,
+  type TickResult,
 } from './lock-renewal-tick.ts';
+import { clampLockDurationMs } from './handler-timeouts.ts';
+import {
+  runDbProbe,
+  getConnectionRouting,
+  DIRECT_PROBE_TIMEOUT_MS,
+  type DbProbeResult,
+  type PoolDiagnostics,
+} from './db-probe.ts';
+import { buildJobContext } from './job-context.ts';
+import {
+  runJobInChild,
+  ChildSpawnInfraError,
+  ChildWorkerShutdownError,
+  ChildNotClaimedError,
+} from './child-job-runner.ts';
 import { lockRenewalAudit } from '../audit/lock-renewal-audit.ts';
+import { loadavg, cpus } from 'os';
+import { monitorEventLoopDelay } from 'perf_hooks';
 import { isRetryableConnError } from '../retry-matcher.ts';
+import { reconnectAfterConnectionError as reconnectEngineAfterConnError } from './reconnect.ts';
 
 /**
  * Abort reasons that signal infrastructure failure (PgBouncer outage,
@@ -46,8 +72,8 @@ import { isRetryableConnError } from '../retry-matcher.ts';
  * to this set is a deliberate two-line change, not a silent regression).
  */
 export const INFRASTRUCTURE_ABORT_REASONS = new Set<string>([
-  'lock-renewal-failed',
-  'lock-lost',
+  ABORT_REASON_LOCK_RENEWAL_FAILED,
+  ABORT_REASON_LOCK_LOST,
 ]);
 import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
@@ -117,10 +143,19 @@ export function getAccurateRss(
 }
 
 /** Reason payload emitted with `'unhealthy'` when self-health-check trips.
- *  CLI layer (jobs.ts:work) subscribes and decides whether to call process.exit. */
+ *  CLI layer (jobs.ts:work) subscribes and decides whether to call process.exit.
+ *  `verdict` (issue #6) distinguishes local pool starvation from a genuinely
+ *  unreachable server so operators stop debugging the wrong layer; absent on
+ *  engines without the probe's disambiguation lane. */
 export type UnhealthyReason =
-  | { reason: 'db_dead'; consecutiveFailures: number; message: string }
-  | { reason: 'stalled'; waitingCount: number; idleMinutes: number };
+  | {
+      reason: 'db_dead';
+      consecutiveFailures: number;
+      message: string;
+      verdict?: 'pool_starved' | 'server_unreachable' | 'unknown';
+    }
+  | { reason: 'stalled'; waitingCount: number; idleMinutes: number }
+  | { reason: 'child_spawn_failing'; consecutiveFailures: number; message: string };
 
 /**
  * Read the quiet_hours JSONB column off a MinionJob, if present. The
@@ -152,6 +187,8 @@ export class MinionWorker extends EventEmitter {
   private queue: MinionQueue;
   private handlers = new Map<string, MinionHandler>();
   private running = false;
+  /** Log the pause/resume transition once each, not every poll. */
+  private pausedByMarkerAnnounced = false;
   private inFlight = new Map<number, InFlightJob>();
   private workerId = randomUUID();
 
@@ -183,8 +220,37 @@ export class MinionWorker extends EventEmitter {
   private _peakRssMb = 0;
   /** Latch so the 80%-of-cap soft-warn fires once per crossing, not every check. */
   private _softWarnFired = false;
+  /**
+   * Circuit breaker for deterministic child-bootstrap failures (red-team
+   * finding): a spawn failure releases the job with no attempt burned, the
+   * stall sweeper requeues it, the same worker re-claims — an infinite
+   * claim/release loop the stall detector cannot see (every settle refreshes
+   * the progress clock). After CHILD_SPAWN_FAIL_EXIT_AFTER consecutive
+   * spawn-class failures we emit 'unhealthy' so the process manager restarts
+   * the worker (and the supervisor's crash budget takes over if the child
+   * CLI stays broken).
+   */
+  private _consecutiveChildSpawnFailures = 0;
+  private static readonly CHILD_SPAWN_FAIL_EXIT_AFTER = 3;
 
   private opts: Required<MinionWorkerOpts>;
+
+  /**
+   * Event-loop-delay histogram (CDX-1/R2-9, issue #4145): the DIRECT
+   * measurement of local starvation, sampled at eviction time and RESET
+   * on every successful lock renewal so a sample attributes to the
+   * window since the last success — not process lifetime. The histogram
+   * is deliberately WORKER-global, not per-job: the event loop is one
+   * shared resource, and ANY job's successful renewal proves the loop was
+   * healthy enough to process a round-trip at that moment — a legitimate
+   * truncation of the starvation window even for a sibling job that
+   * evicts moments later (its per-job discriminator is tick lateness,
+   * which IS per-job). Null when the runtime doesn't ship
+   * `monitorEventLoopDelay` (fail-open: eviction logs omit eld fields).
+   */
+  private eldHistogram: ReturnType<typeof monitorEventLoopDelay> | null = null;
+  /** Core count cached once — pairs with raw loadavg in eviction telemetry. */
+  private readonly cpuCores: number;
 
   constructor(
     private engine: BrainEngine,
@@ -195,6 +261,17 @@ export class MinionWorker extends EventEmitter {
       maxSpawnDepth: opts?.maxSpawnDepth,
       maxAttachmentBytes: opts?.maxAttachmentBytes,
     });
+    let cores = 0;
+    try { cores = cpus().length; } catch { /* telemetry best-effort */ }
+    this.cpuCores = cores;
+    try {
+      if (typeof monitorEventLoopDelay === 'function') {
+        // Created DISABLED: start() enables and stop() disables, so a
+        // constructed-but-never-started worker (setup failures, probe
+        // instances) never holds a native sampling timer.
+        this.eldHistogram = monitorEventLoopDelay({ resolution: 20 });
+      }
+    } catch { this.eldHistogram = null; /* fail-open */ }
     this.opts = {
       queue: opts?.queue ?? 'default',
       concurrency: opts?.concurrency ?? 1,
@@ -210,7 +287,22 @@ export class MinionWorker extends EventEmitter {
       stallExitAfterMs: opts?.stallExitAfterMs ?? 10 * 60_000,
       dbFailExitAfter: opts?.dbFailExitAfter ?? 3,
       dbProbeTimeoutMs: opts?.dbProbeTimeoutMs ?? 10_000,
+      jobIsolation: opts?.jobIsolation ?? 'inline',
+      childCliInvocation: opts?.childCliInvocation ?? null,
+      childTiniPath: opts?.childTiniPath ?? '',
     };
+    // Process isolation contract: 'process' without a resolved child CLI
+    // invocation would silently execute handlers INLINE while the evict path
+    // believed it was isolated (predicate mismatch — red-team finding). The
+    // CLI layer always resolves + validates the invocation; library callers
+    // must too. Loud construction throw, same discipline as the stall
+    // thresholds below.
+    if (this.opts.jobIsolation === 'process' && this.opts.childCliInvocation == null) {
+      throw new Error(
+        "MinionWorkerOpts: jobIsolation 'process' requires childCliInvocation " +
+        '(resolve it via resolveChildCliInvocation and validate it exists before constructing the worker).',
+      );
+    }
     // Stall thresholds contract: exit MUST be strictly greater than warn.
     // If exit <= warn, the warn-then-exit semantics break: a single tick at
     // idle > warn would set stallWarningSince and the subsequent tick at
@@ -224,6 +316,15 @@ export class MinionWorker extends EventEmitter {
         `The contract is "warn first, exit later" — they cannot fire on the same tick.`,
       );
     }
+  }
+
+  /**
+   * Read-only handler lookup. `gbrain jobs run-child` registers the builtin
+   * handlers against a throwaway worker (registerBuiltinHandlers's existing
+   * contract) and resolves the one it needs through this accessor.
+   */
+  getHandler(name: string): MinionHandler | undefined {
+    return this.handlers.get(name);
   }
 
   /** Register a handler for a job type. */
@@ -258,7 +359,9 @@ export class MinionWorker extends EventEmitter {
     if (this.listenerCount('unhealthy') === 0) {
       const detail = info.reason === 'db_dead'
         ? `DB unreachable (${info.consecutiveFailures} probes): ${info.message}`
-        : `worker stalled (${info.waitingCount} waiting, ${info.idleMinutes}m idle)`;
+        : info.reason === 'child_spawn_failing'
+          ? `job-child spawn failing (${info.consecutiveFailures} consecutive): ${info.message}`
+          : `worker stalled (${info.waitingCount} waiting, ${info.idleMinutes}m idle)`;
       console.error(
         `[health] FATAL: ${detail}. No 'unhealthy' listener registered; ` +
         `defaulting to process.exit(1) for process-manager restart.`,
@@ -276,6 +379,10 @@ export class MinionWorker extends EventEmitter {
 
     await this.queue.ensureSchema();
     this.running = true;
+    // R2-9 lifecycle: (re-)enable the event-loop-delay histogram for this
+    // run; stop() disables it so embedding hosts / test suites that cycle
+    // start()/stop() don't leak a ~50Hz native sampling timer per instance.
+    try { this.eldHistogram?.enable(); } catch { /* fail-open */ }
 
     // Graceful shutdown. Fires shutdownAbort so handlers subscribed to
     // `ctx.shutdownSignal` (currently: shell handler) can run their own cleanup
@@ -383,28 +490,36 @@ export class MinionWorker extends EventEmitter {
       let healthRunning = false;
       let healthExited = false;
 
-      // Race executeRaw against a wall-clock deadline. A hung connection
-      // (network-partitioned PgBouncer, deadlocked backend) would otherwise
-      // hold the await forever — the recursive setTimeout's next tick is only
-      // scheduled in `finally`, so a hung probe would silently disable the
-      // entire health monitor. The timeout treats hangs as failures and feeds
-      // them into `dbFailExitAfter`.
-      const probeWithTimeout = async (): Promise<void> => {
-        const ac = new AbortController();
-        const timeoutMs = this.opts.dbProbeTimeoutMs;
-        const timer = setTimeout(() => ac.abort(), timeoutMs);
-        try {
-          await Promise.race([
-            this.engine.executeRaw('SELECT 1'),
-            new Promise<never>((_, reject) => {
-              ac.signal.addEventListener('abort', () => {
-                reject(new Error(`probe timeout after ${timeoutMs}ms`));
-              });
-            }),
-          ]);
-        } finally {
-          clearTimeout(timer);
-        }
+      // DB liveness probe with pool-starvation disambiguation (issue #6).
+      // The probe body lives in db-probe.ts (hermetically tested,
+      // lock-renewal-tick pattern); this is the thin adapter. Both probes
+      // carry an AbortSignal — a hung probe is CANCELLED (slot released),
+      // never abandoned. The direct-lane probe runs ONLY when dual-pool is
+      // genuinely active (a kill-switched executeRawDirect would probe the
+      // same starved read pool twice and fake a verdict).
+      const runProbe = async (): Promise<DbProbeResult> => {
+        const cm = getConnectionRouting(this.engine);
+        const dualPool = cm?.isDualPoolActive?.() === true;
+        const getDiag = (this.engine as {
+          getPoolDiagnostics?: () => PoolDiagnostics | null;
+        }).getPoolDiagnostics;
+        return runDbProbe({
+          probeRead: async (signal) => {
+            await this.engine.executeRaw('SELECT 1', undefined, { signal });
+          },
+          ...(dualPool
+            ? {
+                probeDirect: async (signal: AbortSignal) => {
+                  await this.engine.executeRawDirect('SELECT 1', undefined, { signal });
+                },
+              }
+            : {}),
+          ...(typeof getDiag === 'function'
+            ? { getDiagnostics: () => getDiag.call(this.engine) }
+            : {}),
+          timeoutMs: this.opts.dbProbeTimeoutMs,
+          directTimeoutMs: DIRECT_PROBE_TIMEOUT_MS,
+        });
       };
 
       const runHealthCheck = async (): Promise<void> => {
@@ -412,25 +527,25 @@ export class MinionWorker extends EventEmitter {
         healthRunning = true;
         try {
           // --- 1. DB liveness probe ---
-          try {
-            await probeWithTimeout();
+          const probe = await runProbe();
+          if (probe.ok) {
             consecutiveDbFailures = 0;
-          } catch (e) {
+          } else {
             consecutiveDbFailures++;
-            const msg = e instanceof Error ? e.message : String(e);
             console.error(
-              `[health] DB probe failed (${consecutiveDbFailures}/${this.opts.dbFailExitAfter}): ${msg}`,
+              `[health] DB probe failed (${consecutiveDbFailures}/${this.opts.dbFailExitAfter}): ${probe.detail}`,
             );
             if (consecutiveDbFailures >= this.opts.dbFailExitAfter) {
               console.error(
-                `[health] DB unreachable after ${this.opts.dbFailExitAfter} consecutive probes. ` +
-                `Emitting 'unhealthy' for process-manager restart.`,
+                `[health] DB probe failed ${this.opts.dbFailExitAfter} consecutive times ` +
+                `(verdict: ${probe.verdict}). Emitting 'unhealthy' for process-manager restart.`,
               );
               healthExited = true;
               this.emitUnhealthy({
                 reason: 'db_dead',
                 consecutiveFailures: consecutiveDbFailures,
-                message: msg,
+                message: probe.detail,
+                verdict: probe.verdict,
               });
             }
             return; // Skip stall check when DB is flaky
@@ -535,7 +650,24 @@ export class MinionWorker extends EventEmitter {
           }
         }
 
-        // Claim jobs up to concurrency limit
+        // Claim jobs up to concurrency limit — unless the system-wide pause
+        // marker is parked. `gbrain migrate` quiesces writers for the copy
+        // window; the marker stops the autopilot dispatch loop, and gating
+        // the CLAIM here extends that fence to queued jobs (an already
+        // in-flight job finishes and is waited on by the migrate drain).
+        // Checked at claim time only: one existsSync per poll tick.
+        if (existsSync(autopilotPausedMarkerPath())) {
+          if (!this.pausedByMarkerAnnounced) {
+            console.log('[worker] pause marker present — not claiming new jobs until it clears.');
+            this.pausedByMarkerAnnounced = true;
+          }
+          await new Promise(resolve => setTimeout(resolve, this.opts.pollInterval));
+          continue;
+        }
+        if (this.pausedByMarkerAnnounced) {
+          console.log('[worker] pause marker cleared — resuming job claims.');
+          this.pausedByMarkerAnnounced = false;
+        }
         if (this.inFlight.size < this.opts.concurrency) {
           const lockToken = `${this.workerId}:${Date.now()}`;
           let job: MinionJob | null;
@@ -563,6 +695,16 @@ export class MinionWorker extends EventEmitter {
           }
 
           if (job) {
+            // Post-claim fence re-check: the pre-claim marker check above
+            // races migrate's marker write — this claim may have committed
+            // after migrate's drain probe counted zero active jobs. A job
+            // claimed into that window is released back (delayed, un-run)
+            // instead of executed; the poll loop then parks on the marker.
+            if (existsSync(autopilotPausedMarkerPath())) {
+              console.log(`[worker] pause marker appeared after claim — releasing ${job.name} (id=${job.id}) un-run.`);
+              await this.releaseClaimForPause(job, lockToken);
+              continue;
+            }
             // Quiet-hours gate: evaluated at claim time, not dispatch.
             // Config lives on the job record (jsonb column added in
             // schema migration v12). Worker releases the job back to the
@@ -629,6 +771,31 @@ export class MinionWorker extends EventEmitter {
    * 'skip' → status='cancelled', final_status='skipped_quiet_hours'. The
    *   event is dropped.
    */
+  /**
+   * Release a just-claimed job back to the queue un-run because the
+   * system-wide pause marker appeared between our pre-claim check and the
+   * claim committing. Same conditional-release SQL shape as the quiet-hours
+   * defer, but with a short delay: the poll loop parks on the marker, so the
+   * job re-enters waiting and is picked up as soon as the pause clears.
+   */
+  private async releaseClaimForPause(job: MinionJob, lockToken: string): Promise<void> {
+    try {
+      await this.engine.executeRaw(
+        `UPDATE minion_jobs
+         SET status = 'delayed', lock_token = NULL, lock_until = NULL,
+             delay_until = now() + interval '1 minute',
+             updated_at = now()
+         WHERE id = $1 AND lock_token = $2`,
+        [job.id, lockToken],
+      );
+    } catch (e) {
+      // Fail-open: if the release UPDATE itself fails, the claim lock simply
+      // expires and the stall detector requeues the row — slower, same end
+      // state, and never a reason to crash the worker.
+      console.error(`[worker] pause release failed for job ${job.id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   private async handleQuietHoursDefer(job: MinionJob, lockToken: string, verdict: 'skip' | 'defer'): Promise<void> {
     try {
       if (verdict === 'skip') {
@@ -675,22 +842,15 @@ export class MinionWorker extends EventEmitter {
   /** Stop the worker gracefully. */
   stop(): void {
     this.running = false;
+    try { this.eldHistogram?.disable(); } catch { /* fail-open */ }
   }
 
   /**
    * Rebuild the worker-owned DB pool after a retryable connection failure.
-   *
-   * PostgresEngine exposes reconnect(); PGLite and test doubles may not. Absence
-   * is a no-op so non-Postgres workers preserve their legacy behavior.
+   * Shared with the inline child drain (#2050) via minions/reconnect.ts.
    */
   private async reconnectAfterConnectionError(site: string, error: unknown): Promise<void> {
-    const reconnect = (this.engine as { reconnect?: (ctx?: { error?: unknown }) => Promise<void> }).reconnect;
-    if (!reconnect) return;
-    try {
-      await reconnect.call(this.engine, { error });
-    } catch (re) {
-      console.error(`[worker] reconnect after ${site} error failed: ${re instanceof Error ? re.message : String(re)}`);
-    }
+    await reconnectEngineAfterConnError(this.engine, site, error);
   }
 
   /** RSS watchdog. Called from the per-job finally and the periodic timer.
@@ -801,6 +961,40 @@ export class MinionWorker extends EventEmitter {
    * `failJob` throwing during the same DB outage) can't propagate to
    * the process-level handler and crash the daemon.
    */
+  /**
+   * One formatter for the classified abort telemetry (R2-7) so the
+   * should_abort warn and the 30s-later grace-evict line can never drift
+   * apart (they briefly did: `load1:` vs `load1_at_abort:`).
+   */
+  private formatAbortMeta(meta: Extract<TickResult, { kind: 'lock_lost' | 'should_abort' }>): string {
+    if (meta.kind === 'lock_lost') {
+      return `cause: ${meta.cause}, via: ${meta.via}`;
+    }
+    return `cause: ${meta.cause}, since_last_success_ms: ${Math.round(meta.sinceLastSuccessMs)}, ` +
+      `tick_lateness_ms: ${Math.round(meta.latenessMs)}, overlap_skips: ${meta.overlapSkips}` +
+      `${meta.load1 !== undefined ? `, load1: ${meta.load1.toFixed(2)}/${meta.cores} cores` : ''}`;
+  }
+
+  /**
+   * Event-loop-delay sample for eviction log lines (CDX-1). The histogram
+   * resets on every successful renewal (R2-9 via deps.onRenewalSuccess),
+   * so these numbers attribute to the window since the last success —
+   * i.e. exactly the window in which renewal was failing. ns→ms. Empty
+   * string when the runtime lacks the histogram or sampling throws
+   * (fail-open: never let telemetry break the eviction path).
+   */
+  private formatEvictionTelemetry(): string {
+    const h = this.eldHistogram;
+    if (h === null) return '';
+    try {
+      const p99Ms = Math.round(h.percentile(99) / 1e6);
+      const maxMs = Math.round(h.max / 1e6);
+      return ` [event_loop_delay since last renewal: p99 ${p99Ms}ms, max ${maxMs}ms]`;
+    } catch {
+      return '';
+    }
+  }
+
   private launchJob(job: MinionJob, lockToken: string): void {
     const abort = new AbortController();
 
@@ -808,18 +1002,46 @@ export class MinionWorker extends EventEmitter {
     let cancelled = false;
     // --- re-entrancy guard for overlapping ticks during PgBouncer stalls ---
     let tickInFlight = false;
+    // --- R2-7: the tick's final result, stashed at abort time so the ---
+    // --- grace-evict log (which fires 30s LATER) can report cause/    ---
+    // --- lateness/load instead of just the Error string.              ---
+    let abortMeta: Extract<TickResult, { kind: 'lock_lost' | 'should_abort' }> | null = null;
+
+    // R2-4: ALL elapsed-time arithmetic in the renewal state machine runs
+    // on a monotonic clock — a wall-clock jump (NTP step, DST bug) must
+    // never evict or indefinitely defer. Date.now stays only in log/audit
+    // timestamps (the audit writer stamps its own `ts`).
+    const monotonicNow = () => performance.now();
 
     // --- D3: pure-function lock renewal ---
-    const knobs = resolveLockRenewalKnobs(process.env, this.opts.lockDuration);
+    // #4145: the EFFECTIVE lease is per-job (claim stamped it from the
+    // handler map / explicit submit; NULL = worker default). The cadence
+    // clamps to 60s so a 300s lease renews 5x per window (matching the
+    // cycle refresher's multiple-chances philosophy) instead of the bare
+    // lease/2 = every 150s; leases ≤120s keep the legacy /2 exactly.
+    // Defense-in-depth: re-clamp the row value at consumption. The exposed
+    // submit surfaces already clamp, but the claim COALESCE trusts the row
+    // and the DB CHECK only enforces > 0 — a writer that bypasses add()
+    // (direct SQL repair, foreign tooling) could otherwise stamp a 1ms
+    // lease (renewal-storm setInterval) or a ~25-day one (weeks-long
+    // dead-worker pin).
+    const effectiveLockMs = job.lock_duration_ms != null
+      ? clampLockDurationMs(job.lock_duration_ms)
+      : this.opts.lockDuration;
+    const renewalIntervalMs = renewalIntervalFor(effectiveLockMs);
+    const knobs = resolveLockRenewalKnobs(process.env, effectiveLockMs, renewalIntervalMs);
     const renewalState: LockRenewalState = {
       jobId: job.id,
       jobName: job.name,
       lockToken,
-      lockDurationMs: this.opts.lockDuration,
+      lockDurationMs: effectiveLockMs,
       knobs,
-      lastSuccessfulRenewalAt: Date.now(),
+      lastSuccessfulRenewalAt: monotonicNow(),
       consecutiveFailures: 0,
       cancelled: () => cancelled,
+      intervalMs: renewalIntervalMs,
+      lastTickFiredAt: monotonicNow(),
+      overlapSkips: 0,
     };
     // issue #1678 (Codex #2): hand the tick a bounded reconnect-once hook when
     // the engine owns a pool that a transaction-mode pooler can reap. Postgres
@@ -827,17 +1049,32 @@ export class MinionWorker extends EventEmitter {
     // and the tick keeps its legacy no-reconnect behavior.
     const engineReconnect = (this.engine as { reconnect?: (ctx?: { error?: unknown }) => Promise<void> }).reconnect;
     const renewalDeps: LockRenewalDeps = {
-      renewLock: (id, tok, dur) => this.queue.renewLock(id, tok, dur),
+      renewLock: (id, tok, dur, opts) => this.queue.renewLock(id, tok, dur, opts),
       audit: lockRenewalAudit,
-      now: Date.now,
+      // R2-4: monotonic — see monotonicNow above.
+      now: monotonicNow,
       setTimeout: (cb, ms) => globalThis.setTimeout(cb, ms),
       // Forward the tick's classified error (CODEX impl review #2) so a pooler
       // reap during lock renewal is audited as reap_detected, not reconnect_other.
       ...(engineReconnect ? { reconnect: (ctx?: { error?: unknown }) => engineReconnect.call(this.engine, ctx) } : {}),
+      // Issue #4145 telemetry: raw loadavg + cached cores (CEO-F2: the tick
+      // try/catches every call), and the R2-9 histogram reset-on-success.
+      loadSnapshot: () => ({ load1: loadavg()[0], cores: this.cpuCores }),
+      onRenewalSuccess: () => { try { this.eldHistogram?.reset(); } catch { /* fail-open */ } },
     };
 
     const lockTimer = setInterval(() => {
-      if (tickInFlight) return;
+      if (tickInFlight) {
+        // Overlap skip (CDX-13): a prior tick is still awaiting its
+        // renewal call. Count it — this is NOT a missed interval (those
+        // coalesce and show up as tick LATENESS instead) — and ADVANCE the
+        // lateness baseline: this callback fired on schedule, so the next
+        // executed tick must not book the skipped window as event-loop
+        // lateness (that would misclassify a slow DB call as starvation).
+        renewalState.overlapSkips += 1;
+        renewalState.lastTickFiredAt = monotonicNow();
+        return;
+      }
       tickInFlight = true;
       void runLockRenewalTick(renewalDeps, renewalState)
         .then((result) => {
@@ -848,13 +1085,24 @@ export class MinionWorker extends EventEmitter {
               return;
             case 'lock_lost':
               if (!abort.signal.aborted) {
-                console.warn(`Lock lost for job ${job.id}, aborting execution`);
+                abortMeta = result;
+                console.warn(
+                  `Lock lost for job ${job.id}, aborting execution ` +
+                  `(${this.formatAbortMeta(result)}${this.formatEvictionTelemetry()})`,
+                );
                 clearInterval(lockTimer);
                 abort.abort(new Error('lock-lost'));
               }
               return;
             case 'should_abort':
               if (!abort.signal.aborted) {
+                abortMeta = result;
+                // Issue #4145 request 3: the one line that saves the 8h of
+                // forensics — WHY renewal failed + was the loop starved.
+                console.warn(
+                  `Lock renewal failed for job ${job.id} (${job.name}); aborting ` +
+                  `(${this.formatAbortMeta(result)}${this.formatEvictionTelemetry()})`,
+                );
                 clearInterval(lockTimer);
                 abort.abort(new Error(result.reason));
               }
@@ -874,7 +1122,7 @@ export class MinionWorker extends EventEmitter {
         .finally(() => {
           tickInFlight = false;
         });
-    }, this.opts.lockDuration / 2);
+    }, renewalIntervalMs);
 
     // --- D8b: universal grace-eviction timer ---
     // Fires for ANY abort reason (not just job.timeout_ms). Without
@@ -890,18 +1138,36 @@ export class MinionWorker extends EventEmitter {
           const reason = abort.signal.reason instanceof Error
             ? abort.signal.reason.message
             : String(abort.signal.reason);
+          // R2-7: abortMeta carries the tick's classified cause + starvation
+          // telemetry captured AT abort time — the Error string alone would
+          // make this line read like an orphan leak (the #4145 forensics trap).
+          const meta = abortMeta === null ? '' : ` (${this.formatAbortMeta(abortMeta)})`;
           console.warn(
-            `Job ${job.id} (${job.name}) did not exit within 30s of abort (reason: ${reason}). ` +
+            `Job ${job.id} (${job.name}) did not exit within 30s of abort (reason: ${reason}).${meta} ` +
             `Force-evicting from inFlight to unblock worker. ` +
-            `The handler is still running but the worker will claim new jobs.`
+            `The handler is still running but the worker will claim new jobs.` +
+            this.formatEvictionTelemetry()
           );
           clearInterval(lockTimer);
-          this.inFlight.delete(job.id);
-          // D8a: don't failJob if the abort was infrastructure. The
-          // stall detector will reclaim the row cleanly because the
-          // lock has expired (lock-renewal aborts only fire after
-          // lockDuration - safetyMargin elapsed without renewal).
-          if (!INFRASTRUCTURE_ABORT_REASONS.has(reason)) {
+          // R2-1 generation-safety: delete ONLY our own execution's entry.
+          // After a force-evict, this job id can be requeued and re-claimed
+          // by THIS worker while the old handler is still alive — an
+          // unconditional delete-by-id would then remove the NEW
+          // execution's entry (concurrency undercount, lost tracking).
+          // The lockToken is minted per claim, so it is the generation.
+          if (this.inFlight.get(job.id)?.lockToken === lockToken) {
+            this.inFlight.delete(job.id);
+          }
+          // D8a: don't failJob if the abort was infrastructure. The stall
+          // detector will reclaim the row cleanly: a lock-renewal abort
+          // now fires only after the at-deadline VERIFY either returned
+          // fenced-false (row already reclaimed) or stayed unreachable
+          // past hardEvictMs (lease long expired) — see #4145
+          // verify-before-evict in lock-renewal-tick.ts. Isolation mode:
+          // also skip — the group SIGKILL already fired and executeJob's
+          // own recording follows; a competing evict failJob('dead') could
+          // dead-letter a job with attempts remaining (adversarial-review P3).
+          if (!INFRASTRUCTURE_ABORT_REASONS.has(reason) && this.opts.jobIsolation !== 'process') {
             this.queue.failJob(
               job.id,
               lockToken,
@@ -943,7 +1209,12 @@ export class MinionWorker extends EventEmitter {
         clearInterval(lockTimer);
         if (timeoutTimer) clearTimeout(timeoutTimer);
         if (graceTimer) clearTimeout(graceTimer);
-        this.inFlight.delete(job.id);
+        // R2-1 generation-safety: a force-evicted execution's finally can
+        // fire long after the same job id was re-claimed by this worker.
+        // Only delete the entry if it is still OURS (token = generation).
+        if (this.inFlight.get(job.id)?.lockToken === lockToken) {
+          this.inFlight.delete(job.id);
+        }
         this.jobsCompleted += 1;
         this.checkMemoryLimit('post-job');
       })
@@ -975,48 +1246,48 @@ export class MinionWorker extends EventEmitter {
       return;
     }
 
+    // issue #5: 'process' isolation runs the handler in a SIGKILL-able child;
+    // the parent keeps claim/renewal and ALL result recording below — this
+    // branch swaps ONLY the execution engine. When isolated, the parent-side
+    // context is skipped entirely (the child builds its own against its own
+    // engine; building it here would be dead work holding closures). The
+    // constructor guarantees childCliInvocation != null whenever
+    // jobIsolation === 'process', so this predicate matches the evict guard.
+    const isolated = this.opts.jobIsolation === 'process';
+
     // Build job context with per-job AbortSignal + shared shutdown signal.
     // Most handlers only care about `signal` (timeout / cancel / lock-loss).
     // `shutdownSignal` is separate: fires only on worker process SIGTERM/SIGINT.
     // Handlers that need to run cleanup before worker exit (shell handler's
     // SIGTERM→5s→SIGKILL on its child) subscribe to shutdownSignal too.
-    const context: MinionJobContext = {
-      id: job.id,
-      name: job.name,
-      data: job.data,
-      attempts_made: job.attempts_made,
-      signal: abort.signal,
-      deadlineAtMs: job.timeout_at != null ? job.timeout_at.getTime() : null,
-      shutdownSignal: this.shutdownAbort.signal,
-      updateProgress: async (progress: unknown) => {
-        await this.queue.updateProgress(job.id, lockToken, progress);
-      },
-      updateTokens: async (tokens: TokenUpdate) => {
-        await this.queue.updateTokens(job.id, lockToken, tokens);
-      },
-      log: async (message: string | Record<string, unknown>) => {
-        const value = typeof message === 'string' ? message : JSON.stringify(message);
-        await this.engine.executeRaw(
-          `UPDATE minion_jobs SET stacktrace = COALESCE(stacktrace, '[]'::jsonb) || to_jsonb($1::text),
-            updated_at = now()
-           WHERE id = $2 AND status = 'active' AND lock_token = $3`,
-          [value, job.id, lockToken]
+    // Builder shared with `gbrain jobs run-child` (job-context.ts) so the
+    // process-isolation child wires the exact same DB-backed callbacks.
+    const context: MinionJobContext | null = isolated
+      ? null
+      : buildJobContext(
+          this.engine,
+          this.queue,
+          job,
+          lockToken,
+          abort.signal,
+          this.shutdownAbort.signal,
         );
-      },
-      isActive: async () => {
-        const rows = await this.engine.executeRaw<{ id: number }>(
-          `SELECT id FROM minion_jobs WHERE id = $1 AND status = 'active' AND lock_token = $2`,
-          [job.id, lockToken]
-        );
-        return rows.length > 0;
-      },
-      readInbox: async () => {
-        return this.queue.readInbox(job.id, lockToken);
-      },
-    };
 
     try {
-      const result = await handler(context);
+      const result = isolated
+        ? await runJobInChild({
+            jobId: job.id,
+            jobName: job.name,
+            lockToken,
+            abortSignal: abort.signal,
+            shutdownSignal: this.shutdownAbort.signal,
+            invocation: this.opts.childCliInvocation as { cmd: string; argsPrefix: string[] },
+            tiniPath: this.opts.childTiniPath,
+          })
+        : await handler(context as MinionJobContext);
+
+      // The child spawned and ran — the spawn path is healthy again.
+      this._consecutiveChildSpawnFailures = 0;
 
       clearInterval(lockTimer);
 
@@ -1069,6 +1340,56 @@ export class MinionWorker extends EventEmitter {
           `Job ${job.id} (${job.name}) released after infrastructure abort (${abortReason}); ` +
           `stall detector will requeue (no attempt burned)`,
         );
+        return;
+      }
+
+      // Any error that ISN'T a spawn failure proves the spawn path works —
+      // keep the breaker's "consecutive" semantics honest.
+      if (!(err instanceof ChildSpawnInfraError)) {
+        this._consecutiveChildSpawnFailures = 0;
+      }
+
+      // issue #5 process isolation — two more infrastructure classes, same
+      // release semantics as the block above (lock expires once launchJob's
+      // finally clears the renewal timer; the stall sweeper requeues):
+      //   - spawn failure: an ops misconfiguration (bad child CLI path) must
+      //     not burn attempts job-by-job until the queue dead-letters. The
+      //     CLI layer also fail-fast validates the invocation at startup.
+      //   - worker shutdown: a routine deploy killed the child before it
+      //     could report (codex-2 #7); burning an attempt per deploy would
+      //     dead-letter long jobs after a few releases.
+      if (err instanceof ChildSpawnInfraError) {
+        console.error(
+          `Job ${job.id} (${job.name}) released after child spawn failure — ` +
+          `check the worker's child CLI configuration: ${errorText} (no attempt burned)`,
+        );
+        this._consecutiveChildSpawnFailures += 1;
+        if (this._consecutiveChildSpawnFailures >= MinionWorker.CHILD_SPAWN_FAIL_EXIT_AFTER) {
+          console.error(
+            `[isolation] ${this._consecutiveChildSpawnFailures} consecutive child spawn/bootstrap ` +
+            `failures — the child CLI is deterministically broken. Emitting 'unhealthy' for ` +
+            `process-manager restart instead of looping claim/release forever.`,
+          );
+          this.emitUnhealthy({
+            reason: 'child_spawn_failing',
+            consecutiveFailures: this._consecutiveChildSpawnFailures,
+            message: errorText,
+          });
+        }
+        return;
+      }
+      if (err instanceof ChildWorkerShutdownError) {
+        console.log(
+          `Job ${job.id} (${job.name}) released after worker shutdown (${errorText}); ` +
+          `stall detector will requeue (no attempt burned)`,
+        );
+        return;
+      }
+      if (err instanceof ChildNotClaimedError) {
+        // The child proved the claim is gone (reclaimed/cancelled before the
+        // handler ran). The token-fenced failJob would no-op anyway — return
+        // without burning anything against a claim we no longer hold.
+        console.log(`Job ${job.id} (${job.name}): ${errorText}`);
         return;
       }
 

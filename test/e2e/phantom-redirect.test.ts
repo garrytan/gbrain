@@ -235,27 +235,38 @@ describeMaybe('phantom-redirect E2E (Postgres)', () => {
          FROM facts WHERE source_id='default'
          ORDER BY id`,
       );
-      // After migrateFactsToCanonical, the row is now under canonical.
-      // The migrate step preserves embedding. Then the main reconcile
-      // visits canonical (added via touched_canonicals) and does
-      // wipe-then-insert from fence — which DROPS embedding because
-      // the fence doesn't carry it. So embedding ends up NULL.
+      // After migrateFactsToCanonical, the row is now under canonical with
+      // every other column — including embedding — preserved (the UPDATE
+      // rewrites only the slug columns). The main reconcile then visits
+      // canonical (added via touched_canonicals); since 54a807064 (#2932,
+      // idempotent extract_facts) an in-sync page is a NO-OP instead of the
+      // old wipe-then-reinsert, so the migrated row and its embedding
+      // SURVIVE the pass. (Pre-#2932 the wipe dropped the embedding to
+      // NULL, which this test used to document.)
       //
-      // This test EXISTS to document this baseline behavior: the migrate
-      // step itself does NOT corrupt the embedding column on Postgres
-      // (the round-12 concern), but the subsequent fence reconcile
-      // intentionally re-derives from fence and embedding is regenerated
-      // by the embed phase.
-      //
-      // The pinning assertion: at NO point is the embedding column
-      // populated with a STRING (postgres-js's text shape leak — that
-      // bug class would produce a non-null text-shaped value here, not
-      // a clean NULL).
+      // The round-12 pinning assertions:
+      //   1. The embedding survived the migrate + reconcile round-trip
+      //      non-NULL at its original dimensionality — postgres-js did not
+      //      mangle it through its text representation.
+      //   2. At NO point is the embedding column populated with a
+      //      non-vector-typed value. Since v0.31.0 (89ae72095, migration
+      //      v40) the facts.embedding column is HALFVEC(1536) on pgvector
+      //      >= 0.7 (full-precision VECTOR fallback below that), so BOTH
+      //      real vector types are legitimate here.
+      const survived = await engine.executeRaw<{ ct: string; dims: number | null }>(
+        `SELECT COUNT(*)::text AS ct, MIN(vector_dims(embedding::vector)) AS dims
+         FROM facts
+         WHERE source_id='default'
+           AND source_markdown_slug='people/alice-example'
+           AND embedding IS NOT NULL`,
+      );
+      expect(parseInt(survived[0].ct, 10)).toBe(1);
+      expect(Number(survived[0].dims)).toBe(1536);
       const stringShaped = await engine.executeRaw<{ ct: string }>(
         `SELECT COUNT(*)::text AS ct FROM facts
          WHERE source_id='default'
            AND embedding IS NOT NULL
-           AND pg_typeof(embedding)::text != 'vector'`,
+           AND pg_typeof(embedding)::text NOT IN ('vector', 'halfvec')`,
       );
       expect(parseInt(stringShaped[0].ct, 10)).toBe(0);
       expect(rows.length).toBeGreaterThan(0);

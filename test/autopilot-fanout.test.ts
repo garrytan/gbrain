@@ -18,6 +18,11 @@ import {
   resolveFanoutMax,
   dispatchPerSource,
 } from '../src/commands/autopilot-fanout.ts';
+import {
+  autopilotRemediationIdempotencyKey,
+  shouldRunAutopilotFullCycle,
+  shouldSleepHealthyAutopilot,
+} from '../src/commands/autopilot-remediation-policy.ts';
 import type { SourceRow, BrainEngine } from '../src/core/engine.ts';
 
 function src(id: string, last_full_cycle_at?: string | null, extra: Record<string, unknown> = {}): SourceRow {
@@ -71,6 +76,66 @@ describe('isSourceStale', () => {
     const past = new Date(NOW - 6 * 60_000).toISOString();
     expect(isSourceStale(src('a', past), NOW, 5)).toBe(true);
     expect(isSourceStale(src('a', past), NOW, 60)).toBe(false);
+  });
+});
+
+describe('Autopilot remediation policy (#4046)', () => {
+  test('targeted remediation keys reopen in each dispatch interval', () => {
+    const recommendationKey = 'default:sync:deadbeef';
+    const firstSlot = '2026-08-13T06:00:00.000Z';
+    const nextSlot = '2026-08-13T06:05:00.000Z';
+
+    expect(autopilotRemediationIdempotencyKey(recommendationKey, firstSlot)).toBe(
+      'default:sync:deadbeef:autopilot:2026-08-13T06:00:00.000Z',
+    );
+    expect(autopilotRemediationIdempotencyKey(recommendationKey, nextSlot)).not.toBe(
+      autopilotRemediationIdempotencyKey(recommendationKey, firstSlot),
+    );
+  });
+
+  test('an overdue full cycle wins even while a small remediation plan exists', () => {
+    expect(shouldRunAutopilotFullCycle({
+      score: 94,
+      planLength: 2,
+      estimatedSeconds: 30,
+      minutesSinceLastFull: 61,
+    })).toBe(true);
+  });
+
+  test('a fresh small remediation plan stays targeted', () => {
+    expect(shouldRunAutopilotFullCycle({
+      score: 94,
+      planLength: 2,
+      estimatedSeconds: 30,
+      minutesSinceLastFull: 10,
+    })).toBe(false);
+  });
+
+  test('only a fresh healthy brain with no plan sleeps', () => {
+    expect(shouldSleepHealthyAutopilot(95, 0, 59)).toBe(true);
+    expect(shouldSleepHealthyAutopilot(95, 0, 60)).toBe(false);
+    expect(shouldSleepHealthyAutopilot(95, 1, 10)).toBe(false);
+  });
+
+  test('large, slow, or severely degraded plans still use the full cycle', () => {
+    expect(shouldRunAutopilotFullCycle({
+      score: 90,
+      planLength: 4,
+      estimatedSeconds: 30,
+      minutesSinceLastFull: 10,
+    })).toBe(true);
+    expect(shouldRunAutopilotFullCycle({
+      score: 90,
+      planLength: 2,
+      estimatedSeconds: 300,
+      minutesSinceLastFull: 10,
+    })).toBe(true);
+    expect(shouldRunAutopilotFullCycle({
+      score: 69,
+      planLength: 1,
+      estimatedSeconds: 30,
+      minutesSinceLastFull: 10,
+    })).toBe(true);
   });
 });
 
@@ -289,20 +354,61 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     expect(parsed.pending.length).toBe(2);
   });
 
-  test('per-source submit MUST NOT pass maxWaiting (regression — coalesces all sources to one job)', async () => {
-    // Direct unit-stub queues can't enforce maxWaiting semantics (the
+  test('per-source submit MUST NOT pass maxWaiting, MUST pass maxPending: 1 (fan-out preserved + single-flight)', async () => {
+    // Direct unit-stub queues can't enforce backpressure semantics (the
     // production MinionQueue implementation does), so this catches the
     // regression by inspecting the submit opts at the dispatch boundary.
-    // If a future refactor re-adds maxWaiting:1 to the per-source path,
-    // the production fan-out would silently coalesce N sources to ONE
-    // waiting job per tick — killing the entire feature. The e2e test
-    // also catches this against a real queue, but this guard fires in
-    // unit tests too so the bug surfaces 100x faster.
+    // maxWaiting's NULL-as-wildcard source scope would coalesce N per-source
+    // jobs sharing name='autopilot-cycle' down to ONE waiting job — killing
+    // the fan-out. maxPending is required instead: its EXACT source scope
+    // keeps N independent per-source caps while suppressing cross-slot
+    // re-dispatch when a source's cycle is still in flight (upstream
+    // issue #2). The e2e test also pins both against a real queue.
     const { engine, queue, added, fanoutOpts } = makeStubs([src('a'), src('b'), src('c')]);
     await dispatchPerSource(engine, queue, fanoutOpts);
+    expect(added.length).toBe(3);
     for (const job of added) {
       expect(job.opts.maxWaiting).toBeUndefined();
+      expect(job.opts.maxPending).toBe(1);
     }
+  });
+
+  test('legacy fallback submit passes maxPending: 1 (cross-slot single-flight) and no maxWaiting', async () => {
+    const { engine, queue, added, fanoutOpts } = makeStubs([]);
+    await dispatchPerSource(engine, queue, fanoutOpts);
+    expect(added.length).toBe(1);
+    expect(added[0].opts.maxPending).toBe(1);
+    expect(added[0].opts.maxWaiting).toBeUndefined();
+  });
+
+  test('coalesced submissions are reported separately and emit dispatch_coalesced', async () => {
+    // Stub queue marks the second source's job as coalesced (already in
+    // flight) — the fanout must not claim it as a dispatch.
+    const added: Array<{ name: string; data: Record<string, unknown>; opts: Record<string, unknown> }> = [];
+    const events: string[] = [];
+    let nextId = 200;
+    const engine = {
+      kind: 'postgres' as const,
+      listAllSources: async () => [src('a'), src('b')],
+      getConfig: async () => null,
+      executeRaw: async () => [],
+    } as unknown as BrainEngine;
+    const queue = {
+      add: async (name: string, data: Record<string, unknown>, addOpts: Record<string, unknown>) => {
+        added.push({ name, data, opts: addOpts });
+        const coalesce = data.source_id === 'b';
+        return { id: nextId++, ...(coalesce ? { coalesced: true } : {}) };
+      },
+    } as unknown as Parameters<typeof dispatchPerSource>[1];
+    const result = await dispatchPerSource(engine, queue, {
+      repoPath: '/tmp/brain', slot: 's', timeoutMs: 1, fanoutMax: 4, jsonMode: true,
+      emit: (l: string) => events.push(l), log: () => {},
+    });
+    expect(result.dispatched).toEqual(['a']);
+    expect(result.coalesced).toEqual(['b']);
+    const kinds = events.map(e => JSON.parse(e).event);
+    expect(kinds).toContain('dispatched');
+    expect(kinds).toContain('dispatch_coalesced');
   });
 
   test('all-fresh tick dispatches nothing (no jobs added)', async () => {
@@ -313,6 +419,19 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     const result = await dispatchPerSource(engine, queue, fanoutOpts);
     expect(result.dispatched.length).toBe(0);
     expect(result.skipped_fresh.length).toBe(2);
+    expect(result.all_sources_fresh).toBe(true);
     expect(added.length).toBe(0);
+  });
+
+  test('a failed stale-source submission is not misclassified as all fresh', async () => {
+    const { engine, fanoutOpts } = makeStubs([src('stale')]);
+    const queue = {
+      add: async () => { throw new Error('queue unavailable'); },
+    } as unknown as Parameters<typeof dispatchPerSource>[1];
+
+    const result = await dispatchPerSource(engine, queue, fanoutOpts);
+
+    expect(result.dispatched).toEqual([]);
+    expect(result.all_sources_fresh).toBe(false);
   });
 });

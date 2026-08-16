@@ -28,7 +28,7 @@ receipt file from disk and re-renders it. The other modes need the brain.
 |---|---|---|
 | `--limit N` | 100 | Random sample of N takes from the brain. |
 | `--cycles N` | 3 (TTY) / 1 (non-TTY) | Up to N panel calls before giving up; early-stop on PASS or INCONCLUSIVE. |
-| `--budget-usd N` | unset | Abort before next call's projected cost would exceed cap. Models without a `pricing.ts` entry fail loud (codex #4). |
+| `--budget-usd N` | unset | Abort before next call's projected cost would exceed cap. Models without a `pricing.ts` entry fail loud rather than silently blowing the budget. |
 | `--source db|fs` | `db` | `fs` is reserved for v0.33+. |
 | `--slug-prefix P` | unset | Filter takes to pages whose slug starts with P. |
 | `--models a,b,c` | `openai:gpt-5.2,anthropic:claude-opus-4-7,google:gemini-2.0-flash` | Comma-separated panel. |
@@ -73,8 +73,8 @@ receipt file from disk and re-renders it. The other modes need the brain.
 
 - `schema_version` — locks the contract. Adding optional fields is additive
   and compatible. Renaming, removing, or changing semantics bumps the version.
-- `rubric_version` + `rubric_sha8` — segregate trend rows by rubric epoch
-  (codex review #3). When the rubric definition changes, both fields update,
+- `rubric_version` + `rubric_sha8` — segregate trend rows by rubric epoch.
+  When the rubric definition changes, both fields update,
   and trend mode groups runs accordingly so a stricter rubric doesn't
   silently look like a quality drop.
 - `corpus.corpus_sha8` — fingerprint over the joined takes-text the judge
@@ -83,7 +83,7 @@ receipt file from disk and re-renders it. The other modes need the brain.
   models in `--models` doesn't change the sha (sort is stable).
 - `successes_per_cycle` — count of contributing models per cycle. A model
   contributes when (a) its JSON parsed AND (b) every declared rubric dim
-  has a finite score (codex review #5 — missing-dim drops the contribution).
+  has a finite score (a missing dim drops the whole contribution).
 - `verdict` — `pass` if every dim mean >= 7 AND every dim min across
   contributing models >= 5; `fail` otherwise; `inconclusive` if fewer than
   2/3 models contributed complete scores.
@@ -93,11 +93,11 @@ receipt file from disk and re-renders it. The other modes need the brain.
 
 ## Receipt persistence
 
-Receipts persist to **`eval_takes_quality_runs`** (DB-authoritative per
-codex review #6) AND to disk at `~/.gbrain/eval-receipts/takes-quality-<corpus>-<prompt>-<models>-<rubric>.json`
+Receipts persist to **`eval_takes_quality_runs`** (the DB is authoritative)
+AND to disk at `~/.gbrain/eval-receipts/takes-quality-<corpus>-<prompt>-<models>-<rubric>.json`
 as a best-effort artifact. The DB row carries the full receipt JSON in the
 `receipt_json` JSONB column, so when the disk artifact is gone, `replay`
-can still reconstruct via `loadReceiptFromDb` (v0.33+ flag wiring).
+can still reconstruct via `loadReceiptFromDb`.
 
 The 4-sha primary key is unique (`UNIQUE` constraint) so re-running an
 identical eval is `INSERT ... ON CONFLICT DO NOTHING` — idempotent.

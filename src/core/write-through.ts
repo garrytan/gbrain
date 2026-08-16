@@ -22,12 +22,15 @@
  */
 
 import { existsSync, statSync, mkdirSync, writeFileSync, renameSync, unlinkSync, readdirSync } from 'fs';
-import { basename, dirname, join } from 'path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import { serializePageToMarkdown, resolvePageFilePath } from './markdown.ts';
 import { isWriteTargetContained } from './path-confine.ts';
-import { isDurabilityHardened, commitWriteThroughFile } from './brain-repo-durability.ts';
+import {
+  isDurabilityHardened, commitWriteThroughFile, currentBranch, getLastPushOutcome,
+  type PushLogOutcome,
+} from './brain-repo-durability.ts';
 
 /** Minimal logger surface — structurally compatible with operations.ts `Logger`. */
 export interface WriteThroughLogger {
@@ -39,11 +42,28 @@ export interface WriteThroughResult {
   path?: string;
   /**
    * True when the write was also committed to git (#2426). Only attempted on
-   * repos hardened via `gbrain sources harden` (durability hook installed);
-   * the hook then background-pushes the commit. Best-effort — a false/absent
-   * value never blocks the write.
+   * repos hardened via `gbrain sources harden` (durability hook installed).
+   * Commit-only — this says nothing about whether the commit ever reached the
+   * remote. Best-effort — a false/absent value never blocks the write.
    */
   committed?: boolean;
+  /**
+   * Set alongside `committed: true`. The actual push runs detached in the
+   * post-commit hook (see brain-repo-durability.ts), so at the moment this
+   * result is returned the outcome for THIS commit is genuinely unknown —
+   * 'pending' is the only honest value. Check `lastPushStatus` (or
+   * $GBRAIN_HOME/brain-push.log directly) afterward to see whether pushes for
+   * this branch are landing.
+   */
+  pushed?: 'pending';
+  /**
+   * Best-effort snapshot of the most recently logged push outcome for this
+   * branch (read from the hook's shared log), taken right after the commit
+   * above. It reflects push history UP TO that point — not the push this
+   * write just queued — so callers and health tooling can tell "pushes for
+   * this branch have been failing" apart from "this write committed fine".
+   */
+  lastPushStatus?: PushLogOutcome;
   /**
    * Non-error reasons the file was not written:
    *   - no_repo_configured: the resolved target (source `local_path` or, for a
@@ -71,6 +91,58 @@ export interface WritePageThroughOpts {
   /** Merged over the page's own frontmatter at render time (e.g. provenance). */
   frontmatterOverrides?: Record<string, unknown>;
   logger?: WriteThroughLogger;
+}
+
+/**
+ * Vet a `pages.source_path` before it is trusted as a write target.
+ *
+ * The column is populated from the scanner's relative path at import time, so
+ * the normal value is a clean repo-relative `.md` path. This rejects the shapes
+ * that would make `join(root, value)` unsafe or nonsensical — absolute paths,
+ * `..` traversal, NUL bytes, non-markdown artifacts, and blanks. Containment is
+ * still re-checked by `isWriteTargetContained` after the join; this is the
+ * cheap structural filter in front of it.
+ */
+function sanitizeRecordedSourcePath(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const value = raw.trim();
+  if (!value || value.includes('\0')) return null;
+  if (!value.toLowerCase().endsWith('.md')) return null;
+  if (isAbsolute(value)) return null;
+  if (value.split(/[\\/]/).some((segment) => segment === '..')) return null;
+  return value;
+}
+
+/**
+ * Recover a page-root-relative write target from a `file://` `source_uri`.
+ *
+ * `gbrain capture --file` records the absolute input path as `source_uri` but
+ * does NOT set `source_path` (that column is the file-scanner's). So a file the
+ * user authored INSIDE the brain repo and then captured has no file of record,
+ * and the slug-derived fallback would mint a twin beside the very file that was
+ * just read. When the recorded URI points at a path under `pageRoot`, that path
+ * IS the file of record — use it.
+ *
+ * Returns null for anything not a contained `.md` file so the caller falls back
+ * to the slug path.
+ */
+function recordedPathFromFileUri(sourceUri: string | null | undefined, pageRoot: string): string | null {
+  if (!sourceUri || !sourceUri.startsWith('file://')) return null;
+  let abs = sourceUri.slice('file://'.length);
+  if (!abs) return null;
+  // Percent-decode only when it looks encoded — the CLI stores raw paths, so a
+  // literal '%' in a filename must not be mangled.
+  if (/%[0-9A-Fa-f]{2}/.test(abs)) {
+    try {
+      abs = decodeURIComponent(abs);
+    } catch {
+      return null;
+    }
+  }
+  if (abs.includes('\0') || !abs.toLowerCase().endsWith('.md')) return null;
+  const rel = relative(resolve(pageRoot), resolve(abs));
+  if (!rel || isAbsolute(rel) || rel.split(/[\\/]/).some((segment) => segment === '..')) return null;
+  return rel;
 }
 
 /**
@@ -104,11 +176,37 @@ export async function writePageThrough(
       [sourceId],
     );
     const sourceLocalPath = srcRows[0]?.local_path ?? null;
+
+    // Prefer the page's recorded `source_path` — the ACTUAL file this row was
+    // imported from — over a slug-derived name. Deriving `<slug>.md` mints a
+    // SECOND file beside the original whenever the on-disk name isn't the slug,
+    // which is the common case for a human-authored vault: `Library/People/
+    // Steve Jobs.md` has slug `library/people/steve-jobs`, so a later put_page
+    // dropped a lowercase `steve-jobs.md` twin next to it. Two artifacts, one
+    // row, and the newer content in whichever the caller didn't expect.
+    //
+    // It also desyncs `gbrain sync`, which keys delete-reconcile on
+    // `source_path` (see collectMissingSourcePaths): the twin is invisible to
+    // reconcile, so deleting the ORIGINAL file deletes the page even though a
+    // file for it is still on disk.
+    //
+    // A NULL `source_path` means the page was born via put/capture and has no
+    // file of record yet — the slug-derived path stays correct for those.
+    const pathRows = await engine.executeRaw<{ source_path: string | null; source_uri: string | null }>(
+      `SELECT source_path, source_uri FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL LIMIT 1`,
+      [sourceId, slug],
+    );
+    const recordedPath = sanitizeRecordedSourcePath(pathRows[0]?.source_path);
+    const recordedUri = pathRows[0]?.source_uri ?? null;
+
     if (sourceLocalPath) {
       if (!existsSync(sourceLocalPath) || !statSync(sourceLocalPath).isDirectory()) {
         return { written: false, skipped: 'repo_not_found' };
       }
-      filePath = join(sourceLocalPath, `${slug}.md`);
+      filePath = join(
+        sourceLocalPath,
+        recordedPath ?? recordedPathFromFileUri(recordedUri, sourceLocalPath) ?? `${slug}.md`,
+      );
       writeRoot = sourceLocalPath;
     } else {
       const repoPath = await engine.getConfig('sync.repo_path');
@@ -127,7 +225,9 @@ export async function writePageThrough(
       if (collide.length > 0) {
         return { written: false, skipped: 'source_repo_belongs_to_other_source' };
       }
-      filePath = resolvePageFilePath(repoPath, slug, sourceId);
+      const pageRoot = sourceId === 'default' ? repoPath : join(repoPath, '.sources', sourceId);
+      const knownPath = recordedPath ?? recordedPathFromFileUri(recordedUri, pageRoot);
+      filePath = knownPath ? join(pageRoot, knownPath) : resolvePageFilePath(repoPath, slug, sourceId);
       writeRoot = repoPath;
     }
 
@@ -204,13 +304,23 @@ export async function writePageThrough(
     // post-commit hook background-pushes the commit. Best-effort: a commit
     // failure never fails the write (the DB row + file are the durable sinks).
     let committed = false;
+    let pushed: 'pending' | undefined;
+    let lastPushStatus: PushLogOutcome | undefined;
     try {
       if (isDurabilityHardened(writeRoot)) {
         committed = commitWriteThroughFile(writeRoot, filePath, slug);
+        if (committed) {
+          pushed = 'pending';
+          lastPushStatus = getLastPushOutcome(currentBranch(writeRoot));
+        }
       }
     } catch { /* best-effort */ }
 
-    return { written: true, path: filePath, ...(committed ? { committed } : {}) };
+    return {
+      written: true,
+      path: filePath,
+      ...(committed ? { committed, pushed, lastPushStatus } : {}),
+    };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     opts.logger?.warn(`[write-through] failed for ${slug}: ${msg}`);

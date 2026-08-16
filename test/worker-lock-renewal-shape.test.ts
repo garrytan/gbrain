@@ -144,9 +144,11 @@ describe('G: tickInFlight re-entrancy guard', () => {
 
   test('the setInterval callback checks tickInFlight and bails on re-entry', () => {
     const launchJobBody = extractFunctionBody(workerSource, 'private launchJob(');
-    // The pattern is `if (tickInFlight) return;` — minor whitespace
-    // variation tolerated.
-    expect(launchJobBody).toMatch(/if\s*\(\s*tickInFlight\s*\)\s*return/);
+    // v0.46 (#4145): the guard grew a block body — it counts the overlap
+    // skip (CDX-13 telemetry) before bailing. The load-bearing shape is
+    // unchanged: check tickInFlight, return WITHOUT scheduling a tick.
+    expect(launchJobBody).toMatch(/if\s*\(\s*tickInFlight\s*\)\s*\{[^}]*return/);
+    expect(launchJobBody).toMatch(/overlapSkips\s*\+=\s*1/);
   });
 
   test('the setInterval callback sets tickInFlight=true before scheduling work', () => {
@@ -221,8 +223,11 @@ describe('E: universal grace-evict listener (D8b)', () => {
     // Find the addEventListener and look in its function body.
     const listenerIdx = launchJobBody.indexOf("abort.signal.addEventListener('abort'");
     expect(listenerIdx).toBeGreaterThan(-1);
-    // Grab ~1500 chars after the listener to capture its body.
-    const listenerWindow = launchJobBody.slice(listenerIdx, listenerIdx + 1500);
+    // Grab ~4500 chars after the listener to capture its body (v0.46:
+    // the grace-evict log gained the #4145 abortMeta/telemetry block AND
+    // the #4151 isolation-mode failJob guard commentary, both of which sit
+    // between the listener head and the 30_000 literal).
+    const listenerWindow = launchJobBody.slice(listenerIdx, listenerIdx + 4500);
     expect(listenerWindow).toMatch(/30_000|30000/);
   });
 });

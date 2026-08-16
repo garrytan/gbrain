@@ -8,7 +8,7 @@
  * connection string into the error message:
  *   - `connection to server at "db.example.supabase.com" (1.2.3.4), port 5432 failed: ...`
  *   - `FATAL: password authentication failed for user "postgres"`
- *   - `could not connect to server: postgresql://user:pass@host:5432/db`
+ *   - `could not connect to server: postgresql://user:pass@host:5432/db` (allow-pg-url-literal)
  *
  * If an operator pastes a JSONL audit dump into a GitHub issue or Slack,
  * those errors leak credentials. The project's audit-as-debug-tool
@@ -34,7 +34,7 @@ interface RedactPattern {
  * occurrences in a single string get redacted.
  */
 const PATTERNS: ReadonlyArray<RedactPattern> = [
-  // postgres:// and postgresql:// URLs. Includes user:pass@host:port/db
+  // postgres:// and postgresql:// URLs. Includes user:pass@host:port/db /* allow-pg-url-literal */
   // shapes plus query-string variants. Terminator is whitespace or
   // common JSON/markdown delimiters.
   { kind: 'pg_url', re: /postgres(?:ql)?:\/\/[^\s"'>)]+/gi },

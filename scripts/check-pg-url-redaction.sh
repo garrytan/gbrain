@@ -10,7 +10,7 @@
 #   - new logging APIs that may show up later (the regex matches the URL,
 #     not the consumer; any leak will trip)
 #
-# Wired into bun run check:all and bun run verify.
+# Wired into bun run verify (single guard registry: scripts/guards-manifest.tsv).
 #
 # Exit codes: 0 = clean, 1 = found at least one suspect line.
 set -euo pipefail
@@ -21,7 +21,10 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 #   - The redactor itself: src/core/url-redact.ts
 #   - Test fixtures that build redacted strings from full URLs
 #   - Documentation comments referring to the pattern
-ALLOW_REGEX='url-redact\.ts|test/url-redact\.test\.ts|/\* allow-pg-url-literal \*/'
+# The marker text is the exemption; its comment wrapper is not load-bearing
+# (inside a /** block comment a literal `*/` would terminate the comment, so
+# block-comment examples carry the bare marker).
+ALLOW_REGEX='url-redact\.ts|test/url-redact\.test\.ts|allow-pg-url-literal'
 
 # The pattern matches an unredacted Postgres URL appearing in a string
 # literal, NOT preceded by `redactPgUrl(` or `***@`. We also match any
@@ -47,6 +50,6 @@ echo "ERROR: unredacted postgres:// URL found in source. Use redactPgUrl() befor
 echo ""
 echo "$FILTERED"
 echo ""
-echo "Allowed exemption: append \"/* allow-pg-url-literal */\" comment on the line"
+echo "Allowed exemption: append an allow-pg-url-literal comment marker on the line"
 echo "(only for fixtures and the redactor itself)."
 exit 1

@@ -1,5 +1,7 @@
 # Embedder Shootout — May 2026 Eval Plan
 
+> **Historical note:** this plan predates the ZeroEntropy hosted-API sunset (2026-09-04); the ZeroEntropy cells below are historical.
+
 **Status:** approved, ready to execute
 **Owner:** Garry
 **Plan source:** `~/.claude/plans/system-instruction-you-are-working-linear-origami.md` (review log)

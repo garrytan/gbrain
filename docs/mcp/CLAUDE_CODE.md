@@ -4,6 +4,34 @@
 > tutorial walks both paths (local-from-nothing and connect-to-an-existing-brain)
 > end to end, plus the brain-first protocol that makes it worth it. This page is
 > the connection reference.
+>
+> Want the **full agent** — identity, per-turn context, schedules, and a private
+> repo as its durable body — not just a memory? That's `gbrain bootstrap`:
+> see the paste block in the README and [docs/guides/bootstrap.md](../guides/bootstrap.md).
+> Open a new empty folder (bootstrap creates the private repo for you), or make an
+> empty private repo under your own account and open the clone — bootstrap adopts it.
+
+## Option 0: Install as a Claude Code plugin
+
+gbrain ships as a native Claude Code plugin — MCP server + the curated
+brain-first skill set:
+
+```
+/plugin marketplace add garrytan/gbrain
+/plugin install gbrain@gbrain
+```
+
+(CLI form: `claude plugin marketplace add garrytan/gbrain` +
+`claude plugin install gbrain@gbrain`.) Prerequisites and behavior match the
+[Codex plugin](CODEX.md#install-as-a-codex-plugin-recommended): the gbrain CLI
+installed (`bun install -g github:garrytan/gbrain#latest-stable`), a brain
+(`gbrain init`), `starter` MCP surface with `--source-guard`, and the same
+routing rules (`GBRAIN_SOURCE`/`GBRAIN_BRAIN_ID` env — dotfiles don't apply
+to a plugin-launched serve). Positioning: the plugin is the lightweight
+brain+skills path; `gbrain bootstrap` remains the deep lane (identity, hooks,
+push protocol). One approval-UX difference: the bootstrap lane pre-approves
+`mcp__gbrain` via `permissions.allow` for headless runs; plugin-provided MCP
+tools use the plugin lane's own approval flow.
 
 ## Option 1: Local (recommended, zero server needed)
 
@@ -14,9 +42,11 @@ claude mcp add gbrain -- gbrain serve --surface verbs
 That's it. Claude Code spawns `gbrain serve` as a stdio subprocess. No server, no
 tunnel, no token needed. Works with both PGLite and Supabase engines.
 
-`--surface verbs` exposes the five-verb memory protocol (`recall`, `remember`,
-`entity`, `synthesize`, `forget` — [MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)),
-the surface built for agents and quickstarts. Drop the flag for the full
+`--surface verbs` exposes the seven-verb memory protocol (`recall`, `remember`,
+`entity`, `synthesize`, `forget`, `context_pack`, `delta` —
+[MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)),
+the surface built for agents and quickstarts. `--surface starter` adds the
+daily-driver set on top (~26 ops total). Drop the flag for the full
 operation catalog (`get_page`, `put_page`, `search`, graph ops, …) — `full` is
 the default and what existing installs already run.
 
@@ -87,12 +117,33 @@ You should see results from your GBrain knowledge base.
 > older release stay OFF until you opt in. Enable it on the host with
 > `gbrain config set mcp.publish_skills true`. Skill discovery and the core tools
 > named here (search, query, get_page, put_page, think, find_experts) are
-> full-surface — on `--surface verbs` the agent sees only the five memory verbs,
+> full-surface — on `--surface verbs` the agent sees only the seven memory verbs,
 > and `list_skills` isn't on the surface at all. Note: `capture` is a
 > CLI-only command, not an MCP tool — the agent writes over MCP with `put_page`.
+> Why brains differ on the default: [tutorial A1](../tutorials/connect-coding-agent.md#a1-on-the-host-serve-over-http).
+
+## Ambient recall at session boundaries (v0.45.7)
+
+Two frozen verbs close the "no question fired" gap for long-lived sessions:
+`context_pack` (session-start warm-up + post-compaction rehydration) and
+`delta` ("what changed since my last wake" for heartbeats). Both are zero-LLM,
+sub-second, world-visibility by default, and available on `--surface verbs`.
+
+- **Automatic (PGLite brains via `gbrain bootstrap`):** the bootstrap hook
+  installer wires `SessionStart` (injects a warm pack; also fires on
+  post-compaction re-entry, `source=compact`) and `PreCompact` (banks the
+  window's standing entities so that rehydration pack is warm) into
+  `.claude/settings.local.json`. Nothing to call; `GBRAIN_HOOKS=0` disables.
+- **Manual (any brain, incl. remote/Postgres):** call the verbs yourself at
+  boundaries — `context_pack(entities, budget_tokens)` at session start /
+  after compaction, `delta(session_id, budget_tokens)` on wakes. See
+  [ambient recall](../guides/ambient-recall.md) for the placement frontier
+  and the per-verb latency table.
 
 ## Remove
 
 ```bash
-claude mcp remove gbrain
+claude mcp remove gbrain     # the Option 1 local/stdio registration
+# Installed as the Option 0 plugin instead? Remove it with:
+#   claude plugin uninstall gbrain@gbrain
 ```

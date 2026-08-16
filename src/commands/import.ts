@@ -25,6 +25,34 @@ import {
   resumeFilter,
 } from '../core/import-checkpoint.ts';
 
+/**
+ * Records one failed file against the run's error-grouping state and
+ * returns the running count for its group plus an unredacted sample
+ * message for display.
+ *
+ * `key` groups structurally-identical errors (e.g. the same failure
+ * across many files) so a single noisy failure mode doesn't produce
+ * thousands of near-duplicate warning lines — quoted substrings (typically
+ * a per-file slug or path) are blanked for the GROUPING key only. The
+ * printed `sample` is always a real, unredacted occurrence of the error
+ * (the first one seen for that key), so identifying details that are
+ * constant across the whole group — a Postgres table or constraint name,
+ * for instance — survive into what actually gets shown to the user.
+ * Pre-fix, the redacted key itself was printed, so e.g. a `pages_source_id_fkey`
+ * foreign-key violation surfaced as `table "" violates foreign key constraint ""`.
+ */
+export function recordImportFailure(
+  errorCounts: Record<string, number>,
+  errorSamples: Record<string, string>,
+  msg: string,
+): { key: string; count: number; sample: string } {
+  const key = msg.replace(/"[^"]*"/g, '""');
+  const count = (errorCounts[key] ?? 0) + 1;
+  errorCounts[key] = count;
+  if (!(key in errorSamples)) errorSamples[key] = msg;
+  return { key, count, sample: errorSamples[key] };
+}
+
 function defaultWorkers(): number {
   const cpuCount = cpus().length;
   const memGB = totalmem() / (1024 ** 3);
@@ -34,6 +62,27 @@ function defaultWorkers(): number {
   const byCpu = Math.max(2, cpuCount);
   const byMem = Math.floor(memGB * 2);
   return Math.min(byPool, byCpu, byMem);
+}
+
+/**
+ * W0 fix-wave (Tier-1 #5): typed abort for runImport's preflight/argv
+ * failures. Pre-fix these five sites called process.exit(1) directly —
+ * correct for the CLI, but runImport is ALSO invoked in-process by the
+ * sync_brain MCP op (via performFullSync), the autopilot daemon, and the
+ * minion sync handler, so a first sync with unconfigured embedding
+ * credentials TERMINATED the MCP server / daemon / worker mid-call. The
+ * user-facing messages are printed BEFORE the throw (byte-identical CLI
+ * output); the CLI dispatch site maps this error back to exit(exitCode).
+ */
+export class ImportAbortError extends Error {
+  readonly exitCode: number;
+  /** True: the user-facing message was already printed at the throw site. */
+  readonly alreadyReported = true;
+  constructor(reason: string, exitCode = 1) {
+    super(`import aborted: ${reason}`);
+    this.name = 'ImportAbortError';
+    this.exitCode = exitCode;
+  }
 }
 
 /** Bug 9 — surface per-file failures so callers (performFullSync) can gate state advances. */
@@ -101,7 +150,7 @@ export async function runImport(
     } catch (e) {
       console.error(`\n${e instanceof Error ? e.message : e}`);
       console.error('Tip: run `gbrain import <dir> --no-embed` to import without embedding now.');
-      process.exit(1);
+      throw new ImportAbortError('embedding disabled (deferred-setup sentinel)');
     }
 
     // v0.41.6.0 D1: preflight embedding credentials. Closes the bug class
@@ -119,7 +168,7 @@ export async function runImport(
           console.error(e.userMessage);
           console.error('');
         }
-        process.exit(1);
+        throw new ImportAbortError('embedding credentials missing');
       }
       throw e;
     }
@@ -193,7 +242,7 @@ export async function runImport(
     workerCount = parseWorkers(workersArg ?? undefined) ?? 1;
   } catch (e) {
     console.error(e instanceof Error ? e.message : String(e));
-    process.exit(1);
+    throw new ImportAbortError('invalid --workers value');
   }
   // Find dir: first non-flag arg that isn't a value for --workers
   const flagValues = new Set<number>();
@@ -203,7 +252,7 @@ export async function runImport(
 
   if (!dirArg) {
     console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--source-id <id>] [--include-gitignored] [--json]');
-    process.exit(1);
+    throw new ImportAbortError('no import directory given');
   }
   // #1728: capture the import target ONCE as an absolute real path. Every
   // downstream consumer of `dir` (collection, checkpoint load/save, resume
@@ -216,7 +265,7 @@ export async function runImport(
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`Import target is not readable: ${dirArg} (${msg})`);
-    process.exit(1);
+    throw new ImportAbortError(`import target not readable: ${dirArg}`);
   }
 
   // v0.31.2: collect under the right strategy. Pre-fix this called
@@ -288,7 +337,13 @@ export async function runImport(
   let chunksCreated = 0;
   const importedSlugs: string[] = [];
   const errorCounts: Record<string, number> = {};
+  const errorSamples: Record<string, string> = {};
   const failures: Array<{ path: string; error: string }> = []; // Bug 9
+  // #3839: paths that succeeded (imported OR unchanged) this run, keyed the
+  // same way as `failures` above (importRelPath) so a path that failed on a
+  // prior run and now succeeds clears its ledger row instead of staying
+  // `open` forever.
+  const succeededPaths: string[] = [];
   const startTime = Date.now();
 
   // Progress on stderr so stdout stays clean for the final summary / --json payload.
@@ -328,6 +383,7 @@ export async function runImport(
         importedSlugs.push(result.slug);
         // v0.33.2: path-based checkpoint — record only on success.
         completed.add(relativePath);
+        succeededPaths.push(importRelPath); // #3839
       } else {
         skipped++;
         if (result.error && result.error !== 'unchanged') {
@@ -340,16 +396,16 @@ export async function runImport(
           // 'unchanged' or no-error skip: content_hash matched a prior
           // successful import, so this file IS done for checkpoint purposes.
           completed.add(relativePath);
+          succeededPaths.push(importRelPath); // #3839
         }
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      const errorKey = msg.replace(/"[^"]*"/g, '""');
-      errorCounts[errorKey] = (errorCounts[errorKey] || 0) + 1;
-      if (errorCounts[errorKey] <= 5) {
+      const { count, sample } = recordImportFailure(errorCounts, errorSamples, msg);
+      if (count <= 5) {
         console.error(`  Warning: skipped ${relativePath}: ${msg}`);
-      } else if (errorCounts[errorKey] === 6) {
-        console.error(`  (suppressing further "${errorKey.slice(0, 60)}..." errors)`);
+      } else if (count === 6) {
+        console.error(`  (suppressing further "${sample.slice(0, 60)}..." errors)`);
       }
       errors++;
       skipped++;
@@ -450,9 +506,9 @@ export async function runImport(
   progress.finish();
 
   // Error summary
-  for (const [err, count] of Object.entries(errorCounts)) {
+  for (const [key, count] of Object.entries(errorCounts)) {
     if (count > 5) {
-      console.error(`  ${count} files failed: ${err.slice(0, 100)}`);
+      console.error(`  ${count} files failed: ${errorSamples[key].slice(0, 100)}`);
     }
   }
 
@@ -545,8 +601,9 @@ export async function runImport(
 
   // Import → sync continuity: write sync checkpoint if this is a git repo.
   // Bug 9 — gate last_commit on "no failures" so import doesn't silently
-  // stomp on the sync bookmark when parsing broke. We still write
-  // last_run + repo_path either way (those are progress indicators).
+  // stomp on the sync bookmark when parsing broke. last_run + repo_path are
+  // written alongside it, but ONLY when this import owns the globals (#2114
+  // guard below) — a foreign directory must not repoint the brain repo.
   let gitHead: string | null = null;
   try {
     if (existsSync(join(dir, '.git'))) {
@@ -568,17 +625,49 @@ export async function runImport(
       const { recordFailures } = await import('../core/sync.ts');
       recordFailures(opts.sourceId ?? 'default', failures, gitHead);
     }
-    if (failures.length === 0) {
-      await engine.setConfig('sync.last_commit', gitHead);
-    } else {
+
+    // #3839: a path that failed on a prior run and succeeded (imported or
+    // unchanged) this run must clear its ledger row — pre-fix, clearFailures
+    // existed but had no caller anywhere, so `open` rows never healed short
+    // of a manual `gbrain sync --skip-failed`. Runs on every non-empty
+    // success list regardless of whether this SAME run also had failures,
+    // so a stale row from an earlier run gets cleared even if today's run
+    // is only partially clean.
+    if (succeededPaths.length > 0) {
+      const { clearFailures } = await import('../core/sync.ts');
+      clearFailures(opts.sourceId ?? 'default', succeededPaths);
+    }
+
+    // #2114 guard: the global sync.* keys describe THE brain repo (the
+    // default source's working tree). Pre-fix this block rewrote them on
+    // every git-repo import, silently repointing put_page write-through
+    // and poisoning the incremental sync anchor. Ownership + the bootstrap
+    // rule live in ownsGlobalSyncAnchor (shared with writeSyncAnchor's
+    // legacy branch in sync.ts, so the two layers cannot drift).
+    const { ownsGlobalSyncAnchor } = await import('../core/sync.ts');
+    const { owns, configured } = await ownsGlobalSyncAnchor(engine, sourceId, dir);
+
+    if (owns) {
+      if (failures.length === 0) {
+        await engine.setConfig('sync.last_commit', gitHead);
+      } else {
+        console.error(
+          `\nImport completed with ${failures.length} failure(s). ` +
+          `sync.last_commit NOT advanced — re-run 'gbrain sync' to retry, or ` +
+          `'gbrain sync --skip-failed' to acknowledge and move past them.`,
+        );
+      }
+      await engine.setConfig('sync.last_run', new Date().toISOString());
+      await engine.setConfig('sync.repo_path', dir);
+    } else if ((sourceId ?? 'default') === 'default') {
       console.error(
-        `\nImport completed with ${failures.length} failure(s). ` +
-        `sync.last_commit NOT advanced — re-run 'gbrain sync' to retry, or ` +
-        `'gbrain sync --skip-failed' to acknowledge and move past them.`,
+        `\n[import] sync.repo_path stays at ${configured ?? '(unset)'} — NOT repointing to "${dir}". ` +
+        `Sync bookmarks were not advanced. If this directory IS your brain repo, run: ` +
+        `gbrain config set sync.repo_path "${dir}"`,
       );
     }
-    await engine.setConfig('sync.last_run', new Date().toISOString());
-    await engine.setConfig('sync.repo_path', dir);
+    // Non-default sources: deliberately silent no-op — the globals are not
+    // this import's to move (its sync anchors live on the `sources` row).
   }
 
   return { imported, skipped, errors, chunksCreated, failures };

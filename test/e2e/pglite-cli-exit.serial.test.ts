@@ -96,6 +96,14 @@ beforeAll(() => {
   delete runEnv.OPENAI_API_KEY;
   delete runEnv.ANTHROPIC_API_KEY;
   delete runEnv.GOOGLE_API_KEY;
+  // Strip DB-URL env vars: since v0.31.3 (9c60b3a06, #801) an env
+  // DATABASE_URL deliberately overrides a file-backed PGLite engine
+  // selection in loadConfig(). This whole file is a hermetic-PGLite
+  // suite; when run under the DATABASE_URL-bearing e2e wrapper, an
+  // inherited URL would silently retarget every subprocess (including
+  // the torn-WAL fixture below) at the shared Postgres test DB.
+  delete runEnv.DATABASE_URL;
+  delete runEnv.GBRAIN_DATABASE_URL;
 
   // NOTE: init grew strict flag validation (#2201); `--repo`/`--yes` were
   // never real init flags (previously silently ignored). The repo is wired

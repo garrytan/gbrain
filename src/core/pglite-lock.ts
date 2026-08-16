@@ -252,6 +252,8 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
               `GBrain's local database is already open through \`gbrain serve\` (MCP, PID ${lockPid}). ` +
               `This brain uses PGLite, so a separate CLI process cannot open it at the same time. ` +
               `Stop \`gbrain serve\`, then retry this CLI command. ` +
+              `(\`gbrain serve\` is usually spawned by your agent harness — close or exit that ` +
+              `Claude Code/Codex session to release the database.) ` +
               `Or keep it running and use its MCP tools instead. ` +
               `A process with the recorded PID is still running, so GBrain will not remove ${lockDir} automatically.`,
             );

@@ -18,12 +18,15 @@ gbrain serve --http --port 3131 --bind 0.0.0.0 \
   --public-url https://YOUR-DOMAIN.ngrok.app
 ```
 
-- **`--bind 0.0.0.0` is required.** Since v0.34, `--http` defaults to
-  `127.0.0.1`, so without it the tunnel reaches the server but the connection is
-  refused (`ECONNREFUSED`).
+- **`--bind 0.0.0.0` is required.** `--http` defaults to `127.0.0.1`, so
+  without it the tunnel reaches the server but the connection is refused
+  (`ECONNREFUSED`).
 - **`--public-url` must match the tunnel.** The OAuth issuer in the discovery
   metadata has to line up with the URL Perplexity actually hits (RFC 8414 §3.3),
   or OAuth client-credentials auth fails.
+
+Full detail on both flags (and the rest of the server setup) lives in
+[DEPLOY.md — Expose the server](DEPLOY.md#3-expose-the-server).
 
 ## 2. Expose it with a tunnel
 
@@ -36,9 +39,12 @@ tunnel.
 
 ## 3. Create credentials
 
-Two supported auth paths.
+Two supported auth paths. (Full client-registration mechanics — the `/admin`
+dashboard flow, grant types, scope format — live in
+[DEPLOY.md — Register OAuth clients](DEPLOY.md#2-register-oauth-clients);
+below is the Perplexity-specific shape.)
 
-**OAuth 2.1 client credentials (recommended, v0.26.0+).** Perplexity is a cloud
+**OAuth 2.1 client credentials (recommended).** Perplexity is a cloud
 service, so it holds whatever credential you give it. OAuth is the correct choice:
 least-privilege scopes + short-lived rotating access tokens instead of a
 long-lived full-access secret. Mint a client and print the connector fields in

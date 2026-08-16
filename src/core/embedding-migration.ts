@@ -93,7 +93,11 @@ export function migrationSignature(toModel: string, toDims: number): string {
  * Throws with a paste-ready message on an unknown provider or when the
  * recipe declares no default dims and the caller passed none.
  */
-export function resolveMigrationTarget(to: string, dimFlag?: number): { toModel: string; toDims: number } {
+export function resolveMigrationTarget(
+  to: string,
+  dimFlag?: number,
+  opts?: { allowSunsetTarget?: boolean },
+): { toModel: string; toDims: number } {
   if (!to.includes(':')) {
     throw new Error(
       `--to must be provider:model (e.g. openai:text-embedding-3-small). Got: ${to}`,
@@ -103,6 +107,20 @@ export function resolveMigrationTarget(to: string, dimFlag?: number): { toModel:
   const { recipe } = resolveRecipe(to);
   if (!recipe.touchpoints.embedding) {
     throw new Error(`Provider ${recipe.id} has no embedding support. Pick an embedding-capable provider:model.`);
+  }
+  // v0.46.3: refuse a PAID full re-embed onto a provider with an announced
+  // shutdown — the live probe passes while the hosted API is still up, so
+  // without this gate an agent replaying an old runbook could strand the
+  // brain days before the shutdown. Same posture as ze-switch's forward
+  // refusal; `--force-sunset-target` (self-hosters with a compatible
+  // endpoint) is the loud escape hatch.
+  if (recipe.sunset && !opts?.allowSunsetTarget) {
+    throw new Error(
+      `Refusing to migrate ONTO ${recipe.name}: its hosted API stops working on ` +
+      `${recipe.sunset.date}, so this paid re-embed would strand the brain. ` +
+      `Recommended target: ${recipe.sunset.replacement?.embedding ?? 'voyage:voyage-4'}. ` +
+      `Self-hosting a compatible endpoint? Re-run with --force-sunset-target.`,
+    );
   }
   const toDims = dimFlag ?? embeddingDimsForModel(recipe, to);
   if (!toDims || toDims <= 0) {
@@ -120,9 +138,11 @@ export function resolveMigrationTarget(to: string, dimFlag?: number): { toModel:
  */
 export async function planEmbeddingMigration(
   engine: BrainEngine,
-  opts: { to: string; dim?: number; fromModel?: string; fromDims?: number },
+  opts: { to: string; dim?: number; fromModel?: string; fromDims?: number; allowSunsetTarget?: boolean },
 ): Promise<EmbeddingMigrationPlan> {
-  const { toModel, toDims } = resolveMigrationTarget(opts.to, opts.dim);
+  const { toModel, toDims } = resolveMigrationTarget(opts.to, opts.dim, {
+    allowSunsetTarget: opts.allowSunsetTarget,
+  });
 
   // From-state: caller (CLI) passes the gateway-resolved values; fall back
   // to the shipped defaults for gateway-less contexts (unit tests, op probe).

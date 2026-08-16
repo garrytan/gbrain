@@ -47,6 +47,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createAuditWriter, resolveAuditDir, computeIsoWeekFilename } from './audit-writer.ts';
 import { redactConnectionInfo } from './redact-connection-info.ts';
+import type { LockRenewalTelemetryCtx } from '../minions/lock-renewal-tick.ts';
 
 export type LockRenewalOutcome =
   | 'failure'
@@ -77,6 +78,23 @@ export interface LockRenewalAuditEvent {
   error_message_summary?: string;
   /** Postgres SQLSTATE if present (e.g. '08006' for connection failure). */
   error_code?: string;
+  // -- v0.46 additive telemetry (issue #4145 request 3). All optional: --
+  // -- pre-upgrade JSONL lines parse unchanged; the 4-outcome contract --
+  // -- is untouched.                                                   --
+  /** Failure-cause classification: call-timeout | refused | fenced-lost. */
+  cause?: string;
+  /** How late the renewal tick fired vs its own cadence (ms) — the local-starvation signal. */
+  lateness_ms?: number;
+  /** Interval callbacks skipped by the tickInFlight re-entrancy guard (overlap, NOT missed intervals). */
+  overlap_skips?: number;
+  /** os.loadavg()[0] at event time (raw, not normalized; 0 on Windows). */
+  load1?: number;
+  /** Core count paired with load1 so operators can normalize. */
+  cores?: number;
+  /** For success_after_failure: which path recovered — plain renewal or the at-deadline verify. */
+  via?: string;
+  /** True when the deadline was reached but eviction was deferred (verify threw pre-hard-deadline). */
+  deadline_deferred?: boolean;
 }
 
 const FEATURE_NAME = 'lock-renewal';
@@ -93,14 +111,33 @@ const writer = createAuditWriter<LockRenewalAuditEvent>({
  * without writing to disk.
  */
 export interface LockRenewalAuditSink {
-  logFailure(jobId: number, jobName: string, attempt: number, err: unknown): void;
-  logSuccessAfterFailure(jobId: number, jobName: string, recoveredAfterAttempts: number): void;
-  logGaveUp(jobId: number, jobName: string, totalFailures: number, err: unknown): void;
+  // Trailing ctx params are optional + additive (ENG-E2): the tick's
+  // structural SinkLike and pre-existing test fakes stay assignable.
+  logFailure(jobId: number, jobName: string, attempt: number, err: unknown, ctx?: LockRenewalTelemetryCtx): void;
+  logSuccessAfterFailure(jobId: number, jobName: string, recoveredAfterAttempts: number, ctx?: LockRenewalTelemetryCtx): void;
+  logGaveUp(jobId: number, jobName: string, totalFailures: number, err: unknown, ctx?: LockRenewalTelemetryCtx): void;
   logExecuteJobRejected(jobId: number, jobName: string, err: unknown): void;
 }
 
+/**
+ * Copy only DEFINED ctx fields onto the event so absent telemetry stays
+ * absent from the JSONL (no `"load1":undefined` noise, stable byte size).
+ */
+function compactCtx(ctx?: LockRenewalTelemetryCtx): Partial<LockRenewalAuditEvent> {
+  if (!ctx) return {};
+  const out: Partial<LockRenewalAuditEvent> = {};
+  if (ctx.cause !== undefined) out.cause = ctx.cause;
+  if (ctx.lateness_ms !== undefined) out.lateness_ms = ctx.lateness_ms;
+  if (ctx.overlap_skips !== undefined) out.overlap_skips = ctx.overlap_skips;
+  if (ctx.load1 !== undefined) out.load1 = ctx.load1;
+  if (ctx.cores !== undefined) out.cores = ctx.cores;
+  if (ctx.via !== undefined) out.via = ctx.via;
+  if (ctx.deadline_deferred !== undefined) out.deadline_deferred = ctx.deadline_deferred;
+  return out;
+}
+
 export const lockRenewalAudit: LockRenewalAuditSink = {
-  logFailure(jobId, jobName, attempt, err) {
+  logFailure(jobId, jobName, attempt, err, ctx) {
     writer.log({
       job_id: jobId,
       job_name: jobName,
@@ -108,18 +145,20 @@ export const lockRenewalAudit: LockRenewalAuditSink = {
       outcome: 'failure',
       error_message_summary: summarizeError(err),
       error_code: extractErrorCode(err),
+      ...compactCtx(ctx),
     });
   },
-  logSuccessAfterFailure(jobId, jobName, recoveredAfterAttempts) {
+  logSuccessAfterFailure(jobId, jobName, recoveredAfterAttempts, ctx) {
     writer.log({
       job_id: jobId,
       job_name: jobName,
       attempt: recoveredAfterAttempts,
       outcome: 'success_after_failure',
       // No error_message_summary or error_code: recovery has no error.
+      ...compactCtx(ctx),
     });
   },
-  logGaveUp(jobId, jobName, totalFailures, err) {
+  logGaveUp(jobId, jobName, totalFailures, err, ctx) {
     writer.log({
       job_id: jobId,
       job_name: jobName,
@@ -127,6 +166,7 @@ export const lockRenewalAudit: LockRenewalAuditSink = {
       outcome: 'gave_up',
       error_message_summary: summarizeError(err),
       error_code: extractErrorCode(err),
+      ...compactCtx(ctx),
     });
   },
   logExecuteJobRejected(jobId, jobName, err) {

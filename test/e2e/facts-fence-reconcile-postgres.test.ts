@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { runExtractFacts } from '../../src/core/cycle/extract-facts.ts';
 import { parseFactsFence, renderFactsTable, type ParsedFact } from '../../src/core/facts-fence.ts';
+import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 
 const databaseUrl = process.env.DATABASE_URL;
 const skip = !databaseUrl;
@@ -14,6 +15,7 @@ describe.skipIf(skip)('facts-fence escaped-pipe reconciliation on Postgres', () 
 
   beforeAll(async () => {
     engine = new PostgresEngine();
+    assertSafeE2eDatabaseUrl(databaseUrl!);
     await engine.connect({ database_url: databaseUrl! });
     await engine.initSchema();
   });

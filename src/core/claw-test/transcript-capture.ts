@@ -105,6 +105,8 @@ export interface SpawnResult {
 }
 
 const SIGTERM_GRACE_MS = 5_000;
+/** After 'exit', how long to wait for 'close' (pipe drain) before resolving anyway. */
+const STREAM_DRAIN_GRACE_MS = 2_000;
 
 export async function spawnWithCapture(bin: string, args: string[], opts: SpawnOpts): Promise<SpawnResult> {
   const start = Date.now();
@@ -116,19 +118,33 @@ export async function spawnWithCapture(bin: string, args: string[], opts: SpawnO
         env: opts.env,
         stdio: ['pipe', 'pipe', 'pipe'],
         shell: false,
+        // Own process group so timeout kills reach grandchildren too — agents
+        // spawn MCP servers and gbrain children; signalling only the direct
+        // PID leaves those orphaned holding the stdout/stderr pipes open.
+        detached: true,
       });
     } catch (e) {
       reject(e);
       return;
     }
 
+    // Signal the whole process group (negative pid); fall back to the direct
+    // child if the group is already gone or grouping failed.
+    const killTree = (sig: NodeJS.Signals) => {
+      const pid = child.pid;
+      if (pid) {
+        try { process.kill(-pid, sig); return; } catch { /* group gone or not a leader */ }
+      }
+      try { child.kill(sig); } catch { /* already gone */ }
+    };
+
     let timedOut = false;
     let killTimer: ReturnType<typeof setTimeout> | null = null;
     const wallClockTimer = setTimeout(() => {
       timedOut = true;
-      try { child.kill('SIGTERM'); } catch { /* already gone */ }
+      killTree('SIGTERM');
       killTimer = setTimeout(() => {
-        try { child.kill('SIGKILL'); } catch { /* already gone */ }
+        killTree('SIGKILL');
       }, SIGTERM_GRACE_MS);
     }, opts.timeoutMs);
 
@@ -151,15 +167,17 @@ export async function spawnWithCapture(bin: string, args: string[], opts: SpawnO
         reject(e);
         return;
       }
+    } else {
+      // No payload: close stdin anyway. An agent build that waits for stdin
+      // EOF would otherwise block silently until the wall-clock kill — a paid
+      // live turn burned as a timeout.
+      try { child.stdin?.end(); } catch { /* stream already gone */ }
     }
 
-    child.on('error', (err) => {
-      clearTimeout(wallClockTimer);
-      if (killTimer) clearTimeout(killTimer);
-      reject(err);
-    });
-
-    child.on('close', (code) => {
+    let settled = false;
+    const settle = (code: number | null) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(wallClockTimer);
       if (killTimer) clearTimeout(killTimer);
       resolve({
@@ -167,6 +185,25 @@ export async function spawnWithCapture(bin: string, args: string[], opts: SpawnO
         durationMs: Date.now() - start,
         timedOut,
       });
+    };
+
+    child.on('error', (err) => {
+      clearTimeout(wallClockTimer);
+      if (killTimer) clearTimeout(killTimer);
+      if (!settled) {
+        settled = true;
+        reject(err);
+      }
+    });
+
+    // 'close' (all pipes drained) is the clean path. But a grandchild that
+    // survives the group kill can hold the pipes open forever, so 'exit' arms
+    // a short drain grace and then settles regardless — the harness must not
+    // hang AFTER its own timeout already fired.
+    child.on('close', (code) => settle(code));
+    child.on('exit', (code) => {
+      const t = setTimeout(() => settle(code), STREAM_DRAIN_GRACE_MS);
+      t.unref?.();
     });
   });
 }

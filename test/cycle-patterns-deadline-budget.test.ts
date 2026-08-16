@@ -120,12 +120,17 @@ describe('claim stamps timeout_at (deadlineAtMs ground truth)', () => {
 
 describe('deadline plumbing wiring (structural)', () => {
   const workerSrc = readFileSync(new URL('../src/core/minions/worker.ts', import.meta.url), 'utf-8');
+  // The context builder was extracted from executeJob into job-context.ts
+  // (shared with `jobs run-child` for process isolation) — the deadlineAtMs
+  // derivation lives there now; worker.ts calls buildJobContext.
+  const jobContextSrc = readFileSync(new URL('../src/core/minions/job-context.ts', import.meta.url), 'utf-8');
   const jobsSrc = readFileSync(new URL('../src/commands/jobs.ts', import.meta.url), 'utf-8');
   const cycleSrc = readFileSync(new URL('../src/core/cycle.ts', import.meta.url), 'utf-8');
   const patternsSrc = readFileSync(new URL('../src/core/cycle/patterns.ts', import.meta.url), 'utf-8');
 
-  test('worker exposes deadlineAtMs from the claim-time timeout_at stamp', () => {
-    expect(workerSrc).toContain('deadlineAtMs: job.timeout_at != null ? job.timeout_at.getTime() : null');
+  test('job context exposes deadlineAtMs from the claim-time timeout_at stamp', () => {
+    expect(jobContextSrc).toContain('deadlineAtMs: job.timeout_at != null ? job.timeout_at.getTime() : null');
+    expect(workerSrc).toContain('buildJobContext(');
   });
 
   test('worker arms its abort timer from timeout_at when present (one absolute deadline)', () => {

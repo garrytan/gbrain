@@ -18,7 +18,7 @@
 
 export interface ConformanceCase {
   name: string;
-  verb: 'recall' | 'remember' | 'entity' | 'synthesize' | 'forget';
+  verb: 'recall' | 'remember' | 'entity' | 'synthesize' | 'forget' | 'context_pack' | 'delta';
   /** `{{marker}}` and `{{id:<key>}}` substitute at run time. */
   params: Record<string, unknown>;
   /** Validate the (parsed) response body against RESPONSE_SCHEMAS[verb]. */
@@ -222,5 +222,40 @@ export const CONFORMANCE_CASES: ConformanceCase[] = [
     requiresSynthesizeFlag: true,
     // Either a schema-valid answer (key configured) or a clean unavailable
     // error (no key). The runner accepts both; anything else fails.
+    // v0.45.x: the answer path also validates the additive compose-status
+    // fields (synthesis_status enum incl. extractive_fallback, pages_gathered,
+    // takes_gathered, warnings) via RESPONSE_SCHEMAS.synthesize — present on
+    // post-v0.45.x servers, never required (additive-forever).
+  },
+
+  // ── v0.45.7 additive verbs: context_pack + delta ──────────────────────────
+  // The runner SKIPS these against endpoints that don't advertise the verbs
+  // (they are additive — a pre-v0.45.7 v1 endpoint must still certify).
+  {
+    name: 'context_pack returns a schema-valid bundle for unknown entities (empty, not an error)',
+    verb: 'context_pack',
+    params: { entities: 'conformance-nonexistent-{{marker}}', budget_tokens: 500 },
+    validateSchema: true,
+    expect: [
+      { path: 'protocol_version', equals: 1 },
+    ],
+  },
+  {
+    name: 'delta with an explicit epoch since returns a schema-valid delta',
+    verb: 'delta',
+    params: { since: '1970-01-01T00:00:00Z', budget_tokens: 500 },
+    validateSchema: true,
+    expect: [
+      { path: 'protocol_version', equals: 1 },
+      // `since` is normalized to ISO (v0.45.7 F4 — never echoed raw).
+      { path: 'since', equals: '1970-01-01T00:00:00.000Z' },
+    ],
+  },
+  {
+    name: 'delta without since or session_id is invalid_params with a suggestion',
+    verb: 'delta',
+    params: {},
+    expectErrorCode: 'invalid_params',
+    expectSuggestion: true,
   },
 ];

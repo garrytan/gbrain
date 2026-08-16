@@ -24,6 +24,7 @@ import { writeRunRow, loadTrend } from '../../src/core/eval-contradictions/trend
 import { JudgeCache, buildCacheKey } from '../../src/core/eval-contradictions/cache.ts';
 import type { ProbeReport } from '../../src/core/eval-contradictions/types.ts';
 import { operationsByName, type OperationContext } from '../../src/core/operations.ts';
+import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 
@@ -35,6 +36,7 @@ beforeAll(async () => {
     return;
   }
   engine = new PostgresEngine();
+  assertSafeE2eDatabaseUrl(DATABASE_URL!);
   await engine.connect({ database_url: DATABASE_URL });
   await engine.initSchema();
 });

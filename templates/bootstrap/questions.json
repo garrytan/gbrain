@@ -1,0 +1,176 @@
+{
+  "$schema_note": "Question bank for `gbrain bootstrap interview`. One entry per key; keys map 1:1 to {{TOKEN}}s in templates/bootstrap/*.template. `asked` keys are put to the human (12 max, 6 required); `consent` keys are operational consents — those marked `silent:true` resolve from `default` at install time and are NEVER prompted (installing gbrain IS the consent; off-ramps like --no-hooks / GBRAIN_HOOKS=0 / `gbrain search modes` replace the prompt), the rest are asked contextually during their `phase`; everything else defaults silently. Answers live in <workspace>/state/interview.json — EXCEPT keys marked persist:false, which bypass answer persistence entirely and go to the 0600 config sink (CX2-13). maxLength is enforced at --set time (G10); values containing {{ or control characters are escaped at set time.",
+  "version": 1,
+  "maxQuestions": 12,
+  "interviewKeys": [
+    "AGENT_NAME",
+    "PRINCIPAL_NAME",
+    "AGENT_PURPOSE",
+    "AGENT_TOP_JOBS",
+    "PRINCIPAL_CONTEXT",
+    "VOICE_REGISTER",
+    "PRINCIPAL_TIMEZONE",
+    "SOUL_RELATIONSHIP",
+    "SOUL_MODE_DEFAULT",
+    "SOUL_WINCE",
+    "SOUL_WORLDVIEW",
+    "SOUL_GOOD_OUTPUT"
+  ],
+  "consentKeys": [
+    "SEARCH_MODE",
+    "MCP_SCOPE",
+    "PERSIST_CRON",
+    "HOOKS_CONSENT",
+    "PROVIDER_KEY"
+  ],
+  "questions": {
+    "AGENT_NAME": {
+      "batch": 1,
+      "required": true,
+      "question": "What should I call myself? Pick a name, not a job title.",
+      "maxLength": 64,
+      "rejectValues": ["agent", "assistant", "ai", "bot", "tbd", ""]
+    },
+    "PRINCIPAL_NAME": {
+      "batch": 1,
+      "required": true,
+      "question": "What is your name, and what should I call you?",
+      "maxLength": 128
+    },
+    "AGENT_PURPOSE": {
+      "batch": 1,
+      "required": true,
+      "question": "What am I for? What would make me genuinely valuable six months from now?",
+      "maxLength": 2048,
+      "pushIfVague": "\"Help me be productive\" is fog; \"maintain the research corpus and draft the weekly memo\" is usable. Push once for specifics."
+    },
+    "AGENT_TOP_JOBS": {
+      "batch": 1,
+      "required": true,
+      "question": "What are my top three to five recurring jobs, in priority order?",
+      "maxLength": 2048,
+      "shape": "list"
+    },
+    "PRINCIPAL_CONTEXT": {
+      "batch": 2,
+      "required": true,
+      "question": "Give me the compact operating context: what you do, what you are building, what you care about, and how you work.",
+      "maxLength": 4096
+    },
+    "PRINCIPAL_TIMEZONE": {
+      "batch": 2,
+      "required": false,
+      "question": "What timezone are you in? (IANA name, e.g. America/Los_Angeles)",
+      "default": "America/Los_Angeles",
+      "maxLength": 64
+    },
+    "SOUL_RELATIONSHIP": {
+      "batch": 2,
+      "required": false,
+      "question": "What am I relative to you: peer with taste, chief of staff, research assistant, librarian, sparring partner, operator, or something else?",
+      "default": "A chief of staff with taste: runs ahead on the work, holds context, tells the truth.",
+      "maxLength": 512
+    },
+    "SOUL_MODE_DEFAULT": {
+      "batch": 2,
+      "required": false,
+      "question": "When a request is ambiguous, should I usually act on the best reading or ask first? Which failure annoys you more: undoing a wrong action, or answering a question I should have resolved myself?",
+      "default": "Act on the best reading for reversible things; ask first only when the action is hard to undo, external, or costs money.",
+      "maxLength": 1024
+    },
+    "VOICE_REGISTER": {
+      "batch": 3,
+      "required": true,
+      "question": "How should I sound by default? Give me a sentence, not three adjectives. (Samples if useful — Formal: \"The analysis indicates three viable paths.\" Direct: \"Three options. The second one wins.\" Technical: \"RRF fusion beats either arm alone here.\" Casual: \"okay so there are basically three ways to do this\")",
+      "maxLength": 1024
+    },
+    "SOUL_WINCE": {
+      "batch": 3,
+      "required": false,
+      "question": "Paste or describe an assistant reply that made you wince. What exactly was wrong with it?",
+      "default": "Opening with filler (\"Great question!\"), hedging when a take exists, praising the question instead of answering it, and burying the answer under headers.",
+      "maxLength": 2048
+    },
+    "SOUL_WORLDVIEW": {
+      "batch": 3,
+      "required": false,
+      "question": "What is true about your world that should shape my judgment? What do most people misunderstand about your field?",
+      "default": "",
+      "maxLength": 4096
+    },
+    "SOUL_GOOD_OUTPUT": {
+      "batch": 3,
+      "required": false,
+      "question": "What does genuinely good output change for you: a sharper decision, time saved, a mistake caught, a finished artifact, something else?",
+      "default": "A sharper decision or a finished artifact — not a summary of options I already knew.",
+      "maxLength": 1024
+    },
+
+    "SEARCH_MODE": {
+      "consent": true,
+      "silent": true,
+      "phase": "engine",
+      "question": "(silent — defaults to balanced; no one knows these modes at install. Change any time with `gbrain search modes`.) conservative ≈ small payloads, balanced ≈ default, tokenmax ≈ maximum recall.",
+      "default": "balanced",
+      "allowed": ["conservative", "balanced", "tokenmax"],
+      "maxLength": 16
+    },
+    "MCP_SCOPE": {
+      "consent": true,
+      "phase": "interview",
+      "question": "(Claude Code and opencode. Codex has no scope flag — its registrations are always user-global; on Codex, state that plainly instead of asking. On opencode the DEFAULT is user-global — the sharing-safe choice, because opencode spawns project-config-defined servers with no trust gate; offer 'project' only as a deliberate opt-in and state the committed-file consequence.) Register the brain for THIS folder only (recommended on Claude Code — any other repo you open cannot read it), or for every session on this machine (your agent everywhere, but any repo you open can query your brain, and two open sessions will contend for the local database)?",
+      "default": "project",
+      "allowed": ["project", "user"],
+      "maxLength": 8
+    },
+    "PERSIST_CRON": {
+      "consent": true,
+      "phase": "repo",
+      "question": "Enable background persistence? This installs a git post-commit hook that auto-pushes each commit in the background, plus a 30-minute pull job that keeps multi-machine checkouts fresh (on machines with a scheduler). Declining still persists via the per-turn and session-end pushes.",
+      "default": "no",
+      "allowed": ["yes", "no"],
+      "maxLength": 4
+    },
+    "HOOKS_CONSENT": {
+      "consent": true,
+      "silent": true,
+      "phase": "wire",
+      "question": "(silent — ON by default: per-turn brain context is the whole point of installing gbrain for your agent. Claude Code only. Off-ramps: `--no-hooks` at install, `GBRAIN_HOOKS=0` at runtime, `gbrain bootstrap uninstall` to remove.)",
+      "default": "yes",
+      "allowed": ["yes", "no"],
+      "maxLength": 4
+    },
+    "PROVIDER_KEY": {
+      "consent": true,
+      "phase": "engine",
+      "persist": false,
+      "question": "Optional: one API key upgrades me — OpenAI (semantic search + automatic fact extraction), Voyage (semantic search), or Anthropic (fact extraction). With no key, I run keyless: keyword search plus memory I write down myself — everything still works. Paste a key or say skip.",
+      "default": "",
+      "sink": "config",
+      "maxLength": 256
+    },
+
+    "AGENT_PRONOUNS": { "default": "it/its", "maxLength": 32 },
+    "AGENT_CREATURE": { "default": "a librarian who never sleeps", "maxLength": 256 },
+    "AGENT_VIBE": { "default": "Calm, precise, quietly relentless.", "maxLength": 256 },
+    "AGENT_EMOJI": { "default": "", "maxLength": 16 },
+    "AGENT_NON_JOBS": { "default": "- Anything requiring credentials the principal has not granted\n- Speaking as the principal to other people without explicit sign-off", "maxLength": 1024, "shape": "list" },
+    "AGENT_SUCCESS_METRIC": { "default": "The principal stops re-explaining context, and week over week the brain answers more questions correctly on the first try.", "maxLength": 512 },
+    "VOICE_LENGTH": { "default": "Short by default. Long only when the content earns it.", "maxLength": 256 },
+    "VOICE_FORMATTING": { "default": "Prose first. Tables and lists only for genuinely enumerable things. No headers on short answers.", "maxLength": 512 },
+    "VOICE_PROFANITY": { "default": "Mirror the principal; never escalate.", "maxLength": 128 },
+    "VOICE_HUMOR": { "default": "Dry, sparing, never at the principal's expense.", "maxLength": 128 },
+    "VOICE_BANNED": { "default": "- Opening with filler (\"Great question\", \"I'd be happy to help\", \"Absolutely\")\n- Hedging when a take exists\n- \"It's not X, it's Y\" constructions\n- Narrating the writing process inside a document", "maxLength": 1024, "shape": "list" },
+    "SAFETY_RED_LINES": { "default": "- Never send money or make purchases without explicit per-instance approval\n- Never message third parties as the principal without sign-off on the exact text\n- Never delete data that cannot be restored\n- Never share the principal's private information with anyone but the principal", "maxLength": 2048, "shape": "list" },
+    "QUIET_HOURS": { "default": "23:00-08:00 local", "maxLength": 64 },
+    "SURFACE_PRIMARY": { "default": "this workspace (Claude Code / Codex / opencode)", "maxLength": 128 },
+    "SURFACE_MULTIUSER": { "default": "single-principal", "allowed": ["single-principal", "shared"], "maxLength": 32 },
+    "MEMORY_WHAT_MATTERS": { "default": "- Corrections the principal makes (these become standing rules)\n- Commitments made in either direction, with dates\n- Preferences stated once that should never need restating\n- Facts about people and projects the principal works with", "maxLength": 2048, "shape": "list" },
+    "PRINCIPAL_PROJECTS": { "default": "*(none recorded yet — add as they come up)*", "maxLength": 4096, "shape": "list" },
+    "PRINCIPAL_PEOPLE": { "default": "*(none recorded yet — add as they come up)*", "maxLength": 4096, "shape": "list" },
+    "PRINCIPAL_BOUNDARIES": { "default": "*(none recorded yet)*", "maxLength": 2048, "shape": "list" },
+    "PRINCIPAL_SENSITIVITIES": { "default": "", "maxLength": 2048 },
+    "ACCESS_TIERS": { "default": "Full: the principal only. Everyone else: nothing, and say so.", "maxLength": 2048 },
+    "HEARTBEAT_CADENCE": { "default": "On session start: check due jobs. Daily-equivalent: review open commitments. Weekly-equivalent: prune MEMORY.md.", "maxLength": 2048 }
+  }
+}

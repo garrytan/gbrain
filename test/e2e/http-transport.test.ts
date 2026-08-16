@@ -52,6 +52,12 @@ describeE2E('http-transport E2E (real Postgres)', () => {
   let validToken: string;
   let revokedToken: string;
   let validTokenName: string;
+  // v0.45.7 ambient recall: two tokens with DISTINCT clientIds (the auth
+  // clientId is the access_tokens row id) for the delta session-cursor test.
+  let tokenA: string;
+  let tokenB: string;
+  let tokenAId: string;
+  let tokenBId: string;
 
   beforeAll(async () => {
     await setupDB();
@@ -69,6 +75,20 @@ describeE2E('http-transport E2E (real Postgres)', () => {
       'INSERT INTO access_tokens (name, token_hash, revoked_at) VALUES ($1, $2, now())',
       ['e2e-revoked-' + randomBytes(4).toString('hex'), hashToken(revokedToken)],
     );
+    // Two more valid tokens — RETURNING id captures each token's clientId
+    // (http-transport sets auth.clientId to the access_tokens row id).
+    tokenA = generateToken();
+    const [rowA] = await conn.unsafe(
+      'INSERT INTO access_tokens (name, token_hash) VALUES ($1, $2) RETURNING id',
+      ['e2e-client-a-' + randomBytes(4).toString('hex'), hashToken(tokenA)],
+    ) as { id: string }[];
+    tokenAId = rowA.id;
+    tokenB = generateToken();
+    const [rowB] = await conn.unsafe(
+      'INSERT INTO access_tokens (name, token_hash) VALUES ($1, $2) RETURNING id',
+      ['e2e-client-b-' + randomBytes(4).toString('hex'), hashToken(tokenB)],
+    ) as { id: string }[];
+    tokenBId = rowB.id;
 
     srv = await startServer();
   }, 30_000);
@@ -229,5 +249,99 @@ describeE2E('http-transport E2E (real Postgres)', () => {
     const body = await r.json();
     expect(body.result.isError).toBe(true);
     expect(body.result.content[0].text).toContain('invalid_params');
+  });
+
+  // ── v0.45.7 ambient recall: the two boundary verbs over real HTTP ─────────
+
+  test('9. tools/list on the default surface includes the boundary verbs (context_pack + delta)', async () => {
+    const r = await fetch(`http://localhost:${srv.port}/mcp`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${validToken}`, 'Content-Type': 'application/json' },
+      body: rpc('tools/list'),
+    });
+    expect(r.status).toBe(200);
+    const body = await r.json();
+    const names = body.result.tools.map((t: { name: string }) => t.name);
+    expect(names).toContain('context_pack');
+    expect(names).toContain('delta');
+  });
+
+  test('10. delta keys the session cursor by auth clientId — two tokens, same session_id → two rows, neither "local"', async () => {
+    const conn = getConn();
+    const sessionId = 'e2e-delta-' + randomBytes(6).toString('hex');
+
+    // First wake per (client, session): establishes the cursor, empty delta.
+    // Same session_id under BOTH tokens — the auth clientId must namespace the
+    // cursor rows or the two harnesses would stomp each other's state.
+    for (const token of [tokenA, tokenB]) {
+      const r = await fetch(`http://localhost:${srv.port}/mcp`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: rpc('tools/call', { name: 'delta', arguments: { session_id: sessionId } }),
+      });
+      expect(r.status).toBe(200);
+      const body = await r.json();
+      expect(body.result.isError).toBeUndefined();
+      const parsed = JSON.parse(body.result.content[0].text);
+      expect(parsed.protocol_version).toBe(1);
+      expect(parsed.pages).toEqual([]);
+    }
+
+    // Query the engine directly: one row per clientId, keyed by the tokens'
+    // access_tokens row ids — and never the 'local' trusted-CLI sentinel.
+    const rows = await conn.unsafe(
+      'SELECT client_id, source_id FROM session_context_state WHERE session_id = $1 ORDER BY client_id',
+      [sessionId],
+    ) as { client_id: string; source_id: string }[];
+    expect(rows.length).toBe(2);
+    expect(rows.map(row => row.client_id).sort()).toEqual([tokenAId, tokenBId].sort());
+    for (const row of rows) {
+      expect(row.client_id).not.toBe('local');
+      expect(row.source_id).toBe('default');
+    }
+  });
+
+  test('11. context_pack with include_private:true over HTTP is fail-closed — no private fact in facts[] or text', async () => {
+    const conn = getConn();
+    const marker = randomBytes(6).toString('hex');
+    const worldFact = `E2E world fact ${marker}`;
+    const privateFact = `E2E private fact SECRET-${marker}`;
+    await conn.unsafe(
+      `INSERT INTO facts (source_id, fact, kind, visibility, source) VALUES
+         ('default', $1, 'fact', 'world', 'e2e-http'),
+         ('default', $2, 'fact', 'private', 'e2e-http')`,
+      [worldFact, privateFact],
+    );
+
+    // include_private only widens for trusted-local callers (ctx.remote ===
+    // false); this transport always dispatches remote:true, so the flag must
+    // be a no-op over real HTTP.
+    const r = await fetch(`http://localhost:${srv.port}/mcp`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${validToken}`, 'Content-Type': 'application/json' },
+      body: rpc('tools/call', {
+        name: 'context_pack',
+        arguments: {
+          entities: 'nonexistent-entity-' + marker,
+          include_private: true,
+          // Fresh session id → fresh hot-memory cache key (no cross-test reuse).
+          session_id: 'e2e-pack-' + marker,
+        },
+      }),
+    });
+    expect(r.status).toBe(200);
+    const body = await r.json();
+    expect(body.result.isError).toBeUndefined();
+    const rawText = body.result.content[0].text;
+    const parsed = JSON.parse(rawText);
+    expect(parsed.protocol_version).toBe(1);
+    // World fact present — proves the facts arm actually ran (non-vacuous).
+    const factTexts = parsed.facts.map((f: { fact: string }) => f.fact);
+    expect(factTexts).toContain(worldFact);
+    // Private fact absent from facts[], from the injectable text, and from
+    // the entire serialized payload (covers every additive field at once).
+    expect(factTexts).not.toContain(privateFact);
+    expect(parsed.text).not.toContain('SECRET-' + marker);
+    expect(rawText).not.toContain('SECRET-' + marker);
   });
 });

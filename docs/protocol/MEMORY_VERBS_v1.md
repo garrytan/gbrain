@@ -1,7 +1,8 @@
 # MEMORY_VERBS v1 — the memory wire protocol
 
-GBrain's frozen five-verb memory interface over MCP: `recall`, `remember`,
-`entity`, `synthesize`, `forget`. The contract every harness can rely on the
+GBrain's frozen memory-verb interface over MCP: `recall`, `remember`,
+`entity`, `synthesize`, `forget`, plus (v0.45.7, additive) `context_pack` and
+`delta` — seven verbs, all at `protocol_version: 1`. The contract every harness can rely on the
 way every Postgres client relies on the wire protocol — and the contract any
 OTHER memory server can implement and certify against
 (`gbrain protocol conformance --target <endpoint>`).
@@ -10,7 +11,7 @@ OTHER memory server can implement and certify against
 agent (any MCP harness)
    │  remember("picked Stripe over Adyen", provenance: "chat 2026-06-11")
    ▼
-five verbs ── recall ── remember ── entity ── synthesize ── forget
+seven verbs  recall ─ remember ─ entity ─ synthesize ─ forget ─ context_pack ─ delta
    │   self-describing envelopes: protocol_version, evidence, provenance,
    │   budget meta, cost block, enumerated error codes + a populated fix
    ▼
@@ -38,12 +39,17 @@ the same registry.
 - Enum values are part of the contract. Where an enum's DERIVATION is
   implementation-defined (noted per field), implementations may improve the
   derivation without a version bump; the values and their meanings stay fixed.
+- **Adding a VERB is additive, not a version bump.** v0.45.7 grew the frozen set
+  from 5 to 7 (`context_pack`, `delta`) at `protocol_version: 1`. New verbs are
+  new optional surface a v1 client discovers via tool-listing; the existing five
+  keep stamping `1`. Bumping `protocol_version` would rewrite the frozen five's
+  wire output and break every client that pins `== 1` — so we don't.
 
 ## Install (the 4-command quickstart)
 
 ```bash
 gbrain init --pglite                                      # 2-second local brain
-claude mcp add gbrain -- gbrain serve --surface verbs     # the five-verb surface
+claude mcp add gbrain -- gbrain serve --surface verbs     # the memory-verb surface
 gbrain remember "I prefer dark mode in every editor" --provenance demo --entity people/me
 gbrain recall --entity people/me                          # …now ask your agent in a NEW session
 ```
@@ -58,17 +64,45 @@ If `claude` is not found: install Claude Code first, or use a block below.
 codex mcp add gbrain -- gbrain serve --surface verbs
 ```
 
+**Grok Build** (verify with `grok mcp doctor gbrain` — the add is lazy)
+```bash
+grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- gbrain serve --surface verbs
+```
+
+**opencode** (verify with `opencode mcp list` — the add is lazy, and list SPAWNS the server)
+```bash
+opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- gbrain serve --surface verbs
+```
+
 **OpenClaw / any stdio MCP host** — register the server command
 `gbrain serve --surface verbs`. Remote brains: `gbrain serve --http` on the
 host, then `gbrain connect https://host/mcp --token gbrain_xxx --install` on
 each client.
 
-**Surface modes:** `--surface verbs` exposes EXACTLY the five verbs —
+**Surface modes:** `--surface verbs` exposes EXACTLY the seven verbs —
 advertised list AND dispatch are filtered fail-closed (a hidden op returns
-`unknown_tool` even when called by name). `--surface full` (the default)
-exposes every operation, verbs included. Why default full: verbs is for
-agents and quickstarts; full preserves existing advanced tooling. Persist a
-default with `gbrain config set mcp_surface verbs`.
+`unknown_tool` even when called by name). `--surface starter` exposes the
+~26-op daily-driver set (`STARTER_OPS` in `src/mcp/surface.ts`): the seven
+verbs plus the daily brain-tool slice, the agent lane, `whoami`, and the
+`request_tools` discovery meta-op (re-derivable from production usage via
+`scripts/derive-starter-ops.ts`). Monotonic by construction: verbs ⊆ starter ⊆ full
+(pinned by test) — starter extends the ladder ABOVE verbs and never changes
+verb semantics. `--surface full` (the default) exposes every operation,
+verbs included. Why default full: verbs/starter are for agents and
+quickstarts; full preserves existing advanced tooling. Persist a default
+with `gbrain config set mcp_surface verbs`.
+
+**Ceiling semantics (OAuth HTTP transport):** the server-resolved surface
+is a CEILING, not the final answer. Each request resolves
+`min(ceiling, client row surface ?? mcp.default_surface_dcr ?? ceiling)` —
+so a verbs-pinned server always serves verbs regardless of client rows,
+while a full server can narrow individual clients
+(`gbrain auth rescope-client <id> --surface starter`) or let them narrow
+themselves via `request_tools` (never past the ceiling; an operator-set
+row is locked against self-service). Recomputed per request — rescopes
+take effect on the client's next request; clients should re-issue
+tools/list after a surface change. stdio and the legacy bearer transport
+have no per-client row: they serve the server-resolved surface directly.
 
 ## The verbs
 
@@ -177,6 +211,36 @@ output_tokens, usd_estimate}, protocol_version }`.
 - No LLM configured ⇒ the protocol error `unavailable` with a fix — never a
   fake answer.
 
+#### synthesize compose status (v0.45.x, additive)
+
+Every response additionally carries four ADDITIVE-FOREVER fields (absent on
+pre-v0.45.x servers; a server that omits them still certifies):
+
+- `synthesis_status` — how `answer` was produced: `ok` (LLM synthesis) or
+  `extractive_fallback` (the LLM compose step failed but retrieval succeeded —
+  `answer` is an extractive digest quoting ONLY retrieved pages, `sources`
+  cite the digested pages). The remaining enum values (`empty_answer`,
+  `not_json`, `no_llm`, `model_unusable`, `llm_error`) name compose-failure
+  states a non-verb `think` surface may report; the verb converts them to the
+  fallback or a typed error and never emits them itself.
+- `pages_gathered` / `takes_gathered` — retrieval counts behind the answer.
+- `warnings` — machine-stable pipeline warning codes (e.g.
+  `LLM_OUTPUT_NOT_JSON`, `SYNTHESIS_EMPTY_ANSWER`, `LLM_CALL_FAILED: <class>`
+  where `<class>` is one of the closed set `timeout` | `rate_limited` |
+  `network` | `provider_error` — raw provider detail never rides the wire,
+  `MODEL_NOT_USABLE:<reason>`).
+
+Precedence (frozen): compose failure + NON-EMPTY gather ⇒
+`extractive_fallback` — the digest is composed exclusively from gathered
+pages, never fabricated. Compose failure + EMPTY gather ⇒ the protocol error
+`unavailable` with message `retrieved 0 pages; compose failed: <warning-code>`
+(an empty gather NEVER produces an answer). Provider/transport failures at
+call time (429 / timeout / 5xx / network) are caught into `llm_error` and
+follow the same precedence. No LLM configured stays the `unavailable`
+configure-and-retry error regardless of gather — an extractive digest would
+mask the misconfiguration forever. Refusals parse as `not_json` (coarse on
+purpose, no dedicated status).
+
 ### forget(id, reason?) — write
 
 Expire a fact by its opaque string id (from `remember` or
@@ -186,7 +250,71 @@ already-expired fact returns `expired: false` (success); unknown id ⇒
 
 Response: `{ id, expired, reason, protocol_version }`.
 
-## Error contract (uniform across all five verbs)
+### context_pack(entities, budget_tokens?, since?, session_id?, include_private?) — read, zero LLM
+
+v0.45.7 (issue #1). One deterministic, budget-packed bundle for a set of standing
+entities — entity cards + open threads + hot facts. Built for **session
+boundaries**: call it at session start to warm cold context, and immediately
+after compaction to rehydrate what the summary dropped. Composes existing arms
+(`entity` card builder + the hot-facts arm); never calls an LLM.
+
+`entities` is comma-separated, capped at 8 (the response echoes the capped list). `budget_tokens` packs
+server-side (cards first, then facts) and the response reports
+`budget_used` + `dropped_count` — it never trims client-side. `since` filters
+open-thread events to those after the cursor. **Visibility is WORLD-ONLY by
+default** on every arm (a pack is injected into an agent context window that may
+be logged or synced to a cloud model). `include_private` widens ALL arms in
+lockstep, and is honored ONLY for trusted-local callers (`remote === false`); a
+remote caller never widens (fail-closed).
+
+Response: `{ protocol_version, entities, cards[], open_threads[], facts[], text,
+degraded_reason?, budget_tokens?, budget_used?, dropped_count? }`. `text` is the
+pre-rendered, envelope-wrapped injectable block.
+
+### delta(since?, entities?, budget_tokens?, session_id?, include_private?) — read, zero LLM
+
+v0.45.7 (issue #1). "What changed since T" for heartbeats — pages updated after
+the cursor (oldest first) + facts recorded after the cursor + open-thread
+events after the cursor. Lets a periodic wake maintain warm state in
+O(changes) instead of re-deriving. Provide `since` (ISO 8601) OR a
+`session_id` whose cursor carries the last wake. Delivery is **at-least-once**:
+when a budget or the fetch limit drops pages, `has_more: true` is set and the
+session cursor advances only to the newest DELIVERED page — the undelivered
+tail surfaces on the next wake, never silently lost. Dedup is cursor-based (a
+delivered page reappears only if it changes again). Same world-only-default +
+`include_private` fail-closed rule as `context_pack`. The session cursor is
+keyed `(source_id, client_id, session_id)` — authenticated remote callers are
+namespaced by their auth client id, auth-less remotes share the `'remote'`
+sentinel, and `'local'` is RESERVED for the trusted CLI/hook lane, so a remote
+harness can never read or advance the local lane's cursor.
+
+Delivery is at-least-once via a **keyset cursor `(updated_at, slug)`**: a cluster
+of pages sharing one `updated_at` (bulk syncs stamp identical timestamps) pages
+deterministically by slug, so a >fetch-limit cluster drains across wakes instead
+of livelocking. Stateless callers resume by passing the response's
+`next_cursor.since` + `next_cursor.slug` back as `since` + `since_slug`;
+`session_id` callers get this automatically.
+
+Response: `{ protocol_version, since, pages[], facts[], threads[], text,
+has_more, next_cursor: { since, slug }, degraded_reason?, budget_tokens?,
+budget_used?, dropped_count? }`. `text` is rendered from the budget-packed sets
+(it honors the declared budget) and `since` is always normalized ISO (never the
+raw input string).
+
+## Latency classes (per verb)
+
+Published so harness authors place calls by cost, not by learning at timeout:
+
+| Verb | Class | Notes |
+|---|---|---|
+| `entity` | zero-LLM, **p99 < 100ms** | CI-gated on a 20K-page corpus (below). Safe per entity-bearing message. |
+| `context_pack` | zero-LLM, sub-second | Fan-out capped at 8 entities. Session boundaries, not per-message. Push path passes a wall-clock deadline and returns a PARTIAL pack (`degraded_reason`) rather than overrun. |
+| `delta` | zero-LLM, sub-second | O(changes). Heartbeats — pull path only (there is no push heartbeat); session cursors expire after 7 idle days. |
+| `recall` | zero-LLM (keyword) to one embedding call (when `query` is passed) | Sub-second typical; the `query` arm adds one embedding round-trip. |
+| `remember` / `forget` | write, sub-second | One durable write; `remember` adds one embedding call for dedup when a provider is configured. |
+| `synthesize` | **EXPENSIVE / SLOW** | LLM calls, seconds-to-minutes, costs money. Never place on a hot or ambient path. |
+
+## Error contract (uniform across all verbs)
 
 ```json
 { "error": "<code>", "message": "...", "suggestion": "problem + cause + fix",

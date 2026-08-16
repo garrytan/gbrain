@@ -91,6 +91,10 @@ describe('formatRecipeTable', () => {
     expect(lines[2]).toContain('openai');
     expect(lines[2]).toContain('✓ ready');
     expect(lines[3]).toContain('zeroentropyai');
-    expect(lines[3]).toContain('✗ missing ZEROENTROPY_API_KEY');
+    // v0.46.3: sunsetting providers show the DEPRECATED annotation instead of
+    // key-readiness — "ready" on a dying API is not a state to advertise.
+    expect(lines[3]).toContain('DEPRECATED');
+    expect(lines[3]).toContain('2026-09-04');
+    expect(lines[3]).toContain('voyage:voyage-4');
   });
 });

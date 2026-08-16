@@ -22,6 +22,7 @@
  */
 
 import { applyChunkEmbeddingIndexPolicy } from './vector-index.ts';
+import { applyFtsLanguagePolicy } from './fts-language.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 
 const PGLITE_SCHEMA_SQL_TEMPLATE = `
@@ -461,6 +462,7 @@ CREATE TABLE IF NOT EXISTS minion_jobs (
   depth            INTEGER     NOT NULL DEFAULT 0,
   max_children     INTEGER,
   timeout_ms       INTEGER,
+  lock_duration_ms INTEGER,
   timeout_at       TIMESTAMPTZ,
   remove_on_complete BOOLEAN   NOT NULL DEFAULT FALSE,
   remove_on_fail   BOOLEAN     NOT NULL DEFAULT FALSE,
@@ -481,7 +483,8 @@ CREATE TABLE IF NOT EXISTS minion_jobs (
   CONSTRAINT chk_nonnegative CHECK (attempts_made >= 0 AND attempts_started >= 0 AND stalled_counter >= 0 AND max_attempts >= 1 AND max_stalled >= 0),
   CONSTRAINT chk_depth_nonnegative CHECK (depth >= 0),
   CONSTRAINT chk_max_children_positive CHECK (max_children IS NULL OR max_children > 0),
-  CONSTRAINT chk_timeout_positive CHECK (timeout_ms IS NULL OR timeout_ms > 0)
+  CONSTRAINT chk_timeout_positive CHECK (timeout_ms IS NULL OR timeout_ms > 0),
+  CONSTRAINT chk_lock_duration_positive CHECK (lock_duration_ms IS NULL OR (lock_duration_ms >= 5000 AND lock_duration_ms <= 3600000))
 );
 
 CREATE INDEX IF NOT EXISTS idx_minion_jobs_claim ON minion_jobs (queue, priority ASC, created_at ASC) WHERE status = 'waiting';
@@ -495,6 +498,9 @@ CREATE INDEX IF NOT EXISTS idx_minion_jobs_parent_status ON minion_jobs (parent_
   WHERE parent_job_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_minion_jobs_idempotency ON minion_jobs (idempotency_key)
   WHERE idempotency_key IS NOT NULL;
+-- WP4/WP5 (v127, ENG-10): wedge-signal index — covers the queue-health count
+-- FILTERs and max(updated_at) reads in queryWedgeSignals (supervisor.ts).
+CREATE INDEX IF NOT EXISTS idx_minion_jobs_queue_status_updated ON minion_jobs (queue, status, updated_at);
 
 -- Inbox table for sidechannel messaging
 CREATE TABLE IF NOT EXISTS minion_inbox (
@@ -898,6 +904,11 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
   bound_brain_id          TEXT NULL,
   bound_slug_prefixes     TEXT[] NULL,
   bound_max_concurrent    INTEGER NOT NULL DEFAULT 1,
+  -- WP4 (v127): per-client MCP tool surface + who set it ('operator' |
+  -- 'self' | 'dcr_default'). Value space is OPEN (future client tiers write
+  -- tier names into surface); NULL = server/config surface resolution.
+  surface                 TEXT NULL,
+  surface_set_by          TEXT NULL,
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 -- v0.34.1 (#861, D13 + #876): source_id is the OAuth client's write-source
@@ -990,6 +1001,20 @@ CREATE INDEX IF NOT EXISTS context_volunteer_events_src_time_idx
   ON context_volunteer_events (source_id, volunteered_at DESC);
 CREATE INDEX IF NOT EXISTS context_volunteer_events_src_slug_idx
   ON context_volunteer_events (source_id, slug);
+
+-- session_context_state (v0.45.7 / migration v126 — ambient recall issue #1).
+CREATE TABLE IF NOT EXISTS session_context_state (
+  source_id         TEXT NOT NULL,
+  client_id         TEXT NOT NULL DEFAULT 'local',
+  session_id        TEXT NOT NULL,
+  standing_entities JSONB NOT NULL DEFAULT '[]'::jsonb,
+  surfaced_slugs    JSONB NOT NULL DEFAULT '[]'::jsonb,
+  last_wake_at      TIMESTAMPTZ,
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_id, client_id, session_id)
+);
+CREATE INDEX IF NOT EXISTS session_context_state_updated_idx
+  ON session_context_state (updated_at);
 
 -- ============================================================
 -- migration_impact_log (v0.41.18.0 — gbrain onboard wave)
@@ -1114,7 +1139,7 @@ export function getPGLiteSchema(
     throw new Error(`Invalid embedding dimensions: ${dims}`);
   }
   const sanitizedModel = String(model).replace(/'/g, "''");
-  return applyChunkEmbeddingIndexPolicy(PGLITE_SCHEMA_SQL_TEMPLATE, parsedDims)
+  return applyFtsLanguagePolicy(applyChunkEmbeddingIndexPolicy(PGLITE_SCHEMA_SQL_TEMPLATE, parsedDims))
     .replace(/__EMBEDDING_DIMS__/g, String(parsedDims))
     .replace(/__EMBEDDING_MODEL__/g, sanitizedModel);
 }

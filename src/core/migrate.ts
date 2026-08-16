@@ -11,6 +11,26 @@ import {
 import { repairTimelineDedupIndex } from './timeline-dedup-repair.ts';
 
 /**
+ * When true, per-migration explanatory notices (e.g. the v123/v124 "here is
+ * what this migration changed" lines that specific handlers write to stderr)
+ * are suppressed. Set by runMigrations for a FRESH-install full replay — those
+ * notices are useful diagnostics on an UPGRADE but pure noise as a new user's
+ * first-run output. Module-level (not threaded through the Migration type)
+ * because only a couple of handlers emit them. Guarded via `migrationNotice`.
+ * Known limitation: concurrent runMigrations calls in one process (two engines
+ * migrating simultaneously) share this flag — worst case is a suppressed or
+ * extra stderr NOTICE line; migration execution/stamping is unaffected.
+ */
+let quietMigrationNotices = false;
+
+/** Write a per-migration explanatory notice unless fresh-install quiet mode is
+ *  on. Handlers should route their "what changed" lines through this. */
+function migrationNotice(line: string): void {
+  if (quietMigrationNotices) return;
+  process.stderr.write(line);
+}
+
+/**
  * Schema migrations — run automatically on initSchema().
  *
  * Each migration is a version number + idempotent SQL. Migrations are embedded
@@ -5511,7 +5531,7 @@ export const MIGRATIONS: Migration[] = [
         // stderr, NOT stdout: migrations run lazily inside any command's
         // first DB connect — a console.log here polluted `doctor --json`
         // stdout and broke jq consumers (heavy-tests fm_wallclock).
-        process.stderr.write(`  v123: trigger functions recreated with language='english' (default — no backfill needed)\n`);
+        migrationNotice(`  v123: trigger functions recreated with language='english' (default — no backfill needed)\n`);
         return;
       }
 
@@ -5532,7 +5552,7 @@ export const MIGRATIONS: Migration[] = [
         WHERE search_vector IS NOT NULL;
       `);
 
-      process.stderr.write(`  v123: trigger functions recreated with language='${lang}' + backfilled existing rows\n`);
+      migrationNotice(`  v123: trigger functions recreated with language='${lang}' + backfilled existing rows\n`);
     },
   },
   {
@@ -5600,7 +5620,7 @@ export const MIGRATIONS: Migration[] = [
         END;
         $fn$ LANGUAGE plpgsql;
       `);
-      process.stderr.write(`  v124: update_page_search_vector() no longer indexes compiled_truth (was overflowing tsvector on large pages, #2704)
+      migrationNotice(`  v124: update_page_search_vector() no longer indexes compiled_truth (was overflowing tsvector on large pages, #2704)
 `);
     },
   },
@@ -5616,6 +5636,221 @@ export const MIGRATIONS: Migration[] = [
       DROP INDEX IF EXISTS take_proposals_idempotency_idx;
       CREATE UNIQUE INDEX IF NOT EXISTS take_proposals_idempotency_idx
         ON take_proposals (source_id, page_slug, content_hash, prompt_version, md5(claim_text));
+    `,
+  },
+  {
+    version: 126,
+    name: 'session_context_state',
+    // v0.45.7 (issue #1) ambient recall — per-session cursor + boundary-tie
+    // dedup for the `delta` verb and the heartbeat runtime. Key is
+    // (source_id, client_id, session_id): client_id defaults to the 'local'
+    // sentinel for the CLI/hook path; REMOTE callers pass their auth client id
+    // so two harnesses in one source can't stomp/read each other's cursor
+    // (eng 1B). ONE key shape — no split key, no NULL branch. surfaced_slugs
+    // holds the boundary set: page slugs delivered AT the cursor timestamp,
+    // REPLACED on every advance (bounded by the delta fetch limit). jsonb
+    // columns default to '[]'::jsonb (a DDL LITERAL default — the ::jsonb
+    // param double-encode trap only bites INSERT/UPDATE binds, not DDL
+    // defaults; writes bind via executeRaw + $N::text::jsonb, guarded by
+    // scripts/check-jsonb-params.mjs). Created empty; plain CREATE INDEX
+    // is instant — no CONCURRENTLY. RLS: covered by the v35
+    // auto_rls_on_create_table event trigger on Postgres. Keep in sync with
+    // src/schema.sql, src/core/pglite-schema.ts, src/core/schema-embedded.ts.
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS session_context_state (
+        source_id         TEXT NOT NULL,
+        client_id         TEXT NOT NULL DEFAULT 'local',
+        session_id        TEXT NOT NULL,
+        standing_entities JSONB NOT NULL DEFAULT '[]'::jsonb,
+        surfaced_slugs    JSONB NOT NULL DEFAULT '[]'::jsonb,
+        last_wake_at      TIMESTAMPTZ,
+        updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (source_id, client_id, session_id)
+      );
+      CREATE INDEX IF NOT EXISTS session_context_state_updated_idx
+        ON session_context_state (updated_at);
+    `,
+  },
+  {
+    version: 127,
+    name: 'oauth_client_surface_and_minion_queue_index',
+    // WP4 (MCP consumer-feedback wave) — two additive pieces:
+    //
+    // 1. oauth_clients.surface + surface_set_by (amendments 17-19): the
+    //    per-client MCP tool surface consumed by the D2 ceiling resolution in
+    //    serve-http (`min(server --surface ceiling, row surface ?? config
+    //    default)`) and written by `gbrain auth rescope-client --surface`
+    //    (surface_set_by='operator', the lock the request_tools persist
+    //    branch cannot override) and the `request_tools` meta-op
+    //    (surface_set_by='self'). TEXT with an OPEN value space (amendment
+    //    18): unrecognized values are ignored at resolution (warn-once per
+    //    client), and future client tiers will write tier names into this
+    //    same column — never a second column. NULL = no per-client surface
+    //    (server/config resolution applies). verifyAccessToken's degrade
+    //    ladder gained a rung above v85's so pre-v127 brains keep
+    //    authenticating (ENG-9: both columns probed by missingOAuthColumn).
+    //
+    // 2. idx_minion_jobs_queue_status_updated (ENG-10, WP5 wedge index):
+    //    btree (queue, status, updated_at) covering all four count FILTERs
+    //    and both max(updated_at) FILTERs in queryWedgeSignals
+    //    (supervisor.ts) — no non-partial queue index existed before this.
+    //    Plain CREATE INDEX (small table; no CONCURRENTLY needed, which also
+    //    keeps this runnable inside the migration transaction on both
+    //    engines).
+    //
+    // Keep in sync with src/schema.sql, src/core/pglite-schema.ts,
+    // src/core/schema-embedded.ts + the bootstrap probe sets in both engines
+    // (test/schema-bootstrap-coverage.test.ts pins coverage).
+    idempotent: true,
+    sql: `
+      ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS surface TEXT;
+      ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS surface_set_by TEXT;
+      CREATE INDEX IF NOT EXISTS idx_minion_jobs_queue_status_updated
+        ON minion_jobs (queue, status, updated_at);
+    `,
+  },
+  {
+    version: 128,
+    name: 'minion_jobs_timeout_backfill_and_duplicate_cycle_cleanup',
+    // Jobs fix wave (upstream issues #2/#3) — two one-shot repairs for rows
+    // that predate the fixes shipping alongside this migration:
+    //
+    // 1. HANDLER_DEFAULT_TIMEOUT_MS backfill. Submit-time stamping (#1737)
+    //    never touched already-queued rows, so their timeout_ms = NULL fell
+    //    to the minutes-scale null-default wall-clock sweep and long handlers
+    //    were dead-lettered mid-progress. Values are SNAPSHOTTED at authoring
+    //    time — deliberately NOT generated from the live map, so every brain
+    //    applies identical SQL under this version number; the claim-time
+    //    COALESCE in MinionQueue.claim owns all future drift. Do NOT sync
+    //    this list when handler-timeouts.ts changes. No timeout_at stamp for
+    //    already-active rows: that would arm the tighter 1x handleTimeouts
+    //    kill mid-flight; the 2x wall-clock bound (via non-NULL timeout_ms)
+    //    is the gentler, sufficient repair, and every future claim stamps
+    //    timeout_at correctly.
+    //
+    // 2. Duplicate autopilot-cycle backlog cleanup. The slot-scoped dispatch
+    //    guards accumulated byte-identical waiting cycles when a job stalled
+    //    in 'active' (unbounded — one observed brain held ~111). Cancel all
+    //    but the newest waiting row per (name, queue, source scope),
+    //    restricted to ticker-keyed rows (idempotency-key prefix heuristic:
+    //    manually submitted cycles carry no key unless the operator passes
+    //    one; mimicking the ticker prefix opts into ticker dedup semantics)
+    //    AND to rows without a camelCase data.sourceId — the ticker only
+    //    ever writes snake_case source_id, so a sourceId row is by
+    //    definition not ticker-provenance and must never be swept
+    //    (adversarial-review tightening: prevents distinct sourceId scopes
+    //    collapsing into the empty source_id group).
+    //    Rows are preserved as 'cancelled' for audit; their idempotency keys
+    //    free naturally via the dead/cancelled key-NULLing rule in add().
+    //    Leaves <=1 waiting (+ possibly 1 active) per scope — converges to
+    //    single-flight within one wall-clock window; the maxPending guard
+    //    (shipped with this wave) prevents new accumulation.
+    //
+    // Non-terminal status set + row-lock race-safety per the v15 precedent
+    // (serializes against claim()'s FOR UPDATE SKIP LOCKED). Idempotent:
+    // statement 1 re-runs match zero rows (timeout_ms IS NULL guard);
+    // statement 2 re-runs keep only survivors.
+    idempotent: true,
+    sql: `
+      UPDATE minion_jobs
+         SET timeout_ms = CASE name
+               WHEN 'subagent'                     THEN 1800000
+               WHEN 'subagent_aggregator'          THEN 1800000
+               WHEN 'embed-backfill'               THEN 1800000
+               WHEN 'autopilot-cycle'              THEN 1800000
+               WHEN 'autopilot-global-maintenance' THEN 1800000
+               WHEN 'chronicle_extract'            THEN 600000
+               WHEN 'facts-absorb'                 THEN 600000
+               WHEN 'contextual_reindex_per_chunk' THEN 3600000
+             END,
+             updated_at = now()
+       WHERE timeout_ms IS NULL
+         AND status IN ('waiting','active','delayed','waiting-children','paused')
+         AND name IN ('subagent','subagent_aggregator','embed-backfill',
+                      'autopilot-cycle','autopilot-global-maintenance',
+                      'chronicle_extract','facts-absorb',
+                      'contextual_reindex_per_chunk');
+
+      UPDATE minion_jobs
+         SET status = 'cancelled',
+             finished_at = now(),
+             updated_at = now(),
+             error_text = 'v128: superseded duplicate autopilot cycle'
+       WHERE status = 'waiting' AND parent_job_id IS NULL
+         AND name IN ('autopilot-cycle','autopilot-global-maintenance')
+         AND (idempotency_key LIKE 'autopilot-cycle:%' OR idempotency_key LIKE 'autopilot-global:%')
+         AND data->>'sourceId' IS NULL
+         AND id NOT IN (
+           SELECT id FROM (
+             SELECT DISTINCT ON (name, queue, COALESCE(data->>'source_id','')) id
+             FROM minion_jobs
+             WHERE status = 'waiting' AND parent_job_id IS NULL
+               AND name IN ('autopilot-cycle','autopilot-global-maintenance')
+               AND (idempotency_key LIKE 'autopilot-cycle:%' OR idempotency_key LIKE 'autopilot-global:%')
+               AND data->>'sourceId' IS NULL
+             ORDER BY name, queue, COALESCE(data->>'source_id',''), created_at DESC, id DESC
+           ) keep
+         );
+    `,
+  },
+  {
+    version: 129,
+    name: 'dream_verdicts_triage_v1_columns',
+    // #4152 two-stage cascade: widens the boolean-era verdict cache into a
+    // scored triage record — ordinal salience score in [0,1], content type,
+    // candidate segments (verbatim quotes), entity candidates, plus the
+    // judging model and triage prompt version that make a cached verdict
+    // auditable and version-invalidatable. Legacy rows keep score NULL and
+    // are treated as cache misses by runTriagePass (re-judged once, cheap).
+    // No backfill by design; no index (the table is PK-probed only).
+    //
+    // dream_verdicts is migration-created on PGLite (v30, absent from
+    // PGLITE_SCHEMA_SQL), so these columns take the COLUMN_EXEMPTIONS route
+    // in test/schema-bootstrap-coverage.test.ts rather than bootstrap
+    // probes — there is no schema-blob forward reference to trip on, and
+    // every reader treats NULL as legacy-miss. Keep src/schema.sql (and the
+    // regenerated schema-embedded.ts) in sync for fresh Postgres installs.
+    //
+    // Rollback note: the stored worth_processing boolean derives from the
+    // FIXED 0.5 constant while the new runtime gate uses the configurable
+    // dream.triage.threshold. A binary rollback to pre-#4152 code (which
+    // trusts the boolean as permanent) after retuning the threshold gates
+    // differently until content hashes change — sweep with
+    // `gbrain dream retriage --force` (or clear scored rows) after such a
+    // rollback.
+    idempotent: true,
+    sql: `
+      ALTER TABLE dream_verdicts ADD COLUMN IF NOT EXISTS score DOUBLE PRECISION;
+      ALTER TABLE dream_verdicts ADD COLUMN IF NOT EXISTS content_type TEXT;
+      ALTER TABLE dream_verdicts ADD COLUMN IF NOT EXISTS segments JSONB;
+      ALTER TABLE dream_verdicts ADD COLUMN IF NOT EXISTS entities JSONB;
+      ALTER TABLE dream_verdicts ADD COLUMN IF NOT EXISTS model TEXT;
+      ALTER TABLE dream_verdicts ADD COLUMN IF NOT EXISTS triage_version INT;
+    `,
+  },
+  {
+    version: 130,
+    name: 'minion_jobs_lock_duration_ms',
+    // #4145: per-job lock lease. A single worker-global 30s lockDuration
+    // cannot serve both 2s shell jobs and 173s-average LLM subagent jobs —
+    // under host CPU saturation the renewal window was missed and healthy
+    // long-running handlers were force-evicted. The column carries an
+    // optional per-job lease; NULL means "worker default" (the pre-#4145
+    // behavior), so NO backfill is needed — the claim-time COALESCE against
+    // HANDLER_DEFAULT_LOCK_DURATION_MS (handler-timeouts.ts) owns all
+    // defaulting from here on. CHECK added via the idempotent drop-then-add
+    // pattern (v7 precedent) so migrated brains carry the same DB bound as
+    // fresh installs; the operative [5s,1h] range clamp lives app-side in
+    // clampLockDurationMs. No index: only per-row reads on already-indexed
+    // access paths (bootstrap-coverage: column-only, no probe needed).
+    // (Authored as v129; renumbered to v130 when #4152's
+    // dream_verdicts_triage_v1_columns landed the number first.)
+    idempotent: true,
+    sql: `
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS lock_duration_ms INTEGER;
+      ALTER TABLE minion_jobs DROP CONSTRAINT IF EXISTS chk_lock_duration_positive;
+      ALTER TABLE minion_jobs ADD CONSTRAINT chk_lock_duration_positive CHECK (lock_duration_ms IS NULL OR (lock_duration_ms >= 5000 AND lock_duration_ms <= 3600000));
     `,
   },
 ];
@@ -5978,17 +6213,64 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
     return { applied: 0, current };
   }
 
+  // Fresh install vs upgrade: a never-migrated brain (schema blob seeds
+  // version='1'; every migration is >= 2) replays the FULL history — printing
+  // ~240 lines of internal migration names as the user's first-run experience.
+  // That wall makes a 2-second init read as complex and fragile ("1 → 125"
+  // implies the brand-new install was 124 versions stale). Fresh installs get
+  // one summary line; EXISTING brains keep the full per-migration detail
+  // (upgrades are where the names carry diagnostic value).
+  // GBRAIN_MIGRATE_VERBOSE=1 is the incident escape hatch (env-first, matching
+  // the GBRAIN_SYNC_*/GBRAIN_PACE_* pattern).
+  const freshInstall = current <= 1 && pending.length === sorted.length;
+  const quietReplay = freshInstall && process.env.GBRAIN_MIGRATE_VERBOSE !== '1';
+  // Suppress per-migration explanatory notices during a fresh-install replay
+  // (they are upgrade diagnostics, noise on a new user's first run). Restored
+  // in the finally so an in-process upgrade after a fresh init still narrates.
+  quietMigrationNotices = quietReplay;
+
   // Progress messages route to stderr so callers parsing stdout (e.g.
   // `gbrain jobs submit --json | jq`) aren't polluted by migration noise.
-  process.stderr.write(`  Schema version ${current} → ${LATEST_VERSION} (${pending.length} migration(s) pending)\n`);
-
-  // Pre-flight: warn about connections that might block DDL
-  await checkForBlockingConnections(engine);
+  if (quietReplay) {
+    process.stderr.write(`  Setting up brain schema (v${LATEST_VERSION})...\n`);
+  } else {
+    process.stderr.write(`  Schema version ${current} → ${LATEST_VERSION} (${pending.length} migration(s) pending)\n`);
+  }
 
   let applied = 0;
-  for (const m of pending) {
-    process.stderr.write(`  [${m.version}] ${m.name}...\n`);
+  try {
+    // Pre-flight: warn about connections that might block DDL
+    await checkForBlockingConnections(engine);
 
+    for (const m of pending) {
+      if (!quietReplay) process.stderr.write(`  [${m.version}] ${m.name}...\n`);
+      try {
+        await applyOneMigration(engine, m);
+        // Update version after both SQL and handler succeed. Inside the same
+        // catch so a stamp-write failure is also NAMED in quiet mode.
+        await engine.setConfig('version', String(m.version));
+      } catch (err) {
+        // Quiet fresh-install replay: name the failing migration — without the
+        // per-step lines, the error would otherwise be anonymous.
+        if (quietReplay) process.stderr.write(`  [${m.version}] ${m.name} failed\n`);
+        throw err;
+      }
+
+      if (!quietReplay) process.stderr.write(`  [${m.version}] ✓ ${m.name}\n`);
+      applied++;
+    }
+  } finally {
+    // Never leak the fresh-install quiet flag into a later in-process run —
+    // covers every exit path from here on (incl. the pre-flight probe).
+    quietMigrationNotices = false;
+  }
+
+  return { applied, current: LATEST_VERSION };
+}
+
+/** One migration's full body (SQL + handler + verify), extracted so the
+ *  runMigrations loop can name the failing migration in quiet-replay mode. */
+async function applyOneMigration(engine: BrainEngine, m: Migration): Promise<void> {
     // Pick SQL: engine-specific `sqlFor` wins over engine-agnostic `sql`.
     const sql = m.sqlFor?.[engine.kind] ?? m.sql;
 
@@ -6059,11 +6341,4 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
       }
     }
 
-    // Update version after both SQL and handler succeed
-    await engine.setConfig('version', String(m.version));
-    process.stderr.write(`  [${m.version}] ✓ ${m.name}\n`);
-    applied++;
-  }
-
-  return { applied, current: LATEST_VERSION };
 }

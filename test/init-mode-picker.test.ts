@@ -49,14 +49,17 @@ describe('recommendModeFor — auto-suggestion heuristic', () => {
     expect(r.reason).toMatch(/Haiku/);
   });
 
-  test('No OpenAI key → conservative (no LLM expansion possible)', () => {
-    const r = recommendModeFor({ hasOpenAIKey: false });
+  test('No expansion-capable key → conservative (LLM expansion cannot run)', () => {
+    const r = recommendModeFor({ hasExpansionKey: false });
     expect(r.mode).toBe('conservative');
-    expect(r.reason).toMatch(/No OpenAI/);
+    // Provider-neutral copy: expansion routes through the chat lane, so an
+    // Anthropic or Google key counts — the reason must not say "No OpenAI".
+    expect(r.reason).toMatch(/expansion-capable/i);
+    expect(r.reason).not.toMatch(/No OpenAI key/);
   });
 
   test('Sonnet / unknown → tokenmax (preserve-v0.31.x default)', () => {
-    const r = recommendModeFor({ subagentModel: 'anthropic:claude-sonnet-4-6', hasOpenAIKey: true });
+    const r = recommendModeFor({ subagentModel: 'anthropic:claude-sonnet-4-6', hasExpansionKey: true });
     expect(r.mode).toBe('tokenmax');
     expect(r.reason).toMatch(/v0\.31\.x|preserve/i);
   });
@@ -75,7 +78,7 @@ describe('recommendModeFor — auto-suggestion heuristic', () => {
     const r = recommendModeFor({
       defaultModel: 'anthropic:claude-opus-4-7',
       subagentModel: 'anthropic:claude-haiku-4-5',
-      hasOpenAIKey: true,
+      hasExpansionKey: true,
     });
     expect(r.mode).toBe('conservative');
   });

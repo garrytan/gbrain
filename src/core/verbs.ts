@@ -28,7 +28,11 @@ import type { Operation } from './operations.ts';
 /** Frozen protocol version for the MEMORY_VERBS v1 verb set. Single source of truth. */
 export const MEMORY_VERBS_VERSION = 1;
 
-export const VERB_NAMES = ['recall', 'remember', 'entity', 'synthesize', 'forget'] as const;
+// v0.45.7 (issue #1): the frozen set grows from 5 to 7 with two ambient-recall
+// verbs. The wire protocol_version STAYS 1 (additive) — MEMORY_VERBS_VERSION is
+// unchanged so the five existing schemas + handlers keep stamping 1 and their
+// conformance assertions (protocol_version === 1) hold.
+export const VERB_NAMES = ['recall', 'remember', 'entity', 'synthesize', 'forget', 'context_pack', 'delta'] as const;
 export type VerbName = (typeof VERB_NAMES)[number];
 
 const FACT_KINDS = ['event', 'preference', 'commitment', 'belief', 'fact'] as const;
@@ -207,13 +211,27 @@ const entity: Operation = {
 
 // ─── synthesize ──────────────────────────────────────────────────────────────
 
+// [WP2/T5] compose-failure status → the machine-stable warning code named in
+// the empty-gather `unavailable` error message. Freeform tails (provider
+// messages) ride `detail` only; the message carries the code.
+const SYNTHESIS_FAILURE_CODES: Record<string, string> = {
+  not_json: 'LLM_OUTPUT_NOT_JSON',
+  empty_answer: 'SYNTHESIS_EMPTY_ANSWER',
+  llm_error: 'LLM_CALL_FAILED',
+  model_unusable: 'MODEL_NOT_USABLE',
+  no_llm: 'NO_ANTHROPIC_API_KEY',
+};
+
 const synthesize: Operation = {
   name: 'synthesize',
   description:
     '[EXPENSIVE / SLOW — makes LLM calls, seconds-to-minutes latency, costs money] ' +
     'MEMORY VERB (v1): answer a broad question using cross-page LLM reasoning with citations and gap analysis. ' +
     'Prefer recall (facts/snippets) or entity (one known card, zero LLM) for lookups — use synthesize only when the answer ' +
-    'requires combining evidence across pages. Response carries a best-effort cost block (model, tokens, usd_estimate).',
+    'requires combining evidence across pages. Response carries a best-effort cost block (model, tokens, usd_estimate) ' +
+    'plus compose-status fields (synthesis_status, pages_gathered, takes_gathered, warnings); when the LLM compose step ' +
+    'fails but retrieval succeeded, `answer` degrades to an extractive digest of retrieved pages ' +
+    '(synthesis_status: "extractive_fallback") instead of an error.',
   params: {
     question: { type: 'string', required: true, description: 'The question to answer.' },
     since: { type: 'string', description: 'Optional temporal window start (ISO 8601 date or datetime).' },
@@ -249,6 +267,9 @@ const synthesize: Operation = {
     // [c10] runThink degrades gracefully to a no-LLM stub RESULT; the protocol
     // contract converts that state into an explicit `unavailable` error so
     // agents branch on configure/retry instead of relaying a fake answer.
+    // Deliberately unconditional (fires even with a non-empty gather): an
+    // unconfigured key routed to the extractive fallback would be masked on
+    // every call and never get fixed.
     if (result.warnings.includes('NO_ANTHROPIC_API_KEY')) {
       throw verbError(
         'unavailable',
@@ -267,17 +288,50 @@ const synthesize: Operation = {
       usage && pricing
         ? (usage.input_tokens * pricing.input + usage.output_tokens * pricing.output) / 1_000_000
         : null;
+    const cost = {
+      model: result.modelUsed,
+      input_tokens: usage?.input_tokens ?? null,
+      output_tokens: usage?.output_tokens ?? null,
+      usd_estimate: usdEstimate,
+    };
+
+    // [WP2/T5+E2] compose-status precedence: 'ok' → the synthesized answer;
+    // any compose failure with a NON-EMPTY gather → the extractive fallback
+    // (quotes/cites ONLY gathered pages); compose failure with an EMPTY
+    // gather → typed error. An answer is NEVER fabricated from nothing
+    // (ENG-19). Defensive ?? 'ok' mirrors synthesisOk's back-compat posture.
+    const status = result.synthesis_status ?? 'ok';
+    if (status !== 'ok') {
+      if (result.extractive) {
+        return {
+          answer: result.extractive.answer,
+          sources: result.extractive.citations.map(c => c.page_slug),
+          gaps: result.gaps,
+          cost,
+          synthesis_status: 'extractive_fallback',
+          pages_gathered: result.pagesGathered,
+          takes_gathered: result.takesGathered,
+          warnings: result.warnings,
+          protocol_version: MEMORY_VERBS_VERSION,
+        };
+      }
+      throw verbError(
+        'unavailable',
+        `retrieved ${result.pagesGathered} pages; compose failed: ${SYNTHESIS_FAILURE_CODES[status] ?? status}`,
+        'The LLM compose step failed and retrieval found nothing to fall back on. Rephrase or broaden the question (or the since/until window); if the code names the model or provider, fix the model config and retry.',
+        result.warnings.length > 0 ? result.warnings.join('; ') : undefined,
+      );
+    }
 
     return {
       answer: result.answer,
       sources: result.citations.map(c => c.page_slug),
       gaps: result.gaps,
-      cost: {
-        model: result.modelUsed,
-        input_tokens: usage?.input_tokens ?? null,
-        output_tokens: usage?.output_tokens ?? null,
-        usd_estimate: usdEstimate,
-      },
+      cost,
+      synthesis_status: 'ok',
+      pages_gathered: result.pagesGathered,
+      takes_gathered: result.takesGathered,
+      warnings: result.warnings,
       protocol_version: MEMORY_VERBS_VERSION,
     };
   },
@@ -371,6 +425,14 @@ export const verbOperations: Operation[] = [remember, entity, synthesize, forget
 const EVIDENCE_ENUM = ['alias_hit', 'exact_title_match', 'high_vector_match', 'keyword_exact', 'weak_semantic'];
 const CREATE_SAFETY_ENUM = ['exists', 'probable', 'unknown'];
 const STATUS_ENUM = ['inserted', 'duplicate', 'superseded'];
+// v0.45.x (WP2/T5+E2) — additive-forever. The verb emits 'ok' or
+// 'extractive_fallback'; the remaining compose-failure values ride the
+// non-verb `think` surface (the verb converts them to the extractive
+// fallback or a typed `unavailable` error) and stay enum-listed so any
+// v1 server emitting them validates.
+const SYNTHESIS_STATUS_ENUM = [
+  'ok', 'empty_answer', 'not_json', 'no_llm', 'model_unusable', 'llm_error', 'extractive_fallback',
+];
 
 export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
   recall: {
@@ -520,6 +582,17 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
           usd_estimate: { type: ['number', 'null'] },
         },
       },
+      // v0.45.x (WP2/T5+E2) additive compose-status fields — never required
+      // (a pre-v0.45.x v1 server that omits them must still certify).
+      synthesis_status: {
+        type: 'string',
+        enum: SYNTHESIS_STATUS_ENUM,
+        description:
+          'How the answer was produced. ok = LLM synthesis; extractive_fallback = compose failed with a non-empty gather — answer is an extractive digest quoting ONLY retrieved pages, sources cite the digested pages (never fabricated).',
+      },
+      pages_gathered: { type: 'integer', description: 'Pages retrieved by the gather phase behind this answer.' },
+      takes_gathered: { type: 'integer', description: 'Takes retrieved by the gather phase behind this answer.' },
+      warnings: { type: 'array', items: { type: 'string' }, description: 'Machine-stable pipeline warning codes (e.g. LLM_OUTPUT_NOT_JSON, LLM_CALL_FAILED: <class> where <class> is timeout | rate_limited | network | provider_error).' },
     },
   },
   forget: {
@@ -532,9 +605,148 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
       reason: { type: ['string', 'null'] },
     },
   },
+  // v0.45.7 (issue #1) — ambient recall. World-only by default; include_private
+  // widens all arms (local trusted callers only). protocol_version stays 1.
+  context_pack: {
+    type: 'object',
+    required: ['protocol_version', 'entities', 'cards', 'open_threads', 'facts'],
+    properties: {
+      protocol_version: { type: 'integer', const: MEMORY_VERBS_VERSION },
+      entities: { type: 'array', items: { type: 'string' } },
+      cards: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['slug', 'title', 'summary', 'open_threads'],
+          properties: {
+            slug: { type: 'string' },
+            title: { type: 'string' },
+            type: { type: ['string', 'null'] },
+            summary: { type: 'string' },
+            open_threads: {
+              type: 'array',
+              items: {
+                type: 'object',
+                required: ['kind', 'text', 'date'],
+                properties: {
+                  kind: { type: 'string', enum: ['commitment', 'recent_event'] },
+                  text: { type: 'string' },
+                  date: { type: ['string', 'null'] },
+                },
+              },
+            },
+            edges: {
+              type: 'array',
+              items: {
+                type: 'object',
+                required: ['type', 'direction', 'slug'],
+                properties: {
+                  type: { type: 'string' },
+                  direction: { type: 'string', enum: ['out', 'in'] },
+                  slug: { type: 'string' },
+                  context: { type: ['string', 'null'] },
+                },
+              },
+            },
+            backlink_count: { type: 'integer' },
+          },
+        },
+      },
+      open_threads: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['kind', 'text', 'date'],
+          properties: {
+            kind: { type: 'string', enum: ['commitment', 'recent_event'] },
+            text: { type: 'string' },
+            date: { type: ['string', 'null'] },
+          },
+        },
+      },
+      facts: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['fact', 'kind'],
+          properties: {
+            fact: { type: 'string' },
+            kind: { type: 'string' },
+            entity_slug: { type: ['string', 'null'] },
+            valid_from: { type: 'string' },
+            confidence: { type: 'number' },
+          },
+        },
+      },
+      text: { type: 'string', description: 'Pre-rendered injectable block (envelope-wrapped).' },
+      degraded_reason: { type: 'string', description: 'Present when a wall-clock deadline returned a partial pack.' },
+      budget_tokens: { type: 'integer', description: 'Present when budget_tokens was passed.' },
+      budget_used: { type: 'integer' },
+      dropped_count: { type: 'integer' },
+    },
+  },
+  delta: {
+    type: 'object',
+    required: ['protocol_version', 'since', 'pages', 'facts', 'threads'],
+    properties: {
+      protocol_version: { type: 'integer', const: MEMORY_VERBS_VERSION },
+      since: { type: 'string', description: 'The ISO cursor this delta was computed against.' },
+      has_more: { type: 'boolean', description: 'True when changes beyond the fetch limit or budget were NOT delivered; with session_id the cursor advanced only to the last delivered page, so the tail surfaces on the next wake.' },
+      next_cursor: {
+        type: 'object',
+        required: ['since', 'slug'],
+        description: 'Keyset to resume from (stateless callers pass back as since + since_slug).',
+        properties: { since: { type: 'string' }, slug: { type: 'string' } },
+      },
+      pages: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['slug', 'title', 'updated_at'],
+          properties: {
+            slug: { type: 'string' },
+            source_id: { type: 'string' },
+            title: { type: 'string' },
+            updated_at: { type: 'string' },
+          },
+        },
+      },
+      facts: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['fact', 'kind'],
+          properties: {
+            fact: { type: 'string' },
+            kind: { type: 'string' },
+            entity_slug: { type: ['string', 'null'] },
+            valid_from: { type: 'string' },
+            confidence: { type: 'number' },
+          },
+        },
+      },
+      threads: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['kind', 'text', 'date'],
+          properties: {
+            kind: { type: 'string', enum: ['commitment', 'recent_event'] },
+            text: { type: 'string' },
+            date: { type: ['string', 'null'] },
+          },
+        },
+      },
+      text: { type: 'string' },
+      degraded_reason: { type: 'string' },
+      budget_tokens: { type: 'integer' },
+      budget_used: { type: 'integer' },
+      dropped_count: { type: 'integer' },
+    },
+  },
 };
 
-/** Error envelope schema (uniform across all five verbs). */
+/** Error envelope schema (uniform across all verbs). */
 export const ERROR_SCHEMA: Record<string, unknown> = {
   type: 'object',
   required: ['error', 'message'],

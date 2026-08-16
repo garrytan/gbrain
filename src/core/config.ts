@@ -27,6 +27,10 @@ function getConfigPath() { return configPath(); }
 
 export interface GBrainConfig {
   engine: 'postgres' | 'pglite';
+  /** File-plane hook-lane keys (read by engine-free hook/push children).
+   * `gbrain config set` routes these two dotted keys here, not to the DB. */
+  push?: { allow_unverified_remote?: boolean };
+  hooks?: { stop_push_debounce_min?: number | string };
   database_url?: string;
   database_path?: string;
   openai_api_key?: string;
@@ -116,10 +120,14 @@ export interface GBrainConfig {
   provider_chat_options?: Record<string, Record<string, unknown>>;
   /**
    * MEMORY_VERBS v1 (Cathedral 1): default MCP tool surface for `gbrain serve`.
-   * 'verbs' = exactly the 5 protocol verbs (the quickstart surface);
-   * 'full' (default) = every operation. The `--surface` flag overrides per-run.
+   * 'verbs' = exactly the 7 protocol verbs (the quickstart surface);
+   * 'starter' (WP4) = the ~20-op daily-driver set (STARTER_OPS in
+   * src/mcp/surface.ts); 'full' (default) = every operation. The `--surface`
+   * flag overrides per-run. On the OAuth HTTP transport this resolves the
+   * server CEILING (D2): per-client row surfaces can narrow below it but
+   * never widen past it.
    */
-  mcp_surface?: 'verbs' | 'full';
+  mcp_surface?: 'verbs' | 'starter' | 'full';
   /**
    * MEMORY_VERBS v1 [D6C]: ISO timestamp stamped by `gbrain init` so
    * `gbrain protocol stats` can derive real TTHW (install → first verb call).
@@ -423,6 +431,30 @@ export interface GBrainConfig {
      * tier so a hosted gbrain never serves its own bundled dev skills).
      */
     skills_dir?: string;
+    /**
+     * WP3 — unknown tool-call argument posture for MCP dispatch.
+     *   'warn' (default / absent): unknown params are accepted; each call
+     *     collects `_meta.warnings` + a model-visible notice block, and the
+     *     request logs as 'success_with_warnings'.
+     *   'reject': unknown params return `invalid_params` (with a
+     *     did-you-mean suggestion), and tool schemas are emitted with
+     *     `additionalProperties: false`.
+     * Dual-plane: DB plane (`gbrain config set mcp.strict_params ...`) wins
+     * over this file slot. See src/mcp/validate-params.ts.
+     */
+    strict_params?: 'warn' | 'reject';
+    /**
+     * WP4 (D2 / plan OQ1) — default surface for OAuth clients whose
+     * `oauth_clients.surface` row value is NULL. oauth_clients carries no
+     * DCR-origin marker, so this applies to ALL null-surface clients (not
+     * just dynamically-registered ones); operators pre-seed important
+     * clients with `gbrain auth rescope-client <id> --surface full`.
+     * Unset (default) = null-surface clients get the server ceiling —
+     * pre-WP4 behavior, existing clients untouched. Dual-plane: the DB
+     * plane (`gbrain config set mcp.default_surface_dcr starter`) wins
+     * over this file slot. Always bounded by the server ceiling (D2).
+     */
+    default_surface_dcr?: 'verbs' | 'starter' | 'full';
   };
 }
 
@@ -984,6 +1016,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'agent.use_gateway_loop',
   // #2778: per-turn output-token cap for the subagent loop (default 8192).
   'agent.max_output_tokens',
+  // File-plane bootstrap hook-lane keys (routed to ~/.gbrain/config.json by
+  // `config set` — engine-free hook/push children read loadConfigFileOnly).
+  'push.allow_unverified_remote',
+  'hooks.stop_push_debounce_min',
   // DB-plane (v0.32.3 search modes + related)
   'search.mode',
   'search.cache.enabled',
@@ -1012,6 +1048,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'cycle.extract_atoms.budget_usd',
   'models.dream.patterns',
   'models.dream.synthesize_verdict',
+  // #4152: preferred triage-model key (explicit pre-read in loadSynthConfig;
+  // wins over models.dream.synthesize_verdict + dream.synthesize.verdict_model).
+  'models.dream.triage',
   'models.drift',
   'models.auto_think',
   'models.think',
@@ -1024,6 +1063,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'facts.extraction_model',
   // #2113: output-token cap for the per-turn facts extractor (default 4000).
   'facts.extraction_max_tokens',
+  // [ENG-8] Brain-level default visibility for facts writes when the caller
+  // didn't specify one: 'private' (default) | 'world'. Resolved by
+  // src/core/facts/visibility.ts; explicit caller values always win.
+  'facts.default_visibility',
   // Conversation parser LLM fallback. Deliberately register the exact key,
   // not a conversation_parser.* prefix: fallback is the only live opt-in
   // consumer, while the polish scaffold remains unwired.
@@ -1039,6 +1082,19 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'dream.synthesize.output_root',
   'dream.synthesize.subagent_timeout_ms',
   'dream.synthesize.subagent_wait_timeout_ms',
+  // #4152 two-stage cascade: subagent turn budget (default 16) + opt-in
+  // per-source daily submission cap (default 0 = disabled; 200 recommended
+  // for busy deployments).
+  'dream.synthesize.max_turns',
+  'dream.synthesize.max_submissions_per_source_per_day',
+  // #4152 triage knobs. The triage model's preferred key is
+  // `models.dream.triage` (models.* prefix, registered via the models.dream.*
+  // family); these tune the gate + sampling + pass budget.
+  'dream.triage.threshold',
+  'dream.triage.max_chars',
+  'dream.triage.max_tokens',
+  'dream.triage.max_ms',
+  'dream.triage.concurrency',
   'dream.patterns.lookback_days',
   'dream.patterns.min_evidence',
   // #2782-family: patterns-phase subagent timeouts (mirror of the
@@ -1067,6 +1123,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // the advisor exposes operational diagnostics (version/jobs/key presence),
   // not prose skills. Default OFF; read-only over MCP.
   'mcp.publish_advisor',
+  // WP3 — unknown tool-call argument posture ('warn' default | 'reject').
+  // Read dual-plane by src/mcp/validate-params.ts (DB > file > 'warn').
+  'mcp.strict_params',
   // Skill-nag suppression (#2180): brain-resident pack install nag off-switch.
   'skillpack.nag_disabled',
   // Self-upgrade (v0.42; file plane, read on the hot path)
@@ -1093,6 +1152,17 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // operator had to discover --force by reading source. Same class as the
   // spend-controls registration above.
   'auto_chronicle',
+  // Auto-link toggle read by the put_page post-hook (link-extraction.ts),
+  // reconcile-links, and sweep. The documented off-switch is `gbrain config
+  // set auto_link false` — same unregistered-key class as auto_chronicle.
+  'auto_link',
+  // v0.46.3: the provider_sunset doctor check's own suppression escape hatch
+  // (doctor.ts) and docs/guides/embedding-migration.md both document
+  // `gbrain config set doctor.suppress_provider_sunset true`, but the key was
+  // never registered — the documented command exited 1 with "Unknown config
+  // key". Same class as auto_chronicle above. Deliberately an exact key, not
+  // a blanket 'doctor.' prefix (unbounded namespaces defeat the typo gate).
+  'doctor.suppress_provider_sunset',
   // #2606: chronicle judge output-token cap (default 4000). Event-dense
   // pages overflowed the old hardcoded 1500 and were misrecorded as
   // no_events; the cap is now configurable and truncation is surfaced.
@@ -1107,6 +1177,11 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'orphans.exclude_slugs',
   'sync.cost_gate_min_usd',
   'sync.federated_v2',
+  // #2179: clamp window for DCR-requested per-client token TTLs. Read by
+  // `gbrain serve --http` at startup; unset min defaults to 300s, unset max
+  // defaults fail-closed to max(--token-ttl, min).
+  'oauth.dcr_ttl_min_seconds',
+  'oauth.dcr_ttl_max_seconds',
   'embed.backfill_cooldown_min',
   'embed.backfill_max_usd_per_source_24h',
   'embed.backfill_max_usd',

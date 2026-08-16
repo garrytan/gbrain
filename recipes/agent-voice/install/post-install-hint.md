@@ -67,9 +67,14 @@ bun run start    # or `npm start`
 
 Open `http://localhost:8765/call` in a browser, click Connect, grant mic permission. You should be talking to Venus (or Mars if you set `DEFAULT_PERSONA=mars`).
 
-### 6. (Optional) Run the WebRTC roundtrip E2E
+### 6. (Optional) Run the WebRTC roundtrip E2E — from the gbrain checkout
+
+The install copies **unit tests only**. The E2E and eval suites stay gbrain-side
+(under `recipes/agent-voice/tests/`), so run them from your gbrain checkout,
+not from `<target-repo>`:
 
 ```bash
+cd <gbrain-checkout>/recipes/agent-voice && bun install
 export AGENT_VOICE_E2E=1 OPENAI_API_KEY=sk-...
 bun run test:e2e
 # → ~$0.10/run; spawns server, drives puppeteer with a fake-audio WAV
@@ -83,15 +88,15 @@ gbrain claw-test --scenario voice-agent-install --live --agent openclaw
 # → ~$1-2/run; friction-discovery test, NOT a ship gate
 ```
 
-### 7. (Optional) Run the LLM-judge persona evals
+### 7. (Optional) Run the LLM-judge persona evals — from the gbrain checkout
 
 ```bash
-cd <target-repo>/services/voice-agent
+cd <gbrain-checkout>/recipes/agent-voice
 node tests/evals/mars-eval.mjs   # ~$1-3 for the full 3-model judge sweep
 node tests/evals/venus-eval.mjs
 ```
 
-Synthetic canonical baselines are committed under `tests/evals/baseline-runs/canonical/`. Live receipts you generate go to `tests/evals/baseline-runs/` (gitignored — they may contain residual brain content from your live personas).
+Live receipts you generate go to `tests/evals/baseline-runs/` (gitignored — they may contain residual brain content from your live personas). See `tests/evals/README.md` for the pass criteria and failure triage.
 
 ### 8. Update later
 
@@ -101,4 +106,4 @@ When gbrain ships a new agent-voice reference, refresh your local copy:
 gbrain integrations install agent-voice --target <target-repo> --refresh
 ```
 
-The refresh classifies each file (identical / stale / locally-modified / source-deleted / host-deleted) and lets you decide per-file. See `<target>/services/voice-agent/code/install/refresh-algorithm.md` (copied from gbrain) for the contract.
+Refresh classifies each file (six states — identical / stale / locally-modified / host-deleted / source-deleted / new-in-manifest) and applies a deterministic decision per state: local edits are preserved by default; pass `--auto take-theirs` to take upstream everywhere, or `--dry-run` to preview. The full contract lives gbrain-side at `recipes/agent-voice/install/refresh-algorithm.md` (not copied to the host repo).

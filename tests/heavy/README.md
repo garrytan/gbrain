@@ -38,6 +38,21 @@ The runner is `scripts/run-heavy.sh`. It discovers every `tests/heavy/*.sh`
 file at this directory's top level (NOT recursive), runs them in lexical
 order, fails on the first non-zero exit.
 
+## Database name floor (#3485)
+
+Heavy scripts run destructive operations (schema drops, migration replays,
+parallel syncs) against whatever database URL the environment names. The
+runner sources `tests/heavy/_db_floor.sh` once for the whole lane, and every
+database-touching script sources it itself: it refuses (exit 2) unless the
+database name in `DATABASE_URL` / `GBRAIN_DATABASE_URL` carries "test" as a
+word segment (e.g. `gbrain_test`), or the exact name is opted in one-shot via
+`GBRAIN_E2E_ALLOW_DB=<name>`. The PGLite-based scripts (`measure_rss.sh`,
+`read_latency_under_sync.sh`, `sync_timeout_rescue.sh`) unset the URL instead.
+When adding a script that touches the database, add
+`source "$(dirname "$0")/_db_floor.sh"` before it does — scripts are
+documented for direct invocation, so the runner-level floor alone is not
+enough.
+
 ## Naming convention
 
 - `tests/heavy/<name>.sh` — top-level test script, picked up by the runner.

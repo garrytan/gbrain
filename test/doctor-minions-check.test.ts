@@ -30,6 +30,13 @@ function run(args: string[]): { exitCode: number; stdout: string; stderr: string
   const env = { ...process.env, HOME: tmp } as Record<string, string | undefined>;
   delete env.DATABASE_URL;
   delete env.GBRAIN_DATABASE_URL;
+  // Cross-file poisoning guard: sibling test files in the same bun process
+  // set process.env.GBRAIN_HOME (preferences, friction, bootstrap-* et al),
+  // and doctor resolves ~/.gbrain via resolveGbrainHome — which prefers
+  // GBRAIN_HOME over HOME. A leaked value makes the seeded
+  // $HOME/.gbrain/migrations fixture invisible and doctor exits 0 where the
+  // test expects the FAIL exit. Scrub it like the DB URLs above.
+  delete env.GBRAIN_HOME;
   try {
     const stdout = execFileSync('bun', ['run', CLI, ...args], {
       env: env as Record<string, string>,

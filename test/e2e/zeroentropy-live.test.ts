@@ -35,9 +35,15 @@ import {
 
 const API_KEY = process.env.ZEROENTROPY_API_KEY;
 
+// v0.46.3 date guard: ZeroEntropy's hosted API shuts down on the sunset date.
+// After it, this live suite can only go permanently red against a dead
+// endpoint — auto-skip regardless of key presence so a slipped removal wave
+// can't wedge CI. The September removal release deletes this file entirely.
+const SUNSET_PASSED = Date.now() >= Date.parse('2026-09-04T00:00:00Z');
+
 // Skip the entire file when env is absent. `describe.skipIf` exists in
 // modern bun:test; fall back to in-test guards for older runners.
-const skipAll = !API_KEY;
+const skipAll = !API_KEY || SUNSET_PASSED;
 
 beforeAll(() => {
   if (skipAll) return;

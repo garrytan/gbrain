@@ -45,6 +45,6 @@ describe('models doctor — embedding reachability probe (v0.40.x)', () => {
     // The config probe result is captured and the reachability call is gated
     // on its status === 'ok' before firing.
     expect(slice).toContain('const embeddingConfig = await probeEmbeddingConfig()');
-    expect(slice).toMatch(/embeddingConfig\.status === 'ok'[\s\S]*probeEmbeddingReachability\(\)/);
+    expect(slice).toMatch(/embeddingConfig\.status === 'ok'[\s\S]*probeEmbeddingReachability\(/);
   });
 });

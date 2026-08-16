@@ -276,6 +276,33 @@ describe('parseConversation — disabledBuiltinIds', () => {
 // Multi-line continuation (D5)
 // ---------------------------------------------------------------------------
 
+describe('parseConversation — markdown-heading-turn (gbrain transcript ingest)', () => {
+  test('parses ## User / ## Assistant heading-only turns with continuation body', () => {
+    const body = [
+      '## User',
+      'What is the capital of France?',
+      '## Assistant',
+      'The capital of France is Paris.',
+      'It is also its largest city.',
+    ].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2026-08-11' });
+    expect(r.matched_pattern_id).toBe('markdown-heading-turn');
+    expect(r.messages).toHaveLength(2);
+    expect(r.messages[0].speaker).toBe('User');
+    expect(r.messages[0].text).toBe('What is the capital of France?');
+    expect(r.messages[1].speaker).toBe('Assistant');
+    expect(r.messages[1].text).toBe(
+      'The capital of France is Paris.\nIt is also its largest city.',
+    );
+  });
+
+  test('does not mistake an ordinary ## Summary heading for a turn', () => {
+    const body = ['## Summary', 'This is not a speaker turn.'].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2026-08-11' });
+    expect(r.matched_pattern_id).not.toBe('markdown-heading-turn');
+  });
+});
+
 describe('parseConversation — multi-line continuation (D5)', () => {
   test('iMessage continuation absorbs orphan lines', () => {
     const body = [

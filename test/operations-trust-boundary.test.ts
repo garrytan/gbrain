@@ -90,7 +90,11 @@ describe('operations contract — every op has scope + correct mutability shape'
     // `think` is read-scoped for OAuth/MCP because its handler forces
     // save/take OFF for remote callers before persistence — pinned by
     // test/takes-mcp-allowlist.serial.test.ts. Local CLI can still persist.
-    const REMOTE_READ_ONLY_MUTATING_OPS = new Set(['think']);
+    // WP4/D9: request_tools is read-scoped + mutating — its only write (the
+    // {surface} persist branch) self-enforces the D2 ceiling, the operator
+    // lock, and a per-client rate limit (test/request-tools.test.ts pins all
+    // three); read scope keeps discovery available to every token class.
+    const REMOTE_READ_ONLY_MUTATING_OPS = new Set(['think', 'request_tools']);
     for (const op of operations) {
       if (op.mutating === true) {
         if (REMOTE_READ_ONLY_MUTATING_OPS.has(op.name)) {

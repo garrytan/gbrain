@@ -202,13 +202,20 @@ describe('buildSyncStatusReport', () => {
     const syncIso = new Date(now - 100 * 60 * 60 * 1000).toISOString(); // synced 100h ago
     const sources = [
       { id: 'quiet', name: 'quiet', local_path: '/tmp/quiet', config: { syncEnabled: true } },
+      { id: 'quiet_recent', name: 'quiet_recent', local_path: '/tmp/quiet_recent', config: { syncEnabled: true } },
       { id: 'behind', name: 'behind', local_path: '/tmp/behind', config: { syncEnabled: true } },
       { id: 'nocol', name: 'nocol', local_path: '/tmp/nocol', config: { syncEnabled: true } },
     ];
     const engine = makeEngine({
       sourceRows: [
-        // Newest commit 200h ago, synced 100h ago → caught up → lag 0 → fresh.
+        // Newest commit 200h ago, synced 100h ago → caught up, but nobody has
+        // synced in 100h, so the staleness ceiling ramps it to ~28h (100 - 72).
+        // It lands in the MIDDLE band, not 'severe' — that ordering is the point.
         { id: 'quiet', last_commit: 'a'.repeat(40), last_sync_at: syncIso,
+          newest_content_at: new Date(now - 200 * 60 * 60 * 1000).toISOString() },
+        // Same content shape but synced 1h ago → genuinely being checked → fresh.
+        { id: 'quiet_recent', last_commit: 'd'.repeat(40),
+          last_sync_at: new Date(now - 1 * 60 * 60 * 1000).toISOString(),
           newest_content_at: new Date(now - 200 * 60 * 60 * 1000).toISOString() },
         // Newest commit 10h ago, synced 100h ago → behind → wall-clock → severe.
         { id: 'behind', last_commit: 'b'.repeat(40), last_sync_at: syncIso,
@@ -218,6 +225,7 @@ describe('buildSyncStatusReport', () => {
       ],
       countRows: [
         { source_id: 'quiet', pages: 10, chunks_total: 20, chunks_unembedded: 0 },
+        { source_id: 'quiet_recent', pages: 10, chunks_total: 20, chunks_unembedded: 0 },
         { source_id: 'behind', pages: 10, chunks_total: 20, chunks_unembedded: 0 },
         { source_id: 'nocol', pages: 10, chunks_total: 20, chunks_unembedded: 0 },
       ],
@@ -225,10 +233,19 @@ describe('buildSyncStatusReport', () => {
 
     const report = await buildSyncStatusReport(engine, sources);
     const byId = new Map(report.sources.map((s) => [s.source_id, s]));
-    // Legacy wall-clock would have called 'quiet' severe (100h). Content-relative
-    // correctly reports caught-up.
-    expect(byId.get('quiet')!.staleness_hours).toBe(0);
-    expect(byId.get('quiet')!.staleness_class).toBe('fresh');
+    // Three-way distinction, which is the whole point of the ramp:
+    //   quiet_recent → 0    (caught up AND being checked)
+    //   quiet        → ~28h (caught up but abandoned 100h ago — used to report 0
+    //                        forever, which is how a dead daemon stayed invisible)
+    //   behind       → 100h (real new content unsynced)
+    // Naive wall-clock would flatten the first two into 'severe' alongside the third.
+    expect(byId.get('quiet_recent')!.staleness_hours).toBe(0);
+    expect(byId.get('quiet_recent')!.staleness_class).toBe('fresh');
+    expect(byId.get('quiet')!.staleness_hours).toBeGreaterThan(27);
+    expect(byId.get('quiet')!.staleness_hours).toBeLessThan(29);
+    // Middle band, NOT severe: the ramp crosses warn before fail so consumers at
+    // 24h and 72h escalate in order rather than tripping in the same instant.
+    expect(byId.get('quiet')!.staleness_class).toBe('stale');
     expect(byId.get('behind')!.staleness_class).toBe('severe');
     expect(byId.get('nocol')!.staleness_hours).toBeGreaterThan(72);
     expect(byId.get('nocol')!.staleness_class).toBe('severe');

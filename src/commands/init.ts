@@ -312,6 +312,13 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
 
   if (verbose) {
     out.embedding_model = verbose;
+    // v0.46.3: an EXPLICIT --embedding-model wins over a seeded deferred-setup
+    // sentinel — without this, `gbrain init --force --embedding-model
+    // voyage:voyage-4` on a keyless brain (embedding_disabled persisted) would
+    // silently re-persist embedding_disabled and the documented recovery
+    // command would be a no-op. (--no-embedding is parsed later and still
+    // wins when both flags are passed.)
+    delete out.noEmbedding;
   } else if (shorthand) {
     const { getRecipe } = await import('../core/ai/recipes/index.ts');
     const recipe = getRecipe(shorthand);
@@ -331,15 +338,22 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
       );
       process.exit(1);
     }
-    const firstModel = recipe.touchpoints.embedding?.models[0];
-    if (!firstModel) {
+    // v0.46.3: the shorthand resolves the recipe's canonical model, not array
+    // position — Voyage lists voyage-4-large first but its canonical default
+    // is voyage-4 (see EmbeddingTouchpoint.default_model).
+    const canonicalModel =
+      recipe.touchpoints.embedding?.default_model ?? recipe.touchpoints.embedding?.models[0];
+    if (!canonicalModel) {
       console.error(`Provider ${shorthand} has no embedding models listed. Use --embedding-model provider:model.`);
       process.exit(1);
     }
-    out.embedding_model = `${shorthand}:${firstModel}`;
+    out.embedding_model = `${shorthand}:${canonicalModel}`;
+    // v0.46.3: explicit flag wins over a seeded deferred-setup sentinel (see the
+    // verbose branch above).
+    delete out.noEmbedding;
     // #2051: width follows the model actually chosen, not the recipe default.
     const { embeddingDimsForModel } = await import('../core/ai/model-resolver.ts');
-    out.embedding_dimensions = embeddingDimsForModel(recipe, firstModel);
+    out.embedding_dimensions = embeddingDimsForModel(recipe, canonicalModel);
   }
 
   if (dimsArg !== null && !Number.isNaN(dimsArg) && dimsArg > 0) {
@@ -370,6 +384,22 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
       const { embeddingDimsForModel } = await import('../core/ai/model-resolver.ts');
       const dims = embeddingDimsForModel(recipe, out.embedding_model);
       if (dims > 0) out.embedding_dimensions = dims;
+    }
+  }
+
+  // v0.46.3: an explicitly-requested sunset provider (verbose or shorthand form)
+  // is allowed until the removal release, but never silently — warn loudly and
+  // proceed (D3: hide + warn, allow explicit).
+  if (out.embedding_model) {
+    const { getRecipe } = await import('../core/ai/recipes/index.ts');
+    const sunsetRecipe = getRecipe(out.embedding_model.split(':')[0]);
+    if (sunsetRecipe?.sunset) {
+      const rep = sunsetRecipe.sunset.replacement?.embedding;
+      console.error(
+        `WARNING: ${sunsetRecipe.name} stops working on ${sunsetRecipe.sunset.date}. ` +
+        `Proceeding because you asked explicitly${rep ? `, but the recommended provider is ${rep}` : ''}. ` +
+        `Migrate before that date: gbrain migrate embeddings --to ${rep ?? '<provider:model>'} --dry-run`,
+      );
     }
   }
 
@@ -453,6 +483,10 @@ export async function groupReadyByProvider(
     // still picker-selectable explicitly, but silent auto-pick is wrong UX.
     const required = r.auth_env?.required ?? [];
     if (required.length === 0) continue;
+    // v0.46.3: never auto-pick a provider whose hosted API has an announced
+    // shutdown (recipe.sunset). Explicit --embedding-model still works
+    // (with a loud warning) until the removal release.
+    if (r.sunset) continue;
     if (envReady(r, env)) {
       ready.push({ recipeId: r.id, recipe: r });
       seen.add(r.id);
@@ -491,19 +525,22 @@ export async function findEnvKeyTypos(
   return out;
 }
 
-/** Emit the fail-loud "no embedding provider" message + paste-ready setup. */
+/** Emit the "no embedding provider" message + paste-ready setup. Keyless
+ *  continue leads (it always works); key setup follows for the upgrade. */
 function printNoEmbeddingProviderHint(typos: Array<{ userSet: string; suggested: string }>): void {
-  console.error('\nNo embedding provider configured. Set one of:');
+  console.error('\nNo embedding provider configured.');
+  console.error('Continue without one (keyless — keyword search + memory your agent writes):');
+  console.error('  gbrain init --pglite --no-embedding');
+  console.error('  (enable semantic search later by re-running with a key:');
+  console.error('   gbrain init --force --pglite --embedding-model <id>)');
+  console.error('');
+  console.error('Or set a key for semantic search:');
+  console.error('  export VOYAGE_API_KEY=pa-…        # voyage:voyage-4 (1024d) — default');
   console.error('  export OPENAI_API_KEY=sk-…        # openai:text-embedding-3-large (1536d)');
-  console.error('  export ZEROENTROPY_API_KEY=ze-…   # zeroentropyai:zembed-1 (2560d, Matryoshka)');
-  console.error('  export VOYAGE_API_KEY=pa-…        # voyage:voyage-3-large (1024d)');
   console.error('Then re-run: gbrain init --pglite');
   console.error('');
   console.error('Or pick explicitly:');
-  console.error('  gbrain init --pglite --embedding-model openai:text-embedding-3-large');
-  console.error('');
-  console.error('Or defer setup: gbrain init --pglite --no-embedding');
-  console.error('  (you can configure later with `gbrain config set embedding_model <id>`)');
+  console.error('  gbrain init --pglite --embedding-model voyage:voyage-4');
   // D13: surface near-miss env vars (e.g. OPENAPI_API_KEY → OPENAI_API_KEY).
   if (typos.length > 0) {
     console.error('');
@@ -513,29 +550,113 @@ function printNoEmbeddingProviderHint(typos: Array<{ userSet: string; suggested:
   }
 }
 
+/**
+ * v0.46.3: voyage-keyed installs (any picked embedding provider) get the
+ * recommended reranker written as EXPLICIT per-brain config — the mode-bundle
+ * reranker default stays on the sunsetting legacy provider until the
+ * September removal (split-default), so without this write a fresh voyage
+ * brain would resolve a reranker whose key it doesn't have; keyed non-voyage
+ * installs get explicit `search.reranker.enabled false` instead, and keyless
+ * installs get no write. Never clobbers an existing explicit choice (re-init
+ * preserves user config). Best-effort: reranking is fail-open, a missed
+ * override degrades to no-rerank, never breaks init. Shared by the PGLite and
+ * Postgres init paths (one edit site for the September bundle flip).
+ */
+async function writeNewInstallRerankerDefault(
+  engine: { getConfig(key: string): Promise<string | null>; setConfig(key: string, value: string): Promise<void> },
+  resolvedModel: string | undefined,
+): Promise<void> {
+  // Deliberate legacy setups keep the legacy bundle reranker (works until the
+  // provider's shutdown; warn-on-use covers it).
+  if (resolvedModel?.startsWith('zeroentropyai:')) return;
+  try {
+    // Never-clobber: an existing explicit reranker model OR enabled override
+    // means the user already decided — leave both keys alone.
+    const [existingModel, existingEnabled] = await Promise.all([
+      engine.getConfig('search.reranker.model'),
+      engine.getConfig('search.reranker.enabled'),
+    ]);
+    if (existingModel || existingEnabled != null) return;
+    // Voyage key on either plane (env or ~/.gbrain/config.json) → point the
+    // reranker at it. Otherwise the bundle default still resolves the legacy
+    // sunset reranker, which this install has no key for and which dies on
+    // 2026-09-04 — disable it explicitly so fresh installs don't inherit a
+    // doomed fail-open (per-search timeout penalty after the shutdown).
+    const hasVoyageKey =
+      !!process.env.VOYAGE_API_KEY || !!loadConfigFileOnly()?.voyage_api_key;
+    if (resolvedModel?.startsWith('voyage:') || hasVoyageKey) {
+      const { NEW_INSTALL_DEFAULT_RERANKER_MODEL } = await import('../core/ai/defaults.ts');
+      await engine.setConfig('search.reranker.model', NEW_INSTALL_DEFAULT_RERANKER_MODEL);
+      console.log(`  Reranker: ${NEW_INSTALL_DEFAULT_RERANKER_MODEL} (same VOYAGE_API_KEY)`);
+    } else if (resolvedModel) {
+      // Keyed non-voyage install (e.g. openai): make the no-reranker state
+      // explicit instead of inheriting the legacy sunset bundle default this
+      // brain has no key for. KEYLESS installs deliberately get NO write —
+      // the documented recovery re-init must find virgin reranker config so
+      // its voyage override still lands (never-clobber would block it).
+      await engine.setConfig('search.reranker.enabled', 'false');
+      console.log(
+        '  Reranker: disabled (no VOYAGE_API_KEY — enable later: ' +
+        'gbrain config set search.reranker.enabled true && ' +
+        'gbrain config set search.reranker.model voyage:rerank-2.5)',
+      );
+    }
+  } catch {
+    // Cosmetic; never block init.
+  }
+}
+
+/** Loud keyless-continue notice for the no-keys default path. The upgrade
+ *  command is `init --force` re-init, NOT `config set embedding_model` — that
+ *  key is a schema-sizing file-plane field that `gbrain config set` refuses
+ *  (it would be a silent no-op), so pointing users there is a dead end. */
+function printKeylessContinueNotice(): void {
+  console.error(
+    'No embedding provider keys detected — continuing in keyless mode:\n' +
+    '  keyword search + memory your agent writes down itself. Everything works.\n' +
+    '  One optional key upgrades search to semantic — set the key, then re-run\n' +
+    '  `gbrain init --force --pglite --embedding-model <id>` (re-imports via `gbrain sync`).',
+  );
+}
+
 async function resolveEmbeddingByEnv(out: ResolvedAIOptions, nonInteractive: boolean): Promise<void> {
-  const ready = await groupReadyByProvider('embedding');
+  // v0.46.3: provider readiness folds FILE-PLANE keys too (docs explicitly
+  // permit `voyage_api_key` etc. in ~/.gbrain/config.json) — env still wins
+  // via buildGatewayConfig's spread order. Without this, a non-interactive
+  // fresh install keyed only via config.json reported zero providers and
+  // silently persisted keyless mode.
+  const fileCfgForKeys = loadConfigFileOnly();
+  let effectiveEnv: NodeJS.ProcessEnv = process.env;
+  if (fileCfgForKeys) {
+    try {
+      const { buildGatewayConfig } = await import('../core/ai/build-gateway-config.ts');
+      effectiveEnv = buildGatewayConfig(fileCfgForKeys).env as NodeJS.ProcessEnv;
+    } catch {
+      // Fold failure → env-only readiness (pre-v0.46.3 behavior).
+    }
+  }
+  const ready = await groupReadyByProvider('embedding', effectiveEnv);
   const isTTY = !nonInteractive && !!process.stdin.isTTY;
 
   if (ready.length === 1) {
     const r = ready[0].recipe;
     const tp = r.touchpoints.embedding!;
     if (Array.isArray(tp.models) && tp.models.length > 0) {
-      const model = tp.models[0];
+      // v0.46.3: recipes carry a canonical default_model — array order is
+      // quality-sorted, not recommendation-sorted (Voyage lists voyage-4-large
+      // first; the canonical pick is voyage-4).
+      const model = tp.default_model ?? tp.models[0];
       const fullModel = `${r.id}:${model}`;
-      // When the resolved provider matches the canonical default model
-      // (DEFAULT_EMBEDDING_MODEL), use the gateway's
-      // DEFAULT_EMBEDDING_DIMENSIONS instead of the recipe's `default_dims`
-      // (which is the recipe's "largest sensible" tier). This keeps
-      // fresh-install schema width aligned with the v0.37.11.0 system
-      // default — for ZE that means 1280 (the Matryoshka step closest to
-      // legacy OpenAI 1536), not the recipe's 2560.
-      const { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } =
+      // When the resolved provider matches the NEW-INSTALL canonical default
+      // model, use NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS instead of the
+      // recipe's `default_dims` so fresh-install schema width stays aligned
+      // with the system default (1024 for voyage-4).
+      const { NEW_INSTALL_DEFAULT_EMBEDDING_MODEL, NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS } =
         await import('../core/ai/defaults.ts');
       const { embeddingDimsForModel } = await import('../core/ai/model-resolver.ts');
       // #2051: non-canonical models resolve per-model, not recipe-wide.
-      const dims = fullModel === DEFAULT_EMBEDDING_MODEL
-        ? DEFAULT_EMBEDDING_DIMENSIONS
+      const dims = fullModel === NEW_INSTALL_DEFAULT_EMBEDDING_MODEL
+        ? NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS
         : embeddingDimsForModel(r, model);
       out.embedding_model = fullModel;
       out.embedding_dimensions = dims;
@@ -548,37 +669,130 @@ async function resolveEmbeddingByEnv(out: ResolvedAIOptions, nonInteractive: boo
     }
   }
 
-  // Zero or multi — pick or fail loud.
+  // Zero keys — keyless is a first-class posture (the whole paste-in
+  // bootstrap runs on it), so the DEFAULT is to continue keyless with a loud
+  // notice, not exit 1. Fail-loud survives in exactly one zero-key case: a
+  // near-miss env var (OPENAPI_API_KEY → OPENAI_API_KEY) signals the user
+  // MEANT to configure a key — completing keyless there would silently bury
+  // their typo.
   if (ready.length === 0) {
-    if (!isTTY) {
-      const typos = await findEnvKeyTypos();
+    // v0.46.3: the sunset exclusion must NOT convert a working legacy brain to
+    // keyless. A configless EXISTING brain (config.json has a database but no
+    // embedding_model — it rides the legacy runtime fallback) being re-inited
+    // with only a sunset-provider key would otherwise land in the zero-ready
+    // path and get `embedding_disabled: true` written — disabling semantic
+    // search BEFORE the provider's shutdown. When the brain already depends
+    // on the sunsetting provider and its key is present, keep it (with the
+    // loud warning); FRESH installs still never get steered onto it.
+    const { listRecipes } = await import('../core/ai/recipes/index.ts');
+    const { envReady } = await import('./providers.ts');
+    const sunsetReady = listRecipes().filter(
+      (r) =>
+        r.sunset &&
+        (r.auth_env?.required ?? []).length > 0 &&
+        envReady(r, effectiveEnv) &&
+        (r.touchpoints.embedding?.models?.length ?? 0) > 0,
+    );
+    if (sunsetReady.length > 0) {
+      const fileCfg = fileCfgForKeys;
+      const existingConfiglessBrain =
+        !!fileCfg &&
+        !!(fileCfg.database_path || fileCfg.database_url) &&
+        !fileCfg.embedding_model &&
+        fileCfg.embedding_disabled !== true;
+      if (!existingConfiglessBrain) {
+        // FRESH install with only a sunset-provider key: keyless-continue is
+        // right, but "no keys detected" would be false — name the key we
+        // deliberately ignored and the way out (D3: hide + WARN, not hide
+        // silently).
+        const r = sunsetReady[0];
+        console.error(
+          `NOTE: ${r.auth_env?.required?.[0] ?? r.id} is set, but ${r.name} shuts down on ` +
+          `${r.sunset!.date} — not auto-selecting it for a new brain. ` +
+          `Set VOYAGE_API_KEY (recommended) or force it explicitly: ` +
+          `gbrain init --pglite --embedding-model ${r.id}:${r.touchpoints.embedding!.default_model ?? r.touchpoints.embedding!.models[0]} (not recommended).`,
+        );
+      }
+      if (existingConfiglessBrain) {
+        const r = sunsetReady[0];
+        const tp = r.touchpoints.embedding!;
+        const model = tp.default_model ?? tp.models[0];
+        const fullModel = `${r.id}:${model}`;
+        const { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } =
+          await import('../core/ai/defaults.ts');
+        const { embeddingDimsForModel } = await import('../core/ai/model-resolver.ts');
+        // Legacy brains ride the legacy width (their stored vectors live there).
+        const dims = fullModel === DEFAULT_EMBEDDING_MODEL
+          ? DEFAULT_EMBEDDING_DIMENSIONS
+          : embeddingDimsForModel(r, model);
+        out.embedding_model = fullModel;
+        out.embedding_dimensions = dims;
+        console.error(
+          `WARNING: this brain currently embeds via ${r.name}, which stops working on ` +
+          `${r.sunset!.date}. Keeping ${fullModel} (${dims}d) so nothing breaks today — ` +
+          `migrate before that date: gbrain migrate embeddings --to ` +
+          `${r.sunset!.replacement?.embedding ?? '<provider:model>'} --dry-run`,
+        );
+        return;
+      }
+    }
+    const typos = await findEnvKeyTypos();
+    if (typos.length > 0) {
       printNoEmbeddingProviderHint(typos);
       process.exit(1);
     }
-    // TTY → picker; on null (user aborted) still fail loud.
+    if (!isTTY) {
+      printKeylessContinueNotice();
+      out.noEmbedding = true;
+      return;
+    }
+    // TTY → picker (local providers like ollama may be selectable); a null
+    // pick (nothing offered, user skipped, or EOF) continues keyless.
     const { pickProvider } = await import('./init-provider-picker.ts');
-    const picked = await pickProvider({ touchpoint: 'embedding', env: process.env, isTTY: true });
+    const picked = await pickProvider({ touchpoint: 'embedding', env: effectiveEnv, isTTY: true });
     if (!picked) {
-      const typos = await findEnvKeyTypos();
-      printNoEmbeddingProviderHint(typos);
-      process.exit(1);
+      printKeylessContinueNotice();
+      out.noEmbedding = true;
+      return;
     }
     out.embedding_model = picked.fullModel;
     out.embedding_dimensions = picked.dim;
     return;
   }
 
-  // ready.length > 1 — picker (TTY) or fail-loud (non-TTY) per D2/D3.
+  // ready.length > 1 — picker (TTY); non-TTY auto-picks the canonical default
+  // when its key is present (the most common agent/dev setup is 2+ provider
+  // keys — failing there blocked scripted installs), else fail-loud per D2/D3
+  // (a genuinely ambiguous set with no canonical candidate stays explicit).
   if (!isTTY) {
+    const { NEW_INSTALL_DEFAULT_EMBEDDING_MODEL, NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS } =
+      await import('../core/ai/defaults.ts');
+    const canonicalProvider = NEW_INSTALL_DEFAULT_EMBEDDING_MODEL.split(':')[0];
+    const canonical = ready.find((p) => p.recipeId === canonicalProvider);
+    if (canonical) {
+      out.embedding_model = NEW_INSTALL_DEFAULT_EMBEDDING_MODEL;
+      out.embedding_dimensions = NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS;
+      console.error(
+        `Multiple embedding providers env-ready (${ready.map(p => p.recipeId).join(', ')}). ` +
+        `Using the default ${NEW_INSTALL_DEFAULT_EMBEDDING_MODEL} (${NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS}d). ` +
+        `Override with --embedding-model.`,
+      );
+      return;
+    }
     console.error(`Multiple embedding providers env-ready: ${ready.map(p => p.recipeId).join(', ')}.`);
     console.error(`Disambiguate by passing --embedding-model <provider>:<model>, or unset extra env vars.`);
     process.exit(1);
   }
   const { pickProvider } = await import('./init-provider-picker.ts');
-  const picked = await pickProvider({ touchpoint: 'embedding', env: process.env, isTTY: true });
+  const picked = await pickProvider({ touchpoint: 'embedding', env: effectiveEnv, isTTY: true });
   if (!picked) {
-    console.error('Init aborted: no embedding provider picked.');
-    process.exit(1);
+    // The embedding picker offers an explicit "0) none — continue keyless"
+    // option (and returns null on it). Honor that instead of aborting: a user
+    // with multiple keys who deliberately chose keyless gets keyless, matching
+    // the zero-key path. (Ctrl-D / EOF / invalid also land here → keyless.)
+    printKeylessContinueNotice();
+    out.noEmbedding = true;
+    return;
   }
   out.embedding_model = picked.fullModel;
   out.embedding_dimensions = picked.dim;
@@ -874,8 +1088,8 @@ function printResolvedAIChoice(
       console.warn('    export ZEROENTROPY_API_KEY=...');
       console.warn('  Or add to ~/.gbrain/config.json:');
       console.warn('    "zeroentropy_api_key": "..."');
-      console.warn('  Or pick a different provider:');
-      console.warn('    gbrain init --pglite --embedding-model openai:text-embedding-3-large --embedding-dimensions 1536');
+      console.warn('  NOTE: ZeroEntropy shuts down 2026-09-04 — prefer the default instead:');
+      console.warn('    gbrain init --pglite --embedding-model voyage:voyage-4');
     }
   }
 }
@@ -903,7 +1117,7 @@ async function initPGLite(opts: {
   let resolvedModel: string | undefined;
   if (opts.aiOpts?.noEmbedding) {
     // D9 deferred-setup mode: skip preflight, no model/dim resolved.
-    console.log(`  --no-embedding: deferred setup — configure with \`gbrain config set embedding_model <id>\` before import`);
+    console.log(`  --no-embedding: deferred setup — enable later with \`gbrain init --force --embedding-model voyage:voyage-4\` (\`config set embedding_model\` is refused by design)`);
   } else if (opts.aiOpts?.embedding_model) {
     const { resolveSchemaEmbeddingDim } = await import('../core/embedding-dim-check.ts');
     const pre = resolveSchemaEmbeddingDim({
@@ -931,9 +1145,20 @@ async function initPGLite(opts: {
   // resolveAIOptions above: CLI flags > env vars > existing file > gateway
   // defaults.
   const { configureGateway } = await import('../core/ai/gateway.ts');
+  // v0.46.3: keyless fresh installs size the embedding column at the NEW-INSTALL
+  // width (1024), not the legacy configless fallback (1280) — the sizing is an
+  // explicit param here, NOT a rewire of the schema generators' legacy import
+  // (those also run on existing-brain reconnects, where legacy must stay
+  // legacy). Existing keyless brains are unaffected: initSchema never resizes
+  // an existing column, and the Lane B.5 mismatch guard stays off for keyless
+  // (resolvedDim is undefined).
+  const { NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS: newInstallDims } =
+    await import('../core/ai/defaults.ts');
   configureGateway({
     embedding_model: resolvedModel ?? opts.aiOpts?.embedding_model,
-    embedding_dimensions: resolvedDim ?? opts.aiOpts?.embedding_dimensions,
+    embedding_dimensions:
+      resolvedDim ?? opts.aiOpts?.embedding_dimensions ??
+      (opts.aiOpts?.noEmbedding ? newInstallDims : undefined),
     expansion_model: opts.aiOpts?.expansion_model,
     chat_model: opts.aiOpts?.chat_model,
     env: { ...process.env },
@@ -1016,6 +1241,8 @@ async function initPGLite(opts: {
       }
     }
 
+    await writeNewInstallRerankerDefault(engine, resolvedModel);
+
     // v0.37.10.0 T7 (D9) + v0.37.11.0 Lane B.4: atomic embedding-config
     // persistence on top of the existing file-plane config (preserves
     // user-set fields like zeroentropy_api_key, chat_model, expansion_model).
@@ -1042,6 +1269,14 @@ async function initPGLite(opts: {
       // unless explicitly overridden by --schema-pack on re-init.
       ...(opts.schemaPack ? { schema_pack: opts.schemaPack } : {}),
     };
+    // v0.46.3: leaving deferred-setup mode — a resolved (model, dims) tuple must
+    // also CLEAR a stale embedding_disabled sentinel inherited via the
+    // ...existingFile spread, or the documented recovery command
+    // (`init --force --embedding-model ...`) persists a config that still
+    // disables embedding at runtime.
+    if (!opts.aiOpts?.noEmbedding && resolvedModel && resolvedDim) {
+      delete config.embedding_disabled;
+    }
     // PR1: new installs publish their skill catalog over MCP by default
     // (existing config wins on re-init, so a prior opt-out is preserved).
     config.mcp = { publish_skills: true, ...(config.mcp ?? {}) };
@@ -1080,18 +1315,16 @@ async function initPGLite(opts: {
     } else {
       console.log(`\nBrain ready at ${dbPath}`);
       console.log(`${stats.page_count} pages. Engine: PGLite (local Postgres).`);
+      // Reference/status blocks print FIRST and terse; the ONE primary action
+      // (the memory demo) prints LAST so it is the final, unmistakable thing on
+      // screen. Krug: one obvious next action, everything else subordinate.
       if (stats.page_count > 0) {
         console.log('');
-        console.log('Existing brain detected. To wire up the v0.10.3 knowledge graph:');
+        console.log('Existing brain detected. Wire up the knowledge graph:');
         console.log('  gbrain extract links --source db        (typed link backfill)');
         console.log('  gbrain extract timeline --source db     (structured timeline backfill)');
         console.log('  gbrain stats                            (verify links > 0)');
-      } else {
-        console.log('Next: gbrain import <dir>');
       }
-      printMemoryVerbsQuickstart();
-      console.log('');
-      console.log('When you outgrow local: gbrain migrate --to supabase');
       reportModStatus();
       const { printAdvisoryIfRecommended } = await import('../core/skillpack/post-install-advisory.ts');
       const { VERSION } = await import('../version.ts');
@@ -1101,6 +1334,9 @@ async function initPGLite(opts: {
       // Fail-open; 3s wallclock cap. Skipped silently in non-TTY contexts.
       const { runInitNudge } = await import('../core/onboard/init-nudge.ts');
       await runInitNudge(engine);
+
+      // The single primary action, last-on-screen.
+      printMemoryVerbsQuickstart({ emptyBrain: stats.page_count === 0, onPglite: true });
     }
   } finally {
     try { await engine.disconnect(); } catch { /* best-effort */ }
@@ -1108,23 +1344,33 @@ async function initPGLite(opts: {
 }
 
 /**
- * MEMORY_VERBS v1 quickstart funnel (E3 + D4B + T1 consent). Printed at the
- * end of both init epilogues. The copy-next block is EXACTLY three commands
- * (codex DX 9): wire the harness, write a memory, prove the resurrection.
- * The demo uses the facts arm only, so it works with NO embedding key [F-B].
+ * MEMORY_VERBS v1 quickstart funnel (E3 + D4B + T1 consent). Printed LAST in
+ * both init epilogues as the ONE primary action. The copy-next block is
+ * EXACTLY three commands (codex DX 9): wire the harness, write a memory, prove
+ * the resurrection. The demo uses the facts arm only, so it works with NO
+ * embedding key [F-B]. Secondary paths (import, migrate) ride a single terse
+ * "More:" footer so they never compete with the primary action.
  */
-function printMemoryVerbsQuickstart(): void {
+function printMemoryVerbsQuickstart(opts: { emptyBrain?: boolean; onPglite?: boolean } = {}): void {
   console.log('');
-  console.log('Give your agent memory (copy these three commands):');
+  console.log('→ Do this next — give your agent memory (copy these three commands):');
   console.log('  claude mcp add gbrain -- gbrain serve --surface verbs');
   console.log('  gbrain remember "I prefer dark mode in every editor" --provenance demo --entity people/me');
   console.log('  gbrain recall --entity people/me');
-  console.log('Now ask your agent in a NEW session — it remembers.');
+  console.log('Then ask your agent in a NEW session — it remembers.');
   console.log('');
   console.log('Note: memories agents save are readable by every agent connected to');
   console.log('this brain; use visibility:"private" for local-only facts.');
   console.log('Other harnesses (Codex, OpenClaw): docs/protocol/MEMORY_VERBS_v1.md');
   console.log('If `claude` is not found: install Claude Code first, or use the per-harness blocks in that doc.');
+  // Secondary paths, one line, clearly subordinate to the action above.
+  console.log('');
+  console.log(
+    'More: ' +
+      (opts.emptyBrain ? 'bulk-load notes `gbrain import <dir>` · ' : '') +
+      (opts.onPglite ? 'scale up `gbrain migrate --to supabase` · ' : '') +
+      'health `gbrain doctor`',
+  );
 }
 
 async function initPostgres(opts: {
@@ -1150,7 +1396,7 @@ async function initPostgres(opts: {
   let resolvedDim: number | undefined;
   let resolvedModel: string | undefined;
   if (opts.aiOpts?.noEmbedding) {
-    console.log(`  --no-embedding: deferred setup — configure with \`gbrain config set embedding_model <id>\` before import`);
+    console.log(`  --no-embedding: deferred setup — enable later with \`gbrain init --force --embedding-model voyage:voyage-4\` (\`config set embedding_model\` is refused by design)`);
   } else if (opts.aiOpts?.embedding_model) {
     const { resolveSchemaEmbeddingDim } = await import('../core/embedding-dim-check.ts');
     const pre = resolveSchemaEmbeddingDim({
@@ -1170,9 +1416,15 @@ async function initPostgres(opts: {
 
   // T6: unconditional configureGateway BEFORE initSchema.
   const { configureGateway } = await import('../core/ai/gateway.ts');
+  // v0.46.3: keyless fresh installs size at the NEW-INSTALL width (see the
+  // PGLite path's comment — same explicit-param rationale).
+  const { NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS: newInstallDims } =
+    await import('../core/ai/defaults.ts');
   configureGateway({
     embedding_model: resolvedModel ?? opts.aiOpts?.embedding_model,
-    embedding_dimensions: resolvedDim ?? opts.aiOpts?.embedding_dimensions,
+    embedding_dimensions:
+      resolvedDim ?? opts.aiOpts?.embedding_dimensions ??
+      (opts.aiOpts?.noEmbedding ? newInstallDims : undefined),
     expansion_model: opts.aiOpts?.expansion_model,
     chat_model: opts.aiOpts?.chat_model,
     env: { ...process.env },
@@ -1294,6 +1546,8 @@ async function initPostgres(opts: {
       }
     }
 
+    await writeNewInstallRerankerDefault(engine, resolvedModel);
+
     // v0.37.10.0 T7 (D9) + v0.37.11.0 Lane B.4 (Postgres mirror): atomic
     // embedding-config persistence on top of the existing file-plane config.
     // Same precedence + same merge contract as the PGLite path above.
@@ -1314,6 +1568,14 @@ async function initPostgres(opts: {
       // v0.42 (T17): same schema_pack default as PGLite path.
       ...(opts.schemaPack ? { schema_pack: opts.schemaPack } : {}),
     };
+    // v0.46.3: leaving deferred-setup mode — a resolved (model, dims) tuple must
+    // also CLEAR a stale embedding_disabled sentinel inherited via the
+    // ...existingFile spread, or the documented recovery command
+    // (`init --force --embedding-model ...`) persists a config that still
+    // disables embedding at runtime.
+    if (!opts.aiOpts?.noEmbedding && resolvedModel && resolvedDim) {
+      delete config.embedding_disabled;
+    }
     // PR1: new installs publish their skill catalog over MCP by default
     // (existing config wins on re-init, so a prior opt-out is preserved).
     config.mcp = { publish_skills: true, ...(config.mcp ?? {}) };
@@ -1350,14 +1612,11 @@ async function initPostgres(opts: {
       console.log(`\nBrain ready. ${stats.page_count} pages. Engine: Postgres (Supabase).`);
       if (stats.page_count > 0) {
         console.log('');
-        console.log('Existing brain detected. To wire up the v0.10.3 knowledge graph:');
+        console.log('Existing brain detected. Wire up the knowledge graph:');
         console.log('  gbrain extract links --source db        (typed link backfill)');
         console.log('  gbrain extract timeline --source db     (structured timeline backfill)');
         console.log('  gbrain stats                            (verify links > 0)');
-      } else {
-        console.log('Next: gbrain import <dir>');
       }
-      printMemoryVerbsQuickstart();
       reportModStatus();
       const { printAdvisoryIfRecommended } = await import('../core/skillpack/post-install-advisory.ts');
       const { VERSION } = await import('../version.ts');
@@ -1367,6 +1626,9 @@ async function initPostgres(opts: {
       // Fail-open; 3s wallclock cap. Skipped silently in non-TTY contexts.
       const { runInitNudge } = await import('../core/onboard/init-nudge.ts');
       await runInitNudge(engine);
+
+      // The single primary action, last-on-screen.
+      printMemoryVerbsQuickstart({ emptyBrain: stats.page_count === 0 });
     }
   } finally {
     try { await engine.disconnect(); } catch { /* best-effort */ }
@@ -1402,6 +1664,15 @@ function countMarkdownFiles(dir: string, maxScan = 1500): number {
 }
 
 async function supabaseWizard(): Promise<string> {
+  // Non-TTY guard: without a terminal the URL prompt below can never be
+  // answered — the legacy behavior was a silent exit-0 no-op (stdin closed →
+  // readLine never resolved data → process ended with NO config written), the
+  // worst failure shape for a scripted/agent caller. Fail loud with the fix.
+  if (!process.stdin.isTTY) {
+    console.error('gbrain init --supabase needs an interactive terminal to prompt for the connection URL.');
+    console.error('Non-interactive: pass --url <connection_string>, or set GBRAIN_DATABASE_URL and use --non-interactive.');
+    process.exit(1);
+  }
   try {
     execSync('bunx supabase --version', { stdio: 'pipe' });
     console.log('Supabase CLI detected.');
@@ -1427,12 +1698,21 @@ function readLine(prompt: string): Promise<string> {
   return new Promise((resolve) => {
     process.stdout.write(prompt);
     let data = '';
+    let settled = false;
+    const settle = (value: string) => {
+      if (settled) return;
+      settled = true;
+      process.stdin.pause();
+      resolve(value);
+    };
     process.stdin.setEncoding('utf-8');
     process.stdin.once('data', (chunk) => {
       data = chunk.toString().trim();
-      process.stdin.pause();
-      resolve(data);
+      settle(data);
     });
+    // EOF (Ctrl-D mid-prompt) resolves empty instead of hanging — the caller's
+    // "No URL provided." guard then fails loud.
+    process.stdin.once('end', () => settle(''));
     process.stdin.resume();
   });
 }
@@ -1578,23 +1858,18 @@ export function reportModStatus(): void {
     skillCount = manifest.skills?.length || 0;
   } catch { /* manifest not found */ }
 
+  // One line per fact, one pointer per optional extra — this block sits on
+  // the init success screen, where every extra call-to-action competes with
+  // the memory-verbs funnel (the one action that matters). Krug: one screen,
+  // one primary action.
   console.log('');
   console.log('--- GBrain Mod Status ---');
-  console.log(`Skills: ${skillCount} loaded`);
-  console.log(`GStack: ${gstack.found ? `found (${gstack.host})` : 'not found'}`);
-  if (!gstack.found) {
-    console.log('  Install GStack for coding skills:');
-    console.log('  git clone https://github.com/garrytan/gstack.git ~/.claude/skills/gstack');
-    console.log('  cd ~/.claude/skills/gstack && ./setup');
-  }
-  console.log('Resolver: skills/RESOLVER.md');
-  console.log('Soul audit: ask your agent to "run a soul audit" to customize its identity (see skills/soul-audit)');
+  console.log(`Skills: ${skillCount} loaded (router: skills/RESOLVER.md)`);
+  console.log(`GStack: ${gstack.found ? `found (${gstack.host})` : 'not found (coding skills — see github.com/garrytan/gstack)'}`);
   // Retrieval Reflex (#1981): the deterministic pointer layer is ON by default
   // (no action needed). The policy skill is installed into the HOST repo on
-  // request — we PRINT the command rather than silently mutating the host repo.
-  console.log('Retrieval reflex: on by default (entity pointers injected per turn)');
-  console.log('  Install the policy skill into your agent repo:');
-  console.log('  gbrain integrations install retrieval-reflex --target <host-repo>');
+  // request — we PRINT the pointer rather than silently mutating the host repo.
+  console.log('Retrieval reflex: on by default. More: `gbrain integrations` (policy skill), skills/soul-audit (identity).');
   console.log('');
 }
 
@@ -1606,7 +1881,7 @@ USAGE
   gbrain init [flags]
 
 ENGINE SELECTION (mutually exclusive)
-  --pglite              Use embedded PGLite (zero-config, default for <1000 .md files)
+  --pglite              Use embedded PGLite (zero-config, the default)
   --supabase            Use Supabase Postgres (recommended for 1000+ files)
   --url <URL>           Use a manual Postgres connection string
   --mcp-only            Thin-client mode: connect to a remote gbrain MCP, no local engine
@@ -1639,9 +1914,10 @@ EXAMPLES
   gbrain init --mcp-only --url https://...  # Thin-client mode
 
 NOTES
-  - Bare \`gbrain init\` in a directory with 1000+ .md files defaults to Supabase
-    interactive setup. With <1000 files (or with --pglite explicitly), defaults
-    to PGLite at ~/.gbrain/brain.pglite.
+  - Bare \`gbrain init\` always defaults to PGLite at ~/.gbrain/brain.pglite.
+    In a directory with 1000+ .md files it prints a suggestion to use
+    \`gbrain init --supabase\` (faster search at scale) but still proceeds
+    with PGLite.
   - Existing config is preserved unless --force is passed.
 `.trim());
 }

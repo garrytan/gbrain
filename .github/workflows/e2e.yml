@@ -20,6 +20,44 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ──────────────────────────────────────────────────────────────────────
+  # e2e-cache-check: same content-hash skip as test.yml's cache-check, in
+  # its own key namespace (e2e-pass-<hash>). Doc-only pushes previously
+  # provisioned 3 pgvector services and spent real OpenAI/Anthropic/
+  # ZeroEntropy tokens in tier2; now they skip. SCHEDULED runs are exempt
+  # below — the nightly is a drift check against live providers and must
+  # run even when the tree is unchanged.
+  # ──────────────────────────────────────────────────────────────────────
+  e2e-cache-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      hit: ${{ steps.lookup.outputs.cache-hit }}
+      hash: ${{ steps.compute.outputs.hash }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - name: Compute content hash
+        id: compute
+        run: |
+          HASH=$(bash scripts/ci-cache-hash.sh --verbose 2>/tmp/cache-diag)
+          cat /tmp/cache-diag
+          echo "Computed cache hash: $HASH"
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+      - name: Lookup actions/cache for e2e-pass-<hash>
+        id: lookup
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          key: e2e-pass-${{ steps.compute.outputs.hash }}
+          path: .e2e-cache-marker
+          lookup-only: true
+      - name: Cache status
+        run: |
+          if [ "${{ steps.lookup.outputs.cache-hit }}" = "true" ]; then
+            echo "✓ e2e cache HIT for hash ${{ steps.compute.outputs.hash }} — e2e jobs will skip (unless scheduled)"
+          else
+            echo "✗ e2e cache MISS for hash ${{ steps.compute.outputs.hash }} — e2e suite will run"
+          fi
+
   jsonb-parity:
     # Dedicated required guard for the JSONB double-encode bug-class (#2339).
     # PGLite parses a double-encoded jsonb string silently, so this assertion can
@@ -28,6 +66,8 @@ jobs:
     # Postgres and HARD-FAILS if DATABASE_URL is missing, so the guard can never
     # silently skip.
     name: JSONB parity (#2339 regression guard)
+    needs: e2e-cache-check
+    if: needs.e2e-cache-check.outputs.hit != 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -49,7 +89,12 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.3.13
-      - run: bun install
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-cache-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
       - name: Require DATABASE_URL (no silent skip)
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
@@ -61,13 +106,20 @@ jobs:
       - name: Run JSONB double-encode parity tests on real Postgres
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
+          # #3485 preload guard: this job intentionally tests against a DB.
+          GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
         # --timeout also raises bun's 5s default hook budget (beforeAll/afterAll
         # do NOT inherit a test's third-arg timeout; verified on bun 1.3.x).
         # Every runner script in scripts/ passes it; bare invocations must too.
-        run: bun test --timeout=60000 test/e2e/op-checkpoint-jsonb-parity.test.ts test/e2e/jsonb-roundtrip.test.ts
+        # phantom-redirect rides this job: its Postgres arm is the other
+        # engine-parity backstop and no other CI lane carries DATABASE_URL to it
+        # (the unit wrappers strip the URL per #3485).
+        run: bun test --timeout=60000 test/e2e/op-checkpoint-jsonb-parity.test.ts test/e2e/jsonb-roundtrip.test.ts test/phantom-redirect-engine-parity.test.ts
 
   tier1:
     name: Tier 1 (Mechanical)
+    needs: e2e-cache-check
+    if: needs.e2e-cache-check.outputs.hit != 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -89,20 +141,32 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.3.13
-      - run: bun install
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-cache-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
       - name: Run Tier 1 E2E tests
-        run: bun test --timeout=60000 test/e2e/mechanical.test.ts test/e2e/mcp.test.ts
+        # job-isolation rides tier1 deliberately: e2e.yml runs only explicitly
+        # NAMED files (no glob) — an unwired e2e file is silent coverage loss.
+        run: bun test --timeout=60000 test/e2e/mechanical.test.ts test/e2e/mcp.test.ts test/e2e/job-isolation.test.ts
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
+          # #3485 preload guard: this job intentionally tests against a DB.
+          GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
 
   tier2:
     name: Tier 2 (LLM Skills)
+    # Runs on every push/PR (promoted from schedule-only in v0.19.0), in
+    # PARALLEL with tier1 (own postgres service — the old `needs: tier1`
+    # serialized ~2min for no shared state). The jsonb-parity gate (~40s)
+    # stays in front as the broken-build SPEND gate: this job burns real
+    # OpenAI/Anthropic/ZeroEntropy tokens and must not fire when the build
+    # can't even pass the cheapest DB guard.
+    needs: [e2e-cache-check, jsonb-parity]
+    if: needs.e2e-cache-check.outputs.hit != 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    # Runs on every push/PR now (promoted from schedule-only in v0.19.0).
-    # Tier 1 must pass first; Tier 2 uses OPENAI_API_KEY + ANTHROPIC_API_KEY
-    # from repo/org secrets. Nightly + manual triggers still supported via
-    # the workflow-level `on:` list.
-    needs: tier1
     timeout-minutes: 30
     services:
       postgres:
@@ -123,7 +187,12 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.3.13
-      - run: bun install
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-cache-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
       - name: Install OpenClaw
         # Bound + retry the install: a transient npm/registry stall here used to
         # hang unbounded and (since the v0.42.50.0 job timeout) burn the entire
@@ -161,6 +230,8 @@ jobs:
         run: bun test --timeout=60000 test/e2e/skills.test.ts test/e2e/zeroentropy-live.test.ts
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
+          # #3485 preload guard: this job intentionally tests against a DB.
+          GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # v0.33.3.0: ZE live API tests skip gracefully when this is unset,
@@ -168,3 +239,61 @@ jobs:
           # zeroEntropyCompatFetch response-rewriter + URL rewrite + flexible
           # dim handling + gateway.rerank against the real provider.
           ZEROENTROPY_API_KEY: ${{ secrets.ZEROENTROPY_API_KEY }}
+
+  # ──────────────────────────────────────────────────────────────────────
+  # e2e-cache-write: seals e2e-pass-<hash> only when every gated job
+  # succeeded (writing earlier would bless states the suite never proved).
+  # Scheduled runs may also write: a nightly green at an unchanged hash is
+  # the same proof a push green is.
+  # ──────────────────────────────────────────────────────────────────────
+  e2e-cache-write:
+    needs: [e2e-cache-check, jsonb-parity, tier1, tier2]
+    if: success() && needs.e2e-cache-check.outputs.hit != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Create cache marker
+        run: |
+          mkdir -p .e2e-cache-marker
+          echo "${{ needs.e2e-cache-check.outputs.hash }}" > .e2e-cache-marker/hash
+          echo "$GITHUB_SHA" > .e2e-cache-marker/sha
+          echo "$GITHUB_REF" > .e2e-cache-marker/ref
+      - uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          key: e2e-pass-${{ needs.e2e-cache-check.outputs.hash }}
+          path: .e2e-cache-marker
+
+  # ──────────────────────────────────────────────────────────────────────
+  # e2e-status: the single stable "did E2E pass?" name (mirror of
+  # test.yml's test-status). Succeeds when the cache hit on a non-scheduled
+  # run, or when every gated job succeeded.
+  # ──────────────────────────────────────────────────────────────────────
+  e2e-status:
+    needs: [e2e-cache-check, jsonb-parity, tier1, tier2]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Aggregate result
+        run: |
+          HIT="${{ needs.e2e-cache-check.outputs.hit }}"
+          JSONB="${{ needs.jsonb-parity.result }}"
+          TIER1="${{ needs.tier1.result }}"
+          TIER2="${{ needs.tier2.result }}"
+          EVENT="${{ github.event_name }}"
+          echo "e2e-cache-check.hit=$HIT event=$EVENT"
+          echo "jsonb-parity=$JSONB  tier1=$TIER1  tier2=$TIER2"
+          # schedule AND workflow_dispatch always run the real suite — a
+          # manual dispatch is an explicit ask for a live run, so a cache
+          # hit must not report green-without-running for either.
+          if [ "$HIT" = "true" ] && [ "$EVENT" != "schedule" ] && [ "$EVENT" != "workflow_dispatch" ]; then
+            echo "✓ e2e cache HIT for hash ${{ needs.e2e-cache-check.outputs.hash }} — E2E green"
+            exit 0
+          fi
+          for r in "$JSONB" "$TIER1" "$TIER2"; do
+            if [ "$r" != "success" ]; then
+              echo "✗ gated e2e job did not succeed (got $r) — E2E fail"
+              exit 1
+            fi
+          done
+          echo "✓ all e2e jobs succeeded — E2E green"

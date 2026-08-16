@@ -1,5 +1,13 @@
 # GBrain Installation Verification Runbook
 
+> **One-command equivalent:** `gbrain bootstrap verify` runs the whole install
+> contract (round-trip, graph floor, and more) automatically and exits non-zero
+> on failure — it is the modern first thing to run after any install. See
+> [docs/guides/bootstrap.md](guides/bootstrap.md). This runbook is the
+> **manual, deep-verification** companion: use it when `bootstrap verify` fails
+> and you need to isolate which layer broke, or when you want to understand
+> what "healthy" looks like check by check.
+
 Run these checks after install to confirm every part of GBrain is working.
 Each check includes the command, expected output, and what to do if it fails.
 
@@ -20,7 +28,8 @@ gbrain doctor --json
 **Expected:** All checks return `"ok"`:
 - `connection`: connected, N pages
 - `pgvector`: extension installed
-- `rls`: enabled on all tables
+- `rls`: enabled on all tables (Postgres/Supabase brains only — PGLite brains
+  skip this check; the embedded engine has no remote surface)
 - `schema_version`: current
 - `embeddings`: coverage percentage
 
@@ -33,12 +42,12 @@ check. See `skills/setup/SKILL.md` Error Recovery table.
 
 **Check:** Ask the agent: "What is the brain-agent loop?"
 
-**Expected:** The agent references GBRAIN_SKILLPACK.md Section 2 and describes
-the read-write cycle: detect entities, read brain, respond with context, write
-brain, sync.
+**Expected:** The agent describes the read-write cycle documented in
+[docs/guides/brain-agent-loop.md](guides/brain-agent-loop.md): detect entities,
+read brain, respond with context, write brain, sync.
 
-**If it fails:** The agent hasn't loaded the skillpack. Run step 6 from the
-install paste (read `docs/GBRAIN_SKILLPACK.md`).
+**If it fails:** The agent hasn't loaded the skillpack. Have it read
+`docs/GBRAIN_SKILLPACK.md` (the index) and follow the Core Patterns links.
 
 ---
 
@@ -53,8 +62,8 @@ gbrain check-update --json
 **Expected:** Returns JSON with `current_version`, `latest_version`,
 `update_available` (boolean). The cron `gbrain-update-check` is registered.
 
-**If it fails:** Run step 7 from the install paste. See GBRAIN_SKILLPACK.md
-Section 17.
+**If it fails:** See [docs/guides/upgrades-auto-update.md](guides/upgrades-auto-update.md)
+for how to register the update-check cron.
 
 ---
 
@@ -88,8 +97,9 @@ find /data/brain -name '*.md' \
 Some difference is normal (files added since last sync), but if page count is
 less than half the file count, sync is silently skipping pages.
 
-**If page count is way too low:** The #1 cause is an unreachable direct
-connection on an IPv4-only host. GBrain uses the Transaction pooler (port 6543)
+**If page count is way too low (Supabase/Postgres brains):** The #1 cause is an
+unreachable direct connection on an IPv4-only host. (PGLite brains have no
+network layer — for them, check that the sync cron/watch is actually running.) GBrain uses the Transaction pooler (port 6543)
 for reads, but routes migrations, DDL, and sync transactions to a derived direct
 connection (`db.<ref>.supabase.co:5432`), which is IPv6-only.
 - On an IPv4-only host, reads work but sync transactions fail and silently skip
@@ -122,7 +132,7 @@ This is the real test. Edit a brain page, push, wait, search.
 1. Edit a page in the brain repo (e.g., correct a fact on a person's page):
 
 ```bash
-# Example: fix a line in Gustaf's page
+# Example: fix a line in alice-example's page
 cd /data/brain
 # Make a small edit to any .md file
 git add -A && git commit -m "test: verify live sync" && git push
@@ -253,19 +263,23 @@ gbrain repair-jsonb
 
 Idempotent. PGLite brains always report 0 (unaffected by the original bug).
 
-**Bonus check** — frontmatter-keyed queries actually resolve:
+**Bonus check** — the doctor's dedicated JSONB scan agrees:
 
 ```bash
-gbrain call list_pages '{"frontmatterKey": "type", "frontmatterValue": "person"}'
+gbrain doctor --json | grep -o '"name":"jsonb_integrity"[^}]*'
 ```
 
-If this returns rows on a brain with person pages, the JSONB path is healthy.
+**Expected:** the fragment contains `"status":"ok"` ("All JSONB columns store
+objects/arrays"). If it reports double-encoded rows, run `gbrain repair-jsonb`.
 
 ---
 
 ## Quick Verification (all checks in one pass)
 
 ```bash
+# 0. The one-command contract check (exits non-zero on failure)
+gbrain bootstrap verify
+
 # 1. Schema
 gbrain doctor --json
 

@@ -208,6 +208,9 @@ describe('thin-client scratch-DB guard — jobs partial dispatch + config refusa
     expect(existsSync(join(tmp, '.gbrain', 'brain.pglite'))).toBe(false);
     expect(r.stdout + r.stderr).not.toContain('Schema version');
     expect(r.stdout + r.stderr).not.toContain('migration(s) pending');
+    // A scratch store is a FRESH install, so a re-regression would print the
+    // quiet-replay summary line, not the verbose header — pin both shapes.
+    expect(r.stdout + r.stderr).not.toContain('Setting up brain schema');
   });
 
   test('`gbrain jobs list` never fabricates a scratch local engine', async () => {
@@ -216,5 +219,6 @@ describe('thin-client scratch-DB guard — jobs partial dispatch + config refusa
     const { existsSync } = await import('fs');
     expect(existsSync(join(tmp, '.gbrain', 'brain.pglite'))).toBe(false);
     expect(r.stdout + r.stderr).not.toContain('Schema version');
+    expect(r.stdout + r.stderr).not.toContain('Setting up brain schema');
   });
 });

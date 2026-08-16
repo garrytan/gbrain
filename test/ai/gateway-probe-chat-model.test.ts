@@ -60,8 +60,13 @@ describe('validateModelId (#1698 C1 core)', () => {
     if (!v.ok) expect(v.reason).toBe('unknown_provider');
   });
 
-  test('unknown_model for a typo native model', () => {
-    const v = validateModelId('anthropic:claude-bogus-9');
+  test('ok for an unlisted native model (no runtime allowlist — provider decides)', () => {
+    expect(validateModelId('anthropic:claude-bogus-9').ok).toBe(true);
+    expect(validateModelId('openai:gpt-5.6-sol').ok).toBe(true);
+  });
+
+  test('unknown_model when the provider lacks the touchpoint entirely', () => {
+    const v = validateModelId('voyage:voyage-3', 'chat');
     expect(v.ok).toBe(false);
     if (!v.ok) expect(v.reason).toBe('unknown_model');
   });
@@ -85,7 +90,10 @@ describe('probeChatModel (#1698 = validity + key, config-independent)', () => {
   test('unknown_provider / unknown_model classify regardless of key (validity runs first)', async () => {
     await withEnv(withKeyEnv(), async () => {
       expect(probeChatModel('bogusprovider:x')).toMatchObject({ ok: false, reason: 'unknown_provider' });
-      expect(probeChatModel('anthropic:claude-bogus-9')).toMatchObject({ ok: false, reason: 'unknown_model' });
+      // unknown_model now fires only for a missing touchpoint (voyage has no
+      // chat); unlisted ids on chat-capable providers pass local validation.
+      expect(probeChatModel('voyage:voyage-3')).toMatchObject({ ok: false, reason: 'unknown_model' });
+      expect(probeChatModel('anthropic:claude-bogus-9').ok).toBe(true);
     });
   });
 

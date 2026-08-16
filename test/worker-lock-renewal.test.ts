@@ -38,9 +38,9 @@ import { withEnv } from './helpers/with-env.ts';
 // --- fakes ----------------------------------------------------------------
 
 interface AuditLog {
-  failures: Array<{ jobId: number; jobName: string; attempt: number; err: unknown }>;
-  recoveries: Array<{ jobId: number; jobName: string; recoveredAfterAttempts: number }>;
-  gaveUps: Array<{ jobId: number; jobName: string; totalFailures: number; err: unknown }>;
+  failures: Array<{ jobId: number; jobName: string; attempt: number; err: unknown; ctx?: unknown }>;
+  recoveries: Array<{ jobId: number; jobName: string; recoveredAfterAttempts: number; ctx?: unknown }>;
+  gaveUps: Array<{ jobId: number; jobName: string; totalFailures: number; err: unknown; ctx?: unknown }>;
 }
 
 function freshAudit(): { sink: LockRenewalAuditSinkLike; log: AuditLog } {
@@ -48,12 +48,12 @@ function freshAudit(): { sink: LockRenewalAuditSinkLike; log: AuditLog } {
   return {
     log,
     sink: {
-      logFailure: (jobId, jobName, attempt, err) =>
-        log.failures.push({ jobId, jobName, attempt, err }),
-      logSuccessAfterFailure: (jobId, jobName, recoveredAfterAttempts) =>
-        log.recoveries.push({ jobId, jobName, recoveredAfterAttempts }),
-      logGaveUp: (jobId, jobName, totalFailures, err) =>
-        log.gaveUps.push({ jobId, jobName, totalFailures, err }),
+      logFailure: (jobId, jobName, attempt, err, ctx) =>
+        log.failures.push({ jobId, jobName, attempt, err, ctx }),
+      logSuccessAfterFailure: (jobId, jobName, recoveredAfterAttempts, ctx) =>
+        log.recoveries.push({ jobId, jobName, recoveredAfterAttempts, ctx }),
+      logGaveUp: (jobId, jobName, totalFailures, err, ctx) =>
+        log.gaveUps.push({ jobId, jobName, totalFailures, err, ctx }),
     },
   };
 }
@@ -88,6 +88,7 @@ const DEFAULT_KNOBS: LockRenewalKnobs = {
   maxFailuresForAudit: 3,
   callTimeoutMs: 10_000,
   safetyMarginMs: 5_000,
+  hardEvictMs: 60_000, // 2 × lockDuration (the #4145 backstop)
 };
 
 function makeState(overrides?: Partial<LockRenewalState>): LockRenewalState {
@@ -100,6 +101,11 @@ function makeState(overrides?: Partial<LockRenewalState>): LockRenewalState {
     lastSuccessfulRenewalAt: 0,
     consecutiveFailures: 0,
     cancelled: () => false,
+    // v0.46 (#4145) telemetry fields: cadence for lateness math, seeded
+    // previous-tick timestamp, and the worker-maintained overlap counter.
+    intervalMs: DEFAULT_LOCK_MS / 2,
+    lastTickFiredAt: 0,
+    overlapSkips: 0,
     ...overrides,
   };
 }
@@ -178,10 +184,12 @@ describe('runLockRenewalTick: failure counter + audit', () => {
   });
 });
 
-describe('runLockRenewalTick: time-based abort', () => {
-  test('case 4 — sustained throws past deadline returns should_abort, gave_up logged', async () => {
+describe('runLockRenewalTick: verify-before-evict + hard backstop (#4145)', () => {
+  test('case 4 — sustained throws past the SOFT deadline are DEFERRED (verify attempted), abort only past hardEvictMs', async () => {
     const audit = freshAudit();
-    // deadline = 30000 - 5000 = 25000; we've been failing for 26s.
+    // Soft deadline = 30000 - 5000 = 25000; hardEvict = 60000.
+    // At 26s of failure the pre-#4145 code aborted — the incident. Now the
+    // tick attempts a verify (which also throws here) and DEFERS.
     const deps: LockRenewalDeps = {
       renewLock: async () => { throw new Error('persistent outage'); },
       audit: audit.sink,
@@ -189,46 +197,177 @@ describe('runLockRenewalTick: time-based abort', () => {
       setTimeout: makeFakeTimer().setTimeout,
     };
     const state = makeState({ lastSuccessfulRenewalAt: 0, consecutiveFailures: 2 });
-    const result = await runLockRenewalTick(deps, state);
-    expect(result).toEqual({ kind: 'should_abort', reason: 'lock-renewal-failed' });
-    expect(audit.log.failures).toHaveLength(1);
+    const deferred = await runLockRenewalTick(deps, state);
+    expect(deferred).toEqual({ kind: 'ok' });
+    // Primary attempt (3) + failed verify (4), the latter deadline_deferred.
+    expect(state.consecutiveFailures).toBe(4);
+    expect(audit.log.failures).toHaveLength(2);
+    expect(audit.log.failures[1].ctx).toMatchObject({ deadline_deferred: true, cause: 'refused' });
+    expect(audit.log.gaveUps).toHaveLength(0);
+
+    // Past the hard backstop the tick gives up: primary (5) + verify (6),
+    // gave_up carries the classified cause + starvation telemetry.
+    // lateness = max(0, 61000 - 26000 - 15000) = 20000.
+    const hardDeps: LockRenewalDeps = { ...deps, now: () => 61_000 };
+    const result = await runLockRenewalTick(hardDeps, state);
+    expect(result).toMatchObject({
+      kind: 'should_abort',
+      reason: 'lock-renewal-failed',
+      cause: 'refused',
+      sinceLastSuccessMs: 61_000,
+      latenessMs: 20_000,
+      overlapSkips: 0,
+    });
+    expect(state.consecutiveFailures).toBe(6);
     expect(audit.log.gaveUps).toHaveLength(1);
-    expect(audit.log.gaveUps[0].totalFailures).toBe(3);
+    expect(audit.log.gaveUps[0].totalFailures).toBe(6);
   });
 
-  test('case 10 — time-based abort fires BEFORE count-based threshold', async () => {
-    // Critical regression: deadline at 25s, 5 failures over 30s.
-    // count-based (3-strike) would have aborted at failure #3 — but
-    // failure #3 happens at t=15s, well inside the 25s deadline.
-    // Time-based correctly waits until the deadline crosses.
+  test('case 10 — INCIDENT REPLAY: renewal times out under starvation, verify succeeds → job survives', async () => {
+    // The #4145 incident shape: the event loop starves, the renewal's
+    // 10s race timeout wins even though the DB is healthy (external
+    // SELECT 1 probes ran 32ms). Pre-fix: abort at the 25s deadline,
+    // discarding ~173s of LLM work. Post-fix: ONE fenced verify — the
+    // DB is the authority — recovers the lease and the job survives.
+    const audit = freshAudit();
+    let calls = 0;
+    const timer = makeFakeTimer();
+    const deps: LockRenewalDeps = {
+      renewLock: async () => {
+        calls++;
+        if (calls === 1) return new Promise<boolean>(() => { /* starved: never settles */ });
+        return true; // the verify — DB was healthy all along
+      },
+      audit: audit.sink,
+      now: () => 26_000, // past the soft deadline of 25000
+      setTimeout: timer.setTimeout,
+    };
+    const state = makeState({ lastSuccessfulRenewalAt: 0 });
+    const pending = runLockRenewalTick(deps, state);
+    timer.runAll(); // fire the primary race timeout (the starvation symptom)
+    const result = await pending;
+    expect(result).toEqual({ kind: 'ok' }); // NO abort — the incident fix
+    expect(state.consecutiveFailures).toBe(0); // verify-success resets
+    expect(state.lastSuccessfulRenewalAt).toBe(26_000);
+    expect(audit.log.failures).toHaveLength(1); // the primary call-timeout
+    expect(audit.log.failures[0].ctx).toMatchObject({ cause: 'call-timeout' });
+    expect(audit.log.recoveries).toHaveLength(1);
+    expect(audit.log.recoveries[0].ctx).toMatchObject({ via: 'verify' });
+    expect(audit.log.gaveUps).toHaveLength(0);
+  });
+
+  test('case 10b — verify returns fenced-false: CERTAIN loss → lock_lost via verify', async () => {
+    const audit = freshAudit();
+    let calls = 0;
+    const deps: LockRenewalDeps = {
+      renewLock: async () => {
+        calls++;
+        if (calls === 1) throw new Error('outage');
+        return false; // the stall sweep reclaimed the row during the blip
+      },
+      audit: audit.sink,
+      now: () => 26_000,
+      setTimeout: makeFakeTimer().setTimeout,
+    };
+    const state = makeState({ lastSuccessfulRenewalAt: 0 });
+    const result = await runLockRenewalTick(deps, state);
+    expect(result).toEqual({ kind: 'lock_lost', cause: 'fenced-lost', via: 'verify' });
+    expect(audit.log.gaveUps).toHaveLength(0); // certain loss ≠ infrastructure gave-up
+  });
+
+  test('case 10c — CDX-4 cadence quantization: 300s lease / 60s cadence verifies at 240s with lease remaining', async () => {
+    // With the bare `>= deadline` gate there is NO tick between 240s and
+    // lease expiry (300s): deadline 270s is unreachable and the first
+    // eligible tick is already past expiry. The next-tick-too-late form
+    // (sinceLastSuccess + intervalMs >= deadline) verifies at 240s.
     const audit = freshAudit();
     const knobs: LockRenewalKnobs = {
       maxFailuresForAudit: 3,
-      callTimeoutMs: 10_000,
-      safetyMarginMs: 5_000,
+      callTimeoutMs: 15_000,
+      safetyMarginMs: 30_000, // deadline = 270_000
+      hardEvictMs: 600_000,
     };
-    let nowMs = 0;
+    let calls = 0;
     const deps: LockRenewalDeps = {
-      renewLock: async () => { throw new Error('outage'); },
+      renewLock: async () => {
+        calls++;
+        if (calls === 1) throw new Error('blip at the 240s tick');
+        return true; // verify recovers with 60s of lease left
+      },
       audit: audit.sink,
-      now: () => nowMs,
+      now: () => 240_000,
       setTimeout: makeFakeTimer().setTimeout,
     };
-    const state = makeState({ knobs, lastSuccessfulRenewalAt: 0 });
+    const state = makeState({
+      lockDurationMs: 300_000,
+      knobs,
+      intervalMs: 60_000,
+      lastSuccessfulRenewalAt: 0,
+      lastTickFiredAt: 180_000,
+    });
+    const result = await runLockRenewalTick(deps, state);
+    expect(result).toEqual({ kind: 'ok' });
+    expect(calls).toBe(2); // primary + verify — the verify DID fire at 240s
+    expect(audit.log.recoveries[0].ctx).toMatchObject({ via: 'verify' });
 
-    // Five sequential failures at t=5, 10, 15, 20, 26.
-    for (const t of [5_000, 10_000, 15_000, 20_000]) {
-      nowMs = t;
-      const r = await runLockRenewalTick(deps, state);
-      expect(r.kind).toBe('ok'); // within deadline despite counter > maxFailuresForAudit
-    }
-    expect(state.consecutiveFailures).toBe(4);
-    expect(audit.log.gaveUps).toHaveLength(0);
+    // Control: at the 180s tick (180 + 60 = 240 < 270) no verify fires.
+    calls = 0;
+    const controlState = makeState({
+      lockDurationMs: 300_000,
+      knobs,
+      intervalMs: 60_000,
+      lastSuccessfulRenewalAt: 0,
+      lastTickFiredAt: 120_000,
+    });
+    const controlDeps: LockRenewalDeps = {
+      ...deps,
+      renewLock: async () => { calls++; throw new Error('blip'); },
+      now: () => 180_000,
+    };
+    expect(await runLockRenewalTick(controlDeps, controlState)).toEqual({ kind: 'ok' });
+    expect(calls).toBe(1); // primary only — deferred to the next tick
+  });
 
-    nowMs = 26_000; // crosses deadline of 25000
-    const final = await runLockRenewalTick(deps, state);
-    expect(final).toEqual({ kind: 'should_abort', reason: 'lock-renewal-failed' });
-    expect(audit.log.gaveUps).toHaveLength(1);
+  test('case 10d — ENG-E1 pin: 30s default verifies on the FIRST failed tick (15s), strictly safer than abort-at-30s', async () => {
+    // interval 15s, deadline 25s: at the t=15s tick, 15000 + 15000 >= 25000
+    // → the verify fires immediately on the first failure. This is the
+    // accepted timing behavior — a renewal(≤10s) + verify(≤10s) pair can
+    // span 20s and skip one tick via tickInFlight; benign because a
+    // verify-success re-extends the lease.
+    let calls = 0;
+    const deps: LockRenewalDeps = {
+      renewLock: async () => {
+        calls++;
+        if (calls === 1) throw new Error('first-tick blip');
+        return true;
+      },
+      audit: freshAudit().sink,
+      now: () => 15_000,
+      setTimeout: makeFakeTimer().setTimeout,
+    };
+    const state = makeState({ lastSuccessfulRenewalAt: 0 });
+    expect(await runLockRenewalTick(deps, state)).toEqual({ kind: 'ok' });
+    expect(calls).toBe(2);
+    expect(state.lastSuccessfulRenewalAt).toBe(15_000);
+  });
+
+  test('case 10e — cancelled() flips mid-verify: returns cancelled, no abort', async () => {
+    let cancelled = false;
+    let calls = 0;
+    const deps: LockRenewalDeps = {
+      renewLock: async () => {
+        calls++;
+        if (calls === 1) throw new Error('outage');
+        cancelled = true; // the job ends while the verify is in flight
+        return true;
+      },
+      audit: freshAudit().sink,
+      now: () => 26_000,
+      setTimeout: makeFakeTimer().setTimeout,
+    };
+    const state = makeState({ lastSuccessfulRenewalAt: 0, cancelled: () => cancelled });
+    const result = await runLockRenewalTick(deps, state);
+    expect(result).toEqual({ kind: 'cancelled' });
   });
 });
 
@@ -243,7 +382,9 @@ describe('runLockRenewalTick: lock_lost (token mismatch)', () => {
     };
     const state = makeState({ lastSuccessfulRenewalAt: 0 });
     const result = await runLockRenewalTick(deps, state);
-    expect(result).toEqual({ kind: 'lock_lost' });
+    // v0.46 (#4145): lock_lost names its cause — the fenced UPDATE matched
+    // 0 rows, the only CERTAIN loss signal.
+    expect(result).toEqual({ kind: 'lock_lost', cause: 'fenced-lost', via: 'renewal' });
     expect(audit.log.failures).toHaveLength(0);
     expect(audit.log.gaveUps).toHaveLength(0);
     expect(audit.log.recoveries).toHaveLength(0);
@@ -374,12 +515,13 @@ describe('runLockRenewalTick: audit defense-in-depth (codex C4)', () => {
     const deps: LockRenewalDeps = {
       renewLock: async () => { throw new Error('outage'); },
       audit,
-      now: () => 26_000,
+      // Past hardEvictMs (60000) so the verify-throws path reaches gave_up.
+      now: () => 61_000,
       setTimeout: makeFakeTimer().setTimeout,
     };
     const state = makeState({ lastSuccessfulRenewalAt: 0 });
     const result = await runLockRenewalTick(deps, state);
-    expect(result).toEqual({ kind: 'should_abort', reason: 'lock-renewal-failed' });
+    expect(result).toMatchObject({ kind: 'should_abort', reason: 'lock-renewal-failed' });
   });
 
   test('case 11c — audit.logSuccessAfterFailure throws: tick still returns ok, counter resets', async () => {
@@ -482,6 +624,42 @@ describe('resolveLockRenewalKnobs', () => {
     // a deliberate two-line edit (default + this test).
     expect(resolveLockRenewalKnobs({}, 30_000).maxFailuresForAudit).toBe(3);
   });
+
+  test('case 15a — hardEvictMs defaults to 2×lockDuration; env override + floor to soft deadline (#4145)', () => {
+    _resetKnobWarningsForTests();
+    expect(resolveLockRenewalKnobs({}, 30_000).hardEvictMs).toBe(60_000);
+    expect(resolveLockRenewalKnobs({ GBRAIN_LOCK_RENEWAL_HARD_EVICT_MS: '120000' }, 30_000).hardEvictMs).toBe(120_000);
+    // Below the soft deadline (25000) → warn-and-floor to the deadline.
+    const floored = resolveLockRenewalKnobs({ GBRAIN_LOCK_RENEWAL_HARD_EVICT_MS: '1000' }, 30_000);
+    expect(floored.hardEvictMs).toBe(25_000);
+  });
+
+  test('case 15b — CDX-10 relational validation: margin >= lease/2 and callTimeout > cadence are clamped', () => {
+    _resetKnobWarningsForTests();
+    // Margin 20000 >= 30000/2 → clamped back to the default (5000).
+    const m = resolveLockRenewalKnobs({ GBRAIN_LOCK_RENEWAL_SAFETY_MARGIN_MS: '20000' }, 30_000);
+    expect(m.safetyMarginMs).toBe(5_000);
+    // Call timeout 20000 > cadence 15000 → clamped to the cadence.
+    const c = resolveLockRenewalKnobs({ GBRAIN_LOCK_RENEWAL_CALL_TIMEOUT_MS: '20000' }, 30_000, 15_000);
+    expect(c.callTimeoutMs).toBe(15_000);
+    // A valid env override still wins untouched (env-beats-default, passes validation).
+    const ok = resolveLockRenewalKnobs({ GBRAIN_LOCK_RENEWAL_CALL_TIMEOUT_MS: '12000' }, 30_000, 15_000);
+    expect(ok.callTimeoutMs).toBe(12_000);
+  });
+
+  test('case 15c — per-job lease knob derivation: 300s lease gets capped 15s/30s defaults + 600s hardEvict', () => {
+    _resetKnobWarningsForTests();
+    const knobs = resolveLockRenewalKnobs({}, 300_000, 60_000);
+    expect(knobs.hardEvictMs).toBe(600_000);
+    // The lock/3 and lock/6 derivations CAP at 15s/30s for long leases —
+    // a 100s call timeout would wedge tickInFlight across cadence windows.
+    expect(knobs.callTimeoutMs).toBe(15_000);
+    expect(knobs.safetyMarginMs).toBe(30_000);
+    // 30s worker default keeps today's numbers exactly.
+    const legacy = resolveLockRenewalKnobs({}, 30_000, 15_000);
+    expect(legacy.callTimeoutMs).toBe(10_000);
+    expect(legacy.safetyMarginMs).toBe(5_000);
+  });
 });
 
 // issue #1678 (Codex #2): the bounded reconnect-once hook. NOT a withRetry on
@@ -553,19 +731,193 @@ describe('runLockRenewalTick: reconnect-once dep (issue #1678)', () => {
     expect(reconnectCalls).toBe(0);
   });
 
-  test('reconnect is NOT called when the tick aborts at the deadline', async () => {
+  test('reconnect IS called on a deadline DEFERRAL (CEO-F3: next tick needs a live pool)', async () => {
     let reconnectCalls = 0;
     const deps: LockRenewalDeps = {
       renewLock: async () => { throw new Error('write CONNECTION_ENDED'); },
       audit: freshAudit().sink,
-      // sinceLastSuccess = 30000 - 0 = 30000 >= deadline (30000-5000=25000) → abort
+      // Past the soft deadline (25000) but inside hardEvict (60000):
+      // primary throw → verify throw → DEFER, reconnect-once for next tick.
       now: () => 30_000,
       setTimeout: makeFakeTimer().setTimeout,
       reconnect: async () => { reconnectCalls++; },
     };
     const state = makeState({ lastSuccessfulRenewalAt: 0 });
     const result = await runLockRenewalTick(deps, state);
-    expect(result).toEqual({ kind: 'should_abort', reason: 'lock-renewal-failed' });
+    expect(result).toEqual({ kind: 'ok' }); // deferred, not aborted
+    expect(reconnectCalls).toBe(1);
+  });
+
+  test('reconnect is NOT called when the tick gives up past hardEvictMs', async () => {
+    let reconnectCalls = 0;
+    const deps: LockRenewalDeps = {
+      renewLock: async () => { throw new Error('write CONNECTION_ENDED'); },
+      audit: freshAudit().sink,
+      now: () => 61_000, // past hardEvict (60000) → gave_up
+      setTimeout: makeFakeTimer().setTimeout,
+      reconnect: async () => { reconnectCalls++; },
+    };
+    const state = makeState({ lastSuccessfulRenewalAt: 0 });
+    const result = await runLockRenewalTick(deps, state);
+    expect(result).toMatchObject({ kind: 'should_abort', reason: 'lock-renewal-failed' });
     expect(reconnectCalls).toBe(0); // pointless to reconnect when we're giving up the lock
+  });
+});
+
+// =============================================================================
+// v0.46 (#4145) — failure-cause classification + starvation telemetry
+// =============================================================================
+
+describe('runLockRenewalTick: telemetry (issue #4145)', () => {
+  test('case 13a — race timeout classifies as call-timeout (named error, not message-sniff)', async () => {
+    const audit = freshAudit();
+    const timer = makeFakeTimer();
+    const deps: LockRenewalDeps = {
+      renewLock: () => new Promise<boolean>(() => { /* hangs forever */ }),
+      audit: audit.sink,
+      now: () => 61_000, // past hardEvict so the verify-throws path aborts
+      setTimeout: timer.setTimeout,
+    };
+    const state = makeState({ lastSuccessfulRenewalAt: 0 });
+    const pending = runLockRenewalTick(deps, state);
+    timer.runAll(); // fire the PRIMARY race timeout
+    await new Promise(r => globalThis.setTimeout(r, 0)); // let the catch schedule the verify
+    timer.runAll(); // fire the VERIFY race timeout
+    const result = await pending;
+    expect(result).toMatchObject({ kind: 'should_abort', cause: 'call-timeout' });
+  });
+
+  test('case 13b — audit failure events carry cause + lateness + overlap_skips ctx (primary + deferred verify)', async () => {
+    const ctxLog: unknown[] = [];
+    const audit: LockRenewalAuditSinkLike = {
+      logFailure: (_id, _name, _attempt, _err, ctx) => { ctxLog.push(ctx); },
+      logSuccessAfterFailure: () => { /* noop */ },
+      logGaveUp: () => { /* noop */ },
+    };
+    const deps: LockRenewalDeps = {
+      renewLock: async () => { throw new Error('outage'); },
+      audit,
+      // lateness = max(0, 20000 - 0 - 15000) = 5000. 20000 + 15000 >= 25000
+      // → the verify fires (and also throws) → a second, deferred failure.
+      now: () => 20_000,
+      setTimeout: makeFakeTimer().setTimeout,
+      loadSnapshot: () => ({ load1: 28.5, cores: 32 }),
+    };
+    const state = makeState({ lastSuccessfulRenewalAt: 0, overlapSkips: 3 });
+    const result = await runLockRenewalTick(deps, state);
+    expect(result).toEqual({ kind: 'ok' });
+    expect(ctxLog).toHaveLength(2);
+    expect(ctxLog[0]).toMatchObject({
+      cause: 'refused',
+      lateness_ms: 5_000,
+      overlap_skips: 3,
+      load1: 28.5,
+      cores: 32,
+    });
+    expect(ctxLog[1]).toMatchObject({ cause: 'refused', deadline_deferred: true });
+    expect(state.consecutiveFailures).toBe(2); // primary + verify each count
+  });
+
+  test('case 13c — a THROWING loadSnapshot never breaks the tick (CEO-F2)', async () => {
+    const audit = freshAudit();
+    const deps: LockRenewalDeps = {
+      renewLock: async () => { throw new Error('outage'); },
+      audit: audit.sink,
+      now: () => 61_000, // past hardEvict → the verify-throws path aborts
+      setTimeout: makeFakeTimer().setTimeout,
+      loadSnapshot: () => { throw new Error('os.loadavg exploded'); },
+    };
+    const state = makeState({ lastSuccessfulRenewalAt: 0 });
+    const result = await runLockRenewalTick(deps, state);
+    // Still aborts cleanly; load fields simply absent.
+    expect(result).toMatchObject({ kind: 'should_abort', cause: 'refused' });
+    expect('load1' in result).toBe(false);
+  });
+
+  test('case 13d — onRenewalSuccess fires on success (R2-9 histogram reset hook) and its throw is swallowed', async () => {
+    let resets = 0;
+    const okDeps: LockRenewalDeps = {
+      renewLock: async () => true,
+      audit: freshAudit().sink,
+      now: () => 1000,
+      setTimeout: makeFakeTimer().setTimeout,
+      onRenewalSuccess: () => { resets++; },
+    };
+    expect(await runLockRenewalTick(okDeps, makeState())).toEqual({ kind: 'ok' });
+    expect(resets).toBe(1);
+
+    const throwingDeps: LockRenewalDeps = {
+      ...okDeps,
+      onRenewalSuccess: () => { throw new Error('histogram on fire'); },
+    };
+    expect(await runLockRenewalTick(throwingDeps, makeState())).toEqual({ kind: 'ok' });
+  });
+
+  test('case 13e — lateness baseline advances every tick (coalesced-timer semantics)', async () => {
+    let nowMs = 15_000; // exactly one interval after the seeded baseline (0)
+    const deps: LockRenewalDeps = {
+      renewLock: async () => true,
+      audit: freshAudit().sink,
+      now: () => nowMs,
+      setTimeout: makeFakeTimer().setTimeout,
+    };
+    const state = makeState();
+    await runLockRenewalTick(deps, state);
+    expect(state.lastTickFiredAt).toBe(15_000); // baseline advanced
+
+    // Next tick fires 61s later (starved past hardEvict — verify throws too):
+    // lateness = 76000 - 15000 - 15000 = 46000 attributes the miss to LOCAL
+    // starvation; sinceLastSuccess = 76000 - 15000 = 61000 >= 60000 → abort.
+    nowMs = 76_000;
+    const failDeps: LockRenewalDeps = { ...deps, renewLock: async () => { throw new Error('x'); } };
+    const result = await runLockRenewalTick(failDeps, state);
+    expect(result).toMatchObject({ kind: 'should_abort', latenessMs: 46_000, sinceLastSuccessMs: 61_000 });
+  });
+});
+
+describe('runLockRenewalTick: per-call cancellation signal (issue #6)', () => {
+  test('renewLock receives a live AbortSignal; not aborted on the happy path', async () => {
+    const audit = freshAudit();
+    const timer = makeFakeTimer();
+    let seenSignal: AbortSignal | undefined;
+    const deps: LockRenewalDeps = {
+      renewLock: async (_id, _tok, _dur, opts) => {
+        seenSignal = opts?.signal;
+        return true;
+      },
+      audit: audit.sink,
+      now: () => 1000,
+      setTimeout: timer.setTimeout,
+    };
+    const result = await runLockRenewalTick(deps, makeState());
+    expect(result.kind).toBe('ok');
+    expect(seenSignal).toBeInstanceOf(AbortSignal);
+    expect(seenSignal!.aborted).toBe(false);
+  });
+
+  test('hung renewLock: the timeout aborts the per-call signal so the query is cancelled, not orphaned', async () => {
+    const audit = freshAudit();
+    const timer = makeFakeTimer();
+    let seenSignal: AbortSignal | undefined;
+    const deps: LockRenewalDeps = {
+      renewLock: (_id, _tok, _dur, opts) => {
+        seenSignal = opts?.signal;
+        return new Promise<boolean>(() => { /* hangs forever — abandoned racer */ });
+      },
+      audit: audit.sink,
+      now: () => 1000,
+      setTimeout: timer.setTimeout,
+    };
+    // Renewed recently: the timeout counts as failure #1, not a give-up.
+    const state = makeState({ lastSuccessfulRenewalAt: 1000 });
+    const tick = runLockRenewalTick(deps, state);
+    // The race installs the timeout synchronously; firing it must abort the
+    // per-call signal (this is what releases the checked-out pool slot).
+    timer.runAll();
+    const result = await tick;
+    expect(result.kind).toBe('ok'); // counter bumped, deadline not yet crossed
+    expect(state.consecutiveFailures).toBe(1);
+    expect(seenSignal).toBeInstanceOf(AbortSignal);
+    expect(seenSignal!.aborted).toBe(true);
   });
 });

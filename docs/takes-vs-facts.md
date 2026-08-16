@@ -14,10 +14,10 @@ The epistemological layer. WHO believes WHAT, with confidence weight and time.
 - **Scale:** 100K+ rows across thousands of holders in a mature brain
 
 **Example takes:**
-- `holder=people/garry-tan kind=bet` "AI will replace 50% of coding by 2030" (w=0.75)
-- `holder=people/jared-friedman kind=take` "Momo has strong retention" (w=0.80)
-- `holder=world kind=fact` "Clipboard raised $100M Series C" (w=1.0)
-- `holder=brain kind=hunch` "Garry has a hero/rescuer pattern" (w=0.70)
+- `holder=people/alice-example kind=bet` "AI will replace 50% of coding by 2030" (w=0.75)
+- `holder=people/bob-example kind=take` "widget-co has strong retention" (w=0.80)
+- `holder=world kind=fact` "acme-example raised a Series C" (w=1.0)
+- `holder=brain kind=hunch` "alice-example has a hero/rescuer pattern" (w=0.70)
 
 **Query surface:** `gbrain takes list`, `gbrain takes search`, `gbrain think`
 
@@ -32,9 +32,9 @@ Personal knowledge from the brain owner's conversations. Real-time capture.
 - **Bridge:** Dream cycle `consolidate` phase promotes hot facts → cold takes nightly
 
 **Example facts:**
-- `kind=event` "I have a meeting with Brian tomorrow"
+- `kind=event` "I have a meeting with alice-example tomorrow"
 - `kind=preference` "I don't drink coffee"
-- `kind=commitment` "We decided on nesting custody"
+- `kind=commitment` "We decided to move the offsite to March"
 - `kind=belief` "I think the market is overheated"
 
 **Query surface:** `gbrain recall`, MCP `_meta.brain_hot_memory`
@@ -42,8 +42,8 @@ Personal knowledge from the brain owner's conversations. Real-time capture.
 ## The Category Error
 
 **Never dump takes into the facts table.** Takes include other people's attributed
-beliefs (Jared's assessment of a company, PG's view on schools, a founder's
-revenue claims). These are NOT the brain owner's personal facts.
+beliefs (a partner's assessment of a company, an investor's view on markets, a
+founder's revenue claims). These are NOT the brain owner's personal facts.
 
 **Never dump facts into the takes table without transformation.** Facts are
 scoped to what the owner said in conversation. They become takes only through
@@ -85,7 +85,7 @@ First full takes extraction run on a ~100K-page brain:
 
 ### Key Learnings for Extraction Prompts
 
-1. **Holder ≠ subject.** "Garry has a hero/rescuer pattern" → holder=brain, NOT people/garry-tan
+1. **Holder ≠ subject.** "alice-example has a hero/rescuer pattern" → holder=brain, NOT people/alice-example
 2. **Atomic claims.** Split compound claims into separate rows
 3. **Amplification ≠ endorsement.** Retweet-only → max weight 0.55
 4. **Self-reported ≠ verified.** "Reports 7 figures" → holder=person, weight=0.75, NOT world/1.0

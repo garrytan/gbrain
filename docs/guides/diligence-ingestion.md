@@ -53,6 +53,8 @@ Write extracted content to `brain/diligence/{company}/{doc-name}.md`:
 **Step 5: Save Raw Files.**
 Copy original PDFs/files to `brain/diligence/{company}/.raw/`
 Preserve originals for reference. The diarized version is for search.
+This is safe by design: `.raw/` directories are excluded from sync, so the
+originals never enter the search index — only your extracted markdown does.
 
 **Step 6: Create or Update index.md.**
 Every diligence directory needs an `index.md`:
@@ -103,7 +105,8 @@ cd brain/ && git add -A && git commit -m "diligence: {Company} — {doc type} in
 
 **Step 9: Publish (if asked).**
 When the user wants a shareable brief, create a password-protected
-published version. Strip internal notes and raw assessment language.
+published version via the `publish` skill (`skills/publish/`). Strip
+internal notes and raw assessment language.
 
 ### Quality Bar
 

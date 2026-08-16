@@ -43,6 +43,9 @@ export async function runInitNudge(engine: BrainEngine): Promise<void> {
     let linkedCount = 0;
     let timelineCount = 0;
     let takesCount = 0;
+    // -1 = the page-count probe failed: fail-open sentinel, treat as non-empty
+    // so current behavior is preserved when the count is unknown.
+    let totalPages = -1;
     let checksRan = 0;
     let checksAttempted = 0;
     let partial = false;
@@ -82,6 +85,11 @@ export async function runInitNudge(engine: BrainEngine): Promise<void> {
         [],
         { signal: controller.signal },
       ),
+      engine.executeRaw<{ count: string | number }>(
+        `SELECT COUNT(*) AS count FROM pages WHERE deleted_at IS NULL`,
+        [],
+        { signal: controller.signal },
+      ),
     ]);
     clearTimeout(timer);
 
@@ -99,7 +107,15 @@ export async function runInitNudge(engine: BrainEngine): Promise<void> {
       else if (i === 2) linkedCount = n;
       else if (i === 3) timelineCount = n;
       else if (i === 4) takesCount = n;
+      else if (i === 5) totalPages = n;
     }
+
+    // A brand-new EMPTY brain has no "opportunities" — telling a fresh user
+    // "0 takes" at the end of their first init is jargon-noise on the
+    // activation surface. Suppress the ENTIRE nudge on empty (including the
+    // partial-checks notice below).
+    const brainEmpty = totalPages === 0;
+    if (brainEmpty) return;
 
     // Aggregate: any non-zero metric triggers the nudge.
     const linkCoverage = totalEntities > 0 ? linkedCount / totalEntities : 1;
@@ -109,7 +125,6 @@ export async function runInitNudge(engine: BrainEngine): Promise<void> {
       || (totalEntities > 0 && linkCoverage < 0.7)
       || (totalEntities > 0 && timelineCoverage < 0.9)
       || takesCount === 0;
-
     if (!hasRecommendations && !partial) return;
 
     // Emit one-line nudge. Be terse — init is the activation surface.
@@ -122,6 +137,13 @@ export async function runInitNudge(engine: BrainEngine): Promise<void> {
       parts.push(`timeline coverage ${Math.round(timelineCoverage * 100)}%`);
     }
     if (takesCount === 0) parts.push('0 takes');
+
+    if (parts.length === 0 && partial) {
+      process.stderr.write(
+        `\n[onboard] Init checks incomplete (${checksRan}/${checksAttempted}) — run 'gbrain onboard --check' for full recommendations.\n`,
+      );
+      return;
+    }
 
     process.stderr.write(
       `\n[onboard] Brain has opportunities: ${parts.join(', ')}.\n` +

@@ -112,14 +112,6 @@ export const DIRECTORY_RULES: DirectoryRule[] = [
     datePattern: 'filename',
     titleStrategy: 'filename',
   },
-  {
-    pathPrefix: 'apple notes/jan bowman notes/',
-    type: 'apple-note',
-    source: 'apple-notes',
-    tags: ['therapy', 'jan-bowman'],
-    datePattern: 'filename',
-    titleStrategy: 'filename',
-  },
   // Catch-all for Apple Notes not in a subfolder
   {
     pathPrefix: 'apple notes/',

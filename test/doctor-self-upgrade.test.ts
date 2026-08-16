@@ -6,6 +6,7 @@ import { withEnv } from './helpers/with-env.ts';
 import { checkSelfUpgradeHealth } from '../src/commands/doctor.ts';
 import { writeUpdateCache } from '../src/core/self-upgrade.ts';
 import { logSelfUpgrade } from '../src/core/audit/self-upgrade-audit.ts';
+import { VERSION } from '../src/version.ts';
 
 async function withHome<T>(fn: (home: string) => T | Promise<T>): Promise<T> {
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-doctor-su-'));
@@ -40,7 +41,18 @@ describe('checkSelfUpgradeHealth', () => {
       const c = checkSelfUpgradeHealth();
       expect(c.status).toBe('ok');
       expect(c.message).toContain('update available');
-      expect(c.message).toContain('0.99.0');
+      expect(c.message).toContain('-> 0.99.0');
+    });
+  });
+
+  test('fresh cache with latest == running version → suppressed (no update-available nag)', async () => {
+    await withHome(() => {
+      // Stale/foreign cache: the recorded latest is the version we are already
+      // running. The shared pendingUpgradeVersion guard must suppress the nag.
+      writeUpdateCache({ kind: 'upgrade_available', current: VERSION, latest: VERSION });
+      const c = checkSelfUpgradeHealth();
+      expect(c.status).toBe('ok');
+      expect(c.message).not.toContain('update available');
     });
   });
 

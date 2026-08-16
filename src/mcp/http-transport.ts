@@ -31,8 +31,11 @@ import { buildToolDefs } from './tool-defs.ts';
 import { operations } from '../core/operations.ts';
 import type { AuthInfo } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
-import { dispatchToolCall } from './dispatch.ts';
-import { filterOpsForSurface } from './surface.ts';
+import { dispatchToolCall, requestLogStatusForResult } from './dispatch.ts';
+import { parseStrictParamsMode } from './validate-params.ts';
+import { filterOpsForSurface, clampSurface, type McpSurface } from './surface.ts';
+import { disabledOpsForPublishGates } from './publish-gates.ts';
+import { loadConfig } from '../core/config.ts';
 import { buildDefaultLimiters, type RateLimiter } from './rate-limit.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { parseLegacyTokenScope, parseTakesHoldersAllowList, coerceLegacyPermissions } from '../core/legacy-token-scope.ts';
@@ -65,9 +68,13 @@ interface HttpTransportOptions {
   /**
    * MEMORY_VERBS v1 [c1]: tool-surface mode for this transport (the SECOND
    * HTTP path — the OAuth path in serve-http.ts carries its own). 'verbs' =
-   * exactly the five protocol verbs; 'full' (default) = everything.
+   * exactly the seven protocol verbs; 'starter' (WP4) = the STARTER_OPS
+   * daily-driver set; 'full' (default) = everything. Legacy bearer tokens
+   * have no oauth_clients row, so there is no per-client surface here — the
+   * transport surface (clamped by GBRAIN_MCP_FORCE_SURFACE, narrow-only)
+   * applies to every caller.
    */
-  surface?: 'verbs' | 'full';
+  surface?: McpSurface;
 }
 
 interface AuthResult {
@@ -164,12 +171,24 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
   const bodyCap = envInt('GBRAIN_HTTP_MAX_BODY_BYTES', DEFAULT_BODY_CAP);
   const corsAllowlist = parseCorsAllowlist();
   // MEMORY_VERBS v1 [c1]: surface filter applies to THIS transport too —
-  // the advertised list AND dispatch (allowedOps), fail-closed.
-  const surface = opts.surface ?? 'full';
-  const surfacedOps = filterOpsForSurface(operations, surface);
+  // the advertised list AND dispatch (allowedOps), fail-closed. WP4: the
+  // GBRAIN_MCP_FORCE_SURFACE kill switch min()s in (narrow-only, FOV-6a);
+  // resolved once at startup — this transport builds its tool list once.
+  const surface = clampSurface(opts.surface ?? 'full');
+  // WP1/D7: this is a network transport — localOnly ops (operator-filesystem
+  // reach) never appear in its catalog, matching serve-http's filter. The
+  // dispatch-layer backstop denies them even if a caller guesses the name.
+  const surfacedOps = filterOpsForSurface(operations.filter(op => !op.localOnly), surface);
   const surfaceAllowedOps: ReadonlySet<string> | undefined =
     surface === 'full' ? undefined : new Set(surfacedOps.map(o => o.name));
-  const tools = buildToolDefs(surfacedOps);
+  // WP3: strict-params schema emission resolved ONCE at startup from the FILE
+  // config plane — this transport builds its tool list once, so a
+  // `mcp.strict_params` flip needs a restart here (deliberate; the OAuth
+  // serve-http path re-reads dual-plane per request). Dispatch-side
+  // enforcement still resolves per call.
+  const fileConfig = loadConfig();
+  const strictParams = parseStrictParamsMode(fileConfig?.mcp?.strict_params) === 'reject';
+  const tools = buildToolDefs(surfacedOps, { strictParams });
 
   /**
    * v0.41.3 (T6): single consolidated CORS header builder. Pre-fix there were
@@ -391,9 +410,23 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
 
       // tools/list
       if (method === 'tools/list') {
+        // WP1/E5 truthful catalog on THIS transport too: publish-gated ops
+        // (`Operation.publishGateKey`) are hidden while their gate resolves
+        // off. Read per request (dual-plane, DB > file > false) so a
+        // `gbrain config set mcp.publish_skills true` takes effect on the
+        // next list with no restart — matching the OAuth transport. The
+        // resolver never throws (read failure = hidden, the fail-closed
+        // consent posture); the in-handler gates stay as the call-time
+        // backstop. Pre-fix this transport listed the gated ops
+        // unconditionally, so gates-off served the exact listed-but-denied
+        // catalog lie E5 (test/truthful-catalog.e2e-lite.test.ts) pins out.
+        const gateDisabled = await disabledOpsForPublishGates(engine, fileConfig);
+        const visibleTools = gateDisabled.size === 0
+          ? tools
+          : tools.filter(t => !gateDisabled.has(t.name));
         logRequest(auth.tokenName!, 'tools/list', 'success', Date.now() - startedMs);
         return Response.json(
-          { result: { tools }, jsonrpc: '2.0', id },
+          { result: { tools: visibleTools }, jsonrpc: '2.0', id },
           { headers: corsHeaders(origin) },
         );
       }
@@ -418,6 +451,9 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         }
         const result = await dispatchToolCall(engine, toolName, args, {
           remote: true,
+          // WP1/D7: network transport — the dispatch-layer localOnly
+          // backstop keys off this marker.
+          transport: 'http',
           takesHoldersAllowList: auth.takesHoldersAllowList,
           sourceId: auth.sourceId,
           ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),
@@ -427,8 +463,13 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           // MEMORY_VERBS v1 [c1/c2]: fail-closed surface enforcement here too.
           ...(surfaceAllowedOps ? { allowedOps: surfaceAllowedOps } : {}),
           surface,
+          // WP4 (D2): this transport has no per-client rows, so its surface
+          // IS the ceiling request_tools bounds catalog + persist by.
+          surfaceCeiling: surface,
         });
-        const status = result.isError ? 'error' : 'success';
+        // Same status taxonomy as the OAuth transport (denied_after_list /
+        // success_with_warnings feed the amendment-33 metric + E4 usage).
+        const status = requestLogStatusForResult(result);
         logRequest(auth.tokenName!, `tools/call:${toolName}`, status, Date.now() - startedMs);
         return Response.json(
           { result, jsonrpc: '2.0', id },

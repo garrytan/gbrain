@@ -6,7 +6,7 @@
  * shape, validation, and flag parsing.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -229,6 +229,37 @@ describe('sources list', () => {
 
     const count = calls.find(c => c.sql.includes('COUNT(*)::int AS n FROM pages'));
     expect(count?.sql).toContain('deleted_at IS NULL');
+  });
+
+  test('distinguishes explicit false / absent key / explicit true in the human-readable label', async () => {
+    const { engine } = makeStub({
+      'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at': [
+        { id: 'wiki', name: 'wiki', local_path: '/tmp/wiki', last_commit: null, last_sync_at: null, config: '{"federated":true}', created_at: new Date() },
+        { id: 'yc-media', name: 'yc-media', local_path: '/tmp/yc', last_commit: null, last_sync_at: null, config: '{"federated":false}', created_at: new Date() },
+        { id: 'gstack', name: 'gstack', local_path: '/tmp/gstack', last_commit: null, last_sync_at: null, config: '{}', created_at: new Date() },
+      ],
+      'COUNT(*)::int AS n FROM pages': [{ n: 0 }],
+    });
+    const lines: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); });
+    try {
+      await runSources(engine, ['list']);
+    } finally {
+      logSpy.mockRestore();
+    }
+    const wikiLine = lines.find(l => l.includes('wiki'))!;
+    const ycLine = lines.find(l => l.includes('yc-media'))!;
+    const gstackLine = lines.find(l => l.includes('gstack'))!;
+    // Explicit `federated: true` — unchanged.
+    expect(wikiLine).toContain('federated');
+    // Explicit `federated: false` (`sources unfederate`) — fully isolated.
+    expect(ycLine).toContain('isolated');
+    // Absent key (bare `sources add`, config={}) is NOT the same as explicit
+    // false: it doesn't appear in others' federated reads, but its own
+    // unqualified reads still widen outward (#1434/#2561/#2928). The label
+    // must say something other than "isolated", which overstates it.
+    expect(gstackLine).not.toContain('isolated');
+    expect(gstackLine).toContain('unset');
   });
 });
 

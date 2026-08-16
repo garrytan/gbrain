@@ -1,0 +1,40 @@
+# HEARTBEAT.md
+
+Session-triggered schedules for {{AGENT_NAME}}. These are cadence-prompted jobs
+that fire at turn/session boundaries **while the harness is open** — nothing runs
+while the laptop sleeps or the app is closed. (Always-on 24/7 schedules are what a
+hosted brain provides; this file is the honest desktop contract.)
+
+## The silence contract
+
+Most checks should produce **no visible output**. Deliver only when at least one is
+true: something is time-sensitive and {{PRINCIPAL_NAME}} does not know yet; a
+watched thing changed materially; a scheduled deliverable is due; something failed
+in a way {{PRINCIPAL_NAME}} must decide about. Otherwise: work silently, write to
+memory, stay quiet. Never narrate quiet-hours state.
+
+## Before anything
+
+Verify the time first: `TZ={{PRINCIPAL_TIMEZONE}} date` — never compute local time
+in your head. Quiet hours: {{QUIET_HOURS}} (proactive output waits; direct requests
+are always answered).
+
+## Due-job list
+
+Checked at session start and turn boundaries. Every job ships DISABLED — the
+enable ritual is one at a time: run the job manually first, confirm the output
+is worth delivering, then (and only then) flip its Enabled cell to `yes`. Never
+enable two jobs in the same session; you cannot tell which one earned its keep.
+
+| Job | Cadence (session-triggered) | Enabled | What |
+|---|---|---|---|
+| commitments-check | first session of the day | no | Scan MEMORY.md open commitments; surface anything due or overdue. |
+| memory-prune | weekly-equivalent | no | The MEMORY.md maintenance ritual (promote / demote / cut). |
+| brain-hygiene | weekly-equivalent | no | `gbrain doctor`; relay anything red. |
+| morning-briefing | first session after 06:00 | no | One screen: due today, waiting on, worth knowing. No filler — a skipped briefing costs less than an empty one. |
+| ambient-delta | every session start + turn boundary | no | `gbrain delta --session-id <thread> --budget-tokens 2000` — pull "what changed since my last wake" (new/updated pages, new facts, thread updates), deduped per session. Zero-LLM. Inject the returned block; stay silent when empty. Pair with `gbrain context-pack --entities <standing> --budget-tokens 4000` at session start / after compaction to warm context. See docs/guides/ambient-recall.md. |
+
+Cadence bookkeeping lives in `state/heartbeat-state.local.json` (machine-local,
+not committed).
+
+{{HEARTBEAT_CADENCE}}

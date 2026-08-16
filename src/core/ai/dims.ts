@@ -24,6 +24,9 @@ const VOYAGE_OUTPUT_DIMENSION_MODELS = new Set([
   'voyage-4-large',
   'voyage-4',
   'voyage-4-lite',
+  // voyage-code-4: hosted, flexible dims 256/512/1024/2048 per Voyage's
+  // embeddings docs (verified 2026-08-15).
+  'voyage-code-4',
   'voyage-3-large',
   'voyage-3.5',
   'voyage-3.5-lite',
@@ -309,9 +312,12 @@ export function dimsProviderOptions(
       // provider serving it) supports Matryoshka truncation via `dimensions`.
       // Native sizes: 0.6B=1024, 4B=2560, 8B=4096. Without `dimensions`,
       // Ollama returns the native size and brains configured for narrower
-      // widths hard-fail with a dim-mismatch error. Pattern match the bare
-      // model name + any `:tag` (e.g. `qwen3-embedding:4b`, `qwen3-embedding:0.6b`).
-      if (modelId === 'qwen3-embedding' || modelId.startsWith('qwen3-embedding:')) {
+      // widths hard-fail with a dim-mismatch error. Two naming schemes reach
+      // this path: Ollama's colon-tag form (`qwen3-embedding:4b`) and the
+      // hyphenated hub form used by OpenRouter/HF-style routers
+      // (`qwen/qwen3-embedding-8b` — org prefix stripped to
+      // `qwen3-embedding-8b` above). Match both.
+      if (bareModelId === 'qwen3-embedding' || bareModelId.startsWith('qwen3-embedding:') || bareModelId.startsWith('qwen3-embedding-')) {
         // Only send `dimensions` when it actually differs from the model's
         // native width. Fixed-dim OpenAI-compatible backends serving this
         // family (e.g. vLLM) reject the parameter outright with HTTP 400
@@ -323,8 +329,11 @@ export function dimsProviderOptions(
           'qwen3-embedding:0.6b': 1024,
           'qwen3-embedding:4b': 2560,
           'qwen3-embedding:8b': 4096,
+          'qwen3-embedding-0.6b': 1024,
+          'qwen3-embedding-4b': 2560,
+          'qwen3-embedding-8b': 4096,
         };
-        if (QWEN3_EMBEDDING_NATIVE_DIMS[modelId] === dims) return undefined;
+        if (QWEN3_EMBEDDING_NATIVE_DIMS[bareModelId] === dims) return undefined;
         return { openaiCompatible: { dimensions: dims } };
       }
       // MiniMax embo-01 takes a `type: 'db' | 'query'` field for asymmetric

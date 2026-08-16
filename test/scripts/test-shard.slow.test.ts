@@ -130,33 +130,68 @@ describe('test-shard.sh — LPT balance contract', () => {
   });
 
   function totalsFor(shards: string[][]): number[] {
-    // Use 30ms as the cold-start fallback (matches mine-shard-weights
-    // median observation). When weights are loaded, missing files get
-    // the corpus median anyway via sharding.ts.
+    // p75 fallback mirroring sharding.ts's computeQuantile choice (the
+    // weight distribution is right-skewed and missing files skew heavy).
+    const sorted = Array.from(weightsMap.values()).sort((a, b) => a - b);
     const fallback = weightsLoaded
-      ? Array.from(weightsMap.values()).sort((a, b) => a - b)[
-          Math.floor(weightsMap.size / 2)
-        ] ?? 30
+      ? sorted[Math.min(sorted.length - 1, Math.ceil(0.75 * sorted.length) - 1)] ?? 30
       : 1;
     return shards.map((s) =>
       s.reduce((acc, f) => acc + (weightsMap.get(f) ?? fallback), 0),
     );
   }
 
-  it('4-shard wallclock imbalance ratio ≤ 1.5', () => {
-    const shards = [1, 2, 3, 4].map(s => dryRunList(s, 4));
-    for (const s of shards) expect(s.length).toBeGreaterThan(0);
-    const totals = totalsFor(shards);
-    const ratio = Math.max(...totals) / Math.min(...totals);
-    expect(ratio).toBeLessThanOrEqual(1.5);
+  // CI runs THIS many shards (test.yml matrix). The old version of this
+  // test asserted 4- and 6-shard splits — configurations nothing runs.
+  const CI_SHARDS = 10;
+
+  it('CI_SHARDS matches the test.yml matrix (parsed, not regexed)', () => {
+    const fs = require('fs');
+    const yaml = require('js-yaml');
+    const wf = yaml.load(
+      fs.readFileSync(resolve(REPO_ROOT, '.github/workflows/test.yml'), 'utf8'),
+    ) as { jobs: { test: { strategy: { matrix: { shard: unknown[] } } } } };
+    const matrix = wf.jobs.test.strategy.matrix.shard;
+    expect(Array.isArray(matrix)).toBe(true);
+    expect(matrix.length).toBe(CI_SHARDS);
   });
 
-  it('6-shard wallclock imbalance ratio ≤ 1.5', () => {
-    const shards = [1, 2, 3, 4, 5, 6].map(s => dryRunList(s, 6));
+  it(`${CI_SHARDS}-shard wallclock imbalance ratio ≤ 1.5 (the configuration CI actually runs)`, () => {
+    const shards = Array.from({ length: CI_SHARDS }, (_, i) => dryRunList(i + 1, CI_SHARDS));
     for (const s of shards) expect(s.length).toBeGreaterThan(0);
     const totals = totalsFor(shards);
     const ratio = Math.max(...totals) / Math.min(...totals);
     expect(ratio).toBeLessThanOrEqual(1.5);
+  }, 60_000);
+
+  // The two guards below are what make the ratio assertion above MEAN
+  // something: recomputing totals with the same weights the partitioner
+  // used is near-tautological — unless the weights actually cover the
+  // corpus and refer to real files. Weight rot (files added without a
+  // re-mine, or renamed away from their entries) used to be invisible:
+  // 45% of the corpus once rode a 30ms median fallback while really
+  // averaging ~4s, and the "balanced" partition was balanced on fiction.
+  it('weights cover ≥70% of matrix-eligible files (anti-rot gate)', () => {
+    const all = Array.from(
+      new Set(Array.from({ length: CI_SHARDS }, (_, i) => dryRunList(i + 1, CI_SHARDS)).flat()),
+    );
+    expect(all.length).toBeGreaterThan(0);
+    const covered = all.filter((f) => weightsMap.has(f)).length;
+    const coverage = covered / all.length;
+    // Regenerate from the latest green Test run:
+    //   bun run scripts/mine-shard-weights.ts --run <run id>
+    expect(coverage).toBeGreaterThanOrEqual(0.7);
+  }, 60_000);
+
+  it('no stale weight keys — every entry names a tracked file', () => {
+    const tracked = new Set(
+      execFileSync('git', ['ls-files', 'test', 'evals'], { cwd: REPO_ROOT, encoding: 'utf-8' })
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean),
+    );
+    const stale = [...weightsMap.keys()].filter((k) => !tracked.has(k));
+    expect(stale).toEqual([]);
   });
 
   it('6-shard partition is deterministic across runs', () => {

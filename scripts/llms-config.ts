@@ -176,7 +176,7 @@ export const SECTIONS: DocSection[] = [
       {
         title: "docs/ai-providers/zeroentropy.md",
         description:
-          "ZeroEntropy zembed-1 embedding + zerank-2 reranker (hosted): API key, embedding switch, reranker config.",
+          "ZeroEntropy zembed-1 embedding + zerank-2 reranker (hosted): API key, embedding switch, reranker config. (deprecated; hosted sunset 2026-09-04)",
         path: "docs/ai-providers/zeroentropy.md",
         // Setup walkthrough — discoverable in the index, not inlined in the
         // single-fetch bundle (keeps llms-full.txt under FULL_SIZE_BUDGET).

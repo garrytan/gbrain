@@ -14,6 +14,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test
 import { randomUUIDv7 } from 'bun';
 import { PostgresEngine } from 'gbrain';
 import { BudgetExceededError, reserve } from '../../src/core/minions/budget-meter.ts';
+import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 
 const databaseUrl = process.env.DATABASE_URL;
 const describePostgres = databaseUrl ? describe : describe.skip;
@@ -24,6 +25,7 @@ describePostgres('MCP spend reservation — Postgres concurrency', () => {
 
   beforeAll(async () => {
     engine = new PostgresEngine();
+    assertSafeE2eDatabaseUrl(databaseUrl!);
     await engine.connect({ database_url: databaseUrl!, poolSize: 16 });
     await engine.initSchema();
   });

@@ -27,6 +27,7 @@ describe('rehydrateJobDates', () => {
       started_at: '2026-07-21T04:02:12.001Z',
       finished_at: '2026-07-21T04:02:14.900Z',
       lock_until: '2026-07-21T04:03:12.001Z',
+      timeout_at: '2026-07-21T04:32:12.001Z',
       delay_until: null,
     };
     const job = rehydrateJobDates(wire);
@@ -35,6 +36,7 @@ describe('rehydrateJobDates', () => {
     expect(job.started_at).toBeInstanceOf(Date);
     expect(job.finished_at).toBeInstanceOf(Date);
     expect(job.lock_until).toBeInstanceOf(Date);
+    expect(job.timeout_at).toBeInstanceOf(Date);
     expect((job.started_at as unknown as Date).toISOString()).toBe('2026-07-21T04:02:12.001Z');
     // Date math used by formatJob's duration column works post-rehydration.
     expect((job.finished_at as unknown as Date).getTime() - (job.started_at as unknown as Date).getTime())

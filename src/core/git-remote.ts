@@ -393,7 +393,7 @@ export function hasTrackedContent(path: string): boolean {
  * transport. Default stays `never`. These ops act on an ALREADY-validated origin
  * (set + checked at clone time); `http.followRedirects=false` is the live guard.
  */
-function durableSsrfFlags(): string[] {
+export function durableSsrfFlags(): string[] {
   const fileAllow = process.env.GBRAIN_GIT_ALLOW_FILE_TRANSPORT === '1' ? 'always' : 'never';
   return [
     '-c', 'http.followRedirects=false',

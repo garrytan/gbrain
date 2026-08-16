@@ -100,6 +100,13 @@ describe('#2185 acceptance — real usage stays legal', () => {
     expect(validateCommandFlags('sync', ['--full'])).toBeNull();
   });
 
+  test('sources push accepts --message/--allow-unverified-remote (registry-regen regression)', () => {
+    // A stale committed registry rejected these post-merge flags until
+    // `bun run build:flag-registry` was re-run — pin the accepted form.
+    expect(validateCommandFlags('sources', ['push', '--message', 'x', '--allow-unverified-remote'])).toBeNull();
+    expect(validateCommandFlags('sources', ['push', BOGUS])).toBe(BOGUS);
+  });
+
   // Pre-landing review regression: the validator rejected the CLI-local
   // flags makeContext consumes OUTSIDE the op contract — `gbrain search
   // "x" --source y` and `--dry-run` invocations exited 1 as unknown flags.

@@ -4,12 +4,12 @@
  * redirected to a tmp dir; installCron:false so the suite never touches launchd.
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, statSync, chmodSync } from 'fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, statSync, chmodSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { execFileSync } from 'child_process';
 import {
-  hardenBrainRepo, unhardenBrainRepo, acceptPat,
+  hardenBrainRepo, unhardenBrainRepo, acceptPat, maintainPushLog,
 } from '../src/core/brain-repo-durability.ts';
 
 const PAT = 'ghp_TESTSECRETTOKEN0123456789abcdef';
@@ -53,7 +53,9 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'brd-'));
   oldHome = process.env.HOME; oldGbrainHome = process.env.GBRAIN_HOME;
   process.env.HOME = mkdtempSync(join(root, 'home-'));
-  process.env.GBRAIN_HOME = join(process.env.HOME, '.gbrain');
+  // CX2-8: GBRAIN_HOME is a PARENT dir (config.ts semantics — `.gbrain` is
+  // appended by the resolver), so the effective home is $HOME/.gbrain.
+  process.env.GBRAIN_HOME = process.env.HOME;
   process.env.GBRAIN_GIT_ALLOW_FILE_TRANSPORT = '1';
   makePair();
 });
@@ -124,7 +126,7 @@ describe('hardenBrainRepo', () => {
 
   test('D11 — writes a repo-scoped credential (0600 store, local config, ownership key)', async () => {
     await harden();
-    const store = join(process.env.GBRAIN_HOME!, 'git-credentials');
+    const store = join(process.env.HOME!, '.gbrain', 'git-credentials');
     expect(existsSync(store)).toBe(true);
     expect(statSync(store).mode & 0o077).toBe(0); // not group/other readable
     expect(git(work, 'config', '--local', '--get', 'credential.helper')).toContain('store --file');
@@ -134,7 +136,7 @@ describe('hardenBrainRepo', () => {
   test('D11 — reuses an existing credential.helper (no plaintext store written)', async () => {
     git(work, 'config', 'credential.helper', 'osxkeychain');
     await harden();
-    const store = join(process.env.GBRAIN_HOME!, 'git-credentials');
+    const store = join(process.env.HOME!, '.gbrain', 'git-credentials');
     expect(existsSync(store)).toBe(false);
     expect(git(work, 'config', '--local', '--get', 'credential.helper')).toBe('osxkeychain');
   });
@@ -184,6 +186,40 @@ describe('hardenBrainRepo', () => {
     chmodSync(helperPath, 0o644);
     await harden();
     expect(statSync(helperPath).mode & 0o111).toBeTruthy(); // exec bit restored
+  });
+
+  test('CX2-3 — parent-repo-aware: a subdirectory target hardens the repo ROOT', async () => {
+    // Workspace layout: the source dir is `repo/brain` while the enclosing
+    // repo owns `.git`. Pre-fix the `.git` assertion failed on the subdir.
+    const sub = join(work, 'brain');
+    mkdirSync(sub, { recursive: true });
+    writeFileSync(join(sub, 'note.md'), '# note\n');
+    git(work, 'add', 'brain/note.md'); git(work, 'commit', '-qm', 'brain dir');
+    const r = await hardenBrainRepo({ repoPath: sub, sourceId: 'wiki', pat: PAT, installCron: false });
+    expect(r.repo_path).toBe(git(work, 'rev-parse', '--show-toplevel'));
+    // scaffolding landed at the ROOT, not inside brain/
+    expect(existsSync(join(work, 'scripts', 'brain-commit-push.sh'))).toBe(true);
+    expect(existsSync(join(sub, 'scripts'))).toBe(false);
+    expect(r.needs_attention).toEqual([]);
+  });
+
+  test('S3#10 — maintainPushLog chmods 0600 and rotates at 1MB', async () => {
+    const home = join(process.env.HOME!, '.gbrain');
+    mkdirSync(home, { recursive: true });
+    const log = join(home, 'brain-push.log');
+    writeFileSync(log, 'x'.repeat(1024 * 1024 + 1), { mode: 0o644 });
+    maintainPushLog();
+    // rotated: predecessor kept as .1, fresh log is empty + 0600
+    expect(existsSync(`${log}.1`)).toBe(true);
+    expect(readFileSync(log, 'utf-8')).toBe('');
+    expect(statSync(log).mode & 0o077).toBe(0);
+    // small log: chmod only, no rotation
+    rmSync(`${log}.1`);
+    writeFileSync(log, 'small\n', { mode: 0o644 });
+    maintainPushLog();
+    expect(existsSync(`${log}.1`)).toBe(false);
+    expect(readFileSync(log, 'utf-8')).toBe('small\n');
+    expect(statSync(log).mode & 0o077).toBe(0);
   });
 });
 

@@ -14,6 +14,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { assertSafeE2eDatabaseUrl } from './helpers/db-guard.ts';
 
 let pglite: PGLiteEngine;
 let pg: PostgresEngine | null = null;
@@ -25,6 +26,7 @@ beforeAll(async () => {
 
   if (process.env.DATABASE_URL) {
     pg = new PostgresEngine();
+    assertSafeE2eDatabaseUrl(process.env.DATABASE_URL!);
     await pg.connect({ database_url: process.env.DATABASE_URL });
     await pg.initSchema();
   }

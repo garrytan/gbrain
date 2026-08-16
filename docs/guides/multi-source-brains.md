@@ -5,6 +5,11 @@ is a `source`: a logical brain-within-the-brain with its own slug
 namespace, its own sync state, and its own federation policy. The rest
 of this guide walks the three canonical scenarios.
 
+(Sources are the *within-one-database* axis. If you want to connect a
+whole separate database — a team-published brain with its own access
+policy — that's the *brain* axis: `gbrain mounts add`. See
+`docs/architecture/brains-and-sources.md` for the two-axis topology.)
+
 ## The three scenarios
 
 ### 1. Unified knowledge recall (wiki + gstack)
@@ -66,14 +71,14 @@ gbrain search "tech layoffs" --source yc-media,garrys-list
 ### 3. Mixed (wiki federated + sessions isolated)
 
 Your main wiki is federated with a few trusted sources. Your session
-transcripts (coming in v0.18) land in a separate isolated source so
-they don't dominate every search result.
+transcripts (`gbrain transcripts` ingests them) land in a separate
+isolated source so they don't dominate every search result.
 
 ```bash
 # Federated sources
 gbrain sources add gstack --path ~/.gstack --federated
 
-# Isolated source (future v0.18 — sessions use this shape today for ingest)
+# Isolated source for session transcripts
 gbrain sources add sessions --path ~/.claude/sessions --no-federated
 ```
 
@@ -104,14 +109,16 @@ Every source row stores `config.federated: boolean` in its JSONB config.
 | `true` | Source participates in unqualified `gbrain search "X"` results. |
 | `false` (default for new sources) | Source only searched when explicitly named via `--source <id>` or qualified citation. |
 
-The seeded `default` source is `federated=true` so pre-v0.17 brains
-behave exactly as before — every page appears in search.
+The seeded `default` source is `federated=true` so single-source brains
+behave as you'd expect — every page appears in search.
 
 Flip later with `gbrain sources federate <id>` / `unfederate <id>`.
 
 ## Commands
 
-Full subcommand reference:
+The most-used subcommands (run `gbrain sources --help` for the full,
+always-current reference — it also covers `status`, `current`,
+`set-cr-mode`, and the `push`/`pull` durability surface):
 
 ```
 gbrain sources add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force]
@@ -119,9 +126,17 @@ gbrain sources add <id> --path <p> [--name <n>] [--federated|--no-federated] [--
                                --path must be a git repo (or a subdirectory of one) — see
                                "The git requirement for --path sources" below. --force
                                skips that check to register before git-init exists.
+gbrain sources add <id> --url <git-url> [--pat-file <p>] [--clone-dir <path>] [--no-harden]
+                               Clone + register a remote repo in one step; auto-hardens
+                               for durability when a PAT is provided (see "Durability" below).
 gbrain sources list [--json]   List all sources with page counts + federation state.
-gbrain sources remove <id> [--yes] [--dry-run] [--keep-storage]
-                               Cascade-delete a source (pages, chunks, timeline).
+gbrain sources archive <id>    Soft-delete: hide from search, keep data for a TTL
+                               grace window. Prefer this over `remove`.
+gbrain sources restore <id>    Un-archive. `gbrain sources archived` lists expiries;
+                               `gbrain sources purge` permanently deletes expired archives.
+gbrain sources remove <id> [--confirm-destructive] [--dry-run]
+                               Permanently cascade-delete a source (pages, chunks,
+                               timeline). Shows an impact preview first.
 gbrain sources rename <id> <new-name>
                                Change display name only; id is immutable.
 gbrain sources default <id>    Set the brain-level default.
@@ -253,8 +268,8 @@ reachable only over a filesystem path, set `GBRAIN_GIT_ALLOW_FILE_TRANSPORT=1`
 
 ## Upgrading an existing brain
 
-`gbrain upgrade` runs the v16 + v17 migrations automatically. Your
-existing pages all move under `source_id='default'`. Behavior is
+`gbrain upgrade` runs the needed schema migrations automatically. Your
+existing pages all live under `source_id='default'`. Behavior is
 unchanged until you add a second source.
 
 To add one:
@@ -266,13 +281,13 @@ cd ~/.gstack && gbrain sources attach gstack && gbrain sync
 
 Two commands. The existing default source is untouched.
 
-## Not in v0.18.0
+## Related features that build on sources
 
-- Session transcript ingest (`.jsonl`, raised size cap, session
-  PageType) — v0.18.
-- Per-source retention/TTL (`gbrain sources prune`) — v0.18.
-- ACL enforcement via caller-identity — v0.17.1.
-- `gbrain sources import-from-github <url>` one-shot bootstrap — patch
-  release after the core plumbing stabilizes.
-
-All of these build on the `sources` primitive shipped here.
+- **Session transcript ingest** — `gbrain transcripts` (server-private:
+  raw chat exports stay on the host machine).
+- **Per-source retention** — `gbrain sources archive` / `archived` /
+  `purge` (soft-delete with a TTL grace window).
+- **One-shot remote bootstrap** — `gbrain sources add <id> --url <git-url>`
+  (clone + register + auto-harden).
+- **Access control across brains** — the *brain* axis (`gbrain mounts`);
+  see `docs/architecture/brains-and-sources.md`.

@@ -32,7 +32,12 @@ cd "$ROOT"
 BANNED_NAMES=(
   'Diana'           # Diana Hu, named in CLAUDE.md privacy example
   'Wintermute'      # private OpenClaw fork name (CLAUDE.md rule)
-  'Hermes'          # downstream agent fork name
+  # 'Hermes' removed (hermes-harness wave): here it names NousResearch/hermes-agent,
+  # a PUBLIC platform gbrain documents (README hero, INSTALL_FOR_AGENTS.md) and now
+  # tests against (claw-test hermes runner, install door e2e).
+  # test/readme-hero-anchors.test.ts REQUIRES the README to mention it. The original
+  # scrub targeted conflating the public agent with PRIVATE deployment names — those
+  # (Wintermute, and any future private fork names) remain banned above/below.
   'Technium'        # real GP handle
   'McGrew'          # ex-OpenAI exec
   'YC Labs'         # internal team name
@@ -57,9 +62,6 @@ ALLOWLIST=(
   "test/recency-decay.test.ts:Wintermute"              # regression-prevention test asserting wintermute is absent (structural)
   "test/scripts/check-proposal-pii.test.ts:Wintermute" # privacy-guard test asserting docs/proposals/ rejects wintermute (structural; same meta-rule exception as check-privacy.sh)
   "test/scripts/check-proposal-pii.test.ts:WINTERMUTE" # case-insensitive sentinel literal for the same privacy-guard test
-  "test/serve-stdio-lifecycle.test.ts:Hermes"          # comment naming a downstream-agent scenario — pre-existing, low signal
-  "test/extract.test.ts:Hermes"                        # markdown-link extraction test fixture — pre-existing, ambiguous (Greek god vs fork)
-  "test/readme-hero-anchors.test.ts:Hermes"            # v0.36.0.0 D9 anchor test — asserts README mentions Hermes as a credit
   "test/readme-hero-anchors.test.ts:OpenClaw"          # v0.36.0.0 D9 anchor test — asserts README mentions OpenClaw as a credit
   # v0.36.0.0: skillpack-harvest privacy linter tests structurally
   # require the literal "Wintermute" to verify the linter catches it.
@@ -99,10 +101,12 @@ done
 IFS='|' eval 'PATTERN="${PATTERN_PARTS[*]}"'
 
 # Find tool.
+# evals/ joins the scan: its *.test.ts files are collected into the CI
+# matrix (scripts/test-shard.sh) and carry the same privacy bar.
 if command -v rg >/dev/null 2>&1; then
-  matches="$(rg -niH --no-heading -t ts "$PATTERN" test 2>/dev/null || true)"
+  matches="$(rg -niH --no-heading -t ts "$PATTERN" test evals 2>/dev/null || true)"
 elif command -v grep >/dev/null 2>&1; then
-  matches="$(grep -rniE --include='*.test.ts' "$PATTERN" test 2>/dev/null || true)"
+  matches="$(grep -rniE --include='*.test.ts' "$PATTERN" test evals 2>/dev/null || true)"
 else
   echo "check-test-real-names: ERROR: neither rg nor grep available." >&2
   exit 2

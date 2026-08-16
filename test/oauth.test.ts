@@ -231,7 +231,7 @@ describe('rescopeClient', () => {
     await expect(provider.rescopeClient(clientId, { sourceId: '../etc' })).rejects.toThrow('Invalid source_id');
     await expect(provider.rescopeClient(clientId, { federatedRead: ['ok', 'Not Valid!'] })).rejects.toThrow('Invalid source_id');
     await expect(provider.rescopeClient(clientId, { federatedRead: [] })).rejects.toThrow('cannot be empty');
-    await expect(provider.rescopeClient(clientId, {})).rejects.toThrow('requires --source, --federated-read, and/or --bound-slug-prefixes');
+    await expect(provider.rescopeClient(clientId, {})).rejects.toThrow('requires --source, --federated-read, --bound-slug-prefixes, and/or --surface');
     // v0.42.70.0: an explicit empty prefix list is ambiguous (deny-all) — rejected.
     await expect(provider.rescopeClient(clientId, { boundSlugPrefixes: [] })).rejects.toThrow('cannot be an empty list');
     // An empty/whitespace ENTRY matches every slug under startsWith — it would
@@ -590,6 +590,51 @@ describe('verifyAccessToken', () => {
 });
 
 // ---------------------------------------------------------------------------
+// #4043 — legacy access_tokens honor the scopes TEXT[] column (least
+// privilege). NULL (every pre-feature token) grandfathers to full access —
+// pinned above by 'legacy access_tokens fallback works'.
+// ---------------------------------------------------------------------------
+
+describe('#4043 legacy token scopes column', () => {
+  async function insertLegacyTokenWithScopes(name: string, scopesLiteral: string | null): Promise<string> {
+    const token = generateToken('gbrain_');
+    const hash = hashToken(token);
+    await sql`
+      INSERT INTO access_tokens (id, name, token_hash, scopes)
+      VALUES (${crypto.randomUUID()}, ${name}, ${hash}, ${scopesLiteral}::text[])
+    `;
+    return token;
+  }
+
+  test("scopes ['read','write'] verifies with exactly those scopes (no admin)", async () => {
+    const token = await insertLegacyTokenWithScopes('scoped-harness-agent', '{read,write}');
+    const authInfo = await provider.verifyAccessToken(token) as CoreAuthInfo;
+    expect(authInfo.scopes).toEqual(['read', 'write']);
+  });
+
+  test('explicit empty scopes array is preserved as deny-all', async () => {
+    const token = await insertLegacyTokenWithScopes('deny-all-agent', '{}');
+    const authInfo = await provider.verifyAccessToken(token) as CoreAuthInfo;
+    expect(authInfo.scopes).toEqual([]);
+  });
+
+  test('unknown scope strings are filtered; all-unknown collapses to deny, not grandfather', async () => {
+    const token = await insertLegacyTokenWithScopes('typo-agent', '{reed,write}');
+    const authInfo = await provider.verifyAccessToken(token) as CoreAuthInfo;
+    expect(authInfo.scopes).toEqual(['write']);
+    const token2 = await insertLegacyTokenWithScopes('all-typo-agent', '{reed,wright}');
+    const authInfo2 = await provider.verifyAccessToken(token2) as CoreAuthInfo;
+    expect(authInfo2.scopes).toEqual([]);
+  });
+
+  test('NULL scopes keeps the grandfathered full-access grant (byte-identical legacy behavior)', async () => {
+    const token = await insertLegacyTokenWithScopes('null-scopes-agent', null);
+    const authInfo = await provider.verifyAccessToken(token) as CoreAuthInfo;
+    expect(authInfo.scopes).toEqual(['read', 'write', 'admin']);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Token Revocation
 // ---------------------------------------------------------------------------
 
@@ -900,7 +945,11 @@ describe('operation scope annotations', () => {
     // is read-scoped for OAuth/MCP because its handler forces save/take off
     // for remote callers before persistence (pinned by
     // test/takes-mcp-allowlist.serial.test.ts); local CLI can still persist.
-    const remoteReadOnlyMutatingOps = new Set(['think']);
+    // WP4/D9: request_tools is read-scoped + mutating — its only write (the
+    // {surface} persist branch) self-enforces the D2 ceiling, the operator
+    // lock, and a per-client rate limit; the read scope keeps discovery
+    // available to every token class (agent scope via the FOV-4 carve-out).
+    const remoteReadOnlyMutatingOps = new Set(['think', 'request_tools']);
     for (const op of operations) {
       if (op.mutating) {
         if (remoteReadOnlyMutatingOps.has(op.name)) {

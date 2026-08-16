@@ -293,7 +293,9 @@ async function assembleCard(
   return {
     entity: { slug: pageSlug, title: row.title ?? pageSlug, type: row.type ?? null },
     aka,
-    summary: safeSynopsis(row),
+    // v0.45.7: summary widens in lockstep with the card's fact visibility —
+    // remote (world-only) keeps ['world']; a local include_private card widens.
+    summary: safeSynopsis(row, { keepVisibility: remote ? ['world'] : ['private', 'world'] }),
     last_touched: {
       updated_at: toIso(row.updated_at),
       last_retrieved_at: toIso(row.last_retrieved_at),

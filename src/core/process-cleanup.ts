@@ -4,9 +4,14 @@
  * v0.41.6.0 D5 — registry + signal handlers so abnormal termination
  * (SIGTERM/SIGHUP/SIGPIPE, EPIPE on stdout, uncaughtException) releases
  * locks instead of leaking them for up to 30 minutes until the TTL
- * expires. Pre-v0.41.6.0, `gbrain sync --full | head -20` would SIGPIPE
- * gbrain, finally blocks wouldn't run, and the next sync would report
+ * expires. Pre-v0.41.6.0, a full `gbrain sync` piped into `head` would
+ * SIGPIPE gbrain, finally blocks wouldn't run, and the next sync would report
  * "Another sync is in progress" because the lock row was orphaned.
+ *
+ * (The flag name is spelled out rather than written literally: the CLI
+ * flag-registry generator scans comments, so a bare double-dash token here
+ * would be inherited as an accepted flag by every command that imports this
+ * module. Pinned by `test/cli-flag-validation.test.ts`.)
  *
  * Design (per eng-review D7 + outside-voice F9-F11, 2026-05-24):
  *

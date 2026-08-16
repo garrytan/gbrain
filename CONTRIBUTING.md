@@ -48,7 +48,9 @@ src/
   core/
     operations.ts         Contract-first operation definitions (the foundation)
     engine.ts             BrainEngine interface
-    postgres-engine.ts    Postgres implementation
+    engine-factory.ts     Engine factory (dynamic import of the configured engine)
+    postgres-engine.ts    Postgres + pgvector implementation
+    pglite-engine.ts      PGLite (embedded Postgres via WASM) implementation
     db.ts                 Connection management + schema loader
     import-file.ts        Import pipeline (chunk + embed + tags)
     types.ts              TypeScript types
@@ -59,12 +61,16 @@ src/
     supabase-admin.ts     Supabase admin API
     file-resolver.ts      MIME detection + content hashing
     migrate.ts            Migration helpers
+    bootstrap/            Agent-bootstrap flow (interview, hooks, repo, verify)
     yaml-lite.ts          Lightweight YAML parser
     chunkers/             3-tier chunking (recursive, semantic, llm)
     search/               Hybrid search (vector, keyword, hybrid, expansion, dedup)
-    embedding.ts          OpenAI embedding service
+    embedding.ts          Embedding service (provider-routed; Voyage default)
   mcp/
     server.ts             MCP stdio server (generated from operations)
+    http-transport.ts     HTTP MCP transport (OAuth, body caps)
+    dispatch.ts           Op dispatch + scope enforcement + param redaction
+    rate-limit.ts         Rate limiting
   schema.sql              Postgres DDL
 skills/                   Fat markdown skills for AI agents
 test/                     Unit tests (bun test, no DB required)
@@ -77,15 +83,21 @@ test/e2e/                 E2E tests (requires DATABASE_URL, real Postgres+pgvect
 docs/                     Architecture docs
 ```
 
+Per-file invariants live in `docs/architecture/KEY_FILES.md` — read a file's entry
+before editing it.
+
 ## Running tests
 
+The canonical reference for test tiers, isolation rules, timing, and the E2E
+lifecycle is [`docs/TESTING.md`](docs/TESTING.md). The short version:
+
 ```bash
-# Inner edit loop (~85s on a Mac dev box, 3700+ unit tests)
-bun run test                      # parallel 4-shard fan-out (memory-adaptive) + serial post-pass
+# Inner edit loop (~8min full suite on a Mac dev box; single files in seconds)
+bun run test                      # parallel 4-shard fan-out (memory-adaptive) + serial post-pass; PGLite snapshot default-on
 bun test test/markdown.test.ts    # specific unit test
 
-# Pre-push gate (matches what CI runs on shard 1 + typecheck)
-bun run verify                    # privacy + jsonb + progress + test-isolation + wasm + admin-build + resolver + typecheck
+# Pre-push gate (40+ parallel checks + typecheck)
+bun run verify
 
 # Pre-merge sanity (everything CI runs)
 bun run test:full                 # verify + parallel unit + slow + smart e2e
@@ -103,18 +115,35 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5434/gbrain_test bun run t
 DATABASE_URL=postgresql://... bun run test:e2e
 ```
 
-Use `bun run verify` before pushing. The guard chain catches: banned fork-name
-leaks (`scripts/check-privacy.sh`), `JSON.stringify(x)::jsonb` interpolation
+Heads-up: a bare `bun test` refuses to start while `DATABASE_URL` or
+`GBRAIN_DATABASE_URL` is set in your environment — some tests run destructive
+SQL against whatever those URLs point at. Unset the variable for unit runs
+(they need no database) or use the wrappers: the unit/slow runners strip the
+variables at their boundary, and `bun run test:e2e` opts in at its own. The
+refusal message walks you through it; details in
+[`docs/TESTING.md`](docs/TESTING.md) ("Database-URL run guard"). If you point
+`bun run test:e2e` at your own Postgres or Supabase, a second floor applies:
+the database name must carry "test" as a word segment (like `gbrain_test`
+above) or destructive tests refuse to run — opt a differently-named database
+in one-shot with `GBRAIN_E2E_ALLOW_DB=<name>`.
+
+Use `bun run verify` before pushing. It runs 40+ guard checks in parallel
+(`scripts/run-verify-parallel.sh`), including: banned fork-name leaks
+(`scripts/check-privacy.sh`), `JSON.stringify(x)::jsonb` interpolation
 patterns (`scripts/check-jsonb-pattern.sh`), `\r` progress bleed to stdout
 (`scripts/check-progress-to-stdout.sh`), test-isolation rule violations
 (`scripts/check-test-isolation.sh` — see "Writing tests that survive the parallel
 loop" below), silent fallback to recursive chunking in the compiled binary
 (`scripts/check-wasm-embedded.sh`), stale admin-dashboard build artifacts
-(`scripts/check-admin-build.sh`), and resolver drift on bundled skills
-(`bun run check:resolver` — strict-mode `check-resolvable` that exit-1s on any
-warning, added in v0.41.14.0 to catch SKILL.md frontmatter ↔ RESOLVER.md drift
-before merge). `bun run check:all` runs the full historical sweep including the
-trailing-newline and exports-count checks.
+(`scripts/check-admin-build.sh`), resolver drift on bundled skills
+(`bun run check:resolver`), and typecheck. The guard REGISTRY is
+`scripts/guards-manifest.tsv`, and `scripts/guard-self-test.sh` (also in
+`verify`) proves each self-tested scanner guard (`selftest=yes` in the
+manifest; coverage ratchets up from the `todo` rows) can actually fail by
+running it against known-bad fixtures — a new `scripts/check-*` guard must be
+registered in the manifest or the build fails. There is no `check:all` script; the
+trailing-newline, exports-count, and no-legacy-getconnection checks run in
+`verify` with everything else.
 
 ### Writing tests that survive the parallel loop
 
@@ -123,75 +152,35 @@ capping total concurrency (shards × intra-shard files) to available memory and
 re-running OOM-killed or externally-killed files serially before calling them
 failures (see `docs/TESTING.md` for the rescue-pass details and knobs). Files
 in the same shard share a process, so process-global state leaks between them.
-Four lint rules (`scripts/check-test-isolation.sh`, R1-R4) enforce isolation:
+Four lint rules (`scripts/check-test-isolation.sh`, R1–R4) enforce isolation:
+no direct `process.env` mutation (use `withEnv()` from
+`test/helpers/with-env.ts`), no `mock.module(...)` outside `*.serial.test.ts`,
+and every `new PGLiteEngine(` goes inside the canonical `beforeAll` block with
+a paired `afterAll(disconnect)`.
 
-| Rule | What it bans | Fix |
-|---|---|---|
-| **R1** | Direct `process.env.X = ...` mutation | Use `withEnv()` from `test/helpers/with-env.ts`, or rename to `*.serial.test.ts` |
-| **R2** | `mock.module(...)` anywhere in the file | Rename to `*.serial.test.ts` |
-| **R3** | `new PGLiteEngine(` outside ~50 lines after `beforeAll(` | Use the canonical PGLite block (see below) |
-| **R4** | `new PGLiteEngine(` without paired `afterAll(disconnect)` | Add the `afterAll(() => engine.disconnect())` |
+**The full rules, the canonical PGLite block, the `withEnv` pattern, and the
+`*.serial.test.ts` quarantine policy live in
+[`docs/TESTING.md`](docs/TESTING.md#test-isolation-lint-and-helpers)
+— read that before writing a new test file.** Files that predate the rules are
+listed in `scripts/check-test-isolation.allowlist`; the allow-list MUST shrink
+over time — never add new entries.
 
-Canonical PGLite block (R3 + R4 compliant — paste this verbatim):
-
-```ts
-import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { resetPgliteState } from './helpers/reset-pglite.ts';
-
-let engine: PGLiteEngine;
-
-beforeAll(async () => {
-  engine = new PGLiteEngine();
-  await engine.connect({});
-  await engine.initSchema();
-});
-afterAll(async () => { await engine.disconnect(); });
-beforeEach(async () => { await resetPgliteState(engine); });
-```
-
-Env-touching tests:
-
-```ts
-import { withEnv } from './helpers/with-env.ts';
-
-test('reads OPENAI_API_KEY', async () => {
-  await withEnv({ OPENAI_API_KEY: 'sk-test' }, async () => {
-    expect(loadConfig().openai_key).toBe('sk-test');
-  });
-});
-```
-
-`withEnv` saves and restores keys via try/finally including when the callback
-throws. Cross-test safe; **NOT** intra-file concurrent-safe (`process.env` is
-process-global). Files using `withEnv` stay outside the future
-`test.concurrent()` codemod's eligibility filter.
-
-When to quarantine instead of fix: rename to `*.serial.test.ts` if the file
-uses `mock.module(...)`, is genuinely env-coupled (module-load env readers +
-ESM caching defeat dynamic-import-after-env tricks), or intentionally shares
-state across `it()` boundaries. Quarantine count cap: 10 (informational).
-
-Files that violated these rules at the v0.26.7 baseline are listed in
-`scripts/check-test-isolation.allowlist`. **The allow-list MUST shrink over
-time** ... never add new entries. v0.26.8 (env sweep) and v0.26.9 (PGLite sweep
-+ codemod) remove entries as files get fixed.
-
-### Local CI gate (recommended before pushing, v0.23.1+)
+### Local CI gate (recommended before pushing)
 
 ```bash
-bun run ci:local         # full gate: gitleaks + unit + ALL 29 E2E files (sequential)
+bun run ci:local         # full gate: gitleaks + guards/typecheck + 4-shard parallel unit + E2E
 bun run ci:local:diff    # gate with diff-aware E2E selector
 bun run ci:select-e2e    # print which E2E files the selector would run
 ```
 
-`ci:local` spins up `pgvector/pgvector:pg16` + `oven/bun:1` via
-`docker-compose.ci.yml`, runs everything PR CI runs plus the full E2E suite, then
-tears down. Named volumes keep the install warm across runs (~16-20 min sequential
-E2E after the first cold pull). Requires Docker (Docker Desktop, OrbStack, or
-Colima) and `gitleaks` on host (`brew install gitleaks`). Override the postgres
-host port with `GBRAIN_CI_PG_PORT=5435 bun run ci:local` if 5434 collides.
+`ci:local` spins up four pgvector services plus a transaction-mode PgBouncer via
+`docker-compose.ci.yml`, runs everything PR CI runs plus the full E2E suite
+sharded 4 ways in parallel, then tears down. Named volumes keep the install warm
+across runs. Requires Docker (Docker Desktop, OrbStack, or Colima) and `gitleaks`
+on host (`brew install gitleaks`). Override the postgres host port with
+`GBRAIN_CI_PG_PORT=5435 bun run ci:local` if 5434 collides.
 
-Fail-closed selector: an unmapped `src/` change runs all 29 E2E files. Hand-tune
+Fail-closed selector: an unmapped `src/` change runs ALL E2E files. Hand-tune
 narrower mappings via `scripts/e2e-test-map.ts`.
 
 ### PR-side security checks
@@ -237,7 +226,7 @@ Parity tests (`test/parity.test.ts`) verify CLI/MCP/tools-json stay in sync.
 See `docs/ENGINES.md` for the full guide. In short:
 
 1. Create `src/core/myengine-engine.ts` implementing `BrainEngine`
-2. Add to engine factory in `src/core/engine.ts`
+2. Add to the engine factory in `src/core/engine-factory.ts`
 3. Run the test suite against your engine
 4. Document in `docs/`
 
@@ -322,7 +311,7 @@ NDJSON wire format is documented in
 [`docs/eval-capture.md`](./docs/eval-capture.md).
 
 For public benchmark coverage on top of replay, `gbrain eval longmemeval
-<dataset.jsonl>` (v0.28.1) runs LongMemEval against gbrain's hybrid
+<dataset.jsonl>` runs LongMemEval against gbrain's hybrid
 retrieval. One in-memory PGLite per question, runtime-enumerated
 `TRUNCATE` between questions, ground-truth scoring via LongMemEval's
 published `evaluate_qa.py`. Use it alongside replay when changes affect
@@ -331,9 +320,18 @@ regressions on YOUR queries, LongMemEval catches them on a public set the
 benchmark community already cites. See the "Public benchmarks: LongMemEval"
 section in [`docs/eval-bench.md`](./docs/eval-bench.md).
 
+## Shipping
+
+Releases go through the `/ship` skill, never hand-rolled. The full release +
+contributor process (CHANGELOG voice, version-locations sync, PR conventions,
+community-PR-wave workflow) lives in [`docs/RELEASING.md`](docs/RELEASING.md).
+Community PRs are batched into release waves rather than merged one-by-one;
+contributor attribution stays attached via `Co-Authored-By:` trailers and every
+accepted contribution is credited in `CHANGELOG.md`.
+
 ## Welcome PRs
 
-- SQLite engine implementation
+- Additional engine implementations (see [`docs/ENGINES.md`](docs/ENGINES.md))
 - Docker Compose for self-hosted Postgres
 - Additional migration sources
 - New enrichment API integrations

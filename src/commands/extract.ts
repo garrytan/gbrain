@@ -81,8 +81,10 @@ const BATCH_SIZE = 100;
 const STALE_BATCH_SIZE = Math.max(1, Number(process.env.GBRAIN_EXTRACT_STALE_BATCH) || 25);
 // v0.42.7: wall-clock budget for one `extract --stale` invocation (default
 // 30 min). `--catch-up` removes the cap (loops until 0 stale). Mirrors
-// embedAllStale's time-budget shape.
-const STALE_TIME_BUDGET_MS = Math.max(1000, Number(process.env.GBRAIN_EXTRACT_TIME_BUDGET_MS) || 30 * 60 * 1000);
+// embedAllStale's time-budget shape. Exported so the #2849 deferred-sweep
+// submitters (sync's size-gate defer branch + the jobs continuation chain)
+// derive their job timeout_ms from the SAME budget instead of hardcoding.
+export const STALE_TIME_BUDGET_MS = Math.max(1000, Number(process.env.GBRAIN_EXTRACT_TIME_BUDGET_MS) || 30 * 60 * 1000);
 
 /**
  * v0.42.7 (#1696): best-effort extraction stamp for the source-correct write
@@ -488,15 +490,53 @@ export async function extractLinksFromFile(
 
 // --- Timeline extraction ---
 
+/**
+ * Index of the first dash (—, –, -) that can serve as the Source — Summary
+ * delimiter: it must have whitespace on both sides and sit outside every
+ * markdown-link span. Hyphens inside link targets
+ * (`../people/alice-example.md`) and dashes inside link labels
+ * (`[Deals — Q1 Review](...)`) are content, not delimiters — splitting on
+ * them shatters one entry into two fragments whose halves re-insert on
+ * every sync (the (page_id, date, summary, source) uniqueness sees each
+ * fragment shape as a new row). Returns -1 when the line has no delimiter.
+ */
+function findDelimiterOutsideLinks(text: string): number {
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '[' || c === '(') depth++;
+    else if (c === ']' || c === ')') { if (depth > 0) depth--; }
+    else if (
+      depth === 0 &&
+      (c === '—' || c === '–' || c === '-') &&
+      i > 0 && /\s/.test(text[i - 1]) &&
+      i + 1 < text.length && /\s/.test(text[i + 1])
+    ) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 /** Extract timeline entries from markdown content */
 export function extractTimelineFromContent(content: string, slug: string): ExtractedTimelineEntry[] {
   const entries: ExtractedTimelineEntry[] = [];
 
   // Format 1: Bullet — - **YYYY-MM-DD** | Source — Summary
-  const bulletPattern = /^-\s+\*\*(\d{4}-\d{2}-\d{2})\*\*\s*\|\s*(.+?)\s*[—–-]\s*(.+)$/gm;
+  // The delimiter search is link-aware (see findDelimiterOutsideLinks); a
+  // bullet with no delimiter (e.g. an auto-generated backlink line
+  // `- **date** | Referenced in [X](y.md)`) is kept whole as the summary
+  // rather than dropped or fragmented.
+  const bulletPattern = /^-\s+\*\*(\d{4}-\d{2}-\d{2})\*\*\s*\|\s*(.+)$/gm;
   let match;
   while ((match = bulletPattern.exec(content)) !== null) {
-    entries.push({ slug, date: match[1], source: match[2].trim(), summary: match[3].trim() });
+    const rest = match[2].trim();
+    const at = findDelimiterOutsideLinks(rest);
+    if (at >= 0) {
+      entries.push({ slug, date: match[1], source: rest.slice(0, at).trim(), summary: rest.slice(at + 1).trim() });
+    } else {
+      entries.push({ slug, date: match[1], source: 'markdown', summary: rest });
+    }
   }
 
   // Format 2: Header — ### YYYY-MM-DD — Title

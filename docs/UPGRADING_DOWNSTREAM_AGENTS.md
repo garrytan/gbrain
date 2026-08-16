@@ -1,5 +1,13 @@
 # Upgrading Downstream Agents
 
+> **Currency note:** this file is an append-only historical log and stopped
+> receiving new sections after v0.36.5.0. **The canonical, maintained upgrade
+> channel is `skills/migrations/v*.md`** (the agent-executed migration files
+> that `gbrain upgrade` / `gbrain post-upgrade` route through), plus
+> `CHANGELOG.md` for what each release changed. Use this file only to catch a
+> long-diverged fork up through the versions it covers; for anything after
+> v0.36.5.0, walk the migration files and CHANGELOG instead.
+
 GBrain ships skills in `skills/`. Downstream agents (custom OpenClaw deployments,
 agent forks of any kind) often **copy** these skill files into their own workspace and
 diverge over time — adding agent-specific phases, removing irrelevant ones, tightening

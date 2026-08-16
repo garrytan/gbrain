@@ -26,6 +26,7 @@ import {
   findPrimaryResolverPath,
   loadSkillTriggerIndex,
 } from './skill-trigger-index.ts';
+import { parseSkillFrontmatter } from './skill-frontmatter.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -218,26 +219,13 @@ export function parseResolverEntries(resolverContent: string): ResolverEntry[] {
 // needed for AGENTS.md-only OpenClaw deployments. See D-CX-12 / F-ENG-1.
 
 /**
- * Simple YAML frontmatter parser — extracts triggers array if present.
+ * Extract the triggers array through the shared SKILL.md frontmatter parser.
  *
- * Normalizes CRLF → LF before parsing so Windows checkouts (where
- * `core.autocrlf=true` is the default) parse correctly. Without this,
- * the `^---\n` and `^triggers:\s*\n` regexes never match because the
- * file content is `---\r\n` / `triggers:\r\n`, and every skill on
- * Windows is reported as `mece_gap` regardless of its actual content.
- * CI runs on Ubuntu-only so the bug only surfaces in user environments.
+ * Keeping this compatibility export routed through `parseSkillFrontmatter`
+ * prevents doctor gap detection from drifting from the trigger index.
  */
 export function extractTriggers(skillContent: string): string[] {
-  const content = skillContent.replace(/\r\n/g, '\n');
-  const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!fmMatch) return [];
-  const fm = fmMatch[1];
-  const triggersMatch = fm.match(/^triggers:\s*\n((?:\s+-\s+.+\n?)*)/m);
-  if (!triggersMatch) return [];
-  return triggersMatch[1]
-    .split('\n')
-    .map(l => l.replace(/^\s+-\s+/, '').replace(/^["']|["']$/g, '').trim())
-    .filter(Boolean);
+  return parseSkillFrontmatter(skillContent)?.triggers ?? [];
 }
 
 /**

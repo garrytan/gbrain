@@ -199,6 +199,13 @@ export class SemanticQueryCache {
    * Persist a fresh search result set into the cache. Idempotent on
    * (query_text + source_id) \u2014 re-writes the row with a fresh
    * created_at. Best-effort: errors are swallowed.
+   *
+   * WP2/T3: the null-embedding no-op below is load-bearing for ENG-6 \u2014
+   * a total embed outage produces no cache-lookup embedding, so degraded
+   * keyword-only result sets are uncacheable by construction. Degraded
+   * sets that DO have an embedding are written by hybridSearchCached with
+   * `ttlSeconds: DEGRADED_CACHE_TTL_SECONDS` and a `meta.degraded` stamp
+   * (D14.2), so a salvaged set never serves as clean for the full TTL.
    */
   async store(
     queryText: string,

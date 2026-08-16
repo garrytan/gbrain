@@ -23,10 +23,12 @@ import {
   resolvePriority,
   newestCommitMs,
   lagFromContentMs,
+  resolveStalenessCeilingSeconds,
   _resetPriorityWarningsForTest,
 } from '../src/core/source-health.ts';
 import { isSourceUnchangedSinceSync } from '../src/core/git-head.ts';
 import { loadAllSources } from '../src/core/sources-load.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const HOUR = 3600_000;
 
@@ -161,11 +163,55 @@ describe('lagFromContentMs (pure remote/column comparator)', () => {
   test('null content → wall-clock fallback', () => {
     expect(lagFromContentMs(null, now - 100 * HOUR, now)).toBe(360_000); // 100h in s
   });
-  test('content at/before last sync → caught up (0)', () => {
-    expect(lagFromContentMs(now - 200 * HOUR, now - 100 * HOUR, now)).toBe(0);
+  test('content at/before last sync, recently checked → caught up (0)', () => {
+    // The quiet-source contract: a 0-change sync heartbeats last_sync_at
+    // (sync.ts, v0.42.52.0), so a source that IS being checked stays at 0.
+    expect(lagFromContentMs(now - 200 * HOUR, now - HOUR, now, 72 * 3600)).toBe(0);
+  });
+  test('content at/before last sync, past the ceiling → ramps (was the 71-day bug)', () => {
+    // This assertion previously expected 0 at 100h and that WAS the bug: a source
+    // whose clone had vanished reported fresh forever, because the caught-up branch
+    // discarded the wall-clock number computed one line above it. 100h - 72h ceiling
+    // = 28h of real lag. Do not "restore" this to 0.
+    expect(lagFromContentMs(now - 200 * HOUR, now - 100 * HOUR, now, 72 * 3600)).toBe(28 * 3600);
+  });
+  test('ceiling boundary: just under → 0, just over → ramped', () => {
+    const ceiling = 72 * 3600;
+    expect(lagFromContentMs(now - 200 * HOUR, now - 71.9 * HOUR, now, ceiling)).toBe(0);
+    // Exactly at the ceiling is still 0; one second past it is one second of lag.
+    expect(lagFromContentMs(now - 200 * HOUR, now - 72 * HOUR, now, ceiling)).toBe(0);
+    expect(lagFromContentMs(now - 200 * HOUR, now - (72 * HOUR + 1000), now, ceiling)).toBe(1);
+  });
+  test('ramp is monotonic — crosses warn before fail, never steps', () => {
+    const ceiling = 72 * 3600;
+    const at = (h: number) => lagFromContentMs(now - 500 * HOUR, now - h * HOUR, now, ceiling)!;
+    // Strictly increasing past the ceiling, so the 1h/24h/72h consumers escalate in
+    // order instead of all tripping in the same instant.
+    expect(at(80)).toBeLessThan(at(100));
+    expect(at(100)).toBeLessThan(at(200));
+    // Enters the band from 0 rather than jumping straight to the ceiling value:
+    // one hour past the ceiling is one hour of lag, not 72.
+    expect(at(73)).toBe(3600);
   });
   test('content after last sync → wall-clock since sync', () => {
     expect(lagFromContentMs(now - 10 * HOUR, now - 100 * HOUR, now)).toBe(360_000);
+  });
+  test('GBRAIN_STALENESS_CEILING_HOURS overrides GBRAIN_SYNC_FRESHNESS_FAIL_HOURS', async () => {
+    await withEnv(
+      { GBRAIN_SYNC_FRESHNESS_FAIL_HOURS: '72', GBRAIN_STALENESS_CEILING_HOURS: '10' },
+      async () => {
+        // Override wins: 20h wall-clock against a 10h ceiling → 10h of lag.
+        expect(resolveStalenessCeilingSeconds()).toBe(10 * 3600);
+        expect(lagFromContentMs(now - 200 * HOUR, now - 20 * HOUR, now)).toBe(10 * 3600);
+      },
+    );
+    await withEnv(
+      { GBRAIN_SYNC_FRESHNESS_FAIL_HOURS: '72', GBRAIN_STALENESS_CEILING_HOURS: undefined },
+      async () => {
+        // Without the override it tracks the fail threshold.
+        expect(resolveStalenessCeilingSeconds()).toBe(72 * 3600);
+      },
+    );
   });
 });
 
@@ -338,9 +384,12 @@ describe('computeAllSourceMetrics', () => {
       expect(metrics.find((m) => m.source_id === 'behind')!.lag_seconds!).toBeGreaterThan(72 * 3600);
     });
 
-    test('REMOTE (default): reads newest_content_at column, NO git probe → quiet repo lag 0', async () => {
+    test('REMOTE (default): reads newest_content_at column, NO git probe → quiet + recently synced = lag 0', async () => {
+      // Criterion 2 (quiet-source non-regression) at the metrics layer: a bogus
+      // local_path must NOT make a source stale so long as sync is still running
+      // against it. This is the doctor 70->30 alert-storm case.
       const contentIso = new Date(Date.now() - 200 * HOUR).toISOString(); // content predates sync
-      const syncIso = new Date(Date.now() - 100 * HOUR).toISOString();
+      const syncIso = new Date(Date.now() - 1 * HOUR).toISOString();
       await engine.executeRaw(
         `INSERT INTO sources (id, name, local_path, last_commit, last_sync_at, newest_content_at, config)
          VALUES ('remote', 'remote', '/nonexistent/not-a-repo', 'x', $1, $2, '{"federated":true}'::jsonb)`,
@@ -350,6 +399,24 @@ describe('computeAllSourceMetrics', () => {
       // probeContent OFF (remote): even though local_path is bogus, no git runs.
       const metrics = await computeAllSourceMetrics(engine, sources);
       expect(metrics.find((m) => m.source_id === 'remote')!.lag_seconds).toBe(0);
+    });
+
+    test('REMOTE (default): quiet but unsynced past the ceiling → ramps, not 0', async () => {
+      // Criterion 1 (the 71-day bug) at the metrics layer. This previously
+      // asserted 0 at 100h, which is exactly how a dead daemon stayed invisible.
+      const contentIso = new Date(Date.now() - 200 * HOUR).toISOString();
+      const syncIso = new Date(Date.now() - 100 * HOUR).toISOString();
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, local_path, last_commit, last_sync_at, newest_content_at, config)
+         VALUES ('abandoned', 'abandoned', '/nonexistent/not-a-repo', 'x', $1, $2, '{"federated":true}'::jsonb)`,
+        [syncIso, contentIso],
+      );
+      const sources = await loadAllSources(engine);
+      const metrics = await computeAllSourceMetrics(engine, sources);
+      const lag = metrics.find((m) => m.source_id === 'abandoned')!.lag_seconds!;
+      // ~100h elapsed minus the 72h ceiling = ~28h of real lag.
+      expect(lag).toBeGreaterThan(27 * 3600);
+      expect(lag).toBeLessThan(29 * 3600);
     });
 
     test('REMOTE (default): NULL column → wall-clock fallback', async () => {

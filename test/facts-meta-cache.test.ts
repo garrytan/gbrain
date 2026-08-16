@@ -17,7 +17,10 @@ import {
   getBrainHotMemoryMeta,
   bumpHotMemoryCache,
   __resetHotMemoryCacheForTests,
+  __hotMemoryCacheForTests,
+  HOT_MEMORY_CACHE_MAX_ENTRIES,
 } from '../src/core/facts/meta-hook.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
 
@@ -182,5 +185,51 @@ describe('meta-hook cache', () => {
     const emptyList = await getBrainHotMemoryMeta('get_stats', ctx({ sourceId: src, takesHoldersAllowList: [] }));
     const emptyCount = (emptyList?.brain_hot_memory as { facts: unknown[] } | undefined)?.facts.length ?? 0;
     expect(emptyCount).toBeGreaterThan(unsetCount);
+  });
+});
+
+describe('meta-hook cache hygiene (bounded, expired-entry eviction)', () => {
+  /** Engine stub with no facts — every call takes the payload:undefined cache path. */
+  function emptyEngine(): BrainEngine {
+    return {
+      listFactsBySession: async () => [],
+      listFactsSince: async () => [],
+    } as unknown as BrainEngine;
+  }
+
+  test('expired entry is evicted on read-miss even when the rebuild fails', async () => {
+    await engine.insertFact(
+      { fact: 'expiry-evict seed', kind: 'fact', entity_slug: 'expiry-evict', visibility: 'world', source: 'test' },
+      { source_id: 'default' },
+    );
+    // Warm the cache, then force the entry past its expiry.
+    await getBrainHotMemoryMeta('get_stats', ctx());
+    const cache = __hotMemoryCacheForTests();
+    expect(cache.size).toBe(1);
+    for (const entry of cache.values()) entry.expiresAt = Date.now() - 1;
+
+    // Rebuild path throws (dispatch absorbs this in production). The expired
+    // entry must NOT survive the failed rebuild — delete happens on read-miss.
+    const boomEngine = {
+      listFactsBySession: async () => { throw new Error('boom'); },
+      listFactsSince: async () => { throw new Error('boom'); },
+    } as unknown as BrainEngine;
+    await expect(getBrainHotMemoryMeta('get_stats', ctx({ engine: boomEngine }))).rejects.toThrow('boom');
+    expect(cache.size).toBe(0);
+  });
+
+  test('max-entries bound holds under many distinct (caller-controlled) session ids', async () => {
+    const stub = emptyEngine();
+    const total = HOT_MEMORY_CACHE_MAX_ENTRIES + 50;
+    for (let i = 0; i < total; i++) {
+      await getBrainHotMemoryMeta('get_stats', ctx({ engine: stub, sessionId: `spam-${i}` }));
+    }
+    const cache = __hotMemoryCacheForTests();
+    expect(cache.size).toBe(HOT_MEMORY_CACHE_MAX_ENTRIES);
+    // Oldest-expiry (== oldest-inserted at uniform TTL) entries were evicted;
+    // the newest survives.
+    const keys = [...cache.keys()];
+    expect(keys.some((k) => k.includes(`spam-${total - 1}`))).toBe(true);
+    expect(keys.some((k) => k.includes('spam-0::'))).toBe(false);
   });
 });

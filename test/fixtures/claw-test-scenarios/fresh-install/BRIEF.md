@@ -3,11 +3,11 @@
 You are testing gbrain on a brand-new install. The user just ran `gbrain init` for the first time. Walk through the canonical first-day flow:
 
 1. **Verify install:** confirm `gbrain --version` works and `gbrain doctor --json` returns a valid JSON object with a `status` field.
-2. **Install skillpack:** run `gbrain skillpack install --workspace $PWD`. The workspace already has an `AGENTS.md` routing file.
+2. **Scaffold the skillpack:** run `gbrain skillpack scaffold --all --workspace $PWD`. The workspace already has an `AGENTS.md` routing file.
 3. **Import the brain:** run `gbrain import ./brain --no-embed --progress-json`. There are 3 small markdown pages already there.
 4. **Query the brain:** run `gbrain query "alice"` and verify >0 results.
-5. **Extract links:** run `gbrain extract --source fs --progress-json`.
-6. **Verify health:** run `gbrain doctor --json`. The `status` field should be `"ok"`.
+5. **Extract links:** run `gbrain extract all --source fs --dir ./brain --progress-json`.
+6. **Verify health:** run `gbrain doctor --json`. The `status` field should be `"healthy"` or `"warnings"` — never `"unhealthy"`.
 
 ## Friction protocol
 

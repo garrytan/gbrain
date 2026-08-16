@@ -19,18 +19,18 @@ need to understand both of them, or queries misroute silently.
 A **brain** is one database — PGLite file, self-hosted Postgres, or Supabase.
 Each brain has:
 - Its own `pages` table, `chunks` table, `embeddings`, etc.
-- Its own OAuth surface if served over HTTP MCP (v0.19+, PR 2).
+- Its own OAuth surface if served over HTTP MCP.
 - Its own separate lifecycle, backup, access control.
 
 Brains are enumerated by:
 - **host** — your default brain, configured in `~/.gbrain/config.json`.
 - **mounts** — additional brains registered in `~/.gbrain/mounts.json` via
-  `gbrain mounts add <id>` (v0.19+).
+  `gbrain mounts add <id>`.
 
 Routing: `--brain <id>`, `GBRAIN_BRAIN_ID`, `.gbrain-mount` dotfile, or
 longest-path match against registered mount paths. Falls back to `host`.
 
-### Sources (the repo axis, v0.18.0+)
+### Sources (the repo axis)
 
 A **source** is a named content repo *inside* one brain. Every `pages` row
 carries a `source_id`. Slugs are unique per source, not globally.
@@ -142,7 +142,7 @@ Use this topology when:
 
 You're senior enough to sit across multiple teams. You maintain your personal
 brain (with N sources inside) AND mount several work team brains. Each team
-brain is itself a multi-source brain in the v0.18.0 sense — organized
+brain is itself a multi-source brain — organized
 internally however the team owner chose.
 
 ```
@@ -181,7 +181,7 @@ Use this topology when:
 - You need latent-space federation (agent decides when to query across
   brains), not SQL federation.
 
-Cross-brain queries are **not deterministic** in v0.19. The agent sees the
+Cross-brain queries are **not deterministic**. The agent sees the
 brain list and re-queries as needed. That's the feature — it keeps debugging
 sane and access control clean.
 
@@ -201,6 +201,13 @@ WHICH BRAIN (DB)?                    WHICH SOURCE (repo in DB)?
 
 Both axes follow the same layered pattern on purpose. If you know one, you
 know the other.
+
+One addition on the source axis for remote (MCP/OAuth) callers: a client
+registered with federated reads carries `ctx.auth.allowedSources` — an
+ARRAY of readable sources that takes precedence over the scalar
+`ctx.sourceId` on every read path (`sourceScopeOpts(ctx)` in the
+operations layer). Local CLI callers never set it; the scalar chain above
+is the whole story for them.
 
 ---
 
@@ -236,7 +243,7 @@ know the other.
 
 ## Further reading
 
-- v0.18.0 CHANGELOG — introduced `sources` primitive.
-- v0.19.0 CHANGELOG (TBD after PR 0+1+2 ship) — introduces `mounts`.
-- `docs/mounts/publishing-a-team-brain.md` (PR 2) — how to be the brain
-  publisher, not just the subscriber.
+- [`topologies.md`](./topologies.md) — where the DB lives (operator recipes
+  for each deployment shape).
+- `skills/conventions/brain-routing.md` — the agent-facing decision table.
+- `CHANGELOG.md` — release history for the `sources` and `mounts` primitives.

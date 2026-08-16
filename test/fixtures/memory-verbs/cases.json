@@ -286,5 +286,46 @@
       "question": "What do we know about conformance {{marker}}?"
     },
     "requiresSynthesizeFlag": true
+  },
+  {
+    "name": "context_pack returns a schema-valid bundle for unknown entities (empty, not an error)",
+    "verb": "context_pack",
+    "params": {
+      "entities": "conformance-nonexistent-{{marker}}",
+      "budget_tokens": 500
+    },
+    "validateSchema": true,
+    "expect": [
+      {
+        "path": "protocol_version",
+        "equals": 1
+      }
+    ]
+  },
+  {
+    "name": "delta with an explicit epoch since returns a schema-valid delta",
+    "verb": "delta",
+    "params": {
+      "since": "1970-01-01T00:00:00Z",
+      "budget_tokens": 500
+    },
+    "validateSchema": true,
+    "expect": [
+      {
+        "path": "protocol_version",
+        "equals": 1
+      },
+      {
+        "path": "since",
+        "equals": "1970-01-01T00:00:00.000Z"
+      }
+    ]
+  },
+  {
+    "name": "delta without since or session_id is invalid_params with a suggestion",
+    "verb": "delta",
+    "params": {},
+    "expectErrorCode": "invalid_params",
+    "expectSuggestion": true
   }
 ]

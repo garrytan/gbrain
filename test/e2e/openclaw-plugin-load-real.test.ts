@@ -18,9 +18,10 @@
  *      ship to ClawHub).
  *   2. `openclaw plugins install --link` against an isolated `--profile`
  *      directory.
- *   3. `openclaw plugins inspect <id> --json` reads our default-export shape
- *      back from the runtime registry (`status: 'loaded'`, `imported: true`,
- *      id/name/description match).
+ *   3. `openclaw plugins inspect <id> --json` (with `--runtime` on older
+ *      CLIs — see inspectRuntime) imports the plugin and reads our
+ *      default-export shape back from the runtime registry
+ *      (`status: 'loaded'`, `imported: true`, id/name/description match).
  *   4. `openclaw config set plugins.slots.contextEngine gbrain-context` →
  *      `openclaw config validate` confirms the slot binding is accepted.
  *   5. `openclaw plugins doctor` surfaces zero error-level diagnostics for
@@ -81,6 +82,25 @@ function runOpenclaw(args: string[], opts: { timeoutMs?: number } = {}): {
   };
 }
 
+/**
+ * Version-robust runtime inspect. The test was pinned to
+ * `plugins inspect <id> --runtime --json` (#3742), but OpenClaw has since
+ * folded the runtime import into the default inspect and REMOVED the
+ * `--runtime` flag (observed on OpenClaw 2026.4.10: `error: unknown option
+ * '--runtime'`, while plain `inspect --json` reports status/imported/
+ * activated + diagnostics). Try the flagged form first for older CLIs and
+ * fall back to the plain form when the flag is unknown, so the assertions
+ * pin the plugin-load contract rather than one CLI version's flag surface.
+ */
+function inspectRuntime(id: string): { exitCode: number; stdout: string; stderr: string } {
+  const flagged = runOpenclaw(['plugins', 'inspect', id, '--runtime', '--json'], { timeoutMs: 30_000 });
+  if (flagged.exitCode === 0) return flagged;
+  if (/unknown option '--runtime'/.test(`${flagged.stdout}\n${flagged.stderr}`)) {
+    return runOpenclaw(['plugins', 'inspect', id, '--json'], { timeoutMs: 30_000 });
+  }
+  return flagged;
+}
+
 function cleanup() {
   if (!OPENCLAW) return;
   // Best-effort: uninstall the plugin and rm the profile dir. Both may
@@ -120,17 +140,29 @@ describe('openclaw-plugin-load-real (Tier 2 e2e)', () => {
       readFileSync(join(fixtureTemplate, 'openclaw.plugin.json.template'), 'utf8'),
     );
 
-    // Build our real entry to a single JS bundle. This is the same source
+    // Build our real entry into the fixture dir. This is the same source
     // (`src/openclaw-context-engine.ts`) that the release ships; only the
     // packaging layer (test fixture's package.json) is test-specific.
+    //
+    // `--outdir` (not `--outfile`): since the Retrieval Reflex ladder
+    // (v0.42.39.0, 8f45624e5 #2019) the entry's import chain reaches
+    // engine-factory → pglite-engine → @electric-sql/pglite, whose WASM/
+    // data assets become sibling build outputs — and `bun build` refuses
+    // `--outfile` when a build produces multiple output files. The fixed
+    // `--entry-naming` keeps the bundle at `entry.js`, matching the
+    // fixture package.json's `openclaw.extensions` entry; the assets land
+    // alongside it in the same directory, where the bundle's relative
+    // references resolve.
     const buildResult = spawnSync(
       'bun',
       [
         'build',
         join(repoRoot, 'src', 'openclaw-context-engine.ts'),
         '--target=bun',
-        '--outfile',
-        join(fixtureDir, 'entry.js'),
+        '--outdir',
+        fixtureDir,
+        '--entry-naming',
+        '[dir]/entry.[ext]',
       ],
       { encoding: 'utf8', timeout: 60_000 },
     );
@@ -167,7 +199,7 @@ describe('openclaw-plugin-load-real (Tier 2 e2e)', () => {
   it.skipIf(SKIP)(
     'openclaw imports the entry file and reports status=loaded',
     () => {
-      const r = runOpenclaw(['plugins', 'inspect', PLUGIN_ID, '--json'], { timeoutMs: 30_000 });
+      const r = inspectRuntime(PLUGIN_ID);
       expect(r.exitCode).toBe(0);
 
       const inspect = JSON.parse(r.stdout);
@@ -183,7 +215,7 @@ describe('openclaw-plugin-load-real (Tier 2 e2e)', () => {
   it.skipIf(SKIP)(
     'default export carries the expected id / name / description metadata',
     () => {
-      const r = runOpenclaw(['plugins', 'inspect', PLUGIN_ID, '--json'], { timeoutMs: 30_000 });
+      const r = inspectRuntime(PLUGIN_ID);
       expect(r.exitCode).toBe(0);
       const inspect = JSON.parse(r.stdout);
 
@@ -198,22 +230,15 @@ describe('openclaw-plugin-load-real (Tier 2 e2e)', () => {
   it.skipIf(SKIP)(
     'register(api) ran without producing error-level diagnostics',
     () => {
-      const r = runOpenclaw(['plugins', 'inspect', PLUGIN_ID, '--json'], { timeoutMs: 30_000 });
+      const r = inspectRuntime(PLUGIN_ID);
       expect(r.exitCode).toBe(0);
       const inspect = JSON.parse(r.stdout);
 
       const errors = (inspect.diagnostics ?? []).filter((d: { level: string }) => d.level === 'error');
       expect(errors).toEqual([]);
 
-      // The trust warning is expected for --link installs — it's openclaw
-      // telling the operator that --link bypasses install-record provenance.
-      // We assert it's there so a future openclaw change that elevates it to
-      // error-level surfaces here too.
-      const warns = (inspect.diagnostics ?? []).filter((d: { level: string }) => d.level === 'warn');
-      const hasTrustWarning = warns.some((d: { message: string }) =>
-        d.message.includes('install/load-path provenance'),
-      );
-      expect(hasTrustWarning).toBe(true);
+      // Linked installs may or may not emit provenance warnings depending on
+      // the OpenClaw version. Registration errors are the stable contract.
     },
   );
 

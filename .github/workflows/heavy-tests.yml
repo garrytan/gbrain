@@ -1,7 +1,7 @@
 name: Heavy Tests
 
 # Heavy ops-shape tests under tests/heavy/. Cost minutes per run; NOT part
-# of default PR CI. Two triggers:
+# of default PR CI. Three triggers:
 #   - Nightly schedule (catches regressions within 24h of merge to master).
 #   - On-demand opt-in via PR label `heavy-tests` (slow loop kept off by default).
 #   - Manual workflow_dispatch for triage.
@@ -18,6 +18,11 @@ on:
     # label so we don't fan out on unrelated label changes.
     types: [labeled, synchronize, reopened]
   workflow_dispatch:
+    inputs:
+      run_grok_door:
+        description: 'Run the grok-door job (pre-secret posture: label or this input only)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -59,12 +64,33 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.3.13
-      - run: bun install
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-cache-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
 
       - name: Run heavy tests
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
+          # #3485 preload guard: this job intentionally tests against a DB.
+          GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
         run: bun run test:heavy
+
+      # Agent-bootstrap offline Docker e2e [A7] — placeholder registration.
+      # The networkless cold-machine container test (interview → render →
+      # verify with a fake gh) lands with the bootstrap doors task at
+      # tests/docker/bootstrap-e2e.sh. Gated on file existence so this stays
+      # a visible no-op until then. It runs at heavy cadence (nightly +
+      # `heavy-tests` label) by design — never in the PR shard matrix.
+      - name: Bootstrap offline Docker e2e (placeholder)
+        run: |
+          if [ -f tests/docker/bootstrap-e2e.sh ]; then
+            bash tests/docker/bootstrap-e2e.sh
+          else
+            echo "SKIP: tests/docker/bootstrap-e2e.sh not present yet — placeholder until the bootstrap doors task lands."
+          fi
 
       # The heavy runner writes per-script logs to ~/.gbrain/audit/ on every
       # run. Upload those + the rss workload JSON on failure for triage
@@ -87,3 +113,852 @@ jobs:
           path: heavy-artifacts/
           retention-days: 14
           if-no-files-found: ignore
+
+  # Real-agent door e2e: drives the ACTUAL `claude` + `codex` + `hermes` +
+  # `grok` + `opencode` binaries (no PATH shims) against a real gbrain over
+  # MCP. These pay real API
+  # cost and need the binaries installed + authed, which a stock GitHub runner
+  # does NOT have — so the tests self-SKIP (describe.skipIf on binary/auth) and
+  # the job is a clean no-op here. It exists so a self-hosted /
+  # manually-provisioned runner WITH authed claude/codex/hermes (and
+  # ANTHROPIC/OPENAI creds) actually exercises the real binaries. Heavy cadence
+  # only (nightly + `real-agent-e2e` label + dispatch); NEVER the PR shard
+  # matrix.
+  real-agent-e2e:
+    name: Real-agent door e2e (skips without authed binaries)
+    if: |
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'real-agent-e2e') ||
+      contains(github.event.pull_request.labels.*.name, 'heavy-tests')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Open the hermes/grok opt-in doors here so binary/auth absence — not
+      # the opt-in var — is what skips (same posture as the claude/codex
+      # doors). The grok door's keyless tier additionally self-skips without
+      # a grok binary, which a stock runner does not have.
+      GBRAIN_REAL_HERMES_E2E: '1'
+      GBRAIN_REAL_GROK_E2E: '1'
+      GBRAIN_REAL_OPENCODE_E2E: '1'
+      # Pin so a provisioned runner's grok version-shape test asserts against
+      # the supported version (and a colliding community `grok` binary fails
+      # loud instead of running the keyless tier confusingly).
+      GROK_VERSION: "1.0.4"
+      # Same posture for opencode: a provisioned runner's version pin.
+      OPENCODE_VERSION: "1.18.18"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.3.13
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-cache-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+
+      # Reference the door tests; run only the ones present (a door may land
+      # in a sibling PR). Missing binary/auth → the file self-skips, so a
+      # stock runner reports a green no-op rather than failing.
+      - name: Run real-agent door tests
+        run: |
+          files=()
+          for f in \
+            test/e2e/bootstrap-real-claude.serial.test.ts \
+            test/e2e/bootstrap-real-codex.serial.test.ts \
+            test/e2e/install-real-hermes.serial.test.ts \
+            test/e2e/install-real-grok.serial.test.ts \
+            test/e2e/install-real-opencode.serial.test.ts; do
+            [ -f "$f" ] && files+=("$f")
+          done
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "SKIP: no real-agent door test files present yet."
+            exit 0
+          fi
+          echo "Running: ${files[*]}"
+          # --timeout: real-agent turns are slow (live claude/codex); the door
+          # tests self-skip without authed binaries so this is a no-op elsewhere.
+          bun test --timeout=600000 "${files[@]}"
+
+  # Hermes door e2e: unlike real-agent-e2e above (best-effort, self-skipping),
+  # this job PROVISIONS the real hermes binary itself — pinned installer digest,
+  # non-interactive auth + model pin — and then requires the door tests to
+  # actually execute. It pays real API cost, so it stays label-gated at heavy
+  # cadence (nightly + `real-agent-e2e`/`heavy-tests` label + dispatch); NEVER
+  # the PR shard matrix. Loud-fail throughout: a runner that cannot install or
+  # auth hermes fails this job rather than skipping.
+  hermes-door:
+    name: Hermes door e2e (real binary, loud-fail)
+    if: |
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'real-agent-e2e') ||
+      contains(github.event.pull_request.labels.*.name, 'heavy-tests')
+    runs-on: ubuntu-latest
+    # Four serial door tests at 600s each plus the installer budget cannot
+    # fit the sibling job's 20 minutes.
+    timeout-minutes: 40
+    env:
+      # Pin values documented in docs/mcp/HERMES-CLI-PIN.md — update them
+      # together, deliberately, after reviewing upstream changes. The digest
+      # pins the INSTALLER SCRIPT; the tag + commit pin the PAYLOAD it clones
+      # (without them, the installer pulls upstream main into the runner that
+      # later holds secrets). The commit is v2026.8.3's dereferenced SHA —
+      # immutable even if the tag moves.
+      HERMES_VERSION: "0.20.0"
+      HERMES_GIT_TAG: "v2026.8.3"
+      HERMES_GIT_COMMIT: "3c27eb6234bf91b8ceee9e9071591b31e9b148cb"
+      HERMES_INSTALL_SHA256: "868ed3a91e0fabbff6d7418b3ede82bf4833652ec4e77196a42852fb35a9e5b9"
+      GBRAIN_REAL_HERMES_E2E: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.3.13
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-cache-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+
+      # `runner.temp` is not an allowed context in job-level env, so the
+      # evidence dir is derived here and exported for every later step (the
+      # door test writes into it; the failure-path upload reads it — exporting
+      # early keeps that upload working even when an install/precondition step
+      # is what failed).
+      - name: Prepare evidence dir
+        run: |
+          echo "GBRAIN_E2E_EVIDENCE_DIR=$RUNNER_TEMP/hermes-door-evidence" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/hermes-door-evidence"
+
+      # NO secrets in this step's env: the installer is downloaded from the
+      # network and executed, so it must never see credentials. The digest pin
+      # turns an upstream installer change into a loud failure instead of
+      # unreviewed code running in CI. Bound + retry the install run itself
+      # (same posture as the e2e tier2 OpenClaw install): `timeout` kills a
+      # hung attempt, 3 attempts ride out transient flakes, step cap backstops.
+      - name: Install hermes (pinned installer digest)
+        timeout-minutes: 15
+        run: |
+          curl -fsSL --retry 3 -o hermes-install.sh https://hermes-agent.nousresearch.com/install.sh
+          if ! echo "$HERMES_INSTALL_SHA256  hermes-install.sh" | sha256sum -c -; then
+            echo "::error::hermes installer digest drift — re-pin deliberately: update HERMES_INSTALL_SHA256 + HERMES_VERSION in this workflow and docs/mcp/HERMES-CLI-PIN.md after reviewing upstream changes" >&2
+            exit 1
+          fi
+          for attempt in 1 2 3; do
+            if timeout 600 bash hermes-install.sh --skip-setup --non-interactive --branch "$HERMES_GIT_TAG" --commit "$HERMES_GIT_COMMIT"; then
+              # The branch/commit flags above are ASSERTED here, not trusted:
+              # a shell installer that silently ignores unknown flags would
+              # clone upstream main into a runner that later holds secrets.
+              # Verify the actual checkout before anything else runs it.
+              actual_commit=$(git -C "$HOME/.hermes/hermes-agent" rev-parse HEAD 2>/dev/null || echo "no-git-checkout")
+              if [ "$actual_commit" != "$HERMES_GIT_COMMIT" ]; then
+                echo "::error::hermes payload drift — installed checkout is $actual_commit, pinned $HERMES_GIT_COMMIT. Either the installer ignored its branch/commit flags or the layout moved from ~/.hermes/hermes-agent; re-pin deliberately (HERMES_GIT_TAG/HERMES_GIT_COMMIT + docs/mcp/HERMES-CLI-PIN.md) after reviewing upstream." >&2
+                exit 1
+              fi
+              echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+              exit 0
+            fi
+            echo "::warning::hermes install attempt $attempt failed or timed out; retrying in 10s" >&2
+            sleep 10
+          done
+          echo "::error::hermes install failed after 3 attempts" >&2
+          exit 1
+
+      - name: Preconditions (binary, secret, version pin)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if ! command -v hermes >/dev/null 2>&1; then
+            echo "::error::hermes did not resolve on PATH after install" >&2
+            exit 1
+          fi
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::ANTHROPIC_API_KEY secret is empty — fork PRs get no secrets from GitHub, and this labeled job cannot run without them" >&2
+            exit 1
+          fi
+          version_output=$(hermes --version)
+          echo "$version_output"
+          # Observed shape: `Hermes Agent v0.20.0 (2026.8.3)`.
+          if ! printf '%s' "$version_output" | grep -qF "v$HERMES_VERSION"; then
+            echo "::error::hermes version drift — expected v$HERMES_VERSION in: $version_output" >&2
+            exit 1
+          fi
+
+      - name: Configure hermes (auth + model pin)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          mkdir -p ~/.hermes
+          printf 'ANTHROPIC_API_KEY=%s\n' "$ANTHROPIC_API_KEY" > ~/.hermes/.env
+          chmod 600 ~/.hermes/.env
+          # `hermes model` is interactive-only; `config set` is the observed
+          # non-interactive model pin.
+          hermes config set model.default anthropic/claude-haiku-4.5
+          # Global health check — informational only, never a gate here.
+          hermes doctor || true
+
+      - name: Run hermes door tests
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          # Redirect to a file, then tail — never pipe bun through tail (the
+          # pipe eats the real exit code and truncates failure details).
+          # `|| EXIT=$?` keeps the default `-e` shell from bailing before the
+          # tail runs.
+          EXIT=0
+          bun test --timeout=600000 test/e2e/install-real-hermes.serial.test.ts > door.txt 2>&1 || EXIT=$?
+          tail -40 door.txt
+          # Preserve the FULL bun output UNCONDITIONALLY (upload stays
+          # failure-gated): the zero-pass failure class below exits with the
+          # summary as its only trace, and bun prints failure details before
+          # the summary, so the 40-line tail can drop exactly the lines a
+          # paid-CI triage needs.
+          cp door.txt "$GBRAIN_E2E_EVIDENCE_DIR/" 2>/dev/null || true
+          if [ "$EXIT" -ne 0 ]; then
+            exit "$EXIT"
+          fi
+          # This job provisions the binary + auth above, so the door must
+          # actually EXECUTE: a summary with zero passing tests means the
+          # suite ran nothing or self-skipped everything — never let that
+          # read as green.
+          pass_count=$(grep -Eo '[0-9]+ pass' door.txt | tail -1 | grep -Eo '^[0-9]+' || true)
+          if [ -z "$pass_count" ] || [ "$pass_count" -eq 0 ]; then
+            echo "::error::hermes door summary shows no passing tests (nothing ran or everything skipped) — refusing to go green while testing nothing" >&2
+            exit 1
+          fi
+
+      # The door test copies its evidence into GBRAIN_E2E_EVIDENCE_DIR; the
+      # workflow only uploads it. The test already excludes credential files —
+      # the scrub below is defensive belt-and-suspenders before upload. Both
+      # steps also require the evidence-dir env (a failure before the prepare
+      # step leaves it unset, and there is nothing to upload then anyway).
+      - name: Scrub credentials from evidence (defensive)
+        if: failure() && env.GBRAIN_E2E_EVIDENCE_DIR != ''
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          # Three layers, because the evidence dir carries files WRITTEN BY
+          # THE THIRD-PARTY HERMES BINARY (logs/sessions) and upload-artifact
+          # follows symlinks:
+          # 1. filename scrub (env files),
+          # 2. symlink delete (an agent-dropped link could dereference to a
+          #    real credential file at upload time),
+          # 3. content scrub (any file that embeds the key — auth-error dumps
+          #    are most likely exactly on the failure path that uploads).
+          find "$GBRAIN_E2E_EVIDENCE_DIR" -type f \( -name '.env' -o -name '*.env' \) -exec rm -f {} + 2>/dev/null || true
+          find "$GBRAIN_E2E_EVIDENCE_DIR" -type l -delete 2>/dev/null || true
+          if [ -n "$ANTHROPIC_API_KEY" ]; then
+            grep -rlF "$ANTHROPIC_API_KEY" "$GBRAIN_E2E_EVIDENCE_DIR" 2>/dev/null | while IFS= read -r f; do
+              echo "::warning::removing evidence file containing the API key: ${f#"$GBRAIN_E2E_EVIDENCE_DIR"/}" >&2
+              rm -f "$f"
+            done
+          fi
+      - name: Upload hermes door evidence
+        if: failure() && env.GBRAIN_E2E_EVIDENCE_DIR != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: hermes-door-evidence
+          path: ${{ env.GBRAIN_E2E_EVIDENCE_DIR }}
+          retention-days: 14
+          if-no-files-found: ignore
+
+      # Hosted ubuntu-latest runners are ephemeral, but this must not depend
+      # on that: if the job ever moves to a self-hosted runner (the sibling
+      # real-agent-e2e job is designed for one), a key left in ~/.hermes/.env
+      # would persist for every later workload on that runner.
+      - name: Remove hermes credentials (unconditional)
+        if: always()
+        run: rm -f ~/.hermes/.env
+
+  # Grok door e2e (xAI Grok Build): PROVISIONS the real grok binary via the
+  # pinned npm package (registry integrity verified — stronger than the
+  # curl-installer path; both pins live in docs/mcp/GROK-CLI-PIN.md, enforced
+  # against this file by scripts/check-grok-pin.sh in `bun run verify`).
+  # KEYLESS-FIRST ordering (deliberate divergence from hermes-door): grok's
+  # mcp add/list/doctor run keyless, so the compat tier runs and banks its
+  # coverage BEFORE the secret precondition — a missing XAI_API_KEY still
+  # fails this job loudly, but only after the free tier proved the install
+  # surface, so pre-secret runs are diagnostic instead of pure red.
+  #
+  # PRE-SECRET GATING POSTURE: `real-agent-e2e` label or the run_grok_door
+  # dispatch input ONLY — deliberately NOT `schedule` and NOT the generic
+  # `heavy-tests` label, so an absent XAI_API_KEY secret cannot paint nightly
+  # heavy runs (or unrelated heavy-labeled PRs) red. The commit that lands
+  # AFTER an admin creates the XAI_API_KEY secret (an external prerequisite,
+  # not a code change) re-adds: the schedule leg, the heavy-tests label leg,
+  # a default-on dispatch, and a latest-version canary matrix leg
+  # (continue-on-error, schedule-scoped, own timeout) so the pinned lane
+  # stays deterministic while the canary tracks what users actually run.
+  grok-door:
+    name: Grok door e2e (real binary, keyless-first)
+    if: |
+      (github.event_name == 'pull_request' &&
+        contains(github.event.pull_request.labels.*.name, 'real-agent-e2e')) ||
+      (github.event_name == 'workflow_dispatch' &&
+        inputs.run_grok_door == true)
+    runs-on: ubuntu-latest
+    # Measured local door wall-time: keyless tier ~29s + one-time compiled
+    # gbrain build (~2-4 min) + npm install (~10s); paid SMOKE turn budget
+    # 2 x 240s. 20 min = measured + >50% headroom (GROK-CLI-PIN.md).
+    timeout-minutes: 20
+    env:
+      # Pin values documented in docs/mcp/GROK-CLI-PIN.md — update them
+      # together, deliberately, after reviewing upstream changes
+      # (scripts/check-grok-pin.sh fails `bun run verify` on drift).
+      GROK_VERSION: "1.0.4"
+      GROK_NPM_PACKAGE: "@xai-official/grok"
+      GROK_NPM_INTEGRITY: "sha512-Nu3SFXTqwvCQr/LQFwrQYgngJhUQwX2h9ZSgzW4HowidjbPBWtMVO0xI88d2z6/zlDSNaT5YP/uk+2DthKQMsg=="
+      # Per-platform payload pins: the wrapper's integrity covers only the
+      # wrapper tarball; the binary that EXECUTES is the platform sub-package.
+      GROK_NPM_LINUX_X64_INTEGRITY: "sha512-Dan2LfKcFBiabuDGHaGgMT8Ndzibo2ljvSjh4MlpV5117JL+S/0KMbdyYpk+13d7t+4znniW1cm+rRwUGSAvtw=="
+      GROK_NPM_LINUX_ARM64_INTEGRITY: "sha512-zGK42Eq3ZmIa7cSVnl6CiJ4cxTCMsNLQCmCoLJhy5eZXfAvZ1DA3K3HXmKCj4OScX8SalYlp7mx8HWl9Y6gytw=="
+      GBRAIN_REAL_GROK_E2E: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.3.13
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-cache-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+
+      - name: Prepare evidence dir
+        run: |
+          echo "GBRAIN_E2E_EVIDENCE_DIR=$RUNNER_TEMP/grok-door-evidence" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/grok-door-evidence"
+
+      # Compile gbrain ONCE for both bun test invocations below —
+      # ensureCompiledGbrain's cache is per-process, so without this the
+      # keyless and paid runs each pay the 2-4 min compile.
+      - name: Build gbrain (compile once for both door runs)
+        run: |
+          bun build --compile --outfile "$RUNNER_TEMP/gbrain-door-bin" src/cli.ts
+          echo "GBRAIN_COMPILED_BIN=$RUNNER_TEMP/gbrain-door-bin" >> "$GITHUB_ENV"
+
+      # SECRETLESS provisioning: the npm registry verifies the per-platform
+      # payload against its integrity metadata; the pre-check pins that the
+      # registry still serves the SAME integrity we observed (a re-published
+      # 1.0.4 becomes a loud re-pin decision, not silently different code
+      # running next to secrets in later steps). Version assert lives here
+      # too — before any secret-bearing step.
+      - name: Install grok (pinned npm package)
+        timeout-minutes: 10
+        run: |
+          served=$(npm view "$GROK_NPM_PACKAGE@$GROK_VERSION" dist.integrity 2>/dev/null || true)
+          if [ "$served" != "$GROK_NPM_INTEGRITY" ]; then
+            echo "::error::grok npm integrity drift for $GROK_NPM_PACKAGE@$GROK_VERSION — registry serves '$served', pinned '$GROK_NPM_INTEGRITY'. Re-pin deliberately: update the stamps in docs/mcp/GROK-CLI-PIN.md + this workflow after reviewing upstream (see the pin doc's re-observation checklist)." >&2
+            exit 1
+          fi
+          # The platform sub-package is the binary that actually runs — pin it
+          # too (per-arch; ubuntu-latest is x64 today, arm64 pinned for a
+          # future runner switch).
+          arch=$(uname -m)
+          case "$arch" in
+            x86_64) plat_pkg="$GROK_NPM_PACKAGE-linux-x64"; plat_pin="$GROK_NPM_LINUX_X64_INTEGRITY" ;;
+            aarch64|arm64) plat_pkg="$GROK_NPM_PACKAGE-linux-arm64"; plat_pin="$GROK_NPM_LINUX_ARM64_INTEGRITY" ;;
+            *) echo "::error::unsupported runner arch for the grok payload pin: $arch" >&2; exit 1 ;;
+          esac
+          plat_served=$(npm view "$plat_pkg@$GROK_VERSION" dist.integrity 2>/dev/null || true)
+          if [ "$plat_served" != "$plat_pin" ]; then
+            echo "::error::grok platform payload integrity drift for $plat_pkg@$GROK_VERSION — registry serves '$plat_served', pinned '$plat_pin'. Re-pin deliberately (GROK-CLI-PIN.md stamps + this workflow)." >&2
+            exit 1
+          fi
+          npm install -g "$GROK_NPM_PACKAGE@$GROK_VERSION"
+          if ! command -v grok >/dev/null 2>&1; then
+            echo "::error::grok did not resolve on PATH after npm install" >&2
+            exit 1
+          fi
+          version_output=$(grok --version)
+          echo "$version_output"
+          # Observed shape: `grok 1.0.4 (buildhash)` (GROK-CLI-PIN.md).
+          if ! printf '%s' "$version_output" | grep -qF "grok $GROK_VERSION"; then
+            echo "::error::grok version drift — expected 'grok $GROK_VERSION' in: $version_output (see docs/mcp/GROK-CLI-PIN.md triage table)" >&2
+            exit 1
+          fi
+
+      # KEYLESS TIER FIRST — banks the free compat coverage (documented-shape
+      # registration, TOML schema, doctor handshake proving the seven-verb
+      # surface) before anything needs the secret. XAI_API_KEY is absent from
+      # this step by construction, so the paid describe self-skips.
+      - name: Run grok door tests (keyless tier)
+        run: |
+          EXIT=0
+          bun test --timeout=600000 test/e2e/install-real-grok.serial.test.ts > door-keyless.txt 2>&1 || EXIT=$?
+          tail -40 door-keyless.txt
+          cp door-keyless.txt "$GBRAIN_E2E_EVIDENCE_DIR/" 2>/dev/null || true
+          if [ "$EXIT" -ne 0 ]; then
+            exit "$EXIT"
+          fi
+          # Exact expected shape for this tier: 4 keyless tests pass, the
+          # 1 paid test skips. Zero-pass or partial-pass refuses green.
+          pass_count=$(grep -Eo '[0-9]+ pass' door-keyless.txt | tail -1 | grep -Eo '^[0-9]+' || true)
+          if [ -z "$pass_count" ] || [ "$pass_count" -lt 4 ]; then
+            echo "::error::grok door keyless tier expected 4 passing tests, summary shows '${pass_count:-none}' — refusing to go green (see docs/mcp/GROK-CLI-PIN.md triage table)" >&2
+            exit 1
+          fi
+
+      - name: Preconditions (secret present)
+        env:
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+        run: |
+          if [ -z "$XAI_API_KEY" ]; then
+            echo "::error::XAI_API_KEY secret is empty — the keyless tier above already ran (its coverage is banked); the paid SMOKE needs the secret. Admin: create the XAI_API_KEY repo/environment secret (console.x.ai), then re-run. Fork PRs get no secrets from GitHub." >&2
+            exit 1
+          fi
+
+      # Named bad-key preflight: key-rot fails HERE, at a step named for it,
+      # instead of surfacing as a confusing SMOKE failure (GROK-CLI-PIN.md
+      # triage table). One minimal paid probe.
+      - name: Auth preflight (bad-key tripwire)
+        env:
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+        run: |
+          export GROK_HOME="$RUNNER_TEMP/grok-preflight-home"
+          mkdir -p "$GROK_HOME"
+          # Verbatim kill-switch homes (update together): seedGrokConfig in
+          # test/helpers/agent-harness.ts and scenarioGrokInstall in
+          # scripts/dx-explore.ts.
+          printf '[cli]\nauto_update = false\n' > "$GROK_HOME/config.toml"
+          # This step runs the third-party agent binary directly: never hand
+          # it the WRITABLE step-metadata files (appending to GITHUB_ENV/PATH
+          # poisons the later secret-bearing steps — the same channel
+          # grokChildEnv scrubs for test-spawned children), and kill its web
+          # tools like the door SMOKE does.
+          out=$(env -u GITHUB_ENV -u GITHUB_PATH -u GITHUB_OUTPUT -u GITHUB_STATE -u GITHUB_STEP_SUMMARY \
+            grok -p "reply with exactly: PREFLIGHT-OK" --output-format plain --disable-web-search 2>&1) || {
+            echo "::error::grok auth preflight failed — the XAI_API_KEY secret is present but rejected (rotate it at console.x.ai; see GROK-CLI-PIN.md triage table). Output: ${out:0:300}" >&2
+            exit 1
+          }
+          echo "auth preflight ok"
+
+      - name: Run grok door tests (full — paid SMOKE included)
+        env:
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+        run: |
+          EXIT=0
+          bun test --timeout=600000 test/e2e/install-real-grok.serial.test.ts > door.txt 2>&1 || EXIT=$?
+          tail -40 door.txt
+          cp door.txt "$GBRAIN_E2E_EVIDENCE_DIR/" 2>/dev/null || true
+          if [ "$EXIT" -ne 0 ]; then
+            exit "$EXIT"
+          fi
+          # PAID-SENTINEL: with the key present, a skipping paid tier must
+          # never read as green (the split-gating false-green class). The
+          # grep target is the suite's literal skip log — mirrored in
+          # test/e2e/install-real-grok.serial.test.ts (change together).
+          if grep -q 'SKIP paid tier' door.txt; then
+            echo "::error::grok door paid tier skipped despite a present XAI_API_KEY — hasGrokAuth() gate drift; refusing to go green" >&2
+            exit 1
+          fi
+          pass_count=$(grep -Eo '[0-9]+ pass' door.txt | tail -1 | grep -Eo '^[0-9]+' || true)
+          if [ -z "$pass_count" ] || [ "$pass_count" -lt 5 ]; then
+            echo "::error::grok door full run expected 5 passing tests (6 once the JSON tool-call test lands), summary shows '${pass_count:-none}'" >&2
+            exit 1
+          fi
+
+      # Auto-update tripwire: the seeded [cli] auto_update=false is the whole
+      # kill-switch (no env form observed) — a version that MOVED mid-job
+      # means it failed and the pins above are no longer what just ran.
+      - name: Version re-check (mid-job drift tripwire)
+        if: always()
+        run: |
+          if command -v grok >/dev/null 2>&1; then
+            version_output=$(grok --version || true)
+            if ! printf '%s' "$version_output" | grep -qF "grok $GROK_VERSION"; then
+              echo "::error::grok version moved mid-job — auto-update kill-switch failed (expected 'grok $GROK_VERSION', got: $version_output)" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Scrub credentials from evidence (defensive)
+        if: failure() && env.GBRAIN_E2E_EVIDENCE_DIR != ''
+        env:
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+        run: |
+          # Same triple as hermes-door: filenames, symlinks, content. Auth is
+          # env-only here (the job never writes the key to disk — stronger
+          # than the hermes .env posture), so the content grep is the layer
+          # that matters for grok-written logs on the failure path.
+          find "$GBRAIN_E2E_EVIDENCE_DIR" -type f \( -name '.env' -o -name '*.env' -o -name 'mcp_credentials.json' \) -exec rm -f {} + 2>/dev/null || true
+          find "$GBRAIN_E2E_EVIDENCE_DIR" -type l -delete 2>/dev/null || true
+          if [ -n "$XAI_API_KEY" ]; then
+            grep -rlF "$XAI_API_KEY" "$GBRAIN_E2E_EVIDENCE_DIR" 2>/dev/null | while IFS= read -r f; do
+              echo "::warning::removing evidence file containing the API key: ${f#"$GBRAIN_E2E_EVIDENCE_DIR"/}" >&2
+              rm -f "$f"
+            done
+          fi
+      - name: Upload grok door evidence
+        if: failure() && env.GBRAIN_E2E_EVIDENCE_DIR != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: grok-door-evidence
+          path: ${{ env.GBRAIN_E2E_EVIDENCE_DIR }}
+          retention-days: 14
+          if-no-files-found: ignore
+
+      # Auth travels env-only, but grok MAY persist derived credentials after
+      # an authed turn (the inventory is pending — GROK-CLI-PIN.md); remove
+      # the known candidate unconditionally so nothing outlives the job even
+      # on a future self-hosted runner.
+      - name: Remove grok credentials (unconditional)
+        if: always()
+        run: |
+          rm -f ~/.grok/mcp_credentials.json
+          rm -rf "$RUNNER_TEMP/grok-preflight-home"
+          # Cancellation/timeout bypasses the suite's afterAll cleanup — the
+          # hermetic homes carry no key file (env-only auth) but may hold
+          # grok-derived credentials once the authed inventory lands.
+          rm -rf /tmp/gb-grok-* 2>/dev/null || true
+
+  # ── Plugin doors: the codex + claude PLUGIN packaging, non-vacuously ──────
+  # EV11 contract: never self-skip-green. The binaries are PROVISIONED (pinned
+  # npm versions + version-output asserts, refuse on drift), and the INSTALL
+  # tiers must execute their exact expected pass counts — zero-pass or
+  # partial-pass refuses green. The INSTALL tiers are secretless by design
+  # (marketplace/plugin ops are local); the paid SMOKE tiers need real agent
+  # auth (codex: ChatGPT-login auth.json; claude: Anthropic login), which CI
+  # does not hold — they self-skip INSIDE the suites and the pass-count gate
+  # below accounts for exactly that shape, so the skip is explicit, never
+  # silent. Integrity-metadata pinning (grok-door style) is deliberately not
+  # applied: this job carries no secrets, so version pinning is the right
+  # weight.
+  plugin-doors:
+    name: Plugin doors (codex + claude, install tier)
+    if: |
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'heavy-tests')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CODEX_NPM_VERSION: "0.147.0"
+      CLAUDE_NPM_VERSION: "2.1.233"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.3.13
+      - run: bun install
+
+      - name: Build gbrain (compile once for the doors)
+        run: |
+          bun build --compile --outfile "$RUNNER_TEMP/gbrain-door-bin" src/cli.ts
+          echo "GBRAIN_COMPILED_BIN=$RUNNER_TEMP/gbrain-door-bin" >> "$GITHUB_ENV"
+
+      - name: Install codex + claude (pinned npm versions, refuse on drift)
+        timeout-minutes: 10
+        run: |
+          npm install -g "@openai/codex@$CODEX_NPM_VERSION" "@anthropic-ai/claude-code@$CLAUDE_NPM_VERSION"
+          codex_v=$(codex --version)
+          echo "$codex_v"
+          printf '%s' "$codex_v" | grep -qF "$CODEX_NPM_VERSION" || { echo "::error::codex version drift — expected $CODEX_NPM_VERSION in: $codex_v (re-pin deliberately)" >&2; exit 1; }
+          claude_v=$(claude --version)
+          echo "$claude_v"
+          printf '%s' "$claude_v" | grep -qF "$CLAUDE_NPM_VERSION" || { echo "::error::claude version drift — expected $CLAUDE_NPM_VERSION in: $claude_v (re-pin deliberately)" >&2; exit 1; }
+          codex plugin --help >/dev/null || { echo "::error::pinned codex build lost the plugin subcommand" >&2; exit 1; }
+          claude plugin --help >/dev/null || { echo "::error::pinned claude build lost the plugin subcommand" >&2; exit 1; }
+
+      - name: Codex plugin door (install tier — expected shape enforced)
+        run: |
+          EXIT=0
+          bun test --timeout=600000 test/e2e/codex-plugin-install-real.serial.test.ts > codex-plugin-door.txt 2>&1 || EXIT=$?
+          tail -40 codex-plugin-door.txt
+          if [ "$EXIT" -ne 0 ]; then exit "$EXIT"; fi
+          # Exact expected shape (grok-door posture): exactly 1 INSTALL test
+          # passes; the auth-gated SMOKE self-skips (no codex auth.json in
+          # CI). Any other count — zero, partial, or a silently-skipped new
+          # test — refuses green. Update the pin deliberately with new tests.
+          pass_count=$(grep -Eo '[0-9]+ pass' codex-plugin-door.txt | tail -1 | grep -Eo '^[0-9]+' || true)
+          if [ "${pass_count:-0}" -ne 1 ]; then
+            echo "::error::codex plugin door expected exactly 1 passing INSTALL test, summary shows '${pass_count:-none}' — refusing to go green (re-pin deliberately when tests are added)" >&2
+            exit 1
+          fi
+
+      - name: Claude plugin door (install tier — expected shape enforced)
+        run: |
+          EXIT=0
+          bun test --timeout=600000 test/e2e/claude-plugin-install-real.serial.test.ts -t 'VALIDATE' > claude-plugin-door.txt 2>&1 || EXIT=$?
+          tail -40 claude-plugin-door.txt
+          if [ "$EXIT" -ne 0 ]; then exit "$EXIT"; fi
+          pass_count=$(grep -Eo '[0-9]+ pass' claude-plugin-door.txt | tail -1 | grep -Eo '^[0-9]+' || true)
+          if [ "${pass_count:-0}" -ne 1 ]; then
+            echo "::error::claude plugin door expected exactly 1 passing INSTALL test, summary shows '${pass_count:-none}' — refusing to go green (re-pin deliberately when tests are added)" >&2
+            exit 1
+          fi
+
+  # opencode door e2e (SST opencode): PROVISIONS the real opencode binary via
+  # the pinned npm package (wrapper + per-platform payload integrities
+  # verified — both pins live in docs/mcp/OPENCODE-CLI-PIN.md, enforced
+  # against this file by scripts/check-opencode-pin.sh in `bun run verify`).
+  #
+  # DAY-ONE FULL POSTURE (a step past grok's pre-secret gating, deliberate):
+  # opencode's anonymous free tier drives MCP tool calls keyless (observed,
+  # load-bearing — OPENCODE-CLI-PIN.md §One-shot), so the ENTIRE core door —
+  # including the nonce SMOKE — runs with no secret; and the paid anthropic
+  # leg rides the ANTHROPIC_API_KEY secret that already exists (hermes-door
+  # consumes it). So this job takes the hermes-door triggers (nightly +
+  # labels + dispatch, cadence policy: nightly for the NEWEST door agent)
+  # with grok-door's internals (keyless-first ordering, secretless pinned
+  # provisioning, sentinels, scrub triple, unconditional credential removal).
+  # No dedicated dispatch input: any workflow_dispatch already passes the
+  # non-PR arm, so an input would be dead yaml.
+  opencode-door:
+    name: opencode door e2e (real binary, keyless SMOKE)
+    if: |
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'real-agent-e2e') ||
+      contains(github.event.pull_request.labels.*.name, 'heavy-tests')
+    runs-on: ubuntu-latest
+    # Measured local door wall-time: full 6-test run 35.8s + one-time
+    # compiled gbrain build (~2-4 min) + npm install (~15s); free-tier +
+    # paid turn budgets 2 x 240s each. 20 min = measured + >50% headroom.
+    timeout-minutes: 20
+    env:
+      # Pin values documented in docs/mcp/OPENCODE-CLI-PIN.md — update them
+      # together, deliberately, after reviewing upstream changes
+      # (scripts/check-opencode-pin.sh fails `bun run verify` on drift).
+      OPENCODE_VERSION: "1.18.18"
+      OPENCODE_NPM_PACKAGE: "opencode-ai"
+      OPENCODE_NPM_INTEGRITY: "sha512-J+5HFq8tf+wPBBpBpMPSNjSytF2/EkNWYfFZh4si1d9auFbQriqDyqZv+vFUsLWERfdMU32Eajwuiq3rKBvZLQ=="
+      # Per-platform payload pins: the wrapper's integrity covers only the
+      # wrapper tarball; the binary that EXECUTES is the platform sub-package.
+      OPENCODE_NPM_LINUX_X64_INTEGRITY: "sha512-WmeUnhljYJ252wywKTiW4bNDzsas2njpjPUEh0jM6HKNI4vFxJtREtzaWViY4AKEAcOkLWT8Ll17ixvcHz3AnA=="
+      OPENCODE_NPM_LINUX_ARM64_INTEGRITY: "sha512-e8D3g0qJEIzawEg2+ygW3vkZjAYL2ssyAx4GbihjwXwZFvlZZy5zRWWzdz5KLBoHSTl0FB73vNtnNeXONyHpVQ=="
+      GBRAIN_REAL_OPENCODE_E2E: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.3.13
+      - run: bun install
+
+      - name: Prepare evidence dir
+        run: |
+          echo "GBRAIN_E2E_EVIDENCE_DIR=$RUNNER_TEMP/opencode-door-evidence" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/opencode-door-evidence"
+
+      # Compile gbrain ONCE for both bun test invocations below.
+      - name: Build gbrain (compile once for both door runs)
+        run: |
+          bun build --compile --outfile "$RUNNER_TEMP/gbrain-door-bin" src/cli.ts
+          echo "GBRAIN_COMPILED_BIN=$RUNNER_TEMP/gbrain-door-bin" >> "$GITHUB_ENV"
+
+      # SECRETLESS provisioning, pack-verify-install: `npm pack` DOWNLOADS
+      # each artifact and reports the integrity of the BYTES it wrote, so the
+      # asserts below cover the tarballs actually held — closing the
+      # view-then-install TOCTOU (two registry round-trips a payload-swapping
+      # registry could split). The wrapper then installs FROM the verified
+      # local tarball, not a fresh registry resolve of the name. Payload
+      # resolution, honestly: that install still fetches the platform
+      # sub-package (opencode-linux-*) over the network; after the pack step
+      # byte-confirms the registry's payload artifact matches its pin, npm
+      # validates the install-time fetch against the same packument
+      # integrity. No --ignore-scripts: opencode-ai's postinstall places the
+      # platform binary (verified locally — with the flag the CLI refuses to
+      # run). Version assert lives here too — before any secret-bearing step.
+      - name: Install opencode (pinned npm package, pack-verify-install)
+        timeout-minutes: 10
+        run: |
+          packdir=$(mktemp -d)
+          read_integrity() {
+            node -e 'let d;try{d=JSON.parse(require("fs").readFileSync(0,"utf8"))}catch{d=[]}process.stdout.write((Array.isArray(d)&&d[0]&&d[0].integrity)||"")'
+          }
+          pushd "$packdir" >/dev/null
+          served=$(npm pack "$OPENCODE_NPM_PACKAGE@$OPENCODE_VERSION" --json 2>/dev/null | read_integrity || true)
+          if [ "$served" != "$OPENCODE_NPM_INTEGRITY" ]; then
+            echo "::error::opencode npm integrity drift for $OPENCODE_NPM_PACKAGE@$OPENCODE_VERSION — packed tarball integrity '$served', pinned '$OPENCODE_NPM_INTEGRITY'. Re-pin deliberately: update the stamps in docs/mcp/OPENCODE-CLI-PIN.md + this workflow after reviewing upstream (see the pin doc's re-observation checklist)." >&2
+            exit 1
+          fi
+          arch=$(uname -m)
+          case "$arch" in
+            x86_64) plat_pkg="opencode-linux-x64"; plat_pin="$OPENCODE_NPM_LINUX_X64_INTEGRITY" ;;
+            aarch64|arm64) plat_pkg="opencode-linux-arm64"; plat_pin="$OPENCODE_NPM_LINUX_ARM64_INTEGRITY" ;;
+            *) echo "::error::unsupported runner arch for the opencode payload pin: $arch" >&2; exit 1 ;;
+          esac
+          plat_served=$(npm pack "$plat_pkg@$OPENCODE_VERSION" --json 2>/dev/null | read_integrity || true)
+          if [ "$plat_served" != "$plat_pin" ]; then
+            echo "::error::opencode platform payload integrity drift for $plat_pkg@$OPENCODE_VERSION — packed tarball integrity '$plat_served', pinned '$plat_pin'. Re-pin deliberately (OPENCODE-CLI-PIN.md stamps + this workflow)." >&2
+            exit 1
+          fi
+          npm install -g ./opencode-ai-*.tgz
+          popd >/dev/null
+          rm -rf "$packdir"
+          if ! command -v opencode >/dev/null 2>&1; then
+            echo "::error::opencode did not resolve on PATH after npm install" >&2
+            exit 1
+          fi
+          version_output=$(opencode --version)
+          echo "$version_output"
+          # Observed shape: BARE semver (`1.18.18` — no name, no hash); the
+          # SST-vs-claimant discriminator (OPENCODE-CLI-PIN.md §Pin).
+          if [ "$(printf '%s' "$version_output" | tr -d '[:space:]')" != "$OPENCODE_VERSION" ]; then
+            echo "::error::opencode version drift — expected bare '$OPENCODE_VERSION', got: $version_output (see docs/mcp/OPENCODE-CLI-PIN.md triage table)" >&2
+            exit 1
+          fi
+
+      # KEYLESS TIER FIRST — and on opencode that includes the nonce SMOKE
+      # (free tier). ANTHROPIC_API_KEY is absent from this step by
+      # construction, so the paid describe self-skips.
+      - name: Run opencode door tests (keyless tier — SMOKE included)
+        run: |
+          EXIT=0
+          bun test --timeout=600000 test/e2e/install-real-opencode.serial.test.ts > door-keyless.txt 2>&1 || EXIT=$?
+          tail -40 door-keyless.txt
+          cp door-keyless.txt "$GBRAIN_E2E_EVIDENCE_DIR/" 2>/dev/null || true
+          if [ "$EXIT" -ne 0 ]; then
+            exit "$EXIT"
+          fi
+          # Exact expected shape for this tier: 5 keyless tests pass (T1, T2,
+          # T2b, T3, T4-SMOKE), the 1 paid test skips. Zero/partial-pass
+          # refuses green.
+          pass_count=$(grep -Eo '[0-9]+ pass' door-keyless.txt | tail -1 | grep -Eo '^[0-9]+' || true)
+          if [ -z "$pass_count" ] || [ "$pass_count" -lt 5 ]; then
+            echo "::error::opencode door keyless tier expected 5 passing tests, summary shows '${pass_count:-none}' — refusing to go green (see docs/mcp/OPENCODE-CLI-PIN.md triage table)" >&2
+            exit 1
+          fi
+
+      - name: Preconditions (secret present)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::ANTHROPIC_API_KEY secret is empty — the keyless tier above already ran (its coverage, including the SMOKE, is banked); the paid anthropic leg needs the secret hermes-door already consumes. Fork PRs get no secrets from GitHub." >&2
+            exit 1
+          fi
+
+      # Full run (paid anthropic leg included). The T5 models-gate inside the
+      # suite is the named bad-pin tripwire: it validates the pinned model id
+      # against the AUTHED `opencode models` list BEFORE any spend.
+      - name: Run opencode door tests (full — paid anthropic leg included)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          EXIT=0
+          bun test --timeout=600000 test/e2e/install-real-opencode.serial.test.ts > door.txt 2>&1 || EXIT=$?
+          tail -40 door.txt
+          cp door.txt "$GBRAIN_E2E_EVIDENCE_DIR/" 2>/dev/null || true
+          if [ "$EXIT" -ne 0 ]; then
+            exit "$EXIT"
+          fi
+          # PAID-SENTINEL: with the key present, a skipping paid tier must
+          # never read as green (the split-gating false-green class). The
+          # grep target is the suite's literal skip log — mirrored in
+          # test/e2e/install-real-opencode.serial.test.ts (change together).
+          if grep -q 'SKIP paid tier' door.txt; then
+            echo "::error::opencode door paid tier skipped despite a present ANTHROPIC_API_KEY — hasOpencodeAuth() gate drift; refusing to go green" >&2
+            exit 1
+          fi
+          pass_count=$(grep -Eo '[0-9]+ pass' door.txt | tail -1 | grep -Eo '^[0-9]+' || true)
+          if [ -z "$pass_count" ] || [ "$pass_count" -lt 6 ]; then
+            echo "::error::opencode door full run expected 6 passing tests, summary shows '${pass_count:-none}'" >&2
+            exit 1
+          fi
+
+      # Auto-update tripwire: the DOUBLE kill (config seed + env var) is the
+      # whole defense — a version that MOVED mid-job means it failed and the
+      # pins above are no longer what just ran.
+      - name: Version re-check (mid-job drift tripwire)
+        if: always()
+        run: |
+          if command -v opencode >/dev/null 2>&1; then
+            version_output=$(opencode --version || true)
+            if [ "$(printf '%s' "$version_output" | tr -d '[:space:]')" != "$OPENCODE_VERSION" ]; then
+              echo "::error::opencode version moved mid-job — auto-update kill failed (expected '$OPENCODE_VERSION', got: $version_output)" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Scrub credentials from evidence (defensive)
+        if: failure() && env.GBRAIN_E2E_EVIDENCE_DIR != ''
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          # Same triple as the sibling doors, RE-KEYED for this lane: the
+          # credential file candidate is opencode's auth.json and the content
+          # grep sweeps ANTHROPIC_API_KEY (not XAI). Auth is env-only here —
+          # the content grep is the layer that matters for opencode-written
+          # logs on the failure path.
+          find "$GBRAIN_E2E_EVIDENCE_DIR" -type f \( -name '.env' -o -name '*.env' -o -name 'auth.json' \) -exec rm -f {} + 2>/dev/null || true
+          find "$GBRAIN_E2E_EVIDENCE_DIR" -type l -delete 2>/dev/null || true
+          if [ -n "$ANTHROPIC_API_KEY" ]; then
+            grep -rlF "$ANTHROPIC_API_KEY" "$GBRAIN_E2E_EVIDENCE_DIR" 2>/dev/null | while IFS= read -r f; do
+              echo "::warning::removing evidence file containing the API key: ${f#"$GBRAIN_E2E_EVIDENCE_DIR"/}" >&2
+              rm -f "$f"
+            done
+          fi
+      - name: Upload opencode door evidence
+        if: failure() && env.GBRAIN_E2E_EVIDENCE_DIR != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: opencode-door-evidence
+          path: ${{ env.GBRAIN_E2E_EVIDENCE_DIR }}
+          retention-days: 14
+          if-no-files-found: ignore
+
+      # Auth travels env-only, but a future login flow would persist
+      # auth.json — remove the known candidate unconditionally so nothing
+      # outlives the job even on a future self-hosted runner.
+      - name: Remove opencode credentials (unconditional)
+        if: always()
+        run: |
+          rm -f ~/.local/share/opencode/auth.json
+          rm -rf /tmp/gb-opencode-* 2>/dev/null || true
+
+  # opencode canary: latest-version leg (schedule-scoped, continue-on-error,
+  # own timeout — landed IN-WAVE, reversing the grok-style deferral, because
+  # opencode ships near-continuously and a frozen pin goes stale in weeks;
+  # the pinned lane above stays the deterministic gate while this tracks
+  # what users actually run). Keyless tier only (incl. the free-tier SMOKE);
+  # no secret ever reaches this job. A red here is a PIN-REFRESH SIGNAL
+  # (OPENCODE-CLI-PIN.md §Pin-refresh cadence), never a gate.
+  opencode-door-canary:
+    name: opencode door canary (latest, keyless, non-gating)
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    env:
+      GBRAIN_REAL_OPENCODE_E2E: '1'
+      # Deliberately NO OPENCODE_VERSION pin: T1 asserts the bare-semver
+      # SHAPE only, and the suite runs against whatever `latest` is today.
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.3.13
+      - run: bun install
+      - name: Build gbrain
+        run: |
+          bun build --compile --outfile "$RUNNER_TEMP/gbrain-door-bin" src/cli.ts
+          echo "GBRAIN_COMPILED_BIN=$RUNNER_TEMP/gbrain-door-bin" >> "$GITHUB_ENV"
+      - name: Install opencode@latest (unpinned — the whole point)
+        timeout-minutes: 10
+        run: |
+          npm install -g opencode-ai@latest
+          command -v opencode >/dev/null 2>&1
+          echo "canary version: $(opencode --version)"
+      - name: Run opencode door tests (keyless tier against latest)
+        run: |
+          EXIT=0
+          bun test --timeout=600000 test/e2e/install-real-opencode.serial.test.ts > door-canary.txt 2>&1 || EXIT=$?
+          tail -40 door-canary.txt
+          if [ "$EXIT" -ne 0 ]; then
+            echo "::warning::opencode canary red against latest — pin-refresh signal (OPENCODE-CLI-PIN.md §Pin-refresh cadence); the pinned lane is the gate."
+            exit "$EXIT"
+          fi

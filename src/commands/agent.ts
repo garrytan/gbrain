@@ -18,6 +18,8 @@ import type { BrainEngine } from '../core/engine.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
 import { waitForCompletion, TimeoutError } from '../core/minions/wait-for-completion.ts';
 import type { MinionJobInput, SubagentHandlerData, AggregatorHandlerData } from '../core/minions/types.ts';
+import { resolveSourceId, ALL_SOURCES } from '../core/source-resolver.ts';
+import { fetchSource } from '../core/sources-load.ts';
 import { runAgentLogs } from './agent-logs.ts';
 
 // ── arg parsing helpers ────────────────────────────────────
@@ -72,6 +74,10 @@ SUBMITTING
     --max-turns <n>              Max assistant turns (default 20)
     --tools a,b,c                Subset of registered tool names (comma list)
     --timeout-ms <n>             Per-job wall-clock timeout
+    --source <id>                Brain source the subagent's writes are scoped to.
+                                  Default: the standard resolution chain (GBRAIN_SOURCE,
+                                  .gbrain-source, sources.default, ...) — see
+                                  \`gbrain sources current\`
     --fanout-manifest <path>     JSON array of {prompt, input_vars?} — one child each
     --follow                     Tail status until terminal (default on TTY)
     --detach                     Submit + print job id, exit immediately
@@ -116,6 +122,7 @@ interface RunFlags {
   maxTurns?: number;
   tools?: string[];
   timeoutMs?: number;
+  source?: string;
   fanoutManifest?: string;
   follow: boolean;
   detach: boolean;
@@ -181,6 +188,7 @@ function parseRunFlags(args: string[]): { flags: RunFlags; rest: string[] } {
       case '--max-turns':       flags.maxTurns = parseIntFlagValue(requireFlagValue(args, ++i, a), a); break;
       case '--tools':           flags.tools = requireFlagValue(args, ++i, a).split(',').map(s => s.trim()).filter(Boolean); break;
       case '--timeout-ms':      flags.timeoutMs = parseIntFlagValue(requireFlagValue(args, ++i, a), a); break;
+      case '--source':          flags.source = requireFlagValue(args, ++i, a); break;
       case '--fanout-manifest': flags.fanoutManifest = requireFlagValue(args, ++i, a); break;
       case '--follow':          flags.follow = true; break;
       case '--no-follow':       flags.follow = false; break;
@@ -203,9 +211,78 @@ function parseRunFlags(args: string[]): { flags: RunFlags; rest: string[] } {
   return { flags, rest };
 }
 
+/**
+ * Predicate: is this error one of the source resolver's user-facing throws
+ * we want to surface as a clean stderr line + exit 1? Mirrors
+ * dream.ts:isResolverUserError — anything else (connection failures,
+ * genuine bugs) propagates with a stack trace.
+ */
+function isResolverUserError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  const m = e.message;
+  return (m.startsWith('Source "') && m.includes(' not found.'))
+      || m.startsWith('Invalid --source value')
+      || m.startsWith('Invalid GBRAIN_SOURCE value');
+}
+
+/**
+ * #2922: resolve the brain source for a subagent submission via the
+ * canonical chain (explicit --source → GBRAIN_SOURCE → .gbrain-source →
+ * local_path match → sources.default → sole non-default → 'default').
+ * Pre-fix, `gbrain agent run` never resolved a source, so every page an
+ * agent job wrote landed in the seed 'default' source even on brains with
+ * `gbrain sources default <id>` configured.
+ *
+ * The `__all__` sentinel is rejected here: subagent writes must target
+ * exactly one source (and `validateSourceId` at tool-registry build time
+ * would reject it anyway — better to fail at submit than at claim).
+ */
+async function resolveAgentSource(engine: BrainEngine, explicit: string | undefined): Promise<string> {
+  // An empty `--source ""` must fail loudly, not silently degrade to the
+  // env/dotfile/default tiers (resolveSourceId's `if (explicit)` treats a
+  // falsy value as omitted — explicit-but-empty would slip through).
+  if (explicit !== undefined && explicit.trim() === '') {
+    console.error('gbrain agent run: --source requires a non-empty value. Run `gbrain agent run --help`.');
+    process.exit(2);
+  }
+  let resolved: string;
+  try {
+    resolved = await resolveSourceId(engine, explicit ?? null);
+  } catch (e) {
+    if (isResolverUserError(e)) {
+      console.error(`gbrain agent run: ${(e as Error).message}`);
+      process.exit(1);
+    }
+    throw e;
+  }
+  if (resolved === ALL_SOURCES) {
+    console.error(
+      `gbrain agent run: --source ${ALL_SOURCES} is not supported — ` +
+      `subagent writes must target exactly one source. Pass a concrete --source <id>.`,
+    );
+    process.exit(2);
+  }
+  // Archived-source guard, mirroring dream.ts: writing subagent pages into
+  // an archived (normally invisible) source would mask them until restore.
+  const src = await fetchSource(engine, resolved);
+  if (src?.archived === true) {
+    console.error(
+      `gbrain agent run: source ${resolved} is archived; restore with ` +
+      `\`gbrain sources restore ${resolved}\` before submitting agent jobs`,
+    );
+    process.exit(1);
+  }
+  return resolved;
+}
+
 export async function runAgentRun(engine: BrainEngine, args: string[]): Promise<void> {
   const { flags, rest } = parseRunFlags(args);
   const queue = new MinionQueue(engine);
+
+  // #2922: resolve once at submit time; both the single-job and fan-out
+  // paths stamp it on SubagentHandlerData.source_id so buildOpContext
+  // scopes every tool call to it instead of the legacy 'default'.
+  const sourceId = await resolveAgentSource(engine, flags.source);
 
   // Fan-out path: --fanout-manifest supplies explicit child inputs. The
   // aggregator submits first (so its id is available as parent for each
@@ -213,7 +290,7 @@ export async function runAgentRun(engine: BrainEngine, args: string[]): Promise<
   // outcomes don't cascade; aggregator waits in waiting-children until
   // Lane 1B's terminal-set check unblocks it.
   if (flags.fanoutManifest) {
-    await runFanout(engine, queue, flags, rest.join(' '));
+    await runFanout(engine, queue, flags, rest.join(' '), sourceId);
     return;
   }
 
@@ -223,7 +300,7 @@ export async function runAgentRun(engine: BrainEngine, args: string[]): Promise<
     process.exit(2);
   }
 
-  const data: SubagentHandlerData = { prompt };
+  const data: SubagentHandlerData = { prompt, source_id: sourceId };
   if (flags.subagentDef) data.subagent_def = flags.subagentDef;
   if (flags.model) data.model = flags.model;
   if (flags.maxTurns) data.max_turns = flags.maxTurns;
@@ -248,7 +325,7 @@ export async function runAgentRun(engine: BrainEngine, args: string[]): Promise<
 
 // ── fan-out ───────────────────────────────────────────────
 
-async function runFanout(engine: BrainEngine, queue: MinionQueue, flags: RunFlags, promptTemplate: string): Promise<void> {
+async function runFanout(engine: BrainEngine, queue: MinionQueue, flags: RunFlags, promptTemplate: string, sourceId: string): Promise<void> {
   const manifestPath = flags.fanoutManifest!;
   let manifest: Array<{ prompt?: string; input_vars?: Record<string, unknown> }>;
   try {
@@ -272,6 +349,7 @@ async function runFanout(engine: BrainEngine, queue: MinionQueue, flags: RunFlag
     const entry = manifest[0]!;
     const data: SubagentHandlerData = {
       prompt: entry.prompt ?? promptTemplate,
+      source_id: sourceId,
       ...(entry.input_vars ? { input_vars: entry.input_vars } : {}),
       ...(flags.subagentDef ? { subagent_def: flags.subagentDef } : {}),
       ...(flags.model ? { model: flags.model } : {}),
@@ -303,6 +381,7 @@ async function runFanout(engine: BrainEngine, queue: MinionQueue, flags: RunFlag
   for (const entry of manifest) {
     const data: SubagentHandlerData = {
       prompt: entry.prompt ?? promptTemplate,
+      source_id: sourceId,
       ...(entry.input_vars ? { input_vars: entry.input_vars } : {}),
       ...(flags.subagentDef ? { subagent_def: flags.subagentDef } : {}),
       ...(flags.model ? { model: flags.model } : {}),

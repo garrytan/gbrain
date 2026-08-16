@@ -2,8 +2,9 @@
 
 GBrain's MCP server runs via `gbrain serve` (stdio transport). To make it
 accessible from other devices and AI clients, run `gbrain serve --http`
-(built-in HTTP transport with bearer auth, Postgres-only ... see
-[DEPLOY.md](DEPLOY.md)) behind a public tunnel. Here are your tunnel options.
+(built-in HTTP transport with OAuth 2.1 + bearer auth, works on both PGLite
+and Postgres brains — see [DEPLOY.md](DEPLOY.md)) behind a public tunnel.
+Here are your tunnel options.
 
 ## ngrok (recommended)
 
@@ -58,10 +59,11 @@ Both run Bun natively. No bundling, no Deno, no cold start, no timeout limits.
 | Works when laptop is off | No | No | Yes |
 | Cold start | None | None | None |
 | Timeout limits | None | None | None |
-| All 30 operations | Yes | Yes | Yes |
+| Full remote operation surface (100+ ops, minus `localOnly`) | Yes | Yes | Yes |
 | Setup time | 5 min | 10 min | 15 min |
 
-**Note:** `gbrain serve --http` is the built-in HTTP transport (v0.22.7+). Bearer auth
-against the `access_tokens` table, default-deny CORS, two-bucket rate limit, body cap,
-per-request audit log. Postgres-only by design (PGLite is local-only). See
-[DEPLOY.md](DEPLOY.md) and [SECURITY.md](../../SECURITY.md) for env vars and tunables.
+**Note:** `gbrain serve --http` is the built-in HTTP transport. OAuth 2.1 plus
+bearer auth against the `access_tokens` table, default-deny CORS, two-bucket rate
+limit, body cap, per-request audit log. Works on both PGLite and Postgres brains.
+See [DEPLOY.md](DEPLOY.md) and [SECURITY.md](../../SECURITY.md) for env vars and
+tunables.

@@ -7,16 +7,21 @@ Every inbound message gets scanned for original thinking AND entity mentions so 
 ## What the User Gets
 
 Without this: the agent answers questions but forgets everything. You mention
-Pedro in a meeting, and next week the agent doesn't know who Pedro is.
+Alice in a meeting, and next week the agent doesn't know who Alice is.
 
 With this: every person, company, and idea mentioned in conversation gets a
-brain page. Next time Pedro comes up, the agent already has context. The
+brain page. Next time Alice comes up, the agent already has context. The
 brain compounds.
 
 ## Implementation
 
 Spawn a lightweight sub-agent on EVERY inbound message. Do NOT wait for it
 to finish before responding. It runs in parallel.
+
+This pattern is harness-side by design, but gbrain ships help on both ends:
+the `signal-detector` skill (`skills/signal-detector/`) is the bundled
+version of this detection loop, and `gbrain extract` runs gbrain's own
+extraction machinery (entities, facts) over already-synced content.
 
 ```
 on_every_message(message_text, source_context):
@@ -109,6 +114,7 @@ is_notable(entity):
 | Pattern recognition ("I keep seeing X in every Y") | Acknowledgments and reactions |
 | Hot takes with reasoning | Routine operational messages |
 | Metaphors that reveal new angles | Requests without embedded insight |
+| Emotional/psychological insights about self or others | |
 
 ### Filing Rules
 
@@ -116,11 +122,17 @@ is_notable(entity):
 |--------|-------------|
 | User generated the idea | `brain/originals/{slug}.md` |
 | User's synthesis of others' ideas | `brain/originals/` (the synthesis is original) |
+| User's ghostwritten book/essay | `brain/originals/` (note ghostwriter in metadata) |
 | World concept someone else coined | `brain/concepts/{slug}.md` |
 | Product or business idea | `brain/ideas/{slug}.md` |
 | Person mentioned | `brain/people/{slug}.md` |
 | Company mentioned | `brain/companies/{slug}.md` |
 | Media referenced | `brain/media/{type}/{slug}.md` |
+| Article ABOUT the user | `brain/media/writings/{slug}.md` |
+
+This table is the single home for the capture/filing taxonomy. Other guides
+([idea-capture](idea-capture.md) especially) link here rather than carrying
+their own copy.
 
 ### The Iron Law of Back-Linking
 
@@ -128,21 +140,21 @@ Every entity mention MUST create a back-link FROM the entity page TO the
 source. This is not optional.
 
 ```
-// When message mentions "Pedro" and creates a meeting page:
+// When message mentions "Alice" and creates a meeting page:
 
 // 1. Update the meeting page (normal)
 brain/meetings/2026-04-10-board-sync.md:
-  - Pedro presented Q1 numbers
+  - Alice presented Q1 numbers
 
-// 2. ALSO update Pedro's page (back-link)
-brain/people/pedro-franceschi.md:
+// 2. ALSO update Alice's page (back-link)
+brain/people/alice-example.md:
   ## Timeline
   - **2026-04-10** | Presented Q1 numbers at board sync
     [Source: User, board meeting, 2026-04-10]
 ```
 
 Without back-links, you can't traverse the graph. "Show me everything related
-to Pedro" only works if Pedro's page links back to every mention.
+to Alice" only works if Alice's page links back to every mention.
 
 ## Tricky Spots
 
@@ -163,7 +175,7 @@ to Pedro" only works if Pedro's page links back to every mention.
 
 5. **Dedup before creating.** Always `gbrain search` before creating a page.
    Variant spellings, nicknames, and company abbreviations cause duplicates.
-   "Pedro Franceschi" and "Pedro" might be the same person.
+   "Alice Example" and "Alice" might be the same person.
 
 ## How to Verify
 
@@ -182,7 +194,7 @@ to Pedro" only works if Pedro's page links back to every mention.
 4. **Send a boring message.** Say "ok sounds good." Verify: nothing was
    created. The detector should report "No signals detected."
 
-5. **Check for duplicates.** Mention "Pedro" then later "Pedro Franceschi."
+5. **Check for duplicates.** Mention "Alice" then later "Alice Example."
    Verify: one page, not two.
 
 ---

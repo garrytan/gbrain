@@ -304,16 +304,21 @@ describe('check-engine-dynamic-import.sh', () => {
 });
 
 describe('engine dynamic-import guard wiring', () => {
-  it('is invoked through bash by check:all', () => {
+  it('is wired into the verify registry (W0: check:all deleted; CHECKS array is THE registry)', () => {
     const pkg = JSON.parse(readFileSync(PACKAGE_JSON, 'utf8')) as {
       scripts: Record<string, string>;
     };
     expect(pkg.scripts['check:engine-dynamic-import']).toBe(
       'bash scripts/check-engine-dynamic-import.sh',
     );
-    expect(pkg.scripts['check:all']).toContain(
-      'bash scripts/check-engine-dynamic-import.sh',
+    // The stale duplicate registry is gone for good…
+    expect(pkg.scripts['check:all']).toBeUndefined();
+    // …and the single registry carries this guard.
+    const checks = readFileSync(
+      new URL('../../scripts/run-verify-parallel.sh', import.meta.url),
+      'utf8',
     );
+    expect(checks).toContain('"check:engine-dynamic-import"');
   });
 
   it('is listed by the authoritative verify dispatcher', () => {
