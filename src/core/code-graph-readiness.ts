@@ -67,7 +67,7 @@ function effectiveSourceId(scope: ReadinessScope): string | undefined {
 }
 
 /** EXISTS probe: does any code chunk exist in scope? Matches the def/refs result query. */
-async function codeChunksExist(engine: BrainEngine, sourceId: string | undefined): Promise<boolean> {
+export async function codeChunksExist(engine: BrainEngine, sourceId: string | undefined): Promise<boolean> {
   const params: unknown[] = [];
   let scopeClause = '';
   if (sourceId) {

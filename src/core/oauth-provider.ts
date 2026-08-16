@@ -964,6 +964,9 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         // allowedSources for federated reads, matching legacy HTTP transport.
         sourceId,
         allowedSources,
+        // #3242 parity with src/mcp/http-transport.ts: only the historical
+        // no-grant floor may widen unqualified reads to the federated set.
+        hasSourceGrant: permissions?.source_id != null,
         takesHoldersAllowList,
       } as CoreAuthInfo as SdkAuthInfo;
     }
