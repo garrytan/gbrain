@@ -38,12 +38,13 @@ import { DEFAULT_CYCLES_NONTTY } from '../eval/cycle-default.ts';
  * be listed in its recipe's chat touchpoint AND in the SUPPORTED_MODELS
  * pricing allowlist — pinned by test/default-model-panels.test.ts.
  * google:gemini-1.5-pro (retired by Google) and openai:gpt-4o (dropped from
- * the OpenAI recipe's chat list) sat here dead until #3510.
+ * the OpenAI recipe's chat list) sat here dead until #3510; gemini-2.0-flash
+ * replaced the former and was itself retired before it was ever swept.
  */
 export const DEFAULT_MODEL_PANEL = [
   'openai:gpt-5.2',
   'anthropic:claude-opus-4-7',
-  'google:gemini-2.0-flash',
+  'google:gemini-2.5-flash',
 ] as const;
 
 export interface RunOpts {

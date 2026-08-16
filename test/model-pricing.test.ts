@@ -61,6 +61,13 @@ describe('CANONICAL_PRICING — table integrity', () => {
       CANONICAL_PRICING['google:gemini-2.0-flash'],
     );
   });
+
+  // Retired ids stay priced so historical usage/audit rows still resolve;
+  // the live successors have to be priced for anything new to be estimated.
+  test('the live Gemini ids are priced alongside the retired ones', () => {
+    expect(CANONICAL_PRICING['google:gemini-2.5-flash']).toEqual({ input: 0.3, output: 2.5 });
+    expect(CANONICAL_PRICING['google:gemini-2.5-flash-lite']).toEqual({ input: 0.1, output: 0.4 });
+  });
 });
 
 describe('canonicalLookup — id normalization', () => {
