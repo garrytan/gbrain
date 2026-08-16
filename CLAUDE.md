@@ -335,9 +335,10 @@ filed for held-out corpus growth, cross-vendor verification, hierarchical
 area-of-areas, embedding-based pre-router, and the run-1 vs run-2
 prompt-design ablation methodology.
 
-**Operational health (v0.19.1):** smoke-test (8 post-restart health checks with auto-fix
-for Bun, CLI, DB, worker, Zod CJS, gateway, API key, brain repo; user-extensible via
-`~/.gbrain/smoke-tests.d/*.sh`).
+**Operational health (v0.19.1):** smoke-test (8 post-restart health checks; bounded
+auto-fix for Bun, CLI, and Zod CJS; read-only worker topology via native supervisor
+status with duplicate detection; DB, gateway, API key, brain repo; user-extensible
+via `~/.gbrain/smoke-tests.d/*.sh`).
 
 **Conventions:** `skills/conventions/` has cross-cutting rules (quality, brain-first,
 model-routing, test-before-bulk, cross-modal). `skills/_brain-filing-rules.md` and

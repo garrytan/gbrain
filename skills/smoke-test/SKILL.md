@@ -2,8 +2,9 @@
 name: smoke-test
 description: |
   Post-restart smoke tests + auto-fix for gbrain and OpenClaw environments.
-  Tests critical services, auto-fixes known issues, extensible via user-defined
-  test scripts in ~/.gbrain/smoke-tests.d/*.sh.
+  Tests critical services, auto-fixes bounded local issues, and reports worker
+  topology without starting daemons. Extensible via user-defined test scripts
+  in ~/.gbrain/smoke-tests.d/*.sh.
 triggers:
   - "smoke test"
   - "run smoke tests"
@@ -25,7 +26,8 @@ mutating: true
 
 This skill guarantees:
 - 8 core tests verify gbrain + OpenClaw health after restart
-- Known failures are auto-fixed before reporting
+- Bounded local failures are auto-fixed before reporting; worker repair is
+  explicit because process topology and shell-job policy are operator choices
 - User-extensible via `~/.gbrain/smoke-tests.d/*.sh` drop-in scripts
 - Results logged to `/tmp/gbrain-smoke-test.log`
 - Exit code = number of unfixed failures (0 = all pass)
@@ -37,7 +39,7 @@ This skill guarantees:
 | 1 | Bun runtime | Install from bun.sh |
 | 2 | GBrain CLI loads | Reinstall deps |
 | 3 | GBrain database (doctor) | — |
-| 4 | GBrain worker process | Start worker |
+| 4 | GBrain worker process | — (native supervisor status + duplicate detection) |
 | 5 | OpenClaw Codex plugin (Zod CJS) | `npm install zod@4 --force` |
 | 6 | OpenClaw gateway | — (may not be started yet) |
 | 7 | Embedding API key | — (check .env) |
@@ -116,7 +118,9 @@ fi
 |-----|---------|-------------|
 | `GBRAIN_SMOKE_LOG` | `/tmp/gbrain-smoke-test.log` | Log file path |
 | `GBRAIN_DIR_OVERRIDE` | (auto-detect) | Force gbrain install path |
+| `GBRAIN_BUN_PATH` | (auto-detect) | Force Bun binary path |
 | `GBRAIN_DATABASE_URL` | (from .env) | Database connection URL |
+| `GBRAIN_SMOKE_WORKER_PID_FILE` | `/tmp/gbrain-worker.pid` | Legacy bare-worker PID path |
 | `OPENCLAW_GATEWAY_PORT` | `18789` | Gateway port to test |
 | `GBRAIN_BRAIN_PATH` | `/data/brain` | Brain repo path |
 

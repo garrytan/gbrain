@@ -2,6 +2,26 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.46.6.4] - 2026-08-15
+
+**`gbrain smoke-test` no longer starts a surprise shell-enabled worker.** The
+worker check now asks the native supervisor status surface, which understands
+brain-scoped PID files and the queue's live database lock. A healthy managed
+worker therefore passes without creating a second unmanaged process.
+
+### Fixed
+- Missing workers now produce an explicit
+  `gbrain jobs supervisor start --detach` repair instead of silently launching
+  `jobs work` with shell jobs enabled.
+- A live supervisor plus a legacy worker PID is reported as a duplicate
+  topology that requires operator review.
+- Smoke-test worker detection is hermetically covered without touching live
+  processes or global PID files.
+- Doctor health-score extraction uses POSIX `sed` instead of GNU-only
+  `grep -P`, eliminating the macOS warning and `?/100` fallback.
+
+No migration or configuration change is required.
+
 ## [0.46.6.0] - 2026-08-15
 
 **A busy machine can no longer make the job queue evict its own healthy
