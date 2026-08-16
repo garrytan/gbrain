@@ -2,6 +2,26 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.46.6.1] - 2026-08-15
+
+**Previewing job controls no longer changes the queue.** `pause_job` and
+`resume_job` previously performed their state transition even when invoked with
+the operation layer's dry-run context. They now return an explicit preview
+receipt while leaving the job untouched. These four job-control operations
+(`pause_job`, `resume_job`, `replay_job`, and `send_job_message`) also advertise
+themselves as mutating operations, so tool catalogs and client-side approval
+flows can classify them correctly.
+
+### Itemized changes
+
+### Fixed
+- **Job-control dry runs are non-destructive.** Immediate queue-state regression
+  tests prove that pause and resume previews preserve the original status while
+  real calls still perform the requested transition.
+- **Mutation metadata matches behavior.** Pause, resume, replay, and message
+  delivery now carry the same mutating marker as the other state-changing
+  operations.
+
 ## [0.46.6.0] - 2026-08-15
 
 **A busy machine can no longer make the job queue evict its own healthy
