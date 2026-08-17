@@ -183,6 +183,7 @@ describe('ALLOWED_TYPES — canonical source of truth (leaf module)', () => {
 describe('DRIFT GUARD — consumer sites derive from the leaf module (re-hardcode + wrong-import trip-wire)', () => {
   for (const [label, relPath] of [
     ['doctor.ts', 'commands/doctor.ts'],
+    ['conversation-coverage.ts', 'commands/doctor/checks/conversation-coverage.ts'],
     ['jobs.ts', 'commands/jobs.ts'],
     ['sources.ts', 'commands/sources.ts'],
     ['conversation-facts-backfill.ts', 'core/cycle/conversation-facts-backfill.ts'],
@@ -209,12 +210,18 @@ describe('DRIFT GUARD — consumer sites derive from the leaf module (re-hardcod
     expect(countAllowedTypesImportsFrom(src, '\\.\\./facts/conversation-types\\.ts')).toBe(1);
   });
 
-  test('doctor.ts: imports ALLOWED_TYPES from the leaf exactly once', () => {
-    // Post-peel (v0.46.9.1 containment sprint) doctor.ts keeps ONE call site
-    // (the buildChecks parser sample); the backlog check moved to
-    // doctor/checks/search-eval.ts and is guarded separately below.
+  test('doctor.ts: no longer imports ALLOWED_TYPES (all call sites peeled)', () => {
+    // The backlog check moved to doctor/checks/search-eval.ts and the
+    // parser-sample scan (conversation_format_coverage, #4193) moved to
+    // doctor/checks/conversation-coverage.ts; each is guarded separately.
     const src = readSrc('commands/doctor.ts');
-    expect(countAllowedTypesImportsFrom(src, '\\.\\./core/facts/conversation-types\\.ts')).toBe(1);
+    expect(countAllowedTypesImportsFrom(src, '\\.\\./core/facts/conversation-types\\.ts')).toBe(0);
+    expect((src.match(/\bALLOWED_TYPES\b/g) ?? []).length).toBe(0);
+  });
+
+  test('doctor/checks/conversation-coverage.ts: the peeled coverage check derives from the leaf', () => {
+    const src = readSrc('commands/doctor/checks/conversation-coverage.ts');
+    expect(countAllowedTypesImportsFrom(src, '\\.\\./\\.\\./\\.\\./core/facts/conversation-types\\.ts')).toBe(1);
     expect((src.match(/\bALLOWED_TYPES\b/g) ?? []).length).toBeGreaterThanOrEqual(2); // import + 1 usage
   });
 
