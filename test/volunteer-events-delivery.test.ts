@@ -41,8 +41,8 @@ beforeEach(() => {
 });
 
 describe('isVolunteerChannel', () => {
-  test('accepts exactly the six known channels; rejects everything else', () => {
-    for (const ok of ['op', 'reflex', 'watch', 'claude-code', 'codex', 'opencode']) {
+  test('accepts exactly the known channels; rejects everything else', () => {
+    for (const ok of ['op', 'reflex', 'watch', 'claude-code', 'codex', 'opencode', 'traecli']) {
       expect(isVolunteerChannel(ok)).toBe(true);
     }
     for (const bad of ['vim', '', null, undefined, 42, {}, 'CLAUDE-CODE', 'hook']) {
@@ -139,6 +139,7 @@ describe('channel guards', () => {
     // opencode widening (v0.45.x): without this membership a hook delivery
     // attributed `--harness opencode` silently rebadges as claude-code.
     expect(isHarnessChannel('opencode')).toBe(true);
+    expect(isHarnessChannel('traecli')).toBe(true);
     for (const internal of ['op', 'reflex', 'watch']) expect(isHarnessChannel(internal)).toBe(false);
   });
 

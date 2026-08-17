@@ -2101,20 +2101,12 @@ events at the IPC delivery point and dedupes via the transcript's
   plus user reports of "it only noticed on my next message". **Start:**
   `src/commands/hook.ts` (the event already has a dispatch slot pattern),
   `src/core/bootstrap/hooks.ts` registration writers.
-- [ ] **P3 — engine-uniform IPC listener (Postgres serves).** serve's resolve/turn_context
-  socket is PGLite-gated (`src/mcp/server.ts`: `cfg?.engine === 'pglite'`), so on a
-  Postgres brain `gbrain hook user-prompt` short-circuits (`no_pglite_path`) and the
-  hook lane is PGLite-only. Extending the listener needs (a) a canonical per-connection
-  socket path for brains with no data dir (e.g. `~/.gbrain/run/resolve-<hash12(database_url)>.sock`,
-  0700 dir) and (b) a secret-file home for `turn_context` auth (same hash-keyed run dir).
-  The cathedral-3 branch prototyped (a) as `resolveSocketPathForConfig` (see branch
-  history at commit 2350294c) before the convergence dropped it pending the secret
-  design. **Trigger:** a Postgres-brain user asking why hooks stay silent — and as of
-  #4043, every `gbrain bootstrap harness` install on a Postgres brain: harness mode
-  pre-wires all five hooks and states the degradation plainly, so this listener is what
-  lights them up. **Start:**
-  `src/core/context/resolve-ipc.ts` socket-path helpers + `src/mcp/server.ts` listener gate
-  + `src/commands/hook.ts:no_pglite_path` branch.
+- [x] **P3 — engine-uniform IPC listener (Postgres serves).** The narrow
+  resolve/turn_context listener now starts on both engines. PGLite keeps the
+  original data-dir socket; Postgres uses a source- and harness-bound, URL-hashed runtime
+  directory below the gbrain home for both its socket and 0600 shared secret.
+  `gbrain hook user-prompt` uses the same resolver, remains engine-free, and
+  reuses the MCP serve process's warm engine.
 - [ ] **P3 — thin-client remote push route.** Thin-client installs (remote_mcp) have no
   local engine and no serve socket — every push channel is dead there and only the
   hook's typed heartbeat reason says why. The natural route is `volunteer_context`

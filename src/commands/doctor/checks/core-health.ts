@@ -291,14 +291,11 @@ export async function checkVolunteerChannels(
       }
     } catch { /* heartbeat surface is best-effort */ }
 
-    // Engine-aware quiet-channel guidance: the harness-hook lane rides the
-    // PGLite serve socket — on a Postgres brain, "check your registration and
-    // restart" can never make the channel fire (pull-mode covers Postgres).
-    const cfg = (() => { try { return loadConfig(); } catch { return null; } })();
+    // Both engines use the local context IPC listener. A quiet channel means
+    // registration/session/serve identity should be checked, not that the
+    // configured database engine is unsupported.
     const quietGuidance =
-      cfg?.engine === 'pglite'
-        ? 'if a hook adapter is installed, confirm its registration landed and the harness session was RESTARTED (hooks snapshot at session start); a serve older than this build logs NOTHING for the hook lane — restart serve on the new build to activate the feedback loop'
-        : 'note: the harness-hook channels require a PGLite serve socket — on this engine the hook lane stays quiet by design (pull-mode retrieval covers it)';
+      'if a hook adapter is installed, confirm its registration landed and the harness session was RESTARTED (hooks snapshot at session start); restart its serve with the matching GBRAIN_HARNESS identity on this build';
     const message = active.length
       ? `push-context channels active (7d): ${active.map((c) => `${c}=${channels[c].count}`).join(', ')}${heartbeatNote}`
       : `no push-context activity in 7 days — ${quietGuidance}`;

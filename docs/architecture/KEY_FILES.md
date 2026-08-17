@@ -1,5 +1,7 @@
 # Key files — per-file index (gbrain repo)
 
+- `src/core/context/resolve-ipc.ts` + `src/mcp/server.ts` — engine-uniform local context IPC. PGLite retains its data-dir path; Postgres paths hash database, source, and `GBRAIN_HARNESS`. Startup probes existing sockets, never unlinks an active owner, and removes only confirmed-stale pathnames.
+
 On-demand reference. CLAUDE.md (the always-loaded orientation file) routes here
 via its Reference map. **Read a file's entry before editing that file.**
 

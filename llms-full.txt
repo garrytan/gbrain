@@ -4073,7 +4073,7 @@ The push channels share one zero-LLM core (`src/core/context/volunteer.ts`):
 | `reflex` | automatic, inside the context engine | default-on for plugin hosts; nothing to call |
 | `op` | `gbrain volunteer-context` / MCP `volunteer_context` | agents without the plugin; one call per turn |
 | `watch` | `gbrain watch` | stream a transcript in, volunteered pages stream out |
-| `claude-code` / `codex` / `opencode` | `gbrain hook user-prompt` (registered by `gbrain bootstrap`) | per-prompt injection inside a harness; see "Harness hooks" below |
+| `claude-code` / `codex` / `opencode` / `traecli` | `gbrain hook user-prompt` | per-prompt injection inside a hook-capable harness; see "Harness hooks" below |
 
 ## How it decides
 
@@ -4140,8 +4140,8 @@ this channel production-grade rather than spammy-and-invisible:
   over-suppress.
 - **The feedback loop.** The serve logs each DELIVERED block's volunteered
   pages and pointers to `context_volunteer_events` under the hook's channel
-  (`claude-code` by default; a codex hook registration passes
-  `--harness codex` / `--harness opencode`). `gbrain volunteer-context --stats` then shows
+  (`claude-code` by default; other adapters pass `--harness <host>`).
+  `gbrain volunteer-context --stats` then shows
   per-harness precision, and `gbrain doctor`'s `volunteer_channels` check
   shows which channels actually fire, with guidance for the two quiet cases:
   "hook installed but never registered (restart the session)" and "registered
@@ -4151,9 +4151,14 @@ this channel production-grade rather than spammy-and-invisible:
   client-side), the doctor check reconciles the counts against the hook's own
   heartbeat and cautions when they diverge.
 
-The hook lane rides the PGLite serve's IPC socket: on a Postgres brain or a
-thin-client install the hook stays quiet by design (pull-mode retrieval covers
-those; extending the lane is a filed follow-up in TODOS.md).
+The hook lane rides the local serve process's narrow IPC socket. PGLite keeps
+the socket in its data directory; Postgres uses a source- and harness-bound,
+URL-hashed runtime directory below the gbrain home. Each MCP serve and hook
+must share `GBRAIN_HARNESS`; active socket owners are never unlinked by a
+second serve. TraeCLI is prompt-only: its non-Claude transcript path is ignored,
+while Claude Code keeps strict transcript confinement and cross-turn dedupe.
+Thin-client installs still have no
+local engine or serve socket and therefore use pull-mode retrieval.
 
 Kill switch: `GBRAIN_HOOKS=0`. Install/uninstall: `docs/guides/bootstrap.md`.
 

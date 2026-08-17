@@ -29,6 +29,7 @@ import {
 import { pushStatusPathForRoot } from '../src/core/workspace-push.ts';
 import {
   ensureIpcSecret,
+  resolveIpcRuntimeDirForConfig,
   resolveSocketPath,
   startResolveIpcServer,
   type TurnContextRequest,
@@ -71,11 +72,16 @@ afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
-const home = () => join(tmp, '.gbrain');
+const home = () => join(process.env.GBRAIN_HOME ?? tmp, '.gbrain');
 
 function writePgliteConfig(dataDir: string): void {
   mkdirSync(home(), { recursive: true });
   writeFileSync(join(home(), 'config.json'), JSON.stringify({ engine: 'pglite', database_path: dataDir }));
+}
+
+function writePostgresConfig(databaseUrl: string): void {
+  mkdirSync(home(), { recursive: true });
+  writeFileSync(join(home(), 'config.json'), JSON.stringify({ engine: 'postgres', database_url: databaseUrl }));
 }
 
 function collectStdout(): { io: { write: (s: string) => void }; get: () => string } {
@@ -244,7 +250,32 @@ describe('user-prompt', () => {
     const hb = await lastHeartbeat();
     expect(hb?.event).toBe('user-prompt');
     expect(hb?.outcome).toBe('degraded');
-    expect(hb?.reason).toBe('no_pglite_path');
+    expect(hb?.reason).toBe('no_ipc_path');
+  });
+
+  test('TraeCLI ignores an unsupported transcript path and injects from prompt only', async () => {
+    const shortHome = mkdtempSync('/tmp/gb-hk-ta-');
+    process.env.GBRAIN_HOME = shortHome;
+    const databaseUrl = 'postgresql://example.invalid/brain';
+    process.env.GBRAIN_SOURCE = 'default';
+    writePostgresConfig(databaseUrl);
+    const runtimeDir = resolveIpcRuntimeDirForConfig(
+      { engine: 'postgres', database_url: databaseUrl },
+      'default',
+      'traecli',
+    )!;
+    await startServer({ dataDir: runtimeDir, blockText: 'CTX: prompt-only works' });
+    const out = collectStdout();
+    await runHook(['user-prompt', '--harness', 'traecli'], {
+      ...out.io,
+      stdin: JSON.stringify({
+        prompt: 'Tell me about Alice Example',
+        transcript_path: '/tmp/traecli-session.jsonl',
+      }),
+    });
+    expect(out.get()).toContain('CTX: prompt-only works');
+    expect((await lastHeartbeat())?.outcome).toBe('ok');
+    rmSync(shortHome, { recursive: true, force: true });
   });
 
   test('no stdin → degraded no_stdin, exit 0 empty', async () => {
@@ -288,6 +319,35 @@ describe('user-prompt', () => {
     const hb = await lastHeartbeat();
     expect(hb?.outcome).toBe('ok');
     expect(hb?.turns).toBe(1);
+  });
+
+  test('Postgres config reaches engine-uniform IPC and attributes TraeCLI', async () => {
+    // macOS caps unix-domain socket paths at 104 bytes. Keep this test's
+    // Postgres runtime root short; production's default ~/.gbrain is short
+    // too, while the test runner's tmpdir lives under /var/folders/... .
+    const shortHome = mkdtempSync('/tmp/gb-hk-pg-');
+    process.env.GBRAIN_HOME = shortHome;
+    const databaseUrl = 'postgresql://example.invalid/gbrain-hook-test';
+    process.env.GBRAIN_SOURCE = 'default';
+    writePostgresConfig(databaseUrl);
+    const runtimeDir = resolveIpcRuntimeDirForConfig(
+      { engine: 'postgres', database_url: databaseUrl },
+      'default',
+      'traecli',
+    );
+    expect(runtimeDir).not.toBeNull();
+    const seen: TurnContextRequest[] = [];
+    await startServer({ dataDir: runtimeDir!, blockText: 'CTX: postgres memory', onRequest: (r) => { seen.push(r); } });
+    const out = collectStdout();
+    await runHook(['user-prompt', '--harness', 'traecli'], {
+      ...out.io,
+      stdin: JSON.stringify({ prompt: 'what do I remember?', session_id: 'trae-session' }),
+    });
+    expect(JSON.parse(out.get()).hookSpecificOutput.additionalContext).toBe('CTX: postgres memory');
+    expect(seen[0]?.channel).toBe('traecli');
+    expect(seen[0]?.window).toEqual([{ role: 'user', text: 'what do I remember?' }]);
+    expect((await lastHeartbeat())?.outcome).toBe('ok');
+    rmSync(shortHome, { recursive: true, force: true });
   });
 
   test('window = last 4 transcript turns + the current prompt', async () => {
@@ -410,6 +470,11 @@ describe('user-prompt', () => {
     // user-prompt fires once per user PROMPT: a stale update cache would
     // otherwise spawn a detached check-update child per prompt.
     expect(m![0]).toContain("'hook'");
+  });
+
+  test('CLI hook dispatch exits explicitly after the one-shot hook completes', () => {
+    const cliSrc = readFileSync(join(import.meta.dir, '..', 'src', 'cli.ts'), 'utf8');
+    expect(cliSrc).toContain('process.exit(await runHook(args))');
   });
 
   test('confinement rejection aborts: heartbeat + exit 0 empty [S3#8]', async () => {
@@ -1217,7 +1282,7 @@ describe('user-prompt push-failure banner [D5]', () => {
     const root = bannerRoot();
     failingStatus(root);
     const out = collectStdout();
-    // No config at all → degraded no_pglite_path; the banner must still land.
+    // No config at all → degraded no_ipc_path; the banner must still land.
     expect(await runHook(['user-prompt'], { ...out.io, stdin: JSON.stringify({ prompt: 'hi' }) })).toBe(0);
     const payload = JSON.parse(out.get()) as {
       hookSpecificOutput?: { additionalContext?: string };

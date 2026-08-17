@@ -13,7 +13,8 @@ import type { Operation } from '../core/operations.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { loadConfig } from '../core/config.ts';
 import {
-  resolveSocketPath,
+  resolveIpcRuntimeDirForConfig,
+  resolveSocketPathForConfig,
   startResolveIpcServer,
   cleanupStaleSocket,
   ensureIpcSecret,
@@ -177,25 +178,27 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  // Retrieval Reflex (#1981, D9=C): on a PGLite brain, serve owns the single
-  // connection, so the context engine (and the per-prompt hook command)
-  // resolve salient entities THROUGH us over a local unix socket rather than
-  // opening a second (impossible) connection.
+  // Retrieval Reflex (#1981, D9=C): expose the narrow local context IPC on
+  // both engines. PGLite must resolve through the single connection held by
+  // serve; Postgres reuses serve's warm pool so per-prompt hooks do not pay a
+  // fresh connection handshake.
   // Best-effort; failure to bind never blocks the MCP server.
   let resolveServer: import('node:net').Server | null = null;
   let resolveSocket: string | null = null;
   try {
     const cfg = loadConfig();
-    if (cfg?.engine === 'pglite' && cfg.database_path) {
-      resolveSocket = resolveSocketPath(cfg.database_path);
-      const { sourceId: defaultSource } = await resolveMcpStdioSourceScope(engine);
+    const { sourceId: defaultSource } = await resolveMcpStdioSourceScope(engine);
+    const harness = process.env.GBRAIN_HARNESS || 'default';
+    const runtimeDir = resolveIpcRuntimeDirForConfig(cfg, defaultSource, harness);
+    resolveSocket = resolveSocketPathForConfig(cfg, defaultSource, harness);
+    if (runtimeDir && resolveSocket) {
       // [S3#6] turn_context requires the shared secret from the data dir
       // (created 0600 here if absent). If the secret can't be provisioned,
       // turn_context stays fail-closed ('unauthorized') while the secret-free
       // resolve kind keeps working.
       let ipcSecret: string | undefined;
       try {
-        ipcSecret = ensureIpcSecret(cfg.database_path);
+        ipcSecret = ensureIpcSecret(runtimeDir);
       } catch { /* turn_context disabled; resolve unaffected */ }
       // Serve-delegated sync kinds — built in their OWN try/catch so a
       // runner import/registration failure can never take resolve /
@@ -325,7 +328,9 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     process.stderr.write(`[gbrain-serve] shutdown: ${reason}\n`);
     try { startupSweep?.cancel(); } catch { /* noop */ }
     try { resolveServer?.close(); } catch { /* noop */ }
-    if (resolveSocket) cleanupStaleSocket(resolveSocket);
+    // Only the process that successfully bound this pathname may unlink it.
+    // A standby serve gets null and must not remove the active owner's socket.
+    if (resolveServer && resolveSocket) cleanupStaleSocket(resolveSocket);
     // Cathedral 5: abort the in-flight checkpoint harvest + drop its queue
     // BEFORE engine.disconnect — the background-work registry's drain is
     // CLI-exit-only by contract, and a fire-and-forget DB writer surviving

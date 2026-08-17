@@ -42,7 +42,7 @@
  */
 
 import net from 'node:net';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import {
   existsSync,
   unlinkSync,
@@ -53,6 +53,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { resolveGbrainHome } from '../gbrain-home.ts';
 import type { EntityCandidate } from './entity-salience.ts';
 import type { WindowTurn } from './entity-salience.ts';
 import type { PointerBlock } from './retrieval-reflex.ts';
@@ -283,16 +284,48 @@ export function resolveSocketPath(dataDir: string): string {
   return join(dataDir, SOCK_NAME);
 }
 
+/**
+ * Engine-uniform runtime location for the narrow local context IPC. PGLite
+ * keeps its original in-store path byte-for-byte. Postgres has no data dir,
+ * so its serve and hook processes rendezvous below the gbrain home using an
+ * opaque hash of the connection identity + bound source. The URL itself is
+ * never written to a filename or heartbeat.
+ */
+export function resolveIpcRuntimeDirForConfig(
+  cfg: { engine?: string; database_path?: string; database_url?: string } | null | undefined,
+  sourceId?: string,
+  harness?: string,
+): string | null {
+  if (!cfg) return null;
+  if (cfg.engine === 'pglite' && cfg.database_path) return cfg.database_path;
+  if (cfg.engine === 'postgres' && cfg.database_url) {
+    const identity = `${cfg.database_url}\0${sourceId || 'default'}\0${harness || 'default'}`;
+    const hash = createHash('sha256').update(identity).digest('hex').slice(0, 12);
+    return join(resolveGbrainHome(), 'run', `resolve-${hash}`);
+  }
+  return null;
+}
+
+/** Canonical socket path for either configured engine. */
+export function resolveSocketPathForConfig(
+  cfg: { engine?: string; database_path?: string; database_url?: string } | null | undefined,
+  sourceId?: string,
+  harness?: string,
+): string | null {
+  const runtimeDir = resolveIpcRuntimeDirForConfig(cfg, sourceId, harness);
+  return runtimeDir ? resolveSocketPath(runtimeDir) : null;
+}
+
 // ── Shared secret [S3#6] ──────────────────────────────────────────────────
 
-/** Canonical shared-secret file path for a PGLite data dir. */
+/** Canonical shared-secret file path for an engine-specific IPC runtime dir. */
 export function ipcSecretPath(dataDir: string): string {
   return join(dataDir, SECRET_NAME);
 }
 
 /**
  * Server-side: read the shared secret, creating a fresh 32-byte random hex
- * secret at `<dataDir>/.gbrain-ipc-secret` (mode 0600) if absent. Throws only
+ * secret at `<runtimeDir>/.gbrain-ipc-secret` (mode 0600) if absent. Throws only
  * when the file can neither be read nor created (callers treat that as
  * "turn_context disabled", never as "skip auth").
  */
@@ -603,7 +636,11 @@ export async function startResolveIpcServer(
     chmodSync(dir, 0o700);
   } catch { /* best effort */ }
 
-  // Remove a stale socket file if present (a previous serve that didn't clean up).
+  // Remove only a confirmed-stale socket. A live owner is never unlinked: on
+  // Unix an unlinked listening socket keeps serving existing clients but its
+  // pathname can be rebound, silently splitting hooks across two owners.
+  const available = await probeSocket(socketPath);
+  if (available) return null;
   cleanupStaleSocket(socketPath);
 
   return new Promise((resolve) => {
@@ -808,12 +845,32 @@ async function handleSyncKind<Req extends { protocol: number; secret: string }, 
   }
 }
 
-/** Remove a socket file whose owning process is gone (or any leftover file). */
+/** True when a listener accepts a local connection at this path. */
+async function probeSocket(socketPath: string): Promise<boolean> {
+  if (!existsSync(socketPath)) return false;
+  return new Promise((resolve) => {
+    const conn = net.createConnection(socketPath);
+    let settled = false;
+    const finish = (value: boolean) => {
+      if (settled) return;
+      settled = true;
+      conn.destroy();
+      resolve(value);
+    };
+    // Unknown is treated as active: a slow local accept must never authorize
+    // unlinking a pathname that may still belong to a live server.
+    const timer = setTimeout(() => finish(true), 100);
+    timer.unref?.();
+    conn.once('connect', () => { clearTimeout(timer); finish(true); });
+    conn.once('error', () => { clearTimeout(timer); finish(false); });
+  });
+}
+
+/** Remove a socket file only after the caller confirmed no owner is listening. */
 export function cleanupStaleSocket(socketPath: string): void {
   try {
     if (existsSync(socketPath)) {
-      // A unix socket shows up as a socket file; unlink unconditionally — if a
-      // live server holds it, listen() below would fail and we return null.
+      // A unix socket shows up as a socket file. Callers must probe first.
       const st = statSync(socketPath);
       if (st.isSocket() || st.isFIFO() || st.isFile()) unlinkSync(socketPath);
     }

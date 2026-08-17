@@ -7,9 +7,9 @@
  * (status never worse than ok); pre-v117 brains (no table) degrade to a note
  * instead of throwing; transient failures are NOT misreported as pre-v117.
  *
- * Hermetic: stub engine + temp GBRAIN_HOME per test (the check reads the real
- * config for engine-aware guidance and the hook heartbeat for delivery
- * reconciliation — both must come from the temp home, never this machine's).
+ * Hermetic: stub engine + temp GBRAIN_HOME per test (the check reads the hook
+ * heartbeat for delivery reconciliation, which must come from the temp home,
+ * never this machine's).
  */
 import { describe, test, expect } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
@@ -81,13 +81,15 @@ describe('checkVolunteerChannels', () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  test('quiet week on Postgres: engine-aware message — never sends the operator chasing hook registration (red-team)', async () => {
+  test('quiet week on Postgres: engine-uniform registration/restart diagnosis', async () => {
     const home = tmpHome('postgres');
     await withEnv({ GBRAIN_HOME: home }, async () => {
       const check = await checkVolunteerChannels(stubEngine([]));
       expect(check.status).toBe('ok');
-      expect(check.message).toContain('PGLite serve socket');
-      expect(check.message).not.toContain('RESTARTED');
+      expect(check.message).toContain('no push-context activity');
+      expect(check.message).toContain('RESTARTED');
+      expect(check.message).not.toContain('PGLite serve socket');
+      expect(check.message).not.toContain('quiet by design');
     });
     rmSync(home, { recursive: true, force: true });
   });

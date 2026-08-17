@@ -1904,10 +1904,11 @@ async function handleCliOnly(command: string, args: string[]) {
   if (command === 'hook') {
     // `gbrain hook <event>` — harness hook entry (plan D5): NEVER opens an
     // engine (talks to serve's IPC socket only); fail-open exit-0 contract
-    // lives inside runHook.
+    // lives inside runHook. Hooks are one-shot subprocesses: exit explicitly
+    // after runHook has synchronously written stdout + heartbeat so unrelated
+    // imported handles can never keep the harness waiting past its timeout.
     const { runHook } = await import('./commands/hook.ts');
-    setCliExitVerdict(await runHook(args));
-    return;
+    process.exit(await runHook(args));
   }
   if (command === 'sweep' && (args.includes('--help') || args.includes('-h'))) {
     // SWEEP_HELP is engine-independent and must print on a fresh install
