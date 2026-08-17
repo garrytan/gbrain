@@ -49,6 +49,8 @@ test/cli.test.ts	CLI version	2	readFileSync
 test/cli.test.ts	ask alias	2	readFileSync
 test/codex-plugin-manifest.test.ts	codex mcp.json	3	readFileSync
 test/codex-plugin-manifest.test.ts	curated tree membership + scanner guard	5	readFileSync
+test/codex-plugin-manifest.test.ts	generator negative fixtures (a guard that cannot fail is not coverage)	9	readFileSync
+test/codex-plugin-manifest.test.ts	variant ${def.plugin_name} (persona ${personaName})	5	readFileSync
 test/compile-view.test.ts	compileView — determinism	3	readFileSync
 test/compile-view.test.ts	compileView — source isolation + read errors	3	readFileSync
 test/config.test.ts	config source correctness	2	readFileSync
@@ -187,6 +189,7 @@ test/scripts/test-shard.slow.test.ts	test-shard.sh — LPT balance contract	5	re
 test/skillify-scaffold.test.ts	11-item scaffold contract (T9 + Phase 3 cross-modal eval)	1	readFileSync
 test/skillify-scaffold.test.ts	applyScaffold	3	readFileSync
 test/skillify-scaffold.test.ts	planScaffold	13	readFileSync
+test/skillpack-harness-bridge.test.ts	review-driven hardening (ship pre-landing findings)	5	readFileSync
 test/skillpack-harvest.test.ts	addToBundleManifest	1	readFileSync
 test/skillpack-harvest.test.ts	runHarvest — happy path	2	readFileSync
 test/skillpack-harvest.test.ts	runHarvest — privacy linter integration (T7)	2	readFileSync

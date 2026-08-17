@@ -26,6 +26,13 @@ only for from-source installs. Refresh a snapshot with
 `codex plugin marketplace upgrade`; remove with `codex plugin remove
 gbrain@gbrain` + `codex plugin marketplace remove gbrain`.
 
+**Persona variants (Claude-lane only, for now).** The `gbrain-coding` /
+`gbrain-daily` curated variants ship in the Claude Code marketplace; the
+codex marketplace deliberately stays at the single full plugin until codex's
+handling of multi-entry marketplaces gets its observation run (the dist
+branch carries the variant trees already, so enabling is a two-line
+marketplace edit once verified — TODOS.md follow-up).
+
 **Prerequisites.** The plugin cannot ship the gbrain binary; install it once
 (`bun install -g github:garrytan/gbrain#latest-stable` — the npm package
 named `gbrain` is unrelated, never `npm install -g gbrain`) and create a

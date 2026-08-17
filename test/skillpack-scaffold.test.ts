@@ -272,3 +272,25 @@ describe('runScaffold — IRON-RULE regressions (R1, R2)', () => {
     expect(readFileSync(join(ws, 'AGENTS.md'), 'utf-8')).not.toContain('cumulative-slugs');
   });
 });
+
+describe('runScaffold — skillSlugs (persona filtering, cathedral-7)', () => {
+  it('plural selection scaffolds exactly the named slugs + shared deps', () => {
+    const { gbrainRoot } = scratchGbrain();
+    const ws = scratchWorkspace();
+
+    const result = runScaffold({ gbrainRoot, targetWorkspace: ws, skillSlug: null, skillSlugs: ['query'] });
+
+    expect(result.summary.wroteNew).toBeGreaterThan(0);
+    expect(existsSync(join(ws, 'skills', 'query', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(ws, 'skills', 'book-mirror'))).toBe(false);
+    // Shared deps ship with any selection (dependency closure).
+    expect(existsSync(join(ws, 'skills', 'conventions', 'quality.md'))).toBe(true);
+  });
+
+  it('an unknown slug in the plural form fails loudly naming it', () => {
+    const { gbrainRoot } = scratchGbrain();
+    const ws = scratchWorkspace();
+
+    expect(() => runScaffold({ gbrainRoot, targetWorkspace: ws, skillSlug: null, skillSlugs: ['query', 'zzz'] })).toThrow(/zzz/);
+  });
+});

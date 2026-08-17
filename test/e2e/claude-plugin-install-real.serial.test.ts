@@ -100,6 +100,34 @@ describe.skipIf(!PLUGIN_CAPABLE)('claude plugin door — VALIDATE + INSTALL (no 
       }
     }
   }, 300_000);
+
+  // Persona variant (cathedral-7, prove-before-publish [CX11]): the
+  // marketplace's gbrain-coding entry installs from its self-contained
+  // variant root BEFORE the entries ship to real users.
+  test('persona variant gbrain-coding installs from the same marketplace', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gb-cplugin-variant-'));
+    const configDir = join(home, '.claude');
+    mkdirSync(configDir, { recursive: true });
+    const stage = stageCleanTree();
+    try {
+      const run = makeClaudeRunner(home, configDir);
+      const addMkt = run([CLAUDE_BIN!, 'plugin', 'marketplace', 'add', stage]);
+      expect(addMkt.code, addMkt.stderr).toBe(0);
+
+      const install = run([CLAUDE_BIN!, 'plugin', 'install', 'gbrain-coding@gbrain']);
+      expect(install.code, install.stderr).toBe(0);
+      const settingsPath = join(configDir, 'settings.json');
+      expect(claudePluginProvidesName(settingsPath, 'gbrain-coding')).toBe('gbrain-coding@gbrain');
+
+      const un = run([CLAUDE_BIN!, 'plugin', 'uninstall', 'gbrain-coding@gbrain']);
+      expect(un.code, un.stderr).toBe(0);
+      expect(claudePluginProvidesName(settingsPath, 'gbrain-coding')).toBeNull();
+    } finally {
+      for (const d of [home, stage]) {
+        try { rmSync(d, { recursive: true, force: true }); } catch { /* best-effort */ }
+      }
+    }
+  }, 300_000);
 });
 
 describe.skipIf(!PLUGIN_CAPABLE || !hasClaudeAuth())('claude plugin door — SMOKE (live turn)', () => {

@@ -15,6 +15,7 @@
  * gets a chance to copy, or nothing does.
  */
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'fs';
+import { createHash } from 'crypto';
 import { dirname, join, relative, sep } from 'path';
 
 export interface CopyItem {
@@ -22,6 +23,13 @@ export interface CopyItem {
   source: string;
   /** Absolute target path. */
   target: string;
+  /**
+   * Inline content to write instead of reading `source` (the harness
+   * bridge's rendered stub bodies). `source` stays set for reporting.
+   * The source-side gates (rejectSymlinks / confineRealpath / existence)
+   * are skipped for content items — there is no source read.
+   */
+  content?: string;
 }
 
 export interface CopyArtifactsOpts {
@@ -31,6 +39,11 @@ export interface CopyArtifactsOpts {
   /** Every source path must canonicalize to a path inside this dir.
    *  For harvest's path-confinement gate. */
   confineRealpath?: string;
+  /** Compute a sha256 of the exact bytes written per wrote_new item (the
+   *  harness bridge's install-time hash ledger — hashing the same buffer
+   *  the write used closes the copy-then-rehash TOCTOU and the second
+   *  source read). */
+  computeSha256?: boolean;
   /** Dry-run: validate + report; no writes. */
   dryRun?: boolean;
 }
@@ -41,6 +54,8 @@ export interface CopyFileResult {
   source: string;
   target: string;
   outcome: CopyOutcome;
+  /** Present when computeSha256 was set and this item wrote (not on dry-run). */
+  sha256?: string;
 }
 
 export interface CopyResult {
@@ -55,8 +70,12 @@ export interface CopyResult {
 export class CopyError extends Error {
   constructor(
     message: string,
-    public code: 'symlink_rejected' | 'path_traversal' | 'source_missing',
+    public code: 'symlink_rejected' | 'path_traversal' | 'source_missing' | 'write_failed',
     public offendingPath?: string,
+    /** For 'write_failed': the per-file results completed BEFORE the failing
+     *  write, so callers can record ownership of what actually landed (a
+     *  mid-run disk-full/EACCES must not orphan files 1..k−1). */
+    public partial?: CopyFileResult[],
   ) {
     super(message);
     this.name = 'CopyError';
@@ -132,6 +151,7 @@ export function copyArtifacts(items: CopyItem[], opts: CopyArtifactsOpts = {}): 
 
   // Validate every item first (atomic-refusal contract).
   for (const item of items) {
+    if (item.content != null) continue; // inline content — no source read
     if (!existsSync(item.source)) {
       throw new CopyError(
         `Source path does not exist: ${item.source}`,
@@ -174,12 +194,32 @@ export function copyArtifacts(items: CopyItem[], opts: CopyArtifactsOpts = {}): 
       files.push({ source: item.source, target: item.target, outcome: 'skipped_existing' });
       continue;
     }
+    let sha256: string | undefined;
     if (!dryRun) {
-      const content = readFileSync(item.source);
-      mkdirSync(dirname(item.target), { recursive: true });
-      writeFileSync(item.target, content);
+      try {
+        const content = item.content != null ? item.content : readFileSync(item.source);
+        mkdirSync(dirname(item.target), { recursive: true });
+        writeFileSync(item.target, content);
+        if (opts.computeSha256) {
+          sha256 = createHash('sha256').update(content).digest('hex');
+        }
+      } catch (err) {
+        // Carry the completed results so the caller can still record
+        // ownership of files 1..k−1 — a mid-run failure must not orphan them.
+        throw new CopyError(
+          `write failed for ${item.target}: ${(err as Error).message}`,
+          'write_failed',
+          item.target,
+          files,
+        );
+      }
     }
-    files.push({ source: item.source, target: item.target, outcome: 'wrote_new' });
+    files.push({
+      source: item.source,
+      target: item.target,
+      outcome: 'wrote_new',
+      ...(sha256 ? { sha256 } : {}),
+    });
   }
 
   return {

@@ -40,6 +40,9 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, write
 import { join, resolve } from 'path';
 import { STARTER_OPS } from '../src/mcp/surface.ts';
 import { parseSkillFrontmatter } from '../src/core/skill-frontmatter.ts';
+// Personas: the SINGLE validation implementation (the harness-bridge CLI
+// imports the same module), so CLI errors and CI errors match by construction.
+import { loadPersonas, type PersonaDef } from '../src/core/skillpack/personas.ts';
 
 // GBRAIN_PLUGIN_TREE_ROOT is the negative-fixture test seam: the manifest
 // test points the generator at a synthetic repo root to prove each curation
@@ -47,16 +50,20 @@ import { parseSkillFrontmatter } from '../src/core/skill-frontmatter.ts';
 const ROOT = process.env.GBRAIN_PLUGIN_TREE_ROOT || resolve(import.meta.dir, '..');
 
 function usage(): never {
-  console.error('usage: bun run scripts/generate-plugin-tree.ts --out <dir> [--write-gaps]');
+  console.error(
+    'usage: bun run scripts/generate-plugin-tree.ts --out <dir> [--variants-out <dir>] [--write-gaps]',
+  );
   process.exit(2);
 }
 
 const args = process.argv.slice(2);
 let out = '';
+let variantsOut = '';
 let writeGaps = false;
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
   if (a === '--out') out = args[++i] ?? '';
+  else if (a === '--variants-out') variantsOut = args[++i] ?? '';
   else if (a === '--write-gaps') writeGaps = true;
   else usage();
 }
@@ -67,6 +74,10 @@ interface PluginLanes {
   additions: Record<string, string>;
   base_exclusions: Record<string, string>;
   not_added: Record<string, string>;
+  /** Persona curation (validated by src/core/skillpack/personas.ts). The
+   *  --write-gaps writer MUST spread-preserve this block — pinned by a
+   *  byte-identical round-trip test. */
+  personas?: Record<string, PersonaDef>;
   starter_gaps: Record<string, string[]>;
 }
 
@@ -107,6 +118,14 @@ const laneSet = [
   ...base.filter(s => !(s in lanes.base_exclusions)),
   ...Object.keys(lanes.additions),
 ].sort();
+
+// ── Persona validation (single implementation: src/core/skillpack/personas.ts)
+let personas: Record<string, PersonaDef> = {};
+try {
+  personas = loadPersonas(ROOT).personas;
+} catch (err) {
+  fail((err as Error).message);
+}
 
 // ── Starter-gap snapshot ────────────────────────────────────────────────────
 // Harness-native tool names a skill may declare that are not gbrain MCP ops.
@@ -156,14 +175,31 @@ const outDir = resolve(out);
 rmSync(outDir, { recursive: true, force: true });
 mkdirSync(join(outDir, 'skills'), { recursive: true });
 
+/**
+ * Shared deps: always ship (mirrors openclaw.plugin.json#shared_deps). ONE
+ * implementation for the main tree and every persona variant — the two copy
+ * sites must never diverge (the shared_deps reconciliation follow-up in
+ * TODOS.md gets fixed in one place).
+ */
+// Semgrep path-join suppressions in this file: repo-only build/CI tooling,
+// deliberately not wired into src/cli.ts. ROOT is the repo root (or the
+// test-seam env var our own manifest test sets), persona names come from the
+// committed skills/plugin-lanes.json via loadPersonas validation, and
+// --out/--variants-out are operator flags with their own refuse() guards —
+// there is no untrusted input in these paths.
+function copySharedDeps(destSkillsDir: string): void {
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+  cpSync(join(ROOT, 'skills', 'conventions'), join(destSkillsDir, 'conventions'), { recursive: true });
+  for (const f of readdirSync(join(ROOT, 'skills'))) {
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+    if (/^_.*\.(md|json)$/.test(f)) cpSync(join(ROOT, 'skills', f), join(destSkillsDir, f));
+  }
+}
+
 for (const slug of laneSet) {
   cpSync(join(ROOT, 'skills', slug), join(outDir, 'skills', slug), { recursive: true });
 }
-// Shared deps: always ship (mirrors openclaw.plugin.json#shared_deps).
-cpSync(join(ROOT, 'skills', 'conventions'), join(outDir, 'skills', 'conventions'), { recursive: true });
-for (const f of readdirSync(join(ROOT, 'skills'))) {
-  if (/^_.*\.(md|json)$/.test(f)) cpSync(join(ROOT, 'skills', f), join(outDir, 'skills', f));
-}
+copySharedDeps(join(outDir, 'skills'));
 
 const version = readFileSync(join(ROOT, 'VERSION'), 'utf8').trim();
 const gapSkills = Object.keys(computedGaps).length;
@@ -196,6 +232,125 @@ sessions pick it up).
 - A brain: \`gbrain init\` (the bundled \`setup\` skill walks the full path).
 `,
 );
+
+// ── Persona variant trees (marketplace entries gbrain-coding / gbrain-daily) ─
+// Each variant root is SELF-CONTAINED (Claude Code installs the plugin source
+// dir only): its own generated .claude-plugin/plugin.json + .codex-plugin/
+// manifests (version from VERSION → variant lockstep is automatic under the
+// byte-diff drift gate), a byte-copy of the launcher, the persona's skills,
+// and the same shared-dep set the main tree ships.
+function emitVariant(variantsDir: string, personaName: string, def: PersonaDef, version: string): void {
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+  const root = join(variantsDir, def.plugin_name);
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+  mkdirSync(join(root, 'skills'), { recursive: true });
+
+  const slugs = Object.keys(def.skills).sort();
+  for (const slug of slugs) {
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+    cpSync(join(ROOT, 'skills', slug), join(root, 'skills', slug), { recursive: true });
+  }
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+  copySharedDeps(join(root, 'skills'));
+
+  // Launcher byte-copy (cpSync preserves the executable bit).
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+  cpSync(join(ROOT, '.agents', 'gbrain-launcher'), join(root, '.agents', 'gbrain-launcher'));
+
+  // Claude plugin manifest: model on the root manifest, retargeted at the
+  // variant root (skills live at ./skills/ here, not ./plugin/skills/).
+  const claudeBase = JSON.parse(readFileSync(join(ROOT, '.claude-plugin', 'plugin.json'), 'utf8')) as Record<
+    string,
+    unknown
+  >;
+  const claudeVariant = {
+    ...claudeBase,
+    name: def.plugin_name,
+    version,
+    description: `${def.description} (persona variant of the gbrain plugin — ${slugs.length} skills)`,
+    skills: './skills/',
+  };
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+  mkdirSync(join(root, '.claude-plugin'), { recursive: true });
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+  writeFileSync(join(root, '.claude-plugin', 'plugin.json'), JSON.stringify(claudeVariant, null, 2) + '\n');
+
+  // Codex plugin manifest + mcp.json: same retarget; mcp.json is verbatim
+  // (its paths are already variant-root-relative: ./.agents/gbrain-launcher).
+  const codexBase = JSON.parse(readFileSync(join(ROOT, '.codex-plugin', 'plugin.json'), 'utf8')) as Record<
+    string,
+    unknown
+  >;
+  const codexVariant = {
+    ...codexBase,
+    name: def.plugin_name,
+    version,
+    description: `${def.description} (persona variant of the gbrain plugin — ${slugs.length} skills)`,
+    skills: './skills/',
+    mcpServers: './.codex-plugin/mcp.json',
+  };
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+  mkdirSync(join(root, '.codex-plugin'), { recursive: true });
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+  writeFileSync(join(root, '.codex-plugin', 'plugin.json'), JSON.stringify(codexVariant, null, 2) + '\n');
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+  cpSync(join(ROOT, '.codex-plugin', 'mcp.json'), join(root, '.codex-plugin', 'mcp.json'));
+
+  writeFileSync(
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+    join(root, 'README.md'),
+    `<!-- gbrain-plugin-tree-stamp: ${version} -->
+# ${def.plugin_name} (generated persona variant — do not hand-edit)
+
+${def.description}
+
+${slugs.length} skills curated from the gbrain plugin lane (persona
+\`${personaName}\` in \`skills/plugin-lanes.json#personas\`, one recorded
+reason per skill). Install exactly ONE gbrain plugin per machine — every
+variant serves the same \`gbrain\` MCP server name, so two installed variants
+would double-serve. The full-lane plugin's README carries the MCP surface
+note; it applies verbatim here.
+
+Regenerate with \`bun run scripts/generate-plugin-tree.ts --out plugin
+--variants-out plugin-variants\`.
+`,
+  );
+}
+
+if (variantsOut) {
+  const variantsDir = resolve(variantsOut);
+  // rmSync guard: --variants-out is recursively DELETED before emission, so
+  // a mistyped path must refuse rather than eat a real directory. Refuse:
+  // filesystem root, the repo root or any ancestor of it, the --out dir, and
+  // any existing NON-generated non-empty dir (a prior emission is
+  // recognizable by a variant README carrying the tree stamp).
+  const refuse = (why: string): never => {
+    console.error(`generate-plugin-tree: refusing --variants-out ${variantsDir}: ${why}`);
+    process.exit(2);
+  };
+  if (variantsDir === '/' || variantsDir === resolve(out)) refuse('unsafe target');
+  if (ROOT === variantsDir || ROOT.startsWith(variantsDir + '/')) refuse('would delete the repo root');
+  if (existsSync(variantsDir) && readdirSync(variantsDir).length > 0) {
+    const looksGenerated = readdirSync(variantsDir).some(d => {
+      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+      const readme = join(variantsDir, d, 'README.md');
+      try {
+        return existsSync(readme) && readFileSync(readme, 'utf8').includes('gbrain-plugin-tree-stamp');
+      } catch {
+        return false;
+      }
+    });
+    if (!looksGenerated) refuse('existing non-empty directory without a generated tree stamp');
+  }
+  rmSync(variantsDir, { recursive: true, force: true });
+  const version = readFileSync(join(ROOT, 'VERSION'), 'utf8').trim();
+  for (const [personaName, def] of Object.entries(personas)) {
+    emitVariant(variantsDir, personaName, def, version);
+  }
+  console.error(
+    `generate-plugin-tree: ${Object.keys(personas).length} persona variant(s) → ${variantsDir}`,
+  );
+}
 
 // Print sorted relative file list (parity with generate-template-repo.ts).
 const files: string[] = [];

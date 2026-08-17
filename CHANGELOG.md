@@ -2,6 +2,94 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.46.18.0] - 2026-08-17
+
+**Your harness now gets gbrain's skills as capability, not just knowledge —
+curated to who you are.** One command copies a persona-curated skill set into
+Claude Code's native skills directory with an update lens that respects your
+local edits, and the plugin marketplace gains two persona variants
+(`gbrain-coding`, `gbrain-daily`) for sessions that don't want all 65 skills
+in the manifest. This is the skill bridge (cathedral 7): personas defined
+once, delivered over every lane.
+
+To take advantage of v0.46.18.0: `gbrain upgrade`, then either
+`gbrain skillpack scaffold --harness claude-code` (marketplace-free,
+user-scope, persona-curated) or `/plugin install gbrain-coding@gbrain` from
+the marketplace. `gbrain skillpack status` shows what's installed where.
+
+### Added
+- `gbrain skillpack scaffold --harness <claude-code|openclaw|codex|opencode>`
+  — installs a persona-curated set of bundled skills into the harness's
+  native skill-discovery location. Claude Code defaults to the
+  `coding-agent` persona and your user-scope skills dir (`--scope project`
+  for a repo-local install); openclaw delegates to the workspace scaffold
+  with persona filtering; codex/opencode take an explicit `--dest` until
+  their native locations are verified. Additive and idempotent: re-runs
+  never overwrite your files.
+- **Personas** — named, reasoned skill curations in
+  `skills/plugin-lanes.json#personas`: `coding-agent` (18 skills: retrieval,
+  routing, ingest discipline, correction hygiene) and `daily-driver`
+  (17 skills: meetings, tasks, briefings, reading, research). `--persona
+  all` installs the full lane; `--skill` picks individual skills, validated
+  against the lane so repo-development-only skills are refused with the
+  recorded reason. Installing everything costs every session ~80 tokens per
+  skill of native manifest — curation is the fix.
+- **Marketplace persona variants** — `/plugin install gbrain-coding@gbrain`
+  or `gbrain-daily@gbrain` install curated subsets as native Claude Code
+  plugins (self-contained trees under `plugin-variants/`, same MCP server).
+  Install exactly one gbrain plugin per machine.
+- `gbrain skillpack reference --harness <h>` — a three-way diff lens over a
+  harness install: with the install-time hash ledger it tells **your edits**
+  (`local_edit` — kept, always) apart from **upstream movement**
+  (`upstream_drift` — `--apply-clean-hunks` aligns it and keeps the ledger
+  current). Files the bridge can't prove it wrote are never touched.
+- `gbrain skillpack remove --harness <h>` — removes only files the bridge
+  itself wrote (a machine-owned ledger at
+  `~/.gbrain/skillpack-bridge-state.json`); files you've edited since
+  install are kept — they're yours now. Never the removed-in-v0.33
+  workspace `uninstall`.
+- **Cold-pull stub mode** (`--stub`) — installs pointer SKILL.md files whose
+  bodies fetch the real instructions from your brain via the MCP `get_skill`
+  op, so skill bodies are always current. Preflight-gated: refuses unless
+  skill publishing is on and every skill is servable from the directory the
+  server would resolve. Ships the shared-convention and sibling files skill
+  bodies reference. Aimed at full-surface local/HTTP MCP setups.
+- `gbrain skillpack status` now reports installed harness bridges with
+  file-level currency (identical / differs / missing), and says so when the
+  currency lens itself couldn't run instead of showing healthy zeros.
+
+### Changed
+- Skill installs into harness directories are safety-gated end to end:
+  frontmatter is validated before any write (a frontmatterless SKILL.md can
+  break a harness session at startup), every write path is confined to the
+  destination on the real filesystem (traversal and symlinked parents
+  refused), and switching a skill between full and stub modes is reported as
+  a conflict — never silently converted.
+- The plugin regeneration step now emits the persona variant trees alongside
+  `plugin/` (`--variants-out plugin-variants`), drift-gated in CI and shipped
+  on the release dist branch.
+- The codex marketplace intentionally stays at the single full plugin until
+  codex's multi-entry marketplace handling is verified; the variant trees
+  already ship on the dist branch, so enabling later is a two-line change.
+
+### Fixed
+- The CLI flag registry no longer registers phantom flags harvested from
+  type-only imports' documentation comments (hundreds of phantom entries
+  removed across the command surface — flags a command never read but would
+  silently accept).
+
+### For contributors
+- `src/commands/skillpack.ts` is now a façade (dispatch + help + the v0.33
+  removal errors); handlers live in `src/commands/skillpack/`. New core
+  modules: `src/core/skillpack/{personas,bridge-state,harness-bridge}.ts`.
+  Persona validation has ONE implementation (`personas.ts`) shared by the
+  CLI and `scripts/generate-plugin-tree.ts`. Skills-dir locations live in
+  `src/core/bootstrap/host-specs.ts` with dated verification notes.
+- The bridge's test matrix covers traversal/symlink confinement, mode
+  conflicts in both directions, written-only ownership, ledger refresh after
+  applies, partial-failure ledger banking, and a real-binary marketplace
+  install of the `gbrain-coding` variant.
+
 ## [0.46.17.0] - 2026-08-16
 
 **Checkpoint compaction + compiled views (Cathedral 5).** Compaction is the

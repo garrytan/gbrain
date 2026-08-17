@@ -523,8 +523,15 @@ the branch keeps secret scope tight to just the one PR being shipped.
 
 ## Plugin dist tree (codex/claude lanes)
 
-The committed `plugin/` tree embeds the VERSION stamp, so a release bump drifts
-it. After bumping VERSION/package.json, run `bun run
-scripts/generate-plugin-tree.ts --out plugin` and stage `plugin/` +
-`skills/plugin-lanes.json`. `scripts/check-plugin-tree.sh` (in `bun run
-verify`) and the release `publish-codex-plugin` job both fail on drift.
+The committed `plugin/` and `plugin-variants/` trees embed the VERSION stamp
+(the variants' generated plugin manifests carry it too), so a release bump
+drifts them. After bumping VERSION/package.json, run `bun run
+scripts/generate-plugin-tree.ts --out plugin --variants-out plugin-variants`
+and stage `plugin/` + `plugin-variants/` + `skills/plugin-lanes.json`.
+`scripts/check-plugin-tree.sh` (in `bun run verify`) and the release
+`publish-codex-plugin` job both fail on drift.
+
+When personas change in `skills/plugin-lanes.json#personas`, also hand-edit
+`.claude-plugin/marketplace.json`: the variant entries must match the
+personas block exactly (`test/codex-plugin-manifest.test.ts` pins the
+mapping, so a persona added without a marketplace entry fails the suite).
