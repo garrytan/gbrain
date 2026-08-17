@@ -5852,6 +5852,8 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE minion_jobs DROP CONSTRAINT IF EXISTS chk_lock_duration_positive;
       ALTER TABLE minion_jobs ADD CONSTRAINT chk_lock_duration_positive CHECK (lock_duration_ms IS NULL OR (lock_duration_ms >= 5000 AND lock_duration_ms <= 3600000));
     `,
+  },
+  {
     version: 131,
     name: 'takes_embedding_dimension_matches_config',
     // #2089: takes was created with a hard-coded vector(1536), while the
