@@ -176,3 +176,20 @@ describe('#2540 — ALL_PHASES still includes the pack-gated phases', () => {
     expect(ALL_PHASES).toContain('synthesize_concepts');
   });
 });
+
+describe('cycle phase config gates', () => {
+  test('cycle.propose_takes.enabled=false skips the phase before provider work', async () => {
+    await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
+      await seedSource('propose-disabled');
+      await engine.setConfig('cycle.propose_takes.enabled', 'false');
+      const report = await runCycle(engine, {
+        brainDir,
+        sourceId: 'propose-disabled',
+        phases: ['propose_takes'],
+      });
+      const phase = report.phases.find(p => p.phase === 'propose_takes');
+      expect(phase?.status).toBe('skipped');
+      expect(phase?.details?.reason).toBe('disabled_by_config');
+    });
+  }, 60_000);
+});
