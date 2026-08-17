@@ -164,7 +164,7 @@ export async function writeSingleFact(
         `facts fence write failed for ${resolvedSlug} — .tmp quarantined; see the facts write-failure JSONL log`,
       );
     }
-    if (!result.stubGuardBlocked && !result.legacyFallback) {
+    if (!result.stubGuardBlocked && !result.legacyFallback && !result.targetUnresolvable) {
       const newId = result.ids[0];
       if (supersedeId !== null && newId !== undefined) {
         await expireSuperseded(engine, supersedeId, newId);

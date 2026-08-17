@@ -37,7 +37,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, appendF
 import { dirname } from 'node:path';
 
 import type { BrainEngine, NewFact, FactVisibility } from '../engine.ts';
-import { resolvePageFilePath } from '../markdown.ts';
+import { resolvePageWriteTarget } from '../write-through.ts';
 import { withPageLock } from '../page-lock.ts';
 import { gbrainPath } from '../config.ts';
 import { upsertFactRow, parseFactsFence } from '../facts-fence.ts';
@@ -94,6 +94,16 @@ export interface FenceWriteResult {
    * fell through resolution and produced a top-level `jared.md` stub.
    */
   stubGuardBlocked?: true;
+  /**
+   * True when the shared page-target resolver could not produce a usable
+   * fence file path (source tree missing / not a directory, or a hostile
+   * recorded `source_path` escaping the tree). Rows were NOT inserted; the
+   * caller is expected to route the facts to the legacy DB-only path so
+   * they aren't silently dropped. Unlike the old blind `mkdir -p`, we do
+   * NOT resurrect a deleted source tree just to hold a fence — the same
+   * refusal writePageThrough applies (#2018 `repo_not_found`).
+   */
+  targetUnresolvable?: true;
 }
 
 const FAILURE_LOG_PATH = (): string => gbrainPath('facts.write_failures.jsonl');
@@ -173,12 +183,26 @@ export async function writeFactsToFence(
     return { inserted: 0, ids: [] };
   }
 
-  // Local patch 2026-06-11: route through resolvePageFilePath so non-default
-  // sources fence into `<local_path>/.sources/<id>/<slug>.md` — the same path
-  // the put_page write-through and dream-cycle reverse-render compute. The
-  // bare join wrote main-source fences to the repo ROOT (the default source's
-  // tree), polluting ~/brain with stray root-level fence files.
-  const filePath = resolvePageFilePath(target.localPath, target.slug, target.sourceId);
+  // #4204: compute the SAME path writePageThrough computes for this
+  // (source, slug) — the fence appends to the page's file, so the two writers
+  // must agree. The previous resolvePageFilePath routing nested any
+  // non-default source under `<local_path>/.sources/<id>/` — but every
+  // non-default source that reaches this line has its OWN `local_path`
+  // (callers fall back to the legacy DB-only path when `sources.local_path`
+  // is NULL), and write-through/scanOneSource put that topology's pages at
+  // the tree ROOT. Sync's walker skips dot-directories, so a `.sources/`
+  // fence was invisible to sync and the next extract_facts reconcile deleted
+  // the fence-owned DB rows. The shared resolver also prefers the page's
+  // recorded `source_path`, so the fence lands in the file of record instead
+  // of minting a slug-derived twin beside a human-named vault file.
+  const resolved = await resolvePageWriteTarget(engine, target.slug, target.sourceId);
+  if (!resolved.ok) {
+    // Target tree unusable (deleted dir, hostile source_path row, …) — the
+    // caller routes the facts to the legacy DB-only path so they are
+    // recorded, not dropped.
+    return { inserted: 0, ids: [], targetUnresolvable: true };
+  }
+  const filePath = resolved.filePath;
   const tmpPath = `${filePath}.tmp`;
 
   return withPageLock(
