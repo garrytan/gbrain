@@ -348,6 +348,29 @@ async function runPipelineWithBody(
   ctx: FactsBackstopCtx,
   abortSignal?: AbortSignal,
 ): Promise<{ inserted: number; duplicate: number; superseded: number; fact_ids: number[]; entity_slugs: string[] }> {
+  // #4210: outside a withBudgetTracker scope (extract_facts op, sweep,
+  // put_page backstop, checkpoint harvest, file/code import) the gateway's
+  // chat/embed calls were budget no-ops — real spend, zero audit rows.
+  // Install a record-only fallback tracker labeled by the entry point so
+  // every pipeline invocation is visible to accounting. Uncapped, so it can
+  // never throw BudgetExhausted (cost/runtime gates need a cap); the
+  // pipeline's failure surface is unchanged. An ambient tracker (cycle
+  // phases, transcripts ingest) wins — no double scope, labels preserved.
+  const { getCurrentBudgetTracker, withBudgetTracker } = await import('../ai/gateway.ts');
+  if (!getCurrentBudgetTracker()) {
+    const { BudgetTracker } = await import('../budget/budget-tracker.ts');
+    const fallback = new BudgetTracker({ label: `facts:${ctx.source}` });
+    return withBudgetTracker(fallback, () => runPipelineBodyInner(input, ctx, abortSignal));
+  }
+  return runPipelineBodyInner(input, ctx, abortSignal);
+}
+
+/** The actual pipeline body — always runs inside a BudgetTracker scope (#4210). */
+async function runPipelineBodyInner(
+  input: { turnText: string; isDreamGenerated: boolean },
+  ctx: FactsBackstopCtx,
+  abortSignal?: AbortSignal,
+): Promise<{ inserted: number; duplicate: number; superseded: number; fact_ids: number[]; entity_slugs: string[] }> {
   const { extractFactsFromTurn } = await import('./extract.ts');
   const { resolveEntitySlug } = await import('../entities/resolve.ts');
   const { cosineSimilarity } = await import('./classify.ts');
