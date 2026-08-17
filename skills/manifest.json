@@ -230,6 +230,11 @@
       "description": "Day-one brain bootstrapping: sequence the highest-leverage data sources (contacts, calendar, email, conversations, social, archives) to go from empty brain to useful brain. Uses ClawVisor for safe credential handling — agents never hold raw API keys."
     },
     {
+      "name": "cold-start-apple",
+      "path": "cold-start-apple/SKILL.md",
+      "description": "Apple/iCloud variant of cold-start for macOS: read-only snapshots from Contacts, Calendar, Mail, Messages, and iCloud Drive with the same phase order, windows, consent gates, filtering, and quality checks."
+    },
+    {
       "name": "ask-user",
       "path": "ask-user/SKILL.md",
       "description": "Reusable choice-gate pattern for presenting users with 2-4 options and stopping execution until they respond. Platform-agnostic (Telegram buttons, Discord, CLI, OpenClaw clarify tool)."
