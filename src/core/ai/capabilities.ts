@@ -21,7 +21,7 @@
  * decisions don't depend on it.
  */
 
-import { resolveRecipe } from './model-resolver.ts';
+import { resolveChatContextTokens, resolveRecipe } from './model-resolver.ts';
 import { listRecipes } from './recipes/index.ts';
 import { AIConfigError } from './errors.ts';
 
@@ -105,7 +105,7 @@ export function getProviderCapabilities(modelString: string): ProviderCapabiliti
     // a `supports_thinking` field later without breaking this helper (it'll
     // just keep returning false until a recipe sets it).
     supportsThinking: false,
-    maxContext: chat.max_context_tokens ?? 128_000,
+    maxContext: resolveChatContextTokens(modelString) ?? 128_000,
   };
 }
 

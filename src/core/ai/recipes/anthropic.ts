@@ -34,6 +34,14 @@ export const anthropic: Recipe = {
       supports_tools: true,
       supports_subagent_loop: true,
       supports_prompt_cache: true,
+      model_context_tokens: {
+        'claude-fable-5': 1_000_000,
+        'claude-opus-5': 1_000_000,
+        'claude-sonnet-5': 1_000_000,
+        'claude-opus-4-8': 1_000_000,
+        'claude-opus-4-7': 1_000_000,
+        'claude-opus-4-6': 1_000_000,
+      },
       max_context_tokens: 200000,
       cost_per_1m_input_usd: 3.0, // sonnet-class baseline
       cost_per_1m_output_usd: 15.0,
