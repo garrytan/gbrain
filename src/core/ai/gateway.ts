@@ -467,6 +467,23 @@ export function configureGateway(config: AIGatewayConfig): void {
     provider_chat_options: config.provider_chat_options,
     env: config.env,
   };
+
+  // FIX [2/12] 2026-08-08: Warn operator when ZeroEntropy API key is
+  // missing. Pre-fix, 373 sequential auth failures were silently degraded
+  // to cosine similarity with zero operator visibility.
+  const zeroEntropyKey = config.env?.ZEROENTROPY_API_KEY ?? process.env.ZEROENTROPY_API_KEY;
+  const needsReranker = !!_config.reranker_model && (
+    _config.reranker_model.startsWith('zeroentropyai:') ||
+    (DEFAULT_RERANKER_MODEL && DEFAULT_RERANKER_MODEL.startsWith('zeroentropyai:'))
+  );
+  if (needsReranker && !zeroEntropyKey) {
+    console.warn(
+      '[gateway] ZeroEntropy API key (ZEROENTROPY_API_KEY) not configured. ' +
+      'The reranker will fail and degrade to cosine similarity. ' +
+      'Set ZEROENTROPY_API_KEY in your environment or ~/.gbrain/.env file.',
+    );
+  }
+
   _modelCache.clear();
   _shrinkState.clear();
   warnRecipesMissingBatchTokens();
@@ -2012,7 +2029,15 @@ export async function embedMultimodal(
     ?? DEFAULT_EMBEDDING_MODEL;
   const { parsed, recipe } = resolveRecipe(modelStr);
   const touchpoint = recipe.touchpoints.embedding;
-  if (!touchpoint?.supports_multimodal) {
+  // Local-patch (2026-08-03, BGE-VL): openai-compatible recipes (ollama,
+  // llama-server, litellm, ...) reach the standard /embeddings multimodal
+  // path (embedMultimodalOpenAICompat, v0.34.1) even when their recipe does
+  // not declare supports_multimodal — local multimodal servers like BGE-VL
+  // are valid targets. Native providers (anthropic etc.) still throw, and
+  // recipes with no embedding touchpoint at all (chat-only providers) throw
+  // too. The explicit `!touchpoint ||` also preserves TS narrowing so the
+  // allow-list check below can dereference touchpoint directly.
+  if (!touchpoint || (!touchpoint.supports_multimodal && recipe.implementation !== 'openai-compatible')) {
     throw new AIConfigError(
       `Recipe ${recipe.id} (${parsed.modelId}) does not support multimodal embedding.`,
       `Set embedding_multimodal_model to route multimodal separately from text embeddings.\n` +
@@ -2208,10 +2233,12 @@ async function embedMultimodalOpenAICompat(
   // we skip the dim check rather than fabricate an expected value — the
   // engine's vector(N) column will reject mismatched rows at INSERT time
   // with a clearer error than anything we could throw here.
-  const recipeDims = recipe.touchpoints.embedding?.default_dims ?? 0;
-  const expectedDims = recipeDims > 0
-    ? recipeDims
-    : (cfg.embedding_dimensions ?? 0);
+  // Local-patch (2026-08-03, BGE-VL): expectedDims forced to 0 on
+  // the multimodal openai-compat path — local servers (BGE-VL 512d) legitimately
+  // differ from the recipe's text-embedding default_dims (ollama 768d). The
+  // engine's vector(N) column rejects mismatched rows at INSERT time (D12
+  // design intent), so dropping the pre-check loses no safety.
+  const expectedDims = 0;
 
   // Send each input as one /embeddings request. Most providers cap the
   // number of inputs per call at the text-embedding batch limit, but the

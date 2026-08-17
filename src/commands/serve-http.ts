@@ -1190,6 +1190,72 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   });
 
   // ---------------------------------------------------------------------------
+  // FIX [11/12] 2026-08-08: Basic /metrics endpoint for Prometheus scraping.
+  // Exposes request count, latency p50/p99, error rate, and liveness status.
+  // ---------------------------------------------------------------------------
+  const metricsCounters = {
+    requests: 0,
+    errors: 0,
+    latencySamples: [] as number[],
+    lastReset: Date.now(),
+  };
+
+  // Middleware: track all incoming requests
+  app.use((req, _res, next) => {
+    if (req.path === '/metrics') return next();
+    metricsCounters.requests++;
+    const start = Date.now();
+    _res.on('finish', () => {
+      const status = _res.statusCode;
+      if (status >= 400) metricsCounters.errors++;
+      metricsCounters.latencySamples.push(Date.now() - start);
+      // Cap samples at 10k to bound memory
+      if (metricsCounters.latencySamples.length > 10_000) {
+        metricsCounters.latencySamples = metricsCounters.latencySamples.slice(-5_000);
+      }
+    });
+    next();
+  });
+
+  app.get('/metrics', async (_req, res) => {
+    const uptime = Date.now() - metricsCounters.lastReset;
+    const sorted = [...metricsCounters.latencySamples].sort((a, b) => a - b);
+    const p50 = sorted.length > 0 ? sorted[Math.floor(sorted.length * 0.5)] : 0;
+    const p99 = sorted.length > 0 ? sorted[Math.floor(sorted.length * 0.99)] : 0;
+    const errorRate = metricsCounters.requests > 0
+      ? (metricsCounters.errors / metricsCounters.requests).toFixed(4)
+      : '0';
+
+    res.set('Content-Type', 'text/plain; version=0.0.4');
+    res.send([
+      '# HELP gbrain_requests_total Total HTTP requests served.',
+      '# TYPE gbrain_requests_total counter',
+      `gbrain_requests_total ${metricsCounters.requests}`,
+      '',
+      '# HELP gbrain_errors_total Total HTTP errors (4xx/5xx).',
+      '# TYPE gbrain_errors_total counter',
+      `gbrain_errors_total ${metricsCounters.errors}`,
+      '',
+      '# HELP gbrain_error_ratio Error rate since last reset.',
+      '# TYPE gbrain_error_ratio gauge',
+      `gbrain_error_ratio ${errorRate}`,
+      '',
+      '# HELP gbrain_latency_ms_p50 Request latency p50 (ms).',
+      '# TYPE gbrain_latency_ms_p50 gauge',
+      `gbrain_latency_ms_p50 ${p50}`,
+      '',
+      '# HELP gbrain_latency_ms_p99 Request latency p99 (ms).',
+      '# TYPE gbrain_latency_ms_p99 gauge',
+      `gbrain_latency_ms_p99 ${p99}`,
+      '',
+      '# HELP gbrain_uptime_seconds Process uptime in seconds.',
+      '# TYPE gbrain_uptime_seconds gauge',
+      `gbrain_uptime_seconds ${(uptime / 1000).toFixed(1)}`,
+      '',
+    ].join('\n'));
+  });
+
+  // ---------------------------------------------------------------------------
   // Admin authentication (cookie-based)
   // ---------------------------------------------------------------------------
   // v0.40 D15.5: safeHexEqual extracted to src/core/timing-safe.ts so the new

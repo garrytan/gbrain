@@ -608,7 +608,51 @@ export function effectiveEnvDatabaseUrl(dir: string = process.cwd()): string | u
   return url;
 }
 
+/**
+ * FIX [10/12] 2026-08-08: Load ~/.gbrain/.env into process.env so API keys
+ * and other secrets can live in a separate file from config.json.
+ *
+ * Bun auto-loads .env from cwd, but for a globally-installed CLI tool cwd is
+ * unpredictable. This function explicitly reads ~/.gbrain/.env and merges
+ * KEY=VALUE pairs into process.env (existing env vars take priority so the
+ * operator can override via shell export).
+ */
+function loadGbrainEnv(): void {
+  try {
+    const envPath = join(configDir(), '.env');
+    if (!existsSync(envPath)) return;
+    const raw = readFileSync(envPath, 'utf-8');
+    const assignment = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/;
+    for (const rawLine of raw.split('\n')) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#')) continue;
+      const m = line.match(assignment);
+      if (!m) continue;
+      let v = (m[2] ?? '').trim();
+      if ((v.startsWith('"') && v.endsWith('"') && v.length >= 2) ||
+          (v.startsWith("'") && v.endsWith("'") && v.length >= 2)) {
+        v = v.slice(1, -1);
+      } else {
+        const hash = v.indexOf(' #');
+        if (hash !== -1) v = v.slice(0, hash).trim();
+      }
+      // Never override an already-set env var (operator shell export wins)
+      if (v && !(m[1] in process.env)) {
+        process.env[m[1]] = v;
+      }
+    }
+  } catch {
+    // .env is optional — missing or unreadable is not an error
+  }
+}
+
 export function loadConfig(): GBrainConfig | null {
+  // FIX [10/12] 2026-08-08: Load ~/.gbrain/.env before merging config.
+  // Bun auto-loads .env from cwd only; for a globally-installed tool this
+  // is the wrong directory. We explicitly load from the config dir so API
+  // keys placed in ~/.gbrain/.env (not inline in config.json) are honored.
+  loadGbrainEnv();
+
   let fileConfig: GBrainConfig | null = null;
   try {
     const raw = readFileSync(getConfigPath(), 'utf-8');
