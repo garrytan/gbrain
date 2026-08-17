@@ -101,10 +101,13 @@ export async function runPhaseConsolidate(
 
     const facts = await engine.listFactsByEntity(b.source_id, b.entity_slug, {
       activeOnly: true,
+      unconsolidatedOnly: true,
       limit: 100,
     });
-    // Re-filter to unconsolidated since listFactsByEntity returns all active.
-    const unconsolidated = facts.filter(f => f.consolidated_at == null);
+    // The engine predicate matches the bucket scan. This keeps already-
+    // consolidated rows from occupying the bounded 100-row window and
+    // starving older pending facts in large entity buckets.
+    const unconsolidated = facts;
     if (unconsolidated.length < minPerBucket) {
       bucketsSkipped += 1;
       continue;
