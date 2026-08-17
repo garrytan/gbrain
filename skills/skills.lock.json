@@ -1,5 +1,5 @@
 {
-  "RESOLVER.md": "e16588f3197cc9b8b62c95494dd4a85b8bfb143add215cde696a9079664d1ba0",
+  "RESOLVER.md": "bebb369bdea4a10d6c428a960ad43493993c047d02ea5fae6b90870dab10f970",
   "_AGENT_README.md": "62613f7f1e061576b6c1b18844f59bd35f2df96ca5c45c8c41fae0772b9ce4d3",
   "_brain-filing-rules.json": "cf850df6a7425464c6d63b3ace71991cc93497fa0cc8cd21acd31883e17939c6",
   "_brain-filing-rules.md": "2d2d75b7c76081c56f41b2c0a5a978c355ce957300f9b0a5575dc4079ef1f877",
@@ -35,6 +35,7 @@
   "citation-fixer/routing-eval.jsonl": "52b23b71e66fdc18aee67d0576099b0c83997d648cf4ecf8fe7753b91b6c9c53",
   "citation-graph-ingest/SKILL.md": "849b0cdc64b7ff14d0e6771bde15f0edc3c2fc29af08be015753a5f88a03205f",
   "citation-graph-ingest/routing-eval.jsonl": "a1ba605d35e736b741b9e8aac1e7d50b61a7cbcada893d67099b55bf5a0d2635",
+  "cold-start-apple/SKILL.md": "f354e5324a46d5771642df9c3e5cb317fa47428fed65b49c3fe954d058e8fcac",
   "cold-start/SKILL.md": "36ffea23af6fde97ff6b70d6a12e547bf2097a66d4f8b8146ffea9ead6144cf3",
   "company-brainify/SKILL.md": "ae48372512645f532820e43faaf18a8fa768a691b2144973dfc89465f84d84c6",
   "company-brainify/routing-eval.jsonl": "6f27f835eda9ae77a2b694534c78a043a871349820e8c638c3d8bbba6d3aa17b",
@@ -88,7 +89,7 @@
   "idea-lineage/routing-eval.jsonl": "ee2e00704b9accb7dd58bb8f126a3bc04a2c40be499180fa505dbf6d5061cd41",
   "ingest/SKILL.md": "dc40ecc0072806fb8c7bb6ab9cf1f103842e05653eb55d67632d7e3ffc4dd7d2",
   "maintain/SKILL.md": "89ace6ae686284fd4423416a3b80d8ad940fbcf5313523f690684afe52779788",
-  "manifest.json": "03471868cce05fa38af6f793da54e2fc11f77ef778271a596d75bc29f9ec4c73",
+  "manifest.json": "4a1da83ff45f948398c646d888764f3efa287b4dc8ce90ec379196d969e0d245",
   "measure-before-you-fix/SKILL.md": "1fd3b40ab65cbd08f50dea16107701859165469be3c85c57d779c7b4bbf92db8",
   "measure-before-you-fix/routing-eval.jsonl": "0661df9974a9cfe31216d574b1db0ef341945c2eb844ebf4ab6920fcbbc90d6c",
   "media-ingest/SKILL.md": "4cb0dee1011dce0d5a65dfa4610820511ed6e2da005c7ba15500c79f0b9bcb2f",
