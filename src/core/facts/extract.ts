@@ -307,10 +307,43 @@ export async function extractFactsFromTurnWithOutcome(
     return { ok: false, reason: 'non_terminal_stop' };
   }
 
-  const parsedShape = parseExtractorJsonDetailed(result.text);
+  let parsedShape = parseExtractorJsonDetailed(result.text);
   if (!parsedShape ||
       (parsedShape.invalidCandidates > 0 && parsedShape.facts.length === 0)) {
-    return { ok: false, reason: 'malformed_output' };
+    process.stderr.write(
+      `[facts-extract] WARN: extractor returned malformed output (model=${model}); ` +
+      'retrying once with an explicit JSON-only reminder\n',
+    );
+    try {
+      result = await chat({
+        model,
+        system: `${EXTRACTOR_SYSTEM}\nThe previous attempt returned invalid JSON or an invalid facts schema. ` +
+          'Return exactly one valid JSON object and no prose.',
+        messages: [{ role: 'user', content: userContent }],
+        maxTokens,
+        abortSignal: input.abortSignal,
+      });
+    } catch (err) {
+      if (isAbort(err)) throw err;
+      return { ok: false, reason: 'provider_error', error: err };
+    }
+
+    if (result.stopReason === 'refusal') return { ok: false, reason: 'refusal' };
+    if (result.stopReason === 'content_filter') {
+      return { ok: false, reason: 'content_filter' };
+    }
+    if (result.stopReason === 'length') {
+      return { ok: false, reason: 'truncated_output' };
+    }
+    if (result.stopReason !== 'end') {
+      return { ok: false, reason: 'non_terminal_stop' };
+    }
+
+    parsedShape = parseExtractorJsonDetailed(result.text);
+    if (!parsedShape ||
+        (parsedShape.invalidCandidates > 0 && parsedShape.facts.length === 0)) {
+      return { ok: false, reason: 'malformed_output' };
+    }
   }
   if (parsedShape.invalidCandidates > 0) {
     process.stderr.write(

@@ -130,3 +130,42 @@ describe('extractFactsFromTurn truncation handling (#2113)', () => {
     expect(facts).toEqual([]);
   });
 });
+
+describe('extractFactsFromTurn malformed-output retry', () => {
+  test('completed malformed JSON retries once and recovers the facts', async () => {
+    const seen: ChatOpts[] = [];
+    __setChatTransportForTests(async (opts) => {
+      seen.push(opts);
+      return seen.length === 1
+        ? chatResult('not json', 'end')
+        : chatResult(GOOD_JSON, 'end');
+    });
+
+    const facts = await extractFactsFromTurn({
+      turnText: 'I gave up alcohol.',
+      source: 'test:malformed-retry',
+    });
+
+    expect(seen).toHaveLength(2);
+    expect(seen[1]!.maxTokens).toBe(seen[0]!.maxTokens);
+    expect(String(seen[1]!.system)).toContain('invalid JSON or an invalid facts schema');
+    expect(facts).toHaveLength(1);
+    expect(facts[0]!.fact).toContain('alcohol');
+  });
+
+  test('second malformed response is still fail-closed', async () => {
+    let calls = 0;
+    __setChatTransportForTests(async () => {
+      calls++;
+      return chatResult('{"facts":[{"kind":"fact"}]}', 'end');
+    });
+
+    const facts = await extractFactsFromTurn({
+      turnText: 'I gave up alcohol.',
+      source: 'test:malformed-retry',
+    });
+
+    expect(calls).toBe(2);
+    expect(facts).toEqual([]);
+  });
+});
