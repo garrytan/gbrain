@@ -344,3 +344,37 @@ describe('estimateAnthropicCost', () => {
     expect(cost).toBeGreaterThan(0);
   });
 });
+
+describe('D12 — NULL-signature cohort widens embed.stale', () => {
+  const makeHealth = (over: Partial<import('../src/core/types.ts').BrainHealth> = {}) => ({
+    page_count: 100, embed_coverage: 1, stale_pages: 0, orphan_pages: 0,
+    dead_links: 0, missing_embeddings: 0, link_count: 50, link_coverage: 1,
+    timeline_coverage: 1, most_connected: [], brain_score: 90,
+    ...over,
+  }) as import('../src/core/types.ts').BrainHealth;
+
+  test('cohort > 0 with zero missing embeddings still fires embed.stale, widened + costed', () => {
+    const recs = computeRecommendations(makeHealth(), {
+      embeddingModel: 'openai:text-embedding-3-small',
+      embeddingDimensions: 1536,
+      embeddingProviderConfigured: true,
+      nullSignatureCohort: 563,
+    });
+    const rec = recs.find((r) => r.id === 'embed.stale');
+    expect(rec).toBeDefined();
+    expect((rec!.params as { includeNullSignature?: boolean }).includeNullSignature).toBe(true);
+    expect(rec!.est_usd_cost).toBeGreaterThan(0); // the cohort is real spend
+    expect(rec!.rationale).toContain('563');
+    expect(rec!.rationale).toContain('no recorded embedding signature');
+  });
+
+  test('no cohort ⇒ params unchanged (no includeNullSignature key, idempotency stable)', () => {
+    const recs = computeRecommendations(makeHealth({ missing_embeddings: 10 }), {
+      embeddingModel: 'openai:text-embedding-3-small',
+      embeddingDimensions: 1536,
+      embeddingProviderConfigured: true,
+    });
+    const rec = recs.find((r) => r.id === 'embed.stale')!;
+    expect('includeNullSignature' in (rec.params as Record<string, unknown>)).toBe(false);
+  });
+});

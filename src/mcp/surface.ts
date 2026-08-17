@@ -89,6 +89,12 @@ export const STARTER_OPS: ReadonlySet<string> = new Set([
   ...FALLBACK_DAILY_OPS,
   'whoami',
   'request_tools',
+  // [EV8] capture joins as a DIRECT literal — deliberately NOT via
+  // BRAIN_TOOL_ALLOWLIST (that would grant every minion subagent a new write
+  // tool and require the skillopt mutating-exclusion update). The plugin +
+  // starter connect lanes retire the "unknown tool: capture" FAQ, which only
+  // works if the starter surface actually lists it.
+  'capture',
 ]);
 
 /**
@@ -105,6 +111,10 @@ export const ALWAYS_INCLUDED_STARTER_OPS: ReadonlySet<string> = new Set([
   'request_tools',
   'submit_agent',
   'get_agent_job',
+  // [EV8] capture is contract-bearing on the starter lanes (the retired FAQ
+  // points agents at it) — usage-driven re-derivation must never propose
+  // evicting it as a zero-usage newcomer.
+  'capture',
 ]);
 
 /** Strict flag parser — unknown values reject loudly (parseStdioIdleTimeout pattern). */

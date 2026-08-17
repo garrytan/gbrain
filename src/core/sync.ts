@@ -403,7 +403,63 @@ export type SyncableReason =
   | 'strategy'
   | 'pruned-dir'
   | 'include-glob-miss'
-  | 'exclude-glob-hit';
+  | 'exclude-glob-hit'
+  | 'malformed-path';
+
+/**
+ * Path segments that can never be legitimate page filenames: square brackets
+ * (the signature of markdown-link syntax leaking into a literal filename —
+ * files named `[atoms/foo.md](https:/...)` were minted by misbehaving
+ * producers and polluted search because slugifySegment STRIPS brackets
+ * instead of rejecting them, yielding plausible-looking slugs) and ASCII
+ * control characters. Parentheses are deliberately allowed — `meeting (1).md`
+ * is a legitimate filename shape.
+ *
+ * Two-tier design (cross-model adversarial finding — both reviewers flagged
+ * blanket-bracket collateral):
+ *   - ADMISSION (hasMalformedPathSegment): control chars reject on ANY path;
+ *     brackets reject only on MARKDOWN paths (.md/.mdx). Code-strategy lanes
+ *     keep indexing framework paths like `app/[id]/page.tsx`, which are
+ *     ubiquitous and legitimate.
+ *   - DESTRUCTION (isPoisonedPath): sync's row-DELETING lanes (reconcile,
+ *     modified-lane cleanup) act only on the actual injection signature —
+ *     `](` or control chars. A bare-bracket markdown file (`notes [draft].md`)
+ *     imported by a pre-gate release keeps its indexed row (it just can't
+ *     re-import until renamed; doctor's malformed_path_pages carries the
+ *     hint). Hard-deleting it on a routine post-upgrade full sync while the
+ *     file still exists would be silent data loss.
+ *
+ * IMPORTANT: these are PATH checks only. `](` inside file BODIES is normal
+ * markdown and must never trip them.
+ */
+export const MALFORMED_PATH_SEGMENT_RE = /[\[\]\x00-\x1f]/;
+
+/** The injection signature that marks a path as sweepable junk. */
+export const POISONED_PATH_RE = /\]\(|[\x00-\x1f]/;
+
+/** Admission check: control chars anywhere; brackets on markdown paths. */
+export function hasMalformedPathSegment(path: string): boolean {
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x1f]/.test(path)) return true;
+  return /[\[\]]/.test(path) && /\.(md|mdx)$/i.test(path);
+}
+
+/** Destruction gate: only paths matching the poison signature may have their DB rows swept. */
+export function isPoisonedPath(path: string): boolean {
+  return POISONED_PATH_RE.test(path);
+}
+
+/**
+ * Strip control characters (and cap length) before echoing a malformed path
+ * to a terminal — these paths contain control bytes BY DEFINITION, and a
+ * crafted filename must not be able to inject ANSI escapes into sync output.
+ * Brackets stay: they're printable and the informative part of the name.
+ */
+export function sanitizePathForDisplay(path: string): string {
+  // eslint-disable-next-line no-control-regex
+  const cleaned = path.replace(/[\x00-\x1f\x7f]/g, '\ufffd');
+  return cleaned.length > 200 ? `${cleaned.slice(0, 197)}...` : cleaned;
+}
 
 /**
  * Canonical metafile basenames the markdown sync strategy intentionally
@@ -437,6 +493,11 @@ function classifySync(path: string, opts: SyncableOptions = {}): SyncableReason 
   const strategy = opts.strategy || 'markdown';
 
   if (!isAllowedByStrategy(path, strategy)) return 'strategy';
+
+  // Reject filenames that can't be legitimate pages (bracket/control chars —
+  // markdown-link syntax as a literal filename). Checked after `strategy` so
+  // only files that would otherwise be admitted change classification.
+  if (hasMalformedPathSegment(path)) return 'malformed-path';
 
   // Skip every path segment that pruneDir would block walkers from descending
   // into. Catches hidden dirs (`.git`, `.obsidian`), `.raw/` sidecars, and

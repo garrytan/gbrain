@@ -72,8 +72,8 @@ export function isValidZeroEntropyDim(dims: number): boolean {
 // Matryoshka — any positive integer up to the model's native size. When a
 // brain is configured with `embedding_dimensions` OUTSIDE that range, OpenAI
 // returns HTTP 400 at first embed. We catch it locally with a paste-ready
-// fix so users don't see opaque "vector dimension mismatch" errors after
-// `gbrain ze-switch --undo` lands them on OpenAI at the wrong dim.
+// fix so users don't see opaque "vector dimension mismatch" errors after a
+// `gbrain migrate embeddings --to openai:...` lands them at the wrong dim.
 const OPENAI_TEXT3_MAX_DIMS: Record<string, number> = {
   'text-embedding-3-small': 1536,
   'text-embedding-3-large': 3072,

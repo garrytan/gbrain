@@ -4,7 +4,7 @@
  */
 
 import type { BrainEngine } from '../core/engine.ts';
-import { MinionQueue } from '../core/minions/queue.ts';
+import { MinionQueue, deriveWedgeSignal } from '../core/minions/queue.ts';
 import { MinionWorker } from '../core/minions/worker.ts';
 import {
   WORKER_EXIT_RSS_WATCHDOG,
@@ -919,17 +919,100 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
       const statsQueue = parseFlag(args, '--queue') ?? 'default';
       const stats = await queue.getStats({ queue: statsQueue });
 
+      // Divergence detection: intake (created in window) vs USEFUL drain
+      // (drained_completed — cancellations are outflow, not work; a naive
+      // combined drain self-inflates while the TTL sweep shreds backlog).
+      // Same env-threshold pattern as the wedge line below.
+      const divergenceRatio = (() => {
+        const raw = Number(process.env.GBRAIN_QUEUE_DIVERGENCE_RATIO ?? '');
+        return Number.isFinite(raw) && raw > 0 ? raw : 2;
+      })();
+      const divergenceMinWaiting = (() => {
+        const raw = parseInt(process.env.GBRAIN_QUEUE_DIVERGENCE_MIN_WAITING ?? '', 10);
+        return Number.isFinite(raw) && raw > 0 ? raw : 50;
+      })();
+      const divergent = stats.by_type.filter(t =>
+        t.waiting_now > divergenceMinWaiting &&
+        t.total > divergenceRatio * Math.max(t.drained_completed, 1));
+
+      // Waiting-TTL cancellations in the window (admission sweep visibility —
+      // derived from the reason prefix cancelJobs writes; no extra storage).
+      let ttlCancelled: Array<{ name: string; count: number }> = [];
+      try {
+        const { TTL_REASON_PREFIX } = await import('../core/minions/admission.ts');
+        const ttlRows = await engine.executeRaw<{ name: string; count: string }>(
+          `SELECT name, count(*)::text AS count FROM minion_jobs
+            WHERE status = 'cancelled' AND error_text LIKE $1
+              AND finished_at > now() - interval '24 hours'
+            GROUP BY name ORDER BY count(*) DESC`,
+          [`${TTL_REASON_PREFIX}%`],
+        );
+        ttlCancelled = ttlRows.map(r => ({ name: r.name, count: parseInt(r.count, 10) }));
+      } catch { /* best-effort */ }
+      // Job names originate from the MCP-exposed submit surface — strip
+      // control/ANSI bytes + cap before echoing into the terminal screams
+      // (same hygiene as frontmatter-derived type names). Names embedded in
+      // COPY-PASTEABLE command hints get the stricter safeConfigSegment gate:
+      // display-sanitize keeps shell metacharacters.
+      const { sanitizeTypeForDisplay: sanitizeName } = await import('../core/schema-pack/type-usage.ts');
+      const { safeConfigSegment } = await import('../core/minions/admission.ts');
+
+      if (hasFlag(args, '--json')) {
+        console.log(JSON.stringify({
+          queue: statsQueue,
+          ...stats,
+          divergent: divergent.map(t => ({
+            name: t.name,
+            intake_24h: t.total,
+            drained_completed_24h: t.drained_completed,
+            waiting_now: t.waiting_now,
+            oldest_waiting_minutes: t.oldest_waiting_minutes,
+          })),
+          ttl_cancelled_24h: ttlCancelled,
+        }, null, 2));
+        break;
+      }
+
       console.log('Job Stats (last 24h):');
       if (stats.by_type.length > 0) {
-        console.log(`  ${'Type'.padEnd(14)} ${'Total'.padEnd(7)} ${'Done'.padEnd(7)} ${'Failed'.padEnd(8)} ${'Dead'.padEnd(6)} Avg Time`);
+        console.log(`  ${'Type'.padEnd(14)} ${'Total'.padEnd(7)} ${'Done'.padEnd(7)} ${'Failed'.padEnd(8)} ${'Dead'.padEnd(6)} ${'Drained'.padEnd(9)} ${'Waiting'.padEnd(9)} Avg Time`);
         for (const t of stats.by_type) {
           const avgTime = t.avg_duration_ms != null ? `${(t.avg_duration_ms / 1000).toFixed(1)}s` : '—';
-          console.log(`  ${t.name.padEnd(14)} ${String(t.total).padEnd(7)} ${String(t.completed).padEnd(7)} ${String(t.failed).padEnd(8)} ${String(t.dead).padEnd(6)} ${avgTime}`);
+          // Drained = terminal outflow in-window, completed-first with the
+          // rest bracketed so TTL-cancel storms can't masquerade as work.
+          const drained = `${t.drained_completed}${(t.drained_failed + t.drained_dead + t.drained_cancelled) > 0 ? `(+${t.drained_failed + t.drained_dead + t.drained_cancelled})` : ''}`;
+          console.log(`  ${sanitizeName(t.name).padEnd(14)} ${String(t.total).padEnd(7)} ${String(t.completed).padEnd(7)} ${String(t.failed).padEnd(8)} ${String(t.dead).padEnd(6)} ${drained.padEnd(9)} ${String(t.waiting_now).padEnd(9)} ${avgTime}`);
         }
+        console.log(`  (Drained = completed in-window, +N = failed/dead/cancelled outflow; Waiting = now, all queues)`);
       } else {
         console.log('  No jobs in the last 24 hours.');
       }
       console.log(`\n  Queue health: ${stats.queue_health.waiting} waiting, ${stats.queue_health.active} active, ${stats.queue_health.stalled} stalled`);
+
+      // DIVERGENT-queue scream: intake structurally exceeds useful drain and a
+      // real backlog is sitting there. This is the default-on protection layer
+      // (quota ships config-only), so it must carry the opt-in hint.
+      for (const t of divergent) {
+        const perDay = t.drained_completed; // window is 24h
+        const etaDays = perDay > 0 ? Math.round(t.waiting_now / perDay) : null;
+        const eta = etaDays != null ? `~${etaDays}d backlog at current drain` : 'backlog never drains at current rate';
+        const ttl = ttlCancelled.find(c => c.name === t.name);
+        const ttlNote = ttl ? ` Waiting-TTL is cancelling ~${ttl.count}/day of it.` : '';
+        console.log(
+          `\n  ⚠  DIVERGENT QUEUE type '${sanitizeName(t.name)}': intake ${t.total}/24h vs ${t.drained_completed} completed/24h, ` +
+          `${t.waiting_now} waiting (${eta}).${ttlNote}\n` +
+          `     Reduce intake, raise drain, or cap admission:\n` +
+          `       gbrain config set minions.quota_max_waiting.${safeConfigSegment(t.name) ?? '<job-name>'} <n>`,
+        );
+      }
+      if (ttlCancelled.length > 0) {
+        const parts = ttlCancelled.map(c => `${sanitizeName(c.name)}: ${c.count}`).join(', ');
+        console.log(
+          `\n  ⚠  Waiting-TTL cancelled ${ttlCancelled.reduce((a, c) => a + c.count, 0)} job(s) in the last 24h (${parts}).\n` +
+          `     These waited past their TTL without ever being claimed. Tune:\n` +
+          `       gbrain config set minions.ttl_waiting_hours.<name> <hours|0>`,
+        );
+      }
 
       // Scheduling priority (niceness, issue #1815). Best-effort: measures live
       // workers from the registry + the supervisor (if running) — silently skips
@@ -961,13 +1044,9 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
       {
         const w = stats.wedge;
         const mins = w.minutes_since_completion;
-        // Same threshold the doctor `wedged_queue` check uses, so the two
-        // advisory surfaces agree (issue #1801).
-        const wedgeMins = (() => {
-          const raw = parseInt(process.env.GBRAIN_WEDGED_QUEUE_WARN_MINUTES ?? '', 10);
-          return Number.isFinite(raw) && raw > 0 ? raw : 15;
-        })();
-        const wedged = w.active_healthy === 0 && w.waiting > 0 && (mins === null || mins > wedgeMins);
+        // Shared derivation (queue.ts deriveWedgeSignal) so this line, the
+        // doctor wedged_queue check, and the get_job_stats op agree (#1801).
+        const { wedged, wedge_threshold_minutes: wedgeMins } = deriveWedgeSignal(w);
         if (wedged) {
           const since = mins === null ? 'no completions on record' : `${mins}m since last completion`;
           console.log(
@@ -2011,6 +2090,15 @@ export async function registerBuiltinHandlers(
       // invocation whose whole point was to do neither.
       dryRun: !!job.data.dryRun,
       sourceId: typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined,
+      // Background parity (D7): the doc-recommended recovery
+      // `embed --stale --catch-up --include-null-signature --background`
+      // used to silently DEGRADE — the payload dropped these four, so the
+      // job ran as a plain 30-min-budget stale pass with the grandfather
+      // clause intact. Serialize + read them like every other embed knob.
+      catchUp: !!job.data.catchUp,
+      includeNullSignature: !!job.data.includeNullSignature,
+      batchSize: typeof job.data.batchSize === 'number' ? job.data.batchSize : undefined,
+      priority: job.data.priority === 'recent' ? 'recent' : undefined,
       // CX1+CX5: pace overrides ride in the job payload as explicit overrides
       // only; runEmbedCore re-resolves env > config > bundle at execution so
       // GBRAIN_PACE_* still wins during an incident.
@@ -2711,6 +2799,7 @@ export async function registerBuiltinHandlers(
       sourceId?: string;
       batchSize?: number;
       priority?: 'recent';
+      includeNullSignature?: boolean;
     };
     return await runEmbedCore(engine, {
       stale: true,
@@ -2718,6 +2807,9 @@ export async function registerBuiltinHandlers(
       batchSize: data.batchSize,
       priority: data.priority,
       sourceId: data.sourceId,
+      // D7/D12: submitters that detected a NULL-signature cohort thread the
+      // widening through; absent = grandfather clause stays (unchanged).
+      includeNullSignature: !!data.includeNullSignature,
     });
   });
 

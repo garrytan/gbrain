@@ -39,7 +39,7 @@ that exact install one-liner on stderr; with no brain, it exits with
 resolution order: `$GBRAIN_BIN` → `~/.bun/bin/gbrain` → `gbrain` on PATH — the
 sanctioned install location is preferred over PATH so a stray `gbrain` earlier
 on PATH can't shadow it).
-`starter` is the 26-op daily-driver surface (the seven memory verbs + daily
+`starter` is the daily-driver surface (the seven memory verbs + daily
 brain ops) — the curated skills drive everything else through the `gbrain`
 CLI. Widen a machine without editing the snapshot: `GBRAIN_SURFACE=full` in
 the env that launches Codex (new sessions pick it up), or use the bootstrap
@@ -129,8 +129,10 @@ everything it can do.
 
 > **`list_skills` empty?** It's gated by `mcp.publish_skills` on the host — enable
 > it with `gbrain config set mcp.publish_skills true`. The core tools (search,
-> query, get_page, put_page, think, find_experts) work regardless; `capture` is
-> CLI-only, so write over MCP with `put_page`. Why brains differ on the default:
+> query, get_page, put_page, capture, think, find_experts) work regardless —
+> prefer `capture` for quick notes (auto-slug + dedupe), `put_page` for
+> full-control writes; if a narrowed token's list lacks capture, use `put_page`.
+> Why brains differ on the default:
 > [tutorial A1](../tutorials/connect-coding-agent.md#a1-on-the-host-serve-over-http).
 
 ## Remove

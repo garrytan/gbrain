@@ -49,3 +49,7 @@ test/fixtures/pglite-snapshot.version
 
 # Private brain reports — never check these in (per CLAUDE.md privacy rule)
 reports/network-intelligence/
+
+# Coverage lane output (COVERAGE_DIR opt-in in test-shard.sh /
+# run-serial-tests.sh / run-e2e.sh; merged by scripts/merge-lcov.ts)
+.coverage/

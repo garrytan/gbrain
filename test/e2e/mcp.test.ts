@@ -15,7 +15,9 @@ import { operations } from '../../src/core/operations.ts';
 
 describe('E2E: MCP Tool Generation', () => {
   test('operations generate valid MCP tool definitions', () => {
-    // This replicates exactly what server.ts does in the tools/list handler
+    // This replicates server.ts's tool-def mapping over the FULL op list.
+    // (The live tools/list additionally subtracts gate-off publish-gated ops
+    // per request — stdioVisibleTools, pinned by test/mcp-stdio-gate-list.)
     const tools = operations.map(op => ({
       name: op.name,
       description: op.description,

@@ -204,7 +204,7 @@ gbrain schema add-alias researcher person
 
 Read [`skills/conventions/schema-evolution.md`](../skills/conventions/schema-evolution.md) for the decision tree on when to add types vs aliases vs prefixes. The short version: <20 pages → don't pack-codify; 20-100 → alias on existing type; 100+ → first-class type.
 
-**Lint your pack before shipping.** The 11-rule lint surface (with the optional `--with-db` flag for DB-aware checks) catches dangling references, prefix collisions, and dead-corpus warnings:
+**Lint your pack before shipping.** The 14-rule lint surface (with the optional `--with-db` flag for DB-aware checks, including the stored-type alias/undeclared rules) catches dangling references, prefix collisions, and dead-corpus warnings:
 
 ```bash
 gbrain schema lint --with-db

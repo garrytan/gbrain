@@ -1053,7 +1053,9 @@ export function makeResolver(
       // (unwrapped by unwrapWikilink) that name a real page the strict regex
       // could not reach and whose full-path fuzzy score is below threshold.
       if (/\//.test(trimmed) && /^[a-z0-9][a-z0-9/_-]*$/.test(trimmed)) {
-        const page = await engine.getPage(trimmed);
+        // Same source scope as the basename index above (#972): a wikilink in
+        // source A must not resolve to a same-slug page in source B.
+        const page = await engine.getPage(trimmed, opts.sourceId ? { sourceId: opts.sourceId } : undefined); // gbrain-allow-unscoped-getpage: read-only wikilink resolution; unscoped-when-no-source is the documented single-source behavior
         if (page) {
           cache.set(cacheKey, trimmed);
           return trimmed;
@@ -1065,7 +1067,7 @@ export function makeResolver(
       for (const hint of hints) {
         if (!hint) continue;
         const candidate = `${hint}/${slugified}`;
-        const page = await engine.getPage(candidate);
+        const page = await engine.getPage(candidate, opts.sourceId ? { sourceId: opts.sourceId } : undefined); // gbrain-allow-unscoped-getpage: read-only wikilink resolution; unscoped-when-no-source is the documented single-source behavior
         if (page) {
           cache.set(cacheKey, candidate);
           return candidate;

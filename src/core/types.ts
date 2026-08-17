@@ -602,6 +602,13 @@ export interface Chunk {
    * image search arm.
    */
   modality?: 'text' | 'image';
+  /**
+   * True when the stored vector is NULL. Cheap boolean (no vector egress) so
+   * non-embedding readers can tell "vector missing" apart from `embedded_at`,
+   * which a schema rebuild leaves stale. Present only on paths that select it
+   * (getChunks).
+   */
+  embedding_is_null?: boolean;
 }
 
 /**
@@ -1535,34 +1542,20 @@ export interface BrainHealth {
   no_orphans_score: number;          // 0-15
   no_dead_links_score: number;       // 0-10
   /**
-   * v0.30.1 (Cherry D7 + Codex C3): explicit migrations diagnostic surface
-   * exposed to MCP get_health callers so remote agents can detect a wedged
-   * brain WITHOUT shelling SSH + gbrain doctor. Two ledgers (schema +
-   * orchestrator) per Codex T5 namespacing.
+   * Host migration-ledger summary so remote get_health callers can detect a
+   * wedged brain WITHOUT shelling SSH + gbrain doctor. Composed at the op
+   * layer by get_health from src/core/migration-ledger.ts
+   * (migrationLedgerSummary — version strings only, never migration
+   * internals); an unreadable/corrupt ledger degrades to the error variant.
    *
    * `schema_version` ("1") on the parent BrainHealth pins the additive
    * contract — clients should default-handle missing fields and never
    * assume removed ones.
    */
   schema_version?: '1';
-  migrations?: {
-    schema: {
-      /** Current numeric config.version. */
-      version: number;
-      /** Latest available migration. */
-      latest_version: number;
-      /**
-       * Optional drift evidence — names of columns/tables a verify hook
-       * surfaced as missing on opt-in migrations. Empty array means no
-       * drift detected (or no verify hook ran).
-       */
-      verify_drift?: string[];
-    };
-    orchestrator: {
-      pending: Array<{ version: string; name: string; status: 'pending' | 'partial' }>;
-      wedged: Array<{ version: string; name: string; consecutive_partials: number }>;
-    };
-  };
+  migrations?:
+    | { pending: string[]; partial: string[]; wedged: string[]; skipped_future: number }
+    | { error: 'ledger_unreadable' };
 }
 
 // Ingest log

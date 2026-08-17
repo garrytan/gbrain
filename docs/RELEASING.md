@@ -470,10 +470,19 @@ Never merge external PRs directly into master. Instead, use the "fix wave" workf
    read the diff, understand the fix, and write it yourself if needed.
 4. **Test the wave** — verify with `bun test && bun run test:e2e` (full E2E lifecycle).
    Every fix in the wave must have test coverage.
-5. **Close with context** — every closed PR gets a comment explaining why and what (if
+5. **Security review** — run `bun run wave-security-scan <base>..<collector-head>` over the
+   collector branch (the repeatable mechanical sweep). It ALARMS on newly-introduced
+   obfuscation/eval in code, secrets found by gitleaks **with the test/skills allowlist
+   stripped**, and any committed `admin/dist` change (the bundle-backdoor artifact); new
+   outbound endpoints, spawns, env reads, and dependency changes print as context. Exit 1
+   means "eyeball before shipping," not "unsafe" — read the ALARM rows and the context lists,
+   and confirm each is benign. Link the result (or a one-line "clean") in the wave PR body.
+   This is the standard's teeth: a wave PR body that claims "security reviewed" must have run
+   this. It is a net, not a proof — a human still reads the diffs.
+6. **Close with context** — every closed PR gets a comment explaining why and what (if
    anything) supersedes it. Contributors did real work; respect that with clear communication
    and thank them.
-6. **Ship as one PR** — single PR to master with all attributions preserved via
+7. **Ship as one PR** — single PR to master with all attributions preserved via
    `Co-Authored-By:` trailers. Include a summary of what merged and what closed.
 
 **Community PR guardrails:**

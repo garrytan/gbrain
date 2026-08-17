@@ -106,7 +106,7 @@ export function logDbDisconnect(
 
 /**
  * Read recent disconnect audit events. Consumed by
- * `doctor.ts:checkBatchRetryHealth` to surface the 24h count + most-
+ * `doctor/checks/queue-jobs.ts:checkBatchRetryHealth` to surface the 24h count + most-
  * recent caller in the existing check (no new check needed per codex
  * finding 11).
  *

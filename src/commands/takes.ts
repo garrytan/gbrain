@@ -10,25 +10,21 @@
  *   takes supersede <slug> --row N ...     — strikethrough old + append new
  *   takes resolve <slug> --row N --outcome true|false [--value N --unit u]
  *
- * Markdown is canonical. Every mutate command:
- *   1. acquires the per-page file lock
- *   2. re-reads the .md file
- *   3. applies the edit via takes-fence (upsertTakeRow / supersedeRow)
- *   4. writes the .md file back
- *   5. mirrors to the DB via the engine method
- *   6. releases the lock (auto via withPageLock)
+ * Markdown is canonical. Every mutate command routes through the shared
+ * write-through core (src/core/takes-write.ts — also the takes_* MCP ops'
+ * backend): lock → resolve page → fence edit → write .md → DB mirror. This
+ * file owns arg parsing + rendering + exit codes only.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { existsSync } from 'node:fs';
 import type { BrainEngine, TakeKind } from '../core/engine.ts';
 import {
-  parseTakesFence,
-  upsertTakeRow,
-  supersedeRow,
-  type ParsedTake,
-} from '../core/takes-fence.ts';
-import { withPageLock } from '../core/page-lock.ts';
+  addTakeToPage,
+  updateTakeOnPage,
+  supersedeTakeOnPage,
+  resolveTakeOnPage,
+  TakesWriteError,
+} from '../core/takes-write.ts';
 import { resolveSourceId } from '../core/source-resolver.ts';
 import { resolveOwnerHolder } from '../core/owner-holder.ts';
 
@@ -60,8 +56,22 @@ async function resolveBrainDir(engine: BrainEngine | null, explicitDir: string |
   process.exit(1);
 }
 
-function pageFilePath(brainDir: string, slug: string): string {
-  return join(brainDir, `${slug}.md`);
+/**
+ * Map a TakesWriteError to the historical CLI error surface (stderr + exit 1).
+ * Message text preserves the pre-extraction wording users and scripts saw.
+ */
+function exitTakesError(err: unknown): never {
+  if (err instanceof TakesWriteError) {
+    switch (err.code) {
+      case 'page_not_found':
+        console.error(`${err.message} Run \`gbrain sync\` first.`);
+        process.exit(1);
+      default:
+        console.error(err.hint && err.code !== 'holder_denied' ? `${err.message} ${err.hint}` : err.message);
+        process.exit(1);
+    }
+  }
+  throw err;
 }
 
 function ensureKind(raw: string | undefined): TakeKind {
@@ -86,23 +96,6 @@ function ensureFloat(raw: string | undefined, fallback: number): number {
   return n;
 }
 
-async function getPageId(engine: BrainEngine, slug: string, sourceId?: string): Promise<number> {
-  const rows = sourceId
-    ? await engine.executeRaw<{ id: number }>(
-        `SELECT id FROM pages WHERE slug = $1 AND source_id = $2 LIMIT 1`,
-        [slug, sourceId],
-      )
-    : await engine.executeRaw<{ id: number }>(
-        `SELECT id FROM pages WHERE slug = $1 LIMIT 1`,
-        [slug],
-      );
-  if (!rows[0]) {
-    console.error(`Page not found in brain: ${slug}${sourceId ? ` (source=${sourceId})` : ''}. Run \`gbrain sync\` first.`);
-    process.exit(1);
-  }
-  return rows[0].id;
-}
-
 // Fail-closed (#2698 residual, TODOS.md): `resolveSourceId` only ever
 // throws when a source WAS explicitly in play — an invalid or
 // unregistered `GBRAIN_SOURCE`, a `.gbrain-source` dotfile pointing at a
@@ -115,16 +108,6 @@ async function getPageId(engine: BrainEngine, slug: string, sourceId?: string): 
 // write is blocked instead of silently unscoped.
 async function resolveTakesSourceId(engine: BrainEngine): Promise<string> {
   return resolveSourceId(engine, null);
-}
-
-function readBodyOrEmpty(path: string): string {
-  if (!existsSync(path)) return '';
-  return readFileSync(path, 'utf-8');
-}
-
-function writeBody(path: string, body: string): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, body, 'utf-8');
 }
 
 // --- Subcommands ---
@@ -209,27 +192,15 @@ async function cmdAdd(engine: BrainEngine, args: string[], sourceId?: string): P
   const dirArg = flagValue(args, '--dir');
   const brainDir = await resolveBrainDir(engine, dirArg ?? null);
 
-  await withPageLock(slug, async () => {
-    // Resolve the page BEFORE touching the markdown. getPageId exits 1 when the
-    // page isn't in the brain; doing this after writeBody left a .md file
-    // carrying a take with no DB row — invisible to scorecard/calibration but
-    // present on disk, so a later `takes add` would number the next row past a
-    // take the DB never saw. update/supersede/resolve already resolve first.
-    const pageId = await getPageId(engine, slug, sourceId);
-
-    const path = pageFilePath(brainDir, slug);
-    const body = readBodyOrEmpty(path);
-    const { body: nextBody, rowNum } = upsertTakeRow(body, {
-      claim, kind, holder, weight, source, sinceDate: since, active: true,
-    });
-    writeBody(path, nextBody);
-
-    await engine.addTakesBatch([{
-      page_id: pageId, row_num: rowNum, claim, kind, holder, weight,
-      since_date: since, source, active: true, superseded_by: null,
-    }]);
+  try {
+    const { rowNum } = await addTakeToPage(
+      { engine, slug, brainDir, sourceId },
+      { claim, kind, holder, weight, source, sinceDate: since },
+    );
     console.log(`Added take #${rowNum} to ${slug}.`);
-  });
+  } catch (err) {
+    exitTakesError(err);
+  }
 }
 
 async function cmdUpdate(engine: BrainEngine, args: string[], sourceId?: string): Promise<void> {
@@ -250,36 +221,20 @@ async function cmdUpdate(engine: BrainEngine, args: string[], sourceId?: string)
   const dirArg = flagValue(args, '--dir');
   const brainDir = await resolveBrainDir(engine, dirArg ?? null);
 
-  await withPageLock(slug, async () => {
-    const pageId = await getPageId(engine, slug, sourceId);
-    await engine.updateTake(pageId, rowNum, fields);
-
-    // Sync the markdown table: read fence, find row, apply field updates, re-render.
-    const path = pageFilePath(brainDir, slug);
-    const body = readBodyOrEmpty(path);
-    const parsed = parseTakesFence(body);
-    const target = parsed.takes.find(t => t.rowNum === rowNum);
-    if (!target) {
-      console.warn(`[takes update] DB updated but row #${rowNum} not in markdown fence on disk; markdown may be out of sync. Run 'gbrain extract takes --slugs ${slug}' to reconcile.`);
-      return;
-    }
-    const updated: ParsedTake = {
-      ...target,
-      weight: fields.weight ?? target.weight,
-      source: fields.source ?? target.source,
-      sinceDate: fields.since_date ?? target.sinceDate,
-    };
-    // Replace the row in-place by stripping the fence and re-rendering all rows.
-    const allRows = parsed.takes.map(t => t.rowNum === rowNum ? updated : t);
-    // Round-trip via upsertTakeRow with no new row: easiest is to render manually.
-    const { renderTakesFence, TAKES_FENCE_BEGIN, TAKES_FENCE_END } = await import('../core/takes-fence.ts');
-    const newFence = renderTakesFence(allRows);
-    const beginIdx = body.indexOf(TAKES_FENCE_BEGIN);
-    const endIdx = body.indexOf(TAKES_FENCE_END, beginIdx + TAKES_FENCE_BEGIN.length);
-    const out = body.slice(0, beginIdx) + newFence + body.slice(endIdx + TAKES_FENCE_END.length);
-    writeBody(path, out);
+  // v0.46.x (EV1): markdown is canonical, so a row missing from the on-disk
+  // fence now REFUSES the whole write instead of the old DB-update-then-warn
+  // path — that path was self-defeating (its own reconcile hint, extract
+  // takes, would clobber the DB-only update it had just written).
+  try {
+    await updateTakeOnPage(
+      { engine, slug, brainDir, sourceId },
+      rowNum,
+      { weight: fields.weight, source: fields.source, sinceDate: fields.since_date },
+    );
     console.log(`Updated take #${rowNum} on ${slug}.`);
-  });
+  } catch (err) {
+    exitTakesError(err);
+  }
 }
 
 async function cmdSupersede(engine: BrainEngine, args: string[], sourceId?: string): Promise<void> {
@@ -295,39 +250,29 @@ async function cmdSupersede(engine: BrainEngine, args: string[], sourceId?: stri
   const dirArg = flagValue(args, '--dir');
   const brainDir = await resolveBrainDir(engine, dirArg ?? null);
 
-  await withPageLock(slug, async () => {
-    const pageId = await getPageId(engine, slug, sourceId);
-
-    // Read existing row to inherit kind/holder unless overridden
-    const existing = await engine.listTakes({ page_id: pageId, active: true, limit: 500 });
-    const target = existing.find(t => t.row_num === rowNum);
-    if (!target) {
-      console.error(`Row #${rowNum} not found on ${slug}.`);
-      process.exit(1);
-    }
-    const kind = ensureKind(flagValue(args, '--kind') ?? target.kind);
-    const holder = flagValue(args, '--who') ?? target.holder;
-    const weight = ensureFloat(flagValue(args, '--weight'), Math.max(0, target.weight - 0.1));
-    const source = flagValue(args, '--source');
-    const since = flagValue(args, '--since');
-
-    const dbResult = await engine.supersedeTake(pageId, rowNum, {
-      claim, kind, holder, weight, source, since_date: since, active: true,
-    });
-
-    // Mirror in markdown
-    const path = pageFilePath(brainDir, slug);
-    const body = readBodyOrEmpty(path);
-    if (parseTakesFence(body).takes.find(t => t.rowNum === rowNum)) {
-      const { body: nextBody } = supersedeRow(body, rowNum, {
-        claim, kind, holder, weight, source, sinceDate: since,
-      });
-      writeBody(path, nextBody);
-    } else {
-      console.warn(`[takes supersede] DB updated but markdown lacks row #${rowNum}; only DB written.`);
-    }
-    console.log(`Superseded #${dbResult.oldRow} → new #${dbResult.newRow} on ${slug}.`);
-  });
+  // v0.46.x (EV1): fence-first — kind/holder inherit from the MARKDOWN row
+  // (canonical), the fence assigns the new row number, and a row absent from
+  // the on-disk fence refuses instead of the old DB-only write.
+  const kindArg = flagValue(args, '--kind');
+  try {
+    const result = await supersedeTakeOnPage(
+      { engine, slug, brainDir, sourceId },
+      rowNum,
+      {
+        claim,
+        kind: kindArg !== undefined ? ensureKind(kindArg) : undefined,
+        holder: flagValue(args, '--who'),
+        weight: flagValue(args, '--weight') !== undefined
+          ? ensureFloat(flagValue(args, '--weight'), 0.5)
+          : undefined,
+        source: flagValue(args, '--source'),
+        sinceDate: flagValue(args, '--since'),
+      },
+    );
+    console.log(`Superseded #${result.oldRow} → new #${result.newRow} on ${slug}.`);
+  } catch (err) {
+    exitTakesError(err);
+  }
 }
 
 async function cmdResolve(engine: BrainEngine, args: string[], sourceId?: string): Promise<void> {
@@ -374,61 +319,24 @@ async function cmdResolve(engine: BrainEngine, args: string[], sourceId?: string
   const source = flagValue(args, '--evidence') ?? flagValue(args, '--source');
   const resolvedBy = flagValue(args, '--by') ?? resolveOwnerHolder({ configValue: await engine.getConfig('emotional_weight.user_holder') });
   const dirArg = flagValue(args, '--dir');
-
-  const pageId = await getPageId(engine, slug, sourceId);
-  await engine.resolveTake(pageId, rowNum, {
-    quality,
-    outcome,
-    value,
-    unit,
-    source,
-    resolvedBy,
-  });
-
-  // Mirror resolution into the markdown fence so the page is self-describing.
-  // The renderer conditionally widens the table to 13 columns when at least one
-  // row has resolution data; pages with no resolved rows keep the 7-col shape.
-  // Round-trip via parseTakesFence + renderTakesFence preserves all rows.
   const brainDir = await resolveBrainDir(engine, dirArg ?? null);
-  await withPageLock(slug, async () => {
-    const path = pageFilePath(brainDir, slug);
-    const body = readBodyOrEmpty(path);
-    if (!body) {
-      console.warn(`[takes resolve] markdown file not found at ${path}; DB updated but on-disk page absent.`);
-      return;
-    }
-    const { parseTakesFence, renderTakesFence, TAKES_FENCE_BEGIN, TAKES_FENCE_END } = await import('../core/takes-fence.ts');
-    const parsed = parseTakesFence(body);
-    const target = parsed.takes.find(t => t.rowNum === rowNum);
-    if (!target) {
-      console.warn(`[takes resolve] DB updated but row #${rowNum} not in markdown fence; run 'gbrain extract takes --slugs ${slug}' to reconcile.`);
-      return;
-    }
-    // Derive resolved fields from the inputs. Mirror the engine semantics:
-    // quality wins when both set; partial → outcome=null.
-    const finalQuality = quality ?? (outcome === true ? 'correct' : outcome === false ? 'incorrect' : undefined);
-    if (!finalQuality) return; // unreachable — covered by earlier validation
-    const finalOutcome = finalQuality === 'partial' ? undefined
-                       : finalQuality === 'correct' ? true : false;
-    const updated = {
-      ...target,
-      resolvedAt: new Date().toISOString().slice(0, 10),
-      resolvedQuality: finalQuality,
-      resolvedOutcome: finalOutcome,
-      resolvedEvidence: source,
-      resolvedValue: value,
-      resolvedUnit: unit,
-      resolvedBy,
-    };
-    const allRows = parsed.takes.map(t => t.rowNum === rowNum ? updated : t);
-    const newFence = renderTakesFence(allRows);
-    const beginIdx = body.indexOf(TAKES_FENCE_BEGIN);
-    const endIdx = body.indexOf(TAKES_FENCE_END, beginIdx + TAKES_FENCE_BEGIN.length);
-    const out = body.slice(0, beginIdx) + newFence + body.slice(endIdx + TAKES_FENCE_END.length);
-    writeBody(path, out);
-  });
 
-  const finalQuality = quality ?? (outcome === true ? 'correct' : outcome === false ? 'incorrect' : 'unknown');
+  // Back-compat --outcome maps onto quality; the shared core takes quality only.
+  const finalQuality = quality ?? (outcome === true ? 'correct' : 'incorrect');
+
+  // v0.46.x (EV1): markdown is canonical — the fence row must exist on disk
+  // (the old path resolved the DB first and warned when the fence lacked the
+  // row, leaving a resolution the next reconcile couldn't see).
+  try {
+    await resolveTakeOnPage(
+      { engine, slug, brainDir, sourceId },
+      rowNum,
+      { quality: finalQuality, evidence: source, value, unit, resolvedBy },
+    );
+  } catch (err) {
+    exitTakesError(err);
+  }
+
   const valueSummary = valueStr ? ` value=${value}${unit ? ` ${unit}` : ''}` : '';
   console.log(`Resolved take #${rowNum} on ${slug}: quality=${finalQuality}${valueSummary}.`);
 }

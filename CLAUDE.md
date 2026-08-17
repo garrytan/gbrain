@@ -58,7 +58,12 @@ Per-file detail is in `docs/architecture/KEY_FILES.md`.
   sites; `ctx.remote !== false` for untrust-unless-explicit-false). Don't default it falsy.
 - **Source isolation.** Every read-side op routes through `sourceScopeOpts(ctx)`; precedence
   is federated array (`ctx.auth.allowedSources`) > scalar (`ctx.sourceId`) > nothing. Don't
-  hand-roll source filtering — a missed thread is a cross-source data leak.
+  hand-roll source filtering — a missed thread is a cross-source data leak. Corollary
+  (unscoped-check/scoped-write): `engine.getPage` with no opts matches ANY source while
+  `putPage` defaults to `'default'` — an existence check + write pair must scope the read
+  to the write's source (`getPage(slug, { sourceId: x ?? 'default' })`). Guarded by
+  `scripts/check-getpage-scoped-write.mjs` (opt-out marker
+  `gbrain-allow-unscoped-getpage` for read-only first-match sites).
 - **JSONB: never `JSON.stringify` into a `::jsonb` cast.** postgres.js double-encodes it (a jsonb
   string scalar); PGLite hides the bug. This bites BOTH spellings — the template form
   (`${JSON.stringify(x)}::jsonb`) AND the positional form (`executeRaw(\`…$N::jsonb\`, [JSON.stringify(x)])`,
@@ -105,6 +110,26 @@ Per-file detail is in `docs/architecture/KEY_FILES.md`.
   (fail-closed vs warn-only vs null), not its own numbers. Pinned by `test/model-pricing.test.ts`
   (drift guard asserts each view equals canonical). Embeddings price separately in
   `embedding-pricing.ts` (different unit).
+- **Module-size ratchet.** `scripts/module-size-limits.tsv` pins per-file line ceilings
+  (`check:module-size` in verify): growth over a ceiling, >50 lines of stale slack after a
+  shrink, a row for a deleted file, and any UNLISTED src file over 1,500 lines all fail.
+  Raise a ceiling only via a reviewer-visible TSV edit in the same commit; lower it in the
+  same commit as any peel. migrate.ts is `region-exempt` (the MIGRATIONS array grows freely;
+  the runner logic around it is ratcheted).
+- **Peeled façades keep their surface.** operations.ts (`src/core/ops/*`), doctor.ts
+  (`src/commands/doctor/*`), sync.ts (`src/core/sync-*`), and both engines
+  (`src/core/{postgres,pglite}-engine/*`) are façades re-exporting everything they always
+  exported — import sites and published package exports never chase the peel. New code goes
+  in the module dirs, not back into the façades. Engine modules take narrow explicit deps
+  (never an engine-shaped bag); doctor source-text guards read `test/helpers/doctor-source.ts`,
+  and the flag-registry generator's `facadeExpansion` keeps peeled flag text in each command's
+  scan surface.
+- **Coverage is measured, honestly.** CI merges per-lane lcov (`scripts/merge-lcov.ts`) into
+  a PR-corpus report on every run (advisory until the diff gate graduates via
+  `COVERAGE_GATE_ENFORCE`) and a nightly fullCorpus number incl. the full e2e glob. bun
+  facts: unique `--coverage-dir` per process (reuse overwrites lcov.info), line records only
+  (JSC omits function names), no subprocess coverage (cli.ts is exempt as a documented
+  undercount), never-loaded files are a count+list, never fake all-files math.
 
 
 ## Reference map (load on demand)
@@ -685,7 +710,11 @@ Before any ship, read **[docs/RELEASING.md](docs/RELEASING.md)** in full. It car
 full release + contributor process: pre-ship test requirements (`bun run ci:local` / the
 E2E lifecycle), the CHANGELOG voice + release-summary template, the "To take advantage of
 vX" self-repair block, version migrations, the GitHub Actions SHA refresh, PR conventions,
-and the community-PR-wave process. **Use `/ship` — never hand-roll a release.**
+and the community-PR-wave process. **Use `/ship` — never hand-roll a release.** Every
+community wave runs `bun run wave-security-scan <base>..<head>` (RELEASING.md step 5) before
+ship — the repeatable mechanical sweep (obfuscation/eval, gitleaks with the test/skills
+allowlist stripped, committed `admin/dist` changes as alarms; new endpoints/spawns/env/deps
+as context).
 
 The ship-critical IRON RULES stay inline in this file (do NOT relocate them): the
 Version-locations table above (the 5-file sync + the 3-line VERSION/package.json/CHANGELOG

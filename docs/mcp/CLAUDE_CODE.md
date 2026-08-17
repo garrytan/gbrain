@@ -46,7 +46,7 @@ tunnel, no token needed. Works with both PGLite and Supabase engines.
 `entity`, `synthesize`, `forget`, `context_pack`, `delta` —
 [MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)),
 the surface built for agents and quickstarts. `--surface starter` adds the
-daily-driver set on top (~26 ops total). Drop the flag for the full
+daily-driver set on top (core page/search/graph ops + capture). Drop the flag for the full
 operation catalog (`get_page`, `put_page`, `search`, graph ops, …) — `full` is
 the default and what existing installs already run.
 
@@ -118,8 +118,10 @@ You should see results from your GBrain knowledge base.
 > `gbrain config set mcp.publish_skills true`. Skill discovery and the core tools
 > named here (search, query, get_page, put_page, think, find_experts) are
 > full-surface — on `--surface verbs` the agent sees only the seven memory verbs,
-> and `list_skills` isn't on the surface at all. Note: `capture` is a
-> CLI-only command, not an MCP tool — the agent writes over MCP with `put_page`.
+> and `list_skills` isn't on the surface at all. `capture` is on the starter and
+> full surfaces (prefer it for quick notes — auto-slug + dedupe; `put_page` for
+> full-control writes); if your tool list doesn't carry it, use `put_page`, or
+> `remember` on the verbs surface.
 > Why brains differ on the default: [tutorial A1](../tutorials/connect-coding-agent.md#a1-on-the-host-serve-over-http).
 
 ## Ambient recall at session boundaries (v0.45.7)

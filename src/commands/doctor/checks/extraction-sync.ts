@@ -1,0 +1,948 @@
+/**
+ * Extraction + sync-lag check cluster (incl. checkSyncFreshness) — verbatim peel from src/commands/doctor.ts (containment
+ * sprint). No behavior change; doctor.ts re-exports every exported symbol
+ * under its original name (tests and external callers import them from
+ * doctor.ts) and buildChecks / doctorReportRemote consume them.
+ */
+import { join } from 'path';
+import { existsSync, readdirSync } from 'fs';
+import type { BrainEngine } from '../../../core/engine.ts';
+import { probeSourceGitState } from '../../../core/git-head.ts';
+// v0.41.32.0: remote staleness reads the stored newest_content_at column via
+// this pure comparator (no git subprocess on the HTTP MCP doctor path).
+import { lagFromContentMs, resolveStalenessCeilingSeconds } from '../../../core/source-health.ts';
+import { resolveEnvNumber, resolveHoursEnv, warnOnceForEnv } from '../../../core/env-number.ts';
+import { CHUNKER_VERSION } from '../../../core/chunkers/code.ts';
+import { LINK_EXTRACTOR_VERSION_TS } from '../../../core/link-extraction.ts';
+import { isUndefinedColumnError } from '../../../core/utils.ts';
+import {
+  loadStorageConfig,
+  effectiveDbOnlyDirs,
+  DERIVE_PHASE_DB_ONLY_DEFAULTS,
+  findDbOnlyCollisions,
+} from '../../../core/storage-config.ts';
+import { slugifyPath } from '../../../core/sync.ts';
+import { unverifiedExtractionFragment } from '../../../core/extraction-review.ts';
+import type { Check } from '../../doctor.ts';
+
+/** Local aliases; the shared warn-once memo lives in core so it can't fork per module. */
+const _resolveEnvNumber = resolveEnvNumber;
+const _resolveSyncFreshnessHours = resolveHoursEnv;
+
+/**
+ * v0.42.7 (#1696): single source of truth for the extraction-lag warn
+ * threshold (percent). Both the `links_extraction_lag` doctor check AND the
+ * end-of-sync nudge (`sync.ts:maybeExtractionNudge`) resolve through this +
+ * `_resolveEnvNumber` so "the nudge fires iff doctor would warn" can't drift.
+ */
+export const EXTRACTION_LAG_WARN_PCT_DEFAULT = 20;
+/** Min non-deleted page count below which extraction-lag is vacuous-skipped
+ *  (unless an explicit --source scope is set). Shared by doctor + the sync
+ *  nudge (D6/C4) so their skip predicates match exactly. */
+export const EXTRACTION_LAG_MIN_PAGES = 100;
+
+/**
+ * Sync freshness check (v0.32.4) — verify that sources with local_path have
+ * been synced recently. Detects the silent failure mode where `gbrain sync`
+ * stopped running and brain search now misses recent pages.
+ *
+ * Pure staleness check. Reads `sources.last_sync_at` only — no filesystem
+ * access. Filesystem-vs-DB drift detection is intentionally out of scope:
+ *   - doctorReportRemote runs in the HTTP MCP server (src/commands/serve-http.ts);
+ *     walking arbitrary DB-supplied paths from a remote-callable endpoint
+ *     crosses a trust boundary (OAuth write scope could mutate local_path).
+ *   - Drift detection belongs in `multi_source_drift` which already has
+ *     GBRAIN_DRIFT_LIMIT + GBRAIN_DRIFT_TIMEOUT_MS guards.
+ *
+ * Thresholds (env-overridable, default = 24h warn / 72h fail):
+ *   - GBRAIN_SYNC_FRESHNESS_WARN_HOURS
+ *   - GBRAIN_SYNC_FRESHNESS_FAIL_HOURS
+ * Invalid values (NaN, ≤0) fall back to defaults with a once-per-process warn.
+ *
+ * Edge cases handled:
+ *   - last_sync_at IS NULL → fail "never synced"
+ *   - last_sync_at > now() (clock skew / corrupted timestamp) → warn
+ *   - mixed sources → highest-severity drives the overall status
+ *   - executeRaw throws → outer-catch warn so doctor keeps running
+ *
+ * Failure messages embed `source.id` so the fix command
+ * `gbrain sync --source <id>` matches what the user copy-pastes.
+ */
+
+/**
+ * v0.42.7 (#1696) — links_extraction_lag doctor check.
+ *
+ * The signal that surfaces the "imported ≠ curated" root cause: pages whose
+ * link/timeline extraction is stale (never run, edited-since, or extractor
+ * bumped). Without it, a brain can run for months at 0% typed-edge coverage
+ * with nothing warning the operator.
+ *
+ * Warn-only by DEFAULT (>20% stale). Hard-fail ONLY when the operator opts in
+ * via GBRAIN_EXTRACTION_LAG_FAIL_PCT — so a just-upgraded 280K-page brain
+ * (every page NULL → 100% stale) gets a loud WARN, never a non-zero exit that
+ * would break a CI/cron pipeline gating on `gbrain doctor`.
+ *
+ * Vacuous-skip on tiny brains (<100 pages, no --source) like orphan_ratio.
+ * Pre-v112 brains (column missing) degrade to OK via isUndefinedColumnError.
+ * Strictly SQL — no filesystem/git access — so it's safe to wire into the
+ * thin-client doctorReportRemote path (CDX-5 trust boundary).
+ *
+ * `opts.sourceId` scopes both the denominator and the stale count to one
+ * source (the explicit-only `--source` parse, like orphan_ratio).
+ */
+export async function checkLinksExtractionLag(
+  engine: BrainEngine,
+  opts?: { sourceId?: string },
+): Promise<Check> {
+  const name = 'links_extraction_lag';
+  const sourceId = opts?.sourceId;
+  const fix = "Run: gbrain extract --stale";
+  try {
+    const totalRows = await engine.executeRaw<{ count: number }>(
+      sourceId
+        ? `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND source_id = $1`
+        : `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL`,
+      sourceId ? [sourceId] : [],
+    );
+    const total = Number(totalRows[0]?.count ?? 0);
+    if (total === 0) {
+      return { name, status: 'ok', message: 'Extraction lag not applicable (no pages)' };
+    }
+    // Vacuous-skip tiny brains unless explicitly source-scoped. Shared floor
+    // const so the sync nudge (D6/C4) skips on the exact same predicate.
+    if (total < EXTRACTION_LAG_MIN_PAGES && !sourceId) {
+      return { name, status: 'ok', message: `Extraction lag not applicable (${total} pages — too few to assess)` };
+    }
+
+    const stale = await engine.countStalePagesForExtraction({ sourceId, versionTs: LINK_EXTRACTOR_VERSION_TS });
+    const pct = (stale / total) * 100;
+    const pctStr = pct.toFixed(0);
+    const scope = sourceId ? ` in source '${sourceId}'` : '';
+
+    const warnPct = _resolveEnvNumber('GBRAIN_EXTRACTION_LAG_WARN_PCT', EXTRACTION_LAG_WARN_PCT_DEFAULT, { unit: '%' });
+    // Fail threshold is DISABLED unless explicitly set (warn-only default). A
+    // bare unset env var → no hard-fail; invalid value → warn-once + disabled.
+    let failPct: number | undefined;
+    const failRaw = process.env.GBRAIN_EXTRACTION_LAG_FAIL_PCT;
+    if (failRaw !== undefined && failRaw !== '') {
+      const n = Number(failRaw);
+      if (Number.isFinite(n) && n > 0) {
+        failPct = n;
+      } else {
+        warnOnceForEnv(
+          'GBRAIN_EXTRACTION_LAG_FAIL_PCT',
+          `[gbrain] Ignoring invalid GBRAIN_EXTRACTION_LAG_FAIL_PCT=${failRaw}; hard-fail stays disabled.`,
+        );
+      }
+    }
+
+    const details = { total, stale, pct: Number(pctStr), warn_pct: warnPct, fail_pct: failPct ?? null, source_id: sourceId ?? null };
+    if (failPct !== undefined && pct > failPct) {
+      return { name, status: 'fail', message: `${stale}/${total} pages (${pctStr}%)${scope} need link/timeline extraction (> ${failPct}% fail threshold). ${fix}`, details };
+    }
+    if (pct > warnPct) {
+      return { name, status: 'warn', message: `${stale}/${total} pages (${pctStr}%)${scope} have un-extracted edges. ${fix}`, details };
+    }
+    return { name, status: 'ok', message: `Extraction current: ${stale}/${total} pages (${pctStr}%) stale${scope}`, details };
+  } catch (e) {
+    // Pre-v112 brain: links_extracted_at column doesn't exist yet. Graceful OK
+    // (migration/bootstrap adds it; nothing to assess until then).
+    if (isUndefinedColumnError(e, 'links_extracted_at')) {
+      return { name, status: 'ok', message: 'links_extracted_at not present (pre-v112 brain)' };
+    }
+    return { name, status: 'warn', message: `Could not check links_extraction_lag: ${(e as Error).message}` };
+  }
+}
+
+/**
+ * issue #160 — unverified_extractions doctor check.
+ *
+ * The extraction quarantine lane parks auto-extracted entity stubs
+ * (frontmatter `provenance: 'auto-extracted'` + `status: 'unverified'`)
+ * until the owner promotes or rejects them. A queue nobody reviews decays
+ * into invisible clutter, so this check counts stubs older than N days
+ * (default 7) and nudges toward the review surface. Exported for direct
+ * testing (mirrors checkLinksExtractionLag).
+ */
+export async function checkUnverifiedExtractions(
+  engine: BrainEngine,
+  opts?: { sourceId?: string; days?: number },
+): Promise<Check> {
+  const name = 'unverified_extractions';
+  const days = opts?.days ?? 7;
+  const sourceId = opts?.sourceId;
+  try {
+    const params: unknown[] = [String(days)];
+    let srcClause = '';
+    if (sourceId) {
+      params.push(sourceId);
+      srcClause = 'AND p.source_id = $2';
+    }
+    const rows = await engine.executeRaw<{ n: string | number }>(
+      `SELECT COUNT(*)::int AS n FROM pages p
+       WHERE p.deleted_at IS NULL
+         AND ${unverifiedExtractionFragment('p')}
+         AND p.created_at < now() - ($1 || ' days')::interval
+         ${srcClause}`,
+      params,
+    );
+    const n = Number(rows[0]?.n ?? 0);
+    return {
+      name,
+      status: n > 0 ? 'warn' : 'ok',
+      message: n > 0
+        ? `${n} unverified auto-extracted entity stub(s) older than ${days} days awaiting review. List with 'gbrain extraction-pending'; promote/reject with 'gbrain extraction-review <promote|reject> --slugs <slug,...>'.`
+        : 'No stale unverified extraction stubs',
+      details: { count: n, days, source_id: sourceId ?? null },
+    };
+  } catch (e) {
+    return { name, status: 'warn', message: `Could not check unverified_extractions: ${(e as Error).message}` };
+  }
+}
+
+/**
+ * issue #2250 (reported by @615Works) — content_hash_duplicates.
+ *
+ * `gbrain import` run from the wrong root (one level too deep) drops the
+ * path prefix from every slug, leaving `people/x` and `x` coexisting with
+ * identical content. `dream --phase purge` never removes them (they aren't
+ * file-backed orphans) and nothing surfaced the condition. One GROUP BY —
+ * never an N² hash comparison — flags hash groups that contain BOTH a bare
+ * slug (no '/') and a path-prefixed slug.
+ */
+export async function checkContentHashDuplicates(engine: BrainEngine): Promise<Check> {
+  const name = 'content_hash_duplicates';
+  const fix = 'Fix: gbrain pages delete <bare-slug> for each pair, then gbrain pages purge-deleted --older-than 0';
+  try {
+    const rows = await engine.executeRaw<{ source_id: string; content_hash: string; slugs: string }>(
+      `SELECT source_id, content_hash,
+              string_agg(slug, '|' ORDER BY length(slug), slug) AS slugs
+         FROM pages
+        WHERE deleted_at IS NULL AND content_hash IS NOT NULL AND content_hash <> ''
+        GROUP BY source_id, content_hash
+       HAVING count(*) > 1
+          AND count(*) FILTER (WHERE strpos(slug, '/') = 0) > 0
+          AND count(*) FILTER (WHERE strpos(slug, '/') > 0) > 0
+        LIMIT 50`,
+    );
+    if (rows.length === 0) {
+      return { name, status: 'ok', message: 'No content-hash duplicate pairs (bare vs path-prefixed slugs)' };
+    }
+    let pairCount = 0;
+    const samples: string[] = [];
+    for (const r of rows) {
+      const slugs = String(r.slugs).split('|');
+      const prefixed = slugs.filter(s => s.includes('/'));
+      for (const bare of slugs.filter(s => !s.includes('/'))) {
+        const twin = prefixed.find(p => p.endsWith('/' + bare)) ?? prefixed[0];
+        pairCount++;
+        if (samples.length < 5) samples.push(`${bare} <-> ${twin}`);
+      }
+    }
+    return {
+      name,
+      status: 'warn',
+      message: `${pairCount} content-hash duplicate pair(s) detected (same content, differing slug forms — usually an import run from the wrong root, which drops the path prefix). Sample: ${samples.join('; ')}. ${fix}`,
+      details: { pair_count: pairCount, hash_groups: rows.length, sample_pairs: samples },
+    };
+  } catch (e) {
+    return { name, status: 'warn', message: `Could not check content-hash duplicates: ${(e as Error).message}` };
+  }
+}
+
+/** Walk a repo for markdown files and return their slugified (lowercased) slugs. */
+function collectMarkdownSlugs(root: string): Set<string> {
+  const out = new Set<string>();
+  const stack = [''];
+  while (stack.length > 0) {
+    const rel = stack.pop()!;
+    let entries;
+    try {
+      entries = readdirSync(rel ? join(root, rel) : root, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      // Hidden directories can contain canonical, tracked knowledge (for
+      // example `.archive/`). Only implementation metadata is never a page.
+      if (e.name === '.git' || e.name === 'node_modules') continue;
+      const childRel = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) stack.push(childRel);
+      else if (/\.mdx?$/i.test(e.name)) out.add(slugifyPath(childRel).toLowerCase());
+    }
+  }
+  return out;
+}
+
+/**
+ * issue #2784 (reported by @alexputici) — undeclared_db_only_pages.
+ *
+ * A markdown page with no backing file that sits outside every declared
+ * db_only path is invisible to any file-lane backup/recovery reasoning: an
+ * operator auditing "what would survive a DB loss" gets a silently wrong
+ * answer. The engine's own derive-phase output prefixes
+ * (DERIVE_PHASE_DB_ONLY_DEFAULTS) count as implicitly declared so the check
+ * stays quiet on healthy brains. Deliberately allowed to stat the source
+ * repo (the one thing the SQL-only check registry could never see).
+ */
+export async function checkUndeclaredDbOnlyPages(engine: BrainEngine): Promise<Check> {
+  const name = 'undeclared_db_only_pages';
+  try {
+    const sources = await engine.executeRaw<{ id: string; local_path: string | null }>(
+      `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL`,
+    );
+    const checkable = sources.filter(s => s.local_path && existsSync(s.local_path));
+    if (checkable.length === 0) {
+      return { name, status: 'ok', message: 'Not applicable (no sources with a local repo path on this host)' };
+    }
+    let total = 0;
+    const samples: string[] = [];
+    const perSource: Record<string, number> = {};
+    for (const src of checkable) {
+      let declared: string[] = [];
+      try {
+        declared = loadStorageConfig(src.local_path)?.db_only ?? [];
+      } catch {
+        // invalid gbrain.yml — treated as no declarations; the sync path
+        // already surfaces the config error itself.
+      }
+      const dbOnlyDirs = effectiveDbOnlyDirs(declared);
+      const rows = await engine.executeRaw<{ slug: string }>(
+        `SELECT slug FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND page_kind = 'markdown'`,
+        [src.id],
+      );
+      if (rows.length === 0) continue;
+      const backed = collectMarkdownSlugs(src.local_path!);
+      for (const { slug } of rows) {
+        if (dbOnlyDirs.some(dir => slug.startsWith(dir))) continue;
+        if (backed.has(slug)) continue;
+        total++;
+        perSource[src.id] = (perSource[src.id] ?? 0) + 1;
+        if (samples.length < 5) samples.push(`${slug} (src=${src.id})`);
+      }
+    }
+    if (total === 0) {
+      return {
+        name,
+        status: 'ok',
+        message: `Every DB page is file-backed or under a declared/default db_only path (derive-phase defaults: ${DERIVE_PHASE_DB_ONLY_DEFAULTS.join(' ')})`,
+      };
+    }
+    return {
+      name,
+      status: 'warn',
+      message: `${total} DB page(s) have no backing file and sit outside every declared/default db_only path — invisible to file-lane backup/recovery. Sample: ${samples.join('; ')}. Fix: restore or export the files, or declare their prefixes under storage.db_only in gbrain.yml (derive-phase defaults already cover: ${DERIVE_PHASE_DB_ONLY_DEFAULTS.join(' ')})`,
+      details: { total, per_source: perSource, sample_slugs: samples },
+    };
+  } catch (e) {
+    return { name, status: 'warn', message: `Could not check undeclared db-only pages: ${(e as Error).message}` };
+  }
+}
+
+/**
+ * issue #2788 (reported by @alexputici) — db_only_collector_collision.
+ *
+ * Declaring a collector's output dir in storage.db_only silently kills its
+ * ingestion: manageGitignore auto-gitignores the dir, the git-walking sync
+ * never sees the files, and import honors .gitignore too — everything stays
+ * green while nothing reaches the DB (a 7-week outage in the field). The
+ * recipe's `output_paths` frontmatter is the ground truth; the same warning
+ * also fires at .gitignore-write time inside sync's manageGitignore.
+ */
+export async function checkDbOnlyCollectorCollision(
+  engine: BrainEngine,
+  opts?: { collectors?: Array<{ id: string; output_path: string }> },
+): Promise<Check> {
+  const name = 'db_only_collector_collision';
+  try {
+    let collectors = opts?.collectors;
+    if (!collectors) {
+      const { getConfiguredCollectorOutputs } = await import('../../integrations.ts');
+      collectors = getConfiguredCollectorOutputs();
+    }
+    if (collectors.length === 0) {
+      return { name, status: 'ok', message: 'No configured collectors declare output paths' };
+    }
+    const sources = await engine.executeRaw<{ id: string; local_path: string | null }>(
+      `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL`,
+    );
+    const hits: string[] = [];
+    for (const src of sources) {
+      if (!src.local_path || !existsSync(src.local_path)) continue;
+      let dbOnly: string[] = [];
+      try {
+        dbOnly = loadStorageConfig(src.local_path)?.db_only ?? [];
+      } catch {
+        continue;
+      }
+      if (dbOnly.length === 0) continue;
+      for (const hit of findDbOnlyCollisions(collectors, dbOnly)) {
+        hits.push(`collector '${hit.id}' writes to '${hit.output_path}' which is inside db_only path '${hit.db_only_dir}' (source ${src.id})`);
+      }
+    }
+    if (hits.length === 0) {
+      return { name, status: 'ok', message: 'No collector output dir falls inside a db_only path' };
+    }
+    return {
+      name,
+      status: 'warn',
+      message: `${hits.length} collector/db_only collision(s): ${hits.join('; ')}. db_only dirs are auto-gitignored, so sync AND import silently skip files there — the collector runs green while nothing reaches the DB. Fix: remove the prefix from storage.db_only in gbrain.yml, or move the collector output.`,
+      details: { collisions: hits },
+    };
+  } catch (e) {
+    return { name, status: 'warn', message: `Could not check collector/db_only collisions: ${(e as Error).message}` };
+  }
+}
+
+/**
+ * issue #1678 — extract_atoms_backlog doctor check.
+ *
+ * Closes the "silent backlog" gap: extract_atoms is pack-gated, so on a brain
+ * whose active pack doesn't declare the phase it NEVER runs in the routine
+ * cycle and pages accumulate forever with zero signal (the cycle reports a
+ * clean `skipped`). This check counts the eligible-but-unextracted pages and,
+ * when the pack doesn't run the phase AND the backlog is real, WARNs with the
+ * exact `--drain` command.
+ *
+ * PAGE-BACKLOG-ONLY (Codex #11): extract_atoms also discovers transcript files
+ * at runtime; this counts DB pages only — labeled in details. No
+ * synthesize_concepts sibling this wave (Codex #12: that phase is a stub with
+ * no real eligibility predicate; a check would be a fake signal).
+ */
+export async function computeExtractAtomsBacklogCheck(
+  engine: BrainEngine,
+): Promise<Check> {
+  const name = 'extract_atoms_backlog';
+  const approx = 'page backlog only; transcript corpus not counted';
+  try {
+    const { countExtractAtomsBacklog } = await import('../../../core/cycle/extract-atoms.ts');
+    const backlog = await countExtractAtomsBacklog(engine); // brain-wide
+    if (backlog === null) {
+      return { name, status: 'warn', message: 'backlog query failed (could not count eligible pages)' };
+    }
+
+    const { packDeclaresPhase } = await import('../../../core/cycle.ts');
+    let declared = false;
+    try { declared = await packDeclaresPhase(engine, 'extract_atoms'); } catch { declared = false; }
+
+    if (backlog === 0) {
+      return {
+        name, status: 'ok',
+        message: 'no pages awaiting atom extraction',
+        details: { backlog, pack_declares_phase: declared, known_approximation: approx },
+      };
+    }
+
+    // The incident: pack does NOT run the phase but a real backlog exists →
+    // it will grow forever without a signal. WARN with the drain command.
+    if (!declared && backlog > 10) {
+      const fix = 'gbrain dream --phase extract_atoms --drain --window 120 (or declare extract_atoms in your active schema pack)';
+      return {
+        name, status: 'warn',
+        message: `${backlog} pages eligible for atom extraction but the active pack does not run extract_atoms — backlog growing. Fix: ${fix}`,
+        details: { backlog, pack_declares_phase: false, fix_hint: fix, known_approximation: approx },
+      };
+    }
+
+    if (declared) {
+      // Pack runs it; the routine cycle drains in bounded batches. Informational.
+      return {
+        name, status: 'ok',
+        message: `${backlog} page(s) pending; active pack runs extract_atoms each cycle`,
+        details: { backlog, pack_declares_phase: true, known_approximation: approx },
+      };
+    }
+
+    // Not declared but below the warn threshold.
+    return {
+      name, status: 'ok',
+      message: `${backlog} page(s) eligible (below warn threshold; pack does not run extract_atoms)`,
+      details: { backlog, pack_declares_phase: false, known_approximation: approx },
+    };
+  } catch (err) {
+    return { name, status: 'warn', message: `extract_atoms_backlog check failed: ${(err as Error).message}` };
+  }
+}
+
+/**
+ * v0.42 — extract_health doctor check.
+ *
+ * Reads the extract_rollup_7d table (migration v106) for the last 7 days
+ * and reports per-kind aggregates. Stable JSON envelope schema_version:1.
+ *
+ * 3-state status:
+ *   - OK when rollup is empty (no extractions yet) OR every per-kind
+ *     halt rate is below the warn threshold.
+ *   - WARN when any per-kind halt rate exceeds 10% (operator-visible
+ *     signal that an extractor is failing too often).
+ *   - WARN when rollup_write_failures > 0 (audit JSONL is the source of
+ *     truth but operator should know the DB cache is degraded).
+ *
+ * Per-kind columns (per plan A5 + D-EXTRACT-32 spec):
+ *   cost_7d_usd, eval_pass_count, eval_fail_count, halt_count,
+ *   round_completed_count, last_updated_at
+ *
+ * The check is empty-rollup-tolerant: a brain that has never extracted
+ * shows OK with `kinds: []` rather than warning. Doctor latency stays
+ * under 100ms regardless of brain size because the rollup table
+ * pre-aggregates (rolled-up at audit-emitter time per F-OUT-19).
+ *
+ * Empty rollup short-circuits BEFORE hitting the rollup_write_failures
+ * branch so a brand-new brain doesn't surface a "0 failures" warning.
+ */
+export async function computeExtractHealthCheck(
+  engine: BrainEngine,
+): Promise<Check> {
+  const name = 'extract_health';
+  try {
+    type RollupRow = {
+      kind: string;
+      cost_7d_usd: number;
+      eval_pass_count: number;
+      eval_fail_count: number;
+      halt_count: number;
+      round_completed_count: number;
+      rollup_write_failures: number;
+      last_updated_at: Date | string | null;
+    };
+
+    const rows = await engine.executeRaw<RollupRow>(
+      `SELECT
+         kind,
+         SUM(cost_usd) AS cost_7d_usd,
+         SUM(eval_pass_count) AS eval_pass_count,
+         SUM(eval_fail_count) AS eval_fail_count,
+         SUM(halt_count) AS halt_count,
+         SUM(round_completed_count) AS round_completed_count,
+         SUM(rollup_write_failures) AS rollup_write_failures,
+         MAX(updated_at) AS last_updated_at
+       FROM extract_rollup_7d
+       WHERE day >= CURRENT_DATE - 7
+       GROUP BY kind
+       ORDER BY kind`,
+      [],
+    );
+
+    if (rows.length === 0) {
+      return {
+        name,
+        status: 'ok',
+        message: 'no extractions in last 7 days',
+        details: {
+          schema_version: 1,
+          kinds: [],
+        },
+      };
+    }
+
+    type KindAggregate = {
+      kind: string;
+      cost_7d_usd: number;
+      eval_pass_count: number;
+      eval_fail_count: number;
+      halt_count: number;
+      round_completed_count: number;
+      halt_rate: number;
+      last_updated_at: string | null;
+    };
+
+    const kinds: KindAggregate[] = rows.map(r => {
+      const halts = Number(r.halt_count) || 0;
+      const completed = Number(r.round_completed_count) || 0;
+      const total = halts + completed;
+      return {
+        kind: r.kind,
+        cost_7d_usd: Number(r.cost_7d_usd) || 0,
+        eval_pass_count: Number(r.eval_pass_count) || 0,
+        eval_fail_count: Number(r.eval_fail_count) || 0,
+        halt_count: halts,
+        round_completed_count: completed,
+        halt_rate: total > 0 ? halts / total : 0,
+        last_updated_at: r.last_updated_at
+          ? new Date(r.last_updated_at).toISOString()
+          : null,
+      };
+    });
+
+    const totalRollupFailures = rows.reduce(
+      (acc, r) => acc + (Number(r.rollup_write_failures) || 0),
+      0,
+    );
+
+    // High halt rates: per F-OUT-19 doctor surfaces extractor health
+    // distinctly from rollup write health.
+    const highHaltKinds = kinds.filter(k => k.halt_rate > 0.10);
+
+    if (highHaltKinds.length > 0) {
+      const top3 = [...highHaltKinds]
+        .sort((a, b) => b.halt_rate - a.halt_rate)
+        .slice(0, 3)
+        .map(k => `${k.kind}=${(k.halt_rate * 100).toFixed(1)}%`)
+        .join(', ');
+      return {
+        name,
+        status: 'warn',
+        message: `${highHaltKinds.length} kind(s) with halt rate > 10% (top: ${top3})`,
+        details: {
+          schema_version: 1,
+          kinds,
+          rollup_write_failures_7d: totalRollupFailures,
+        },
+      };
+    }
+
+    if (totalRollupFailures > 0) {
+      return {
+        name,
+        status: 'warn',
+        message: `${totalRollupFailures} rollup write failure(s) in last 7d (audit JSONL is source of truth; rebuild via gbrain extract status --rebuild-rollup)`,
+        details: {
+          schema_version: 1,
+          kinds,
+          rollup_write_failures_7d: totalRollupFailures,
+        },
+      };
+    }
+
+    return {
+      name,
+      status: 'ok',
+      message: `${kinds.length} kind(s) tracked, all halt rates below 10%`,
+      details: {
+        schema_version: 1,
+        kinds,
+        rollup_write_failures_7d: totalRollupFailures,
+      },
+    };
+  } catch (err) {
+    // Pre-v106 brains lack the extract_rollup_7d table. Don't warn — the
+    // bootstrap-coverage / migration framework brings the schema forward
+    // and the next run resolves naturally. Stay quiet.
+    const msg = (err as Error).message || String(err);
+    if (/extract_rollup_7d.*does not exist|no such table/i.test(msg)) {
+      return {
+        name,
+        status: 'ok',
+        message: 'extract_rollup_7d not yet present (pre-v0.42 brain or fresh init)',
+      };
+    }
+    return {
+      name,
+      status: 'warn',
+      message: `rollup query failed: ${msg}`,
+    };
+  }
+}
+
+export async function checkSyncFreshness(
+  engine: BrainEngine,
+  opts?: { nowMs?: number; localOnly?: boolean },
+): Promise<Check> {
+  try {
+    // v0.41.27.0: SELECT widens to carry last_commit + chunker_version so
+    // the git short-circuit gate (below) can compare against what
+    // `gbrain sync`'s up-to-date predicate at sync.ts:1057+1075 checks.
+    // Columns existed pre-v0.41 (writeSyncAnchor / writeChunkerVersion);
+    // no schema migration needed.
+    const sources = await engine.executeRaw<{
+      id: string;
+      name: string;
+      local_path: string | null;
+      last_sync_at: Date | null;
+      last_commit: string | null;
+      chunker_version: string | null;
+      newest_content_at: Date | null;
+    }>(
+      // v0.41.32.0: newest_content_at feeds the REMOTE (non-localOnly) lag so
+      // doctorReportRemote never shells out to git on a DB-supplied local_path.
+      `SELECT id, name, local_path, last_sync_at, last_commit, chunker_version, newest_content_at FROM sources WHERE local_path IS NOT NULL`,
+    );
+
+    if (sources.length === 0) {
+      return {
+        name: 'sync_freshness',
+        status: 'ok',
+        message: 'No federated sources to sync',
+        details: { unchanged_count: 0, synced_recently_count: 0, stale_count: 0 },
+      };
+    }
+
+    const warnHours = _resolveSyncFreshnessHours('GBRAIN_SYNC_FRESHNESS_WARN_HOURS', 24);
+    const failHours = _resolveSyncFreshnessHours('GBRAIN_SYNC_FRESHNESS_FAIL_HOURS', 72);
+    const warnMs = warnHours * 60 * 60 * 1000;
+    const failMs = failHours * 60 * 60 * 1000;
+
+    // `opts.nowMs` is a test-only injection seam for the boundary tests.
+    // Without it, the two `Date.now()` calls (one in the test's `agoMs`
+    // helper, one here) drift apart by microseconds-to-milliseconds, which
+    // pushes "exactly 72h ago" above the strict `>` threshold and flips the
+    // status from warn to fail (CI-flaky, see PR #1138 ship). Production
+    // callers omit `nowMs` and get live wall-clock semantics.
+    const now = opts?.nowMs ?? Date.now();
+
+    // v0.41.27.0: D4 trust boundary. The git short-circuit runs ONLY when
+    // the caller explicitly opts in via `localOnly: true`. Default (false)
+    // preserves the v0.32.4 trust boundary for `doctorReportRemote` (the
+    // HTTP MCP path) — a remote-callable code path must NOT walk
+    // DB-supplied `local_path` values with subprocess calls. runDoctor
+    // (local CLI) passes true; doctorReportRemote keeps the default.
+    const localOnly = opts?.localOnly === true;
+
+    // v0.41.27.0: D7 narrowed predicate. The CHUNKER_VERSION caller-side
+    // check mirrors sync.ts:1057's chunker-version gate so doctor agrees
+    // with sync on "is there work to do?". `sources.chunker_version` is
+    // a TEXT column storing String(CHUNKER_VERSION).
+    const currentChunkerVersion = String(CHUNKER_VERSION);
+
+    const issues: string[] = [];
+    // v0.41.27.0: D6 three-bucket count math. Every source falls into
+    // EXACTLY ONE bucket per iteration. Invariant pinned by unit test:
+    //   unchanged_count + synced_recently_count + stale_count === sources.length
+    // Stale subsumes warn + fail + never-synced + future-timestamp; we keep
+    // hasWarnings/hasFailures for the existing return-status logic.
+    let unchanged_count = 0;
+    let synced_recently_count = 0;
+    let stale_count = 0;
+    let hasWarnings = false;
+    let hasFailures = false;
+
+    // BUG 4 (v0.42.x): a source with a LIVE, non-expired per-source sync lock is
+    // actively syncing RIGHT NOW — it must not read as stale or never-synced.
+    // The live lock is the only honest "in progress" signal. Checkpoint banking
+    // is NOT usable: a blocked sync banks the good files then writes no anchor
+    // (test/sync-resumable-import.serial.test.ts), so banking can't tell
+    // in-progress from wedged. A blocked/failed sync's process has exited (no
+    // lock row) and a wedged holder stops refreshing (TTL lapses), so either
+    // correctly falls through to the stale path and is NEVER masked. Same
+    // dynamic import as the stale_locks check; any throw (stub engine in unit
+    // tests, pre-lock-table brain) is swallowed to false, so this can only ADD
+    // an in-progress verdict, never suppress a real stale one.
+    // Notes for sources caught actively syncing (surfaced in the result
+    // message so the operator sees "in progress", not just a silent healthy
+    // bucket). Empty when nothing is syncing — keeps the steady-state messages
+    // byte-for-byte unchanged.
+    const inProgress: string[] = [];
+    let liveSyncSnap: (sourceId: string) => Promise<{ holder_pid: number; holder_host: string; age_ms: number } | null> =
+      async () => null;
+    try {
+      const { inspectLock, syncLockId } = await import('../../../core/db-lock.ts');
+      liveSyncSnap = async (sourceId: string) => {
+        try {
+          const snap = await inspectLock(engine, syncLockId(sourceId));
+          return snap && !snap.ttl_expired
+            ? { holder_pid: snap.holder_pid, holder_host: snap.holder_host, age_ms: snap.age_ms }
+            : null;
+        } catch {
+          return null;
+        }
+      };
+    } catch {
+      /* db-lock unavailable — skip in-progress detection, staleness stands. */
+    }
+
+    // One ceiling for the whole report: hoisted out of the loop so every
+    // source is judged against the same number (and the env read + warn-once
+    // machinery runs once, not once per source).
+    const stalenessCeilingSeconds = resolveStalenessCeilingSeconds();
+    for (const source of sources) {
+      // Embed source.id in user-visible messages so `gbrain sync --source <id>`
+      // matches what the user copy-pastes. Show display name in parens when set.
+      const display = source.name && source.name !== source.id
+        ? `'${source.id}' (${source.name})`
+        : `'${source.id}'`;
+
+      // BUG 4: actively syncing (live lock) → healthy, count as synced_recently
+      // and skip the staleness checks. Keeps the 3-bucket invariant intact.
+      //
+      // ...but ONLY up to the staleness ceiling. `withRefreshingLock` bumps the
+      // heartbeat on its own timer regardless of whether the import is making
+      // forward progress (`liveSyncStatus`'s docstring is explicit: callers may
+      // report "running", NOT "healthy"). So a holder blocked inside a query
+      // keeps refreshing forever, and an uncapped in-progress verdict would
+      // mask that source from every staleness check indefinitely — the same
+      // invisible-failure class this whole pass exists to close, just reached
+      // through the lock table instead of the freshness column.
+      const liveSnap = await liveSyncSnap(source.id);
+      if (liveSnap) {
+        const ceilingMs = stalenessCeilingSeconds * 1000;
+        if (liveSnap.age_ms <= ceilingMs) {
+          inProgress.push(`${display} sync in progress (pid ${liveSnap.holder_pid} on ${liveSnap.holder_host})`);
+          synced_recently_count++;
+          continue;
+        }
+        // Sub-hour ceilings are legal (fractional env override), and an alarm
+        // that names a zero duration ("held the lock for 0h") reads as broken.
+        const heldFor = liveSnap.age_ms >= 3600_000
+          ? `${Math.floor(liveSnap.age_ms / 3600_000)}h`
+          : `${Math.max(1, Math.floor(liveSnap.age_ms / 60_000))}m`;
+        issues.push(
+          `Source ${display} has held the sync lock for ${heldFor} ` +
+          `(pid ${liveSnap.holder_pid} on ${liveSnap.holder_host}) — heartbeating but not finishing. ` +
+          `Run \`gbrain sync --break-lock --source ${source.id}\` after confirming the holder is wedged.`,
+        );
+        hasFailures = true;
+        stale_count++;
+        continue;
+      }
+
+      if (!source.last_sync_at) {
+        issues.push(`Source ${display} has never been synced`);
+        hasFailures = true;
+        stale_count++;
+        continue;
+      }
+
+      const lastSync = new Date(source.last_sync_at).getTime();
+      const ageMs = now - lastSync;
+
+      if (ageMs < 0) {
+        issues.push(
+          `Source ${display} has future last_sync_at — clock skew or corrupted timestamp`,
+        );
+        hasWarnings = true;
+        stale_count++;
+        continue;
+      }
+
+      // v0.41.27.0: git short-circuit (D4 + D7 combined). Only fires when:
+      //   1. caller opted in via localOnly=true (trust boundary)
+      //   2. HEAD === last_commit (no new commits to sync)
+      //   3. working tree has no TRACKED changes — untracked files ignored
+      //      (v0.41.32.0: `'ignore-untracked'`. Sync's incremental path keys off
+      //      the commit diff and never imports untracked files, so a quiet repo
+      //      with stray untracked dirs is genuinely caught up. The pre-v0.41.30
+      //      `true` mode counted those as dirty and produced the false-SEVERE
+      //      alarm this wave fixes.)
+      //   4. chunker_version matches CURRENT (no post-upgrade re-chunk pending —
+      //      still ANDed, so a re-chunk need is never masked)
+      // All four must hold; otherwise fall through to the time-based check.
+      // The chunker version match is computed here (not in the helper)
+      // because it depends on engine state, not git state.
+      //
+      // Clone-unavailable fallback: on stateless deploys (Docker on EB /
+      // K8s / Fly — the platforms the cloud recipes produce), a container
+      // restart wipes `local_path` and each clone is only re-materialized
+      // when that source's next sync job runs. Until then the HEAD probe
+      // cannot run at all ('unavailable'), which previously fell through to
+      // raw wall-clock age — and since a no-op sync doesn't advance
+      // `last_sync_at`, every QUIET source read as stale/FAIL after a
+      // restart (score-sinking alert storm; observed live: 16-source brain,
+      // 12 clones gone after a config-update restart, doctor 70→30).
+      // 'unavailable' + chunker match now reuses the v0.41.32.0 REMOTE lag
+      // signal (newest_content_at) below — DB-only, no subprocess, and it
+      // still reports staleness whenever content really is newer than the
+      // last sync. 'changed' (readable clone with real work) keeps
+      // wall-clock exactly as before, and a chunker mismatch is never
+      // masked (D7): it disables the fallback too.
+      let cloneUnavailable = false;
+      if (localOnly) {
+        const gitState = probeSourceGitState(
+          source.local_path,
+          source.last_commit,
+          { requireCleanWorkingTree: 'ignore-untracked' },
+        );
+        const chunkerMatch = source.chunker_version === currentChunkerVersion;
+        if (gitState === 'unchanged' && chunkerMatch) {
+          unchanged_count++;
+          continue;
+        }
+        cloneUnavailable = gitState === 'unavailable' && chunkerMatch;
+      }
+
+      // v0.41.32.0: REMOTE path (doctorReportRemote, !localOnly) computes lag
+      // from the stored newest_content_at column — NO git subprocess on a
+      // DB-supplied local_path (preserves the v0.41.27.0 trust boundary). A
+      // quiet repo whose newest commit predates its last sync reports 0; NULL
+      // column → wall-clock fallback. LOCAL fall-through keeps wall-clock when
+      // the clone is READABLE: the short-circuit failed on real evidence
+      // (HEAD moved / dirty tree), so the source genuinely has work and
+      // "hours since last sync" is the right staleness measure. A local clone
+      // that is UNAVAILABLE (not yet re-materialized, see above) carries no
+      // evidence either way, so it borrows this same DB-only lag. The
+      // `ageMs < 0` skew check above still runs on raw wall-clock for both
+      // paths (A1).
+      let thresholdAgeMs = ageMs;
+      if (!localOnly || cloneUnavailable) {
+        const contentMs = source.newest_content_at
+          ? new Date(source.newest_content_at).getTime()
+          : null;
+        const lagSec = lagFromContentMs(
+          contentMs !== null && Number.isFinite(contentMs) ? contentMs : null,
+          lastSync,
+          now,
+          stalenessCeilingSeconds,
+        );
+        thresholdAgeMs = lagSec === null ? ageMs : lagSec * 1000;
+      }
+
+      const ageHours = Math.floor(thresholdAgeMs / (1000 * 60 * 60));
+      const ageDays = Math.floor(ageHours / 24);
+
+      if (thresholdAgeMs > failMs) {
+        issues.push(`Source ${display} last synced ${ageDays}d ago — brain search is stale!`);
+        hasFailures = true;
+        stale_count++;
+      } else if (thresholdAgeMs > warnMs) {
+        issues.push(`Source ${display} last synced ${ageHours}h ago`);
+        hasWarnings = true;
+        stale_count++;
+      } else {
+        synced_recently_count++;
+      }
+    }
+
+    // D6 invariant: every source incremented exactly one bucket.
+    const details = { unchanged_count, synced_recently_count, stale_count };
+    // BUG 4: append in-progress context when any source is actively syncing.
+    // Empty otherwise, so steady-state messages are byte-for-byte unchanged.
+    const inProgressNote = inProgress.length ? `. ${inProgress.join('; ')}` : '';
+
+    if (hasFailures) {
+      return {
+        name: 'sync_freshness',
+        status: 'fail',
+        message: `${issues.join('; ')}. Run \`gbrain sync --source <id>\` for each stale source${inProgressNote}`,
+        details,
+      };
+    }
+    if (hasWarnings) {
+      return {
+        name: 'sync_freshness',
+        status: 'warn',
+        message: `${issues.join('; ')}. Run \`gbrain sync --source <id>\` to refresh${inProgressNote}`,
+        details,
+      };
+    }
+    // v0.41.27.0: D2 ok-message reshape. Three branches surface what the
+    // git short-circuit actually did so operators understand "unchanged
+    // since last sync" vs "synced recently".
+    if (unchanged_count === sources.length) {
+      return {
+        name: 'sync_freshness',
+        status: 'ok',
+        message: `All ${sources.length} federated source(s) up to date (no new commits since last sync)${inProgressNote}`,
+        details,
+      };
+    }
+    if (unchanged_count > 0) {
+      return {
+        name: 'sync_freshness',
+        status: 'ok',
+        message: `${sources.length} federated source(s): ${synced_recently_count} synced recently, ${unchanged_count} unchanged since last sync${inProgressNote}`,
+        details,
+      };
+    }
+    return {
+      name: 'sync_freshness',
+      status: 'ok',
+      message: `All ${sources.length} federated source(s) synced recently${inProgressNote}`,
+      details,
+    };
+  } catch (e) {
+    return {
+      name: 'sync_freshness',
+      status: 'warn',
+      message: `Could not check sync freshness: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}

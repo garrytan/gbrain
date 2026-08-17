@@ -66,7 +66,9 @@ Ask the user for these. gbrain defaults to the Voyage embedding + reranker stack
 (`voyage:voyage-4` @ 1024d + `voyage:rerank-2.5` — one key covers both); OpenAI is the
 main alternative, chosen at init via `--embedding-model <provider:model>`. ZeroEntropy
 is deprecated (its hosted API shuts down 2026-09-04): init auto-pick and the picker
-exclude it, and every ZE embed/rerank prints a deprecation warning.
+exclude it, and every ZE embed/rerank prints a deprecation warning. **Existing brain
+still on ZeroEntropy (or any need to switch embedding/reranker models later)?** Follow
+the playbook at `skills/migrations/v0.46.3.0.md` — one command migrates both.
 
 ```bash
 export VOYAGE_API_KEY=pa-...          # default embedding + reranker (one key covers both)

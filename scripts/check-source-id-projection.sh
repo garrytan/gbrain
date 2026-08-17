@@ -58,7 +58,17 @@ check_file() {
 }
 
 EXIT=0
-for f in src/core/postgres-engine.ts src/core/pglite-engine.ts; do
+
+# The engine surface = the two façade files plus every method module peeled
+# into their sibling dirs — SQL moved out of the façades must stay scanned.
+ENGINE_FILES=(src/core/postgres-engine.ts src/core/pglite-engine.ts)
+for d in src/core/postgres-engine src/core/pglite-engine; do
+  if [ -d "$d" ]; then
+    while IFS= read -r ef; do ENGINE_FILES+=("$ef"); done < <(find "$d" -name '*.ts' | sort)
+  fi
+done
+
+for f in "${ENGINE_FILES[@]}"; do
   if ! check_file "$f"; then
     EXIT=1
   fi
@@ -66,7 +76,7 @@ done
 
 # Also check RETURNING clauses (putPage uses INSERT ... RETURNING).
 # Same shape: returns a row that feeds rowToPage.
-for f in src/core/postgres-engine.ts src/core/pglite-engine.ts; do
+for f in "${ENGINE_FILES[@]}"; do
   awk '
     /RETURNING/ {
       buf = $0

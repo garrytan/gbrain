@@ -8,6 +8,8 @@ import { buildToolDefs } from './tool-defs.ts';
 import { dispatchToolCall, buildOperationContext } from './dispatch.ts';
 import { validateParams, parseStrictParamsMode } from './validate-params.ts';
 import { filterOpsForSurface, allowedOpNames, clampSurface, type McpSurface } from './surface.ts';
+import { disabledOpsForPublishGates } from './publish-gates.ts';
+import type { Operation } from '../core/operations.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { loadConfig } from '../core/config.ts';
 import {
@@ -53,6 +55,34 @@ export async function resolveMcpStdioSourceScope(
   }
 }
 
+/**
+ * Per-request stdio tools/list set: the surfaced ops minus publish-gated ops
+ * whose gate resolves off. stdio dispatches remote:true (agent-facing), and
+ * the gate enforcement (assertPublishEnabled, the advisor inline gate) exempts
+ * only ctx.remote === false — so listing gate-off ops here was the exact
+ * listed-but-denied class the honest-catalog wave exists to kill, surviving on
+ * the default transport. localOnly ops STAY listed: locality is the transport
+ * axis (stdio IS the local pipe, D7); publish gates are the owner-consent
+ * axis. Deliberately uncached (publish-gates.ts doctrine: the per-request read
+ * is what makes a config flip take effect without a restart; tools/list is
+ * rare). Fail-closed: a resolver failure hides every gated op rather than
+ * re-creating the listed-but-denied complaint.
+ */
+export async function stdioVisibleTools(
+  engine: BrainEngine,
+  surfacedOps: Operation[],
+): Promise<Operation[]> {
+  if (!surfacedOps.some(op => op.publishGateKey)) return surfacedOps;
+  let gateDisabled: ReadonlySet<string>;
+  try {
+    gateDisabled = await disabledOpsForPublishGates(engine, loadConfig());
+  } catch {
+    gateDisabled = new Set(surfacedOps.filter(o => o.publishGateKey).map(o => o.name));
+  }
+  if (gateDisabled.size === 0) return surfacedOps;
+  return surfacedOps.filter(op => !gateDisabled.has(op.name));
+}
+
 export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpSurface; sourceGuard?: boolean } = {}) {
   const server = new Server(
     { name: 'gbrain', version: VERSION },
@@ -64,7 +94,10 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   // (exactly the 7 protocol verbs). Enforced BOTH on the advertised list and
   // in dispatch (fail-closed [c2]). WP4: the GBRAIN_MCP_FORCE_SURFACE kill
   // switch min()s in (narrow-only, FOV-6a). Note stdio keeps localOnly ops
-  // on every surface tier that includes them — it IS the local surface (D7).
+  // on every surface tier that includes them — it IS the local surface (D7,
+  // the transport-LOCALITY axis). Publish gates are the separate owner-
+  // CONSENT axis keyed on ctx.remote === false only, and stdio dispatches
+  // remote:true — so gate-off ops are subtracted per tools/list below.
   const surface: McpSurface = clampSurface(opts.surface ?? 'full');
   const surfacedOps = filterOpsForSurface(operations, surface);
   const allowedOps = surface === 'full' ? undefined : allowedOpNames(operations, surface);
@@ -77,9 +110,12 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
 
   // Generate tool definitions from operations. Extracted to buildToolDefs so
   // the subagent tool registry (v0.15+) can call the same mapper against a
-  // filtered OPERATIONS subset instead of duplicating this shape.
+  // filtered OPERATIONS subset instead of duplicating this shape. Publish-gate
+  // subtraction happens per request (stdioVisibleTools) — no caching, so a
+  // `gbrain config set mcp.publish_skills true` takes effect on the next
+  // tools/list without a serve restart (matches the HTTP transports).
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: buildToolDefs(surfacedOps, { strictParams }),
+    tools: buildToolDefs(await stdioVisibleTools(engine, surfacedOps), { strictParams }),
   }));
 
   // Dispatch tool calls via shared dispatch.ts (parity with HTTP transport).

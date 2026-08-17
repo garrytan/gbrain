@@ -82,8 +82,8 @@ each client.
 **Surface modes:** `--surface verbs` exposes EXACTLY the seven verbs —
 advertised list AND dispatch are filtered fail-closed (a hidden op returns
 `unknown_tool` even when called by name). `--surface starter` exposes the
-~26-op daily-driver set (`STARTER_OPS` in `src/mcp/surface.ts`): the seven
-verbs plus the daily brain-tool slice, the agent lane, `whoami`, and the
+~27-op daily-driver set (`STARTER_OPS` in `src/mcp/surface.ts`): the seven
+verbs plus the daily brain-tool slice, the agent lane, `whoami`, `capture`, and the
 `request_tools` discovery meta-op (re-derivable from production usage via
 `scripts/derive-starter-ops.ts`). Monotonic by construction: verbs ⊆ starter ⊆ full
 (pinned by test) — starter extends the ladder ABOVE verbs and never changes

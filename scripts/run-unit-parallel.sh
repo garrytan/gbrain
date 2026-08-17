@@ -44,10 +44,22 @@
 
 set -uo pipefail
 
+# Fixture tests that `git commit` in temp repos must not inherit the developer's
+# global commit.gpgsign — a signing gpg-agent can OOM under full-suite memory
+# pressure and fail the commit ("gpg: signing failed: Cannot allocate memory",
+# #1696). git applies these env keys as highest-precedence config on every
+# invocation in this process tree, so all child `git commit`s run unsigned.
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="commit.gpgsign" GIT_CONFIG_VALUE_0="false"
+
 # #3485: unit tests need no database — strip ambient DB URLs at this wrapper
 # boundary so the bunfig preload guard passes and nothing can reach a real
 # brain. The e2e wrapper (run-e2e.sh) is the only lane that keeps them.
 unset DATABASE_URL GBRAIN_DATABASE_URL
+# An ambient GBRAIN_HOME (a dev shell configured for a real brain) must not
+# reach unit tests either: the gbrain-home-preload respects a pre-set value
+# (the e2e wrapper needs that), so strip it at this boundary and let the
+# preload allocate per-run scratch instead.
+unset GBRAIN_HOME
 
 cd "$(dirname "$0")/.."
 

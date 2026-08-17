@@ -12,6 +12,7 @@ import { probeOllama, probeLMStudio } from '../core/ai/probes.ts';
 import { loadConfig } from '../core/config.ts';
 import { AIConfigError, AITransientError } from '../core/ai/errors.ts';
 import { lookupEmbeddingPrice } from '../core/embedding-pricing.ts';
+import { renderCanonicalMigrationCommands } from '../core/ai/defaults.ts';
 import type { Recipe } from '../core/ai/types.ts';
 
 const SCHEMA_VERSION = 1;
@@ -60,6 +61,78 @@ export function envReady(recipe: Recipe, env: NodeJS.ProcessEnv = process.env): 
 }
 
 /**
+ * ONE shared sunset-marker primitive for every human-facing providers surface
+ * (list status cell, explain table rows, env block header) so the renderings
+ * can't drift. `sunsetMarkerText` is the string; `sunsetMarker` is the
+ * recipe-shaped convenience (null for recipes without an announced shutdown).
+ */
+export function sunsetMarkerText(date: string, replacementEmbedding?: string | null): string {
+  return `⚠ DEPRECATED — hosted API ends ${date}` + (replacementEmbedding ? `; use ${replacementEmbedding}` : '');
+}
+
+export function sunsetMarker(recipe: Pick<Recipe, 'sunset'>): string | null {
+  if (!recipe.sunset) return null;
+  return sunsetMarkerText(recipe.sunset.date, recipe.sunset.replacement?.embedding);
+}
+
+/**
+ * Pure formatter for `gbrain providers env <id>` so the output is testable
+ * without spawning the CLI (runEnv itself process.exits).
+ *
+ * Sunset-aware: a provider with an announced shutdown gets the deprecation
+ * block + the canonical migration command INSTEAD of the signup funnel
+ * (setup_url / setup_hint) — three weeks before a provider dies, "get an API
+ * key" is the wrong guidance. Key STATUS still renders above so existing
+ * users can see what's configured.
+ */
+export function formatEnvOutput(recipe: Recipe, env: NodeJS.ProcessEnv = process.env): string {
+  const lines: string[] = [];
+  lines.push(`${recipe.name} (${recipe.id})`);
+  lines.push('');
+  const required = recipe.auth_env?.required ?? [];
+  const optional = recipe.auth_env?.optional ?? [];
+  if (required.length > 0) {
+    lines.push('Required:');
+    for (const k of required) {
+      lines.push(`  ${k.padEnd(32)} ${env[k] ? '✓ set' : '✗ not set'}`);
+    }
+  } else {
+    lines.push('Required: (none)');
+  }
+  if (optional.length > 0) {
+    lines.push('');
+    lines.push('Optional:');
+    for (const k of optional) {
+      lines.push(`  ${k.padEnd(32)} ${env[k] ? '✓ set' : '✗ not set'}`);
+    }
+  }
+  const marker = sunsetMarker(recipe);
+  if (marker) {
+    const s = recipe.sunset!;
+    lines.push('');
+    lines.push(marker);
+    if (s.message) lines.push(`  ${s.message}`);
+    if (s.replacement) {
+      const parts: string[] = [];
+      if (s.replacement.embedding) parts.push(`${s.replacement.embedding} (embedding)`);
+      if (s.replacement.reranker) parts.push(`${s.replacement.reranker} (reranker)`);
+      if (parts.length > 0) lines.push(`  Replacement: ${parts.join(', ')}`);
+    }
+    lines.push(`  Migrate: ${renderCanonicalMigrationCommands().recommendedDryRun}`);
+    return lines.join('\n');
+  }
+  if (recipe.auth_env?.setup_url) {
+    lines.push('');
+    lines.push(`Setup: ${recipe.auth_env.setup_url}`);
+  }
+  if (recipe.setup_hint) {
+    lines.push('');
+    lines.push(recipe.setup_hint);
+  }
+  return lines.join('\n');
+}
+
+/**
  * Pure formatter for the recipe matrix shown by `gbrain providers list` and
  * the new `init-provider-picker` (D1+D2 — picker reuses this so its display
  * stays in sync with `providers list` and can't drift).
@@ -86,12 +159,10 @@ export function formatRecipeTable(recipes: Recipe[], env: NodeJS.ProcessEnv = pr
     const ready = envReady(r, env);
     // v0.46.3: a sunsetting provider is flagged in the listing regardless of
     // key readiness — "ready" on a dying API is not a state to advertise.
-    const status = r.sunset
-      ? `⚠ DEPRECATED — hosted API ends ${r.sunset.date}` +
-        (r.sunset.replacement?.embedding ? `; use ${r.sunset.replacement.embedding}` : '')
-      : ready
-        ? '✓ ready'
-        : `✗ missing ${r.auth_env?.required?.[0] ?? 'setup'}`;
+    // Marker text is the shared sunsetMarker so list/explain/env can't drift.
+    const status =
+      sunsetMarker(r) ??
+      (ready ? '✓ ready' : `✗ missing ${r.auth_env?.required?.[0] ?? 'setup'}`);
     rows.push(
       r.id.padEnd(idCol) +
       r.tier.padEnd(18) +
@@ -287,32 +358,7 @@ function runEnv(args: string[]): void {
     console.error(`Unknown provider: ${id}. Run \`gbrain providers list\` to see known providers.`);
     process.exit(1);
   }
-  console.log(`${recipe.name} (${recipe.id})`);
-  console.log('');
-  const required = recipe.auth_env?.required ?? [];
-  const optional = recipe.auth_env?.optional ?? [];
-  if (required.length > 0) {
-    console.log('Required:');
-    for (const k of required) {
-      const set = !!process.env[k];
-      console.log(`  ${k.padEnd(32)} ${set ? '✓ set' : '✗ not set'}`);
-    }
-  } else {
-    console.log('Required: (none)');
-  }
-  if (optional.length > 0) {
-    console.log('\nOptional:');
-    for (const k of optional) {
-      const set = !!process.env[k];
-      console.log(`  ${k.padEnd(32)} ${set ? '✓ set' : '✗ not set'}`);
-    }
-  }
-  if (recipe.auth_env?.setup_url) {
-    console.log(`\nSetup: ${recipe.auth_env.setup_url}`);
-  }
-  if (recipe.setup_hint) {
-    console.log(`\n${recipe.setup_hint}`);
-  }
+  console.log(formatEnvOutput(recipe));
 }
 
 async function runExplain(args: string[]): Promise<void> {
@@ -429,7 +475,14 @@ async function runExplain(args: string[]): Promise<void> {
   for (const o of options.filter(x => x.touchpoint === 'embedding')) {
     const cost = o.cost_per_1m_tokens_usd !== undefined ? `$${o.cost_per_1m_tokens_usd}/1M` : '—';
     const dims = o.dims ? `${o.dims}d` : '—';
-    console.log(`  ${o.env_ready ? '✓' : '✗'} ${o.id.padEnd(44)} ${dims.padEnd(8)} ${cost.padEnd(10)} ${o.tier}`);
+    // A sunsetting provider must not read as a green-check cheap option in
+    // the HUMAN table (the deprecation used to live only in cons/JSON).
+    // Rendered via the shared primitive so list/env/explain can't drift, and
+    // the lead marker is ⚠ regardless of key readiness — "ready" on a dying
+    // API is not a state to advertise (mirrors formatRecipeTable's status).
+    const dep = o.deprecated ? `  ${sunsetMarkerText(o.deprecated.date, o.deprecated.replacement)}` : '';
+    const lead = o.deprecated ? '⚠' : o.env_ready ? '✓' : '✗';
+    console.log(`  ${lead} ${o.id.padEnd(44)} ${dims.padEnd(8)} ${cost.padEnd(10)} ${o.tier}${dep}`);
   }
   console.log('');
   console.log('Expansion options:');

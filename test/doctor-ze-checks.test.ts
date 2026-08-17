@@ -52,7 +52,7 @@ describe('checkZeEmbeddingHealth', () => {
     expect(check.message).toContain('not ZeroEntropy');
   });
 
-  test('on ZE + no key: warns with setup hint', async () => {
+  test('on ZE + no key: warns migration-first (no signup funnel)', async () => {
     configureGateway({
       embedding_model: 'zeroentropyai:zembed-1',
       embedding_dimensions: 1280,
@@ -65,7 +65,10 @@ describe('checkZeEmbeddingHealth', () => {
       const check = await checkZeEmbeddingHealth(engine);
       expect(check.status).toBe('warn');
       expect(check.message).toContain('ZEROENTROPY_API_KEY');
-      expect(check.message).toContain('zeroentropy.dev');
+      // Migration-first: the fix for a missing key on a sunsetting provider
+      // is the off-ramp, never a signup link.
+      expect(check.message).toContain('migrate embeddings');
+      expect(check.message).not.toContain('dashboard.zeroentropy.dev');
     });
   });
 

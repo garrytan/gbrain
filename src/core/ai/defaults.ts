@@ -69,3 +69,45 @@ export const NEW_INSTALL_DEFAULT_RERANKER_MODEL = 'voyage:rerank-2.5';
  * doctor check. Self-hosting the Apache-2.0 zembed-1 weights is unaffected.
  */
 export const ZEROENTROPY_SUNSET_DATE = '2026-09-04';
+
+/**
+ * ONE canonical rendering of the sunset-migration command for every surface
+ * that tells a user/agent how to leave a dying provider (gateway deprecation
+ * line, init warnings, upgrade banners, doctor provider_sunset, ze-switch
+ * refusal, advisor). Before this, five surfaces printed five different
+ * commands — including one with an unsubstituted placeholder and this
+ * brain's current width as `--dim`, which is INVALID on Voyage (valid
+ * widths: 256/512/1024/2048). Rules:
+ *   - the Voyage command ALWAYS carries `--dim 1024` (never the brain's
+ *     current width);
+ *   - the keep-width OpenAI alternative renders only when the current
+ *     column width is known and <= 1536 (text-embedding-3-small's cap);
+ *   - the note explains the rebuild whenever the width changes.
+ * Lives here (zero-dep constants module) so every consumer can import it
+ * without cycles; drift-guarded by test against the doc/skill copies.
+ */
+export function renderCanonicalMigrationCommands(opts: { colDims?: number | null } = {}): {
+  /** Live run (agents append --yes themselves after consent). */
+  recommended: string;
+  /** Cost preview — what every warning surface should print first. */
+  recommendedDryRun: string;
+  /** Keep-width alternative (no schema rebuild), when the width allows it. */
+  openaiAlternative: string | null;
+  /** Rebuild explanation when the recommended target changes the width. */
+  note: string | null;
+} {
+  const base = `gbrain migrate embeddings --to ${NEW_INSTALL_DEFAULT_EMBEDDING_MODEL} --dim ${NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS}`;
+  const colDims = opts.colDims ?? null;
+  const openaiAlternative = colDims !== null && colDims <= 1536
+    ? `gbrain migrate embeddings --to openai:text-embedding-3-small --dim ${colDims} --dry-run`
+    : null;
+  const note = colDims !== null && colDims !== NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS
+    ? `(--dim ${NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS} rebuilds the ${colDims}d index — Voyage's valid widths are 256/512/1024/2048${openaiAlternative ? `; the OpenAI alternative keeps this brain's ${colDims}d width` : ''}.)`
+    : null;
+  return {
+    recommended: base,
+    recommendedDryRun: `${base} --dry-run`,
+    openaiAlternative,
+    note,
+  };
+}

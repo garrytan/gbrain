@@ -37,6 +37,7 @@
     "build:admin-embedded": "bun run scripts/build-admin-embedded.ts",
     "build:schema": "bash scripts/build-schema.sh",
     "build:llms": "bun run scripts/build-llms.ts",
+    "wave-security-scan": "bash scripts/wave-security-scan.sh",
     "build:flag-registry": "bun run scripts/generate-flag-registry.ts",
     "build:pglite-snapshot": "bun run scripts/build-pglite-snapshot.ts",
     "test": "bash scripts/run-unit-parallel.sh",
@@ -62,6 +63,7 @@
     "check:wasm": "bash scripts/check-wasm-embedded.sh",
     "check:pglite-embedded": "bash scripts/check-pglite-embedded.sh",
     "check:newlines": "bash scripts/check-trailing-newline.sh",
+    "test:compile-smoke": "GBRAIN_SELFUPDATE_COMPILE_SMOKE=1 bun test test/binary-self-update-compiled.serial.test.ts",
     "test:e2e": "bash scripts/run-e2e.sh",
     "test:slow": "bash scripts/run-slow-tests.sh",
     "test:heavy": "bash scripts/run-heavy.sh",
@@ -100,13 +102,16 @@
     "check:pagetype-exhaustive": "bash scripts/check-pagetype-exhaustive.sh",
     "check:pg-url-redaction": "bash scripts/check-pg-url-redaction.sh",
     "check:source-scope-onboard": "bash scripts/check-source-scope-onboard.sh",
+    "check:getpage-scope": "node scripts/check-getpage-scoped-write.mjs",
     "postinstall": "bun run scripts/postinstall.ts",
     "prepublish:clawhub": "bun run build:all",
     "publish:clawhub": "clawhub package publish . --family bundle-plugin",
     "check:skill-refs": "bun scripts/check-skill-refs.mjs",
     "gate:skills": "bash scripts/skills-commit-gate.sh",
     "check:guard-self-test": "bash scripts/guard-self-test.sh",
-    "check:no-legacy-getconnection": "bash scripts/check-no-legacy-getconnection.sh"
+    "check:no-legacy-getconnection": "bash scripts/check-no-legacy-getconnection.sh",
+    "check:module-size": "bash scripts/check-module-size.sh",
+    "check:structural-manifest": "bash scripts/check-structural-manifest.sh"
   },
   "openclaw": {
     "compat": {
@@ -165,7 +170,7 @@
     "bun": ">=1.3.10"
   },
   "license": "MIT",
-  "version": "0.46.7.0",
+  "version": "0.46.12.3",
   "overrides": {
     "@hono/node-server": "^2.0.5",
     "fast-uri": "^3.1.5",

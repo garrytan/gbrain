@@ -36,6 +36,19 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# COVERAGE_DIR (opt-in lcov coverage) must be an ABSOLUTE path: this script
+# redirects HOME (and E2E tests spawn CLI subprocesses with varying cwd), so
+# a relative --coverage-dir would scatter lcov output across working dirs.
+# Normalize it once against the repo root, before HOME moves. COVERAGE_DIR is
+# deliberately NOT GBRAIN-prefixed: the hermetic env scrub below drops
+# GBRAIN_*/operator prefixes, and this variable must survive that scrub.
+if [ -n "${COVERAGE_DIR:-}" ]; then
+  case "$COVERAGE_DIR" in
+    /*) ;;
+    *) COVERAGE_DIR="$PWD/$COVERAGE_DIR" ;;
+  esac
+fi
+
 # #3485: this wrapper IS the e2e boundary — opt in to running with a database
 # URL present. The bunfig test preload (database-url-guard-preload.ts) refuses
 # bare `bun test` runs while DATABASE_URL/GBRAIN_DATABASE_URL is ambient; the
@@ -98,6 +111,7 @@ for _e2e_var in $(env | grep -oE '^(CONDUCTOR_|MCP_|OPENCLAW_|HERMES_|GROK_|OPEN
     GBRAIN_HOME) ;;  # required for HOME isolation (set above) — keep
     GBRAIN_PGLITE_SNAPSHOT) ;;  # snapshot fast-path fixture (exported by ci-local.sh / runners) — keep
     GBRAIN_TEST_ALLOW_DATABASE_URL) ;;  # #3485 preload opt-in (set above) — keep
+    GBRAIN_E2E_FILE_TIMEOUT) ;;  # per-file cap override — read AFTER this scrub, so it must survive it
     GBRAIN_E2E_ALLOW_DB) ;;  # #3485 name-floor opt-in — the guard's own error
                              # message tells operators to set it; stripping it
                              # here would make that escape hatch a dead end
@@ -171,9 +185,19 @@ fail_files=0
 fail_list=()
 total_pass=0
 total_fail=0
+file_idx=0
 
 for f in "${files[@]}"; do
   name=$(basename "$f")
+  file_idx=$((file_idx + 1))
+  # COVERAGE_DIR (opt-in): each E2E file runs in its OWN bun process, so each
+  # needs its OWN coverage dir — a second bun process reusing a coverage dir
+  # OVERWRITES lcov.info. Empty/unset COVERAGE_DIR leaves the exec line
+  # byte-identical to the pre-coverage behavior.
+  COVERAGE_ARGS=()
+  if [ -n "${COVERAGE_DIR:-}" ]; then
+    COVERAGE_ARGS=(--coverage --coverage-reporter=lcov --coverage-dir="$COVERAGE_DIR/e2e-$file_idx")
+  fi
   echo ""
   echo "=== $name ==="
   # Cross-file isolation: terminate any stale connections from the prior
@@ -186,10 +210,13 @@ for f in "${files[@]}"; do
   if [ -n "${DATABASE_URL:-}" ]; then
     psql "$DATABASE_URL" -At -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid != pg_backend_pid() AND datname = current_database()" >/dev/null 2>&1 || true
   fi
-  # Hard outer timeout (default 180s per file; GBRAIN_E2E_FILE_TIMEOUT
-  # overrides). bun's --timeout covers tests AND hooks (measured on 1.3.14),
-  # but it's timer-based: a PGLite WASM call that blocks the event loop
-  # synchronously never lets the timer fire and the file wedges indefinitely.
+  # Hard outer timeout (default 180s per file; GBRAIN_E2E_FILE_TIMEOUT or
+  # E2E_FILE_TIMEOUT_SECS overrides — the GBRAIN_ name is kept in the scrub
+  # keep-list below, the non-GBRAIN name survives the scrub by construction;
+  # nightly coverage runs use it to absorb instrumentation overhead). bun's
+  # --timeout covers tests AND hooks (measured on 1.3.14), but it's
+  # timer-based: a PGLite WASM call that blocks the event loop synchronously
+  # never lets the timer fire and the file wedges indefinitely.
   # gtimeout/timeout SIGKILLs the file so the suite advances. gtimeout (macOS
   # via coreutils) preferred; timeout (Linux) fallback; bare bun (no outer
   # cap) if neither is installed.
@@ -200,7 +227,7 @@ for f in "${files[@]}"; do
   # assertion output, which reads like a mystery failure. CI runs those
   # files in their own job WITHOUT this wrapper (see .github/workflows/
   # e2e.yml tier2), so the cap only ever bit local runs: give them 4x.
-  file_timeout="${GBRAIN_E2E_FILE_TIMEOUT:-180}"
+  file_timeout="${GBRAIN_E2E_FILE_TIMEOUT:-${E2E_FILE_TIMEOUT_SECS:-180}}"
   # Digits-only validation (same strict positive-int posture as the TS env
   # knobs): a malformed value falls back to the default instead of
   # word-splitting into extra gtimeout arguments or breaking the 4x math.
@@ -215,7 +242,7 @@ for f in "${files[@]}"; do
   else
     TIMEOUT_CMD=""
   fi
-  if output=$($TIMEOUT_CMD bun test --timeout=60000 "$f" 2>&1); then
+  if output=$($TIMEOUT_CMD bun test --timeout=60000 ${COVERAGE_ARGS[@]+"${COVERAGE_ARGS[@]}"} "$f" 2>&1); then
     pass_files=$((pass_files + 1))
     # Extract pass/fail counts from bun's summary (e.g., "123 pass")
     p=$(echo "$output" | grep -oE '[0-9]+ pass' | tail -1 | grep -oE '[0-9]+' || echo 0)
@@ -281,4 +308,13 @@ if [ ${#fail_list[@]} -gt 0 ]; then
     echo "  - $f"
   done
   exit 1
+fi
+
+# Lane manifest: written ONLY on a fully green run (isolation breach exits 2
+# and failing files exit 1 above, both before reaching here), so
+# complete:true means the lcov data represents the whole E2E lane.
+if [ -n "${COVERAGE_DIR:-}" ]; then
+  LCOV_COUNT=$(find "$COVERAGE_DIR" -name 'lcov.info' 2>/dev/null | grep -c '^' || true)
+  printf '{"lane":"e2e","sha":"%s","lcovCount":%s,"complete":true}\n' \
+    "$(git rev-parse HEAD)" "${LCOV_COUNT:-0}" > "$COVERAGE_DIR/lane-manifest.json"
 fi

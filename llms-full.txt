@@ -213,7 +213,12 @@ Per-file detail is in `docs/architecture/KEY_FILES.md`.
   sites; `ctx.remote !== false` for untrust-unless-explicit-false). Don't default it falsy.
 - **Source isolation.** Every read-side op routes through `sourceScopeOpts(ctx)`; precedence
   is federated array (`ctx.auth.allowedSources`) > scalar (`ctx.sourceId`) > nothing. Don't
-  hand-roll source filtering — a missed thread is a cross-source data leak.
+  hand-roll source filtering — a missed thread is a cross-source data leak. Corollary
+  (unscoped-check/scoped-write): `engine.getPage` with no opts matches ANY source while
+  `putPage` defaults to `'default'` — an existence check + write pair must scope the read
+  to the write's source (`getPage(slug, { sourceId: x ?? 'default' })`). Guarded by
+  `scripts/check-getpage-scoped-write.mjs` (opt-out marker
+  `gbrain-allow-unscoped-getpage` for read-only first-match sites).
 - **JSONB: never `JSON.stringify` into a `::jsonb` cast.** postgres.js double-encodes it (a jsonb
   string scalar); PGLite hides the bug. This bites BOTH spellings — the template form
   (`${JSON.stringify(x)}::jsonb`) AND the positional form (`executeRaw(\`…$N::jsonb\`, [JSON.stringify(x)])`,
@@ -260,6 +265,26 @@ Per-file detail is in `docs/architecture/KEY_FILES.md`.
   (fail-closed vs warn-only vs null), not its own numbers. Pinned by `test/model-pricing.test.ts`
   (drift guard asserts each view equals canonical). Embeddings price separately in
   `embedding-pricing.ts` (different unit).
+- **Module-size ratchet.** `scripts/module-size-limits.tsv` pins per-file line ceilings
+  (`check:module-size` in verify): growth over a ceiling, >50 lines of stale slack after a
+  shrink, a row for a deleted file, and any UNLISTED src file over 1,500 lines all fail.
+  Raise a ceiling only via a reviewer-visible TSV edit in the same commit; lower it in the
+  same commit as any peel. migrate.ts is `region-exempt` (the MIGRATIONS array grows freely;
+  the runner logic around it is ratcheted).
+- **Peeled façades keep their surface.** operations.ts (`src/core/ops/*`), doctor.ts
+  (`src/commands/doctor/*`), sync.ts (`src/core/sync-*`), and both engines
+  (`src/core/{postgres,pglite}-engine/*`) are façades re-exporting everything they always
+  exported — import sites and published package exports never chase the peel. New code goes
+  in the module dirs, not back into the façades. Engine modules take narrow explicit deps
+  (never an engine-shaped bag); doctor source-text guards read `test/helpers/doctor-source.ts`,
+  and the flag-registry generator's `facadeExpansion` keeps peeled flag text in each command's
+  scan surface.
+- **Coverage is measured, honestly.** CI merges per-lane lcov (`scripts/merge-lcov.ts`) into
+  a PR-corpus report on every run (advisory until the diff gate graduates via
+  `COVERAGE_GATE_ENFORCE`) and a nightly fullCorpus number incl. the full e2e glob. bun
+  facts: unique `--coverage-dir` per process (reuse overwrites lcov.info), line records only
+  (JSC omits function names), no subprocess coverage (cli.ts is exempt as a documented
+  undercount), never-loaded files are a count+list, never fake all-files math.
 
 
 ## Reference map (load on demand)
@@ -840,7 +865,11 @@ Before any ship, read **[docs/RELEASING.md](docs/RELEASING.md)** in full. It car
 full release + contributor process: pre-ship test requirements (`bun run ci:local` / the
 E2E lifecycle), the CHANGELOG voice + release-summary template, the "To take advantage of
 vX" self-repair block, version migrations, the GitHub Actions SHA refresh, PR conventions,
-and the community-PR-wave process. **Use `/ship` — never hand-roll a release.**
+and the community-PR-wave process. **Use `/ship` — never hand-roll a release.** Every
+community wave runs `bun run wave-security-scan <base>..<head>` (RELEASING.md step 5) before
+ship — the repeatable mechanical sweep (obfuscation/eval, gitleaks with the test/skills
+allowlist stripped, committed `admin/dist` changes as alarms; new endpoints/spawns/env/deps
+as context).
 
 The ship-critical IRON RULES stay inline in this file (do NOT relocate them): the
 Version-locations table above (the 5-file sync + the 3-line VERSION/package.json/CHANGELOG
@@ -1093,7 +1122,9 @@ Ask the user for these. gbrain defaults to the Voyage embedding + reranker stack
 (`voyage:voyage-4` @ 1024d + `voyage:rerank-2.5` — one key covers both); OpenAI is the
 main alternative, chosen at init via `--embedding-model <provider:model>`. ZeroEntropy
 is deprecated (its hosted API shuts down 2026-09-04): init auto-pick and the picker
-exclude it, and every ZE embed/rerank prints a deprecation warning.
+exclude it, and every ZE embed/rerank prints a deprecation warning. **Existing brain
+still on ZeroEntropy (or any need to switch embedding/reranker models later)?** Follow
+the playbook at `skills/migrations/v0.46.3.0.md` — one command migrates both.
 
 ```bash
 export VOYAGE_API_KEY=pa-...          # default embedding + reranker (one key covers both)
@@ -1573,6 +1604,7 @@ wins; fix the row.
 | "agent workspace bootstrap", "install gbrain into this agent workspace", "gbrain bootstrap", "paste-in install", "set up the maintenance sweep" | Run `gbrain bootstrap` (paste-in workspace install: interview + identity files + hooks + sweep). See `docs/guides/bootstrap.md` |
 | "wire this box's coding agents to the brain", "framework-spawned sessions need brain access", "wire gbrain hooks without a workspace", "hook Claude Code/Codex to the running serve" | Run `gbrain bootstrap harness --yes` (machine-level wiring to a running `serve --http`: scoped token + user-scope MCP + headless pre-approval + hooks; no agent.json). See the "Local harness mode" section of `docs/guides/bootstrap.md` |
 | "Migrate from Obsidian/Notion/Logseq" | `skills/migrate/SKILL.md` |
+| "Switch embedding provider" / "migrate my embeddings" / "switch reranker" / "ZeroEntropy" / "provider_sunset" / "search stopped working after a provider shutdown" | `skills/migrations/v0.46.3.0.md` |
 | Brain health check, maintenance run | `skills/maintain/SKILL.md` |
 | "Extract links", "build link graph", "populate timeline" | `skills/maintain/SKILL.md` (extraction sections) |
 | "Run dream", "process today's session", "synthesize my conversations", "consolidate yesterday's conversations", "what patterns did you see", "did the dream cycle run", "retriage the backlog", "re-score the triage" | `skills/maintain/SKILL.md` (dream cycle section) |
@@ -2007,7 +2039,7 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 
 **PGLite crashes at startup with `RuntimeError: Aborted()` (often right after a macOS upgrade)?** Not a macOS incompatibility — the OS-upgrade reboot killed gbrain mid-write and tore the data dir's WAL. gbrain now repairs this automatically on the next command (data preserved, backup kept); if auto-repair is disabled or skipped, run `gbrain pglite-repair --dry-run` to diagnose and `gbrain pglite-repair --yes` to repair in place. Full recovery ladder (repair → rebuild → engine switch) in [`docs/ENGINES.md` — Troubleshooting: startup abort](docs/ENGINES.md#troubleshooting-startup-abort-runtimeerror-aborted) and [`docs/INSTALL.md`](docs/INSTALL.md#pglite-crashes-on-macos-26x-tahoe).
 
-**`gbrain import` fails with `expected N dimensions, not M`?** Run `gbrain doctor`. It will print the exact `gbrain config set ...` or `gbrain retrieval-upgrade` command to repair the mismatch. You should not need to delete `~/.gbrain`. Fresh `gbrain init --pglite` auto-detects your embedding provider from API keys: set `VOYAGE_API_KEY` (or `OPENAI_API_KEY` / another provider key) in the environment — or in `~/.gbrain/config.json`, which init also reads — before running init, or pass `--embedding-model <provider>:<model>` explicitly. With multiple keys set, init fires an interactive picker (non-TTY auto-picks the Voyage default when its key is present). With no keys at all, init continues keyless (keyword-only search) with a loud notice; add a key later and re-run `gbrain init --force --embedding-model voyage:voyage-4` to enable embeddings, or pass `--no-embedding` up front to make keyless explicit. See [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md) for the full provider matrix and [`docs/operations/headless-install.md`](docs/operations/headless-install.md) for Docker/CI sequencing.
+**`gbrain import` fails with `expected N dimensions, not M`?** Run `gbrain doctor`. It will print the exact `gbrain config set ...` or `gbrain migrate embeddings` command to repair the mismatch. You should not need to delete `~/.gbrain`. Fresh `gbrain init --pglite` auto-detects your embedding provider from API keys: set `VOYAGE_API_KEY` (or `OPENAI_API_KEY` / another provider key) in the environment — or in `~/.gbrain/config.json`, which init also reads — before running init, or pass `--embedding-model <provider>:<model>` explicitly. With multiple keys set, init fires an interactive picker (non-TTY auto-picks the Voyage default when its key is present). With no keys at all, init continues keyless (keyword-only search) with a loud notice; add a key later and re-run `gbrain init --force --embedding-model voyage:voyage-4` to enable embeddings, or pass `--no-embedding` up front to make keyless explicit. See [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md) for the full provider matrix and [`docs/operations/headless-install.md`](docs/operations/headless-install.md) for Docker/CI sequencing.
 
 **Hourly cron sync keeps timing out on a federated brain?** Switch your
 cron to a per-source loop with shell `timeout(1)` doing the OS-level kill
@@ -2137,7 +2169,7 @@ the page PK, soft-delete-filtered, source-safe) and completes in seconds.
 - [`AGENTS.md`](AGENTS.md) — entry point for non-Claude agents
 - [`CLAUDE.md`](CLAUDE.md) — entry point for Claude Code (deep operating context)
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — contributor guide, test discipline, eval-capture mode
-- [`SECURITY.md`](SECURITY.md) — OAuth threat model, hardening defaults
+- [`SECURITY.md`](SECURITY.md) — install-path trust model, self-update integrity, automated scanning, OAuth threat model, hardening defaults
 
 ## Contributing
 
@@ -2913,7 +2945,7 @@ gbrain schema add-alias researcher person
 
 Read [`skills/conventions/schema-evolution.md`](../skills/conventions/schema-evolution.md) for the decision tree on when to add types vs aliases vs prefixes. The short version: <20 pages → don't pack-codify; 20-100 → alias on existing type; 100+ → first-class type.
 
-**Lint your pack before shipping.** The 11-rule lint surface (with the optional `--with-db` flag for DB-aware checks) catches dangling references, prefix collisions, and dead-corpus warnings:
+**Lint your pack before shipping.** The 14-rule lint surface (with the optional `--with-db` flag for DB-aware checks, including the stored-type alias/undeclared rules) catches dangling references, prefix collisions, and dead-corpus warnings:
 
 ```bash
 gbrain schema lint --with-db
@@ -4116,7 +4148,7 @@ No server, no tunnel, no token needed. Works on both PGLite and Postgres engines
 `--surface verbs` exposes exactly the seven-verb memory protocol (`recall`,
 `remember`, `entity`, `synthesize`, `forget`, `context_pack`, `delta` —
 [MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)) instead of the full catalog;
-`--surface starter` sits between (~26 ops: the verbs plus the daily-driver set);
+`--surface starter` sits between (~27 ops: the verbs plus the daily-driver set);
 omit the flag (default `full`) for every operation.
 
 ### Remote over OAuth 2.1 (recommended)
@@ -4543,8 +4575,8 @@ each client.
 **Surface modes:** `--surface verbs` exposes EXACTLY the seven verbs —
 advertised list AND dispatch are filtered fail-closed (a hidden op returns
 `unknown_tool` even when called by name). `--surface starter` exposes the
-~26-op daily-driver set (`STARTER_OPS` in `src/mcp/surface.ts`): the seven
-verbs plus the daily brain-tool slice, the agent lane, `whoami`, and the
+~27-op daily-driver set (`STARTER_OPS` in `src/mcp/surface.ts`): the seven
+verbs plus the daily brain-tool slice, the agent lane, `whoami`, `capture`, and the
 `request_tools` discovery meta-op (re-derivable from production usage via
 `scripts/derive-starter-ops.ts`). Monotonic by construction: verbs ⊆ starter ⊆ full
 (pinned by test) — starter extends the ladder ABOVE verbs and never changes

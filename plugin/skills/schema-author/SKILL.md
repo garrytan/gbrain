@@ -177,8 +177,9 @@ Validate before sync:
 gbrain schema lint --with-db
 ```
 
-The `--with-db` flag opts into the 2 DB-aware rules
-(`extractable_empty_corpus`, `mutation_count_anomaly`) that detect
+The `--with-db` flag opts into the 4 DB-aware rules
+(`extractable_empty_corpus`, `mutation_count_anomaly`,
+`stored_type_is_alias`, `stored_type_undeclared`) that detect
 mis-declared types you'd otherwise discover only at runtime.
 
 ### Phase 5 — Sync (backfill existing pages with the new types)

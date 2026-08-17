@@ -112,6 +112,70 @@ describe('gbrain quarantine clear', () => {
   });
 });
 
+describe('gbrain quarantine clear — multi-source ambiguity + --source-id', () => {
+  const JUNK = (t: string) => `---\ntitle: ${t}\ntype: note\n---\n\nCloudflare Ray ID: q. junk body.`;
+
+  /** Same slug quarantined in BOTH 'default' and 'work'. */
+  async function seedBothSources(): Promise<void> {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ('work', 'work', '{}'::jsonb) ON CONFLICT (id) DO NOTHING`,
+    );
+    await importFromContent(engine, 'notes/dup', JUNK('D'), { noEmbed: true });
+    await importFromContent(engine, 'notes/dup', JUNK('W'), { noEmbed: true, sourceId: 'work' });
+    for (const src of ['default', 'work']) {
+      const page = await engine.getPage('notes/dup', { sourceId: src });
+      expect(isQuarantined(page!.frontmatter as Record<string, unknown>)).toBe(true);
+    }
+  }
+
+  test('clear without --source-id on a slug in two sources errors (exit 2) listing the sources; nothing mutated', async () => {
+    await withHome(async () => {
+      await seedBothSources();
+      // The ambiguity path console.errors + process.exit(2)s. Stub exit with a
+      // throw (commands-search.test.ts pattern) so the test can assert on it.
+      const errs: string[] = [];
+      const origErr = console.error;
+      const origExit = process.exit;
+      let exitCode: number | undefined;
+      console.error = (...a: unknown[]) => { errs.push(a.map(String).join(' ')); };
+      (process.exit as unknown as (code?: number) => void) =
+        ((code?: number) => { exitCode = code ?? 0; throw new Error('__EXIT__'); }) as never;
+      try {
+        await expect(runQuarantine(engine, ['clear', 'notes/dup'])).rejects.toThrow('__EXIT__');
+      } finally {
+        console.error = origErr;
+        process.exit = origExit;
+      }
+      expect(exitCode).toBe(2);
+      const msg = errs.join('\n');
+      expect(msg).toContain('exists in 2 sources');
+      expect(msg).toContain('default');
+      expect(msg).toContain('work');
+      expect(msg).toContain('--source-id');
+      // Ambiguity is an error, not a coin flip: BOTH rows remain quarantined.
+      for (const src of ['default', 'work']) {
+        const page = await engine.getPage('notes/dup', { sourceId: src });
+        expect(isQuarantined(page!.frontmatter as Record<string, unknown>)).toBe(true);
+      }
+    });
+  });
+
+  test('clear --source-id work clears only the work row; default row untouched', async () => {
+    await withHome(async () => {
+      await seedBothSources();
+      // --force: the stored body is still junk, so an unforced clear would
+      // re-quarantine instead of exercising the deterministic-source write.
+      await capture(() =>
+        runQuarantine(engine, ['clear', 'notes/dup', '--source-id', 'work', '--force', '--no-embed']),
+      );
+      const work = await engine.getPage('notes/dup', { sourceId: 'work' });
+      expect(isQuarantined(work!.frontmatter as Record<string, unknown>)).toBe(false);
+      const def = await engine.getPage('notes/dup', { sourceId: 'default' });
+      expect(isQuarantined(def!.frontmatter as Record<string, unknown>)).toBe(true);
+    });
+  });
+});
+
 describe('engine.getContentFlagsByPageIds', () => {
   test('returns markers for flagged pages, skips clean, empty-input short-circuits', async () => {
     await withHome(async () => {

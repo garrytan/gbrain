@@ -107,7 +107,12 @@ const MAX_CHARS = 8000;
 // Re-exported from the leaf `defaults.ts` so heavy schema/registry modules
 // don't transitively load every provider SDK just to read the defaults.
 export { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './defaults.ts';
-import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './defaults.ts';
+import {
+  DEFAULT_EMBEDDING_MODEL,
+  DEFAULT_EMBEDDING_DIMENSIONS,
+  NEW_INSTALL_DEFAULT_EMBEDDING_MODEL,
+  renderCanonicalMigrationCommands,
+} from './defaults.ts';
 const DEFAULT_EXPANSION_MODEL = 'anthropic:claude-haiku-4-5-20251001';
 const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
 // v0.35.0.0+: reranker default. Used only when search.reranker.enabled is set
@@ -1443,10 +1448,16 @@ function warnSunsetOnce(recipe: Recipe, touchpoint: 'embedding' | 'reranker'): v
     _sunsetWarned.add(key);
     const replacement =
       touchpoint === 'embedding' ? sunset.replacement?.embedding : sunset.replacement?.reranker;
+    // Canonical command (defaults.ts renderer) when the replacement IS the
+    // recommended default — always carries the valid --dim; a bespoke
+    // replacement falls back to the target's own declared width via --dim
+    // omission (the recipe default applies).
     const fix =
       touchpoint === 'embedding'
         ? replacement
-          ? ` Migrate: \`gbrain migrate embeddings --to ${replacement} --dry-run\``
+          ? replacement === NEW_INSTALL_DEFAULT_EMBEDDING_MODEL
+            ? ` Migrate: \`${renderCanonicalMigrationCommands().recommendedDryRun}\``
+            : ` Migrate: \`gbrain migrate embeddings --to ${replacement} --dry-run\``
           : ''
         : replacement
         ? ` Switch: \`gbrain config set search.reranker.model ${replacement}\``
@@ -2719,7 +2730,8 @@ export interface ChatToolDef {
  */
 /**
  * Default per-call max output tokens. Thinking-by-default Claude 5 models
- * (`anthropic:claude-*-5`) burn a large chunk of the budget on internal
+ * (`anthropic:claude-*-5`, including routed forms like
+ * `openrouter:anthropic/claude-*-5`) burn a large chunk of the budget on internal
  * reasoning before emitting any text, so a 4096 default leaves them with empty
  * final text on the subagent tool loop. Give those models headroom; providers
  * bill actual tokens, not the cap, so it is free for the models that don't use
@@ -2730,7 +2742,7 @@ export interface ChatToolDef {
  */
 const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 const THINKING_MODEL_MAX_OUTPUT_TOKENS = 32000;
-const THINKING_BY_DEFAULT_MODEL_RE = /^anthropic[:/]claude-[a-z0-9]+-5(?:[.-]|$)/i;
+const THINKING_BY_DEFAULT_MODEL_RE = /(?:^|[:/])anthropic[:/]claude-[a-z0-9]+-5(?:[.-]|$)/i;
 function defaultMaxOutputTokens(modelStr: string | undefined): number {
   return modelStr && THINKING_BY_DEFAULT_MODEL_RE.test(modelStr)
     ? THINKING_MODEL_MAX_OUTPUT_TOKENS

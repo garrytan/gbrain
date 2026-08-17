@@ -27,10 +27,27 @@ jobs:
       image: semgrep/semgrep:1.170.0@sha256:c98f8829eea377274ee4b10656458b078b88232469b2ff913f091c2317347c9d
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
-      # Non-blocking initially (continue-on-error): the first runs establish a
-      # baseline without failing unrelated PRs. Graduation path: once the
-      # baseline findings are triaged (fixed or `# nosemgrep`'d), remove
-      # continue-on-error so new findings block PRs.
-      - name: Semgrep scan (report-only)
-        run: semgrep scan --config p/default --config p/typescript --error
-        continue-on-error: true
+        with:
+          # Full history so --baseline-commit can diff against the PR base;
+          # a shallow clone would not contain the base commit.
+          fetch-depth: 0
+      # Graduated from advisory: on a PR, fail only on findings NEW since the PR
+      # base (semgrep --baseline-commit), so legacy findings never block an
+      # unrelated PR and no full-tree triage is required. Scheduled/dispatch
+      # runs have no PR base, so they do a full-tree report-only scan.
+      - name: Semgrep scan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ]; then
+            # Diff against the MERGE BASE, not the base-branch head captured at
+            # event time: the checkout is the merge ref against current master,
+            # so a finding master landed after the event would otherwise be
+            # attributed to this PR. merge-base is the true common ancestor.
+            BASELINE="$(git merge-base "$BASE_SHA" HEAD || echo "$BASE_SHA")"
+            echo "PR scan — failing only on findings new since $BASELINE"
+            semgrep scan --config p/default --config p/typescript --error --baseline-commit "$BASELINE"
+          else
+            echo "Full-tree scan (schedule/dispatch) — report-only"
+            semgrep scan --config p/default --config p/typescript || true
+          fi

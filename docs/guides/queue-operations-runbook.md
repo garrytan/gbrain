@@ -55,6 +55,45 @@ gbrain jobs supervisor stop && gbrain jobs supervisor start --detach --json
 gbrain jobs retry <id>
 ```
 
+## The backlog grows structurally (DIVERGENT QUEUE)
+
+A different failure from a wedge: the worker is draining fine, but one job
+type's intake structurally exceeds its completions, so the waiting pile
+grows forever. Since v0.46.11.0 the queue has admission control and the
+signal is loud:
+
+```bash
+gbrain jobs stats            # Drained/Waiting columns + a DIVERGENT QUEUE
+                             # scream per offending type (also in --json)
+gbrain doctor --json | jq '.checks[] | select(.name == "queue_health")'
+                             # same findings for cron topologies
+```
+
+The scream fires when a type's 24h intake exceeds `GBRAIN_QUEUE_DIVERGENCE_RATIO`
+(default 2) × its 24h completions AND more than
+`GBRAIN_QUEUE_DIVERGENCE_MIN_WAITING` (default 50) jobs are waiting.
+Cancellations — including the waiting-TTL sweep — are deliberately not
+counted as drain: outflow is not work.
+
+What's already protecting you, and the knobs:
+
+- **Param-coalescing** (default on for `subagent`): identical parentless
+  submits — same owner lane, payload, and execution options — coalesce onto
+  the existing waiting job instead of stacking. Per-name toggle:
+  `minions.coalesce_params.<name>`.
+- **Waiting-TTL** (default 48h for `subagent`): jobs still waiting past the
+  TTL are cancelled with an auditable reason instead of queueing forever.
+  Tune or disable: `gbrain config set minions.ttl_waiting_hours.<name> <hours|0>`.
+  The first sweep never fires cold — a one-time notice prints with the
+  affected-job count, then a one-hour grace window holds before the first
+  cancellation.
+- **Waiting quota** (opt-in, off by default): a hard cap on a type's waiting
+  count, name-global across queues, exact under concurrent submitters. New
+  submits past the cap are rejected with a structured, retryable error.
+  Opt in: `gbrain config set minions.quota_max_waiting.<name> <n>`.
+- **Kill-switch**: `GBRAIN_MINIONS_ADMISSION=0` disables all three at once
+  (incident escape hatch, no DB needed).
+
 ## Triage commands
 
 ```bash
@@ -106,6 +145,16 @@ gbrain jobs smoke --wedge-rescue
   drain them. Set `--max-waiting N` on the submission or on the programmatic
   `queue.add()` call. If you want a taller pile, raise the threshold via
   `GBRAIN_QUEUE_WAITING_THRESHOLD=50 gbrain doctor`.
+- **divergent queue** — A type's 24h intake structurally exceeds its 24h
+  completions while a real backlog waits (same thresholds as the
+  `jobs stats` scream, so the two surfaces agree). The finding names the
+  type and prints the exact `minions.quota_max_waiting.<name>` command to
+  cap admission. See "The backlog grows structurally" above.
+- **waiting-TTL cancellations** — The admission sweep cancelled queued work
+  that expired unclaimed in the last 24h. That's operating as designed, but
+  it means the divergence is being shredded, not worked — intake still
+  exceeds drain. Tune with `gbrain config set
+  minions.ttl_waiting_hours.<name> <hours|0>`.
 
 ## Lock-renewal: reading an eviction, and the knobs
 

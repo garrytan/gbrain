@@ -56,19 +56,7 @@ export function getMigration(version: string): Migration | null {
 
 export type { Migration, FeaturePitch, OrchestratorOpts, OrchestratorResult } from './types.ts';
 
-/**
- * Compare two semver strings (MAJOR.MINOR.PATCH). Returns -1 / 0 / 1.
- * Extracted from src/commands/upgrade.ts#isNewerThan for shared use across
- * the migration runner + post-upgrade pitch path.
- */
-export function compareVersions(a: string, b: string): -1 | 0 | 1 {
-  const va = a.split('.').map(n => parseInt(n, 10) || 0);
-  const vb = b.split('.').map(n => parseInt(n, 10) || 0);
-  for (let i = 0; i < 3; i++) {
-    const da = va[i] ?? 0;
-    const db = vb[i] ?? 0;
-    if (da > db) return 1;
-    if (da < db) return -1;
-  }
-  return 0;
-}
+// Canonical home moved to src/core/migration-ledger.ts (shared with the
+// get_health migrations block without pulling this registry into the ops
+// layer). Re-exported so every existing importer is unchanged.
+export { compareVersions } from '../../core/migration-ledger.ts';

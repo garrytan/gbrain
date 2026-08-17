@@ -66,6 +66,33 @@ export async function runUpgrade(args: string[]) {
         console.log('No published binary for this platform/arch.');
         console.log('Download the latest binary from GitHub Releases:');
         console.log('  https://github.com/garrytan/gbrain/releases');
+      } else if (
+        result.reason === 'integrity_failed' ||
+        result.reason === 'integrity_unavailable' ||
+        result.reason === 'version_mismatch'
+      ) {
+        // Fail-closed: the downloaded binary was never installed (renamed over
+        // the live path). "signed" is intentionally omitted — we match against
+        // the build-provenance attestation's digest + builder identity fetched
+        // over TLS from the GitHub API; we do NOT independently verify the
+        // Sigstore signature chain (see src/core/binary-self-update.ts header).
+        const detail =
+          result.reason === 'integrity_failed'
+            ? 'the downloaded binary did not match its build-provenance attestation (digest/builder mismatch)'
+            : result.reason === 'version_mismatch'
+              ? 'the downloaded binary reported a different version than the release it was fetched for (possible downgrade)'
+              : 'the build-provenance attestation could not be fetched (offline, rate-limited, or missing)';
+        console.error(`Binary self-update rejected — integrity not confirmed: ${detail}.`);
+        console.error('Your existing binary is unchanged and the download was discarded.');
+        console.error('Retry later, or download + verify manually:');
+        console.error('  https://github.com/garrytan/gbrain/releases');
+        recordUpgradeError({
+          phase: 'binary-self-update',
+          fromVersion: oldVersion,
+          toVersion: '',
+          error: result.reason,
+          hint: 'Integrity check failed; existing binary retained. Retry or download manually.',
+        });
       } else {
         console.error(`Binary self-update failed (${result.reason}${result.error ? `: ${result.error}` : ''}).`);
         console.error('Your existing binary is unchanged. Download manually if needed:');
@@ -463,6 +490,37 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
           // Banner is cosmetic; never block the upgrade.
         }
 
+        // Waiting-TTL pre-notice (one-shot, warn-before-act). The worker
+        // gates its first sweep behind the SAME flag via runWaitingTtlTick
+        // (notice → grace window → sweep) because daemon restarts never run
+        // this CLI path — this banner is the interactive channel. Stamping
+        // the ISO timestamp here starts the same grace clock, so an operator
+        // who sees this banner gets the full window to tune before anything
+        // is cancelled.
+        try {
+          const { admissionKilled, resolveTtlNames, countTtlExpiredWaiting, ttlNoticeGraceMs, TTL_NOTICE_SHOWN_KEY } =
+            await import('../core/minions/admission.ts');
+          const shown = await engine.getConfig(TTL_NOTICE_SHOWN_KEY);
+          if ((shown == null || shown.trim() === '') && !admissionKilled()) {
+            const ttlNames = await resolveTtlNames(engine);
+            const { total: affected, by_name } = await countTtlExpiredWaiting(engine, ttlNames);
+            const parts = [...ttlNames].map(([name, hours]) => `${name} > ${hours}h: ${by_name[name] ?? 0}`);
+            console.log('');
+            console.log(`⚠ [gbrain] Waiting-TTL is now active: queued jobs that never get claimed are`);
+            console.log(`  cancelled after their per-type TTL (${parts.join('; ') || 'defaults'}).`);
+            if (affected > 0) {
+              console.log(`  ${affected} currently-queued job(s) already exceed their TTL and will be`);
+              console.log(`  cancelled after a ${Math.round(ttlNoticeGraceMs() / 60_000)}min grace window`);
+              console.log(`  (auditable error_text; visible in 'gbrain jobs stats').`);
+            }
+            console.log(`  Tune or disable: gbrain config set minions.ttl_waiting_hours.<name> <hours|0>`);
+            console.log('');
+            await engine.setConfig(TTL_NOTICE_SHOWN_KEY, new Date().toISOString());
+          }
+        } catch {
+          // Banner is cosmetic; never block the upgrade.
+        }
+
         // #3390: ZeroEntropy sunset notice. ZE announced (2026-07-24) that
         // its hosted endpoints — including /models/embed and /models/rerank —
         // shut down on 2026-09-04. Any brain resolving to a zeroentropyai:*
@@ -496,8 +554,9 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
             try {
               const { readContentChunksEmbeddingDim } = await import('../core/embedding-dim-check.ts');
               colDims = (await readContentChunksEmbeddingDim(engine)).dims;
-            } catch { /* fresh brain — omit --dim */ }
-            const dimFlag = colDims ? ` --dim ${colDims}` : '';
+            } catch { /* fresh brain — canonical command carries its own --dim */ }
+            const { renderCanonicalMigrationCommands } = await import('../core/ai/defaults.ts');
+            const cmds = renderCanonicalMigrationCommands({ colDims });
             console.log('');
             console.log('═══════════════════════════════════════════════════════════════');
             console.log(`[gbrain] ACTION REQUIRED: ZeroEntropy hosted API sunsets ${ZEROENTROPY_SUNSET_DATE}.`);
@@ -522,11 +581,11 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
             console.log('    vector; NO re-embed. See docs/guides/embedding-migration.md.');
             console.log('');
             console.log('[2] Migrate to another provider (resumable; preview cost first):');
-            console.log(`      gbrain migrate embeddings --to <provider:model>${dimFlag} --dry-run`);
-            console.log(`      gbrain migrate embeddings --to <provider:model>${dimFlag}`);
-            if (colDims) {
-              console.log(`    (--dim ${colDims} is this brain's current index width — keep it to`);
-              console.log('    avoid a needless schema rebuild when the target supports it.)');
+            console.log(`      ${cmds.recommendedDryRun}`);
+            console.log(`      ${cmds.recommended}`);
+            if (cmds.note) console.log(`    ${cmds.note}`);
+            if (cmds.openaiAlternative) {
+              console.log(`    Keep-width alternative: ${cmds.openaiAlternative}`);
             }
             if (onZeReranker) {
               console.log('');

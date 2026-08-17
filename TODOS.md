@@ -1,5 +1,244 @@
 # TODOS
 
+## Security-sweep mitigation follow-ups (filed 2026-08-16)
+
+- [ ] **P1 — `gbrain upgrade` binary lane returns success exit status on failure (autopilot false-success).** **What:** `runUpgrade`'s `binary` case logs every failure reason (`smoke_failed`, `download_failed`, `integrity_failed`, `integrity_unavailable`, `version_mismatch`, `replace_failed`) but never sets a non-zero CLI exit verdict, so callers see exit 0. **Why:** autopilot (`src/commands/autopilot.ts`) can read a false success, record "applied," relaunch, and then mark a transiently-unavailable version permanently bad — an amplification loop, now more reachable because `integrity_unavailable` fires on ordinary GitHub API rate limits. **Context:** PRE-EXISTING for the whole binary lane (not introduced by the v0.46.12.3 integrity work); surfaced by that PR's adversarial review with 2-model consensus. Fix needs care: distinguish hard-fail (`integrity_failed`/`version_mismatch` → exit non-zero, autopilot should NOT mark-bad on a security rejection) from transient (`integrity_unavailable` → retry, not a version fault), with autopilot-loop tests — hence its own PR, not a rushed rider. **Start:** `src/commands/upgrade.ts` binary case + `setCliExitVerdict` + `src/commands/autopilot.ts` upgrade handling.
+- [ ] **P3 — Self-update GitHub API rate-limit resilience.** **What:** each `gbrain upgrade` makes 2 unauthenticated `api.github.com` calls (releases/latest + attestations), 60/hr/IP; corporate NAT / CI fleets hit 403 → `integrity_unavailable` → fail-closed. **Why:** a hard availability regression for shared-egress fleets vs the pre-integrity path. **Options:** honor an ambient `GH_TOKEN`/`GITHUB_TOKEN` when present (weigh against widening what a leaked env token authorizes), or a small bounded retry with backoff, and align the attestation fetch timeout (10s) with the download budget so a slow-but-working link doesn't spuriously fail. **Start:** `defaultFetchRelease`/`defaultFetchAttestation` in `src/core/binary-self-update.ts`.
+
+
+- [ ] **P3 — Integrity for the from-source / `latest-stable` install paths.** **What:** the
+  compiled-binary self-update now verifies the GitHub build-provenance attestation before
+  installing (`src/core/binary-self-update.ts`), but the primary documented install
+  (`bun install -g github:garrytan/gbrain#latest-stable`, a force-moved tag) and the
+  force-published `codex-plugin` branch / template repo remain TLS+GitHub trust-on-first-use.
+  **Why:** those paths are how most users actually install; a compromised GitHub account could
+  serve an unverified tree. **Context:** documented as a residual in SECURITY.md
+  ("Install-path trust model"). A postinstall attestation check (or a documented
+  `gh attestation verify` step for tag installs) would close it, but a from-source tree has no
+  single binary to attest — needs design. **Start:** `scripts/postinstall.ts` +
+  SECURITY.md residual note. **Depends on:** the WS2 self-update integrity that just landed.
+- [ ] **P3 — Make `check:admin-embedded` deterministic so it can gate.** **What:**
+  `scripts/build-admin-embedded.ts` stamps today's date into a comment in
+  `src/admin-embedded.ts`, so `check-admin-embedded.sh`'s `git diff --exit-code` fails on any
+  day after commit — which is why it's `EXECUTION_EXEMPT` and unwired. **Why:** if the date
+  stamp were dropped (or the check ignored it), the embedded-manifest freshness guard could
+  actually run in CI. **Context:** correctness guard (catches a forgotten manifest regen), not
+  a security control — a backdoored dist regenerates the manifest and passes. The real dist
+  trust anchor is build-fresh-in-release (WS1, landed). **Start:** the date-comment line in
+  `scripts/build-admin-embedded.ts` + `guards-manifest.tsv:50`.
+## CLI→MCP gap-closure wave follow-ups (2026-08-16; plan: ~/.claude/plans/system-instruction-you-are-working-concurrent-lantern.md)
+
+- [ ] **P2 — publish-gate fail-open on a DB-config read failure.**
+  **What:** `readPublishGate` + `assertPublishEnabled` (publish-gate path) fall back to the
+  file plane when `engine.getConfig` throws, so a DB outage with file-plane=true but a
+  DB-override=false widens authorization instead of denying it. **Why:** an auth gate that
+  opens wider when its store is unreachable is fail-open — the wrong default for a
+  publish/authorization boundary. **Context:** pre-existing behavior, explicitly pinned by
+  `test/publish-gates.test.ts:71`; this needs a dedicated auth-plane decision (fail-closed
+  vs. the current fail-open), NOT a drive-by flip in a test-regression pass. **Effort:** M,
+  review-bound (one-way-door auth semantics).
+
+- [ ] **P2 — takes-fence parser drops pack-extended kinds (whole-page refusal is the interim guard).**
+  **What:** `parseTakesFence`'s `KIND_VALUES` is the closed `{fact,take,bet,hunch}` set, so a
+  schema-pack kind (`finding|hypothesis|…`) is skipped as malformed and surfaces a warning —
+  which is exactly why the F1 guard (`assertFenceRoundTrips`) has to refuse the WHOLE page to
+  avoid deleting the skipped row on a re-render. **Why:** a brain with pack-extended takes
+  kinds can't be mutated through the write verbs at all today (every mutate refuses
+  `fence_unparsed`). **Deeper fix:** widen the parser to accept any string kind (`TakeKind`
+  opened to `string` in v0.38) and/or make the fence editor splice-preserve raw unparsed
+  lines instead of a whole-fence re-render. **Effort:** M. (Related to the P3 pack-aware
+  kind-validation item below, but that one is write-side; this is the parser + editor.)
+
+- [ ] **P2 — `get_health` migration-ledger honesty.**
+  **What:** `loadCompletedMigrations` skips a malformed JSONL line with a `warn`, so a
+  truncated ledger entry silently mis-reports — a completed migration can look pending —
+  instead of surfacing a `ledger_unreadable` signal. **Why:** health/doctor output should
+  fail loud when its own audit trail is unreadable, not quietly under-count. **Effort:** S.
+
+- [ ] **P2 — `quarantine_list` SELECT projection pushdown.**
+  **What:** the quarantine scan pulls full page bodies (`SELECT p.*`) only to read two
+  frontmatter keys. Push the marker filter into SQL (`frontmatter ? 'quarantine'`) and
+  project just `slug`, `source_id`, `frontmatter`. **Why:** loading every page body to check
+  a frontmatter flag is O(corpus-bytes) for an O(matches) result. **Effort:** S.
+
+- [ ] **P3 — `permissions.takes_write_holders`: split the takes read/write holder axes.**
+  **What:** a dedicated write-side holder allow-list config, consumed by the takes write
+  verbs' fence in `src/core/ops/takes.ts` (today the WRITE fence reuses the READ
+  allow-list `takesHoldersAllowList` — fail-closed and symmetric, but semantically
+  overloaded). **Why:** an operator may want an agent to READ private holders but WRITE
+  only world-held rows, or vice versa. **Context:** decided at the wave's CEO/OV review
+  ("reuse now, split when field use demands"); the fence is one shared function
+  (`takesWriteAllowList` + takes-write.ts's holder checks), so the split is a
+  resolution-chain change, not a redesign. **Effort:** S. **Depends on:** field demand.
+
+- [ ] **P3 — pack-aware takes kind validation, shared CLI + ops.**
+  **What:** `takes_add`/`takes_supersede` pin `kind` to the 4 base literals
+  (fact|take|bet|hunch) — same limitation as the CLI's `ensureKind` — while schema packs
+  can extend `takes_kinds` (engine.ts TakeKindLiteral). Validate against the ACTIVE
+  pack's kind set in ONE shared place (takes-write.ts) and widen the op enum note.
+  **Why:** pack-extended kinds (finding|hypothesis|…) can't be written through either
+  surface today. **Effort:** S.
+
+- [ ] **P3 — `mcp:capture` provenance channel label (mini trust review).**
+  **What:** capture delegates to put_page, so remote captures stamp `source_kind:
+  'mcp:put_page'` (honest CV6 delegation; the op result carries channel:'capture').
+  A distinct `mcp:capture` stamp needs a trusted internal channel label through the CV6
+  else-branch — its own small trust review, filed rather than rushed. **Why:** finer
+  provenance analytics on ingestion channels. **Effort:** S, review-bound.
+## Five-issue fix wave follow-ups (backlinks corruption / malformed paths / type warnings / getPage scoping / queue admission)
+
+- [ ] **P2 — migrate the remaining fs writers to core/atomic-write.** **What:**
+  `src/core/skillopt/apply-edits.ts` (atomicWrite, leaks tmp on write error),
+  `src/core/write-through.ts` (own tmp+rename), `src/commands/lint.ts:~526`
+  (bare writeFileSync in runLintCore) move onto `src/core/atomic-write.ts`
+  (unique tmp + fsync + mode preservation + optional on-disk verify). Include
+  page-lock unification: write-through's render does NOT take withPageLock, so
+  the backlinks-vs-render lost-update race is only half-closed (backlinks
+  locks; render doesn't). **Why:** four hand-rolled copies drift; the shared
+  helper is strictly stronger. **Effort:** M. **Priority:** P2.
+- [ ] **P3 — relocate/retire skillopt's splitFrontmatter.** **What:** either
+  move it to core/markdown.ts next to frontmatterBodyOffset or port its one
+  SKILL.md caller onto the canonical helper (skillopt's regex is LF-at-byte-0
+  only; the canonical one handles leading blanks + CRLF). **Effort:** S.
+  **Priority:** P3.
+- [ ] **P3 — admission/stats indexes if hot.** **What:** expression index on
+  `(name, (data->>'__param_hash')) WHERE status='waiting'` for the coalesce
+  probe + `(name, created_at)` for the per-type stats aggregates, when
+  minion_jobs exceeds ~100k rows. Same family as the buildQueueDepths perf
+  note (status.ts) and the completed-recency probe TODO below. **Effort:** S.
+  **Priority:** P3.
+- [ ] **P2 — getPage type-boundary redesign (the durable fix behind the
+  guard).** **What:** make source scope explicit at the TYPE level — required
+  scope param or an explicit ALL_SOURCES sentinel on `engine.getPage`, so an
+  unscoped read is unrepresentable instead of merely linted
+  (check-getpage-scoped-write.mjs is the interim guard; the default-first
+  ORDER BY makes today's unscoped reads deterministic). ~78 call sites.
+  **Effort:** L. **Priority:** P2.
+- [ ] **P2 — per-name claim fairness / lane isolation.** **What:** the
+  admission wave (coalescing/TTL/quota) is deliberately submit-side only;
+  claim order remains global FIFO per queue (`queue.ts` claim ORDER BY), so
+  one divergent type still starves same-queue siblings until TTL/quota bites.
+  A per-name claim budget or weighted claim is the drain-side primitive.
+  **Effort:** L. **Priority:** P2.
+- [ ] **P3 — jobs stats divergence: per-queue scoping option.** **What:**
+  the DIVERGENT scream computes name-global (matches quota semantics); a
+  `--queue`-scoped variant would help multi-queue operators localize the
+  producer. **Effort:** S. **Priority:** P3.
+- [ ] **P2 — requeue surface for waiting-TTL-cancelled jobs.** **What:**
+  `jobs retry` targets failed/dead only; a TTL-cancelled row (error_text
+  prefix `waiting_ttl_expired`) that turns out to have been wanted needs a
+  `jobs requeue` (or a retry carve-out gated on that prefix) instead of
+  hand-resubmitting. The data survives (cancelled rows keep payloads +
+  free their idempotency keys), so this is purely a CLI surface. **Effort:**
+  S. **Priority:** P2. (Pre-landing data-migration review, five-issue wave.)
+- [ ] **P2 — dream-path quota-degradation integration tests.** **What:**
+  live-queue integration tests for the QueueQuotaExceededError consumers:
+  cycle patterns → `skipped('admission_quota')`, synthesize → quota latch
+  (one skip per remaining transcript, stop submitting), agent fanout →
+  whole-tree cancel + exit 1. Unit seams exist (isQueueQuotaExceededError
+  is pinned); what's missing is the end-to-end phase behavior under a
+  1-quota config. **Effort:** M. **Priority:** P2.
+- [ ] **P3 — coalesce advisory-lock concurrency e2e.** **What:** real-PG
+  e2e slamming N concurrent identical parentless submits → exactly one row
+  (the advisory lock serializes (name, queue, hash)); PGLite can't prove
+  this (single connection). Home: the DATABASE_URL-gated e2e lane.
+  **Effort:** S. **Priority:** P3.
+- [ ] **P3 — consolidate the stable-stringify triplets.** **What:**
+  `admission.ts` (param hash), plus the two earlier canonical-JSON copies
+  (op-checkpoint hashing, cli-options) each roll their own sorted-key
+  stringify; one `core/canonical-json.ts` would do. Hash-compat note: the
+  admission copy feeds persisted `__param_hash` values — a behavior-change
+  regression there just disables old-row coalescing (forward-safe), but
+  keep the sorted-key semantics bit-identical anyway. **Effort:** S.
+  **Priority:** P3.
+- [ ] **P3 — reconcile lane: quarantine-not-delete option for malformed-path
+  rows + doctor hint nuance.** **What:** full-sync reconcile hard-deletes
+  poisoned rows (consistent with 'strategy' semantics); a
+  `--quarantine-malformed` alternative would preserve rows for triage. Also
+  the malformed_path_pages doctor hint could distinguish rows whose FILE
+  still exists on disk (rename rescues content) from never-committed DB-only
+  rows (delete is the only option). **Effort:** S. **Priority:** P3.
+- [ ] **P3 — thread source scope into `schema lint --with-db`.** **What:**
+  the stored-type data-plane rules accept `LintOpts.sourceId` (multi-source
+  brains can resolve different packs per source; comparing another source's
+  rows against this manifest yields false alias/undeclared warnings), but
+  neither `src/commands/schema.ts` (`runAllLintRules(pack, { engine })`) nor
+  MCP `schema_lint` passes it — the CLI runs a global scan. Add
+  `--source-id` / honor the worktree pin, and expose `[--json]` in the
+  `jobs stats` usage line while in the area (`src/commands/jobs.ts:309`
+  documents `--queue`/`--cluster-errors` but not the shipped `--json`).
+  Also: the interactive coalesce hint suggests "pass a fresh idempotency
+  key", which `gbrain agent run` has no flag for (raw `jobs submit` does).
+  Surfaced by the v0.46.11.0 post-ship doc review. **Effort:** S.
+  **Priority:** P3.
+- [ ] **P3 — one-time cross-source clobber audit.** **What:** the
+  pre-guard unscoped-check/scoped-write class could have historically
+  written 'default'-source rows that shadow same-slug rows in other sources.
+  A one-shot integrity probe (`SELECT slug FROM pages GROUP BY slug HAVING
+  count(DISTINCT source_id) > 1` + updated_at ordering heuristics) would
+  surface survivors for review. **Effort:** S. **Priority:** P3.
+
+## Containment-sprint follow-ups (coverage truth + module peels; plan: ~/.claude/plans/system-instruction-you-are-working-serialized-forest.md)
+
+- [ ] **P1 — Graduate the diff-coverage gate to blocking (time-boxed 2 weeks from merge).**
+  **What:** flip `COVERAGE_GATE_ENFORCE` to `'1'` in test.yml's coverage-report job, add
+  coverage-report to test-status's required-success set and cache-write's needs, and replace
+  the provisional `scripts/coverage-baseline.json` corpus sections with CI-derived values via
+  `scripts/update-coverage-baseline.ts --promote`. **Criteria:** 10 consecutive green
+  coverage-report runs on PRs (master runs are structurally cache-skipped — a squash-merged
+  tree equals its green PR tree, so the ci-pass marker hits; never count master runs) plus 3
+  green nightly fullCorpus merges and zero merge-infrastructure failures. **Why:** the 80%
+  diff gate is built and reporting on every PR; blocking is a one-line flip once the
+  measurement machinery has receipts. Review `scripts/coverage-gate-exemptions.txt` against
+  report-only-window data in the same PR (shrink what gained unit coverage, add only what
+  repeatedly false-positives). **Adversarial acceptance items for the same PR:** decide the
+  enforce-mode degraded posture (today degraded -> report-only, which post-graduation is a
+  bypass channel - fail loud, or require explicit re-run); set a baseline re-seed cadence so
+  serial sub-threshold drops (<=0.49pp) cannot compound unboundedly. **Effort:** S. **Priority:** P1.
+- [ ] **P2 — Wave 4a: decompose performSyncInner (own plan).** **What:** the 1,923-line
+  procedure inside src/commands/sync.ts → sync-phase-{deletes,renames,imports} modules.
+  **Why:** the six pure clusters are peeled (sync.ts 5,991→4,121); the remaining bulk is one
+  function. **Blocked by:** re-pointing the two positional source-text guards
+  (test/sync.test.ts #132 prelude scan, test/redos-hardening.test.ts ordering) at the phase
+  modules — needs its own plan. **Effort:** L→M with CC. **Priority:** P2.
+- [ ] **P2 — Wave 4b: hoist buildChecks' ~220 inline checks.push literals into named
+  functions, then finish the doctor split (own plan).** **What:** doctor.ts is 4,177 lines,
+  ~3,240 of them buildChecks. Hoisting the inline literals into named check functions makes
+  them movable into the checks/ bundles. **Why:** completes the assessment's #1 named peel
+  target. **Effort:** L→M with CC. **Priority:** P2.
+- [ ] **P2 — CLI subprocess coverage.** **What:** investigate an in-process CLI-invocation
+  harness for a coverage lane (import cli.ts main instead of spawning) and track bun
+  child-process coverage support upstream. **Why:** E2E-spawned `bun src/cli.ts` children are
+  invisible to bun's coverage (the documented 15.2% cli.ts undercount);
+  src/cli.ts sits in the gate exemption list until this closes. **Effort:** M. **Priority:** P2.
+- [ ] **P3 — Migrate-runner extraction (revisit only on evidence).** **What:** the ~668
+  region-guarded runner lines in src/core/migrate.ts could move to migrate-runner.ts.
+  **Why deferred:** 9 slice-window source-text assertions in test/migrate.test.ts pin
+  locality; the region-exempt ratchet already forbids logic growth. Revisit if the region
+  guard starts failing on legitimate runner work. **Effort:** M. **Priority:** P3.
+- [ ] **P3 — Shrink coverage-gate-exemptions.txt as engine unit coverage rises.** **What:**
+  the engine files + dirs are exempt because the PR corpus can't see their e2e coverage;
+  nightly fullCorpus data shows their true numbers (postgres-engine 40% merged). As narrow-deps
+  modules gain unit tests, delist them. **Effort:** S per file. **Priority:** P3.
+- [ ] **P3 — Branch coverage when bun ships it.** **What:** bun 1.3.x emits line+function
+  lcov only (and JSC omits function names). When branch records (BRDA) land upstream, extend
+  merge-lcov.ts and report branch coverage. **Effort:** S. **Priority:** P3.
+- [ ] **P2 — Local shard-1 SIGTERM self-kill under load (master-inherited).** **What:** the
+  local fast loop's shard 1/4 dies rc=143 with ZERO test failures ~50–85s in when the machine
+  carries concurrent bun-test load: an `extract.stale` abort observes SIGTERM and the parent
+  bun process dies (`[run-child] job ... not claimed` lines adjacent). Reproduced
+  byte-identically on a clean master worktree (`SHARD=1/4 bash scripts/run-unit-shard.sh
+  --max-concurrency=2`), so it predates the containment sprint — most plausibly a
+  process-group signal escaping a per-job isolation test (#4151 landed the process-isolation
+  lane). **Why:** a self-killing shard reads as CI/local flake and poisons full-suite runs.
+  **Where to start:** the shard-1 file set's isolation/lifecycle tests
+  (test/run-child-entry.test.ts, test/worker-job-isolation.test.ts, test/extract-stale.test.ts)
+  — audit for kill(0)/process-group signals under contention. **Effort:** M. **Priority:** P2.
+- [ ] **P3 — Evidence-gated engine-core dedup.** **What:** the narrow-deps engine modules
+  (facts/takes/code-edges/salience × both engines) are the stepping stone toward a shared
+  engine core, NOT the substitute. The prior proposal drew 15 substantive review objections
+  (see the earlier module-singleton TODO) — pull this in only when parity maintenance costs
+  demonstrably recur. **Effort:** XL→L with CC. **Priority:** P3.
 ## Codex/Claude plugin lane follow-ups (filed from the plugin packaging wave)
 
 - [ ] **Plugin-lane receipt provenance: re-run bootstrap after plugin install can strand a hand-wired registration.** `appendReceiptRegistration` dedups by (host, scope), so wiring via bootstrap (detail:`mcp`) → enabling the plugin → re-running `bootstrap hooks` overwrites the record with `plugin-mcp`; the plugin-owned uninstall guard then skips `mcp remove` forever, stranding the registration bootstrap itself created. Narrow sequence (plugin enabled AFTER a hand-wired bootstrap). Fix: on the plugin-owned skip, don't downgrade an existing `mcp`-detail record for the same (host,scope), or offer to remove the stale hand-wired entry. Priority: P3. Surfaced by the ship-stage red-team review of the codex-plugin wave.
@@ -66,12 +305,19 @@ Staged-deletion discipline (ship replacements → migrate call sites → update 
   registry entries (recipes/index.ts); `zeroEntropyCompatFetch`,
   `MAX_ZEROENTROPY_RESPONSE_BYTES`, `ZeroEntropyResponseTooLargeError` + the
   fetch-ternary arm (gateway.ts); ZE sets in dims.ts; `ze-switch.ts` +
-  `retrieval-upgrade-planner.ts` + `retrieval-upgrade-prompt.ts` (~1200 lines) +
-  cli.ts dispatch/CLI_ONLY/flag-registry rows; `checkZeEmbeddingHealth` in doctor
+  `retrieval-upgrade-planner.ts` + cli.ts dispatch/CLI_ONLY/CLI_ONLY_SELF_HELP/
+  SELF_HELP_WITHOUT_ENGINE/flag-registry rows; `checkZeEmbeddingHealth` in doctor
   (`provider_sunset` STAYS and goes generic — read `recipe.sunset` instead of the
   hardcoded ZE constants); pricing rows LAST (budget-tracker rerank metering reads
   them for historical audit rows). NOTE: test/ai/zeroentropy-compat-fetch.test.ts
   greps gateway.ts SOURCE TEXT — delete the test with the code, in the same commit.
+  ALREADY DONE by the interim ZE cleanup wave (pre-Sept): `retrieval-upgrade-prompt.ts`
+  deleted (banner/marketing copy gone); `ze-switch.ts` is now a ~170-line pure
+  refusal/redirect shim (undo/dry-run ACTIONS retired — apply/undo wrote DB-plane
+  config the file-plane-canonical runtime never read); `providers env`/`explain` are
+  sunset-aware via the shared `sunsetMarker` in providers.ts (generic on
+  `recipe.sunset` — the removal wave inherits it); `ze_embedding_health`'s missing-key
+  copy is migration-first (the check itself still gets deleted here).
 - [ ] **P1 — Self-host continuity decision.** The v0.46.3 playbook's zero-re-embed
   path keeps the `zeroentropyai:zembed-1` id behind a base-URL override to a
   ZE-wire-compatible endpoint. Recipe deletion breaks it. Decide: keep a minimal
@@ -81,11 +327,14 @@ Staged-deletion discipline (ship replacements → migrate call sites → update 
   playbook (skills/migrations/v0.46.3.0.md) links here — honor it.
 - [ ] **P2 — Tests + CI.** Delete the 8 ZE-dedicated test files
   (zeroentropy-recipe, zeroentropy-compat-fetch, dims-zeroentropy,
-  e2e/zeroentropy-live, ze-switch-cli, ze-switch-env-override, doctor-ze-checks,
-  provider-sunset-doctor.serial gets REWRITTEN generic not deleted) + update ~40
-  coupled files; drop the zeroentropy-live job + ZEROENTROPY_API_KEY secret from
-  .github/workflows/e2e.yml:168,179 (already date-skip-gated since v0.46.3);
-  scripts/test-weights.json rows.
+  e2e/zeroentropy-live, ze-switch-cli [now pins the shim contract — dies with the
+  shim], ze-switch-env-override [pins the planner's test-only functions],
+  doctor-ze-checks, provider-sunset-doctor.serial gets REWRITTEN generic not
+  deleted) + update ~40 coupled files; drop the zeroentropy-live job +
+  ZEROENTROPY_API_KEY secret from .github/workflows/e2e.yml:239,250,377 (line refs
+  refreshed by the interim cleanup wave; already date-skip-gated since v0.46.3);
+  scripts/test-weights.json rows. Also remove 'ze-switch' from the
+  cli-help-without-brain HELP_WITHOUT_BRAIN list when the shim dies.
 - [ ] **P2 — Config + docs.** `zeroentropy_api_key` config key: keep
   parseable-but-warned (removing it would make old config.json files fail to
   load); delete docs/ai-providers/zeroentropy.md + its scripts/llms-config.ts
@@ -101,6 +350,33 @@ Staged-deletion discipline (ship replacements → migrate call sites → update 
   zerank-2) for users who want max rerank quality on a dedicated key. Wire shape
   differs from the ZE/voyage dialect — needs its own `top_param`/response mapping
   audit. Filed from the v0.46.3 CEO review (deferred cherry-pick).
+- [ ] **P3 — Standalone reranker config-set should purge the query cache.**
+  `gbrain config set search.reranker.model ...` (the playbook's manual path)
+  changes rank order but leaves cached result sets until the 3600s TTL expires.
+  The in-migration path (`migrate embeddings --reranker`) already purges in the
+  same transaction — mirror that on the bare config-set path (or fold the
+  reranker model into the knobs hash, the same contamination class as
+  graph_signals/relational). Filed from the migration-hardening wave review.
+- [ ] **P2 — Facts re-embed backfill command.** A dimension transition drops
+  `facts.embedding`; facts regenerate only on their next write/`gbrain extract`
+  pass. `migrate embeddings --status` + the completion output now report the
+  pending census, but there is no command to proactively re-embed the backlog.
+  Filed from the migration-hardening wave (outside-voice C5).
+- [ ] **P2 — Tier-preserving re-embed.** A bulk stale re-embed (embedding
+  migration included) lands per_chunk_synopsis pages at the TITLE context tier
+  (embedding-context.ts:211, embed.ts restamp) — a retrieval-quality downgrade
+  the migration now REPORTS (plan consent line + completion count) but cannot
+  avoid. A tier-preserving mode needs its own LLM-spend consent design (synopsis
+  regeneration costs per page). Filed from the migration-hardening wave
+  (outside-voice C6).
+- [ ] **P3 — `gbrain config set embedding_model` refusal still prescribes
+  wipe-and-reinit.** The v0.37.11.0 hard-refuse in `src/commands/config.ts`
+  prints `mv brain.pglite` + re-init (PGLite) / "see docs/embedding-migrations.md"
+  (Postgres) as the switch recipe. The supported path is now `gbrain migrate
+  embeddings --to <provider:model> --dim <N>` on both engines — render this
+  surface via `renderCanonicalMigrationCommands` (`src/core/ai/defaults.ts`) and
+  add it to `test/canonical-migration-command.test.ts`'s sweep so it can't drift
+  again. Filed from the v0.46.9.0 /document-release audit.
 
 ## Issues #5+#6 follow-ups (pool starvation + process isolation; plan: ~/.claude/plans/system-instruction-you-are-working-witty-moore.md)
 
@@ -293,10 +569,15 @@ Each was explicitly deferred in the pass's CEO/eng/outside-voice reviews.
 - [ ] **P2 — `jobs submit --max-pending` public flag.** maxPending stays an
   internal submit option this wave (Codex C4): its semantics exclude
   delayed/paused/waiting-children rows, and identity is (name, queue, source)
-  so distinct payloads collapse. Decide the public contract (include delayed?
-  explicit scope key?) after the primitive soaks in autopilot, then mirror
-  parseMaxWaitingFlag (clamp [1,100]) + help + flag-registry regen + optional
-  submit_job MCP param. Where: src/commands/jobs.ts, src/core/operations.ts.
+  so distinct payloads collapse. NOTE (five-issue fix wave): the
+  payload-DISTINCT dedupe primitive now exists — admission param-coalescing
+  (`coalesce_params` / minions.coalesce_params.<name>, hash of the full
+  payload incl. owner lane) covers the "identical submits collapse, distinct
+  ones don't" case; --max-pending remains the single-flight-per-scope story.
+  Decide the public contract (include delayed? explicit scope key?) after the
+  primitive soaks in autopilot, then mirror parseMaxWaitingFlag (clamp
+  [1,100]) + help + flag-registry regen + optional submit_job MCP param.
+  Where: src/commands/jobs.ts, src/core/operations.ts.
 - [ ] **P2 — maxPending at the other single-flight dispatch sites.** The
   freshness sync submit (src/commands/autopilot.ts freshness loop) and the
   targeted remediation steps (autopilot.ts targeted-submit loop) still use
@@ -1587,13 +1868,14 @@ Filed from the self-upgrading-gbrain wave. All deliberately scoped OUT (D7a/D7b
 + eng-review notes); none is a v0.42.12.0 regression. Plan + reviews at
 `~/.claude/plans/system-instruction-you-are-working-nifty-badger.md`.
 
-- [ ] **P2 — Signature/checksum verification before applying an auto-upgrade
-  (D7a).** Auto-upgrade currently trusts TLS + GitHub, same as `gbrain upgrade`.
-  This is the prerequisite for ever making `auto` a default instead of opt-in:
-  verify a release-asset checksum/signature before `atomicReplace`. Until it
-  lands, `self_upgrade.mode` stays opt-in everywhere. Touches
-  `src/core/binary-self-update.ts` (stage step) + the release workflow (publish
-  the signature/checksum alongside the asset).
+- [x] **P2 — Signature/checksum verification before applying an auto-upgrade
+  (D7a).** **Completed:** v0.46.12.3 (2026-08-16). `verifyIntegrity` in
+  `src/core/binary-self-update.ts` now checks the downloaded asset's SHA-256 +
+  builder identity against the GitHub build-provenance attestation (already
+  published by release.yml's `attest-build-provenance`) BEFORE chmod/exec/rename
+  — fail-closed with typed `integrity_failed`/`integrity_unavailable`. No new
+  release asset needed. Residual (from-source/`latest-stable` install paths) is
+  re-filed as the P3 entry at the top of this file.
 - [ ] **P2 — `gbrain serve` host graceful request-drain on auto-upgrade (D7b).**
   The silent channel currently skips while any request/stream/job/tx is in
   flight and retries next window. A true drain (stop accepting new, finish
@@ -4048,6 +4330,16 @@ verify Voyage adapter integration in `src/core/ai/recipes/voyage.ts`).
 ### Token rotation: `gbrain auth rotate <name>` + `rotate_token` MCP op
 **Priority:** P2
 
+**Deferral note (CLI→MCP gap-closure wave, 2026-08-16, user decision D3A):**
+deliberately NOT bundled into the gap-closure wave — there is no CLI to
+mirror yet (this TODO is its own work item, not a CLI→MCP gap), and a token
+that can mint its own successor turns a leaked credential into persistence +
+operator lock-out, so it needs its own auth-plane design pass. Sketch agreed
+at review: admin scope, NOT localOnly (remote rotation is the point),
+SELF-rotation only (the calling token/client — never a name param), returns
+the new secret exactly once, rate-limited via the RateLimiter house pattern,
+and ships in the same PR as the `gbrain auth rotate` CLI.
+
 **What:** Atomic rotate for legacy + OAuth tokens. Issue a new token in the same TX as the revocation of the old, no overlap window. Refresh-token rotation already exists for OAuth; this is the unified user-facing surface (CLI + MCP).
 
 **Why:** Today rotation is `revoke + create`, with a window where neither token works. For long-lived bearer keys handed to agents, that's a reload outage every time the key gets rotated.
@@ -4058,7 +4350,15 @@ verify Voyage adapter integration in `src/core/ai/recipes/voyage.ts`).
 **Depends on:** Nothing.
 
 ### Migration introspection in `get_health`
-**Priority:** P3
+**Priority:** P3 — **DONE (CLI→MCP gap-closure wave, 2026-08-16).** The
+`get_health` OP now returns `migrations {pending, partial, wedged,
+skipped_future}` composed at the op layer from the new
+`src/core/migration-ledger.ts` (version strings only). Op-layer composition
+was chosen over this TODO's engine-method wording: the ledger is a
+filesystem JSONL, engine-agnostic — growing `BrainEngine.getHealth()` would
+have duplicated a file read in both engines. Pinned by
+`test/migration-ledger.test.ts` + `test/get-job-stats-op.test.ts`'s sibling
+patterns.
 
 **What:** Extend `BrainEngine.getHealth()` return shape with `migrations: { pending: [...], wedged: [...] }`. `gbrain doctor` already shows this; expose it via the MCP op so remote agents can detect partial-migration state without invoking `doctor` separately.
 
@@ -6418,3 +6718,36 @@ covers DEAD logs; go-forward capture beyond Claude Code is deliberately absent.
   are heavy machinery for a benign-cost race; the retriage help documents
   the behavior. Context: outside-voice CX5 on the #4152 ship review.
   Effort: M.
+
+## Local-lane green wave follow-ups (filed at build time)
+
+- [ ] **P2 — Gate `installSigchldHandler()` on `import.meta.main` too.** Same
+  class as the process-cleanup SIGTERM leak fixed in this wave (cli.ts:3-4):
+  a process-wide SIGCHLD reaper installs into any process that merely imports
+  cli.ts — in a bun test runner it could race Bun's own child reaping and
+  steal spawn exit statuses. No observed failure yet; move it inside the
+  import.meta.main seam with a soak run of the full suite before landing.
+  Effort: S.
+- [ ] **P2 — CI e2e lane runs only 8 of ~187 e2e files.** The other ~179 run
+  only via local `bun run test:e2e`, which is how 13 files rotted undetected
+  across v0.42–v0.46 waves (this wave's fix list). Options: a nightly
+  heavy-tests job running the full run-e2e.sh list against the compose
+  postgres, or fold the full lane into ci-local + a required weekly schedule.
+  Decide venue, then wire `scripts/e2e-test-map.ts` coverage accordingly.
+  Effort: M.
+- [ ] **P3 — run-unit-parallel external-kill reporting contradicts itself.**
+  A shard killed by an in-suite exit(143) prints `pass=N fail=0` +
+  `oom_rescue_failed=0real` in the final banner yet exits 1, and the
+  oom-rescue summary line says "real failures confirmed" with fail=0. Make
+  the banner name the killed shard + rescue outcome explicitly so the next
+  mystery kill is a 1-minute diagnosis instead of a bisect. Effort: S.
+- [ ] **P2 — skills.test.ts e2e leaks a git commit into the HOST repo.** During
+  the v0.46.8.0 ship gate, the e2e ingest-skill run created a real commit
+  ("ingest NovaMind board update transcript") with fixture pages
+  (companies/, people/, meetings/) at the WORKSPACE repo root — the test's
+  write-through/commit path resolved the host cwd instead of its tmp fixture
+  repo, despite run-e2e.sh's HOME isolation. Caught only because a soft reset
+  surfaced the staged files. Find the cwd-resolving path in the ingest skill
+  lane (likely repo-root fallback when the source local_path isn't threaded),
+  fix it to fail closed, and add a run-e2e.sh post-run guard that fails the
+  lane if `git status` at the host root gained tracked-file changes. Effort: M.

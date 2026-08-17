@@ -770,11 +770,17 @@ describe('LEARN_INSTRUCTION names only real MCP tools', () => {
   // The self-orientation block is pasted into a connected agent verbatim. Every
   // tool it names MUST be MCP-exposed, or the agent calls an "unknown tool".
   // The exposed set is pinned end-to-end by test/e2e/serve-stdio-roundtrip.ts.
-  test('names put_page (the real MCP write tool), not capture (CLI-only)', () => {
+  test('every named tool is a real op, and capture (now an MCP op, gap-closure wave) is on the starter surface', async () => {
     expect(LEARN_INSTRUCTION).toContain('put_page');
-    // `capture` is a CLI-only convenience wrapper, not an MCP tool — naming it
-    // here told connected agents to call a tool the server does not expose.
-    expect(LEARN_INSTRUCTION).not.toContain('capture');
+    expect(LEARN_INSTRUCTION).toContain('capture');
+    const { operationsByName } = await import('../src/core/operations.ts');
+    const { STARTER_OPS } = await import('../src/mcp/surface.ts');
+    for (const name of ['get_brain_identity', 'list_skills', 'search', 'query', 'get_page', 'put_page', 'capture', 'think', 'find_experts', 'list_brain_skillpack']) {
+      expect(operationsByName[name]).toBeDefined();
+    }
+    // The plugin/starter connect lanes retired the "unknown tool: capture"
+    // FAQ — that only holds if starter actually lists it [EV8].
+    expect(STARTER_OPS.has('capture')).toBe(true);
   });
   test('still steers the agent to get_brain_identity + list_skills + brain-first search', () => {
     expect(LEARN_INSTRUCTION).toContain('get_brain_identity');

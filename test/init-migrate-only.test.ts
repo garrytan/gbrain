@@ -26,7 +26,10 @@ function run(args: string[]): { exitCode: number; stdout: string; stderr: string
   // "no config" error-path tests need loadConfig() to return null, which it
   // won't if any env var fallback is set (src/core/config.ts:30). Tests
   // that seed their own config use freshHomeWithConfig() below.
-  const env = { ...process.env, HOME: tmp } as Record<string, string | undefined>;
+  // Both HOME and GBRAIN_HOME must point at the fixture dir: config/path
+  // resolution prefers GBRAIN_HOME (which the test preload sets to its own
+  // scratch), so HOME alone leaves the child reading the wrong .gbrain.
+  const env = { ...process.env, HOME: tmp, GBRAIN_HOME: tmp } as Record<string, string | undefined>;
   delete env.DATABASE_URL;
   delete env.GBRAIN_DATABASE_URL;
   try {

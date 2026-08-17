@@ -426,7 +426,12 @@ export function renderTakesFence(takes: ParsedTake[]): string {
     const resolved   = t.resolvedAt       ? safe(t.resolvedAt)              : '';
     const quality    = t.resolvedQuality  ?? '';
     const evidence   = t.resolvedEvidence ? safe(t.resolvedEvidence)        : '';
-    const value      = t.resolvedValue !== undefined ? formatWeight(t.resolvedValue) : '';
+    // F3: resolvedValue is an UNBOUNDED measured value (usd/count/pct), NOT a
+    // weight on the 0..1 grid. formatWeight's 2-decimal round would diverge md
+    // from the DB (12345.678 → 12345.68). Render it full-precision. Only the
+    // weight cell (`w` above) stays on formatWeight; `value` is the sole
+    // numeric resolution cell.
+    const value      = t.resolvedValue !== undefined ? String(t.resolvedValue) : '';
     const unit       = t.resolvedUnit     ? safe(t.resolvedUnit)            : '';
     const by         = t.resolvedBy       ? safe(t.resolvedBy)              : '';
     return `${baseCells} ${resolved} | ${quality} | ${evidence} | ${value} | ${unit} | ${by} |`;

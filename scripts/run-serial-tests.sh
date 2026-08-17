@@ -30,6 +30,13 @@
 
 set -euo pipefail
 
+# Fixture tests that `git commit` in temp repos must not inherit the developer's
+# global commit.gpgsign — a signing gpg-agent can OOM under full-suite memory
+# pressure and fail the commit ("gpg: signing failed: Cannot allocate memory",
+# #1696). git applies these env keys as highest-precedence config on every
+# invocation in this process tree, so all child `git commit`s run unsigned.
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="commit.gpgsign" GIT_CONFIG_VALUE_0="false"
+
 # #3485: serial tests need no database — strip ambient DB URLs at this
 # wrapper boundary (same four-layer guard as run-slow-tests.sh / the
 # parallel runner) so the bunfig preload guard passes and nothing can
@@ -161,11 +168,21 @@ echo "[serial-tests] ${#files[@]} file(s): pool=$POOL (${#exclusive_present[@]} 
 run_one_file() {
   # $1 file, $2 log path, $3 exit-sentinel path, $4 wrap ("wrap"|"nowrap")
   local f="$1" log="$2" exitf="$3" wrap="$4" rc=0
+  # COVERAGE_DIR (opt-in): every bun process needs its OWN coverage dir — a
+  # second process reusing a dir OVERWRITES lcov.info. The log basename is
+  # unique per file (pool idx / exclusive i), so it keys the dir. Empty/unset
+  # COVERAGE_DIR leaves the exec line byte-identical to pre-coverage behavior.
+  local cov_args=()
+  if [ -n "${COVERAGE_DIR:-}" ]; then
+    local key
+    key=$(basename "$log" .log)
+    cov_args=(--coverage --coverage-reporter=lcov --coverage-dir="$COVERAGE_DIR/serial-$key")
+  fi
   if [ "$wrap" = "wrap" ] && [ -n "$TIMEOUT_BIN" ]; then
     "$TIMEOUT_BIN" -k 15 "$PER_FILE_TIMEOUT" \
-      bun test --max-concurrency=1 --timeout=120000 "$f" > "$log" 2>&1 || rc=$?
+      bun test --max-concurrency=1 --timeout=120000 ${cov_args[@]+"${cov_args[@]}"} "$f" > "$log" 2>&1 || rc=$?
   else
-    bun test --max-concurrency=1 --timeout=120000 "$f" > "$log" 2>&1 || rc=$?
+    bun test --max-concurrency=1 --timeout=120000 ${cov_args[@]+"${cov_args[@]}"} "$f" > "$log" 2>&1 || rc=$?
   fi
   echo "$rc" > "$exitf"
 }
@@ -307,6 +324,14 @@ if [ "$fail_count" -gt 0 ]; then
     echo "  - $f" >&2
   done
   exit 1
+fi
+# Lane manifest: written ONLY on a fully green run (complete:true means the
+# lcov data represents every serial file). merge-lcov.ts's --manifest-expect
+# treats a missing manifest as a degraded lane.
+if [ -n "${COVERAGE_DIR:-}" ]; then
+  LCOV_COUNT=$(find "$COVERAGE_DIR" -name 'lcov.info' 2>/dev/null | grep -c '^' || true)
+  printf '{"lane":"serial","sha":"%s","lcovCount":%s,"complete":true}\n' \
+    "$(git rev-parse HEAD)" "${LCOV_COUNT:-0}" > "$COVERAGE_DIR/lane-manifest.json"
 fi
 # bun-summary-format aggregate: run-unit-parallel.sh's headline counter
 # (bun_summary_count awk: $1 numeric, $2 == "pass") reads this line — without

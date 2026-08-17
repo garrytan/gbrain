@@ -122,7 +122,37 @@ fi
 
 # Convert newline-separated file list to argv. xargs handles the
 # whitespace correctly without word-splitting on spaces in paths.
+#
+# COVERAGE_DIR (opt-in): when set, run under bun's lcov coverage into
+# $COVERAGE_DIR/shard and write a lane manifest on success. xargs -x makes
+# an argv overflow FAIL LOUD instead of silently batching into a second bun
+# process — a second process reusing the same coverage dir OVERWRITES
+# lcov.info, silently losing the first batch's line data. BSD xargs only
+# accepts -x together with -n (GNU accepts both spellings), so we pass
+# -n 100000: far beyond any real shard's file count, it keeps everything in
+# ONE invocation while -x turns "args do not fit" into a hard error.
+# merge-lcov.ts's lcovCount!=1 manifest tripwire is the second line of
+# defense. When COVERAGE_DIR is empty/unset both arrays stay empty and the
+# exec line is byte-identical to the pre-coverage behavior.
+COVERAGE_ARGS=()
+XARGS_FLAGS=()
+if [ -n "${COVERAGE_DIR:-}" ]; then
+  COVERAGE_ARGS=(--coverage --coverage-reporter=lcov --coverage-dir="$COVERAGE_DIR/shard")
+  XARGS_FLAGS=(-n 100000 -x)
+fi
 # --max-concurrency mirrors the local runner: unbounded intra-process
 # concurrency under parallel PGLite boots produced real shard deaths (the
 # 22-minute matrix timeout in test.yml records 13 of them).
-printf '%s\n' "$SHARD_FILES" | xargs bun test --timeout=60000 --max-concurrency="${GBRAIN_TEST_MAX_CONCURRENCY:-4}"
+rc=0
+printf '%s\n' "$SHARD_FILES" | xargs ${XARGS_FLAGS[@]+"${XARGS_FLAGS[@]}"} bun test --timeout=60000 --max-concurrency="${GBRAIN_TEST_MAX_CONCURRENCY:-4}" ${COVERAGE_ARGS[@]+"${COVERAGE_ARGS[@]}"} || rc=$?
+
+# Lane manifest: written ONLY on a fully green run (complete:true means the
+# lcov data represents the whole shard). The real exit code is preserved
+# either way. lcovCount != 1 downstream (merge-lcov.ts) means the xargs -x
+# tripwire logic above was defeated somehow — merge marks the run degraded.
+if [ -n "${COVERAGE_DIR:-}" ] && [ "$rc" -eq 0 ]; then
+  LCOV_COUNT=$(find "$COVERAGE_DIR" -name 'lcov.info' 2>/dev/null | grep -c '^' || true)
+  printf '{"lane":"shard-%s","sha":"%s","lcovCount":%s,"complete":true}\n' \
+    "$SHARD_INDEX" "$(git rev-parse HEAD)" "${LCOV_COUNT:-0}" > "$COVERAGE_DIR/lane-manifest.json"
+fi
+exit "$rc"

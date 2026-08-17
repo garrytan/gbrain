@@ -17,7 +17,7 @@ which one applies to their current task.
 
 ## When to surface a calibration warning
 
-The four doctor checks (in `src/commands/doctor.ts`):
+The four doctor checks (in `src/commands/doctor/checks/calibration.ts`):
 
 - `abandoned_threads` — informational. Count of high-conviction takes
   (weight >= 0.7) older than 12 months that haven't been superseded or

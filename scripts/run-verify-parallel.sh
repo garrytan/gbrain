@@ -94,6 +94,7 @@ CHECKS=(
   "check:doc-history"
   "check:fixture-privacy"
   "check:source-scope-onboard"
+  "check:getpage-scope"
   "check:no-double-retry"
   "check:batch-audit-site"
   "check:engine-dynamic-import"
@@ -111,6 +112,9 @@ CHECKS=(
   # Revived registered-but-never-executed guards (this pass):
   "check:pagetype-exhaustive"
   "check:pg-url-redaction"
+  # Containment sprint: module-size ratchet + structural-suite freshness.
+  "check:module-size"
+  "check:structural-manifest"
 )
 
 if [ "${#CHECKS[@]}" -eq 0 ]; then

@@ -16,13 +16,16 @@ CI runs three automated security checks alongside secret scanning (Gitleaks):
   (`.github/workflows/osv-scanner.yml`) runs weekly and on any PR that touches
   `package.json` or `bun.lock`.
 - **Static analysis (SAST)** — Semgrep CE (`.github/workflows/semgrep.yml`)
-  runs on every PR and weekly. It is currently **advisory (non-blocking)**
-  while the finding baseline is tuned; the graduation path to a blocking check
-  is documented in the workflow file.
+  runs on every PR and weekly. On a PR it is **blocking for findings new since
+  the PR base** (`--baseline-commit`), so a net-new issue fails the check while
+  pre-existing findings never block an unrelated PR. Scheduled/dispatch runs do
+  a full-tree report-only scan.
 - **Release binary provenance** — release builds
   (`.github/workflows/release.yml`) attest each compiled binary with
-  [GitHub artifact attestations](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations).
-  Verify a downloaded release binary with:
+  [GitHub artifact attestations](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations),
+  and build the admin UI fresh from `admin/src` at release time so the shipped
+  binary embeds a bundle traceable to source (not committed `admin/dist` bytes).
+  Verify a downloaded release binary manually with:
 
   ```bash
   gh attestation verify ./gbrain-darwin-arm64 -R garrytan/gbrain
@@ -31,6 +34,30 @@ CI runs three automated security checks alongside secret scanning (Gitleaks):
 
 All security workflows use SHA-pinned actions and least-privilege permissions,
 enforced structurally by actionlint on every workflow change.
+
+### Install-path trust model
+
+- **Compiled-binary self-update (`gbrain upgrade` on `darwin-arm64` /
+  `linux-x64`)** verifies integrity automatically before it installs: it
+  computes the downloaded binary's SHA-256 and checks it against the build
+  provenance attestation fetched from the GitHub REST API — a different origin
+  than the asset CDN — confirming both the attested digest and that the
+  attestation's builder id is this repo's release workflow. Verification is
+  fail-closed: on a mismatch or an unfetchable attestation, the download is
+  discarded and the running binary is left untouched. It also refuses a binary
+  whose reported version doesn't match the release it was fetched for (a
+  downgrade-replay guard). The dependency-free check is GitHub-account trust
+  plus origin separation and a digest/identity match against the attestation
+  fetched over TLS; it does NOT independently verify the attestation's Sigstore
+  signature (the Fulcio certificate chain or Rekor inclusion).
+- **From-source and pinned-tag installs remain trust-on-first-use.**
+  `bun install -g github:garrytan/gbrain#latest-stable` follows a force-moved
+  tag, and the `codex-plugin` branch / template repo are force-published; these
+  paths trust TLS + GitHub without an independent integrity check. From-source
+  installs also serve the committed `admin/dist` bundle (devDeps for a fresh
+  admin build are not installed by a global install), so that bundle is
+  trust-on-first-use on this path. For the strongest guarantee, install the
+  attested release binary and run `gh attestation verify` as above.
 
 ## Remote MCP Security
 

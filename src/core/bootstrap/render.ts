@@ -287,9 +287,30 @@ export function renderWorkspace(workspaceDir: string, opts: RenderOptions = {}):
 
   // Phase 2 — write, never clobbering without force [plan: render never
   // clobbers]. Backups for a forced overwrite land under one per-run
-  // timestamp dir.
+  // timestamp dir. The stamp has MILLISECOND granularity, so two forced
+  // renders of the same workspace within the same millisecond (a fast CI
+  // runner re-rendering back-to-back) would collide on the exclusive `wx`
+  // backup write with EEXIST. Claim the stamp dir ATOMICALLY (non-recursive
+  // mkdir; EEXIST → bump a numeric suffix) lazily on the first backup, so
+  // every render call owns a distinct backup dir.
   const result: RenderResult = { written: [], skipped: [], backups: [] };
-  const backupStamp = new Date().toISOString().replace(/[:.]/g, '-');
+  let backupStamp: string | null = null;
+  const claimBackupStamp = (): string => {
+    if (backupStamp) return backupStamp;
+    const root = join(workspaceDir, '.gbrain-bootstrap-backups');
+    mkdirSync(root, { recursive: true });
+    const base = new Date().toISOString().replace(/[:.]/g, '-');
+    for (let n = 0; ; n++) {
+      const candidate = n === 0 ? base : `${base}-${n}`;
+      try {
+        mkdirSync(join(root, candidate)); // non-recursive: EEXIST = taken
+        backupStamp = candidate;
+        return candidate;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+      }
+    }
+  };
 
   for (const { dest, content } of rendered) {
     if (!isBootstrapRenderDest(dest)) {
@@ -304,10 +325,11 @@ export function renderWorkspace(workspaceDir: string, opts: RenderOptions = {}):
         result.skipped.push(dest);
         continue;
       }
-      const backupAbs = join(workspaceDir, '.gbrain-bootstrap-backups', backupStamp, dest);
+      const stamp = claimBackupStamp();
+      const backupAbs = join(workspaceDir, '.gbrain-bootstrap-backups', stamp, dest);
       mkdirSync(dirname(backupAbs), { recursive: true });
       writeFileSync(backupAbs, readFileSync(abs), { flag: 'wx' });
-      result.backups.push(join('.gbrain-bootstrap-backups', backupStamp, dest));
+      result.backups.push(join('.gbrain-bootstrap-backups', stamp, dest));
     }
     mkdirSync(dirname(abs), { recursive: true });
     const tmp = `${abs}.tmp-${process.pid}`;

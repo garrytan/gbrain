@@ -105,13 +105,13 @@ describe('serve stdio round-trip E2E (local PGLite → real MCP tool calls)', ()
     const { tools } = await client!.listTools();
     const names = new Set(tools.map((t) => t.name));
     // The core MCP tools the connect LEARN_INSTRUCTION promises always work.
-    // `capture` is deliberately NOT here — it's a CLI-only wrapper, not an MCP
-    // tool; the agent writes via put_page (regression guard for the stale
-    // LEARN_INSTRUCTION that named capture as an MCP tool).
+    // `capture` earned its MCP slot in the CLI-to-MCP gap-closure wave: the
+    // LEARN_INSTRUCTION names it, so tools/list parity requires it advertised
+    // (regression guard against re-demoting it to a CLI-only wrapper).
     for (const core of ['search', 'query', 'get_page', 'put_page', 'get_brain_identity', 'think', 'find_experts']) {
       expect(names.has(core)).toBe(true);
     }
-    expect(names.has('capture')).toBe(false); // CLI-only, must not be advertised as MCP
+    expect(names.has('capture')).toBe(true); // MCP-advertised since the gap-closure wave
   }, 30_000);
 
   test('tools/call get_brain_identity returns version + engine + a populated counter', async () => {

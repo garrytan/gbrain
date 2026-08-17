@@ -162,6 +162,16 @@ export interface EmbedOpts {
    * `gbrain embed --stale --include-null-signature` set this.
    */
   includeNullSignature?: boolean;
+  /**
+   * Migration-hardening: locks the CALLER already holds (the migration
+   * orchestrator acquires the per-source embed-backfill locks up front, before
+   * the schema transition, and holds them through the drain). When set with
+   * `singleFlight`, the drain does NOT re-acquire the same keys — re-acquiring
+   * would always fail against our own holder and misreport `lock_skipped`
+   * ("Migration paused") on every run. Ownership stays with the caller: this
+   * function refreshes them (heartbeat) but never releases them.
+   */
+  heldLocks?: DbLockHandle[];
 }
 
 /**
@@ -215,6 +225,14 @@ export interface EmbedResult {
    * misreporting embed failures.
    */
   lock_skipped?: boolean;
+  /**
+   * Set when the single-flight lock heartbeat discovered the lock was stolen
+   * (refresh matched 0 rows) or kept erroring: mutual exclusion is gone, so
+   * the drain ABORTED with partial progress banked rather than racing the
+   * new holder. Resumable — re-run the same command once the other holder
+   * finishes (the fenced refresh means we can never steal it back silently).
+   */
+  lock_lost?: boolean;
   /**
    * E1 (paced-backfill): end-of-run pacing telemetry. Present ONLY when pacing
    * was active (enabled bundle). The number the operator could not get from an
@@ -360,8 +378,15 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
     // sorted (deterministic) order to avoid acquire-order deadlock. Released in
     // the finally below. Skipped for dryRun and when the caller didn't opt in
     // (cycle / catch-up / sync-auto-embed callers never single-flight).
+    //
+    // Migration hardening: when the caller ALREADY holds the locks
+    // (opts.heldLocks — the migrate-embeddings orchestrator acquires them
+    // before the schema transition), use those instead of re-acquiring — a
+    // re-acquire would always fail against our own holder and misreport
+    // lock_skipped. Ownership stays with the caller (no release here).
     const sfLocks: DbLockHandle[] = [];
-    if (opts.singleFlight && opts.stale && !opts.dryRun) {
+    const callerHeld = opts.heldLocks !== undefined && opts.heldLocks.length > 0;
+    if (callerHeld === false && opts.singleFlight && opts.stale && !opts.dryRun) {
       let lockSourceIds: string[];
       if (opts.sourceId) {
         lockSourceIds = [opts.sourceId];
@@ -399,6 +424,57 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
         sfLocks.push(lock);
       }
     }
+
+    // Lock heartbeat (round-2 C3/#5): the TTL is 60 minutes and million-chunk
+    // drains run longer, so without refresh another process could steal the
+    // lock mid-drain and mutual exclusion silently ends. Refresh every 5
+    // minutes; a refresh that returns false (fenced predicate matched 0 rows
+    // = stolen/released) or that keeps THROWING (3 consecutive transient
+    // errors) aborts the drain — continuing without the lock is the one
+    // thing this machinery exists to prevent. Covers both our own sfLocks
+    // and caller-held locks (the migration's).
+    const activeLocks: DbLockHandle[] = callerHeld ? [...(opts.heldLocks ?? [])] : sfLocks;
+    const lockAbort = new AbortController();
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
+    // Test seam: default 5 min; tests shrink it to exercise the loss path.
+    const heartbeatMs = Number(process.env.GBRAIN_EMBED_LOCK_HEARTBEAT_MS) > 0
+      ? Number(process.env.GBRAIN_EMBED_LOCK_HEARTBEAT_MS)
+      : 5 * 60 * 1000;
+    if (activeLocks.length > 0 && !opts.dryRun) {
+      let consecutiveErrors = 0;
+      let beating = false;
+      heartbeat = setInterval(() => {
+        if (beating) return; // a slow tick must not stack
+        beating = true;
+        void (async () => {
+          try {
+            if (lockAbort.signal.aborted) return;
+            for (const h of activeLocks) {
+              const ok = await h.refresh();
+              if (!ok) {
+                result.lock_lost = true;
+                serr('  [embed] single-flight lock was stolen or released mid-run; aborting the drain (partial progress is banked — re-run to resume).');
+                if (heartbeat !== undefined) clearInterval(heartbeat);
+                lockAbort.abort();
+                return;
+              }
+            }
+            consecutiveErrors = 0;
+          } catch {
+            consecutiveErrors += 1;
+            if (consecutiveErrors >= 3) {
+              result.lock_lost = true;
+              serr('  [embed] lock heartbeat failed 3 consecutive times; aborting the drain rather than running without mutual exclusion.');
+              if (heartbeat !== undefined) clearInterval(heartbeat);
+              lockAbort.abort();
+            }
+          } finally {
+            beating = false;
+          }
+        })();
+      }, heartbeatMs);
+    }
+    const drainSignal = anySignal(lockAbort.signal, opts.signal);
 
     // Resolve DB-contention pacing (env > config > bundle; env is the
     // incident escape hatch). dryRun skips it — no writes to pace. A
@@ -443,8 +519,13 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
         paceMaxConcurrency,
         quiet: opts.quiet,
         includeNullSignature: opts.includeNullSignature,
-      }, opts.signal);
+      }, drainSignal);
+    } catch (e) {
+      // A heartbeat-triggered abort is a clean, resumable stop (lock_lost is
+      // already set + explained on stderr) — not an error to propagate.
+      if (!(result.lock_lost && e instanceof AbortError)) throw e;
     } finally {
+      if (heartbeat !== undefined) clearInterval(heartbeat);
       // E1: surface pacing telemetry (human + structured) when pacing was on.
       const snap = pacer.snapshot();
       if (snap.enabled) {
@@ -563,12 +644,21 @@ export async function runEmbed(engine: BrainEngine, args: string[]): Promise<Emb
       paramBuilder: (cleanArgs) => {
         const slugsI = cleanArgs.indexOf('--slugs');
         const srcI = cleanArgs.indexOf('--source');
+        const bsI = cleanArgs.indexOf('--batch-size');
+        const bsRaw = bsI >= 0 ? parseInt(cleanArgs[bsI + 1] ?? '', 10) : NaN;
+        const prI = cleanArgs.indexOf('--priority');
         return {
           all: cleanArgs.includes('--all'),
           stale: cleanArgs.includes('--stale'),
           dryRun: cleanArgs.includes('--dry-run'),
           slugs: slugsI >= 0 ? cleanArgs.slice(slugsI + 1).filter(a => !a.startsWith('--')) : undefined,
           sourceId: srcI >= 0 ? cleanArgs[srcI + 1] : undefined,
+          // Background parity (D7): these four used to be silently DROPPED,
+          // degrading the documented recovery command to a plain stale run.
+          catchUp: cleanArgs.includes('--catch-up'),
+          includeNullSignature: cleanArgs.includes('--include-null-signature'),
+          ...(Number.isFinite(bsRaw) && bsRaw > 0 && { batchSize: Math.min(10_000, bsRaw) }),
+          ...(prI >= 0 && cleanArgs[prI + 1] === 'recent' && { priority: 'recent' }),
           // CX1+CX5: carry explicit pace overrides into the `embed` job payload
           // (the job name CLI --background actually submits). The handler
           // re-resolves env > config > bundle at execution.
@@ -704,8 +794,12 @@ async function embedPage(
     }
   }
 
-  // Embed chunks without embeddings
-  const toEmbed = chunks.filter(c => !c.embedded_at);
+  // Embed chunks without embeddings. embedding_is_null is the stored-vector
+  // truth: a schema rebuild NULLs vectors without touching embedded_at, so
+  // keying on embedded_at alone silently no-ops ("all chunks already
+  // embedded") on a rebuild-darkened page. Older callers that selected chunks
+  // without the boolean fall back to embedded_at.
+  const toEmbed = chunks.filter(c => !c.embedded_at || c.embedding_is_null === true);
   result.total_chunks += chunks.length;
   result.skipped += chunks.length - toEmbed.length;
 
@@ -770,7 +864,12 @@ async function embedPage(
   // such a page and then stamps it. #3037: a partial failure leaves failed
   // chunks NULL, so don't stamp then either.
   if (failed === 0 && toEmbed.length === chunks.length) {
-    await engine.setPageEmbeddingSignature(slug, { sourceId, signature: currentEmbeddingSignature() });
+    // D9 honesty: no stamp when the gateway is unconfigured — a wrong
+    // signature is worse than none (NULL = unknown provenance).
+    const stampSig = currentEmbeddingSignature();
+    if (stampSig) {
+      await engine.setPageEmbeddingSignature(slug, { sourceId, signature: stampSig });
+    }
     // #3507: a fully re-embedded per_chunk_synopsis page landed at the
     // title tier — keep the stamped mode honest.
     await restampIfDemotedToTitleTier(engine, page, slug, page.source_id);
@@ -832,7 +931,9 @@ async function embedAll(
   // v0.41.31: current embedding provenance signature. Stamped onto pages
   // when their chunks are (re)embedded so a later model/dimension swap is
   // detectable as stale.
-  const signature = currentEmbeddingSignature();
+  // null when the gateway is unconfigured: skip stamping + signature-widened
+  // invalidation entirely (a wrong stamp is worse than none — D9 honesty).
+  const signature = currentEmbeddingSignature() ?? undefined;
   // ─────────────────────────────────────────────────────────────
   // Stale-only fast path: avoid the listPages + per-page getChunks
   // bomb that pulled every page row + every chunk's embedding column
@@ -944,11 +1045,14 @@ async function embedAll(
       await observed(pacer, () => engine.upsertChunks(page.slug, updated, pageOpts));
       // v0.41.31: stamp embedding provenance so a later model swap is
       // detectable as stale. #3037: not on partial failure — failed chunks
-      // stay NULL under unknown provenance.
+      // stay NULL under unknown provenance. D9: no stamp without a gateway
+      // (signature undefined) — a wrong stamp is worse than none.
       if (failed === 0) {
-        await observed(pacer, () =>
-          engine.setPageEmbeddingSignature(page.slug, { sourceId: pageSourceId, signature }),
-        );
+        if (signature) {
+          await observed(pacer, () =>
+            engine.setPageEmbeddingSignature(page.slug, { sourceId: pageSourceId, signature }),
+          );
+        }
         // #3507: --all fully re-embeds; a per_chunk_synopsis page landed at
         // the title tier — keep the stamped mode honest. #3037: gated on
         // failed === 0 — a partially-failed page was NOT fully re-embedded,

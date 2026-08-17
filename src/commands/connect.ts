@@ -117,15 +117,17 @@ export const AGENT_SPECS: Record<AgentId, AgentSpec> = {
 export const AGENT_IDS: AgentId[] = ['claude-code', 'codex', 'opencode', 'perplexity', 'generic'];
 
 // The named tools MUST be real MCP-exposed ops (verified by the round-trip
-// E2E). `capture` is intentionally absent: it's a CLI-only convenience wrapper,
-// not an MCP tool — the agent writes over MCP with `put_page`.
+// E2E). `capture` earned its slot in the CLI→MCP gap-closure wave (D2A):
+// it is a starter-surface op now — prefer it for quick notes (auto-slug +
+// dedupe), `put_page` for full-control writes.
 export const LEARN_INSTRUCTION =
   'Once connected, call the `get_brain_identity` tool (whose brain this is), then ' +
   '`list_skills` (everything it can do; if it errors, the host has not enabled skill ' +
   'publishing — these core tools still work: search, query, get_page, put_page, ' +
-  'think, find_experts). Then call `list_brain_skillpack`: if this brain ships a ' +
-  'skillpack, ask the user whether to install it (gbrain skillpack scaffold <spec>). ' +
-  'Always search the brain before answering or writing.';
+  'capture, think, find_experts). Then call `list_brain_skillpack`: if this brain ships ' +
+  'a skillpack, ask the user whether to install it (gbrain skillpack scaffold <spec>). ' +
+  'Prefer `capture` for quick notes (auto-slug + dedupe) and `put_page` for ' +
+  'full-control writes. Always search the brain before answering or writing.';
 
 const SECRET_NOTE =
   'Note: that bearer token is a long-lived, full-access secret — keep it private and ' +

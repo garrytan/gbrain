@@ -3,7 +3,7 @@
  *
  * Eng-review fold: reuses the v0.17 `~/.gbrain/cycle.lock` PID-liveness
  * pattern (src/core/cycle.ts:acquireFileLock) but scoped per page so two
- * parallel `gbrain takes add` calls + a `takes seed --refresh` running in
+ * parallel `gbrain takes add` calls + a refresh-mode `takes seed` running in
  * autopilot can't race on the same `<slug>.md` file.
  *
  * Lock file path: `~/.gbrain/page-locks/<sha256-of-slug>.lock`. SHA-256
@@ -87,13 +87,25 @@ function tryAcquireOnce(slug: string, lockPath: string): PageLockHandle | null {
       if (pidAlive && ageMs < LOCK_TTL_MS) {
         return null; // live holder
       }
-      // Stale — fall through to overwrite.
+      // Stale — remove it, then race for the exclusive create below. Two
+      // reclaimers can both unlink, but only ONE wins the 'wx' open; the
+      // pre-fix existsSync→writeFileSync sequence let both "acquire"
+      // (adversarial finding — the loser silently lost its writes).
+      try { unlinkSync(lockPath); } catch { /* already gone */ }
     } catch {
       // Any read/stat error → treat as stale.
+      try { unlinkSync(lockPath); } catch { /* already gone */ }
     }
   }
 
-  writeFileSync(lockPath, `${pid}\n${new Date().toISOString()}\n`);
+  // Exclusive create: mutual exclusion comes from O_EXCL, not from the
+  // (racy) existence check above. Losing the create race = lock not held.
+  try {
+    writeFileSync(lockPath, `${pid}\n${new Date().toISOString()}\n`, { flag: 'wx' });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EEXIST') return null;
+    throw e;
+  }
 
   return {
     slug,

@@ -1233,3 +1233,69 @@ describeBoth('Engine parity — ambient recall keyset + session cursor (v0.45.7)
     }
   });
 });
+
+// ── unscoped getPage deterministic multi-source tiebreak ─────────────────
+// The pre-fix behavior: unscoped getPage was `LIMIT 1` with no ORDER BY, so a
+// slug present in several sources returned an ARBITRARY row (and an
+// existence-check + write pair could target different sources). Both engines
+// now pin `ORDER BY (source_id = 'default') DESC, source_id ASC` —
+// default-source first, then stable alpha. Parity here catches either engine
+// dropping the clause.
+describeBoth('Engine parity — unscoped getPage multi-source tiebreak', () => {
+  let pgEngine: BrainEngine;
+  let pgliteEngine: PGLiteEngine;
+
+  beforeAll(async () => {
+    pgEngine = await setupDB();
+    pgliteEngine = new PGLiteEngine();
+    await pgliteEngine.connect({});
+    await pgliteEngine.initSchema();
+    for (const eng of [pgEngine, pgliteEngine]) {
+      for (const src of ['archive', 'work', 'zeta']) {
+        await eng.executeRaw(
+          `INSERT INTO sources (id, name, config) VALUES ($1, $1, '{}'::jsonb) ON CONFLICT (id) DO NOTHING`,
+          [src],
+        );
+      }
+      // Same slug in 'archive' AND 'default' — default must win even though
+      // 'archive' sorts first alphabetically.
+      await eng.putPage('tiebreak/with-default', {
+        type: 'note', title: 'archive row', compiled_truth: 'a', timeline: '',
+      }, { sourceId: 'archive' });
+      await eng.putPage('tiebreak/with-default', {
+        type: 'note', title: 'default row', compiled_truth: 'd', timeline: '',
+      }, { sourceId: 'default' });
+      // Same slug in 'work' AND 'zeta' only (no default row) — the
+      // alphabetically-first source wins.
+      await eng.putPage('tiebreak/no-default', {
+        type: 'note', title: 'work row', compiled_truth: 'w', timeline: '',
+      }, { sourceId: 'work' });
+      await eng.putPage('tiebreak/no-default', {
+        type: 'note', title: 'zeta row', compiled_truth: 'z', timeline: '',
+      }, { sourceId: 'zeta' });
+    }
+  }, 90_000);
+
+  afterAll(async () => {
+    await pgliteEngine.disconnect();
+    await teardownDB();
+  }, 30_000);
+
+  test('unscoped getPage prefers the default-source row on both engines', async () => {
+    for (const eng of [pgEngine, pgliteEngine]) {
+      const page = await eng.getPage('tiebreak/with-default');
+      expect(page).not.toBeNull();
+      expect(page!.source_id).toBe('default');
+      expect(page!.title).toBe('default row');
+    }
+  });
+
+  test('unscoped getPage falls back to the alphabetically-first source when no default row exists', async () => {
+    for (const eng of [pgEngine, pgliteEngine]) {
+      const page = await eng.getPage('tiebreak/no-default');
+      expect(page).not.toBeNull();
+      expect(page!.source_id).toBe('work');
+      expect(page!.title).toBe('work row');
+    }
+  });
+});
