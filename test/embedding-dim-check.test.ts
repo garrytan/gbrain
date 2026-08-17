@@ -407,3 +407,38 @@ describe('resolveSchemaMultimodalDim', () => {
     expect(got.ok).toBe(false);
   });
 });
+
+describe('cased embedding configs fail loud at init (#4123 WIDE — behavior change, pinned deliberately)', () => {
+  test('cased Voyage id at an unsupported width is REJECTED with the valid-sizes hint (was: silently wrong-width vectors)', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'voyage:Voyage-3-Large',
+      embedding_dimensions: 1536,
+    });
+    expect(got.ok).toBe(false);
+    if (!got.ok) {
+      expect(got.error).toMatch(/256, 512, 1024, 2048/);
+    }
+  });
+
+  test('cased Voyage id at a SUPPORTED width passes', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'voyage:Voyage-3-Large',
+      embedding_dimensions: 1024,
+    });
+    expect(got.ok).toBe(true);
+  });
+
+  test('cased OpenAI id out of range is rejected with the allowed-sizes hint (Tier-1 recipe options)', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'openai:Text-Embedding-3-Small',
+      embedding_dimensions: 5000,
+    });
+    expect(got.ok).toBe(false);
+    if (!got.ok) {
+      expect(got.error).toMatch(/rejects custom dimensions 5000/);
+      expect(got.error).toMatch(/allowed: .*1536/);
+      // Paste-ready: the ORIGINAL casing survives into the message.
+      expect(got.error).toContain('Text-Embedding-3-Small');
+    }
+  });
+});

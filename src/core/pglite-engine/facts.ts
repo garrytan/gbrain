@@ -292,7 +292,7 @@ export async function listFactsBySession(
 export async function listSupersessions(
   deps: PgliteFactsDeps,
     source_id: string,
-    opts?: { since?: Date; limit?: number },
+    opts?: { since?: Date; limit?: number; visibility?: ('private' | 'world')[] },
   ): Promise<FactRow[]> {
     const where: string[] = [`expired_at IS NOT NULL`, `superseded_by IS NOT NULL`];
     const params: Record<string, unknown> = {};
@@ -303,6 +303,7 @@ export async function listSupersessions(
     return _listFacts(deps, source_id, {
       activeOnly: false,
       limit: opts?.limit,
+      visibility: opts?.visibility,
       whereClauses: where,
       whereParams: params,
       order: 'expired_at DESC, id DESC',

@@ -24,6 +24,7 @@ import { loadConfig, toEngineConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { assertAllowedScopes } from '../core/scope.ts';
+import { isUndefinedColumnError, isUndefinedTableError } from '../core/utils.ts';
 import { TOKEN_ID_RE } from '../core/token-mint.ts';
 import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
 import { sqlQueryForEngine, executeRawJsonb, type SqlQuery } from '../core/sql-query.ts';
@@ -419,7 +420,7 @@ async function revokeClient(clientId: string) {
  * and `--token-endpoint-auth-method` is recognized. Repeatable flags
  * accumulate into arrays. Unknown flags throw a usage error.
  */
-interface RegisterClientArgs {
+export interface RegisterClientArgs {
   grantTypes: string[];
   scopes: string;
   sourceId: string;
@@ -432,6 +433,29 @@ interface RegisterClientArgs {
   boundSlugPrefixes: string[] | undefined;
   boundMaxConcurrent: number | undefined;
   budgetUsdPerDay: string | undefined;
+  tokenTtlSeconds: number | undefined;
+}
+
+/** --token-ttl bounds: 1 minute .. 90 days. The SERVER default for CLI-minted
+ * access tokens is 3600s (oauth-provider.ts tokenTtl) — NOT 30 days; callers
+ * that promise long-lived tokens must write oauth_clients.token_ttl. */
+export const TOKEN_TTL_MIN_SECONDS = 60;
+export const TOKEN_TTL_MAX_SECONDS = 7_776_000;
+
+/**
+ * Shared --token-ttl value parser (auth register-client + agent register).
+ * `hint` is the parser-specific tail naming what omitting the flag means
+ * (the two commands have different defaults). Throws the canonical bounds
+ * message on anything outside [TOKEN_TTL_MIN_SECONDS, TOKEN_TTL_MAX_SECONDS].
+ */
+export function parseTokenTtl(raw: string, hint: string): number {
+  const v = Number(raw);
+  if (!Number.isInteger(v) || v < TOKEN_TTL_MIN_SECONDS || v > TOKEN_TTL_MAX_SECONDS) {
+    throw new Error(
+      `--token-ttl must be an integer number of seconds between ${TOKEN_TTL_MIN_SECONDS} and ${TOKEN_TTL_MAX_SECONDS} (90 days); got ${JSON.stringify(raw)}. ${hint}`,
+    );
+  }
+  return v;
 }
 
 export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
@@ -448,6 +472,7 @@ export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
     boundSlugPrefixes: undefined,
     boundMaxConcurrent: undefined,
     budgetUsdPerDay: undefined,
+    tokenTtlSeconds: undefined,
   };
   let i = 0;
   let grantTypesSet = false;
@@ -538,6 +563,10 @@ export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
         out.budgetUsdPerDay = v;
         i += 2; break;
       }
+      case '--token-ttl': {
+        out.tokenTtlSeconds = parseTokenTtl(requireValue(), 'Omit the flag to keep the server default.');
+        i += 2; break;
+      }
       default:
         throw new Error(`Unknown flag: ${flag}`);
     }
@@ -552,19 +581,75 @@ export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
   return out;
 }
 
-async function registerClient(name: string, args: string[]) {
-  if (!name) {
-    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none] [--bound-tools T1,T2] [--bound-source SOURCE] [--bound-brain BRAIN] [--bound-slug-prefixes P1,P2] [--bound-max-concurrent N] [--budget-usd-per-day USD]');
-    process.exit(1);
-  }
-  let parsed: RegisterClientArgs;
-  try {
-    parsed = parseRegisterClientArgs(args);
-  } catch (e: any) {
-    console.error(`Error: ${e.message}`);
-    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none] [--bound-tools T1,T2] [--bound-source SOURCE] [--bound-brain BRAIN] [--bound-slug-prefixes P1,P2] [--bound-max-concurrent N] [--budget-usd-per-day USD]');
-    process.exit(1);
-  }
+/**
+ * Column pre-flight (cathedral-6): decide statement shapes BEFORE any
+ * transaction. Postgres/PGLite abort the whole tx on any statement error
+ * (25P02) and SqlQuery has no savepoint seam, so "catch 42703 and continue"
+ * is impossible inside a tx — optional-column degrades must be decided here,
+ * outside, once.
+ */
+export async function preflightOauthClientColumns(sql: SqlQuery): Promise<Set<string>> {
+  const rows = await sql`
+    SELECT column_name FROM information_schema.columns
+    WHERE table_name = 'oauth_clients'
+      AND table_schema = current_schema()
+      AND column_name IN ('token_ttl', 'surface', 'federated_read', 'source_id', 'deleted_at')
+  `;
+  return new Set(rows.map(r => String(r.column_name)));
+}
+
+export interface RegisterScopedClientOpts {
+  /** Per-client access-token TTL to persist (oauth_clients.token_ttl). */
+  tokenTtlSeconds?: number;
+  /** Per-client tool-surface tier, written via provider.rescopeClient — the
+   * ONLY surface-column writer (sets surface_set_by='operator', the lock
+   * request_tools cannot override). Never a raw column UPDATE. */
+  surface?: 'verbs' | 'starter' | 'full';
+  /** Result of preflightOauthClientColumns — decides which optional-column
+   * writes are attempted. Absent → attempt everything (caller owns errors). */
+  columns?: Set<string>;
+}
+
+/**
+ * The data a scoped-client registration produces — everything a printer
+ * (auth register-client's byte-pinned block, agent register's summary,
+ * or the admin HTTP route) needs, with ZERO console output produced here.
+ */
+export interface RegisteredClient {
+  clientId: string;
+  clientSecret?: string;
+  grantTypes: string[];
+  scopes: string;
+  authMethod: string;
+  redirectUris: string[];
+  sourceId: string;
+  federatedRead: string[];
+  surface?: 'verbs' | 'starter' | 'full';
+  tokenTtl?: number;
+  created: { source: boolean };
+  /** Previous surface row value when opts.surface was written (for the
+   * post-commit audit row — audit is fail-open and NEVER runs in the tx). */
+  surfaceOld?: string | null;
+  /** Optional-column writes skipped by the pre-flight (pre-migration brain). */
+  skipped?: { tokenTtl?: boolean; surface?: boolean };
+}
+
+/**
+ * Exit-free, print-free registration core (cathedral-6 seam). Named
+ * registerScopedClient — not run*Core — because unlike the other peels it
+ * returns data instead of printing. Takes an INJECTED SqlQuery handle:
+ * callers on the engine-bound CLI lane pass the dispatcher's engine's sql
+ * (a second withConfiguredSql engine self-deadlocks PGLite's single-writer
+ * lock); `registerClient` below keeps withConfiguredSql for the
+ * early-routed auth lane. Throws on failure — the thin callers own
+ * exit/print mapping.
+ */
+export async function registerScopedClient(
+  sql: SqlQuery,
+  name: string,
+  parsed: RegisterClientArgs,
+  opts: RegisterScopedClientOpts = {},
+): Promise<RegisteredClient> {
   const { grantTypes, scopes, sourceId, federatedRead, redirectUris, tokenEndpointAuthMethod } = parsed;
   const agentBindings = parsed.boundTools || parsed.boundSourceId || parsed.boundBrainId ||
     parsed.boundSlugPrefixes || parsed.boundMaxConcurrent !== undefined || parsed.budgetUsdPerDay !== undefined
@@ -577,46 +662,135 @@ async function registerClient(name: string, args: string[]) {
       budgetUsdPerDay: parsed.budgetUsdPerDay,
     }
     : undefined;
+  const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
+  const provider = new GBrainOAuthProvider({ sql });
+  const { clientId, clientSecret } = await provider.registerClientManual(
+    name, grantTypes, scopes, redirectUris, sourceId, federatedRead, tokenEndpointAuthMethod, agentBindings,
+  );
+
+  const ttl = parsed.tokenTtlSeconds ?? opts.tokenTtlSeconds;
+  let tokenTtl: number | undefined;
+  let ttlSkipped = false;
+  if (ttl !== undefined) {
+    if (opts.columns && !opts.columns.has('token_ttl')) {
+      // Pre-migration brain: the degrade was decided by the pre-flight,
+      // OUTSIDE any transaction — nothing here throws-and-continues.
+      ttlSkipped = true;
+    } else {
+      const updated = await sql`
+        UPDATE oauth_clients SET token_ttl = ${ttl}
+        WHERE client_id = ${clientId}
+        RETURNING client_id
+      `;
+      if (updated.length === 0) {
+        throw new Error(`token_ttl update matched no row for client ${clientId}`);
+      }
+      tokenTtl = ttl;
+    }
+  }
+
+  let surfaceApplied: 'verbs' | 'starter' | 'full' | undefined;
+  let surfaceOld: string | null | undefined;
+  let surfaceSkipped = false;
+  if (opts.surface !== undefined) {
+    if (opts.columns && !opts.columns.has('surface')) {
+      surfaceSkipped = true;
+    } else {
+      const rescoped = await provider.rescopeClient(clientId, { surface: opts.surface });
+      surfaceApplied = opts.surface;
+      surfaceOld = rescoped.surfaceOld ?? null;
+    }
+  }
+
+  return {
+    clientId,
+    ...(clientSecret ? { clientSecret } : {}),
+    grantTypes,
+    scopes,
+    authMethod: tokenEndpointAuthMethod || 'client_secret_post',
+    redirectUris,
+    sourceId,
+    federatedRead: federatedRead && federatedRead.length > 0 ? federatedRead : [sourceId],
+    ...(tokenTtl !== undefined ? { tokenTtl } : {}),
+    ...(surfaceApplied !== undefined ? { surface: surfaceApplied } : {}),
+    ...(surfaceOld !== undefined ? { surfaceOld } : {}),
+    created: { source: false },
+    ...(ttlSkipped || surfaceSkipped
+      ? { skipped: { ...(ttlSkipped ? { tokenTtl: true } : {}), ...(surfaceSkipped ? { surface: true } : {}) } }
+      : {}),
+  };
+}
+
+/**
+ * The exact lines `auth register-client` prints. BYTE-IDENTICAL contract:
+ * connect.ts:defaultRegisterOAuthClient regex-scrapes `Client ID:` /
+ * `Client Secret:` from this output in PRODUCTION, and 7+ e2e assertions pin
+ * it — pinned by test/auth-register-client-output-pin.test.ts. Each array
+ * element is one console.log call (embedded \n are intentional).
+ */
+export function formatRegisterClientOutput(name: string, r: RegisteredClient, parsed: RegisterClientArgs): string[] {
+  const hasBindings = parsed.boundTools || parsed.boundSourceId || parsed.boundBrainId ||
+    parsed.boundSlugPrefixes || parsed.boundMaxConcurrent !== undefined || parsed.budgetUsdPerDay !== undefined;
+  const lines: string[] = [];
+  lines.push(`OAuth client registered: "${name}"\n`);
+  lines.push(`  Client ID:           ${r.clientId}`);
+  if (r.clientSecret) {
+    lines.push(`  Client Secret:       ${r.clientSecret}\n`);
+  } else {
+    lines.push(`  Client Secret:       <public client — none issued>\n`);
+  }
+  lines.push(`  Grant types:         ${r.grantTypes.join(', ')}`);
+  lines.push(`  Scopes:              ${r.scopes}`);
+  lines.push(`  Token auth method:   ${r.authMethod}`);
+  if (r.redirectUris.length > 0) {
+    lines.push(`  Redirect URIs:       ${r.redirectUris.join(', ')}`);
+  }
+  lines.push(`  Write source:        ${r.sourceId}`);
+  lines.push(`  Federated reads:     ${r.federatedRead.join(', ')}`);
+  if (hasBindings) {
+    lines.push(`  Bound tools:         ${(parsed.boundTools ?? []).join(', ') || '<none>'}`);
+    lines.push(`  Bound source:        ${parsed.boundSourceId ?? '<none>'}`);
+    lines.push(`  Bound brain:         ${parsed.boundBrainId ?? '<none>'}`);
+    lines.push(`  Bound slug prefixes:${parsed.boundSlugPrefixes ? ' ' + parsed.boundSlugPrefixes.join(', ') : ' <none>'}`);
+    lines.push(`  Max concurrency:     ${parsed.boundMaxConcurrent ?? 1}`);
+    lines.push(`  Daily budget USD:    ${parsed.budgetUsdPerDay ?? '<none>'}`);
+  }
+  lines.push('');
+  if (r.clientSecret) {
+    lines.push('Save the client secret — it will not be shown again.');
+  } else {
+    lines.push('Public client (PKCE-only) — no secret needed.');
+  }
+  lines.push(`Revoke with: gbrain auth revoke-client "${r.clientId}"`);
+  return lines;
+}
+
+async function registerClient(name: string, args: string[]) {
+  if (!name) {
+    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none] [--bound-tools T1,T2] [--bound-source SOURCE] [--bound-brain BRAIN] [--bound-slug-prefixes P1,P2] [--bound-max-concurrent N] [--budget-usd-per-day USD] [--token-ttl SECONDS]');
+    process.exit(1);
+  }
+  let parsed: RegisterClientArgs;
+  try {
+    parsed = parseRegisterClientArgs(args);
+  } catch (e: any) {
+    console.error(`Error: ${e.message}`);
+    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none] [--bound-tools T1,T2] [--bound-source SOURCE] [--bound-brain BRAIN] [--bound-slug-prefixes P1,P2] [--bound-max-concurrent N] [--budget-usd-per-day USD] [--token-ttl SECONDS]');
+    process.exit(1);
+  }
 
   try {
     await withConfiguredSql(async (sql) => {
-      const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
-      const provider = new GBrainOAuthProvider({ sql });
-      const { clientId, clientSecret } = await provider.registerClientManual(
-        name, grantTypes, scopes, redirectUris, sourceId, federatedRead, tokenEndpointAuthMethod, agentBindings,
-      );
-      const effectiveFederated = federatedRead && federatedRead.length > 0 ? federatedRead : [sourceId];
-      const effectiveAuthMethod = tokenEndpointAuthMethod || 'client_secret_post';
-      console.log(`OAuth client registered: "${name}"\n`);
-      console.log(`  Client ID:           ${clientId}`);
-      if (clientSecret) {
-        console.log(`  Client Secret:       ${clientSecret}\n`);
-      } else {
-        console.log(`  Client Secret:       <public client — none issued>\n`);
+      const columns = parsed.tokenTtlSeconds !== undefined
+        ? await preflightOauthClientColumns(sql)
+        : undefined;
+      const registered = await registerScopedClient(sql, name, parsed, { columns });
+      if (registered.skipped?.tokenTtl) {
+        console.error('Note: this brain predates the token_ttl column; run `gbrain apply-migrations --yes`, then rescope. The server default TTL applies.');
       }
-      console.log(`  Grant types:         ${grantTypes.join(', ')}`);
-      console.log(`  Scopes:              ${scopes}`);
-      console.log(`  Token auth method:   ${effectiveAuthMethod}`);
-      if (redirectUris.length > 0) {
-        console.log(`  Redirect URIs:       ${redirectUris.join(', ')}`);
+      for (const line of formatRegisterClientOutput(name, registered, parsed)) {
+        console.log(line);
       }
-      console.log(`  Write source:        ${sourceId}`);
-      console.log(`  Federated reads:     ${effectiveFederated.join(', ')}`);
-      if (agentBindings) {
-        console.log(`  Bound tools:         ${(parsed.boundTools ?? []).join(', ') || '<none>'}`);
-        console.log(`  Bound source:        ${parsed.boundSourceId ?? '<none>'}`);
-        console.log(`  Bound brain:         ${parsed.boundBrainId ?? '<none>'}`);
-        console.log(`  Bound slug prefixes:${parsed.boundSlugPrefixes ? ' ' + parsed.boundSlugPrefixes.join(', ') : ' <none>'}`);
-        console.log(`  Max concurrency:     ${parsed.boundMaxConcurrent ?? 1}`);
-        console.log(`  Daily budget USD:    ${parsed.budgetUsdPerDay ?? '<none>'}`);
-      }
-      console.log('');
-      if (clientSecret) {
-        console.log('Save the client secret — it will not be shown again.');
-      } else {
-        console.log('Public client (PKCE-only) — no secret needed.');
-      }
-      console.log(`Revoke with: gbrain auth revoke-client "${clientId}"`);
     });
   } catch (e: any) {
     console.error('Error:', e.message);
@@ -757,12 +931,56 @@ export function parseAuthClientsArgs(args: string[]): { usage: boolean; days: nu
   return out;
 }
 
-interface ClientRow {
+export interface ClientRow {
   client_id: string;
   client_name: string | null;
   scope: string | null;
   surface: string | null;
   surface_set_by: string | null;
+  source_id: string | null;
+  federated_read: string[] | null;
+}
+
+/**
+ * Projection-widened client listing with a degrade ladder for pre-migration
+ * brains: full shape (scope + surface + source-scoping columns) → source
+ * columns without surface → the bare original triple. Drops the NEWEST
+ * columns first; missing columns render as null. Only schema-shape errors
+ * (undefined column/table) degrade — anything else (dropped connection,
+ * permission) rethrows instead of silently narrowing the listing. One round
+ * trip on a current brain (the widen adds columns, not queries). Exported
+ * for the unit suite.
+ */
+export async function listClientRows(engine: BrainEngine): Promise<ClientRow[]> {
+  // The columns each degrade tier drops. isUndefinedColumnError matches any
+  // 42703 by code; the column list covers message-only (code-less) variants.
+  const isSchemaShapeError = (e: unknown): boolean =>
+    isUndefinedTableError(e) ||
+    ['surface', 'surface_set_by', 'source_id', 'federated_read']
+      .some(col => isUndefinedColumnError(e, col));
+  try {
+    return await engine.executeRaw<ClientRow>(
+      `SELECT client_id, client_name, scope, surface, surface_set_by, source_id, federated_read
+         FROM oauth_clients ORDER BY client_name, client_id`,
+    );
+  } catch (e) {
+    // Brain predates the surface columns — fall through. Rethrow non-shape errors.
+    if (!isSchemaShapeError(e)) throw e;
+  }
+  try {
+    const mid = await engine.executeRaw<Omit<ClientRow, 'surface' | 'surface_set_by'>>(
+      `SELECT client_id, client_name, scope, source_id, federated_read
+         FROM oauth_clients ORDER BY client_name, client_id`,
+    );
+    return mid.map(r => ({ ...r, surface: null, surface_set_by: null }));
+  } catch (e) {
+    // Brain predates the source-scoping columns — fall through likewise.
+    if (!isSchemaShapeError(e)) throw e;
+  }
+  const bare = await engine.executeRaw<Pick<ClientRow, 'client_id' | 'client_name' | 'scope'>>(
+    `SELECT client_id, client_name, scope FROM oauth_clients ORDER BY client_name, client_id`,
+  );
+  return bare.map(r => ({ ...r, surface: null, surface_set_by: null, source_id: null, federated_read: null }));
 }
 
 async function clientsCmd(args: string[]) {
@@ -777,20 +995,9 @@ async function clientsCmd(args: string[]) {
   }
   try {
     await withConfiguredSql(async (_sql, engine) => {
-      // Surface columns land in migration v127; a pre-migration brain still
-      // gets the listing (surface renders as unknown) instead of an error.
-      let clients: ClientRow[];
-      try {
-        clients = await engine.executeRaw<ClientRow>(
-          `SELECT client_id, client_name, scope, surface, surface_set_by
-             FROM oauth_clients ORDER BY client_name, client_id`,
-        );
-      } catch {
-        const bare = await engine.executeRaw<Omit<ClientRow, 'surface' | 'surface_set_by'>>(
-          `SELECT client_id, client_name, scope FROM oauth_clients ORDER BY client_name, client_id`,
-        );
-        clients = bare.map(r => ({ ...r, surface: null, surface_set_by: null }));
-      }
+      // Degrade ladder lives in listClientRows: a pre-migration brain still
+      // gets the listing (missing columns render as null) instead of an error.
+      const clients = await listClientRows(engine);
 
       const { readClientOpUsage } = await import('../core/mcp-usage.ts');
       const usage = parsed.usage ? await readClientOpUsage(engine, { days: parsed.days }) : [];
@@ -808,6 +1015,8 @@ async function clientsCmd(args: string[]) {
             scopes: c.scope,
             surface: c.surface,
             surface_set_by: c.surface_set_by,
+            source_id: c.source_id,
+            federated_read: c.federated_read,
             usage: usageByToken.get(c.client_id) ?? null,
           })),
           // Legacy bearer tokens seen in the window (no oauth_clients row).
@@ -829,6 +1038,7 @@ async function clientsCmd(args: string[]) {
           ? `${c.surface}${c.surface_set_by ? ` (set by ${c.surface_set_by})` : ''}`
           : '<server/config resolution>';
         console.log(`  scopes: ${c.scope ?? '<none>'}    surface: ${surfaceStr}`);
+        console.log(`  write source: ${c.source_id ?? '<none>'}    federated reads: ${(c.federated_read ?? []).join(', ') || '<none>'}`);
         if (parsed.usage) {
           if (u) {
             const auto = u.likely_automation ? '    [automation-shaped: >90% context_pack/delta]' : '';
@@ -983,7 +1193,8 @@ Usage:
                                                           request_tools cannot override; 'clear' removes the pin
                                                           so server/config resolution applies again). Always
                                                           bounded by the server's --surface ceiling.
-  gbrain auth clients [--usage] [--days N] [--json]       List OAuth clients with scopes + tool surface. --usage
+  gbrain auth clients [--usage] [--days N] [--json]       List OAuth clients with scopes, write source, federated
+                                                          reads + tool surface. --usage
                                                           joins per-client op-call counts, top ops, and last-seen
                                                           from mcp_request_log (default 30d window; HTTP clients
                                                           only — stdio use is not logged). Automation-shaped

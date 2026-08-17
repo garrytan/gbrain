@@ -161,3 +161,22 @@ describe('dimsProviderOptions — prefixed model IDs (OpenRouter / proxy provide
     }
   });
 });
+
+describe('mixed-case ids on the openai-compatible path (#4123)', () => {
+  test('cased Azure-hosted text-embedding-3 id pins dimensions', () => {
+    expect(dimsProviderOptions('openai-compatible', 'azure/Text-Embedding-3-Small', 1024))
+      .toEqual({ openaiCompatible: { dimensions: 1024 } });
+  });
+
+  test('cased id out of range throws with the ORIGINAL casing in the message (paste-ready)', () => {
+    expect(() => dimsProviderOptions('openai-compatible', 'azure/Text-Embedding-3-Small', 5000))
+      .toThrow(/Text-Embedding-3-Small/);
+    expect(() => dimsProviderOptions('openai-compatible', 'azure/Text-Embedding-3-Small', 5000))
+      .toThrow(/1\.\.1536/);
+  });
+
+  test('predicates fold: cased ids recognized, max resolved', () => {
+    expect(isOpenAITextEmbedding3Model('Text-Embedding-3-Large')).toBe(true);
+    expect(maxOpenAITextEmbedding3Dim('TEXT-EMBEDDING-3-SMALL')).toBe(1536);
+  });
+});

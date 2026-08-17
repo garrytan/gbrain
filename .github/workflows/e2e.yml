@@ -121,7 +121,7 @@ jobs:
     needs: e2e-cache-check
     if: needs.e2e-cache-check.outputs.hit != 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -161,6 +161,16 @@ jobs:
         # ever run one-process-per-file via run-e2e.sh — do not fold it into
         # the shared-process tier1 line above.
         run: bun test --timeout=60000 test/e2e/engine-parity.test.ts
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
+          GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
+      - name: Run multi-agent serve suite
+        # cathedral-6 (T7): multi-agent continuity + isolation over a real
+        # `gbrain serve --http`. Own invocation line (engine-parity
+        # precedent): the file spawns two serves on fixed ports
+        # (19133/19134) and SIGKILLs one mid-hammer — never fold it into the
+        # shared-process tier1 line above. Named files only, no glob.
+        run: bun test --timeout=60000 test/e2e/serve-http-multi-agent.test.ts
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
           GBRAIN_TEST_ALLOW_DATABASE_URL: '1'

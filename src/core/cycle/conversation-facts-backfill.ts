@@ -36,7 +36,7 @@
  *   cycle.conversation_facts_backfill.max_total_cost_usd   (5.00)
  *   cycle.conversation_facts_backfill.max_walltime_min     (20)
  *   cycle.conversation_facts_backfill.max_total_walltime_min (30)
- *   cycle.conversation_facts_backfill.types                (["conversation","meeting","slack","email"])
+ *   cycle.conversation_facts_backfill.types                (all of ALLOWED_TYPES — src/core/facts/conversation-types.ts)
  *
  * `.types` is the single source of truth for "enabled types" — the CLI
  * default reads from the same key (Eng-v2 A2).
@@ -48,10 +48,12 @@ import { withBudgetTracker } from '../ai/gateway.ts';
 import { listSources } from '../sources-ops.ts';
 import {
   runExtractConversationFactsCore,
-  ALLOWED_TYPES,
-  type AllowedType,
   type ExtractConversationFactsResult,
 } from '../../commands/extract-conversation-facts.ts';
+// The type allowlist comes straight from the canonical leaf module (same
+// binding extract-conversation-facts.ts re-exports) so this phase is part of
+// the drift-guarded set in test/conversation-facts-type-allowlist-drift.test.ts.
+import { ALLOWED_TYPES, type AllowedType } from '../facts/conversation-types.ts';
 
 /** Per-phase wrapper opts. */
 export interface ConversationFactsBackfillPhaseOpts {
@@ -263,6 +265,7 @@ export async function runPhaseConversationFactsBackfill(
             pages_skipped_completed: 0,
             pages_skipped_non_extractable: 0,
             pages_marked_non_extractable: 0,
+            pages_skipped_unrecognized_speaker: 0,
             pages_failed: 1,
             pages_llm_fallback: 0,
             // v0.41.15.0 (D6 + D11): new counters from the per-page lock
@@ -304,6 +307,7 @@ export async function runPhaseConversationFactsBackfill(
     pages_skipped_completed: 0,
     pages_skipped_non_extractable: 0,
     pages_marked_non_extractable: 0,
+    pages_skipped_unrecognized_speaker: 0,
     pages_failed: 0,
     facts_inserted: 0,
     sources_processed: 0,
@@ -315,6 +319,7 @@ export async function runPhaseConversationFactsBackfill(
     totals.pages_skipped_completed += r.pages_skipped_completed;
     totals.pages_skipped_non_extractable += r.pages_skipped_non_extractable;
     totals.pages_marked_non_extractable += r.pages_marked_non_extractable;
+    totals.pages_skipped_unrecognized_speaker += r.pages_skipped_unrecognized_speaker;
     totals.pages_failed += r.pages_failed;
     totals.facts_inserted += r.facts_inserted;
   }
@@ -338,6 +343,7 @@ export async function runPhaseConversationFactsBackfill(
       pages_skipped_completed: totals.pages_skipped_completed,
       pages_skipped_non_extractable: totals.pages_skipped_non_extractable,
       pages_marked_non_extractable: totals.pages_marked_non_extractable,
+      pages_skipped_unrecognized_speaker: totals.pages_skipped_unrecognized_speaker,
       pages_failed: totals.pages_failed,
       facts_inserted: totals.facts_inserted,
       spent_usd: totalSpent,

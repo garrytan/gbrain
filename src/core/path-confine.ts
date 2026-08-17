@@ -20,7 +20,7 @@
  */
 
 import { realpathSync, existsSync, type Stats } from 'fs';
-import { resolve as resolvePath, relative, isAbsolute, dirname, basename, join } from 'path';
+import { resolve as resolvePath, relative, isAbsolute, dirname, basename, join, sep } from 'path';
 
 /**
  * Symlink-safe path confinement: realpath BOTH sides, then a separator-aware
@@ -41,8 +41,26 @@ export function isPathContained(child: string, parent: string): boolean {
   } catch {
     return false; // missing / unresolvable path → not contained
   }
-  // Append a separator so /foo doesn't match /foobar.
-  const parentWithSep = resolvedParent.endsWith('/') ? resolvedParent : resolvedParent + '/';
+  return resolvedPrefixContained(resolvedChild, resolvedParent, sep);
+}
+
+/**
+ * Pure separator-aware prefix check over ALREADY-RESOLVED paths — the exact
+ * logic that regressed on Windows (#3643/#4103: a hardcoded '/' suffix made
+ * every real backslash subdirectory fail the prefix test). Exported so the
+ * win32 shapes (drive-letter roots, backslash subtrees, UNC shares) are
+ * testable on POSIX CI, where realpathSync can never produce them
+ * (gbrain#4103 review requirement — no Windows runner exists).
+ */
+export function resolvedPrefixContained(
+  resolvedChild: string,
+  resolvedParent: string,
+  sepChar: string,
+): boolean {
+  // Append the OS separator so /foo doesn't match /foobar. `sep`, not a
+  // hardcoded '/': realpathSync returns backslash paths on Windows, so a '/'
+  // suffix would make the prefix test fail for every real subdirectory.
+  const parentWithSep = resolvedParent.endsWith(sepChar) ? resolvedParent : resolvedParent + sepChar;
   return resolvedChild === resolvedParent || resolvedChild.startsWith(parentWithSep);
 }
 

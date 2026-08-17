@@ -55,6 +55,13 @@ export interface TranscriptsIngestOpts {
   sourceId: string;
   /** Embedding opt-in (default OFF: bulk imports defer to the embed backfill). */
   embed?: boolean;
+  /**
+   * gbrain#4149: explicit byte-cap OVERRIDE threaded to every adapter's
+   * parse. Undefined = each adapter keeps its own format-specific default
+   * (Hermes 512MB store guard, 50MB jsonl cap, ...) — the override exists
+   * for legitimate oversized stores, not to replace the defaults.
+   */
+  maxBytes?: number;
   activePack?: IngestActivePack;
   /** Test seam for the redaction user-pattern file. */
   userPatternsPath?: string;
@@ -194,7 +201,11 @@ export async function runTranscriptsIngest(
     }
     fileOutcome.format = detected.adapter.format;
 
-    const gen = detected.adapter.parse(path);
+    // gbrain#4149: thread the explicit cap override; omit the opts object
+    // entirely when unset so adapters keep their native defaults.
+    const gen = opts.maxBytes != null
+      ? detected.adapter.parse(path, { maxBytes: opts.maxBytes })
+      : detected.adapter.parse(path);
     try {
       let step = await gen.next();
       while (!step.done) {

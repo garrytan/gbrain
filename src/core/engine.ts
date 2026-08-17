@@ -1917,11 +1917,13 @@ export interface BrainEngine {
 
   /**
    * Audit log: facts that were superseded (expired_at + superseded_by both set),
-   * newest first. Drives `gbrain recall --supersessions`.
+   * newest first. Drives `gbrain recall --supersessions`. `visibility` filters
+   * BEFORE the LIMIT (same contract as FactListOpts.visibility) so a remote
+   * world-only caller can't have a private row consume a limit slot.
    */
   listSupersessions(
     source_id: string,
-    opts?: { since?: Date; limit?: number },
+    opts?: { since?: Date; limit?: number; visibility?: FactVisibility[] },
   ): Promise<FactRow[]>;
 
   /**

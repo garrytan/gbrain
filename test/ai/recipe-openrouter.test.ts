@@ -18,7 +18,7 @@ import {
   openrouterSupportsPromptCache,
 } from '../../src/core/ai/recipes/openrouter.ts';
 import { defaultResolveAuth } from '../../src/core/ai/gateway.ts';
-import { assertTouchpoint } from '../../src/core/ai/model-resolver.ts';
+import { assertTouchpoint, embeddingDimsForModel } from '../../src/core/ai/model-resolver.ts';
 import { AIConfigError } from '../../src/core/ai/errors.ts';
 
 // D5 shape regex: provider/model slug, allowing letters, digits, dots, hyphens,
@@ -45,9 +45,24 @@ describe('recipe: openrouter', () => {
     expect(r.touchpoints.embedding).toBeDefined();
     const e = r.touchpoints.embedding!;
     expect(e.models[0]).toBe('openai/text-embedding-3-small');
-    expect(e.default_dims).toBe(1536);
     expect(e.dims_options).toEqual([512, 768, 1024, 1536]);
     expect(e.max_batch_tokens).toBe(300_000);
+  });
+
+  test('2b. #4114 — per-model dims for the documented catalog; unlisted ids resolve to 0 (explicit dims required)', () => {
+    const r = getRecipe('openrouter')!;
+    // Known catalog ids resolve to their live native width.
+    expect(embeddingDimsForModel(r, 'openrouter:openai/text-embedding-3-small')).toBe(1536);
+    expect(embeddingDimsForModel(r, 'openrouter:openai/text-embedding-3-large')).toBe(3072);
+    expect(embeddingDimsForModel(r, 'openrouter:qwen/qwen3-embedding-8b')).toBe(4096);
+    expect(embeddingDimsForModel(r, 'openrouter:bge-m3')).toBe(1024);
+    expect(embeddingDimsForModel(r, 'openrouter:baai/bge-m3')).toBe(1024);
+    // Unknown ids must NOT inherit a plausible-wrong 1536: 0 forces the
+    // explicit --dim path (migrate embeddings throws its actionable error).
+    expect(embeddingDimsForModel(r, 'openrouter:some/unknown-embedder')).toBe(0);
+    expect(embeddingDimsForModel(r, 'openrouter:google/gemini-embedding-2-preview')).toBe(0);
+    // Explicit override stays trusted for unlisted models.
+    expect(r.touchpoints.embedding!.trust_custom_dims).toBe(true);
   });
 
   test('3. chat touchpoint accepts arbitrary provider/model IDs (openai-compat tier)', () => {

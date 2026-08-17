@@ -150,6 +150,48 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     expect(pgResults[0]?.slug).toBe(pgliteResults[0]?.slug);
   });
 
+  test('v0.46.15 searchVector escalation parity: a dense page cannot starve the page result on either engine', async () => {
+    // One page with 120 chunks nearest the query + 8 sparse pages behind it.
+    // Pre-fix, the 100-chunk inner pool was consumed entirely by the dense
+    // page → 1 result page. The bounded escalation loop (identical in both
+    // engines) must recover >= limit distinct pages with identical top-5.
+    const denseDim = 900;
+    const mk = (cos: number, other: number): Float32Array => {
+      const e = new Float32Array(1536);
+      e[denseDim] = cos;
+      e[other % 1536] = Math.sqrt(Math.max(0, 1 - cos * cos));
+      return e;
+    };
+    for (const eng of [pgEngine, pgliteEngine]) {
+      await eng.putPage('notes/parity-dense', { type: 'note', title: 'Parity Dense', compiled_truth: 'd.' });
+      await eng.upsertChunks(
+        'notes/parity-dense',
+        Array.from({ length: 120 }, (_, i) => ({
+          chunk_index: i,
+          chunk_text: `pd ${i}`,
+          chunk_source: 'compiled_truth' as const,
+          embedding: mk(0.99 - i * 0.0005, 1000 + i),
+          token_count: 2,
+        })),
+      );
+      for (let p = 0; p < 8; p++) {
+        const slug = `notes/parity-sparse-${p}`;
+        await eng.putPage(slug, { type: 'note', title: `Parity Sparse ${p}`, compiled_truth: 's.' });
+        await eng.upsertChunks(slug, [
+          { chunk_index: 0, chunk_text: `ps ${p}`, chunk_source: 'compiled_truth', embedding: mk(0.6 - p * 0.001, 1200 + p), token_count: 2 },
+        ]);
+      }
+    }
+    const q = new Float32Array(1536);
+    q[denseDim] = 1.0;
+    const pg = await pgEngine.searchVector(q, { limit: 6, detail: 'high' });
+    const pl = await pgliteEngine.searchVector(q, { limit: 6, detail: 'high' });
+    expect(pg.length).toBe(6); // pre-fix: 1
+    expect(pl.length).toBe(6);
+    expect(pg.slice(0, 5).map((r) => r.slug)).toEqual(pl.slice(0, 5).map((r) => r.slug));
+    expect(new Set(pg.map((r) => r.slug)).size).toBe(6);
+  });
+
   test('#4152 dream verdict triage-v1 round-trip: identical shape on both engines (jsonb path)', async () => {
     // The postgres path binds segments/entities via sql.json(); PGLite via
     // $N::jsonb + JSON.stringify. A double-encode regression on the postgres

@@ -104,6 +104,17 @@ import {
   removeOpencodeMcpEntry,
   writeOpencodeMcpEntry,
 } from './opencode-json.ts';
+import { isServeOlderThanScopes, probeServeHealth } from './serve-health.ts';
+
+// Peeled façade seam (cathedral-6): the serve probe + scopes version floor
+// moved to serve-health.ts; re-exported so this module's public surface — and
+// every import site — is unchanged.
+export {
+  SCOPES_MIN_SERVE_VERSION,
+  isServeOlderThanScopes,
+  probeServeHealth,
+  type ServeHealth,
+} from './serve-health.ts';
 
 // ── Flags ───────────────────────────────────────────────────────────────────
 
@@ -227,13 +238,6 @@ export function parseHarnessArgs(rest: string[]): HarnessFlags {
 
 // ── Deps (injectable for the serial suite) ──────────────────────────────────
 
-export interface ServeHealth {
-  ok: boolean;
-  engine?: string;
-  version?: string;
-  detail?: string;
-}
-
 export interface HarnessDeps {
   runner: ExecRunner;
   gbrainHome: string;
@@ -349,25 +353,6 @@ function defaultPgliteLiveServe(): boolean {
   const cfg = loadConfig();
   if (!cfg?.database_path) return false;
   return probeLivePgliteHolder(cfg.database_path) !== null;
-}
-
-// ── Serve probe ─────────────────────────────────────────────────────────────
-
-export async function probeServeHealth(
-  mcpUrl: string,
-  fetchFn: typeof fetch,
-  timeoutMs = 3000,
-): Promise<ServeHealth> {
-  const base = mcpUrl.replace(/\/mcp$/, '');
-  try {
-    const res = await fetchFn(`${base}/health`, { signal: AbortSignal.timeout(timeoutMs) });
-    if (!res.ok) return { ok: false, detail: `GET ${base}/health → ${res.status}` };
-    const body = (await res.json()) as { status?: string; version?: string; engine?: string };
-    if (body.status !== 'ok') return { ok: false, detail: `health status: ${body.status ?? 'unknown'}` };
-    return { ok: true, version: body.version, engine: body.engine };
-  } catch (e) {
-    return { ok: false, detail: (e as Error).message };
-  }
 }
 
 // ── Consent copy [C5 / #4029 register] ──────────────────────────────────────
@@ -1379,24 +1364,6 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
     );
   }
   return allConfirmed && smokeOk ? 0 : 1;
-}
-
-/** The scopes-honoring release: any serve older verifies scoped tokens as full access. */
-/** The first release whose verify path honors the scopes column. PINNED — a
- * comparison against the moving CLI VERSION would false-flag every scope-aware
- * serve as soon as the next release ships (ship-review P3). */
-export const SCOPES_MIN_SERVE_VERSION = '0.45.14.0';
-
-export function isServeOlderThanScopes(serveVersion: string): boolean {
-  const parse = (v: string): number[] => v.split('.').map((n) => Number.parseInt(n, 10) || 0);
-  const a = parse(serveVersion);
-  const b = parse(SCOPES_MIN_SERVE_VERSION);
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    const x = a[i] ?? 0;
-    const y = b[i] ?? 0;
-    if (x !== y) return x < y;
-  }
-  return false;
 }
 
 // ── Remove [C9/F2/C8] ───────────────────────────────────────────────────────

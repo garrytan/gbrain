@@ -19,6 +19,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import {
   isTrustedDotfile, isPathContained, realpathOrResolve, isWriteTargetContained,
+  resolvedPrefixContained,
 } from '../src/core/path-confine.ts';
 import { validateSlug } from '../src/core/utils.ts';
 import { resolveSourceId } from '../src/core/source-resolver.ts';
@@ -121,6 +122,22 @@ describe('isPathContained', () => {
     const sub = join(dir, 'sub');
     mkdirSync(sub);
     expect(isPathContained(sub, dir)).toBe(true);
+  });
+  test('containment uses the OS separator, not a hardcoded "/"', () => {
+    // The boundary check appended '/' unconditionally. realpathSync returns
+    // backslash paths on Windows, so no real child ever matched the
+    // 'C:\\...\\parent/' prefix and every containment check returned false —
+    // which made the skills-dir auto-detector miss a skills/ directory that
+    // was present. Exercised through the public API with OS-native paths.
+    const dir = scratch();
+    const nested = join(dir, 'a', 'b');
+    mkdirSync(nested, { recursive: true });
+    expect(isPathContained(nested, dir)).toBe(true);
+    expect(isPathContained(nested, join(dir, 'a'))).toBe(true);
+    // The separator must remain a real boundary, not a bare string prefix.
+    const sibling = join(dir, 'a-sibling');
+    mkdirSync(sibling);
+    expect(isPathContained(sibling, join(dir, 'a'))).toBe(false);
   });
   test('symlink escaping the parent is NOT contained', () => {
     const dir = scratch();
@@ -315,5 +332,37 @@ describe('autoDetectSkillsDir — skills/ symlink confinement', () => {
     const found = autoDetectSkillsDir(ws, {});
     expect(found.source).toBe('cwd_walk_up');
     expect(found.dir).toBe(join(ws, 'skills'));
+  });
+});
+
+// gbrain#4103 — win32 shapes for the pure prefix core, runnable on POSIX CI
+// (no Windows runner exists; realpathSync can never produce backslash paths
+// here, so the extracted resolvedPrefixContained is the testable seam).
+describe('resolvedPrefixContained — win32 shapes (gbrain#4103)', () => {
+  const BS = '\\';
+
+  test('backslash subtree is contained (the exact pre-fix regression)', () => {
+    // Pre-fix, a hardcoded "/" suffix made this false for EVERY real
+    // Windows subdirectory.
+    expect(resolvedPrefixContained('C:\\brain\\pages\\note.md', 'C:\\brain', BS)).toBe(true);
+    expect(resolvedPrefixContained('C:\\brain', 'C:\\brain', BS)).toBe(true);
+  });
+
+  test('sibling-prefix directories do not leak (C:\\brain vs C:\\brainstorm)', () => {
+    expect(resolvedPrefixContained('C:\\brainstorm\\x.md', 'C:\\brain', BS)).toBe(false);
+  });
+
+  test('drive-letter boundaries hold', () => {
+    expect(resolvedPrefixContained('D:\\brain\\x.md', 'C:\\brain', BS)).toBe(false);
+  });
+
+  test('UNC shares: contained subtree true, sibling share false', () => {
+    expect(resolvedPrefixContained('\\\\server\\share\\brain\\a.md', '\\\\server\\share\\brain', BS)).toBe(true);
+    expect(resolvedPrefixContained('\\\\server\\share2\\brain\\a.md', '\\\\server\\share\\brain', BS)).toBe(false);
+  });
+
+  test('POSIX shapes still hold through the same core', () => {
+    expect(resolvedPrefixContained('/brain/pages/a.md', '/brain', '/')).toBe(true);
+    expect(resolvedPrefixContained('/brainstorm/a.md', '/brain', '/')).toBe(false);
   });
 });

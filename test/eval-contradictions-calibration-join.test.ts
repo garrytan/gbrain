@@ -26,7 +26,7 @@ function buildMember(slug: string, holder: string | null = 'garry'): PairMember 
   return {
     slug,
     chunk_id: 1,
-    take_id: null,
+    take_id: null, take_row_num: null,
     source_tier: 'curated',
     holder,
     text: 'some text',

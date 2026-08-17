@@ -13,6 +13,7 @@
 import { describe, test, expect } from 'bun:test';
 import {
   drainAllBackgroundWorkForCliExit,
+  drainBackgroundWorkBeforeDisconnect,
   __registerDrainerForTest,
   __listDrainerNamesForTest,
   type BackgroundWorkDrainer,
@@ -132,5 +133,69 @@ describe('background-work registry', () => {
     // sets. This just asserts the call resolves without throwing.
     await drainAllBackgroundWorkForCliExit({ timeoutMs: 10 });
     expect(true).toBe(true);
+  });
+});
+
+describe('disconnect drain (#4143)', () => {
+  test('search-telemetry registers as the order-5 sink when its module loads', async () => {
+    await import('../../src/core/search/telemetry.ts');
+    expect(__listDrainerNamesForTest()).toContain('search-telemetry');
+  });
+
+  test('drainBackgroundWorkBeforeDisconnect passes mode disconnect and NEVER aborts', async () => {
+    let sawMode: string | null = null;
+    let aborted = false;
+    const unreg = __registerDrainerForTest({
+      name: 'test-4143-noabort',
+      order: 98,
+      drain: async (_ms, mode) => { sawMode = mode; return { unfinished: 3 }; },
+      abort: async () => { aborted = true; },
+    });
+    try {
+      await drainBackgroundWorkBeforeDisconnect({ timeoutMs: 50 });
+      expect(String(sawMode)).toBe('disconnect');
+      // unfinished>0 + abort defined — the CLI-exit path WOULD abort here;
+      // the disconnect path must not (abort is a permanent process-level
+      // state change, wrong for a long-lived process disconnecting one engine).
+      expect(aborted).toBe(false);
+    } finally {
+      unreg();
+    }
+  });
+
+  test('drainAllBackgroundWorkForCliExit passes mode exit and still aborts stragglers', async () => {
+    let sawMode: string | null = null;
+    let aborted = false;
+    const unreg = __registerDrainerForTest({
+      name: 'test-4143-exitmode',
+      order: 98,
+      drain: async (_ms, mode) => { sawMode = mode; return { unfinished: 1 }; },
+      abort: async () => { aborted = true; },
+    });
+    try {
+      await drainAllBackgroundWorkForCliExit({ timeoutMs: 50 });
+      expect(String(sawMode)).toBe('exit');
+      expect(aborted).toBe(true);
+    } finally {
+      unreg();
+    }
+  });
+
+  test('a throwing drainer does not block the disconnect drain either', async () => {
+    const calls: string[] = [];
+    const u1 = __registerDrainerForTest({
+      name: 'test-4143-thrower', order: 97,
+      drain: async () => { throw new Error('sink exploded'); },
+    });
+    const u2 = __registerDrainerForTest({
+      name: 'test-4143-after', order: 99,
+      drain: async () => { calls.push('after'); return { unfinished: 0 }; },
+    });
+    try {
+      await drainBackgroundWorkBeforeDisconnect({ timeoutMs: 50 });
+      expect(calls).toEqual(['after']);
+    } finally {
+      u1(); u2();
+    }
   });
 });

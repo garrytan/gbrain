@@ -17,7 +17,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { join, sep, parse } from 'path';
+import { join, sep, parse, win32 } from 'path';
 import { isWithinRoot } from '../src/commands/sync.ts';
 
 describe('isWithinRoot path containment (#774 NAV-1/NAV-2)', () => {
@@ -29,6 +29,10 @@ describe('isWithinRoot path containment (#774 NAV-1/NAV-2)', () => {
 
   test('accepts a direct child', () => {
     expect(isWithinRoot(join(root, 'page.md'), root)).toBe(true);
+  });
+
+  test('accepts the root with a trailing separator', () => {
+    expect(isWithinRoot(root + sep, root)).toBe(true);
   });
 
   test('accepts a nested descendant (the case a hardcoded "/" broke on win32)', () => {
@@ -57,5 +61,13 @@ describe('isWithinRoot path containment (#774 NAV-1/NAV-2)', () => {
     // `root + '/'` prefix test would have rejected it.
     const child = `${root}${sep}sub${sep}page.md`;
     expect(isWithinRoot(child, root)).toBe(true);
+  });
+
+  test('accepts Windows paths that differ only by directory casing', () => {
+    const winRoot = 'C:\\Users\\person\\Projects\\Tally';
+
+    expect(isWithinRoot('C:\\Users\\person\\projects\\Tally', winRoot, win32)).toBe(true);
+    expect(isWithinRoot('C:\\Users\\person\\projects\\Tally\\wiki\\page.md', winRoot, win32)).toBe(true);
+    expect(isWithinRoot('C:\\Users\\person\\projects\\Tally-evil\\page.md', winRoot, win32)).toBe(false);
   });
 });

@@ -164,9 +164,9 @@ async function runStatsSubcommand(engine: BrainEngine, args: string[]): Promise<
   if (stats.total_calls === 0) {
     console.log('');
     console.log('No telemetry recorded in this window. This can mean no search activity, or');
-    console.log('it can reflect the coverage gap above — a lone short-lived CLI call is often');
-    console.log('not enough to trigger a flush. `gbrain serve` / an MCP session is more likely');
-    console.log('to record counts over time (telemetry stays best-effort either way).');
+    console.log('it can reflect the coverage gap above — CLI calls flush on clean exit, but');
+    console.log('hard kills and over-bound drains still drop their buffer. `gbrain serve` /');
+    console.log('an MCP session records most reliably (telemetry stays best-effort either way).');
     // Still print the graph-signals section since failures are tracked
     // independently of the search_telemetry table.
     if (gsSection.enabled || gsSection.failures_count > 0) {

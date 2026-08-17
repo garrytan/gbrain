@@ -71,8 +71,14 @@ procedure whenever the source is one of those six formats:
 ```
 gbrain transcripts ingest ~/Downloads/conversations.json   # unzip first
 gbrain transcripts ingest                                  # discover harness logs
+gbrain transcripts ingest --max-bytes 4gb <store>          # oversized store (omit = per-format caps)
 gbrain transcripts status                                  # found vs imported gaps
 ```
+
+`--max-bytes` note: the cap is part of the `--since last` checkpoint
+fingerprint — running with a different cap (or dropping it) starts a fresh
+watermark scope, so a capped run's skipped tail is never mistaken for
+already-scanned.
 
 Native-vs-manual delta to know: the native lane redacts SECRETS (key
 patterns) plus your `~/.gbrain/harvest-private-patterns.txt` regexes and

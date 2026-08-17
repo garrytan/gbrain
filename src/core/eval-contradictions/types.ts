@@ -118,6 +118,13 @@ export interface PairMember {
   chunk_id: number | null;
   /** Present for intra_page_chunk_take when this end is a take. */
   take_id: number | null;
+  /**
+   * gbrain#4169: the take's PER-PAGE row number — what the takes CLI's
+   * `--row` flag actually addresses. `take_id` is the global PK; rendering
+   * it into `--row` made every generated resolution command fail with
+   * "Row #N not found". Null when this end is a chunk.
+   */
+  take_row_num: number | null;
   source_tier: SourceTier;
   /** Takes-only: who holds the take (`garry`, `alice`, ...). */
   holder: string | null;

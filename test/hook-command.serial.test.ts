@@ -1318,3 +1318,199 @@ describe('user-prompt deadline', () => {
     expect(hb?.reason).toBe('deadline');
   });
 });
+
+// ── compact segment lane + session-end remainder [cathedral 5] ──────────────
+
+const boundaryLine = () =>
+  JSON.stringify({ type: 'system', subtype: 'compact_boundary', content: 'conversation compacted' });
+
+describe('compact segment lane (cathedral 5)', () => {
+  const corpus = () => join(home(), 'transcripts', 'corpus');
+
+  test('banks a content-addressed since-last-boundary segment + ledger; heartbeat carries the code', async () => {
+    const projRoot = join(tmp, 'projects');
+    const transcript = seedTranscript(join(projRoot, 'p1'), 'c.jsonl', [
+      userLine('OLD-WINDOW-TEXT before the prior boundary'),
+      boundaryLine(),
+      userLine('NEW-WINDOW-TEXT after the prior boundary'),
+      assistantLine('assistant reply in the new window'),
+    ]);
+    expect(
+      await runHook(['compact'], {
+        stdin: JSON.stringify({ session_id: 'sess-seg', transcript_path: transcript }),
+        transcriptRoot: projRoot,
+      }),
+    ).toBe(0);
+    const files = readdirSync(corpus()).filter((f) => f.startsWith('sess-seg.seg-') && f.endsWith('.txt'));
+    expect(files).toHaveLength(1);
+    const body = readFileSync(join(corpus(), files[0]), 'utf8');
+    expect(body).toContain('NEW-WINDOW-TEXT');
+    expect(body).not.toContain('OLD-WINDOW-TEXT');
+    const ledger = JSON.parse(readFileSync(join(corpus(), 'sess-seg.ledger.json'), 'utf8')) as Array<{ hash: string }>;
+    expect(ledger).toHaveLength(1);
+    expect(files[0]).toContain(ledger[0].hash);
+    const hb = await lastHeartbeat();
+    expect(hb?.event).toBe('compact');
+    expect(hb?.segment).toBe('segment_banked');
+    // No serve configured in this test home — the banking IPC degrades AFTER
+    // the segment was durably written (durability-first ordering).
+    expect(hb?.outcome).toBe('degraded');
+    expect(hb?.reason).toBe('no_pglite_path');
+  });
+
+  test('identical retry is idempotent: same file, segment_dup, single ledger entry', async () => {
+    const projRoot = join(tmp, 'projects');
+    const transcript = seedTranscript(join(projRoot, 'p1'), 'd.jsonl', [
+      userLine('window content that will retry'),
+    ]);
+    const io = {
+      stdin: JSON.stringify({ session_id: 'sess-dup2', transcript_path: transcript }),
+      transcriptRoot: projRoot,
+    };
+    await runHook(['compact'], io);
+    await runHook(['compact'], { ...io });
+    const files = readdirSync(corpus()).filter((f) => f.startsWith('sess-dup2.seg-'));
+    expect(files).toHaveLength(1);
+    const ledger = JSON.parse(readFileSync(join(corpus(), 'sess-dup2.ledger.json'), 'utf8')) as unknown[];
+    expect(ledger).toHaveLength(1);
+    expect((await lastHeartbeat())?.segment).toBe('segment_dup');
+  });
+
+  test('transcript ending AT a boundary ⇒ empty_window, no segment written', async () => {
+    const projRoot = join(tmp, 'projects');
+    const transcript = seedTranscript(join(projRoot, 'p1'), 'e.jsonl', [
+      userLine('everything is before the boundary'),
+      boundaryLine(),
+    ]);
+    await runHook(['compact'], {
+      stdin: JSON.stringify({ session_id: 'sess-empty', transcript_path: transcript }),
+      transcriptRoot: projRoot,
+    });
+    expect(readdirSync(corpus()).filter((f) => f.startsWith('sess-empty.seg-'))).toEqual([]);
+    expect((await lastHeartbeat())?.segment).toBe('empty_window');
+  });
+
+  test('deadline below the scan budget ⇒ deadline_scan, nothing written (never unscanned)', async () => {
+    const projRoot = join(tmp, 'projects');
+    const transcript = seedTranscript(join(projRoot, 'p1'), 'f.jsonl', [userLine('some window text')]);
+    await runHook(['compact'], {
+      stdin: JSON.stringify({ session_id: 'sess-dl', transcript_path: transcript }),
+      transcriptRoot: projRoot,
+      compactDeadlineMs: 500, // < SEGMENT_MIN_BUDGET_MS(600) ⇒ deterministic deadline_scan
+    });
+    expect(existsSync(join(corpus(), 'sess-dl.ledger.json'))).toBe(false);
+    expect(readdirSync(existsSync(corpus()) ? corpus() : tmp).filter((f) => f.startsWith('sess-dl.seg-'))).toEqual([]);
+    expect((await lastHeartbeat())?.segment).toBe('deadline_scan');
+  });
+
+  test('segment content is secret-scanned at write time', async () => {
+    const projRoot = join(tmp, 'projects');
+    const planted = 'sk-' + 'FAKEfakeFAKEfake1234567890';
+    const transcript = seedTranscript(join(projRoot, 'p1'), 'g.jsonl', [
+      userLine(`the key is ${planted} in the compact window`),
+    ]);
+    await runHook(['compact'], {
+      stdin: JSON.stringify({ session_id: 'sess-red2', transcript_path: transcript }),
+      transcriptRoot: projRoot,
+    });
+    const files = readdirSync(corpus()).filter((f) => f.startsWith('sess-red2.seg-'));
+    expect(files).toHaveLength(1);
+    const body = readFileSync(join(corpus(), files[0]), 'utf8');
+    expect(body).not.toContain(planted);
+    expect(body).toContain('<REDACTED:openai>');
+  });
+});
+
+describe('session-end remainder (cathedral 5 dedup contract)', () => {
+  const corpus = () => join(home(), 'transcripts', 'corpus');
+
+  test('remainder-only when the compact-banked segment covers the boundary window', async () => {
+    const projRoot = join(tmp, 'projects');
+    const ws = join(tmp, 'ws');
+    mkdirSync(ws, { recursive: true });
+    // 1. Compact fires BEFORE the boundary is written: window = w1.
+    const preCompact = seedTranscript(join(projRoot, 'p1'), 'r1.jsonl', [
+      userLine('W1-ONLY-TEXT first window'),
+    ]);
+    await runHook(['compact'], {
+      stdin: JSON.stringify({ session_id: 'sess-rem', transcript_path: preCompact }),
+      transcriptRoot: projRoot,
+    });
+    expect((await lastHeartbeat())?.segment).toBe('segment_banked');
+    // 2. The harness appends the boundary + the post-compaction turns.
+    const full = seedTranscript(join(projRoot, 'p1'), 'r1.jsonl', [
+      userLine('W1-ONLY-TEXT first window'),
+      boundaryLine(),
+      userLine('REMAINDER-TEXT second window'),
+    ]);
+    await runHook(['session-end'], {
+      stdin: JSON.stringify({ session_id: 'sess-rem', transcript_path: full, cwd: ws }),
+      transcriptRoot: projRoot,
+    });
+    const body = readFileSync(join(corpus(), 'sess-rem.txt'), 'utf8');
+    expect(body).toContain('REMAINDER-TEXT');
+    expect(body).not.toContain('W1-ONLY-TEXT'); // already segment-banked — not re-written
+    expect((await lastHeartbeat())?.segment).toBe('remainder');
+  });
+
+  test('no ledger coverage ⇒ full-transcript fallback exactly as before', async () => {
+    const projRoot = join(tmp, 'projects');
+    const ws = join(tmp, 'ws');
+    mkdirSync(ws, { recursive: true });
+    const full = seedTranscript(join(projRoot, 'p1'), 'r2.jsonl', [
+      userLine('W1-TEXT'),
+      boundaryLine(),
+      userLine('W2-TEXT'),
+    ]);
+    await runHook(['session-end'], {
+      stdin: JSON.stringify({ session_id: 'sess-fb', transcript_path: full, cwd: ws }),
+      transcriptRoot: projRoot,
+    });
+    const body = readFileSync(join(corpus(), 'sess-fb.txt'), 'utf8');
+    expect(body).toContain('W1-TEXT');
+    expect(body).toContain('W2-TEXT');
+    expect((await lastHeartbeat())?.segment).toBe('full_fallback');
+  });
+
+  test('covered with empty remainder ⇒ skip_covered, no session corpus file written', async () => {
+    const projRoot = join(tmp, 'projects');
+    const ws = join(tmp, 'ws');
+    mkdirSync(ws, { recursive: true });
+    const preCompact = seedTranscript(join(projRoot, 'p1'), 'r3.jsonl', [
+      userLine('ALL-BANKED-TEXT'),
+    ]);
+    await runHook(['compact'], {
+      stdin: JSON.stringify({ session_id: 'sess-skip', transcript_path: preCompact }),
+      transcriptRoot: projRoot,
+    });
+    const full = seedTranscript(join(projRoot, 'p1'), 'r3.jsonl', [
+      userLine('ALL-BANKED-TEXT'),
+      boundaryLine(),
+    ]);
+    await runHook(['session-end'], {
+      stdin: JSON.stringify({ session_id: 'sess-skip', transcript_path: full, cwd: ws }),
+      transcriptRoot: projRoot,
+    });
+    expect(existsSync(join(corpus(), 'sess-skip.txt'))).toBe(false);
+    expect((await lastHeartbeat())?.segment).toBe('skip_covered');
+  });
+
+  test('orphaned sidecars are GC-ed at session-end; live pairs kept', async () => {
+    const projRoot = join(tmp, 'projects');
+    const ws = join(tmp, 'ws');
+    mkdirSync(ws, { recursive: true });
+    mkdirSync(corpus(), { recursive: true });
+    writeFileSync(join(corpus(), 'gone.txt.ingested'), '');
+    writeFileSync(join(corpus(), 'live.txt'), 'x');
+    writeFileSync(join(corpus(), 'live.txt.in-progress'), '');
+    const t1 = seedTranscript(join(projRoot, 'p1'), 'r4.jsonl', [userLine('gc trigger content')]);
+    await runHook(['session-end'], {
+      stdin: JSON.stringify({ session_id: 'sess-gc', transcript_path: t1, cwd: ws }),
+      transcriptRoot: projRoot,
+    });
+    const names = readdirSync(corpus());
+    expect(names).not.toContain('gone.txt.ingested');
+    expect(names).toContain('live.txt');
+    expect(names).toContain('live.txt.in-progress');
+  });
+});

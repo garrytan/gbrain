@@ -165,6 +165,8 @@ interface PersistedMessage {
 
 interface PersistedToolExec {
   message_idx: number;
+  /** D11 stable ordinal (per-turn tool-call position). NULL on legacy rows. */
+  ordinal: number | null;
   tool_use_id: string;
   tool_name: string;
   input: unknown;
@@ -367,7 +369,14 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     // ── Load prior state (replay) ───────────────────────────
     const priorMessages = await loadPriorMessages(engine, ctx.id);
     const priorTools = await loadPriorTools(engine, ctx.id);
-    const priorToolByUseId = new Map(priorTools.map(t => [t.tool_use_id, t]));
+    // Keyed by (message_idx, tool_use_id) — raw provider tool_use_ids may
+    // repeat across turns (#4155), so tool_use_id alone could resolve a
+    // sibling turn's execution row. WITHIN a turn this legacy path relies on
+    // the Anthropic-direct invariant that ids are unique per message (the
+    // whole loop is Anthropic-pinned for exactly that stability — see
+    // src/core/ai/capabilities.ts); the gateway path carries D11 ordinals
+    // for providers without that guarantee.
+    const priorToolByUseId = new Map(priorTools.map(t => [`${t.message_idx}:${t.tool_use_id}`, t]));
 
     // Rebuild the Anthropic messages array from persisted rows.
     const anthroMessages: Anthropic.MessageParam[] = priorMessages.length > 0
@@ -437,8 +446,8 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       }
       if (pendingToolUses.length > 0) {
         const synthesizedResults: ContentBlock[] = [];
-        for (const use of pendingToolUses) {
-          const prior = priorToolByUseId.get(use.id);
+        for (const [useOrdinal, use] of pendingToolUses.entries()) {
+          const prior = priorToolByUseId.get(`${last.message_idx}:${use.id}`);
           if (prior?.status === 'complete') {
             synthesizedResults.push({
               type: 'tool_result',
@@ -460,7 +469,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           const toolDef = toolDefs.find(t => t.name === use.name);
           if (!toolDef) {
             await persistToolExecFailed(
-              engine, ctx.id, last.message_idx, use.id, use.name, use.input,
+              engine, ctx.id, last.message_idx, useOrdinal, use.id, use.name, use.input,
               `tool "${use.name}" is not in the registry for this subagent`,
             );
             synthesizedResults.push({
@@ -472,19 +481,19 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           if (prior?.status === 'pending' && !toolDef.idempotent) {
             throw new Error(`non-idempotent tool "${use.name}" pending on resume; cannot safely re-run`);
           }
-          await persistToolExecPending(engine, ctx.id, last.message_idx, use.id, use.name, use.input);
+          await persistToolExecPending(engine, ctx.id, last.message_idx, useOrdinal, use.id, use.name, use.input);
           try {
             const output = await toolDef.execute(use.input, {
               engine, jobId: ctx.id, remote: true, signal: ctx.signal,
             });
-            await persistToolExecComplete(engine, ctx.id, use.id, output);
+            await persistToolExecComplete(engine, ctx.id, last.message_idx, useOrdinal, use.id, output);
             synthesizedResults.push({
               type: 'tool_result', tool_use_id: use.id,
               content: asStringIfNotObject(output),
             } as ContentBlock);
           } catch (e) {
             const errText = e instanceof Error ? (e.stack ?? e.message) : String(e);
-            await persistToolExecFailed(engine, ctx.id, last.message_idx, use.id, use.name, use.input, errText);
+            await persistToolExecFailed(engine, ctx.id, last.message_idx, useOrdinal, use.id, use.name, use.input, errText);
             synthesizedResults.push({
               type: 'tool_result', tool_use_id: use.id,
               content: errText, is_error: true,
@@ -726,7 +735,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
 
       // 5. Dispatch each tool_use. Two-phase persist (pending → complete/failed).
       const toolResults: ContentBlock[] = [];
-      for (const use of toolUses) {
+      for (const [useOrdinal, use] of toolUses.entries()) {
         if (ctx.signal.aborted || ctx.shutdownSignal.aborted) {
           throw new Error('subagent aborted during tool dispatch');
         }
@@ -737,7 +746,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           // Model called a tool we didn't expose. Mark execution failed
           // with a clear error and feed the error back in the next turn.
           await persistToolExecFailed(
-            engine, ctx.id, assistantIdx, use.id, toolName, use.input,
+            engine, ctx.id, assistantIdx, useOrdinal, use.id, toolName, use.input,
             `tool "${toolName}" is not in the registry for this subagent`,
           );
           toolResults.push({
@@ -756,9 +765,10 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           continue;
         }
 
-        // Replay: if we already have a row for this tool_use_id, trust it
-        // unless status='pending' and the tool is idempotent (re-run).
-        const prior = priorToolByUseId.get(use.id);
+        // Replay: if we already have a row for this turn's tool_use_id,
+        // trust it unless status='pending' and the tool is idempotent
+        // (re-run). Keyed by (message_idx, tool_use_id) — see #4155.
+        const prior = priorToolByUseId.get(`${assistantIdx}:${use.id}`);
         if (prior && prior.status === 'complete') {
           toolResults.push({
             type: 'tool_result',
@@ -782,7 +792,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         }
 
         // Fresh or idempotent-replay dispatch.
-        await persistToolExecPending(engine, ctx.id, assistantIdx, use.id, toolName, use.input);
+        await persistToolExecPending(engine, ctx.id, assistantIdx, useOrdinal, use.id, toolName, use.input);
         logSubagentHeartbeat({ job_id: ctx.id, event: 'tool_called', turn_idx: turnIdx, tool_name: toolName });
 
         const toolStart = Date.now();
@@ -793,7 +803,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
             remote: true,
             signal: ctx.signal,
           });
-          await persistToolExecComplete(engine, ctx.id, use.id, output);
+          await persistToolExecComplete(engine, ctx.id, assistantIdx, useOrdinal, use.id, output);
           logSubagentHeartbeat({
             job_id: ctx.id,
             event: 'tool_result',
@@ -810,7 +820,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           const errText = e instanceof Error
             ? (e.stack ?? e.message)
             : String(e);
-          await persistToolExecFailed(engine, ctx.id, assistantIdx, use.id, toolName, use.input, errText);
+          await persistToolExecFailed(engine, ctx.id, assistantIdx, useOrdinal, use.id, toolName, use.input, errText);
           logSubagentHeartbeat({
             job_id: ctx.id,
             event: 'tool_failed',
@@ -1073,6 +1083,20 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
       // circuit silently breaks and the tool re-executes. Pinned by
       // test/e2e/subagent-crash-replay-multi-provider.test.ts.
       const candidateId = randomUUIDv7();
+      // #4155 — tool_use_id stores the RAW provider id, which is NOT unique
+      // per job: some providers (claude-cli) hand back short, repeating ids
+      // (e.g. "toolu_01" on every turn, since each `claude -p` (print mode)
+      // call is a fresh subprocess replayed from an id-stripped transcript).
+      // NOTE: spell it `-p`, not the long form — scripts/generate-flag-registry.ts
+      // harvests flag-shaped literals out of comments too, and the long form
+      // lands in the generated registry as a flag `jobs` does not accept.
+      // The former job-wide `uniq_subagent_tools_use_id UNIQUE (job_id,
+      // tool_use_id)` constraint encoded the false assumption that provider
+      // ids are job-unique; a reuse collided (it was never this INSERT's
+      // conflict target) and dead-lettered the job. Migration v131 dropped
+      // it — row identity is (job_id, message_idx, ordinal), and every
+      // reader resolves an execution by (message_idx, tool_use_id) or by
+      // gbrain_tool_use_id, never by tool_use_id alone.
       const rows = await engine.executeRaw<{ gbrain_tool_use_id: string }>(
         `INSERT INTO subagent_tool_executions
            (job_id, message_idx, tool_use_id, tool_name, input, status, schema_version, ordinal, gbrain_tool_use_id, provider_id)
@@ -1199,15 +1223,29 @@ async function reconcileGatewayReplay(args: ReconcileArgs): Promise<ReconcileRes
     };
   });
 
-  // Settled executions, looked up by (assistant message_idx, provider
-  // tool_use_id) with an ordinal-position fallback for legacy rows.
+  // Settled executions, three lookup structures:
+  //   - execByOrdinal: rows keyed by their PERSISTED (message_idx, ordinal) —
+  //     the true D11 row identity. The block position callIdx equals the
+  //     ordinal stamped at first observation, so this survives both same-id
+  //     repeats within a turn and slot shift when an earlier call never got
+  //     a ledger row.
+  //   - execByKey: (message_idx, tool_use_id) — exact whenever the turn's raw
+  //     ids are unique (single-value: last-write-wins only for the same-id-
+  //     twice shape, which execByOrdinal already resolves first).
+  //   - legacyByMsg: ordinal=NULL rows (pre-stamping writes) in block order,
+  //     for the positional fallback.
+  const execByOrdinal = new Map<string, PersistedToolExec>();
   const execByKey = new Map<string, PersistedToolExec>();
-  const execByMsg = new Map<number, PersistedToolExec[]>();
+  const legacyByMsg = new Map<number, PersistedToolExec[]>();
   for (const t of priorTools) {
     execByKey.set(`${t.message_idx}:${t.tool_use_id}`, t);
-    const arr = execByMsg.get(t.message_idx) ?? [];
-    arr.push(t);
-    execByMsg.set(t.message_idx, arr);
+    if (t.ordinal != null) {
+      execByOrdinal.set(`${t.message_idx}:${t.ordinal}`, t);
+    } else {
+      const arr = legacyByMsg.get(t.message_idx) ?? [];
+      arr.push(t);
+      legacyByMsg.set(t.message_idx, arr);
+    }
   }
 
   let maxIdx = work.reduce((mx, w) => Math.max(mx, w.message_idx), -1);
@@ -1229,15 +1267,34 @@ async function reconcileGatewayReplay(args: ReconcileArgs): Promise<ReconcileRes
     const next = work[i + 1];
     if (next && next.role === 'user' && next.blocks.some(b => b.type === 'tool-result')) continue;
 
+    // Ids that repeat WITHIN this turn are ambiguous as a lookup key — the
+    // single-value execByKey map is last-write-wins for them, so the exact-id
+    // fallback below is disabled for those ids (ordinal identity only).
+    const idCounts = new Map<string, number>();
+    for (const c of toolCalls) idCounts.set(c.toolCallId, (idCounts.get(c.toolCallId) ?? 0) + 1);
+
     const results: ChatBlock[] = [];
     for (let callIdx = 0; callIdx < toolCalls.length; callIdx++) {
       const call = toolCalls[callIdx];
-      // Prefer an exact (message_idx, provider tool_use_id) match. The
-      // positional fallback is used only when the row at that ordinal is for
-      // the SAME tool, so a missing row can't mis-attribute a sibling's output.
-      const fallback = execByMsg.get(msg.message_idx)?.[callIdx];
-      const exec = execByKey.get(`${msg.message_idx}:${call.toolCallId}`)
-        ?? (fallback && fallback.tool_name === call.toolName ? fallback : undefined);
+      // Row resolution order:
+      //   1. The persisted-ordinal row at this block position when its raw id
+      //      matches the call — exact D11 identity (#4155: raw ids may repeat
+      //      within a turn, and an earlier call without a ledger row must not
+      //      shift a later row into its slot).
+      //   2. The exact (message_idx, tool_use_id) key — only when this turn
+      //      uses the id ONCE (a repeated id makes the key ambiguous and the
+      //      call must resolve by ordinal or not at all, else one row's
+      //      outcome would be served to every call sharing the id).
+      //   3. The legacy (ordinal=NULL) positional row, only when it is for
+      //      the SAME tool, so a missing row can't mis-attribute a sibling's
+      //      output.
+      const stamped = execByOrdinal.get(`${msg.message_idx}:${callIdx}`);
+      const idIsUniqueInTurn = (idCounts.get(call.toolCallId) ?? 0) <= 1;
+      const legacyPositional = legacyByMsg.get(msg.message_idx)?.[callIdx];
+      const exec = (stamped && stamped.tool_use_id === call.toolCallId)
+        ? stamped
+        : (idIsUniqueInTurn ? execByKey.get(`${msg.message_idx}:${call.toolCallId}`) : undefined)
+          ?? (legacyPositional && legacyPositional.tool_name === call.toolName ? legacyPositional : undefined);
       if (exec?.status === 'complete') {
         results.push({ type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName, output: exec.output ?? null });
         continue;
@@ -1248,21 +1305,21 @@ async function reconcileGatewayReplay(args: ReconcileArgs): Promise<ReconcileRes
       }
       const toolDef = toolDefs.find(t => t.name === call.toolName);
       if (!toolDef) {
-        await persistToolExecFailed(engine, jobId, msg.message_idx, call.toolCallId, call.toolName, call.input, `tool "${call.toolName}" is not in the registry for this subagent`);
+        await persistToolExecFailed(engine, jobId, msg.message_idx, callIdx, call.toolCallId, call.toolName, call.input, `tool "${call.toolName}" is not in the registry for this subagent`);
         results.push({ type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName, output: `tool "${call.toolName}" is not available`, isError: true });
         continue;
       }
       if (exec?.status === 'pending' && !toolDef.idempotent) {
         throw new Error(`non-idempotent tool "${call.toolName}" pending on resume; cannot safely re-run`);
       }
-      await persistToolExecPending(engine, jobId, msg.message_idx, call.toolCallId, call.toolName, call.input);
+      await persistToolExecPending(engine, jobId, msg.message_idx, callIdx, call.toolCallId, call.toolName, call.input);
       try {
         const output = await toolDef.execute(call.input, { engine, jobId, remote: true, signal });
-        await persistToolExecComplete(engine, jobId, call.toolCallId, output);
+        await persistToolExecComplete(engine, jobId, msg.message_idx, callIdx, call.toolCallId, output);
         results.push({ type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName, output });
       } catch (e) {
         const errText = e instanceof Error ? (e.stack ?? e.message) : String(e);
-        await persistToolExecFailed(engine, jobId, msg.message_idx, call.toolCallId, call.toolName, call.input, errText);
+        await persistToolExecFailed(engine, jobId, msg.message_idx, callIdx, call.toolCallId, call.toolName, call.input, errText);
         results.push({ type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName, output: errText, isError: true });
       }
     }
@@ -1451,7 +1508,7 @@ async function loadPriorMessages(engine: BrainEngine, jobId: number): Promise<Pe
 
 async function loadPriorTools(engine: BrainEngine, jobId: number): Promise<PersistedToolExec[]> {
   const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT message_idx, tool_use_id, tool_name, input, status, output, error
+    `SELECT message_idx, ordinal, tool_use_id, tool_name, input, status, output, error
        FROM subagent_tool_executions
       WHERE job_id = $1
       ORDER BY message_idx, COALESCE(ordinal, 0), id`,
@@ -1459,6 +1516,7 @@ async function loadPriorTools(engine: BrainEngine, jobId: number): Promise<Persi
   );
   return rows.map(r => ({
     message_idx: r.message_idx as number,
+    ordinal: (r.ordinal as number | null) ?? null,
     tool_use_id: r.tool_use_id as string,
     tool_name: r.tool_name as string,
     input: typeof r.input === 'string' ? JSON.parse(r.input) : r.input,
@@ -1494,6 +1552,8 @@ async function persistToolExecPending(
   engine: BrainEngine,
   jobId: number,
   messageIdx: number,
+  /** 0-based tool_use block position within the turn — the D11 ordinal. */
+  ordinal: number,
   toolUseId: string,
   toolName: string,
   input: unknown,
@@ -1504,25 +1564,61 @@ async function persistToolExecPending(
   // postgres.js .unsafe() (#2339 class; PGLite hides it). The ::text cast makes
   // the text→jsonb parse produce a real jsonb object.
   const jsonStr = typeof input === 'string' ? input : JSON.stringify(input);
+  // Two guards replace the former job-wide ON CONFLICT (job_id, tool_use_id)
+  // DO NOTHING (that constraint was dropped in migration v131, #4155 — raw
+  // provider ids may repeat across turns):
+  //   1. NOT EXISTS, restricted to LEGACY ordinal=NULL rows, preserves the
+  //      DO NOTHING semantics against rows that predate ordinal stamping
+  //      (they never trip a conflict target). Stamped rows are governed by
+  //      guard 2 alone, so two distinct same-turn calls that share a raw id
+  //      each keep their own row.
+  //   2. ON CONFLICT on the stable-id constraint (job_id, message_idx,
+  //      ordinal) is the constraint-backed backstop for the residual race —
+  //      a lease bounds honest workers to one owner per job, but an expired
+  //      job can be reclaimed while a partitioned old worker still writes.
   await engine.executeRaw(
-    `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, input, status)
-     VALUES ($1, $2, $3, $4, $5::text::jsonb, 'pending')
-     ON CONFLICT (job_id, tool_use_id) DO NOTHING`,
-    [jobId, messageIdx, toolUseId, toolName, jsonStr],
+    `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, input, status, ordinal)
+     SELECT $1, $2, $3, $4, $5::text::jsonb, 'pending', $6
+      WHERE NOT EXISTS (
+        SELECT 1 FROM subagent_tool_executions
+         WHERE job_id = $1 AND message_idx = $2 AND tool_use_id = $3
+           AND ordinal IS NULL
+      )
+     ON CONFLICT (job_id, message_idx, ordinal) DO NOTHING`,
+    [jobId, messageIdx, toolUseId, toolName, jsonStr, ordinal],
   );
 }
 
 async function persistToolExecComplete(
   engine: BrainEngine,
   jobId: number,
+  messageIdx: number,
+  /** 0-based tool_use block position within the turn — the D11 ordinal. */
+  ordinal: number,
   toolUseId: string,
   output: unknown,
 ): Promise<void> {
+  // Scoped by message_idx: raw provider tool_use_ids may repeat across turns
+  // (#4155), so (job_id, tool_use_id) alone could also update a sibling
+  // turn's row. Targets exactly ONE row: the call's own ordinal first, then a
+  // legacy ordinal=NULL row — never an already-COMPLETE row (the ordinal IS
+  // NULL disjunct would otherwise let a legacy settled sibling's output be
+  // silently overwritten), and never a same-id SIBLING at another ordinal: a
+  // call's own row is always reachable via its ordinal (persistToolExecPending
+  // stamps the same value) or via the legacy NULL, so a broader status-based
+  // disjunct could only ever capture a sibling's row.
   await engine.executeRaw(
     `UPDATE subagent_tool_executions
-        SET status = 'complete', output = $3::text::jsonb, ended_at = now()
-      WHERE job_id = $1 AND tool_use_id = $2`,
-    [jobId, toolUseId, typeof output === 'string' ? output : JSON.stringify(output)],
+        SET status = 'complete', output = $4::text::jsonb, ended_at = now()
+      WHERE id = (
+        SELECT id FROM subagent_tool_executions
+         WHERE job_id = $1 AND message_idx = $2 AND tool_use_id = $3
+           AND (ordinal = $5 OR ordinal IS NULL)
+           AND status <> 'complete'
+         ORDER BY CASE WHEN ordinal = $5 THEN 0 ELSE 1 END, id
+         LIMIT 1
+      )`,
+    [jobId, messageIdx, toolUseId, typeof output === 'string' ? output : JSON.stringify(output), ordinal],
   );
 }
 
@@ -1530,6 +1626,8 @@ async function persistToolExecFailed(
   engine: BrainEngine,
   jobId: number,
   messageIdx: number,
+  /** 0-based tool_use block position within the turn — the D11 ordinal. */
+  ordinal: number,
   toolUseId: string,
   toolName: string,
   input: unknown,
@@ -1537,13 +1635,45 @@ async function persistToolExecFailed(
 ): Promise<void> {
   // INSERT-or-UPDATE to failed — covers both "no pending row yet" (tool
   // rejected upfront) and "pending row exists" (tool threw mid-execute).
-  await engine.executeRaw(
-    `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, input, status, error, ended_at)
-     VALUES ($1, $2, $3, $4, $5::text::jsonb, 'failed', $6, now())
-     ON CONFLICT (job_id, tool_use_id) DO UPDATE
-       SET status = 'failed', error = EXCLUDED.error, ended_at = now()`,
-    [jobId, messageIdx, toolUseId, toolName, typeof input === 'string' ? input : JSON.stringify(input), error],
+  // UPDATE-then-INSERT replaces the former ON CONFLICT (job_id, tool_use_id)
+  // upsert (that job-wide unique was dropped in migration v131, #4155).
+  // The UPDATE targets exactly ONE row (own ordinal first, then legacy
+  // ordinal=NULL) and NEVER a row that already settled complete — without the
+  // status guard the ordinal IS NULL disjunct would let a late failure
+  // downgrade a legacy settled row, corrupting the ledger replay trusts. No
+  // status-based disjunct: a call's own row is always reachable via its
+  // ordinal or the legacy NULL, so an `OR status = 'pending'` arm could only
+  // ever capture a same-id SIBLING's pending row at another ordinal (e.g. an
+  // unregistered-tool failure with no own row stealing the sibling's slot).
+  // The INSERT leg carries the stable-id ON CONFLICT backstop for the
+  // residual zombie-worker race, mirroring persistToolExecPending; its
+  // conflict update is predicated on the SAME tool_use_id and a non-complete
+  // row for the same reason.
+  const updated = await engine.executeRaw<{ id: number }>(
+    `UPDATE subagent_tool_executions
+        SET status = 'failed', error = $4, ended_at = now()
+      WHERE id = (
+        SELECT id FROM subagent_tool_executions
+         WHERE job_id = $1 AND message_idx = $2 AND tool_use_id = $3
+           AND (ordinal = $5 OR ordinal IS NULL)
+           AND status <> 'complete'
+         ORDER BY CASE WHEN ordinal = $5 THEN 0 ELSE 1 END, id
+         LIMIT 1
+      )
+      RETURNING id`,
+    [jobId, messageIdx, toolUseId, error, ordinal],
   );
+  if (updated.length === 0) {
+    await engine.executeRaw(
+      `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, input, status, error, ended_at, ordinal)
+       VALUES ($1, $2, $3, $4, $5::text::jsonb, 'failed', $6, now(), $7)
+       ON CONFLICT (job_id, message_idx, ordinal) DO UPDATE
+         SET status = 'failed', error = EXCLUDED.error, ended_at = now()
+         WHERE subagent_tool_executions.tool_use_id = EXCLUDED.tool_use_id
+           AND subagent_tool_executions.status <> 'complete'`,
+      [jobId, messageIdx, toolUseId, toolName, typeof input === 'string' ? input : JSON.stringify(input), error, ordinal],
+    );
+  }
 }
 
 // ── Internal: helpers ───────────────────────────────────────

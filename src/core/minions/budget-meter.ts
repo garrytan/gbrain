@@ -92,6 +92,7 @@ export async function reserve(
     // callers cannot both observe the same headroom. PGLite serializes its
     // single connection and does not implement advisory locks.
     if (tx.kind === 'postgres') {
+      // Lock-census (PR6 D5): INTENTIONALLY per-client, not per-source — the budget cap is an oauth_clients.budget_usd_per_day property; one client's concurrent requests must serialize regardless of which source each targets.
       await sql`SELECT pg_advisory_xact_lock(${BigInt(lockKey)})`;
     }
 

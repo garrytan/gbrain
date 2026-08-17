@@ -66,3 +66,27 @@ describe('embeddingDimsForModel — per-model dims (#2051)', () => {
     expect(embeddingDimsForModel(openai, tp.models[0])).toBe(tp.default_dims);
   });
 });
+
+describe('case-folded model_dims lookup (#4123 init-time twin)', () => {
+  const ollama = getRecipe('ollama')!;
+
+  test('cased configured id resolves against the lowercase table instead of falling to default_dims', () => {
+    expect(embeddingDimsForModel(ollama, 'ollama:Qwen3-Embed-8B')).toBe(4096);
+    expect(embeddingDimsForModel(ollama, 'Qwen3-Embed-8B')).toBe(4096);
+  });
+
+  test('cased table keys resolve too (user-editable recipes carry cased keys — both sides fold)', () => {
+    const recipe = {
+      ...ollama,
+      touchpoints: {
+        ...ollama.touchpoints,
+        embedding: {
+          ...ollama.touchpoints.embedding!,
+          model_dims: { 'Custom-Embed-XL': 2048 },
+        },
+      },
+    };
+    expect(embeddingDimsForModel(recipe, 'custom-embed-xl')).toBe(2048);
+    expect(embeddingDimsForModel(recipe, 'Custom-Embed-XL')).toBe(2048);
+  });
+});

@@ -1,4 +1,7 @@
 import type { BrainEngine } from '../core/engine.ts';
+// Leaf module (no flag surface of its own) — see that file for why this
+// isn't imported from extract-conversation-facts.ts directly (#4135).
+import { ALLOWED_TYPES } from '../core/facts/conversation-types.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import * as db from '../core/db.ts';
 import { LATEST_VERSION, getIdleBlockers } from '../core/migrate.ts';
@@ -89,6 +92,7 @@ export {
   checkSourceRoutingHealth,
   checkFederationHealth,
   checkOauthConfidentialHealth,
+  checkOauthClientScopeHealth,
   checkAutopilotLockScope,
   checkStaleLocks,
   checkCyclePhaseScope,
@@ -166,6 +170,7 @@ import {
 import {
   checkSourceRoutingHealth,
   checkOauthConfidentialHealth,
+  checkOauthClientScopeHealth,
   checkAutopilotLockScope,
   checkStaleLocks,
   checkCyclePhaseScope,
@@ -1266,7 +1271,8 @@ export async function buildChecks(
     try {
       const { readConversationBodyForParsing } = await import('../core/conversation-parser/body.ts');
       const { parseConversation } = await import('../core/conversation-parser/parse.ts');
-      const allowedTypes = ['conversation', 'meeting', 'slack', 'email', 'imessage', 'imessage-daily'] as const;
+      // Single source of truth for the conversation-facts type allowlist (#4135).
+      const allowedTypes = ALLOWED_TYPES;
       // PageFilters supports singular `type` only; iterate the allowed types
       // and cap at ~50/each to land at ~200 total max.
       const sample: import('../core/types.ts').Page[] = [];
@@ -3730,6 +3736,9 @@ export async function buildChecks(
     // 5L — oauth_confidential_client_health (success-path probe per codex CF8)
     progress.heartbeat('oauth_confidential_client_health');
     checks.push(await checkOauthConfidentialHealth(engine));
+    // oauth_client_scope_health — dangling federated grants + orphaned empty workspace sources
+    progress.heartbeat('oauth_client_scope_health');
+    checks.push(await checkOauthClientScopeHealth(engine));
     // 5M — autopilot_lock_scope (PID-safe hint per codex CF11)
     progress.heartbeat('autopilot_lock_scope');
     checks.push(checkAutopilotLockScope());

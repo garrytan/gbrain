@@ -78,6 +78,14 @@ export interface ParseResult {
   /** Once-per-page warn from timezone_policy = utc_assumed_with_warn
    *  patterns when no frontmatter timezone is set. */
   timezone_warning?: string;
+  /** #4136 — heading-shaped labels a heading-anchored pattern FOLDED into the
+   *  previous turn's body (or silently dropped before the first anchor)
+   *  instead of anchoring. Deduped, capped, ≤48 chars each, fence-aware.
+   *  Non-empty means speaker attribution on this page may credit one
+   *  speaker with another's words — callers decide whether to warn or
+   *  decline (the parser stays purely descriptive). Undefined when empty so
+   *  healthy-page JSON output is byte-identical. */
+  unrecognized_headings?: string[];
 }
 
 /**

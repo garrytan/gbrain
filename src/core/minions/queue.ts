@@ -320,6 +320,7 @@ export class MinionQueue {
       // silently kill the fresh intent an hour later (round-2 V7).
       if (coalesceActive && paramHash) {
         const admissionQueue = opts?.queue ?? 'default';
+        // Lock-census (PR6 D5): INTENTIONALLY not source-keyed — admission identity is (name, queue, param-hash); any source in the payload is already folded into paramHash.
         await tx.executeRaw(
           `SELECT pg_advisory_xact_lock(hashtext('minion_admission:' || $1 || ':' || $2 || ':' || $3))`,
           [jobName, admissionQueue, paramHash]
@@ -363,6 +364,7 @@ export class MinionQueue {
       // concurrency — defeating the DoS backstop). Serialization cost only
       // applies to names with a quota configured, i.e. the runaway ones.
       if (policy.quotaMaxWaiting != null) {
+        // Lock-census (PR6 D5): INTENTIONALLY cross-source AND cross-queue — the quota is a name-global DoS backstop; scoping the key would let per-source submitters overshoot it in parallel.
         await tx.executeRaw(
           `SELECT pg_advisory_xact_lock(hashtext('minion_quota:' || $1))`,
           [jobName]
@@ -419,6 +421,7 @@ export class MinionQueue {
         const bpSourceId = typeof d?.sourceId === 'string' ? d.sourceId as string
           : typeof d?.source_id === 'string' ? d.source_id as string
           : null;
+        // Lock-census (PR6 D5): COMPLIANT — key already folds the payload source (coalesce($3,'')); the NULL-source wildcard arm is the documented maxWaiting contract above.
         await tx.executeRaw(
           `SELECT pg_advisory_xact_lock(hashtext('minion_maxwaiting:' || $1 || ':' || $2 || ':' || coalesce($3, '')))`,
           [jobName, backpressureQueue, bpSourceId]

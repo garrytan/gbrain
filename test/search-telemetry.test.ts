@@ -14,6 +14,7 @@ import {
   recordSearchTelemetry,
   readSearchStats,
   getTelemetryWriter,
+  awaitPendingTelemetryFlush,
   _resetTelemetryWriterForTest,
 } from '../src/core/search/telemetry.ts';
 import type { HybridSearchMeta } from '../src/core/types.ts';
@@ -323,5 +324,64 @@ describe('empty_result bucket keyed by cause (WP2/T3)', () => {
     expect(Object.keys(s.intent_distribution)).toEqual(['general']);
     expect(s.empty_results.total).toBe(1);
     expect(s.avg_results).toBeCloseTo(2.5, 5); // 5 / 2 calls — reserved row excluded
+  });
+});
+
+describe('awaitPendingTelemetryFlush (#4143 drain)', () => {
+  test('fast path: nothing pending resolves {unfinished: 0} without touching the DB', async () => {
+    const r = await awaitPendingTelemetryFlush(50, 'disconnect');
+    expect(r).toEqual({ unfinished: 0 });
+  });
+
+  test("exit mode flushes residual buckets — BOTH the normal and the empty_result bucket land", async () => {
+    const w = getTelemetryWriter();
+    w.setEngine(engine);
+    // One normal record + one zero-result record (the empty_result cause
+    // bucket #4096 added — the second INSERT that turned the flush into the
+    // close()-deadlock trigger).
+    recordSearchTelemetry(engine, makeMeta(), { results_count: 5 });
+    recordSearchTelemetry(engine, makeMeta({ vector_enabled: false }), { results_count: 0 });
+    expect(w.hasBuffered()).toBe(true);
+
+    const r = await awaitPendingTelemetryFlush(2000, 'exit');
+    expect(r).toEqual({ unfinished: 0 });
+    expect(w.hasBuffered()).toBe(false);
+
+    const rows = await engine.executeRaw<{ mode: string; intent: string }>(
+      'SELECT mode, intent FROM search_telemetry ORDER BY mode',
+    );
+    expect(rows.length).toBe(2);
+    expect(rows.map((x) => x.mode).sort()).toEqual(['balanced', 'empty_result']);
+  });
+
+  test('disconnect mode awaits only the in-flight flush and DROPS residual buckets (lossy by design)', async () => {
+    const w = getTelemetryWriter();
+    w.setEngine(engine);
+    recordSearchTelemetry(engine, makeMeta(), { results_count: 5 });
+    // Kick a flush so it is in flight, then buffer MORE — the post-swap
+    // records that a disconnect-mode drain must NOT try to write.
+    const inFlight = w.flush();
+    recordSearchTelemetry(engine, makeMeta({ intent: 'entity' }), { results_count: 1 });
+    expect(w.hasBuffered()).toBe(true);
+
+    const r = await awaitPendingTelemetryFlush(2000, 'disconnect');
+    expect(r).toEqual({ unfinished: 0 });
+    await inFlight;
+    expect(w.pendingFlush()).toBeNull();
+    expect(w.hasBuffered()).toBe(true); // residual stays buffered — dropped with the process
+
+    const rows = await engine.executeRaw<{ intent: string }>('SELECT intent FROM search_telemetry');
+    expect(rows.map((x) => x.intent)).toEqual(['general']); // only the in-flight write landed
+  });
+
+  test('a drain that exceeds its bound reports unfinished instead of hanging', async () => {
+    const w = getTelemetryWriter();
+    // A flush that never settles (simulated) — the drain must give up at the bound.
+    (w as unknown as { flushInFlight: Promise<void> | null }).flushInFlight = new Promise<void>(() => {});
+    const started = Date.now();
+    const r = await awaitPendingTelemetryFlush(100, 'disconnect');
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(r).toEqual({ unfinished: 1 });
+    _resetTelemetryWriterForTest(); // clear the poisoned singleton for later cases
   });
 });

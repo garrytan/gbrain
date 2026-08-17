@@ -6,15 +6,18 @@
  * records — the latter is a trigger, not a guarantee: a threshold-crossing
  * record that arrives while a flush is in flight coalesces onto it and does
  * not drain the new bucket, so a buffer can exceed the threshold). There is
- * deliberately NO flush on process exit — `ensureExitHook` below documents why
- * the beforeExit/SIGINT/SIGTERM drain was removed. Consequence: anything still
- * buffered when the process exits is lost, and so is a snapshot handed to an
- * in-flight `flush()` that has not committed yet (`flush` clears `buckets`
- * before awaiting the write). Long-running processes (HTTP MCP server,
- * autopilot, jobs work) are covered by the timer; a short-lived CLI invocation
- * usually exits before either trigger fires, so its calls are simply dropped.
- * The search hot path NEVER waits on this write — `record()` is sync and
- * the flush is fire-and-forget.
+ * deliberately NO flush hook on raw process exit — `ensureExitHook` below
+ * documents why the beforeExit/SIGINT/SIGTERM drain was removed. Since #4143
+ * this module registers with the background-work registry (order 5): the CLI's
+ * BOUNDED teardown drain ('exit' mode) flushes residual buckets against the
+ * still-live engine, and `engine.disconnect()`'s drain ('disconnect' mode)
+ * awaits only the IN-FLIGHT flush — an in-flight statement racing PGLite's
+ * `close()` deadlocked the whole process permanently (this was the
+ * unregistered 5th sink the registry's own module doc warned about).
+ * Consequence: a hard kill or an abandoned snapshot still loses data, and
+ * anything buffered at engine disconnect is dropped by design. The search hot
+ * path NEVER waits on this write — `record()` is sync and the flush is
+ * fire-and-forget.
  *
  * Schema math per [CDX-17]: rows are sums + counts only, NEVER averages.
  * Read-time derives averages. ON CONFLICT DO UPDATE adds raw values so two
@@ -28,14 +31,15 @@
  * Per-process bucketing means stdio MCP, HTTP MCP, and CLI processes each
  * maintain their own buffers. Stats are directional, not exact — acceptable
  * because the consumer is the operator (or an agent running `gbrain search
- * tune`), not a financial ledger. Note the loss is not limited to hard
- * crashes: with no exit drain, an ordinary exit loses whatever has not been
- * committed. Weigh that when reading counts from a process class that exits
- * often.
+ * tune`), not a financial ledger. Loss still happens on hard kills, on drains
+ * that exceed their bound, and at engine disconnect (buffered-but-not-flushed
+ * rows are dropped there by design). Weigh that when reading counts from a
+ * process class that dies unclean often.
  */
 
 import type { BrainEngine } from '../engine.ts';
 import type { HybridSearchMeta } from '../types.ts';
+import { registerBackgroundWorkDrainer, type BackgroundWorkDrainMode } from '../background-work.ts';
 
 interface Bucket {
   date: string;
@@ -91,7 +95,9 @@ export function classifyEmptyResultCause(meta: HybridSearchMeta): EmptyResultCau
 }
 
 const FLUSH_INTERVAL_MS = 60_000;
-const FLUSH_THRESHOLD_CALLS = 100;
+/** Exported for the #4143 regression pin — the disconnect-hang test must fire
+ * the flush on its EXACT boundary, not a hard-coded copy that drifts. */
+export const FLUSH_THRESHOLD_CALLS = 100;
 
 /**
  * Per-process telemetry singleton. Each gbrain process (CLI, stdio MCP,
@@ -279,6 +285,18 @@ class TelemetryWriter {
     }
     this.buckets.clear();
     this.pendingCount = 0;
+    // #4143: tests start clean — never inherit a prior case's in-flight write.
+    this.flushInFlight = null;
+  }
+
+  /** #4143 — the in-flight flush promise, if any (drain path; never creates work). */
+  pendingFlush(): Promise<void> | null {
+    return this.flushInFlight;
+  }
+
+  /** #4143 — whether any bucket is buffered (drain path fast-check). */
+  hasBuffered(): boolean {
+    return this.buckets.size > 0;
   }
 
   /** Test-only — read the current bucket count without draining. */
@@ -340,6 +358,63 @@ export function getTelemetryWriter(): TelemetryWriter {
   if (!_writer) _writer = new TelemetryWriter();
   return _writer;
 }
+
+/**
+ * #4143 — background-work drain for the telemetry sink.
+ *
+ * 'disconnect' mode: await ONLY the in-flight flush (its statement settles
+ * against the still-open raw handle; any FURTHER statement it issues fails
+ * fast on the engine's already-nulled handle and is swallowed per-bucket).
+ * Residual buckets are deliberately dropped — the buffer is lossy by design.
+ *
+ * 'exit' mode (CLI teardown, engine still live): after the in-flight flush,
+ * also flush residual buckets so a short-lived CLI invocation's calls land.
+ *
+ * O(1) when nothing is pending. Bounded, non-throwing; `unfinished` counts
+ * what the bound abandoned.
+ */
+export async function awaitPendingTelemetryFlush(
+  timeoutMs = 2000,
+  mode: BackgroundWorkDrainMode = 'disconnect',
+): Promise<{ unfinished: number }> {
+  const w = _writer;
+  if (!w) return { unfinished: 0 };
+  const inFlight = w.pendingFlush();
+  const wantsResidual = mode === 'exit' && w.hasBuffered();
+  if (!inFlight && !wantsResidual) return { unfinished: 0 };
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = Symbol('telemetry-drain-timeout');
+  const bound = new Promise<typeof timedOut>((resolve) => {
+    timer = setTimeout(() => resolve(timedOut), timeoutMs);
+    timer.unref?.();
+  });
+  try {
+    if (inFlight) {
+      const r = await Promise.race([inFlight.catch(() => undefined), bound]);
+      if (r === timedOut) return { unfinished: 1 };
+    }
+    if (mode === 'exit' && w.hasBuffered()) {
+      const r = await Promise.race([w.flush().catch(() => undefined), bound]);
+      if (r === timedOut) return { unfinished: 1 };
+    }
+    return { unfinished: 0 };
+  } catch {
+    return { unfinished: 1 };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+// #4143: register with the background-work registry so BOTH exit points drain
+// this sink (orders 0-4 are facts / last-retrieved / search-cache /
+// eval-capture / volunteer-events). Registration lives here, the
+// enqueue-owning module, per the registry's contract.
+registerBackgroundWorkDrainer({
+  name: 'search-telemetry',
+  order: 5,
+  drain: (timeoutMs, mode) => awaitPendingTelemetryFlush(timeoutMs, mode),
+});
 
 /**
  * Convenience entry point for hot-path callers. Wires the engine lazily
@@ -530,20 +605,21 @@ export async function readSearchStats(
  * display layers a single source of truth for the caveat text instead of
  * each caller re-describing (and risking drift on) the flush mechanics.
  *
- * Short-lived CLI invocations (a single `gbrain query "..."` call) usually
- * exit before the 60s timer or the 100-call threshold fires, so their
- * search is buffered in-memory and then lost with the process — never
- * written to `search_telemetry`. Long-lived processes (`gbrain serve`,
- * stdio/HTTP MCP, `gbrain jobs work`) survive long enough for the periodic
- * flush and are captured reliably. A CLI run that itself issues 100+
- * search calls before exiting (e.g. a bulk eval) CAN cross the threshold
- * and flush — hence "typically", not "never".
+ * Short-lived CLI invocations (a single `gbrain query "..."` call) don't
+ * reach the 60s timer or the 100-call threshold, but since #4143 the CLI's
+ * bounded teardown drain flushes their buffer in 'exit' mode before the
+ * engine disconnects, so a clean exit IS recorded. What still drops: hard
+ * kills (SIGKILL, crash), a drain that exceeds its bound, and anything
+ * buffered when an engine disconnects outside the CLI teardown path.
+ * Long-lived processes (`gbrain serve`, stdio/HTTP MCP, `gbrain jobs work`)
+ * are additionally covered by the periodic flush.
  */
 export const TELEMETRY_COVERAGE_NOTE =
   'Counts are most complete for long-lived processes (gbrain serve, MCP stdio/HTTP, ' +
-  'gbrain jobs work). A single short-lived CLI invocation typically exits before the ' +
-  'telemetry buffer flushes (60s timer or 100-call threshold), so its search is ' +
-  'usually not recorded here — see search/telemetry.ts for the buffering design.';
+  'gbrain jobs work). Short-lived CLI invocations flush their buffer during the ' +
+  'bounded CLI teardown drain (#4143), so a clean exit is recorded; a hard kill, a ' +
+  'drain that exceeds its bound, or an engine disconnect mid-buffer still drops the ' +
+  'remainder — see search/telemetry.ts for the buffering design.';
 
 /**
  * Short, single-line form of {@link TELEMETRY_COVERAGE_NOTE} for human CLI
@@ -553,18 +629,18 @@ export const TELEMETRY_COVERAGE_NOTE =
  * cannot drift between call sites.
  */
 export const TELEMETRY_COVERAGE_CAVEAT =
-  'Coverage favors long-lived processes (gbrain serve, MCP, jobs work) — a lone ' +
-  'short-lived CLI search call is typically not recorded.';
+  'Coverage favors long-lived processes (gbrain serve, MCP, jobs work); CLI search ' +
+  'calls are flushed on clean exit, but hard kills and over-bound drains still drop.';
 
 export interface TelemetryCoverage {
-  /** Whether a lone short-lived CLI search call is reliably counted. */
-  cli_invocations: 'typically_not_recorded';
+  /** Whether a lone short-lived CLI search call is counted (#4143: flushed by the bounded teardown drain on clean exit). */
+  cli_invocations: 'recorded_on_clean_exit';
   reason: string;
 }
 
 /** Machine-readable form of {@link TELEMETRY_COVERAGE_NOTE} for `--json` output. */
 export function telemetryCoverage(): TelemetryCoverage {
-  return { cli_invocations: 'typically_not_recorded', reason: TELEMETRY_COVERAGE_NOTE };
+  return { cli_invocations: 'recorded_on_clean_exit', reason: TELEMETRY_COVERAGE_NOTE };
 }
 
 function nowDate(): string {

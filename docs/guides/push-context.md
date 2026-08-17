@@ -20,9 +20,15 @@ The push channels share one zero-LLM core (`src/core/context/volunteer.ts`):
    merged with recency / frequency / user-role salience. Assistant-introduced
    entities and "what did she invest in?" follow-ups whose antecedent was named
    in the window now resolve.
-2. **Resolve** through the alias table, exact titles, and slug suffixes — each
-   arm carries an honest confidence: alias 0.9, exact title 0.8, slug-suffix 0.6,
-   +0.05 when mentioned in ≥2 turns or the newest turn.
+2. **Resolve** through the alias table, exact titles, surnames, and slug
+   suffixes — each arm carries an honest confidence: alias 0.9, exact title
+   0.8, surname 0.72, slug-suffix 0.6, +0.05 when mentioned in ≥2 turns or the
+   newest turn. Lowercase mentions ("remind me what alice said") probe the
+   alias table only, and only when the alias is unique across every source in
+   play; a surname-only reference ("Did Galewright follow up?") resolves when
+   exactly one person page carries that surname. Ambiguity in either arm
+   injects nothing — silence beats a wrong pointer. Kill switch for both:
+   `retrieval_reflex_lexical_arms` (default on).
 3. **Gate** at `min_confidence` (default 0.7 — slug-suffix matches need an
    explicit lower gate), suppress pages already surfaced (slug-presence only),
    cap at 3 pages (hard cap 5).
@@ -97,6 +103,7 @@ Kill switch: `GBRAIN_HOOKS=0`. Install/uninstall: `docs/guides/bootstrap.md`.
 | `retrieval_reflex_window_turns` | 4 | turns the ambient reflex extracts from; 1 = legacy current-turn-only (file/env plane: `GBRAIN_RETRIEVAL_REFLEX_WINDOW_TURNS`) |
 | `retrieval_reflex` | true | the ambient channel's master switch |
 | `retrieval_reflex_max_pointers` | 3 | pointer cap per turn |
+| `retrieval_reflex_lexical_arms` | true | the lowercase-alias + surname recall arms (env: `GBRAIN_RETRIEVAL_REFLEX_LEXICAL_ARMS`); off = pre-v0.46.15 arm set |
 
 Per-call knobs: `max_pages` + `min_confidence` on both the op and `gbrain watch`
 (`--max-pages` / `--min-confidence`, plus `--window-turns` / `--source` on watch);

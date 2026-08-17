@@ -133,7 +133,10 @@ gbrain sources list [--json]   List all sources with page counts + federation st
 gbrain sources archive <id>    Soft-delete: hide from search, keep data for a TTL
                                grace window. Prefer this over `remove`.
 gbrain sources restore <id>    Un-archive. `gbrain sources archived` lists expiries;
-                               `gbrain sources purge` permanently deletes expired archives.
+                               `gbrain sources purge` permanently deletes expired archives —
+                               except sources still referenced by a registered OAuth client
+                               (reported as `Blocked:`, sweep continues); revoke or rescope
+                               the client (`gbrain auth revoke-client <id>`) and re-run.
 gbrain sources remove <id> [--confirm-destructive] [--dry-run]
                                Permanently cascade-delete a source (pages, chunks,
                                timeline). Shows an impact preview first.

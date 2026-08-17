@@ -248,6 +248,49 @@ Bob should see the performance-review notes from `internal`, plus anything relat
 
 If both queries return correctly scoped results, isolation is working. (There is no per-query "act as client X" flag — the thin-client config decides which credential the CLI uses; only the client secret can be overridden at call time via `GBRAIN_REMOTE_CLIENT_SECRET`.)
 
+### Multi-agent: one brain, many agents (`gbrain agent register`)
+
+The raw `register-client` flow above is the per-teammate primitive. When the client you're onboarding is an **AI agent harness** (a teammate's Claude Code, a coding agent working a project repo, your OpenClaw), there's a packaged one-command path: `gbrain agent register` mints the scoped OAuth client, mints a 30-day access token, and prints the exact wiring block for the harness — all in one step. It runs on the brain host and is a trusted local operation — not a delegation mechanism. (When to use which path lives in [the onboarding decision table](../guides/agent-to-gbrain.md#onboarding-paths--the-decision-table) — link there, it's the single copy.)
+
+Two presets cover the common shapes, with semantics worth knowing honestly:
+
+- **`daily-driver`** — a personal assistant agent: writes to one source, reads broadly. The read grant is a **snapshot** of all non-archived sources at registration time, excluding other agents' `*-workspace` scratch sources (name one explicitly in `--federated-read` to share it) — a source you add next month is NOT automatically readable; re-grant with `gbrain auth rescope-client <client_id> --federated-read <updated list>`.
+- **`coding-agent`** — a write-isolated project agent: its writes land in an auto-created, DB-only `<name>-workspace` source (so a misbehaving agent can't scribble on your wiki), and it reads only the project sources you name via `--federated-read` (required — a coding agent that can read nothing but its own scratch space is a misconfiguration).
+
+Both presets start the client on the **starter** tool surface (the ~27-op daily set, not the full brain-admin surface). Override at registration with `--surface`, or widen a specific client later with `gbrain auth rescope-client <client_id> --surface full`.
+
+A worked example — a coding agent for alice-example's widget project, wired into Claude Code:
+
+```bash
+# On the brain host. proj-widget is the project source it may read
+# (create it first with `gbrain sources add proj-widget` if needed).
+gbrain agent register aurora-coder \
+  --harness claude-code \
+  --preset coding-agent \
+  --federated-read proj-widget,shared \
+  --url https://brain.acme-co.com/mcp
+```
+
+The output prints the client id, the resolved scoping (write source `aurora-coder-workspace`, federated reads, surface tier, token expiry), and a paste-ready block for the harness. Credentials print redacted by default; re-run with `--show-token` when you're ready to paste, or use `--json` for provisioning scripts. A `daily-driver` for yourself looks like `gbrain agent register nova-daily --harness claude-code --preset daily-driver --url https://brain.acme-co.com/mcp`.
+
+Verify the new agent's scoping the same way you verified teammates above — a thin-client install acting as that client (`--force` overwrites the scratch config from the previous check):
+
+```bash
+# On a machine that is NOT the brain host (or the same scratch shell)
+gbrain init --mcp-only --force \
+  --issuer-url https://brain.acme-co.com \
+  --mcp-url https://brain.acme-co.com/mcp \
+  --oauth-client-id <aurora-coder's client_id> \
+  --oauth-client-secret <aurora-coder's client_secret>
+
+gbrain whoami
+gbrain search "widget launch plan"
+```
+
+`gbrain whoami` should name the aurora-coder client; the search should return results only from `proj-widget`, `shared`, and its own workspace.
+
+**Renewal.** The minted access token defaults to a 30-day TTL (registration always writes a per-client TTL — the server default for CLI-minted tokens is one hour, which would be useless in a pasted config). When a token expires, rotate with `gbrain agent register --reissue <client_id> --harness claude-code --url https://brain.acme-co.com/mcp`: it rotates the client secret, mints a fresh token, and reprints the block. Rotation is not revocation — outstanding access tokens stay valid until they expire; revoke the client (`gbrain auth revoke-client <client_id>`) to kill them immediately.
+
 ---
 
 ## Part 6: Set up per-person crons
@@ -412,7 +455,7 @@ The thin-client install creates a local config that knows how to talk to your br
 
 **2. Their AI client, connected directly to `https://brain.acme-co.com/mcp`.** Each client has its own connection shape; the per-client pages in [`docs/mcp/`](../mcp/) are the reference:
 
-- **Claude Code / Codex** — one command from anywhere `gbrain` is installed: `gbrain connect https://brain.acme-co.com/mcp --token <token> --install` (see [CLAUDE_CODE.md](../mcp/CLAUDE_CODE.md) / [CODEX.md](../mcp/CODEX.md)). Note the credential type: `gbrain connect` for these two agents uses **bearer tokens** (`gbrain auth create <name>`), which are full-access. That's fine for you as the admin; for source-scoped teammates, the scoped credential is their OAuth client — use it via the thin-client CLI above and the OAuth-capable clients below.
+- **Claude Code / Codex** — the scoped path is `gbrain agent register <name> --harness claude-code|codex --url https://brain.acme-co.com/mcp` run on the brain host (the Part 5 multi-agent subsection): it mints a source-scoped OAuth client plus a 30-day token and prints the exact paste block for the harness. The older `gbrain connect https://brain.acme-co.com/mcp --token <token> --install` lane (see [CLAUDE_CODE.md](../mcp/CLAUDE_CODE.md) / [CODEX.md](../mcp/CODEX.md)) still works but uses **bearer tokens** (`gbrain auth create <name>`), which are full-access unless minted with `--scopes` — fine for you as the admin, wrong for source-scoped teammates.
 - **Claude Desktop** — remote servers are added through the GUI: **Settings > Integrations**, URL `https://brain.acme-co.com/mcp`. Do **not** put a remote server in `claude_desktop_config.json`; that file only works for local stdio servers and fails silently for remote ones. See [CLAUDE_DESKTOP.md](../mcp/CLAUDE_DESKTOP.md).
 - **ChatGPT** ([CHATGPT.md](../mcp/CHATGPT.md)) and **Perplexity** ([PERPLEXITY.md](../mcp/PERPLEXITY.md)) — both speak OAuth to the server directly, so per-teammate scoping carries into those tools. Perplexity uses the same `client_credentials` clients you registered in Part 5. ChatGPT needs an `authorization_code` (PKCE) client — register one per teammate with the same `--source` / `--federated-read` flags.
 - **OpenClaw / Hermes forks** — if the teammate's own agent runs on a machine with a full local gbrain install, it can use local stdio (`gbrain serve`) against its own brain and reach yours over HTTP MCP like any other remote client.

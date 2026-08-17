@@ -90,3 +90,94 @@ describe('runPhaseSynthesize subagent timeout config', () => {
     }
   }, 30_000);
 });
+
+describe('#4168 sibling — child budgets clamp to the remaining job deadline', () => {
+  test('a tight deadlineAtMs clamps the submitted child timeout_ms below the configured default', async () => {
+    const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-synth-clamp-brain-'));
+    const corpusDir = mkdtempSync(join(tmpdir(), 'gbrain-synth-clamp-corpus-'));
+    try {
+      await engine.setConfig('dream.synthesize.enabled', 'true');
+      await engine.setConfig('dream.synthesize.session_corpus_dir', corpusDir);
+      await engine.setConfig('dream.synthesize.subagent_timeout_ms', '600000'); // 10min configured
+      await engine.setConfig('dream.synthesize.subagent_wait_timeout_ms', '1');
+
+      const filePath = join(corpusDir, '2026-05-29-clamped-transcript.txt');
+      const content = 'clamped transcript line\n'.repeat(250);
+      writeFileSync(filePath, content);
+      await seedWorthProcessingVerdict(filePath, content);
+
+      // ~5.5min of job budget left: after the 60s reserve the child budget is
+      // ~4.5min — under the 10min config, so the clamp must bind.
+      const result = await runPhaseSynthesize(engine, {
+        brainDir,
+        dryRun: false,
+        deadlineAtMs: Date.now() + 5.5 * 60 * 1000,
+      });
+      expect(result.status).toBe('ok');
+
+      const jobs = await engine.executeRaw<{ timeout_ms: string | number | null }>(
+        `SELECT timeout_ms FROM minion_jobs WHERE name = 'subagent' ORDER BY id DESC LIMIT 1`,
+      );
+      expect(jobs).toHaveLength(1);
+      const clamped = Number(jobs[0]!.timeout_ms);
+      expect(clamped).toBeLessThan(600000); // pre-fix: raw 600000 submitted
+      expect(clamped).toBeGreaterThan(2 * 60 * 1000); // above the MIN floor
+    } finally {
+      rmSync(brainDir, { recursive: true, force: true });
+      rmSync(corpusDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test('an exhausted job budget skips honestly (insufficient_cycle_budget) without submitting a child', async () => {
+    const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-synth-skip-brain-'));
+    const corpusDir = mkdtempSync(join(tmpdir(), 'gbrain-synth-skip-corpus-'));
+    try {
+      await engine.setConfig('dream.synthesize.enabled', 'true');
+      await engine.setConfig('dream.synthesize.session_corpus_dir', corpusDir);
+
+      const before = await engine.executeRaw<{ n: number }>(
+        `SELECT count(*)::int AS n FROM minion_jobs WHERE name = 'subagent'`,
+      );
+      const result = await runPhaseSynthesize(engine, {
+        brainDir,
+        dryRun: false,
+        deadlineAtMs: Date.now() + 30 * 1000, // 30s left — far under reserve+MIN
+      });
+      expect(result.status).toBe('skipped');
+      expect((result.details as Record<string, unknown>).reason).toBe('insufficient_cycle_budget');
+      const after = await engine.executeRaw<{ n: number }>(
+        `SELECT count(*)::int AS n FROM minion_jobs WHERE name = 'subagent'`,
+      );
+      expect(after[0]!.n).toBe(before[0]!.n); // no guaranteed-timeout child submitted
+    } finally {
+      rmSync(brainDir, { recursive: true, force: true });
+      rmSync(corpusDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test('no deadlineAtMs (gbrain dream CLI) keeps the configured defaults untouched', async () => {
+    const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-synth-nodl-brain-'));
+    const corpusDir = mkdtempSync(join(tmpdir(), 'gbrain-synth-nodl-corpus-'));
+    try {
+      await engine.setConfig('dream.synthesize.enabled', 'true');
+      await engine.setConfig('dream.synthesize.session_corpus_dir', corpusDir);
+      await engine.setConfig('dream.synthesize.subagent_timeout_ms', '600000');
+      await engine.setConfig('dream.synthesize.subagent_wait_timeout_ms', '1');
+
+      const filePath = join(corpusDir, '2026-05-30-unclamped-transcript.txt');
+      const content = 'unclamped transcript line\n'.repeat(250);
+      writeFileSync(filePath, content);
+      await seedWorthProcessingVerdict(filePath, content);
+
+      const result = await runPhaseSynthesize(engine, { brainDir, dryRun: false });
+      expect(result.status).toBe('ok');
+      const jobs = await engine.executeRaw<{ timeout_ms: string | number | null }>(
+        `SELECT timeout_ms FROM minion_jobs WHERE name = 'subagent' ORDER BY id DESC LIMIT 1`,
+      );
+      expect(Number(jobs[0]!.timeout_ms)).toBe(600000);
+    } finally {
+      rmSync(brainDir, { recursive: true, force: true });
+      rmSync(corpusDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+});

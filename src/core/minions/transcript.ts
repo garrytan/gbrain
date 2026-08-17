@@ -36,6 +36,8 @@ export interface SubagentToolExecRow {
   id: number;
   job_id: number;
   message_idx: number;
+  /** D11 stable ordinal (per-turn tool-call position). NULL on legacy rows. */
+  ordinal: number | null;
   tool_use_id: string;
   tool_name: string;
   input: unknown;
@@ -58,7 +60,7 @@ export async function loadTranscriptRows(
     [jobId],
   );
   const toolRows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT id, job_id, message_idx, tool_use_id, tool_name, input, status, output, error
+    `SELECT id, job_id, message_idx, ordinal, tool_use_id, tool_name, input, status, output, error
        FROM subagent_tool_executions
       WHERE job_id = $1
       ORDER BY id ASC`,
@@ -99,6 +101,7 @@ function normalizeTool(row: Record<string, unknown>): SubagentToolExecRow {
     id: row.id as number,
     job_id: row.job_id as number,
     message_idx: row.message_idx as number,
+    ordinal: (row.ordinal as number | null) ?? null,
     tool_use_id: row.tool_use_id as string,
     tool_name: row.tool_name as string,
     input,
@@ -116,7 +119,7 @@ export interface RenderTranscriptOpts {
 /**
  * Render messages + tool executions to markdown. Message order is
  * authoritative; tool rows are spliced under their owning assistant message
- * by tool_use_id.
+ * by (message_idx, tool_use_id) — raw provider ids may repeat across turns.
  */
 export function renderTranscript(
   messages: SubagentMessageRow[],
@@ -124,9 +127,21 @@ export function renderTranscript(
   opts: RenderTranscriptOpts = {},
 ): string {
   const maxOut = opts.maxOutputBytes ?? 4096;
-  const toolById = new Map<string, SubagentToolExecRow>(
-    tools.map(t => [t.tool_use_id, t]),
+  // Keyed by (message_idx, tool_use_id) — raw provider tool_use_ids may
+  // repeat across turns (#4155: replay-style providers like claude-cli reuse
+  // the same short id on every turn), so tool_use_id alone would collapse
+  // distinct executions onto one row and mis-attribute status/output.
+  const toolByMsgAndId = new Map<string, SubagentToolExecRow>(
+    tools.map(t => [`${t.message_idx}:${t.tool_use_id}`, t]),
   );
+  // Ordinal-first resolution for stamped rows: within one turn a raw id can
+  // even repeat (the composite id map is last-write-wins for that shape);
+  // the persisted D11 ordinal equals the tool_use block position, which is
+  // exact.
+  const toolByMsgAndOrdinal = new Map<string, SubagentToolExecRow>();
+  for (const t of tools) {
+    if (t.ordinal != null) toolByMsgAndOrdinal.set(`${t.message_idx}:${t.ordinal}`, t);
+  }
 
   const out: string[] = [];
   out.push('# Subagent transcript', '');
@@ -141,6 +156,13 @@ export function renderTranscript(
   if (first.model) out.push(`- model: ${first.model}`);
   out.push('');
 
+  // tool_result blocks live in the user message FOLLOWING the owning
+  // assistant message; track the nearest preceding assistant idx so their
+  // ownership check uses that turn's composite key (a job-wide id set would
+  // wrongly suppress a result whose own turn has no execution row when a
+  // DIFFERENT turn reused the id).
+  let prevAssistantIdx: number | null = null;
+
   for (const msg of messages) {
     out.push(`## Message ${msg.message_idx} — ${msg.role}`);
     if (msg.tokens_in != null || msg.tokens_out != null) {
@@ -153,10 +175,23 @@ export function renderTranscript(
     }
     out.push('');
 
+    // Ids repeated WITHIN this message make the (message_idx, raw id) key
+    // ambiguous — resolution for those falls to the stamped ordinal only.
+    const idCounts = new Map<string, number>();
+    for (const b of msg.content_blocks) {
+      if (b.type === 'tool_use' && typeof b.id === 'string') {
+        idCounts.set(b.id, (idCounts.get(b.id) ?? 0) + 1);
+      }
+    }
+    let toolUseOrdinal = 0; // tool_use block position within this message
     for (const block of msg.content_blocks) {
-      renderBlock(block, toolById, maxOut, out);
+      const blockOrdinal = block.type === 'tool_use' ? toolUseOrdinal++ : -1;
+      const idIsUniqueInMsg = !(block.type === 'tool_use' && typeof block.id === 'string'
+        && (idCounts.get(block.id) ?? 0) > 1);
+      renderBlock(block, msg.message_idx, blockOrdinal, idIsUniqueInMsg, prevAssistantIdx, toolByMsgAndId, toolByMsgAndOrdinal, maxOut, out);
     }
     out.push('');
+    if (msg.role === 'assistant') prevAssistantIdx = msg.message_idx;
   }
 
   return out.join('\n').replace(/\n{3,}/g, '\n\n');
@@ -164,7 +199,14 @@ export function renderTranscript(
 
 function renderBlock(
   block: ContentBlock,
-  toolById: Map<string, SubagentToolExecRow>,
+  messageIdx: number,
+  /** tool_use block position within the message (-1 for non-tool_use blocks). */
+  blockOrdinal: number,
+  /** false when this tool_use block's id repeats within the message. */
+  idIsUniqueInMsg: boolean,
+  prevAssistantIdx: number | null,
+  toolByMsgAndId: Map<string, SubagentToolExecRow>,
+  toolByMsgAndOrdinal: Map<string, SubagentToolExecRow>,
   maxOutputBytes: number,
   out: string[],
 ): void {
@@ -179,7 +221,15 @@ function renderBlock(
     const inputStr = safeJson(block.input, 2);
     out.push(`**tool_use** \`${name}\` (id=\`${block.id ?? '?'}\`)`);
     out.push('```json', inputStr, '```');
-    const toolRow = block.id && typeof block.id === 'string' ? toolById.get(block.id) : undefined;
+    // Execution rows are written with the OWNING assistant message's idx.
+    // Resolve by the stamped (message_idx, ordinal) first — validated by the
+    // raw id — then by (message_idx, raw id) for legacy rows.
+    const stamped = toolByMsgAndOrdinal.get(`${messageIdx}:${blockOrdinal}`);
+    const toolRow = (stamped && typeof block.id === 'string' && stamped.tool_use_id === block.id)
+      ? stamped
+      : (idIsUniqueInMsg && block.id && typeof block.id === 'string'
+        ? toolByMsgAndId.get(`${messageIdx}:${block.id}`)
+        : undefined);
     if (toolRow) {
       out.push(`→ status: **${toolRow.status}**`);
       if (toolRow.status === 'complete') {
@@ -197,9 +247,14 @@ function renderBlock(
   if (block.type === 'tool_result') {
     // Most tool_result blocks live inside user messages echoing back the
     // assistant's tool_use. We skip them here because the owning tool_use
-    // block already rendered the execution row. If the user message carries
-    // a raw tool_result with no matching tool_use (rare), dump it raw.
-    if (!block.tool_use_id || !toolById.has(block.tool_use_id as string)) {
+    // block already rendered the execution row. Ownership is checked against
+    // the nearest PRECEDING assistant turn's key — raw ids may repeat across
+    // turns, so a job-wide id match could suppress a result whose own turn
+    // has no execution row. If no owning row exists (rare), dump it raw.
+    const owned = prevAssistantIdx !== null
+      && typeof block.tool_use_id === 'string'
+      && toolByMsgAndId.has(`${prevAssistantIdx}:${block.tool_use_id}`);
+    if (!owned) {
       out.push('**tool_result** (no matching tool_use in this transcript)');
       out.push('```json', truncate(safeJson(block.content, 2), maxOutputBytes), '```');
       out.push('');

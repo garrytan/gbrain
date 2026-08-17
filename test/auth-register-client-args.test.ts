@@ -267,3 +267,28 @@ describe('parseRegisterClientArgs', () => {
     });
   });
 });
+
+describe('--token-ttl (cathedral-6 T2)', () => {
+  const { TOKEN_TTL_MIN_SECONDS, TOKEN_TTL_MAX_SECONDS } = require('../src/commands/auth.ts');
+
+  test('accepts the bounds and passes the value through', () => {
+    expect(parseRegisterClientArgs(['--token-ttl', String(TOKEN_TTL_MIN_SECONDS)]).tokenTtlSeconds).toBe(60);
+    expect(parseRegisterClientArgs(['--token-ttl', String(TOKEN_TTL_MAX_SECONDS)]).tokenTtlSeconds).toBe(7_776_000);
+    expect(parseRegisterClientArgs(['--token-ttl', '2592000']).tokenTtlSeconds).toBe(2_592_000);
+  });
+
+  test('omitted flag leaves tokenTtlSeconds undefined (server default applies)', () => {
+    expect(parseRegisterClientArgs([]).tokenTtlSeconds).toBeUndefined();
+  });
+
+  test.each([['0'], ['-1'], ['abc'], ['10000000'], ['59'], ['3600.5']])(
+    'rejects %s with the range in the message',
+    (raw) => {
+      expect(() => parseRegisterClientArgs(['--token-ttl', raw])).toThrow(/between 60 and 7776000/);
+    },
+  );
+
+  test('requires a value', () => {
+    expect(() => parseRegisterClientArgs(['--token-ttl'])).toThrow(/requires a value/);
+  });
+});

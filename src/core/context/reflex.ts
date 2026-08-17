@@ -39,6 +39,8 @@ export interface ResolveEntitiesOpts {
   maxPointers?: number;
   /** v0.43 (#2095): 'slug-only' under windowing — see ResolvePointersOpts. */
   suppression?: 'slug-and-title' | 'slug-only';
+  /** v0.46.15: lexical-arms kill switch — see ResolvePointersOpts.lexicalArms. */
+  lexicalArms?: boolean;
 }
 
 /**
@@ -106,6 +108,21 @@ export function reflexEnabled(cfg: GBrainConfig | null): boolean {
   return cfg?.retrieval_reflex !== false;
 }
 
+/**
+ * v0.46.15 identity wave — kill switch for the lexical recall arms
+ * (weak-candidate alias arm + surname arm). Default ON; same env-direct
+ * pattern as reflexEnabled/windowTurnCount so a config-less environment
+ * still honors the escape hatch.
+ */
+export function lexicalArmsEnabled(cfg: GBrainConfig | null): boolean {
+  const env = process.env.GBRAIN_RETRIEVAL_REFLEX_LEXICAL_ARMS;
+  // Case-insensitive + common negatives (adversarial F11): this is the
+  // incident escape hatch — an operator typing FALSE/off/no mid-incident must
+  // not get a silent no-op. (Sibling gates keep the stricter legacy parse.)
+  if (env != null && env !== '') return !/^(false|0|off|no)$/i.test(env.trim());
+  return cfg?.retrieval_reflex_lexical_arms !== false;
+}
+
 function maxPointers(cfg: GBrainConfig | null): number {
   const n = cfg?.retrieval_reflex_max_pointers;
   return typeof n === 'number' && n > 0 ? n : DEFAULT_MAX_POINTERS;
@@ -135,6 +152,7 @@ export async function buildReflexAddition(params: ReflexParams): Promise<string 
       priorContextText: params.priorContextText,
       maxPointers: maxPointers(cfg),
       suppression: windowed ? 'slug-only' : 'slug-and-title',
+      lexicalArms: lexicalArmsEnabled(cfg),
     };
     const block = await withTimeout(resolve(params, cfg, candidates, opts), TIMEOUT_MS);
     if (!block || !block.pointers.length) return null;
@@ -186,10 +204,22 @@ async function resolve(
   return null;
 }
 
-function isPostgres(cfg: GBrainConfig | null): boolean {
+export function isPostgres(cfg: GBrainConfig | null): boolean {
   if (cfg?.engine === 'postgres') return true;
   // engine unset but a database_url present → postgres (createEngine default).
   return !cfg?.engine && !!cfg?.database_url;
+}
+
+/**
+ * Cathedral 5 — narrow EXPORTED accessor for the ladder's rung-3 cached
+ * direct-Postgres connection (the checkpoint step in context-engine.ts's
+ * compact() shares the SAME process-singleton — never a second connection,
+ * never a duplicated cache). Returns null off-Postgres or during the
+ * connect-failure cooldown.
+ */
+export async function getDirectPostgresEngine(cfg: GBrainConfig | null): Promise<BrainEngine | null> {
+  if (!isPostgres(cfg)) return null;
+  return getPostgresEngine(cfg);
 }
 
 // ── Postgres process-singleton ──────────────────────────────────────────

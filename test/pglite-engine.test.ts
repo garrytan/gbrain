@@ -1431,29 +1431,42 @@ describe('PGLiteEngine: traverseGraph cycle prevention', () => {
 describe('PGLiteEngine: getHealth graph metrics', () => {
   beforeEach(async () => {
     await truncateAll();
+    // Five entity pages — at MIN_ENTITY_PAGES_FOR_COVERAGE (gbrain#4147), so
+    // the ratio tests below exercise real percentages, not the small-N null.
     await engine.putPage('people/alice', { ...testPage, type: 'person', title: 'Alice' });
     await engine.putPage('people/bob', { ...testPage, type: 'person', title: 'Bob' });
+    await engine.putPage('people/carol', { ...testPage, type: 'person', title: 'Carol' });
     await engine.putPage('companies/acme', { ...testPage, type: 'company', title: 'Acme' });
     await engine.putPage('entities/project-x', { ...testPage, type: 'entity', title: 'Project X' });
   });
 
-  test('link_coverage = 0 when no links exist', async () => {
+  test('link_coverage = 0 when no links exist (at/above the small-N floor)', async () => {
     const h = await engine.getHealth();
+    expect(h.entity_page_count).toBe(5);
     expect(h.link_coverage).toBe(0);
   });
 
   test('link_coverage = % of entity pages with >= 1 inbound link', async () => {
-    // Acme gets 1 inbound link (from Alice); Alice/Bob/Project X get 0 inbound.
-    // 1 of 4 entity pages has inbound links -> 25%.
+    // Acme gets 1 inbound link (from Alice); the other 4 get 0 inbound.
+    // 1 of 5 entity pages has inbound links -> 20%.
     await engine.addLink('people/alice', 'companies/acme', '', 'works_at');
     const h = await engine.getHealth();
-    expect(h.link_coverage).toBeCloseTo(1 / 4, 2);
+    expect(h.link_coverage).toBeCloseTo(1 / 5, 2);
   });
 
   test('timeline_coverage = % with >= 1 timeline entry', async () => {
     await engine.addTimelineEntry('people/alice', { date: '2026-01-15', summary: 'Joined' });
     const h = await engine.getHealth();
-    expect(h.timeline_coverage).toBeCloseTo(1 / 4, 2);
+    expect(h.timeline_coverage).toBeCloseTo(1 / 5, 2);
+  });
+
+  test('below the small-N floor the ratios are null, never a hard 0% (gbrain#4147)', async () => {
+    await truncateAll();
+    await engine.putPage('people/solo', { ...testPage, type: 'person', title: 'Solo' });
+    const h = await engine.getHealth();
+    expect(h.entity_page_count).toBe(1);
+    expect(h.link_coverage).toBeNull();
+    expect(h.timeline_coverage).toBeNull();
   });
 
   test('most_connected lists top entities by link count', async () => {
@@ -1466,16 +1479,17 @@ describe('PGLiteEngine: getHealth graph metrics', () => {
   });
 
   test('orphan_pages: pages with neither inbound nor outbound links', async () => {
-    // All 4 pages start with no links, but entities/project-x is excluded
+    // All 5 pages start with no links, but entities/project-x is excluded
     // from orphan reporting by the shared orphan policy ('entities' is a
-    // first-segment exclusion in orphan-policy.ts). Expect 3 orphans.
+    // first-segment exclusion in orphan-policy.ts). Expect 4 orphans.
     const h = await engine.getHealth();
-    expect(h.orphan_pages).toBe(3);
+    expect(h.orphan_pages).toBe(4);
 
-    // Add alice -> acme. Alice has outbound, acme has inbound, only Bob is orphan.
+    // Add alice -> acme. Alice has outbound, acme has inbound; Bob and Carol
+    // stay orphaned.
     await engine.addLink('people/alice', 'companies/acme', '', 'works_at');
     const h2 = await engine.getHealth();
-    expect(h2.orphan_pages).toBe(1);
+    expect(h2.orphan_pages).toBe(2);
   });
 });
 

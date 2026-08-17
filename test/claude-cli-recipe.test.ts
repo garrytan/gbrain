@@ -17,7 +17,7 @@
  * sibling test files in the same bun-test process.
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { writeFileSync, chmodSync, mkdirSync, rmSync } from 'node:fs';
+import { writeFileSync, chmodSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { LanguageModelV2CallOptions } from '@ai-sdk/provider';
@@ -120,6 +120,54 @@ describe('claude-cli LanguageModel — text-only round trip', () => {
       expect(result.content[0]).toEqual({ type: 'text', text: 'hello world' });
       expect(result.usage.inputTokens).toBe(12);
       expect(result.usage.outputTokens).toBe(34);
+      // baseEnvelope's default cache_read_input_tokens is 0 (present, not
+      // omitted) — pins "present zero" as distinct from the omitted/undefined
+      // case covered below.
+      expect(result.usage.cachedInputTokens).toBe(0);
+    });
+  });
+
+  test('maps cache_read_input_tokens onto usage.cachedInputTokens', async () => {
+    await withStubEnv(async () => {
+      stageResponse(
+        baseEnvelope('hello world', {
+          usage: {
+            input_tokens: 12,
+            output_tokens: 34,
+            cache_read_input_tokens: 9001,
+            cache_creation_input_tokens: 0,
+          },
+        }),
+      );
+      const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+      const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
+      const result = await model.doGenerate({
+        prompt: [userMessage('hi')],
+      } as LanguageModelV2CallOptions);
+
+      expect(result.usage.cachedInputTokens).toBe(9001);
+    });
+  });
+
+  test('leaves usage.cachedInputTokens undefined when the CLI omits cache_read_input_tokens', async () => {
+    await withStubEnv(async () => {
+      stageResponse({
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        result: 'hello world',
+        stop_reason: 'end_turn',
+        session_id: 'test-session',
+        num_turns: 1,
+        usage: { input_tokens: 12, output_tokens: 34 },
+      });
+      const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+      const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
+      const result = await model.doGenerate({
+        prompt: [userMessage('hi')],
+      } as LanguageModelV2CallOptions);
+
+      expect(result.usage.cachedInputTokens).toBeUndefined();
     });
   });
 
@@ -162,11 +210,72 @@ describe('claude-cli LanguageModel — tool use', () => {
       expect(result.content[0]).toMatchObject({ type: 'text', text: 'I will look up the pattern first.' });
       expect(result.content[1]).toMatchObject({
         type: 'tool-call',
-        toolCallId: 'toolu_01ABC',
         toolName: 'search',
         input: '{"query":"n+1 query"}',
       });
+      // #4155: a stray model-supplied id (older cached behavior — the prompt
+      // no longer asks for one) is tolerated but IGNORED; the id is minted.
+      const call = result.content[1] as { toolCallId: string };
+      expect(call.toolCallId).toMatch(/^toolu_claude_cli_/);
+      expect(call.toolCallId).not.toBe('toolu_01ABC');
     });
+  });
+
+  test('#4155: mints a fresh id per call — two identical envelopes yield distinct ids', async () => {
+    await withStubEnv(async () => {
+      const envelope = baseEnvelope(
+        [
+          '<use_tools>',
+          '[{"id": "toolu_01", "name": "search", "input": {"query": "same"}}]',
+          '</use_tools>',
+        ].join('\n'),
+      );
+      const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+      const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
+      const opts = {
+        prompt: [userMessage('turn one')],
+        tools: [
+          {
+            type: 'function',
+            name: 'search',
+            description: 'Search the brain',
+            inputSchema: { type: 'object', properties: { query: { type: 'string' } } },
+          },
+        ],
+      } as LanguageModelV2CallOptions;
+
+      stageResponse(envelope);
+      const first = await model.doGenerate(opts);
+      stageResponse(envelope);
+      const second = await model.doGenerate(opts);
+
+      const id1 = (first.content.find(c => c.type === 'tool-call') as { toolCallId: string }).toolCallId;
+      const id2 = (second.content.find(c => c.type === 'tool-call') as { toolCallId: string }).toolCallId;
+      // The model repeated toolu_01 both turns (it structurally cannot avoid
+      // repeating: fresh subprocess + id-stripped replay). The adapter must
+      // still produce unique ids — this repetition is what dead-lettered
+      // dream patterns jobs pre-fix.
+      expect(id1).toMatch(/^toolu_claude_cli_/);
+      expect(id2).toMatch(/^toolu_claude_cli_/);
+      expect(id1).not.toBe(id2);
+    });
+  });
+
+  test('#4155: prompt protocol no longer asks the model to invent an id (source-shape pin)', () => {
+    // The stub harness cannot capture argv, so pin the protocol template at
+    // the source level (same style as the repo's other source-shape guards):
+    // asking the model for "a unique id" is structurally unsatisfiable — a
+    // fresh subprocess replayed from an id-stripped transcript cannot avoid
+    // repeats, which is exactly what collided real dream jobs to death.
+    const src = readFileSync(
+      new URL('../src/core/ai/providers/claude-cli-language-model.ts', import.meta.url).pathname,
+      'utf-8',
+    );
+    expect(src).toContain('{"name": "<tool name>", "input":');
+    expect(src).not.toContain('unique tool call id');
+    expect(src).not.toContain('toolu_01ABC');
+    // The unconditional mint is present and model ids are never trusted.
+    expect(src).toMatch(/const id = `toolu_claude_cli_\$\{randomUUIDv7\(\)\}`/);
   });
 
   test('parses multiple parallel tool calls in a single block', async () => {
@@ -377,19 +486,24 @@ describe('claude-cli LanguageModel — context isolation', () => {
     });
   });
 
-  test('scrubs ANTHROPIC_* credentials from the child env (subscription-only auth)', async () => {
+  test('scrubs ANTHROPIC_* credentials and cloud-auth backend switches from the child env (subscription-only auth)', async () => {
     await withStubEnv(async () => {
       await withEnv(
         {
           ANTHROPIC_API_KEY: 'sk-should-never-leak',
           ANTHROPIC_AUTH_TOKEN: 'tok-should-never-leak',
           ANTHROPIC_BASE_URL: 'https://proxy.should.never.leak',
+          CLAUDE_CODE_USE_BEDROCK: '1',
+          CLAUDE_CODE_USE_VERTEX: '1',
+          CLAUDE_CODE_USE_MANTLE: '1',
+          CLAUDE_CODE_USE_FOUNDRY: '1',
+          CLAUDE_CODE_USE_ANTHROPIC_AWS: '1',
         },
         async () => {
           const envLog = join(stubDir, 'env.log');
           const envStub = [
             '#!/bin/sh',
-            `printf "key=%s\\ntoken=%s\\nbase=%s\\n" "\${ANTHROPIC_API_KEY:-UNSET}" "\${ANTHROPIC_AUTH_TOKEN:-UNSET}" "\${ANTHROPIC_BASE_URL:-UNSET}" > "${envLog}"`,
+            `printf "key=%s\\ntoken=%s\\nbase=%s\\nbedrock=%s\\nvertex=%s\\nmantle=%s\\nfoundry=%s\\nanthropicAws=%s\\n" "\${ANTHROPIC_API_KEY:-UNSET}" "\${ANTHROPIC_AUTH_TOKEN:-UNSET}" "\${ANTHROPIC_BASE_URL:-UNSET}" "\${CLAUDE_CODE_USE_BEDROCK:-UNSET}" "\${CLAUDE_CODE_USE_VERTEX:-UNSET}" "\${CLAUDE_CODE_USE_MANTLE:-UNSET}" "\${CLAUDE_CODE_USE_FOUNDRY:-UNSET}" "\${CLAUDE_CODE_USE_ANTHROPIC_AWS:-UNSET}" > "${envLog}"`,
             'cat > /dev/null',
             `cat "${stubResponsePath}"`,
           ].join('\n');
@@ -409,6 +523,11 @@ describe('claude-cli LanguageModel — context isolation', () => {
             expect(seen).toContain('key=UNSET');
             expect(seen).toContain('token=UNSET');
             expect(seen).toContain('base=UNSET');
+            expect(seen).toContain('bedrock=UNSET');
+            expect(seen).toContain('vertex=UNSET');
+            expect(seen).toContain('mantle=UNSET');
+            expect(seen).toContain('foundry=UNSET');
+            expect(seen).toContain('anthropicAws=UNSET');
           } finally {
             const fastStub = [
               '#!/bin/sh',

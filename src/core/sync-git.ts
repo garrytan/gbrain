@@ -388,11 +388,28 @@ export function createSyncBaselineCommit(repoPath: string): void {
  * returns backslash paths there, and a literal `rootReal + '/'` prefix can
  * never match one. A sibling (`root-evil`) is rejected because `relative`
  * yields `../root-evil`, and a cross-drive path because it yields an absolute.
+ * On Windows this intentionally follows the platform path semantics exposed by
+ * `win32.relative`, including case-insensitive segment matching; detecting rare
+ * per-directory case-sensitive NTFS siblings would require filesystem identity
+ * checks rather than a pure path check. (#4044/#4144)
  */
-export function isWithinRoot(childReal: string, rootReal: string): boolean {
+interface PathContainmentOps {
+  relative(from: string, to: string): string;
+  isAbsolute(path: string): boolean;
+  sep: string;
+}
+
+const nativePathContainmentOps: PathContainmentOps = { relative, isAbsolute, sep };
+
+export function isWithinRoot(
+  childReal: string,
+  rootReal: string,
+  pathOps: PathContainmentOps = nativePathContainmentOps,
+): boolean {
   if (childReal === rootReal) return true;
-  const rel = relative(rootReal, childReal);
-  return rel !== '' && rel !== '..' && !rel.startsWith('..' + sep) && !isAbsolute(rel);
+  const rel = pathOps.relative(rootReal, childReal);
+  if (rel === '') return true;
+  return rel !== '..' && !rel.startsWith('..' + pathOps.sep) && !pathOps.isAbsolute(rel);
 }
 
 /**

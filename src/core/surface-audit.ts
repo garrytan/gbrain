@@ -33,7 +33,7 @@ export interface SurfaceChangeAudit {
   old: string | null;
   /** New row value (null = cleared). */
   new: string | null;
-  via: 'rescope_cli' | 'admin_api' | 'request_tools';
+  via: 'rescope_cli' | 'admin_api' | 'request_tools' | 'register_cli';
 }
 
 /** Returns true when the audit row landed; false (after a stderr warn) otherwise. */

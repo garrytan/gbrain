@@ -7,7 +7,7 @@
  * parseClaudeSessionFile must never change it.
  */
 import { describe, test, expect, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -31,7 +31,12 @@ import {
 } from '../src/core/transcripts/types.ts';
 
 import { codexAdapter } from '../src/core/transcripts/codex.ts';
-import { isOpenclawCheckpointFile, openclawAdapter } from '../src/core/transcripts/openclaw.ts';
+import {
+  isOpenclawCheckpointFile,
+  mapOpenclawLine,
+  openclawAdapter,
+  type OpenclawLineResult,
+} from '../src/core/transcripts/openclaw.ts';
 import { hermesAdapter } from '../src/core/transcripts/hermes.ts';
 import { chatgptExportAdapter } from '../src/core/transcripts/chatgpt-export.ts';
 import { claudeExportAdapter } from '../src/core/transcripts/claude-export.ts';
@@ -80,6 +85,10 @@ describe('parseTranscript regression pin [T12 — hook lane must not move]', () 
     expect(r.parsedLines).toBe(8);
     expect(r.skippedLines).toBe(1);
     expect(r.compactBoundaries).toBe(1);
+    // Cathedral 5: boundary POSITION in turns-index space (additive; the
+    // fixture's compact_boundary line follows all 5 turns). Always same
+    // length as compactBoundaries.
+    expect(r.boundaryTurnIndexes).toEqual([5]);
     expect(r.injectedContextBlocks).toEqual([]);
     expect(r.turns).toEqual([
       { role: 'user', text: "What do we know about widget-co's seed round?" },
@@ -303,6 +312,47 @@ describe('openclawAdapter', () => {
     expect(isOpenclawCheckpointFile(AGENT_FIXTURE)).toBe(false);
     expect(openclawAdapter.detect(CHECKPOINT_FIXTURE, readSample(CHECKPOINT_FIXTURE))).toBe(false);
     expect(openclawAdapter.detect(AGENT_FIXTURE, readSample(AGENT_FIXTURE))).toBe(true);
+  });
+
+  // Cathedral 5: the exported line mapper is the SAME mapping the adapter
+  // uses (single source of truth for the dated SPEC_TARGET); boundary lines
+  // classify as 'boundary' with positions derivable in message-index space.
+  test('mapOpenclawLine classifies session/boundary/message/skip; boundary sits after 2 fixture messages', () => {
+    const lines = readFileSync(AGENT_FIXTURE, 'utf8')
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((l) => {
+        try {
+          return JSON.parse(l) as unknown;
+        } catch {
+          return undefined;
+        }
+      })
+      .filter((e) => e !== undefined);
+    const kinds = lines.map((e) => mapOpenclawLine(e).kind);
+    expect(kinds[0]).toBe('session');
+    expect(kinds.filter((k) => k === 'boundary')).toHaveLength(1);
+    expect(kinds.filter((k) => k === 'message')).toHaveLength(4);
+    // Boundary position in message-index space: count messages before it.
+    const boundaryAt = (() => {
+      let msgs = 0;
+      for (const e of lines) {
+        const m = mapOpenclawLine(e);
+        if (m.kind === 'boundary') return msgs;
+        if (m.kind === 'message') msgs++;
+      }
+      return -1;
+    })();
+    expect(boundaryAt).toBe(2);
+    // Mapper output matches the adapter's messages 1:1 (behavior identity).
+    const mapped = lines
+      .map((e) => mapOpenclawLine(e))
+      .filter((m): m is Extract<OpenclawLineResult, { kind: 'message' }> => m.kind === 'message')
+      .map((m) => m.message);
+    return drain(openclawAdapter.parse(AGENT_FIXTURE)).then(({ sessions }) => {
+      expect(mapped).toEqual(sessions[0].messages);
+    });
   });
 });
 

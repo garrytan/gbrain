@@ -1,8 +1,8 @@
 # How a downstream agent should talk to gbrain
 
-This guide is for authors of downstream agents (hermes, openclaw, future
-forks) that need to call gbrain operations from their own runtime. Reading
-this first will save you a debugging cycle: gbrain has **two distinct
+This guide is for authors of downstream agents (your OpenClaw, any
+downstream fork) that need to call gbrain operations from their own runtime.
+Reading this first will save you a debugging cycle: gbrain has **two distinct
 surfaces**, and which one you pick depends on the operation.
 
 ## The two surfaces
@@ -11,8 +11,8 @@ surfaces**, and which one you pick depends on the operation.
                        ┌─────────────────────────────────────────────┐
                        │                gbrain process                │
                        │                                              │
-   Agent (hermes,      │  ┌──────────────────┐    ┌────────────────┐ │
-   openclaw, fork) ────┼──▶  MCP ops surface  │    │  local-only    │ │
+   Agent (OpenClaw,    │  ┌──────────────────┐    ┌────────────────┐ │
+   or any fork) ───────┼──▶  MCP ops surface  │    │  local-only    │ │
                        │  │ (HTTP + OAuth)    │    │  commands      │ │
                        │  │                   │    │                │ │
                        │  │  search, query,   │    │  sync, embed,  │ │
@@ -48,12 +48,27 @@ The host runs gbrain as a long-lived HTTP server:
 gbrain serve --http --port 3131
 ```
 
-The agent registers as an OAuth client (one-time):
+**The packaged path is `gbrain agent register`** (run on the brain host —
+it is a trusted local operation, never a delegation mechanism). One command
+mints a scoped OAuth client plus a 30-day access token AND prints the exact
+wiring block for the target harness:
 
 ```bash
-gbrain auth register-client hermes \
+gbrain agent register aurora-coder \
+  --harness claude-code \
+  --preset coding-agent \
+  --federated-read proj-widget \
+  --url https://brain.example.com/mcp
+```
+
+The raw primitive underneath is `gbrain auth register-client` (one-time,
+prints `client_id` + `client_secret` and nothing else — you do the token
+exchange and the harness wiring yourself):
+
+```bash
+gbrain auth register-client aurora-coder \
   --grant-types client_credentials \
-  --scopes read,write
+  --scopes "read write"
 # Prints client_id + client_secret one-time. Store securely.
 ```
 
@@ -65,6 +80,17 @@ Thin-client mode (`gbrain init --mcp-only`) gives the agent the same
 client-credentials wiring, plus the `gbrain` CLI itself routes MCP-eligible
 commands through the configured remote MCP. The agent can call
 `gbrain search` / `gbrain query` directly and the CLI does the OAuth dance.
+
+### Onboarding paths — the decision table
+
+This is THE onboarding-paths table. Other docs link here; none copy it.
+
+| Path | When to use | Credential kind | Print vs write | Serve location |
+|---|---|---|---|---|
+| `gbrain agent register <name> --harness <h>` | The packaged path: onboarding an agent harness (Claude Code, Codex, opencode, your OpenClaw) onto a shared brain. Presets (`daily-driver`, `coding-agent`), starter tool surface, 30-day token TTL, `--reissue` secret rotation. | Scoped OAuth client + a minted access token (source-scoped, expiring) | PRINTS the harness block (redacted unless `--show-token`); writes nothing to harness configs | Runs ON the brain host against a remote-reachable `gbrain serve --http`; `--url` or `--port` required (a live PGLite serve blocks it by design — stop the serve first; a serve too old to enforce scoped tokens is refused — upgrade it, or pass `--allow-old-serve` to accept the risk) |
+| `gbrain connect <mcp-url> --token <t>` | You already hold a bearer token and want ONE coding agent pointed at a running serve, from any machine. | Legacy bearer token (full-access unless minted with `--scopes`); `--oauth` variant for OAuth-capable connectors | Prints the add command by default; `--install` runs it | Any machine; targets a remote `gbrain serve --http` |
+| `gbrain bootstrap harness` | Framework-spawned harnesses (`claude -p` / `codex exec` / `opencode run`) on the SAME box that hosts the brain; wires MCP registration + lifecycle hooks with receipts and mint-first token rotation. | Legacy bearer token, minted per run and rotated by receipt | WRITES managed config blocks (Claude Code user scope, codex TOML, opencode JSONC) + hooks | Local loopback serve on the same box (non-loopback URL requires an explicit supplied token) |
+| `gbrain auth register-client <name>` | The raw primitive: custom flows — PKCE/authorization-code clients, bound `submit_agent` clients, slug-prefix write fences, provisioning scripts that parse output. | Scoped OAuth client only (no token exchange, no TTL default beyond the server's) | Prints `client_id` + `client_secret` one time; you do all wiring | Credential is server-side state; run on the brain host |
 
 ### Why this is preferred for MCP ops
 

@@ -52,6 +52,7 @@ import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine, DreamVerdict, TriageSegment } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
 import { MinionQueue } from '../minions/queue.ts';
+import { clampSubagentBudgets, CYCLE_DEADLINE_RESERVE_MS, MIN_PATTERNS_SUBAGENT_BUDGET_MS } from './patterns.ts';
 import { isQueueQuotaExceededError } from '../minions/admission.ts';
 import { reconnectAfterConnectionError } from '../minions/reconnect.ts';
 import { isRetryableConnError } from '../retry-matcher.ts';
@@ -350,6 +351,13 @@ export interface SynthesizePhaseOpts {
   date?: string;
   from?: string;
   to?: string;
+  /** #4168 sibling: absolute wall-clock deadline (epoch ms) of the enclosing
+   *  minion job. When set, child-subagent timeout_ms/wait are clamped via the
+   *  clampSubagentBudgets template so a child submitted late in the cycle
+   *  cannot outlive the parent's kill switch; under the minimum budget the
+   *  phase skips honestly instead of submitting a guaranteed-timeout child.
+   *  Null/unset (`gbrain dream` CLI) keeps the configured defaults. */
+  deadlineAtMs?: number | null;
   /**
    * Disable the self-consumption guard. Wired from the
    * `--unsafe-bypass-dream-guard` CLI flag. NOT auto-applied for `--input`
@@ -408,6 +416,14 @@ export async function runSubagentsInline(
   yieldDuringPhase?: () => Promise<void>,
   handler: MinionHandler = makeSubagentHandler({ engine }),
   lockMs: number = INLINE_LOCK_MS,
+  /** #4168 adversarial: absolute parent-job deadline. When the remaining
+   *  budget drops under the minimum child budget, the drain stops CLAIMING —
+   *  the caller cancels the still-waiting children and defers their
+   *  transcripts (children submit fast, so submit-time clamps alone cannot
+   *  bound a sequential multi-child drain). Residual, documented: the LAST
+   *  claimed child may still overrun the parent by up to its own clamped
+   *  timeout; the worker abort + reserve absorb one child, not N. */
+  deadlineAtMs?: number | null,
 ): Promise<void> {
   // #3555 interaction: the drain's queue ops used to be bare awaits, so a
   // transient pooler reap mid-drain threw out of the loop and stranded the
@@ -430,6 +446,15 @@ export async function runSubagentsInline(
   };
 
   while (true) {
+    // #4168 adversarial: stop claiming when the parent budget cannot fit
+    // another child. Already-running work is unaffected; unclaimed children
+    // stay 'waiting' for the caller's cancel-and-defer pass.
+    if (
+      deadlineAtMs != null &&
+      deadlineAtMs - CYCLE_DEADLINE_RESERVE_MS - Date.now() < MIN_PATTERNS_SUBAGENT_BUDGET_MS
+    ) {
+      return;
+    }
     const lockToken = randomUUID();
     let job: Awaited<ReturnType<MinionQueue['claim']>>;
     try {
@@ -637,6 +662,24 @@ export async function runPhaseSynthesize(
   try {
     const config = await loadSynthConfig(engine);
 
+    // #4168 sibling: clamp the child-subagent budgets to the REAL remaining
+    // job time (patterns.ts clampSubagentBudgets template). Pre-fix,
+    // DEFAULT_SUBAGENT_TIMEOUT_MS (30min) was submitted raw as the child's
+    // timeout_ms even when the parent cycle had two minutes left — the same
+    // deadline-equals-kill-switch collision propose_takes had, one process
+    // boundary further out.
+    const clamped = clampSubagentBudgets(
+      { subagentTimeoutMs: config.subagentTimeoutMs, subagentWaitTimeoutMs: config.subagentWaitTimeoutMs },
+      opts.deadlineAtMs,
+      Date.now(),
+    );
+    if (clamped === null) {
+      return skipped('insufficient_cycle_budget',
+        'remaining cycle budget too small to submit a synthesize child that could finish; next cycle retries with a fresh budget');
+    }
+    config.subagentTimeoutMs = clamped.timeoutMs;
+    config.subagentWaitTimeoutMs = clamped.waitTimeoutMs;
+
     // Allow ad-hoc --input to run even when config is disabled.
     if (!opts.inputFile && !config.corpusDir) {
       return skipped('not_configured',
@@ -826,10 +869,18 @@ export async function runPhaseSynthesize(
     // this run would be rejected too — record one skip per remaining file
     // without hammering the queue.
     let quotaHit = false;
+    // #4168 red-team: transcripts deferred because the parent job budget ran
+    // out mid-fan-out (distinct from the quota latch: deferral is budget-time,
+    // quota is admission-space; both stop further submits this run).
+    const budgetExhaustedDeferrals: string[] = [];
     for (const t of worthProcessing) {
       if (quotaHit) {
         skipReports.push({ filePath: t.filePath, reason: 'admission_quota: submission stopped this run' });
         continue;
+      }
+      if (budgetExhaustedDeferrals.length > 0) {
+        budgetExhaustedDeferrals.push(basename(t.filePath));
+        continue; // budget gone — defer the rest, don't submit more children
       }
       const hash16 = t.contentHash.slice(0, 16);
       const hash6 = t.contentHash.slice(0, 6);
@@ -948,11 +999,26 @@ export async function runPhaseSynthesize(
         const idempotency_key = isChunked
           ? `${synthesisKey}:c${i}of${chunks.length}`
           : synthesisKey;
+        // #4168 red-team: the phase is a FAN-OUT and children drain
+        // sequentially with claim-time-anchored kill switches, so a single
+        // phase-start clamp only bounds the FIRST child. Re-clamp against the
+        // live clock per submit; when the remaining parent budget drops under
+        // the minimum, stop submitting — deferred transcripts retry next
+        // cycle (partial > guaranteed-timeout children).
+        const perChild = clampSubagentBudgets(
+          { subagentTimeoutMs: config.subagentTimeoutMs, subagentWaitTimeoutMs: config.subagentWaitTimeoutMs },
+          opts.deadlineAtMs,
+          Date.now(),
+        );
+        if (perChild === null) {
+          budgetExhaustedDeferrals.push(basename(t.filePath));
+          break;
+        }
         const submitOpts: Partial<MinionJobInput> = {
           max_stalled: 3,
           on_child_fail: 'continue',
           idempotency_key,
-          timeout_ms: config.subagentTimeoutMs,
+          timeout_ms: perChild.timeoutMs,
           queue: childQueueName,
         };
         let child: Awaited<ReturnType<typeof queue.add>>;
@@ -1042,15 +1108,41 @@ export async function runPhaseSynthesize(
     // terminal child states instead of polling waiters until
     // subagentWaitTimeoutMs expires. Runs on BOTH engines — on Postgres the
     // parent job otherwise deadlocks a fully-occupied worker (#2050).
-    await runSubagentsInline(engine, queue, childQueueName, opts.yieldDuringPhase);
+    await runSubagentsInline(
+      engine, queue, childQueueName, opts.yieldDuringPhase,
+      undefined, undefined, opts.deadlineAtMs ?? null,
+    );
+
+    // #4168 adversarial: children the deadline-gated drain never claimed
+    // would strand in this per-run private queue forever (no worker claims
+    // it). Cancel them and defer their transcripts to the next cycle.
+    if (opts.deadlineAtMs != null) {
+      const stillWaiting = await engine.executeRaw<{ id: number }>(
+        `SELECT id FROM minion_jobs WHERE queue = $1 AND status IN ('waiting', 'delayed')`,
+        [childQueueName],
+      );
+      for (const row of stillWaiting) {
+        const cancelled = await queue.cancelJob(row.id);
+        if (cancelled) {
+          const src = jobRawSource.get(row.id);
+          if (src) budgetExhaustedDeferrals.push(basename(src));
+        }
+      }
+    }
 
     // Wait for every child to reach a terminal state. Tick yieldDuringPhase
     // every 5 min so the cycle lock TTL refreshes.
     const childOutcomes: Array<{ jobId: number; status: string; turns?: number }> = [];
     for (const jobId of childIds) {
       try {
+        // #4168 red-team: bound each wait by the REMAINING parent budget
+        // (never negative-or-zero — floor at 1s so the fast path still
+        // observes an already-terminal child), not just the per-child config.
+        const remainingParentMs = opts.deadlineAtMs != null
+          ? Math.max(1000, opts.deadlineAtMs - CYCLE_DEADLINE_RESERVE_MS - Date.now())
+          : config.subagentWaitTimeoutMs;
         const job = await waitForCompletion(queue, jobId, {
-          timeoutMs: config.subagentWaitTimeoutMs,
+          timeoutMs: Math.min(config.subagentWaitTimeoutMs, remainingParentMs),
           pollMs: 5 * 1000,
         });
         // Turn telemetry: surfaces max_turns cap pressure in details.synthesis
@@ -1106,10 +1198,20 @@ export async function runPhaseSynthesize(
     }
 
     // Write completion timestamp ON SUCCESS only.
-    await engine.setConfig('dream.synthesize.last_completion_ts', new Date().toISOString());
+    // Adversarial F2: a run that deferred transcripts mid-fan-out must NOT
+    // start the 12h cooldown — "deferred transcripts retry next cycle" is a
+    // lie if the next cycle is cooldown-skipped for half a day.
+    if (budgetExhaustedDeferrals.length === 0) {
+      await engine.setConfig('dream.synthesize.last_completion_ts', new Date().toISOString());
+    }
 
     const ms = Date.now() - start;
-    const submittedTranscripts = worthProcessing.length - skipReports.length;
+    // Adversarial F3: deferred transcripts were NOT synthesized — a run that
+    // deferred 8 of 10 must not report "10 synthesized".
+    const submittedTranscripts = Math.max(
+      0,
+      worthProcessing.length - skipReports.length - budgetExhaustedDeferrals.length,
+    );
     const turnsSamples = childOutcomes.filter(
       (o): o is { jobId: number; status: string; turns: number } => typeof o.turns === 'number',
     );
@@ -1127,6 +1229,7 @@ export async function runPhaseSynthesize(
       // transcript for single-chunk). Differs from transcripts_processed
       // when chunking is in play.
       children_submitted: childIds.length,
+      budget_deferred_transcripts: budgetExhaustedDeferrals,
       // D5 cap hits + D8 legacy-key skips + daily_cap_reached. Empty when nothing skipped.
       skips: skipReports,
       summary_slug: summarySlug,

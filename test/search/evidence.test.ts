@@ -19,9 +19,22 @@ describe('classifyEvidence precedence', () => {
   test('exact_title_match when title boost fired', () => {
     expect(classifyEvidence(r({ title_match_boost: 1.25, base_score: 0.2 }))).toBe('exact_title_match');
   });
-  test('high_vector_match at/above HIGH_MATCH_FLOOR', () => {
-    expect(classifyEvidence(r({ base_score: HIGH_MATCH_FLOOR }))).toBe('high_vector_match');
-    expect(classifyEvidence(r({ base_score: 0.90 }))).toBe('high_vector_match');
+  test('RE-PINNED (v0.46.15, #3963): a high BLENDED score without a real cosine is NOT a vector match', () => {
+    // Was: base_score >= HIGH_MATCH_FLOOR → high_vector_match. That let a
+    // keyword+boost pile-up read as confident semantic evidence (the exact
+    // bug class this wave fixes). Without a cosine, the ceiling is
+    // keyword_exact / create_safety 'probable' — the safe direction.
+    expect(classifyEvidence(r({ base_score: HIGH_MATCH_FLOOR }))).toBe('keyword_exact');
+    expect(classifyEvidence(r({ base_score: 0.90 }))).toBe('keyword_exact');
+  });
+  test('high_vector_match fires ONLY on a real cosine at/above the floor', () => {
+    expect(classifyEvidence(r({ base_score: 0.3, cosine: 0.85 }))).toBe('high_vector_match');
+    expect(classifyEvidence(r({ base_score: 0.3, cosine: 0.8 }))).toBe('high_vector_match');
+    expect(classifyEvidence(r({ base_score: 0.95, cosine: 0.5 }))).toBe('keyword_exact');
+  });
+  test('cosine floor is overridable (per-model calibration knob)', () => {
+    expect(classifyEvidence(r({ base_score: 0.3, cosine: 0.7 }), { cosineFloor: 0.65 })).toBe('high_vector_match');
+    expect(classifyEvidence(r({ base_score: 0.3, cosine: 0.7 }), { cosineFloor: 0.9 })).toBe('weak_semantic');
   });
   test('keyword_exact in the solid band', () => {
     expect(classifyEvidence(r({ base_score: SOLID_MATCH_FLOOR }))).toBe('keyword_exact');
@@ -30,8 +43,15 @@ describe('classifyEvidence precedence', () => {
   test('weak_semantic below the solid floor (the incident: 0.64 body chunk... 0.5 here)', () => {
     expect(classifyEvidence(r({ base_score: 0.4 }))).toBe('weak_semantic');
   });
-  test('falls back to score when base_score absent', () => {
-    expect(classifyEvidence(r({ score: 0.95, base_score: undefined }))).toBe('high_vector_match');
+  test('RE-PINNED (v0.46.15): score fallback without cosine caps at keyword_exact', () => {
+    expect(classifyEvidence(r({ score: 0.95, base_score: undefined }))).toBe('keyword_exact');
+  });
+  test('keyless fall-through: no cosine anywhere → create_safety never claims exists via vector', () => {
+    const rs = [r({ base_score: 0.99 }), r({ base_score: 0.7 })];
+    stampEvidence(rs);
+    expect(rs[0].evidence).toBe('keyword_exact');
+    expect(rs[0].create_safety).toBe('probable'); // degraded from 'exists' — safe direction
+    expect(rs[1].create_safety).toBe('probable');
   });
 });
 

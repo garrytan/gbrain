@@ -392,7 +392,10 @@ const put_page: Operation = {
       try {
         const enabled = await isAutoLinkEnabled(ctx.engine);
         if (enabled) {
-          autoLinks = await runAutoLink(ctx.engine, slug, result.parsedPage, ctx.sourceId ? { sourceId: ctx.sourceId } : undefined);
+          // ctx.sourceId is REQUIRED on OperationContext (v0.34 D4) — always
+          // pass it so the reconciliation reads/writes AND the advisory lock
+          // key stay scoped to the source this put_page targets.
+          autoLinks = await runAutoLink(ctx.engine, slug, result.parsedPage, { sourceId: ctx.sourceId });
         }
       } catch (e) {
         autoLinks = { error: e instanceof Error ? e.message : String(e) };
@@ -557,6 +560,20 @@ const put_page: Operation = {
 // predicate. Imported above.
 
 /**
+ * Advisory-lock key for the auto-link reconciliation critical section.
+ * Source-scoped (PR6 D5): two concurrent put_page calls on the SAME slug in
+ * DIFFERENT sources reconcile disjoint link rows — a shared `auto_link:${slug}`
+ * key serialized them for no correctness benefit (cross-source contention),
+ * while same-(source, slug) writers still serialize. runAutoLink has exactly
+ * ONE caller (the put_page handler above) and OperationContext.sourceId is a
+ * REQUIRED string, so sourceId is always present here; the `?? ''` fallback is
+ * belt-and-braces only, never a real key shape.
+ */
+export function autoLinkLockKey(sourceId: string | undefined, slug: string): string {
+  return `auto_link:${sourceId ?? ''}:${slug}`;
+}
+
+/**
  * Extract entity refs from a freshly-written page, sync the links table to match.
  * Creates new links via addLink, removes stale ones (links present in DB but no
  * longer referenced in content) via removeLink. Returns counts.
@@ -576,9 +593,10 @@ async function runAutoLink(
   // v0.31.8 (codex OV-2): thread sourceId through every read + write inside
   // reconcileLinks. Without this the FS walker reads cross-source links/slugs
   // but writes scoped to one source — phantom stale-deletions and duplicate
-  // inserts. opts.sourceId is set when caller knows the source (put_page from
-  // a multi-source-aware handler); when omitted, every read returns the
-  // pre-v0.31.8 cross-source view (back-compat for any existing caller).
+  // inserts. runAutoLink has exactly ONE caller (the put_page handler) and
+  // ctx.sourceId is a REQUIRED string there, so opts.sourceId is always set in
+  // practice; the omitted-opts branches below (and the `?? ''` in
+  // autoLinkLockKey) are belt-and-braces only, not a live back-compat path.
   const sourceOpts = opts?.sourceId ? { sourceId: opts.sourceId } : {};
   const linkSourceOpts = opts?.sourceId
     ? { fromSourceId: opts.sourceId, toSourceId: opts.sourceId, originSourceId: opts.sourceId }
@@ -634,7 +652,12 @@ async function runAutoLink(
   // single-process so there's no cross-process concern there anyway).
   const result = await engine.transaction(async (tx) => {
     try {
-      await tx.executeRaw(`SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, [`auto_link:${slug}`]);
+      // hashtext (not hashtextextended): this call must behave identically on
+      // BOTH engines and any failure here is SILENTLY swallowed by the catch
+      // below — a primitive that errored on either engine would quietly drop
+      // the lock entirely. hashtext is the primitive every advisory-lock site
+      // in this repo already proves on both engines; keep the family uniform.
+      await tx.executeRaw(`SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, [autoLinkLockKey(opts?.sourceId, slug)]);
     } catch {
       // engine doesn't support advisory locks — fall through
     }

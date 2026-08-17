@@ -57,6 +57,15 @@ export const claudeCli: Recipe = {
       cost_per_1m_input_usd: 3.0,
       cost_per_1m_output_usd: 15.0,
       price_last_verified: '2026-06-17',
+      // The gateway dispatches via a `claude -p (print mode)` subprocess (CLI cold
+      // start + user-level CLAUDE.md load), which routinely takes 5-6s even
+      // when the CLI and subscription are perfectly healthy. `gbrain models
+      // doctor`'s chat probe used to hardcode a flat 5000ms abort, so this
+      // recipe always false-failed the doctor check ('unknown — claude-cli
+      // adapter aborted') despite `chat()` succeeding fine at normal call
+      // sites. 30s gives the subprocess room to start without masking a truly
+      // dead/unauthenticated CLI for anywhere near that long.
+      default_timeout_ms: 30_000,
     },
   },
   // Friendly aliases mirror the `anthropic` recipe so config strings stay

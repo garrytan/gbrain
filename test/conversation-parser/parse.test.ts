@@ -469,7 +469,7 @@ describe('scorePatternFull — full-body scoring (v0.41.18+ Codex P1 #1)', () =>
     const im = BUILTIN_PATTERNS.find((p) => p.id === 'imessage-slack')!;
     expect(scorePatternFull('', im)).toBe(0);
   });
-  test('preamble + 20 matching lines scores 20/(preamble + 20)', () => {
+  test('multi-line format ignores preamble after multiple anchors establish a transcript', () => {
     const im = BUILTIN_PATTERNS.find((p) => p.id === 'imessage-slack')!;
     const preamble = ['## Summary', 'Three sentences.', '> Source: ref', '## Transcript'];
     const matches = Array.from(
@@ -477,8 +477,9 @@ describe('scorePatternFull — full-body scoring (v0.41.18+ Codex P1 #1)', () =>
       (_, i) => `**Garry Tan** (2026-01-29 12:00 PM): message ${i}`,
     );
     const body = [...preamble, ...matches].join('\n');
-    // 24 total non-blank, 20 match → 20/24 ≈ 0.833
-    expect(scorePatternFull(body, im)).toBeCloseTo(20 / 24, 5);
+    // Once two anchors establish a real multi-line transcript, unrelated
+    // preamble/continuation lines no longer dilute the format score.
+    expect(scorePatternFull(body, im)).toBe(1);
   });
   test('preamble-only-no-match scores 0', () => {
     const im = BUILTIN_PATTERNS.find((p) => p.id === 'imessage-slack')!;
@@ -982,5 +983,88 @@ describe('parseConversation — full-body fallback', () => {
     // Post-fix: no_match because 1/301 < 0.05 acceptance floor.
     expect(r.phase).toBe('no_match');
     expect(r.messages).toHaveLength(0);
+  });
+});
+
+describe('unrecognized_headings — folded speaker headings surface (#4136)', () => {
+  const mk = (label: string) =>
+    `## User\n\nWhat is the deploy command?\n\n## ${label}\n\nRun the deploy script from the repo root.\n\n## User\n\nThanks.\n`;
+
+  test('THE repro: ## Claude folds into the previous turn and is REPORTED', () => {
+    const r = parseConversation(mk('Claude'), {});
+    expect(r.phase).toBe('regex_match');
+    expect(r.matched_pattern_id).toBe('markdown-heading-turn');
+    expect(r.messages.length).toBe(2); // the fold itself (unchanged behavior)
+    expect(r.messages.map((m) => m.speaker)).toEqual(['User', 'User']);
+    expect(r.unrecognized_headings).toEqual(['Claude']);
+  });
+
+  test('the OTHER fold site: ## Assistant Bot passes quick_reject, fails regex, is reported', () => {
+    const r = parseConversation(mk('Assistant Bot'), {});
+    expect(r.phase).toBe('regex_match');
+    expect(r.messages.length).toBe(2);
+    expect(r.unrecognized_headings).toEqual(['Assistant Bot']);
+  });
+
+  test('#### User (depth outside the pattern) is reported as a folded heading', () => {
+    const r = parseConversation(mk('Claude').replace('## Claude', '#### User'), {});
+    expect(r.unrecognized_headings).toEqual(['User']);
+  });
+
+  test('a heading dropped BEFORE the first anchor is still reported (content silently discarded)', () => {
+    const body = `## Claude\n\nOrphan reply before any anchor.\n\n## User\n\nQuestion?\n\n## Assistant\n\nAnswer.\n`;
+    const r = parseConversation(body, {});
+    expect(r.phase).toBe('regex_match');
+    expect(r.unrecognized_headings).toEqual(['Claude']);
+  });
+
+  test('NO false positive: a clean User/Assistant transcript leaves the field undefined', () => {
+    const body = `## User\n\nQuestion?\n\n## Assistant\n\nAnswer.\n`;
+    const r = parseConversation(body, {});
+    expect(r.phase).toBe('regex_match');
+    expect(r.messages.length).toBe(2);
+    expect(r.unrecognized_headings).toBeUndefined();
+  });
+
+  test('NO false positive: a heading inside a code fence is not reported (answers paste markdown)', () => {
+    const body = [
+      '## User', '', 'Show me the doc template.', '',
+      '## Assistant', '', '```', '## Claude', '## Summary', '```', 'Done.', '',
+      '## User', '', 'Thanks.',
+    ].join('\n');
+    const r = parseConversation(body, {});
+    expect(r.phase).toBe('regex_match');
+    expect(r.messages.length).toBe(3);
+    expect(r.unrecognized_headings).toBeUndefined();
+  });
+
+  test('long prose headings are not collected (section titles, not lost speakers)', () => {
+    const body = `## User\n\nQ?\n\n## Assistant\n\nA.\n\n## How We Should Think About Deploys Going Forward\n\nnotes\n`;
+    const r = parseConversation(body, {});
+    expect(r.phase).toBe('regex_match');
+    expect(r.unrecognized_headings).toBeUndefined(); // >3 tokens — not speaker-shaped-ish
+  });
+
+  test('ordinary doc headings ARE reported (policy lives in the caller, not here)', () => {
+    const body = `## User\n\nQ?\n\n## Assistant\n\nA.\n\n## Summary\n\nwrap-up notes\n`;
+    const r = parseConversation(body, {});
+    expect(r.unrecognized_headings).toEqual(['Summary']);
+  });
+
+  test('labels dedupe and cap; parse behavior is unchanged by collection', () => {
+    const repeated = Array.from({ length: 30 }, (_, i) => `## Ghost${i}\n\nx.\n`).join('\n');
+    const body = `## User\n\nQ?\n\n## Assistant\n\nA.\n\n${repeated}`;
+    const r = parseConversation(body, {});
+    expect(r.unrecognized_headings!.length).toBeLessThanOrEqual(10);
+  });
+
+  test('applyPattern 3-arg call keeps compiling and behaving identically (back-compat)', () => {
+    const entry = BUILTIN_PATTERNS.find((p) => p.id === 'markdown-heading-turn')!;
+    const messages = applyPattern('## User\nhello\n## Assistant\nhi', entry, {
+      fallbackDate: '2026-01-01',
+      timezone: undefined,
+      source: 'explicit',
+    });
+    expect(messages.length).toBe(2);
   });
 });

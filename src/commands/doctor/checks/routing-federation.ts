@@ -7,6 +7,7 @@
 import { existsSync, readFileSync } from 'fs';
 import type { BrainEngine } from '../../../core/engine.ts';
 import { gbrainPath } from '../../../core/config.ts';
+import { isUndefinedTableError, isUndefinedColumnError } from '../../../core/utils.ts';
 import type { Check } from '../../doctor.ts';
 
 /**
@@ -189,6 +190,127 @@ export async function checkOauthConfidentialHealth(engine: BrainEngine): Promise
       return { name: 'oauth_confidential_client_health', status: 'ok', message: 'OAuth not configured (skipping)' };
     }
     return { name: 'oauth_confidential_client_health', status: 'warn', message: `Check failed: ${msg}` };
+  }
+}
+
+/**
+ * oauth_client_scope_health — scoped-client grant hygiene (cathedral-6).
+ *
+ * Two warn conditions, each a single query (no per-client N+1):
+ *
+ *  (a) DANGLING FEDERATED GRANTS — a federated read grant id with no
+ *      sources row. oauth_clients.federated_read is a TEXT[] with no FK
+ *      (only source_id carries ON DELETE RESTRICT), so removing a source
+ *      leaves grants pointing at nothing and the client's reads silently
+ *      return less than the operator believes was granted.
+ *
+ *  (b) ORPHANED EMPTY WORKSPACE SOURCES — an auto-created
+ *      '<name>-workspace' source (DB-only: no local_path, zero pages, ZERO
+ *      FACTS, not archived) that no live client references by write source
+ *      or read grant. This is the post-failure / post-revoke residue
+ *      heuristic for `gbrain agent register` derived workspaces. A
+ *      non-default source WITH pages is normal on every local brain and is
+ *      never flagged; a zero-page source WITH facts is a revoked agent's
+ *      memory (the primary agent write lane) and is never flagged either —
+ *      the `sources remove` hint would cascade the facts away.
+ *
+ * Pre-OAuth / pre-migration schemas (missing table or missing column)
+ * short-circuit to ok — same posture as oauth_confidential_client_health.
+ */
+export async function checkOauthClientScopeHealth(engine: BrainEngine): Promise<Check> {
+  try {
+    // Single source of truth for the derived-workspace suffix — lazy import
+    // (same pattern as the other checks) so agent-register.ts stays out of
+    // doctor's static import graph.
+    const { WORKSPACE_SUFFIX } = await import('../../agent-register.ts');
+    const dangling = await engine.executeRaw<{ client_id: string; client_name: string | null; grant_id: string }>(
+      `SELECT c.client_id, c.client_name, g.grant_id
+         FROM oauth_clients c
+         CROSS JOIN LATERAL unnest(c.federated_read) AS g(grant_id)
+         LEFT JOIN sources s ON s.id = g.grant_id
+        WHERE s.id IS NULL AND c.deleted_at IS NULL
+        ORDER BY c.client_id, g.grant_id`,
+    );
+    // A revoked agent's workspace can hold FACTS with zero pages (facts are
+    // the primary agent write lane) — such a source is NOT empty and the
+    // `gbrain sources remove` recommendation would cascade the facts away.
+    const orphanSql = (withFactsExclusion: boolean) =>
+      `SELECT s.id
+         FROM sources s
+        WHERE s.id LIKE '%' || $1
+          AND s.local_path IS NULL
+          AND COALESCE(s.archived, false) = false
+          AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = s.id)
+          ${withFactsExclusion ? `AND NOT EXISTS (SELECT 1 FROM facts f WHERE f.source_id = s.id)` : ''}
+          AND NOT EXISTS (
+            SELECT 1 FROM oauth_clients c
+             WHERE c.deleted_at IS NULL
+               AND (c.source_id = s.id OR s.id = ANY(c.federated_read))
+          )
+        ORDER BY s.id`;
+    let orphaned: Array<{ id: string }>;
+    try {
+      orphaned = await engine.executeRaw<{ id: string }>(orphanSql(true), [WORKSPACE_SUFFIX]);
+    } catch (e) {
+      // Pre-v0.31 brain without the facts table: a source can't hold facts it
+      // has no table for — retry without the exclusion. Scoped here (code-first
+      // classification + the message must name `facts`) so the dangling-grant
+      // arm's findings above aren't lost to the outer catch's schema-degrade.
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!(isUndefinedTableError(e) && /facts/i.test(msg))) throw e;
+      orphaned = await engine.executeRaw<{ id: string }>(orphanSql(false), [WORKSPACE_SUFFIX]);
+    }
+    const problems: string[] = [];
+    if (dangling.length > 0) {
+      const byClient = new Map<string, { name: string | null; grants: string[] }>();
+      for (const d of dangling) {
+        const entry = byClient.get(d.client_id) ?? { name: d.client_name, grants: [] };
+        entry.grants.push(d.grant_id);
+        byClient.set(d.client_id, entry);
+      }
+      const shown = [...byClient.entries()].slice(0, 5)
+        .map(([id, e]) => `"${e.name ?? id}" (${id}) → ${e.grants.join(', ')}`);
+      problems.push(
+        `${dangling.length} federated read grant(s) point at missing sources: ${shown.join('; ')}` +
+        (byClient.size > 5 ? ` (+${byClient.size - 5} more clients)` : '') +
+        `. Fix each with \`gbrain auth rescope-client <client_id>\` (set a federated read list naming only existing sources), or recreate the source.`,
+      );
+    }
+    if (orphaned.length > 0) {
+      const shown = orphaned.slice(0, 5).map(o => o.id);
+      problems.push(
+        `${orphaned.length} empty auto-created workspace source(s) with no live client: ${shown.join(', ')}` +
+        (orphaned.length > 5 ? ` (+${orphaned.length - 5} more)` : '') +
+        `. May be residue from a revoked or failed \`gbrain agent register\`; verify before removing with \`gbrain sources remove <id>\`.`,
+      );
+    }
+    if (problems.length > 0) {
+      return {
+        name: 'oauth_client_scope_health',
+        status: 'warn',
+        message: problems.join('\n'),
+      };
+    }
+    return {
+      name: 'oauth_client_scope_health',
+      status: 'ok',
+      message: 'Scoped-client grants consistent (no dangling federated reads, no orphaned workspace sources)',
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // Pre-OAuth schema (table missing) or pre-migration schema (column
+    // missing) → ok, matching the confidential-client check's posture.
+    // CODE-FIRST classification (42P01/42703 via core/utils): a bare message
+    // regex would classify e.g. `function unnest(jsonb) does not exist` — a
+    // type-drift failure this check exists to catch — as "schema not present"
+    // and lie green. Column candidates are the optional oauth-scoping columns
+    // this check's queries touch.
+    const missingColumn = ['federated_read', 'source_id', 'deleted_at', 'archived', 'local_path']
+      .some((c) => isUndefinedColumnError(e, c));
+    if (isUndefinedTableError(e) || missingColumn) {
+      return { name: 'oauth_client_scope_health', status: 'ok', message: 'OAuth scoping schema not present (skipping)' };
+    }
+    return { name: 'oauth_client_scope_health', status: 'warn', message: `Check failed: ${msg}` };
   }
 }
 

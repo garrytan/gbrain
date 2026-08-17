@@ -134,6 +134,7 @@ function makeHealth(overrides: Partial<BrainHealth> = {}): BrainHealth {
     brain_score: 100,
     dead_links: 0,
     link_coverage: 1.0,
+    entity_page_count: 10,
     timeline_coverage: 1.0,
     most_connected: [],
     embed_coverage_score: 35,

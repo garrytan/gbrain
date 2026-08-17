@@ -34,6 +34,8 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -390,6 +392,46 @@ describe('bootstrap hook under a live serve (serial e2e) [A7]', () => {
       .filter((b) => b.visibility === 'private')
       .map((b) => b.text);
     for (const frag of privateFragments) expect(pack).not.toContain(frag);
+  }, 60_000);
+
+  test('Pin 3b (cathedral 5): compact under a REAL serve banks a content-addressed segment + ledger and stays fail-open + lock-free', async () => {
+    // Transcript with a PRIOR boundary: the segment must carry only the
+    // since-boundary window. Runs against the live serve from beforeAll —
+    // Pin 2's lock discipline is implicitly re-proven (runHook completes
+    // while the serve holds the PGLite write lock).
+    const projRoot = join(tmpParent, 'projects');
+    mkdirSync(join(projRoot, 'p3b'), { recursive: true });
+    const transcript = join(projRoot, 'p3b', 'session.jsonl');
+    writeFileSync(
+      transcript,
+      [
+        JSON.stringify({ type: 'user', message: { role: 'user', content: 'PRE-BOUNDARY-ONLY text' } }),
+        JSON.stringify({ type: 'system', subtype: 'compact_boundary', content: 'compacted' }),
+        JSON.stringify({ type: 'user', message: { role: 'user', content: 'POST-BOUNDARY window for Alice Example' } }),
+      ].join('\n') + '\n',
+    );
+    const out = collectStdout();
+    const code = await runHook(['compact'], {
+      stdin: JSON.stringify({ transcript_path: transcript, session_id: 'e2e-seg-sess' }),
+      write: out.write,
+      cwd: ws,
+      transcriptRoot: projRoot,
+    });
+    expect(code).toBe(0);
+    expect(out.get()).toBe('');
+    const [hb] = await readHeartbeatTail(1);
+    expect(hb.event).toBe('compact');
+    expect(hb.outcome).toBe('ok'); // IPC round trip reached the serve
+    expect(hb.segment).toBe('segment_banked');
+    // Durability artifacts on disk, content-addressed, since-boundary only.
+    const corpusDir = join(tmpParent, '.gbrain', 'transcripts', 'corpus');
+    const segs = readdirSync(corpusDir).filter((f) => f.startsWith('e2e-seg-sess.seg-') && f.endsWith('.txt'));
+    expect(segs).toHaveLength(1);
+    const body = readFileSync(join(corpusDir, segs[0]), 'utf8');
+    expect(body).toContain('POST-BOUNDARY');
+    expect(body).not.toContain('PRE-BOUNDARY-ONLY');
+    const ledger = JSON.parse(readFileSync(join(corpusDir, 'e2e-seg-sess.ledger.json'), 'utf8')) as unknown[];
+    expect(ledger).toHaveLength(1);
   }, 60_000);
 
   test('Pin 4: stale serve (killed, socket left behind) → fail-open exit 0 with ipc_unavailable/no_serve degradation', async () => {

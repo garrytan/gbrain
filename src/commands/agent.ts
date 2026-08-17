@@ -38,20 +38,40 @@ function isKnownFlag(s: string): boolean {
 
 // ── command dispatcher ────────────────────────────────────
 
-export async function runAgent(engine: BrainEngine, args: string[]): Promise<void> {
+export async function runAgent(engine: BrainEngine | null, args: string[]): Promise<void> {
   const sub = args[0];
   if (!sub || sub === '--help' || sub === '-h') {
     printHelp();
     return;
   }
 
+  // Subcommand-aware help that STOPS at the `--` terminator: `agent run --
+  // --help` submits the LITERAL prompt; only a pre-`--` --help/-h is a help
+  // request. Answered before any engine or queue work, so the
+  // SELF_HELP_WITHOUT_ENGINE lane (engine === null) prints real help on a
+  // brainless machine and can never submit a job (cathedral-6 eng review).
+  const rest = args.slice(1);
+  const dd = rest.indexOf('--');
+  const helpScan = dd === -1 ? rest : rest.slice(0, dd);
+  const wantsHelp = helpScan.includes('--help') || helpScan.includes('-h');
+
   switch (sub) {
     case 'run':
-      await runAgentRun(engine, args.slice(1));
+      if (wantsHelp) { printHelp(); return; }
+      if (!engine) { console.error('gbrain agent run needs a configured brain. Run `gbrain init` first.'); process.exit(1); }
+      await runAgentRun(engine, rest);
       return;
     case 'logs':
-      await runAgentLogsCmd(engine, args.slice(1));
+      if (wantsHelp) { printHelp(); return; }
+      if (!engine) { console.error('gbrain agent logs needs a configured brain. Run `gbrain init` first.'); process.exit(1); }
+      await runAgentLogsCmd(engine, rest);
       return;
+    case 'register': {
+      const { printRegisterHelp, runAgentRegister } = await import('./agent-register.ts');
+      if (wantsHelp) { printRegisterHelp(); return; }
+      await runAgentRegister(engine, rest);
+      return;
+    }
     default:
       console.error(`gbrain agent: unknown subcommand "${sub}"`);
       printHelp();
@@ -65,6 +85,7 @@ function printHelp(): void {
 USAGE
   gbrain agent run <prompt> [flags]
   gbrain agent logs <job_id> [--follow] [--since <spec>]
+  gbrain agent register <name> --harness <h> [flags]   (see: gbrain agent register --help)
 
 SUBMITTING
   gbrain agent run <prompt>

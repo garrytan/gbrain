@@ -265,6 +265,15 @@ export interface GBrainConfig {
    * reflex knobs.
    */
   retrieval_reflex_window_turns?: number;
+  /**
+   * v0.46.15 (identity wave) — kill switch for the reflex's lexical recall
+   * arms (lowercase weak-candidate alias arm + surname arm). Default ON
+   * (absent = enabled); `false` reproduces pre-wave resolution exactly.
+   * File-plane / env (GBRAIN_RETRIEVAL_REFLEX_LEXICAL_ARMS) only — same
+   * plane as the other reflex knobs; a false-fire regression in production
+   * reverts on the next turn with a config edit, no redeploy.
+   */
+  retrieval_reflex_lexical_arms?: boolean;
   embedding_image_ocr?: boolean;
   embedding_image_ocr_model?: string;
 
@@ -666,6 +675,15 @@ export function loadConfig(): GBrainConfig | null {
     ...(process.env.GBRAIN_RETRIEVAL_REFLEX_WINDOW_TURNS &&
       Number.isFinite(Number(process.env.GBRAIN_RETRIEVAL_REFLEX_WINDOW_TURNS))
       ? { retrieval_reflex_window_turns: Number(process.env.GBRAIN_RETRIEVAL_REFLEX_WINDOW_TURNS) }
+      : {}),
+    ...(process.env.GBRAIN_RETRIEVAL_REFLEX_LEXICAL_ARMS
+      ? {
+          // Case-insensitive + common negatives — incident escape hatch;
+          // mirrors reflex.ts:lexicalArmsEnabled (adversarial F11).
+          retrieval_reflex_lexical_arms: !/^(false|0|off|no)$/i.test(
+            process.env.GBRAIN_RETRIEVAL_REFLEX_LEXICAL_ARMS.trim(),
+          ),
+        }
       : {}),
     ...(process.env.GBRAIN_REMOTE_CLIENT_SECRET && fileConfig?.remote_mcp
       ? { remote_mcp: { ...fileConfig.remote_mcp, oauth_client_secret: process.env.GBRAIN_REMOTE_CLIENT_SECRET } }

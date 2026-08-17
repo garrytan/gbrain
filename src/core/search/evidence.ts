@@ -37,16 +37,41 @@ export type Evidence =
 
 export type CreateSafety = 'exists' | 'probable' | 'unknown';
 
-/** base_score (pre-boost) at/above this is a confident vector/keyword match. */
+/**
+ * Legacy pre-v0.46.15 floor — kept exported for back-compat, but
+ * `high_vector_match` no longer keys off it: base_score is a blended
+ * RRF/keyword/title/alias composite, NOT a cosine, so a generic
+ * high-scoring page could read as a confident vector match (#3963,
+ * TODOS retrieval-cathedral P1).
+ */
 export const HIGH_MATCH_FLOOR = 0.85;
 /** base_score at/above this is a solid (not weak) match. */
 export const SOLID_MATCH_FLOOR = 0.6;
+/**
+ * v0.46.15 — `high_vector_match` fires ONLY on a real query↔chunk cosine at/
+ * above this floor (SearchResult.cosine, hydrated from the active embedding
+ * column). Config-overridable via `search.evidence_cosine_floor`; the default
+ * is calibrated for the current default embedding columns — per-model
+ * calibration is a filed follow-up. Keyless/hermetic runs have no cosine and
+ * honestly fall through to keyword_exact/weak_semantic (create_safety
+ * degrades exists→probable, the safe direction for the don't-duplicate
+ * contract).
+ */
+export const DEFAULT_HIGH_COSINE_FLOOR = 0.8;
 
-export function classifyEvidence(r: SearchResult): Evidence {
+export interface EvidenceOpts {
+  /** Cosine floor for high_vector_match (default DEFAULT_HIGH_COSINE_FLOOR). */
+  cosineFloor?: number;
+}
+
+export function classifyEvidence(r: SearchResult, opts: EvidenceOpts = {}): Evidence {
   if (r.alias_hit) return 'alias_hit';
   if (r.title_match_boost && r.title_match_boost > 1.0) return 'exact_title_match';
+  const floor = typeof opts.cosineFloor === 'number' ? opts.cosineFloor : DEFAULT_HIGH_COSINE_FLOOR;
+  if (typeof r.cosine === 'number' && Number.isFinite(r.cosine) && r.cosine >= floor) {
+    return 'high_vector_match';
+  }
   const base = typeof r.base_score === 'number' ? r.base_score : r.score;
-  if (Number.isFinite(base) && base >= HIGH_MATCH_FLOOR) return 'high_vector_match';
   if (Number.isFinite(base) && base >= SOLID_MATCH_FLOOR) return 'keyword_exact';
   return 'weak_semantic';
 }
@@ -69,9 +94,9 @@ export function createSafetyFor(evidence: Evidence): CreateSafety {
  * the end of the hybrid pipeline (after the alias hop, before slice) so the
  * agent-facing result carries the contract. Idempotent.
  */
-export function stampEvidence(results: SearchResult[]): void {
+export function stampEvidence(results: SearchResult[], opts: EvidenceOpts = {}): void {
   for (const r of results) {
-    const e = classifyEvidence(r);
+    const e = classifyEvidence(r, opts);
     r.evidence = e;
     r.create_safety = createSafetyFor(e);
   }

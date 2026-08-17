@@ -125,6 +125,17 @@ export interface ParsedTranscript {
    * compaction happened without re-scanning the file.
    */
   compactBoundaries: number;
+  /**
+   * Cathedral 5 — POSITION of each boundary in turns-array index space: the
+   * `turns.length` value at the moment the boundary line was seen (boundary
+   * lines themselves are excluded from `turns`). `turns.slice(
+   * boundaryTurnIndexes.at(-1))` is "the window since the last compaction".
+   * Positions are relative to THIS read's window (a tail read that scrolled
+   * old boundaries out of range yields fewer indexes than the session's
+   * lifetime count — coverage decisions must use exact-set hashes, never
+   * count equality). Always same length as `compactBoundaries`.
+   */
+  boundaryTurnIndexes: number[];
 }
 
 /**
@@ -162,6 +173,7 @@ export function parseTranscript(
   const lines = raw.split('\n');
   const turns: WindowTurn[] = [];
   const injectedContextBlocks: string[] = [];
+  const boundaryTurnIndexes: number[] = [];
   let parsedLines = 0;
   let skippedLines = 0;
   let compactBoundaries = 0;
@@ -180,7 +192,11 @@ export function parseTranscript(
     parsedLines++;
     // v0.45.7: count compaction boundaries (system entries — disjoint from
     // attachments and turns) so post-compaction rehydration can detect them.
-    if (isCompactBoundary(entry)) compactBoundaries++;
+    // Cathedral 5: also record the boundary's position in turns-index space.
+    if (isCompactBoundary(entry)) {
+      compactBoundaries++;
+      boundaryTurnIndexes.push(turns.length);
+    }
     const injected = entryToInjectedBlock(entry);
     if (injected) {
       injectedContextBlocks.push(injected);
@@ -189,7 +205,7 @@ export function parseTranscript(
     const turn = entryToTurn(entry);
     if (turn) turns.push(turn);
   }
-  return { turns, injectedContextBlocks, bytesRead, parsedLines, skippedLines, compactBoundaries };
+  return { turns, injectedContextBlocks, bytesRead, parsedLines, skippedLines, compactBoundaries, boundaryTurnIndexes };
 }
 
 /** {type:'system', subtype:'compact_boundary'} — Claude Code's on-disk compaction marker (v0.45.7). */

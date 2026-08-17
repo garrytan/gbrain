@@ -1,5 +1,6 @@
-import { test, expect, describe } from 'bun:test';
-import { parseAuthCreateArgs, parseAuthClientsArgs, parseRescopeSurfaceValue, renderTokenScopes } from '../src/commands/auth.ts';
+import { test, expect, describe, beforeAll, afterAll } from 'bun:test';
+import { parseAuthCreateArgs, parseAuthClientsArgs, parseRescopeSurfaceValue, renderTokenScopes, listClientRows } from '../src/commands/auth.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 
 describe('parseAuthCreateArgs', () => {
   test('bare name (no flag) resolves the name — regression for the dropped-name bug', () => {
@@ -130,5 +131,43 @@ describe('parseAuthClientsArgs (E4)', () => {
 
   test('unknown flags reject loudly', () => {
     expect(() => parseAuthClientsArgs(['--nope'])).toThrow(/Unknown flag/);
+  });
+});
+
+// cathedral-6: `auth clients` projection widen — source_id + federated_read
+// ride the same SELECT (zero extra round trips) with a degrade ladder for
+// pre-migration brains. PGLite-backed: proves the full-shape query is valid
+// SQL on a current schema and the row shape carries the new columns.
+describe('listClientRows (projection widen)', () => {
+  let engine: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  test('full-shape rows carry scope, surface, source_id and federated_read', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('proj-widget', 'proj-widget')`,
+    );
+    await engine.executeRaw(
+      `INSERT INTO oauth_clients (client_id, client_name, scope, surface, surface_set_by, source_id, federated_read)
+       VALUES ('c-aurora', 'aurora-coder', 'read write', 'starter', 'operator', 'proj-widget', $1)`,
+      [['proj-widget', 'default']],
+    );
+    const rows = await listClientRows(engine);
+    const aurora = rows.find(r => r.client_id === 'c-aurora');
+    expect(aurora).toBeDefined();
+    expect(aurora!.client_name).toBe('aurora-coder');
+    expect(aurora!.scope).toBe('read write');
+    expect(aurora!.surface).toBe('starter');
+    expect(aurora!.surface_set_by).toBe('operator');
+    expect(aurora!.source_id).toBe('proj-widget');
+    expect(aurora!.federated_read).toEqual(['proj-widget', 'default']);
   });
 });

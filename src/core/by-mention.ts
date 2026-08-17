@@ -27,6 +27,7 @@
  */
 
 import type { BrainEngine } from './engine.ts';
+import { isUndefinedTableError } from './utils.ts';
 import { CJK_SLUG_CHARS } from './cjk.ts';
 import { stripCodeBlocks } from './link-extraction.ts';
 
@@ -40,6 +41,8 @@ export const LINKABLE_ENTITY_TYPES = ['person', 'company', 'organization', 'enti
  * pack-aware follow-up (TODO-1) can let users opt specific 3-char entity
  * types in.
  */
+let aliasGazetteerWarned = false;
+
 const MIN_NAME_LENGTH = 4;
 const MIN_CJK_NAME_LENGTH = 2;
 
@@ -390,6 +393,12 @@ export async function buildGazetteer(
     if (!row.title) continue;
     if (!hasCJK(row.title) && row.title.length < MIN_NAME_LENGTH) continue;
     if (hasCJK(row.title) && cjkCharCount(row.title) < MIN_CJK_NAME_LENGTH) continue;
+    // NOTE (v0.46.15, deliberately preserved): for TITLES this condition is
+    // intentionally vacuous — every row here IS a real page, so an
+    // ignore-listed name the user explicitly created a page for is always
+    // allowed (documented CK12 policy). The ignore list bites only via
+    // opts.extraIgnore names that have no page, and — with real teeth — on
+    // the ALIAS entries below, which are not user-created pages.
     if (ignoreSet.has(row.title) && !existingTitles.has(row.title)) continue;
 
     const tokens = tokenizeTitle(row.title);
@@ -406,6 +415,78 @@ export async function buildGazetteer(
     const bucket = gazetteer.get(key);
     if (bucket) bucket.push(entry);
     else gazetteer.set(key, [entry]);
+  }
+
+  // ── Alias entries (v0.46.15 identity wave, #3801) ────────────────────────
+  // page_aliases rows joined to LIVE entity-typed pages become additional
+  // gazetteer entries, so a body mention of "saoirse" links to
+  // people/saoirse-x. Guards (stricter than titles — aliases are not
+  // user-created pages):
+  //   - ignore-list applies CASE-INSENSITIVELY with NO existing-page escape
+  //     (aliases store normalized lowercase; DEFAULT_IGNORE_LIST is cased)
+  //   - aliases mapping to >1 slug within a source are skipped (ambiguous)
+  //   - aliases colliding with any existing page TITLE in the SAME source
+  //     are skipped (the title entry wins; per-source scoping per R2-9)
+  //   - MIN_NAME_LENGTH applies to the alias string
+  try {
+    const aliasRows = await engine.executeRaw<{
+      alias_norm: string;
+      slug: string;
+      source_id: string | null;
+      title: string | null;
+    }>(
+      `SELECT pa.alias_norm, pa.slug, pa.source_id, p.title
+       FROM page_aliases pa
+       JOIN pages p ON p.slug = pa.slug AND p.source_id = pa.source_id
+       WHERE p.type IN (${typeList})
+         AND p.deleted_at IS NULL`,
+      [],
+    );
+    const ignoreLc = new Set(Array.from(ignoreSet, (s) => s.toLowerCase()));
+    // Per-source title index for alias-vs-title collision checks.
+    const titleBySource = new Set<string>();
+    for (const r of rows) {
+      if (r.title) titleBySource.add(`${r.source_id ?? 'default'} ${r.title.toLowerCase()}`);
+    }
+    // Ambiguity: same (source, alias) → multiple slugs.
+    const bySourceAlias = new Map<string, Set<string>>();
+    for (const a of aliasRows) {
+      const k = `${a.source_id ?? 'default'} ${a.alias_norm}`;
+      const set = bySourceAlias.get(k) ?? new Set<string>();
+      set.add(a.slug);
+      bySourceAlias.set(k, set);
+    }
+    const seenAliasEntry = new Set<string>();
+    for (const a of aliasRows) {
+      const alias = a.alias_norm?.trim();
+      if (!alias || !a.title) continue;
+      const src = a.source_id ?? 'default';
+      if (alias.length < MIN_NAME_LENGTH && !hasCJK(alias)) continue;
+      if (hasCJK(alias) && cjkCharCount(alias) < MIN_CJK_NAME_LENGTH) continue;
+      if (ignoreLc.has(alias.toLowerCase())) continue;
+      if ((bySourceAlias.get(`${src} ${alias}`)?.size ?? 0) > 1) continue;
+      if (titleBySource.has(`${src} ${alias.toLowerCase()}`)) continue;
+      const dedupeKey = `${src} ${alias} ${a.slug}`;
+      if (seenAliasEntry.has(dedupeKey)) continue;
+      seenAliasEntry.add(dedupeKey);
+      const tokens = tokenizeTitle(alias);
+      if (tokens.length === 0) continue;
+      if (tokens[0]!.length < MIN_NAME_LENGTH && tokens.length === 1) continue;
+      const entry: GazetteerEntry = { slug: a.slug, source_id: src, title: a.title, tokens };
+      const key = tokens[0]!;
+      const bucket = gazetteer.get(key);
+      if (bucket) bucket.push(entry);
+      else gazetteer.set(key, [entry]);
+    }
+  } catch (err) {
+    // pre-v110 brains: no page_aliases table — titles-only gazetteer.
+    // Any OTHER failure (connection blip, permission) warns once per process
+    // (adversarial F12): a silently titles-only gazetteer under-links every
+    // page processed until restart, and nobody would know why.
+    if (!isUndefinedTableError(err) && !aliasGazetteerWarned) {
+      aliasGazetteerWarned = true;
+      console.error(`[gbrain] gazetteer alias load degraded (titles-only): ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   // Sort each bucket by token-count DESC so maximal-munch walks longest-first.

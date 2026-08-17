@@ -51,6 +51,7 @@ import {
 import { promptLine } from '../core/cli-util.ts';
 import {
   NAME_RE,
+  OAUTH_SECRET_NOTE,
   REDACTED,
   buildClaudeMcpAddArgv,
   buildCodexMcpAddArgv,
@@ -69,6 +70,7 @@ import {
 // commands). Re-exported so this module's public surface — and every test
 // that imports from it — is unchanged.
 export {
+  OAUTH_SECRET_NOTE,
   REDACTED,
   buildClaudeMcpAddArgv,
   buildCodexMcpAddArgv,
@@ -133,9 +135,8 @@ const SECRET_NOTE =
   'Note: that bearer token is a long-lived, full-access secret — keep it private and ' +
   'prefer a scoped/short-lived token if your host supports one.';
 
-const OAUTH_SECRET_NOTE =
-  'Note: the client secret is sensitive — store it like a password. It mints ' +
-  'short-lived, scoped access tokens; revoke with `gbrain auth revoke-client`.';
+// OAUTH_SECRET_NOTE moved to src/core/mcp-registration.ts (imported +
+// re-exported above; text unchanged).
 
 const PERPLEXITY_REMOTE_NOTE = [
   'Perplexity connects remotely, so the brain must be reachable over HTTPS. On the',

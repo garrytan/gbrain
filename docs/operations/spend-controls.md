@@ -96,6 +96,13 @@ estimate is `delta + stale backlog`, labeled as such.
 - **Recovery under parallel:** `--skip-failed` / `--retry-failed` work under parallel
   sync (the failure ledger is per-source and lock-serialized) — you no longer have to
   drop to `--serial`, which is what used to arm the inline gate.
+- **Chat-side accounting completeness:** query-expansion and image-OCR calls record
+  on the ambient budget tracker like every other gateway call, including failed
+  attempts (recorded pessimistically). This is record-only — these paths never
+  pre-reserve, so a cap breach from them surfaces on the next reserving call.
+  Practical effect: capped runs (`--max-cost` and friends) that previously
+  under-counted may now hit their ceiling; the new number is the honest one, so
+  raise the cap rather than assuming a regression.
 
 ## Escape hatches at a glance
 

@@ -65,7 +65,12 @@ documented future extension.
 
 Hand-authored spike fixtures (`kta-001`, `kta-002`, `ms-001`, `wb-001`,
 `cont-001-*`) froze the schema before the generator scaled it; they remain part
-of the corpus.
+of the corpus. `ms-002-nondefault-active` is hand-authored too: it is the only
+fixture with a non-`default` `active_source` (the generator pins gen-ms
+fixtures to `active_source: default`), exercising the cross-source leak
+detector's other arm — a twin slug seeded into `default` AND `teambrain`, a
+teambrain-only page, and a default-only leak canary, replayed with
+`active_source: teambrain`.
 
 ## Fixture authoring (contributions welcome)
 
