@@ -39,6 +39,7 @@ import { writeReceipt } from '../src/core/bootstrap/format.ts';
 import type { RepoReceipt } from '../src/core/bootstrap/repo.ts';
 
 const FIXTURE = join(import.meta.dir, 'fixtures', 'conversation-formats', 'claude-code.jsonl');
+const TRAECLI_FIXTURE = join(import.meta.dir, 'fixtures', 'conversation-formats', 'traecli-rollout.jsonl');
 const ENV_KEYS = [
   'GBRAIN_HOME', 'DATABASE_URL', 'GBRAIN_DATABASE_URL', 'GBRAIN_SOURCE', 'GBRAIN_HOOKS',
   // stop-push [D3/D17/D20] + banner [D5] + cloud detection knobs
@@ -253,7 +254,7 @@ describe('user-prompt', () => {
     expect(hb?.reason).toBe('no_ipc_path');
   });
 
-  test('TraeCLI ignores an unsupported transcript path and injects from prompt only', async () => {
+  test('TraeCLI parses its rollout transcript and sends history plus the current prompt', async () => {
     const shortHome = mkdtempSync('/tmp/gb-hk-ta-');
     process.env.GBRAIN_HOME = shortHome;
     const databaseUrl = 'postgresql://example.invalid/brain';
@@ -264,17 +265,60 @@ describe('user-prompt', () => {
       'default',
       'traecli',
     )!;
-    await startServer({ dataDir: runtimeDir, blockText: 'CTX: prompt-only works' });
+    const seen: TurnContextRequest[] = [];
+    await startServer({ dataDir: runtimeDir, blockText: 'CTX: rollout works', onRequest: (req) => { seen.push(req); } });
+    const sessionsRoot = join(shortHome, 'sessions');
+    const day = join(sessionsRoot, '2026', '08', '17');
+    mkdirSync(day, { recursive: true });
+    const transcript = join(day, 'rollout-test.jsonl');
+    copyFileSync(TRAECLI_FIXTURE, transcript);
     const out = collectStdout();
     await runHook(['user-prompt', '--harness', 'traecli'], {
       ...out.io,
       stdin: JSON.stringify({
         prompt: 'Tell me about Alice Example',
-        transcript_path: '/tmp/traecli-session.jsonl',
+        transcript_path: transcript,
       }),
+      transcriptRoot: sessionsRoot,
     });
-    expect(out.get()).toContain('CTX: prompt-only works');
+    expect(out.get()).toContain('CTX: rollout works');
+    expect(seen[0]?.window).toEqual([
+      { role: 'user', text: 'What did alice-example decide?' },
+      { role: 'assistant', text: 'alice-example chose the blue launch plan.' },
+      { role: 'user', text: 'What about widget-co?' },
+      { role: 'assistant', text: 'widget-co launches Thursday.' },
+      { role: 'user', text: 'Tell me about Alice Example' },
+    ]);
+    expect(seen[0]?.priorContextText).toContain('companies/widget-co');
+    expect(seen[0]?.priorContextText).not.toContain('companies/foreign');
     expect((await lastHeartbeat())?.outcome).toBe('ok');
+    rmSync(shortHome, { recursive: true, force: true });
+  });
+
+  test('TraeCLI does not append the current prompt twice when rollout already contains it', async () => {
+    const shortHome = mkdtempSync('/tmp/gb-hk-td-');
+    process.env.GBRAIN_HOME = shortHome;
+    const databaseUrl = 'postgresql://example.invalid/brain-dedupe';
+    process.env.GBRAIN_SOURCE = 'default';
+    writePostgresConfig(databaseUrl);
+    const runtimeDir = resolveIpcRuntimeDirForConfig(
+      { engine: 'postgres', database_url: databaseUrl }, 'default', 'traecli',
+    )!;
+    const seen: TurnContextRequest[] = [];
+    await startServer({ dataDir: runtimeDir, blockText: 'ok', onRequest: (req) => { seen.push(req); } });
+    const sessionsRoot = join(shortHome, 'sessions');
+    mkdirSync(sessionsRoot, { recursive: true });
+    const transcript = join(sessionsRoot, 'rollout-current.jsonl');
+    writeFileSync(transcript, JSON.stringify({
+      type: 'event_msg', payload: { type: 'user_message', message: 'same prompt' },
+    }) + '\n');
+    const out = collectStdout();
+    await runHook(['user-prompt', '--harness', 'traecli'], {
+      ...out.io,
+      stdin: JSON.stringify({ prompt: 'same prompt', transcript_path: transcript }),
+      transcriptRoot: sessionsRoot,
+    });
+    expect(seen[0]?.window).toEqual([{ role: 'user', text: 'same prompt' }]);
     rmSync(shortHome, { recursive: true, force: true });
   });
 

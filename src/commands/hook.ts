@@ -68,6 +68,10 @@ import {
   toCorpusText,
 } from '../core/transcripts/claude-code-jsonl.ts';
 import {
+  confineTraeCliTranscriptPath,
+  parseTraeCliTranscript,
+} from '../core/transcripts/traecli-rollout-jsonl.ts';
+import {
   bankCompactSegment,
   decideCorpusMode,
   gcCorpusArtifacts,
@@ -1017,13 +1021,20 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
     // path aborts the event (heartbeat + empty stdout), never "best effort".
     let turns: WindowTurn[] = [];
     let priorContextText: string | undefined;
-    if (io.harness !== 'traecli' && j.transcript_path !== undefined && j.transcript_path !== null) {
-      const conf = confineTranscriptPath(j.transcript_path, {
-        ...(io.transcriptRoot ? { root: io.transcriptRoot } : {}),
-      });
+    if (j.transcript_path !== undefined && j.transcript_path !== null) {
+      const isTraeCli = io.harness === 'traecli';
+      const conf = isTraeCli
+        ? confineTraeCliTranscriptPath(j.transcript_path, {
+            ...(io.transcriptRoot ? { root: io.transcriptRoot } : {}),
+          })
+        : confineTranscriptPath(j.transcript_path, {
+            ...(io.transcriptRoot ? { root: io.transcriptRoot } : {}),
+          });
       if (!conf.ok) return { outcome: 'degraded', reason: `transcript_${conf.reason}` };
       try {
-        const parsed = parseTranscript(conf.path, { maxBytes: USER_PROMPT_TRANSCRIPT_MAX_BYTES });
+        const parsed = isTraeCli
+          ? parseTraeCliTranscript(conf.path, { maxBytes: USER_PROMPT_TRANSCRIPT_MAX_BYTES })
+          : parseTranscript(conf.path, { maxBytes: USER_PROMPT_TRANSCRIPT_MAX_BYTES });
         turns = parsed.turns.slice(-USER_PROMPT_WINDOW_TURNS);
         // Cross-turn dedupe: feed the blocks WE previously injected this
         // session back as priorContextText (slug-only suppression + volunteer
@@ -1058,7 +1069,11 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
       }
     }
     const prompt = typeof j.prompt === 'string' ? j.prompt : '';
-    if (prompt.trim()) turns = [...turns, { role: 'user', text: prompt }];
+    const normalizedPrompt = prompt.trim();
+    const newest = turns[turns.length - 1];
+    if (normalizedPrompt && !(newest?.role === 'user' && newest.text.trim() === normalizedPrompt)) {
+      turns = [...turns, { role: 'user', text: prompt }];
+    }
     if (turns.length === 0) return { outcome: 'ok', reason: 'empty_window' };
 
     const cfg = io.configOverride !== undefined ? io.configOverride : loadConfig();

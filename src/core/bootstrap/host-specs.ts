@@ -283,6 +283,12 @@ export function claudeProjectsDir(): string {
   return join(homedir(), '.claude', 'projects');
 }
 
+/** Where TraeCLI stores rollout transcripts — its hook confinement root. */
+export function traeCliSessionsDir(): string {
+  const home = process.env.HOME?.trim();
+  return join(home || homedir(), '.trae', 'cli', 'sessions');
+}
+
 /**
  * User-scope Claude Code skills dir (native SKILL.md discovery — the
  * harness-bridge install target). Same CLAUDE_CONFIG_DIR-first then

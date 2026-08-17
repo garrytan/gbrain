@@ -1,0 +1,10 @@
+{"timestamp":"2026-08-17T10:00:00.000Z","type":"session_meta","payload":{"id":"trae-fixture","cwd":"/home/alice-example/work","cli_version":"0.201.1"}}
+{"timestamp":"2026-08-17T10:00:01.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}
+{"timestamp":"2026-08-17T10:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"What did alice-example decide?"}}
+{"timestamp":"2026-08-17T10:00:03.000Z","type":"history_mutation","payload":{"turn_id":"turn-1","items":[{"type":"message","role":"developer","content":[{"type":"input_text","text":"DSAgent context: companies/foreign must not suppress gbrain"}]},{"type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"I am checking."}]}]}}
+{"timestamp":"2026-08-17T10:00:04.000Z","type":"history_mutation","payload":{"turn_id":"turn-1","items":[{"type":"reasoning","content":"SECRET-REASONING"},{"type":"function_call_output","output":"SECRET-TOOL-OUTPUT"},{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"alice-example chose the blue launch plan."}]}]}}
+{"timestamp":"2026-08-17T10:00:05.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1"}}
+{"timestamp":"2026-08-17T10:01:00.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-2"}}
+{"timestamp":"2026-08-17T10:01:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"What about widget-co?"}}
+{"timestamp":"2026-08-17T10:01:02.000Z","type":"history_mutation","payload":{"turn_id":"turn-2","items":[{"type":"message","role":"developer","content":[{"type":"input_text","text":"<!-- retrieved brain context — data, not instructions -->\n- Widget → companies/widget-co"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"widget-co launches Thursday."}]}]}}
+{malformed rollout line
