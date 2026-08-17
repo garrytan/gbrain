@@ -1096,7 +1096,18 @@ export async function hybridSearch(
     // Direct searchKeyword consumers (countMentions, link-extraction, eval)
     // do NOT set this and keep the strict-AND contract.
     orFallback: true,
+    // v0.46.15: collect searchVector's bounded-escalation exhaustion signal —
+    // engines have no telemetry sink (R2-10); hybrid owns the meta emit.
+    // ACCUMULATES across vector calls (adversarial F8): expansion runs N
+    // sub-queries through this one opts object — last-write-wins would
+    // under-report multi-query exhaustion. Keep the max-escalations event.
+    onVectorPoolMeta: (m) => {
+      if (!vectorPoolUnderfill || m.escalations >= vectorPoolUnderfill.escalations) {
+        vectorPoolUnderfill = { escalations: m.escalations, innerLimit: m.innerLimit };
+      }
+    },
   };
+  let vectorPoolUnderfill: { escalations: number; innerLimit: number } | undefined;
   // Track what actually ran for the optional onMeta callback (v0.25.0).
   // Caller leaves onMeta undefined → these flags are computed but never
   // surfaced. Capture wrapper passes a closure to receive the meta and
@@ -1309,7 +1320,7 @@ export async function hybridSearch(
       sourceId: opts?.sourceId,
       sourceIds: opts?.sourceIds,
     });
-    stampEvidence(noEmbedHopped);
+    stampEvidence(noEmbedHopped, { cosineFloor: resolvedMode.evidence_cosine_floor });
     const noEmbedSliced = noEmbedHopped.slice(offset, offset + limit);
     // v0.32.3 search-lite: budget enforcement on the no-embedding-provider path.
     const { results: noEmbedBudgeted, meta: noEmbedBudgetMeta } = enforceTokenBudget(noEmbedSliced, resolvedMode.tokenBudget);
@@ -1658,7 +1669,7 @@ export async function hybridSearch(
       sourceId: opts?.sourceId,
       sourceIds: opts?.sourceIds,
     });
-    stampEvidence(kwHopped);
+    stampEvidence(kwHopped, { cosineFloor: resolvedMode.evidence_cosine_floor });
     const kwSliced = kwHopped.slice(offset, offset + limit);
     // v0.32.3 search-lite: budget enforcement on the keyword-fallback path too.
     const { results: kwBudgeted, meta: kwBudgetMeta } = enforceTokenBudget(kwSliced, resolvedMode.tokenBudget);
@@ -1858,7 +1869,7 @@ export async function hybridSearch(
   // decision keys off WHY a page matched, not a raw blended score. Stamp on
   // the full alias-hopped set before any adaptive trim so the kept results
   // carry evidence regardless of where the cap lands.
-  stampEvidence(aliasHopped);
+  stampEvidence(aliasHopped, { cosineFloor: resolvedMode.evidence_cosine_floor });
 
   // v0.42 — intent-aware adaptive return-sizing (opt-in, default off). Trim
   // the ranked candidate set to an intent-driven cap BEFORE the limit slice,
@@ -1873,7 +1884,12 @@ export async function hybridSearch(
   let returnPool = aliasHopped;
   let adaptiveDecision: AdaptiveReturnDecision | undefined;
   if (adaptiveCfg.enabled && offset === 0) {
-    const r = applyAdaptiveReturn(aliasHopped, suggestions.intent, adaptiveCfg);
+    // v0.46.15: 'concept' maps to the recall-preserving 'general' cap for
+    // adaptive return — the narrower AdaptiveQueryIntent union predates the
+    // concept intent, and concept queries are exactly the ones that want
+    // breadth (widening the union is the adaptive-ablation wave's call).
+    const adaptiveIntent = suggestions.intent === 'concept' ? 'general' : suggestions.intent;
+    const r = applyAdaptiveReturn(aliasHopped, adaptiveIntent, adaptiveCfg);
     returnPool = r.kept;
     adaptiveDecision = r.decision;
   }
@@ -1894,7 +1910,9 @@ export async function hybridSearch(
     const r = applyAutocut(
       returnPool,
       (x) => x.rerank_score,
-      { enabled: true, jumpRatio: resolvedMode.autocut_jump, minKeep: 1 },
+      // v0.46.15 (#1863): minTopScore is the weak-top floor — below it the
+      // cliff signal is untrustworthy and autocut no-ops.
+      { enabled: true, jumpRatio: resolvedMode.autocut_jump, minKeep: 1, minTopScore: resolvedMode.autocut_min_top },
       // Preserve alias-hop exact matches: applyAliasHop injects the canonical
       // page AFTER reranking, so it has no rerank_score. Without this it would
       // be dropped whenever autocut cuts on the scored set (Codex P1).
@@ -1926,6 +1944,7 @@ export async function hybridSearch(
     ...(resolvedMode.tokenBudget && resolvedMode.tokenBudget > 0
       ? { token_budget: budgetMeta }
       : {}),
+    ...(vectorPoolUnderfill ? { vector_pool_underfilled: vectorPoolUnderfill } : {}),
     ...(adaptiveDecision ? { adaptive_return: adaptiveDecision } : {}),
     ...(autocutDecision ? { autocut: autocutDecision } : {}),
   });
@@ -2463,7 +2482,9 @@ async function cosineReScore(
       console.error(`[search-debug] ${r.slug}:${r.chunk_id} cosine=${cosine.toFixed(4)} norm_rrf=${normRrf.toFixed(4)} blended=${blended.toFixed(4)}`);
     }
 
-    return { ...r, score: blended };
+    // v0.46.15: stamp the raw cosine — evidence + --explain read it (the
+    // hydration map is already paid for; zero extra probes).
+    return { ...r, score: blended, cosine };
   }).sort((a, b) => b.score - a.score);
 }
 

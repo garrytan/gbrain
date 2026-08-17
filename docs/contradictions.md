@@ -106,15 +106,23 @@ Decision criteria for the bigger swing (chunk-level `revises` field):
 
 ## When to act on findings
 
-Each finding ships with a `resolution_command` field — paste-ready:
+Each finding ships with a `resolution_command` field — addressable and
+honest about what needs operator judgment:
 
-- `gbrain takes supersede <slug> --row N` — newer take should replace
-  the older chunk text on the same page (intra_page kind).
+- `gbrain takes supersede <slug> --row N --claim '<replacement>'` — newer
+  take should replace the older one (intra_page kind). `--row` is the
+  per-page row number and `--claim` is required; when the winning side has
+  an unambiguous claim (temporal supersession where the newer side is
+  itself a take) the command is fully paste-ready, otherwise it carries an
+  explicit `<replacement claim>` placeholder for you to fill from the
+  report — the classifier picks an action, not a winner, and will not
+  fabricate a take from arbitrary chunk prose.
 - `gbrain dream --phase synthesize --slug <slug>` — compiled_truth for
   the curated entity needs an update (cross_slug curated-vs-bulk).
-- `gbrain takes mark-debate <slug> --row N` — intentional disagreement
-  (e.g., two opinions you want to keep both of).
-- `# manual review: <a> vs <b>` — judge wasn't sure; operator decides.
+- `# manual review: ...` — intentional-disagreement (debate) findings and
+  judge-unsure findings render as a manual-review comment; a
+  mark-as-debate subcommand does not exist yet, so nothing is minted that
+  would fail when pasted.
 
 Run `gbrain eval suspected-contradictions review --severity high` to
 inspect findings without re-running the probe.

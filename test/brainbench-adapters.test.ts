@@ -112,30 +112,70 @@ describe('OpenClawAdapter (production seam)', () => {
   }, 30_000);
 });
 
-describe('ClaudeCodeAdapter (contract seam: hook wire shape, no conversation memory)', () => {
-  test('round-trips the UserPromptSubmit JSON contract and ignores prior context', async () => {
+describe('ClaudeCodeAdapter (PRODUCTION seam: real hook + real IPC — v0.46.15 flip)', () => {
+  test('drives the shipped UserPromptSubmit hook end-to-end over the IPC socket', async () => {
     const a = new ClaudeCodeAdapter();
-    await a.beginConversation(engine, VIEW);
-    const prior = 'we already injected people/alice-example earlier';
-    const r = await a.replayTurn(turn('Status on Alice Example?'), prior);
-    // No memory: prior context does NOT suppress (the measured contract delta).
+    await a.beginConversation(engine, {
+      ...VIEW,
+      turns: [{ turn_id: 1, role: 'user', text: 'Status on Alice Example?' }],
+    });
+    const r = await a.replayTurn(turn('Status on Alice Example?'), '');
     expect(r.injectedSlugs).toContain('people/alice-example');
+    // The wire artifact is the hook's rendered additionalContext.
+    expect(r.injectedText).toContain('people/alice-example');
     await a.endConversation();
+    await a.teardownRun?.();
   }, 30_000);
 
-  test('respects the 2-pointer hook budget', async () => {
+  test('RE-PINNED (v0.46.15): the shipped budget governs, not the old 2-pointer contract cap', async () => {
+    // Was: <= 2 (the contract row's budget). The production row runs the
+    // shipped hook -> turn_context path: DEFAULT_MAX_POINTERS (3) reflex
+    // pointers + the volunteer layer's own cap. Bounded, but by production
+    // knobs — that delta IS what the seam flip measures.
     const a = new ClaudeCodeAdapter();
-    await a.beginConversation(engine, VIEW);
-    const r = await a.replayTurn(turn('Memo: Alice Example, Charlie Example, and Widget Co all in one.'), '');
-    expect(r.injectedSlugs.length).toBeLessThanOrEqual(2);
+    const text = 'Memo: Alice Example, Charlie Example, and Widget Co all in one.';
+    await a.beginConversation(engine, { ...VIEW, turns: [{ turn_id: 1, role: 'user', text }] });
+    const r = await a.replayTurn(turn(text), '');
+    expect(r.injectedSlugs.length).toBeGreaterThanOrEqual(1);
+    expect(r.injectedSlugs.length).toBeLessThanOrEqual(6); // 3 pointers + <=3 volunteered
     await a.endConversation();
+    await a.teardownRun?.();
+  }, 30_000);
+
+  test('cross-turn dedupe is REAL now: our own prior injection suppresses re-injection', async () => {
+    const a = new ClaudeCodeAdapter();
+    const t1 = 'Status on Alice Example?';
+    const t2 = 'Anything else on Alice Example?';
+    await a.beginConversation(engine, {
+      ...VIEW,
+      turns: [
+        { turn_id: 1, role: 'user', text: t1 },
+        { turn_id: 2, role: 'user', text: t2 },
+      ],
+    });
+    const r1 = await a.replayTurn({ turn_id: 1, role: 'user', text: t1 }, '');
+    expect(r1.injectedSlugs).toContain('people/alice-example');
+    const r2 = await a.replayTurn({ turn_id: 2, role: 'user', text: t2 }, '');
+    // The shipped transcript-window dedupe (hook_additional_context
+    // attachment round-trip) suppresses the page volunteered one turn ago.
+    expect(r2.injectedSlugs).not.toContain('people/alice-example');
+    await a.endConversation();
+    await a.teardownRun?.();
   }, 30_000);
 });
 
-describe('CodexAdapter (contract seam: static preamble + ≤1 fragment)', () => {
+describe('CodexAdapter (contract seam: static preamble + ≤1 fragment + REAL rollout parser turn selection)', () => {
   test('one fragment max; preamble slugs do NOT count as injections; preamble tokens land once', async () => {
     const a = new CodexAdapter();
-    await a.beginConversation(engine, VIEW);
+    // v0.46.15 (F5): the adapter round-trips the fixture through the shipped
+    // rollout parser for turn selection — turns must exist in the view.
+    await a.beginConversation(engine, {
+      ...VIEW,
+      turns: [
+        { turn_id: 1, role: 'user', text: 'Brief me on Alice Example and Charlie Example.' },
+        { turn_id: 2, role: 'user', text: 'And Widget Co?' },
+      ],
+    });
     const r1 = await a.replayTurn(turn('Brief me on Alice Example and Charlie Example.'), '');
     expect(r1.injectedSlugs.length).toBeLessThanOrEqual(1);
     // The preamble indexes every page, but only the fragment is scored.
@@ -165,4 +205,13 @@ describe('sentinel isolation (the engine-sharing guarantee, eng-review D9)', () 
     // re-seed for any later test in this file (none currently, but keep the brain valid)
     await seedBrain(engine, FIXTURE);
   }, 30_000);
+});
+
+describe('SEAM map ↔ adapter.seam agreement (outside-voice F4)', () => {
+  test('the scoreboard map and every adapter field agree', async () => {
+    const { seamFor } = await import('../src/eval/brainbench/harness.ts');
+    expect(seamFor('openclaw')).toBe(new OpenClawAdapter().seam);
+    expect(seamFor('claude-code')).toBe(new ClaudeCodeAdapter().seam);
+    expect(seamFor('codex')).toBe(new CodexAdapter().seam);
+  });
 });

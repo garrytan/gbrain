@@ -294,6 +294,9 @@ Populate them periodically or after major imports:
 - `gbrain stats` — verify `link_count > 0` and `timeline_entry_count > 0` after extraction.
 - `gbrain health` — review `link_coverage` and `timeline_coverage` percentages
   on entity pages (person/company). Below 50% means more extraction is needed.
+  On brains with very few entity pages these report "too few to grade"
+  (`null` in JSON, with `entity_page_count` carrying the denominator) instead
+  of a misleading 0%/100% — grow the entity set before acting on coverage.
 
 Available link types (use with `gbrain graph-query --type`):
 `attended`, `works_at`, `invested_in`, `founded`, `advises`, `mentions`, `source`.

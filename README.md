@@ -149,6 +149,8 @@ gbrain connect https://your-host/mcp --token gbrain_xxx --install               
 gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex --install # Codex
 ```
 
+Onboarding a whole agent harness onto a shared brain? On the brain host, `gbrain agent register <name> --harness claude-code` mints a scoped OAuth client plus a 30-day token and prints the paste-ready wiring block — presets for daily-driver and write-isolated coding agents. The [onboarding decision table](docs/guides/agent-to-gbrain.md#onboarding-paths--the-decision-table) says which path fits.
+
 **Brain-only install into another coding agent** (Cursor, Claude Cowork, or anything that can fetch a URL and run shell commands) — paste the OpenClaw/Hermes block above (`INSTALL_FOR_AGENTS.md`); it installs the brain, skills, and dream cycle without the personal-agent identity layer. Tested with Codex, Claude Code, Claude Cowork, Cursor, and AlphaClaw.
 
 **[→ Full walkthrough: give your coding agent a memory](docs/tutorials/connect-coding-agent.md)** — the memory-only paths end to end, plus the brain-first protocol you paste into `CLAUDE.md` / `AGENTS.md` and the four habits that make it actually change how you work.
@@ -248,6 +250,7 @@ re-runs are free — unchanged sessions skip on content hash:
 gbrain transcripts ingest                    # discover importable session logs
 gbrain transcripts ingest --all              # import everything discovered
 gbrain transcripts ingest ~/Downloads/conversations.json  # consumer export (unzip first)
+gbrain transcripts ingest --max-bytes 4gb <store>          # oversized store; omit to keep per-format caps
 gbrain transcripts status                    # found vs imported, per harness
 ```
 

@@ -404,6 +404,35 @@ export async function resolveSourceWithTier(
 }
 
 /**
+ * #3242 parity: the widening set a TRANSPORT should attach for a caller that
+ * carries no operator source grant, or `undefined` when the caller must keep
+ * its scalar scope.
+ *
+ * The gate is deliberately `hasSourceGrant === false` rather than falsy.
+ * `false` is set only for a legacy bearer token whose
+ * `access_tokens.permissions.source_id` is absent — the historical no-grant
+ * floor. `true` is an operator-set scope and `undefined` is an OAuth client,
+ * and neither may widen, so a falsy check would hand OAuth clients the
+ * federated set.
+ *
+ * Resolution is best-effort by design: a source table that cannot be read
+ * leaves the scalar scope standing rather than failing the request, matching
+ * the surrounding transport behaviour.
+ */
+export async function noGrantFederatedScope(
+  engine: BrainEngine,
+  hasSourceGrant: boolean | undefined,
+  sourceId: string | undefined,
+): Promise<string[] | undefined> {
+  if (hasSourceGrant !== false || !sourceId) return undefined;
+  try {
+    return await localFederatedSourceIds(engine, sourceId, 'seed_default');
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * #2561 — compute the federated read scope for an UNQUALIFIED local CLI call.
  *
  * `sources add --federated` promises that a `config.federated = true` source
@@ -422,8 +451,12 @@ export async function resolveSourceWithTier(
  *
  * Archived sources are excluded (same rationale as pickSoleNonDefaultSource);
  * the archived column is v34+, so fall back to the un-archived query on older
- * brains. Callers put the result on `OperationContext.localFederatedSourceIds`
- * — consumed only by `federatedSearchScope` and only when `remote === false`.
+ * brains. Callers put the result on `OperationContext.localFederatedSourceIds`,
+ * consumed by `federatedSearchScope`. Two caller classes exist: local CLI/MCP
+ * stdio (`remote === false`, the original #2561 path) and — via
+ * `noGrantFederatedScope` below — remote transports for a legacy no-grant
+ * bearer token (#3242 parity), where the transport itself decides the caller
+ * may see the federated floor.
  */
 export async function localFederatedSourceIds(
   engine: BrainEngine,

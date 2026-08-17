@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "fixture_id": "ms-002-nondefault-active",
+  "suites": ["know-to-ask", "push"],
+  "category": "multi-source",
+  "sources": ["teambrain"],
+  "active_source": "teambrain",
+  "seed_pages": [
+    {
+      "slug": "people/bianca-example",
+      "content": "---\ntitle: Bianca Example\ntype: person\naliases: [bianca]\nsummary: Founder of Latticework Co (personal notes).\n---\n\nBianca Example is the founder of Latticework Co. Personal-source twin copy — must not be the one graded while the team brain is active.\n"
+    },
+    {
+      "slug": "people/bianca-example",
+      "source_id": "teambrain",
+      "content": "---\ntitle: Bianca Example\ntype: person\naliases: [bianca]\nsummary: Candidate profile in the team brain.\n---\n\nBianca Example, candidate profile. TEAM BRAIN copy — the active source's copy for this fixture.\n"
+    },
+    {
+      "slug": "projects/orbit-example",
+      "source_id": "teambrain",
+      "content": "---\ntitle: Orbit Example\ntype: project\nsummary: Team-brain-only project page.\n---\n\nOrbit Example exists ONLY in the team brain. Injecting it while teambrain is active is correct, not a leak.\n"
+    },
+    {
+      "slug": "companies/widgetline-example",
+      "content": "---\ntitle: Widgetline Example\ntype: company\nsummary: Personal-brain-only company page.\n---\n\nWidgetline Example exists ONLY in the personal source. It must never surface while the team brain is active.\n"
+    }
+  ],
+  "turns": [
+    { "turn_id": 1, "role": "user", "text": "What do we know about Bianca Example?" },
+    { "turn_id": 2, "role": "user", "text": "What do I know about Orbit Example?" },
+    { "turn_id": 3, "role": "user", "text": "Anything on Widgetline Example in here?" }
+  ]
+}

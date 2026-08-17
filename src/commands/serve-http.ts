@@ -57,6 +57,15 @@ import { VERSION } from '../version.ts';
 import * as db from '../core/db.ts';
 import { sqlQueryForEngine, executeRawJsonb } from '../core/sql-query.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
+import {
+  registerScopedClient,
+  preflightOauthClientColumns,
+  TOKEN_TTL_MIN_SECONDS,
+  TOKEN_TTL_MAX_SECONDS,
+  type RegisteredClient,
+} from './auth.ts';
+import { registerClientNameLockKey } from './agent-register.ts';
+import { isUndefinedColumnError } from '../core/utils.ts';
 import { isRetryableError } from '../core/retry-matcher.ts';
 import {
   computeContentHash,
@@ -1733,6 +1742,10 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   // Register client from admin dashboard
   app.post('/admin/api/register-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    // Set only once the client row has COMMITTED — the catch below folds it
+    // into the 500 payload so a post-commit failure never reads as
+    // "nothing was created".
+    let createdClientId: string | undefined;
     try {
       // v0.39.3.0 WARN-9 + CV12: accept BOTH `scopes` (admin SPA convention)
       // AND `scope` (OAuth wire-format convention, singular). The pre-fix
@@ -1795,16 +1808,129 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         });
         return;
       }
-      const result = await oauthProvider.registerClientManual(
-        name, grants, scopeString, uris, sourceId, federatedReadIds, validatedAuthMethod,
-      );
-      // Set per-client TTL if specified
-      if (tokenTtl && Number(tokenTtl) > 0) {
-        await sql`UPDATE oauth_clients SET token_ttl = ${Number(tokenTtl)} WHERE client_id = ${result.clientId}`;
+      // cathedral-6: a WELL-FORMED but nonexistent source used to surface as
+      // a 500 (the source_id FK fires inside the INSERT). Check existence +
+      // archived up front for a structured 400 — same contract as the
+      // malformed case, mirroring the CLI lane. ONE batched query on the
+      // engine lane (SqlQuery forbids arrays; engine is in scope).
+      {
+        const idsToCheck = [...new Set([sourceId, ...(federatedReadIds ?? [])])];
+        const found = await engine.executeRaw<{ id: string; archived: boolean | null }>(
+          `SELECT id, archived FROM sources WHERE id = ANY($1::text[])`,
+          [idsToCheck],
+        );
+        const byId = new Map(found.map(r => [r.id, r]));
+        for (const id of idsToCheck) {
+          const row = byId.get(id);
+          if (!row) {
+            res.status(400).json({
+              error: 'unknown_source',
+              message: `source "${id}" does not exist — create it first (gbrain sources add ${id})`,
+            });
+            return;
+          }
+          if (row.archived) {
+            res.status(400).json({
+              error: 'archived_source',
+              message: `source "${id}" is archived — unarchive it or drop it from the grant`,
+            });
+            return;
+          }
+        }
       }
-      res.json({ ...result, tokenTtl: tokenTtl ? Number(tokenTtl) : null });
+      // cathedral-6: validate tokenTtl BEFORE the transaction. The old
+      // `Number(tokenTtl) > 0` passed Infinity/floats through to fail the
+      // integer UPDATE inside the tx (rollback → opaque 500). Falsy values
+      // (omitted / null / 0 / '') keep the historical "no TTL requested"
+      // meaning; anything else must be an integer inside the shared bounds.
+      let ttlNum: number | undefined;
+      if (tokenTtl) {
+        const v = Number(tokenTtl);
+        if (!Number.isInteger(v) || v < TOKEN_TTL_MIN_SECONDS || v > TOKEN_TTL_MAX_SECONDS) {
+          res.status(400).json({
+            error: 'invalid_token_ttl',
+            message: `tokenTtl must be an integer number of seconds between ${TOKEN_TTL_MIN_SECONDS} and ${TOKEN_TTL_MAX_SECONDS} (90 days); got ${JSON.stringify(tokenTtl)}. Omit the field (or pass 0/null) to keep the server default.`,
+          });
+          return;
+        }
+        ttlNum = v;
+      }
+      // Column pre-flight OUTSIDE the tx (25P02 — nothing inside may degrade):
+      // pre-v61 brains lack the scoped-client columns and registerClientManual's
+      // internal 42703 retry ladder would abort the transaction, so refuse up
+      // front with the CLI lane's brain_too_old contract. Passing {columns}
+      // through also makes the ttl write SKIP (rather than throw) on brains
+      // without token_ttl.
+      const columns = await preflightOauthClientColumns(sql);
+      if (!columns.has('source_id') || !columns.has('federated_read')) {
+        res.status(400).json({
+          error: 'brain_too_old',
+          message: 'this brain predates scoped OAuth clients (source_id/federated_read columns) — run `gbrain apply-migrations --yes` first.',
+        });
+        return;
+      }
+      // Duplicate-name parity with the CLI lane: a second client under the
+      // same name is a 409, never a silent second row. The dup-check and the
+      // INSERT run in ONE transaction under the SAME name-scoped advisory
+      // lock the CLI takes — two concurrent same-name requests serialize, and
+      // the loser sees the winner's committed row (as two separate autocommit
+      // statements, both used to pass the pre-check). deleted_at tolerance is
+      // preflight-decided (no in-tx 42703 retry).
+      let dupClientId: string | null = null;
+      let registered: RegisteredClient | undefined;
+      await engine.transaction(async (tx) => {
+        await tx.executeRaw(`SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, [registerClientNameLockKey(name)]);
+        const txSql = sqlQueryForEngine(tx);
+        const dupRows = columns.has('deleted_at')
+          ? await txSql`SELECT client_id FROM oauth_clients WHERE client_name = ${name} AND deleted_at IS NULL`
+          : await txSql`SELECT client_id FROM oauth_clients WHERE client_name = ${name}`;
+        if (dupRows.length > 0) {
+          dupClientId = String(dupRows[0].client_id);
+          return;
+        }
+        // Compose the SAME core the CLI uses (registerScopedClient) instead of
+        // open-coding registerClientManual + a raw TTL UPDATE — the two paths
+        // had already drifted once (this route hardcoded 'default' pre-v0.41).
+        registered = await registerScopedClient(txSql, name, {
+          grantTypes: grants,
+          scopes: scopeString,
+          sourceId,
+          federatedRead: federatedReadIds,
+          redirectUris: uris,
+          tokenEndpointAuthMethod: validatedAuthMethod,
+          boundTools: undefined,
+          boundSourceId: undefined,
+          boundBrainId: undefined,
+          boundSlugPrefixes: undefined,
+          boundMaxConcurrent: undefined,
+          budgetUsdPerDay: undefined,
+          tokenTtlSeconds: undefined,
+        }, { tokenTtlSeconds: ttlNum, columns });
+      });
+      if (dupClientId !== null) {
+        res.status(409).json({
+          error: 'duplicate_name',
+          client_id: dupClientId,
+        });
+        return;
+      }
+      // Post-commit: the row exists from here on — any later failure must
+      // name the created client (no false "nothing was created").
+      const reg = registered!;
+      createdClientId = reg.clientId;
+      res.json({
+        clientId: reg.clientId,
+        ...(reg.clientSecret !== undefined ? { clientSecret: reg.clientSecret } : {}),
+        tokenTtl: reg.tokenTtl ?? null,
+      });
     } catch (e) {
-      res.status(500).json({ error: e instanceof Error ? e.message : 'Registration failed' });
+      // A throw INSIDE the tx rolls the row back (no client persists); the
+      // only window where a client exists at failure time is post-commit,
+      // marked by createdClientId — include it so the operator can revoke.
+      res.status(500).json({
+        error: e instanceof Error ? e.message : 'Registration failed',
+        ...(createdClientId !== undefined ? { client_id: createdClientId } : {}),
+      });
     }
   });
 
@@ -2232,6 +2358,21 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // verifyAccessToken. The env-fallback is gone.
       const tokenSourceId = authInfo.sourceId ?? 'default';
 
+      // #3242 parity: the legacy-transport and stdio dispatch sites widen a
+      // no-grant caller's unqualified reads across the federated source set
+      // (localFederatedSourceIds); this SDK-transport site never did, so the
+      // same token saw federated pages over /mcp on one serve mode and scalar
+      // 'default' on the other. hasSourceGrant === false is set ONLY for
+      // legacy bearer tokens with no operator source grant (oauth-provider);
+      // granted tokens and OAuth clients never widen. Best-effort: a resolver
+      // failure keeps the scalar scope.
+      const { noGrantFederatedScope } = await import('../core/source-resolver.ts');
+      const localFederated = await noGrantFederatedScope(
+        engine,
+        authInfo.hasSourceGrant,
+        tokenSourceId,
+      );
+
       let toolResult: Awaited<ReturnType<typeof dispatchToolCall>>;
       try {
         toolResult = await dispatchToolCall(engine, name, params as Record<string, unknown> | undefined, {
@@ -2241,6 +2382,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           transport: 'http',
           takesHoldersAllowList: tokenAllowList,
           sourceId: tokenSourceId,
+          ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),
           metaHook: getBrainHotMemoryMeta,
           // MEMORY_VERBS v1: fail-closed surface enforcement + usage attribution.
           ...(surfaceAllowedOps ? { allowedOps: surfaceAllowedOps } : {}),

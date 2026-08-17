@@ -19,6 +19,7 @@ import {
   ensureIpcSecret,
 } from '../core/context/resolve-ipc.ts';
 import { resolveEntitiesToPointers, logDeliveredReflexPointers } from '../core/context/retrieval-reflex.ts';
+import { lexicalArmsEnabled } from '../core/context/reflex.ts';
 import { assembleTurnContext } from '../core/context/turn-context.ts';
 import { gcSessionContextState } from '../core/context/session-state.ts';
 import { makeContextPackIpcHandler } from './context-pack-handler.ts';
@@ -212,6 +213,15 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
                 priorContextText: req.priorContextText,
                 maxPointers: req.maxPointers,
                 suppression: req.suppression,
+                // v0.46.15 kill switch: either side may disable — a client
+                // `false` wins, else the server's own file-config gate.
+                // Config is re-read PER REQUEST (adversarial F3): `gbrain
+                // serve` is long-running, and the switch's whole value is
+                // reverting a false-fire regression on the NEXT TURN with a
+                // config edit — a startup snapshot would freeze it until a
+                // serve restart. loadConfig is a file read (~1ms) inside the
+                // 400ms IPC budget.
+                lexicalArms: req.lexicalArms === false ? false : lexicalArmsEnabled(loadConfig()),
               },
             ),
           // IPC v2 [ENG-3]: per-turn context assembly for the hook command.
@@ -225,6 +235,9 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
               priorContextText: req.priorContextText,
               sessionId: req.sessionId,
               maxBytes: req.maxBytes,
+              // Per-request config read — same next-turn-revert rationale as
+              // the resolve handler above (adversarial F3).
+              lexicalArms: lexicalArmsEnabled(loadConfig()),
             }),
           // v0.45.7 ambient recall: boundary context pack. Extracted to
           // context-pack-handler.ts (directly testable against a real engine);
@@ -287,7 +300,14 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     try { startupSweep?.cancel(); } catch { /* noop */ }
     try { resolveServer?.close(); } catch { /* noop */ }
     if (resolveSocket) cleanupStaleSocket(resolveSocket);
-    Promise.resolve(engine.disconnect?.())
+    // Cathedral 5: abort the in-flight checkpoint harvest + drop its queue
+    // BEFORE engine.disconnect — the background-work registry's drain is
+    // CLI-exit-only by contract, and a fire-and-forget DB writer surviving
+    // disconnect busy-loops the single-writer lock (the #1762 hazard class).
+    import('../core/context/checkpoint-harvest.ts')
+      .then((m) => m.shutdownCheckpointHarvest())
+      .catch(() => {})
+      .then(() => Promise.resolve(engine.disconnect?.()))
       .catch(() => {})
       .finally(() => process.exit(code));
   };

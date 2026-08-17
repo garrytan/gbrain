@@ -166,6 +166,48 @@ export function cmdString(binary: string, argv: string[]): string {
   return `${binary} ${argv.map(shellQuote).join(' ')}`;
 }
 
+/**
+ * OAuth client-secret hygiene note. Moved here from src/commands/connect.ts
+ * (cathedral-6: the agent-register lane extends it with scoped-to/expiry/
+ * revoke lines and core must not import from commands); connect.ts re-exports
+ * it, so its surface — and this text — is unchanged.
+ */
+export const OAUTH_SECRET_NOTE =
+  'Note: the client secret is sensitive — store it like a password. It mints ' +
+  'short-lived, scoped access tokens; revoke with `gbrain auth revoke-client`.';
+
+/**
+ * Paste-ready OpenClaw wiring block — HONEST v1. OpenClaw has no native
+ * remote-MCP client yet, so the scoped path is a thin gbrain install on the
+ * OpenClaw machine (`gbrain init` in mcp-only mode), which routes brain access
+ * through the OAuth client minted for it. Deliberately NOT an mcpServers/
+ * stdio JSON config: the stdio config in docs/mcp/OPENCLAW.md grants FULL
+ * local DB access and does not use this client.
+ */
+export function openclawThinClientBlock(opts: {
+  issuerUrl: string;
+  mcpUrl: string;
+  clientId: string;
+  clientSecret: string;
+}): string {
+  const init = cmdString('gbrain', [
+    'init',
+    '--mcp-only',
+    '--issuer-url', opts.issuerUrl,
+    '--mcp-url', opts.mcpUrl,
+    '--oauth-client-id', opts.clientId,
+    '--oauth-client-secret', opts.clientSecret,
+  ]);
+  return [
+    '# On the OpenClaw machine, install the gbrain CLI, then wire this scoped thin client:',
+    init,
+    '',
+    'Your OpenClaw reaches the brain through the scoped gbrain CLI (search/query/recall/put);',
+    "native remote MCP isn't supported yet — the stdio config in docs/mcp/OPENCLAW.md grants",
+    'FULL local DB access and does not use this client.',
+  ].join('\n');
+}
+
 export function redactToken(s: string, token: string | null): string {
   // Exact-substring scrub of the known token, plus a defense-in-depth pass over
   // any `Bearer <value>` shape the SDK/CLI might echo in a transformed form the

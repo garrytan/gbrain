@@ -12,7 +12,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { tryAcquireDbLock, LockStolenError } from '../src/core/db-lock.ts';
-import { startCycleLockRefresher, buildYieldDuringPhase, type LockHandle } from '../src/core/cycle.ts';
+import { startCycleLockRefresher, buildYieldDuringPhase, isLockStolenAbort, type LockHandle } from '../src/core/cycle.ts';
 
 let engine: PGLiteEngine;
 
@@ -194,5 +194,36 @@ describe('buildYieldDuringPhase steal reporting', () => {
     );
     await fn!();
     expect(stolen).toBe(false);
+  });
+});
+
+describe('isLockStolenAbort — the steal decision does not depend on the reason (#4140)', () => {
+  // Duck-typed signals on purpose: `abort()` and `abort(undefined)` BOTH yield a
+  // DOMException, so `reason: undefined` — the state the runtime actually
+  // delivers — is unreachable through AbortController. This is the only way to
+  // pin it deterministically instead of waiting for the ~1-in-20 flake.
+
+  test('a steal with the reason DROPPED still classifies as a steal', () => {
+    expect(isLockStolenAbort({ aborted: true, reason: undefined }, undefined)).toBe(true);
+  });
+
+  test('a steal with the reason intact classifies as a steal (unchanged)', () => {
+    expect(isLockStolenAbort({ aborted: true, reason: new LockStolenError('x') }, undefined)).toBe(true);
+  });
+
+  test('no steal when the controller never fired', () => {
+    expect(isLockStolenAbort({ aborted: false }, undefined)).toBe(false);
+    expect(isLockStolenAbort(undefined, undefined)).toBe(false);
+  });
+
+  test('an external abort still wins — it keeps the throw-out contract', () => {
+    // Both with and without a surviving reason, so the external conjunct is
+    // pinned independently of the reason.
+    expect(isLockStolenAbort({ aborted: true, reason: new LockStolenError('x') }, { aborted: true })).toBe(false);
+    expect(isLockStolenAbort({ aborted: true, reason: undefined }, { aborted: true })).toBe(false);
+  });
+
+  test('a non-aborted external signal does not suppress the steal', () => {
+    expect(isLockStolenAbort({ aborted: true, reason: undefined }, { aborted: false })).toBe(true);
   });
 });

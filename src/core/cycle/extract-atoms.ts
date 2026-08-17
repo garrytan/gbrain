@@ -65,6 +65,21 @@ import { slugifySegment } from '../sync.ts';
 const DEFAULT_BUDGET_USD = 0.3;
 const DEFAULT_EXTRACT_ATOMS_MODEL = 'anthropic:claude-haiku-4-5';
 
+/**
+ * gbrain#4148: consecutive same-content failures of a content-deterministic
+ * class (malformed model output) before the page is tombstoned so the
+ * backlog floor can clear. A content edit resets the streak.
+ */
+export const MAX_DETERMINISTIC_FAILURES = 3;
+
+/**
+ * Transient provider/infra failure shapes — retryable, never counted.
+ * Numeric codes are word-bounded so a 3-digit run inside prose or a larger
+ * number ("chunk 1500", "$1.512") doesn't read as an HTTP 5xx/429.
+ */
+const TRANSIENT_EXTRACT_ERROR_RE =
+  /timeout|timed out|\b429\b|rate.?limit|\b5\d\d\b|ECONN|ETIMEDOUT|EPIPE|ENOTFOUND|fetch failed|\bnetwork\b|socket|overloaded/i;
+
 // v0.42+ TODO: read atom_type enum from active pack manifest at runtime.
 const ATOM_TYPES = [
   'insight', 'anecdote', 'quote', 'framework', 'statistic',
@@ -622,6 +637,49 @@ export async function runPhaseExtractAtoms(
     }
   }
 
+  // ── gbrain#4148 helpers ────────────────────────────────────────────
+  let malformedOutputs = 0;
+  const tombstonedForFailures: string[] = [];
+
+  /** Stamp the zero-yield/complete tombstone (hash-keyed; edits re-eligibilize). */
+  async function stampAtomsScanHash(item: { slug: string; contentHash: string }): Promise<void> {
+    try {
+      await engine.executeRaw(
+        `UPDATE pages
+            SET frontmatter = frontmatter || jsonb_build_object('atoms_scan_hash', $1::text)
+          WHERE source_id = $2 AND slug = $3 AND deleted_at IS NULL`,
+        [item.contentHash.slice(0, 16), sourceId, item.slug],
+      );
+    } catch { /* fail-soft: page stays rediscoverable */ }
+  }
+
+  /**
+   * Durable per-item failure count, keyed to the CURRENT content hash so a
+   * content edit resets the streak. Returns the new consecutive count, or
+   * null for transcripts / on write failure (never blocks the phase).
+   */
+  async function recordPageFailureCount(item: { kind: string; slug?: string; contentHash: string }): Promise<number | null> {
+    if (item.kind !== 'page' || !item.slug || opts.dryRun) return null;
+    try {
+      const rows = await engine.executeRaw<{ cnt: number | string }>(
+        `UPDATE pages
+            SET frontmatter = frontmatter
+              || jsonb_build_object('atoms_fail_hash', $1::text)
+              || jsonb_build_object('atoms_fail_count',
+                   CASE WHEN COALESCE(frontmatter->>'atoms_fail_hash', '') = $1::text
+                        THEN COALESCE((frontmatter->>'atoms_fail_count')::int, 0) + 1
+                        ELSE 1 END)
+          WHERE source_id = $2 AND slug = $3 AND deleted_at IS NULL
+          RETURNING (frontmatter->>'atoms_fail_count')::int AS cnt`,
+        [item.contentHash.slice(0, 16), sourceId, item.slug],
+      );
+      const cnt = rows[0]?.cnt;
+      return cnt == null ? null : Number(cnt);
+    } catch {
+      return null;
+    }
+  }
+
   await withBudgetTracker(budgetTracker, async () => {
   for (const item of work) {
     await maybeYield();
@@ -651,7 +709,29 @@ export async function runPhaseExtractAtoms(
 
       estimatedSpendUsd = budgetTracker.totalSpent;
 
-      const atoms = parseAtomsResponse(result.text);
+      // gbrain#4148: typed outcome — malformed output is a FAILURE (counted
+      // toward the bounded tombstone below), never a zero-yield success.
+      const parseOutcome = parseAtomsOutcome(result.text);
+      if (!parseOutcome.ok) {
+        malformedOutputs++;
+        const failCount = await recordPageFailureCount(item);
+        failures.push({
+          source: originLabel,
+          error: `malformed model output: ${parseOutcome.reason}` +
+            (failCount != null ? ` (consecutive failure ${failCount} on this content)` : ''),
+        });
+        // Content-deterministic class: the same prose reliably produces
+        // unparseable output. After N consecutive failures on the SAME
+        // content hash, tombstone so the backlog floor clears; a content
+        // edit re-eligibilizes (stamp is hash-keyed). Transient provider
+        // errors never reach here — they throw and take the catch path.
+        if (failCount != null && failCount >= MAX_DETERMINISTIC_FAILURES && !opts.dryRun && item.kind === 'page') {
+          await stampAtomsScanHash(item);
+          tombstonedForFailures.push(item.slug);
+        }
+        continue;
+      }
+      const atoms = parseOutcome.atoms;
       if (atoms.length === 0) {
         // #2144: tombstone zero-yield pages so they stop being rediscovered.
         // Idempotency is keyed on atom rows — a page that yields no atoms
@@ -661,16 +741,10 @@ export async function runPhaseExtractAtoms(
         // scanned; discovery skips the page only while its content is
         // unchanged (edits re-eligibilize, mirroring atom-row staleness).
         // Only stamped after a SUCCESSFUL chat call — LLM failures take the
-        // catch path below and stay retryable.
+        // catch path below and stay retryable, and malformed output is
+        // counted above (gbrain#4148), never stamped as success.
         if (!opts.dryRun && item.kind === 'page') {
-          try {
-            await engine.executeRaw(
-              `UPDATE pages
-                  SET frontmatter = frontmatter || jsonb_build_object('atoms_scan_hash', $1::text)
-                WHERE source_id = $2 AND slug = $3 AND deleted_at IS NULL`,
-              [item.contentHash.slice(0, 16), sourceId, item.slug],
-            );
-          } catch { /* fail-soft: page stays rediscoverable */ }
+          await stampAtomsScanHash(item);
         }
         if (item.kind === 'transcript') transcriptsProcessed++;
         else pagesProcessed++;
@@ -678,6 +752,17 @@ export async function runPhaseExtractAtoms(
       }
 
       if (!opts.dryRun) {
+        // gbrain#4148 completion receipt: atoms import with a PROVISIONAL
+        // source_hash (`pending:<hash>`) that discovery's NOT-EXISTS check
+        // can never match, then ONE flip UPDATE marks the whole item done
+        // after every atom persisted. Pre-fix, atom writes were per-atom
+        // while discovery treated any matching source_hash as complete — if
+        // atom 1 persisted and atom 2 failed, the next run skipped the item
+        // and atom 2 was permanently lost. On partial failure the pending
+        // rows stay invisible to doneness, the item re-runs, and the
+        // deterministic slugs upsert instead of duplicating.
+        const hash16 = item.contentHash.slice(0, 16);
+        const importedSlugs: string[] = [];
         for (const atom of atoms) {
           const srcRef = item.kind === 'transcript' ? item.filePath : item.slug;
           const slug = atomSlug(atom.title, srcRef);
@@ -700,7 +785,8 @@ export async function runPhaseExtractAtoms(
             {
               atom_type: atom.atom_type,
               ...originFrontmatter,
-              source_hash: item.contentHash.slice(0, 16),
+              // Provisional until the whole item's atoms persist (see above).
+              source_hash: `pending:${hash16}`,
               ...(atom.source_quote && { source_quote: atom.source_quote }),
               ...(atom.lesson && { lesson: atom.lesson }),
               ...(atom.concepts && atom.concepts.length > 0 && { concepts: atom.concepts }),
@@ -717,7 +803,20 @@ export async function runPhaseExtractAtoms(
             sourceId,
             noEmbed: !isAvailable('embedding'),
           });
+          importedSlugs.push(slug);
           totalAtomsExtracted++;
+        }
+        // Completion receipt: flip provisional → real in one statement, then
+        // stamp the source page. A crash between flip and stamp degrades to
+        // the legacy atom-rows-mean-done semantics — safe, not lossy.
+        await engine.executeRaw(
+          `UPDATE pages
+              SET frontmatter = frontmatter || jsonb_build_object('source_hash', $1::text)
+            WHERE source_id = $2 AND type = 'atom' AND slug = ANY($3::text[]) AND deleted_at IS NULL`,
+          [hash16, sourceId, importedSlugs],
+        );
+        if (item.kind === 'page') {
+          await stampAtomsScanHash(item);
         }
       } else {
         totalAtomsExtracted += atoms.length; // count for dry-run reporting
@@ -734,9 +833,18 @@ export async function runPhaseExtractAtoms(
         else pagesSkipped++;
         continue;
       }
+      // gbrain#4148: classify. Transient provider/infra errors (timeouts,
+      // rate limits, 5xx, network) stay retryable and are NOT counted toward
+      // any tombstone. Everything else gets a durable count for
+      // observability, but only the malformed-output class (handled above)
+      // ever tombstones — an unknown error class must never permanently
+      // suppress a page's atoms.
+      const message = err instanceof Error ? err.message : String(err);
+      const transient = TRANSIENT_EXTRACT_ERROR_RE.test(message);
+      if (!transient) await recordPageFailureCount(item);
       failures.push({
         source: originLabel,
-        error: err instanceof Error ? err.message : String(err),
+        error: transient ? `${message} [transient — retried next run]` : message,
       });
     }
   }
@@ -806,6 +914,8 @@ export async function runPhaseExtractAtoms(
       pages_skipped_budget: pagesSkipped,
       duplicates_skipped: duplicatesSkipped,
       failures,
+      malformed_outputs: malformedOutputs,
+      tombstoned_for_failures: tombstonedForFailures,
       estimated_spend_usd: estimatedSpendUsd,
       budget_usd: budgetCap,
       model: extractModel,
@@ -817,11 +927,19 @@ export async function runPhaseExtractAtoms(
 }
 
 /**
- * Parse the Haiku JSON response into ExtractedAtom[]. Tolerant of
- * common LLM mistakes: extra prose around the JSON, missing fields,
- * invalid atom_type values. Rejects (returns empty) on hard parse fail.
+ * gbrain#4148 — typed parse outcome. Malformed model output and a legitimate
+ * zero-yield extraction both used to collapse into `[]`, so malformed output
+ * was tombstoned as success (the page never retried, its atoms silently
+ * lost). `ok: false` means the response was not parseable as an atoms array
+ * AT ALL — a content-deterministic failure class the caller counts toward a
+ * bounded tombstone; `ok: true, atoms: []` means the model genuinely
+ * extracted nothing.
  */
-export function parseAtomsResponse(raw: string): ExtractedAtom[] {
+export type AtomsParseOutcome =
+  | { ok: true; atoms: ExtractedAtom[] }
+  | { ok: false; reason: string };
+
+export function parseAtomsOutcome(raw: string): AtomsParseOutcome {
   // Strip markdown code fences if the LLM wrapped JSON in them.
   let cleaned = raw.trim();
   const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -829,7 +947,7 @@ export function parseAtomsResponse(raw: string): ExtractedAtom[] {
 
   // Find the first JSON array bracket.
   const arrayStart = cleaned.indexOf('[');
-  if (arrayStart === -1) return [];
+  if (arrayStart === -1) return { ok: false, reason: 'no JSON array in response' };
   cleaned = cleaned.slice(arrayStart);
 
   let parsed: unknown;
@@ -838,15 +956,29 @@ export function parseAtomsResponse(raw: string): ExtractedAtom[] {
   } catch {
     // Try trimming back from the end to recover from trailing prose.
     const arrayEnd = cleaned.lastIndexOf(']');
-    if (arrayEnd === -1) return [];
+    if (arrayEnd === -1) return { ok: false, reason: 'unterminated JSON array' };
     try {
       parsed = JSON.parse(cleaned.slice(0, arrayEnd + 1));
     } catch {
-      return [];
+      return { ok: false, reason: 'unparseable JSON array' };
     }
   }
 
-  if (!Array.isArray(parsed)) return [];
+  if (!Array.isArray(parsed)) return { ok: false, reason: 'JSON value is not an array' };
+  return { ok: true, atoms: atomsFromParsedArray(parsed) };
+}
+
+/**
+ * Back-compat wrapper: parse the response into ExtractedAtom[], returning []
+ * for BOTH malformed output and a legitimate zero-yield (legacy callers/tests
+ * that don't need the typed distinction — new code uses parseAtomsOutcome).
+ */
+export function parseAtomsResponse(raw: string): ExtractedAtom[] {
+  const outcome = parseAtomsOutcome(raw);
+  return outcome.ok ? outcome.atoms : [];
+}
+
+function atomsFromParsedArray(parsed: unknown[]): ExtractedAtom[] {
 
   const atoms: ExtractedAtom[] = [];
   for (const item of parsed) {

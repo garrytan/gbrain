@@ -105,3 +105,19 @@ test('steal-free cycle still completes and releases normally (regression guard)'
   );
   expect(rows.length).toBe(0);
 });
+
+test("source '__all__' on a lock-free phase selection does not throw (regression guard)", async () => {
+  // `__all__` is the span-every-source sentinel and deliberately FAILS strict
+  // source-id validation (source-id.ts) so it can never leak into lock ids.
+  // A lock-free selection acquires no lock at all, so runCycle must never
+  // evaluate cycleLockIdFor(opts.sourceId) for it — an unconditional
+  // evaluation crashed `gbrain dream --phase orphans --source __all__` with
+  // an uncaught `Invalid source_id`.
+  const report = await runCycle(engine, {
+    brainDir,
+    sourceId: '__all__',
+    phases: ['orphans'],
+  });
+  expect(report.phases.map(p => p.phase)).toEqual(['orphans']);
+  expect(report.reason).not.toBe('lock_stolen');
+});

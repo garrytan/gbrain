@@ -168,7 +168,26 @@ export const openrouter: Recipe = {
   touchpoints: {
     embedding: {
       models: ['openai/text-embedding-3-small'],
-      default_dims: 1536,
+      // #4114: per-model native dims for the catalog the docs invite users to
+      // pick. The old recipe-wide `default_dims: 1536` was only right for
+      // text-embedding-3-small — `migrate embeddings --to openrouter:bge-m3`
+      // planned a 1536-wide column for a model that returns 1024. Slash-form
+      // ids are the lookup key (embeddingDimsForModel strips only a leading
+      // `provider:`, never the org slash). gemini-embedding-2-preview is
+      // deliberately NOT listed: its width is unverified, and a plausible
+      // guess is this exact bug class — unlisted ids resolve to 0, which
+      // forces an explicit --dim / embedding_dimensions with a clear error.
+      model_dims: {
+        'openai/text-embedding-3-small': 1536,
+        'openai/text-embedding-3-large': 3072,
+        'qwen/qwen3-embedding-8b': 4096,
+        'bge-m3': 1024,
+        'baai/bge-m3': 1024,
+      },
+      // OpenRouter proxies arbitrary embedding models with widths we cannot
+      // know ahead of time; 0 = no silent default for unlisted ids.
+      default_dims: 0,
+      trust_custom_dims: true,
       // text-embedding-3-small was trained at MRL breakpoints 512/1024/1536
       // (Weaviate analysis); 768 is a practical intermediate. Users opt into
       // a smaller dim via `gbrain config set embedding_dimensions <N>`.

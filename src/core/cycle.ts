@@ -605,6 +605,26 @@ export function cycleLockIdFor(sourceId?: string): string {
 }
 
 /**
+ * Non-throwing companion to `cycleLockIdFor`, for LOG LABELS only (the
+ * LockStolenError messages + the steal abort log line in runCycle).
+ *
+ * runCycle needs the label on paths that never validate `opts.sourceId`:
+ * lock-free phase selections acquire no lock at all (e.g.
+ * `gbrain dream --phase orphans --source __all__` — the `__all__` sentinel
+ * deliberately fails strict validation), and the engine-null file-lock path
+ * never routes the sourceId through `acquireDbCycleLock`. Throwing there
+ * would crash a run that never needed a lock id. NEVER use this for an
+ * actual lock acquisition — `cycleLockIdFor`'s throw IS the defense there.
+ */
+function cycleLockIdLabelFor(sourceId?: string): string {
+  try {
+    return cycleLockIdFor(sourceId);
+  } catch {
+    return `${LEGACY_CYCLE_LOCK_ID}:${String(sourceId)}`;
+  }
+}
+
+/**
  * Acquire the DB-backed cycle lock for a given source.
  *
  * Pre-v0.38 this file had its own copy of the UPSERT-with-TTL SQL for both
@@ -869,6 +889,41 @@ function resolveCycleLockRefreshMs(): number {
     if (Number.isFinite(n) && n >= 10) return n;
   }
   return CYCLE_LOCK_REFRESH_INTERVAL_MS;
+}
+
+/**
+ * Did runCycle's private steal controller fire, and is this a steal rather than
+ * an external abort?
+ *
+ * Keyed on the ABORTED FLAG, not on `reason instanceof LockStolenError`. The
+ * `stolen` controller never leaves runCycle: the only two things that can abort
+ * it are startCycleLockRefresher (which passes `new LockStolenError(lockId)`)
+ * and the `onStolen` callback (typed to take a LockStolenError). So its aborted
+ * flag IS the steal signal, and re-deriving that answer from the reason only
+ * adds a way to get it wrong.
+ *
+ * It does get it wrong: the runtime can deliver `aborted === true` with
+ * `reason === undefined` when abort() runs in a microtask continuation
+ * scheduled from a timer callback — exactly startCycleLockRefresher's shape.
+ * Gating on the reason then INVERTS this branch, so a real steal rethrows
+ * instead of reporting the structured `lock_stolen` partial that exists to
+ * spare daemon callers that classification.
+ *
+ * The external-abort conjunct is preserved: a caller-initiated abort keeps the
+ * throw-out contract even if a steal races it.
+ *
+ * Takes minimal structural types rather than AbortSignal so it stays callable
+ * with the duck-typed stubs this file already documents (see anyAbortSignal)
+ * — and so the reason-dropped case is reachable in a test at all, since
+ * `abort()` / `abort(undefined)` both yield a DOMException, never `undefined`.
+ */
+export function isLockStolenAbort(
+  stolen: { aborted: boolean; reason?: unknown } | undefined,
+  external: { aborted: boolean } | undefined,
+): boolean {
+  if (stolen?.aborted !== true) return false;
+  if (external?.aborted === true) return false;
+  return true;
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────
@@ -1560,7 +1615,10 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
       };
     }
     const { purgeExpiredSources } = await import('./destructive-guard.ts');
-    const purgedSources = await purgeExpiredSources(engine);
+    // gbrain#4115: {purged, blocked} — a RESTRICT-FK-held source (revoked
+    // oauth_client, v64) is reported and skipped instead of aborting the sweep.
+    const purgeResult = await purgeExpiredSources(engine);
+    const purgedSources = purgeResult.purged;
     const purgedPages = await engine.purgeDeletedPages(SOFT_DELETE_TTL_HOURS_FOR_PURGE);
     const purgedClones = await purgeOrphanClones(SOFT_DELETE_TTL_HOURS_FOR_PURGE);
     // v0.36+ folded scope item +C: GC stale op_checkpoints rows.
@@ -1609,13 +1667,16 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
       status: 'ok',
       duration_ms: 0,
       summary:
-        `purged ${purgedSources.length} source(s), ${purgedPages.count} page(s), ` +
+        `purged ${purgedSources.length} source(s)` +
+        (purgeResult.blocked.length > 0 ? ` (${purgeResult.blocked.length} FK-blocked, see details)` : '') +
+        `, ${purgedPages.count} page(s), ` +
         `${purgedClones.count} orphan clone temp dir(s), ${purgedCheckpoints} stale op_checkpoint(s), ` +
         `${purgedBrainstormCheckpoints} stale brainstorm checkpoint(s), ` +
         `${purgedBatchRetryAuditFiles} stale batch-retry audit file(s), ` +
         `and ${purgedVolunteerEvents} stale volunteer event(s)`,
       details: {
         purged_sources_count: purgedSources.length,
+        purged_sources_blocked: purgeResult.blocked,
         purged_pages_count: purgedPages.count,
         purged_orphan_clones_count: purgedClones.count,
         purged_orphan_clone_names: purgedClones.names,
@@ -1896,17 +1957,26 @@ export async function runCycle(
   const cycleSignal: AbortSignal | undefined = combinedSignal
     ? combinedSignal.signal
     : (stolen?.signal ?? externalSignal);
+  // Label only — the non-throwing variant, because this line runs even for
+  // lock-free phase selections where opts.sourceId was never validated (a
+  // `cycleLockIdFor` throw here crashed `--source __all__` runs that never
+  // needed a lock id). Real acquisition validated above via acquireDbCycleLock.
+  const cycleLockId = cycleLockIdLabelFor(opts.sourceId);
   const stopRefresher: (() => void) | undefined = lock && stolen
-    ? startCycleLockRefresher(lock, stolen, cycleLockIdFor(opts.sourceId))
+    ? startCycleLockRefresher(lock, stolen, cycleLockId)
     : undefined;
   const onStolen = stolen ? (e: LockStolenError) => { if (!stolen.signal.aborted) stolen.abort(e); } : undefined;
+  // The reason can arrive as undefined (see isLockStolenAbort); rejecting a
+  // raced phase with `undefined` would hand the outer catch a valueless throw.
+  const stolenReason = () =>
+    (stolen!.signal.reason as unknown) ?? new LockStolenError(cycleLockId);
   const raceStolen = !stolen
     ? <T,>(p: Promise<T>): Promise<T> => p
     : <T,>(p: Promise<T>): Promise<T> => {
-        if (stolen.signal.aborted) return Promise.reject(stolen.signal.reason);
+        if (stolen.signal.aborted) return Promise.reject(stolenReason());
         let onAbort!: () => void;
         const abortP = new Promise<never>((_, rej) => {
-          onAbort = () => rej(stolen.signal.reason);
+          onAbort = () => rej(stolenReason());
           stolen.signal.addEventListener('abort', onAbort, { once: true });
         });
         return Promise.race([p, abortP]).finally(() => {
@@ -2043,6 +2113,10 @@ export async function runCycle(
           // (explicit --source wins, else derived from the checkout dir).
           sourceId: cycleSourceId,
           once: opts.onceForPhase === 'synthesize',
+          // #4168 sibling: clamp child-subagent timeouts to the remaining
+          // job budget (same collision shape as propose_takes, cross-process
+          // timeout domain — clamped via the patterns.ts childBudget template).
+          deadlineAtMs: opts.deadlineAtMs ?? null,
         }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
@@ -2412,7 +2486,11 @@ export async function runCycle(
           checkAborted(cycleSignal);
           progress.start('cycle.propose_takes');
           const { runPhaseProposeTakes } = await import('./cycle/propose-takes.ts');
-          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { repoPath: brainDir ?? undefined }) as Promise<PhaseResult>);
+          // gbrain#4168: thread the job's absolute deadline so the phase's
+          // clean partial-exit fires before the worker's kill switch (same
+          // literal shape as the patterns call above so the structural guard
+          // matches both).
+          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { repoPath: brainDir ?? undefined, deadlineAtMs: opts.deadlineAtMs ?? null }) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();
@@ -2423,7 +2501,7 @@ export async function runCycle(
           checkAborted(cycleSignal);
           progress.start('cycle.grade_takes');
           const { runPhaseGradeTakes } = await import('./cycle/grade-takes.ts');
-          const { result, duration_ms } = await timePhase(() => runPhaseGradeTakes(calibrationCtx, {}) as Promise<PhaseResult>);
+          const { result, duration_ms } = await timePhase(() => runPhaseGradeTakes(calibrationCtx, { deadlineAtMs: opts.deadlineAtMs ?? null }) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();
@@ -2434,7 +2512,7 @@ export async function runCycle(
           checkAborted(cycleSignal);
           progress.start('cycle.calibration_profile');
           const { runPhaseCalibrationProfile } = await import('./cycle/calibration-profile.ts');
-          const { result, duration_ms } = await timePhase(() => runPhaseCalibrationProfile(calibrationCtx, {}) as Promise<PhaseResult>);
+          const { result, duration_ms } = await timePhase(() => runPhaseCalibrationProfile(calibrationCtx, { deadlineAtMs: opts.deadlineAtMs ?? null }) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();
@@ -2714,12 +2792,15 @@ export async function runCycle(
     // per D5.6); report a structured partial instead of throwing so daemon
     // callers (jobs.ts / autopilot) don't have to classify an exception.
     // External aborts (cycleSignal) keep the existing throw-out contract.
-    const stolenFired = stolen?.signal.aborted === true
-      && stolen.signal.reason instanceof LockStolenError
-      && externalSignal?.aborted !== true;
+    const stolenFired = isLockStolenAbort(stolen?.signal, externalSignal);
     if (stolenFired) {
       lockStolenAbort = true;
-      console.error(`[cycle] aborting: ${stolen!.signal.reason.message} — ${phaseResults.length} phase(s) completed before the steal; their writes are durable`);
+      // The reason is the better message when it survived; it is not always
+      // there (see isLockStolenAbort), so never dereference it unguarded.
+      const why = stolen!.signal.reason instanceof LockStolenError
+        ? stolen!.signal.reason.message
+        : `lock '${cycleLockId}' was stolen out from under this holder`;
+      console.error(`[cycle] aborting: ${why} — ${phaseResults.length} phase(s) completed before the steal; their writes are durable`);
     } else {
       throw e;
     }
@@ -2928,6 +3009,22 @@ function deriveStatus(phases: PhaseResult[], totals: CycleReport['totals']): Cyc
     // (resolve_symbol_edges). Without these, an edges-only cycle reports 'clean'
     // — indistinguishable from "nothing happened" even when N edges resolved.
     totals.edges_resolved > 0 ||
-    totals.edges_ambiguous > 0;
+    totals.edges_ambiguous > 0 ||
+    // `gbrain dream --input <file>` implies `--phase synthesize` (a
+    // synthesize-only cycle never touches sync/embed/etc, so those totals
+    // stay zero even on a genuinely productive run). Without these two, a
+    // real synthesize outcome — new pages written, or an already-completed
+    // transcript quietly reusing its prior job via the queue's
+    // idempotency_key dedupe — is indistinguishable from "nothing happened".
+    totals.transcripts_processed > 0 ||
+    totals.synth_pages_written > 0;
   return anyWork ? 'ok' : 'clean';
 }
+
+// ── Test-only export ───────────────────────────────────────
+// `__testing` re-exports otherwise-private helpers so unit tests can pin
+// behavior at function granularity without going through a full runCycle.
+// Not part of the runtime contract.
+export const __testing = {
+  deriveStatus,
+};

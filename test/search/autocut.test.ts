@@ -18,7 +18,7 @@ import {
 // items survived the cut.
 type R = { id: string; rs?: number };
 const scoreOf = (r: R) => r.rs;
-const ON: AutocutConfig = { enabled: true, jumpRatio: 0.2, minKeep: 1 };
+const ON: AutocutConfig = { enabled: true, jumpRatio: 0.2, minKeep: 1, minTopScore: 0.35 };
 
 function mk(scores: Array<number | undefined>): R[] {
   return scores.map((rs, i) => ({ id: `r${i}`, rs }));
@@ -29,6 +29,7 @@ describe('DEFAULT_AUTOCUT', () => {
     expect(DEFAULT_AUTOCUT.enabled).toBe(true);
     expect(DEFAULT_AUTOCUT.jumpRatio).toBe(0.2);
     expect(DEFAULT_AUTOCUT.minKeep).toBe(1);
+    expect(DEFAULT_AUTOCUT.minTopScore).toBe(0.35);
   });
   test('is frozen', () => {
     expect(Object.isFrozen(DEFAULT_AUTOCUT)).toBe(true);
@@ -228,5 +229,19 @@ describe('resolveAutocut — precedence ladder', () => {
     const cfg = resolveAutocut({ jumpRatio: 0.5 }, { jumpRatio: 0.3, enabled: false });
     expect(cfg.jumpRatio).toBe(0.5);
     expect(cfg.enabled).toBe(false); // inherited from config (partial didn't set it)
+  });
+});
+
+describe('autocutFromConfig — search.autocut_min_top (v0.46.15)', () => {
+  test('parses valid [0,1] values (0 disables the weak-top floor)', () => {
+    expect(autocutFromConfig({ search: { autocut_min_top: 0.5 } }).minTopScore).toBe(0.5);
+    expect(autocutFromConfig({ search: { autocut_min_top: 0 } }).minTopScore).toBe(0);
+    expect(autocutFromConfig({ search: { autocut_min_top: 1 } }).minTopScore).toBe(1);
+  });
+
+  test('out-of-range / non-numeric values fall through to the default', () => {
+    expect(autocutFromConfig({ search: { autocut_min_top: 1.5 } }).minTopScore).toBeUndefined();
+    expect(autocutFromConfig({ search: { autocut_min_top: -0.1 } }).minTopScore).toBeUndefined();
+    expect(autocutFromConfig({ search: { autocut_min_top: 'cheese' } }).minTopScore).toBeUndefined();
   });
 });

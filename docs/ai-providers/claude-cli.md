@@ -66,16 +66,21 @@ stdin:
   every call would boot the user's configured MCP servers — including
   gbrain's own MCP, which would recurse and contend for the PGLite
   single-writer lock.
-- The subprocess env is a copy of gbrain's own process env with exactly
-  three keys deleted before spawn: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
-  `ANTHROPIC_BASE_URL`. Everything else in gbrain's environment is inherited
-  as-is. The recipe's source comment states the intent (stop an
-  `ANTHROPIC_API_KEY` present in gbrain's own env from being picked up by the
-  subprocess), scoped to those three variables specifically — the doc does
-  not claim this rules out every other way `claude` could end up billing
-  through a non-subscription path (e.g. other env-based auth switches the CLI
-  itself may support); that is between the installed `claude` binary and its
-  own configuration, not something this recipe's code inspects.
+- The subprocess env is a copy of gbrain's own process env with the
+  cloud-auth routing variables scrubbed before spawn: the three direct-API
+  keys (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`)
+  plus every `CLAUDE_CODE_USE_*` backend-switch flag (a prefix wipe, not a
+  denylist — Bedrock, Vertex AI, and the other cloud backends are each gated
+  by one of these, take priority over subscription OAuth when set, and route
+  billing through a cloud account; clearing the switch is sufficient because
+  the provider-specific credentials are inert without it). Everything else in
+  gbrain's environment is inherited as-is. Subscription-only is the recipe's
+  contract: children always authenticate with the CLI's own login state. If
+  you intentionally route a workload through a cloud backend, use the
+  `anthropic` recipe with cloud credentials instead — the scrub means
+  claude-cli children will not inherit that routing. Whatever auth/billing
+  configuration the installed `claude` binary carries in its own config files
+  (not env) remains between it and its login state.
 - Beyond that env-scrub, auth resolution is entirely up to the installed
   `claude` binary — the recipe does not manage or forward credentials
   itself. Whatever `claude` is already logged in / authenticated with on
@@ -106,37 +111,30 @@ above.
 | Tool use | JSON emission via a system-prompt-injected protocol, not the CLI's native tool-call mechanism. Parallel tool calls in one turn round-trip correctly. |
 | Multimodal | Not supported over the subprocess path. File/image message parts are rendered as a `[file <mediaType>]` text stub, not sent as actual content. |
 | Prompt caching | The recipe declares `supports_prompt_cache: false`. The CLI manages its own caching internally but does not expose it through gbrain's `cache_control` control plane, so from the gateway's point of view this model does not support prompt caching. |
-| Usage / token counts | Reported `usage.input_tokens` / `usage.output_tokens` are read straight from the CLI's `--output-format json` envelope (`result.usage?.input_tokens` / `output_tokens`); gbrain does not independently count tokens for this path. |
+| Usage / token counts | Reported `usage.input_tokens` / `usage.output_tokens` are read straight from the CLI's `--output-format json` envelope (`result.usage?.input_tokens` / `output_tokens`); gbrain does not independently count tokens for this path. The envelope's `cache_read_input_tokens` is surfaced as `usage.cachedInputTokens`, so cache reads no longer count as zero in gbrain's usage accounting; `cache_creation_input_tokens` is not surfaced (the AI SDK's usage shape has no corresponding field). |
 | Cost figures | The recipe declares `cost_per_1m_input_usd: 3.0` / `cost_per_1m_output_usd: 15.0` — the same Sonnet-class figures the `anthropic` recipe declares (`price_last_verified: 2026-06-17`) — purely so gbrain's budget ledger has a number to attribute per call. Neither the recipe nor the adapter code checks what you're actually billed; treat these as the ledger's nominal per-call number, not a verified charge. |
 | User-level CLAUDE.md | `~/.claude/CLAUDE.md` still loads on every call (see above) — only the working directory changes (see "What actually happens on a call" for exactly what that directory is and isn't). |
 
-## Known doctor caveat: cold-start subprocess vs the fixed 5s probe timeout
+## Doctor probe timeout: per-recipe, 30s for claude-cli
 
 `gbrain models doctor`'s chat reachability probe (`probeModel` in
-`src/commands/models.ts`) wraps every chat call in a fixed 5-second
-`AbortController` timeout, independent of any per-recipe timeout the recipe
-itself declares (`claude-cli` does not declare a `default_timeout_ms`).
-Spawning the `claude` binary and letting it start up is generally fast, but
-is not instantaneous — a slow first invocation (cold process cache, slow
-disk, contended machine) can outrun that 5-second window.
+`src/commands/models.ts`) resolves its timeout per model: the recipe
+touchpoint's declared `default_timeout_ms` when present, else a flat 5000ms
+default (the right number for a plain HTTP round-trip). The `claude-cli`
+recipe declares `default_timeout_ms: 30_000` because each call spawns a
+`claude -p` subprocess (CLI cold start + user-level CLAUDE.md load) that
+routinely takes 5-6 seconds even when the CLI and subscription are perfectly
+healthy — under the old flat 5s abort the probe false-failed on every run
+with `status: unknown` (`claude-cli adapter aborted`) while `chat()`
+succeeded fine at normal call sites.
 
-When that happens, the probe's `AbortController` fires, the subprocess is
-killed (`child.kill('SIGTERM')`), and the adapter's abort handler rejects
-with a fixed message (`claude-cli adapter aborted`). `classifyError` in
-`src/commands/models.ts` only maps a message to `status: network` if it
-matches `/timeout|network|econn|fetch failed|enotfound/`; `claude-cli
-adapter aborted` matches none of those, so it falls through to
-`status: unknown` — the classifier's catch-all — instead of `status:
-network`, which is what a plain slow/unreachable HTTP provider would map
-to on the same probe timeout. So a `status: unknown` result on a
-`claude-cli:` model is not necessarily a broken configuration on its own;
-a cold subprocess start outrunning the fixed 5s window is one thing that
-can produce it (the same class of first-call cold-start the embedding
-reachability probe's own code comment already calls out for local
-embedders), and re-running the probe is a reasonable first thing to try.
-`status: unknown` on its own doesn't distinguish that from any other
-unclassified failure, so if a re-run keeps producing it, treat it as an
-unclassified error worth investigating rather than assuming cold-start.
+30 seconds gives the subprocess room to start without masking a truly
+dead or unauthenticated CLI for long. A probe that still outruns 30s kills
+the subprocess (`child.kill('SIGTERM')`) and reports `status: unknown` —
+the adapter's abort message doesn't match `classifyError`'s network
+patterns, so it lands in the catch-all. A persistent `unknown` is now worth
+investigating directly (run the same model via `gbrain models doctor
+--json` or call `claude` by hand) rather than assuming cold-start.
 
 ## Troubleshooting
 
@@ -146,5 +144,5 @@ unclassified error worth investigating rather than assuming cold-start.
 | `claude-cli exited <code>: ...` | Non-zero exit from the `claude` subprocess itself; the message is whatever the CLI wrote to stderr/stdout | Run `claude` interactively with the same model to see the underlying CLI error directly (e.g. not logged in, model unavailable) |
 | `claude-cli output not JSON: ...` | `JSON.parse(stdout)` threw (stdout wasn't valid JSON at all) | Confirm the installed `claude` CLI version still supports `--print --output-format json`; this adapter's JSON handling was verified against CLI 2.1.145 |
 | `claude-cli JSON event array had no "result" event` | stdout parsed as a JSON array (the `"verbose": true` event-stream shape in `~/.claude/settings.json`) but none of the events had `type: "result"` | Check `~/.claude/settings.json` for `"verbose": true`; the adapter tolerates the array shape but still needs a `result` event in it |
-| `gbrain models doctor` reports `chat` as `status: unknown` for a `claude-cli:` model | See "Known doctor caveat" above — `classifyError` falls through to `unknown` for the adapter's abort message | Re-run the probe; if it persists, treat it as an unclassified failure and investigate directly (e.g. run the same model via `gbrain models doctor --json` or call `claude` by hand) |
-| A call bills through the Anthropic API instead of the local session | The adapter deletes `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_BASE_URL` from the subprocess env — this covers gbrain's own env leaking into the call. It does not inspect any other auth/billing switch the installed `claude` CLI itself may support | If billing looks wrong, check the `claude` CLI's own auth/billing configuration on this machine, not just gbrain's env |
+| `gbrain models doctor` reports `chat` as `status: unknown` for a `claude-cli:` model | The probe now allows 30s for the subprocess (see "Doctor probe timeout" above); a persistent `unknown` means the call genuinely failed or outran even that window — `classifyError` falls through to `unknown` for the adapter's abort message | Investigate directly: run the same model via `gbrain models doctor --json` or call `claude` by hand (e.g. not logged in, model unavailable) |
+| A call bills through the Anthropic API or a cloud backend instead of the local session | The adapter deletes `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_BASE_URL` and every `CLAUDE_CODE_USE_*` backend-switch flag from the subprocess env — this covers gbrain's own env leaking into the call. It does not inspect billing switches the installed `claude` CLI carries in its own config files | If billing looks wrong, check the `claude` CLI's own auth/billing configuration on this machine, not just gbrain's env. For intentional cloud routing, use the `anthropic` recipe instead |

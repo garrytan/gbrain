@@ -33,4 +33,9 @@ timeout = 60_000
 # config.json changing mid-day flipped 27 config-honoring cycle/dream tests
 # red on dev boxes while CI stayed green. Respects a pre-set GBRAIN_HOME
 # (the e2e wrapper sets its own). See test/helpers/gbrain-home-preload.ts.
-preload = ["./test/helpers/database-url-guard-preload.ts", "./test/helpers/legacy-embedding-preload.ts", "./test/helpers/audit-dir-preload.ts", "./test/helpers/sync-failures-preload.ts", "./test/helpers/gbrain-home-preload.ts"]
+#
+# git-hermetic-preload: inject commit.gpgsign=false/tag.gpgsign=false via
+# GIT_CONFIG_COUNT env config so a dev box's global signing config can't
+# route test-repo commits through gpg-agent (which intermittently fails
+# under full-suite load). See test/helpers/git-hermetic-preload.ts.
+preload = ["./test/helpers/database-url-guard-preload.ts", "./test/helpers/legacy-embedding-preload.ts", "./test/helpers/audit-dir-preload.ts", "./test/helpers/sync-failures-preload.ts", "./test/helpers/gbrain-home-preload.ts", "./test/helpers/git-hermetic-preload.ts"]

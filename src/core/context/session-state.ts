@@ -167,6 +167,135 @@ export async function upsertSessionContextState(
   }
 }
 
+/**
+ * One brain-link banked by the compaction-boundary harvest (Cathedral 5).
+ * `seg` is the content hash of the harvested corpus segment — the completion
+ * key the OpenClaw assemble poll matches on (a stale non-empty manifest can't
+ * satisfy a poll for a specific checkpoint). `n` is the ledger ordinal of the
+ * checkpoint that banked the link (metadata only, never a filename component).
+ */
+export interface CheckpointLink {
+  slug: string;
+  title: string;
+  /** ISO timestamp the link was banked. */
+  at: string;
+  n: number;
+  seg: string;
+}
+
+/** Manifest cap: newest-first, dedup-by-slug on append. */
+export const CHECKPOINT_MANIFEST_CAP = 20;
+
+function toCheckpointLinks(v: unknown): CheckpointLink[] {
+  let arr: unknown = v;
+  if (typeof arr === 'string') {
+    try {
+      arr = JSON.parse(arr);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(arr)) return [];
+  return arr.filter(
+    (x): x is CheckpointLink =>
+      !!x &&
+      typeof x === 'object' &&
+      typeof (x as CheckpointLink).slug === 'string' &&
+      typeof (x as CheckpointLink).title === 'string' &&
+      typeof (x as CheckpointLink).at === 'string' &&
+      typeof (x as CheckpointLink).n === 'number' &&
+      typeof (x as CheckpointLink).seg === 'string',
+  );
+}
+
+/**
+ * Read the session's checkpoint manifest. Distinguishes a CONFIRMED answer
+ * from a failed read (adversarial review): `[]` means the row/manifest is
+ * genuinely absent or empty; `null` means the read errored (engine down,
+ * pre-v132 schema). Callers on the render path treat null as [] (fail-open);
+ * `appendCheckpointManifest` treats null as abort (a merge seeded from a
+ * failed read would overwrite-truncate the standing manifest), and the
+ * assemble poll only SETTLES on a confirmed answer.
+ */
+export async function getCheckpointManifest(
+  engine: BrainEngine,
+  sourceId: string,
+  clientId: string | null | undefined,
+  sessionId: string,
+): Promise<CheckpointLink[] | null> {
+  try {
+    const rows = await engine.executeRaw<{ checkpoint_manifest: unknown }>(
+      `SELECT checkpoint_manifest
+       FROM session_context_state
+       WHERE source_id = $1 AND client_id = $2 AND session_id = $3`,
+      [sourceId, resolveClientId(clientId), normSession(sessionId)],
+    );
+    if (!rows.length) return [];
+    return toCheckpointLinks(rows[0].checkpoint_manifest);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Append checkpoint links to the manifest: newest-first, dedup-by-slug (an
+ * existing slug's entry is refreshed and moved to the front), capped at
+ * CHECKPOINT_MANIFEST_CAP. Read-modify-write is safe in practice — the serve
+ * harvest FIFO is single-in-flight and the OpenClaw rung-3 writer only runs
+ * when serve is unreachable; a benign race loses at most one append (the
+ * manifest is an optimization like the rest of this table). jsonb binds via
+ * `$N::text::jsonb`.
+ *
+ * Returns true only on a CONFIRMED publish (adversarial review): a failed
+ * READ aborts without writing — merging into `[]` from a transient read error
+ * would overwrite-truncate up to CAP−1 standing links — and a failed write
+ * returns false so the harvest keeps its receipt (and skips `.ingested`)
+ * instead of deleting the only durable copy of the links. Never throws.
+ */
+export async function appendCheckpointManifest(
+  engine: BrainEngine,
+  sourceId: string,
+  clientId: string | null | undefined,
+  sessionId: string,
+  links: Array<{ slug: string; title: string }>,
+  meta: { seg: string; n: number; at?: string },
+): Promise<boolean> {
+  if (!links.length) return true;
+  try {
+    const existing = await getCheckpointManifest(engine, sourceId, clientId, sessionId);
+    if (existing === null) return false;
+    const at = meta.at ?? new Date().toISOString();
+    const fresh: CheckpointLink[] = links.map((l) => ({
+      slug: l.slug.slice(0, ID_MAX_LEN),
+      // Collapse whitespace: titles render as single lines in the pack /
+      // assemble block — an embedded newline from ingested content must not
+      // inject extra lines into model context.
+      title: l.title.replace(/\s+/g, ' ').trim().slice(0, 300),
+      at,
+      n: meta.n,
+      seg: meta.seg.slice(0, ID_MAX_LEN),
+    }));
+    const freshSlugs = new Set(fresh.map((l) => l.slug));
+    const merged = [...fresh, ...existing.filter((l) => !freshSlugs.has(l.slug))].slice(
+      0,
+      CHECKPOINT_MANIFEST_CAP,
+    );
+    await engine.executeRaw(
+      `INSERT INTO session_context_state
+         (source_id, client_id, session_id, checkpoint_manifest, updated_at)
+       VALUES ($1, $2, $3, $4::text::jsonb, now())
+       ON CONFLICT (source_id, client_id, session_id) DO UPDATE SET
+         checkpoint_manifest = EXCLUDED.checkpoint_manifest,
+         updated_at          = now()`,
+      [sourceId, resolveClientId(clientId), normSession(sessionId), JSON.stringify(merged)],
+    );
+    return true;
+  } catch {
+    /* fail-open: a manifest-write failure must never THROW into the harvest */
+    return false;
+  }
+}
+
 /** Max session rows retained per (source_id, client_id) — bounds a remote
  * caller minting session ids (red-team F3: authed ≠ trusted; a read token
  * could otherwise create unbounded rows inside the 7-day age window). */

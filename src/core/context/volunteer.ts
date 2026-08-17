@@ -69,6 +69,8 @@ export interface VolunteerOpts {
   excludeSlugs?: ReadonlySet<string>;
   maxPages?: number;
   minConfidence?: number;
+  /** v0.46.15: lexical-arms kill switch — see ResolvePointersOpts.lexicalArms. */
+  lexicalArms?: boolean;
 }
 
 /** Shared wire protocol for window turns — watch.ts imports this so the two
@@ -113,6 +115,7 @@ function rationaleFor(arm: ResolveArm, display: string, c: WindowEntityCandidate
   const armText =
     arm === 'alias' ? `alias match "${display}"`
     : arm === 'title' ? `exact title match "${display}"`
+    : arm === 'title-surname' ? `surname match "${display}"`
     : `slug match "${display}"`;
   if (!c) return armText;
   const parts = [armText];
@@ -204,6 +207,7 @@ export async function volunteerContext(
     priorContextText: opts.priorContext,
     suppression: 'slug-only',
     maxPointers: VOLUNTEER_MAX_PAGES_CAP * 2,
+    lexicalArms: opts.lexicalArms,
   });
   if (!block) return [];
 

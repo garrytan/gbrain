@@ -47,13 +47,27 @@ describe('maxOutputTokensFor — thinking-default headroom', () => {
     // Version/name boundaries: `gpt-50` and `o3foo` are not gpt-5 / o3.
     expect(maxOutputTokensFor('openai:gpt-50')).toBe(4000);
     expect(maxOutputTokensFor('openai:o3foo')).toBe(4000);
-    // Other providers' reasoning models are out of scope here — the routed
-    // provider recipe, not this budget, is what changes for them.
-    expect(maxOutputTokensFor('deepseek:deepseek-reasoner')).toBe(4000);
     // Prefix must be the openai provider — a bare model name or another
     // provider's gpt-5 spelling doesn't match.
     expect(maxOutputTokensFor('o3')).toBe(4000);
     expect(maxOutputTokensFor('gpt-5.2')).toBe(4000);
     expect(maxOutputTokensFor('openrouter:openai/gpt-5.2')).toBe(4000);
+  });
+
+  test('gbrain#4172 — recipe-declared thinking-by-default models (DeepSeek v4) get 16000 via the capability layer', () => {
+    // DeepSeek v4 thinks by default and bills reasoning against max_tokens:
+    // at 4000 the whole budget is spent reasoning and think returns
+    // truncated/empty JSON. Keyed on thinking_by_default (capability), not a
+    // model-name regex, so provider renames keep the headroom.
+    expect(maxOutputTokensFor('deepseek:deepseek-v4-flash')).toBe(16000);
+    expect(maxOutputTokensFor('deepseek:deepseek-v4-pro')).toBe(16000);
+    // Retired alias still routes to a thinking v4 model at the provider.
+    expect(maxOutputTokensFor('deepseek:deepseek-reasoner')).toBe(16000);
+    // Recipes without the capability keep the conservative default.
+    expect(maxOutputTokensFor('ollama:llama3.3')).toBe(4000);
+    expect(maxOutputTokensFor('groq:llama-3.3-70b-versatile')).toBe(4000);
+    // Unknown provider strings fail open to the default, never throw.
+    expect(maxOutputTokensFor('nonexistent-provider:whatever')).toBe(4000);
+    expect(maxOutputTokensFor('voyage:voyage-4')).toBe(4000); // chat-less recipe
   });
 });

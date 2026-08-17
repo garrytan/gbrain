@@ -151,8 +151,18 @@ export function computeTeardownDeadlineMs(opts: {
   // +500 mirrors endPoolBounded's slack over the postgres.js hint (db.ts);
   // ×2 budgets the worst case of two sequential pool ends (direct + read).
   const poolEndBoundMs = POOL_END_TIMEOUT_SECONDS * 1000 + 500;
+  // #4143: engine.disconnect() now runs its OWN drain pass (the
+  // in-flight-settle drain, fixed at 2000ms/sink — see
+  // drainBackgroundWorkBeforeDisconnect) AFTER the exit-mode drain above it
+  // in finishCliTeardown, plus PGLite's 5s bounded close. Budget both, or
+  // the backstop fires while every component honored its own bound (the D9
+  // false-backstop class this formula exists to kill).
+  const disconnectDrainBoundMs = opts.sinkCount * 2000;
+  const pgliteCloseBoundMs = 5000;
   const computed =
     opts.sinkCount * opts.drainTimeoutMs +
+    disconnectDrainBoundMs +
+    pgliteCloseBoundMs +
     FACTS_ABORT_GRACE_MS +
     2 * poolEndBoundMs +
     TEARDOWN_SLACK_MS;

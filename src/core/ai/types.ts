@@ -202,6 +202,14 @@ export interface ExpansionTouchpoint {
   models: string[];
   cost_per_1m_tokens_usd?: number;
   price_last_verified?: string;
+  /**
+   * Recipe-level timeout fallback for `gbrain models doctor`'s expansion
+   * reachability probe. Mirrors `RerankerTouchpoint.default_timeout_ms`: lets
+   * a slow-start provider (e.g. a subprocess-dispatched CLI with real cold-start
+   * latency) declare the headroom it needs instead of the probe's flat 5000ms
+   * default false-failing on every run.
+   */
+  default_timeout_ms?: number;
 }
 
 /**
@@ -275,6 +283,17 @@ export interface ChatTouchpoint {
    */
   supports_prompt_cache?: boolean | ((modelId: string) => boolean);
   /**
+   * Model reasons/thinks BY DEFAULT, spending output-token budget on internal
+   * reasoning before any answer text (DeepSeek v4's thinking mode bills
+   * reasoning as output and counts it against `max_tokens`). Consumers that
+   * size output caps (e.g. `think`'s `maxOutputTokensFor`) grant these models
+   * the same headroom as thinking-by-default Claude 5 / OpenAI reasoning
+   * models. Boolean for recipe-wide behavior; predicate when only some routed
+   * model ids think by default. Distinct from "can be asked to think" —
+   * default-off reasoning modes should NOT set this (gbrain#4172).
+   */
+  thinking_by_default?: boolean | ((modelId: string) => boolean);
+  /**
    * Backend honors OpenAI structured outputs (a strict `json_schema`
    * response_format). Threaded into `createOpenAICompatible`'s
    * `supportsStructuredOutputs` so query expansion's `generateObject` sends a
@@ -289,6 +308,14 @@ export interface ChatTouchpoint {
   cost_per_1m_input_usd?: number;
   cost_per_1m_output_usd?: number;
   price_last_verified?: string;
+  /**
+   * Recipe-level timeout fallback for `gbrain models doctor`'s chat
+   * reachability probe. Mirrors `RerankerTouchpoint.default_timeout_ms`: lets
+   * a slow-start provider (e.g. a subprocess-dispatched CLI with real cold-start
+   * latency) declare the headroom it needs instead of the probe's flat 5000ms
+   * default false-failing on every run.
+   */
+  default_timeout_ms?: number;
 }
 
 export interface Recipe {

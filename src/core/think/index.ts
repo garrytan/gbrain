@@ -27,6 +27,7 @@ import { resolveCitations, type ParsedCitation } from './cite-render.ts';
 import { resolveOwnerHolder } from '../owner-holder.ts';
 import { resolveModel } from '../model-config.ts';
 import { chat as gatewayChat, probeChatModel, type ChatResult } from '../ai/gateway.ts';
+import { getProviderCapabilities } from '../ai/capabilities.ts';
 import { AIConfigError } from '../ai/errors.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
@@ -227,9 +228,22 @@ const OPENAI_CHAT_SNAPSHOT_RE = /-chat(?:-|$)/i; // gpt-5-chat-latest, gpt-5.2-c
 export function maxOutputTokensFor(modelStr: string): number {
   const openaiReasoning =
     OPENAI_REASONING_MODEL_RE.test(modelStr) && !OPENAI_CHAT_SNAPSHOT_RE.test(modelStr);
-  return THINKING_BY_DEFAULT_MODEL_RE.test(modelStr) || openaiReasoning
-    ? THINKING_DEFAULT_MAX_OUTPUT_TOKENS
-    : DEFAULT_MAX_OUTPUT_TOKENS;
+  if (THINKING_BY_DEFAULT_MODEL_RE.test(modelStr) || openaiReasoning) {
+    return THINKING_DEFAULT_MAX_OUTPUT_TOKENS;
+  }
+  // Recipe-declared thinking-by-default (gbrain#4172, e.g. DeepSeek v4):
+  // keyed on the capability, not a model-name regex, so a provider's model
+  // renames don't silently drop the headroom. Reasoning bills as output and
+  // counts against max_tokens; without headroom the 4000 cap is spent on
+  // reasoning and think returns truncated/empty JSON.
+  try {
+    if (getProviderCapabilities(modelStr).supportsThinking) {
+      return THINKING_DEFAULT_MAX_OUTPUT_TOKENS;
+    }
+  } catch {
+    // Unknown provider / chat-less recipe — keep the conservative default.
+  }
+  return DEFAULT_MAX_OUTPUT_TOKENS;
 }
 
 function inferIntent(question: string, anchor?: string): string {

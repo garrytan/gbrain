@@ -520,3 +520,56 @@ describe('fan-out manifest shape (integration)', () => {
     }
   });
 });
+
+describe('dispatcher routes register (cathedral-6)', () => {
+  test('runAgent dispatches register and its --help never touches the engine', async () => {
+    const { runAgent } = await import('../src/commands/agent.ts');
+    // engine=null: the SELF_HELP_WITHOUT_ENGINE lane. Help must print and return.
+    const logs: string[] = [];
+    const orig = console.log;
+    console.log = (...a: unknown[]) => { logs.push(a.join(' ')); };
+    try {
+      await runAgent(null, ['register', '--help']);
+    } finally {
+      console.log = orig;
+    }
+    const out = logs.join('\n');
+    expect(out).toContain('gbrain agent register');
+    expect(out).toContain('--preset daily-driver|coding-agent');
+  });
+
+  test('top-level help mentions register', async () => {
+    const { runAgent } = await import('../src/commands/agent.ts');
+    const logs: string[] = [];
+    const orig = console.log;
+    console.log = (...a: unknown[]) => { logs.push(a.join(' ')); };
+    try {
+      await runAgent(null, ['--help']);
+    } finally {
+      console.log = orig;
+    }
+    expect(logs.join('\n')).toContain('agent register');
+  });
+
+  test('`agent run -- --help` is NOT a help request (-- terminator honored)', async () => {
+    const { runAgent } = await import('../src/commands/agent.ts');
+    // With a null engine and a post-`--` --help, the dispatcher must treat it
+    // as a REAL run (and refuse on the missing engine) — never print help.
+    const errs: string[] = [];
+    const origErr = console.error;
+    const origExit = process.exit;
+    let exitCode: number | undefined;
+    console.error = (...a: unknown[]) => { errs.push(a.join(' ')); };
+    (process as any).exit = (code?: number) => { exitCode = code; throw new Error('__exit__'); };
+    try {
+      await runAgent(null, ['run', '--', '--help']).catch((e) => {
+        if (!/__exit__/.test(String(e?.message))) throw e;
+      });
+    } finally {
+      console.error = origErr;
+      (process as any).exit = origExit;
+    }
+    expect(exitCode).toBe(1);
+    expect(errs.join('\n')).toContain('needs a configured brain');
+  });
+});

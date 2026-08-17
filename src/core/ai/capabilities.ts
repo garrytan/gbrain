@@ -101,10 +101,12 @@ export function getProviderCapabilities(modelString: string): ProviderCapabiliti
     // Subsequent waves can split this into its own recipe field if a provider
     // ever supports tools without parallel dispatch.
     supportsParallelTools: chat.supports_tools === true,
-    // Not exposed by ChatTouchpoint today — defaults to false. Recipes can add
-    // a `supports_thinking` field later without breaking this helper (it'll
-    // just keep returning false until a recipe sets it).
-    supportsThinking: false,
+    // Recipe-declared thinking-by-default (gbrain#4172): true when the model
+    // reasons without being asked and bills that reasoning as output tokens.
+    // Boolean or per-model predicate, mirroring supports_prompt_cache.
+    supportsThinking: typeof chat.thinking_by_default === 'function'
+      ? chat.thinking_by_default(parsed.modelId)
+      : chat.thinking_by_default === true,
     maxContext: chat.max_context_tokens ?? 128_000,
   };
 }

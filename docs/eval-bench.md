@@ -588,9 +588,10 @@ gbrain config set autopilot.nightly_quality_probe.enabled true
 gbrain config set autopilot.nightly_quality_probe.max_usd 5.00   # optional override
 ```
 
-Note: `--phase nightly_quality_probe` wiring into the autopilot scheduler is
-deferred to a v0.41+ follow-up (see TODOS.md). For now the phase is callable
-in isolation; the test harness exercises it via DI stubs.
+The autopilot scheduler invokes the probe on its tick cadence when the
+config gate is on (`src/commands/autopilot.ts`, pinned by
+`test/autopilot-nightly-probe-wiring.test.ts`); the phase also stays
+callable in isolation, and the test harness exercises it via DI stubs.
 
 ```bash
 # Manual smoke (exercises the path via DI stubs, no real API spend).

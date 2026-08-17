@@ -36,7 +36,7 @@ const HEALTHY_STATS = {
   }),
   getHealth: async () => ({
     page_count: 500, linkable_page_count: 500, embed_coverage: 0.99, stale_pages: 0, orphan_pages: 0, missing_embeddings: 0,
-    brain_score: 95, dead_links: 0, link_coverage: 1, timeline_coverage: 1, most_connected: [],
+    entity_page_count: 10, brain_score: 95, dead_links: 0, link_coverage: 1, timeline_coverage: 1, most_connected: [],
     embed_coverage_score: 35, link_density_score: 25, timeline_coverage_score: 15, no_orphans_score: 15, no_dead_links_score: 10,
   }),
   getConfig: async () => null,
@@ -56,7 +56,7 @@ const FIXTURES: Fixture[] = [
       ...HEALTHY_STATS,
       getHealth: async () => ({
         page_count: 500, linkable_page_count: 500, embed_coverage: 0.3, stale_pages: 0, orphan_pages: 12, missing_embeddings: 350,
-        brain_score: 40, dead_links: 2, link_coverage: 0.2, timeline_coverage: 0.2, most_connected: [],
+        entity_page_count: 10, brain_score: 40, dead_links: 2, link_coverage: 0.2, timeline_coverage: 0.2, most_connected: [],
         embed_coverage_score: 10, link_density_score: 5, timeline_coverage_score: 3, no_orphans_score: 2, no_dead_links_score: 8,
       }),
     },

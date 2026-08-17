@@ -78,9 +78,18 @@ function makeAdapter(name: HarnessName): HarnessAdapter {
 
 const SEAM: Record<HarnessName, 'production' | 'contract'> = {
   openclaw: 'production',
-  'claude-code': 'contract',
+  // v0.46.15 (TODOS:556 P1): the claude-code row now drives the REAL
+  // UserPromptSubmit hook over the real IPC socket — see the adapter header.
+  'claude-code': 'production',
   codex: 'contract',
 };
+
+/** The SEAM map and the adapters' own seam fields must agree — pinned by
+ * test/brainbench-adapters.test.ts (outside-voice F4: the scoreboard reads
+ * THIS map, so a flipped adapter field alone changes nothing). */
+export function seamFor(name: HarnessName): 'production' | 'contract' {
+  return SEAM[name];
+}
 
 function adapterView(lf: LoadedFixture): AdapterFixtureView {
   return {
@@ -175,6 +184,28 @@ export async function runBrainBench(
   const turnRows: TurnRow[] = [];
   const seedFailures: Array<{ fixture_id: string; error: string }> = [];
 
+  // v0.46.15 (F4/R2-5): ONE adapter per harness per RUN, torn down in the
+  // finally — a production seam owns long-lived infrastructure (the
+  // claude-code IPC server) across fixtures instead of paying per-fixture
+  // setup (the ~15s gate stays fast). setupRun is LAZY on first replay
+  // (codex ship-review): a `--suite write-back` run replays nothing, so it
+  // must not require the IPC substrate; and a setup that only happens inside
+  // the try below can never leak a live socket server past the finally.
+  // Input dedupe: a duplicated harness name would construct two instances
+  // and orphan the first (Map overwrite).
+  const harnessList = [...new Set(opts.harnesses)];
+  const adapters = new Map<HarnessName, HarnessAdapter>();
+  for (const h of harnessList) adapters.set(h, makeAdapter(h));
+  const setUp = new Set<HarnessName>();
+  const adapterFor = async (h: HarnessName): Promise<HarnessAdapter> => {
+    const a = adapters.get(h)!;
+    if (!setUp.has(h)) {
+      setUp.add(h); // before the await — teardown must cover a FAILED setup too
+      await a.setupRun?.();
+    }
+    return a;
+  };
+
   const wantedSuites = new Set(opts.suites);
   const eligible = corpus.fixtures.filter((lf) => {
     if (lf.fixture.holdout && !opts.includeHoldout) return false;
@@ -236,8 +267,8 @@ export async function runBrainBench(
         (s): s is BrainBenchSuite => (s === 'know-to-ask' || s === 'push') && wantedSuites.has(s),
       );
       if (retrievalSuites.length > 0) {
-        for (const harness of opts.harnesses) {
-          const adapter = makeAdapter(harness);
+        for (const harness of harnessList) {
+          const adapter = await adapterFor(harness);
           const rows = await replayFixture(engine, adapter, lf, seed, retrievalSuites);
           turnRows.push(...rows);
         }
@@ -315,8 +346,8 @@ export async function runBrainBench(
       }
 
       // Every requested harness reads the SAME persisted state (read-only).
-      for (const readerHarness of opts.harnesses) {
-        const readerAdapter = makeAdapter(readerHarness);
+      for (const readerHarness of harnessList) {
+        const readerAdapter = await adapterFor(readerHarness);
         const readerRows = await replayFixture(engine, readerAdapter, reader, mergedSeed, ['continuity']);
         turnRows.push(...readerRows);
 
@@ -334,12 +365,19 @@ export async function runBrainBench(
       }
     }
   } finally {
+    for (const a of adapters.values()) {
+      try {
+        await a.teardownRun?.();
+      } catch {
+        /* teardown is best-effort — a leaked temp dir must not fail the run */
+      }
+    }
     await engine.disconnect();
   }
 
   // ---- assemble cells ----
   const cells: SuiteMetrics[] = [];
-  for (const harness of opts.harnesses) {
+  for (const harness of harnessList) {
     for (const suite of opts.suites) {
       const cell = assembleCell(harness, suite, turnRows, writeBackAgg, continuityByReader, opts.llm);
       if (cell) cells.push(cell);

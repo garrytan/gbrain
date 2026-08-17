@@ -775,13 +775,14 @@ CREATE INDEX IF NOT EXISTS context_volunteer_events_src_slug_idx
 -- runtime. Key (source_id, client_id, session_id); client_id 'local' sentinel
 -- for CLI/hook, remote auth client id otherwise. jsonb DDL-literal defaults.
 CREATE TABLE IF NOT EXISTS session_context_state (
-  source_id         TEXT NOT NULL,
-  client_id         TEXT NOT NULL DEFAULT 'local',
-  session_id        TEXT NOT NULL,
-  standing_entities JSONB NOT NULL DEFAULT '[]'::jsonb,
-  surfaced_slugs    JSONB NOT NULL DEFAULT '[]'::jsonb,
-  last_wake_at      TIMESTAMPTZ,
-  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  source_id           TEXT NOT NULL,
+  client_id           TEXT NOT NULL DEFAULT 'local',
+  session_id          TEXT NOT NULL,
+  standing_entities   JSONB NOT NULL DEFAULT '[]'::jsonb,
+  surfaced_slugs      JSONB NOT NULL DEFAULT '[]'::jsonb,
+  checkpoint_manifest JSONB NOT NULL DEFAULT '[]'::jsonb,
+  last_wake_at        TIMESTAMPTZ,
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (source_id, client_id, session_id)
 );
 CREATE INDEX IF NOT EXISTS session_context_state_updated_idx
@@ -1066,6 +1067,14 @@ CREATE INDEX IF NOT EXISTS idx_subagent_messages_provider ON subagent_messages (
 -- Two-phase tool execution ledger. Before tool call: INSERT status='pending'.
 -- After success: UPDATE to 'complete' + output. On failure: 'failed' + error.
 -- Replay re-runs 'pending' rows only if the tool is idempotent.
+--
+-- tool_use_id holds the RAW provider id and is deliberately NOT unique per
+-- job (#4155): replay-style providers (claude-cli spawns a fresh subprocess
+-- per turn from an id-stripped transcript) reuse the same short id on every
+-- turn. Row identity is (job_id, message_idx, ordinal); readers that resolve
+-- a tool_use block to its execution row must key by (message_idx, tool_use_id),
+-- never by tool_use_id alone. The former job-wide unique constraint
+-- uniq_subagent_tools_use_id was dropped in migration v131.
 CREATE TABLE IF NOT EXISTS subagent_tool_executions (
   id                  BIGSERIAL PRIMARY KEY,
   job_id              BIGINT      NOT NULL REFERENCES minion_jobs(id) ON DELETE CASCADE,
@@ -1088,7 +1097,6 @@ CREATE TABLE IF NOT EXISTS subagent_tool_executions (
   gbrain_tool_use_id  UUID,
   started_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
   ended_at            TIMESTAMPTZ,
-  CONSTRAINT uniq_subagent_tools_use_id UNIQUE (job_id, tool_use_id),
   CONSTRAINT subagent_tool_executions_stable_id UNIQUE (job_id, message_idx, ordinal),
   CONSTRAINT chk_subagent_tools_status CHECK (status IN ('pending','complete','failed'))
 );

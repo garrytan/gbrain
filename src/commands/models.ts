@@ -578,13 +578,43 @@ export async function probeEmbeddingReachability(deps: ProbeDeps = {}): Promise<
   }
 }
 
+/**
+ * Resolve the chat/expansion probe timeout: the recipe's declared
+ * `touchpoints.<kind>.default_timeout_ms` when set, else the probe's
+ * historical flat 5000ms.
+ *
+ * Pre-fix `probeModel` hardcoded 5000ms for every provider. That's fine for
+ * a plain network round-trip, but `claude-cli:` dispatches through a
+ * `claude -p (print mode)` subprocess (CLI cold start + user-level CLAUDE.md load),
+ * which routinely takes 5-6s even when healthy — so the probe aborted on
+ * every run and reported 'unknown — claude-cli adapter aborted', not
+ * because the model was actually unreachable. Mirrors the reranker probe's
+ * recipe-default fallback (`resolveLiveRerankerTimeoutMs` / mode.ts), but
+ * simpler: unlike `search.reranker.timeout_ms`, there's no config-key
+ * override for chat/expansion timeouts, so the chain is just per-call
+ * default (5000) unless the recipe overrides it.
+ */
+/** Historical flat probe timeout — right for fast HTTP providers; recipes override via default_timeout_ms. */
+const DEFAULT_PROBE_TIMEOUT_MS = 5000;
+
+export async function resolveChatProbeTimeoutMs(modelStr: string, touchpoint: 'chat' | 'expansion'): Promise<number> {
+  try {
+    const { resolveRecipe } = await import('../core/ai/model-resolver.ts');
+    const { recipe } = resolveRecipe(modelStr);
+    return recipe.touchpoints[touchpoint]?.default_timeout_ms ?? DEFAULT_PROBE_TIMEOUT_MS;
+  } catch {
+    return DEFAULT_PROBE_TIMEOUT_MS;
+  }
+}
+
 export async function probeModel(modelStr: string, touchpoint: 'chat' | 'expansion', deps: ProbeDeps = {}): Promise<ProbeResult> {
   const start = Date.now();
+  const probeTimeoutMs = await resolveChatProbeTimeoutMs(modelStr, touchpoint);
   try {
     const chat = deps.chat ?? (await import('../core/ai/gateway.ts')).chat;
-    // Use AbortController so the 5s timeout doesn't hang on a stuck network.
+    // Use AbortController so the resolved timeout doesn't hang on a stuck network.
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(new Error('probe timed out after 5s')), 5000);
+    const timeoutId = setTimeout(() => controller.abort(new Error(`probe timed out after ${probeTimeoutMs}ms`)), probeTimeoutMs);
     try {
       await chat({
         model: modelStr,

@@ -357,6 +357,7 @@ export async function disconnect(): Promise<void> {
 export async function initSchema(): Promise<void> {
   const conn = getConnection();
   // Advisory lock prevents concurrent initSchema() calls from deadlocking
+  // Lock-census (PR6 D5): INTENTIONALLY brain-global (session lock, fixed key 42) — schema replay mutates the whole database, not one source.
   await conn`SELECT pg_advisory_lock(42)`;
   try {
     await conn.unsafe(SCHEMA_SQL);

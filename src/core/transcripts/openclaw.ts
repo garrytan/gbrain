@@ -44,6 +44,64 @@ export function isOpenclawCheckpointFile(path: string): boolean {
   return CHECKPOINT_RE.test(path);
 }
 
+/**
+ * One parsed openclaw session line, classified (cathedral-5). Exported so the
+ * compaction-boundary tail reader (corpus-segments) reuses the SAME
+ * line→message mapping as the import adapter — the dated SPEC_TARGET above
+ * stays the single source of truth for the format. `boundary` is a
+ * {type:'compaction'} line (excluded from messages, positions recorded by
+ * boundary-aware callers); `session` is the header line; `skip` covers
+ * model_change / thinking_level_change / custom / non-text / malformed.
+ */
+export type OpenclawLineResult =
+  | { kind: 'message'; message: TranscriptMessage }
+  | { kind: 'boundary' }
+  | { kind: 'session'; id?: string; cwd?: string; startedAt?: string }
+  | { kind: 'skip' };
+
+/** Map one ALREADY-JSON-PARSED openclaw session line. */
+export function mapOpenclawLine(entry: unknown): OpenclawLineResult {
+  if (typeof entry !== 'object' || entry === null) return { kind: 'skip' };
+  const e = entry as Record<string, unknown>;
+  if (e.type === 'session') {
+    return {
+      kind: 'session',
+      id: typeof e.id === 'string' ? e.id : undefined,
+      cwd: typeof e.cwd === 'string' ? e.cwd : undefined,
+      startedAt: typeof e.timestamp === 'string' ? e.timestamp : undefined,
+    };
+  }
+  if (e.type === 'compaction') return { kind: 'boundary' };
+  if (e.type !== 'message') return { kind: 'skip' }; // model_change / custom / …
+  const msg = e.message;
+  if (typeof msg !== 'object' || msg === null) return { kind: 'skip' };
+  const m = msg as Record<string, unknown>;
+  const role = m.role === 'user' || m.role === 'assistant' ? m.role : null;
+  if (!role) return { kind: 'skip' };
+  const content = m.content;
+  let text = '';
+  if (typeof content === 'string') {
+    text = content;
+  } else if (Array.isArray(content)) {
+    const parts: string[] = [];
+    for (const block of content) {
+      if (typeof block !== 'object' || block === null) continue;
+      const b = block as Record<string, unknown>;
+      if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) parts.push(b.text);
+    }
+    text = parts.join('\n');
+  }
+  text = text.trim();
+  if (!text) return { kind: 'skip' };
+  const timestamp =
+    typeof m.timestamp === 'string' && m.timestamp
+      ? m.timestamp
+      : typeof e.timestamp === 'string'
+        ? e.timestamp
+        : '';
+  return { kind: 'message', message: { role, timestamp, text } };
+}
+
 export const openclawAdapter: TranscriptAdapter = {
   format: 'openclaw',
   specTarget: OPENCLAW_SPEC_TARGET,
@@ -83,42 +141,15 @@ export const openclawAdapter: TranscriptAdapter = {
         skippedLines++;
         continue;
       }
-      if (typeof entry !== 'object' || entry === null) continue;
-      const e = entry as Record<string, unknown>;
-      if (e.type === 'session') {
-        if (typeof e.id === 'string') sessionId = e.id;
-        if (typeof e.cwd === 'string') cwd = e.cwd;
-        if (typeof e.timestamp === 'string') startedAt = e.timestamp;
+      const mapped = mapOpenclawLine(entry);
+      if (mapped.kind === 'session') {
+        if (mapped.id) sessionId = mapped.id;
+        if (mapped.cwd) cwd = mapped.cwd;
+        if (mapped.startedAt) startedAt = mapped.startedAt;
         continue;
       }
-      if (e.type !== 'message') continue; // model_change / custom / compaction
-      const msg = e.message;
-      if (typeof msg !== 'object' || msg === null) continue;
-      const m = msg as Record<string, unknown>;
-      const role = m.role === 'user' || m.role === 'assistant' ? m.role : null;
-      if (!role) continue;
-      const content = m.content;
-      let text = '';
-      if (typeof content === 'string') {
-        text = content;
-      } else if (Array.isArray(content)) {
-        const parts: string[] = [];
-        for (const block of content) {
-          if (typeof block !== 'object' || block === null) continue;
-          const b = block as Record<string, unknown>;
-          if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) parts.push(b.text);
-        }
-        text = parts.join('\n');
-      }
-      text = text.trim();
-      if (!text) continue;
-      const timestamp =
-        typeof m.timestamp === 'string' && m.timestamp
-          ? m.timestamp
-          : typeof e.timestamp === 'string'
-            ? e.timestamp
-            : '';
-      messages.push({ role, timestamp, text });
+      if (mapped.kind !== 'message') continue; // boundary / model_change / custom
+      messages.push(mapped.message);
     }
 
     let sessions = 0;

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "fixtures_hash": "76f201590dd3ad7a929e2e12efc9bf1406627b10ef4edbcfe7caf379aafd4090",
+  "fixtures_hash": "509fd20d7cda693350030393b6d54154e2685516d30f017ca219bd25e92c0e57",
   "config": {
     "include_holdout": false,
     "llm": false,
@@ -16,22 +16,23 @@
       "write-back"
     ]
   },
+  "justification": "Identity-resolution wave (lowercase-alias + surname lexical arms) + claude-code production seam, re-banked after merging master's expanded fixture corpus (v0.46.12.3–v0.46.14.0 waves): kta 0.1452→0 on all three harnesses, push_recall 0.8125/0.6667/0.4583→0.9063/1.0/0.5521 on the 96-gold corpus.",
   "cells": {
     "claude-code/continuity": {
-      "avg_injected_tokens": 75.3333,
+      "avg_injected_tokens": 59.9167,
       "continuity_rate": 1,
       "source_isolation_violations": 0
     },
     "claude-code/know-to-ask": {
-      "avg_injected_tokens": 30.9247,
-      "false_fire_rate": 0.0233,
-      "know_to_ask_failure_rate": 0.15,
+      "avg_injected_tokens": 37.8389,
+      "false_fire_rate": 0,
+      "know_to_ask_failure_rate": 0,
       "source_isolation_violations": 0
     },
     "claude-code/push": {
-      "avg_injected_tokens": 38.8077,
+      "avg_injected_tokens": 50.1963,
       "push_precision": 1,
-      "push_recall": 0.6596,
+      "push_recall": 1,
       "source_isolation_violations": 0
     },
     "claude-code/write-back": {
@@ -44,15 +45,15 @@
       "source_isolation_violations": 0
     },
     "codex/know-to-ask": {
-      "avg_injected_tokens": 40.7123,
+      "avg_injected_tokens": 45.2215,
       "false_fire_rate": 0,
-      "know_to_ask_failure_rate": 0.15,
+      "know_to_ask_failure_rate": 0,
       "source_isolation_violations": 0
     },
     "codex/push": {
-      "avg_injected_tokens": 48.5865,
+      "avg_injected_tokens": 54.6449,
       "push_precision": 1,
-      "push_recall": 0.4468,
+      "push_recall": 0.5521,
       "source_isolation_violations": 0
     },
     "codex/write-back": {
@@ -65,15 +66,15 @@
       "source_isolation_violations": 0
     },
     "openclaw/know-to-ask": {
-      "avg_injected_tokens": 33.7945,
+      "avg_injected_tokens": 38.2752,
       "false_fire_rate": 0,
-      "know_to_ask_failure_rate": 0.15,
+      "know_to_ask_failure_rate": 0,
       "source_isolation_violations": 0
     },
     "openclaw/push": {
-      "avg_injected_tokens": 44.1346,
+      "avg_injected_tokens": 50.0841,
       "push_precision": 1,
-      "push_recall": 0.8085,
+      "push_recall": 0.9063,
       "source_isolation_violations": 0
     },
     "openclaw/write-back": {
@@ -87,12 +88,12 @@
       "gold_failed": 0
     },
     "claude-code/know-to-ask": {
-      "gold_total": 146,
-      "gold_failed": 11
+      "gold_total": 149,
+      "gold_failed": 0
     },
     "claude-code/push": {
-      "gold_total": 94,
-      "gold_failed": 32
+      "gold_total": 96,
+      "gold_failed": 0
     },
     "claude-code/write-back": {
       "gold_total": 58,
@@ -103,12 +104,12 @@
       "gold_failed": 0
     },
     "codex/know-to-ask": {
-      "gold_total": 146,
-      "gold_failed": 9
+      "gold_total": 149,
+      "gold_failed": 0
     },
     "codex/push": {
-      "gold_total": 94,
-      "gold_failed": 52
+      "gold_total": 96,
+      "gold_failed": 43
     },
     "codex/write-back": {
       "gold_total": 58,
@@ -119,12 +120,12 @@
       "gold_failed": 0
     },
     "openclaw/know-to-ask": {
-      "gold_total": 146,
-      "gold_failed": 9
+      "gold_total": 149,
+      "gold_failed": 0
     },
     "openclaw/push": {
-      "gold_total": 94,
-      "gold_failed": 18
+      "gold_total": 96,
+      "gold_failed": 9
     },
     "openclaw/write-back": {
       "gold_total": 58,

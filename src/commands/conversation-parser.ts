@@ -187,6 +187,7 @@ async function runScan(
           message_count: result.messages.length,
           unmatched_line_count: result.unmatched_line_count,
           timezone_warning: result.timezone_warning,
+          unrecognized_headings: result.unrecognized_headings,
           first_3_messages: result.messages.slice(0, 3).map((m) => ({
             speaker: m.speaker,
             timestamp: m.timestamp,
@@ -211,6 +212,9 @@ async function runScan(
         : '') +
       (result.timezone_warning
         ? `  timezone_warning: ${result.timezone_warning}\n`
+        : '') +
+      (result.unrecognized_headings
+        ? `  unrecognized_headings: [${result.unrecognized_headings.join(', ')}] — folded into the previous turn; speaker attribution may be wrong (#4136)\n`
         : ''),
   );
   if (result.messages.length > 0) {

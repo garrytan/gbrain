@@ -23,6 +23,7 @@ export type Family =
   | 'multi-chunk-dilution'
   | 'short-vs-rich'
   | 'graph-relationship'
+  | 'concept-paraphrase'
   | 'hard-negative';
 
 export interface NamedThingQuestion {
@@ -160,7 +161,7 @@ export const DEFAULT_GATE: GateOpts = {
     'multi-chunk-dilution': { hit_at_3: floorEnv('GBRAIN_NTB_DILUTION_HIT3', 1.0) },
     'alias-synonym': { hit_at_1: floorEnv('GBRAIN_NTB_ALIAS_HIT1', 0.98) },
   },
-  softFamilies: ['generic-to-named', 'short-vs-rich', 'graph-relationship', 'hard-negative'],
+  softFamilies: ['generic-to-named', 'short-vs-rich', 'graph-relationship', 'concept-paraphrase', 'hard-negative'],
 };
 
 function floorEnv(name: string, dflt: number): number {

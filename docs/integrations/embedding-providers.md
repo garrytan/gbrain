@@ -25,7 +25,7 @@ The resolved provider + dimensions get persisted to `~/.gbrain/config.json` atom
 |---|---|---|---|---|---|
 | `voyage` (**default** — `voyage-4` @ 1024d; `rerank-2.5` reranker on the same key) | `VOYAGE_API_KEY` | 1024 | 0.06 (`voyage-4`) | no | yes (`voyage-multimodal-3`) |
 | `openai` | `OPENAI_API_KEY` | 1536 | 0.13 | no | no |
-| `openrouter` | `OPENROUTER_API_KEY` | 1536 | 0.02 | no | model-dependent |
+| `openrouter` | `OPENROUTER_API_KEY` | per-model (1536 for the default `openai/text-embedding-3-small`; unlisted ids require explicit dims) | 0.02 | no | model-dependent |
 | `zeroentropyai` — **DEPRECATED** (hosted API **shuts down 2026-09-04**; replacement `voyage:voyage-4` — see note below) | `ZEROENTROPY_API_KEY` | 2560 (Matryoshka to 1280/640/320/...) | 0.05 | no | no |
 | `google` | `GOOGLE_GENERATIVE_AI_API_KEY` | 768 | 0.025 | no | no |
 | `azure-openai` | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT` | 1536 | 0.13 | no | no |
@@ -112,7 +112,7 @@ For GCP service-account / Vertex AI auth (production deployments), see the v0.32
 
 Single OpenAI-compatible API for fan-out to OpenAI, Anthropic, Google, DeepSeek, Meta Llama, Qwen, and dozens of other hosted providers. One key, many models. Set `OPENROUTER_API_KEY` or `openrouter_api_key` in `~/.gbrain/config.json`, then use `openrouter:<provider>/<model>` (e.g. `openrouter:openai/gpt-5.2`, `openrouter:anthropic/claude-sonnet-4.6`).
 
-**Embedding**: `openai/text-embedding-3-small` (1536d default, Matryoshka shrink to 512/768/1024). OR's embedding catalog also includes `text-embedding-3-large`, `google/gemini-embedding-2-preview`, `qwen/qwen3-embedding-8b`, `bge-m3` — opt in via `--embedding-model openrouter:<id>`. Pricing matches the upstream provider (OR adds a small markup).
+**Embedding**: `openai/text-embedding-3-small` (1536d default, Matryoshka shrink to 512/768/1024). The recipe carries verified per-model native dims for its catalog — `openai/text-embedding-3-large` (3072), `qwen/qwen3-embedding-8b` (4096), `bge-m3` (1024) — so opting in via `--embedding-model openrouter:<id>` plans the right column width automatically. Any id NOT in that list (including `google/gemini-embedding-2-preview`, whose width is unverified) has no silent default: you must pass explicit dimensions (`--embedding-dimensions <N>` or `embedding_dimensions` config) or the command errors with the fix. Pricing matches the upstream provider (OR adds a small markup).
 
 **Chat**: every chat model OR proxies works through `/v1/chat/completions`. The recipe lists 8 curated entry points (GPT-5.2 family, Claude 4.5/4.6/4.7, Gemini 3 Flash Preview, DeepSeek); any other OR catalog ID also works. Tool-calling envelope is supported by the OR endpoint, but per-model capability varies — check https://openrouter.ai/models before counting on tools for a specific slug.
 

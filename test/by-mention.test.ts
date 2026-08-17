@@ -648,6 +648,75 @@ describe('buildGazetteer — engine integration', () => {
     expect(g.get('apple')![0]!.slug).toBe('companies/apple');
   });
 
+  test('alias entries (v0.46.15, #3801): page_aliases become gazetteer entries', async () => {
+    await engine.putPage('people/saoirse-x', {
+      type: 'person', title: 'Saoirse Example', compiled_truth: 'b', timeline: '', frontmatter: {},
+    });
+    await engine.setPageAliases('people/saoirse-x', 'default', ['saoirse']);
+    const g = await buildGazetteer(engine);
+    const bucket = g.get('saoirse');
+    expect(bucket).toBeDefined();
+    expect(bucket!.some((e) => e.slug === 'people/saoirse-x')).toBe(true);
+  });
+
+  test('REGRESSION (v0.46.15): ignore-list rejects ALIAS entries case-insensitively; CK12 title behavior unchanged', async () => {
+    // Title side (unchanged CK12 policy): a real page titled "Apple" stays.
+    await engine.putPage('companies/apple', {
+      type: 'company', title: 'Apple', compiled_truth: 'b', timeline: '', frontmatter: {},
+    });
+    // Alias side (new teeth): an alias "apple" on an unrelated page is
+    // suppressed — aliases are not user-created pages; the cased ignore list
+    // must match the normalized-lowercase alias store.
+    await engine.putPage('people/annie-p', {
+      type: 'person', title: 'Annie P Example', compiled_truth: 'b', timeline: '', frontmatter: {},
+    });
+    await engine.setPageAliases('people/annie-p', 'default', ['apple']);
+    const g = await buildGazetteer(engine);
+    const bucket = g.get('apple') ?? [];
+    expect(bucket.some((e) => e.slug === 'companies/apple')).toBe(true); // title entry survives
+    expect(bucket.some((e) => e.slug === 'people/annie-p')).toBe(false); // alias entry rejected
+  });
+
+  test('alias entries: ambiguous alias (two slugs, same source) is skipped', async () => {
+    await engine.putPage('people/sable-one', {
+      type: 'person', title: 'Sable One Example', compiled_truth: 'b', timeline: '', frontmatter: {},
+    });
+    await engine.putPage('people/sable-two', {
+      type: 'person', title: 'Sable Two Example', compiled_truth: 'b', timeline: '', frontmatter: {},
+    });
+    await engine.setPageAliases('people/sable-one', 'default', ['sable']);
+    await engine.setPageAliases('people/sable-two', 'default', ['sable']);
+    const g = await buildGazetteer(engine);
+    // Title entries ("Sable One Example" etc.) legitimately share the key —
+    // the ALIAS-shaped entries (single-token) must be absent.
+    expect((g.get('sable') ?? []).filter((e) => e.tokens.length === 1)).toHaveLength(0);
+  });
+
+  test('alias entries: alias colliding with an existing page TITLE in the same source is skipped', async () => {
+    await engine.putPage('companies/acme-corp', {
+      type: 'company', title: 'Acme', compiled_truth: 'b', timeline: '', frontmatter: {},
+    });
+    await engine.putPage('people/andy-c', {
+      type: 'person', title: 'Andy C Example', compiled_truth: 'b', timeline: '', frontmatter: {},
+    });
+    await engine.setPageAliases('people/andy-c', 'default', ['acme']);
+    const g = await buildGazetteer(engine);
+    const bucket = g.get('acme') ?? [];
+    expect(bucket.some((e) => e.slug === 'companies/acme-corp')).toBe(true);
+    expect(bucket.some((e) => e.slug === 'people/andy-c')).toBe(false);
+  });
+
+  test('alias entries: sub-MIN_NAME_LENGTH aliases are skipped', async () => {
+    await engine.putPage('people/jt-example', {
+      type: 'person', title: 'JT Example Person', compiled_truth: 'b', timeline: '', frontmatter: {},
+    });
+    await engine.setPageAliases('people/jt-example', 'default', ['jt']);
+    const g = await buildGazetteer(engine);
+    // The multi-token TITLE entry may share the key; the single-token alias
+    // entry ('jt' < MIN_NAME_LENGTH) must be absent.
+    expect((g.get('jt') ?? []).filter((e) => e.tokens.length === 1)).toHaveLength(0);
+  });
+
   test('13. all entity pages soft-deleted → empty gazetteer', async () => {
     await engine.putPage('people/alice', {
       type: 'person', title: 'Alice Example', compiled_truth: 'b', timeline: '', frontmatter: {},

@@ -29,6 +29,12 @@ const HELP_WITHOUT_BRAIN = [
   'jobs',
   // #4152: dream answers --help (and the retriage subverb help) engine-free.
   'dream',
+  // cathedral-5: runCompileContext honours help before reading the engine
+  // (SELF_HELP_WITHOUT_ENGINE loader, same shape as dream/jobs).
+  'compile-context',
+  'sources',
+  // cathedral-6: agent answers --help (incl. `register --help`) engine-free.
+  'agent',
   // ZE interim cleanup: the retired ze-switch shim answers --help engine-free
   // (truthful sunset copy + the canonical migration command).
   'ze-switch',
@@ -78,6 +84,26 @@ async function runHelp(command: string): Promise<{ code: number; out: string }> 
 }
 
 describe('--help without a configured brain', () => {
+  // cathedral-6: the register SUBCOMMAND help must also answer brainless —
+  // the whole point of the SELF_HELP_WITHOUT_ENGINE entry is that a reader on
+  // a fresh machine can discover the mint flow before they have a brain.
+  test('agent register --help answers with real help', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-nobrain-'));
+    const env: Record<string, string | undefined> = { ...process.env, GBRAIN_HOME: home };
+    delete env.GBRAIN_DATABASE_URL;
+    delete env.DATABASE_URL;
+    const proc = Bun.spawn(['bun', '--no-env-file', 'run', 'src/cli.ts', 'agent', 'register', '--help'], {
+      cwd: REPO, env, stdout: 'pipe', stderr: 'pipe',
+    });
+    const [stdout, stderr] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    const code = await proc.exited;
+    expect(code).toBe(0);
+    expect(stdout + stderr).toContain('--preset daily-driver|coding-agent');
+  }, 30_000);
+
   for (const command of HELP_WITHOUT_BRAIN) {
     test(`${command} --help answers`, async () => {
       const { code, out } = await runHelp(command);

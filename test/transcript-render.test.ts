@@ -62,6 +62,25 @@ describe('render round-trip through the SHARED imessage-slack pattern', () => {
     expect(body).toContain('(2026-08-02 9:30 PM)');
   });
 
+  test('multi-line coding turns remain parseable below the ordinary density floor', () => {
+    const longUserTurn = Array.from({ length: 40 }, (_, i) => `user line ${i}`).join('\n');
+    const longAssistantTurn = Array.from({ length: 40 }, (_, i) => `assistant line ${i}`).join('\n');
+    const sparse = session([
+      { role: 'user', timestamp: '2026-08-02T09:00:03.000Z', text: longUserTurn },
+      { role: 'assistant', timestamp: '2026-08-02T09:00:04.000Z', text: longAssistantTurn },
+    ]);
+
+    const rendered = renderSessionParts(
+      redactSession(sparse, { userPatternsPath: '/nonexistent' }),
+    );
+    const parsed = parseConversation(splitBody(rendered.parts[0].content));
+
+    expect(parsed.matched_pattern_id).toBe('imessage-slack');
+    expect(parsed.messages).toHaveLength(2);
+    expect(parsed.messages[0].text).toContain('user line 39');
+    expect(parsed.messages[1].text).toContain('assistant line 39');
+  });
+
   test('frontmatter is mandatory-complete: type, date, unique per-part id, marker', () => {
     const r = renderSessionParts(redactSession(BASIC, { userPatternsPath: '/nonexistent' }));
     const fm = frontmatter(r.parts[0].content);

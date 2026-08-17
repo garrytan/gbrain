@@ -6,6 +6,9 @@
  */
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
+// Leaf module (no flag surface of its own) — see that file for why this
+// isn't imported from extract-conversation-facts.ts directly (#4135).
+import { ALLOWED_TYPES } from '../../../core/facts/conversation-types.ts';
 
 /**
  * v0.32.3 [CDX-20]: surface mode + per-key override drift.
@@ -475,7 +478,9 @@ export async function computeConversationFactsBacklogCheck(
     const typesRaw = await engine.getConfig(
       'cycle.conversation_facts_backfill.types',
     );
-    let types = ['conversation', 'meeting', 'slack', 'email', 'imessage', 'imessage-daily'];
+    // Default mirrors ALLOWED_TYPES — the single source of truth for the
+    // conversation-facts type allowlist (#4135).
+    let types: string[] = [...ALLOWED_TYPES];
     if (typesRaw) {
       try {
         const parsed = JSON.parse(typesRaw);

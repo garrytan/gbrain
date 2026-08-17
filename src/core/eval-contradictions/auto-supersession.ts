@@ -89,8 +89,16 @@ export function classifyResolution(
     if (pair.a.take_id !== null) return 'takes_supersede';
     return 'manual_review';
   }
-  if (judgeHint === 'dream_synthesize' || judgeHint === 'takes_mark_debate') {
+  if (judgeHint === 'dream_synthesize') {
     return judgeHint;
+  }
+  // gbrain#4169: `takes mark-debate` is documented but NOT implemented (the
+  // CLI dispatch falls through to the list path and treats "mark-debate" as
+  // a slug — tracked with #4102). Minting the kind would lie to JSON
+  // consumers about an available action; route to manual_review until the
+  // subcommand exists. The enum member stays for legacy stored rows.
+  if (judgeHint === 'takes_mark_debate') {
+    return 'manual_review';
   }
   if (judgeHint === 'takes_supersede' || judgeHint === 'manual_review') {
     return judgeHint;
@@ -99,6 +107,18 @@ export function classifyResolution(
     return 'dream_synthesize';
   }
   return 'manual_review';
+}
+
+/**
+ * POSIX single-quote escaping for untrusted text (claim text AND slugs)
+ * rendered into a paste-ready command (gbrain#4169): wrap in single quotes;
+ * embedded single quotes become the `'\''` splice. Newlines collapse to
+ * spaces — a resolution command is one line by contract. Slugs are quoted
+ * too: validateSlug leaves shell metacharacters unblocked and remote MCP
+ * writers can mint slugs, so an unquoted slug reaches the operator's shell.
+ */
+function shellQuote(s: string): string {
+  return `'${s.replace(/\s+/g, ' ').trim().replace(/'/g, `'\\''`)}'`;
 }
 
 /**
@@ -111,21 +131,30 @@ export function renderResolutionCommand(
 ): string {
   switch (kind) {
     case 'takes_supersede': {
-      // Prefer the slug of the take side (intra_page) or the curated side.
+      // gbrain#4169: --row takes the PER-PAGE row_num (take_id is the global
+      // PK and never resolves), and `takes supersede` REQUIRES --claim — the
+      // replacement text. classifyResolution picks an ACTION, not a winner:
+      // in a chunk-vs-take pair the chunk side is arbitrary prose, so
+      // auto-filling --claim from it would fabricate a take. Render the
+      // correctly-addressed command with an explicit placeholder the
+      // operator fills in.
       const takeSide = pair.b.take_id !== null ? pair.b : (pair.a.take_id !== null ? pair.a : pair.a);
-      const takeId = takeSide.take_id ?? '<row>';
-      return `gbrain takes supersede ${takeSide.slug} --row ${takeId}`;
+      const rowNum = takeSide.take_row_num ?? '<row>';
+      return `gbrain takes supersede ${shellQuote(takeSide.slug)} --row ${rowNum} --claim '<replacement claim — see contradiction report>'`;
     }
     case 'dream_synthesize': {
       const curatedSide = isCuratedEntitySlug(pair.a.slug)
         ? pair.a
         : (isCuratedEntitySlug(pair.b.slug) ? pair.b : pair.a);
-      return `gbrain dream --phase synthesize --slug ${curatedSide.slug}`;
+      return `gbrain dream --phase synthesize --slug ${shellQuote(curatedSide.slug)}`;
     }
     case 'takes_mark_debate': {
+      // gbrain#4169: this subcommand does not exist (tracked with #4102) —
+      // new classifications route to manual_review; this branch only renders
+      // for LEGACY stored rows, and must not emit a command that fails.
       const takeSide = pair.b.take_id !== null ? pair.b : (pair.a.take_id !== null ? pair.a : pair.a);
-      const takeId = takeSide.take_id ?? '<row>';
-      return `gbrain takes mark-debate ${takeSide.slug} --row ${takeId}`;
+      const rowNum = takeSide.take_row_num ?? '<row>';
+      return `# manual review: mark-as-debate is not implemented yet (#4102); take at ${takeSide.slug} row ${rowNum}`;
     }
     case 'temporal_supersede': {
       // v0.34 / Lane A2: pick the newer-dated side as the survivor; render a
@@ -136,10 +165,18 @@ export function renderResolutionCommand(
       const bDate = pair.b.effective_date;
       if (aDate && bDate) {
         const olderSide = aDate < bDate ? pair.a : pair.b;
+        const newerSide = aDate < bDate ? pair.b : pair.a;
         const newerDate = aDate < bDate ? bDate : aDate;
-        const olderTakeId = olderSide.take_id;
-        if (olderTakeId !== null) {
-          return `gbrain takes supersede ${olderSide.slug} --row ${olderTakeId} --since ${newerDate}`;
+        if (olderSide.take_id !== null && olderSide.take_row_num !== null) {
+          // gbrain#4169: temporal supersession has a REAL winner (the
+          // newer-dated side). When that side is itself a take, its claim is
+          // the unambiguous replacement — paste-ready, shell-escaped. When
+          // the newer side is a chunk, its text is arbitrary prose:
+          // correctly-addressed command with an explicit placeholder.
+          const claim = newerSide.take_id !== null
+            ? shellQuote(newerSide.text)
+            : `'<replacement claim — see contradiction report>'`;
+          return `gbrain takes supersede ${shellQuote(olderSide.slug)} --row ${olderSide.take_row_num} --claim ${claim} --since ${newerDate}`;
         }
         return `# temporal_supersession: ${olderSide.slug} (${aDate < bDate ? aDate : bDate}) superseded by ${newerDate}`;
       }

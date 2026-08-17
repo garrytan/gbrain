@@ -25,7 +25,7 @@
  * profiles per source for the same holder.
  */
 
-import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
+import { BaseCyclePhase, effectivePhaseDeadlineMs, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
 import { resolveOwnerHolder } from '../owner-holder.ts';
 import { chat as gatewayChat, getChatModel } from '../ai/gateway.ts';
 import { gateVoice, type VoiceGateGenerator, type VoiceGateJudge } from '../calibration/voice-gate.ts';
@@ -256,6 +256,24 @@ class CalibrationProfilePhase extends BaseCyclePhase {
       brier: null,
       warnings: [],
     };
+
+    // gbrain#4168: this phase runs last in the calibration trio and makes
+    // 1-2 LLM calls with no interior loop to break out of — so the deadline
+    // check is a pre-flight gate: if the job budget is already inside the
+    // reserve, skip cleanly (the next cycle regenerates from fresher data
+    // anyway) instead of starting an LLM call the worker will kill mid-write.
+    const remainingMs = effectivePhaseDeadlineMs(
+      Number.MAX_SAFE_INTEGER,
+      opts.deadlineAtMs,
+      Date.now(),
+    );
+    if (remainingMs <= 0) {
+      return {
+        summary: 'calibration_profile: skipped — job deadline inside the reserve window',
+        details: { ...result, deadline_hit: true },
+        status: 'warn',
+      };
+    }
 
     // Load the holder's scorecard.
     const scorecard = await engine.getScorecard({ holder }, undefined);

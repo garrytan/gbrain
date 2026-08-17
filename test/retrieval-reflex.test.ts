@@ -14,7 +14,7 @@ import { normalizeAlias } from '../src/core/search/alias-normalize.ts';
 import { resolveEntitiesToPointers } from '../src/core/context/retrieval-reflex.ts';
 import { extractCandidates } from '../src/core/context/entity-salience.ts';
 import { createGBrainContextEngine } from '../src/core/context-engine.ts';
-import { disposeReflex } from '../src/core/context/reflex.ts';
+import { disposeReflex, lexicalArmsEnabled } from '../src/core/context/reflex.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END } from '../src/core/takes-fence.ts';
 
 let engine: PGLiteEngine;
@@ -52,6 +52,109 @@ describe('resolveEntitiesToPointers', () => {
     expect(block!.pointers[0].slug).toBe('people/alice-example');
     expect(block!.text).toContain('people/alice-example');
     expect(block!.text).toContain('use get_page');
+  });
+
+  test('weak-alias arm: a lowercase mention resolves via an exact unique alias (kta-pos variant 3)', async () => {
+    await seed('people/saoirse-x', 'Saoirse X', 'A founder.');
+    await engine.setPageAliases('people/saoirse-x', 'default', [normalizeAlias('saoirse')]);
+    const candidates = extractCandidates('remind me what saoirse said about the round');
+    expect(candidates.some((c) => c.weak)).toBe(true);
+    const block = await resolveEntitiesToPointers(engine, 'default', candidates, {});
+    expect(block).not.toBeNull();
+    expect(block!.pointers).toHaveLength(1); // other lowercase words resolve nothing
+    expect(block!.pointers[0].slug).toBe('people/saoirse-x');
+    expect(block!.pointers[0].arm).toBe('alias');
+  });
+
+  test('kill switch: lexicalArms=false reproduces pre-wave resolution exactly', async () => {
+    await seed('people/saoirse-x', 'Saoirse X', 'A founder.');
+    await seed('people/ronan-galewright', 'Ronan Galewright', 'An investor.');
+    await engine.setPageAliases('people/saoirse-x', 'default', [normalizeAlias('saoirse')]);
+    const weakTurn = extractCandidates('remind me what saoirse said about the round');
+    const surnameTurn = extractCandidates('Did Galewright ever follow up on that intro?');
+    expect(await resolveEntitiesToPointers(engine, 'default', weakTurn, { lexicalArms: false })).toBeNull();
+    expect(await resolveEntitiesToPointers(engine, 'default', surnameTurn, { lexicalArms: false })).toBeNull();
+  });
+
+  test('surname arm: unique person page resolves from a surname-only reference (kta-pos variant 4)', async () => {
+    await seed('people/ronan-galewright', 'Ronan Galewright', 'An investor.');
+    const block = await resolveEntitiesToPointers(
+      engine,
+      'default',
+      extractCandidates('Did Galewright ever follow up on that intro?'),
+      {},
+    );
+    expect(block).not.toBeNull();
+    expect(block!.pointers[0].slug).toBe('people/ronan-galewright');
+    expect(block!.pointers[0].arm).toBe('title-surname');
+    expect(block!.pointers[0].confidence).toBeGreaterThanOrEqual(0.7); // survives the volunteer gate
+    expect(block!.pointers[0].matchedNorm).toBe(normalizeAlias('Galewright'));
+  });
+
+  test('surname arm: ambiguous surname (two people) injects nothing', async () => {
+    await seed('people/ronan-galewright', 'Ronan Galewright', 'An investor.');
+    await seed('people/mira-galewright', 'Mira Galewright', 'A founder.');
+    const block = await resolveEntitiesToPointers(
+      engine,
+      'default',
+      extractCandidates('Did Galewright ever follow up?'),
+      {},
+    );
+    expect(block).toBeNull();
+  });
+
+  test('surname arm: company tails are excluded by the person-type guard', async () => {
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+       VALUES ('companies/acme-labs', 'default', 'company', 'Acme Labs', 'A company.', '')`,
+      [],
+    );
+    const block = await resolveEntitiesToPointers(
+      engine,
+      'default',
+      extractCandidates('Did Labs ever ship it?'),
+      {},
+    );
+    expect(block).toBeNull();
+  });
+
+  test('surname arm: adversarial near-miss stays silent', async () => {
+    await seed('people/elias-marrowfield', 'Elias Marrowfield', 'A founder.');
+    const block = await resolveEntitiesToPointers(
+      engine,
+      'default',
+      extractCandidates('Did Marrowfielder ever reply?'),
+      {},
+    );
+    expect(block).toBeNull();
+  });
+
+  test('weak-alias arm: cross-source ambiguity injects nothing (global uniqueness)', async () => {
+    await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ('other', 'Other') ON CONFLICT DO NOTHING`, []).catch(() => {});
+    await seed('people/saoirse-x', 'Saoirse X', 'A founder.');
+    await seed('people/saoirse-y', 'Saoirse Y', 'Another person.', 'other');
+    await engine.setPageAliases('people/saoirse-x', 'default', [normalizeAlias('saoirse')]);
+    await engine.setPageAliases('people/saoirse-y', 'other', [normalizeAlias('saoirse')]);
+    const block = await resolveEntitiesToPointers(
+      engine,
+      'default',
+      extractCandidates('remind me what saoirse said'),
+      { sourceIds: ['default', 'other'] },
+    );
+    expect(block).toBeNull();
+  });
+
+  test('weak-alias arm: a phantom alias (deleted page) resolves nothing', async () => {
+    await seed('people/ghost-page', 'Ghost Page', 'Gone.');
+    await engine.setPageAliases('people/ghost-page', 'default', [normalizeAlias('ghostly')]);
+    await engine.executeRaw(`UPDATE pages SET deleted_at = now() WHERE slug = 'people/ghost-page'`, []);
+    const block = await resolveEntitiesToPointers(
+      engine,
+      'default',
+      extractCandidates('any update from ghostly today?'),
+      {},
+    );
+    expect(block).toBeNull();
   });
 
   test('alias arm resolves an unambiguous single-slug hit', async () => {
@@ -96,16 +199,11 @@ describe('resolveEntitiesToPointers', () => {
     expect(block!.pointers.length).toBe(2);
   });
 
-  test('pre-v110 brains: alias-table absence does not break the slug arm', async () => {
-    await seed('people/alice-example', 'Alice Example', 'A founder.');
-    // Simulate no page_aliases table.
-    await engine.executeRaw('DROP TABLE IF EXISTS page_aliases');
-    const block = await resolveEntitiesToPointers(engine, 'default', extractCandidates('about Alice Example'), {});
-    expect(block).not.toBeNull();
-    expect(block!.pointers[0].slug).toBe('people/alice-example');
-    // restore for other tests
-    await engine.initSchema();
-  });
+  // The pre-v110 alias-table-absence case lives in its own file
+  // (test/retrieval-reflex-pre-v110.test.ts): it DROPS page_aliases, and
+  // "restoring" via initSchema() is a trap under GBRAIN_PGLITE_SNAPSHOT —
+  // the snapshot fast-path short-circuits initSchema, the table never comes
+  // back, and every later alias test in the sharing file fails with 42P01.
 });
 
 describe('context-engine assemble() — Retrieval Reflex integration', () => {
@@ -152,11 +250,34 @@ describe('context-engine assemble() — Retrieval Reflex integration', () => {
         workspaceDir: '/tmp/rr-test-ws-3',
         resolveEntities: async () => { called = true; return null; },
       });
+      // Re-pinned for the v0.46.15 identity wave: the turn must be GENUINELY
+      // candidate-free (stopwords / sub-3-char tokens only) — lowercase words
+      // like "help" are now WEAK candidates and legitimately reach the
+      // resolver's alias arm.
       const res = await ce.assemble({
         sessionId: 's3',
-        messages: [{ role: 'user', content: 'can you help me with this?' }],
+        messages: [{ role: 'user', content: 'can you do it?' }],
       });
       expect(called).toBe(false);
+      expect(res.systemPromptAddition).not.toContain('Brain pages mentioned this turn');
+    });
+  });
+
+  test('weak-only smalltalk reaches the resolver but yields no pointer block', async () => {
+    await withEnv(REFLEX_ON, async () => {
+      let called = false;
+      const ce = createGBrainContextEngine({
+        workspaceDir: '/tmp/rr-test-ws-3b',
+        resolveEntities: async (candidates) => {
+          called = true;
+          return resolveEntitiesToPointers(engine, 'default', candidates, {});
+        },
+      });
+      const res = await ce.assemble({
+        sessionId: 's3b',
+        messages: [{ role: 'user', content: 'can you help me with this?' }],
+      });
+      expect(called).toBe(true); // "help" is a weak candidate — alias-arm-restricted
       expect(res.systemPromptAddition).not.toContain('Brain pages mentioned this turn');
     });
   });
@@ -435,5 +556,118 @@ describe('windowTurnCount — knob edge semantics', () => {
       // Garbage env falls through to config / default, not a crash.
       expect(windowTurnCount(null)).toBe(4);
     });
+  });
+});
+
+describe('lexicalArmsEnabled — kill-switch resolution (env > config > default-ON)', () => {
+  const cfg = (o: object) => o as import('../src/core/config.ts').GBrainConfig;
+
+  test('defaults ON with no env and no config', async () => {
+    await withEnv({ GBRAIN_RETRIEVAL_REFLEX_LEXICAL_ARMS: undefined }, async () => {
+      expect(lexicalArmsEnabled(null)).toBe(true);
+      expect(lexicalArmsEnabled(cfg({}))).toBe(true);
+    });
+  });
+
+  test('config file-plane key disables and re-enables', async () => {
+    await withEnv({ GBRAIN_RETRIEVAL_REFLEX_LEXICAL_ARMS: undefined }, async () => {
+      expect(lexicalArmsEnabled(cfg({ retrieval_reflex_lexical_arms: false }))).toBe(false);
+      expect(lexicalArmsEnabled(cfg({ retrieval_reflex_lexical_arms: true }))).toBe(true);
+    });
+  });
+
+  test('env beats config in BOTH directions (incident escape hatch)', async () => {
+    await withEnv({ GBRAIN_RETRIEVAL_REFLEX_LEXICAL_ARMS: 'false' }, async () => {
+      expect(lexicalArmsEnabled(cfg({ retrieval_reflex_lexical_arms: true }))).toBe(false);
+    });
+    await withEnv({ GBRAIN_RETRIEVAL_REFLEX_LEXICAL_ARMS: '0' }, async () => {
+      expect(lexicalArmsEnabled(null)).toBe(false);
+    });
+    await withEnv({ GBRAIN_RETRIEVAL_REFLEX_LEXICAL_ARMS: 'true' }, async () => {
+      expect(lexicalArmsEnabled(cfg({ retrieval_reflex_lexical_arms: false }))).toBe(true);
+    });
+    await withEnv({ GBRAIN_RETRIEVAL_REFLEX_LEXICAL_ARMS: '1' }, async () => {
+      expect(lexicalArmsEnabled(cfg({ retrieval_reflex_lexical_arms: false }))).toBe(true);
+    });
+  });
+
+  test('empty-string env falls through to config (not treated as set)', async () => {
+    await withEnv({ GBRAIN_RETRIEVAL_REFLEX_LEXICAL_ARMS: '' }, async () => {
+      expect(lexicalArmsEnabled(cfg({ retrieval_reflex_lexical_arms: false }))).toBe(false);
+      expect(lexicalArmsEnabled(null)).toBe(true);
+    });
+  });
+
+  test('incident-hatch parse is case-insensitive with common negatives (F11)', async () => {
+    for (const v of ['FALSE', 'False', 'OFF', 'off', 'No', ' 0 ']) {
+      await withEnv({ GBRAIN_RETRIEVAL_REFLEX_LEXICAL_ARMS: v }, async () => {
+        expect(lexicalArmsEnabled(null)).toBe(false);
+      });
+    }
+    await withEnv({ GBRAIN_RETRIEVAL_REFLEX_LEXICAL_ARMS: 'TRUE' }, async () => {
+      expect(lexicalArmsEnabled(cfg({ retrieval_reflex_lexical_arms: false }))).toBe(true);
+    });
+  });
+});
+
+describe('v0.46.15 ship-review hardening (adversarial F1/F2 + stale-alias veto)', () => {
+  test('F1: a title-claimed namesake still makes the bare surname AMBIGUOUS', async () => {
+    // Jane resolves via title; the bare "Galewright" must count BOTH holders
+    // and stay silent — classification precedence must not hand John the
+    // "unique" surname slot (wrong-person injection at above-gate confidence).
+    await seed('people/jane-galewright', 'Jane Galewright', 'A founder.');
+    await seed('people/john-galewright', 'John Galewright', 'Her brother.');
+    const block = await resolveEntitiesToPointers(
+      engine,
+      'default',
+      extractCandidates('Jane Galewright mentioned it. Did Galewright follow up?'),
+      {},
+    );
+    expect(block).not.toBeNull();
+    const slugs = block!.pointers.map((p) => p.slug);
+    expect(slugs).toContain('people/jane-galewright'); // title arm
+    expect(slugs).not.toContain('people/john-galewright'); // surname stays ambiguous
+    expect(block!.pointers.every((p) => p.arm !== 'title-surname')).toBe(true);
+  });
+
+  test('stale-alias veto: a deleted page\'s leftover alias row cannot veto the sole live target', async () => {
+    await seed('people/saoirse-x', 'Saoirse X', 'A founder.');
+    await seed('people/saoirse-old', 'Saoirse Old', 'Renamed away.');
+    await engine.setPageAliases('people/saoirse-x', 'default', [normalizeAlias('saoirse')]);
+    await engine.setPageAliases('people/saoirse-old', 'default', [normalizeAlias('saoirse')]);
+    await engine.executeRaw(`UPDATE pages SET deleted_at = now() WHERE slug = 'people/saoirse-old'`, []);
+    const block = await resolveEntitiesToPointers(
+      engine,
+      'default',
+      extractCandidates('remind me what saoirse said about the round'),
+      {},
+    );
+    expect(block).not.toBeNull();
+    expect(block!.pointers).toHaveLength(1);
+    expect(block!.pointers[0].slug).toBe('people/saoirse-x');
+  });
+
+  test('F2: weak fold goes FAIL-CLOSED when any source\'s alias lookup fails', async () => {
+    // Alias registered in two sources = ambiguous = must inject nothing.
+    // If one source's lookup transiently fails, the survivor must NOT look
+    // unique — partial visibility cannot manufacture uniqueness.
+    await engine.executeRaw(`INSERT INTO sources (id, name, local_path) VALUES ('other', 'Other', '/tmp/other') ON CONFLICT (id) DO NOTHING`, []).catch(() => {});
+    await seed('people/saoirse-x', 'Saoirse X', 'A founder.');
+    await engine.setPageAliases('people/saoirse-x', 'default', [normalizeAlias('saoirse')]);
+    // (In reality 'other' also has the alias, but its lookup fails.)
+    const shim = {
+      resolveAliases: (norms: string[], opts?: { sourceId?: string }) =>
+        opts?.sourceId === 'other'
+          ? Promise.reject(new Error('transient blip'))
+          : engine.resolveAliases(norms, opts),
+      executeRaw: (sql: string, params: unknown[]) => engine.executeRaw(sql, params),
+    } as unknown as typeof engine;
+    const block = await resolveEntitiesToPointers(
+      shim,
+      'default',
+      extractCandidates('remind me what saoirse said'),
+      { sourceIds: ['default', 'other'] },
+    );
+    expect(block).toBeNull();
   });
 });

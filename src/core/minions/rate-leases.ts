@@ -77,6 +77,7 @@ export async function acquireLease(
   return engine.transaction(async (tx) => {
     // txn-scoped advisory lock keyed on the rate-lease key name. Released
     // automatically when the txn commits/rolls back.
+    // Lock-census (PR6 D5): INTENTIONALLY not source-keyed — a rate lease meters a shared external resource (per lease key, e.g. provider concurrency) brain-wide, not per source.
     await tx.executeRaw(`SELECT pg_advisory_xact_lock($1::bigint)`, [lockKey.toString()]);
 
     // Pre-prune stale leases for this key.

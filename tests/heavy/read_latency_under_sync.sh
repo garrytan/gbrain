@@ -7,6 +7,16 @@
 # in each phase, reports delta_pct. The contract that matters: search p99
 # shouldn't blow up while sync is running.
 #
+# History note (#4143): a v0.45.13.0..v0.46.6.0 hang in this script was NOT a
+# read-under-sync problem — writers were irrelevant (NUM_WRITERS=0 still hung).
+# The trigger was NUM_QUERIES being an exact multiple of the telemetry flush
+# threshold (100): the fire-and-forget flush had a statement in flight when the
+# workload called engine.disconnect(), and PGLite's close() deadlocks
+# permanently with in-flight statements. Fixed by the background-work drain in
+# disconnect() + a bounded close; pinned by
+# test/search-telemetry-disconnect-hang.serial.test.ts. If this script hangs
+# again, suspect teardown, not lock contention.
+#
 # Informational-only by default (delta_pct gets reported but exit stays 0).
 # Set STRICT_LATENCY=1 to fail when p99 delta exceeds threshold.
 #

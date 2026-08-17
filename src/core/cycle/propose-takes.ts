@@ -38,7 +38,8 @@
  */
 
 import { randomUUID, createHash } from 'node:crypto';
-import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
+import { BaseCyclePhase, CYCLE_DEADLINE_RESERVE_MS, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
+import { defaultTimeoutMsFor } from '../minions/handler-timeouts.ts';
 import { chat as gatewayChat, getChatModel, probeChatModel } from '../ai/gateway.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
@@ -404,18 +405,68 @@ export function parseExtractorOutput(raw: string): ProposedTake[] {
  * BaseCyclePhase subclass. Walks pages, checks idempotency cache, calls
  * extractor, writes proposals.
  */
+/**
+ * #4168 — the phase deadline is DERIVED, never a literal. The old
+ * PHASE_DEADLINE_MS thirty-minute literal was bit-identical to the
+ * autopilot-cycle handler anchor (and the clocks were not even co-started:
+ * the job clock starts at claim, this phase starts LATE in ALL_PHASES), so
+ * the clean-exit `deadline_hit` path was structurally unreachable in
+ * production — cycles died on wall-clock instead of completing partial and
+ * `cycle_freshness` never advanced. Same duplicated-literal class as #2781.
+ *
+ * Fail-loud derivation (autopilot-timeout.ts precedent): a missing handler
+ * anchor throws HERE, at module load — which propagates through cycle.ts's
+ * dynamic import and fails the WHOLE cycle visibly rather than one phase
+ * silently. Accepted trade; the drift-guard test pins the inequality.
+ */
+function requireCycleAnchorMs(): number {
+  const ms = defaultTimeoutMsFor('autopilot-cycle');
+  if (ms === null) {
+    throw new Error(
+      "propose_takes: 'autopilot-cycle' has no entry in HANDLER_DEFAULT_TIMEOUT_MS " +
+      '(handler-timeouts.ts) — the phase deadline can no longer be derived from it. See #4168.',
+    );
+  }
+  return ms;
+}
+
+/** Headroom for grade_takes + calibration_profile, which run AFTER this
+ *  phase in the same calibration block with no deadline of their own. */
+export const PHASE_DEADLINE_FRACTION_OF_JOB = 0.8;
+export const PROPOSE_TAKES_FALLBACK_DEADLINE_MS = Math.floor(
+  requireCycleAnchorMs() * PHASE_DEADLINE_FRACTION_OF_JOB,
+);
+/** Mirrors MIN_PATTERNS_SUBAGENT_BUDGET_MS: below this the phase cannot do
+ *  useful LLM work before the job's kill switch — skip honestly instead. */
+export const MIN_PROPOSE_TAKES_BUDGET_MS = 2 * 60 * 1000;
+
+/**
+ * Resolve the phase's wall-clock budget from the REAL remaining job time
+ * when it is known. Shaped like patterns.ts's clampSubagentBudgets: null
+ * means "not worth starting" (caller returns an honest skip). Pure —
+ * unit-testable without an engine.
+ */
+export function resolveProposeTakesDeadlineMs(
+  deadlineAtMs: number | null | undefined,
+  nowMs: number,
+): number | null {
+  if (deadlineAtMs == null) return PROPOSE_TAKES_FALLBACK_DEADLINE_MS;
+  const remaining = deadlineAtMs - CYCLE_DEADLINE_RESERVE_MS - nowMs;
+  // Red-team + adversarial F4: the grade_takes/calibration_profile headroom
+  // the 0.8 fraction exists for must apply on the THREADED path too, and the
+  // MIN floor must gate the FRACTIONED value — clamping a sub-MIN fraction
+  // back UP to MIN would hand propose_takes the whole remaining window and
+  // start the downstream phases inside the reserve. Under the floor, skip
+  // honestly instead.
+  const fractioned = Math.floor(remaining * PHASE_DEADLINE_FRACTION_OF_JOB);
+  if (fractioned < MIN_PROPOSE_TAKES_BUDGET_MS) return null;
+  return Math.min(fractioned, PROPOSE_TAKES_FALLBACK_DEADLINE_MS);
+}
+
 class ProposeTakesPhase extends BaseCyclePhase {
   readonly name = 'propose_takes' as CyclePhase;
   protected readonly budgetUsdKey = 'cycle.propose_takes.budget_usd';
   protected readonly budgetUsdDefault = 5.0;
-  /**
-   * Hard wall-clock deadline for the phase. Even with the per-call timeout in
-   * defaultExtractor, a long tail of slow-but-completing calls can accumulate.
-   * The phase breaks cleanly and returns a partial result with
-   * `deadline_hit: true` instead of being killed mid-write by an outer
-   * `timeout` wrapper (the recurring SIGTERM in nightly dream runs).
-   */
-  private static readonly PHASE_DEADLINE_MS = 30 * 60 * 1000;
 
   protected override mapErrorCode(err: unknown): string {
     if (err instanceof GBrainError) return err.problem;
@@ -436,7 +487,16 @@ class ProposeTakesPhase extends BaseCyclePhase {
     const promptVersion = opts.promptVersion ?? PROPOSE_TAKES_PROMPT_VERSION;
     const pageLimit = opts.pageLimit ?? 100;
     const skipPagesWithFence = opts.skipPagesWithFence ?? false;
-    const deadlineMs = opts.deadlineMs ?? ProposeTakesPhase.PHASE_DEADLINE_MS;
+    // gbrain#4168: explicit test override wins; otherwise the REAL remaining
+    // job budget (when the cycle threads deadlineAtMs) clamped to the derived
+    // fallback. At the default installed-daemon interval the old 30-min
+    // literal was bit-identical to the job timeout floor, and since this
+    // phase starts after earlier phases, phase-elapsed always trailed
+    // job-elapsed — the clean partial-exit below was unreachable and cycles
+    // dead-lettered instead of banking work. Resolved to null = not enough
+    // budget to start (see the honest-skip return after the provider probe).
+    const resolvedDeadlineMs =
+      opts.deadlineMs ?? resolveProposeTakesDeadlineMs(opts.deadlineAtMs, Date.now());
     const phaseStartMs = Date.now();
     const proposalRunId = `propose-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${randomUUID().slice(0, 8)}`;
 
@@ -468,6 +528,39 @@ class ProposeTakesPhase extends BaseCyclePhase {
       }
     }
 
+    // #4168 honest skip — placed AFTER the cheap provider probe (patterns.ts
+    // ordering precedent) and BEFORE any rollup/DB write, matching the
+    // no_provider skip: an insufficient-budget run records neither a halt
+    // nor a completed round. On a brain where earlier phases eat the whole
+    // job budget this fires EVERY cycle — the reason string and operator
+    // hint are load-bearing observability, not decoration (a repeated-skip
+    // doctor check is a filed follow-up).
+    if (resolvedDeadlineMs === null) {
+      return {
+        summary:
+          `propose_takes skipped: remaining cycle budget under ` +
+          `${Math.round(MIN_PROPOSE_TAKES_BUDGET_MS / 1000)}s ` +
+          `(reserve ${Math.round(CYCLE_DEADLINE_RESERVE_MS / 1000)}s) — earlier phases consumed ` +
+          `the job budget; raise the autopilot interval or the autopilot-cycle handler anchor ` +
+          `if this repeats every cycle. Next cycle retries with a fresh budget.`,
+        details: {
+          reason: 'insufficient_cycle_budget',
+          // The job deadline is WHY the phase can't start — carry the same
+          // flag the mid-run partial exit sets so dashboards see one signal.
+          deadline_hit: true,
+          pages_scanned: 0,
+          cache_hits: 0,
+          cache_misses: 0,
+          proposals_inserted: 0,
+          tombstones_written: 0,
+          budget_exhausted: false,
+          warnings: [],
+        },
+        status: 'skipped',
+      };
+    }
+    const deadlineMs = resolvedDeadlineMs;
+
     const result: ProposeTakesResult = {
       pages_scanned: 0,
       cache_hits: 0,
@@ -476,7 +569,21 @@ class ProposeTakesPhase extends BaseCyclePhase {
       tombstones_written: 0,
       budget_exhausted: false,
       warnings: [],
+      deadline_hit: false,
     };
+
+    // gbrain#4168: job budget already inside the reserve window — exit
+    // cleanly before ANY work (the in-loop `elapsed > deadline` check can't
+    // fire on the first iteration when the effective deadline is 0).
+    if (deadlineMs <= 0) {
+      result.warnings.push('phase skipped: job deadline already inside the reserve window');
+      result.deadline_hit = true;
+      return {
+        summary: `propose_takes: skipped — job deadline inside the reserve window (run ${proposalRunId})`,
+        details: { ...result, proposal_run_id: proposalRunId, prompt_version: promptVersion },
+        status: 'warn' as PhaseStatus,
+      };
+    }
 
     // Load pages eligible for proposal. Source-scoped per BaseCyclePhase.
     const pages = await listCandidatePages(engine, scope, pageLimit);

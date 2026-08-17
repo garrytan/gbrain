@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import {
   detectForeignCodexServer,
   removeCodexHttpServerBlock,
+  renderCodexHttpServerBlock,
   tomlString,
   writeCodexHttpServerBlock,
 } from '../src/core/bootstrap/codex-toml.ts';
@@ -202,5 +203,43 @@ describe('tomlString', () => {
     expect(tomlString('a"b')).toBe('"a\\"b"');
     expect(tomlString('a\\b')).toBe('"a\\\\b"');
     expect(() => tomlString('a\nb')).toThrow(/control characters/);
+  });
+});
+
+describe('renderCodexHttpServerBlock', () => {
+  const parseToml = (t: string): Record<string, any> =>
+    (Bun as unknown as { TOML: { parse(x: string): unknown } }).TOML.parse(t) as Record<string, any>;
+
+  test('parses back to exactly {bearer_token, url}; contains NO marker lines', () => {
+    const text = renderCodexHttpServerBlock(BLOCK);
+    expect(text).not.toContain(CODEX_TOML_BLOCK_BEGIN);
+    expect(text).not.toContain(CODEX_TOML_BLOCK_END);
+    // markers are full-line comments — a marker-free snippet has no comment lines at all
+    for (const line of text.split('\n')) expect(line.trimStart().startsWith('#')).toBe(false);
+    const ours = parseToml(text).mcp_servers?.[BLOCK.name];
+    expect(Object.keys(ours as object).sort()).toEqual(['bearer_token', 'url']);
+    expect(ours.url).toBe(BLOCK.url);
+    expect(ours.bearer_token).toBe(BLOCK.bearerToken);
+  });
+
+  test('escaped values round-trip through the TOML parser', () => {
+    const gnarly = { name: 'gbrain', url: 'http://127.0.0.1:3131/mcp', bearerToken: 'to"ken\\v2' };
+    const ours = parseToml(renderCodexHttpServerBlock(gnarly)).mcp_servers?.gbrain;
+    expect(ours.bearer_token).toBe('to"ken\\v2');
+    expect(Object.keys(ours as object).sort()).toEqual(['bearer_token', 'url']);
+  });
+
+  test('refuses a non-bare-key name (same assertion as the writer)', () => {
+    expect(() => renderCodexHttpServerBlock({ ...BLOCK, name: 'bad name' })).toThrow(/bare TOML key/);
+  });
+
+  test('refuses control characters in values (writer parity)', () => {
+    expect(() => renderCodexHttpServerBlock({ ...BLOCK, bearerToken: 'a\nb' })).toThrow(/control characters/);
+  });
+
+  test('pasted snippet reads as a FOREIGN table — the managed writer refuses to double-define, never strips it', () => {
+    const path = tmpConfig();
+    writeFileSync(path, `${renderCodexHttpServerBlock(BLOCK)}\n`);
+    expect(() => writeCodexHttpServerBlock(path, BLOCK)).toThrow(/already defined/);
   });
 });

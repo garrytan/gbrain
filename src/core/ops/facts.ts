@@ -108,9 +108,25 @@ const recall: Operation = {
   annotations: { title: 'recall (memory read)', readOnlyHint: true },
   handler: async (ctx, p) => {
     const sourceId = ctx.sourceId ?? 'default';
-    const limit = typeof p.limit === 'number' ? p.limit : 50;
+    const limit = clampRecallLimit(p.limit);
     const includeExpired = p.include_expired === true;
     const grep = typeof p.grep === 'string' ? p.grep.toLowerCase() : null;
+
+    // Federated grants (cathedral-6): the fact arms honor the SAME scope
+    // ladder as every other read-side op — federated array > scalar >
+    // default — via sourceScopeOpts, never a hand-rolled filter. The engine
+    // fact APIs are scalar-source, so a federated grant fans out per granted
+    // source and merges newest-first; a single-source caller takes exactly
+    // the pre-v1 single-query path. A trusted-local `__all__` ({}) has no
+    // enumerable grant and keeps the resolved-scalar behavior.
+    const scope = sourceScopeOpts(ctx);
+    // Set-dedupe: a grant carrying a repeated id (or the scalar source again)
+    // must not fan out the same source twice into the merge.
+    const factSources: string[] = [...new Set(
+      scope.sourceIds && scope.sourceIds.length > 0 ? scope.sourceIds
+        : scope.sourceId ? [scope.sourceId]
+          : [sourceId],
+    )];
 
     // Visibility filter: remote callers see world-only unless their token
     // grants elevated visibility (future-proofing; v0.31 ships world-only
@@ -120,52 +136,107 @@ const recall: Operation = {
         ? undefined
         : ['world'] as ('private' | 'world')[];
 
-    let rows: Awaited<ReturnType<typeof ctx.engine.listFactsByEntity>> = [];
+    type FactRows = Awaited<ReturnType<typeof ctx.engine.listFactsByEntity>>;
+    type FactRowItem = FactRows[number];
+    // Per-arm merge key: each arm's engine query ORDERs by a different column
+    // (supersessions by expired_at, entity by valid_from, the rest by
+    // created_at) — the cross-source merge must sort by the SAME key or the
+    // truncation at `limit` silently drops the wrong rows. Decorate-sort-
+    // undecorate: the key is computed once per row.
+    const mergeNewest = (lists: FactRows[], keyOf: (rec: Record<string, unknown>) => unknown): FactRows => {
+      if (lists.length === 1) return lists[0];
+      const toTime = (v: unknown): number => {
+        const t = v instanceof Date ? v.getTime() : v ? new Date(String(v)).getTime() : 0;
+        return Number.isFinite(t) ? t : 0;
+      };
+      const decorated = lists.flat().map((r: FactRowItem) => ({
+        r,
+        k: toTime(keyOf(r as unknown as Record<string, unknown>)),
+      }));
+      decorated.sort((a, b) => b.k - a.k);
+      return decorated.slice(0, limit).map(d => d.r);
+    };
+    const byCreated = (rec: Record<string, unknown>) => rec.created_at ?? rec.since_date;
+
+    let rows: FactRows = [];
 
     if (p.supersessions === true) {
       const since = parseSinceParam(p.since);
-      rows = await ctx.engine.listSupersessions(sourceId, { since: since ?? undefined, limit });
+      // Visibility filters at the ENGINE level (before each source's LIMIT),
+      // same as the sibling fact-list arms — a post-merge filter would let a
+      // private newest row consume a limit slot and hide an older world row.
+      rows = mergeNewest(
+        await Promise.all(factSources.map(src =>
+          ctx.engine.listSupersessions(src, { since: since ?? undefined, limit, visibility }),
+        )),
+        (rec) => rec.expired_at ?? rec.created_at,
+      );
     } else if (typeof p.entity === 'string' && p.entity.length > 0) {
       const { resolveEntitySlug } = await import('../entities/resolve.ts');
-      const slug = (await resolveEntitySlug(ctx.engine, sourceId, p.entity)) ?? p.entity;
-      rows = await ctx.engine.listFactsByEntity(sourceId, slug, {
-        activeOnly: !includeExpired,
-        limit,
-        visibility,
-      });
+      rows = mergeNewest(
+        await Promise.all(factSources.map(async (src) => {
+          const slug = (await resolveEntitySlug(ctx.engine, src, p.entity as string)) ?? (p.entity as string);
+          return ctx.engine.listFactsByEntity(src, slug, {
+            activeOnly: !includeExpired,
+            limit,
+            visibility,
+          });
+        })),
+        (rec) => rec.valid_from ?? rec.created_at,
+      );
     } else if (typeof p.session_id === 'string' && p.session_id.length > 0) {
-      rows = await ctx.engine.listFactsBySession(sourceId, p.session_id, {
-        activeOnly: !includeExpired,
-        limit,
-        visibility,
-      });
+      rows = mergeNewest(
+        await Promise.all(factSources.map(src =>
+          ctx.engine.listFactsBySession(src, p.session_id as string, {
+            activeOnly: !includeExpired,
+            limit,
+            visibility,
+          }),
+        )),
+        byCreated,
+      );
     } else if (p.since !== undefined) {
       const since = parseSinceParam(p.since);
       if (since) {
-        rows = await ctx.engine.listFactsSince(sourceId, since, {
-          activeOnly: !includeExpired,
-          limit,
-          visibility,
-        });
+        rows = mergeNewest(
+          await Promise.all(factSources.map(src =>
+            ctx.engine.listFactsSince(src, since, {
+              activeOnly: !includeExpired,
+              limit,
+              visibility,
+            }),
+          )),
+          byCreated,
+        );
       }
     } else {
-      // No filter: return recent across the source.
-      rows = await ctx.engine.listFactsSince(sourceId, new Date(0), {
-        activeOnly: !includeExpired,
-        limit,
-        visibility,
-      });
+      // No filter: return recent across the granted source(s).
+      rows = mergeNewest(
+        await Promise.all(factSources.map(src =>
+          ctx.engine.listFactsSince(src, new Date(0), {
+            activeOnly: !includeExpired,
+            limit,
+            visibility,
+          }),
+        )),
+        byCreated,
+      );
     }
 
     if (grep) rows = rows.filter(r => r.fact.toLowerCase().includes(grep));
 
     // v0.32: optional pending-consolidation count piggy-backed on the recall
     // response. Single round trip on thin-client; omitted when not requested
-    // so existing callers see no shape change.
+    // so existing callers see no shape change. Sums over the SAME factSources
+    // set the fact arms fan out across — a federated caller's pending count
+    // must cover every granted source, not just the scalar sourceId.
     let pending_consolidation_count: number | undefined;
     if (p.include_pending === true) {
       try {
-        pending_consolidation_count = await ctx.engine.countUnconsolidatedFacts(sourceId);
+        const counts = await Promise.all(
+          factSources.map(src => ctx.engine.countUnconsolidatedFacts(src)),
+        );
+        pending_consolidation_count = counts.reduce((a, b) => a + b, 0);
       } catch (e) {
         // Best-effort: if the count query fails we still return facts. Field
         // stays undefined so callers can tell the difference between "0
@@ -603,6 +674,19 @@ const forget_fact: Operation = {
     return { id, expired: true, path: result.path, reason: result.reason };
   },
 };
+
+/**
+ * recall's per-arm limit clamp — applied ONCE, before the per-source fan-out.
+ * The doc contract is "Default 50, cap 100": each engine clamps its own query,
+ * but the cross-source merge slices with THIS value, so an unclamped limit
+ * (e.g. 150 across two granted sources) would return up to 200 rows.
+ * Invalid input (undefined / NaN / non-positive / non-integer) → default 50;
+ * valid positive integers clamp to [1, 100]. Exported for the unit suite.
+ */
+export function clampRecallLimit(raw: unknown): number {
+  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw <= 0) return 50;
+  return Math.min(raw, 100);
+}
 
 /**
  * Parse a `since` parameter into a Date. Accepts ISO 8601, plain duration

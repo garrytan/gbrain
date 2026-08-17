@@ -28,10 +28,28 @@ export interface EntityCandidate {
   display: string;
   /** Text fed to alias-normalize / slugify for resolution (no leading @, no possessive). */
   query: string;
+  /**
+   * Lowercase weak candidate (v0.46.15 identity wave). Emitted by the
+   * lowercase pass for turns like "remind me what saoirse said" — the v1
+   * capitalization-biased extractor was blind to these (the documented
+   * know-to-ask limit). Weak candidates are resolution-restricted: the
+   * resolver may probe them against the ALIAS table only (exact, unique,
+   * live-page-verified) — never title/slug/suffix arms — so ordinary
+   * lowercase words cannot fabricate pointers.
+   */
+  weak?: true;
 }
 
-/** Max candidates returned per turn — bounds downstream DB work regardless of pointer cap. */
+/** Max STRONG candidates returned per turn — bounds downstream DB work regardless of pointer cap. */
 export const MAX_CANDIDATES = 12;
+
+/**
+ * Max lowercase WEAK candidates per turn. Separate budget from
+ * MAX_CANDIDATES (weak tokens never evict or crowd out strong ones); the
+ * resolver caps on alias HITS, not raw tokens, so this only bounds the
+ * batched alias probe size.
+ */
+export const MAX_WEAK_CANDIDATES = 32;
 
 /**
  * HARD stopwords — function words that are never an entity, even capitalized
@@ -99,6 +117,11 @@ function isPureNumber(s: string): boolean {
   return /^[0-9][0-9.,]*$/.test(s);
 }
 
+// Lowercase-initial word of ≥3 chars, whole-word (lookarounds instead of \b —
+// \b misbehaves with unicode property classes). The lookbehind also excludes
+// @handles (step 1 owns those) and the lowercase TAIL of a capitalized word.
+const WEAK_TOKEN_RE = /(?<![\p{L}\p{N}'’@-])\p{Ll}[\p{L}\p{N}'’-]{2,}(?![\p{L}\p{N}'’-])/gu;
+
 /**
  * Extract candidate entity surface-forms from one turn's text.
  * Deterministic, precision-biased, capped at MAX_CANDIDATES. Deduped on the
@@ -153,6 +176,22 @@ export function extractCandidates(text: string): EntityCandidate[] {
     const surface = m[0];
     const idx = m.index ?? 0;
     consider(surface, surface, !isAtSentenceStart(text, idx));
+    // Leading-stopword trim (v0.46.15 identity wave): a sentence-start
+    // auxiliary glues into the run — "Did Galewright ever…" extracts
+    // "Did Galewright", which resolves to nothing. ALSO consider the
+    // remainder with the leading hard-stopword tokens shed. The trimmed
+    // token is positionally mid-sentence (it follows the stopword), which
+    // is exactly the strong "this is a real name" signal. Keep the
+    // original run too — "Will Smith" must still resolve whole.
+    const tokens = surface.split(/\s+/);
+    let firstKept = 0;
+    while (firstKept < tokens.length && STOPWORDS.has(stripPossessive(tokens[firstKept]).toLowerCase())) {
+      firstKept++;
+    }
+    if (firstKept > 0 && firstKept < tokens.length) {
+      const trimmed = tokens.slice(firstKept).join(' ');
+      consider(trimmed, trimmed, true);
+    }
   }
 
   // 3. Filter for precision.
@@ -172,6 +211,35 @@ export function extractCandidates(text: string): EntityCandidate[] {
     }
     out.push({ display: c.display, query: c.query });
     if (out.length >= MAX_CANDIDATES) break;
+  }
+
+  // 2.5→3.5. Lowercase WEAK pass (v0.46.15 identity wave, documented v1 limit).
+  // Users type names lowercase ("remind me what saoirse said"); the alias
+  // table stores normalized forms, so an exact unique alias hit is the same
+  // evidence class regardless of source casing. Weak candidates ride a
+  // SEPARATE budget (never evict strong), and the resolver restricts them to
+  // the alias arm — a generic lowercase word only fabricates a pointer if it
+  // is literally a unique registered alias.
+  // Built from the EMITTED strong list, not the raw accumulator (adversarial
+  // F10): a strong candidate the precision filter REJECTED (e.g. a common
+  // word seen only at sentence start) must not shadow the same norm's weak
+  // alias probe — that's exactly the name-collides-with-a-common-word case
+  // the alias table exists to disambiguate.
+  const strongNorms = new Set(out.map((c) => normalizeAlias(c.query)).filter(Boolean));
+  const weakSeen = new Set<string>();
+  let weakCount = 0;
+  for (const m of text.matchAll(WEAK_TOKEN_RE)) {
+    if (weakCount >= MAX_WEAK_CANDIDATES) break;
+    const raw = stripPossessive(m[0]);
+    if (raw.length < 3) continue;
+    const lc = raw.toLowerCase();
+    if (STOPWORDS.has(lc) || COMMON_WORDS.has(lc)) continue;
+    const norm = normalizeAlias(raw);
+    if (!norm) continue;
+    if (strongNorms.has(norm) || weakSeen.has(norm)) continue; // covered by a strong candidate / dup
+    weakSeen.add(norm);
+    weakCount++;
+    out.push({ display: raw, query: raw, weak: true });
   }
   return out;
 }
@@ -226,6 +294,14 @@ export function extractCandidatesFromWindow(turns: WindowTurn[]): WindowEntityCa
         existing.occurrences += 1;
         existing.lastTurnIdx = i;
         existing.inNewestTurn = existing.inNewestTurn || i === lastIdx;
+        // A strong sighting upgrades a weak-born candidate: the weak flag
+        // clears (it may now use all resolution arms) and the capitalized
+        // surface beats the lowercase one (unless a user-said label already
+        // won and this sighting is assistant-only).
+        if (existing.weak && !c.weak) {
+          delete existing.weak;
+          if (!existing.userMention || turn.role === 'user') existing.display = c.display;
+        }
         if (turn.role === 'user' && !existing.userMention) {
           // First USER-said surface form beats an assistant-introduced one
           // for the display label.
@@ -236,6 +312,7 @@ export function extractCandidatesFromWindow(turns: WindowTurn[]): WindowEntityCa
         acc.set(norm, {
           display: c.display,
           query: c.query,
+          ...(c.weak ? { weak: true as const } : {}),
           occurrences: 1,
           lastTurnIdx: i,
           inNewestTurn: i === lastIdx,
@@ -247,11 +324,15 @@ export function extractCandidatesFromWindow(turns: WindowTurn[]): WindowEntityCa
   }
 
   // Salience weight: recency dominates, then frequency, then user-role.
-  // Deterministic tie-break on first-seen order.
+  // Deterministic tie-break on first-seen order. Strong candidates rank
+  // STRICTLY above weak ones (separate budgets too) — recent weak noise can
+  // never evict an older strong candidate.
   const weight = (c: WAcc) =>
     (c.lastTurnIdx + 1) / turns.length + Math.min(c.occurrences, 4) * 0.1 + (c.userMention ? 0.15 : 0);
-  return Array.from(acc.values())
-    .sort((a, b) => weight(b) - weight(a) || a.order - b.order)
-    .slice(0, MAX_CANDIDATES)
-    .map(({ lastTurnIdx: _l, order: _o, ...rest }) => rest);
+  const sorted = Array.from(acc.values()).sort(
+    (a, b) => (a.weak ? 1 : 0) - (b.weak ? 1 : 0) || weight(b) - weight(a) || a.order - b.order,
+  );
+  const strong = sorted.filter((c) => !c.weak).slice(0, MAX_CANDIDATES);
+  const weak = sorted.filter((c) => c.weak).slice(0, MAX_WEAK_CANDIDATES);
+  return [...strong, ...weak].map(({ lastTurnIdx: _l, order: _o, ...rest }) => rest);
 }

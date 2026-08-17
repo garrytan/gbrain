@@ -156,6 +156,15 @@ export interface ModeBundle {
    */
   title_boost: number | undefined;
 
+  /**
+   * v0.46.15 — cosine floor for evidence's `high_vector_match` (see
+   * evidence.ts DEFAULT_HIGH_COSINE_FLOOR). Config `search.evidence_cosine_floor`.
+   * Deliberately EXCLUDED from knobsHash: it shapes the evidence LABEL, not
+   * the result set — a floor change serves TTL-bounded stale labels on cached
+   * rows, which is acceptable for an operator tuning knob.
+   */
+  evidence_cosine_floor: number | undefined;
+
   // v0.36 cross-modal wave knobs (D2 + D3 + D6 + D8 + D13 + LLM-intent).
   // All three mode bundles default these to the same values — cross-modal
   // is opt-in per-call (D6 weighting), opt-in per-brain (D8 unified flags),
@@ -268,6 +277,13 @@ export interface ModeBundle {
    */
   autocut_jump: number;
   /**
+   * v0.46.15 (#1863) — weak-top floor: when the TOP rerank score is below
+   * this, autocut no-ops (gap normalization by a weak top manufactures
+   * spurious cliffs). Scale-dependent on the reranker — the September
+   * reranker default flip must re-tune it. Config: `search.autocut_min_top`.
+   */
+  autocut_min_top: number;
+  /**
    * v0.43 — relational recall arm. When on, a relational query ("who invested
    * in widget-co", "what connects fund-a and fund-b") resolves its seed
    * entity and walks the typed-edge graph, injecting edge-derived candidates
@@ -309,6 +325,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     floor_ratio: undefined,
     // T2 — title-phrase boost ON by default (correctness fix, cheap + gated).
     title_boost: 1.25,
+    evidence_cosine_floor: 0.8,
     // v0.36 cross-modal defaults (same across all modes — opt-in)
     cross_modal_both_text_weight: 0.6,
     cross_modal_both_image_weight: 0.4,
@@ -332,6 +349,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     relationalRetrieval: false,
     relational_retrieval_depth: 2,
     autocut_jump: 0.2,
+    autocut_min_top: 0.35,
   }),
   balanced: Object.freeze({
     cache_enabled: true,
@@ -363,6 +381,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     floor_ratio: undefined,
     // T2 — title-phrase boost ON by default (correctness fix, cheap + gated).
     title_boost: 1.25,
+    evidence_cosine_floor: 0.8,
     // v0.36 cross-modal defaults (same across all modes — opt-in)
     cross_modal_both_text_weight: 0.6,
     cross_modal_both_image_weight: 0.4,
@@ -390,6 +409,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     relationalRetrieval: true,
     relational_retrieval_depth: 2,
     autocut_jump: 0.2,
+    autocut_min_top: 0.35,
   }),
   tokenmax: Object.freeze({
     cache_enabled: true,
@@ -418,6 +438,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     floor_ratio: undefined,
     // T2 — title-phrase boost ON by default (correctness fix, cheap + gated).
     title_boost: 1.25,
+    evidence_cosine_floor: 0.8,
     // v0.36 cross-modal defaults (same across all modes — opt-in)
     cross_modal_both_text_weight: 0.6,
     cross_modal_both_image_weight: 0.4,
@@ -441,6 +462,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     relationalRetrieval: true,
     relational_retrieval_depth: 2,
     autocut_jump: 0.2,
+    autocut_min_top: 0.35,
   }),
 });
 
@@ -476,6 +498,8 @@ export interface SearchKeyOverrides {
   floor_ratio?: number;
   // T2 — title-phrase boost override.
   title_boost?: number;
+  // v0.46.15 — evidence cosine-floor override (label-only; not in knobsHash).
+  evidence_cosine_floor?: number;
   // v0.36 cross-modal overrides
   cross_modal_both_text_weight?: number;
   cross_modal_both_image_weight?: number;
@@ -495,6 +519,7 @@ export interface SearchKeyOverrides {
   relationalRetrieval?: boolean;
   relational_retrieval_depth?: number;
   autocut_jump?: number;
+  autocut_min_top?: number;
 }
 
 /**
@@ -522,6 +547,8 @@ export interface SearchPerCallOpts {
   floor_ratio?: number;
   // T2 — title-phrase boost per-call override.
   title_boost?: number;
+  // v0.46.15 — evidence cosine-floor per-call override.
+  evidence_cosine_floor?: number;
   // v0.36 cross-modal per-call overrides
   cross_modal_both_text_weight?: number;
   cross_modal_both_image_weight?: number;
@@ -541,6 +568,7 @@ export interface SearchPerCallOpts {
   // numeric per-call knob threaded through the bundle.
   autocut?: boolean;
   autocut_jump?: number;
+  autocut_min_top?: number;
   // v0.43 — relational recall per-call overrides.
   relationalRetrieval?: boolean;
   relational_retrieval_depth?: number;
@@ -620,6 +648,7 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     // v0.35.6.0 — floor-ratio resolved via the same pick chain.
     floor_ratio: pick('floor_ratio'),
     title_boost: pick('title_boost'),
+    evidence_cosine_floor: pick('evidence_cosine_floor'),
     // v0.36 cross-modal knobs
     cross_modal_both_text_weight: pick('cross_modal_both_text_weight'),
     cross_modal_both_image_weight: pick('cross_modal_both_image_weight'),
@@ -636,6 +665,7 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     // v0.42.3.0 — autocut resolved via the same pick chain.
     autocut: pick('autocut'),
     autocut_jump: pick('autocut_jump'),
+    autocut_min_top: pick('autocut_min_top'),
     // v0.43 — relational recall resolved via the same pick chain.
     relationalRetrieval: pick('relationalRetrieval'),
     relational_retrieval_depth: pick('relational_retrieval_depth'),
@@ -805,7 +835,7 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // degraded:[{stage:'cache_prestamp'}] at hit time (belt-and-braces).
 // (Merge note: both this wave and master's #3515 wave claimed v=16 in
 // flight; the merge sequences them as 16 then 17.)
-export const KNOBS_HASH_VERSION = 17;
+export const KNOBS_HASH_VERSION = 18;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -934,6 +964,10 @@ export function knobsHash(
     // etc.) so a partial-knobs caller (tests passing a minimal literal) can't
     // crash the hash. Typed callers always carry the field.
     `acj=${(knobs.autocut_jump ?? 0.2).toFixed(2)}`,
+    // v=18 addition (v0.46.15 #1863, append-only): weak-top floor. A floored
+    // write (full cluster kept on a weak top) must not be served to an
+    // unfloored lookup and vice versa — the kept set differs.
+    `acm=${(knobs.autocut_min_top ?? 0.35).toFixed(2)}`,
     // v=10 additions (v0.43, append-only): relational recall arm. A
     // relational-on write (edge-seeded result set) must NOT be served to a
     // relational-off lookup — same contamination class as graph_signals. The
@@ -1068,6 +1102,14 @@ export function loadOverridesFromConfig(
     if (Number.isFinite(n) && n >= 1.0 && n <= 5.0) out.title_boost = n;
   }
 
+  // v0.46.15 — evidence cosine floor (label-only knob; deliberately not in
+  // knobsHash). [0, 1] sanity-bounded.
+  const ecf = get('search.evidence_cosine_floor');
+  if (ecf !== undefined) {
+    const n = parseFloat(ecf);
+    if (Number.isFinite(n) && n >= 0 && n <= 1) out.evidence_cosine_floor = n;
+  }
+
   // v0.36 cross-modal overrides (D3 registry)
   const cmbt = get('search.cross_modal.both_mode_text_weight');
   if (cmbt !== undefined) {
@@ -1129,6 +1171,12 @@ export function loadOverridesFromConfig(
     const n = parseFloat(acj);
     if (Number.isFinite(n) && n > 0 && n <= 1) out.autocut_jump = n;
   }
+  // v0.46.15 (#1863) — weak-top floor. [0, 1]; 0 disables the floor.
+  const acm = get('search.autocut_min_top');
+  if (acm !== undefined) {
+    const n = parseFloat(acm);
+    if (Number.isFinite(n) && n >= 0 && n <= 1) out.autocut_min_top = n;
+  }
 
   // v0.43 — relational recall arm.
   const rel = get('search.relational_retrieval');
@@ -1162,6 +1210,7 @@ export const SEARCH_MODE_CONFIG_KEYS: ReadonlyArray<string> = Object.freeze([
   // v0.35.6.0 — floor-ratio gate
   'search.floor_ratio',
   'search.title_boost',
+  'search.evidence_cosine_floor',
   // v0.36 cross-modal keys (D3)
   'search.cross_modal.both_mode_text_weight',
   'search.cross_modal.both_mode_image_weight',
@@ -1183,6 +1232,7 @@ export const SEARCH_MODE_CONFIG_KEYS: ReadonlyArray<string> = Object.freeze([
   'search.relational_retrieval',
   'search.relational_retrieval_depth',
   'search.autocut_jump',
+  'search.autocut_min_top',
 ]);
 
 /**

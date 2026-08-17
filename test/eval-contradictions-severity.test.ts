@@ -21,7 +21,7 @@ function mkFinding(opts: {
     a: {
       slug: opts.slugA,
       chunk_id: 1,
-      take_id: null,
+      take_id: null, take_row_num: null,
       source_tier: 'curated',
       holder: null,
       text: 'A',
@@ -31,7 +31,7 @@ function mkFinding(opts: {
     b: {
       slug: opts.slugB,
       chunk_id: 2,
-      take_id: null,
+      take_id: null, take_row_num: null,
       source_tier: 'bulk',
       holder: null,
       text: 'B',

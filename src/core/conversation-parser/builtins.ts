@@ -74,7 +74,13 @@ export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
     date_source: 'inline',
     time_format: '12h_ampm',
     timezone_policy: 'inline_utc',
-    multi_line: false,
+    // Transcript imports preserve embedded newlines in each turn. Treat
+    // non-anchor lines as message continuations when scoring so a small
+    // number of long coding turns does not fall below the global 5% density
+    // floor and become unparseable. The continuation-aware scorer still
+    // requires an anchor on the first line or at least two valid anchors.
+    multi_line: true,
+    score_continuations_as_body: true,
     quick_reject: /^\*\*/,
     test_positive: [
       '**Alice Example** (2024-03-15 9:00 AM): hello',

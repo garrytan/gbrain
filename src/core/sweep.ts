@@ -565,6 +565,51 @@ async function runCorpusIngestPass(
         // visibility deliberately unset → resolveDefaultVisibility [ENG-8]
       });
 
+      // POST-check (adversarial review, same class the harvest FIFO pins):
+      // runFactsPipeline returns NORMALLY with partial results when the
+      // budget signal aborts mid-file. Writing `.ingested` here would
+      // permanently mark a half-extracted file done — skip the sidecar,
+      // release the claim, and let the next sweep retry it.
+      if (signal.aborted) {
+        skip('budget_exhausted:corpus', candidates.length - i);
+        abortLoop = true;
+        continue;
+      }
+
+      // Cathedral 5 — best-effort checkpoint-link publish when the backstop
+      // ingests a compaction segment (queue overflow, serve down at compact
+      // time, keyless-then-keyed): without this, every segment that falls to
+      // the sweep loses its brain:// links forever. The harvest FIFO remains
+      // the guaranteed lane (receipt retry); here a publish failure is
+      // fail-open and `.ingested` is written regardless (facts are durable;
+      // re-extracting just to retry a link append is the worse trade).
+      let linksBanked = 0;
+      if (r.entity_slugs.length) {
+        try {
+          const segs = await import('./context/corpus-segments.ts');
+          const parsed = segs.parseSegmentFileName(name);
+          if (parsed) {
+            const verified: Array<{ slug: string; title: string }> = [];
+            for (const slug of r.entity_slugs) {
+              try {
+                const page = await engine.getPage(slug, { sourceId });
+                if (page) verified.push({ slug, title: page.title || slug });
+              } catch { /* a non-resolvable link is never banked */ }
+            }
+            if (verified.length) {
+              const ss = await import('./context/session-state.ts');
+              const ledger = segs.readSegmentLedger(dir, parsed.sessionId);
+              const n = Math.max(1, ledger.findIndex((e) => e.hash === parsed.hash) + 1);
+              const ok = await ss.appendCheckpointManifest(
+                engine, sourceId, null, parsed.sessionId, verified,
+                { seg: parsed.hash, n },
+              );
+              if (ok) linksBanked = verified.length;
+            }
+          }
+        } catch { /* link publish is best-effort on the backstop lane */ }
+      }
+
       // Sidecar AFTER success — a crash before this line re-processes the
       // file next sweep (dedup absorbs the repeats), never loses it.
       await writeFile(
@@ -573,6 +618,7 @@ async function runCorpusIngestPass(
           ingested_at: new Date().toISOString(),
           facts_inserted: r.inserted,
           facts_duplicate: r.duplicate,
+          ...(linksBanked ? { links_banked: linksBanked } : {}),
         }) + '\n',
       );
       report.corpusIngested += 1;
@@ -597,9 +643,11 @@ async function runCorpusIngestPass(
  * Try to claim a corpus file for ingestion. O_EXCL (`wx`) create is the
  * atomic primitive; a live existing claim (< CORPUS_CLAIM_STALE_MS old)
  * means another sweep owns the file. Stale claims are removed and re-raced
- * (one contender wins the second `wx`). Never throws.
+ * (one contender wins the second `wx`). Never throws. EXPORTED (cathedral 5)
+ * so the serve-side checkpoint harvest shares the exact same fencing — a
+ * sweep and a harvest can never double-spend on one segment.
  */
-async function acquireCorpusClaim(claimPath: string): Promise<boolean> {
+export async function acquireCorpusClaim(claimPath: string): Promise<boolean> {
   const body = JSON.stringify({ claimed_at: new Date().toISOString(), pid: process.pid }) + '\n';
   const tryCreate = () =>
     writeFile(claimPath, body, { flag: 'wx', mode: 0o600 }).then(() => true, () => false);

@@ -67,13 +67,41 @@ interface IngestCliOpts {
   source?: string;
   facts?: boolean;
   maxCostUsd?: number;
+  /** gbrain#4149: explicit per-format byte-cap override; undefined = adapter-native defaults. */
+  maxBytes?: number;
   embed?: boolean;
   all?: boolean;
   json?: boolean;
   quiet?: boolean;
 }
 
-function parseIngestArgs(args: string[]): IngestCliOpts | { help: true } | { error: string } {
+/**
+ * gbrain#4149: the checkpoint fingerprint input, extracted so the cap
+ * dimension is unit-testable — a `--since last` watermark written under one
+ * cap must never be reused under another (or the auto defaults).
+ */
+export function ingestCheckpointFingerprintInput(args: {
+  sourceId: string;
+  pathspec: string | string[];
+  format: string;
+  version: string | number;
+  maxBytes?: number;
+}): Record<string, string | number | string[]> {
+  return {
+    sourceId: args.sourceId,
+    pathspec: args.pathspec,
+    format: args.format,
+    version: args.version,
+    // Key present ONLY for an explicit cap (review finding, multi-specialist
+    // confirmed): an unconditional `maxBytes: 'auto'` would re-hash EVERY
+    // pre-existing watermark at upgrade and silently force a one-time full
+    // rescan. Omitting the key keeps the default path on the legacy
+    // fingerprint; every explicit cap still gets its own scope.
+    ...(args.maxBytes != null ? { maxBytes: args.maxBytes } : {}),
+  };
+}
+
+export function parseIngestArgs(args: string[]): IngestCliOpts | { help: true } | { error: string } {
   const opts: IngestCliOpts = { paths: [] };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -128,6 +156,20 @@ function parseIngestArgs(args: string[]): IngestCliOpts | { help: true } | { err
       opts.maxCostUsd = n;
       continue;
     }
+    if (a === '--max-bytes') {
+      // gbrain#4149: optional VALIDATED override for the per-format byte
+      // caps (e.g. the Hermes store guard). Omission preserves each
+      // adapter's native default — one global cap must not replace
+      // format-specific safety limits. Accepts plain bytes or kb/mb/gb.
+      const raw = (args[++i] ?? '').toLowerCase();
+      const m = raw.match(/^(\d+(?:\.\d+)?)(kb|mb|gb)?$/);
+      if (!m) return { error: `max-bytes must be a positive size like 800000000, 512mb, or 4gb (got '${raw || ''}')` };
+      const mult = m[2] === 'kb' ? 1024 : m[2] === 'mb' ? 1024 ** 2 : m[2] === 'gb' ? 1024 ** 3 : 1;
+      const n = Math.floor(parseFloat(m[1]) * mult);
+      if (!Number.isFinite(n) || n <= 0) return { error: 'max-bytes must resolve to a positive byte count' };
+      opts.maxBytes = n;
+      continue;
+    }
     if (a.startsWith('-')) return { error: `unknown flag ${a}` };
     opts.paths.push(a);
   }
@@ -158,6 +200,11 @@ skip). Embedding is OFF by default; run the embed backfill later or opt in.
   --embed           Embed pages at import (default: defer to embed backfill)
   --facts           Extract facts from imported pages (budget-capped)
   --max-cost-usd F  Facts budget cap (default 5)
+  --max-bytes N     Override the per-format file/store byte caps (e.g. 4gb
+                    for a multi-GB hermes store). Omit to keep each
+                    format's native safety default. Changing it starts a
+                    fresh --since last scope (caps are part of the
+                    checkpoint fingerprint)
   --json            Machine-readable result
   --quiet           Suppress the human summary
 
@@ -347,12 +394,18 @@ async function runIngest(engine: BrainEngine, args: string[]): Promise<void> {
   const { TRANSCRIPT_IMPORT_VERSION } = await import('../core/transcripts/render.ts');
   const checkpointKey = {
     op: 'transcripts-ingest',
-    fingerprint: fingerprint({
+    // gbrain#4149: the effective cap is part of scan coverage — a checkpoint
+    // written under a different cap (or the auto defaults) must not be
+    // silently reused, or a capped run's skipped tail reads as
+    // already-imported. The input builder distinguishes 'auto' from every
+    // explicit value.
+    fingerprint: fingerprint(ingestCheckpointFingerprintInput({
       sourceId,
       pathspec: checkpointSpec,
       format: parsed.format ?? 'auto',
       version: TRANSCRIPT_IMPORT_VERSION,
-    }),
+      maxBytes: parsed.maxBytes,
+    })),
   };
   let sinceIso = parsed.since;
   if (parsed.since === 'last') {
@@ -383,6 +436,7 @@ async function runIngest(engine: BrainEngine, args: string[]): Promise<void> {
       limit: parsed.limit,
       sinceIso,
       sourceId,
+      maxBytes: parsed.maxBytes,
       embed: parsed.embed,
       activePack,
       onFileDone: () => reporter.tick(),

@@ -57,7 +57,7 @@ describe('R2: contradictions probe UNCHANGED when no calibration profile', () =>
       a: {
         slug: 'wiki/companies/x',
         chunk_id: 1,
-        take_id: null,
+        take_id: null, take_row_num: null,
         source_tier: 'curated' as const,
         holder: 'garry',
         text: 't',
@@ -67,7 +67,7 @@ describe('R2: contradictions probe UNCHANGED when no calibration profile', () =>
       b: {
         slug: 'wiki/companies/y',
         chunk_id: 1,
-        take_id: null,
+        take_id: null, take_row_num: null,
         source_tier: 'curated' as const,
         holder: 'garry',
         text: 't',

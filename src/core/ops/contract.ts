@@ -166,6 +166,15 @@ export interface AuthInfo {
    */
   sourceId?: string;
   /**
+   * #3242 (serve --http parity): distinguishes an operator-set source scope
+   * from the historical no-grant 'default' floor. `false` ONLY for a legacy
+   * bearer token whose `access_tokens.permissions.source_id` is absent —
+   * the one case whose unqualified reads may widen to the federated set.
+   * `true` (or undefined, e.g. OAuth clients) never widens. Mirrors
+   * `AuthResult.hasSourceGrant` in `src/mcp/http-transport.ts`.
+   */
+  hasSourceGrant?: boolean;
+  /**
    * v0.34.1 (#876): array of source ids this OAuth client may READ
    * from (federation). Sourced from `oauth_clients.federated_read`.
    * Independent of `sourceId` (write authority): a "WeCare L3 dept"

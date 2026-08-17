@@ -301,6 +301,7 @@ detail on demand.)
 | search modes / cost knobs | `docs/guides/search-modes.md` |
 | embedding spend gates / cost gate / `spend.posture` / off switches | `docs/operations/spend-controls.md` |
 | push-based context (volunteer/watch/reflex window) | `docs/guides/push-context.md` |
+| checkpoint compaction / compiled context files (`gbrain compile-context`) | `docs/guides/checkpoint-compaction.md` + `docs/guides/ambient-recall.md` |
 | schema packs / page types / extraction | `docs/architecture/schema-packs.md`, `type-taxonomy.md`, `lens-packs.md` |
 | thin-client / remote MCP / cross-modal | `docs/architecture/thin-client.md` |
 | memory verbs / MCP tool surface (`--surface`) / conformance | `docs/protocol/MEMORY_VERBS_v1.md` + the `verbs*`/`surface.ts`/`protocol.ts` entries in `KEY_FILES.md` |
@@ -1823,6 +1824,8 @@ gbrain connect https://your-host/mcp --token gbrain_xxx --install               
 gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex --install # Codex
 ```
 
+Onboarding a whole agent harness onto a shared brain? On the brain host, `gbrain agent register <name> --harness claude-code` mints a scoped OAuth client plus a 30-day token and prints the paste-ready wiring block — presets for daily-driver and write-isolated coding agents. The [onboarding decision table](docs/guides/agent-to-gbrain.md#onboarding-paths--the-decision-table) says which path fits.
+
 **Brain-only install into another coding agent** (Cursor, Claude Cowork, or anything that can fetch a URL and run shell commands) — paste the OpenClaw/Hermes block above (`INSTALL_FOR_AGENTS.md`); it installs the brain, skills, and dream cycle without the personal-agent identity layer. Tested with Codex, Claude Code, Claude Cowork, Cursor, and AlphaClaw.
 
 **[→ Full walkthrough: give your coding agent a memory](docs/tutorials/connect-coding-agent.md)** — the memory-only paths end to end, plus the brain-first protocol you paste into `CLAUDE.md` / `AGENTS.md` and the four habits that make it actually change how you work.
@@ -1922,6 +1925,7 @@ re-runs are free — unchanged sessions skip on content hash:
 gbrain transcripts ingest                    # discover importable session logs
 gbrain transcripts ingest --all              # import everything discovered
 gbrain transcripts ingest ~/Downloads/conversations.json  # consumer export (unzip first)
+gbrain transcripts ingest --max-bytes 4gb <store>          # oversized store; omit to keep per-format caps
 gbrain transcripts status                    # found vs imported, per harness
 ```
 
@@ -4016,9 +4020,15 @@ The push channels share one zero-LLM core (`src/core/context/volunteer.ts`):
    merged with recency / frequency / user-role salience. Assistant-introduced
    entities and "what did she invest in?" follow-ups whose antecedent was named
    in the window now resolve.
-2. **Resolve** through the alias table, exact titles, and slug suffixes — each
-   arm carries an honest confidence: alias 0.9, exact title 0.8, slug-suffix 0.6,
-   +0.05 when mentioned in ≥2 turns or the newest turn.
+2. **Resolve** through the alias table, exact titles, surnames, and slug
+   suffixes — each arm carries an honest confidence: alias 0.9, exact title
+   0.8, surname 0.72, slug-suffix 0.6, +0.05 when mentioned in ≥2 turns or the
+   newest turn. Lowercase mentions ("remind me what alice said") probe the
+   alias table only, and only when the alias is unique across every source in
+   play; a surname-only reference ("Did Galewright follow up?") resolves when
+   exactly one person page carries that surname. Ambiguity in either arm
+   injects nothing — silence beats a wrong pointer. Kill switch for both:
+   `retrieval_reflex_lexical_arms` (default on).
 3. **Gate** at `min_confidence` (default 0.7 — slug-suffix matches need an
    explicit lower gate), suppress pages already surfaced (slug-presence only),
    cap at 3 pages (hard cap 5).
@@ -4093,6 +4103,7 @@ Kill switch: `GBRAIN_HOOKS=0`. Install/uninstall: `docs/guides/bootstrap.md`.
 | `retrieval_reflex_window_turns` | 4 | turns the ambient reflex extracts from; 1 = legacy current-turn-only (file/env plane: `GBRAIN_RETRIEVAL_REFLEX_WINDOW_TURNS`) |
 | `retrieval_reflex` | true | the ambient channel's master switch |
 | `retrieval_reflex_max_pointers` | 3 | pointer cap per turn |
+| `retrieval_reflex_lexical_arms` | true | the lowercase-alias + surname recall arms (env: `GBRAIN_RETRIEVAL_REFLEX_LEXICAL_ARMS`); off = pre-v0.46.15 arm set |
 
 Per-call knobs: `max_pages` + `min_confidence` on both the op and `gbrain watch`
 (`--max-pages` / `--min-confidence`, plus `--window-turns` / `--source` on watch);

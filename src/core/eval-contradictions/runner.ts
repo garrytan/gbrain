@@ -111,6 +111,7 @@ function searchResultToMember(r: SearchResult): PairMember {
     slug: r.slug,
     chunk_id: r.chunk_id,
     take_id: null,
+    take_row_num: null,
     source_tier: classifySlugTier(r.slug),
     holder: null,
     text: r.chunk_text,
@@ -130,7 +131,7 @@ function searchResultToMember(r: SearchResult): PairMember {
  * `pages.effective_date` here — for v1 they share the same page anchor.
  */
 function takeToMember(
-  take: { id: number; page_slug: string; claim: string; holder: string },
+  take: { id: number; row_num: number; page_slug: string; claim: string; holder: string },
   source_tier: ReturnType<typeof classifySlugTier>,
   effective_date: string | null,
   effective_date_source: string | null,
@@ -139,6 +140,10 @@ function takeToMember(
     slug: take.page_slug,
     chunk_id: null,
     take_id: take.id,
+    // gbrain#4169: the per-page row number is what `takes supersede --row`
+    // addresses. listActiveTakesForPages already SELECTs t.* so it rides
+    // along for free; takeToMember just stopped dropping it.
+    take_row_num: take.row_num,
     source_tier,
     holder: take.holder,
     text: take.claim,

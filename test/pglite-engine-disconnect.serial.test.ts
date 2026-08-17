@@ -36,6 +36,7 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { __registerDrainerForTest } from '../src/core/background-work.ts';
 
 function newTempDataDir(): string {
   return mkdtempSync(join(tmpdir(), 'gbrain-disconnect-test-'));
@@ -218,6 +219,75 @@ describe('PGLiteEngine.disconnect() — v0.41.8.0 lifecycle invariants', () => {
       rmSync(dataDir, { recursive: true, force: true });
     }
   });
+
+  test('#6 DRAIN (#4143): disconnect() drains in-flight background statements after early-null, before close', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite' }); // in-memory
+    await engine.initSchema();
+
+    // Simulate the telemetry-flush shape: a fire-and-forget CHAIN of two
+    // sequential statements (statement 2 only issues after statement 1
+    // settles) — the exact primitive that deadlocked PGLite's close()
+    // pre-fix. The sink registers a drainer, like every production sink.
+    let secondStatementError: unknown = null;
+    const chain = engine
+      .executeRaw('SELECT 1')
+      .then(() => engine.executeRaw('SELECT 1'))
+      .catch((e) => { secondStatementError = e; });
+    const unregister = __registerDrainerForTest({
+      name: 'test-4143-inflight',
+      order: 99,
+      drain: async () => { await chain; return { unfinished: 0 }; },
+    });
+
+    try {
+      // Pre-fix this raced close() against the in-flight INSERT and hung
+      // forever (600s CI kill). Post-fix the drain settles the chain first.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const winner = await Promise.race([
+        engine.disconnect().then(() => 'disconnected' as const),
+        new Promise<'hung'>((r) => { timer = setTimeout(() => r('hung'), 10_000); }),
+      ]);
+      if (timer) clearTimeout(timer);
+      expect(winner).toBe('disconnected');
+      // The chain's SECOND statement raced the early-null: either it slipped
+      // in before the null (fine) or it failed fast with 'not connected'
+      // (fine, and intended) — what it must NEVER do is wedge disconnect.
+      if (secondStatementError !== null) {
+        expect(String(secondStatementError)).toContain('not connected');
+      }
+    } finally {
+      unregister();
+    }
+  }, 20_000);
+
+  test('#7 BOUNDED CLOSE (#4143): a close() that never settles cannot wedge disconnect, and the lock still releases', async () => {
+    const dataDir = newTempDataDir();
+    try {
+      const engine = new PGLiteEngine();
+      await engine.connect({ database_path: dataDir });
+      await engine.initSchema();
+
+      // Force the deadlock shape directly: close() never settles.
+      const eng = engine as unknown as { _db: { close: () => Promise<void> } | null };
+      eng._db!.close = () => new Promise<void>(() => { /* never settles */ });
+
+      const started = Date.now();
+      await engine.disconnect(); // must resolve via the bounded race (~5s), not hang
+      const elapsed = Date.now() - started;
+      expect(elapsed).toBeLessThan(9_000); // 5s bound + generous slack
+
+      // Lock released despite the abandoned close: a fresh engine can
+      // connect to the SAME dataDir without lock contention.
+      const engine2 = new PGLiteEngine();
+      await engine2.connect({ database_path: dataDir });
+      const result = await engine2.executeRaw<{ ok: number }>('SELECT 1 AS ok');
+      expect(result[0].ok).toBe(1);
+      await engine2.disconnect();
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
 
 // ─────────────────────────────────────────────────────────────────

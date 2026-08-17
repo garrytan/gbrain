@@ -528,7 +528,14 @@ describe('gbrain-context engine', () => {
       sessionId: 'fallback-test',
       sessionFile: '/tmp/never-read',
     });
-    expect(result).toEqual({ ok: true, compacted: false, reason: 'no-runtime' });
+    // Cathedral 5: the delegate fallback shape is unchanged; the additive
+    // `result.gbrain_checkpoint` bag rides alongside (fail-open — the
+    // unreadable sessionFile maps to a typed skip, never an error).
+    expect(result.ok).toBe(true);
+    expect(result.compacted).toBe(false);
+    expect(result.reason).toBe('no-runtime');
+    const bag = (result.result ?? {}) as { gbrain_checkpoint?: { status: string } };
+    expect(bag.gbrain_checkpoint?.status).toBe('skipped');
   });
 
   it('L0-B: SDK load is lazy — engine creation does NOT trigger module-load constraint', async () => {

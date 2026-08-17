@@ -321,21 +321,20 @@ describe.skipIf(!DATABASE_URL)('Postgres bootstrap verify (real Postgres)', () =
     const magic = res.checks.find((c) => c.id === 'magic_moment');
     expect(magic?.ok).toBe(true);
 
-    // Probe cleanup [G13] must hold on the Postgres DDL path too. Verify
-    // cleans up through the real delete_page op, which is a SOFT delete
-    // (deleted_at stamp) — so assert no ACTIVE probe rows remain, and pin
-    // that the probes went through the soft-delete path rather than never
-    // being cleaned at all.
+    // Probe cleanup [G13] must hold on the Postgres DDL path too. Since
+    // v0.46.6.0 (#4170, closing #4142) verify's probe cleanup HARD-deletes
+    // via the trusted engine primitive — probes are not user content and
+    // verify is a trusted local caller; the old soft-delete path left
+    // tombstones in user brains until the 72h purge. Assert NO probe rows
+    // remain at all, active or tombstoned. (This hunk shipped in #4171
+    // still asserting the pre-#4170 soft-delete contract — the merge-base
+    // collision flagged in that PR's review thread — and broke the Postgres
+    // e2e lane on master; repaired here.)
     const probePages = await engine.executeRaw<{ n: number }>(
-      `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1 AND slug IN ($2, $3) AND deleted_at IS NULL`,
+      `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1 AND slug IN ($2, $3)`,
       ['workspace', VERIFY_PROBE_SLUG, VERIFY_PROBE_ENTITY_SLUG],
     );
     expect(probePages[0].n).toBe(0);
-    const probeTombstones = await engine.executeRaw<{ n: number }>(
-      `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1 AND slug IN ($2, $3) AND deleted_at IS NOT NULL`,
-      ['workspace', VERIFY_PROBE_SLUG, VERIFY_PROBE_ENTITY_SLUG],
-    );
-    expect(probeTombstones[0].n).toBe(2);
     const probeFacts = await engine.executeRaw<{ n: number }>(
       `SELECT COUNT(*)::int AS n FROM facts WHERE source_id = $1 AND source_markdown_slug = $2`,
       ['workspace', VERIFY_PROBE_SLUG],

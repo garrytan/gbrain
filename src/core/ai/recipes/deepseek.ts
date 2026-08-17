@@ -96,6 +96,10 @@ export const deepseek: Recipe = {
       supports_tools: true,
       supports_subagent_loop: true,
       supports_prompt_cache: false,
+      // Thinking mode is DEFAULT ON for both v4 models (see module docstring):
+      // reasoning bills as output and counts against max_tokens, so callers
+      // that size output caps must grant reasoning headroom (gbrain#4172).
+      thinking_by_default: true,
       max_context_tokens: 1_000_000,
       cost_per_1m_input_usd: 0.14, // deepseek-v4-flash cache-miss baseline
       cost_per_1m_output_usd: 0.28,

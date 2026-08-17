@@ -40,6 +40,8 @@ import {
   purgeExpiredSources,
   formatImpact,
   formatSoftDelete,
+  clientsReferencingSource,
+  formatClientReferentsBlock,
   SOFT_DELETE_TTL_HOURS,
 } from '../core/destructive-guard.ts';
 import {
@@ -60,6 +62,8 @@ import {
   sourceFederationState,
   type SourceRow as LoadedSourceRow,
 } from '../core/sources-load.ts';
+import { sqlQueryForEngine } from '../core/sql-query.ts';
+import { preflightOauthClientColumns } from './auth.ts';
 
 // ── Validation ──────────────────────────────────────────────
 
@@ -535,19 +539,63 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
     }
   }
 
-  // v0.42.44 — tear down durability scaffolding BEFORE the row is deleted (we
-  // need the path/label while it still exists). Best-effort; tolerates missing
-  // repo/cron/credential independently.
+  // PR6 D5b: FK-RESTRICT pre-check — a referenced source refuses with revoke
+  // guidance, never a raw FK violation.
+  const referents = await clientsReferencingSource(engine, id);
+  if (referents.length > 0) {
+    console.error(formatClientReferentsBlock(id, referents));
+    process.exit(5);
+  }
+
+  // cathedral-6 (F1): the row DELETE commits FIRST — atomically with an in-tx
+  // referents re-check — and external teardown (unharden: git scaffolding /
+  // cron / credential) runs only AFTER the commit. Pre-fix the teardown ran
+  // before the DELETE, so a registration racing between the pre-check and the
+  // DELETE failed the FK AFTER scaffolding was already destroyed. The in-tx
+  // re-check uses a column-preflighted statement shape (25P02: no
+  // catch-and-retry degrade inside a tx; missing table ⇒ empty column set ⇒
+  // no FK ⇒ skip); the FK constraint itself is the backstop for a
+  // registration committing between the re-check and the DELETE.
+  class SourceReferencedError extends Error {}
+  try {
+    await engine.transaction(async (tx) => {
+      const cols = await preflightOauthClientColumns(sqlQueryForEngine(tx));
+      if (cols.has('source_id')) {
+        // PHYSICAL count (no deleted_at filter): the FK ignores soft-deletion.
+        const rows = await tx.executeRaw<{ n: string }>(
+          `SELECT COUNT(*)::text AS n FROM oauth_clients WHERE source_id = $1`,
+          [id],
+        );
+        if (Number(rows[0]?.n ?? 0) > 0) throw new SourceReferencedError();
+      }
+      await tx.executeRaw(`DELETE FROM sources WHERE id = $1`, [id]);
+    });
+  } catch (e) {
+    const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code?: unknown }).code) : '';
+    if (e instanceof SourceReferencedError || code === '23503') {
+      const raced = await clientsReferencingSource(engine, id);
+      console.error(formatClientReferentsBlock(id, raced.length > 0 ? raced : referents));
+      process.exit(5);
+    }
+    throw e;
+  }
+
+  const pageCount = impact?.pageCount ?? 0;
+  console.log(`Removed source "${id}" (${pageCount} pages + dependent rows cascaded).`);
+
+  // v0.42.44 — durability-scaffolding teardown, POST-COMMIT as of cathedral-6
+  // (the path/label were captured from `src` before the delete). Best-effort;
+  // on failure the DB row is already gone — print exactly what remains so the
+  // operator can sweep the residue (doctor also surfaces it).
   try {
     const { unhardenBrainRepo } = await import('../core/brain-repo-durability.ts');
     await unhardenBrainRepo({ repoPath: src.local_path ?? '', sourceId: id, logger: (l) => console.error(l) });
   } catch (e) {
-    console.error(`[gbrain] durability teardown skipped (non-fatal): ${(e as Error).message}`);
+    console.error(
+      `[gbrain] source row "${id}" is deleted, but durability teardown failed (non-fatal): ${(e as Error).message}. ` +
+      `Residue may remain${src.local_path ? ` at ${src.local_path}` : ''} (git hardening / cron entry / stored credential) — \`gbrain doctor\` surfaces it.`,
+    );
   }
-
-  await engine.executeRaw(`DELETE FROM sources WHERE id = $1`, [id]);
-  const pageCount = impact?.pageCount ?? 0;
-  console.log(`Removed source "${id}" (${pageCount} pages + dependent rows cascaded).`);
 }
 
 // ── Subcommand: archive (soft-delete) ───────────────────────
@@ -724,17 +772,30 @@ async function runPurge(engine: BrainEngine, args: string[]): Promise<void> {
       process.exit(5);
     }
 
+    // PR6 D5b: FK-RESTRICT pre-check — refuse with revoke guidance instead of
+    // letting the raw FK violation surface from the DELETE.
+    const referents = await clientsReferencingSource(engine, id);
+    if (referents.length > 0) {
+      console.error(formatClientReferentsBlock(id, referents));
+      process.exit(5);
+    }
+
     await engine.executeRaw(`DELETE FROM sources WHERE id = $1`, [id]);
     console.log(`Permanently deleted source "${id}" (${impact.pageCount} pages cascaded).`);
     return;
   }
 
   // No id: purge all expired archives
-  const purged = await purgeExpiredSources(engine);
-  if (purged.length === 0) {
+  const { purged, blocked } = await purgeExpiredSources(engine);
+  if (purged.length === 0 && blocked.length === 0) {
     console.log('No expired archives to purge.');
   } else {
-    console.log(`Purged ${purged.length} expired archive(s): ${purged.join(', ')}`);
+    if (purged.length > 0) {
+      console.log(`Purged ${purged.length} expired archive(s): ${purged.join(', ')}`);
+    }
+    for (const b of blocked) {
+      console.log(`Blocked: ${b.id} — ${b.reason}`);
+    }
   }
 }
 
@@ -974,6 +1035,17 @@ function formatLag(seconds: number): string {
 }
 
 // ── v0.40 sources webhook (D8) ──────────────────────────────
+// Hoisted so both runWebhook's `case '--help'` and the top-level nested-help
+// guard in runSources (`sources webhook --help`, `sources webhook <sub>
+// --help`) print the identical text without dispatching into runWebhook.
+const SOURCES_WEBHOOK_HELP = `Usage: gbrain sources webhook <subcommand> <source-id> [options]
+
+Subcommands:
+  set <id>    [--secret VAL] [--github-repo owner/name]   One-time reveal
+  show <id>                                                Metadata only
+  rotate <id>                                              New secret, reveal
+  clear <id>                                               Remove webhook config`;
+
 async function runWebhook(engine: BrainEngine, args: string[]): Promise<void> {
   const sub = args[0];
   const rest = args.slice(1);
@@ -985,13 +1057,7 @@ async function runWebhook(engine: BrainEngine, args: string[]): Promise<void> {
     case undefined:
     case '--help':
     case '-h':
-      console.log(`Usage: gbrain sources webhook <subcommand> <source-id> [options]
-
-Subcommands:
-  set <id>    [--secret VAL] [--github-repo owner/name]   One-time reveal
-  show <id>                                                Metadata only
-  rotate <id>                                              New secret, reveal
-  clear <id>                                               Remove webhook config`);
+      console.log(SOURCES_WEBHOOK_HELP);
       return;
     default:
       console.error(`Unknown webhook subcommand: ${sub}`);
@@ -1313,14 +1379,8 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
   // frontmatter.type and estimates per-page segment count from body
   // bytes. Estimated per-segment Sonnet cost is a rough heuristic
   // (~2000 in + 500 out tokens at $3/MTok in + $15/MTok out ≈ $0.013).
-  const FACTS_BACKFILL_ALLOWED = [
-    'conversation',
-    'meeting',
-    'slack',
-    'email',
-    'imessage',
-    'imessage-daily',
-  ];
+  // Single source of truth for the conversation-facts type allowlist.
+  const { ALLOWED_TYPES: FACTS_BACKFILL_ALLOWED } = await import('../core/facts/conversation-types.ts');
   const FACTS_BACKFILL_CHARS_PER_SEGMENT = 6500; // matches SEGMENT_TEXT_CHAR_LIMIT
   const FACTS_BACKFILL_USD_PER_SEGMENT = 0.013;
   let factsBackfillPages = 0;
@@ -1364,7 +1424,7 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
     }
     // Facts-backfill estimator: counts pages matching allowed types.
     const fmType = (parsed.frontmatter?.type as string | undefined) ?? null;
-    if (fmType && FACTS_BACKFILL_ALLOWED.includes(fmType)) {
+    if (fmType && (FACTS_BACKFILL_ALLOWED as readonly string[]).includes(fmType)) {
       factsBackfillPages++;
       const totalBytes = sanity.bytes;
       const segmentsEstimate = Math.max(
@@ -1463,6 +1523,36 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
   const sub = args[0];
   const rest = args.slice(1);
 
+  // Help guards run BEFORE the subcommand switch below (mirrors jobs.ts
+  // src/commands/jobs.ts:462-471 — help checked first-position, then any
+  // position, before any subcommand body runs). cli.ts routes bare `sources
+  // --help` here with a placeholder engine (SELF_HELP_WITHOUT_ENGINE): the
+  // second check is why that's safe — without it, `sources <sub> --help`
+  // would fall through to <sub>'s own handler instead of printing help,
+  // which crashes for engine-touching subcommands (the placeholder engine
+  // is not a real one) and, for engine-free subcommands like `detach`
+  // (unlinks .gbrain-source with no engine involved at all), would silently
+  // perform the destructive action instead of showing usage.
+  if (!sub || sub === '--help' || sub === '-h') {
+    printHelp();
+    return;
+  }
+  if (rest.includes('--help') || rest.includes('-h')) {
+    // webhook is the one sources subcommand that ships its own detailed
+    // --help (set/show/rotate/clear, in SOURCES_WEBHOOK_HELP) — print that
+    // instead of the general list so `sources webhook --help` and `sources
+    // webhook <sub> --help` reach it. Do NOT dispatch into runWebhook: that
+    // would let e.g. `sources webhook set x --help` fall through to
+    // runWebhookSet, the same destructive-dispatch class this guard exists
+    // to prevent for the rest of sources' subcommands.
+    if (sub === 'webhook') {
+      console.log(SOURCES_WEBHOOK_HELP);
+      return;
+    }
+    printHelp();
+    return;
+  }
+
   switch (sub) {
     case 'add':        return runAdd(engine, rest);
     case 'list':       return runList(engine, rest);
@@ -1496,11 +1586,8 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     // agent-bootstrap: scan-gated workspace push
     case 'push':       return runPush(engine, rest);
     case 'unharden':   { const { runUnharden } = await import('./sources-harden.ts'); return runUnharden(engine, rest); }
-    case undefined:
-    case '--help':
-    case '-h':
-      printHelp();
-      return;
+    // undefined / --help / -h are handled by the guards above, before this
+    // switch is ever reached — no case needed here.
     default:
       console.error(`Unknown sources subcommand: ${sub}`);
       printHelp();
@@ -1548,6 +1635,9 @@ Subcommands:
                                     override (v0.40.3.0). Pass "unset" or
                                     "default" to clear (NULL falls through
                                     to the global search.mode bundle).
+  webhook <set|show|rotate|clear> <id> [options]
+                                    v0.40 — per-source webhook secret management.
+                                    Run 'sources webhook --help' for subcommand detail.
   harden <id|--all> [--pat-file <p>] [--branch <b>] [--no-cron] [--no-verify] [--dry-run] [--json]
                                     v0.42.44 — make a brain repo durable: local
                                     auto-push hook, committed commit-push helper,

@@ -131,5 +131,25 @@ export function canonicalLookup(
   const { provider, model } = splitProviderModelId(modelId);
   if (!model) return undefined;
   const key = provider ? `${provider}:${model}` : `anthropic:${model}`;
-  return CANONICAL_PRICING[key];
+  const normalized = CANONICAL_PRICING[key];
+  if (normalized) return normalized;
+  // 3. #4123 (TODOS P3 case-sensitivity): case-insensitive fallback, folding
+  //    BOTH sides — some canonical keys carry cased model tails verbatim
+  //    (Llama-3.3-70B-...), so folding only the probe would miss those. Exact
+  //    matches above stay first, so all-lowercase lookups pay nothing new.
+  //    Safe only while no two canonical keys collide case-insensitively —
+  //    pinned by test/model-pricing.test.ts.
+  const folded = canonicalFoldedView();
+  return folded[modelId.toLowerCase()] ?? folded[key.toLowerCase()];
+}
+
+let _canonicalFoldedView: Record<string, ModelPricing> | null = null;
+function canonicalFoldedView(): Record<string, ModelPricing> {
+  if (!_canonicalFoldedView) {
+    _canonicalFoldedView = {};
+    for (const [k, v] of Object.entries(CANONICAL_PRICING)) {
+      _canonicalFoldedView[k.toLowerCase()] = v;
+    }
+  }
+  return _canonicalFoldedView;
 }

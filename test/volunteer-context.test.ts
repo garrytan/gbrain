@@ -277,6 +277,21 @@ describe('gateVolunteeredPointers — direct unit (the pure gate step)', () => {
     });
     expect(pages).toEqual([]);
   });
+
+  test('title-surname arm clears the 0.70 gate unboosted and renders a surname rationale (R2-7)', () => {
+    const block: PointerBlock = {
+      pointers: [
+        { display: 'Galewright', slug: 'people/ronan-galewright', source_id: 'default', synopsis: 'z', arm: 'title-surname', confidence: 0.72 },
+      ],
+      text: 'B',
+    };
+    // Empty candidate map: no salience boost — the arm's base 0.72 alone must
+    // survive the 0.70 volunteer floor (the reason it isn't 0.65).
+    const pages = gateVolunteeredPointers(block, new Map(), { windowSize: 1 });
+    expect(pages).toHaveLength(1);
+    expect(pages[0].confidence).toBeCloseTo(0.72);
+    expect(pages[0].rationale).toContain('surname match "Galewright"');
+  });
 });
 
 describe('volunteerUsageStats', () => {
@@ -490,7 +505,10 @@ describe('window-cap ordering — the newest user mention survives the cap', () 
       { role: 'assistant', text: `consider ${stale}.` },
       { role: 'user', text: 'actually ask Alice Example first' },
     ]);
-    expect(cands.length).toBeLessThanOrEqual(CAP);
+    // Re-pinned for the v0.46.15 identity wave: the STRONG cap is what this
+    // test pins; lowercase weak candidates ("consider", "ask", …) ride a
+    // separate alias-arm-restricted budget and never evict strong ones.
+    expect(cands.filter((c) => !c.weak).length).toBeLessThanOrEqual(CAP);
     const alice = cands.find((c) => normalizeAlias(c.query) === normalizeAlias('Alice Example'));
     expect(alice).toBeDefined();
     // Recency + user-role weighting puts the newest user mention FIRST.

@@ -62,11 +62,12 @@ async function insertTool(
   status: 'pending' | 'complete' | 'failed',
   output: unknown = null,
   error: string | null = null,
+  ordinal: number | null = null,
 ) {
   await engine.executeRaw(
-    `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, input, status, output, error)
-     VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7::jsonb, $8)`,
-    [jobId, idx, toolUseId, toolName, JSON.stringify(input), status, output == null ? null : JSON.stringify(output), error],
+    `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, input, status, output, error, ordinal)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7::jsonb, $8, $9)`,
+    [jobId, idx, toolUseId, toolName, JSON.stringify(input), status, output == null ? null : JSON.stringify(output), error, ordinal],
   );
 }
 
@@ -143,6 +144,83 @@ describe('renderTranscript', () => {
     const { messages, tools } = await loadTranscriptRows(engine, jobId);
     const md = renderTranscript(messages, tools);
     expect(md).toContain('pending (no resolution recorded yet)');
+  });
+
+  test('#4155 regression: the same raw tool_use_id across two turns resolves each tool_use to ITS OWN execution row', async () => {
+    // claude-cli replays a fresh subprocess per turn from an id-stripped
+    // transcript, so the model reuses the same short id ("toolu_01") on every
+    // turn. Rows must resolve by (message_idx, tool_use_id): an id-only map
+    // is last-write-wins and mis-attributes turn 1's status/output to turn 2's
+    // row (and vice versa).
+    await insertMessage(0, 'user', [{ type: 'text', text: 'do two things' }]);
+    await insertMessage(1, 'assistant', [
+      { type: 'tool_use', id: 'toolu_01', name: 'brain_search', input: { q: 'first' } },
+    ]);
+    await insertMessage(2, 'user', [
+      { type: 'tool_result', tool_use_id: 'toolu_01', content: 'first-turn-output' },
+    ]);
+    await insertMessage(3, 'assistant', [
+      { type: 'tool_use', id: 'toolu_01', name: 'brain_put_page', input: { slug: 'x' } },
+    ]);
+    await insertMessage(4, 'user', [
+      { type: 'tool_result', tool_use_id: 'toolu_01', content: 'second-turn-error', is_error: true },
+    ]);
+    // Same raw id on both rows — legal now that the job-wide unique on
+    // (job_id, tool_use_id) is gone from the schema (v131).
+    await insertTool(1, 'toolu_01', 'brain_search', { q: 'first' }, 'complete', { hit: 'first-turn-output' });
+    await insertTool(3, 'toolu_01', 'brain_put_page', { slug: 'x' }, 'failed', null, 'second-turn-error');
+
+    const { messages, tools } = await loadTranscriptRows(engine, jobId);
+    expect(tools.length).toBe(2); // both rows persisted despite the shared raw id
+    const md = renderTranscript(messages, tools);
+
+    // Attribution: turn 1 (before the "## Message 3" header) shows ITS
+    // complete output; turn 2 (after) shows ITS failure. Pre-fix, the
+    // id-only map served the LAST row for both lookups, so turn 1 rendered
+    // as failed.
+    const splitAt = md.indexOf('## Message 3');
+    expect(splitAt).toBeGreaterThan(-1);
+    const turn1 = md.slice(0, splitAt);
+    const turn2 = md.slice(splitAt);
+    expect(turn1).toContain('status: **complete**');
+    expect(turn1).toContain('first-turn-output');
+    expect(turn1).not.toContain('status: **failed**');
+    expect(turn2).toContain('status: **failed**');
+    expect(turn2).toContain('second-turn-error');
+    expect(turn2).not.toContain('status: **complete**');
+
+    // The echoed tool_result blocks are still recognized as owned (skipped),
+    // not dumped as orphans.
+    expect(md).not.toContain('no matching tool_use in this transcript');
+  });
+
+  test('#4155 corner: the same raw id repeated WITHIN one turn resolves per-call by the stamped ordinal', async () => {
+    // A provider should never repeat an id inside a single response, but the
+    // ledger tolerates it: rows carry the D11 ordinal and rendering resolves
+    // ordinal-first, disabling the ambiguous raw-id map for repeated ids.
+    await insertMessage(0, 'assistant', [
+      { type: 'tool_use', id: 'dup', name: 'brain_search', input: { q: 'a' } },
+      { type: 'tool_use', id: 'dup', name: 'brain_put_page', input: { slug: 'b' } },
+    ]);
+    await insertTool(0, 'dup', 'brain_search', { q: 'a' }, 'complete', { hit: 'ordinal-zero-output' }, null, 0);
+    await insertTool(0, 'dup', 'brain_put_page', { slug: 'b' }, 'failed', null, 'ordinal-one-error', 1);
+
+    const { messages, tools } = await loadTranscriptRows(engine, jobId);
+    expect(tools.length).toBe(2);
+    const md = renderTranscript(messages, tools);
+
+    const firstBlockAt = md.indexOf('**tool_use** `brain_search`');
+    const secondBlockAt = md.indexOf('**tool_use** `brain_put_page`');
+    expect(firstBlockAt).toBeGreaterThan(-1);
+    expect(secondBlockAt).toBeGreaterThan(firstBlockAt);
+    const firstBlock = md.slice(firstBlockAt, secondBlockAt);
+    const secondBlock = md.slice(secondBlockAt);
+    expect(firstBlock).toContain('status: **complete**');
+    expect(firstBlock).toContain('ordinal-zero-output');
+    expect(firstBlock).not.toContain('ordinal-one-error');
+    expect(secondBlock).toContain('status: **failed**');
+    expect(secondBlock).toContain('ordinal-one-error');
+    expect(secondBlock).not.toContain('ordinal-zero-output');
   });
 
   test('truncates huge tool outputs per maxOutputBytes', async () => {

@@ -95,6 +95,10 @@ describe('runFactsPipeline (extract_facts MCP op path) — response shape stabil
     for (const id of r.fact_ids) {
       expect(id).toBeGreaterThan(0);
     }
+    // Cathedral 5 (additive): entity_slugs = fence-written slugs only.
+    // These facts are unparented (entity: null) → legacy DB-only path →
+    // never a fence write → the truthful-links list stays empty.
+    expect(r.entity_slugs).toEqual([]);
   });
 
   test('empty extraction → zero counts (no NaN, no undefined)', async () => {
@@ -109,6 +113,7 @@ describe('runFactsPipeline (extract_facts MCP op path) — response shape stabil
     expect(r.duplicate).toBe(0);
     expect(r.superseded).toBe(0);
     expect(r.fact_ids).toEqual([]);
+    expect(r.entity_slugs).toEqual([]);
   });
 });
 

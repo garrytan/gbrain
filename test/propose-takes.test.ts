@@ -25,11 +25,15 @@ import {
   isWellFormedEmptyExtraction,
   PROPOSE_TAKES_PROMPT_VERSION,
   EMPTY_EXTRACTION_TOMBSTONE_TEXT,
+  resolveProposeTakesDeadlineMs,
+  PROPOSE_TAKES_FALLBACK_DEADLINE_MS,
+  MIN_PROPOSE_TAKES_BUDGET_MS,
   type ProposeTakesExtractor,
   type ProposedTake,
 } from '../src/core/cycle/propose-takes.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { BudgetMeter } from '../src/core/cycle/budget-meter.ts';
+import { CYCLE_DEADLINE_RESERVE_MS } from '../src/core/cycle/base-phase.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { Page } from '../src/core/types.ts';
@@ -508,7 +512,9 @@ New prose appended here.`;
     const extractor: ProposeTakesExtractor = async () => [];
     const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
     const details = result.details as Record<string, unknown>;
-    expect(details.deadline_hit).toBeUndefined();
+    // gbrain#4168: deadline_hit is now explicitly initialized false (was
+    // undefined-when-unhit); the behavior pinned here is unchanged.
+    expect(details.deadline_hit).toBe(false);
     expect(details.pages_scanned).toBe(1);
   });
 
@@ -705,5 +711,108 @@ describe('runPhaseProposeTakes — empty extraction memoization', () => {
 
     expect((result.details as Record<string, unknown>).tombstones_written).toBe(0);
     expect(captured.filter(c => c.sql.includes('INSERT INTO take_proposals'))).toHaveLength(0);
+  });
+});
+
+describe('resolveProposeTakesDeadlineMs — derived phase budget (#4168)', () => {
+  const NOW = 1_000_000_000_000;
+
+  test('no job deadline (gbrain dream CLI) falls back to the DERIVED constant, strictly under the anchor', () => {
+    expect(resolveProposeTakesDeadlineMs(null, NOW)).toBe(PROPOSE_TAKES_FALLBACK_DEADLINE_MS);
+    expect(resolveProposeTakesDeadlineMs(undefined, NOW)).toBe(PROPOSE_TAKES_FALLBACK_DEADLINE_MS);
+  });
+
+  test('generous job deadline is capped at the fallback (min, not raw remaining)', () => {
+    const generous = NOW + 10 * 60 * 60 * 1000;
+    expect(resolveProposeTakesDeadlineMs(generous, NOW)).toBe(PROPOSE_TAKES_FALLBACK_DEADLINE_MS);
+  });
+
+  test('tight job deadline yields the FRACTION of remaining-minus-reserve (headroom for the downstream calibration phases)', () => {
+    const tight = NOW + 10 * 60 * 1000; // 10min left
+    const remaining = 10 * 60 * 1000 - CYCLE_DEADLINE_RESERVE_MS;
+    // Red-team fix: un-fractioned, a small budget was consumed whole and
+    // grade_takes/calibration_profile started inside the reserve.
+    expect(resolveProposeTakesDeadlineMs(tight, NOW)).toBe(Math.floor(remaining * 0.8));
+  });
+
+  test('boundary: the skip line sits where the FRACTIONED budget crosses MIN (adversarial F4 — never clamp a sub-MIN fraction back up)', () => {
+    // Non-null requires floor(remaining * 0.8) >= MIN, i.e. remaining >= MIN/0.8.
+    const minRemaining = Math.ceil(MIN_PROPOSE_TAKES_BUDGET_MS / 0.8);
+    const atBoundary = NOW + CYCLE_DEADLINE_RESERVE_MS + minRemaining;
+    expect(resolveProposeTakesDeadlineMs(atBoundary, NOW)).toBe(MIN_PROPOSE_TAKES_BUDGET_MS);
+    // remaining == MIN exactly → fractioned < MIN → honest skip (was: clamped
+    // UP to MIN, handing propose_takes the whole window and starving the
+    // downstream calibration phases into the reserve).
+    const atMin = NOW + CYCLE_DEADLINE_RESERVE_MS + MIN_PROPOSE_TAKES_BUDGET_MS;
+    expect(resolveProposeTakesDeadlineMs(atMin, NOW)).toBeNull();
+    expect(resolveProposeTakesDeadlineMs(atBoundary - 2, NOW)).toBeNull();
+    expect(resolveProposeTakesDeadlineMs(NOW - 1, NOW)).toBeNull();
+  });
+});
+
+describe('deadlineAtMs threading through the phase (#4168)', () => {
+  test('a sufficient deadlineAtMs does not skip (runtime governance is pinned by the resolver unit tests above)', async () => {
+    const pages = [
+      buildPage({ slug: 'wiki/gov-a', body: 'page a' }),
+      buildPage({ slug: 'wiki/gov-b', body: 'page b' }),
+    ];
+    const { engine } = buildMockEngine({ pages });
+    const extractor: ProposeTakesExtractor = async () => {
+      await new Promise((r) => setTimeout(r, 30));
+      return [];
+    };
+    // remaining = reserve + MIN + 10ms → resolved budget ≈ MIN... too large to
+    // fire on a 30ms extractor. Instead use explicit-precedence coverage below
+    // and pin GOVERNANCE structurally: resolved = min(remaining-reserve, fallback).
+    // Here: a deadlineAtMs whose remaining-minus-reserve lands at 5ms cannot be
+    // constructed above MIN, so governance-at-runtime is proven via the resolver
+    // unit tests + the skip case below (the two reachable production shapes).
+    const result = await runPhaseProposeTakes(buildCtx(engine), {
+      extractor,
+      // Above the F4 boundary: non-null needs floor(remaining*0.8) >= MIN.
+      deadlineAtMs: Date.now() + CYCLE_DEADLINE_RESERVE_MS + Math.ceil(MIN_PROPOSE_TAKES_BUDGET_MS / 0.8) + 10_000,
+    });
+    expect(result.status).not.toBe('skipped'); // enough budget → runs
+  });
+
+  test('an exhausted job budget returns status skipped with insufficient_cycle_budget and writes NO rollup row', async () => {
+    const pages = [buildPage({ slug: 'wiki/never-scanned', body: 'x' })];
+    const { engine, captured } = buildMockEngine({ pages });
+    let extractorCalls = 0;
+    const extractor: ProposeTakesExtractor = async () => { extractorCalls++; return []; };
+    const result = await runPhaseProposeTakes(buildCtx(engine), {
+      extractor,
+      deadlineAtMs: Date.now() + 1000, // ~1s left — far under MIN
+    });
+    expect(result.status).toBe('skipped');
+    const details = result.details as Record<string, unknown>;
+    expect(details.reason).toBe('insufficient_cycle_budget');
+    expect(details.pages_scanned).toBe(0);
+    expect(extractorCalls).toBe(0);
+    expect(result.summary).toContain('raise the autopilot interval'); // operator hint is load-bearing
+    // BEFORE any rollup write — an insufficient-budget run records neither a
+    // halt nor a completed round (no_provider-skip parity).
+    expect(captured.filter((c) => c.sql.includes('extract_rollup_7d'))).toHaveLength(0);
+    expect(captured.filter((c) => c.sql.includes('INSERT INTO take_proposals'))).toHaveLength(0);
+  });
+
+  test('explicit opts.deadlineMs still wins over deadlineAtMs (test-override precedence)', async () => {
+    const pages = [
+      buildPage({ slug: 'wiki/prec-a', body: 'page a' }),
+      buildPage({ slug: 'wiki/prec-b', body: 'page b' }),
+    ];
+    const { engine } = buildMockEngine({ pages });
+    const extractor: ProposeTakesExtractor = async () => {
+      await new Promise((r) => setTimeout(r, 10));
+      return [];
+    };
+    const result = await runPhaseProposeTakes(buildCtx(engine), {
+      extractor,
+      deadlineMs: 5, // explicit override
+      deadlineAtMs: Date.now() + 60 * 60 * 1000, // generous job budget must NOT mask it
+    });
+    const details = result.details as Record<string, unknown>;
+    expect(details.deadline_hit).toBe(true);
+    expect(details.pages_scanned).toBe(1);
   });
 });

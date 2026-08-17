@@ -80,28 +80,69 @@ describe('#1305 — getHealth excludes soft-deleted pages', () => {
   });
 
   test('entity coverage denominators and most_connected exclude deleted entities', async () => {
-    // Live entity: inbound link + timeline entry → full coverage.
-    await engine.putPage('people/alice-example', { type: 'person', title: 'Alice', compiled_truth: 'a person', frontmatter: {} });
+    // FIVE live entities (>= the gbrain#4147 small-N floor, so the ratios
+    // are real percentages, not the below-floor null), each with an inbound
+    // link + timeline entry → full coverage. Bob is the sixth, soft-deleted.
+    const liveSlugs = ['people/alice-example', 'people/carol-example', 'people/dana-example', 'companies/acme-example', 'companies/widget-co'];
+    for (const slug of liveSlugs) {
+      await engine.putPage(slug, { type: slug.startsWith('companies/') ? 'company' : 'person', title: slug, compiled_truth: 'an entity', frontmatter: {} });
+    }
     await engine.putPage('people/bob-example', { type: 'person', title: 'Bob', compiled_truth: 'another person', frontmatter: {} });
-    await seedNote('wiki/mentions-alice');
-    const aliceId = await pageId('people/alice-example');
-    await (engine as any).db.query(
-      `INSERT INTO links (from_page_id, to_page_id, link_type) VALUES ($1, $2, 'mentions')`,
-      [await pageId('wiki/mentions-alice'), aliceId],
-    );
-    await (engine as any).db.query(
-      `INSERT INTO timeline_entries (page_id, date, summary) VALUES ($1, '2026-01-01', 'met alice')`,
-      [aliceId],
-    );
+    await seedNote('wiki/mentions-all');
+    const hubId = await pageId('wiki/mentions-all');
+    for (const slug of liveSlugs) {
+      const pid = await pageId(slug);
+      await (engine as any).db.query(
+        `INSERT INTO links (from_page_id, to_page_id, link_type) VALUES ($1, $2, 'mentions')`,
+        [hubId, pid],
+      );
+      await (engine as any).db.query(
+        `INSERT INTO timeline_entries (page_id, date, summary) VALUES ($1, '2026-01-01', 'seen')`,
+        [pid],
+      );
+    }
 
     await engine.softDeletePage('people/bob-example');
     const h = await engine.getHealth();
 
-    // Pre-fix: bob stayed in the entity_pages CTE → coverage 0.5 each,
+    // Pre-fix: bob stayed in the entity_pages CTE → coverage 5/6 each,
     // and bob appeared in most_connected.
+    expect(h.entity_page_count).toBe(5);
     expect(h.link_coverage).toBe(1);
     expect(h.timeline_coverage).toBe(1);
     expect(h.most_connected.map((c) => c.slug)).not.toContain('people/bob-example');
+  });
+
+  test('link_coverage does not count inbound links whose SOURCE page is soft-deleted (red-team consistency with islanded)', async () => {
+    // Five entities (at the #4147 floor). Four get live inbound links; the
+    // fifth's ONLY inbound link comes from a page that is then soft-deleted.
+    // The islanded predicate (#4153) calls that entity islanded; coverage
+    // must agree it is uncovered — 4/5, not 5/5.
+    const slugs = ['people/alice-example', 'people/carol-example', 'people/dana-example', 'companies/acme-example', 'companies/widget-co'];
+    for (const slug of slugs) {
+      await engine.putPage(slug, { type: slug.startsWith('companies/') ? 'company' : 'person', title: slug, compiled_truth: 'an entity', frontmatter: {} });
+    }
+    await seedNote('wiki/live-hub');
+    await seedNote('wiki/doomed-hub');
+    const liveHub = await pageId('wiki/live-hub');
+    const doomedHub = await pageId('wiki/doomed-hub');
+    for (const slug of slugs.slice(0, 4)) {
+      await (engine as any).db.query(
+        `INSERT INTO links (from_page_id, to_page_id, link_type) VALUES ($1, $2, 'mentions')`,
+        [liveHub, await pageId(slug)],
+      );
+    }
+    await (engine as any).db.query(
+      `INSERT INTO links (from_page_id, to_page_id, link_type) VALUES ($1, $2, 'mentions')`,
+      [doomedHub, await pageId('companies/widget-co')],
+    );
+
+    await engine.softDeletePage('wiki/doomed-hub');
+    const h = await engine.getHealth();
+
+    expect(h.entity_page_count).toBe(5);
+    // Pre-fix: 1 (the dead inbound link still counted widget-co as covered).
+    expect(h.link_coverage).toBeCloseTo(0.8, 5);
   });
 
   test('chunk storage counts stay raw (the deliberate boundary)', async () => {

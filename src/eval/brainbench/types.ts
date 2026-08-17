@@ -204,6 +204,15 @@ export interface HarnessTurnResult {
 export interface HarnessAdapter {
   readonly name: HarnessName;
   readonly seam: SeamKind;
+  /**
+   * v0.46.15 — optional RUN-scoped lifecycle (outside-voice F4/R2-5). The
+   * harness constructs ONE adapter per harness per run and calls setupRun
+   * before the first fixture / teardownRun after the last, so a production
+   * seam can own long-lived infrastructure (the claude-code adapter's
+   * resolve-IPC server + temp home) instead of paying setup per fixture.
+   */
+  setupRun?(): Promise<void>;
+  teardownRun?(): Promise<void>;
   /** Called once per (fixture, adapter) before any turn. */
   beginConversation(engine: PGLiteEngine, fixture: AdapterFixtureView): Promise<void>;
   /**
