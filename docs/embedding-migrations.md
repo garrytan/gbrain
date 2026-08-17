@@ -1,10 +1,21 @@
 # Switching embedding models or dimensions on an existing brain
 
+> **Use the command, not the recipes:** `gbrain migrate embeddings --to
+> <provider:model> --dim <N>` is the supported path — it handles the schema
+> transition (all three dim-pinned columns), NULL-signature pages, the
+> reranker companion switch, the query cache, locks, and resume-after-kill,
+> and verifies the database before declaring anything done. Preview with
+> `--dry-run`; inspect state with `--status`. Leaving ZeroEntropy: follow
+> `skills/migrations/v0.46.3.0.md`. The manual recipes below remain as the
+> appendix for unusual situations (they are what the dimension-mismatch
+> error messages link to).
+
+
 GBrain stores embeddings in a fixed-dimension `vector(N)` column on
 `content_chunks`. If you switch to a model with a different dimension
-(e.g. `openai:text-embedding-3-large` 1536 → `zeroentropyai:zembed-1`
-1280, or `voyage:voyage-4-large` 2048), the on-disk column type doesn't
-change automatically.
+(e.g. `openai:text-embedding-3-large` 1536 → `voyage:voyage-4` 1024, or
+`voyage:voyage-4-large` 2048), the on-disk column type doesn't change
+automatically.
 
 `gbrain init`, `gbrain doctor`, and `gbrain embed --stale` all detect
 this mismatch and refuse to silently proceed. This doc is the recipe
@@ -63,8 +74,8 @@ single-command wrapper:
 
 ```bash
 gbrain reinit-pglite \
-  --embedding-model zeroentropyai:zembed-1 \
-  --embedding-dimensions 1280
+  --embedding-model voyage:voyage-4 \
+  --embedding-dimensions 1024
 ```
 
 This backs up the existing brain to `<path>.bak`, runs `gbrain init`
@@ -84,8 +95,8 @@ mv ~/.gbrain/brain.pglite ~/.gbrain/brain.pglite.bak
 #    every other field in ~/.gbrain/config.json (chat model,
 #    expansion model, API keys).
 gbrain init --pglite \
-  --embedding-model zeroentropyai:zembed-1 \
-  --embedding-dimensions 1280
+  --embedding-model voyage:voyage-4 \
+  --embedding-dimensions 1024
 
 # 3. Re-import your brain repo. `gbrain sync` reads the brain repo
 #    from disk and re-creates the page rows.

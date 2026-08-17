@@ -27,8 +27,9 @@
  * B5 relay instruction), never a stack trace.
  */
 
-import { mkdirSync, readdirSync } from 'node:fs';
-import { basename, isAbsolute, join, resolve } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { VERSION } from '../version.ts';
 import { loadConfig, loadConfigFileOnly, toEngineConfig } from '../core/config.ts';
@@ -70,14 +71,25 @@ import {
 } from '../core/bootstrap/format.ts';
 import {
   applyHarness,
+  claudePluginProvidesName,
   codexBlockOwnsName,
+  codexPluginProvidesName,
   ensureHarnessHome,
   parseHarnessArgs,
   removeHarness,
   statusHarness,
   type HarnessDeps,
 } from '../core/bootstrap/harness.ts';
-import { codexConfigPath } from '../core/bootstrap/host-specs.ts';
+import { claudeUserSettingsPath, codexConfigPath, opencodeConfigDir, opencodeGlobalConfigPath, opencodeProjectConfigPath } from '../core/bootstrap/host-specs.ts';
+import {
+  opencodeEntryKind,
+  opencodeEntrySnippet,
+  opencodeRemoteEntryExists,
+  parseOpencodeConfig,
+  reconcileOpencodeSiblingGlobal,
+  removeOpencodeMcpEntry,
+  writeOpencodeMcpEntry,
+} from '../core/bootstrap/opencode-json.ts';
 import { promptLine } from '../core/cli-util.ts';
 import {
   appendInstallLog,
@@ -88,7 +100,7 @@ import {
 } from '../core/bootstrap/status.ts';
 import { verifyWorkspace, deriveWorkspaceSourceId } from '../core/bootstrap/verify.ts';
 
-export const BOOTSTRAP_HELP = `gbrain bootstrap — paste-in agent install (Claude Code / Codex)
+export const BOOTSTRAP_HELP = `gbrain bootstrap — paste-in agent install (Claude Code / Codex / opencode)
 
 Usage: gbrain bootstrap <subcommand> [flags]
 
@@ -104,25 +116,29 @@ Subcommands (run \`gbrain bootstrap status\` first — it is the resume entrypoi
   render [--force] [--only F] [--minimal]
                                   Render identity files from the confirmed answers.
                                   Never clobbers; --force backs up first.
-  hooks [--harness claude-code|codex] [--repair] [--no-hooks] [--gbrain-bin <path>]
+  hooks [--harness claude-code|codex|opencode] [--repair] [--no-hooks] [--gbrain-bin <path>]
                                   Register MCP (+ per-turn hooks on Claude Code,
                                   ON by default; --no-hooks opts out, GBRAIN_HOOKS=0
-                                  disables at runtime).
+                                  disables at runtime). opencode registrations are
+                                  written directly into its JSONC config (user-global
+                                  by default; MCP_SCOPE=project is an explicit opt-in
+                                  with a sharing warning).
   repo                            Create the dedicated PRIVATE GitHub repo (or adopt
                                   an EMPTY private repo you created under your own
                                   account), verify the privacy bit via the API, push.
   verify [--json]                 The whole install contract (round-trip, graph floor,
                                   magic moment, scans, hooks smoke). Exit 0 or not done.
   attach [--harness H]            Machine two: adopt a cloned agent workspace.
-  harness [--harness claude-code|codex|all] [--url U | --port N] [--source ID]
+  harness [--harness claude-code|codex|opencode|all] [--url U | --port N] [--source ID]
           [--token-name NAME | --token TOK] [--name MCPNAME] [--project DIR]...
           [--no-hooks] [--no-capture] [--force] [--status] [--remove] [--yes] [--json]
-                                  Wire framework-spawned Claude Code / Codex sessions to a
-                                  RUNNING \`gbrain serve --http\` on this box (#4043): scoped
-                                  bearer token, user-scope MCP + headless pre-approval,
-                                  lifecycle hooks (user scope, or per --project dir), codex
-                                  config block. No agent.json needed. Idempotent; --remove
-                                  tears it down. (--local is an accepted no-op alias.)
+                                  Wire framework-spawned Claude Code / Codex / opencode
+                                  sessions to a RUNNING \`gbrain serve --http\` on this box
+                                  (#4043): scoped bearer token, user-scope MCP + headless
+                                  pre-approval, lifecycle hooks (user scope, or per --project
+                                  dir), codex config block, opencode config entry. No
+                                  agent.json needed. Idempotent; --remove tears it down.
+                                  (--local is an accepted no-op alias.)
   cloud-setup-script              Print the paste-ready cloud environment setup
                                   script (installs the gbrain binary into the
                                   environment snapshot; npm-based — bun fetching
@@ -158,7 +174,7 @@ const SUBCOMMAND_HELP: Record<string, string> = {
     '  Create the dedicated PRIVATE GitHub repo (or adopt an EMPTY private repo you created\n' +
     '  under your own account), verify the privacy bit via the API, push.',
   hooks:
-    'gbrain bootstrap hooks [--harness claude-code|codex] [--repair] [--no-hooks] [--gbrain-bin <path>]\n' +
+    'gbrain bootstrap hooks [--harness claude-code|codex|opencode] [--repair] [--no-hooks] [--gbrain-bin <path>]\n' +
     '  Register MCP (+ per-turn hooks on Claude Code, ON by default; --no-hooks opts out).',
   verify:
     'gbrain bootstrap verify [--json]\n' +
@@ -244,12 +260,26 @@ function shellQuoteForDisplay(arg: string): string {
 
 // ── Shared plumbing ─────────────────────────────────────────────────────────
 
-type Harness = 'claude-code' | 'codex';
+type Harness = 'claude-code' | 'codex' | 'opencode';
 
-/** Best-effort harness auto-detect; the --harness flag always wins. */
+/** Every workspace-lane harness — exhaustive-switch anchors key off this so
+ * a future member is a COMPILE error at each dispatch site, not a silent
+ * fall-through into another harness's branch (the union-widening trap: a
+ * `harness === 'claude-code' ? A : B` ternary routes every new member down
+ * B). */
+const HARNESSES = ['claude-code', 'codex', 'opencode'] as const satisfies readonly Harness[];
+
+function isHarness(v: string | undefined): v is Harness {
+  return (HARNESSES as readonly string[]).includes(v ?? '');
+}
+
+/** Best-effort harness auto-detect; the --harness flag always wins.
+ * opencode sets OPENCODE=1 (+OPENCODE_PID) in its bash-tool children —
+ * verified against opencode 1.18.18 (OPENCODE-CLI-PIN.md §Environment). */
 export function detectHarness(env: Record<string, string | undefined> = process.env): Harness | null {
   if (env.CLAUDECODE || env.CLAUDE_CODE_ENTRYPOINT) return 'claude-code';
   if (env.CODEX_HOME || env.CODEX_SANDBOX || env.CODEX_CI) return 'codex';
+  if (env.OPENCODE || env.OPENCODE_PID) return 'opencode';
   return null;
 }
 
@@ -285,7 +315,16 @@ async function verifyMcpTargetsWorkspace(
   gbrainBin: string,
   sourceId: string,
 ): Promise<'match' | 'mismatch' | 'unknown'> {
-  const bin = harness === 'claude-code' ? 'claude' : 'codex';
+  // Exec-lane harnesses only. opencode registrations go through the direct
+  // JSONC writer whose 4-state fingerprint IS the [FIX7] check (structural,
+  // no exec) — it never routes here; 'unknown' keeps a stray call honest.
+  const EXEC_HARNESS_BIN = {
+    'claude-code': 'claude',
+    codex: 'codex',
+    opencode: null,
+  } as const satisfies Record<Harness, string | null>;
+  const bin = EXEC_HARNESS_BIN[harness];
+  if (bin === null) return 'unknown';
   let res;
   try {
     res = await runner([bin, 'mcp', 'get', name]);
@@ -298,6 +337,121 @@ async function verifyMcpTargetsWorkspace(
   const hasBin = out.includes(gbrainBin);
   const hasSource = out.includes(`GBRAIN_SOURCE=${sourceId}`);
   return hasBin && hasSource ? 'match' : 'mismatch';
+}
+
+/** Wall-clock cap on the best-effort `opencode mcp list` probe: `mcp list`
+ * SPAWNS every configured server, and a hung spawn must not hang the install
+ * — on timeout the probe child is actually TERMINATED (SIGTERM, then SIGKILL
+ * ~2s later) and the result degrades to the could-not-confirm branch (code
+ * 124, repo-visibility's raced-runner convention). */
+const OPENCODE_PROBE_TIMEOUT_MS = 20_000;
+
+/** Injectable probe-spawn seam (the door serial tests capture argv + cwd +
+ * env and fake the child). The default holds the REAL process handle via
+ * Bun.spawn — a Promise.race that merely abandons a hung `opencode mcp list`
+ * leaves its spawned MCP servers running (including the just-registered
+ * `gbrain serve`, which then squats the PGLite single-writer lock) and keeps
+ * the CLI's event loop alive past flushThenExit. */
+export interface OpencodeProbeHandle {
+  exited: Promise<number>;
+  kill(force?: boolean): void;
+  stdout: Promise<string>;
+  stderr: Promise<string>;
+  /** Detach the child + its pipes from the event loop (called when the probe
+   * gives up on a hung child/grandchild so the CLI can still exit). */
+  unref?: () => void;
+}
+export type OpencodeProbeSpawn = (
+  argv: string[],
+  opts: { cwd: string; env: Record<string, string | undefined> },
+) => OpencodeProbeHandle;
+
+function defaultOpencodeProbeSpawn(
+  argv: string[],
+  opts: { cwd: string; env: Record<string, string | undefined> },
+): OpencodeProbeHandle {
+  const proc = Bun.spawn(argv, {
+    cwd: opts.cwd,
+    env: opts.env as Record<string, string>,
+    stdin: 'ignore',
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  return {
+    exited: proc.exited,
+    kill: (force?: boolean) => {
+      try {
+        proc.kill(force ? 9 : undefined);
+      } catch {
+        /* already dead */
+      }
+    },
+    stdout: new Response(proc.stdout).text().catch(() => ''),
+    stderr: new Response(proc.stderr).text().catch(() => ''),
+    unref: () => {
+      try {
+        proc.unref();
+      } catch {
+        /* best-effort */
+      }
+    },
+  };
+}
+
+/** Run the opencode registration probe with OPENCODE_DISABLE_AUTOUPDATE=1 on
+ * the spawn env (OPENCODE-CLI-PIN.md §Probes: the auto-updater must never
+ * fire mid-probe) from an explicit `cwd` — callers pass a fresh EMPTY temp
+ * dir, never the invoking cwd, because opencode merges a project
+ * opencode.json from cwd and spawns its local servers with NO trust prompt
+ * (a cloned malicious repo must not get code execution out of an install
+ * probe). On timeout the child is killed (SIGTERM → SIGKILL) and the pipes
+ * are drained BOUNDED (a spawned MCP-server grandchild can inherit the pipe
+ * fds and hold them open past the direct child's death). Exported for the
+ * timeout-kill unit test. */
+export async function runOpencodeProbe(
+  argv: string[],
+  opts: { cwd: string; spawn?: OpencodeProbeSpawn; timeoutMs?: number },
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  const spawnFn = opts.spawn ?? defaultOpencodeProbeSpawn;
+  const timeoutMs = opts.timeoutMs ?? OPENCODE_PROBE_TIMEOUT_MS;
+  const env: Record<string, string | undefined> = { ...process.env, OPENCODE_DISABLE_AUTOUPDATE: '1' };
+  let handle: OpencodeProbeHandle;
+  try {
+    handle = spawnFn(argv, { cwd: opts.cwd, env });
+  } catch (e) {
+    // Bun.spawn throws synchronously when the binary is absent — map to the
+    // shell's 127 convention so the caller's not-on-PATH branch fires.
+    return { code: 127, stdout: '', stderr: e instanceof Error ? e.message : String(e) };
+  }
+  // Bounded race helper that never leaves a live timer holding the loop.
+  const raceMs = async <T>(p: Promise<T>, ms: number, fallback: T): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([p, new Promise<T>((res) => { timer = setTimeout(() => res(fallback), ms); })]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  let code = await raceMs<number | null>(handle.exited, timeoutMs, null);
+  const timedOut = code === null;
+  if (code === null) {
+    handle.kill(); // graceful first — opencode tears its servers down on TERM
+    code = await raceMs<number | null>(handle.exited, 2_000, null);
+    if (code === null) {
+      handle.kill(true); // SIGKILL is not refusable; the wait below is paranoia-bounded
+      code = await raceMs<number | null>(handle.exited, 2_000, null);
+    }
+  }
+  const drainCap = timedOut ? 2_000 : 5_000;
+  const [stdout, stderr] = await Promise.all([
+    raceMs(handle.stdout, drainCap, ''),
+    raceMs(handle.stderr, drainCap, ''),
+  ]);
+  if (timedOut || code === null) {
+    handle.unref?.(); // a grandchild may still hold the pipes — never hold the CLI's exit
+    return { code: 124, stdout, stderr: stderr || `timeout after ${timeoutMs}ms` };
+  }
+  return { code, stdout, stderr };
 }
 
 async function withLock<T>(ws: string, fn: () => Promise<T>): Promise<T> {
@@ -768,11 +922,21 @@ async function runRepo(ws: string, rest: string[], home: string, runner: ExecRun
   });
 }
 
-async function runHooks(ws: string, rest: string[], home: string, runner: ExecRunner): Promise<number> {
-  const harnessFlag = flagValue(rest, '--harness') as Harness | undefined;
-  const harness = harnessFlag ?? detectHarness();
-  if (!harness || (harness !== 'claude-code' && harness !== 'codex')) {
-    console.error('cannot auto-detect the harness — pass --harness claude-code or --harness codex');
+async function runHooks(
+  ws: string,
+  rest: string[],
+  home: string,
+  runner: ExecRunner,
+  probeSpawn?: OpencodeProbeSpawn,
+): Promise<number> {
+  const harnessFlag = flagValue(rest, '--harness');
+  const harness = isHarness(harnessFlag) ? harnessFlag : harnessFlag ? null : detectHarness();
+  if (!harness) {
+    console.error(
+      harnessFlag
+        ? `unknown --harness '${harnessFlag}' — pass --harness claude-code, codex, or opencode`
+        : 'cannot auto-detect the harness — pass --harness claude-code, codex, or opencode',
+    );
     return 2;
   }
   // --repair is an idempotent-run alias: the same registration/write path as a
@@ -783,6 +947,11 @@ async function runHooks(ws: string, rest: string[], home: string, runner: ExecRu
   // `--no-hooks` is the explicit install-time opt-out; `GBRAIN_HOOKS=0` and
   // `uninstall` are the runtime/after off-ramps.
   const noHooks = rest.includes('--no-hooks');
+  // Plugin-lane override: detection reads the plugin-ENABLE config entry,
+  // which is not a health signal — a plugin whose launcher can't find the
+  // gbrain binary still matches. This flag forces the hand-wired MCP
+  // registration through anyway.
+  const mcpEvenIfPlugin = rest.includes('--mcp-even-if-plugin');
 
   const state = readManifest(ws);
   if (state.state !== 'initialized') {
@@ -804,18 +973,44 @@ async function runHooks(ws: string, rest: string[], home: string, runner: ExecRu
     return 2;
   }
 
-  const mcpScope = ((consentAnswer(ws, 'MCP_SCOPE') ?? 'project').toLowerCase() === 'user' ? 'user' : 'project') as 'project' | 'user';
+  // Raw (unbanked) MCP_SCOPE answer — several harness branches need to know
+  // whether a human EXPLICITLY chose a scope vs the bank default filling in.
+  // typeof guard: readInterviewState validates `answers` is an object but not
+  // per-answer shapes — a hand-edited value of 3 must not throw.
+  const rawScopeAnswer = (() => {
+    const read = readInterviewState(ws);
+    const raw = read.ok ? read.state.answers['MCP_SCOPE'] : undefined;
+    // .trim(): a hand-edited or sloppily-recorded ' project' must not
+    // silently resolve to the user-global default (scope answers are
+    // security-relevant on opencode).
+    return raw?.skipped !== true && typeof raw?.value === 'string' ? raw.value.trim().toLowerCase() : undefined;
+  })();
+  // Scope resolution is per-harness (exhaustive switch — see HARNESSES):
+  // - claude-code: consent answer, bank default 'project' (the privacy-safe
+  //   default: any other repo you open cannot read the brain).
+  // - codex: no scope flag exists; the value is ignored (note below).
+  // - opencode: default 'user' — OPPOSITE of claude-code, because opencode
+  //   spawns project-config-defined servers with NO trust gate (verified,
+  //   OPENCODE-CLI-PIN.md §Probes): a committed project entry would auto-spawn
+  //   on every collaborator's machine. 'project' only via an EXPLICIT answer
+  //   (the sharing warning prints at write time).
+  const mcpScope = ((): 'project' | 'user' => {
+    switch (harness) {
+      case 'claude-code':
+        return (consentAnswer(ws, 'MCP_SCOPE') ?? 'project').toLowerCase() === 'user' ? 'user' : 'project';
+      case 'codex':
+        return 'project'; // ignored — codex registrations are user-global (no scope flag)
+      case 'opencode':
+        return rawScopeAnswer === 'project' ? 'project' : 'user';
+    }
+  })();
   // A persisted 'project' answer is meaningless on Codex (`codex mcp add` has no
   // scope flag) — reachable via attach from a Claude Code machine or a pre-fix
   // install. Fires on each hooks/repair run while the stale answer persists.
   // Raw read, NOT consentAnswer: the bank default is 'project', so the resolved
   // value would fire this note on every Codex install where no one was asked.
   if (harness === 'codex') {
-    const read = readInterviewState(ws);
-    const raw = read.ok ? read.state.answers['MCP_SCOPE'] : undefined;
-    // typeof guard: readInterviewState validates `answers` is an object but not
-    // per-answer shapes — a hand-edited value of 3 must not throw.
-    if (raw?.skipped !== true && typeof raw?.value === 'string' && raw.value.toLowerCase() === 'project') {
+    if (rawScopeAnswer === 'project') {
       console.error(
         "note: the recorded MCP_SCOPE answer 'project' has no effect on Codex — " +
           '`codex mcp add` has no scope flag; the registration is user-global (any repo ' +
@@ -842,6 +1037,27 @@ async function runHooks(ws: string, rest: string[], home: string, runner: ExecRu
       "the 'gbrain' codex MCP server is managed by `gbrain bootstrap harness` (marker block in the codex " +
         'config) — skipping the stdio registration. Run `gbrain bootstrap harness --remove` first if you ' +
         'want this workspace-lane stdio registration instead.',
+    );
+    return 0;
+  }
+  // Same ownership rule, opencode spelling: a REMOTE-type mcp.gbrain in the
+  // user-global config is either the harness lane's (inline bearer) or
+  // foreign — the stdio lane must not fight it in either case. BOTH global
+  // filenames are checked: opencode merges opencode.json AND opencode.jsonc
+  // when both exist, so a remote entry in EITHER file owns the name even
+  // when the path resolver would pick the other for writing.
+  if (
+    harness === 'opencode' &&
+    mcpScope === 'user' &&
+    [join(opencodeConfigDir(), 'opencode.jsonc'), join(opencodeConfigDir(), 'opencode.json')].some((p) =>
+      opencodeRemoteEntryExists(p, 'gbrain'),
+    )
+  ) {
+    console.log(
+      "the 'gbrain' opencode MCP entry in the user-global config is a remote server (managed by " +
+        '`gbrain bootstrap harness`, or foreign) — skipping the stdio registration. Run ' +
+        '`gbrain bootstrap harness --remove` first (or remove the entry) if you want this ' +
+        'workspace-lane stdio registration instead.',
     );
     return 0;
   }
@@ -889,8 +1105,186 @@ async function runHooks(ws: string, rest: string[], home: string, runner: ExecRu
     // binary. The old early-return silently dropped hooks while the copy said
     // only "MCP registration skipped".
     let mcpSkipped = false;
-    const argvs =
-      harness === 'claude-code'
+    // Plugin-lane ownership: when the harness's gbrain PLUGIN provides the
+    // MCP server, a hand-wired registration would double-register the name.
+    // DISTINCT from mcpSkipped (host failure → exit 2, failure-owned
+    // receipt): a plugin-owned skip is HEALTHY — exit 0, hooks still
+    // install below, receipt records hooks-only ownership. The registration
+    // smoke is also skipped (plugin MCP servers are invisible to
+    // `codex mcp list` / `mcp get`). No plugin lane exists for opencode.
+    // Hoisted above the opencode branch: the receipt step after the
+    // exec-lane block needs it in scope.
+    const mcpPluginOwned = mcpEvenIfPlugin || harness === 'opencode'
+      ? null
+      : harness === 'codex'
+        ? codexPluginProvidesName(codexConfigPath(), 'gbrain')
+        : claudePluginProvidesName(claudeUserSettingsPath(), 'gbrain');
+    if (harness === 'opencode') {
+      // Direct-writer lane (no exec): registrations land via the JSONC
+      // writer whose 4-state fingerprint is the [FIX7] check. Scope resolves
+      // to a FILE here — user → global config (absolute binary path),
+      // project → committed-candidate opencode.json (PATH-resolved command;
+      // no absolute machine paths in a file that travels, and no fail-open
+      // analog exists — the sharing warning below is the mitigation).
+      const configPath = mcpScope === 'project' ? opencodeProjectConfigPath(ws) : opencodeGlobalConfigPath();
+      const command =
+        mcpScope === 'project'
+          ? ['gbrain', 'serve', '--surface', 'full']
+          : [gbrainBin, 'serve', '--surface', 'full'];
+      const entry = {
+        kind: 'local' as const,
+        name: 'gbrain',
+        command,
+        environment: { GBRAIN_SOURCE: sourceId, ...(gbrainHome ? { GBRAIN_HOME: gbrainHome } : {}) },
+      };
+      try {
+        // [X11] config-dir lock parity with the harness lane: the user-global
+        // config is shared across workspaces AND homes, so gbrain writers
+        // serialize on ITS directory. The project-scope file lives in the
+        // workspace root, which withLock(ws) already holds — the lock is
+        // non-reentrant, so the same-dir case skips the nested acquire.
+        const ocCfgDir = dirname(configPath);
+        let ocLock: { release(): void } | null = null;
+        if (resolve(ocCfgDir) !== resolve(ws)) {
+          mkdirSync(ocCfgDir, { recursive: true }); // the lock needs the dir; the writer mkdirs later anyway
+          ocLock = await acquireBootstrapLock(ocCfgDir);
+        }
+        let w: ReturnType<typeof writeOpencodeMcpEntry>;
+        try {
+          // [FIX7] parity: an existing entry pointing at a DIFFERENT workspace
+          // is warned about and replaced (same behavior as the exec lanes'
+          // mismatch path); a FOREIGN entry refuses inside the writer. The
+          // pre-check parse carries the same paste-by-hand snippet the writer
+          // uses so a corrupt config never strands the user.
+          const existingText = existsSync(configPath) ? readFileSync(configPath, 'utf8') : '';
+          const existingKind = opencodeEntryKind(
+            parseOpencodeConfig(existingText, configPath, opencodeEntrySnippet(entry)),
+            'gbrain',
+            { sourceId },
+          );
+          if (existingKind === 'ours-other-source') {
+            console.error(`existing 'gbrain' opencode entry targets a DIFFERENT workspace — replacing it.`);
+          }
+          // Two-filename merge blind spot: opencode merges BOTH user-global
+          // filenames, so a same-name gbrain entry in the SIBLING file would
+          // survive this write as a shadow registration. Reconcile it under
+          // the same config-dir lock (ours → removed with a note; foreign →
+          // refuse loudly naming both files). User scope only — the project
+          // file has no observed sibling semantics.
+          if (mcpScope === 'user') {
+            const sib = reconcileOpencodeSiblingGlobal(configPath, 'gbrain', { sourceId });
+            for (const note of sib.notes) console.error(note);
+          }
+          w = writeOpencodeMcpEntry(configPath, entry, {
+            expect: { sourceId },
+            allowReplaceOtherSource: true,
+          });
+        } finally {
+          ocLock?.release();
+        }
+        console.log(
+          `MCP registered with opencode (scope: ${mcpScope === 'project' ? 'project (explicit opt-in)' : 'user-global'}) — ` +
+            `wrote ${w.configPath}${w.replacedPrior ? ' (replaced prior gbrain entry)' : ''}; ` +
+            'restart opencode (config is read at session start).',
+        );
+        for (const note of w.notes) console.error(note);
+        if (mcpScope === 'project') {
+          console.error(
+            'SHARING WARNING: opencode spawns project-config-defined MCP servers with NO trust prompt — ' +
+              'if this opencode.json is committed, every collaborator machine will spawn gbrain (teammates ' +
+              'without gbrain see a failing spawn each session; teammates WITH gbrain attach THEIR host ' +
+              'brain to this repo). The command is PATH-resolved ("gbrain" — requires gbrain on PATH); ' +
+              'the teammate opt-out is `"enabled": false` on the entry. The user-global default avoids all of this.' +
+              (gbrainHome
+                ? ` Also: the entry embeds this machine's GBRAIN_HOME path (${gbrainHome}) — it won't be portable to other machines.`
+                : ''),
+          );
+        } else if (rawScopeAnswer === undefined) {
+          console.log(
+            "scope defaulted to user-global — opencode spawns project-defined servers with no trust gate, " +
+              'so the committed-file scope is explicit-opt-in only (record MCP_SCOPE=project to choose it).',
+          );
+        }
+      } catch (e) {
+        console.error((e as Error).message);
+        return 1;
+      }
+      // Registration smoke: the writer's post-render validation already
+      // proved the config parses and carries exactly our entry (that is the
+      // authoritative check). Best-effort live probe when the binary is on
+      // PATH: `opencode mcp list` SPAWNS servers (the honest discriminator)
+      // — run it with --pure (no external plugin autoload; `mcp list` is a
+      // code-execution surface otherwise) and skip it entirely when a
+      // plugin-bearing config is present (OPENCODE-CLI-PIN.md §Probes).
+      try {
+        const parsedCfg = parseOpencodeConfig(
+          existsSync(configPath) ? readFileSync(configPath, 'utf8') : '',
+          configPath,
+        );
+        if (mcpScope === 'project') {
+          // SECURITY: opencode merges the project opencode.json from the
+          // probe's cwd and spawns its local servers with NO trust prompt —
+          // running `mcp list` inside this workspace would execute whatever
+          // the (possibly just-cloned) repo's config names. Parse-back stays
+          // the authoritative check; the human runs the live probe.
+          console.log(
+            'live `opencode mcp list` probe skipped for project scope — config parse-back is authoritative; ' +
+              'run `opencode mcp list` yourself in this workspace to confirm.',
+          );
+        } else if (parsedCfg.plugin !== undefined) {
+          console.log('live `opencode mcp list` probe skipped (plugin-bearing config) — config parse-back is the verification.');
+        } else {
+          // SECURITY: the probe spawns from a fresh EMPTY temp dir, never the
+          // invoking cwd — no project opencode.json can load there (the same
+          // no-trust-prompt spawn surface as the project-scope skip above).
+          const probeCwd = mkdtempSync(join(tmpdir(), 'gbrain-opencode-probe-'));
+          let probe: { code: number; stdout: string; stderr: string };
+          try {
+            probe = await runOpencodeProbe(['opencode', 'mcp', 'list', '--pure'], {
+              cwd: probeCwd,
+              ...(probeSpawn ? { spawn: probeSpawn } : {}),
+            });
+          } finally {
+            rmSync(probeCwd, { recursive: true, force: true });
+          }
+          // `mcp list` colorizes when a TTY-ish env leaks through — strip ANSI
+          // escapes before matching, and anchor the name on whitespace/EOL so
+          // a `gbrain-remote` entry can never satisfy a bare \bgbrain\b (\b
+          // matches before the hyphen).
+          const plain = probe.stdout.replace(/\u001b\[[0-9;]*m/g, '');
+          if (probe.code === 127) {
+            console.log('`opencode` is not on PATH — registration written; the config activates when opencode next starts here.');
+          } else if (probe.code === 0 && /✓\s+gbrain(\s|$)/.test(plain)) {
+            console.log('`opencode mcp list` handshake: ✓ gbrain connected.');
+          } else if (probe.code === 0 && /✗\s+gbrain(\s|$)/.test(plain)) {
+            console.error(
+              'WARNING: `opencode mcp list` reports ✗ gbrain failed — the spawn did not handshake ' +
+                '(is the gbrain binary path valid on this machine?). The exit code of `mcp list` is 0 even ' +
+                'on failure; this warning is from parsing its output.',
+            );
+          } else {
+            console.log('MCP registration written; could not confirm via `opencode mcp list` (best-effort probe).');
+          }
+        }
+      } catch {
+        /* smoke is best-effort */
+      }
+    } else {
+    if (mcpPluginOwned) {
+      console.log(
+        `the '${mcpPluginOwned}' plugin already provides the gbrain MCP server on ${harness} — ` +
+          'skipping the hand-wired MCP registration (one owner per name). The plugin serve is ' +
+          `user-global: route this workspace's writes with GBRAIN_SOURCE=${sourceId} (and ` +
+          'GBRAIN_BRAIN_ID for mounted brains) in the environment that launches the harness. ' +
+          'Note: the plugin being ENABLED is a config signal, not a health signal — if its MCP ' +
+          'server is not actually working, either fix the plugin (is the gbrain binary installed?), ' +
+          `remove it (\`codex plugin remove gbrain\` / disable it in Claude Code), or force this ` +
+          'workspace-bound registration with `--mcp-even-if-plugin`.',
+      );
+    }
+    const argvs = mcpPluginOwned
+      ? []
+      : harness === 'claude-code'
         ? registerClaudeMcp({ gbrainBin, scope: mcpScope, sourceId, ...(gbrainHome ? { gbrainHome } : {}) })
         : registerCodexMcp({ gbrainBin, sourceId, ...(gbrainHome ? { gbrainHome } : {}) });
     for (const argv of argvs) {
@@ -971,8 +1365,10 @@ async function runHooks(ws: string, rest: string[], home: string, runner: ExecRu
 
     // 2. Registration smoke [FIX7]: confirm the EXPECTED server (binary path +
     // GBRAIN_SOURCE), not merely a 'gbrain' substring in `mcp list`. Falls back
-    // to the list probe only when the host has no `mcp get`.
-    if (!mcpSkipped) try {
+    // to the list probe only when the host has no `mcp get`. Plugin-owned
+    // installs skip it: plugin MCP servers never appear in `mcp get`/`list`,
+    // so the smoke would report a spurious mismatch.
+    if (!mcpSkipped && !mcpPluginOwned) try {
       const listBin = harness === 'claude-code' ? 'claude' : 'codex';
       const scopeLabel = harness === 'claude-code' ? mcpScope : 'user-global';
       const verdict = await verifyMcpTargetsWorkspace(runner, harness, 'gbrain', gbrainBin, sourceId);
@@ -997,6 +1393,7 @@ async function runHooks(ws: string, rest: string[], home: string, runner: ExecRu
     } catch {
       /* smoke is best-effort */
     }
+    } // end exec-lane registration (claude-code / codex)
 
     // 3. Hooks (Claude Code only, consent-gated).
     let hooksWritten = false;
@@ -1044,16 +1441,41 @@ async function runHooks(ws: string, rest: string[], home: string, runner: ExecRu
             : 'hooks declined (HOOKS_CONSENT set to no) — the AGENTS.md pull protocol covers per-turn context instead; re-enable with `gbrain bootstrap hooks --harness claude-code`.',
         );
       }
-    } else {
+    } else if (harness === 'codex') {
       console.log('gbrain does not wire Codex hooks yet — per-turn context is the AGENTS.md pull protocol (stated plainly; the codex hook lane is a filed follow-up).');
+    } else {
+      console.log(
+        'gbrain does not wire opencode\'s plugin/event system yet — per-turn context is the AGENTS.md ' +
+          'pull protocol, which opencode loads natively (the opencode plugin lane is a filed follow-up).',
+      );
     }
 
     // 4. Receipt registration record [CX2-12]. Detail records what actually
     // landed; nothing landed at all (127 + no hooks) → no receipt entry.
-    if (!mcpSkipped || hooksWritten) {
+    // Plugin-owned installs record hooks-only ownership ('hooks+plugin-mcp')
+    // or, when nothing was written by us at all (codex has no hooks), a bare
+    // 'plugin-mcp' marker so status/uninstall know the MCP owner is the
+    // plugin, not a missing registration.
+    if (mcpPluginOwned) {
       appendReceiptRegistration(home, ws, {
         host: harness,
         scope: harness === 'claude-code' ? mcpScope : 'user',
+        detail: hooksWritten ? 'hooks+plugin-mcp' : 'plugin-mcp',
+      });
+    } else if (!mcpSkipped || hooksWritten) {
+      const receiptScope = ((): string => {
+        switch (harness) {
+          case 'claude-code':
+            return mcpScope;
+          case 'codex':
+            return 'user'; // codex registrations are always user-global
+          case 'opencode':
+            return mcpScope; // user default; project only via explicit opt-in
+        }
+      })();
+      appendReceiptRegistration(home, ws, {
+        host: harness,
+        scope: receiptScope,
         detail: hooksWritten ? (mcpSkipped ? 'hooks' : 'mcp+hooks') : 'mcp',
       });
     }
@@ -1252,15 +1674,79 @@ async function runUninstall(ws: string, rest: string[], home: string, runner: Ex
 
     // Execute the structured host-registration removals the module returned.
     for (const reg of result.registration_removals) {
-      if (reg.host === 'claude-code') {
-        const r = removeClaudeHooks(ws);
-        if (r.removed > 0) console.log(`removed ${r.removed} gbrain hook entr${r.removed === 1 ? 'y' : 'ies'} from ${r.settingsPath}`);
-        for (const note of r.notes) console.error(note);
-        const rm = await runner(['claude', 'mcp', 'remove', 'gbrain']);
-        if (rm.code !== 0) console.error('note: `claude mcp remove gbrain` did not succeed — remove it by hand if it lingers.');
-      } else {
-        const rm = await runner(['codex', 'mcp', 'remove', 'gbrain']);
-        if (rm.code !== 0) console.error('note: `codex mcp remove gbrain` did not succeed — remove it by hand if it lingers.');
+      // Plugin-owned registrations were NEVER created by us (the plugin
+      // provides the MCP server; bootstrap only recorded a hooks-only
+      // receipt). Running `mcp remove gbrain` here would delete whatever
+      // registration DOES own the name — e.g. a hand-wired `codex mcp add`
+      // or `gbrain connect --install` the user added later. Remove only the
+      // hooks half for these; leave the MCP owner alone. (No opencode plugin
+      // lane exists, so the guard is inert for that host.)
+      const pluginOwned = typeof reg.detail === 'string' && reg.detail.endsWith('plugin-mcp');
+      switch (reg.host) {
+        case 'claude-code': {
+          const r = removeClaudeHooks(ws);
+          if (r.removed > 0) console.log(`removed ${r.removed} gbrain hook entr${r.removed === 1 ? 'y' : 'ies'} from ${r.settingsPath}`);
+          for (const note of r.notes) console.error(note);
+          if (pluginOwned) {
+            console.log('MCP server was provided by the gbrain plugin (not registered by bootstrap) — leaving it; `claude plugin uninstall gbrain@gbrain` removes the plugin.');
+            break;
+          }
+          const rm = await runner(['claude', 'mcp', 'remove', 'gbrain']);
+          if (rm.code !== 0) console.error('note: `claude mcp remove gbrain` did not succeed — remove it by hand if it lingers.');
+          break;
+        }
+        case 'codex': {
+          if (pluginOwned) {
+            console.log('MCP server was provided by the gbrain plugin (not registered by bootstrap) — leaving it; `codex plugin remove gbrain@gbrain` removes the plugin.');
+            break;
+          }
+          const rm = await runner(['codex', 'mcp', 'remove', 'gbrain']);
+          if (rm.code !== 0) console.error('note: `codex mcp remove gbrain` did not succeed — remove it by hand if it lingers.');
+          break;
+        }
+        case 'opencode': {
+          // Direct-writer removal (fingerprint-keyed; foreign entries refuse
+          // inside the module). Every candidate file best-effort — the
+          // receipt's scope names where the registration landed, but a stale
+          // entry in another file costs nothing to sweep. BOTH global
+          // filenames are swept: opencode merges opencode.json AND
+          // opencode.jsonc when both exist, so sweeping only the resolver's
+          // pick would strand a gbrain entry in the other file. The removal
+          // is expectation-keyed on THIS workspace's source id — a gbrain
+          // entry from a DIFFERENT workspace is skipped with a note, never
+          // silently deleted (it is not this uninstall's to remove).
+          const sweep = (p: string): void => {
+            try {
+              const r = removeOpencodeMcpEntry(p, 'gbrain', { sourceId: durabilitySourceId }, { skipOtherSource: true });
+              if (r.removed) console.log(`removed the gbrain opencode MCP entry from ${p}`);
+              for (const note of r.notes) console.error(note);
+            } catch (e) {
+              console.error(`note: could not remove the gbrain opencode entry from ${p}: ${(e as Error).message}`);
+            }
+          };
+          // Global files run under the config-dir bootstrap lock (the writer
+          // contract; harness.ts [X11] parity). Only when the dir exists — no
+          // dir means no config, and uninstall must not create one just to
+          // lock it.
+          const ocDir = opencodeConfigDir();
+          const globals = [join(ocDir, 'opencode.jsonc'), join(ocDir, 'opencode.json')].filter((p) => existsSync(p));
+          if (globals.length > 0) {
+            try {
+              const ocLock = await acquireBootstrapLock(ocDir);
+              try {
+                for (const p of globals) sweep(p);
+              } finally {
+                ocLock.release();
+              }
+            } catch (e) {
+              console.error(`note: could not lock the opencode config dir (${(e as Error).message}) — entries left for a re-run.`);
+            }
+          }
+          // The project file's dir IS the workspace, which withLock(ws)
+          // already holds — the lock is non-reentrant, so no nested acquire.
+          sweep(opencodeProjectConfigPath(ws));
+          break;
+        }
       }
     }
 
@@ -1321,6 +1807,9 @@ async function runUninstall(ws: string, rest: string[], home: string, runner: Ex
 export interface RunBootstrapOpts {
   /** Exec seam for gh/claude/codex subprocesses (tests inject a recorder). */
   runner?: ExecRunner;
+  /** Spawn seam for the opencode `mcp list` probe (tests capture argv, cwd,
+   * and env; the default holds a real Bun.spawn handle so timeouts kill). */
+  probeSpawn?: OpencodeProbeSpawn;
 }
 
 /** Dispatch. Returns the process exit code (cli.ts passes it to setCliExitVerdict). */
@@ -1386,7 +1875,7 @@ export async function runBootstrap(args: string[], opts: RunBootstrapOpts = {}):
         code = await runRepo(ws, rest, home, runner);
         break;
       case 'hooks':
-        code = await runHooks(ws, rest, home, runner);
+        code = await runHooks(ws, rest, home, runner, opts.probeSpawn);
         break;
       case 'verify':
         code = await runVerify(ws, rest, home);

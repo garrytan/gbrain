@@ -225,8 +225,10 @@ describe('migrate embeddings — full flow on PGLite', () => {
     const code = await runMigrate(['--to', 'openai:text-embedding-3-small', '--yes']);
     expect(code).toBe(0);
 
-    // Only the two previously-failed pages were embedded this pass.
-    expect(embeddedTexts.length).toBe(2);
+    // Only the two previously-failed pages were embedded this pass, plus the
+    // 3 completion smoke-check QUERY embeds (self-retrieval runs only on the
+    // completed path — the interrupted run above had none).
+    expect(embeddedTexts.length).toBe(5);
     expect(embeddedTexts.join(' ')).toContain('page-4');
     expect(embeddedTexts.join(' ')).toContain('page-5');
 

@@ -32,6 +32,7 @@ ALLOWED=(
   "src/core/postgres-engine.ts"         # calls db.connect + fallback in sql getter — PR 1 removes the fallback
   "src/commands/init.ts"                # first-time setup path, no engine yet
   "src/commands/doctor.ts"              # PR 1 refactors to accept engine
+  "src/commands/doctor/checks/pglite-worker.ts"  # grandfathered doctor.ts call site, peeled verbatim (containment sprint); PR 1 refactors to accept engine
   "src/commands/files.ts"               # PR 1 refactors to accept engine
   "src/commands/repair-jsonb.ts"        # PR 1 refactors
   "src/commands/serve-http.ts"          # PR 1 threads engine through the OAuth dispatch path

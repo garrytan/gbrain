@@ -161,7 +161,7 @@ That's the whole wire-up. No token, no URL, no tunnel. The agent spawns
 [MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md), frozen + additive-forever)
 instead of the full operation catalog, so the agent sees a tight, stable surface
 instead of a 110-tool wall. `--surface starter` sits between: the verbs plus the
-daily-driver set (~26 ops total). Drop the flag (or pass `--surface full`) for every
+daily-driver set (core page/search/graph ops + capture). Drop the flag (or pass `--surface full`) for every
 operation. The default when the flag is omitted is `full`, so existing wire-ups
 are unchanged.
 
@@ -244,7 +244,7 @@ habits to build. Your agent stops being amnesiac.
 | Agent "can't reach the brain" (Path A) | `gbrain serve --http` bound to loopback | Restart with `--bind 0.0.0.0` |
 | `list_skills` returns nothing / errors | Skill publishing OFF on the host | `gbrain config set mcp.publish_skills true` |
 | Token rejected on first call | Wrong/expired token | Re-mint with `gbrain auth create`; `--install` smoke-tests it for you |
-| `unknown tool: capture` | `capture` is CLI-only, not an MCP tool | Use `put_page` over MCP; `capture` only on the CLI |
+| `unknown tool: capture` | Your surface predates v0.47 or your token's surface was narrowed | Upgrade the host (capture is on starter + full now); on narrowed tokens use `put_page`, or `remember` on the verbs surface |
 | Empty results (Path B) | Brain has nothing in it yet | `gbrain import ~/notes/` or `gbrain capture "..."` |
 
 ## Next steps

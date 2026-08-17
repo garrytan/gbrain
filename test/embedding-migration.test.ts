@@ -117,6 +117,17 @@ describe('resolveMigrationTarget', () => {
     expect(() => resolveMigrationTarget('litellm:my-custom-model')).toThrow(/--dim/);
     expect(resolveMigrationTarget('litellm:my-custom-model', 1024).toDims).toBe(1024);
   });
+  test('v0.46.3: refuses a sunset target (paid re-embed onto a dying provider)', () => {
+    expect(() => resolveMigrationTarget('zeroentropyai:zembed-1')).toThrow(/Refusing to migrate ONTO/);
+    expect(() => resolveMigrationTarget('zeroentropyai:zembed-1')).toThrow(/--force-sunset-target/);
+  });
+  test('v0.46.3: allowSunsetTarget is the loud escape hatch (self-hosted endpoint)', () => {
+    // Self-hosters keep the brain's existing width explicitly (--dim 1280).
+    expect(resolveMigrationTarget('zeroentropyai:zembed-1', 1280, { allowSunsetTarget: true })).toEqual({
+      toModel: 'zeroentropyai:zembed-1',
+      toDims: 1280,
+    });
+  });
 });
 
 describe('#3391 includeNullSignature widening', () => {
@@ -362,6 +373,21 @@ describe('applyEmbeddingMigration', () => {
       { chunk_index: 0, chunk_text: 'fghij', chunk_source: 'compiled_truth', token_count: 4 },
       { chunk_index: 1, chunk_text: 'not embedded', chunk_source: 'compiled_truth', token_count: 4 },
     ]);
+    // The drain stamps chunk.model with the model that actually embedded each
+    // chunk; reconcile only stamps pages whose chunks ALL carry the target
+    // model (a foreign-model chunk means the page is NOT in the new space).
+    // Mirror the post-drain state the batch-boundary shape actually leaves.
+    await engine.executeRaw(
+      `UPDATE content_chunks SET model = 'openai:text-embedding-3-small'
+        WHERE page_id IN (SELECT id FROM pages WHERE slug IN ('done','partial') AND source_id = 'default')`,
+    );
+    // 'foreign' — every chunk embedded, but by a DIFFERENT model (a non-locked
+    // writer raced the drain): must NOT get the new stamp.
+    await seedEmbedded('foreign', 'klmno', 'old:model:1');
+    await engine.executeRaw(
+      `UPDATE content_chunks SET model = 'other:writer-model'
+        WHERE page_id = (SELECT id FROM pages WHERE slug = 'foreign' AND source_id = 'default')`,
+    );
 
     const plan = await planEmbeddingMigration(engine, {
       to: 'openai:text-embedding-3-small', dim: colDim,
@@ -371,10 +397,11 @@ describe('applyEmbeddingMigration', () => {
 
     const sig = `openai:text-embedding-3-small:${colDim}`;
     const rows = await engine.executeRaw<{ slug: string; embedding_signature: string | null }>(
-      `SELECT slug, embedding_signature FROM pages WHERE slug IN ('done','partial') ORDER BY slug`,
+      `SELECT slug, embedding_signature FROM pages WHERE slug IN ('done','partial','foreign') ORDER BY slug`,
     );
     expect(rows.find(r => r.slug === 'done')?.embedding_signature).toBe(sig);
     expect(rows.find(r => r.slug === 'partial')?.embedding_signature).toBe('old:model:1');
+    expect(rows.find(r => r.slug === 'foreign')?.embedding_signature).toBe('old:model:1');
   });
 
   test('completeEmbeddingMigration clears the state marker and stamps completion', async () => {

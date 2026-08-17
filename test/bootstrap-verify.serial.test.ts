@@ -170,6 +170,13 @@ describe('verifyWorkspace — keyless pass', () => {
     // Probe cleanup [G13]: pages, files, and the reconciled fact are gone.
     expect(existsSync(join(ws, 'brain', `${VERIFY_PROBE_SLUG}.md`))).toBe(false);
     expect(existsSync(join(ws, 'brain', `${VERIFY_PROBE_ENTITY_SLUG}.md`))).toBe(false);
+    // Tombstone-proof: the cleanup HARD-deletes via engine.deletePage — a
+    // soft delete (deleted_at tombstone) would leave these rows countable.
+    const probeRows = await engine.executeRaw<{ n: string }>(
+      `SELECT count(*)::text AS n FROM pages WHERE slug = ANY($1::text[])`,
+      [[VERIFY_PROBE_SLUG, VERIFY_PROBE_ENTITY_SLUG]],
+    );
+    expect(probeRows[0].n).toBe('0');
     const facts = await engine.executeRaw<{ fact: string }>(
       `SELECT fact FROM facts WHERE source_id = $1 AND fact LIKE $2`,
       ['workspace', `%${VERIFY_MAGIC_TOKEN}%`],

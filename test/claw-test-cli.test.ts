@@ -605,3 +605,178 @@ describe('spawnWithCapture — stdin EOF (no payload)', () => {
 // module dropped its registrations. The HONEST integration check lives in
 // test/e2e/claw-test.test.ts ("--list-agents reports both built-in runners"),
 // which spawns the real CLI and asserts both runner lines.
+
+describe('OpencodeRunner detection (reliable on box without opencode)', () => {
+  test('detect returns the contract shape when OPENCODE_BIN unset', async () => {
+    const orig = process.env.OPENCODE_BIN;
+    delete process.env.OPENCODE_BIN;
+    try {
+      const { OpencodeRunner } = await import('../src/core/claw-test/runners/opencode.ts');
+      const d = await new OpencodeRunner().detect();
+      expect(typeof d.available).toBe('boolean');
+      if (!d.available) expect(typeof d.reason).toBe('string');
+      else expect(d.binPath?.startsWith('/')).toBe(true);
+    } finally {
+      if (orig !== undefined) process.env.OPENCODE_BIN = orig;
+    }
+  });
+
+  test('detect rejects relative / ..-segment / metachar OPENCODE_BIN (through-runner injection pin)', async () => {
+    const orig = process.env.OPENCODE_BIN;
+    const { OpencodeRunner } = await import('../src/core/claw-test/runners/opencode.ts');
+    try {
+      process.env.OPENCODE_BIN = 'relative/opencode';
+      expect((await new OpencodeRunner().detect()).reason).toMatch(/OPENCODE_BIN must be absolute/);
+      process.env.OPENCODE_BIN = '/tmp/foo/../opencode';
+      expect((await new OpencodeRunner().detect()).reason).toMatch(/'\.\.' segments/);
+      process.env.OPENCODE_BIN = '/tmp/open"code';
+      expect((await new OpencodeRunner().detect()).reason).toMatch(/quotes, backslashes, dollar signs/);
+    } finally {
+      if (orig !== undefined) process.env.OPENCODE_BIN = orig;
+      else delete process.env.OPENCODE_BIN;
+    }
+  });
+});
+
+describe('OpencodeRunner invoke argv/env (shim — no opencode binary needed)', () => {
+  test('argv is the pinned run shape; multi-provider keys + XDG dirs propagate; unlisted env does not', async () => {
+    const orig = {
+      OPENCODE_BIN: process.env.OPENCODE_BIN,
+      XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+      XDG_DATA_HOME: process.env.XDG_DATA_HOME,
+      OPENCODE_DISABLE_AUTOUPDATE: process.env.OPENCODE_DISABLE_AUTOUPDATE,
+      OPENCODE_CONFIG_CONTENT: process.env.OPENCODE_CONFIG_CONTENT,
+      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+      XAI_API_KEY: process.env.XAI_API_KEY,
+      GOOGLE_GENERATIVE_AI_API_KEY: process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+      OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
+      LEAK_CANARY: process.env.LEAK_CANARY,
+      GBRAIN_DATABASE_URL: process.env.GBRAIN_DATABASE_URL,
+    };
+    const shim = join(tmp, 'opencode-shim');
+    // The runner first execs the shim with --version (transcript preamble),
+    // then spawns the real turn — the shim answers both. Bare-semver output
+    // mirrors the SST CLI's real shape.
+    writeFileSync(shim, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "9.9.9"; exit 0; fi\nprintf "ARGV:%s\\n" "$@"\nprintf "XDGC:[%s] XDGD:[%s] AUP:[%s] INLINE:[%s] ANT:[%s] XAI:[%s] GGL:[%s] OR:[%s] CANARY:[%s] DBURL:[%s]\\n" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$OPENCODE_DISABLE_AUTOUPDATE" "$OPENCODE_CONFIG_CONTENT" "$ANTHROPIC_API_KEY" "$XAI_API_KEY" "$GOOGLE_GENERATIVE_AI_API_KEY" "$OPENROUTER_API_KEY" "$LEAK_CANARY" "$GBRAIN_DATABASE_URL"\n', 'utf-8');
+    chmodSync(shim, 0o755);
+    process.env.OPENCODE_BIN = shim;
+    process.env.XDG_CONFIG_HOME = '/tmp/xdgc-canary';
+    process.env.XDG_DATA_HOME = '/tmp/xdgd-canary';
+    process.env.OPENCODE_DISABLE_AUTOUPDATE = '1';
+    // The config-shadowing channel: deliberately NOT in the allowlist.
+    process.env.OPENCODE_CONFIG_CONTENT = '{"mcp":{}}';
+    // Multi-provider: opencode's headline feature — BASE carries only
+    // Anthropic+OpenAI; the delta must name the rest (EV6) or a live-lane
+    // operator on xai/google/openrouter models sees a misleading auth failure.
+    process.env.ANTHROPIC_API_KEY = 'ant-sentinel-77aa';
+    process.env.XAI_API_KEY = 'xai-sentinel-77bb';
+    process.env.GOOGLE_GENERATIVE_AI_API_KEY = 'ggl-sentinel-77cc';
+    process.env.OPENROUTER_API_KEY = 'or-sentinel-77dd';
+    process.env.LEAK_CANARY = 'must-not-leak';
+    process.env.GBRAIN_DATABASE_URL = 'postgres://must-not-leak';
+    try {
+      const { OpencodeRunner } = await import('../src/core/claw-test/runners/opencode.ts');
+      const chunks: Buffer[] = [];
+      const result = await new OpencodeRunner().invoke({
+        cwd: tmp,
+        brief: 'BRIEF BODY sentinel-4c2f',
+        env: {},
+        timeoutMs: 10_000,
+        transcriptSink: {
+          write: (e) => { if (e.channel === 'stdout') chunks.push(e.bytes); },
+          nextOffset: () => 0,
+          close: async () => {},
+        },
+      });
+      expect(result.exitCode).toBe(0);
+      const stdout = Buffer.concat(chunks).toString('utf-8');
+      expect(stdout).toContain('[opencode-runner preamble] version: 9.9.9');
+      // Pinned argv: run + brief + explicit default format (an upstream
+      // default flip must not silently change the transcript shape); no
+      // --auto (MCP tools fire without it — OPENCODE-CLI-PIN.md §One-shot).
+      expect(stdout).toContain('ARGV:run\nARGV:BRIEF BODY sentinel-4c2f\nARGV:--format\nARGV:default');
+      expect(stdout).not.toContain('ARGV:--auto');
+      // Allowlist held: XDG + autoupdate kill + all four provider deltas
+      // pass; the inline-config shadow channel, the canary, and the
+      // deliberately-delisted GBRAIN_DATABASE_URL do not.
+      expect(stdout).toContain('XDGC:[/tmp/xdgc-canary]');
+      expect(stdout).toContain('XDGD:[/tmp/xdgd-canary]');
+      expect(stdout).toContain('AUP:[1]');
+      expect(stdout).toContain('ANT:[ant-sentinel-77aa]');
+      expect(stdout).toContain('XAI:[xai-sentinel-77bb]');
+      expect(stdout).toContain('GGL:[ggl-sentinel-77cc]');
+      expect(stdout).toContain('OR:[or-sentinel-77dd]');
+      expect(stdout).toContain('INLINE:[] ');
+      expect(stdout).toContain('CANARY:[] DBURL:[]');
+    } finally {
+      for (const [k, v] of Object.entries(orig)) {
+        if (v !== undefined) process.env[k] = v;
+        else delete process.env[k];
+      }
+    }
+  });
+});
+
+describe('OpencodeRunner global-config tripwire + preamble resilience (shim)', () => {
+  async function invokeWithXdg(xdgConfig: string): Promise<{ warns: string[]; exitCode: number; stdout: string }> {
+    const shim = join(tmp, 'opencode-shim-tripwire');
+    writeFileSync(shim, '#!/bin/sh\nif [ "$1" = "--version" ]; then exit 1; fi\necho ok\n', 'utf-8');
+    chmodSync(shim, 0o755);
+    const origBin = process.env.OPENCODE_BIN;
+    process.env.OPENCODE_BIN = shim;
+    const warns: string[] = [];
+    const origWarn = console.warn;
+    console.warn = (m: unknown) => { warns.push(String(m)); };
+    try {
+      const { OpencodeRunner } = await import('../src/core/claw-test/runners/opencode.ts');
+      const chunks: Buffer[] = [];
+      const result = await new OpencodeRunner().invoke({
+        cwd: tmp,
+        brief: 'brief',
+        env: { XDG_CONFIG_HOME: xdgConfig },
+        timeoutMs: 10_000,
+        transcriptSink: {
+          write: (e) => { if (e.channel === 'stdout') chunks.push(e.bytes); },
+          nextOffset: () => 0,
+          close: async () => {},
+        },
+      });
+      return { warns, exitCode: result.exitCode, stdout: Buffer.concat(chunks).toString('utf-8') };
+    } finally {
+      console.warn = origWarn;
+      if (origBin !== undefined) process.env.OPENCODE_BIN = origBin;
+      else delete process.env.OPENCODE_BIN;
+    }
+  }
+
+  test('warns loudly when the global config carries mcp.gbrain (checks BOTH merged filenames, JSONC-tolerant)', async () => {
+    const xdg = mkdtempSync(join(tmpdir(), 'opencode-vendor-'));
+    try {
+      mkdirSync(join(xdg, 'opencode'), { recursive: true });
+      // .jsonc name + a comment: the tripwire must not require strict JSON.
+      writeFileSync(
+        join(xdg, 'opencode', 'opencode.jsonc'),
+        '{\n  // operator config\n  "mcp": { "gbrain": { "type": "local", "command": ["gbrain", "serve"] } }\n}\n',
+      );
+      const r = await invokeWithXdg(xdg);
+      expect(r.warns.some((w) => w.includes("OPERATOR'S REAL"))).toBe(true);
+      // A failing --version preamble never fails the run.
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout).toContain('ok');
+    } finally {
+      rmSync(xdg, { recursive: true, force: true });
+    }
+  });
+
+  test('no warning for a gbrain-free global config', async () => {
+    const xdg = mkdtempSync(join(tmpdir(), 'opencode-clean-'));
+    try {
+      mkdirSync(join(xdg, 'opencode'), { recursive: true });
+      writeFileSync(join(xdg, 'opencode', 'opencode.json'), '{"mcp":{"other":{"type":"remote","url":"https://x/mcp"}}}');
+      const r = await invokeWithXdg(xdg);
+      expect(r.warns.length).toBe(0);
+    } finally {
+      rmSync(xdg, { recursive: true, force: true });
+    }
+  });
+});

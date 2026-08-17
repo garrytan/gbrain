@@ -32,10 +32,16 @@ export const voyage: Recipe = {
     embedding: {
       models: [
         'voyage-4-large', 'voyage-4', 'voyage-4-lite', 'voyage-4-nano',
+        'voyage-code-4',
         'voyage-3.5', 'voyage-3-large', 'voyage-3', 'voyage-3-lite',
         'voyage-code-3', 'voyage-finance-2', 'voyage-law-2',
         'voyage-multimodal-3',
       ],
+      // v0.46.3: canonical pick for every "choose a model for the user" surface.
+      // models[0] is voyage-4-large (quality order); the new-install default is
+      // voyage-4 (price/quality balance, shared v4 embedding space) — see
+      // NEW_INSTALL_DEFAULT_EMBEDDING_MODEL in ai/defaults.ts.
+      default_model: 'voyage-4',
       default_dims: 1024,
       // Display hint for `gbrain providers` only (billing math goes through
       // src/core/embedding-pricing.ts). Rate for the default voyage-4-large.
@@ -58,6 +64,27 @@ export const voyage: Recipe = {
       // which gateway.ts:626 misclassifies as transient (TODO: reclassify
       // 4xx).
       multimodal_models: ['voyage-multimodal-3'],
+    },
+    // v0.46.3: Voyage reranking (the recommended zerank-2 replacement — same
+    // VOYAGE_API_KEY as embeddings). gateway.rerank() posts to
+    // `${base_url_default}/rerank` (base already ends in /v1). Wire dialect:
+    // request takes `top_k` (declared via top_param); response is
+    // {object: "list", data: [{index, relevance_score}]} — live-wire verified
+    // 2026-08-15; the gateway's parser accepts both data[] and results[].
+    reranker: {
+      models: ['rerank-2.5', 'rerank-2.5-lite'],
+      default_model: 'rerank-2.5',
+      path: '/rerank',
+      top_param: 'top_k',
+      // https://docs.voyageai.com/docs/pricing (verified 2026-08-15):
+      // rerank-2.5 $0.05/M, rerank-2.5-lite $0.02/M.
+      cost_per_1m_tokens_usd: 0.05,
+      price_last_verified: '2026-08-15',
+      // Voyage enforces token-based caps (32K per query+document pair,
+      // ≤1000 documents/request) rather than a byte cap; 5MB is a
+      // conservative byte-level proxy matching the ZE-era pre-flight so
+      // oversized bodies still fail open before the wire.
+      max_payload_bytes: 5_000_000,
     },
   },
   setup_hint: 'Get an API key at https://dash.voyageai.com/api-keys, then `export VOYAGE_API_KEY=...`',

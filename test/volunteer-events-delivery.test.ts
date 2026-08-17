@@ -40,8 +40,8 @@ beforeEach(() => {
 });
 
 describe('isVolunteerChannel', () => {
-  test('accepts exactly the five known channels; rejects everything else', () => {
-    for (const ok of ['op', 'reflex', 'watch', 'claude-code', 'codex']) {
+  test('accepts exactly the six known channels; rejects everything else', () => {
+    for (const ok of ['op', 'reflex', 'watch', 'claude-code', 'codex', 'opencode']) {
       expect(isVolunteerChannel(ok)).toBe(true);
     }
     for (const bad of ['vim', '', null, undefined, 42, {}, 'CLAUDE-CODE', 'hook']) {
@@ -121,6 +121,9 @@ describe('channel guards', () => {
     const { isHarnessChannel } = await import('../src/core/context/volunteer-events.ts');
     expect(isHarnessChannel('claude-code')).toBe(true);
     expect(isHarnessChannel('codex')).toBe(true);
+    // opencode widening (v0.45.x): without this membership a hook delivery
+    // attributed `--harness opencode` silently rebadges as claude-code.
+    expect(isHarnessChannel('opencode')).toBe(true);
     for (const internal of ['op', 'reflex', 'watch']) expect(isHarnessChannel(internal)).toBe(false);
   });
 

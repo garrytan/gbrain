@@ -141,6 +141,78 @@ describe('runGather', () => {
   });
 });
 
+describe('runGather — per-stream typed warnings (GATHER_*_FAILED)', () => {
+  /** Delegating wrapper: listed methods reject; everything else hits the real engine. */
+  function withFailing(methods: string[]): PGLiteEngine {
+    return new Proxy(engine, {
+      get(target, prop) {
+        if (typeof prop === 'string' && methods.includes(prop)) {
+          return async () => { throw new Error(`${prop} boom`); };
+        }
+        const v = Reflect.get(target, prop, target);
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    }) as PGLiteEngine;
+  }
+
+  test('clean run reports no gather warnings', async () => {
+    const r = await runGather(engine, { question: 'technical founder' });
+    expect(r.warnings).toEqual([]);
+  });
+
+  test('a throwing hybrid stream surfaces GATHER_HYBRID_FAILED and stays fail-open', async () => {
+    const r = await runGather(withFailing(['searchKeyword']), { question: 'technical founder' });
+    expect(r.warnings).toContain('GATHER_HYBRID_FAILED');
+    expect(r.pages).toEqual([]);
+    // Fail-open: the takes stream keeps working.
+    expect(r.takes.length).toBeGreaterThan(0);
+  });
+
+  test('each failing stream maps to its own code', async () => {
+    const r = await runGather(
+      withFailing(['searchKeyword', 'searchTakes', 'searchTakesVector', 'traversePaths']),
+      {
+        question: 'technical founder',
+        anchor: 'people/alice-example',
+        questionEmbedding: new Float32Array(8),
+      },
+    );
+    expect([...r.warnings].sort()).toEqual([
+      'GATHER_GRAPH_FAILED',
+      'GATHER_HYBRID_FAILED',
+      'GATHER_TAKES_KEYWORD_FAILED',
+      'GATHER_TAKES_VECTOR_FAILED',
+    ]);
+    expect(r.pages).toEqual([]);
+    expect(r.takes).toEqual([]);
+    expect(r.graphSlugs).toEqual([]);
+  });
+
+  test('runThink folds gather warnings into ThinkResult.warnings', async () => {
+    const stubClient: ThinkLLMClient = {
+      create: async () => ({
+        id: 'msg_gather_warn',
+        type: 'message',
+        role: 'assistant',
+        model: 'stub',
+        stop_reason: 'end_turn',
+        stop_sequence: null,
+        usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: null, service_tier: null },
+        content: [{
+          type: 'text',
+          text: JSON.stringify({ answer: 'stubbed answer', citations: [], gaps: [] }),
+        }],
+      }),
+    };
+    const result = await runThink(withFailing(['searchTakes']), {
+      question: 'technical founder',
+      client: stubClient,
+    });
+    expect(result.warnings).toContain('GATHER_TAKES_KEYWORD_FAILED');
+    expect(result.warnings).not.toContain('GATHER_HYBRID_FAILED');
+  });
+});
+
 describe('runThink (with stub client)', () => {
   test('full pipeline: gather → stub synthesize → result', async () => {
     const stubClient: ThinkLLMClient = {

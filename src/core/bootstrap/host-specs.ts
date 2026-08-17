@@ -19,8 +19,9 @@
  * gbrain code.
  */
 
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 // ── Spec-target registry [ENG-7] ────────────────────────────────────────────
 
@@ -38,6 +39,7 @@ export interface HostSpecTarget {
 
 export const CLAUDE_CODE_SPEC_ID = 'claude-code-2026-08';
 export const CODEX_SPEC_ID = 'codex-2026-08';
+export const OPENCODE_SPEC_ID = 'opencode-2026-08';
 
 export const TARGETS: Record<string, HostSpecTarget> = {
   [CLAUDE_CODE_SPEC_ID]: {
@@ -102,6 +104,43 @@ export const TARGETS: Record<string, HostSpecTarget> = {
       '"gbrain does not wire codex hooks yet" (follow-up filed), NOT "codex ' +
       'has no hooks". Some codex builds gate HTTP MCP servers behind ' +
       '`experimental_use_rmcp_client = true` — probe at wiring time.',
+  },
+  [OPENCODE_SPEC_ID]: {
+    id: OPENCODE_SPEC_ID,
+    status: 'verified',
+    verifiedAt: '2026-08-15',
+    references: [
+      'docs/mcp/OPENCODE-CLI-PIN.md',
+      'https://opencode.ai/docs/mcp-servers/',
+      'opencode-ai 1.18.18 (hermetic observation run, macOS arm64, 2026-08-15)',
+    ],
+    note:
+      'opencode (SST, opencode.ai — not OpenClaw). Config is JSONC everywhere: ' +
+      'comments parse in .json-named files, and global opencode.json AND ' +
+      'opencode.jsonc are BOTH read (merged) when both exist; `opencode mcp ' +
+      'add` writes the user-global opencode.jsonc via a comment-preserving ' +
+      'editor, so gbrain writes match that bar (jsonc-parser surgical edits, ' +
+      'opencode-json.ts). MCP entries: {type:"local", command[], environment, ' +
+      'enabled?} / {type:"remote", url, headers} — header values keep ' +
+      '`{env:VAR}` interpolation verbatim; unknown keys tolerated in 1.18.18 ' +
+      'but gbrain writes NO marker key (ownership is a structural ' +
+      'fingerprint — a future strict-schema flip must not brick the host). ' +
+      '`mcp add` has no scope flag (always user-global); project opencode.json ' +
+      'is read but a project-defined LOCAL server spawns with NO trust gate ' +
+      '(verified) — so gbrain defaults registration to USER scope and treats ' +
+      'project scope as explicit opt-in with a sharing warning. `mcp list` is ' +
+      'the honest discriminator (spawns servers; ✓/✗ text; exit 0 regardless); ' +
+      '`mcp debug` is OAuth-only. Keyless anonymous free tier answers headless ' +
+      '`run` AND drives MCP tool calls without --auto (load-bearing for the ' +
+      'door SMOKE). DOCS-CONTRADICTION pinned: OPENCODE_CONFIG / _CONFIG_DIR / ' +
+      '_CONFIG_CONTENT observed INERT in 1.18.18 — only HOME/XDG_CONFIG_HOME ' +
+      'move the config; path helpers resolve via XDG only. opencode sets ' +
+      'OPENCODE=1 (+OPENCODE_PID) in bash-tool children — detectHarness ' +
+      'probes OPENCODE. AGENTS.md loads natively; CLAUDE.md is NOT ' +
+      'double-loaded. opencode ships a JS plugin/event system — ' +
+      'OPENCODE_HAS_HOOKS=false means "gbrain does not wire it yet" (follow-up ' +
+      'filed), NOT "opencode has no hooks"; probes run with --pure + ' +
+      'OPENCODE_DISABLE_AUTOUPDATE=1 because mcp list autoloads plugins.',
   },
 };
 
@@ -204,6 +243,19 @@ export function mcpPermissionEntry(serverName: string): string {
   return `mcp__${serverName}`;
 }
 
+/**
+ * User-scope Claude Code MCP registration store (`claude mcp add` user scope
+ * writes here). Same HOME-env-first discipline as claudeUserSettingsPath —
+ * Bun's homedir() reads the password database, not $HOME, so a sandboxed
+ * test that remaps HOME would otherwise read the operator's REAL config.
+ */
+export function claudeUserMcpConfigPath(): string {
+  const configDir = process.env.CLAUDE_CONFIG_DIR?.trim();
+  if (configDir) return join(configDir, '.claude.json');
+  const home = process.env.HOME?.trim();
+  return join(home || homedir(), '.claude.json');
+}
+
 /** Where Claude Code stores session transcripts — the confinement root [S3#8]. */
 export function claudeProjectsDir(): string {
   return join(homedir(), '.claude', 'projects');
@@ -240,3 +292,74 @@ export const CODEX_HAS_HOOKS = false;
 export const CODEX_TOML_BLOCK_BEGIN =
   `# gbrain:${GBRAIN_HARNESS_MARKER_VALUE} begin - managed by \`gbrain bootstrap harness\`; do not edit inside`;
 export const CODEX_TOML_BLOCK_END = `# gbrain:${GBRAIN_HARNESS_MARKER_VALUE} end`;
+
+// ── opencode shapes ─────────────────────────────────────────────────────────
+
+/**
+ * opencode config DIRECTORY (user-global). Resolution mirrors what the real
+ * binary was OBSERVED to do (OPENCODE-CLI-PIN.md §Path seams): XDG_CONFIG_HOME
+ * else $HOME/.config, then /opencode. The OPENCODE_CONFIG / OPENCODE_CONFIG_DIR
+ * / OPENCODE_CONFIG_CONTENT env vars are deliberately NOT honored here —
+ * observed INERT in opencode 1.18.18 (probes registered through each were
+ * invisible to `mcp list` while the XDG-resolved config was still read), so
+ * honoring them would write registrations into a file opencode never reads (a
+ * silent no-op install). HOME is read from the env explicitly because Bun's
+ * homedir() reads the password database, not the HOME env var (the
+ * claudeUserSettingsPath lesson).
+ */
+export function opencodeConfigDir(): string {
+  const xdg = process.env.XDG_CONFIG_HOME?.trim();
+  if (xdg) return join(xdg, 'opencode');
+  const home = process.env.HOME?.trim();
+  return join(home || homedir(), '.config', 'opencode');
+}
+
+/**
+ * User-global opencode config FILE. Both `opencode.json` and `opencode.jsonc`
+ * are read (merged) by the host when both exist; gbrain edits the file that
+ * already carries content, preferring `.jsonc` (the name `opencode mcp add`
+ * itself writes) when both or neither exist — one-owner-per-file keeps the
+ * merge unambiguous for `mcp.gbrain`.
+ */
+export function opencodeGlobalConfigPath(): string {
+  const dir = opencodeConfigDir();
+  const jsonc = join(dir, 'opencode.jsonc');
+  const json = join(dir, 'opencode.json');
+  if (existsSync(jsonc)) return jsonc;
+  if (existsSync(json)) return json;
+  return jsonc;
+}
+
+/**
+ * The OTHER member of the global filename pair for a given config path
+ * (`opencode.json` ↔ `opencode.jsonc` in the same dir), or null when the
+ * basename is not a pair member. opencode MERGES both files when both exist,
+ * so global WRITERS must reconcile `mcp.<name>` across the pair — a same-name
+ * entry left in the sibling survives as a shadow registration whose merge
+ * winner is ambiguous (and a later removal of the primary "reveals" it).
+ * Callers apply this to the USER-GLOBAL pair only; project-scope sibling
+ * semantics are unobserved.
+ */
+export function opencodeGlobalSiblingPath(configPath: string): string | null {
+  const dir = dirname(configPath);
+  const base = basename(configPath);
+  if (base === 'opencode.json') return join(dir, 'opencode.jsonc');
+  if (base === 'opencode.jsonc') return join(dir, 'opencode.json');
+  return null;
+}
+
+/** Project-scope opencode config (docs-canonical name; opencode's lookup
+ * traverses up to the git root). Committed-file candidate — the writer's
+ * PATH-resolved command + sharing-warning rules apply (OPENCODE.md). */
+export function opencodeProjectConfigPath(workspaceDir: string): string {
+  return join(workspaceDir, 'opencode.json');
+}
+
+/**
+ * Whether gbrain WIRES opencode's hook/plugin system. False = not yet:
+ * opencode ships a JS plugin/event system (and `--pure` to suppress it), but
+ * gbrain's opencode plugin lane is a filed follow-up; per-turn context on
+ * opencode rides the pull-protocol AGENTS.md gates, which opencode loads
+ * natively (verified — and CLAUDE.md is NOT double-loaded alongside it).
+ */
+export const OPENCODE_HAS_HOOKS = false;

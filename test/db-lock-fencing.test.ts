@@ -102,13 +102,22 @@ describe('startCycleLockRefresher (Tier-1 #1 + D5.11)', () => {
     const stop = startCycleLockRefresher(fakeLock(async () => false), controller, 'test-lock', 15);
     try {
       // Poll instead of a fixed sleep: under full-suite shard load, timer
-      // ticks can be starved well past the nominal interval.
+      // ticks can be starved well past the nominal interval. Poll on the
+      // REASON, not just `aborted`: one loaded-CI run (2026-08-16, shard 9)
+      // observed `aborted === true` with `reason === undefined` at the first
+      // post-abort read — unreproduced locally/in-container across 50+ runs,
+      // so treat reason visibility as part of the awaited condition and keep
+      // the assertion diagnostic when it genuinely never arrives.
       const deadline = Date.now() + 5_000;
-      while (!controller.signal.aborted && Date.now() < deadline) {
+      while (!(controller.signal.reason instanceof LockStolenError) && Date.now() < deadline) {
         await new Promise(r => setTimeout(r, 25));
       }
       expect(controller.signal.aborted).toBe(true);
-      expect(controller.signal.reason).toBeInstanceOf(LockStolenError);
+      if (!(controller.signal.reason instanceof LockStolenError)) {
+        throw new Error(
+          `expected LockStolenError abort reason within 5s; aborted=${controller.signal.aborted} reason=${String(controller.signal.reason)}`,
+        );
+      }
     } finally {
       stop();
     }

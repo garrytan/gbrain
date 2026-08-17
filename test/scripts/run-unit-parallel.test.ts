@@ -23,12 +23,15 @@ import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
 import { execFileSync, spawnSync } from 'child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, copyFileSync, chmodSync, symlinkSync } from 'fs';
 import { tmpdir } from 'os';
-import { join, resolve } from 'path';
+import { dirname, join, resolve } from 'path';
 
 const REPO_ROOT = resolve(import.meta.dir, '..', '..');
 const PARALLEL_SH_SRC = resolve(REPO_ROOT, 'scripts/run-unit-parallel.sh');
 const SHARD_SH_SRC = resolve(REPO_ROOT, 'scripts/run-unit-shard.sh');
 const SERIAL_SH_SRC = resolve(REPO_ROOT, 'scripts/run-serial-tests.sh');
+// The runners `source scripts/lib/test-env.sh` — every sandbox copy of a
+// runner must stage the lib too or the source line fails at startup.
+const TESTENV_SH_SRC = resolve(REPO_ROOT, 'scripts/lib/test-env.sh');
 
 let TMPROOT: string;
 
@@ -37,8 +40,9 @@ beforeAll(() => {
   // and 4 fixture test files (3 pass, 1 fail). The wrapper's `find test`
   // expression will pick them up via cwd.
   TMPROOT = mkdtempSync(join(tmpdir(), 'gbrain-parallel-test-'));
-  mkdirSync(join(TMPROOT, 'scripts'), { recursive: true });
+  mkdirSync(join(TMPROOT, 'scripts', 'lib'), { recursive: true });
   mkdirSync(join(TMPROOT, 'test'), { recursive: true });
+  copyFileSync(TESTENV_SH_SRC, join(TMPROOT, 'scripts', 'lib', 'test-env.sh'));
 
   copyFileSync(PARALLEL_SH_SRC, join(TMPROOT, 'scripts', 'run-unit-parallel.sh'));
   copyFileSync(SHARD_SH_SRC, join(TMPROOT, 'scripts', 'run-unit-shard.sh'));
@@ -190,7 +194,8 @@ describe('run-unit-parallel.sh no-timeout-binary fallback (rc from shard wait, n
     FROOT = mkdtempSync(join(tmpdir(), 'gbrain-parallel-fallback-'));
     mkdirSync(join(FROOT, 'scripts'), { recursive: true });
     mkdirSync(join(FROOT, 'test'), { recursive: true });
-    for (const s of ['run-unit-parallel.sh', 'run-unit-shard.sh', 'run-serial-tests.sh']) {
+    for (const s of ['run-unit-parallel.sh', 'run-unit-shard.sh', 'run-serial-tests.sh', 'lib/test-env.sh']) {
+      mkdirSync(dirname(join(FROOT, 'scripts', s)), { recursive: true });
       copyFileSync(resolve(REPO_ROOT, 'scripts', s), join(FROOT, 'scripts', s));
       chmodSync(join(FROOT, 'scripts', s), 0o755);
     }
@@ -275,7 +280,8 @@ describe('run-unit-parallel.sh OOM rescue lane', () => {
     OROOT = mkdtempSync(join(tmpdir(), 'gbrain-parallel-oom-'));
     mkdirSync(join(OROOT, 'scripts'), { recursive: true });
     mkdirSync(join(OROOT, 'test'), { recursive: true });
-    for (const s of ['run-unit-parallel.sh', 'run-unit-shard.sh', 'run-serial-tests.sh']) {
+    for (const s of ['run-unit-parallel.sh', 'run-unit-shard.sh', 'run-serial-tests.sh', 'lib/test-env.sh']) {
+      mkdirSync(dirname(join(OROOT, 'scripts', s)), { recursive: true });
       copyFileSync(resolve(REPO_ROOT, 'scripts', s), join(OROOT, 'scripts', s));
       chmodSync(join(OROOT, 'scripts', s), 0o755);
     }

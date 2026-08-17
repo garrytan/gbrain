@@ -87,6 +87,21 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/engine-parity.test.ts",
     "test/e2e/schema-drift.test.ts",
   ],
+  // Engine method modules peeled from the façades carry the same blast
+  // radius as the façades themselves.
+  "src/core/postgres-engine/**": [
+    "test/e2e/postgres-bootstrap.test.ts",
+    "test/e2e/postgres-jsonb.test.ts",
+    "test/e2e/jsonb-roundtrip.test.ts",
+    "test/e2e/engine-parity.test.ts",
+    "test/e2e/schema-drift.test.ts",
+    "test/e2e/migrate-embeddings-postgres.test.ts",
+  ],
+  "src/core/pglite-engine/**": [
+    "test/e2e/postgres-bootstrap.test.ts",
+    "test/e2e/engine-parity.test.ts",
+    "test/e2e/schema-drift.test.ts",
+  ],
   // Schema source of truth: any change must pass the cross-engine drift gate.
   "src/schema.sql": ["test/e2e/schema-drift.test.ts"],
   "src/core/pglite-schema.ts": ["test/e2e/schema-drift.test.ts"],
@@ -106,6 +121,8 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/migration-flow.test.ts",
   ],
   "src/commands/doctor.ts": ["test/e2e/doctor-progress.test.ts"],
+  // Doctor check modules peeled from doctor.ts feed the same e2e surface.
+  "src/commands/doctor/**": ["test/e2e/doctor-progress.test.ts"],
   // Knowledge graph layer feeds graph-quality.
   "src/core/link-extraction.ts": ["test/e2e/graph-quality.test.ts"],
   // v0.38 ingestion substrate. POST /ingest lives inside serve-http.ts

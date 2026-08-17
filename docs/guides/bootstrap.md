@@ -1,7 +1,7 @@
 # GBrain Bootstrap — your harness as your agent
 
-`gbrain bootstrap` turns a Claude Code or Codex session into a persistent personal
-agent: identity files rendered from your own answers, a local PGLite brain,
+`gbrain bootstrap` turns a Claude Code, Codex, or opencode session into a
+persistent personal agent: identity files rendered from your own answers, a local PGLite brain,
 per-turn context, session-triggered schedules, and a private GitHub repo as the
 agent's durable, portable body. This guide is the full contract — what gets
 installed, what runs when, what it can and cannot do, and how to undo all of it.
@@ -19,7 +19,7 @@ follows is `BOOTSTRAP_FOR_AGENTS.md` at the repo root, fetched at the
 | Identity files (SOUL/USER/MEMORY/AGENTS/CLAUDE/HEARTBEAT/ACCESS_POLICY/GITHUB) | your workspace folder | loaded at session start |
 | `agent.json` manifest + `brain/`, `memory/`, `skills/`, `state/` | workspace | — |
 | Local brain (PGLite) | `~/.gbrain/` (never in the repo) | while a session's MCP serve is open |
-| MCP registration (`gbrain serve`) | Claude Code: project scope by default; Codex: user-global (no scope flag) | spawned by your harness per session |
+| MCP registration (`gbrain serve`) | Claude Code: project scope by default; Codex: user-global (no scope flag); opencode: user-global by default (project scope is an explicit opt-in — see the degradation matrix) | spawned by your harness per session |
 | Hooks (Claude Code, ON by default) | local installs: `.claude/settings.local.json` (gitignored); cloud sandboxes: the COMMITTED `.claude/settings.json` (PATH-resolved, fail-open commands) | each prompt; fail-open; `--no-hooks` opts out at install, `GBRAIN_HOOKS=0` disables at runtime |
 | Per-turn persistence | Stop hook → debounced, detached scan-gated push (per workspace; 5 min default, every turn in cloud sandboxes) | after each assistant turn; `GBRAIN_STOP_PUSH=0` disables; `GBRAIN_STOP_PUSH_DEBOUNCE_MIN` / config `hooks.stop_push_debounce_min` tune it |
 | Session persistence | SessionEnd hook → scan-gated commit+push | at session end (note: the harness never fires SessionEnd on `/exit` — the per-turn push is what covers that) |
@@ -155,6 +155,8 @@ you'd apply to any journal: write what you'd be comfortable persisting.
 | GitHub / `gh` | full local agent | off-machine durability (repo re-runnable later) |
 | Hooks (Claude Code) | pull protocol via AGENTS.md gates | automatic per-turn context + session-end persistence |
 | Codex (no wired hooks, no MCP scope flag) | pull protocol + MCP tools | per-turn push (stated plainly; not oversold — codex 0.147+ ships a hook system, but gbrain does not wire it yet) + the ability to confine MCP reach to one folder (`codex mcp add` is always user-global) |
+| opencode (no wired hooks; scope INVERTED: user-global by default) | pull protocol (opencode reads AGENTS.md natively) + MCP tools; project scope available as an explicit opt-in | per-turn push (opencode ships a plugin/event system, but gbrain does not wire it yet). The project-scope default is deliberately NOT offered: opencode spawns project-config servers with no trust prompt, so a committed entry would auto-execute on every collaborator machine |
+| Bootstrap at all (plugin-only install) | MCP tools (`starter` surface, `--source-guard`) + the curated skill set via the codex/claude plugin (docs/mcp/CODEX.md) | identity files, hooks/push protocol, the private-repo body — the plugin is the lightweight lane; bootstrap is the full agent |
 | Second simultaneous session | first session unaffected | second session's brain tools fail politely (one live serve per brain — v1 contract) |
 | Postgres brain (incl. harness mode) | MCP tools every session + pull protocol | per-turn hook injection (`no_pglite_path`: the hook IPC socket is PGLite-only today; hooks stay pre-wired and light up when the engine-uniform listener lands) |
 
@@ -187,7 +189,20 @@ mode wires them in one command, with no `agent.json` and no interview:
 - Codex: one managed `[mcp_servers.gbrain]` block with the bearer token
   INLINE in the codex config (0600) — framework-spawned codex inherits no
   shell profile, so the env-var lane the `connect` path uses would never
-  reach it.
+  reach it. One owner per server name: if the gbrain codex PLUGIN is
+  also enabled, two `gbrain` servers exist in different layers — the wire
+  proceeds with a loud WARNING and `gbrain doctor` reports the collision
+  (`plugin_lane_collision`); keep one (`codex plugin remove gbrain@gbrain`, or
+  `--remove` here).
+- opencode: one managed `mcp.gbrain` remote entry with the bearer header
+  INLINE in the user-global JSONC config (0600), written by the same
+  comment-preserving editor the workspace lane uses — the `{env:…}`
+  interpolation the `connect` path prefers would resolve empty under a
+  framework-spawned opencode for the same no-shell-profile reason.
+  Note: downgrading gbrain below the release that introduced opencode support
+  after wiring it leaves the opencode entry in place for manual removal —
+  edit the opencode config by hand, or re-upgrade and run
+  `gbrain bootstrap harness --remove`.
 - Honesty on Postgres brains: per-turn injection is degraded (the matrix row
   above); MCP is the active seam and the summary says so.
 - `--status [--json]` probes the live truth (serve health, token validity via
@@ -274,6 +289,11 @@ that changed shape, a harness that stopped calling our MCP server):
   a seeded, brain-only fact (falling back to a shell `gbrain query` if headless
   stdio-MCP is unavailable).
 
+opencode's real-binary door lives in
+`test/e2e/install-real-opencode.serial.test.ts` (its writer-parity leg
+handshakes gbrain's direct JSONC registration through the actual binary);
+`docs/TESTING.md` carries the full door inventory and cadence policy.
+
 These pay real API cost and take 30s–2min per turn, so they are NOT in the PR
 shard. Everything is hermetic (temp `HOME` / `CODEX_HOME` / `CLAUDE_CONFIG_DIR` /
 `GBRAIN_HOME` per test — the operator's real `~/.claude`, `~/.gbrain`, `~/.codex`
@@ -294,7 +314,7 @@ bun test test/e2e/bootstrap-real-codex.serial.test.ts
 ## DX exploration harness (developer instrument, not a test)
 
 The door tests prove the install WORKS; they say nothing about how it FEELS.
-`test/helpers/tty-harness.ts` spawns any CLI (gbrain, `claude`, `codex`, `grok`) under a
+`test/helpers/tty-harness.ts` spawns any CLI (gbrain, `claude`, `codex`, `grok`, `opencode`) under a
 real pseudo-terminal (Bun's `terminal:` spawn option) and records every output
 burst with a millisecond timestamp, so unnecessary pauses become a measurable
 artifact (`computeStalls` → `stalls.md`) instead of a vibe. Same hermetic env as
@@ -313,6 +333,7 @@ bun run scripts/dx-explore.ts help              # comprehension surfaces (no key
 bun run scripts/dx-explore.ts init [--keyless]  # interactive init, naive-user autopilot
 bun run scripts/dx-explore.ts claude-install    # REAL claude running the paste-in bootstrap
 bun run scripts/dx-explore.ts codex-install     # REAL codex, same
+bun run scripts/dx-explore.ts opencode-install  # REAL opencode running the paste-in bootstrap
 bun run scripts/dx-explore.ts grok-install      # REAL grok, brain-only GROK.md install (no bootstrap path)
 bun run scripts/dx-explore.ts drive -- gbrain init   # manual: steer a live TUI via a file channel
 ```

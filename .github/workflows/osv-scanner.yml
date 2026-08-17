@@ -19,6 +19,11 @@ on:
 permissions:
   contents: read
 
+# Rapid pushes to the same PR previously queued duplicate scans.
+concurrency:
+  group: osv-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   osv-scan:
     permissions:

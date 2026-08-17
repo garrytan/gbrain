@@ -176,7 +176,7 @@ export const SECTIONS: DocSection[] = [
       {
         title: "docs/ai-providers/zeroentropy.md",
         description:
-          "ZeroEntropy zembed-1 embedding + zerank-2 reranker (hosted): API key, embedding switch, reranker config.",
+          "ZeroEntropy (deprecated; hosted sunset 2026-09-04): the off-ramp for existing brains — migrate embeddings + reranker, self-host continuity, troubleshooting. Do not onboard.",
         path: "docs/ai-providers/zeroentropy.md",
         // Setup walkthrough — discoverable in the index, not inlined in the
         // single-fetch bundle (keeps llms-full.txt under FULL_SIZE_BUDGET).
@@ -230,7 +230,7 @@ export const SECTIONS: DocSection[] = [
       {
         title: "skills/migrations/",
         description:
-          "Per-version (v0.5.0 - v0.14.1) agent-executable migration instructions.",
+          "Per-version agent-executable migration instructions (latest: v0.46.3.0 — the ZeroEntropy-sunset embedding + reranker switch playbook).",
         path: "skills/migrations/",
       },
       {

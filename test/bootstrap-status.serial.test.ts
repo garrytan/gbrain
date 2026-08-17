@@ -64,9 +64,10 @@ describe('phase list is the single TS source of truth [D5]', () => {
     }
   });
 
-  test('wire hint carries the harness scope rule (Claude Code consent vs Codex user-global)', () => {
+  test('wire hint carries the harness scope rule (Claude Code + opencode consent vs Codex user-global)', () => {
     const wire = PHASES.find((p) => p.id === 'wire');
-    expect(wire?.resume_hint).toContain('MCP scope consent is Claude Code only');
+    expect(wire?.resume_hint).toContain('MCP scope consent applies on Claude Code and opencode');
+    expect(wire?.resume_hint).toContain('opencode defaults to user-global');
     expect(wire?.resume_hint).toContain('Codex registrations are always user-global (no scope flag)');
   });
 });

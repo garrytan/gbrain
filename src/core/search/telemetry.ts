@@ -496,7 +496,14 @@ export async function readSearchStats(
       empty_results: { total: empty_total, by_cause: empty_by_cause },
     };
   } catch {
-    // Table missing or query failed — return empty stats rather than throw.
+    // Best-effort by design: a pre-v0.32.3 brain WITHOUT the search_telemetry
+    // table shows "0 searches" (with the coverage caveat explaining low/zero
+    // counts), NOT a crash — a long-standing contract pinned by
+    // test/search-telemetry.test.ts and relied on by the CLI dashboard. The
+    // search_stats op wraps this in withRelationGuard for OTHER unexpected
+    // relation errors, but the missing-telemetry-table case is intentionally
+    // graceful, not 'unavailable'. (Reverted an over-eager gap-closure rethrow
+    // that broke this contract for the CLI + dashboard to satisfy a P2 finding.)
     return {
       total_calls: 0,
       cache_hits: 0,
@@ -570,4 +577,60 @@ export function _resetTelemetryWriterForTest(): void {
     _writer.stop();
     _writer = null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// v0.40.4 graph-signals observability (moved from src/commands/search.ts in
+// the CLI→MCP gap-closure wave so the `search_stats` op and the CLI share it).
+// ---------------------------------------------------------------------------
+
+export interface GraphSignalsStatsSection {
+  enabled: boolean;
+  source: 'config' | 'mode_default';
+  failures_count: number;
+  /** Failure-reason breakdown across the window (truncated to top reasons). */
+  failures_by_reason: Record<string, number>;
+}
+
+export async function readGraphSignalsStats(engine: BrainEngine, days: number): Promise<GraphSignalsStatsSection> {
+  // Resolve graph_signals on/off. Mirrors the resolution chain in
+  // src/commands/doctor/checks/graph-embedding.ts:checkGraphSignalsCoverage.
+  // v0.40.4 codex F1: case-insensitive + trim parity with
+  // loadOverridesFromConfig (mode.ts). Without this, search-stats would
+  // silently report the opposite of what the parser actually enables on
+  // values like 'TRUE' or 'True'.
+  const cfg = await engine.getConfig('search.graph_signals').catch(() => null);
+  let enabled: boolean;
+  let source: 'config' | 'mode_default';
+  if (cfg !== null && cfg !== undefined) {
+    const v = cfg.trim().toLowerCase();
+    enabled = v === 'true' || v === '1';
+    source = 'config';
+  } else {
+    const modeRaw = await engine.getConfig('search.mode').catch(() => null);
+    const modeVal = typeof modeRaw === 'string' ? modeRaw.trim().toLowerCase() : '';
+    const mode = modeVal === 'conservative' || modeVal === 'tokenmax' ? modeVal : 'balanced';
+    enabled = mode !== 'conservative';
+    source = 'mode_default';
+  }
+
+  let failures_count = 0;
+  const failures_by_reason: Record<string, number> = {};
+  try {
+    const { readRecentGraphSignalsFailures } = await import('./graph-signals.ts');
+    const events = readRecentGraphSignalsFailures(days);
+    failures_count = events.length;
+    // The failure event schema has error_summary (not a reason field) —
+    // bucket by the first word of the summary so operators see e.g.
+    // "ECONNREFUSED" / "timeout" / "permission" at a glance.
+    for (const e of events) {
+      const firstWord = (e.error_summary ?? '').split(/[\s:]+/)[0]?.slice(0, 32) || 'unknown';
+      failures_by_reason[firstWord] = (failures_by_reason[firstWord] ?? 0) + 1;
+    }
+  } catch {
+    // Audit reader is best-effort. Missing module / corrupt files →
+    // count stays 0, search-stats still renders.
+  }
+
+  return { enabled, source, failures_count, failures_by_reason };
 }

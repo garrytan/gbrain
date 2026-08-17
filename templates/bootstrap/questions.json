@@ -118,7 +118,7 @@
     "MCP_SCOPE": {
       "consent": true,
       "phase": "interview",
-      "question": "(Claude Code only. Codex has no scope flag — its registrations are always user-global; on Codex, state that plainly instead of asking.) Register the brain for THIS folder only (recommended — any other repo you open cannot read it), or for every session on this machine (your agent everywhere, but any repo you open can query your brain, and two open sessions will contend for the local database)?",
+      "question": "(Claude Code and opencode. Codex has no scope flag — its registrations are always user-global; on Codex, state that plainly instead of asking. On opencode the DEFAULT is user-global — the sharing-safe choice, because opencode spawns project-config-defined servers with no trust gate; offer 'project' only as a deliberate opt-in and state the committed-file consequence.) Register the brain for THIS folder only (recommended on Claude Code — any other repo you open cannot read it), or for every session on this machine (your agent everywhere, but any repo you open can query your brain, and two open sessions will contend for the local database)?",
       "default": "project",
       "allowed": ["project", "user"],
       "maxLength": 8
@@ -163,7 +163,7 @@
     "VOICE_BANNED": { "default": "- Opening with filler (\"Great question\", \"I'd be happy to help\", \"Absolutely\")\n- Hedging when a take exists\n- \"It's not X, it's Y\" constructions\n- Narrating the writing process inside a document", "maxLength": 1024, "shape": "list" },
     "SAFETY_RED_LINES": { "default": "- Never send money or make purchases without explicit per-instance approval\n- Never message third parties as the principal without sign-off on the exact text\n- Never delete data that cannot be restored\n- Never share the principal's private information with anyone but the principal", "maxLength": 2048, "shape": "list" },
     "QUIET_HOURS": { "default": "23:00-08:00 local", "maxLength": 64 },
-    "SURFACE_PRIMARY": { "default": "this workspace (Claude Code / Codex)", "maxLength": 128 },
+    "SURFACE_PRIMARY": { "default": "this workspace (Claude Code / Codex / opencode)", "maxLength": 128 },
     "SURFACE_MULTIUSER": { "default": "single-principal", "allowed": ["single-principal", "shared"], "maxLength": 32 },
     "MEMORY_WHAT_MATTERS": { "default": "- Corrections the principal makes (these become standing rules)\n- Commitments made in either direction, with dates\n- Preferences stated once that should never need restating\n- Facts about people and projects the principal works with", "maxLength": 2048, "shape": "list" },
     "PRINCIPAL_PROJECTS": { "default": "*(none recorded yet — add as they come up)*", "maxLength": 4096, "shape": "list" },

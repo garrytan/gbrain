@@ -36,9 +36,11 @@ describe('zeroEntropyCompatFetch — shim structural shape', () => {
     // fetch` the function-arrow type loses Bun's `preconnect` method
     // signature. Pinning here prevents a future refactor from removing
     // the cast and re-introducing the tsc TS2741 failure documented in
-    // gateway.ts:556 comments.
+    // gateway.ts:556 comments. (Window is 3000 chars because v0.46.3's
+    // `warnSunsetOnce` block sits between the last shim cast and
+    // `resolveEmbeddingProvider`.)
     const src = await Bun.file(GATEWAY_PATH).text();
-    expect(src).toMatch(/\}\)\s*as unknown as typeof fetch;[\s\S]{0,200}async function resolveEmbeddingProvider/);
+    expect(src).toMatch(/\}\)\s*as unknown as typeof fetch;[\s\S]{0,3000}async function resolveEmbeddingProvider/);
   });
 
   test('URL rewrite: /embeddings → /models/embed (CDX1-F2)', async () => {

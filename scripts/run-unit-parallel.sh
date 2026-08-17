@@ -44,10 +44,22 @@
 
 set -uo pipefail
 
+# Fixture tests that `git commit` in temp repos must not inherit the developer's
+# global commit.gpgsign — a signing gpg-agent can OOM under full-suite memory
+# pressure and fail the commit ("gpg: signing failed: Cannot allocate memory",
+# #1696). git applies these env keys as highest-precedence config on every
+# invocation in this process tree, so all child `git commit`s run unsigned.
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="commit.gpgsign" GIT_CONFIG_VALUE_0="false"
+
 # #3485: unit tests need no database — strip ambient DB URLs at this wrapper
 # boundary so the bunfig preload guard passes and nothing can reach a real
 # brain. The e2e wrapper (run-e2e.sh) is the only lane that keeps them.
 unset DATABASE_URL GBRAIN_DATABASE_URL
+# An ambient GBRAIN_HOME (a dev shell configured for a real brain) must not
+# reach unit tests either: the gbrain-home-preload respects a pre-set value
+# (the e2e wrapper needs that), so strip it at this boundary and let the
+# preload allocate per-run scratch instead.
+unset GBRAIN_HOME
 
 cd "$(dirname "$0")/.."
 
@@ -62,54 +74,11 @@ cd "$(dirname "$0")/.."
 # fan-out — shards inherit a finished fixture. Opt out: GBRAIN_NO_SNAPSHOT=1
 # (the migration-replay canary tests clear the env themselves regardless).
 # ──────────────────────────────────────────────────────────────────────────
-if [ "${GBRAIN_NO_SNAPSHOT:-0}" != "1" ]; then
-  if bun run build:pglite-snapshot >/dev/null 2>&1; then
-    export GBRAIN_PGLITE_SNAPSHOT=test/fixtures/pglite-snapshot.tar
-  else
-    echo "[run-unit-parallel] snapshot build failed (non-fatal) — tests run with cold init" >&2
-  fi
-fi
-
-# ──────────────────────────────────────────────────────────────────────────
-# CPU detection: Apple Silicon perf cores → Mac total physical → nproc → 4.
-# Returns a single positive integer.
-# ──────────────────────────────────────────────────────────────────────────
-detect_cpus() {
-  local n=""
-  n=$(sysctl -n hw.perflevel0.physicalcpu 2>/dev/null) && [ -n "$n" ] && [ "$n" -gt 0 ] && echo "$n" && return
-  n=$(sysctl -n hw.physicalcpu 2>/dev/null) && [ -n "$n" ] && [ "$n" -gt 0 ] && echo "$n" && return
-  n=$(nproc 2>/dev/null) && [ -n "$n" ] && [ "$n" -gt 0 ] && echo "$n" && return
-  echo 4
-}
-
-# ──────────────────────────────────────────────────────────────────────────
-# Available-memory detection (MB). macOS: vm_stat free + inactive +
-# speculative + purgeable pages (inactive/purgeable are reclaimable on
-# pressure, which is exactly the scenario we size for). Linux: MemAvailable.
-# Unknown platform → 0, and the caller skips adaptation entirely.
-# ──────────────────────────────────────────────────────────────────────────
-detect_available_mem_mb() {
-  if command -v vm_stat >/dev/null 2>&1; then
-    vm_stat 2>/dev/null | awk '
-      /page size of/ { psize = $8 }
-      /Pages free/        { free = $NF }
-      /Pages inactive/    { inactive = $NF }
-      /Pages speculative/ { spec = $NF }
-      /Pages purgeable/   { purge = $NF }
-      END {
-        gsub(/\./, "", free); gsub(/\./, "", inactive)
-        gsub(/\./, "", spec); gsub(/\./, "", purge)
-        if (psize == 0) psize = 16384
-        printf "%d\n", (free + inactive + spec + purge) * psize / 1048576
-      }'
-    return
-  fi
-  if [ -r /proc/meminfo ]; then
-    awk '/MemAvailable/ { printf "%d\n", $2 / 1024; found = 1 } END { if (!found) print 0 }' /proc/meminfo
-    return
-  fi
-  echo 0
-}
+# detect_cpus / detect_available_mem_mb / ensure_pglite_snapshot live in the
+# shared lib (also sourced by test-shard.sh, run-serial-tests.sh,
+# run-slow-tests.sh) — one implementation, no copy drift.
+. scripts/lib/test-env.sh
+ensure_pglite_snapshot "run-unit-parallel"
 
 # ──────────────────────────────────────────────────────────────────────────
 # Argument parsing. --shards N override wins over $SHARDS; both are clamped.

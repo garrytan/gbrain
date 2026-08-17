@@ -403,6 +403,10 @@ export async function runThink(
     ...(opts.sourceId !== undefined ? { sourceId: opts.sourceId } : {}),
     ...(opts.allowedSources !== undefined ? { sourceIds: opts.allowedSources } : {}),
   });
+  // D6: per-stream gather failures surface as typed codes (GATHER_*_FAILED);
+  // raw error text stays on stderr. Distinguishes an errored stream from a
+  // legitimately-empty one for MCP/remote callers.
+  for (const w of gather.warnings) warnings.push(w);
 
   // Render evidence blocks for the prompt
   const pagesBlock = renderPagesBlock(gather.pages, 600, opts.question);

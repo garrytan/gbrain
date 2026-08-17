@@ -1,0 +1,23 @@
+# coverage-gate-exemptions.txt — shrink-only allowlist for the coverage
+# diff gate (scripts/coverage-diff-gate.ts).
+#
+# Paths listed here are EXCLUDED from the >=80% changed-line coverage gate.
+# They are still REPORTED in the gate's table, tagged:
+#   [e2e-exempt]            coverage for these lives in DATABASE_URL-gated
+#                           e2e lanes that the PR corpus may not run
+#   [subprocess-undercount] src/cli.ts only: the CLI is exercised via child
+#                           processes and bun coverage does not propagate
+#                           into subprocesses, so its numbers undercount
+#
+# SHRINK-ONLY: entries may be removed as the coverage corpus learns to see
+# these paths; ADDING an entry requires a graduation review in the PR
+# description explaining why the path cannot be gated yet.
+#
+# Syntax: one path per line; '#' starts a comment. Entries ending in '/'
+# are directory prefix matches; all others are exact file matches.
+src/core/postgres-engine.ts
+src/core/pglite-engine.ts
+src/core/postgres-engine/
+src/core/pglite-engine/
+src/core/migrate.ts
+src/cli.ts

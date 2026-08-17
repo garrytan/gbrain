@@ -32,19 +32,8 @@
  *   brick).
  */
 
-import { randomBytes } from 'node:crypto';
-import {
-  chmodSync,
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  renameSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
-import { dirname } from 'node:path';
+import { chmodSync, copyFileSync, existsSync, readFileSync, statSync } from 'node:fs';
+import { atomicWriteTextFile } from './atomic-write.ts';
 import { CODEX_TOML_BLOCK_BEGIN, CODEX_TOML_BLOCK_END } from './host-specs.ts';
 
 export interface CodexHttpServerBlock {
@@ -158,15 +147,11 @@ function renderBlock(block: CodexHttpServerBlock): string[] {
   ];
 }
 
-/** Atomic 0600 write preserving symlinks and the file's dominant EOL. */
+/** Atomic 0600 write preserving symlinks and the file's dominant EOL
+ * (forceMode: the file carries a bearer token regardless of prior mode). */
 function atomicWriteToml(configPath: string, unixText: string, crlf: boolean): void {
-  const target = existsSync(configPath) ? realpathSync(configPath) : configPath;
-  mkdirSync(dirname(target), { recursive: true });
-  const tmp = `${target}.tmp-${randomBytes(6).toString('hex')}`;
   const out = crlf ? unixText.replace(/\n/g, '\r\n') : unixText;
-  writeFileSync(tmp, out, { encoding: 'utf8', mode: 0o600 });
-  chmodSync(tmp, 0o600);
-  renameSync(tmp, target);
+  atomicWriteTextFile(configPath, out, { forceMode: 0o600 });
 }
 
 /**

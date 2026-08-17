@@ -48,6 +48,14 @@ registration is always user-global and the tradeoff above is the standing
 state. Off-ramps: `codex mcp remove gbrain` removes just the registration;
 `gbrain bootstrap uninstall` is the full teardown.
 
+opencode: the scope logic is INVERTED from Claude Code. opencode spawns
+servers from a project `opencode.json` with NO trust prompt, so a
+project-scoped registration in a repo you share means anyone who checks the
+repo out gets the entry executed on open. gbrain therefore defaults to a
+user-global registration; project scope is an explicit opt-in that prints a
+sharing warning. Off-ramps: `gbrain bootstrap uninstall` removes the entry
+from both scope files; deleting the `mcp.gbrain` key by hand also works.
+
 ## The transcript corpus
 
 Session transcripts are retained locally (outside this repo, mode 0700, pruned

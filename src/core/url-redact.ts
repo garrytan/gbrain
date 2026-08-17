@@ -36,6 +36,34 @@ export function redactPgUrl(url: unknown): string {
 }
 
 /**
+ * Redact credential-bearing URLs of ANY scheme embedded in free text (error
+ * messages, log lines). Greedy userinfo match — `scheme://<anything>@` up to
+ * the last `@` in the same token — so a raw `@` INSIDE a password can't leak
+ * its tail (`p@ssw@rd` redacts whole, at the cost of over-redacting a
+ * hostname that legitimately follows a second `@`, which is the safe
+ * direction for a log line). Text without a `scheme://...@` shape passes
+ * through untouched.
+ *
+ * Examples (scheme genericized so this docstring itself never carries a
+ * credential-shaped span — the tests pin the real postgres shapes):
+ *   redactUrlsInText('connect failed: demo://user:pw@db:5432/x timeout')
+ *     → 'connect failed: demo://***@db:5432/x timeout'
+ *   redactUrlsInText('demo://user:p@ssw@rd@db.example.com/x')
+ *     → 'demo://***@db.example.com/x'
+ */
+export function redactUrlsInText(text: string): string {
+  return (
+    text
+      .replace(/(\w+:\/\/)\S+@/g, '$1***@')
+      // libpq keyword/value form: `password=hunter2 host=db ...` — postgres.js
+      // echoes malformed connection strings verbatim in its error messages.
+      // Quoted values may contain spaces (`password='hunter two'`), so match
+      // quoted forms before the bare-token form.
+      .replace(/\b(password|sslpassword)\s*=\s*('[^']*'|"[^"]*"|\S+)/gi, '$1=***')
+  );
+}
+
+/**
  * Recursively redact any postgresql:// or postgres:// URLs found inside an
  * arbitrary value (string, object, array). Useful when the caller is about
  * to JSON.stringify a structured payload and might have a URL nested

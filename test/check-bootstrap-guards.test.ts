@@ -65,7 +65,7 @@ const BANK_JSON = JSON.stringify({
     MCP_SCOPE: {
       consent: true,
       phase: 'interview',
-      question: '(Claude Code only. Codex has no scope flag.) Register for this folder or the whole machine?',
+      question: '(Claude Code and opencode. Codex has no scope flag.) Register for this folder or the whole machine?',
       maxLength: 8,
     },
     UNUSED_OPTIONAL: { maxLength: 8 },
@@ -75,7 +75,7 @@ const BANK_JSON = JSON.stringify({
 // Minimal runbook that satisfies the section (e) counter-signal pins; fixtures
 // exercising OTHER failure modes include it so they fail only for their own
 // reason.
-const RUNBOOK_PINS = 'Claude Code only\nDo NOT offer an MCP scope choice\n';
+const RUNBOOK_PINS = 'Claude Code and opencode\nDo NOT offer an MCP scope choice\nNO trust prompt\n';
 
 describe('check-bootstrap-tag.sh', () => {
   test('exists and is executable', () => {
@@ -307,7 +307,7 @@ describe('check-bootstrap-templates.sh', () => {
         'templates/bootstrap/questions.json': BANK_JSON,
         'templates/bootstrap/SOUL.md.template': '# {{AGENT_NAME}}\n',
         'BOOTSTRAP_FOR_AGENTS.md':
-          '<!-- gbrain-runbook-stamp: 1.2.3.4 -->\nClaude Code only\n(counter-signal deleted)\n',
+          '<!-- gbrain-runbook-stamp: 1.2.3.4 -->\nClaude Code and opencode\nNO trust prompt\n(counter-signal deleted)\n',
       },
       (dir) => {
         const r = runGuard(TPL_GUARD, dir);
@@ -317,18 +317,34 @@ describe('check-bootstrap-templates.sh', () => {
     );
   });
 
-  test("(e) fails when the runbook loses the 'Claude Code only' consent scoping", () => {
+  test("(e) fails when the runbook loses the 'Claude Code and opencode' consent scoping", () => {
     withFixture(
       {
         'templates/bootstrap/questions.json': BANK_JSON,
         'templates/bootstrap/SOUL.md.template': '# {{AGENT_NAME}}\n',
         'BOOTSTRAP_FOR_AGENTS.md':
-          '<!-- gbrain-runbook-stamp: 1.2.3.4 -->\nDo NOT offer an MCP scope choice\n',
+          '<!-- gbrain-runbook-stamp: 1.2.3.4 -->\nDo NOT offer an MCP scope choice\nNO trust prompt\n',
       },
       (dir) => {
         const r = runGuard(TPL_GUARD, dir);
         expect(r.status).toBe(1);
-        expect(r.out).toContain("'Claude Code only'");
+        expect(r.out).toContain("'Claude Code and opencode'");
+      },
+    );
+  });
+
+  test("(e) fails when the runbook loses the opencode 'no trust prompt' rationale", () => {
+    withFixture(
+      {
+        'templates/bootstrap/questions.json': BANK_JSON,
+        'templates/bootstrap/SOUL.md.template': '# {{AGENT_NAME}}\n',
+        'BOOTSTRAP_FOR_AGENTS.md':
+          '<!-- gbrain-runbook-stamp: 1.2.3.4 -->\nClaude Code and opencode\nDo NOT offer an MCP scope choice\n',
+      },
+      (dir) => {
+        const r = runGuard(TPL_GUARD, dir);
+        expect(r.status).toBe(1);
+        expect(r.out).toContain('spawn-gate rationale');
       },
     );
   });
@@ -343,7 +359,7 @@ describe('check-bootstrap-templates.sh', () => {
       (dir) => {
         const r = runGuard(TPL_GUARD, dir);
         expect(r.status).toBe(1);
-        expect(r.out).toContain("must start with '(Claude Code only'");
+        expect(r.out).toContain("must start with '(Claude Code and opencode'");
       },
     );
   });
@@ -368,7 +384,7 @@ describe('check-bootstrap-templates.sh', () => {
       (dir) => {
         const r = runGuard(TPL_GUARD, dir);
         expect(r.status).toBe(1);
-        expect(r.out).toContain("must start with '(Claude Code only'");
+        expect(r.out).toContain("must start with '(Claude Code and opencode'");
       },
     );
   });
@@ -385,7 +401,7 @@ describe('check-bootstrap-templates.sh', () => {
         MCP_SCOPE: {
           consent: true,
           phase: 'wire',
-          question: '(Claude Code only. Codex has no scope flag.) Register for this folder or the whole machine?',
+          question: '(Claude Code and opencode. Codex has no scope flag.) Register for this folder or the whole machine?',
           maxLength: 8,
         },
       },
@@ -425,7 +441,7 @@ describe('check-bootstrap-templates.sh', () => {
       (dir) => {
         const r = runGuard(TPL_GUARD, dir);
         expect(r.status).toBe(1);
-        expect(r.out).toContain("must start with '(Claude Code only'");
+        expect(r.out).toContain("must start with '(Claude Code and opencode'");
       },
     );
   });
@@ -683,5 +699,246 @@ describe('check-grok-pin.sh', () => {
     expect(verify).toContain('"check:grok-pin"');
     const pkg = require('node:fs').readFileSync(join(ROOT, 'package.json'), 'utf-8');
     expect(pkg).toContain('"check:grok-pin": "bash scripts/check-grok-pin.sh"');
+  });
+});
+
+// ── check-opencode-pin.sh ────────────────────────────────────────────────────
+
+const OPENCODE_PIN_GUARD = join(ROOT, 'scripts/check-opencode-pin.sh');
+
+function runOpencodePinGuard(fixtureRoot: string): { status: number | null; out: string } {
+  const r = spawnSync('bash', [OPENCODE_PIN_GUARD], {
+    cwd: ROOT,
+    encoding: 'utf-8',
+    env: { ...process.env, GBRAIN_OPENCODE_PIN_GUARD_ROOT: fixtureRoot },
+  });
+  return { status: r.status, out: `${r.stdout}\n${r.stderr}` };
+}
+
+const OPENCODE_PIN_STAMPS_NPM = [
+  '<!-- opencode-pin: distribution_kind=npm -->',
+  '<!-- opencode-pin: npm_package=opencode-ai -->',
+  '<!-- opencode-pin: npm_version=1.18.18 -->',
+  '<!-- opencode-pin: npm_integrity=sha512-BBB= -->',
+  '<!-- opencode-pin: opencode_version=1.18.18 -->',
+].join('\n');
+
+function opencodeDoorWorkflow(envLines: string[]): string {
+  return [
+    'jobs:',
+    '  other-job:',
+    '    steps: []',
+    '  opencode-door:',
+    '    env:',
+    ...envLines.map((l) => `      ${l}`),
+    '    steps: []',
+    '  opencode-door-canary:',
+    '    env:',
+    '      GBRAIN_REAL_OPENCODE_E2E: "1"', // deliberately UNPINNED — must not satisfy the check
+    '    steps: []',
+    '',
+  ].join('\n');
+}
+
+const OPENCODE_NPM_ENV_OK = [
+  'OPENCODE_VERSION: "1.18.18"',
+  'OPENCODE_NPM_PACKAGE: "opencode-ai"',
+  'OPENCODE_NPM_INTEGRITY: "sha512-BBB="',
+];
+
+describe('check-opencode-pin.sh', () => {
+  test('ok: npm mode with matching workflow pins (anchored to the opencode-door block, canary leg ignored)', () => {
+    withFixture({
+      'docs/mcp/OPENCODE-CLI-PIN.md': `# pin\n${OPENCODE_PIN_STAMPS_NPM}\n`,
+      '.github/workflows/heavy-tests.yml': opencodeDoorWorkflow(OPENCODE_NPM_ENV_OK),
+    }, (dir) => {
+      const r = runOpencodePinGuard(dir);
+      expect(r.out).toContain('check-opencode-pin: ok');
+      expect(r.status).toBe(0);
+    });
+  });
+
+  test('SKIP-graceful pre-landing; FAIL-closed once the door job exists without the pin doc', () => {
+    withFixture({
+      '.github/workflows/heavy-tests.yml': opencodeDoorWorkflow(OPENCODE_NPM_ENV_OK),
+    }, (dir) => {
+      const r = runOpencodePinGuard(dir);
+      expect(r.status).toBe(1);
+      expect(r.out).toContain('pin doc is the gate');
+    });
+    withFixture({
+      'docs/mcp/OPENCODE-CLI-PIN.md': `# pin\n${OPENCODE_PIN_STAMPS_NPM}\n`,
+      '.github/workflows/heavy-tests.yml': 'jobs:\n  other-job:\n    steps: []\n',
+    }, (dir) => {
+      const r = runOpencodePinGuard(dir);
+      expect(r.out).toContain('SKIP');
+      expect(r.status).toBe(0);
+    });
+  });
+
+  test('FAIL: workflow OPENCODE_VERSION drifts from the opencode_version stamp', () => {
+    withFixture({
+      'docs/mcp/OPENCODE-CLI-PIN.md': `# pin\n${OPENCODE_PIN_STAMPS_NPM}\n`,
+      '.github/workflows/heavy-tests.yml': opencodeDoorWorkflow([
+        'OPENCODE_VERSION: "1.18.19"',
+        'OPENCODE_NPM_PACKAGE: "opencode-ai"',
+        'OPENCODE_NPM_INTEGRITY: "sha512-BBB="',
+      ]),
+    }, (dir) => {
+      const r = runOpencodePinGuard(dir);
+      expect(r.status).toBe(1);
+      expect(r.out).toContain('OPENCODE_VERSION drift');
+    });
+  });
+
+  test('FAIL: npm_version stamp disagreeing with opencode_version can never pass green', () => {
+    const stamps = OPENCODE_PIN_STAMPS_NPM.replace(
+      '<!-- opencode-pin: npm_version=1.18.18 -->',
+      '<!-- opencode-pin: npm_version=1.18.19 -->',
+    );
+    withFixture({
+      'docs/mcp/OPENCODE-CLI-PIN.md': `# pin\n${stamps}\n`,
+      '.github/workflows/heavy-tests.yml': opencodeDoorWorkflow(OPENCODE_NPM_ENV_OK),
+    }, (dir) => {
+      const r = runOpencodePinGuard(dir);
+      expect(r.status).toBe(1);
+      expect(r.out).toContain('npm_version stamp');
+    });
+  });
+
+  test('FAIL: linux platform-integrity stamps must match the job env (missing AND drifted)', () => {
+    const stampsWithLinux = [
+      OPENCODE_PIN_STAMPS_NPM,
+      '<!-- opencode-pin: npm_linux_x64_integrity=sha512-X64= -->',
+      '<!-- opencode-pin: npm_linux_arm64_integrity=sha512-ARM= -->',
+    ].join('\n');
+    // Missing from the job env → fail.
+    withFixture({
+      'docs/mcp/OPENCODE-CLI-PIN.md': `# pin\n${stampsWithLinux}\n`,
+      '.github/workflows/heavy-tests.yml': opencodeDoorWorkflow(OPENCODE_NPM_ENV_OK),
+    }, (dir) => {
+      const r = runOpencodePinGuard(dir);
+      expect(r.status).toBe(1);
+      expect(r.out).toContain('OPENCODE_NPM_LINUX_X64_INTEGRITY');
+    });
+    // Present but drifted → fail.
+    withFixture({
+      'docs/mcp/OPENCODE-CLI-PIN.md': `# pin\n${stampsWithLinux}\n`,
+      '.github/workflows/heavy-tests.yml': opencodeDoorWorkflow([
+        ...OPENCODE_NPM_ENV_OK,
+        'OPENCODE_NPM_LINUX_X64_INTEGRITY: "sha512-X64="',
+        'OPENCODE_NPM_LINUX_ARM64_INTEGRITY: "sha512-DRIFT="',
+      ]),
+    }, (dir) => {
+      const r = runOpencodePinGuard(dir);
+      expect(r.status).toBe(1);
+      expect(r.out).toContain('drift');
+    });
+    // Both matching → ok.
+    withFixture({
+      'docs/mcp/OPENCODE-CLI-PIN.md': `# pin\n${stampsWithLinux}\n`,
+      '.github/workflows/heavy-tests.yml': opencodeDoorWorkflow([
+        ...OPENCODE_NPM_ENV_OK,
+        'OPENCODE_NPM_LINUX_X64_INTEGRITY: "sha512-X64="',
+        'OPENCODE_NPM_LINUX_ARM64_INTEGRITY: "sha512-ARM="',
+      ]),
+    }, (dir) => {
+      const r = runOpencodePinGuard(dir);
+      expect(r.out).toContain('check-opencode-pin: ok');
+      expect(r.status).toBe(0);
+    });
+  });
+
+  test('FAIL: a second OPENCODE_VERSION copy elsewhere in the workflow disagreeing with the stamp', () => {
+    // The real workflow carries a second OPENCODE_VERSION in the
+    // real-agent-e2e job — every copy must move with the stamp.
+    const workflow = [
+      'jobs:',
+      '  real-agent-e2e:',
+      '    env:',
+      '      OPENCODE_VERSION: "1.18.19"', // drifted second copy
+      '    steps: []',
+      '  opencode-door:',
+      '    env:',
+      ...OPENCODE_NPM_ENV_OK.map((l) => `      ${l}`),
+      '    steps: []',
+      '',
+    ].join('\n');
+    withFixture({
+      'docs/mcp/OPENCODE-CLI-PIN.md': `# pin\n${OPENCODE_PIN_STAMPS_NPM}\n`,
+      '.github/workflows/heavy-tests.yml': workflow,
+    }, (dir) => {
+      const r = runOpencodePinGuard(dir);
+      expect(r.status).toBe(1);
+      expect(r.out).toContain('every copy in the workflow moves with the stamp');
+    });
+  });
+});
+
+// ── check-pin-doc-privacy.sh ─────────────────────────────────────────────────
+
+const PIN_PRIVACY_GUARD = join(ROOT, 'scripts/check-pin-doc-privacy.sh');
+
+function runPinPrivacyGuard(fixtureRoot: string): { status: number | null; out: string } {
+  const r = spawnSync('bash', [PIN_PRIVACY_GUARD], {
+    cwd: ROOT,
+    encoding: 'utf-8',
+    env: { ...process.env, GBRAIN_PIN_PRIVACY_GUARD_ROOT: fixtureRoot },
+  });
+  return { status: r.status, out: `${r.stdout}\n${r.stderr}` };
+}
+
+describe('check-pin-doc-privacy.sh', () => {
+  test('ok: placeholder-disciplined pin doc (tmp paths, sha512 pins, example.com emails)', () => {
+    withFixture({
+      'docs/mcp/FAKE-CLI-PIN.md': [
+        '# fake pin',
+        '<!-- fake-pin: npm_integrity=sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA== -->',
+        'Config lands at `<tmp>/.config/fake/config.json`; auth at `~/.local/share/fake/auth.json`.',
+        'Support: docs@example.com; probe url https://fake.invalid/mcp.',
+      ].join('\n'),
+    }, (dir) => {
+      const r = runPinPrivacyGuard(dir);
+      expect(r.out).toContain('check-pin-doc-privacy: ok');
+      expect(r.status).toBe(0);
+    });
+  });
+
+  test('SKIP-graceful when no pin docs exist', () => {
+    withFixture({ 'docs/mcp/OTHER.md': '# not a pin doc\n' }, (dir) => {
+      const r = runPinPrivacyGuard(dir);
+      expect(r.out).toContain('SKIP');
+      expect(r.status).toBe(0);
+    });
+  });
+
+  test('FAIL: operator home path in a verbatim transcript', () => {
+    withFixture({
+      'docs/mcp/FAKE-CLI-PIN.md': 'observed: wrote /Users/alicesmith/.config/fake/config.json\n',
+    }, (dir) => {
+      const r = runPinPrivacyGuard(dir);
+      expect(r.status).toBe(1);
+      expect(r.out).toContain('operator home path');
+    });
+  });
+
+  test('FAIL: key-shaped material outside a sha512 integrity line', () => {
+    withFixture({
+      'docs/mcp/FAKE-CLI-PIN.md': `observed header: Bearer sk-${'a'.repeat(24)}\n`,
+    }, (dir) => {
+      const r = runPinPrivacyGuard(dir);
+      expect(r.status).toBe(1);
+      expect(r.out).toContain('key-shaped material');
+    });
+  });
+
+  test('FAIL: a real-looking email address; example.com/invalid domains stay fine', () => {
+    withFixture({
+      'docs/mcp/FAKE-CLI-PIN.md': 'signed in as operator@realmail.com\n',
+    }, (dir) => {
+      const r = runPinPrivacyGuard(dir);
+      expect(r.status).toBe(1);
+      expect(r.out).toContain('email');
+    });
   });
 });

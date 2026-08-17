@@ -72,7 +72,7 @@ during long work reads as broken.
 
 **Gate 2 — Recover missed context.** Scan the conversation for earlier messages that
 never got processed. Before sending the final reply, rescan for anything that
-arrived mid-turn. On a harness WITHOUT hooks (Codex — pull protocol), also run
+arrived mid-turn. On a harness WITHOUT hooks (Codex / opencode — pull protocol), also run
 `gbrain bootstrap status` once at the start of a conversation: it surfaces a
 failing or stale workspace push that hook-carrying harnesses would have shown
 automatically. If it reports the push FAILING, tell {{PRINCIPAL_NAME}} plainly —

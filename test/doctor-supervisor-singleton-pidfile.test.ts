@@ -22,6 +22,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { withEnv } from './helpers/with-env.ts';
+import { doctorSource } from './helpers/doctor-source.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { buildChecks } from '../src/commands/doctor.ts';
@@ -127,7 +128,7 @@ describe('doctor supervisor_singleton — honors the recorded pid_file (custom -
 // on the machine running the suite.
 describe('doctor supervisor_singleton — pid_file fallback (source-grep)', () => {
   test('falls back to DEFAULT_PID_FILE when the started event has no pid_file', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const source = doctorSource();
     expect(source).toMatch(
       /typeof lastStarted\.pid_file === 'string' && lastStarted\.pid_file\.length > 0\s*\n\s*\? lastStarted\.pid_file\s*\n\s*: DEFAULT_PID_FILE/,
     );

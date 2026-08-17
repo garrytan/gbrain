@@ -25,11 +25,11 @@ import { reflexPointerRationale } from './retrieval-reflex.ts';
 export const VOLUNTEER_EVENTS_TTL_DAYS = 90;
 
 /** Single source of truth for channel values — type + guards derive from it. */
-export const VOLUNTEER_CHANNELS = ['op', 'reflex', 'watch', 'claude-code', 'codex'] as const;
+export const VOLUNTEER_CHANNELS = ['op', 'reflex', 'watch', 'claude-code', 'codex', 'opencode'] as const;
 export type VolunteerChannel = (typeof VOLUNTEER_CHANNELS)[number];
 
 /** The harness subset — the ONLY channels a wire caller may claim. */
-export const HARNESS_CHANNELS = ['claude-code', 'codex'] as const;
+export const HARNESS_CHANNELS = ['claude-code', 'codex', 'opencode'] as const;
 export type HarnessChannel = (typeof HARNESS_CHANNELS)[number];
 
 /** Wire fallback: the only harness bootstrap registers hooks for today. */

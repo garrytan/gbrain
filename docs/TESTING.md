@@ -7,16 +7,17 @@ only.
 
 ### Test command tiers
 
-Six test command tiers, each with a clear scope:
+Seven test command tiers, each with a clear scope:
 
 | Command | What it runs | Wallclock | When to use |
 |---|---|---|---|
-| `bun run test` | Parallel unit-test fast loop. Sharded fan-out via `scripts/run-unit-parallel.sh` (default 4 shards — CPU-detected, clamped to a max of 8; 4 matches CI's fan-out and avoids PGLite WASM-init contention), then a serial pass over `*.serial.test.ts`. Excludes `*.slow.test.ts` and `test/e2e/*`. No pre-checks, no typecheck. Builds/refreshes the PGLite schema snapshot BEFORE the shard fan-out and exports `GBRAIN_PGLITE_SNAPSHOT` so PGLite-booting files restore a baked schema instead of replaying every migration (~10x wallclock on a full run; see "PGLite schema snapshot" below). Opt out: `GBRAIN_NO_SNAPSHOT=1`. Memory-safe by default: total concurrency (shards × intra-shard files) is capped to available memory at `GBRAIN_TEST_MEM_PER_FILE_MB` (default 1536 — a PGLite WASM instance) per concurrent file, and two phantom-failure classes are automatically re-run serially (the rescue pass): failures carrying the WASM out-of-memory signature, and shards killed externally (SIGTERM/SIGKILL well before the shard timeout — sibling workspaces' process cleanup, memory jetsam). Phantoms pass serially and the run goes green with an `oom_rescued` note; real failures fail again serially and stay red. Knobs: `GBRAIN_TEST_NO_MEM_ADAPT=1`, `GBRAIN_TEST_NO_OOM_FALLBACK=1`, `GBRAIN_TEST_MAX_CONCURRENCY` (intra-shard, default 4), `GBRAIN_TEST_SHARD_TIMEOUT` / `GBRAIN_TEST_SHARD_KILL_AFTER`, plus `--shards N` / `--max-concurrency N` / `--dry-run` script args. | a few minutes on a Mac dev box | Inner edit loop. Default. |
-| `bun run verify` | CI's authoritative pre-test gate set, fanned out in parallel by `scripts/run-verify-parallel.sh`: the full `check:*` battery (privacy, jsonb, progress, source-id, test-isolation, wasm, …) plus `bun run typecheck`. The `CHECKS` array in that script is the single source of truth — CI literally calls `bun run verify` in a dedicated job. | ~16s (parallel; typecheck dominates) | Before pushing; before `/ship`. |
+| `bun run test` | Parallel unit-test fast loop. Sharded fan-out via `scripts/run-unit-parallel.sh` (default 4 shards — CPU-detected, clamped to a max of 8; 4 matches CI's fan-out and avoids PGLite WASM-init contention), then a serial pass over `*.serial.test.ts`. Excludes `*.slow.test.ts` and `test/e2e/*`. No pre-checks, no typecheck. Builds/refreshes the PGLite schema snapshot BEFORE the shard fan-out and exports `GBRAIN_PGLITE_SNAPSHOT` so PGLite-booting files restore a baked schema instead of replaying every migration (~3.5x per booting file; see "PGLite schema snapshot" below). Opt out: `GBRAIN_NO_SNAPSHOT=1`. Memory-safe by default: total concurrency (shards × intra-shard files) is capped to available memory at `GBRAIN_TEST_MEM_PER_FILE_MB` (default 1536 — a PGLite WASM instance) per concurrent file, and two phantom-failure classes are automatically re-run serially (the rescue pass): failures carrying the WASM out-of-memory signature, and shards killed externally (SIGTERM/SIGKILL well before the shard timeout — sibling workspaces' process cleanup, memory jetsam). Phantoms pass serially and the run goes green with an `oom_rescued` note; real failures fail again serially and stay red. Knobs: `GBRAIN_TEST_NO_MEM_ADAPT=1`, `GBRAIN_TEST_NO_OOM_FALLBACK=1`, `GBRAIN_TEST_MAX_CONCURRENCY` (intra-shard, default 4), `GBRAIN_TEST_SHARD_TIMEOUT` / `GBRAIN_TEST_SHARD_KILL_AFTER`, plus `--shards N` / `--max-concurrency N` / `--dry-run` script args. | a few minutes on a Mac dev box | Inner edit loop. Default. |
+| `bun run verify` | CI's authoritative pre-test gate set, fanned out by `scripts/run-verify-parallel.sh` through a bounded worker pool (default `detect_cpus`; override `GBRAIN_VERIFY_MAX_PARALLEL`) with the heavy checks ordered first (typecheck, the two compile-embed checks, admin build, fuzz bundles, guard self-tests, the PGLite-booting eval checks, whole-tree greps). The battery includes the deterministic `check:eval-chronicle` and `check:eval-canary` eval gates. The `CHECKS` array in that script is the single source of truth — CI literally calls `bun run verify` in a dedicated job. | ~40s (pool-bounded; longest check dominates) | Before pushing; before `/ship`. |
 | `bun run test:full` | `verify && bun run test && bun run test:slow && [smart e2e]`. The local equivalent of "everything CI runs." Smart e2e: runs e2e only when `DATABASE_URL` is set; else loud skip notice to stderr. | ~3-5min depending on slow + e2e | Pre-merge sanity, before opening a PR. |
 | `bun run test:slow` | Just the `*.slow.test.ts` set (intentional cold-path correctness checks). | seconds-to-minutes | When touching slow-path code. |
-| `bun run test:serial` | Just the `*.serial.test.ts` set (cross-file-contention quarantine; one bun process per file for true module-registry isolation). | ~1s per quarantined file | Debugging a specific quarantined file. |
+| `bun run test:serial` | Just the `*.serial.test.ts` set (cross-file-contention quarantine; one bun process per file for true module-registry isolation), run through a POOL of concurrent per-file processes — the isolation is per-process, not per-machine. Pool defaults to `min(detect_cpus, 4)` then memory-adapts (same doctrine as the parallel runner); a small growth-guarded set of files (machine-global state or contention-critical timing — see the justified `EXCLUSIVE_FILES` list in `scripts/run-serial-tests.sh`, capped at 3 by `test/scripts/serial-files.test.ts`) runs on a sequential EXCLUSIVE lane after the pool. Per-test timeout 120s (pooled contention headroom); each pooled file is wall-clock-killed at 300s (`timeout -k`, exit-hang containment). Externally-killed files (exit 143/137 or a missing exit sentinel — sibling-workspace cleanup, memory jetsam) get ONE sequential rescue re-run, mirroring the parallel runner's doctrine: phantoms stay green with a rescue note, real failures stay red. Prints per-file PASS lines plus a top-10 slowest-files list. Knobs: `GBRAIN_SERIAL_POOL=N` (explicit pool width — bypasses the memory clamp; `1` restores fully-sequential), `GBRAIN_SERIAL_FILE_TIMEOUT`. | ~2.5min for all ~140 files at pool=4 (was ~8.5min sequential) | Debugging quarantined files; CI's serial-tests job. |
 | `bun run test:e2e` | Real Postgres E2E. Requires Docker + `DATABASE_URL`. Sequential. | ~5-10min | Pre-ship; nightly. |
+| `bun run test:compile-smoke` | Self-update integrity verify under a REAL `bun build --compile` binary, offline (sets `GBRAIN_SELFUPDATE_COMPILE_SMOKE=1`). The unit suite mocks the network seams; this proves the dependency-free crypto/base64/JSON verify path survives compilation — the failure mode `sigstore-js` would have hit. | ~5s (one compile) | When touching `src/core/binary-self-update.ts`; pre-ship on self-update changes. |
 
 There is no `check:all` script anymore — it was a second, hand-synced guard
 registry that drifted from `verify` (three checks were reachable ONLY from it,
@@ -32,11 +33,17 @@ self-test" below).
 post-`initSchema()` PGLite data dir into `test/fixtures/pglite-snapshot.tar`
 plus a version file; `PGLiteEngine.initSchema()` restores the tar instead of
 replaying the embedded schema + all migrations when the env var
-`GBRAIN_PGLITE_SNAPSHOT` points at it. Both `bun run test`
-(`scripts/run-unit-parallel.sh`, before the shard fan-out) and
-`scripts/ci-local.sh` call the builder unconditionally and export the env var.
-Measured effect: a full parallel suite run drops ~10x (PGLite-booting files go
-~1.63s → ~0.91s each). Properties:
+`GBRAIN_PGLITE_SNAPSHOT` points at it. Runners activate it through the shared
+`ensure_pglite_snapshot` helper in `scripts/lib/test-env.sh` (also home of
+`detect_cpus` and `detect_available_mem_mb`), sourced by
+`run-unit-parallel.sh`, `test-shard.sh`, `run-slow-tests.sh`,
+`run-serial-tests.sh`, and `run-verify-parallel.sh`; `scripts/ci-local.sh`
+calls the builder directly. The helper builds/refreshes the snapshot and
+exports the env var, no-ops on `GBRAIN_NO_SNAPSHOT=1` or an already-inherited
+path, and is non-fatal on build failure — tests fall back to cold init, with
+a one-line "active" echo so a silent fallback stays visible in CI logs.
+Measured effect: ~3.5x per PGLite-booting file (a cold boot replays every
+migration, ~3.1s each on a CI shard). Properties:
 
 - **Idempotent.** A hash short-circuit exits in ~40ms when the snapshot is
   fresh, and REBUILDS a stale one. The hash covers `PGLITE_SCHEMA_SQL`, every
@@ -66,7 +73,7 @@ handler-source hash sensitivity).
 ### Guard registry and self-test
 
 `scripts/guards-manifest.tsv` is THE single registry of `scripts/check-*`
-guards (currently 45), each classified `scanner` (greps/parses repo sources —
+guards (currently 48), each classified `scanner` (greps/parses repo sources —
 must eventually carry fixtures), `buildfresh`, or `repostate` (build/freshness
 guards are exempt-with-reason, not fixture-tested).
 `scripts/guard-self-test.sh` (`bun run check:guard-self-test`, wired into
@@ -106,10 +113,118 @@ there even though they pass on Linux and macOS.
 
 ### CI vs local: intentionally divergent file sets
 
-- **CI matrix** (`.github/workflows/test.yml`) runs `scripts/test-shard.sh` across 10 matrix shards partitioned by weight-aware LPT bin-packing (`scripts/sharding.ts`) and INCLUDES `*.slow.test.ts` (the two outlier slow files run as dedicated jobs alongside the matrix). CI EXCLUDES `*.serial.test.ts` from the shards and runs them in a dedicated job via `bun run test:serial`, one bun process per file — keeping serial files out of the shard processes is what preserves the `mock.module` quarantine (a top-level mock in one file leaks into every other file sharing its process). `bun run verify` gets its own job too, as does the BrainBench memory-conformance gate (`brainbench` job → `scripts/ci-brainbench-gate.sh`, hermetic in-memory PGLite, ~15s), which compares HEAD's fresh run against master's committed baseline (`evals/brainbench/baselines/main.json`) — the `test-status` aggregate checks its result explicitly. CI is the ground truth for "did everything pass."
+- **CI matrix** (`.github/workflows/test.yml`) runs `scripts/test-shard.sh` across 10 matrix shards partitioned by weight-aware LPT bin-packing (`scripts/sharding.ts`; files with no mined weight fall back to the p75 file weight so a new unweighted file can't silently unbalance a shard) and INCLUDES `*.slow.test.ts` (the two outlier slow files run as dedicated jobs alongside the matrix) plus `evals/**/*.test.ts` (keyless-allowlist-gated — `test/scripts/evals-collection.test.ts`). Each shard's bun process is bounded by `--max-concurrency` (`GBRAIN_TEST_MAX_CONCURRENCY`, default 4). Every bun-test job — matrix shards, serial-tests, verify, the slow/eval jobs — activates the PGLite schema snapshot (built in-runner via `scripts/lib/test-env.sh`; the brainbench gate brings its own in-memory PGLite and skips it; the ~42MB tar is also cached across jobs via actions/cache, with the runner's own hash check staying authoritative). CI EXCLUDES `*.serial.test.ts` from the shards and runs them in the pooled `serial-tests` job via `bun run test:serial` — one bun process per file preserves the `mock.module` quarantine; the pool runs those processes concurrently. `bun run verify` gets its own job too, as does the BrainBench memory-conformance gate (`brainbench` job → `scripts/ci-brainbench-gate.sh`, hermetic in-memory PGLite, ~15s), which compares HEAD's fresh run against master's committed baseline (`evals/brainbench/baselines/main.json`) — the `test-status` aggregate checks its result explicitly. E2E (`.github/workflows/e2e.yml`) mirrors the content-hash skip in its own `e2e-pass-<hash>` namespace (scheduled nightly runs are exempt and always run), runs tier1 and tier2 in parallel with the jsonb-parity job in front of tier2 as the token-spend gate, and aggregates through `e2e-status`. CI is the ground truth for "did everything pass."
 - **Local fast loop** (`scripts/run-unit-shard.sh` via the parallel wrapper) uses round-robin-by-index sharding and EXCLUDES `*.slow.test.ts` AND `*.serial.test.ts`. Local trades coverage for inner-loop speed; CI catches what local skips.
 
 This divergence is intentional. Don't try to make them equal — the two scripts deliberately solve different problems. The regression test at `test/scripts/run-unit-shard.test.ts` pins what the local fast loop should and shouldn't include; `test/scripts/run-unit-parallel.test.ts` pins the wrapper's memory-adaptive concurrency and the OOM/external-kill serial rescue pass.
+
+### Coverage lanes and gates
+
+Line coverage is opt-in via `COVERAGE_DIR`: when set, the shell lanes
+(`scripts/test-shard.sh`, `scripts/run-serial-tests.sh`, `scripts/run-e2e.sh`)
+pass `--coverage --coverage-reporter=lcov` to bun; when unset, the exec line is
+byte-identical to a non-coverage run. Every bun process gets its OWN coverage
+dir (`$COVERAGE_DIR/shard`, `serial-$idx`, `e2e-$idx`) because a reused dir
+silently overwrites `lcov.info` — the shard runner also pins xargs to a single
+batch (`-n 100000 -x`) so an argv overflow fails loud instead of spawning a
+second, overwriting bun process. On a green run each lane writes
+`$COVERAGE_DIR/lane-manifest.json` (`{lane, sha, lcovCount, complete}`); a red
+run writes no manifest, which downstream merging treats as an incomplete lane.
+`run-e2e.sh` specifics: `COVERAGE_DIR` is normalized to an absolute path
+against the repo root before `HOME` moves (the script redirects
+`HOME`/`GBRAIN_HOME` and E2E tests spawn CLI subprocesses with varying cwd —
+an un-normalized relative dir would scatter output), and `E2E_FILE_TIMEOUT_SECS`
+caps each file's wallclock (default 180s; the nightly coverage lane uses 300s
+for instrumentation overhead). Both env names are deliberately
+non-`GBRAIN_`-prefixed so the hermetic env scrub keeps them.
+
+**Two corpora.**
+
+- **PR corpus** (`prCorpus`) — the 13 coverage-collecting lanes in
+  `.github/workflows/test.yml`: the 10 matrix shards, `serial-tests`, and the
+  two dedicated slow jobs. Deterministic (runs identically on every PR); this
+  is the corpus the gates run against.
+- **fullCorpus** — nightly, schedule-only in `.github/workflows/e2e.yml`:
+  `coverage-full-{unit,serial,slow,e2e}` + `coverage-full-report`. Fully
+  self-contained (every lane re-runs with coverage inside that workflow,
+  including the full `test/e2e/*` glob against real Postgres) — the honest
+  merged unit+serial+slow+e2e number, kept as the `coverage-full-merged` trend
+  artifact.
+
+**Merge** (`scripts/merge-lcov.ts`). Walks the input dirs for `lcov.info` +
+`lane-manifest.json`, sums DA hits per file:line, normalizes paths
+repo-relative, and emits a merged lcov plus a summary JSON: src-only
+totals/per-dir/per-file percentages, a `lineHits` map (the diff gate's input),
+and the never-loaded src file list. `--manifest-expect lane,lane,...` pins the
+expected lane set; a missing or `complete: false` manifest, an unparseable
+lcov, or a `shard` lane with `lcovCount != 1` marks the summary
+`degraded: true`. Degraded is data, not failure: the merge never aborts (exit
+0), and both gates print `WOULD PASS`/`WOULD FAIL` and exit 0 on a degraded
+summary instead of enforcing against partial data.
+
+**Diff gate** (`scripts/coverage-diff-gate.ts`). Gates the added/changed lines
+of `git diff origin/master...HEAD` restricted to gate scope (`src/**.ts` minus
+`*.test.ts`/`*.generated.ts`/`*.d.ts`): covered/(covered+uncovered) must be
+≥ 80%, AND no gate-scoped changed file may be entirely absent from the
+coverage data (a never-loaded file is one violation — add a test that imports
+it). Non-executable lines (no lcov record) don't count against you; empty and
+doc-only diffs short-circuit to PASS via the `select-e2e` classifier. Escape
+hatches: a commit body containing `[coverage-exempt: reason]` passes with a
+loud warning, and `scripts/coverage-gate-exemptions.txt` (exact path or
+trailing-`/` prefix per line; resolved via
+`git show origin/master:scripts/coverage-gate-exemptions.txt`, never the
+working tree, so a PR cannot self-exempt; SHRINK-ONLY — additions need a
+graduation review in the PR description) excludes paths from the gate while
+still reporting them
+(`[e2e-exempt]`, `[subprocess-undercount]`). Report-only unless
+`COVERAGE_GATE_ENFORCE=1`. Exit contract: 0 = pass or report-only, 1 = gate
+fail while enforcing, 2 = infrastructure error (missing summary, git failure —
+never conflated with a coverage verdict).
+
+**Baseline gate** (`scripts/coverage-baseline-gate.ts`). Anti-erosion floor:
+reads the baseline via `git show origin/master:scripts/coverage-baseline.json`
+— the master copy, never the working tree, so a PR cannot weaken its own bar —
+and compares like-for-like by corpus (`--corpus prCorpus` in test.yml,
+`--corpus fullCorpus` nightly). A global drop > 0.5pp, a per-directory drop
+> 1.0pp, or a never-loaded-count increase fails (deleting tests shrinks the
+coverage denominator, which inflates pct for free); a corpus section that is
+`null` on master is an ungated first landing. `provisional: true` in the baseline keeps the gate report-only
+regardless of enforcement — the committed baseline is currently provisional
+with both corpus sections unseeded. `scripts/update-coverage-baseline.ts
+--summary <json> --corpus <c> [--promote]` writes the working-tree baseline
+(per-file detail limited to the baseline's `watchlist`); `--promote` flips
+`provisional: false` at graduation.
+
+**CI wiring.** The 13 PR lanes upload `coverage-*` artifacts; the advisory
+`coverage-report` job downloads + merges (`COVERAGE_CORPUS=prCorpus`), renders
+`scripts/render-coverage-summary.ts` to the step summary (including the
+behavioral-vs-structural counts from `scripts/structural-suites.tsv`), and
+runs both gates with `COVERAGE_GATE_ENFORCE: '0'`. It is deliberately NOT in
+`test-status` or `cache-write` needs — it cannot block a PR until graduation.
+
+**Bun caveats.** Bun/JSC emits line records only, so function coverage is
+informational (no reliable function names). There is NO subprocess coverage:
+code exercised only through spawned CLI subprocesses undercounts — `src/cli.ts`
+carries a permanent `[subprocess-undercount]` exemption for this. A src file
+never imported by any test produces no lcov record at all; the summary reports
+these as a count + sorted list, deliberately never a percentage (physical
+lines ≠ executable lines), and the diff gate treats a changed-but-never-loaded
+file as a violation.
+
+**One-command local smoke** (one shard of ten, so totals reflect a tenth of
+the corpus — this checks the plumbing, not the number):
+
+```bash
+COVERAGE_DIR=$PWD/.coverage bash scripts/test-shard.sh 1 10 \
+  && bun scripts/merge-lcov.ts --out-lcov .coverage/merged.lcov --out-json .coverage/summary.json .coverage \
+  && bun scripts/render-coverage-summary.ts --summary .coverage/summary.json
+```
+
+Optional flags: `coverage-diff-gate.ts --base <ref>` overrides the diff base
+(default `origin/master`); `render-coverage-summary.ts --structural
+scripts/structural-suites.tsv` adds the behavioral-vs-structural split to the
+rendered summary (both CI lanes pass it); `classify-tests.ts --summary` prints
+counts only.
 
 ### Failure-first logging
 
@@ -131,10 +246,17 @@ Triage rule: a `warn-pass` EXIT-HANG line in `.context/test-summary.txt` is NOT 
 
 - `*.test.ts` → fast loop (parallel up-to-4-shard fan-out, memory-adaptive).
 - `*.slow.test.ts` → run via `bun run test:slow` only (intentional cold-path tests; would dominate the fast loop's wallclock).
-- `*.serial.test.ts` → run via `bun run test:serial` after the parallel pass completes; one bun process per file (`--max-concurrency=1` within a shared process is not enough — the module registry still leaks `mock.module`). Quarantine for tests that share file-wide state and race when run alongside other files in the same `bun test` process. Several dozen files, discovered by the `*.serial.test.ts` glob — no list to maintain. Typical residents: `mock.module(...)` users (top-level mocks leak across files in a shard process, e.g. `test/embed.serial.test.ts`), env-coupled files (e.g. `test/brain-registry.serial.test.ts`), and process-lifecycle suites that assert on `process.exitCode` (e.g. `test/pglite-engine-disconnect.serial.test.ts`). **Do not put the parallelism back on a serial file unless you've fixed the contention root cause** (it just re-introduces the flake).
-- `test/e2e/*.test.ts` → real-Postgres E2E. Skipped when `DATABASE_URL` is unset. One out-of-directory file rides this lane: `test/phantom-redirect-engine-parity.test.ts` (lives in `test/` for its PGLite arm, but its Postgres arm is only reachable through a DATABASE_URL-bearing lane — the unit wrappers strip the URL per #3485, so `run-e2e.sh`'s no-args list and CI's parity job carry it).
+- `*.serial.test.ts` → run via `bun run test:serial` after the parallel pass completes; one bun process per file (`--max-concurrency=1` within a shared process is not enough — the module registry still leaks `mock.module`), with those per-file processes POOLED (per-process isolation never required one-at-a-time execution). Files touching machine-global state (launchd/cron) live on the sequential `EXCLUSIVE_FILES` lane inside `scripts/run-serial-tests.sh` — growth-guarded to ≤3 entries with justification comments. Quarantine for tests that share file-wide state and race when run alongside other files in the same `bun test` process. Several dozen files, discovered by the `*.serial.test.ts` glob — no list to maintain. Typical residents: `mock.module(...)` users (top-level mocks leak across files in a shard process, e.g. `test/embed.serial.test.ts`), env-coupled files (e.g. `test/brain-registry.serial.test.ts`), and process-lifecycle suites that assert on `process.exitCode` (e.g. `test/pglite-engine-disconnect.serial.test.ts`). **Do not put the parallelism back on a serial file unless you've fixed the contention root cause** (it just re-introduces the flake).
+- `test/e2e/*.test.ts` → real-Postgres E2E. Skipped when `DATABASE_URL` is unset. One out-of-directory file rides this lane: `test/phantom-redirect-engine-parity.test.ts` (lives in `test/` for its PGLite arm, but its Postgres arm is only reachable through a DATABASE_URL-bearing lane — the unit wrappers strip the URL per #3485, so `run-e2e.sh`'s no-args list and CI's parity job carry it). `run-e2e.sh` wraps each file in a hard outer timeout (default 180s; `GBRAIN_E2E_FILE_TIMEOUT=<seconds>` overrides) because a synchronously-blocking PGLite WASM call can outlive bun's timer-based `--timeout`; LLM-bound Tier-2 files (`skills.test.ts`, `zeroentropy-live.test.ts`) automatically get 4× the cap since real provider round-trips legitimately run past 180s.
 - `tests/heavy/*.sh` → ops-shape shell scripts. Cost minutes per run; NOT in default `bun test`. Run via `bun run test:heavy` or scheduled nightly via `.github/workflows/heavy-tests.yml`. Examples: pg_upgrade matrix (boot legacy brain → walk to head), RSS budget gate (measure peak worker RSS vs committed baseline), read-latency-under-sync (p50/p95/p99 under concurrent writer load), sync lock regression (N concurrent syncs assert 1 winner + N-1 lock-busy + zero leaked `gbrain_cycle_locks` rows). See `tests/heavy/README.md` for when to add a script here vs `*.slow.test.ts`. Files prefixed with `_` (e.g. `tests/heavy/_build_legacy_fixtures.sh`) are helpers/libs invoked by sibling tests — the runner skips them.
 - `test/fuzz/*.test.ts` → property-based fuzz harness. Pure-validator targets in `pure-validators.test.ts` are guarded by `scripts/check-fuzz-purity.sh` (in `bun run verify`), which `bun build --target=bun` bundles each target and greps the resulting bundle for banned transitive imports (`node:fs`, `node:child_process`, engine modules). Anything that fails the guard moves to `mixed-validators.test.ts` (still property-tested, but no purity guarantee) or `filesystem-validators.test.ts` (fs-backed, uses temp dirs). Fuzz tests run in the default `bun test` loop because they're fast (~3s for ~12 properties × 1000 runs each).
+
+The taxonomy above is LANE-based (where a test runs). A second, orthogonal axis is INTENT:
+
+- **Behavioral** tests execute product code and assert on behavior — the default.
+- **Structural** (source-shape) suites read repo source/doc TEXT and assert on its shape (wiring guards, drift pins, `doctorSource()` consumers). They are real invariants but execute no product paths, so they inflate the headline test count without adding line coverage. The committed inventory is `scripts/structural-suites.tsv`, generated by `scripts/classify-tests.ts` (suite-level, content-based detectors: repo-anchored `readFileSync`/`Bun.file` readers, grep-style exec scanners, the doctor-source helpers) and freshness-checked in `bun run verify` (`check:structural-manifest` — regenerate with `bun scripts/classify-tests.ts` when suites change shape). The inventory is approximate by design; fix misclassifications in the classifier's detector list, never by hand-editing the TSV. CI's coverage report renders behavioral vs structural counts side by side.
+
+Guards that pin doctor source text read it through `test/helpers/doctor-source.ts` (`doctorSource()` = the façade + every `src/commands/doctor/**` module, for containment assertions; `doctorFileSource(rel)` = one named file, for positional/ordering assertions) so peeling doctor.ts into modules can't silently move a pinned string out of a guard's sight.
 
 ### TTY and interactive-CLI testing
 
@@ -241,6 +363,25 @@ The quarantine has grown to dozens of files — treat it as debt: every addition
 ### Unit test inventory
 
 `bun test` runs all tests without a database. E2E tests skip gracefully when `DATABASE_URL` is not set.
+
+**GBRAIN_HOME isolation preload.** `test/helpers/gbrain-home-preload.ts` (bunfig
+`[test]` preload) points `GBRAIN_HOME` at a per-run scratch dir when it isn't
+already set, so unit tests never read — or clobber — the operator's real
+`~/.gbrain` config/brain. Without it, any config-honoring code path silently
+changes behavior with whatever the live `config.json` says (observed: 27
+cycle/autopilot/dream tests flipped red the moment a sibling workspace's run
+rewrote the real config, while the identical commit stayed green in CI). The
+canonical GBRAIN_HOME convention is `config.ts:configDir()`: GBRAIN_HOME is a
+PARENT dir and `.gbrain` is appended. Subprocess-spawning tests must set BOTH
+`HOME: tmp` and `GBRAIN_HOME: tmp` in the child env (HOME alone loses to the
+inherited preload value; in-process HOME mutation loses to Bun's cached
+`os.homedir()`). The e2e wrapper sets its own GBRAIN_HOME before bun starts,
+which this preload respects. Because the preload respects a pre-set value, the
+unit/slow wrappers (`run-unit-parallel.sh` / `run-unit-shard.sh` /
+`run-slow-tests.sh`) strip an ambient `GBRAIN_HOME` at their boundary — same
+discipline as the database-URL vars — so a dev shell configured for a real
+brain can't ride through. `GBRAIN_DEBUG_PRELOAD=1` prints the allocated
+scratch home for debugging.
 
 **Database-URL run guard (#3485).** A `bun test` invocation REFUSES to start while
 `DATABASE_URL` or `GBRAIN_DATABASE_URL` is ambient in the environment, because some
@@ -420,6 +561,9 @@ E2E tests live in `test/e2e/` and run against real Postgres+pgvector (require `D
 - `test/e2e/workspace-generic-compat.test.ts` — always-on (PGLite, no binary): pins the INSTALL_FOR_AGENTS.md "any repo with a workspace" contract against `test/fixtures/generic-agents-workspace/` (Hermes is the motivating consumer): `cwd_walk_up` detection, the `GBRAIN_SKILLS_DIR` override, `check-resolvable` on a root AGENTS.md, and scaffold additivity + refuse-overwrite. The real Hermes-behavior proof is the door suite below.
 - `test/e2e/install-real-hermes.serial.test.ts` — the hermes "door": real `hermes` binary + real `hermes mcp add` handshake (full-catalog tool discovery; the count tracks the op catalog, so the test asserts discovery happened, not a number) + a paid `hermes -z` recall turn against a seeded brain. Triple-gated: `GBRAIN_REAL_HERMES_E2E=1` (explicit opt-in — run-e2e.sh scrubs GBRAIN_*, so it can never fire under `bun run test:e2e`) + resolvable binary + non-empty ANTHROPIC key (anthropic-pinned on purpose: a second provider key flips hermes provider-auto into a mis-routed 401). Hermetic HOME + HERMES_HOME with a tripwire on the operator's real config; evidence copies to `GBRAIN_E2E_EVIDENCE_DIR` for CI upload. Venue: heavy-tests.yml (`real-agent-e2e` + `hermes-door` jobs).
 - `test/e2e/install-real-grok.serial.test.ts` — the grok "door" (xAI Grok Build; every asserted shape observed against the pin in `docs/mcp/GROK-CLI-PIN.md`). SPLIT-GATED, a deliberate divergence from the hermes door: grok's `mcp add/list/doctor` run keyless, so the compat tier (version-shape pin, documented-shape `grok mcp add gbrain -- gbrain serve --surface verbs` via a PATH-staged bin dir, saved-TOML asserts via `Bun.TOML.parse`, `mcp doctor` handshake proving the seven-verb surface, vendor-fallback provenance guard, direct-TOML surface) needs only `GBRAIN_REAL_GROK_E2E=1` + a resolvable binary; the paid SMOKE additionally needs a non-empty `XAI_API_KEY` and asserts a PER-RUN NONCE fact (grok has fs/shell tools — the committed fact is greppable, so recall of it proves nothing) with web search disabled. `mcp add` is lazy (exit 0 always) — `mcp doctor <name> --json` is the honest discriminator (exit 0/1 observed). Hermetic HOME + GROK_HOME + tmp cwd on every spawn (grok reads vendor MCP configs for trusted folders and loads `.envrc` from cwd); bounded tripwire over the operator's real `~/.grok` config/credential files (volatile paths excluded — grok rewrites logs/sessions/bin/docs every run) + a checkout guard that no `.grok/`/`.mcp.json` appeared in the repo root. Venue: heavy-tests.yml (`real-agent-e2e` + `grok-door` jobs); run directly via `GBRAIN_REAL_GROK_E2E=1 bun test test/e2e/install-real-grok.serial.test.ts`.
+- `test/e2e/install-real-opencode.serial.test.ts` — the opencode "door" (SST opencode; every asserted shape observed against the pin in `docs/mcp/OPENCODE-CLI-PIN.md`). SPLIT-GATED a step past the grok door: opencode's anonymous FREE TIER drives MCP tool calls keyless, so even the nonce SMOKE runs in the keyless tier — T1 bare-semver version pin (the SST-vs-claimant discriminator), T2 documented-shape `opencode mcp add gbrain --env … -- gbrain serve --surface verbs` + the honest `opencode mcp list` discriminator (it SPAWNS every server; `✓/✗` text is the assertion surface — exit code is 0 even on failure, and `mcp debug` is OAuth-only), T2b spawn-gate CANARY (a project-config decoy is spawn-attempted with NO trust prompt — if this ever gates, the bootstrap user-global scope default's rationale changed: re-observe), T3 writer parity (gbrain's `opencode-json.ts` output handshakes through the real binary; cross-tool preservation both ways), T4 keyless SMOKE (per-run nonce + STRUCTURAL `gbrain_*` tool_use proof via `parseOpencodeJsonl`, `--format json`). The paid T5 anthropic leg additionally needs a non-empty `ANTHROPIC_API_KEY` and self-validates the pinned model id against the authed `opencode models` list BEFORE any spend. Hermetic HOME + both XDG dirs + tmp cwd on every spawn; `--pure` on every probe (`mcp list` autoloads plugins — a code-execution surface); bounded tripwire over the operator's real opencode configs/auth.json + a repo-root checkout guard. Venue: heavy-tests.yml (`real-agent-e2e` + `opencode-door` jobs, plus the schedule-only `opencode-door-canary` latest-version leg — continue-on-error, a pin-refresh signal, never a gate); run directly via `GBRAIN_REAL_OPENCODE_E2E=1 bun test test/e2e/install-real-opencode.serial.test.ts`.
+
+**Door cadence policy** (adopted with the 4th door agent): the NEWEST door agent runs at nightly/schedule cadence (currently opencode, whose canary leg also tracks `latest`); a door drops to label-only (`real-agent-e2e`) after 2 stable monthly cycles with unchanged pins. Rationale: churn concentrates in the newest integration; steady-state doors pay for themselves on demand, not nightly.
 - `test/helpers/tty-harness.ts` + `test/tty-harness.test.ts` — the DX real-PTY harness (`Bun.spawn({terminal:})`): pure text/timing helpers unit-tested with zero subprocesses, plus three live PTY smokes against `sh` guarded by `describe.skipIf(!ptySupported())`. The harness itself is a dev instrument surface — its consumer `scripts/dx-explore.ts` never runs in CI (transcripts land in gitignored `.context/dx-runs/`); see `docs/guides/bootstrap.md` for the scenario runbook.
 - `test/e2e/search-swamp.test.ts` — reproduces the source-swamp case. Seeds a curated `originals/talks/article-outline-fat-code` page against two `<fork>/chat/` pages stuffed with the same multi-word phrase. Asserts the article wins keyword AND vector ranking, that `detail=high` lets the chat swamp re-surface, and that `source_id` passes through the two-stage CTE intact. PGLite in-memory.
 - `test/e2e/search-exclude.test.ts` — `test/` + `archive/` pages hidden by default, `include_slug_prefixes` opts back in, caller-supplied `exclude_slug_prefixes` adds to defaults. Both keyword and vector search paths.

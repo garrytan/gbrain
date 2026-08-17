@@ -52,6 +52,14 @@ ALLOWED=(
   "src/mcp/publish-gates.ts"                    # reads op.publishGateKey/name only to compute gate-DISABLED sets; never lists/exposes ops
   "src/mcp/tool-catalog.ts"                     # docs/TOOL_CATALOG.md renderer; filters !op.localOnly at the boundary; never a transport surface
   "src/commands/serve-http.ts"                  # MUST APPLY .filter(op => !op.localOnly) — verified by grep below
+  "src/core/ops/request-tools.ts"               # visibleOpsForCaller loads the assembled list lazily (verbs.ts house pattern) and applies (isLocal || !op.localOnly) + surface + gate filtering
+  # The four below predate the widened specifier regex (they import via
+  # '../operations.ts', invisible to the old 'core/operations.ts' pattern) —
+  # all internal consumers, none a transport surface:
+  "src/core/advisor/collect-mcp-client-fit.ts"  # advisor collector; uses op.localOnly names to SCORE client fit, never serves the list
+  "src/core/bootstrap/verify.ts"                # bootstrap wiring verifier; finds ops by name to probe local wiring, remote=false context
+  "src/core/skillopt/rollout.ts"                # skillopt internals; iterates op metadata for rollout planning, not exposed
+  "src/core/skillopt/write-capture.ts"          # skillopt internals; iterates op params for capture schema, not exposed
 )
 
 # Pattern: any import that brings the `operations` VALUE in from core/operations.ts.
@@ -65,7 +73,11 @@ ALLOWED=(
 # inside the destructured clause OR a namespace import (`* as X`); type-only
 # imports of sibling exports like `sourceScopeOpts` / `OperationContext` are
 # left alone (those don't expose the op list to a transport surface).
-PATTERN='import[[:space:]]+(\*[[:space:]]+as[[:space:]]+[a-zA-Z_$][a-zA-Z0-9_$]*|\{[^}]*\boperations\b[^}]*\})[[:space:]]+from[[:space:]]*['\''"][^'\''"]*core/operations\.ts['\''"]'
+# Specifier: `core/operations.ts` from outside src/core, `../operations.ts`
+# from inside (the ops/ module dir sits one level down post-peel), and the
+# dynamic `import('...operations.ts')` house pattern — all three reach the
+# assembled op list.
+PATTERN='(import[[:space:]]+(\*[[:space:]]+as[[:space:]]+[a-zA-Z_$][a-zA-Z0-9_$]*|\{[^}]*\boperations\b[^}]*\})[[:space:]]+from[[:space:]]*['\''"][^'\''"]*(core/operations|\.\./operations)\.ts['\''"]|\{[^}]*\boperations\b[^}]*\}[[:space:]]*=[[:space:]]*await[[:space:]]+import\(['\''"][^'\''"]*operations\.ts['\''"]\))'
 
 # Collect files that import `operations`. Use a while-loop over grep output
 # instead of `mapfile` to stay compatible with macOS's default bash 3.2.

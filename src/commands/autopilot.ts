@@ -568,8 +568,9 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   // brain. Two exit paths must both close the engine:
   //   - autopilot's own shutdown() below (owns SIGINT + internal stops like
   //     max_crashes / cycle-failure-cap), and
-  //   - process-cleanup's SIGTERM handler (installed at cli.ts module load;
-  //     it runs the cleanup registry with a 3s deadline and then exits) —
+  //   - process-cleanup's SIGTERM handler (installed inside cli.ts's
+  //     import.meta.main seam before main() dispatches; it runs the cleanup
+  //     registry with a 3s deadline and then exits) —
   //     which is why closeEngine is ALSO registered there.
   // closeEngine aborts the in-flight inline cycle (runCycle checks the
   // signal between phases and threads it into phase sub-work), gives it a

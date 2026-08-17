@@ -141,6 +141,52 @@ describe('eval gate: usage errors', () => {
   });
 });
 
+describe('eval gate: embedder flag validation', () => {
+  // The hermetic-canary embedder option accepts exactly one value and only
+  // composes with the correctness (qrels) gate. A regression that silently
+  // accepts a bad value would fall through to the keyed gateway path and
+  // defeat the hermetic guarantee.
+  const REAL_QRELS = 'test/fixtures/eval-baselines/qrels-search.json';
+
+  test('unsupported embedder value → exit 2', async () => {
+    const out = await withExitCapture(() =>
+      runEvalGate(engine, ['--embedder', 'semantic', '--qrels', REAL_QRELS]),
+    );
+    expect(out.exitCode).toBe(2);
+  });
+
+  test('deterministic embedder combined with the baseline gate → exit 2', async () => {
+    const out = await withExitCapture(() =>
+      runEvalGate(engine, [
+        '--embedder', 'deterministic',
+        '--baseline', '/tmp/does-not-exist-12345.ndjson',
+        '--qrels', REAL_QRELS,
+      ]),
+    );
+    expect(out.exitCode).toBe(2);
+  });
+
+  test('deterministic embedder without a qrels file → exit 2', async () => {
+    const out = await withExitCapture(() =>
+      runEvalGate(engine, ['--embedder', 'deterministic']),
+    );
+    expect(out.exitCode).toBe(2);
+  });
+
+  test('deterministic embedder with a malformed qrels file → exit 2', async () => {
+    const { mkdtempSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = mkdtempSync(join(tmpdir(), 'gate-embedder-'));
+    const bad = join(dir, 'malformed.json');
+    writeFileSync(bad, '{"not_queries": []}');
+    const out = await withExitCapture(() =>
+      runEvalGate(engine, ['--embedder', 'deterministic', '--qrels', bad]),
+    );
+    expect(out.exitCode).toBe(2);
+  });
+});
+
 describe('eval gate: regression-only path', () => {
   test('malformed baseline → surfaces as breach (verdict fail, exit 1)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'eval-gate-test-'));

@@ -172,8 +172,10 @@ export function makeEmbedBackfillHandler(engine: BrainEngine) {
           pacer,
           ...(concurrency !== undefined && { concurrency }),
           // v0.41.31: re-embed pages whose model signature drifted + stamp
-          // provenance as chunks land.
-          embeddingSignature: currentEmbeddingSignature(),
+          // provenance as chunks land. D9: omitted when the gateway is
+          // unconfigured (null) — the drain falls back to NULL-embedding-only
+          // staleness instead of stamping a wrong signature.
+          ...(currentEmbeddingSignature() !== null && { embeddingSignature: currentEmbeddingSignature()! }),
           onProgress: ({ embedded, chunksProcessed, cursor }) => {
             // Fire-and-forget; updateProgress returns a Promise but the
             // handler is sync inside the loop.

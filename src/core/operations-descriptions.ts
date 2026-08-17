@@ -238,3 +238,19 @@ export const SKILL_CLIENT_GUIDANCE = {
       "if the user hasn't clearly asked for a write.",
   ],
 } as const;
+
+/**
+ * CLI→MCP gap-closure wave — the capture op (D2A). Pinned here because it
+ * rewrites the routing guidance three docs used to carry as the
+ * "unknown tool: capture → use put_page" FAQ: agents must learn the split
+ * (capture = quick notes with auto-slug + dedupe; put_page = full control)
+ * from this description alone. Phrase-pinned by
+ * test/operations-descriptions.test.ts.
+ */
+export const CAPTURE_DESCRIPTION =
+  'Capture a quick note into the brain — the "just remember this" write. Auto-derives a ' +
+  'stable inbox/ slug from the content date + hash (recapturing identical text is ' +
+  'idempotent), merges frontmatter, refuses binary/empty payloads, then delegates to ' +
+  'put_page (inheriting its fences and provenance stamping). Prefer capture for quick ' +
+  'notes and put_page when you need to control the slug, type, or an existing page\'s ' +
+  'content. For structured facts about entities, prefer remember.';

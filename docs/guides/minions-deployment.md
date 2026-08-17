@@ -12,9 +12,13 @@ The persistent worker can die silently from:
 - Bun process crashes with no automatic restart.
 - Internal event-loop death (PID alive, worker loop stopped).
 
-When the worker dies, submitted jobs sit in `waiting` forever. The
-canonical answer is `gbrain jobs supervisor` — a first-class CLI that
-spawns `gbrain jobs work` as a child and auto-restarts it on crash.
+When the worker dies, submitted jobs sit in `waiting` — indefinitely for
+most types; types with a waiting-TTL (`subagent` defaults to 48h, see the
+[queue operations runbook](queue-operations-runbook.md)) are eventually
+cancelled with an auditable reason rather than queueing forever. Either
+way the work doesn't happen. The canonical answer is
+`gbrain jobs supervisor` — a first-class CLI that spawns `gbrain jobs work`
+as a child and auto-restarts it on crash.
 
 ## Worker supervision
 
@@ -361,16 +365,34 @@ claimable work waits. The escalation commands and thresholds live in the
 [queue operations runbook](queue-operations-runbook.md) — that's the
 canonical home for wedge recovery.
 
-What can still bite: a *brief* blip during a long-running job can make
-lock renewal miss, and the stall detector dead-letters the job after
-`max_stalled` misses (schema column default 5; lock duration and stall
-check interval are both 30 s).
+What can still bite is now narrow. Lock renewal is verify-before-evict:
+a thrown or timed-out renewal is never treated as loss — at the deadline
+the worker asks the database the authoritative question (one fenced
+re-check), so a starved-but-healthy job recovers its lease and keeps
+working. Eviction happens only on a fenced miss (the row was genuinely
+reclaimed — requeued with no attempt burned) or after a hard backstop
+(default 2× the lease) during a total outage. Long LLM handlers also get
+a 300 s lock lease by default (`HANDLER_DEFAULT_LOCK_DURATION_MS`)
+instead of the worker-global 30 s, and the stall sweep grants a 15 s
+reclaim grace so a just-recovered worker's renewal beats the sweep.
+The remaining exposure: a genuinely dead worker's long-lease job waits
+up to lease + grace + one sweep interval before requeue, and the stall
+detector still dead-letters after `max_stalled` genuine misses (schema
+column default 5).
+
+Mixed-version fleets degrade gracefully: an old worker ignores the
+`lock_duration_ms` column and runs the legacy 30 s behavior; new workers
+honor old rows via the claim-time default. No drain or ordered restart
+is required.
 
 **Tune per-job.** `gbrain jobs submit` accepts `--max-stalled N`,
 `--backoff-type fixed|exponential`, `--backoff-delay <ms>`,
-`--backoff-jitter 0..1`, and `--timeout-ms N` as first-class flags.
+`--timeout-ms N`, `--lock-duration-ms N` (lock lease, clamped to
+[5 s, 1 h]), and `--backoff-jitter 0..1` as first-class flags.
 These write onto the job row at submit time — which is what
-`handleStalled()` reads — so per-job tuning is the real knob.
+`handleStalled()` and the renewal timer read — so per-job tuning is the
+real knob. The lock-renewal env knobs (incident escape hatches) are
+documented in the [queue operations runbook](queue-operations-runbook.md).
 
 ### DO NOT pass `maxStalledCount` to `MinionWorker`
 

@@ -17,6 +17,7 @@ import { runDoctor, type DoctorReport } from '../src/commands/doctor.ts';
 import { setCliOptions } from '../src/core/cli-options.ts';
 import { runOrphanRatioCheck } from '../src/core/doctor-remote.ts';
 import { readFileSync } from 'fs';
+import { doctorSource } from './helpers/doctor-source.ts';
 
 let engine: PGLiteEngine;
 let stdoutBuffer: string[];
@@ -242,21 +243,21 @@ describe('runOrphanRatioCheck — thin-client surface (D11)', () => {
 
 describe('cross-surface parity contract', () => {
   test('source greps: orphan_ratio check name appears in BOTH local doctor and remote doctor', () => {
-    const doctor = readFileSync('src/commands/doctor.ts', 'utf8');
+    const doctor = doctorSource();
     const remote = readFileSync('src/core/doctor-remote.ts', 'utf8');
     expect(doctor.includes("name: 'orphan_ratio'")).toBe(true);
     expect(remote.includes("name: 'orphan_ratio'")).toBe(true);
   });
 
   test('source greps: both surfaces reference the same fix command', () => {
-    const doctor = readFileSync('src/commands/doctor.ts', 'utf8');
+    const doctor = doctorSource();
     const remote = readFileSync('src/core/doctor-remote.ts', 'utf8');
     expect(doctor).toContain('gbrain extract links --by-mention');
     expect(remote).toContain('gbrain extract links --by-mention');
   });
 
   test('source greps: local hint is self-fix; thin-client hint points at operator', () => {
-    const doctor = readFileSync('src/commands/doctor.ts', 'utf8');
+    const doctor = doctorSource();
     const remote = readFileSync('src/core/doctor-remote.ts', 'utf8');
     // Local hint: just the command (user can run it).
     expect(doctor).toContain('Run: gbrain extract links --by-mention');

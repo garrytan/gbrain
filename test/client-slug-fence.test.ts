@@ -63,6 +63,13 @@ const FENCED_OPS: Array<{ name: string; params: (slug: string) => Record<string,
   { name: 'add_timeline_entry', params: (slug) => ({ slug, date: '2026-08-01', summary: 's' }) },
   { name: 'revert_version', params: (slug) => ({ slug, version_id: 1 }) },
   { name: 'put_raw_data', params: (slug) => ({ slug, source: 'src', data: {} }) },
+  // CLI→MCP gap-closure wave: the four takes write verbs call
+  // enforceClientSlugFence themselves BEFORE the dry-run short-circuit (their
+  // markdown mirror writes the page file under the slug).
+  { name: 'takes_add', params: (slug) => ({ slug, claim: 'c', kind: 'fact', holder: 'world' }) },
+  { name: 'takes_update', params: (slug) => ({ slug, row_num: 1, weight: 0.5 }) },
+  { name: 'takes_resolve', params: (slug) => ({ slug, row_num: 1, quality: 'correct' }) },
+  { name: 'takes_supersede', params: (slug) => ({ slug, row_num: 1, claim: 'c' }) },
 ];
 
 describe('client slug fence (bound_slug_prefixes on direct writes)', () => {

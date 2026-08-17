@@ -7,23 +7,51 @@
  *   (defaultSmoke / execFileSync) → real renameSync over a running "binary" →
  *   re-exec the swapped binary and assert it reports the new version.
  *
- * Only `fetchRelease` is injected (to point at the local server instead of the
- * GitHub API). The "binary" is a `#!/bin/sh` script so the swap mechanics are
- * exercised identically on darwin + linux; platform/arch are pinned to
- * linux/x64 so `expectedAssetName` resolves deterministically regardless of host.
+ * Only `fetchRelease` and `fetchAttestation` are injected (to point at the local
+ * server / an in-process attestation instead of the GitHub API — tests must
+ * never hit the real network). The DIGEST computation stays REAL
+ * (`defaultComputeDigest` runs, uninjected): the in-process attestation carries
+ * the true sha256 of the served bytes, so the integrity gate is exercised
+ * end-to-end, not bypassed. The "binary" is a `#!/bin/sh` script so the swap
+ * mechanics are exercised identically on darwin + linux; platform/arch are
+ * pinned to linux/x64 so `expectedAssetName` resolves deterministically
+ * regardless of host.
  *
  * No DB — runs in every environment.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { chmodSync, existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runBinarySelfUpdate, type ReleaseAsset } from '../../src/core/binary-self-update.ts';
+import {
+  EXPECTED_BUILDER_IDS,
+  runBinarySelfUpdate,
+  type ParsedAttestation,
+  type ReleaseAsset,
+} from '../../src/core/binary-self-update.ts';
 
 const NEW_BINARY = '#!/bin/sh\necho "gbrain 0.43.0"\n';
 const OLD_BINARY = '#!/bin/sh\necho "gbrain 0.42.0"\n';
 const NON_GBRAIN = '#!/bin/sh\necho "not the tool"\n';
+// A real gbrain binary, but an OLDER version than the release claims — the
+// downgrade-replay an asset-swap adversary would serve (its old digest still
+// has a valid attestation).
+const OLD_ATTESTED_BINARY = '#!/bin/sh\necho "gbrain 0.41.0"\n';
+
+/** Attestation deps whose subject digest is the REAL sha256 of `content` —
+ * integrity passes only because the served bytes genuinely match. */
+function attestationFor(content: string): {
+  fetchAttestation: () => Promise<ParsedAttestation[]>;
+} {
+  const digest = createHash('sha256').update(content).digest('hex');
+  return {
+    fetchAttestation: async () => [
+      { subjects: [{ name: 'gbrain-linux-x64', sha256: digest }], builderId: EXPECTED_BUILDER_IDS[0]! },
+    ],
+  };
+}
 
 let server: ReturnType<typeof Bun.serve>;
 let base: string;
@@ -34,6 +62,7 @@ beforeAll(() => {
     fetch(req) {
       const path = new URL(req.url).pathname;
       if (path === '/good-asset') return new Response(NEW_BINARY, { status: 200 });
+      if (path === '/downgrade-asset') return new Response(OLD_ATTESTED_BINARY, { status: 200 });
       if (path === '/bad-smoke-asset') return new Response(NON_GBRAIN, { status: 200 });
       if (path === '/404-asset') return new Response('nope', { status: 404 });
       if (path === '/empty-asset') return new Response('', { status: 200 });
@@ -74,6 +103,7 @@ describe('binary self-update — real swap E2E', () => {
       expect(versionOf(target)).toBe('gbrain 0.42.0');
       const result = await runBinarySelfUpdate(target, {
         fetchRelease: async () => ({ tag: 'v0.43.0', assets: assets(`${base}/good-asset`) }),
+        ...attestationFor(NEW_BINARY),
         platform: 'linux',
         arch: 'x64',
       });
@@ -92,6 +122,9 @@ describe('binary self-update — real swap E2E', () => {
     try {
       const result = await runBinarySelfUpdate(target, {
         fetchRelease: async () => ({ tag: 'v0.43.0', assets: assets(`${base}/bad-smoke-asset`) }),
+        // Attestation genuinely matches the served bytes, so integrity passes
+        // and the failure is isolated to the smoke step (the case under test).
+        ...attestationFor(NON_GBRAIN),
         platform: 'linux',
         arch: 'x64',
       });
@@ -99,6 +132,63 @@ describe('binary self-update — real swap E2E', () => {
       expect(result.reason).toBe('smoke_failed');
       expect(versionOf(target)).toBe('gbrain 0.42.0'); // old binary intact
       expect(tmpLeftovers(dir)).toEqual([]); // staged temp cleaned up on failure
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('missing attestation → integrity_unavailable: never executed, old binary intact, no leftovers', async () => {
+    const { dir, target } = makeTargetBinary();
+    try {
+      const result = await runBinarySelfUpdate(target, {
+        fetchRelease: async () => ({ tag: 'v0.43.0', assets: assets(`${base}/good-asset`) }),
+        fetchAttestation: async () => null, // 404 / offline / rate-limited
+        platform: 'linux',
+        arch: 'x64',
+      });
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe('integrity_unavailable');
+      expect(versionOf(target)).toBe('gbrain 0.42.0'); // fail-closed, old binary intact
+      expect(tmpLeftovers(dir)).toEqual([]); // unverified download discarded
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('downgrade replay: older attested binary served for a newer tag → version_mismatch, no swap', async () => {
+    const { dir, target } = makeTargetBinary();
+    try {
+      const result = await runBinarySelfUpdate(target, {
+        // Release tag is v0.43.0, but the served bytes are a real, validly
+        // attested gbrain 0.41.0 (its digest has a genuine attestation).
+        fetchRelease: async () => ({ tag: 'v0.43.0', assets: assets(`${base}/downgrade-asset`) }),
+        ...attestationFor(OLD_ATTESTED_BINARY), // digest+builder verify PASSES
+        platform: 'linux',
+        arch: 'x64',
+      });
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe('version_mismatch'); // real --version says 0.41.0, tag says 0.43.0
+      expect(versionOf(target)).toBe('gbrain 0.42.0'); // running binary untouched
+      expect(tmpLeftovers(dir)).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('tampered bytes (digest not attested) → integrity_failed before any exec', async () => {
+    const { dir, target } = makeTargetBinary();
+    try {
+      const result = await runBinarySelfUpdate(target, {
+        // Server serves NEW_BINARY, but the attestation covers different bytes.
+        fetchRelease: async () => ({ tag: 'v0.43.0', assets: assets(`${base}/good-asset`) }),
+        ...attestationFor('DIFFERENT CONTENT ENTIRELY'),
+        platform: 'linux',
+        arch: 'x64',
+      });
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe('integrity_failed');
+      expect(versionOf(target)).toBe('gbrain 0.42.0');
+      expect(tmpLeftovers(dir)).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -242,5 +242,27 @@ printf '%s\n' "$codex_out" | grep -Fq "verified targeting this workspace" \
 grep -Fq "GBRAIN_SOURCE=" "$GB_CODEX_STATE" || fail "codex registration did not bind GBRAIN_SOURCE"
 grep -Fq "serve --surface full" "$GB_CODEX_STATE" || fail "codex registration did not pin the full op surface"
 
+# ── opencode door: direct-writer registration, NO binary at all ─────────────
+# The opencode lane needs no CLI (the JSONC writer is the registration), so
+# the offline container exercises it with nothing faked except the config
+# location (XDG_CONFIG_HOME → scratch). Asserts: user-global default scope
+# (no MCP_SCOPE answer recorded → the sharing-safe inversion), the entry
+# shape (absolute binary, GBRAIN_SOURCE bound, full surface), and no Claude
+# hooks written.
+step "opencode MCP registration (direct JSONC writer, no binary)"
+export XDG_CONFIG_HOME="$SCRATCH/xdg-config"
+opencode_out="$(gbrain bootstrap hooks --workspace "$WS" --harness opencode --gbrain-bin "$FAKE_GBRAIN" 2>&1)"
+printf '%s\n' "$opencode_out"
+printf '%s\n' "$opencode_out" | grep -Fq "scope: user-global" \
+  || fail "opencode registration did not default to user-global scope"
+OC_CFG="$XDG_CONFIG_HOME/opencode/opencode.jsonc"
+[ -f "$OC_CFG" ] || fail "opencode writer did not create the user-global config"
+grep -Fq '"GBRAIN_SOURCE"' "$OC_CFG" || fail "opencode registration did not bind GBRAIN_SOURCE"
+grep -Fq '"--surface"' "$OC_CFG" || fail "opencode registration did not pin a surface"
+grep -Fq "\"$FAKE_GBRAIN\"" "$OC_CFG" || fail "opencode user-global entry must carry the absolute binary path"
+printf '%s\n' "$opencode_out" | grep -Fq "AGENTS.md" \
+  || fail "opencode wiring did not state the pull protocol plainly"
+unset XDG_CONFIG_HOME
+
 echo
-echo "PASS: offline bootstrap e2e (interview -> render -> repo -> abort/resume -> keyless verify -> codex MCP)"
+echo "PASS: offline bootstrap e2e (interview -> render -> repo -> abort/resume -> keyless verify -> codex MCP -> opencode MCP)"

@@ -286,10 +286,18 @@ describe.skipIf(!DATABASE_URL)('Postgres bootstrap verify (real Postgres)', () =
     assertSafeE2eDatabaseUrl(DATABASE_URL!);
     await engine.connect({ database_url: DATABASE_URL! });
     await engine.initSchema();
+    // This file runs against the shared e2e DB WITHOUT setupDB's TRUNCATE, so
+    // a prior standalone run's `workspace` source row survives and addSource
+    // (whose `force` only bypasses git validation, not the id-collision check)
+    // would throw source_id_taken. Sweep it first; the FK cascade removes any
+    // leftover pages/facts under it.
+    await engine.executeRaw(`DELETE FROM sources WHERE id = 'workspace'`, []);
     await addSource(engine, { id: 'workspace', localPath: join(ws, 'brain'), force: true });
   }, 60_000);
 
   afterAll(async () => {
+    // Leave the shared DB clean for the next file / next standalone run.
+    try { await engine.executeRaw(`DELETE FROM sources WHERE id = 'workspace'`, []); } catch { /* noop */ }
     try { await engine.disconnect(); } catch { /* noop */ }
     if (prevHome === undefined) delete process.env.GBRAIN_HOME;
     else process.env.GBRAIN_HOME = prevHome;
@@ -313,12 +321,21 @@ describe.skipIf(!DATABASE_URL)('Postgres bootstrap verify (real Postgres)', () =
     const magic = res.checks.find((c) => c.id === 'magic_moment');
     expect(magic?.ok).toBe(true);
 
-    // Probe cleanup [G13] must hold on the Postgres DDL path too.
+    // Probe cleanup [G13] must hold on the Postgres DDL path too. Verify
+    // cleans up through the real delete_page op, which is a SOFT delete
+    // (deleted_at stamp) — so assert no ACTIVE probe rows remain, and pin
+    // that the probes went through the soft-delete path rather than never
+    // being cleaned at all.
     const probePages = await engine.executeRaw<{ n: number }>(
-      `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1 AND slug IN ($2, $3)`,
+      `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1 AND slug IN ($2, $3) AND deleted_at IS NULL`,
       ['workspace', VERIFY_PROBE_SLUG, VERIFY_PROBE_ENTITY_SLUG],
     );
     expect(probePages[0].n).toBe(0);
+    const probeTombstones = await engine.executeRaw<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1 AND slug IN ($2, $3) AND deleted_at IS NOT NULL`,
+      ['workspace', VERIFY_PROBE_SLUG, VERIFY_PROBE_ENTITY_SLUG],
+    );
+    expect(probeTombstones[0].n).toBe(2);
     const probeFacts = await engine.executeRaw<{ n: number }>(
       `SELECT COUNT(*)::int AS n FROM facts WHERE source_id = $1 AND source_markdown_slug = $2`,
       ['workspace', VERIFY_PROBE_SLUG],

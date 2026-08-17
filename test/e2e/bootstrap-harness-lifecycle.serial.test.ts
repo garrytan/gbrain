@@ -75,6 +75,14 @@ describe('bootstrap harness lifecycle E2E (PGLite + real serve --http)', () => {
     HOME: sandboxHome,
     CLAUDE_CONFIG_DIR: join(sandboxHome, '.claude'),
     CODEX_HOME: codexHome,
+    // The e2e lane exports DATABASE_URL; the IN-PROCESS runBootstrap calls
+    // (unlike the spawned children scrubbed in beforeAll) would otherwise
+    // resolve it via loadConfig's env>file precedence and mint tokens
+    // against Postgres while the live serve is PGLite-backed — turning the
+    // expected refusal into an invalid_token rollback. withEnv treats
+    // undefined as delete-with-restore.
+    DATABASE_URL: undefined,
+    GBRAIN_DATABASE_URL: undefined,
   });
 
   beforeAll(async () => {

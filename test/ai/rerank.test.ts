@@ -431,3 +431,106 @@ describe('gateway.rerank() — v0.40.6.1 path regression: zerank-1-small unaffec
     expect(capturedUrl.endsWith('/models/rerank')).toBe(true);
   });
 });
+
+describe('gateway.rerank() — v0.46.3 Voyage wire dialect', () => {
+  function configureVoyage(model: string = 'voyage:rerank-2.5'): void {
+    configureGateway({
+      reranker_model: model,
+      env: { VOYAGE_API_KEY: 'pa-test-voyagekey' },
+    });
+  }
+
+  test('posts to https://api.voyageai.com/v1/rerank (path override, no /v1/v1)', async () => {
+    configureVoyage();
+    let capturedUrl = '';
+    __setRerankTransportForTests(async (url) => {
+      capturedUrl = url;
+      return mockResp({ results: [{ index: 0, relevance_score: 0.9 }] });
+    });
+    await rerank({ query: 'q', documents: ['d'] });
+    expect(capturedUrl).toBe('https://api.voyageai.com/v1/rerank');
+  });
+
+  test('request carries top_k (NOT top_n) — the only wire difference', async () => {
+    configureVoyage();
+    let body: any = null;
+    __setRerankTransportForTests(async (_url, init) => {
+      body = JSON.parse(String(init?.body ?? '{}'));
+      return mockResp({ results: [{ index: 0, relevance_score: 0.9 }] });
+    });
+    await rerank({ query: 'q', documents: ['a', 'b'], topN: 1 });
+    expect(body.top_k).toBe(1);
+    expect(body.top_n).toBeUndefined();
+    expect(body.model).toBe('rerank-2.5');
+  });
+
+  test('ZE dialect still sends top_n (regression: top_param defaults)', async () => {
+    configureZE();
+    let body: any = null;
+    __setRerankTransportForTests(async (_url, init) => {
+      body = JSON.parse(String(init?.body ?? '{}'));
+      return mockResp({ results: [{ index: 0, relevance_score: 0.9 }] });
+    });
+    await rerank({ query: 'q', documents: ['a', 'b'], topN: 1 });
+    expect(body.top_n).toBe(1);
+    expect(body.top_k).toBeUndefined();
+  });
+
+  test("voyage's REST data[] response parses (live-wire shape, 2026-08-15)", async () => {
+    configureVoyage();
+    __setRerankTransportForTests(async () =>
+      mockResp({
+        object: 'list',
+        data: [{ index: 1, relevance_score: 0.8 }, { index: 0, relevance_score: 0.3 }],
+        model: 'rerank-2.5',
+        usage: { total_tokens: 12 },
+      }),
+    );
+    const out = await rerank({ query: 'q', documents: ['a', 'b'] });
+    expect(out).toEqual([
+      { index: 1, relevanceScore: 0.8 },
+      { index: 0, relevanceScore: 0.3 },
+    ]);
+  });
+
+  test('the legacy results[] shape still parses too (ZE/llama-server dialect)', async () => {
+    configureVoyage();
+    __setRerankTransportForTests(async () =>
+      mockResp({ results: [{ index: 0, relevance_score: 0.9 }] }),
+    );
+    const out = await rerank({ query: 'q', documents: ['a'] });
+    expect(out).toEqual([{ index: 0, relevanceScore: 0.9 }]);
+  });
+
+  test('malformed response (neither results[] nor data[]) → RerankError', async () => {
+    configureVoyage();
+    __setRerankTransportForTests(async () => mockResp({ items: [{ index: 0 }] }));
+    await expect(rerank({ query: 'q', documents: ['a'] })).rejects.toThrow(RerankError);
+  });
+
+  test('missing VOYAGE_API_KEY → RerankError auth (fail-open class)', async () => {
+    resetGateway();
+    configureGateway({ reranker_model: 'voyage:rerank-2.5', env: {} });
+    __setRerankTransportForTests(async () =>
+      mockResp({ results: [{ index: 0, relevance_score: 0.9 }] }),
+    );
+    try {
+      await rerank({ query: 'q', documents: ['a'] });
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(RerankError);
+      expect((e as RerankError).reason).toBe('auth');
+    }
+  });
+
+  test('rerank-2.5-lite passes the allowlist', async () => {
+    configureVoyage('voyage:rerank-2.5-lite');
+    let body: any = null;
+    __setRerankTransportForTests(async (_url, init) => {
+      body = JSON.parse(String(init?.body ?? '{}'));
+      return mockResp({ results: [{ index: 0, relevance_score: 0.9 }] });
+    });
+    await rerank({ query: 'q', documents: ['a'] });
+    expect(body.model).toBe('rerank-2.5-lite');
+  });
+});

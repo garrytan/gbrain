@@ -67,13 +67,13 @@ if grep -Eq 'lockTimer[[:space:]]*=[[:space:]]*setInterval\([[:space:]]*async' "
   echo "       routes through src/core/minions/lock-renewal-tick.ts:"
   echo
   echo "         setInterval(() => {"
-  echo "           if (tickInFlight) return;"
+  echo "           if (tickInFlight) { state.overlapSkips += 1; return; }"
   echo "           tickInFlight = true;"
   echo "           void runLockRenewalTick(deps, state)"
   echo "             .then(handleResult)"
   echo "             .catch(handlePostError)"
   echo "             .finally(() => { tickInFlight = false; });"
-  echo "         }, lockDurationMs / 2);"
+  echo "         }, renewalIntervalMs); // min(lease/2, 60s)"
   exit 1
 fi
 

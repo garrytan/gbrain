@@ -1,0 +1,35 @@
+# Module-size ratchet ceilings (containment sprint). Enforced by
+# scripts/check-module-size.sh via `bun run check:module-size` (in verify).
+# Raising a ceiling is a conscious, reviewer-visible act. Lower ceilings in
+# the same commit as any peel (the guard fails on >50 lines of stale slack).
+# Columns: path	max_lines	policy	note
+src/commands/doctor.ts	4270	ratchet	peel target: containment sprint C8-C13; grown v0.46.11.0 five-issue wave
+src/core/operations.ts	303	ratchet	peel target: containment sprint C4-C7
+src/core/postgres-engine.ts	5770	ratchet	peel target: containment sprint C15; grown v0.46.11.0 five-issue wave
+src/core/pglite-engine.ts	5660	ratchet	peel target: containment sprint C15; grown v0.46.11.0 five-issue wave
+src/core/migrate.ts	668	region-exempt	append-only MIGRATIONS array grows freely; runner logic is ratcheted
+src/commands/sync.ts	4300	ratchet	peel target: containment sprint C13-C14; grown v0.46.11.0 five-issue wave
+src/core/ai/gateway.ts	4117	ratchet	watchlist
+src/cli.ts	3385	ratchet	watchlist; +21 gap-closure wave: thin-client routing call sites (logic in commands/thin-client-routing.ts)
+src/core/cycle.ts	2933	ratchet
+src/commands/serve-http.ts	2836	ratchet
+src/commands/jobs.ts	2950	ratchet	grown v0.46.11.0 five-issue wave
+src/core/search/hybrid.ts	2479	ratchet
+src/core/engine.ts	2343	ratchet
+src/commands/autopilot.ts	2301	ratchet
+src/commands/extract.ts	2161	ratchet
+src/commands/extract-conversation-facts.ts	1968	ratchet
+src/core/import-file.ts	2000	ratchet	grown v0.46.11.0 five-issue wave
+src/core/cycle/synthesize.ts	2685	ratchet	grown v0.46.11.0 five-issue wave
+src/commands/embed.ts	1963	ratchet
+src/core/types.ts	1829	ratchet
+src/commands/skillpack.ts	1763	ratchet
+src/core/minions/queue.ts	2130	ratchet	grown v0.46.11.0 five-issue wave
+src/commands/init.ts	1932	ratchet
+src/commands/integrations.ts	1675	ratchet
+src/core/minions/handlers/subagent.ts	1643	ratchet
+src/commands/bootstrap.ts	1923	ratchet	grandfathered at merge (grew past the 1500 cap on master)
+src/core/minions/worker.ts	1560	ratchet	grandfathered at merge (grew past the 1500 cap on master, #4170); grown v0.46.11.0 five-issue wave
+src/commands/sources.ts	1586	ratchet
+src/core/bootstrap/harness.ts	1947	ratchet
+src/commands/hook.ts	1525	ratchet

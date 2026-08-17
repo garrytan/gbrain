@@ -7,7 +7,7 @@ valence of what they said, stop and re-derive from their words.
 
 - **Name:** {{PRINCIPAL_NAME}}
 - **Timezone:** America/Los_Angeles
-- **Primary surface:** this workspace (Claude Code / Codex)
+- **Primary surface:** this workspace (Claude Code / Codex / opencode)
 
 ## Context
 

@@ -35,6 +35,11 @@ import {
   parseDotenvFile,
   seedHermesHome,
   seedGrokConfig,
+  opencodeChildEnv,
+  hasOpencodeAuth,
+  seedOpencodeConfig,
+  parseOpencodeJsonl,
+  runOneShotSpawn,
 } from './agent-harness.ts';
 import { withEnv } from './with-env.ts';
 
@@ -93,7 +98,31 @@ describe('parseCodexJsonl', () => {
   });
 
   test('empty input yields empty result, never throws', () => {
-    expect(parseCodexJsonl([])).toEqual({ finalText: '', toolCalls: [], reasoning: [] });
+    expect(parseCodexJsonl([])).toEqual({ finalText: '', toolCalls: [], reasoning: [], mcpToolCalls: [] });
+  });
+
+  test('mcp_tool_call items extract {server, tool} from top-level fields', () => {
+    const line = JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'mcp_tool_call', server: 'gbrain', tool: 'recall' },
+    });
+    expect(parseCodexJsonl([line]).mcpToolCalls).toEqual([{ server: 'gbrain', tool: 'recall' }]);
+  });
+
+  test('mcp_tool_call falls back to invocation.{server,tool} and name', () => {
+    const nested = JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'mcp_tool_call', invocation: { server: 'gbrain', tool: 'search' } },
+    });
+    const named = JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'mcp_tool_call', server: 'gbrain', name: 'context_pack' },
+    });
+    const parsed = parseCodexJsonl([nested, named]);
+    expect(parsed.mcpToolCalls).toEqual([
+      { server: 'gbrain', tool: 'search' },
+      { server: 'gbrain', tool: 'context_pack' },
+    ]);
   });
 });
 
@@ -260,6 +289,24 @@ describe('hermesChildEnv — the single-auth-source enforcement point', () => {
       }
       expect(env.HOME).toBe('/tmp/hermes-child-test');
       expect(env.HERMES_HOME).toBe('/tmp/hermes-child-test/.hermes');
+    });
+  });
+
+  test('GITHUB_* step-metadata files are deleted (the backported grok scrub, via the shared factory)', async () => {
+    await withEnv({
+      GITHUB_ENV: '/tmp/gh-env-file',
+      GITHUB_PATH: '/tmp/gh-path-file',
+      GITHUB_OUTPUT: '/tmp/gh-output-file',
+      GITHUB_STATE: '/tmp/gh-state-file',
+      GITHUB_STEP_SUMMARY: '/tmp/gh-summary-file',
+      GITHUB_ACTIONS: 'true',
+    }, () => {
+      const env = hermesChildEnv('/tmp/hermes-child-test');
+      for (const k of ['GITHUB_ENV', 'GITHUB_PATH', 'GITHUB_OUTPUT', 'GITHUB_STATE', 'GITHUB_STEP_SUMMARY']) {
+        expect(env[k]).toBeUndefined();
+      }
+      // Read-only CI metadata stays allowed (prefix rule intact).
+      expect(env.GITHUB_ACTIONS).toBe('true');
     });
   });
 });
@@ -465,6 +512,172 @@ describe('resolveGrokBinary — fail-closed GROK_BIN handling', () => {
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('opencodeChildEnv — XDG redirection + explicit anthropic re-admission (5a-core factory)', () => {
+  test('ANTHROPIC_API_KEY survives via explicit override; HOME + both XDG dirs point at the temp home; autoupdate env kill set', async () => {
+    await withEnv({ ANTHROPIC_API_KEY: 'ant-child-sentinel' }, () => {
+      const env = opencodeChildEnv('/tmp/opencode-child-test');
+      expect(env.ANTHROPIC_API_KEY).toBe('ant-child-sentinel');
+      expect(env.HOME).toBe('/tmp/opencode-child-test');
+      expect(env.XDG_CONFIG_HOME).toBe('/tmp/opencode-child-test/.config');
+      expect(env.XDG_DATA_HOME).toBe('/tmp/opencode-child-test/.local/share');
+      expect(env.OPENCODE_DISABLE_AUTOUPDATE).toBe('1');
+    });
+  });
+
+  test('other provider keys, the OPENCODE_CONFIG* shadow trio, and GITHUB_* step files are deleted', async () => {
+    await withEnv({
+      ANTHROPIC_API_KEY: 'ant-x',
+      OPENAI_API_KEY: 'oai-must-not-leak',
+      XAI_API_KEY: 'xai-must-not-leak',
+      OPENROUTER_API_KEY: 'or-must-not-leak',
+      GOOGLE_GENERATIVE_AI_API_KEY: 'ggl-must-not-leak',
+      OPENCODE_CONFIG: '/operator/custom.json',
+      OPENCODE_CONFIG_DIR: '/operator/cfgdir',
+      OPENCODE_CONFIG_CONTENT: '{"mcp":{}}',
+      GITHUB_ENV: '/tmp/gh-env-file',
+      GITHUB_ACTIONS: 'true',
+    }, () => {
+      const env = opencodeChildEnv('/tmp/opencode-child-test');
+      for (const k of [
+        'OPENAI_API_KEY', 'XAI_API_KEY', 'OPENROUTER_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY',
+        'OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'OPENCODE_CONFIG_CONTENT',
+        'GITHUB_ENV',
+      ]) {
+        expect(env[k]).toBeUndefined();
+      }
+      expect(env.GITHUB_ACTIONS).toBe('true');
+    });
+  });
+
+  test('binDir PATH-prepends (staged bare-`gbrain` registrations must resolve in every spawn)', async () => {
+    await withEnv({}, () => {
+      const env = opencodeChildEnv('/tmp/opencode-child-test', { binDir: '/tmp/staged-bin' });
+      expect(env.PATH?.startsWith('/tmp/staged-bin:')).toBe(true);
+    });
+  });
+});
+
+describe('CI credential scrub — no door agent child ever sees the workflow/OIDC tokens (5a-core factory)', () => {
+  test('GITHUB_TOKEN, ACTIONS_RUNTIME_TOKEN, ACTIONS_ID_TOKEN_REQUEST_TOKEN are deleted for EVERY agent child env', async () => {
+    await withEnv({
+      GITHUB_TOKEN: 'ghs_must-not-leak', // rides the GITHUB_ prefix allowlist without the scrub
+      ACTIONS_RUNTIME_TOKEN: 'art-must-not-leak',
+      ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'oidc-must-not-leak',
+      GITHUB_ACTIONS: 'true',
+    }, () => {
+      const envs: Array<[string, NodeJS.ProcessEnv]> = [
+        ['hermes', hermesChildEnv('/tmp/agent-cred-scrub')],
+        ['grok', grokChildEnv('/tmp/agent-cred-scrub')],
+        ['opencode', opencodeChildEnv('/tmp/agent-cred-scrub')],
+      ];
+      for (const [label, env] of envs) {
+        expect(`${label}:${env.GITHUB_TOKEN ?? ''}`).toBe(`${label}:`);
+        expect(`${label}:${env.ACTIONS_RUNTIME_TOKEN ?? ''}`).toBe(`${label}:`);
+        expect(`${label}:${env.ACTIONS_ID_TOKEN_REQUEST_TOKEN ?? ''}`).toBe(`${label}:`);
+        // Benign CI metadata still flows — the scrub is credential-shaped, not prefix-wide.
+        expect(env.GITHUB_ACTIONS).toBe('true');
+      }
+    });
+  });
+});
+
+describe('hasOpencodeAuth — the PAID leg gate only (keyless free tier carries the core SMOKE)', () => {
+  test('non-empty ANTHROPIC_API_KEY (or its GSTACK_ promotion) → true; blank/absent → false', async () => {
+    await withEnv({ ANTHROPIC_API_KEY: 'ant-key', GSTACK_ANTHROPIC_API_KEY: undefined }, () => {
+      expect(hasOpencodeAuth()).toBe(true);
+    });
+    await withEnv({ ANTHROPIC_API_KEY: undefined, GSTACK_ANTHROPIC_API_KEY: 'promoted-key' }, () => {
+      expect(hasOpencodeAuth()).toBe(true);
+    });
+    await withEnv({ ANTHROPIC_API_KEY: '   ', GSTACK_ANTHROPIC_API_KEY: undefined }, () => {
+      expect(hasOpencodeAuth()).toBe(false);
+    });
+    await withEnv({ ANTHROPIC_API_KEY: undefined, GSTACK_ANTHROPIC_API_KEY: undefined }, () => {
+      expect(hasOpencodeAuth()).toBe(false);
+    });
+  });
+});
+
+describe('seedOpencodeConfig — the autoupdate kill-switch seed (config half of the double kill)', () => {
+  test('writes autoupdate:false + optional model pin, valid JSON, never credentials', () => {
+    const home = mkdtempSync(join(tmpdir(), 'opencode-seed-'));
+    try {
+      const cfgPath = seedOpencodeConfig(home, { defaultModel: 'anthropic/claude-haiku-4-5' });
+      const doc = JSON.parse(readFileSync(cfgPath, 'utf-8')) as Record<string, unknown>;
+      expect(doc.autoupdate).toBe(false);
+      expect(doc.model).toBe('anthropic/claude-haiku-4-5');
+      expect(doc.$schema).toBe('https://opencode.ai/config.json');
+      expect(JSON.stringify(doc)).not.toMatch(/api[_-]?key|bearer/i);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('without a model opt, no model key is written', () => {
+    const home = mkdtempSync(join(tmpdir(), 'opencode-seed-'));
+    try {
+      const cfgPath = seedOpencodeConfig(home);
+      const doc = JSON.parse(readFileSync(cfgPath, 'utf-8')) as Record<string, unknown>;
+      expect(doc.model).toBeUndefined();
+      expect(doc.autoupdate).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('parseOpencodeJsonl (pure — fixtures pinned to observed v1.18.18 shapes)', () => {
+  test('collects text parts and tool names; skips malformed lines and unknown types', () => {
+    const lines = [
+      JSON.stringify({ type: 'step_start', timestamp: 1, sessionID: 's', part: {} }),
+      JSON.stringify({ type: 'tool_use', timestamp: 2, sessionID: 's', part: { type: 'tool', tool: 'gbrain_recall', callID: 'c1', state: { status: 'completed', input: { query: 'door codeword' }, output: '{}' } } }),
+      'NOT JSON {{{',
+      JSON.stringify({ type: 'mystery_event', part: { text: 'must-not-count' } }),
+      JSON.stringify({ type: 'text', timestamp: 3, sessionID: 's', part: { id: 'p1', text: 'kestrel-3f82e013', time: {} } }),
+      JSON.stringify({ type: 'step_finish', part: {} }),
+    ];
+    const parsed = parseOpencodeJsonl(lines);
+    expect(parsed.finalText).toBe('kestrel-3f82e013');
+    expect(parsed.toolCalls).toEqual(['gbrain_recall']);
+  });
+
+  test('empty/garbage input → empty result, never throws', () => {
+    expect(parseOpencodeJsonl([])).toEqual({ finalText: '', toolCalls: [] });
+    expect(parseOpencodeJsonl(['{', 'null', '42'])).toEqual({ finalText: '', toolCalls: [] });
+  });
+});
+
+describe('runOneShotSpawn — drain-cap timer hygiene', () => {
+  test('returns promptly on a fast child and clears every drain-cap timer (no post-run event-loop hold)', async () => {
+    // The bounded() drain caps are timeoutMs + 30s each; uncleared they keep
+    // Bun alive for minutes after a successful door run. Spy on clearTimeout:
+    // the main kill timer + the three bounded races (stdout, stderr, exited)
+    // must ALL clear when the real promises win.
+    const realClear = globalThis.clearTimeout;
+    let clears = 0;
+    globalThis.clearTimeout = ((id: Parameters<typeof clearTimeout>[0]) => {
+      clears++;
+      return realClear(id);
+    }) as typeof clearTimeout;
+    try {
+      const t0 = Date.now();
+      const res = await runOneShotSpawn({
+        argv: ['echo', 'door-timer-hygiene'],
+        cwd: tmpdir(),
+        env: process.env,
+        timeoutMs: 240_000, // door-scale timeout — the leak would be ~270s of hold
+      });
+      expect(res.exitCode).toBe(0);
+      expect(res.finalText).toBe('door-timer-hygiene');
+      expect(res.timedOut).toBe(false);
+      expect(Date.now() - t0).toBeLessThan(10_000); // returned promptly, no cap wait
+      expect(clears).toBeGreaterThanOrEqual(4); // kill timer + 3 bounded drain caps
+    } finally {
+      globalThis.clearTimeout = realClear;
     }
   });
 });

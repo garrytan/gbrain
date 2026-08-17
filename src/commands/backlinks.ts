@@ -10,13 +10,16 @@
  *   gbrain check-backlinks fix --dry-run                  # preview fixes
  */
 
-import { readFileSync, writeFileSync, readdirSync, statSync, lstatSync, existsSync } from 'fs';
+import { readFileSync, readdirSync, statSync, lstatSync, existsSync } from 'fs';
 import { join, relative, basename } from 'path';
 import { extractEntityRefs as canonicalExtractEntityRefs } from '../core/link-extraction.ts';
 import { createProgress, startHeartbeat } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
+import { parseMarkdown, frontmatterBodyOffset } from '../core/markdown.ts';
+import { atomicWriteFileSync } from '../core/atomic-write.ts';
+import { withPageLock } from '../core/page-lock.ts';
 
-interface BacklinkGap {
+export interface BacklinkGap {
   /** The page that mentions the entity */
   sourcePage: string;
   /** The entity page that's missing the back-link */
@@ -132,10 +135,77 @@ export function findBacklinkGaps(brainDir: string): BacklinkGap[] {
   return gaps;
 }
 
-/** Fix back-link gaps by appending timeline entries to target pages */
-export function fixBacklinkGaps(brainDir: string, gaps: BacklinkGap[], dryRun: boolean = false): number {
+/** Per-run outcome of the fixer: entries inserted + per-file skip reasons. */
+export interface BacklinkFixOutcome {
+  fixed: number;
+  skipped: Array<{ page: string; reason: string }>;
+}
+
+/**
+ * Validation codes that make a file UNSAFE to edit: the fence/YAML itself is
+ * broken (or the offset math would be unreliable), so any body insertion could
+ * worsen the damage. Deliberately NOT in this set: MISSING_OPEN (a legacy page
+ * with no frontmatter at all has no fence to corrupt — the whole file is body
+ * and stays fixable) and the content-quality lint codes (NESTED_QUOTES,
+ * NON_STRING_FIELD, EMPTY_FRONTMATTER, SLUG_MISMATCH) whose presence doesn't
+ * affect where the body starts.
+ */
+const EDIT_BLOCKING_CODES = new Set(['YAML_PARSE', 'MISSING_CLOSE', 'NULL_BYTES']);
+
+function firstEditBlockingError(content: string, filePath: string): string | null {
+  const parsed = parseMarkdown(content, filePath, { validate: true });
+  const blocking = (parsed.errors ?? []).find(e => EDIT_BLOCKING_CODES.has(e.code));
+  return blocking ? `${blocking.code}: ${blocking.message}` : null;
+}
+
+/**
+ * Insert a timeline entry into the body of `content`, never touching bytes
+ * before `bodyStart`. The `## Timeline` heading is matched only as a real
+ * heading line at/after bodyStart (CRLF-tolerant), so a `## Timeline` string
+ * inside YAML frontmatter, a `### Timeline` sub-heading, or a
+ * `## Timeline (2026)` variant never anchors the insertion. With multiple real
+ * headings, the FIRST one wins deterministically (post-validation guards the
+ * result either way). Exported for direct unit tests.
+ */
+export function insertTimelineEntry(content: string, bodyStart: number, entry: string): string {
+  const bodySlice = content.slice(bodyStart);
+  const headingMatch = /^## Timeline[ \t]*\r?$/m.exec(bodySlice);
+
+  if (!headingMatch) {
+    // No real Timeline heading in the body — append a fresh section.
+    return content.trimEnd() + '\n\n## Timeline\n\n' + entry + '\n';
+  }
+
+  const headingAbs = bodyStart + headingMatch.index;
+  const headingLineEnd = content.indexOf('\n', headingAbs);
+  const sectionStart = headingLineEnd === -1 ? content.length : headingLineEnd + 1;
+
+  const nextHeading = /^## /m.exec(content.slice(sectionStart));
+  if (nextHeading) {
+    const insertAt = sectionStart + nextHeading.index;
+    return content.slice(0, insertAt) + entry + '\n' + content.slice(insertAt);
+  }
+  return content.trimEnd() + '\n' + entry + '\n';
+}
+
+/**
+ * Fix back-link gaps by inserting timeline entries into target pages.
+ *
+ * Safety pipeline per target file (each failure isolates to that file and is
+ * reported in `skipped` — one bad page can't kill the batch or corrupt itself):
+ *   lock (withPageLock) → read → pre-validate (skip if the fence/YAML is
+ *   already broken) → insert after the frontmatter-safe body offset →
+ *   post-validate the candidate → atomic write (tmp+fsync+rename) that
+ *   re-validates the on-disk bytes before the rename.
+ */
+export async function fixBacklinkGaps(
+  brainDir: string,
+  gaps: BacklinkGap[],
+  dryRun: boolean = false,
+  opts?: { lockRoot?: string },
+): Promise<BacklinkFixOutcome> {
   const today = new Date().toISOString().slice(0, 10);
-  let fixed = 0;
+  const outcome: BacklinkFixOutcome = { fixed: 0, skipped: [] };
 
   // Group gaps by target page to batch writes
   const byTarget = new Map<string, BacklinkGap[]>();
@@ -149,42 +219,62 @@ export function fixBacklinkGaps(brainDir: string, gaps: BacklinkGap[], dryRun: b
     const targetPath = join(brainDir, targetPage);
     if (!existsSync(targetPath)) continue;
 
-    let content = readFileSync(targetPath, 'utf-8');
+    const lockKey = targetPage.replace(/\.md$/, '');
+    try {
+      await withPageLock(lockKey, async () => {
+        let content = readFileSync(targetPath, 'utf-8');
 
-    for (const gap of targetGaps) {
-      // Compute relative path from target to source
-      const targetDir = targetPage.split('/').slice(0, -1);
-      const sourceDir = gap.sourcePage.split('/');
-      const depth = targetDir.length;
-      const relPrefix = '../'.repeat(depth);
-      const relPath = relPrefix + gap.sourcePage;
-
-      const entry = buildBacklinkEntry(gap.sourceTitle, relPath, today);
-
-      // Insert into Timeline section
-      if (content.includes('## Timeline')) {
-        const parts = content.split('## Timeline');
-        const afterTimeline = parts[1];
-        const nextSection = afterTimeline.match(/\n## /);
-        if (nextSection) {
-          const insertIdx = parts[0].length + '## Timeline'.length + nextSection.index!;
-          content = content.slice(0, insertIdx) + '\n' + entry + content.slice(insertIdx);
-        } else {
-          content = content.trimEnd() + '\n' + entry + '\n';
+        const preError = firstEditBlockingError(content, targetPath);
+        if (preError) {
+          outcome.skipped.push({
+            page: targetPage,
+            reason: `pre-existing invalid frontmatter (${preError}) — file left untouched`,
+          });
+          return;
         }
-      } else {
-        // Add Timeline section
-        content = content.trimEnd() + '\n\n## Timeline\n\n' + entry + '\n';
-      }
-      fixed++;
-    }
 
-    if (!dryRun) {
-      writeFileSync(targetPath, content);
+        const bodyStart = frontmatterBodyOffset(content);
+        let inserted = 0;
+        for (const gap of targetGaps) {
+          // Compute relative path from target to source
+          const targetDir = targetPage.split('/').slice(0, -1);
+          const depth = targetDir.length;
+          const relPrefix = '../'.repeat(depth);
+          const relPath = relPrefix + gap.sourcePage;
+
+          const entry = buildBacklinkEntry(gap.sourceTitle, relPath, today);
+          content = insertTimelineEntry(content, bodyStart, entry);
+          inserted++;
+        }
+
+        const postError = firstEditBlockingError(content, targetPath);
+        if (postError) {
+          outcome.skipped.push({
+            page: targetPage,
+            reason: `edit would invalidate page (${postError}) — aborted, file left untouched`,
+          });
+          return;
+        }
+
+        if (!dryRun) {
+          atomicWriteFileSync(targetPath, content, {
+            verify: (onDisk) => {
+              const diskError = firstEditBlockingError(onDisk, targetPath);
+              if (diskError) throw new Error(`on-disk validation failed (${diskError})`);
+            },
+          });
+        }
+        outcome.fixed += inserted;
+      }, { timeoutMs: 10_000, lockRoot: opts?.lockRoot });
+    } catch (e) {
+      outcome.skipped.push({
+        page: targetPage,
+        reason: e instanceof Error ? e.message : String(e),
+      });
     }
   }
 
-  return fixed;
+  return outcome;
 }
 
 export interface BacklinksOpts {
@@ -199,6 +289,9 @@ export interface BacklinksResult {
   fixed: number;
   pages_affected: number;
   dryRun: boolean;
+  /** Pages the fixer refused to touch (invalid frontmatter, lock/write errors). */
+  skipped_invalid?: number;
+  skipped_pages?: Array<{ page: string; reason: string }>;
 }
 
 export interface ParsedBacklinksArgs {
@@ -263,8 +356,27 @@ export async function runBacklinksCore(opts: BacklinksOpts): Promise<BacklinksRe
   const pagesAffected = new Set(gaps.map(g => g.targetPage)).size;
 
   if (opts.action === 'fix' && gaps.length > 0) {
-    const fixed = fixBacklinkGaps(opts.dir, gaps, !!opts.dryRun);
-    return { action: 'fix', gaps_found: gaps.length, fixed, pages_affected: pagesAffected, dryRun: !!opts.dryRun };
+    // Locks + per-file validation make the fix loop slower than the naive
+    // writer it replaced — run it under its own phase with a heartbeat so
+    // agents see forward progress (the scan phase above already finished).
+    progress.start('backlinks.fix');
+    const fixHb = startHeartbeat(progress, 'applying back-link fixes…');
+    let fixOutcome: BacklinkFixOutcome;
+    try {
+      fixOutcome = await fixBacklinkGaps(opts.dir, gaps, !!opts.dryRun);
+    } finally {
+      fixHb();
+      progress.finish();
+    }
+    return {
+      action: 'fix',
+      gaps_found: gaps.length,
+      fixed: fixOutcome.fixed,
+      pages_affected: pagesAffected,
+      dryRun: !!opts.dryRun,
+      skipped_invalid: fixOutcome.skipped.length,
+      skipped_pages: fixOutcome.skipped,
+    };
   }
   return { action: opts.action, gaps_found: gaps.length, fixed: 0, pages_affected: pagesAffected, dryRun: !!opts.dryRun };
 }
@@ -310,6 +422,12 @@ export async function runBacklinks(args: string[]) {
   } else {
     const label = result.dryRun ? '(dry run) ' : '';
     console.log(`${label}Fixed ${result.fixed} missing back-link(s) across ${result.pages_affected} page(s).`);
+    if (result.skipped_pages && result.skipped_pages.length > 0) {
+      console.log(`\nSkipped ${result.skipped_pages.length} page(s):`);
+      for (const s of result.skipped_pages) {
+        console.log(`  ${s.page}: ${s.reason}`);
+      }
+    }
     if (result.dryRun) {
       console.log('\nRe-run without --dry-run to apply.');
     }

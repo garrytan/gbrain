@@ -32,7 +32,7 @@ pure win. See the per-verb latency table in
   calls `context_pack` / `delta` over MCP (they are on `--surface verbs`) or the
   CLI (`gbrain context-pack`, `gbrain delta`) at the boundary and injects the
   returned `text` (or renders the structured arms). This is the portable path —
-  no hooks required. It is the primary path for Codex (which has no hooks) and
+  no hooks required. It is the primary path for Codex and opencode (no wired hooks) and
   for Postgres brains (which have no local IPC socket).
 - **Push (PGLite + Claude Code):** the bundled hook framework fires
   automatically at `SessionStart` (injects a warm pack — including the

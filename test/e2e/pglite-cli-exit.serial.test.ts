@@ -96,6 +96,16 @@ beforeAll(() => {
   delete runEnv.OPENAI_API_KEY;
   delete runEnv.ANTHROPIC_API_KEY;
   delete runEnv.GOOGLE_API_KEY;
+  // This file is PGLite-only, but the e2e lane deliberately exports
+  // DATABASE_URL (scripts/run-e2e.sh). An inherited env URL overrides the
+  // fixture's `engine: 'pglite'` config (env > file precedence), silently
+  // rerouting every spawned CLI to the healthy shared Postgres — the
+  // corrupt-WAL case then exits 0 against the wrong engine. Strip all
+  // DB-routing vars so the spawned CLIs honor the PGLite fixture homes.
+  delete runEnv.DATABASE_URL;
+  delete runEnv.GBRAIN_DATABASE_URL;
+  delete runEnv.GBRAIN_PGBOUNCER_URL;
+  delete runEnv.GBRAIN_PGBOUNCER_DIRECT_URL;
 
   // NOTE: init grew strict flag validation (#2201); `--repo`/`--yes` were
   // never real init flags (previously silently ignored). The repo is wired

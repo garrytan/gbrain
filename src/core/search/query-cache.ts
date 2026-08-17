@@ -328,6 +328,10 @@ export class SemanticQueryCache {
       );
       return rows[0] ?? { total_rows: 0, total_hits: 0, fresh_rows: 0, stale_rows: 0 };
     } catch {
+      // Best-effort by design (parity with readSearchStats): a brain without
+      // the cache table shows all-zero, not a crash. cache_stats wraps this in
+      // withRelationGuard for other unexpected relation errors; the
+      // missing-cache-table case stays gracefully empty.
       return { total_rows: 0, total_hits: 0, fresh_rows: 0, stale_rows: 0 };
     }
   }

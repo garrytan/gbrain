@@ -73,7 +73,7 @@ test("failJob's delayed branch clears started_at (terminal branches keep it)", a
 test("handleStalled's requeue branch clears started_at", async () => {
   const { id } = await addAndClaim();
   await engine.executeRaw(
-    `UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1`, [id],
+    `UPDATE minion_jobs SET lock_until = now() - interval '30 seconds' WHERE id = $1`, [id],
   );
   const { requeued } = await queue.handleStalled();
   expect(requeued.map(j => j.id)).toContain(id);
@@ -146,7 +146,7 @@ test('red-team 5th path: a re-claimed aggregator parent survives the wall-clock 
   // Child stalls to death → killJobs unblocks the parent.
   await queue.claim('tok-wc', 30_000, 'default', ['child-wc', 'agg-wallclock']);
   await engine.executeRaw(
-    `UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1`, [child.id],
+    `UPDATE minion_jobs SET lock_until = now() - interval '30 seconds' WHERE id = $1`, [child.id],
   );
   await queue.handleStalled();
   expect(await jobStatus(parent.id)).toBe('waiting');

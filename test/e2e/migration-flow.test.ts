@@ -62,12 +62,13 @@ if (!SKIP) {
 
 function freshTempHome(label: string) {
   const dir = mkdtempSync(join(tmpdir(), `gbrain-e2e-migration-${label}-`));
-  // preferences.ts's gbrainDir() returns `$HOME/.gbrain` when GBRAIN_HOME
-  // is unset. Test fixtures write to `$dir/.gbrain/...`, so set HOME only
-  // and clear any inherited GBRAIN_HOME (which would route prefs to $dir
-  // directly, no .gbrain suffix).
+  // preferences.ts's gbrainDir() delegates to gbrainPath(): GBRAIN_HOME is a
+  // PARENT dir with '.gbrain' appended, so GBRAIN_HOME=$dir routes prefs +
+  // the migration ledger to `$dir/.gbrain/...`, matching the fixture layout.
+  // (HOME alone doesn't isolate in-process reads — the unset-GBRAIN_HOME
+  // fallback uses Bun's cached homedir(), frozen at the e2e wrapper's HOME.)
   process.env.HOME = dir;
-  delete process.env.GBRAIN_HOME;
+  process.env.GBRAIN_HOME = dir;
   // Seed config so Phase A's `gbrain init --migrate-only` has a target.
   mkdirSync(join(dir, '.gbrain'), { recursive: true });
   writeFileSync(
@@ -87,6 +88,8 @@ function freshTempHome(label: string) {
 function restoreHomePath() {
   if (origHome === undefined) delete process.env.HOME;
   else process.env.HOME = origHome;
+  if (origGbrainHome === undefined) delete process.env.GBRAIN_HOME;
+  else process.env.GBRAIN_HOME = origGbrainHome;
   if (origPath === undefined) delete process.env.PATH;
   else process.env.PATH = `${fakeBinDir}:${origPath ?? ''}`;
 }

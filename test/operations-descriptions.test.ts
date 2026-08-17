@@ -10,6 +10,7 @@ import {
   GET_SKILL_DESCRIPTION,
   SKILL_CATALOG_INSTRUCTIONS,
   SKILL_CLIENT_GUIDANCE,
+  CAPTURE_DESCRIPTION,
 } from '../src/core/operations-descriptions.ts';
 import { operations, operationsByName } from '../src/core/operations.ts';
 import { BRAIN_TOOL_ALLOWLIST } from '../src/core/minions/tools/brain-allowlist.ts';
@@ -165,6 +166,19 @@ describe('v0.29 — operations array carries the three new ops', () => {
     expect(names).toContain('get_recent_salience');
     expect(names).toContain('find_anomalies');
     expect(names).toContain('get_recent_transcripts');
+  });
+});
+
+describe('CLI→MCP gap-closure wave — capture description', () => {
+  test('matches the operation registration', () => {
+    expect(operationsByName['capture'].description).toBe(CAPTURE_DESCRIPTION);
+  });
+
+  test('teaches the capture/put_page/remember routing split', () => {
+    // capture = quick notes with auto-slug + dedupe; put_page = full control;
+    // structured entity facts route to remember.
+    expect(CAPTURE_DESCRIPTION).toContain('put_page');
+    expect(CAPTURE_DESCRIPTION).toContain('remember');
   });
 });
 

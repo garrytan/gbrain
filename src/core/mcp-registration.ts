@@ -142,6 +142,16 @@ export function buildCodexMcpAddArgv(p: { name: string; url: string; envVar: str
 }
 
 /**
+ * `opencode mcp add` argv for a remote HTTP server. The header value carries
+ * opencode's `{env:VAR}` interpolation LITERALLY — opencode resolves it at
+ * read time, so the token never enters argv or the config file (verified
+ * against opencode 1.18.18; OPENCODE-CLI-PIN.md §mcp add).
+ */
+export function buildOpencodeMcpAddArgv(p: { name: string; url: string; envVar: string }): string[] {
+  return ['mcp', 'add', p.name, '--url', p.url, '--header', `Authorization=Bearer {env:${p.envVar}}`];
+}
+
+/**
  * POSIX single-quote any arg that isn't already shell-safe, so `$()`, backticks,
  * etc. in a token are inert literals when the block is pasted into a shell
  * (double-quoting would still allow command substitution).

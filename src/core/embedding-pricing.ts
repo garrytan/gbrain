@@ -34,10 +34,15 @@ export const EMBEDDING_PRICING: Record<string, EmbeddingPricing> = {
   'openai:text-embedding-3-small': { pricePerMTok: 0.02 },
   // Legacy OpenAI ada (still common in older brains)
   'openai:text-embedding-ada-002': { pricePerMTok: 0.10 },
-  // Voyage (https://docs.voyageai.com/docs/pricing, verified 2026-07-28)
+  // Voyage (https://docs.voyageai.com/docs/pricing, verified 2026-08-15)
   'voyage:voyage-4-large':         { pricePerMTok: 0.12 },
   'voyage:voyage-4':               { pricePerMTok: 0.06 },
   'voyage:voyage-4-lite':          { pricePerMTok: 0.02 },
+  'voyage:voyage-code-4':          { pricePerMTok: 0.12 },
+  // Voyage rerankers (same pricing page, verified 2026-08-15). Same
+  // budget-tracker rerank-kind fallback rationale as the zerank-2 row below.
+  'voyage:rerank-2.5':             { pricePerMTok: 0.05 },
+  'voyage:rerank-2.5-lite':        { pricePerMTok: 0.02 },
   // voyage-4-nano is deliberately absent: it's the open-weight variant (see
   // src/core/ai/recipes/voyage.ts) and Voyage's pricing page lists no hosted
   // rate for it. A 0 entry would under-estimate anyone paying for it via the

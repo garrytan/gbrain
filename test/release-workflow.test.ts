@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expectedAssetName } from '../src/core/binary-self-update.ts';
+import { EXPECTED_BUILDER_IDS, expectedAssetName } from '../src/core/binary-self-update.ts';
 
 const ROOT = join(import.meta.dir, '..');
 const WORKFLOW = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
@@ -57,6 +57,43 @@ describe('release.yml ↔ binary-self-update asset contract', () => {
     const topLevel = WORKFLOW.slice(0, WORKFLOW.indexOf('jobs:'));
     expect(topLevel).toContain('contents: read');
     expect(topLevel).not.toContain('contents: write');
+  });
+
+  test('build attests provenance for the compiled binary (self-update integrity depends on it)', () => {
+    // binary-self-update verifies the downloaded asset against this attestation
+    // (verifyIntegrity). Removing the attest step would fail-close every fleet
+    // self-update (integrity_unavailable) with CI still green — this is the pin.
+    expect(WORKFLOW).toContain('attest-build-provenance');
+    expect(WORKFLOW).toMatch(/subject-path:\s*bin\/\$\{\{ matrix\.artifact \}\}/);
+  });
+
+  test('expected builder ids name this workflow file on a trusted ref', () => {
+    // verifyIntegrity accepts only attestations whose builder id is exactly
+    // release.yml@<trusted ref>. If the workflow file is renamed or the ref
+    // scheme changes, this test forces the constant to move in lockstep.
+    for (const id of EXPECTED_BUILDER_IDS) {
+      expect(id).toContain('/.github/workflows/release.yml@');
+      const ref = id.split('@')[1]!;
+      expect(ref.startsWith('refs/')).toBe(true);
+    }
+    // The workflow this repo actually ships from is the one the ids name.
+    expect(EXPECTED_BUILDER_IDS.some((id) => id.endsWith('@refs/heads/master'))).toBe(true);
+  });
+
+  test('release builds the admin UI fresh from source before compiling', () => {
+    // Supply-chain pin: the distributed binary's admin bundle must come from
+    // admin/src (built in the release job), never from committed admin/dist
+    // bytes. Deleting this step would silently re-trust the committed bundle.
+    expect(WORKFLOW).toContain('bun run build:admin');
+    expect(WORKFLOW).toMatch(/cd admin && bun install --frozen-lockfile/);
+    // Cache key covers the admin lockfile so the fresh build is reproducible.
+    expect(WORKFLOW).toContain("hashFiles('bun.lock', 'admin/bun.lock')");
+    // Ordering: the admin build must run BEFORE the compile that embeds it.
+    const adminIdx = WORKFLOW.indexOf('bun run build:admin');
+    const compileIdx = WORKFLOW.indexOf('bun build --compile');
+    expect(adminIdx).toBeGreaterThan(-1);
+    expect(compileIdx).toBeGreaterThan(-1);
+    expect(adminIdx).toBeLessThan(compileIdx);
   });
 
   test('template-repo push keeps the PAT out of argv (askpass, not URL-embedded)', () => {

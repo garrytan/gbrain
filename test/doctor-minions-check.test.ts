@@ -27,9 +27,19 @@ let origHome: string | undefined;
 function run(args: string[]): { exitCode: number; stdout: string; stderr: string } {
   // Strip DATABASE_URL so doctor runs filesystem-only for these tests.
   // Half-migrated checks run in the filesystem section; no DB needed.
-  const env = { ...process.env, HOME: tmp } as Record<string, string | undefined>;
+  // Both HOME and GBRAIN_HOME must point at the fixture dir: config/path
+  // resolution prefers GBRAIN_HOME (which the test preload sets to its own
+  // scratch), so HOME alone leaves the child reading the wrong .gbrain.
+  const env = { ...process.env, HOME: tmp, GBRAIN_HOME: tmp } as Record<string, string | undefined>;
   delete env.DATABASE_URL;
   delete env.GBRAIN_DATABASE_URL;
+  // Cross-file poisoning guard: sibling test files in the same bun process
+  // set process.env.GBRAIN_HOME (preferences, friction, bootstrap-* et al),
+  // and doctor resolves ~/.gbrain via resolveGbrainHome — which prefers
+  // GBRAIN_HOME over HOME. A leaked value makes the seeded
+  // $HOME/.gbrain/migrations fixture invisible and doctor exits 0 where the
+  // test expects the FAIL exit. Scrub it like the DB URLs above.
+  delete env.GBRAIN_HOME;
   try {
     const stdout = execFileSync('bun', ['run', CLI, ...args], {
       env: env as Record<string, string>,
@@ -243,4 +253,37 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
     expect(result.stdout).toContain('MINIONS HALF-INSTALLED');
     expect(result.stdout).toContain('gbrain apply-migrations --yes');
   });
+
+  test('DB-connect failure announces the filesystem-only fallback on stderr, credentials redacted', () => {
+    // The fallback used to be silent — indistinguishable from a healthy
+    // DB-backed run minus the DB checks. Pin the stderr note AND that a
+    // credential-bearing connect error never leaks the password (doctor
+    // output is what users paste into issues and CI logs).
+    const gbrainDir = join(tmp, '.gbrain');
+    mkdirSync(gbrainDir, { recursive: true });
+    // Assembled at runtime so the source never contains a scannable
+    // credential-URL span (the value is synthetic).
+    const fakeUrl = ['postgresql:/', '/alice:sekrit-hunter2', '@127.0.0.1:1/refused'].join('');
+    writeFileSync(
+      join(gbrainDir, 'config.json'),
+      JSON.stringify({ engine: 'postgres', database_url: fakeUrl }) + '\n',
+    );
+
+    // The shared run() helper discards stderr on exit 0; this pin needs it
+    // regardless of exit code, so spawn directly.
+    const env = { ...process.env, HOME: tmp, GBRAIN_HOME: tmp } as Record<string, string | undefined>;
+    delete env.DATABASE_URL;
+    delete env.GBRAIN_DATABASE_URL;
+    const { spawnSync } = require('child_process') as typeof import('child_process');
+    const res = spawnSync('bun', ['run', CLI, 'doctor', '--json'], {
+      env: env as NodeJS.ProcessEnv,
+      encoding: 'utf-8',
+      timeout: 60_000,
+    });
+    expect(res.stderr).toContain('[doctor] DB-backed doctor run failed');
+    expect(res.stderr).toContain('filesystem-only checks');
+    expect(res.stderr).not.toContain('sekrit-hunter2');
+    // stdout stays parseable JSON for --json consumers.
+    expect(() => JSON.parse(res.stdout.trim())).not.toThrow();
+  }, 60_000);
 });

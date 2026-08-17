@@ -41,7 +41,23 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
-  rmSync(dir, { recursive: true, force: true });
+  // Best-effort tmpdir cleanup with one retry. Bun's recursive rmSync has
+  // EFAULT'd here on CI (bun 1.3.13, ubuntu-24.04) immediately after the
+  // WASM engine teardown — a runtime flake, not a test failure. bun treats
+  // a throwing afterAll as an "(unnamed)" failed test and reds the shard;
+  // the OS reaps tmpdir anyway, so cleanup must never fail the suite.
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch {
+    await new Promise((r) => setTimeout(r, 50));
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch (e) {
+      console.warn(
+        `[run-child-entry.test] tmpdir cleanup failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
 });
 
 beforeEach(async () => {
@@ -168,6 +184,7 @@ describe('runChildJobEntry', () => {
     const resultPath = join(dir, `sigterm-${job.id}.json`);
     let ctxSignalAbortedAtShutdown: boolean | null = null;
 
+    const listenersBefore = new Set(process.listeners('SIGTERM'));
     const entry = runChildJobEntry(
       engine,
       { jobId: job.id, lockToken: 'parent-tok-1', resultPath, parentPid: 0 },
@@ -184,9 +201,19 @@ describe('runChildJobEntry', () => {
       }),
     );
     await new Promise((r) => setTimeout(r, 100));
-    // Trigger the entry's process.on('SIGTERM') handler in-process without
-    // sending a real signal to the test runner.
-    (process as unknown as { emit: (event: string) => boolean }).emit('SIGTERM');
+    // Trigger ONLY the SIGTERM listener(s) the entry registered. A bare
+    // process.emit('SIGTERM') broadcasts to EVERY listener in the shared
+    // bun test process — including process-cleanup.ts's leaked handler,
+    // whose runCleanupPass().finally(process.exit(143)) kills the whole
+    // shard mid-suite when an earlier file installed it. That exit code
+    // reads as rc=143 and gets misclassified as an "external kill" by
+    // run-unit-parallel.sh (bit three consecutive suite runs under host
+    // load before being traced here).
+    const added = process
+      .listeners('SIGTERM')
+      .filter((l) => !listenersBefore.has(l));
+    expect(added.length).toBeGreaterThan(0);
+    for (const l of added) (l as (...args: unknown[]) => void)('SIGTERM');
     const code = await entry;
 
     expect(code).toBe(0);

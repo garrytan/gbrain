@@ -26,6 +26,13 @@ else
     src/core/postgres-engine.ts
     src/core/migrate.ts
   )
+  # Engine method modules peeled out of the façade classes are engine-live
+  # paths too — extraction must not shrink this guard's coverage.
+  for d in src/core/pglite-engine src/core/postgres-engine; do
+    if [ -d "$d" ]; then
+      while IFS= read -r f; do FILES+=("$f"); done < <(find "$d" -name '*.ts' | sort)
+    fi
+  done
 fi
 
 exec bun "$SCRIPT_DIR/check-engine-dynamic-import.ts" "${FILES[@]}"
