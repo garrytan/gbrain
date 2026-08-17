@@ -146,7 +146,7 @@ describe('writePageThrough', () => {
     expect(walkFiles(brainDir).sort()).toEqual([path.join(brainDir, authored)]);
   });
 
-  test('[REGRESSION twin] null source_path still falls back to the slug-derived path', async () => {
+  test('[REGRESSION twin] null source_path falls back to the slug path and binds it immediately', async () => {
     await engine.setConfig('sync.repo_path', brainDir);
     const slug = 'inbox/2026-01-01-abc123';
     // Born via put/capture: no file of record, so source_path stays NULL.
@@ -159,6 +159,11 @@ describe('writePageThrough', () => {
 
     expect(res.written).toBe(true);
     expect(res.path).toBe(resolvePageFilePath(brainDir, slug, 'default'));
+    const rows = await engine.executeRaw<{ source_path: string | null }>(
+      `SELECT source_path FROM pages WHERE source_id = 'default' AND slug = $1`,
+      [slug],
+    );
+    expect(rows[0]?.source_path).toBe(`${slug}.md`);
   });
 
   test('[REGRESSION twin] falls back to a contained file:// source_uri when source_path is null (capture --file of a vault file)', async () => {
@@ -182,6 +187,11 @@ describe('writePageThrough', () => {
 
     expect(res.written).toBe(true);
     expect(res.path).toBe(path.join(brainDir, authored));
+    const rows = await engine.executeRaw<{ source_path: string | null }>(
+      `SELECT source_path FROM pages WHERE source_id = 'default' AND slug = $1`,
+      [slug],
+    );
+    expect(rows[0]?.source_path).toBe(authored);
     // NB: no `existsSync(slug path)` assertion here — this slug differs from the
     // authored name only by CASE, so a case-insensitive FS (macOS/Windows) folds
     // the two and existsSync would report a twin that isn't there. walkFiles

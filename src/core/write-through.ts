@@ -171,6 +171,7 @@ export async function writePageThrough(
     //      git repo (the reported bug). Skip instead.
     let filePath: string;
     let writeRoot: string;
+    let sourcePathToBind: string;
     const srcRows = await engine.executeRaw<{ local_path: string | null }>(
       `SELECT local_path FROM sources WHERE id = $1`,
       [sourceId],
@@ -208,6 +209,7 @@ export async function writePageThrough(
         recordedPath ?? recordedPathFromFileUri(recordedUri, sourceLocalPath) ?? `${slug}.md`,
       );
       writeRoot = sourceLocalPath;
+      sourcePathToBind = relative(sourceLocalPath, filePath).replaceAll('\\', '/');
     } else {
       const repoPath = await engine.getConfig('sync.repo_path');
       if (!repoPath) {
@@ -229,6 +231,7 @@ export async function writePageThrough(
       const knownPath = recordedPath ?? recordedPathFromFileUri(recordedUri, pageRoot);
       filePath = knownPath ? join(pageRoot, knownPath) : resolvePageFilePath(repoPath, slug, sourceId);
       writeRoot = repoPath;
+      sourcePathToBind = relative(pageRoot, filePath).replaceAll('\\', '/');
     }
 
     // Defense-in-depth (#1647-slug / codex #6): confirm the computed file path
@@ -295,6 +298,25 @@ export async function writePageThrough(
         // best-effort cleanup; surface the original write error below
       }
       throw writeErr;
+    }
+
+    // A write-through file is now the page's canonical file of record. Bind
+    // it immediately instead of relying on a future mtime-driven sync to
+    // rediscover it. Untouched reverse-written pages otherwise remain
+    // source_path=NULL forever because incremental sync never scans them.
+    try {
+      await engine.executeRaw(
+        `UPDATE pages
+            SET source_path = $1
+          WHERE source_id = $2
+            AND slug = $3
+            AND deleted_at IS NULL
+            AND source_path IS NULL`,
+        [sourcePathToBind, sourceId, slug],
+      );
+    } catch (bindErr) {
+      const msg = bindErr instanceof Error ? bindErr.message : String(bindErr);
+      opts.logger?.warn(`[write-through] wrote ${slug} but could not bind source_path: ${msg}`);
     }
 
     // #2426: on a durability-hardened repo (user ran `gbrain sources harden`),
