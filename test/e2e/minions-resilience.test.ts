@@ -173,7 +173,7 @@ describeE2E('E2E: Minions resilience (OpenClaw real-world patterns)', () => {
         VALUES
           ('rescue-me', 'default', 'active', 0, '{}'::jsonb, 3, 1, 1,
            'exponential', 1000, 0.2, 0, 3,
-           'crashed-worker:123', now() - interval '10 seconds', 'fail_parent', 0, false, false,
+           'crashed-worker:123', now() - interval '30 seconds', 'fail_parent', 0, false, false,
            now() - interval '1 minute')
         RETURNING id
       `);

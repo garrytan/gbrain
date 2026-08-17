@@ -29,6 +29,9 @@ const HELP_WITHOUT_BRAIN = [
   'jobs',
   // #4152: dream answers --help (and the retriage subverb help) engine-free.
   'dream',
+  // ZE interim cleanup: the retired ze-switch shim answers --help engine-free
+  // (truthful sunset copy + the canonical migration command).
+  'ze-switch',
 ];
 
 /**

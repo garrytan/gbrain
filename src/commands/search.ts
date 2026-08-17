@@ -22,114 +22,37 @@
  *     Recommendation engine. Reads stats + brain size + model tier and
  *     prints structured recommendations. --apply mutates config (each
  *     change logged loud + paste-ready revert command at the end).
+ *
+ * The report builders live in core (src/core/search/modes-report.ts,
+ * tune-recommendations.ts, telemetry.ts) and are shared with the
+ * search_modes / search_stats / search_tune MCP ops. This file owns arg
+ * parsing, text rendering, the --reset lane, and the --apply lane
+ * (config mutation stays CLI-only per [CDX-21]).
  */
 
 import type { BrainEngine } from '../core/engine.ts';
 import {
-  MODE_BUNDLES,
   SEARCH_MODES,
   SEARCH_MODE_KEY,
-  SEARCH_MODE_CONFIG_KEYS,
-  DEFAULT_SEARCH_MODE,
   isSearchMode,
-  loadSearchModeConfig,
-  resolveSearchMode,
-  attributeKnob,
-  type SearchMode,
-  type ModeBundle,
 } from '../core/search/mode.ts';
-import { readSearchStats, telemetryCoverage, TELEMETRY_COVERAGE_CAVEAT } from '../core/search/telemetry.ts';
-
-const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
-  cache_enabled: 'Semantic query cache on/off',
-  cache_similarity_threshold: 'Cosine-similarity floor for cache hits (0..1)',
-  cache_ttl_seconds: 'Per-row cache TTL',
-  intentWeighting: 'Zero-LLM intent classifier weight adjustments',
-  tokenBudget: 'Per-call token-budget cap (undefined = no cap)',
-  expansion: 'LLM multi-query expansion (Haiku call per search)',
-  searchLimit: 'Default `limit` for the operation layer',
-  reranker_enabled: 'Cross-encoder reranker (ZE zerank-2) on/off',
-  reranker_model: 'Provider:model for the reranker',
-  reranker_top_n_in: 'Candidates sent to reranker per call',
-  reranker_top_n_out: 'Cap on reranked output (null = no truncate)',
-  reranker_timeout_ms: 'HTTP timeout for the reranker call',
-  floor_ratio: 'Floor-ratio gate for metadata boosts (0..1, undefined = off)',
-  title_boost: 'Title-phrase boost multiplier (query is a title token-run; 1.0 = off)',
-  // v0.36 cross-modal knobs (D3 registry)
-  cross_modal_both_text_weight: "D6 'both'-mode RRF weight for text branch (0.6 default)",
-  cross_modal_both_image_weight: "D6 'both'-mode RRF weight for image branch (0.4 default)",
-  image_query_text_refinement_weight: 'D13 searchByImage text-refinement RRF weight (0.4 default)',
-  image_query_image_refinement_weight: 'D13 searchByImage image branch RRF weight (0.6 default)',
-  unified_multimodal: 'Phase 3 — route all queries through embedding_multimodal column',
-  unified_multimodal_only: 'Phase 3 strict — bypass dual-column fallback when unified is on',
-  cross_modal_llm_intent: 'Commit 4 — Haiku tie-break for ambiguous modality classification',
-  // v0.40.4 graph signals
-  graph_signals: 'Selective graph signals: adjacency hub + cross-source hub + session diversification',
-  // v0.40.3.0 contextual retrieval
-  contextual_retrieval: 'CR tier (none|title|per_chunk_synopsis) — wraps chunks at embed time',
-  contextual_retrieval_disabled: 'Soft kill switch — neutralizes CR wrapping for queries + new embeds',
-  // v0.42.3.0 autocut
-  autocut: 'Score-discontinuity result-sizing (cuts at the rerank-score cliff; no-op without a reranker)',
-  autocut_jump: 'Autocut sensitivity: min normalized score gap that counts as a cliff (0..1, 0.20 default)',
-  // v0.43 relational recall
-  relationalRetrieval: 'Typed-edge relational recall arm (relational queries walk the graph; no-op otherwise)',
-  relational_retrieval_depth: 'Max hops for relational traversal (1..3, 2 default)',
-};
-
-interface SearchModesReport {
-  schema_version: 2;
-  active_mode: SearchMode;
-  active_mode_valid: boolean;
-  resolved: Record<keyof ModeBundle, { value: unknown; source: string; source_detail: string; description: string }>;
-  bundles: Record<SearchMode, ModeBundle>;
-  config_keys: ReadonlyArray<string>;
-  _meta?: {
-    metric_glossary?: Record<string, string>;
-  };
-}
-
-async function buildModesReport(engine: BrainEngine): Promise<SearchModesReport> {
-  const input = await loadSearchModeConfig(engine);
-  const resolved = resolveSearchMode(input);
-
-  const knobs: Array<keyof ModeBundle> = [
-    'cache_enabled',
-    'cache_similarity_threshold',
-    'cache_ttl_seconds',
-    'intentWeighting',
-    'tokenBudget',
-    'expansion',
-    'searchLimit',
-    // v0.35.6.0 — floor-ratio surfaced in `gbrain search modes` dashboard
-    // so config drift is legible. Default undefined renders as 'undefined'
-    // in the bundle column, 'mode' source when unset by config/per-call.
-    'floor_ratio',
-  ];
-
-  const attributions = {} as SearchModesReport['resolved'];
-  for (const k of knobs) {
-    const a = attributeKnob(k, input, resolved);
-    attributions[k] = {
-      value: a.value,
-      source: a.source,
-      source_detail: a.source_detail,
-      description: KNOB_DESCRIPTIONS[k],
-    };
-  }
-
-  return {
-    schema_version: 2,
-    active_mode: resolved.resolved_mode,
-    active_mode_valid: resolved.mode_valid,
-    resolved: attributions,
-    bundles: {
-      conservative: { ...MODE_BUNDLES.conservative },
-      balanced: { ...MODE_BUNDLES.balanced },
-      tokenmax: { ...MODE_BUNDLES.tokenmax },
-    },
-    config_keys: SEARCH_MODE_CONFIG_KEYS,
-  };
-}
+import {
+  readSearchStats,
+  readGraphSignalsStats,
+  telemetryCoverage,
+  TELEMETRY_COVERAGE_CAVEAT,
+  type GraphSignalsStatsSection,
+} from '../core/search/telemetry.ts';
+import {
+  buildModesReport,
+  KNOB_DESCRIPTIONS,
+  type SearchModesReport,
+} from '../core/search/modes-report.ts';
+import {
+  buildTuneRecommendations,
+  TUNE_MIN_CALLS,
+  type TuneRecommendation,
+} from '../core/search/tune-recommendations.ts';
 
 function formatModesText(report: SearchModesReport): string {
   const lines: string[] = [];
@@ -210,15 +133,8 @@ async function runStatsSubcommand(engine: BrainEngine, args: string[]): Promise<
 
   const stats = await readSearchStats(engine, { days: Number.isFinite(days) ? days : 7 });
 
-  // v0.40.4 — graph_signals section. Sourced from:
-  //   1. config: search.graph_signals (or mode bundle default) for the
-  //      on/off status.
-  //   2. JSONL audit: graph-signals-failures-*.jsonl for the error count.
-  //
-  // Fire-rate metrics (adjacency_fires, cross_source_fires,
-  // session_demotions) require telemetry table writes from the
-  // applyGraphSignals onMeta callback — wired in a v0.41+ follow-up
-  // (T-todo-2 calibration wave). For now: status + error count.
+  // v0.40.4 — graph_signals section (readGraphSignalsStats now lives in
+  // core/search/telemetry.ts, shared with the search_stats op).
   const gsSection = await readGraphSignalsStats(engine, Number.isFinite(days) ? days : 7);
 
   if (json) {
@@ -291,57 +207,6 @@ async function runStatsSubcommand(engine: BrainEngine, args: string[]): Promise<
   printGraphSignalsSection(gsSection);
 }
 
-interface GraphSignalsStatsSection {
-  enabled: boolean;
-  source: 'config' | 'mode_default';
-  failures_count: number;
-  /** Failure-reason breakdown across the window (truncated to top reasons). */
-  failures_by_reason: Record<string, number>;
-}
-
-async function readGraphSignalsStats(engine: BrainEngine, days: number): Promise<GraphSignalsStatsSection> {
-  // Resolve graph_signals on/off. Mirrors the resolution chain in
-  // src/commands/doctor.ts:checkGraphSignalsCoverage.
-  // v0.40.4 codex F1: case-insensitive + trim parity with
-  // loadOverridesFromConfig (mode.ts). Without this, search-stats would
-  // silently report the opposite of what the parser actually enables on
-  // values like 'TRUE' or 'True'.
-  const cfg = await engine.getConfig('search.graph_signals').catch(() => null);
-  let enabled: boolean;
-  let source: 'config' | 'mode_default';
-  if (cfg !== null && cfg !== undefined) {
-    const v = cfg.trim().toLowerCase();
-    enabled = v === 'true' || v === '1';
-    source = 'config';
-  } else {
-    const modeRaw = await engine.getConfig('search.mode').catch(() => null);
-    const modeVal = typeof modeRaw === 'string' ? modeRaw.trim().toLowerCase() : '';
-    const mode = modeVal === 'conservative' || modeVal === 'tokenmax' ? modeVal : 'balanced';
-    enabled = mode !== 'conservative';
-    source = 'mode_default';
-  }
-
-  let failures_count = 0;
-  const failures_by_reason: Record<string, number> = {};
-  try {
-    const { readRecentGraphSignalsFailures } = await import('../core/search/graph-signals.ts');
-    const events = readRecentGraphSignalsFailures(days);
-    failures_count = events.length;
-    // The failure event schema has error_summary (not a reason field) —
-    // bucket by the first word of the summary so operators see e.g.
-    // "ECONNREFUSED" / "timeout" / "permission" at a glance.
-    for (const e of events) {
-      const firstWord = (e.error_summary ?? '').split(/[\s:]+/)[0]?.slice(0, 32) || 'unknown';
-      failures_by_reason[firstWord] = (failures_by_reason[firstWord] ?? 0) + 1;
-    }
-  } catch {
-    // Audit reader is best-effort. Missing module / corrupt files →
-    // count stays 0, search-stats still renders.
-  }
-
-  return { enabled, source, failures_count, failures_by_reason };
-}
-
 function printGraphSignalsSection(gs: GraphSignalsStatsSection): void {
   console.log('  Graph signals:');
   const sourceLabel = gs.source === 'config' ? 'config override' : 'mode default';
@@ -362,100 +227,41 @@ function printGraphSignalsSection(gs: GraphSignalsStatsSection): void {
   }
 }
 
-interface TuneRecommendation {
-  knob: string;
-  current: unknown;
-  suggested: unknown;
-  reason: string;
-  apply_command: string;
-}
-
 async function runTuneSubcommand(engine: BrainEngine, args: string[]): Promise<void> {
   const json = args.includes('--json');
   const apply = args.includes('--apply');
 
-  const modeInput = await loadSearchModeConfig(engine);
-  const resolved = resolveSearchMode(modeInput);
-  const stats = await readSearchStats(engine, { days: 7 });
+  const report = await buildTuneRecommendations(engine);
+  const recs = report.recommendations;
 
-  const recs: TuneRecommendation[] = [];
-
-  // Recommendation 1: low call volume → no data yet.
-  if (stats.total_calls < 20) {
+  // Recommendation gate: low call volume → no data yet.
+  if (report.status === 'insufficient_data') {
     if (json) {
       console.log(JSON.stringify({
         schema_version: 2,
         status: 'insufficient_data',
-        total_calls: stats.total_calls,
-        coverage: telemetryCoverage(),
+        total_calls: report.total_calls,
+        coverage: report.coverage,
         recommendations: [],
         message: 'Not enough search activity in the last 7 days to tune. Run `gbrain search stats` after some real usage.',
       }, null, 2));
       return;
     }
     console.log('Not enough search activity in the last 7 days to tune.');
-    console.log(`Total searches: ${stats.total_calls} (need >= 20 for confident recommendations).`);
+    console.log(`Total searches: ${report.total_calls} (need >= ${TUNE_MIN_CALLS} for confident recommendations).`);
     console.log(`(${TELEMETRY_COVERAGE_CAVEAT} Low counts can reflect this gap, not just low usage.)`);
     console.log('Use `gbrain serve` or an MCP session for a while, then re-run `gbrain search tune`.');
     return;
   }
 
-  // Recommendation 2: budget pressure under conservative.
-  if (resolved.resolved_mode === 'conservative' && stats.total_calls > 0) {
-    const dropPctPerCall = stats.total_budget_dropped / stats.total_calls;
-    if (dropPctPerCall > 2) {
-      recs.push({
-        knob: 'search.mode',
-        current: 'conservative',
-        suggested: 'balanced',
-        reason: `Avg ${dropPctPerCall.toFixed(1)} results dropped per search by the 4K budget. Consider balanced (12K budget) or raise search.tokenBudget.`,
-        apply_command: 'gbrain config set search.mode balanced',
-      });
-    }
-  }
-
-  // Recommendation 3: high cache hit rate → bump similarity threshold.
-  if (stats.cache_hit_rate > 0.85 && stats.cache_hits + stats.cache_misses > 50) {
-    recs.push({
-      knob: 'search.cache.similarity_threshold',
-      current: resolved.cache_similarity_threshold,
-      suggested: 0.94,
-      reason: `Cache hit rate is ${(stats.cache_hit_rate * 100).toFixed(1)}%. You can raise similarity threshold to 0.94 for tighter freshness at small recall cost.`,
-      apply_command: 'gbrain config set search.cache.similarity_threshold 0.94',
-    });
-  }
-
-  // Recommendation 4: tokenmax + Haiku subagent.
-  const subagentModel = await engine.getConfig('models.tier.subagent');
-  if (resolved.resolved_mode === 'tokenmax' && subagentModel && /haiku/i.test(subagentModel)) {
-    recs.push({
-      knob: 'search.mode',
-      current: 'tokenmax',
-      suggested: 'balanced',
-      reason: `Subagent tier is Haiku but mode is tokenmax. LLM expansion adds ~50ms + ~1¢ per query. Balanced cuts that cost without losing intent weighting or cache.`,
-      apply_command: 'gbrain config set search.mode balanced',
-    });
-  }
-
-  // Recommendation 5: cache disabled but available — fix the free win.
-  if (!resolved.cache_enabled && stats.total_calls > 5) {
-    recs.push({
-      knob: 'search.cache.enabled',
-      current: false,
-      suggested: true,
-      reason: 'Cache is disabled but mode bundles enable it by default. Cache is a free win (zero LLM cost, big latency drop on repeat queries).',
-      apply_command: 'gbrain config unset search.cache.enabled',
-    });
-  }
-
   if (json) {
     console.log(JSON.stringify({
       schema_version: 2,
-      status: recs.length === 0 ? 'no_recommendations' : 'has_recommendations',
-      total_calls: stats.total_calls,
-      cache_hit_rate: stats.cache_hit_rate,
-      active_mode: resolved.resolved_mode,
-      coverage: telemetryCoverage(),
+      status: report.status,
+      total_calls: report.total_calls,
+      cache_hit_rate: report.cache_hit_rate,
+      active_mode: report.active_mode,
+      coverage: report.coverage,
       recommendations: recs,
       applied: apply ? recs.map(r => r.apply_command) : [],
       _meta: {
@@ -473,7 +279,7 @@ async function runTuneSubcommand(engine: BrainEngine, args: string[]): Promise<v
     return;
   }
 
-  console.log(`Search tune (last 7 days, active mode: ${resolved.resolved_mode}):`);
+  console.log(`Search tune (last 7 days, active mode: ${report.active_mode}):`);
   console.log(`(${TELEMETRY_COVERAGE_CAVEAT})`);
   console.log('');
 
@@ -572,20 +378,9 @@ export async function runSearch(engine: BrainEngine, args: string[]): Promise<vo
   }
 }
 
-/**
- * `gbrain search modes` is read-only — no DB connection strictly required
- * for the bundle display IF the engine is given. The dispatch in cli.ts
- * adds 'search' to its dispatch table so the engine connects normally;
- * this export is here so future no-engine modes (e.g. `gbrain search --help`
- * without an engine) could route through it cleanly.
- */
 export const _exports_for_test = {
   buildModesReport,
   formatModesText,
   maybeApplyRecommendation,
   buildRevertCommand,
 };
-
-// Suppress unused-export TS warning — these are intentionally retained for
-// downstream callers (cli.ts dispatch / future skill linkage).
-void DEFAULT_SEARCH_MODE;

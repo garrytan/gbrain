@@ -56,6 +56,8 @@ fi
 
 cd "$(dirname "$0")/.."
 
+. scripts/lib/test-env.sh
+
 # Collect non-E2E, non-serial unit test files. Slow files INCLUDED — see
 # header comment. Local run-unit-shard.sh excludes slow files (different
 # policy by design).
@@ -72,7 +74,13 @@ cd "$(dirname "$0")/.."
 # total bounded. With 10 matrix shards the per-shard total drops to ~272s.
 # Dedicated jobs run in parallel so total CI wallclock = max(matrix ~4.5min,
 # slow-eval ~3.3min, slow-entity-resolve-perf ~2.6min) ≈ 4.5min.
-ALL_FILES=$(find test -name '*.test.ts' \
+# evals/ is included: its *.test.ts files (eval-harness unit tests) were
+# previously collected by NO runner — 45+ real tests never executed anywhere.
+# Every collected evals file must be KEYLESS (no API keys, no network) —
+# enforced by the allowlist guard in test/scripts/evals-collection.test.ts.
+# The local fast loop (run-unit-shard.sh) stays test-only by design (see
+# docs/TESTING.md "CI vs local: intentionally divergent file sets").
+ALL_FILES=$(find test evals -name '*.test.ts' \
   -not -name '*.serial.test.ts' \
   -not -name 'eval-longmemeval-e2e.slow.test.ts' \
   -not -name 'entity-resolve-perf.slow.test.ts' \
@@ -94,6 +102,12 @@ if [ "$DRY_RUN_LIST" = "1" ]; then
   exit 0
 fi
 
+# Snapshot fast-path (after the dry-run exit so list-only calls stay
+# instant): ~370 PGLite-booting matrix files pay ~3.1s cold init each
+# without it. The echo inside makes silent cold-init regressions visible
+# in CI logs.
+ensure_pglite_snapshot "test-shard"
+
 ALL_COUNT=$(printf '%s\n' "$ALL_FILES" | grep -c '^' || true)
 SHARD_COUNT=$(printf '%s\n' "$SHARD_FILES" | grep -c '^' || true)
 # grep -c on empty input returns 0 even with trailing newline edge cases
@@ -108,4 +122,37 @@ fi
 
 # Convert newline-separated file list to argv. xargs handles the
 # whitespace correctly without word-splitting on spaces in paths.
-printf '%s\n' "$SHARD_FILES" | xargs bun test --timeout=60000
+#
+# COVERAGE_DIR (opt-in): when set, run under bun's lcov coverage into
+# $COVERAGE_DIR/shard and write a lane manifest on success. xargs -x makes
+# an argv overflow FAIL LOUD instead of silently batching into a second bun
+# process — a second process reusing the same coverage dir OVERWRITES
+# lcov.info, silently losing the first batch's line data. BSD xargs only
+# accepts -x together with -n (GNU accepts both spellings), so we pass
+# -n 100000: far beyond any real shard's file count, it keeps everything in
+# ONE invocation while -x turns "args do not fit" into a hard error.
+# merge-lcov.ts's lcovCount!=1 manifest tripwire is the second line of
+# defense. When COVERAGE_DIR is empty/unset both arrays stay empty and the
+# exec line is byte-identical to the pre-coverage behavior.
+COVERAGE_ARGS=()
+XARGS_FLAGS=()
+if [ -n "${COVERAGE_DIR:-}" ]; then
+  COVERAGE_ARGS=(--coverage --coverage-reporter=lcov --coverage-dir="$COVERAGE_DIR/shard")
+  XARGS_FLAGS=(-n 100000 -x)
+fi
+# --max-concurrency mirrors the local runner: unbounded intra-process
+# concurrency under parallel PGLite boots produced real shard deaths (the
+# 22-minute matrix timeout in test.yml records 13 of them).
+rc=0
+printf '%s\n' "$SHARD_FILES" | xargs ${XARGS_FLAGS[@]+"${XARGS_FLAGS[@]}"} bun test --timeout=60000 --max-concurrency="${GBRAIN_TEST_MAX_CONCURRENCY:-4}" ${COVERAGE_ARGS[@]+"${COVERAGE_ARGS[@]}"} || rc=$?
+
+# Lane manifest: written ONLY on a fully green run (complete:true means the
+# lcov data represents the whole shard). The real exit code is preserved
+# either way. lcovCount != 1 downstream (merge-lcov.ts) means the xargs -x
+# tripwire logic above was defeated somehow — merge marks the run degraded.
+if [ -n "${COVERAGE_DIR:-}" ] && [ "$rc" -eq 0 ]; then
+  LCOV_COUNT=$(find "$COVERAGE_DIR" -name 'lcov.info' 2>/dev/null | grep -c '^' || true)
+  printf '{"lane":"shard-%s","sha":"%s","lcovCount":%s,"complete":true}\n' \
+    "$SHARD_INDEX" "$(git rev-parse HEAD)" "${LCOV_COUNT:-0}" > "$COVERAGE_DIR/lane-manifest.json"
+fi
+exit "$rc"

@@ -51,7 +51,7 @@ export interface AttachWorkspaceOptions {
   /** The gbrain home receiving the install receipt (default: configDir()). */
   gbrainHomeDir?: string;
   /** Target harness for the hooks/MCP steps' descriptions. */
-  harness?: 'claude-code' | 'codex';
+  harness?: 'claude-code' | 'codex' | 'opencode';
   /** Recorded as the receipt's created_by (the attaching binary's version). */
   createdBy?: string;
 }

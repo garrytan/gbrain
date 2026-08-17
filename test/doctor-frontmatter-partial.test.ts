@@ -15,13 +15,9 @@
  * codex D4 catch simplification.
  */
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'fs';
-import { join } from 'path';
+import { doctorSource } from './helpers/doctor-source.ts';
 
-const DOCTOR_SOURCE = readFileSync(
-  join(__dirname, '..', 'src', 'commands', 'doctor.ts'),
-  'utf8',
-);
+const DOCTOR_SOURCE = doctorSource();
 
 describe('doctor frontmatter_integrity — structural rendering (source-grep)', () => {
   test('source contains GBRAIN_DOCTOR_FM_TIMEOUT_MS handling', () => {

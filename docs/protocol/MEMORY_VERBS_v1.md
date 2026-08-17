@@ -69,6 +69,11 @@ codex mcp add gbrain -- gbrain serve --surface verbs
 grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- gbrain serve --surface verbs
 ```
 
+**opencode** (verify with `opencode mcp list` — the add is lazy, and list SPAWNS the server)
+```bash
+opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- gbrain serve --surface verbs
+```
+
 **OpenClaw / any stdio MCP host** — register the server command
 `gbrain serve --surface verbs`. Remote brains: `gbrain serve --http` on the
 host, then `gbrain connect https://host/mcp --token gbrain_xxx --install` on
@@ -77,8 +82,8 @@ each client.
 **Surface modes:** `--surface verbs` exposes EXACTLY the seven verbs —
 advertised list AND dispatch are filtered fail-closed (a hidden op returns
 `unknown_tool` even when called by name). `--surface starter` exposes the
-~26-op daily-driver set (`STARTER_OPS` in `src/mcp/surface.ts`): the seven
-verbs plus the daily brain-tool slice, the agent lane, `whoami`, and the
+~27-op daily-driver set (`STARTER_OPS` in `src/mcp/surface.ts`): the seven
+verbs plus the daily brain-tool slice, the agent lane, `whoami`, `capture`, and the
 `request_tools` discovery meta-op (re-derivable from production usage via
 `scripts/derive-starter-ops.ts`). Monotonic by construction: verbs ⊆ starter ⊆ full
 (pinned by test) — starter extends the ladder ABOVE verbs and never changes

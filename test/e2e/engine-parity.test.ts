@@ -740,9 +740,20 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     expect(pgRow.updated_at).toBeInstanceOf(Date);
 
     // markPagesExtractedBatch: stamp one → count drops to 2 on both.
-    const stampAt = new Date().toISOString();
-    await pgEngine.markPagesExtractedBatch([{ slug: 'sp/1', source_id: SRC }], stampAt);
-    await pgliteEngine.markPagesExtractedBatch([{ slug: 'sp/1', source_id: SRC }], stampAt);
+    // Stamp with the row's OWN updated_at_iso (per-ref extractedAt — the
+    // #1768/D4 production semantics used by extractStaleFromDB), NOT client
+    // `new Date()`: the test client's clock and the DB server's clock are
+    // different clocks (docker VM drift under load), so a client-now stamp can
+    // land before the row's server-side `updated_at`, leaving sp/1 flagged
+    // `updated_at > links_extracted_at` and the count stuck at 3.
+    for (const eng of [pgEngine, pgliteEngine]) {
+      const sp1 = (await eng.listStalePagesForExtraction({ batchSize: 10, sourceId: SRC }))
+        .find((r) => r.slug === 'sp/1')!;
+      await eng.markPagesExtractedBatch(
+        [{ slug: 'sp/1', source_id: SRC, extractedAt: sp1.updated_at_iso }],
+        sp1.updated_at_iso,
+      );
+    }
     expect(await pgEngine.countStalePagesForExtraction({ sourceId: SRC })).toBe(2);
     expect(await pgliteEngine.countStalePagesForExtraction({ sourceId: SRC })).toBe(2);
 
@@ -1219,6 +1230,72 @@ describeBoth('Engine parity — ambient recall keyset + session cursor (v0.45.7)
       expect(st!.standing_entities).toEqual(entities);
       expect(st!.surfaced_slugs).toEqual(['ks/tie-04']);
       expect(st!.last_wake_at).toBe(KS_LATE_TS);
+    }
+  });
+});
+
+// ── unscoped getPage deterministic multi-source tiebreak ─────────────────
+// The pre-fix behavior: unscoped getPage was `LIMIT 1` with no ORDER BY, so a
+// slug present in several sources returned an ARBITRARY row (and an
+// existence-check + write pair could target different sources). Both engines
+// now pin `ORDER BY (source_id = 'default') DESC, source_id ASC` —
+// default-source first, then stable alpha. Parity here catches either engine
+// dropping the clause.
+describeBoth('Engine parity — unscoped getPage multi-source tiebreak', () => {
+  let pgEngine: BrainEngine;
+  let pgliteEngine: PGLiteEngine;
+
+  beforeAll(async () => {
+    pgEngine = await setupDB();
+    pgliteEngine = new PGLiteEngine();
+    await pgliteEngine.connect({});
+    await pgliteEngine.initSchema();
+    for (const eng of [pgEngine, pgliteEngine]) {
+      for (const src of ['archive', 'work', 'zeta']) {
+        await eng.executeRaw(
+          `INSERT INTO sources (id, name, config) VALUES ($1, $1, '{}'::jsonb) ON CONFLICT (id) DO NOTHING`,
+          [src],
+        );
+      }
+      // Same slug in 'archive' AND 'default' — default must win even though
+      // 'archive' sorts first alphabetically.
+      await eng.putPage('tiebreak/with-default', {
+        type: 'note', title: 'archive row', compiled_truth: 'a', timeline: '',
+      }, { sourceId: 'archive' });
+      await eng.putPage('tiebreak/with-default', {
+        type: 'note', title: 'default row', compiled_truth: 'd', timeline: '',
+      }, { sourceId: 'default' });
+      // Same slug in 'work' AND 'zeta' only (no default row) — the
+      // alphabetically-first source wins.
+      await eng.putPage('tiebreak/no-default', {
+        type: 'note', title: 'work row', compiled_truth: 'w', timeline: '',
+      }, { sourceId: 'work' });
+      await eng.putPage('tiebreak/no-default', {
+        type: 'note', title: 'zeta row', compiled_truth: 'z', timeline: '',
+      }, { sourceId: 'zeta' });
+    }
+  }, 90_000);
+
+  afterAll(async () => {
+    await pgliteEngine.disconnect();
+    await teardownDB();
+  }, 30_000);
+
+  test('unscoped getPage prefers the default-source row on both engines', async () => {
+    for (const eng of [pgEngine, pgliteEngine]) {
+      const page = await eng.getPage('tiebreak/with-default');
+      expect(page).not.toBeNull();
+      expect(page!.source_id).toBe('default');
+      expect(page!.title).toBe('default row');
+    }
+  });
+
+  test('unscoped getPage falls back to the alphabetically-first source when no default row exists', async () => {
+    for (const eng of [pgEngine, pgliteEngine]) {
+      const page = await eng.getPage('tiebreak/no-default');
+      expect(page).not.toBeNull();
+      expect(page!.source_id).toBe('work');
+      expect(page!.title).toBe('work row');
     }
   });
 });

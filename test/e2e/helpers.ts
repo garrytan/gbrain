@@ -110,6 +110,26 @@ export async function setupDB(): Promise<PostgresEngine> {
     ON CONFLICT (key) DO NOTHING
   `);
 
+  // Reset leaked brain identity: `sources` is not in ALL_TABLES (the default
+  // row must survive), but rows/columns written by earlier files or runs
+  // persist. writeSyncAnchor's ownership guard (#3735) keys on
+  // sources.default.local_path — a stale value from another test makes every
+  // legacy-path performSync classify as first_sync forever. 42P01-tolerant
+  // like the TRUNCATE loop above.
+  try {
+    await conn.unsafe(`DELETE FROM sources WHERE id <> 'default'`);
+    // Only the sync-identity columns: local_path feeds writeSyncAnchor's
+    // ownership guard (#3735) and last_commit/last_sync_at feed first_sync
+    // classification. chunker_version is deliberately left alone — NULLing
+    // it flips extraction-staleness semantics for unrelated suites.
+    await conn.unsafe(
+      `UPDATE sources SET local_path = NULL, last_commit = NULL, last_sync_at = NULL WHERE id = 'default'`,
+    );
+  } catch (e: unknown) {
+    const code = (e as { code?: string })?.code;
+    if (code !== '42P01' && code !== '42703') throw e; // missing table/column on older schemas
+  }
+
   engine = new PostgresEngine();
   await engine.connect({ database_url: DATABASE_URL });
   // Apply MIGRATIONS via the engine path. db.initSchema above only runs the

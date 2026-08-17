@@ -130,7 +130,7 @@ export interface InstallReceipt {
    * corpus dir, …). Uninstall removes exactly these, nothing else. */
   created_paths: string[];
   /** Host registrations bootstrap performed (for marker-keyed removal). */
-  registrations: Array<{ host: 'claude-code' | 'codex'; scope: string; detail?: string }>;
+  registrations: Array<{ host: 'claude-code' | 'codex' | 'opencode'; scope: string; detail?: string }>;
 }
 
 export function receiptPath(gbrainHomeDir: string): string {
@@ -223,7 +223,7 @@ export type HarnessTargetKind = 'mcp' | 'permission' | 'hooks';
 export type HarnessTargetState = 'pending' | 'confirmed' | 'failed';
 
 export interface HarnessTarget {
-  host: 'claude-code' | 'codex';
+  host: 'claude-code' | 'codex' | 'opencode';
   kind: HarnessTargetKind;
   state: HarnessTargetState;
   /** user scope or a --project dir (hooks); user for mcp/permission. */

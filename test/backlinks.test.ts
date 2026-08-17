@@ -106,6 +106,286 @@ describe('findBacklinkGaps dedupe (v0.36.x #967 regression)', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// fixBacklinkGaps safety pipeline (frontmatter corruption incident regression)
+// ---------------------------------------------------------------------------
+
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync, readdirSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import {
+  fixBacklinkGaps,
+  insertTimelineEntry,
+  findBacklinkGaps,
+  type BacklinkGap,
+} from '../src/commands/backlinks.ts';
+import { frontmatterBodyOffset } from '../src/core/markdown.ts';
+import { acquirePageLock } from '../src/core/page-lock.ts';
+
+const fence = '---';
+
+function makeFixture(): { root: string; lockRoot: string; cleanup: () => void } {
+  const root = mkdtempSync(join(tmpdir(), 'gbrain-backlinks-fix-'));
+  const lockRoot = join(root, '.locks');
+  mkdirSync(join(root, 'people'));
+  mkdirSync(join(root, 'meetings'));
+  return { root, lockRoot, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+}
+
+function gapFor(target: string): BacklinkGap {
+  return {
+    sourcePage: 'meetings/standup.md',
+    targetPage: target,
+    entityName: 'Alice',
+    sourceTitle: 'Standup',
+  };
+}
+
+describe('frontmatterBodyOffset', () => {
+  test('no frontmatter → 0 (whole file is body)', () => {
+    expect(frontmatterBodyOffset('# Alice\n\nBody.')).toBe(0);
+  });
+
+  test('LF frontmatter → offset just after closing fence', () => {
+    const content = `${fence}\ntype: person\n${fence}\n# Alice\n`;
+    const off = frontmatterBodyOffset(content);
+    expect(content.slice(off)).toBe('# Alice\n');
+  });
+
+  test('CRLF fences count (trim semantics)', () => {
+    const content = `${fence}\r\ntype: person\r\n${fence}\r\n# Alice\r\n`;
+    const off = frontmatterBodyOffset(content);
+    expect(content.slice(off)).toBe('# Alice\r\n');
+  });
+
+  test('leading blank lines before the opener are allowed', () => {
+    const content = `\n\n${fence}\ntype: person\n${fence}\nBody`;
+    const off = frontmatterBodyOffset(content);
+    expect(content.slice(off)).toBe('Body');
+  });
+
+  test('unclosed fence → 0 (caller must pre-validate)', () => {
+    expect(frontmatterBodyOffset(`${fence}\ntype: person\n# Alice`)).toBe(0);
+  });
+
+  test('closing fence as final line without trailing newline', () => {
+    const content = `${fence}\ntype: person\n${fence}`;
+    expect(frontmatterBodyOffset(content)).toBe(content.length);
+  });
+});
+
+describe('insertTimelineEntry', () => {
+  test('never anchors on a "## Timeline" string inside frontmatter', () => {
+    // GUARD-DISTINGUISHING fixture (adversarial-review finding: a quoted
+    // `description: "## Timeline"` is never at line start, so the ^-anchored
+    // regex ignores it even WITHOUT the bodyStart slice — the old fixture
+    // couldn't detect a broken guard). A line-start `## Timeline` INSIDE the
+    // fence is valid YAML (a comment line) and matches the heading regex at
+    // offset 0 — only the bodyStart slice keeps the insertion out of the
+    // frontmatter.
+    const content = `${fence}\ntype: person\n## Timeline\ntitle: Alice\n${fence}\n# Alice\n\nBody text.\n`;
+    const bodyStart = frontmatterBodyOffset(content);
+    expect(bodyStart).toBeGreaterThan(0);
+    const out = insertTimelineEntry(content, bodyStart, '- new entry');
+    // Frontmatter bytes untouched — a broken guard would have inserted the
+    // entry into the YAML block right under the comment line.
+    expect(out.slice(0, bodyStart)).toBe(content.slice(0, bodyStart));
+    // No real body heading exists → a fresh section is appended at EOF.
+    expect(out.trimEnd().endsWith('- new entry')).toBe(true);
+    expect(out.indexOf('- new entry')).toBeGreaterThan(bodyStart);
+  });
+
+  test('### Timeline and ## Timeline (2026) near-misses do not match; fresh section appended', () => {
+    const content = `# Alice\n\n### Timeline\n\nsub\n\n## Timeline (2026)\n\nyear\n`;
+    const out = insertTimelineEntry(content, 0, '- entry');
+    expect(out).toContain('\n\n## Timeline\n\n- entry\n');
+    // near-miss sections untouched
+    expect(out).toContain('### Timeline\n\nsub');
+    expect(out).toContain('## Timeline (2026)\n\nyear');
+  });
+
+  test('two real ## Timeline headings → entry lands in the FIRST section', () => {
+    const content = `# Alice\n\n## Timeline\n\n- first section\n\n## Notes\n\nx\n\n## Timeline\n\n- second section\n`;
+    const out = insertTimelineEntry(content, 0, '- new');
+    const firstIdx = out.indexOf('- new');
+    expect(firstIdx).toBeGreaterThan(out.indexOf('- first section'));
+    expect(firstIdx).toBeLessThan(out.indexOf('## Notes'));
+  });
+
+  test('CRLF heading line matches', () => {
+    const content = `# Alice\r\n\r\n## Timeline\r\n\r\n- old\r\n\r\n## Notes\r\nx\r\n`;
+    const out = insertTimelineEntry(content, 0, '- new');
+    expect(out.indexOf('- new')).toBeGreaterThan(out.indexOf('- old'));
+    expect(out.indexOf('- new')).toBeLessThan(out.indexOf('## Notes'));
+  });
+
+  test('heading present, no next section → appended at trimmed EOF', () => {
+    const content = `# Alice\n\n## Timeline\n\n- old\n`;
+    const out = insertTimelineEntry(content, 0, '- new');
+    expect(out.endsWith('- old\n- new\n')).toBe(true);
+  });
+});
+
+describe('fixBacklinkGaps safety pipeline', () => {
+  test('valid frontmatter page: entry inserted, frontmatter byte-identical, no tmp residue', async () => {
+    const { root, lockRoot, cleanup } = makeFixture();
+    try {
+      const original = `${fence}\ntype: person\ntitle: Alice\n${fence}\n# Alice\n\n## Timeline\n\n- old\n`;
+      writeFileSync(join(root, 'people/alice.md'), original);
+      const outcome = await fixBacklinkGaps(root, [gapFor('people/alice.md')], false, { lockRoot });
+      expect(outcome.fixed).toBe(1);
+      expect(outcome.skipped).toHaveLength(0);
+      const after = readFileSync(join(root, 'people/alice.md'), 'utf-8');
+      const bodyStart = frontmatterBodyOffset(original);
+      expect(after.slice(0, bodyStart)).toBe(original.slice(0, bodyStart));
+      expect(after).toContain('Referenced in [Standup](../meetings/standup.md)');
+      expect(readdirSync(join(root, 'people')).filter(f => f.includes('.tmp.'))).toHaveLength(0);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('frontmatter-less legacy page stays fixable (MISSING_OPEN is not a blocker)', async () => {
+    const { root, lockRoot, cleanup } = makeFixture();
+    try {
+      writeFileSync(join(root, 'people/alice.md'), '# Alice\n');
+      const outcome = await fixBacklinkGaps(root, [gapFor('people/alice.md')], false, { lockRoot });
+      expect(outcome.fixed).toBe(1);
+      expect(outcome.skipped).toHaveLength(0);
+      const after = readFileSync(join(root, 'people/alice.md'), 'utf-8');
+      expect(after.startsWith('# Alice')).toBe(true);
+      expect(after).toContain('## Timeline');
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('pre-broken YAML fence (MISSING_CLOSE) → skipped, file byte-identical', async () => {
+    const { root, lockRoot, cleanup } = makeFixture();
+    try {
+      const broken = `${fence}\ntype: person\n# Alice heading glued into frontmatter\n`;
+      writeFileSync(join(root, 'people/alice.md'), broken);
+      const outcome = await fixBacklinkGaps(root, [gapFor('people/alice.md')], false, { lockRoot });
+      expect(outcome.fixed).toBe(0);
+      expect(outcome.skipped).toHaveLength(1);
+      expect(outcome.skipped[0].reason).toContain('MISSING_CLOSE');
+      expect(readFileSync(join(root, 'people/alice.md'), 'utf-8')).toBe(broken);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('incident regression: bullet can never land above the frontmatter fence', async () => {
+    const { root, lockRoot, cleanup } = makeFixture();
+    try {
+      // The incident shape: an entity page whose frontmatter carries a
+      // LINE-START `## Timeline` (a valid YAML comment — the
+      // guard-distinguishing form; a quoted mid-line mention can't detect a
+      // broken bodyStart guard) and whose body has no Timeline section yet.
+      const original = `${fence}\ntype: person\ntitle: Y Combinator\n## Timeline\nnotes: history below\n${fence}\n# Y Combinator\n\nBody text.\n`;
+      writeFileSync(join(root, 'people/alice.md'), original);
+      const outcome = await fixBacklinkGaps(root, [gapFor('people/alice.md')], false, { lockRoot });
+      expect(outcome.fixed).toBe(1);
+      const after = readFileSync(join(root, 'people/alice.md'), 'utf-8');
+      // Byte 0 is still the opening fence; frontmatter intact.
+      expect(after.startsWith(`${fence}\ntype: person`)).toBe(true);
+      const bodyStart = frontmatterBodyOffset(original);
+      expect(after.slice(0, bodyStart)).toBe(original.slice(0, bodyStart));
+      // Entry landed in a fresh body section, below the fence.
+      expect(after.indexOf('Referenced in')).toBeGreaterThan(bodyStart);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('dryRun counts fixes but writes nothing', async () => {
+    const { root, lockRoot, cleanup } = makeFixture();
+    try {
+      const original = `${fence}\ntype: person\n${fence}\n# Alice\n`;
+      writeFileSync(join(root, 'people/alice.md'), original);
+      const outcome = await fixBacklinkGaps(root, [gapFor('people/alice.md')], true, { lockRoot });
+      expect(outcome.fixed).toBe(1);
+      expect(readFileSync(join(root, 'people/alice.md'), 'utf-8')).toBe(original);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('held page lock → that file skipped with a reason, others still fixed', async () => {
+    const { root, lockRoot, cleanup } = makeFixture();
+    try {
+      writeFileSync(join(root, 'people/alice.md'), `${fence}\ntype: person\n${fence}\n# Alice\n`);
+      writeFileSync(join(root, 'people/bob.md'), `${fence}\ntype: person\n${fence}\n# Bob\n`);
+      const held = await acquirePageLock('people/alice', { lockRoot });
+      expect(held).not.toBeNull();
+      try {
+        const outcome = await fixBacklinkGaps(
+          root,
+          [gapFor('people/alice.md'), gapFor('people/bob.md')],
+          false,
+          { lockRoot },
+        );
+        expect(outcome.fixed).toBe(1); // bob only
+        expect(outcome.skipped).toHaveLength(1);
+        expect(outcome.skipped[0].page).toBe('people/alice.md');
+        expect(outcome.skipped[0].reason).toContain('lock');
+      } finally {
+        await held!.release();
+      }
+    } finally {
+      cleanup();
+    }
+  }, 15_000);
+
+  test('frontmatter-only page (empty body) gets a section appended after the fence', async () => {
+    const { root, lockRoot, cleanup } = makeFixture();
+    try {
+      const original = `${fence}\ntype: person\ntitle: Alice\n${fence}\n`;
+      writeFileSync(join(root, 'people/alice.md'), original);
+      const outcome = await fixBacklinkGaps(root, [gapFor('people/alice.md')], false, { lockRoot });
+      expect(outcome.fixed).toBe(1);
+      const after = readFileSync(join(root, 'people/alice.md'), 'utf-8');
+      const bodyStart = frontmatterBodyOffset(original);
+      expect(after.slice(0, bodyStart)).toBe(original.slice(0, bodyStart));
+      expect(after.slice(bodyStart)).toContain('## Timeline');
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('two gaps from different source pages batch into one target write: fixed=2, both bullets under Timeline', async () => {
+    const { root, lockRoot, cleanup } = makeFixture();
+    try {
+      const original = `${fence}\ntype: person\ntitle: Alice\n${fence}\n# Alice\n\n## Timeline\n\n- old\n`;
+      writeFileSync(join(root, 'people/alice.md'), original);
+      const gaps: BacklinkGap[] = [
+        { sourcePage: 'meetings/standup.md', targetPage: 'people/alice.md', entityName: 'Alice', sourceTitle: 'Standup' },
+        { sourcePage: 'meetings/retro.md', targetPage: 'people/alice.md', entityName: 'Alice', sourceTitle: 'Retro' },
+      ];
+      const outcome = await fixBacklinkGaps(root, gaps, false, { lockRoot });
+      expect(outcome.fixed).toBe(2);
+      expect(outcome.skipped).toHaveLength(0);
+      const after = readFileSync(join(root, 'people/alice.md'), 'utf-8');
+      // Frontmatter byte-identical.
+      const bodyStart = frontmatterBodyOffset(original);
+      expect(after.slice(0, bodyStart)).toBe(original.slice(0, bodyStart));
+      // Both bullets present, and both land BELOW the Timeline heading.
+      const headingIdx = after.indexOf('## Timeline');
+      expect(headingIdx).toBeGreaterThan(bodyStart);
+      const standupIdx = after.indexOf('Referenced in [Standup](../meetings/standup.md)');
+      const retroIdx = after.indexOf('Referenced in [Retro](../meetings/retro.md)');
+      expect(standupIdx).toBeGreaterThan(headingIdx);
+      expect(retroIdx).toBeGreaterThan(headingIdx);
+      // Exactly one Timeline section — the second gap must not mint a new one.
+      expect(after.match(/^## Timeline$/gm)).toHaveLength(1);
+      // No tmp residue from the atomic-write pipeline.
+      expect(readdirSync(join(root, 'people')).filter(f => f.includes('.tmp.'))).toHaveLength(0);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
 describe('parseBacklinksArgs', () => {
   test('uses positional dir for check and fix subcommands', () => {
     expect(parseBacklinksArgs(['check', '/tmp/brain']).brainDir).toBe('/tmp/brain');

@@ -123,6 +123,12 @@ export async function pickProvider(opts: PickProviderOpts): Promise<PickedProvid
   const all = listRecipes();
   let ready = readyRecipesForTouchpoint(all, opts.touchpoint, env);
 
+  // v0.46.3: never OFFER a provider whose hosted API has an announced shutdown
+  // (recipe.sunset) — a fresh install must not be steered onto a dying
+  // provider. Explicit --embedding-model still works (with a loud warning)
+  // until the removal release.
+  ready = ready.filter((r) => !r.sunset);
+
   // Probe-gate the ollama daemon: `envReady` treats no-key-required as
   // ready, but daemon-up ≠ model-pulled — the exact trap that let a keyless
   // Enter "choose" a broken ollama config and continue silently degraded.
@@ -179,7 +185,9 @@ export async function pickProvider(opts: PickProviderOpts): Promise<PickedProvid
       label += `  (${tp.default_dims}d)`;
     }
     if (tp && 'models' in tp && Array.isArray(tp.models) && tp.models.length > 0) {
-      label += `  ${tp.models[0]}`;
+      // v0.46.3: show the canonical model (default_model), not array position —
+      // the displayed row must match what a pick actually selects.
+      label += `  ${('default_model' in tp && tp.default_model) || tp.models[0]}`;
     }
     const hint = localHints.get(r.id);
     if (hint) label += `  [${hint}]`;
@@ -215,9 +223,10 @@ export async function pickProvider(opts: PickProviderOpts): Promise<PickedProvid
   const tp = picked.touchpoints[opts.touchpoint];
   if (!tp) return null;
 
-  // Pick first model in the recipe's list (callers can override via flag).
+  // v0.46.3: pick the recipe's canonical model (default_model), falling back to
+  // array position (callers can override via flag).
   const modelId = ('models' in tp && Array.isArray(tp.models) && tp.models.length > 0)
-    ? tp.models[0]
+    ? (('default_model' in tp && tp.default_model) || tp.models[0])
     : '';
   if (!modelId) {
     writeStderr(`\nRecipe "${picked.id}" declares no models for ${opts.touchpoint}. Aborting.\n`);

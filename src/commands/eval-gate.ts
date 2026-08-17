@@ -40,7 +40,7 @@ import {
   parseQrelsFile,
   type QrelsFile,
 } from '../core/bench/qrels-file.ts';
-import { runCorrectnessGate, type CorrectnessResult } from '../core/bench/correctness-gate.ts';
+import { runCorrectnessGate, type CorrectnessGateOpts, type CorrectnessResult } from '../core/bench/correctness-gate.ts';
 import { replayCore, type ReplaySummary } from './eval-replay.ts';
 
 interface GateOpts {
@@ -55,6 +55,18 @@ interface GateOpts {
   thresholdRecallAtK?: number;
   thresholdFirstRelevantHit?: number;
   thresholdExpectedTop1?: number;
+  /**
+   * Hermetic embedder selector. The only accepted value is 'deterministic':
+   * query embeddings come from the qrels fixture's basis-vector dims
+   * (src/eval/deterministic-embed.ts) instead of the gateway, so the
+   * correctness gate runs with no API keys. Correctness-gate-only; rejected
+   * when combined with the baseline regression gate (replay re-embeds
+   * captured queries via the gateway). Cache safety: this path drives bare
+   * `hybridSearch`, which never reads or writes the semantic query cache
+   * (both live in `hybridSearchCached`), so deterministic runs cannot
+   * poison cached production results by construction.
+   */
+  embedder?: string;
 }
 
 interface Breach {
@@ -139,6 +151,10 @@ function parseArgs(args: string[]): GateOpts {
         opts.thresholdExpectedTop1 = Number(next);
         i++;
         break;
+      case '--embedder':
+        opts.embedder = next;
+        i++;
+        break;
       default:
         break;
     }
@@ -168,6 +184,13 @@ Thresholds (override baseline metadata; CLI > embedded > defaults):
                                      Correctness: first-relevant-hit-rate floor (default ${DEFAULT_QRELS_THRESHOLDS.first_relevant_hit})
   --threshold-expected-top1 FLOAT    Correctness: expected_top1-hit-rate floor (default ${DEFAULT_QRELS_THRESHOLDS.expected_top1})
   -k, --k N                          Top-K for recall@K (default ${DEFAULT_QRELS_THRESHOLDS.k})
+
+Hermetic mode (correctness gate only):
+  --embedder deterministic           Embed queries as the qrels fixture's basis
+                                     vectors instead of calling the gateway —
+                                     no API keys, fully reproducible (eval
+                                     canaries/CI). Rejected together with the
+                                     baseline regression gate.
 
 Output:
   --json                       Print JSON envelope to stdout
@@ -286,6 +309,7 @@ function runCorrectnessGateDispatch(
   qrelsPath: string,
   k: number,
   cliOverrides: Pick<GateOpts, 'thresholdRecallAtK' | 'thresholdFirstRelevantHit' | 'thresholdExpectedTop1'>,
+  searchFn?: CorrectnessGateOpts['searchFn'],
 ): Promise<GateResult['correctness_gate']> {
   return (async () => {
     let qrelsFile: QrelsFile;
@@ -312,7 +336,7 @@ function runCorrectnessGateDispatch(
 
     let result: CorrectnessResult;
     try {
-      result = await runCorrectnessGate(engine, qrelsFile, { k });
+      result = await runCorrectnessGate(engine, qrelsFile, { k, ...(searchFn ? { searchFn } : {}) });
     } catch (err) {
       return {
         ran: true,
@@ -448,6 +472,29 @@ export async function runEvalGate(engine: BrainEngine, args: string[]): Promise<
     process.exit(2);
   }
 
+  // Hermetic embedder validation. Only 'deterministic' is supported; the
+  // regression gate is out of scope (replay re-embeds captured queries via
+  // the gateway, which needs a provider key — defeating the hermetic point).
+  if (opts.embedder !== undefined) {
+    if (opts.embedder !== 'deterministic') {
+      console.error(
+        `Error: unsupported embedder "${opts.embedder}" — the only supported value is "deterministic".`,
+      );
+      process.exit(2);
+    }
+    if (opts.baseline) {
+      console.error(
+        'Error: the deterministic embedder cannot be combined with the baseline regression gate ' +
+        '(replay re-embeds captured queries via the gateway). Use it with the qrels correctness gate only.',
+      );
+      process.exit(2);
+    }
+    if (!opts.qrels) {
+      console.error('Error: the deterministic embedder requires a qrels file.');
+      process.exit(2);
+    }
+  }
+
   const result: GateResult = {
     schema_version: 1,
     verdict: 'pass',
@@ -468,11 +515,35 @@ export async function runEvalGate(engine: BrainEngine, args: string[]): Promise<
 
   if (opts.qrels) {
     const k = opts.k ?? DEFAULT_QRELS_THRESHOLDS.k;
+
+    // Deterministic embedder: build a searchFn that threads basis-vector
+    // query embeddings (derived from the qrels fixture itself) into bare
+    // hybridSearch via the queryEmbedFn seam. The rest of the pipeline
+    // (keyword/title/alias arms, RRF, boosts) runs exactly as production.
+    let deterministicSearchFn: CorrectnessGateOpts['searchFn'] | undefined;
+    if (opts.embedder === 'deterministic') {
+      let queryEmbedFn: (text: string) => Float32Array;
+      try {
+        const { buildQrelsQueryEmbedFn } = await import('../eval/deterministic-embed.ts');
+        queryEmbedFn = buildQrelsQueryEmbedFn(readFileSync(opts.qrels, 'utf-8'));
+      } catch (err) {
+        console.error(
+          `Error: could not build the deterministic embedder from ${opts.qrels}: ${(err as Error).message}`,
+        );
+        process.exit(2);
+      }
+      const { hybridSearch } = await import('../core/search/hybrid.ts');
+      deterministicSearchFn = async (e, q, o) => {
+        const results = await hybridSearch(e, q, { limit: o.limit, queryEmbedFn });
+        return results.map(r => ({ source_id: r.source_id, slug: r.slug }));
+      };
+    }
+
     result.correctness_gate = await runCorrectnessGateDispatch(engine, opts.qrels, k, {
       thresholdRecallAtK: opts.thresholdRecallAtK,
       thresholdFirstRelevantHit: opts.thresholdFirstRelevantHit,
       thresholdExpectedTop1: opts.thresholdExpectedTop1,
-    });
+    }, deterministicSearchFn);
     if (result.correctness_gate.breaches && result.correctness_gate.breaches.length > 0) {
       result.verdict = 'fail';
     }

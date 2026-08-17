@@ -171,8 +171,10 @@ describe('ingestion roundtrip — inbox-folder → daemon → ingest_capture →
     expect(fetched?.compiled_truth).toContain('full e2e flow');
 
     // File was archived after ingestion (the inbox-folder source's
-    // post-emit archive step).
-    expect(fs.existsSync(captured)).toBe(false);
+    // post-emit archive step). The archive (mkdir+rename) runs ASYNC
+    // relative to the dispatch that satisfied the waits above — emit is
+    // fire-and-forget — so poll rather than asserting immediately.
+    await waitFor(() => !fs.existsSync(captured));
     const archiveDate = new Date().toISOString().slice(0, 10);
     expect(fs.existsSync(path.join(inboxDir, '.archived', archiveDate, 'roundtrip.md'))).toBe(true);
 

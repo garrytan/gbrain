@@ -82,3 +82,20 @@ describe('formatJobDetail timeout/deadline lines', () => {
     expect(out).toContain('null-default wall-clock sweep applies');
   });
 });
+
+describe('lock lease rendering (#4145)', () => {
+  test('stamped row value renders with the cadence note', () => {
+    const out = formatJobDetail(job({ lock_duration_ms: 120000 }));
+    expect(out).toContain('Lock lease: 120000ms (renewed at min(lease/2, 60s) cadence)');
+  });
+
+  test('unset lease on a mapped handler renders the claim-time default', () => {
+    const out = formatJobDetail(job({ name: 'subagent', lock_duration_ms: null }));
+    expect(out).toContain('Lock lease: (unset) — handler default 300000ms stamps at claim');
+  });
+
+  test('unset lease on an unmapped handler renders no lease line (worker default applies)', () => {
+    const out = formatJobDetail(job({ name: 'sync', lock_duration_ms: null }));
+    expect(out).not.toContain('Lock lease:');
+  });
+});

@@ -6,7 +6,7 @@
 > that `gbrain upgrade` / `gbrain post-upgrade` route through), plus
 > `CHANGELOG.md` for what each release changed. Use this file only to catch a
 > long-diverged fork up through the versions it covers; for anything after
-> v0.36.5.0, walk the migration files and CHANGELOG instead.
+> v0.36.5.0, walk the migration files and CHANGELOG instead. Time-critical example: the ZeroEntropy shutdown (2026-09-04) — every fork still embedding or reranking through `zeroentropyai:*` must run `skills/migrations/v0.46.3.0.md` before that date.
 
 GBrain ships skills in `skills/`. Downstream agents (custom OpenClaw deployments,
 agent forks of any kind) often **copy** these skill files into their own workspace and

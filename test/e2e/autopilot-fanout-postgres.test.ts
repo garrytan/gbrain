@@ -217,7 +217,7 @@ describeIfDB('autopilot fan-out — Postgres E2E', () => {
     // expired-lock active must NOT suppress (wedge detectors stay fed):
     // the next slot INSERTS a fresh waiting row.
     await engine.executeRaw(
-      `UPDATE minion_jobs SET lock_until = now() - interval '1 second'
+      `UPDATE minion_jobs SET lock_until = now() - interval '30 seconds'
         WHERE id = $1`, [claimed!.id],
     );
     const r2 = await dispatchPerSource(engine, queue, mkOpts('rl-slot-2'));

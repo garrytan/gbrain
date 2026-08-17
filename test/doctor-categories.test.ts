@@ -15,6 +15,7 @@
 import { describe, test, expect, beforeEach } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { doctorSource } from './helpers/doctor-source.ts';
 import {
   BRAIN_CHECK_NAMES,
   SKILL_CHECK_NAMES,
@@ -24,14 +25,14 @@ import {
   _resetUnknownCheckWarningsForTest,
 } from '../src/core/doctor-categories.ts';
 
-const DOCTOR_TS_PATH = join(import.meta.dir, '..', 'src', 'commands', 'doctor.ts');
 const ONBOARD_CHECKS_TS_PATH = join(import.meta.dir, '..', 'src', 'core', 'onboard', 'checks.ts');
-const CHECK_SOURCE_PATHS = [DOCTOR_TS_PATH, ONBOARD_CHECKS_TS_PATH];
 
 function enumerateCheckNames(): Set<string> {
   const names = new Set<string>();
-  for (const path of CHECK_SOURCE_PATHS) {
-    const source = readFileSync(path, 'utf-8');
+  // doctorSource() spans the whole doctor surface (façade + every peeled
+  // src/commands/doctor/ module) so the name scan can't go blind on a peel.
+  const checkSources = [doctorSource(), readFileSync(ONBOARD_CHECKS_TS_PATH, 'utf-8')];
+  for (const source of checkSources) {
     // 1) Inline object-literal form: `{ name: 'foo', ... }`.
     for (const m of source.matchAll(/name:\s*['"]([a-z][a-z0-9_]+)['"]/g)) {
       names.add(m[1]);

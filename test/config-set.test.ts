@@ -82,6 +82,14 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('zeroentropy_api_key');
   });
 
+  test('registers the provider_sunset suppression key (v0.46.3 documented command)', () => {
+    // doctor.ts + docs/guides/embedding-migration.md both document
+    // `gbrain config set doctor.suppress_provider_sunset true`; the key must
+    // be registered or the documented command exits 1 with "Unknown config
+    // key". Exact key, deliberately not a 'doctor.' prefix.
+    expect(KNOWN_CONFIG_KEYS).toContain('doctor.suppress_provider_sunset');
+  });
+
   test('registers only the live conversation-parser fallback key', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('conversation_parser.llm_fallback_enabled');
     expect(KNOWN_CONFIG_KEY_PREFIXES).not.toContain('conversation_parser.');

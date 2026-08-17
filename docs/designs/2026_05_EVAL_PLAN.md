@@ -1,5 +1,7 @@
 # Embedder Shootout — May 2026 Eval Plan
 
+> **Historical note:** this plan predates the ZeroEntropy hosted-API sunset (2026-09-04); the ZeroEntropy cells below are historical.
+
 **Status:** approved, ready to execute
 **Owner:** Garry
 **Plan source:** `~/.claude/plans/system-instruction-you-are-working-linear-origami.md` (review log)
@@ -219,15 +221,19 @@ Wire the harness to drive 3 embedding providers via the newly-exposed gbrain gat
 ```
 
 ### Smoke verification (run manually before opening PR)
+
+> (Historical: the two `zeroentropyai:` commands below stop passing after
+> 2026-09-04 — do not run them. Only the non-ZE smokes remain runnable.)
+
 ```bash
 bun run eval:smoke -- --embedder openai:text-embedding-3-large --dim 1536
 bun run eval:smoke -- --embedder voyage:voyage-4-large --dim 2048
-bun run eval:smoke -- --embedder zeroentropyai:zembed-1 --dim 2560
-bun run eval:smoke -- --embedder zeroentropyai:zembed-1 --dim 2560 --reranker zeroentropyai:zerank-2
+bun run eval:smoke -- --embedder zeroentropyai:zembed-1 --dim 2560                                       # historical
+bun run eval:smoke -- --embedder zeroentropyai:zembed-1 --dim 2560 --reranker zeroentropyai:zerank-2     # historical
 ```
 
-All four MUST exit 0. Reports should print the observed vector dim, matching the
-configured dim.
+The two non-ZE smokes MUST exit 0 (the ZE pair did at the time). Reports
+should print the observed vector dim, matching the configured dim.
 
 ### Open PR β
 ```bash

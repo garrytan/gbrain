@@ -80,8 +80,11 @@ describe('provider_sunset — doctor flags brains pinned to a sunsetting provide
     // date-branch in the frozen-clock describe below — this test runs on the
     // real clock, so it only asserts date-independent structure.)
     expect(sunset!.message).toContain(ZEROENTROPY_SUNSET_DATE);
-    // Paste-ready migration command with the brain's ACTUAL column width.
-    expect(sunset!.message).toContain('gbrain migrate embeddings --to <provider:model> --dim 1280');
+    // v0.46.3: paste-ready TARGET-AWARE migration commands — voyage at its valid
+    // 1024 width (1280 is not a Voyage step) + the OpenAI keep-width
+    // alternative carrying the brain's ACTUAL column width.
+    expect(sunset!.message).toContain('gbrain migrate embeddings --to voyage:voyage-4 --dim 1024');
+    expect(sunset!.message).toContain('openai:text-embedding-3-small --dim 1280');
     // The self-host escape hatch gets equal billing (no migration at all).
     expect(sunset!.message).toContain('Apache-2.0');
   });
@@ -99,6 +102,9 @@ describe('provider_sunset — doctor flags brains pinned to a sunsetting provide
       });
       const check = await checkProviderSunset(engine);
       expect(FLAGGED).toContain(check.status);
+      // v0.46.3 target-aware hint: the OpenAI keep-width alternative carries the
+      // ACTUAL width (640), never the drifted config value (1280); the voyage
+      // headline is always at its valid 1024 step.
       expect(check.message).toContain('--dim 640');
       expect(check.message).not.toContain('--dim 1280');
     } finally {

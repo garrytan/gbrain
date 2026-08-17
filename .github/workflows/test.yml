@@ -91,16 +91,24 @@ jobs:
       # now enforces a paid GITLEAKS_LICENSE (fails the job with "missing
       # gitleaks license" for accounts it can't validate). The CLI is free, uses
       # the committed .gitleaks.toml allowlist, and scans the same commit range.
+      - name: Cache gitleaks tarball
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: /tmp/gitleaks-dl
+          key: gitleaks-8.30.1-linux-x64
       - name: Install gitleaks (pinned + checksum-verified)
         run: |
           set -euo pipefail
           VER=8.30.1
           BASE="gitleaks_${VER}_linux_x64.tar.gz"
           URL="https://github.com/gitleaks/gitleaks/releases/download/v${VER}"
-          curl -fsSL -o "/tmp/${BASE}" "${URL}/${BASE}"
+          mkdir -p /tmp/gitleaks-dl
+          [ -f "/tmp/gitleaks-dl/${BASE}" ] || curl -fsSL -o "/tmp/gitleaks-dl/${BASE}" "${URL}/${BASE}"
+          # Checksums fetched fresh EVERY run: a cache-restored tarball is
+          # re-verified against the published digest, never trusted.
           curl -fsSL -o /tmp/gitleaks_checksums.txt "${URL}/gitleaks_${VER}_checksums.txt"
-          ( cd /tmp && grep " ${BASE}\$" gitleaks_checksums.txt | sha256sum -c - )
-          tar -xzf "/tmp/${BASE}" -C /tmp gitleaks
+          ( cd /tmp/gitleaks-dl && grep " ${BASE}\$" /tmp/gitleaks_checksums.txt | sha256sum -c - )
+          tar -xzf "/tmp/gitleaks-dl/${BASE}" -C /tmp gitleaks
           install /tmp/gitleaks /usr/local/bin/gitleaks
           gitleaks version
       - name: Scan for secrets (gitleaks CLI, .gitleaks.toml)
@@ -134,11 +142,25 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.3.13
+      # This job is the ONE designated saver of the bun cache (the others
+      # restore-only, so 5 redundant post-job save attempts disappear).
+      # admin/bun.lock is in the key because verify's check:admin-build
+      # installs from it.
       - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: ~/.bun/install/cache
-          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-      - run: bun install
+          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock', 'admin/bun.lock') }}
+          restore-keys: bun-cache-${{ runner.os }}-
+      # verify's runner sources test-env.sh and builds the snapshot for its
+      # PGLite-booting eval checks — restore the cache so it's the ~40ms
+      # freshness check, not a cold build ahead of all ~47 checks.
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: |
+            test/fixtures/pglite-snapshot.tar
+            test/fixtures/pglite-snapshot.version
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+      - run: bun install --frozen-lockfile
       - run: bun run verify
       # Guard: no bare `bun test` in workflows/scripts — bun ignores
       # bunfig.toml's timeout, and hooks (beforeAll/afterAll) get the 5s
@@ -147,10 +169,11 @@ jobs:
       - run: bash scripts/check-bun-test-timeout.sh
 
   serial-tests:
-    # *.serial.test.ts at --max-concurrency=1. Lives in its own runner so
-    # the matrix shards aren't carrying the serial-pass tail (the old shape
-    # stuffed this into `test (1)` after the matrix work, which compounded
-    # shard 1's overload).
+    # *.serial.test.ts — one bun process per file (module-registry isolation),
+    # POOLED across files by scripts/run-serial-tests.sh (was strictly
+    # sequential: an 8.5-minute job whose serialization the quarantine
+    # contract never required). Lives in its own runner so the matrix shards
+    # aren't carrying the serial tail.
     needs: cache-check
     if: needs.cache-check.outputs.hit != 'true'
     runs-on: ubuntu-latest
@@ -160,12 +183,39 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.3.13
-      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: ~/.bun/install/cache
           key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-      - run: bun install
+          restore-keys: bun-cache-${{ runner.os }}-
+      # PGLite schema snapshot (~42MB): the runner builds it when absent or
+      # stale (its runtime hash is authoritative — a stale restore is rebuilt,
+      # never trusted). Cached so the build is paid once per schema change,
+      # not once per job per run. This job SAVES; verify + matrix + slow jobs
+      # restore-only. The key is an approximation on purpose: it only has to
+      # be a superset-trigger of real schema changes.
+      # KEY HAS 5 HOMES in this file (this save + 4 restores: verify, matrix,
+      # slow-eval, slow-perf) — edit all together, or drift shows up only as
+      # silent rebuild cost.
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: |
+            test/fixtures/pglite-snapshot.tar
+            test/fixtures/pglite-snapshot.version
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+      - run: bun install --frozen-lockfile
       - run: bun run test:serial
+        env:
+          COVERAGE_DIR: ${{ runner.temp }}/coverage
+      - name: Upload coverage (serial lane)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: coverage-serial
+          path: ${{ runner.temp }}/coverage
+          retention-days: 14
+          if-no-files-found: ignore
+          overwrite: true
 
   slow-eval-longmemeval:
     # Dedicated runner for the LongMemEval end-to-end test file. The file
@@ -185,12 +235,35 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.3.13
-      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: ~/.bun/install/cache
           key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-      - run: bun install
-      - run: bun test test/eval-longmemeval-e2e.slow.test.ts --timeout=60000
+          restore-keys: bun-cache-${{ runner.os }}-
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: |
+            test/fixtures/pglite-snapshot.tar
+            test/fixtures/pglite-snapshot.version
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+      - run: bun install --frozen-lockfile
+      - name: Ensure PGLite snapshot (build-or-validate, non-fatal)
+        run: bash -c '. scripts/lib/test-env.sh && ensure_pglite_snapshot slow-eval && echo "GBRAIN_PGLITE_SNAPSHOT=${GBRAIN_PGLITE_SNAPSHOT:-}" >> "$GITHUB_ENV"'
+      - run: bun test test/eval-longmemeval-e2e.slow.test.ts --timeout=60000 --coverage --coverage-reporter=lcov --coverage-dir=${{ runner.temp }}/coverage/sloweval
+      - name: Write coverage lane manifest
+        run: |
+          printf '{"lane":"sloweval","sha":"%s","lcovCount":%s,"complete":true}\n' \
+            "$GITHUB_SHA" "$(find "$RUNNER_TEMP/coverage" -name lcov.info | wc -l | tr -d ' ')" \
+            > "$RUNNER_TEMP/coverage/lane-manifest.json"
+      - name: Upload coverage (slow-eval lane)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: coverage-sloweval
+          path: ${{ runner.temp }}/coverage
+          retention-days: 14
+          if-no-files-found: ignore
+          overwrite: true
 
   brainbench:
     # BrainBench memory-conformance gate (Cathedral 2). Hermetic: in-memory
@@ -206,16 +279,19 @@ jobs:
     timeout-minutes: 10  # ~15s hermetic run; matches the per-job-timeout hardening (#2254)
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
-        with:
-          fetch-depth: 0  # the gate needs origin/master's baseline
+      - name: Fetch origin/master baseline ref (shallow)
+        # The gate reads ONE file via `git show origin/master:...` — a depth-1
+        # fetch of the master ref replaces the previous full 3700-commit clone.
+        run: git fetch --no-tags --depth=1 origin +refs/heads/master:refs/remotes/origin/master
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.3.13
-      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: ~/.bun/install/cache
           key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-      - run: bun install
+          restore-keys: bun-cache-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
       - run: bash scripts/ci-brainbench-gate.sh
         env:
           BRAINBENCH_OUT: ${{ runner.temp }}/brainbench-result.json
@@ -242,16 +318,41 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.3.13
-      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: ~/.bun/install/cache
           key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-      - run: bun install
-      - run: bun test test/entity-resolve-perf.slow.test.ts --timeout=300000
+          restore-keys: bun-cache-${{ runner.os }}-
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: |
+            test/fixtures/pglite-snapshot.tar
+            test/fixtures/pglite-snapshot.version
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+      - run: bun install --frozen-lockfile
+      - name: Ensure PGLite snapshot (build-or-validate, non-fatal)
+        run: bash -c '. scripts/lib/test-env.sh && ensure_pglite_snapshot slow-perf && echo "GBRAIN_PGLITE_SNAPSHOT=${GBRAIN_PGLITE_SNAPSHOT:-}" >> "$GITHUB_ENV"'
+      # Two bun processes: each needs its own coverage dir (a reused dir is
+      # silently overwritten by the second process).
+      - run: bun test test/entity-resolve-perf.slow.test.ts --timeout=300000 --coverage --coverage-reporter=lcov --coverage-dir=${{ runner.temp }}/coverage/perf-a
       # MEMORY_VERBS v1 (Cathedral 1): the entity() p99 < 100ms contract gate
       # (20K-page corpus + ratio guard) shares this runner — same perf-job
       # shape, runs in parallel with the matrix.
-      - run: bun test test/entity-card-perf.slow.test.ts --timeout=300000
+      - run: bun test test/entity-card-perf.slow.test.ts --timeout=300000 --coverage --coverage-reporter=lcov --coverage-dir=${{ runner.temp }}/coverage/perf-b
+      - name: Write coverage lane manifest
+        run: |
+          printf '{"lane":"slowperf","sha":"%s","lcovCount":%s,"complete":true}\n' \
+            "$GITHUB_SHA" "$(find "$RUNNER_TEMP/coverage" -name lcov.info | wc -l | tr -d ' ')" \
+            > "$RUNNER_TEMP/coverage/lane-manifest.json"
+      - name: Upload coverage (slow-perf lane)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: coverage-slowperf
+          path: ${{ runner.temp }}/coverage
+          retention-days: 14
+          if-no-files-found: ignore
+          overwrite: true
       # Protocol self-certification: init a scratch brain and run the
       # conformance kit against gbrain's own stdio server. --synthesize is
       # safe here: no LLM key in CI, so it asserts the clean `unavailable`
@@ -299,13 +400,100 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.3.13
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-cache-${{ runner.os }}-
+      # Restore-only: test-shard.sh validates the snapshot's runtime hash and
+      # rebuilds when stale (the serial-tests job is the designated saver).
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: |
+            test/fixtures/pglite-snapshot.tar
+            test/fixtures/pglite-snapshot.version
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+      - run: bun install --frozen-lockfile
+      - name: Run test shard ${{ matrix.shard }}/10
+        run: scripts/test-shard.sh ${{ matrix.shard }} 10
+        env:
+          COVERAGE_DIR: ${{ runner.temp }}/coverage
+      - name: Upload coverage (shard lane)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: coverage-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/coverage
+          retention-days: 14
+          if-no-files-found: ignore
+          overwrite: true
+
+  # ──────────────────────────────────────────────────────────────────────
+  # coverage-report: merges the PR corpus (10 shards + serial + 2 slow
+  # lanes) into one honest number, renders it to the step summary, and runs
+  # the diff + baseline gates in report-only mode (COVERAGE_GATE_ENFORCE=0).
+  # ADVISORY during the report-only window: deliberately NOT in test-status's
+  # required set or cache-write's needs — a coverage infra flake must not
+  # redden branch protection or block the ci-pass marker until the gate
+  # graduates (the graduation PR adds it to both and flips ENFORCE).
+  # `always()` is load-bearing: without it, a failed shard skips this job at
+  # exactly the moment the (degraded) report matters most.
+  # ──────────────────────────────────────────────────────────────────────
+  coverage-report:
+    needs: [cache-check, serial-tests, slow-eval-longmemeval, slow-entity-resolve-perf, test]
+    if: always() && needs.cache-check.outputs.hit != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          fetch-depth: 0  # diff gate needs origin/master; baseline gate reads git show origin/master:
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.3.13
       - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: ~/.bun/install/cache
           key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-      - run: bun install
-      - name: Run test shard ${{ matrix.shard }}/10
-        run: scripts/test-shard.sh ${{ matrix.shard }} 10
+      - run: bun install --frozen-lockfile
+      - name: Download per-lane coverage artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          pattern: coverage-*
+          path: ${{ runner.temp }}/coverage-artifacts
+      - name: Merge lanes
+        env:
+          COVERAGE_CORPUS: prCorpus
+        run: |
+          bun scripts/merge-lcov.ts \
+            --out-lcov "$RUNNER_TEMP/coverage-merged/lcov.info" \
+            --out-json "$RUNNER_TEMP/coverage-merged/summary.json" \
+            --manifest-expect shard-1,shard-2,shard-3,shard-4,shard-5,shard-6,shard-7,shard-8,shard-9,shard-10,serial,sloweval,slowperf \
+            "$RUNNER_TEMP/coverage-artifacts"
+      - name: Coverage summary → step summary
+        run: bun scripts/render-coverage-summary.ts --summary "$RUNNER_TEMP/coverage-merged/summary.json" --structural scripts/structural-suites.tsv >> "$GITHUB_STEP_SUMMARY"
+      - name: Diff coverage gate (report-only until graduation)
+        # shell: bash is load-bearing: the default `bash -e {0}` has NO
+        # pipefail, so the tee pipe would mask the gate's exit code — the
+        # graduated gate could never fail the job.
+        shell: bash
+        env:
+          COVERAGE_GATE_ENFORCE: '0'
+        run: bun scripts/coverage-diff-gate.ts --summary "$RUNNER_TEMP/coverage-merged/summary.json" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Baseline gate (prCorpus, like-for-like)
+        shell: bash
+        env:
+          COVERAGE_GATE_ENFORCE: '0'
+        run: bun scripts/coverage-baseline-gate.ts --summary "$RUNNER_TEMP/coverage-merged/summary.json" --corpus prCorpus | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Upload merged coverage
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: coverage-merged
+          path: ${{ runner.temp }}/coverage-merged
+          retention-days: 14
+          if-no-files-found: ignore
+          overwrite: true
 
   # ──────────────────────────────────────────────────────────────────────
   # cache-write: ONLY runs when every gated job succeeded. Writes the

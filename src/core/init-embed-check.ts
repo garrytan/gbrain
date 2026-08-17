@@ -15,9 +15,10 @@
  *      warn only, never blocks.
  *
  * Both run against the EFFECTIVE gateway config — process.env overlaid with
- * file-plane keys (openai/anthropic/zeroentropy from config.json) and
- * `opts.apiKey`, plus provider base URLs — built via the same
- * `buildGatewayConfig` runtime uses. Without that, the config-only check would
+ * every file-plane provider key config.json carries (openai / anthropic /
+ * voyage / zeroentropy / dashscope / google — whatever buildGatewayConfig
+ * folds, #2662) and `opts.apiKey`, plus provider base URLs — built via the
+ * same `buildGatewayConfig` runtime uses. Without that, the config-only check would
  * false-warn on config.json-keyed users, and the live probe could hit the
  * wrong endpoint (custom OpenAI base URL, llama-server, etc.).
  *

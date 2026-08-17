@@ -11,8 +11,7 @@
 // Hermetic: PGLite + withEnv per CLAUDE.md R1/R3/R4.
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
-import { readFileSync } from 'fs';
-import { join } from 'path';
+import { doctorSource } from './helpers/doctor-source.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { buildChecks, doctorReportRemote, type Check } from '../src/commands/doctor.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
@@ -138,10 +137,7 @@ describe('cross-surface parity (source-grep regression guard)', () => {
     // Static regression assertion: the helper must be called from BOTH surfaces.
     // If a future maintainer removes the call from one surface, this test fails
     // pointing at the asymmetry.
-    const src = readFileSync(
-      join(import.meta.dir, '../src/commands/doctor.ts'),
-      'utf-8',
-    );
+    const src = doctorSource();
     // The helper is called as `await checkEmbeddingEnvOverride(engine)`
     const matches = src.match(/await checkEmbeddingEnvOverride\(engine\)/g) ?? [];
     expect(matches.length).toBeGreaterThanOrEqual(2);

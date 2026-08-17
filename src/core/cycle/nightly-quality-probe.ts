@@ -156,7 +156,7 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
   if (!hasEmbed) {
     process.stderr.write(
       `[nightly-quality-probe] no embedding provider configured; skipping. ` +
-      `Configure OPENAI_API_KEY / VOYAGE_API_KEY / ZEROENTROPY_API_KEY and re-enable.\n`,
+      `Configure VOYAGE_API_KEY / OPENAI_API_KEY and re-enable.\n`,
     );
     logQualityProbeEvent({
       outcome: 'no_embedding_key',

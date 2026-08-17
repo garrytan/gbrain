@@ -301,3 +301,24 @@ describe('v0.42.43.0 #2095 — volunteer-events sink + cycle purge wiring (struc
     expect(src).toMatch(/purged_volunteer_events_count/);
   });
 });
+
+describe('five-issue fix wave — integrity progress is (source_id, slug)-keyed', () => {
+  // integrity.ts's resume progress used to be keyed by slug alone, so a resume
+  // SKIPPED same-slug pages in every other source (the scan iterates
+  // (slug, source_id) pairs from listAllPageRefs). Behavioral coverage would
+  // need live resolvers; the keying shape is what must not regress.
+  test('integrity.ts keys seen/progress by progressKey(source_id, slug) and persists source_id', () => {
+    const src = readFileSync('src/commands/integrity.ts', 'utf8');
+    expect(src).toMatch(/function progressKey\(/);
+    expect(src).toMatch(/seen\.has\(progressKey\(source_id, slug\)\)/);
+    expect(src).toMatch(/seen\.add\(progressKey\(entry\.source_id, entry\.slug\)\)/);
+    // Every appendProgress site persists the source_id.
+    const appends = src.match(/appendProgress\(\{[^}]*\}\)/g) ?? [];
+    expect(appends.length).toBeGreaterThan(0);
+    for (const call of appends) {
+      expect(call).toContain('source_id');
+    }
+    // One writer PER SOURCE (a single default-scoped writer was the bug).
+    expect(src).toMatch(/new BrainWriter\(engine, \{ strictMode: 'off', sourceId \}\)/);
+  });
+});

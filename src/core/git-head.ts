@@ -120,7 +120,7 @@ export type SourceGitState = 'unchanged' | 'changed' | 'unavailable';
  * This is NOT a full mirror of `gbrain sync`'s "do work?" predicate.
  * Chunker-version match is computed by the caller because it depends on
  * engine state (`sources.chunker_version` vs `CURRENT_CHUNKER_VERSION`).
- * See `src/commands/doctor.ts:checkSyncFreshness` for the AND
+ * See `src/commands/doctor/checks/extraction-sync.ts:checkSyncFreshness` for the AND
  * combination at the call site.
  *
  * NULL-input guard stays first: a NULL `last_commit` (legacy row) returns

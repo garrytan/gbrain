@@ -12,7 +12,7 @@ The push channels share one zero-LLM core (`src/core/context/volunteer.ts`):
 | `reflex` | automatic, inside the context engine | default-on for plugin hosts; nothing to call |
 | `op` | `gbrain volunteer-context` / MCP `volunteer_context` | agents without the plugin; one call per turn |
 | `watch` | `gbrain watch` | stream a transcript in, volunteered pages stream out |
-| `claude-code` / `codex` | `gbrain hook user-prompt` (registered by `gbrain bootstrap`) | per-prompt injection inside a harness; see "Harness hooks" below |
+| `claude-code` / `codex` / `opencode` | `gbrain hook user-prompt` (registered by `gbrain bootstrap`) | per-prompt injection inside a harness; see "Harness hooks" below |
 
 ## How it decides
 
@@ -74,7 +74,7 @@ this channel production-grade rather than spammy-and-invisible:
 - **The feedback loop.** The serve logs each DELIVERED block's volunteered
   pages and pointers to `context_volunteer_events` under the hook's channel
   (`claude-code` by default; a codex hook registration passes
-  `--harness codex`). `gbrain volunteer-context --stats` then shows
+  `--harness codex` / `--harness opencode`). `gbrain volunteer-context --stats` then shows
   per-harness precision, and `gbrain doctor`'s `volunteer_channels` check
   shows which channels actually fire, with guidance for the two quiet cases:
   "hook installed but never registered (restart the session)" and "registered

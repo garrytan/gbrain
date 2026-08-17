@@ -103,6 +103,18 @@ describe('relationalFanout', () => {
     expect(a!.path[a!.path.length - 1]).toBe('people/investor-a');
   });
 
+  test('equal-depth multi-seed tie picks the lexicographically-smallest path (deterministic winner)', async () => {
+    // people/investor-a is reachable at depth 1 from BOTH seeds; parity alone
+    // would pass if both engines agreed on a wrong-but-deterministic pick
+    // (e.g. an ORDER BY direction flip). Pin the WINNER: the final
+    // lexicographic tie-break must choose the smallest path string, whose
+    // first hop is 'companies/other-co' (< 'companies/widget-co').
+    const rows = await eng.relationalFanout(['companies/widget-co', 'companies/other-co'], { direction: 'both' });
+    const a = rows.find(r => r.slug === 'people/investor-a');
+    expect(a).toBeDefined();
+    expect(a!.path[0]).toBe('companies/other-co');
+  });
+
   test('empty seeds → []', async () => {
     expect(await eng.relationalFanout([])).toEqual([]);
   });

@@ -96,6 +96,17 @@ export function computeMedian(values: number[]): number {
     : sorted[mid]!;
 }
 
+/**
+ * Quantile (nearest-rank) of a list of numbers. Empty input returns 0.
+ * q in [0, 1]; q=0.75 is the missing-file fallback weight (see partition).
+ */
+export function computeQuantile(values: number[], q: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil(q * sorted.length) - 1));
+  return sorted[idx]!;
+}
+
 export interface PartitionOpts {
   /**
    * Weight to assign files that are absent from the weights map. Defaults
@@ -133,8 +144,15 @@ export function partition(
   const shards: string[][] = Array.from({ length: n }, () => []);
   if (files.length === 0) return shards;
 
-  // Compute fallback weight from the median of present weights, unless
-  // the caller supplied an explicit override.
+  // Compute fallback weight from the p75 of present weights, unless the
+  // caller supplied an explicit override. p75, not median: the weight
+  // distribution is extremely right-skewed (median ~27ms, mean ~800ms —
+  // most files are trivial greps, the tail boots PGLite), and files
+  // MISSING from the map skew heavy (new integration tests land unweighted
+  // more often than new pure-unit tests). A median fallback modeled 45% of
+  // the corpus at ~30ms and let one shard silently carry the unweighted
+  // heavies; p75 over-weights small new files slightly (harmless — LPT
+  // self-corrects on the next mine) instead of under-weighting big ones.
   let fallback: number;
   if (opts.fallbackWeight !== undefined) {
     if (!Number.isFinite(opts.fallbackWeight) || opts.fallbackWeight < 0) {
@@ -144,7 +162,7 @@ export function partition(
     }
     fallback = opts.fallbackWeight;
   } else {
-    fallback = computeMedian(Array.from(weights.values()));
+    fallback = computeQuantile(Array.from(weights.values()), 0.75);
   }
   // Cold-start guard: if the weights map is empty AND no explicit
   // fallback was supplied, every effective weight would be 0 and LPT

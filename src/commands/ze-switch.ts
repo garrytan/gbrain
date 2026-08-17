@@ -1,217 +1,272 @@
 /**
- * v0.36.0.0 — `gbrain ze-switch` CLI lever for the ZeroEntropy default switch.
+ * `gbrain ze-switch` — RETIRED refusal/redirect shim.
  *
- * Subcommands / flags:
- *   gbrain ze-switch                        Run the interactive prompt
- *   gbrain ze-switch --dry-run              Plan only; change nothing
- *   gbrain ze-switch --json                 Machine-readable envelope
- *   gbrain ze-switch --non-interactive      Switch without prompting
- *                                           (errors if ZEROENTROPY_API_KEY missing
- *                                            unless --ignore-missing-key is also set)
- *   gbrain ze-switch --resume               Finish a half-applied switch (recovery)
- *   gbrain ze-switch --force                Bypass the `prompt_shown` gate
- *                                           (use after `n` / never-ask-again)
- *   gbrain ze-switch --undo                 Reverse: restore prior model + dim
- *                                           + reranker state. Cost-warning prompt
- *                                           appears before any change.
- *   gbrain ze-switch --undo --non-interactive --confirm-reembed
- *                                           Scripted undo path (also pays for re-embed)
+ * ZeroEntropy's hosted API shuts down on ZEROENTROPY_SUNSET_DATE. Every
+ * invocation refuses or redirects; nothing here mutates the brain:
+ *
+ *   gbrain ze-switch --help           Truthful usage (exit 0, engine-free)
+ *   gbrain ze-switch --undo [--json]  Print the exact migration command that
+ *                                     returns this brain to its pre-switch
+ *                                     provider (from the stored snapshot).
+ *                                     Guidance only — exit 1, nothing changes.
+ *   anything else                     Refusal naming the canonical migration.
+ *
+ * Why the legacy actions are gone: the forward switch/resume have been
+ * sunset-refused since v0.46.3, and the undo ACTION wrote DB-plane config
+ * (engine.setConfig) that the post-v0.37 file-plane-canonical embed pipeline
+ * never reads — it could rebuild the schema (dropping every vector) while the
+ * runtime kept resolving the old model. Printing the verified, resumable
+ * `gbrain migrate embeddings` command is strictly safer than acting.
+ *
+ * The whole command is deleted in the v0.47 September removal release.
  */
 
 import type { BrainEngine } from '../core/engine.ts';
 import {
-  planRetrievalUpgrade,
-  applyRetrievalUpgrade,
-  resumeRetrievalUpgrade,
-  undoRetrievalUpgrade,
-  formatEnvOverrideWarning,
-  type ApplyResult,
-} from '../core/retrieval-upgrade-planner.ts';
-import {
-  runRetrievalUpgradePrompt,
-  runUndoPrompt,
-} from '../core/retrieval-upgrade-prompt.ts';
+  ZEROENTROPY_SUNSET_DATE,
+  renderCanonicalMigrationCommands,
+} from '../core/ai/defaults.ts';
+import { getCliOptions } from '../core/cli-options.ts';
 
-interface Flags {
-  dryRun: boolean;
-  json: boolean;
-  nonInteractive: boolean;
-  resume: boolean;
-  force: boolean;
-  undo: boolean;
-  confirmReembed: boolean;
-  ignoreMissingKey: boolean;
-  ignoreEnvOverride: boolean;
+/** Config row written by the pre-v0.46.3 forward switch (the literal matches
+ *  KEY_PREVIOUS_SNAPSHOT in retrieval-upgrade-planner.ts; kept local so the
+ *  shim does not drag the retired planner module into its import graph). */
+const KEY_PREVIOUS_SNAPSHOT = 'ze_switch_previous_snapshot';
+
+interface ZeSwitchSnapshot {
+  embedding_model: string;
+  embedding_dimensions: number;
+  search_reranker_enabled?: boolean;
+  search_reranker_model?: string | null;
 }
 
-function parseFlags(args: string[]): Flags {
-  return {
-    dryRun: args.includes('--dry-run'),
-    json: args.includes('--json'),
-    nonInteractive: args.includes('--non-interactive') || args.includes('--yes'),
-    resume: args.includes('--resume'),
-    force: args.includes('--force'),
-    undo: args.includes('--undo'),
-    confirmReembed: args.includes('--confirm-reembed'),
-    ignoreMissingKey: args.includes('--ignore-missing-key'),
-    // v0.41.2.1: escape hatch for power users running parallel experiments
-    // with GBRAIN_EMBEDDING_MODEL set. Loud stderr line when used.
-    ignoreEnvOverride: args.includes('--ignore-env-override'),
-  };
+// Retired forward-switch flags — kept as quoted literals ONLY so the
+// generated CLI_FLAG_REGISTRY row keeps accepting them and old scripts reach
+// the refusal message naming the migration instead of dying pre-dispatch
+// with an unknown-flag error (cli.ts validates against the row BEFORE
+// dispatch; the row is generated from these literals, and safety flags like
+// '--dry-run' need quoted consumption evidence to survive regeneration).
+// The shim never consults them — every non-help/undo invocation refuses.
+// '--markdown' rode the pre-shim row (generator over-scan); kept for the
+// same old-scripts-reach-the-refusal reason. The registry-superset pin in
+// test/ze-switch-cli.test.ts makes any drop of this list loud.
+export const RETIRED_FLAGS = [
+  '--dry-run',
+  '--resume',
+  '--force',
+  '--non-interactive',
+  '--yes',
+  '--ignore-missing-key',
+  '--ignore-env-override',
+  '--confirm-reembed',
+  '--markdown',
+];
+
+/** The `--brain <id>` selector is parsed and STRIPPED by the global CLI
+ *  option layer before dispatch, so any command this shim tells the user to
+ *  run must carry it explicitly — otherwise `ze-switch --brain team-x --undo`
+ *  reads team-x's snapshot but the printed migrate command targets the
+ *  ambient/default brain (a paid re-embed of the wrong corpus). */
+function brainSuffix(): string {
+  const brain = getCliOptions().brain;
+  return brain ? ` --brain ${brain}` : '';
 }
 
 function printHelp() {
-  process.stdout.write(`Usage: gbrain ze-switch [flags]
+  const cmds = renderCanonicalMigrationCommands();
+  process.stdout.write(`Usage: gbrain ze-switch [--undo] [--json]
 
-Switch the brain's embedding + reranker defaults to ZeroEntropy.
+RETIRED — ZeroEntropy shuts down its hosted API on ${ZEROENTROPY_SUNSET_DATE}.
+Switching a brain ONTO ZeroEntropy is refused (exit 1, reason
+provider_sunset), and the legacy dry-run/resume/undo ACTIONS no longer run.
+Every invocation refuses or redirects; nothing changes your brain.
 
 Flags:
-  --dry-run              Plan only; change nothing.
-  --json                 Machine-readable output.
-  --non-interactive      Skip prompts; apply directly (CI / scripts).
-  --resume               Finish a half-applied switch (crash recovery).
-  --force                Bypass the prompt_shown gate (use after --undo or "never ask").
-  --undo                 Reverse the switch: restore prior model + dim + reranker.
-  --confirm-reembed      Required with --undo --non-interactive (re-embed pays cost).
-  --ignore-missing-key   Allow --non-interactive without ZEROENTROPY_API_KEY set.
-  --ignore-env-override  Apply even when GBRAIN_EMBEDDING_* env vars would
-                         override the target at runtime (use if you know why).
-  --help                 Show this help.
+  --undo     Print the exact migration command that returns this brain to its
+             pre-switch provider (read from the stored switch snapshot). No
+             changes are made; run the printed command yourself. Exit 1.
+  --json     Machine-readable envelope on stdout.
+  --help     This help. Exit 0.
+
+To LEAVE ZeroEntropy (the maintained path):
+  ${cmds.recommendedDryRun}   # cost preview
+  ${cmds.recommended}
+  Playbook: skills/migrations/v0.46.3.0.md
+
+Retired flags — still accepted so old scripts get the refusal above instead
+of an unknown-flag error: ${RETIRED_FLAGS.join(' ')}
+
+This command is deleted in the September (v0.47) removal release.
 `);
 }
 
-/**
- * Render an ApplyResult; if status is 'refused' (env-override gate),
- * write the ASCII warning box to stderr AND exit non-zero. Pure data
- * stays in the JSON envelope; the box is for human readers.
- */
-function renderApplyResult(result: ApplyResult, json: boolean): void {
-  if (result.status === 'refused' && result.reason === 'env_override') {
-    if (json) {
-      console.log(JSON.stringify(result, null, 2));
-    } else {
-      console.error(formatEnvOverrideWarning(result.warning));
-      console.error(`\nSwitch status: refused (env_override)`);
-    }
-    process.exit(1);
-  }
-  if (json) {
-    console.log(JSON.stringify(result, null, 2));
-  } else {
-    console.log(`Switch status: ${result.status}`);
-  }
+function refusalEnvelope(
+  extraMessage?: string,
+  opts: { omitUndoHint?: boolean } = {},
+): {
+  status: 'refused';
+  reason: 'provider_sunset';
+  /** The LIVE canonical migration command — what an agent should run. */
+  migrate: string;
+  /** The cost-preview variant — run this first. */
+  migrate_preview: string;
+  message: string;
+} {
+  const cmds = renderCanonicalMigrationCommands();
+  const brain = brainSuffix();
+  const live = `${cmds.recommended}${brain}`;
+  const preview = `${cmds.recommendedDryRun}${brain}`;
+  const message =
+    (extraMessage ? `${extraMessage}\n` : '') +
+    `ze-switch is retired: ZeroEntropy shuts down its hosted API on ${ZEROENTROPY_SUNSET_DATE}.\n` +
+    `To LEAVE ZeroEntropy: ${preview}   # cost preview\n` +
+    `  then: ${live}\n` +
+    `Playbook: skills/migrations/v0.46.3.0.md` +
+    // Never point a failed --undo back at --undo (guidance loop).
+    (opts.omitUndoHint
+      ? ''
+      : `\nTo see the command that returns this brain to its pre-switch provider: gbrain ze-switch --undo`);
+  return { status: 'refused', reason: 'provider_sunset', migrate: live, migrate_preview: preview, message };
 }
 
-export async function runZeSwitch(args: string[], engine: BrainEngine): Promise<void> {
+/** Emit the envelope (stdout JSON or stderr message) and exit 1. */
+function emitAndExit(payload: { message: string } & Record<string, unknown>, json: boolean): never {
+  if (json) {
+    console.log(JSON.stringify(payload));
+  } else {
+    console.error(payload.message);
+  }
+  process.exit(1);
+}
+
+/** Model ids are `provider:model` tokens; the tail may nest (`ollama:model:tag`,
+ *  `openrouter:google/gemma`, `nvidia:nvidia/nv-embedqa-e5-v5`). The snapshot
+ *  row is data-plane content (writable via config set / direct DB / a mounted
+ *  brain), and its fields land verbatim in a command the user or a downstream
+ *  agent is told to RUN — so validate before interpolating and degrade to the
+ *  plain refusal on anything suspicious. Leading alphanumeric + no whitespace
+ *  means a value like `--force-sunset-target` can never inject a flag. */
+const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*:[A-Za-z0-9._/:-]+$/;
+
+type SnapshotReadResult =
+  | { kind: 'ok'; snapshot: ZeSwitchSnapshot }
+  | { kind: 'missing' }
+  | { kind: 'invalid' }
+  | { kind: 'read_error' };
+
+function parseSnapshot(raw: string): ZeSwitchSnapshot | null {
+  try {
+    const p = JSON.parse(raw) as ZeSwitchSnapshot;
+    if (
+      p &&
+      typeof p.embedding_model === 'string' &&
+      MODEL_ID_RE.test(p.embedding_model) &&
+      Number.isInteger(p.embedding_dimensions) &&
+      p.embedding_dimensions > 0 &&
+      // A string "false" would pass a truthiness check and then FAIL the
+      // strict ===false test below, re-enabling a reranker the snapshot says
+      // was off — require boolean or absent.
+      (p.search_reranker_enabled == null || typeof p.search_reranker_enabled === 'boolean') &&
+      (p.search_reranker_model == null ||
+        (typeof p.search_reranker_model === 'string' && MODEL_ID_RE.test(p.search_reranker_model)))
+    ) {
+      return p;
+    }
+  } catch {
+    /* corrupt JSON is `invalid` — the caller words the refusal */
+  }
+  return null;
+}
+
+/** Pure builder for the undo redirect commands (exported for tests). */
+export function buildUndoCommands(
+  snapshot: ZeSwitchSnapshot,
+  brainArg: string,
+): { live: string; preview: string } {
+  // Fold the pre-switch reranker into the same run: `--reranker` takes a
+  // model id or `off`; omitted means the migration's own default.
+  // enabled===false WINS over a lingering model id — the pre-switch brain
+  // had reranking off, and `migrate embeddings --reranker <model>` would
+  // re-enable it (the retired undo restored `enabled` independently).
+  const rerankerArg =
+    snapshot.search_reranker_enabled === false
+      ? ' --reranker off'
+      : snapshot.search_reranker_model
+        ? ` --reranker ${snapshot.search_reranker_model}`
+        : '';
+  const live = `gbrain migrate embeddings --to ${snapshot.embedding_model} --dim ${snapshot.embedding_dimensions}${rerankerArg}${brainArg}`;
+  return { live, preview: `${live} --dry-run` };
+}
+
+/** cli.ts SELF_HELP_WITHOUT_ENGINE adapter: that record's handlers take
+ *  (engine, args); runZeSwitch takes (args, engine). Help never touches the
+ *  engine, so null is safe here. */
+export function runZeSwitchSelfHelp(_engine: never, args: string[]): Promise<void> {
+  return runZeSwitch(args, null);
+}
+
+export async function runZeSwitch(args: string[], engine: BrainEngine | null): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     printHelp();
     process.exit(0);
   }
 
-  const flags = parseFlags(args);
+  // Both --json spellings, mirroring cli.ts's own convention.
+  const json = args.some((a) => a === '--json' || (a.startsWith('--json=') && a !== '--json=false'));
 
-  try {
-    // --dry-run: just plan, never apply.
-    if (flags.dryRun) {
-      const plan = await planRetrievalUpgrade(engine);
-      if (flags.json) {
-        console.log(JSON.stringify({ status: 'planned', plan }, null, 2));
-      } else {
-        console.log(`Current model: ${plan.current_embedding_model} (${plan.current_dim}d)`);
-        console.log(`Target model:  ${plan.target_embedding_model ?? '(no change)'}`);
-        console.log(`Target dim:    ${plan.target_dim ?? '(no change)'}`);
-        console.log(`Pages pending: chunker=${plan.pages_pending_chunker}, dim=${plan.pages_pending_dim}`);
-        console.log(`Est cost:      $${plan.est_cost_usd.toFixed(2)}`);
-        console.log(`Est minutes:   ${plan.est_minutes}`);
-        console.log(`Schema change: ~${plan.est_schema_change_seconds}s`);
-        console.log(`Offered:       ${plan.ze_switch_offered}`);
+  if (args.includes('--undo')) {
+    // Read the pre-switch snapshot the old forward path stored. A missing,
+    // corrupt, invalid-shape, or unreadable snapshot degrades to the plain
+    // refusal (there is nothing to redirect to); `redirected` is reserved
+    // for a validated snapshot. The failure states word the refusal
+    // differently — telling the operator of a switched brain whose snapshot
+    // failed validation that "no switch was recorded" would be false, and a
+    // null engine here means the brain could not be reached at all.
+    let read: SnapshotReadResult = engine ? { kind: 'missing' } : { kind: 'read_error' };
+    if (engine) {
+      try {
+        const raw = await engine.getConfig(KEY_PREVIOUS_SNAPSHOT);
+        if (raw) {
+          const parsed = parseSnapshot(raw);
+          read = parsed ? { kind: 'ok', snapshot: parsed } : { kind: 'invalid' };
+        }
+      } catch {
+        read = { kind: 'read_error' };
       }
-      return;
     }
 
-    // --resume: complete a half-applied switch.
-    if (flags.resume) {
-      if (flags.ignoreEnvOverride) {
-        console.error('[ze-switch] WARNING: --ignore-env-override is set; env vars will silently override the switch at runtime.');
-      }
-      const result = await resumeRetrievalUpgrade(engine, {
-        ignoreEnvOverride: flags.ignoreEnvOverride,
-      });
-      // v0.41.2.1: route through the env-override-aware renderer so
-      // refused-status emits the ASCII warning box + exits non-zero.
-      if (result.status === 'refused' && result.reason === 'env_override') {
-        renderApplyResult(result, flags.json); // exits non-zero
-      }
-      if (flags.json) {
-        console.log(JSON.stringify(result, null, 2));
-      } else {
-        console.log(`Resume status: ${result.status}`);
-      }
-      process.exit(result.status === 'applied' || result.status === 'skipped_already_applied' ? 0 : 1);
-    }
-
-    // --undo: reverse switch.
-    if (flags.undo) {
-      if (flags.nonInteractive) {
-        if (!flags.confirmReembed) {
-          console.error('--undo --non-interactive requires --confirm-reembed (undo re-embeds at the prior width — costs real money).');
-          process.exit(1);
-        }
-        const result = await undoRetrievalUpgrade(engine);
-        if (flags.json) {
-          console.log(JSON.stringify(result, null, 2));
-        } else {
-          console.log(`Undo status: ${result.status}`);
-        }
-        process.exit(result.status === 'undone' ? 0 : 1);
-      }
-      // Interactive undo: shows cost-warning prompt.
-      const result = await runUndoPrompt(engine);
-      if (flags.json) {
-        console.log(JSON.stringify(result, null, 2));
-      }
-      process.exit(result.status === 'undone' ? 0 : 1);
-    }
-
-    // --non-interactive: apply without prompting.
-    if (flags.nonInteractive) {
-      if (!process.env.ZEROENTROPY_API_KEY && !flags.ignoreMissingKey) {
-        const config = await engine.getConfig('zeroentropy_api_key');
-        if (!config) {
-          console.error('ZEROENTROPY_API_KEY not set. Pass --ignore-missing-key to switch anyway (embeddings will fail until you set a key).');
-          process.exit(1);
-        }
-      }
-      if (flags.ignoreEnvOverride) {
-        console.error('[ze-switch] WARNING: --ignore-env-override is set; env vars will silently override the switch at runtime.');
-      }
-      const plan = await planRetrievalUpgrade(engine);
-      const result = await applyRetrievalUpgrade(engine, plan, {
-        ignoreEnvOverride: flags.ignoreEnvOverride,
-      });
-      // v0.41.2.1: render env-override refusal with ASCII box + exit non-zero.
-      if (result.status === 'refused' && result.reason === 'env_override') {
-        renderApplyResult(result, flags.json); // exits non-zero
-      }
-      if (flags.json) {
-        console.log(JSON.stringify(result, null, 2));
-      } else {
-        console.log(`Switch status: ${result.status}`);
-      }
-      process.exit(
-        result.status === 'applied' || result.status === 'skipped_already_applied' || result.status === 'skipped_no_work'
-          ? 0
-          : 1,
+    if (read.kind === 'ok') {
+      const { live, preview } = buildUndoCommands(read.snapshot, brainSuffix());
+      const message =
+        `ze-switch no longer undoes in place (the retired action wrote config the runtime does not read).\n` +
+        `To return this brain to its pre-switch provider, run:\n` +
+        `  ${preview}   # cost preview\n` +
+        `  ${live}\n` +
+        `(This reflects the recorded pre-switch snapshot; the preview shows the live\n` +
+        ` current->target plan and the migration verifies against the database before\n` +
+        ` changing anything — a brain that already migrated will report nothing to do.)`;
+      emitAndExit(
+        {
+          status: 'redirected',
+          reason: 'provider_sunset',
+          undo_command: live,
+          undo_preview: preview,
+          message,
+        },
+        json,
       );
     }
 
-    // Interactive mode.
-    const result = await runRetrievalUpgradePrompt(engine, { force: flags.force });
-    if (flags.json) {
-      console.log(JSON.stringify(result, null, 2));
-    }
-    process.exit(result.status === 'applied' || result.status === 'declined_this_run' || result.status === 'declined_forever' || result.status === 'non_tty_skip' || result.status === 'not_offered' ? 0 : 1);
-  } finally {
-    // Engine lifecycle is owned by the dispatcher.
+    const undoFailure =
+      read.kind === 'invalid'
+        ? 'A switch snapshot exists but is unreadable or failed validation — inspect the ze_switch_previous_snapshot config row before trusting any undo guidance.'
+        : read.kind === 'read_error'
+          ? 'Could not read the switch snapshot (no brain configured, or the config read failed) — check the brain connection and retry.'
+          : 'No prior switch snapshot recorded — nothing to undo.';
+    emitAndExit(refusalEnvelope(undoFailure, { omitUndoHint: true }), json);
   }
+
+  // Every other invocation — bare, --dry-run, --resume, --non-interactive,
+  // --force, any combination — refuses.
+  emitAndExit(refusalEnvelope(), json);
 }

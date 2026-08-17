@@ -12,13 +12,52 @@
  * install AND every doctor consistency check.
  */
 
-// v0.36.0 chose ZeroEntropy as the system default after evals showed
-// 11/20 wins vs OpenAI (6) and Voyage (4) on real-corpus benchmarks.
-// 1280 is the closest analog to legacy OpenAI 1536d while staying on
-// the high-recall section of ZE's Matryoshka curve. Valid ZE Matryoshka
-// steps: {2560, 1280, 640, 320, 160, 80, 40} — see ai/dims.ts.
+// LEGACY CONFIGLESS RUNTIME FALLBACK — not the new-install default anymore.
+//
+// v0.36.0 chose ZeroEntropy as the system default (11/20 eval wins vs OpenAI
+// and Voyage). ZeroEntropy's hosted API shuts down on ZEROENTROPY_SUNSET_DATE,
+// so v0.46.3 split the default: these two constants now serve ONLY brains with
+// no `embedding_model` in file config (old/hand-rolled installs whose stored
+// vectors live in ZE's 1280d space — flipping this under them would break
+// retrieval BEFORE the provider itself dies). Every new-install surface reads
+// NEW_INSTALL_DEFAULT_* below. The September removal release deletes this
+// fallback and hard-errors unmigrated configless brains with the migrate
+// command. Do NOT point anything new at these.
 export const DEFAULT_EMBEDDING_MODEL = 'zeroentropyai:zembed-1';
 export const DEFAULT_EMBEDDING_DIMENSIONS = 1280;
+
+// NEW-INSTALL DEFAULT (v0.46.3): voyage-4 @ 1024d.
+//
+// Why Voyage: ZeroEntropy covered BOTH gbrain touchpoints (embedding +
+// reranking); Voyage is the only replacement that covers both on one key
+// (rerank-2.5 rides VOYAGE_API_KEY; OpenAI has no reranker API), the
+// multimodal model is already voyage:voyage-multimodal-3, and the voyage-4
+// family is the current hosted retrieval SOTA. Why voyage-4 (not -large/-lite):
+// $0.06/M ≈ zembed-1's $0.05/M, and the v4 trio SHARES ONE EMBEDDING SPACE —
+// a brain indexed with voyage-4 can later point its query model at
+// voyage-4-large or -lite with no reindex, so the within-family choice is
+// reversible. 1024 is a valid Voyage Matryoshka step {256, 512, 1024, 2048}
+// and matches the embedding_image/embedding_multimodal widths.
+//
+// Consumers (new-install surfaces ONLY): init auto-pick canonical tiebreak,
+// the interactive picker default, the no-keys hint, keyless fresh-install
+// schema sizing (passed as an explicit init param — the schema generators keep
+// importing the legacy constants for existing-brain reconnects), and all
+// recommendation copy (playbook, banners, doctor fix-hints, advisor).
+export const NEW_INSTALL_DEFAULT_EMBEDDING_MODEL = 'voyage:voyage-4';
+export const NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS = 1024;
+
+/**
+ * Recommended reranker replacement (v0.46.3). The runtime reranker defaults
+ * (gateway DEFAULT_RERANKER_MODEL + the mode-bundle reranker_model values)
+ * stay on zerank-2 until the September removal so existing ZE-keyed brains
+ * keep their working reranker until the API actually dies; init writes this
+ * as an explicit `search.reranker.model` config for voyage-keyed installs
+ * (any picked embedding provider; keyed non-voyage installs get explicit
+ * `search.reranker.enabled false` instead), and the migration playbook sets
+ * it for migrating users.
+ */
+export const NEW_INSTALL_DEFAULT_RERANKER_MODEL = 'voyage:rerank-2.5';
 
 /**
  * ZeroEntropy announced (2026-07-24) that its hosted API — including
@@ -30,3 +69,45 @@ export const DEFAULT_EMBEDDING_DIMENSIONS = 1280;
  * doctor check. Self-hosting the Apache-2.0 zembed-1 weights is unaffected.
  */
 export const ZEROENTROPY_SUNSET_DATE = '2026-09-04';
+
+/**
+ * ONE canonical rendering of the sunset-migration command for every surface
+ * that tells a user/agent how to leave a dying provider (gateway deprecation
+ * line, init warnings, upgrade banners, doctor provider_sunset, ze-switch
+ * refusal, advisor). Before this, five surfaces printed five different
+ * commands — including one with an unsubstituted placeholder and this
+ * brain's current width as `--dim`, which is INVALID on Voyage (valid
+ * widths: 256/512/1024/2048). Rules:
+ *   - the Voyage command ALWAYS carries `--dim 1024` (never the brain's
+ *     current width);
+ *   - the keep-width OpenAI alternative renders only when the current
+ *     column width is known and <= 1536 (text-embedding-3-small's cap);
+ *   - the note explains the rebuild whenever the width changes.
+ * Lives here (zero-dep constants module) so every consumer can import it
+ * without cycles; drift-guarded by test against the doc/skill copies.
+ */
+export function renderCanonicalMigrationCommands(opts: { colDims?: number | null } = {}): {
+  /** Live run (agents append --yes themselves after consent). */
+  recommended: string;
+  /** Cost preview — what every warning surface should print first. */
+  recommendedDryRun: string;
+  /** Keep-width alternative (no schema rebuild), when the width allows it. */
+  openaiAlternative: string | null;
+  /** Rebuild explanation when the recommended target changes the width. */
+  note: string | null;
+} {
+  const base = `gbrain migrate embeddings --to ${NEW_INSTALL_DEFAULT_EMBEDDING_MODEL} --dim ${NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS}`;
+  const colDims = opts.colDims ?? null;
+  const openaiAlternative = colDims !== null && colDims <= 1536
+    ? `gbrain migrate embeddings --to openai:text-embedding-3-small --dim ${colDims} --dry-run`
+    : null;
+  const note = colDims !== null && colDims !== NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS
+    ? `(--dim ${NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS} rebuilds the ${colDims}d index — Voyage's valid widths are 256/512/1024/2048${openaiAlternative ? `; the OpenAI alternative keeps this brain's ${colDims}d width` : ''}.)`
+    : null;
+  return {
+    recommended: base,
+    recommendedDryRun: `${base} --dry-run`,
+    openaiAlternative,
+    note,
+  };
+}

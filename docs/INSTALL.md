@@ -26,7 +26,7 @@ Your agent now reads `skills/RESOLVER.md` once per request, routes intent to the
 
 Scaffolded skills are first-class files in your agent repo — edit freely. To pull upstream gbrain improvements later, `gbrain skillpack reference <name>` diffs your local copy vs the bundle. The legacy `skillpack install` managed-block model was retired in v0.36.0.0; if you're upgrading from an older release, run `gbrain skillpack migrate-fence` once to strip the legacy fence and keep your existing skill rows.
 
-To upgrade later: `gbrain upgrade` runs schema migrations + post-upgrade prompts (chunker bumps, the v0.36.2.0 ZeroEntropy switch). Always TTY-only; non-TTY upgrades skip prompts with informational stderr lines.
+To upgrade later: `gbrain upgrade` runs schema migrations + post-upgrade prompts (chunker bumps, provider-sunset notices). Always TTY-only; non-TTY upgrades skip prompts with informational stderr lines.
 
 ## 2. CLI standalone
 
@@ -48,13 +48,15 @@ gbrain migrate --to pglite       # Postgres → PGLite (rare)
 
 For shared / large / multi-machine deployments (a team or company brain with multiple users hitting one server over HTTP MCP with OAuth scoping per user), follow the dedicated walkthrough: **[Tutorial: set up GBrain as your company brain](tutorials/company-brain.md)**.
 
-API keys live in `~/.gbrain/config.json` (file plane) or env vars (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ZEROENTROPY_API_KEY`, `VOYAGE_API_KEY`, `ANTHROPIC_API_KEY`). Set via CLI:
+API keys live in `~/.gbrain/config.json` (file plane) or env vars (`VOYAGE_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`). Set them via env or by editing `~/.gbrain/config.json` directly — do NOT use `gbrain config set` for API keys (that writes the DB plane, which the embedding pipeline never reads):
 
 ```bash
-gbrain config set zeroentropy_api_key sk-...
-gbrain config set openrouter_api_key sk-or-...
-gbrain config set anthropic_api_key sk-ant-...
+export VOYAGE_API_KEY=pa-...          # default embedding (voyage-4) + reranker (rerank-2.5) — one key
+export OPENAI_API_KEY=sk-...          # alternative embeddings; also used for chat models
+export ANTHROPIC_API_KEY=sk-ant-...   # optional, improves search via query expansion
 ```
+
+`ZEROENTROPY_API_KEY` is still honored but deprecated — the ZeroEntropy hosted API shuts down 2026-09-04. Off-ramp: the agent playbook at [`skills/migrations/v0.46.3.0.md`](../skills/migrations/v0.46.3.0.md) (one command migrates embeddings + reranker) with the full reference in [`docs/guides/embedding-migration.md`](guides/embedding-migration.md).
 
 Common follow-ups:
 
@@ -71,7 +73,7 @@ claude mcp add gbrain -- gbrain serve --surface verbs    # Claude Code
 codex  mcp add gbrain -- gbrain serve --surface verbs    # Codex
 ```
 
-The agent spawns `gbrain serve` as a stdio subprocess against your local brain. `--surface verbs` gives the agent the seven-verb memory protocol (`recall`, `remember`, `entity`, `synthesize`, `forget`, `context_pack`, `delta` — [MEMORY_VERBS v1](protocol/MEMORY_VERBS_v1.md)) instead of the full tool catalog; `--surface starter` adds the daily-driver set on top of the verbs (~26 ops total); drop the flag (default `full`) for every operation. Full walkthrough (both this local path and connecting to a remote brain), plus the brain-first protocol to paste into `CLAUDE.md` / `AGENTS.md`: **[Give your coding agent a memory](tutorials/connect-coding-agent.md)**.
+The agent spawns `gbrain serve` as a stdio subprocess against your local brain. `--surface verbs` gives the agent the seven-verb memory protocol (`recall`, `remember`, `entity`, `synthesize`, `forget`, `context_pack`, `delta` — [MEMORY_VERBS v1](protocol/MEMORY_VERBS_v1.md)) instead of the full tool catalog; `--surface starter` adds the daily-driver set on top of the verbs (~27 ops total); drop the flag (default `full`) for every operation. Full walkthrough (both this local path and connecting to a remote brain), plus the brain-first protocol to paste into `CLAUDE.md` / `AGENTS.md`: **[Give your coding agent a memory](tutorials/connect-coding-agent.md)**.
 
 ## 3. MCP server (any MCP client)
 
@@ -101,6 +103,7 @@ Per-client setup guides live in [`docs/mcp/`](mcp/):
 - [`docs/mcp/PERPLEXITY.md`](mcp/PERPLEXITY.md)
 - [`docs/mcp/HERMES.md`](mcp/HERMES.md) — Hermes (Nous Research CLI)
 - [`docs/mcp/GROK.md`](mcp/GROK.md) — Grok Build (xAI CLI)
+- [`docs/mcp/OPENCODE.md`](mcp/OPENCODE.md) — opencode (opencode.ai / SST terminal agent)
 - [`docs/mcp/OPENCLAW.md`](mcp/OPENCLAW.md) — OpenClaw (bundle plugin or stdio)
 - [`docs/mcp/CLAUDE_COWORK.md`](mcp/CLAUDE_COWORK.md) — Claude Cowork (team plan)
 - [`docs/mcp/DEPLOY.md`](mcp/DEPLOY.md) — production deploy patterns

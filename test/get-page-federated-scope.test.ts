@@ -453,8 +453,14 @@ describe('#2555 get_chunks federated scope', () => {
         'parent_symbol_path', 'doc_comment', 'symbol_name_qualified', 'modality']) {
         expect(body, `${enginePath} getChunks must select cc.${col}`).toContain(`cc.${col}`);
       }
-      // The vector columns stay unselected.
-      expect(body).not.toMatch(/cc\.embedding\b/);
+      // The vector columns stay unselected. The ONE allowed reference is the
+      // cheap `(cc.embedding IS NULL) AS embedding_is_null` boolean (no vector
+      // egress — a schema rebuild NULLs vectors without touching embedded_at,
+      // and the per-slug embed filter needs the stored-vector truth). Strip
+      // that exact shape, then keep forbidding any other cc.embedding use.
+      const withoutNullBoolean = body.replace(/\(cc\.embedding IS NULL\) AS embedding_is_null/g, '');
+      expect(withoutNullBoolean).not.toMatch(/cc\.embedding\b/);
+      expect(body).toContain('(cc.embedding IS NULL) AS embedding_is_null');
     }
   });
 });

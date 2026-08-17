@@ -12,6 +12,12 @@
  *   3. sourceId scoping isolates between two seeded sources (no leak)
  *   4. ANY($2::text[]) binding actually filters by type set
  *
+ * Type allowlist updated for e1e1f3bac (PR #2615): discovery now honors the
+ * active schema pack's `extractable: true` flags in addition to the legacy
+ * 6-type floor. Under the default `gbrain-base` pack that makes `note`
+ * extractable; the non-extractable control type here is `person`
+ * (pack-declared `extractable: false`).
+ *
  * ~4 structural assertions; ~3-5s wallclock budget.
  * Skips gracefully when DATABASE_URL is unset.
  */
@@ -37,8 +43,10 @@ afterAll(async () => {
 
 beforeEach(async () => {
   if (skip) return;
-  // Clean test-source rows + atoms + meeting pages between tests
-  await engine.executeRaw(`DELETE FROM pages WHERE source_id IN ('default', 'dept-x') AND (type = 'atom' OR type IN ('meeting', 'source', 'article', 'video', 'book', 'original'))`);
+  // Clean test-source rows + atoms + seeded pages between tests. Includes
+  // 'note' (pack-extractable since e1e1f3bac / PR #2615) and 'person' (the
+  // non-extractable control) so seeds can't leak into later tests.
+  await engine.executeRaw(`DELETE FROM pages WHERE source_id IN ('default', 'dept-x') AND (type = 'atom' OR type IN ('meeting', 'source', 'article', 'video', 'book', 'original', 'note', 'person'))`);
   await engine.executeRaw(`DELETE FROM sources WHERE id = 'dept-x'`);
 });
 
@@ -74,13 +82,17 @@ describeIfDB('v0.41.2.1 D10 — discoverExtractablePages on real Postgres', () =
   test('returns extractable rows when seeded', async () => {
     await seedPage({ slug: 'meeting/a', type: 'meeting', content_hash: 'hash-A-1234567890abc' });
     await seedPage({ slug: 'source/b', type: 'source', content_hash: 'hash-B-1234567890abc' });
-    await seedPage({ slug: 'notes/skip', type: 'note', content_hash: 'hash-N-1234567890abc' });
+    // e1e1f3bac (PR #2615): `note` is pack-extractable under gbrain-base, so
+    // it IS discovered now. `person` (extractable: false) is the skip control.
+    await seedPage({ slug: 'notes/kept', type: 'note', content_hash: 'hash-N-1234567890abc' });
+    await seedPage({ slug: 'people/skip', type: 'person', content_hash: 'hash-P-1234567890abc' });
 
     const discovered = await discoverExtractablePages(engine, 'default');
     const slugs = discovered.map((d) => d.slug).sort();
     expect(slugs).toContain('meeting/a');
     expect(slugs).toContain('source/b');
-    expect(slugs).not.toContain('notes/skip');
+    expect(slugs).toContain('notes/kept');
+    expect(slugs).not.toContain('people/skip');
   });
 
   test('ANY($::text[]) bind works through postgres.unsafe (PGLite parity proof)', async () => {
@@ -90,7 +102,9 @@ describeIfDB('v0.41.2.1 D10 — discoverExtractablePages on real Postgres', () =
     for (const type of ['meeting', 'source', 'article', 'video', 'book', 'original']) {
       await seedPage({ slug: `${type}/x`, type, content_hash: `hash-${type}-1234567890ab` });
     }
-    await seedPage({ slug: 'note/skip', type: 'note', content_hash: 'hash-note-1234567890' });
+    // e1e1f3bac (PR #2615): `note` is now pack-extractable, so the
+    // non-extractable control is `person` (extractable: false in gbrain-base).
+    await seedPage({ slug: 'person/skip', type: 'person', content_hash: 'hash-pers-1234567890' });
 
     const discovered = await discoverExtractablePages(engine, 'default');
     const slugs = discovered.map((d) => d.slug).sort();

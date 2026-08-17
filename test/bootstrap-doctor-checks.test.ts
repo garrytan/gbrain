@@ -175,6 +175,17 @@ describe('bootstrap_harness_health (#4043)', () => {
     expect(c?.message).toMatch(/1 failed \/ 1 pending/);
   }, T);
 
+  test('host:opencode receipt flows through host-generic filtering — failed target still fails', async () => {
+    const { parent, home } = makeHome();
+    const receipt = harnessReceiptFixture([{ state: 'failed' }, { state: 'confirmed' }]) as Record<string, unknown>;
+    for (const t of receipt.targets as Array<Record<string, unknown>>) t.host = 'opencode';
+    writeHarnessReceipt(home, receipt as never);
+    const checks = await run(parent);
+    const c = byName(checks, 'bootstrap_harness_health');
+    expect(c?.status).toBe('fail');
+    expect(c?.message).toMatch(/1 failed/);
+  }, T);
+
   test('unconverged rotation (previous_id) → fail naming the revoke command', async () => {
     const { parent, home } = makeHome();
     const receipt = harnessReceiptFixture([{ state: 'confirmed' }]) as Record<string, unknown>;

@@ -29,12 +29,14 @@ import { resolveAgentRunner, listRegisteredAgents, registerAgentRunner, validate
 import { OpenClawRunner } from '../core/claw-test/runners/openclaw.ts';
 import { HermesRunner } from '../core/claw-test/runners/hermes.ts';
 import { GrokRunner } from '../core/claw-test/runners/grok.ts';
+import { OpencodeRunner } from '../core/claw-test/runners/opencode.ts';
 import { createTranscriptSink } from '../core/claw-test/transcript-capture.ts';
 
 // Ensure built-in runners are registered.
 registerAgentRunner('openclaw', () => new OpenClawRunner());
 registerAgentRunner('hermes', () => new HermesRunner());
 registerAgentRunner('grok', () => new GrokRunner());
+registerAgentRunner('opencode', () => new OpencodeRunner());
 
 interface HarnessOpts {
   scenario: string;
@@ -417,6 +419,9 @@ const AGENT_INSTALL_HINTS: Record<string, string> = {
   // Official xAI CLI only — the community superagent-ai grok-cli ships a
   // colliding `grok` binary (docs/mcp/GROK-CLI-PIN.md).
   grok: 'install grok (npm: @xai-official/grok, or https://x.ai/cli/install.sh) or set GROK_BIN',
+  // SST terminal agent — not OpenClaw, and not the renamed-to-Crush ancestor
+  // that shares the binary name (docs/mcp/OPENCODE-CLI-PIN.md).
+  opencode: 'install opencode (npm: opencode-ai, or https://opencode.ai/install) or set OPENCODE_BIN',
 };
 
 /**
@@ -1003,6 +1008,7 @@ Examples:
   gbrain claw-test --scenario fresh-install
   gbrain claw-test --scenario upgrade-from-v0.18 --keep-tempdir
   gbrain claw-test --live --agent openclaw
+  gbrain claw-test --live --agent opencode
   gbrain claw-test --live --agent hermes
   gbrain claw-test --live --agent grok`);
 }

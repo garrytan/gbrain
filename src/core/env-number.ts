@@ -3,7 +3,7 @@
  *
  * Relocated from `src/commands/doctor.ts` (where `_resolveEnvNumber` was already
  * exported but `_resolveSyncFreshnessHours` was module-private). `src/core/source-health.ts`
- * needs the hours resolver for the staleness ceiling, and `doctor.ts:51` already imports
+ * needs the hours resolver for the staleness ceiling, and doctor.ts already imports
  * FROM `source-health.ts` — so having core reach back into commands would close an import
  * cycle. Duplicating the helper instead would create a SECOND `_envNumberWarned` set, so
  * the same bad env var would warn once per module and the "warn exactly once" contract

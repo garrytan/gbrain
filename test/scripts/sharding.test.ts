@@ -7,6 +7,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   computeMedian,
+  computeQuantile,
   imbalanceRatio,
   loadWeights,
   partition,
@@ -83,20 +84,32 @@ describe("partition — happy path", () => {
 });
 
 describe("partition — fallback semantics", () => {
-  it("missing weights default to corpus median", () => {
-    // weights = {a:100, b:50}, median = 75. Files c + d are unknown → 75 each.
+  it("missing weights default to corpus p75 (missing files skew heavy)", () => {
+    // weights = {a:100, b:50}, p75 (nearest-rank of [50,100] at 0.75) = 100.
+    // Files c + d are unknown → 100 each.
     const weights: WeightMap = new Map([
       ["a", 100],
       ["b", 50],
     ]);
     const out = partition(["a", "b", "c", "d"], weights, 2);
-    // Effective weights: a=100, b=50, c=75, d=75. LPT: 100→s0, 75→s1 (c),
-    // 75→s1 (d, ties broken alpha)... actually: 100→s0=100, 75→s1=75,
-    // 75→s1 vs s0 → s1=150, 50→s0=150. Balanced 150/150.
+    // Effective weights: a=100, b=50, c=100, d=100. Exact LPT placement of
+    // ties is implementation-defined — assert the invariant instead: totals
+    // differ by ≤ the fallback (the LPT bound), and every file landed once.
     const totalsEffective = out.map((s) =>
-      s.reduce((acc, f) => acc + (weights.get(f) ?? 75), 0),
+      s.reduce((acc, f) => acc + (weights.get(f) ?? 100), 0),
     );
-    expect(totalsEffective[0]).toBe(totalsEffective[1]);
+    expect(Math.abs(totalsEffective[0]! - totalsEffective[1]!)).toBeLessThanOrEqual(100);
+    const flat = out.flat().sort();
+    expect(flat).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("computeQuantile: nearest-rank p75 on a skewed corpus", () => {
+    // Right-skewed like the real weights file: p75 lands in the tail's
+    // foothills, far above the median.
+    expect(computeQuantile([1, 1, 1, 1000], 0.75)).toBe(1);
+    expect(computeQuantile([1, 2, 3, 4], 0.75)).toBe(3);
+    expect(computeQuantile([50, 100], 0.75)).toBe(100);
+    expect(computeQuantile([], 0.75)).toBe(0);
   });
 
   it("explicit fallback override beats median", () => {

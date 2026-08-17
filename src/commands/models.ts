@@ -451,7 +451,7 @@ async function probeRerankerConfig(engine: BrainEngine): Promise<ProbeResult> {
         touchpoint: 'reranker_config',
         status: 'config',
         message: `Provider "${recipe.id}" does not declare a reranker touchpoint.`,
-        fix: 'Switch to a provider that does (e.g. zeroentropyai:zerank-2).',
+        fix: 'Switch to a provider that does (e.g. voyage:rerank-2.5).',
         elapsed_ms: Date.now() - start,
       };
     }

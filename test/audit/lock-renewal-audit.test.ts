@@ -85,6 +85,69 @@ describe('lockRenewalAudit: 4-outcome contract', () => {
   });
 });
 
+describe('lockRenewalAudit: v0.46 (#4145) additive telemetry fields', () => {
+  test('case 9a — ctx fields round-trip through the JSONL (cause/lateness/overlap/load/via)', async () => {
+    await withEnv({ GBRAIN_AUDIT_DIR: tmpDir }, async () => {
+      lockRenewalAudit.logFailure(7, 'subagent', 2, new Error('x'), {
+        cause: 'call-timeout',
+        lateness_ms: 40_000,
+        overlap_skips: 1,
+        load1: 28.12,
+        cores: 32,
+        deadline_deferred: true,
+      });
+      lockRenewalAudit.logSuccessAfterFailure(7, 'subagent', 2, { via: 'verify' });
+      const result = readRecentLockRenewalEvents(24);
+      expect(result.events).toHaveLength(2);
+      expect(result.events[0]).toMatchObject({
+        outcome: 'failure',
+        cause: 'call-timeout',
+        lateness_ms: 40_000,
+        overlap_skips: 1,
+        load1: 28.12,
+        cores: 32,
+        deadline_deferred: true,
+      });
+      expect(result.events[1]).toMatchObject({ outcome: 'success_after_failure', via: 'verify' });
+    });
+  });
+
+  test('case 9b — omitted ctx leaves the new keys OUT of the JSONL entirely (no undefined noise)', async () => {
+    await withEnv({ GBRAIN_AUDIT_DIR: tmpDir }, async () => {
+      lockRenewalAudit.logGaveUp(8, 'sync', 3, new Error('y'));
+      const result = readRecentLockRenewalEvents(24);
+      expect(result.events).toHaveLength(1);
+      const raw = result.events[0] as unknown as Record<string, unknown>;
+      for (const key of ['cause', 'lateness_ms', 'overlap_skips', 'load1', 'cores', 'via', 'deadline_deferred']) {
+        expect(key in raw).toBe(false);
+      }
+    });
+  });
+
+  test('case 9c — pre-upgrade JSONL lines (no telemetry fields) still parse in readback', async () => {
+    await withEnv({ GBRAIN_AUDIT_DIR: tmpDir }, async () => {
+      // A line exactly as a pre-v0.46 build would have written it.
+      const legacy = JSON.stringify({
+        ts: new Date().toISOString(),
+        job_id: 5,
+        job_name: 'embed',
+        attempt: 1,
+        outcome: 'failure',
+        error_message_summary: 'Connection terminated',
+        error_code: '08006',
+      });
+      const file = path.join(tmpDir, computeIsoWeekFilename(LOCK_RENEWAL_FEATURE_NAME, new Date()));
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, `${legacy}\n`);
+      const result = readRecentLockRenewalEvents(24);
+      expect(result.corrupted_lines).toBe(0);
+      expect(result.events).toHaveLength(1);
+      expect(result.events[0].outcome).toBe('failure');
+      expect(result.events[0].cause).toBeUndefined();
+    });
+  });
+});
+
 describe('lockRenewalAudit: privacy via redactor (D9)', () => {
   test('case 5a — logFailure with PG connection-failure error: no DSN/IP in JSONL', async () => {
     await withEnv({ GBRAIN_AUDIT_DIR: tmpDir }, async () => {

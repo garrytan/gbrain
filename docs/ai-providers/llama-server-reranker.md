@@ -22,9 +22,13 @@ Two flavors of "local" this recipe covers:
 
 This recipe is the path override + recipe shape. Any provider whose
 request/response wire matches ZE/llama.cpp can use it by just pointing
-at a different base URL. Providers whose wire shape differs (Voyage uses
-`top_k` not `top_n`, returns `data[]` not `results[]`) need a separate
-recipe with adapter hooks — that lands in a follow-up plan.
+at a different base URL. A provider whose request differs only in the
+top-N key declares it via the recipe's `top_param` — that's how the
+hosted Voyage reranker recipe (`voyage:rerank-2.5`, the new-install
+default, `top_k`) works. On the response side the gateway parser accepts
+both known array keys (`results[]` for ZE/llama.cpp, `data[]` for
+Voyage's REST — the shared item shape is `{index, relevance_score}`);
+a genuinely different item shape needs its own recipe with adapter hooks.
 
 ## Setup
 

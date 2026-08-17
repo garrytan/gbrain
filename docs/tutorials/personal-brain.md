@@ -106,8 +106,7 @@ In the AlphaClaw UI (Providers tab):
 - **OpenAI API Key.** Required for embeddings if you use the OpenAI provider.
 - **Anthropic API Key.** Required for Claude (the main model the agent talks through).
 - **Perplexity API Key.** Optional, for web search.
-- **Voyage API Key.** Optional, alternative to OpenAI for embeddings.
-- **ZeroEntropy API Key.** Recommended. GBrain ships with ZeroEntropy as the default embedder + reranker because it's about 2× faster than OpenAI and about 2.6× cheaper.
+- **Voyage API Key.** Recommended. GBrain ships with Voyage as the default embedder + reranker (`voyage-4` + `rerank-2.5`) — one key covers both, at about half OpenAI's embedding price.
 
 You can use the same keys across multiple agents.
 
@@ -236,7 +235,7 @@ Brains share through git. My main agent can populate another agent's brain by pu
 |-----------|-------------|
 | Render Pro (minimum viable) | about $85 |
 | Supabase (small) | free to $25 |
-| OpenAI API (embeddings) | $5 to $20 (much less if you use ZeroEntropy as the default) |
+| OpenAI API (embeddings) | $5 to $20 (about half that on the default Voyage stack) |
 | Anthropic API (Claude) | $50 to $500 (usage dependent) |
 | **Total minimum** | **about $100 to $150 a month** |
 

@@ -24,19 +24,9 @@
  * (and GBRAIN_HOME when isolated) ride the registration itself.
  */
 
-import { randomBytes } from 'node:crypto';
-import {
-  chmodSync,
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  renameSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
-import { dirname, isAbsolute, join } from 'node:path';
+import { copyFileSync, existsSync, readFileSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
+import { atomicWriteTextFile } from './atomic-write.ts';
 import {
   CLAUDE_COMMITTED_SETTINGS_FILE_RELPATH,
   CLAUDE_HOOK_DEFAULT_TIMEOUT_SECS,
@@ -297,18 +287,9 @@ function stripOurEntries(groups: unknown[], marker: string = GBRAIN_HOOK_MARKER_
  * but not for user-global config).
  */
 function atomicWriteJson(path: string, value: unknown, freshMode?: number): void {
-  const target = existsSync(path) ? realpathSync(path) : path;
-  mkdirSync(dirname(target), { recursive: true });
-  let mode: number | undefined;
-  try {
-    mode = statSync(target).mode & 0o777;
-  } catch {
-    mode = freshMode; // fresh file: caller's convention (user-scope → 0600) [X11]
-  }
-  const tmp = `${target}.tmp-${randomBytes(6).toString('hex')}`;
-  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', ...(mode !== undefined ? { mode } : {}) });
-  if (mode !== undefined) chmodSync(tmp, mode); // writeFileSync mode applies only on create
-  renameSync(tmp, target);
+  // Shared bootstrap atomic writer (symlink-resolving, mode-inheriting) —
+  // fresh files take the caller's convention (user-scope → 0600) [X11].
+  atomicWriteTextFile(path, `${JSON.stringify(value, null, 2)}\n`, { freshMode });
 }
 
 /** Pre-write backup path per strategy; timestamped avoids the shared-slot loss. */

@@ -23,7 +23,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -69,6 +69,7 @@ interface Fake {
   home: string;
   userSettings: string;
   codexConfig: string;
+  opencodeConfig: string;
 }
 
 function makeFake(opts: {
@@ -84,6 +85,7 @@ function makeFake(opts: {
   mkdirSync(home, { recursive: true });
   const userSettings = join(dir, 'claude-settings.json');
   const codexConfig = join(dir, 'codex-config.toml');
+  const opencodeConfig = join(dir, 'opencode.jsonc');
   const calls: string[][] = [];
   const revoked: string[] = [];
   const mintCalls: Array<{ name: string; scopes: string[]; sourceGrant?: string[] }> = [];
@@ -126,6 +128,7 @@ function makeFake(opts: {
     },
     userSettingsPath: userSettings,
     codexConfig,
+    opencodeConfig,
     mint: async (o) => {
       mintCalls.push(o as { name: string; scopes: string[]; sourceGrant?: string[] });
       const m = mintQueue[Math.min(mintIdx++, mintQueue.length - 1)];
@@ -138,11 +141,12 @@ function makeFake(opts: {
     pgliteLiveServe: () => opts.pgliteLive ?? false,
     detectClaude: () => true,
     detectCodex: () => true,
+    detectOpencode: () => true,
     gbrainBin: '/opt/fake/gbrain',
     log: (l) => out.push(l),
     logError: (l) => err.push(l),
   };
-  return { deps, calls, revoked, mintCalls, out, err, home, userSettings, codexConfig };
+  return { deps, calls, revoked, mintCalls, out, err, home, userSettings, codexConfig, opencodeConfig };
 }
 
 function flags(extra: string[] = []): HarnessFlags {
@@ -197,6 +201,8 @@ describe('consent gate', () => {
       name: 'gbrain',
       userSettingsPath: '/u/settings.json',
       codexConfig: '/u/config.toml',
+      wireOpencode: true,
+      opencodeConfig: '/u/opencode.jsonc',
     });
     expect(block).toMatch(/Session-transcript capture: every Claude Code session/);
     expect(block).toMatch(/no-capture/);
@@ -716,12 +722,40 @@ describe('outside-voice hardening (X-batch)', () => {
       name: 'gbrain',
       userSettingsPath: '/u/settings.json',
       codexConfig: '/u/config.toml',
+      wireOpencode: false,
+      opencodeConfig: '/u/opencode.jsonc',
     });
     expect(block).toMatch(/EVERY Codex session/);
     expect(block).not.toMatch(/EVERY Claude Code and Codex session/);
+    expect(block).not.toMatch(/opencode/);
     expect(block).toMatch(/No hooks are wired by this invocation/);
     expect(block).toMatch(/written ONLY into the host registrations/);
     expect(block).not.toMatch(/never stored/);
+  });
+
+  test('[X7] consent reach names opencode when (and only when) it is wired', () => {
+    const block = buildConsentBlock({
+      tokenName: 'bootstrap-harness',
+      tokenSupplied: false,
+      scopes: ['read', 'write'],
+      url: URL,
+      wireClaude: false,
+      wireCodex: false,
+      wireOpencode: true,
+      hooks: false,
+      capture: true,
+      hookScope: 'user scope',
+      name: 'gbrain',
+      userSettingsPath: '/u/settings.json',
+      codexConfig: '/u/config.toml',
+      opencodeConfig: '/u/opencode.jsonc',
+    });
+    expect(block).toMatch(/EVERY opencode session/);
+    expect(block).toMatch(/mcp\.gbrain remote entry with the bearer token INLINE/);
+    expect(block).toMatch(/\{env:…\} interpolation would resolve empty/);
+    expect(block).toMatch(/edit the opencode config/);
+    expect(block).not.toMatch(/Claude Code session/);
+    expect(block).not.toMatch(/Codex session/);
   });
 
   test('[X8] a pre-existing permissions.allow entry is recorded as such and SURVIVES --remove', async () => {
@@ -850,5 +884,149 @@ describe('parse helpers', () => {
     expect(isServeOlderThanScopes('0.45.13.0')).toBe(true);
     // 3-segment historical form pads with 0: X.Y.Z === X.Y.Z.0.
     expect(isServeOlderThanScopes('0.45.14')).toBe(false);
+  });
+});
+
+describe('plugin-lane collision WARN on the codex wire (never a refusal)', () => {
+  test('pre-existing enabled gbrain plugin → loud WARNING, managed block still written', async () => {
+    const f = makeFake();
+    // Seed the codex config with an ENABLED gbrain plugin BEFORE the wire —
+    // the harness lane (HTTP, framework-spawned sessions) may legitimately
+    // coexist with the plugin's stdio serve, so the wire proceeds.
+    writeFileSync(f.codexConfig, '[plugins."gbrain@gbrain"]\nenabled = true\n');
+    const code = await applyHarness(flags(['--harness', 'codex']), f.deps);
+    expect(code).toBe(0);
+    const warn = f.err.find((l) => l.includes('codex plugin also provides an MCP server'));
+    expect(warn).toBeDefined();
+    expect(warn).toContain("'gbrain@gbrain'");
+    expect(warn).toContain('codex plugin remove gbrain');
+    // Write proceeded: the managed block landed next to the plugin entry.
+    const toml = readFileSync(f.codexConfig, 'utf8');
+    expect(toml).toContain(CODEX_TOML_BLOCK_BEGIN);
+    expect(toml).toContain('[plugins."gbrain@gbrain"]');
+  }, 30_000);
+
+  test('no plugin entry → no collision WARNING (zero noise)', async () => {
+    const f = makeFake();
+    const code = await applyHarness(flags(['--harness', 'codex']), f.deps);
+    expect(code).toBe(0);
+    expect(f.err.some((l) => l.includes('plugin also provides'))).toBe(false);
+  }, 30_000);
+});
+
+describe('opencode harness target (managed JSONC entry)', () => {
+  test('apply --harness opencode: inline-bearer remote entry written 0600, receipt confirmed, exit 0', async () => {
+    const f = makeFake();
+    expect(await applyHarness(flags(['--harness', 'opencode']), f.deps)).toBe(0);
+    const text = readFileSync(f.opencodeConfig, 'utf8');
+    const parsed = JSON.parse(text) as { mcp: Record<string, { type: string; url: string; headers: Record<string, string>; enabled: boolean } > };
+    expect(parsed.mcp.gbrain.type).toBe('remote');
+    expect(parsed.mcp.gbrain.url).toBe(URL);
+    expect(parsed.mcp.gbrain.headers.Authorization).toBe(`Bearer ${TOKEN_A}`);
+    expect(parsed.mcp.gbrain.enabled).toBe(true);
+    expect(statSync(f.opencodeConfig).mode & 0o777).toBe(0o600);
+    const state = readHarnessReceiptState(f.home);
+    const receipt = (state as { receipt: { targets: Array<{ host: string; kind: string; state: string; mechanism?: string }> } }).receipt;
+    const t = receipt.targets.find((x) => x.host === 'opencode');
+    expect(t?.state).toBe('confirmed');
+    expect(t?.mechanism).toBe('jsonc-entry');
+    // No opencode CLI is ever execed — the writer IS the mechanism.
+    expect(f.calls.some((argv) => argv[0] === 'opencode')).toBe(false);
+    expect(f.out.join('\n')).toMatch(/opencode wired: mcp\.gbrain remote entry/);
+    expect(f.out.join('\n')).toMatch(/Restart opencode/);
+  });
+
+  test('rotation across a url change: the prior receipt url classifies the old entry as ours and it is replaced', async () => {
+    const f = makeFake();
+    expect(await applyHarness(flags(['--harness', 'opencode']), f.deps)).toBe(0);
+    // Re-apply against a DIFFERENT serve url — the existing entry carries the
+    // old url and must be recognized via the prior receipt, not refused.
+    expect(await applyHarness(flags(['--harness', 'opencode', '--url', 'http://127.0.0.1:4242/mcp']), f.deps)).toBe(0);
+    const parsed = JSON.parse(readFileSync(f.opencodeConfig, 'utf8')) as { mcp: Record<string, { url: string; headers: Record<string, string> }> };
+    expect(parsed.mcp.gbrain.url).toBe('http://127.0.0.1:4242/mcp');
+    expect(parsed.mcp.gbrain.headers.Authorization).toBe(`Bearer ${TOKEN_B}`); // rotated mint
+  });
+
+  test('a FOREIGN mcp.gbrain entry refuses (failed target, exit 1) and survives untouched', async () => {
+    const f = makeFake();
+    const foreign = JSON.stringify({ mcp: { gbrain: { type: 'remote', url: 'https://other.example/mcp', headers: {} } } });
+    writeFileSync(f.opencodeConfig, foreign);
+    expect(await applyHarness(flags(['--harness', 'opencode']), f.deps)).toBe(1);
+    expect(readFileSync(f.opencodeConfig, 'utf8')).toBe(foreign);
+    expect(f.err.join('\n')).toMatch(/not a gbrain-managed entry/);
+    // Impostor-guard economics hold: the fresh mint is revoked when wiring fails.
+    const state = readHarnessReceiptState(f.home);
+    const t = (state as { receipt: { targets: Array<{ host: string; state: string }> } }).receipt.targets.find((x) => x.host === 'opencode');
+    expect(t?.state).toBe('failed');
+  });
+
+  test('failed smoke rolls the fresh opencode entry back and revokes the fresh mint', async () => {
+    const f = makeFake({ probeOk: false });
+    expect(await applyHarness(flags(['--harness', 'opencode']), f.deps)).toBe(1);
+    // Fresh add (no prior entry) → rollback removes it entirely.
+    const parsed = JSON.parse(readFileSync(f.opencodeConfig, 'utf8')) as { mcp?: Record<string, unknown> };
+    expect(parsed.mcp?.gbrain).toBeUndefined();
+    expect(f.revoked).toContain(ID_A);
+    expect(f.out.join('\n') + f.err.join('\n')).toMatch(/rolled back to the previous opencode config/);
+  });
+
+  test('[X5] smoke failure on a RE-APPLY rolls the opencode config back byte-for-byte (codex-lane mirror)', async () => {
+    const f = makeFake();
+    expect(await applyHarness(flags(['--harness', 'opencode']), f.deps)).toBe(0); // entry with TOKEN_A
+    const preRun = readFileSync(f.opencodeConfig, 'utf8');
+    const f2deps: HarnessDeps = {
+      ...f.deps,
+      probeIdentity: async () => ({ ok: false, reason: 'unreachable', message: 'boom' }),
+    };
+    expect(await applyHarness(flags(['--harness', 'opencode']), f2deps)).toBe(1); // mints B, smoke fails
+    expect(readFileSync(f.opencodeConfig, 'utf8')).toBe(preRun); // TOKEN_A entry restored, byte-identical
+    // The OLD token (ID_A) stays live and wired; the FRESH mint (ID_B) — sent
+    // to the unverified endpoint — is retired immediately.
+    expect(f.revoked).toEqual([ID_B]);
+  });
+
+  test('a corrupt opencode config fails the target WITHOUT leaking the minted bearer (snippet placeholder + redaction)', async () => {
+    const f = makeFake();
+    writeFileSync(f.opencodeConfig, '{"mcp": {{{');
+    expect(await applyHarness(flags(['--harness', 'opencode']), f.deps)).toBe(1);
+    const err = f.err.join('\n');
+    expect(err).toMatch(/does not parse as JSONC/);
+    expect(err).not.toContain(TOKEN_A); // neither the snippet nor the message may carry the mint
+    const state = readHarnessReceiptState(f.home);
+    const t = (state as { receipt: { targets: Array<{ host: string; state: string; error?: string }> } }).receipt.targets.find(
+      (x) => x.host === 'opencode',
+    );
+    expect(t?.state).toBe('failed');
+    expect(t?.error ?? '').not.toContain(TOKEN_A); // the receipt is durable — no token in it either
+    expect(readFileSync(f.opencodeConfig, 'utf8')).toBe('{"mcp": {{{'); // untouched
+  });
+
+  test('--status recovers the bearer from the opencode entry (url-matched) and verifies it', async () => {
+    const f = makeFake();
+    expect(await applyHarness(flags(['--harness', 'opencode']), f.deps)).toBe(0);
+    expect(await statusHarness(parseHarnessArgs(['--status']), f.deps)).toBe(0);
+    const out = f.out.join('\n');
+    expect(out).toMatch(/token: OK \('bootstrap-harness' via opencode config entry/);
+  });
+
+  test('--remove removes OUR entry; an entry at a different url is skipped with a note', async () => {
+    const f = makeFake();
+    expect(await applyHarness(flags(['--harness', 'opencode']), f.deps)).toBe(0);
+    expect(await removeHarness(parseHarnessArgs(['--remove']), f.deps)).toBe(0);
+    const parsed = JSON.parse(readFileSync(f.opencodeConfig, 'utf8')) as { mcp?: Record<string, unknown> };
+    expect(parsed.mcp?.gbrain).toBeUndefined();
+    expect(f.out.join('\n')).toMatch(/opencode managed entry removed/);
+    expect(f.revoked).toContain(ID_A);
+
+    // Second install; then the entry is retargeted by "another install".
+    const g = makeFake();
+    expect(await applyHarness(flags(['--harness', 'opencode']), g.deps)).toBe(0);
+    const hijacked = JSON.parse(readFileSync(g.opencodeConfig, 'utf8')) as { mcp: Record<string, { url: string }> };
+    hijacked.mcp.gbrain.url = 'http://127.0.0.1:9999/mcp';
+    writeFileSync(g.opencodeConfig, JSON.stringify(hijacked));
+    expect(await removeHarness(parseHarnessArgs(['--remove']), g.deps)).toBe(0);
+    expect(g.out.join('\n')).toMatch(/does not match this receipt's url .* skipping/);
+    const kept = JSON.parse(readFileSync(g.opencodeConfig, 'utf8')) as { mcp: Record<string, unknown> };
+    expect(kept.mcp.gbrain).toBeDefined(); // never delete what is not provably ours
   });
 });

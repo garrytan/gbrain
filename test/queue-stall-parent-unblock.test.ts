@@ -52,7 +52,7 @@ test('stall-exhausted child → child_done(dead) in parent inbox + parent unbloc
   const claimed = await queue.claim('tok-stall', 30_000, 'default', ['child', 'aggregator']);
   expect(claimed?.id).toBe(child.id);
   await engine.executeRaw(
-    `UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1`, [child.id],
+    `UPDATE minion_jobs SET lock_until = now() - interval '30 seconds' WHERE id = $1`, [child.id],
   );
 
   const { requeued, dead } = await queue.handleStalled();
@@ -85,7 +85,7 @@ test('stall-requeued child (budget left) does NOT touch the parent', async () =>
   const claimed = await queue.claim('tok-stall2', 30_000, 'default', ['child', 'aggregator']);
   expect(claimed?.id).toBe(child.id);
   await engine.executeRaw(
-    `UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1`, [child.id],
+    `UPDATE minion_jobs SET lock_until = now() - interval '30 seconds' WHERE id = $1`, [child.id],
   );
 
   const { requeued, dead } = await queue.handleStalled();

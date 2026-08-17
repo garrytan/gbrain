@@ -10,8 +10,8 @@ remain private.
   anything matching the deny list in `.gitignore`.
 - **How it syncs:** `gbrain sources push` — a secret-scan-gated commit + push that
   refuses public remotes. On Claude Code it runs automatically per turn
-  (debounced) and at session end via hooks; on Codex (no hook system) run it at
-  natural stopping points (the AGENTS.md gate reminds you). If background
+  (debounced) and at session end via hooks; on Codex or opencode (no wired hook
+  system) run it at natural stopping points (the AGENTS.md gate reminds you). If background
   persistence is enabled, a git post-commit hook auto-pushes each commit and a
   30-minute pull job keeps multi-machine checkouts fresh. Run it by hand after
   meaningful changes on any harness.

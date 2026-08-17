@@ -28,6 +28,8 @@
  *                   so the interview completes unattended. Pays real API cost;
  *                   takes 10-25 min. Run in background and watch session/screen.txt.
  *   codex-install   Same for REAL `codex` (interactive TUI).
+ *   opencode-install Same for REAL `opencode` (bootstrap-supported; the keyless
+ *                    run rides the anonymous free tier and should COMPLETE).
  *   drive -- <cmd>  Manual mode: spawn ANY command under the PTY and steer it
  *                   across separate shell calls via a file control channel:
  *                     watch:  cat  <dir>/session/screen.txt
@@ -45,6 +47,7 @@
  *   bun run scripts/dx-explore.ts init
  *   bun run scripts/dx-explore.ts claude-install
  *   bun run scripts/dx-explore.ts codex-install
+ *   bun run scripts/dx-explore.ts opencode-install [--keyless]
  *   bun run scripts/dx-explore.ts drive [--no-hermetic-home] -- gbrain init
  *   Options: --dir <out>   transcript dir (default .context/dx-runs/<scenario>-<ts>)
  *            --gbrain <bin> use an existing gbrain binary (default: compile+cache)
@@ -756,6 +759,96 @@ async function scenarioCodexInstall(ctx: ScenarioCtx, args: CliArgs): Promise<vo
   });
 }
 
+// ── scenario: codex-plugin-install ──────────────────────────────────────────
+
+/** The PLUGIN lane's first-run journey: marketplace add + plugin add happen
+ *  via the CLI up front (the two documented commands), then a REAL interactive
+ *  codex session answers a brain question through the plugin-provided MCP
+ *  server. Friction observed here is the plugin lane's actual first-run UX —
+ *  distinct from codex-install, which observes the bootstrap paste-in lane. */
+async function scenarioCodexPluginInstall(ctx: ScenarioCtx, args: CliArgs): Promise<void> {
+  const home = tmp(ctx, 'gb-dx-home-');
+  const gbHome = tmp(ctx, 'gb-dx-gbhome-');
+  const ws = tmp(ctx, 'gb-dx-ws-');
+  const binDir = stageBinDir(ctx);
+
+  // Hermetic ~/.codex with ONLY the operator's auth (codex-install posture).
+  const codexHome = path.join(home, '.codex');
+  fs.mkdirSync(codexHome, { recursive: true });
+  const realAuth = path.join(os.homedir(), '.codex', 'auth.json');
+  if (fs.existsSync(realAuth)) {
+    const authCopy = path.join(codexHome, 'auth.json');
+    fs.copyFileSync(realAuth, authCopy);
+    fs.chmodSync(authCopy, 0o600);
+    ctx.secretPaths.push(authCopy);
+  }
+  spawnSync('git', ['init', '-q', ws]);
+  spawnSync('git', ['-C', ws, 'config', 'user.email', 'dx@example.com']);
+  spawnSync('git', ['-C', ws, 'config', 'user.name', 'DX Explore']);
+
+  // Stage a CLEAN tree (tracked files only) as the local marketplace source.
+  const stage = tmp(ctx, 'gb-dx-plugin-stage-');
+  spawnSync('sh', ['-c', `git -C '${REPO_ROOT}' archive HEAD | tar -x -C '${stage}'`]);
+
+  // The two documented install commands, up front (CLI, not the PTY).
+  const pluginEnv = {
+    ...process.env,
+    HOME: home,
+    CODEX_HOME: codexHome,
+    PATH: `${binDir}:${process.env.PATH ?? ''}`,
+  };
+  for (const argv of [
+    ['codex', 'plugin', 'marketplace', 'add', stage],
+    ['codex', 'plugin', 'add', 'gbrain@gbrain'],
+  ]) {
+    const r = spawnSync(argv[0], argv.slice(1), { env: pluginEnv, encoding: 'utf8' });
+    event(ctx, r.status === 0 ? 'note' : 'friction', `${argv.join(' ')} → exit ${r.status}${r.status === 0 ? '' : `: ${(r.stderr ?? '').slice(0, 300)}`}`);
+    if (r.status !== 0) throw new Error(`plugin install step failed: ${argv.join(' ')}`);
+  }
+
+  // A brain the plugin serve can answer from (keyless PGLite + one fact).
+  const initR = spawnSync(ctx.gbrainBin, ['init', '--pglite', '--no-embedding', '--non-interactive'], {
+    env: { ...pluginEnv, GBRAIN_HOME: gbHome },
+    cwd: ws,
+    encoding: 'utf8',
+  });
+  if (initR.status !== 0) throw new Error(`gbrain init failed: ${(initR.stderr ?? '').slice(0, 300)}`);
+  const seedR = spawnSync(ctx.gbrainBin, ['call', 'remember', JSON.stringify({
+    content: 'The dx-explore plugin probe codeword is heliograph.',
+    provenance: 'dx-explore codex-plugin-install scenario',
+  })], { env: { ...pluginEnv, GBRAIN_HOME: gbHome }, cwd: ws, encoding: 'utf8' });
+  if (seedR.status !== 0) {
+    // Fail fast — proceeding would burn a paid, minutes-long interactive
+    // session that can only fail confusingly on the codeword probe.
+    throw new Error(`seed remember failed: ${(seedR.stderr ?? '').slice(0, 300)}`);
+  }
+
+  log('REAL interactive codex with the gbrain PLUGIN installed (minutes, real API cost)');
+  await runInstallSession(ctx, {
+    argv: ['codex', '--sandbox', 'workspace-write', '--ask-for-approval', 'never'],
+    cwd: ws,
+    env: {
+      HOME: home,
+      CODEX_HOME: codexHome,
+      GBRAIN_HOME: gbHome,
+      GBRAIN_BIN: path.join(binDir, 'gbrain'),
+      PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    },
+    extraAllow: ['OPENAI_API_KEY', 'CODEX_*'],
+    dropEnv: args.keyless ? PROVIDER_KEY_NAMES : undefined,
+    prompt:
+      'The gbrain plugin is installed. Using ONLY the gbrain MCP tools (do not guess), ' +
+      'answer: what is the dx-explore plugin probe codeword? Then reply with one line: ' +
+      'the codeword and which tool you used.\n\n' +
+      '[Unattended-run appendix — I am stepping away; do not wait for my input. ' +
+      'If no gbrain MCP tool is available, note the exact error and stop.]',
+    meta: {
+      promptDeviation: 'plugin lane (marketplace add + plugin add pre-run); brain question via plugin MCP',
+      runbook: 'docs/mcp/CODEX.md (plugin install section)',
+    },
+  });
+}
+
 // ── scenario: grok-install ───────────────────────────────────────────────────
 
 /** Brain-only success copy for the grok scenario: the doctor banner proves
@@ -829,6 +922,59 @@ async function scenarioGrokInstall(ctx: ScenarioCtx, args: CliArgs): Promise<voi
     meta: {
       promptDeviation: 'unattended appendix + local GROK.md path + preinstalled binary',
       runbook: 'docs/mcp/GROK.md (local, brain-only — grok has no bootstrap path)',
+    },
+  });
+}
+
+// ── scenario: opencode-install ───────────────────────────────────────────────
+
+async function scenarioOpencodeInstall(ctx: ScenarioCtx, args: CliArgs): Promise<void> {
+  const home = tmp(ctx, 'gb-dx-home-');
+  const gbHome = tmp(ctx, 'gb-dx-gbhome-');
+  const ws = tmp(ctx, 'gb-dx-ws-');
+  const binDir = stageBinDir(ctx);
+
+  // Hermetic HOME + BOTH XDG dirs (config/auth/data all move — observed
+  // v1.18.18, OPENCODE-CLI-PIN.md §Path seams), seeded with the config half
+  // of the double autoupdate kill; the env half rides the session env below.
+  const xdgConfig = path.join(home, '.config');
+  const ocCfgDir = path.join(xdgConfig, 'opencode');
+  fs.mkdirSync(ocCfgDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(ocCfgDir, 'opencode.json'),
+    JSON.stringify({ $schema: 'https://opencode.ai/config.json', autoupdate: false }, null, 2) + '\n',
+  );
+  // Auth travels env-only for the anthropic leg; a login flow would persist
+  // auth.json — pre-register the known candidate for the scrub (rm of a file
+  // that never appears is a no-op).
+  ctx.secretPaths.push(path.join(home, '.local', 'share', 'opencode', 'auth.json'));
+  spawnSync('git', ['init', '-q', ws]);
+  spawnSync('git', ['-C', ws, 'config', 'user.email', 'dx@example.com']);
+  spawnSync('git', ['-C', ws, 'config', 'user.name', 'DX Explore']);
+
+  log('REAL interactive opencode running the paste-in bootstrap (opencode is a bootstrap-supported harness)');
+  log('keyless runs ride the anonymous free tier (observed) — the flow should COMPLETE keyless; a sign-in wall here is itself a pin-refresh signal');
+  await runInstallSession(ctx, {
+    argv: ['opencode'],
+    cwd: ws,
+    env: {
+      HOME: home,
+      XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: path.join(home, '.local', 'share'),
+      OPENCODE_DISABLE_AUTOUPDATE: '1',
+      GBRAIN_HOME: gbHome,
+      PATH: `${binDir}:${process.env.PATH ?? ''}`,
+      // Never let a first-run bounce the OPERATOR's browser for sign-in.
+      BROWSER: '/usr/bin/false',
+    },
+    extraAllow: ['ANTHROPIC_API_KEY'],
+    // --keyless drops provider keys AFTER extraAllow re-admission — on
+    // opencode that measures the FREE-TIER path, not a wall (observed).
+    dropEnv: args.keyless ? PROVIDER_KEY_NAMES : undefined,
+    prompt: installPrompt(),
+    meta: {
+      promptDeviation: 'unattended persona appendix + local runbook path + preinstalled binary',
+      runbook: 'BOOTSTRAP_FOR_AGENTS.md (local — opencode is bootstrap-supported)',
     },
   });
 }
@@ -918,7 +1064,9 @@ const SCENARIOS: Record<string, { needsGbrain: boolean; run: (ctx: ScenarioCtx, 
   init: { needsGbrain: true, run: scenarioInit },
   'claude-install': { needsGbrain: true, run: scenarioClaudeInstall },
   'codex-install': { needsGbrain: true, run: scenarioCodexInstall },
+  'codex-plugin-install': { needsGbrain: true, run: scenarioCodexPluginInstall },
   'grok-install': { needsGbrain: true, run: scenarioGrokInstall },
+  'opencode-install': { needsGbrain: true, run: scenarioOpencodeInstall },
   drive: { needsGbrain: true, run: scenarioDrive },
 };
 

@@ -77,6 +77,45 @@ export function coerceFrontmatterString(v: unknown): string {
 }
 
 /**
+ * Byte offset of the first character AFTER the closing frontmatter fence —
+ * i.e. where the body starts and where a body-only editor may safely operate
+ * without ever touching frontmatter bytes.
+ *
+ * Fence semantics mirror collectValidationErrors exactly (the canonical
+ * definition): leading blank lines are allowed before the opener, fences are
+ * matched with trim() so CRLF line endings (`---\r`) count. Returns 0 when the
+ * file has no frontmatter at all (first non-empty line is not `---`) — there
+ * is no fence to protect, the whole file is body. Returns 0 for an UNCLOSED
+ * fence too; callers that must not edit such files should pre-validate with
+ * parseMarkdown({validate:true}) and treat MISSING_CLOSE as a blocker (the
+ * backlinks fixer does).
+ */
+export function frontmatterBodyOffset(content: string): number {
+  const lines = content.split('\n');
+
+  let offset = 0;
+  let i = 0;
+  // Skip leading blank lines.
+  for (; i < lines.length; i++) {
+    if (lines[i].trim().length > 0) break;
+    offset += lines[i].length + 1;
+  }
+  if (i >= lines.length) return 0; // empty / whitespace-only file
+  if (lines[i].trim() !== '---') return 0; // no frontmatter
+
+  offset += lines[i].length + 1; // consume the opening fence line
+  for (i = i + 1; i < lines.length; i++) {
+    const isLast = i === lines.length - 1;
+    const lineLen = lines[i].length + (isLast ? 0 : 1);
+    offset += lineLen;
+    if (lines[i].trim() === '---') {
+      return Math.min(offset, content.length);
+    }
+  }
+  return 0; // unclosed fence — no safe body offset
+}
+
+/**
  * Parse a markdown file with YAML frontmatter into its components.
  *
  * Structure:

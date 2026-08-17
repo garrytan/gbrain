@@ -69,7 +69,7 @@ gbrain schema fork <a> <b>        # copy + rename a pack    (experimental)
 gbrain schema edit <name>         # surface the pack path   (experimental)
 gbrain schema diff <a> <b>        # set-diff two packs      (experimental)
 gbrain schema graph               # ASCII type listing      (experimental)
-gbrain schema lint                # flag duplicates + missing prefixes
+gbrain schema lint [--with-db]    # duplicates + missing prefixes; --with-db adds data-plane rules
 gbrain schema explain <type>      # plain-English type description (experimental)
 gbrain schema downgrade --to <p>  # restore previous pack (recovery)
 gbrain schema usage --since 30d   # per-verb invocation counts (telemetry)
@@ -78,6 +78,18 @@ gbrain schema usage --since 30d   # per-verb invocation counts (telemetry)
 The verbs marked `experimental` are demand-gated: usage is tracked via the
 schema-events audit (`gbrain schema usage`), which informs whether
 rarely-used verbs get deprecated.
+
+With `--with-db`, `schema lint` also runs two data-plane rules over the
+stored corpus: `stored_type_is_alias` (a page's explicit type is an alias —
+the canonical type and its filing directory are named) and
+`stored_type_undeclared` (the type isn't in the active pack at all). The
+rule layer accepts a per-source scope (`LintOpts.sourceId` — multi-source
+brains can resolve different packs per source), though the CLI currently
+runs a global scan. The same classification warns once per type per run at
+sync/import so alias types stop filing into unexpected directories
+silently; silence the ingest warnings with
+`gbrain config set schema.type_warnings false` (the `--with-db` lint rules
+are unaffected).
 
 ## Resolution chain (7 tiers)
 

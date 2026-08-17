@@ -101,10 +101,12 @@ done
 IFS='|' eval 'PATTERN="${PATTERN_PARTS[*]}"'
 
 # Find tool.
+# evals/ joins the scan: its *.test.ts files are collected into the CI
+# matrix (scripts/test-shard.sh) and carry the same privacy bar.
 if command -v rg >/dev/null 2>&1; then
-  matches="$(rg -niH --no-heading -t ts "$PATTERN" test 2>/dev/null || true)"
+  matches="$(rg -niH --no-heading -t ts "$PATTERN" test evals 2>/dev/null || true)"
 elif command -v grep >/dev/null 2>&1; then
-  matches="$(grep -rniE --include='*.test.ts' "$PATTERN" test 2>/dev/null || true)"
+  matches="$(grep -rniE --include='*.test.ts' "$PATTERN" test evals 2>/dev/null || true)"
 else
   echo "check-test-real-names: ERROR: neither rg nor grep available." >&2
   exit 2

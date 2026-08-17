@@ -98,27 +98,31 @@ function withDefaultTimeout(caller: AbortSignal | undefined, timeoutMs: number):
 }
 
 const MAX_CHARS = 8000;
-// v0.36.0.0 (D3 + D4): ZeroEntropy zembed-1 at 1280d via Matryoshka is the
-// new default for embedding. Real-corpus benchmark across 20 queries:
-//   - ZE wins 11/20 (OpenAI 6, Voyage 4)
-//   - 442ms avg vs OpenAI 973ms (2.2x faster)
-//   - $0.05/M tokens vs OpenAI $0.13/M (2.6x cheaper at regular pricing)
-// ZE valid Matryoshka steps are {2560, 1280, 640, 320, 160, 80, 40}; 1280 is
-// the closest analog to current OpenAI 1536d (smaller -> smaller HNSW index
-// -> faster queries) while staying in the high-recall zone of the Matryoshka
-// curve. 1024 (Voyage's step) is NOT a valid ZE dim — see
-// src/core/ai/dims.ts:ZEROENTROPY_VALID_DIMS.
-// New installs without ZEROENTROPY_API_KEY size for 1280d anyway — the
-// AIConfigError surfaces at first embed with a paste-ready setup hint.
+// v0.46.3 SPLIT-DEFAULT: DEFAULT_EMBEDDING_MODEL / DEFAULT_EMBEDDING_DIMENSIONS
+// are now the LEGACY CONFIGLESS RUNTIME FALLBACK only (brains with no
+// `embedding_model` in file config, whose stored vectors live in ZE's 1280d
+// space). ZeroEntropy's hosted API shuts down on ZEROENTROPY_SUNSET_DATE; the
+// September removal release deletes this fallback. Every NEW-INSTALL surface
+// reads NEW_INSTALL_DEFAULT_* instead — full rationale in ./defaults.ts.
 // Re-exported from the leaf `defaults.ts` so heavy schema/registry modules
 // don't transitively load every provider SDK just to read the defaults.
 export { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './defaults.ts';
-import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './defaults.ts';
+import {
+  DEFAULT_EMBEDDING_MODEL,
+  DEFAULT_EMBEDDING_DIMENSIONS,
+  NEW_INSTALL_DEFAULT_EMBEDDING_MODEL,
+  renderCanonicalMigrationCommands,
+} from './defaults.ts';
 const DEFAULT_EXPANSION_MODEL = 'anthropic:claude-haiku-4-5-20251001';
 const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
 // v0.35.0.0+: reranker default. Used only when search.reranker.enabled is set
 // AND no explicit reranker_model is configured. Mode bundles' per-mode
 // `reranker_model` default to this same value but can be overridden.
+// v0.46.3: stays on the LEGACY zerank-2 until the September removal (reranker
+// split-default: existing ZE-keyed brains keep their working reranker until
+// the API dies; voyage-keyed NEW installs get an explicit
+// `search.reranker.model voyage:rerank-2.5` override written at init, and
+// keyed non-voyage installs get explicit `search.reranker.enabled false`).
 const DEFAULT_RERANKER_MODEL = 'zeroentropyai:zerank-2';
 
 let _config: AIGatewayConfig | null = null;
@@ -1417,9 +1421,60 @@ export const perplexityCompatFetch = (async (input: RequestInfo | URL, init?: Re
   }
 }) as unknown as typeof fetch;
 
+/**
+ * v0.46.3 once-per-(recipe,touchpoint) sunset warning. Fires when a recipe with
+ * `sunset` metadata is actually USED (embedding resolution / rerank call), so
+ * brains still riding a dying provider hear about it on every process, not
+ * only at upgrade time. Module-level memoization (same pattern as
+ * storage-config.ts's deprecation warn); `_resetSunsetWarningsForTest()` is
+ * the test seam. Never throws — a warning must not take down an embed.
+ */
+const _sunsetWarned = new Set<string>();
+export function _resetSunsetWarningsForTest(): void {
+  _sunsetWarned.clear();
+}
+function warnSunsetOnce(recipe: Recipe, touchpoint: 'embedding' | 'reranker'): void {
+  try {
+    const sunset = recipe.sunset;
+    if (!sunset) return;
+    // A base-URL override routes this provider id to a user-supplied endpoint
+    // (typically a self-hosted wire-compatible server) — the HOSTED shutdown
+    // doesn't apply, so a per-call deprecation warning would be a false
+    // positive. The removal-release continuity story is carried by the
+    // migration notice/banner instead.
+    if (_config?.base_urls?.[recipe.id]) return;
+    const key = `${recipe.id}:${touchpoint}`;
+    if (_sunsetWarned.has(key)) return;
+    _sunsetWarned.add(key);
+    const replacement =
+      touchpoint === 'embedding' ? sunset.replacement?.embedding : sunset.replacement?.reranker;
+    // Canonical command (defaults.ts renderer) when the replacement IS the
+    // recommended default — always carries the valid --dim; a bespoke
+    // replacement falls back to the target's own declared width via --dim
+    // omission (the recipe default applies).
+    const fix =
+      touchpoint === 'embedding'
+        ? replacement
+          ? replacement === NEW_INSTALL_DEFAULT_EMBEDDING_MODEL
+            ? ` Migrate: \`${renderCanonicalMigrationCommands().recommendedDryRun}\``
+            : ` Migrate: \`gbrain migrate embeddings --to ${replacement} --dry-run\``
+          : ''
+        : replacement
+        ? ` Switch: \`gbrain config set search.reranker.model ${replacement}\``
+        : '';
+    process.stderr.write(
+      `[gbrain] DEPRECATED: ${recipe.name} ${touchpoint} stops working on ` +
+        `${sunset.date}.${sunset.message ? ` ${sunset.message}` : ''}${fix}\n`,
+    );
+  } catch {
+    // Cosmetic; never block the call path.
+  }
+}
+
 async function resolveEmbeddingProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
   assertTouchpoint(recipe, 'embedding', parsed.modelId);
+  warnSunsetOnce(recipe, 'embedding');
   const cfg = requireConfig();
 
   const cacheKey = `emb:${recipe.id}:${parsed.modelId}:${cfg.base_urls?.[recipe.id] ?? ''}`;
@@ -2675,7 +2730,8 @@ export interface ChatToolDef {
  */
 /**
  * Default per-call max output tokens. Thinking-by-default Claude 5 models
- * (`anthropic:claude-*-5`) burn a large chunk of the budget on internal
+ * (`anthropic:claude-*-5`, including routed forms like
+ * `openrouter:anthropic/claude-*-5`) burn a large chunk of the budget on internal
  * reasoning before emitting any text, so a 4096 default leaves them with empty
  * final text on the subagent tool loop. Give those models headroom; providers
  * bill actual tokens, not the cap, so it is free for the models that don't use
@@ -2686,7 +2742,7 @@ export interface ChatToolDef {
  */
 const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 const THINKING_MODEL_MAX_OUTPUT_TOKENS = 32000;
-const THINKING_BY_DEFAULT_MODEL_RE = /^anthropic[:/]claude-[a-z0-9]+-5(?:[.-]|$)/i;
+const THINKING_BY_DEFAULT_MODEL_RE = /(?:^|[:/])anthropic[:/]claude-[a-z0-9]+-5(?:[.-]|$)/i;
 function defaultMaxOutputTokens(modelStr: string | undefined): number {
   return modelStr && THINKING_BY_DEFAULT_MODEL_RE.test(modelStr)
     ? THINKING_MODEL_MAX_OUTPUT_TOKENS
@@ -3907,15 +3963,17 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
       'unknown',
     );
   }
+  warnSunsetOnce(recipe, 'reranker');
 
   // Resolve base URL + auth from the recipe (same path Voyage/ZE embeddings use).
   const cfg = requireConfig();
   const compat = applyOpenAICompatConfig(recipe, cfg);
   // v0.40.6.1: rerank URL path is recipe-pluggable. Defaults to ZeroEntropy's
   // legacy `/models/rerank`; openai-style providers like llama.cpp's
-  // llama-server set `/v1/rerank`. Wire shape is unchanged — any provider
-  // whose request/response shape differs from ZE/llama.cpp (e.g. Voyage with
-  // `top_k` / `data[]`) needs separate adapter hooks in a follow-up plan.
+  // llama-server set `/v1/rerank`; Voyage sets `/rerank`. Response shape is
+  // shared across all current dialects ({results: [{index, relevance_score}]});
+  // the only request-side difference is the top-N key, declared per recipe via
+  // `top_param` (v0.46.3).
   const url = `${compat.baseURL.replace(/\/$/, '')}${tp.path ?? '/models/rerank'}`;
   let auth: { apiKey?: string; headers?: Record<string, string> };
   try {
@@ -3937,7 +3995,7 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
     model: parsed.modelId,
     query: input.query,
     documents: input.documents,
-    ...(input.topN !== undefined ? { top_n: input.topN } : {}),
+    ...(input.topN !== undefined ? { [tp.top_param ?? 'top_n']: input.topN } : {}),
   });
 
   // Pre-flight payload size guard (CDX1-F17 / plan Phase 3 cost guard). The
@@ -4009,10 +4067,20 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
       throw new RerankError(msg, reason, resp.status);
     }
     const json: any = await resp.json();
-    if (!json || !Array.isArray(json.results)) {
-      throw new RerankError('rerank: malformed response (no results array)', 'unknown');
+    // v0.46.3: two response dialects share the item shape {index,
+    // relevance_score} but differ in the array key — ZE/llama-server return
+    // `results[]`, Voyage's REST returns `data[]` ({object: "list", data:
+    // [...]}, live-wire verified 2026-08-15; Voyage's Python SDK renames it
+    // `results`, which is why docs-level checks get this wrong). Accept both.
+    const items: any[] | null = Array.isArray(json?.results)
+      ? json.results
+      : Array.isArray(json?.data)
+        ? json.data
+        : null;
+    if (!items) {
+      throw new RerankError('rerank: malformed response (no results/data array)', 'unknown');
     }
-    const mapped = json.results.map((r: any) => ({
+    const mapped = items.map((r: any) => ({
       index: typeof r.index === 'number' ? r.index : 0,
       relevanceScore: typeof r.relevance_score === 'number' ? r.relevance_score : 0,
     }));

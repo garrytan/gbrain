@@ -61,6 +61,52 @@ describe("run-verify-parallel.sh — CLI contract", () => {
   });
 });
 
+describe("guard registration ⇒ execution coverage", () => {
+  // guard-self-test.sh enforces that every scripts/check-* guard is
+  // REGISTERED in guards-manifest.tsv, but nothing enforced that a
+  // registered guard actually EXECUTES anywhere — five guards sat
+  // registered-but-dead until the v0.45.x test/eval/CI pass. This closes
+  // the loop: every manifest guard must be reachable from verify's CHECKS
+  // (via a package.json script that invokes its file), or be explicitly
+  // exempted HERE with the reason it runs elsewhere / deliberately not.
+  const EXECUTION_EXEMPT: Record<string, string> = {
+    "check-bun-test-timeout.sh":
+      "runs directly as a test.yml verify-job step (not via CHECKS — avoids a package.json edit)",
+    "check-jsonb-params.mjs":
+      "exercised by test/check-jsonb-params.test.ts + guard self-test fixtures",
+    "check-admin-embedded.sh":
+      "duplicates check:admin-build's vite+tsc build; embed freshness covered there",
+    "check-image-decoders-embedded.sh":
+      "runs its own bun build --compile — too heavy for per-verify cadence",
+  };
+
+  it("every manifest guard is executed by verify or explicitly exempt", () => {
+    const manifestLines = readFileSync("scripts/guards-manifest.tsv", "utf8")
+      .split("\n")
+      .filter((l) => l.trim() && !l.startsWith("#"));
+    const guards = manifestLines.map((l) => l.split("\t")[0]!).filter(Boolean);
+    expect(guards.length).toBeGreaterThan(30);
+
+    const pkg = JSON.parse(readFileSync("package.json", "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    const dry = spawnSync("bash", [SCRIPT, "--dry-list"], { encoding: "utf8" });
+    expect(dry.status).toBe(0);
+    const executed = new Set(dry.stdout.trim().split("\n"));
+
+    const missing: string[] = [];
+    for (const g of guards) {
+      if (EXECUTION_EXEMPT[g]) continue;
+      const invokingKeys = Object.entries(pkg.scripts)
+        .filter(([, cmd]) => cmd.includes(`scripts/${g}`))
+        .map(([key]) => key);
+      const covered = invokingKeys.some((k) => executed.has(k));
+      if (!covered) missing.push(g);
+    }
+    expect(missing).toEqual([]);
+  });
+});
+
 describe("run-verify-parallel.sh — failure surfacing (synthetic dispatcher)", () => {
   // We can't inject a fake check into the real script without touching the
   // CHECKS array. Instead, we write a SMALLER synthetic dispatcher that
@@ -203,13 +249,15 @@ describe("run-verify-parallel.sh — no-timeout-binary fallback rc capture (regr
 
   function makeFallbackHarness(): { root: string; env: Record<string, string> } {
     const root = mkdtempSync(join(tmpdir(), "verify-fallback-"));
-    mkdirSync(join(root, "scripts"), { recursive: true });
+    mkdirSync(join(root, "scripts", "lib"), { recursive: true });
     copyFileSync(SCRIPT, join(root, "scripts", "run-verify-parallel.sh"));
+    // The dispatcher sources the shared runner lib — stage it too (E3).
+    copyFileSync("scripts/lib/test-env.sh", join(root, "scripts", "lib", "test-env.sh"));
 
     const bin = join(root, "bin");
     mkdirSync(bin);
     // Everything the dispatcher and its subshells invoke, minus timeout bins.
-    for (const tool of ["bash", "sh", "env", "dirname", "mktemp", "date", "sleep", "cat", "tail", "head", "rm", "mkdir", "pkill", "grep", "sed", "awk"]) {
+    for (const tool of ["bash", "sh", "env", "dirname", "mktemp", "date", "sleep", "cat", "tail", "head", "rm", "mkdir", "pkill", "grep", "sed", "awk", "wc", "tr"]) {
       const p = Bun.which(tool);
       if (p) symlinkSync(p, join(bin, tool));
     }

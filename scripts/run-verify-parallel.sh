@@ -25,28 +25,61 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.."
 
+# detect_cpus + ensure_pglite_snapshot (the PGLite-booting eval checks use
+# the snapshot fast-path when the shape matches).
+. scripts/lib/test-env.sh
+
 # ──────────────────────────────────────────────────────────────────────────
-# Checks to run. Order is irrelevant (parallel), but keep stable for log
-# determinism + grep-ability. Each entry is a bun-script name (the
-# `package.json` "scripts" key), invoked as `bun run <name>`.
+# Checks to run. Each entry is a bun-script name (the `package.json`
+# "scripts" key), invoked as `bun run <name>`.
 #
-# To add a check: append to this array. To skip in CI temporarily, comment
-# the line — the parallel runner doesn't care about count.
+# ORDER MATTERS for wallclock: the spawn loop below is capped at
+# GBRAIN_VERIFY_MAX_PARALLEL workers, so the heaviest checks go FIRST
+# (LPT-style — makespan ≈ max(longest check, total/POOL)). The heavy block:
+# typecheck (tsc), two `cp -R src` + `bun build --compile` binary builds,
+# the admin vite+tsc build, the fuzz bundles, guard self-tests, the
+# PGLite-booting eval checks, and the whole-tree greps. Everything after is
+# sub-second; that tail keeps its historical order for grep-ability.
+#
+# To add a check: append to the right block. To skip in CI temporarily,
+# comment the line — the runner doesn't care about count.
 # ──────────────────────────────────────────────────────────────────────────
 CHECKS=(
+  # ── heavy (longest-first) ──
+  "typecheck"
+  "check:admin-build"
+  "check:wasm"
+  "check:pglite-embedded"
+  "check:fuzz-purity"
+  # W0 fix-wave (Tier-1 #11): guard self-tests — every scanner guard proves it
+  # can fail (bad fixture → exit 1) before it counts as coverage. Registry:
+  # scripts/guards-manifest.tsv (package.json's stale `check:all` copy deleted).
+  "check:guard-self-test"
+  # Chronicle eval: $0, deterministic, exit-0-only-on-perfect (6 gold tasks).
+  # Boots its own PGLite — budget ≤60s under a saturated pool; if it breaches
+  # ~100s under contention, move it into the serial-tests CI job instead.
+  "check:eval-chronicle"
+  # Retrieval canary: $0, hermetic, deterministic-embedder CLI run of the
+  # qrels correctness gate. Boots two PGLite processes (seed + real CLI) —
+  # budget ≤60s under a saturated pool; if it breaches ~100s under
+  # contention, move it into the serial-tests CI job instead (same fallback
+  # as eval-chronicle above).
+  "check:eval-canary"
+  "check:bootstrap-templates"
+  "check:skill-brain-first"
+  "check:conversation-parser"
+  "check:resolver"
   "check:privacy"
-  "check:proposal-pii"
   "check:test-names"
+  "check:test-isolation"
+  # ── light tail (sub-second greps; historical order) ──
+  "check:proposal-pii"
   "check:jsonb"
   "check:search-path"
   "check:source-id-projection"
   "check:source-config-leak"
   "check:progress"
   "check:no-tracked-symlinks"
-  "check:test-isolation"
-  "check:wasm"
-  "check:pglite-embedded"
-  "check:admin-build"
   "check:admin-scope-drift"
   "check:cli-exec"
   "check:system-of-record"
@@ -55,33 +88,33 @@ CHECKS=(
   "check:skills-manifest"
   "check:no-pii-agent-voice"
   "check:synthetic-corpus-privacy"
-  "check:skill-brain-first"
-  "check:fuzz-purity"
   "check:operations-filter-bypass"
   "check:gateway-routed"
   "check:worker-pool-atomicity"
   "check:doc-history"
   "check:fixture-privacy"
-  "check:conversation-parser"
-  "check:resolver"
   "check:source-scope-onboard"
+  "check:getpage-scope"
   "check:no-double-retry"
   "check:batch-audit-site"
   "check:engine-dynamic-import"
   "check:grok-pin"
+  "check:opencode-pin"
+  "check:pin-doc-privacy"
   "check:worker-lock-renewal-shape"
   "check:bootstrap-tag"
-  "check:bootstrap-templates"
+  "check:plugin-tree"
   "check:skill-refs"
-  # W0 fix-wave (Tier-1 #11): guard self-tests — every scanner guard proves it
-  # can fail (bad fixture → exit 1) before it counts as coverage. Registry:
-  # scripts/guards-manifest.tsv (package.json's stale `check:all` copy deleted).
-  "check:guard-self-test"
   # Previously reachable ONLY from the deleted check:all (i.e. never run):
   "check:newlines"
   "check:exports-count"
   "check:no-legacy-getconnection"
-  "typecheck"
+  # Revived registered-but-never-executed guards (this pass):
+  "check:pagetype-exhaustive"
+  "check:pg-url-redaction"
+  # Containment sprint: module-size ratchet + structural-suite freshness.
+  "check:module-size"
+  "check:structural-manifest"
 )
 
 if [ "${#CHECKS[@]}" -eq 0 ]; then
@@ -122,8 +155,22 @@ if command -v gtimeout >/dev/null 2>&1; then TIMEOUT_BIN="gtimeout"
 elif command -v timeout >/dev/null 2>&1; then TIMEOUT_BIN="timeout"
 fi
 
+# Bounded worker pool. Unbounded fan-out ran two `cp -R src` +
+# `bun build --compile` builds, the admin vite build, tsc, and ~40 greps
+# simultaneously on a 4-vCPU CI runner — pushing slow checks into the
+# 120s per-check timeout (the documented flake class on slower hosts).
+# Default = detect_cpus so a many-core dev machine keeps its wide fan-out;
+# escape hatch: GBRAIN_VERIFY_MAX_PARALLEL=999.
+MAX_PAR="${GBRAIN_VERIFY_MAX_PARALLEL:-$(detect_cpus)}"
+if ! printf '%s' "$MAX_PAR" | grep -qE '^[0-9]+$' || [ "$MAX_PAR" -lt 1 ]; then
+  echo "ERROR: invalid GBRAIN_VERIFY_MAX_PARALLEL: $MAX_PAR" >&2
+  exit 2
+fi
+
+ensure_pglite_snapshot "verify-parallel"
+
 START_TS=$(date +%s)
-echo "[verify-parallel] running ${#CHECKS[@]} checks in parallel (timeout=${TIMEOUT}s, logs=$LOG_DIR)" >&2
+echo "[verify-parallel] running ${#CHECKS[@]} checks (pool=$MAX_PAR, timeout=${TIMEOUT}s, logs=$LOG_DIR)" >&2
 
 # ──────────────────────────────────────────────────────────────────────────
 # Spawn one background process per check. Each child captures its own exit
@@ -136,6 +183,10 @@ echo "[verify-parallel] running ${#CHECKS[@]} checks in parallel (timeout=${TIME
 PIDS=()
 SAFE_NAMES=()
 for c in "${CHECKS[@]}"; do
+  # Throttle to the worker pool (bash 3.2 — no wait -n; jobs -rp reaps).
+  while [ "$(jobs -rp | wc -l | tr -d ' ')" -ge "$MAX_PAR" ]; do
+    sleep 0.1
+  done
   safe="${c//:/_}"
   SAFE_NAMES+=("$safe")
   LOG_FILE="$LOG_DIR/$safe.log"

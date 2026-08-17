@@ -813,6 +813,21 @@ export interface HybridSearchOpts extends SearchOpts {
   _queryEmbedDeadline?: QueryEmbedDeadline;
 
   /**
+   * Hermetic eval canaries/CI — non-semantic embeddings. When set, the query
+   * embedding for the TEXT vector arm comes from this function (e.g. qrels
+   * basis vectors) INSTEAD of the gateway's query-embed path, and the
+   * no-embedding-provider keyword-only short-circuit is bypassed — so the
+   * vector arm runs with no provider key configured at all. Never set on
+   * production paths; when absent, behavior is byte-for-byte unchanged.
+   *
+   * Cache note: bare `hybridSearch` neither reads nor writes the semantic
+   * query cache by construction — both the lookup and the store live only in
+   * `hybridSearchCached` — so a deterministic-embedding eval run through this
+   * seam cannot poison `query_cache` for production queries.
+   */
+  queryEmbedFn?: (text: string) => Float32Array | Promise<Float32Array>;
+
+  /**
    * INTERNAL — cache-consult outcome threaded from `hybridSearchCached` into
    * the inner `hybridSearch` so the ONE telemetry record per search (emitted
    * by the inner function) carries the cache classification: 'miss' when the
@@ -1264,7 +1279,10 @@ export async function hybridSearch(
       earlyModality === 'both' ||
       mayEscalateToMultimodal) &&
     isAvailable('embedding', multimodalProviderProbe);
-  if (!isAvailable('embedding', providerProbe) && !willTryMultimodal) {
+  // Hermetic eval canaries/CI: a caller-supplied queryEmbedFn produces the
+  // vector-arm query embedding without the gateway, so provider
+  // availability is irrelevant — skip the keyword-only short-circuit.
+  if (!opts?.queryEmbedFn && !isAvailable('embedding', providerProbe) && !willTryMultimodal) {
     // v0.43 — fuse the relational arm with keyword so typed-edge answers
     // survive on the no-embedding-provider path (the relational win is most
     // valuable exactly when vector is unavailable). The title arm fuses here
@@ -1502,12 +1520,20 @@ export async function hybridSearch(
     // share one ~6s budget); direct callers get a fresh deadline. On timeout
     // the embed rejects → salvage below (or keyword-only when all reject).
     const embedDl = opts?._queryEmbedDeadline ?? makeQueryEmbedDeadline();
+    // Hermetic eval canaries/CI: queryEmbedFn (non-semantic deterministic
+    // embeddings) replaces the gateway query-embed for the text vector arm.
+    // No deadline needed — it's a synchronous-ish local computation with no
+    // network. Absent queryEmbedFn, the bounded gateway path is unchanged.
+    const embedOneQuery = (q: string): Promise<Float32Array> =>
+      opts?.queryEmbedFn
+        ? Promise.resolve(opts.queryEmbedFn(q))
+        : embedQueryBounded(q, embedOpts, embedDl);
     if (!searchSalvageEnabled()) {
       // ENG-7 kill switch (GBRAIN_SEARCH_SALVAGE=off): pre-wave
       // all-or-nothing fan-outs — one variant's failure abandons every
       // embedding and falls back to keyword-only.
       try {
-        const embeddings = await Promise.all(queries.map(q => embedQueryBounded(q, embedOpts, embedDl)));
+        const embeddings = await Promise.all(queries.map(q => embedOneQuery(q)));
         queryEmbedding = embeddings[0];
         const textLists = await Promise.all(
           embeddings.map(emb => engine.searchVector(emb, searchOpts)),
@@ -1537,7 +1563,7 @@ export async function hybridSearch(
       // WP2/T3 (ENG-15) salvage fan-outs: allSettled on BOTH the embed
       // fan-out and the searchVector fan-out so one variant's failure no
       // longer abandons the survivors (the query-vs-search asymmetry fix).
-      const settled = await Promise.allSettled(queries.map(q => embedQueryBounded(q, embedOpts, embedDl)));
+      const settled = await Promise.allSettled(queries.map(q => embedOneQuery(q)));
       const okEmbeds: Float32Array[] = [];
       const embedFailures: unknown[] = [];
       for (const s of settled) {

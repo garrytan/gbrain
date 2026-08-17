@@ -24,15 +24,19 @@ import {
   ABORT_REASON_LOCK_LOST,
 } from './types.ts';
 import { MinionQueue } from './queue.ts';
+import { runWaitingTtlTick, ttlNoticeGraceMs } from './admission.ts';
 import { calculateBackoff } from './backoff.ts';
 import { RateLeaseUnavailableError } from './handlers/subagent.ts';
 import { logLeasePressure } from './lease-pressure-audit.ts';
 import {
   runLockRenewalTick,
   resolveLockRenewalKnobs,
+  renewalIntervalFor,
   type LockRenewalDeps,
   type LockRenewalState,
+  type TickResult,
 } from './lock-renewal-tick.ts';
+import { clampLockDurationMs } from './handler-timeouts.ts';
 import {
   runDbProbe,
   getConnectionRouting,
@@ -48,6 +52,8 @@ import {
   ChildNotClaimedError,
 } from './child-job-runner.ts';
 import { lockRenewalAudit } from '../audit/lock-renewal-audit.ts';
+import { loadavg, cpus } from 'os';
+import { monitorEventLoopDelay } from 'perf_hooks';
 import { isRetryableConnError } from '../retry-matcher.ts';
 import { reconnectAfterConnectionError as reconnectEngineAfterConnError } from './reconnect.ts';
 
@@ -230,6 +236,23 @@ export class MinionWorker extends EventEmitter {
 
   private opts: Required<MinionWorkerOpts>;
 
+  /**
+   * Event-loop-delay histogram (CDX-1/R2-9, issue #4145): the DIRECT
+   * measurement of local starvation, sampled at eviction time and RESET
+   * on every successful lock renewal so a sample attributes to the
+   * window since the last success — not process lifetime. The histogram
+   * is deliberately WORKER-global, not per-job: the event loop is one
+   * shared resource, and ANY job's successful renewal proves the loop was
+   * healthy enough to process a round-trip at that moment — a legitimate
+   * truncation of the starvation window even for a sibling job that
+   * evicts moments later (its per-job discriminator is tick lateness,
+   * which IS per-job). Null when the runtime doesn't ship
+   * `monitorEventLoopDelay` (fail-open: eviction logs omit eld fields).
+   */
+  private eldHistogram: ReturnType<typeof monitorEventLoopDelay> | null = null;
+  /** Core count cached once — pairs with raw loadavg in eviction telemetry. */
+  private readonly cpuCores: number;
+
   constructor(
     private engine: BrainEngine,
     opts?: MinionWorkerOpts & MinionQueueOpts,
@@ -239,6 +262,17 @@ export class MinionWorker extends EventEmitter {
       maxSpawnDepth: opts?.maxSpawnDepth,
       maxAttachmentBytes: opts?.maxAttachmentBytes,
     });
+    let cores = 0;
+    try { cores = cpus().length; } catch { /* telemetry best-effort */ }
+    this.cpuCores = cores;
+    try {
+      if (typeof monitorEventLoopDelay === 'function') {
+        // Created DISABLED: start() enables and stop() disables, so a
+        // constructed-but-never-started worker (setup failures, probe
+        // instances) never holds a native sampling timer.
+        this.eldHistogram = monitorEventLoopDelay({ resolution: 20 });
+      }
+    } catch { this.eldHistogram = null; /* fail-open */ }
     this.opts = {
       queue: opts?.queue ?? 'default',
       concurrency: opts?.concurrency ?? 1,
@@ -346,6 +380,10 @@ export class MinionWorker extends EventEmitter {
 
     await this.queue.ensureSchema();
     this.running = true;
+    // R2-9 lifecycle: (re-)enable the event-loop-delay histogram for this
+    // run; stop() disables it so embedding hosts / test suites that cycle
+    // start()/stop() don't leak a ~50Hz native sampling timer per instance.
+    try { this.eldHistogram?.enable(); } catch { /* fail-open */ }
 
     // Graceful shutdown. Fires shutdownAbort so handlers subscribed to
     // `ctx.shutdownSignal` (currently: shell handler) can run their own cleanup
@@ -400,6 +438,33 @@ export class MinionWorker extends EventEmitter {
       } catch (e) {
         console.error('Wall-clock timeout detection error:', e instanceof Error ? e.message : String(e));
         await recoverConnection('handleWallClockTimeouts', e);
+      }
+      // 4th sweep: waiting-TTL (admission control). Warn-before-act (user
+      // requirement D1A) lives in runWaitingTtlTick (admission.ts): the first
+      // tick counts + stamps the notice timestamp, sweeping starts only after
+      // the grace window elapses. The gate is engine-state (not process
+      // state) because the worker restarts via self-upgrade/systemd without
+      // ever running the CLI's runPostUpgrade banner; the notice must precede
+      // the cancellation on EVERY channel, and the worker log is the daemon
+      // channel.
+      try {
+        const tick = await runWaitingTtlTick(this.engine, this.queue);
+        if (tick.phase === 'notice') {
+          console.log(
+            `⚠ Waiting-TTL is now active: ${tick.affected ?? 0} queued job(s) currently exceed their TTL and ` +
+            `will be cancelled after a ${Math.round(ttlNoticeGraceMs() / 60_000)}min grace window. ` +
+            `Tune: gbrain config set minions.ttl_waiting_hours.<name> <hours|0>.`,
+          );
+        } else if (tick.phase === 'swept' && tick.cancelled > 0) {
+          const breakdown = Object.entries(tick.by_name).map(([n, c]) => `${n}: ${c}`).join(', ');
+          console.log(
+            `Waiting-TTL: cancelled ${tick.cancelled} job(s) that waited past their TTL (${breakdown}). ` +
+            `Tune: gbrain config set minions.ttl_waiting_hours.<name> <hours|0>. See 'gbrain jobs stats'.`,
+          );
+        }
+      } catch (e) {
+        console.error('Waiting-TTL sweep error:', e instanceof Error ? e.message : String(e));
+        await recoverConnection('handleWaitingTTL', e);
       }
     }, this.opts.stalledInterval);
 
@@ -805,6 +870,7 @@ export class MinionWorker extends EventEmitter {
   /** Stop the worker gracefully. */
   stop(): void {
     this.running = false;
+    try { this.eldHistogram?.disable(); } catch { /* fail-open */ }
   }
 
   /**
@@ -923,6 +989,40 @@ export class MinionWorker extends EventEmitter {
    * `failJob` throwing during the same DB outage) can't propagate to
    * the process-level handler and crash the daemon.
    */
+  /**
+   * One formatter for the classified abort telemetry (R2-7) so the
+   * should_abort warn and the 30s-later grace-evict line can never drift
+   * apart (they briefly did: `load1:` vs `load1_at_abort:`).
+   */
+  private formatAbortMeta(meta: Extract<TickResult, { kind: 'lock_lost' | 'should_abort' }>): string {
+    if (meta.kind === 'lock_lost') {
+      return `cause: ${meta.cause}, via: ${meta.via}`;
+    }
+    return `cause: ${meta.cause}, since_last_success_ms: ${Math.round(meta.sinceLastSuccessMs)}, ` +
+      `tick_lateness_ms: ${Math.round(meta.latenessMs)}, overlap_skips: ${meta.overlapSkips}` +
+      `${meta.load1 !== undefined ? `, load1: ${meta.load1.toFixed(2)}/${meta.cores} cores` : ''}`;
+  }
+
+  /**
+   * Event-loop-delay sample for eviction log lines (CDX-1). The histogram
+   * resets on every successful renewal (R2-9 via deps.onRenewalSuccess),
+   * so these numbers attribute to the window since the last success —
+   * i.e. exactly the window in which renewal was failing. ns→ms. Empty
+   * string when the runtime lacks the histogram or sampling throws
+   * (fail-open: never let telemetry break the eviction path).
+   */
+  private formatEvictionTelemetry(): string {
+    const h = this.eldHistogram;
+    if (h === null) return '';
+    try {
+      const p99Ms = Math.round(h.percentile(99) / 1e6);
+      const maxMs = Math.round(h.max / 1e6);
+      return ` [event_loop_delay since last renewal: p99 ${p99Ms}ms, max ${maxMs}ms]`;
+    } catch {
+      return '';
+    }
+  }
+
   private launchJob(job: MinionJob, lockToken: string): void {
     const abort = new AbortController();
 
@@ -930,18 +1030,46 @@ export class MinionWorker extends EventEmitter {
     let cancelled = false;
     // --- re-entrancy guard for overlapping ticks during PgBouncer stalls ---
     let tickInFlight = false;
+    // --- R2-7: the tick's final result, stashed at abort time so the ---
+    // --- grace-evict log (which fires 30s LATER) can report cause/    ---
+    // --- lateness/load instead of just the Error string.              ---
+    let abortMeta: Extract<TickResult, { kind: 'lock_lost' | 'should_abort' }> | null = null;
+
+    // R2-4: ALL elapsed-time arithmetic in the renewal state machine runs
+    // on a monotonic clock — a wall-clock jump (NTP step, DST bug) must
+    // never evict or indefinitely defer. Date.now stays only in log/audit
+    // timestamps (the audit writer stamps its own `ts`).
+    const monotonicNow = () => performance.now();
 
     // --- D3: pure-function lock renewal ---
-    const knobs = resolveLockRenewalKnobs(process.env, this.opts.lockDuration);
+    // #4145: the EFFECTIVE lease is per-job (claim stamped it from the
+    // handler map / explicit submit; NULL = worker default). The cadence
+    // clamps to 60s so a 300s lease renews 5x per window (matching the
+    // cycle refresher's multiple-chances philosophy) instead of the bare
+    // lease/2 = every 150s; leases ≤120s keep the legacy /2 exactly.
+    // Defense-in-depth: re-clamp the row value at consumption. The exposed
+    // submit surfaces already clamp, but the claim COALESCE trusts the row
+    // and the DB CHECK only enforces > 0 — a writer that bypasses add()
+    // (direct SQL repair, foreign tooling) could otherwise stamp a 1ms
+    // lease (renewal-storm setInterval) or a ~25-day one (weeks-long
+    // dead-worker pin).
+    const effectiveLockMs = job.lock_duration_ms != null
+      ? clampLockDurationMs(job.lock_duration_ms)
+      : this.opts.lockDuration;
+    const renewalIntervalMs = renewalIntervalFor(effectiveLockMs);
+    const knobs = resolveLockRenewalKnobs(process.env, effectiveLockMs, renewalIntervalMs);
     const renewalState: LockRenewalState = {
       jobId: job.id,
       jobName: job.name,
       lockToken,
-      lockDurationMs: this.opts.lockDuration,
+      lockDurationMs: effectiveLockMs,
       knobs,
-      lastSuccessfulRenewalAt: Date.now(),
+      lastSuccessfulRenewalAt: monotonicNow(),
       consecutiveFailures: 0,
       cancelled: () => cancelled,
+      intervalMs: renewalIntervalMs,
+      lastTickFiredAt: monotonicNow(),
+      overlapSkips: 0,
     };
     // issue #1678 (Codex #2): hand the tick a bounded reconnect-once hook when
     // the engine owns a pool that a transaction-mode pooler can reap. Postgres
@@ -951,15 +1079,30 @@ export class MinionWorker extends EventEmitter {
     const renewalDeps: LockRenewalDeps = {
       renewLock: (id, tok, dur, opts) => this.queue.renewLock(id, tok, dur, opts),
       audit: lockRenewalAudit,
-      now: Date.now,
+      // R2-4: monotonic — see monotonicNow above.
+      now: monotonicNow,
       setTimeout: (cb, ms) => globalThis.setTimeout(cb, ms),
       // Forward the tick's classified error (CODEX impl review #2) so a pooler
       // reap during lock renewal is audited as reap_detected, not reconnect_other.
       ...(engineReconnect ? { reconnect: (ctx?: { error?: unknown }) => engineReconnect.call(this.engine, ctx) } : {}),
+      // Issue #4145 telemetry: raw loadavg + cached cores (CEO-F2: the tick
+      // try/catches every call), and the R2-9 histogram reset-on-success.
+      loadSnapshot: () => ({ load1: loadavg()[0], cores: this.cpuCores }),
+      onRenewalSuccess: () => { try { this.eldHistogram?.reset(); } catch { /* fail-open */ } },
     };
 
     const lockTimer = setInterval(() => {
-      if (tickInFlight) return;
+      if (tickInFlight) {
+        // Overlap skip (CDX-13): a prior tick is still awaiting its
+        // renewal call. Count it — this is NOT a missed interval (those
+        // coalesce and show up as tick LATENESS instead) — and ADVANCE the
+        // lateness baseline: this callback fired on schedule, so the next
+        // executed tick must not book the skipped window as event-loop
+        // lateness (that would misclassify a slow DB call as starvation).
+        renewalState.overlapSkips += 1;
+        renewalState.lastTickFiredAt = monotonicNow();
+        return;
+      }
       tickInFlight = true;
       void runLockRenewalTick(renewalDeps, renewalState)
         .then((result) => {
@@ -970,13 +1113,24 @@ export class MinionWorker extends EventEmitter {
               return;
             case 'lock_lost':
               if (!abort.signal.aborted) {
-                console.warn(`Lock lost for job ${job.id}, aborting execution`);
+                abortMeta = result;
+                console.warn(
+                  `Lock lost for job ${job.id}, aborting execution ` +
+                  `(${this.formatAbortMeta(result)}${this.formatEvictionTelemetry()})`,
+                );
                 clearInterval(lockTimer);
                 abort.abort(new Error('lock-lost'));
               }
               return;
             case 'should_abort':
               if (!abort.signal.aborted) {
+                abortMeta = result;
+                // Issue #4145 request 3: the one line that saves the 8h of
+                // forensics — WHY renewal failed + was the loop starved.
+                console.warn(
+                  `Lock renewal failed for job ${job.id} (${job.name}); aborting ` +
+                  `(${this.formatAbortMeta(result)}${this.formatEvictionTelemetry()})`,
+                );
                 clearInterval(lockTimer);
                 abort.abort(new Error(result.reason));
               }
@@ -996,7 +1150,7 @@ export class MinionWorker extends EventEmitter {
         .finally(() => {
           tickInFlight = false;
         });
-    }, this.opts.lockDuration / 2);
+    }, renewalIntervalMs);
 
     // --- D8b: universal grace-eviction timer ---
     // Fires for ANY abort reason (not just job.timeout_ms). Without
@@ -1012,18 +1166,35 @@ export class MinionWorker extends EventEmitter {
           const reason = abort.signal.reason instanceof Error
             ? abort.signal.reason.message
             : String(abort.signal.reason);
+          // R2-7: abortMeta carries the tick's classified cause + starvation
+          // telemetry captured AT abort time — the Error string alone would
+          // make this line read like an orphan leak (the #4145 forensics trap).
+          const meta = abortMeta === null ? '' : ` (${this.formatAbortMeta(abortMeta)})`;
           console.warn(
-            `Job ${job.id} (${job.name}) did not exit within 30s of abort (reason: ${reason}). ` +
+            `Job ${job.id} (${job.name}) did not exit within 30s of abort (reason: ${reason}).${meta} ` +
             `Force-evicting from inFlight to unblock worker. ` +
-            `The handler is still running but the worker will claim new jobs.`
+            `The handler is still running but the worker will claim new jobs.` +
+            this.formatEvictionTelemetry()
           );
           clearInterval(lockTimer);
-          this.inFlight.delete(job.id);
-          // D8a: don't failJob on infrastructure aborts (stall detector
-          // reclaims after lock expiry). Isolation mode: also skip — the
-          // group SIGKILL already fired and executeJob's own recording
-          // follows; a competing evict failJob('dead') could dead-letter a
-          // job with attempts remaining (adversarial-review P3).
+          // R2-1 generation-safety: delete ONLY our own execution's entry.
+          // After a force-evict, this job id can be requeued and re-claimed
+          // by THIS worker while the old handler is still alive — an
+          // unconditional delete-by-id would then remove the NEW
+          // execution's entry (concurrency undercount, lost tracking).
+          // The lockToken is minted per claim, so it is the generation.
+          if (this.inFlight.get(job.id)?.lockToken === lockToken) {
+            this.inFlight.delete(job.id);
+          }
+          // D8a: don't failJob if the abort was infrastructure. The stall
+          // detector will reclaim the row cleanly: a lock-renewal abort
+          // now fires only after the at-deadline VERIFY either returned
+          // fenced-false (row already reclaimed) or stayed unreachable
+          // past hardEvictMs (lease long expired) — see #4145
+          // verify-before-evict in lock-renewal-tick.ts. Isolation mode:
+          // also skip — the group SIGKILL already fired and executeJob's
+          // own recording follows; a competing evict failJob('dead') could
+          // dead-letter a job with attempts remaining (adversarial-review P3).
           if (!INFRASTRUCTURE_ABORT_REASONS.has(reason) && this.opts.jobIsolation !== 'process') {
             this.queue.failJob(
               job.id,
@@ -1066,7 +1237,12 @@ export class MinionWorker extends EventEmitter {
         clearInterval(lockTimer);
         if (timeoutTimer) clearTimeout(timeoutTimer);
         if (graceTimer) clearTimeout(graceTimer);
-        this.inFlight.delete(job.id);
+        // R2-1 generation-safety: a force-evicted execution's finally can
+        // fire long after the same job id was re-claimed by this worker.
+        // Only delete the entry if it is still OURS (token = generation).
+        if (this.inFlight.get(job.id)?.lockToken === lockToken) {
+          this.inFlight.delete(job.id);
+        }
         this.jobsCompleted += 1;
         this.checkMemoryLimit('post-job');
       })

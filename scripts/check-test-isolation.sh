@@ -41,6 +41,14 @@ ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$ROOT"
 
 TARGET_DIR="${1:-test}"
+# When scanning the default root, also lint evals/**/*.test.ts — those files
+# are collected into the CI matrix (scripts/test-shard.sh) and must obey the
+# same isolation rules as everything else CI executes. An explicit TARGET_DIR
+# argument (guard self-test fixtures) scans only itself.
+EXTRA_DIRS=""
+if [ "$TARGET_DIR" = "test" ] && [ -d evals ]; then
+  EXTRA_DIRS="evals"
+fi
 ALLOWLIST_FILE="$ROOT/scripts/check-test-isolation.allowlist"
 
 # Read allowlist (one filename per line, # comments allowed). Empty file
@@ -72,7 +80,7 @@ is_allowlisted() {
 
 # Find non-serial unit test files (excluding test/e2e). Portable across
 # bash 3.2 (macOS default) and bash 4+; no mapfile.
-FILE_LIST="$(find "$TARGET_DIR" -name '*.test.ts' \
+FILE_LIST="$(find "$TARGET_DIR" $EXTRA_DIRS -name '*.test.ts' \
   -not -name '*.serial.test.ts' \
   -not -path "*/e2e/*" \
   -type f 2>/dev/null | sort)"

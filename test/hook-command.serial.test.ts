@@ -376,7 +376,7 @@ describe('user-prompt', () => {
     expect(prior.split('pages/dup').length - 1).toBeLessThanOrEqual(1);
   });
 
-  test('--harness codex flags the channel; unknown values fall back to the default', async () => {
+  test('--harness codex/opencode flags the channel; unknown values fall back to the default', async () => {
     const dataDir = join(tmp, 'data');
     writePgliteConfig(dataDir);
     const seen: TurnContextRequest[] = [];
@@ -386,13 +386,21 @@ describe('user-prompt', () => {
       ...out.io,
       stdin: JSON.stringify({ prompt: 'hello Acme' }),
     });
+    // opencode widening (v0.45.x): pins the hook.ts flag parse — a regression
+    // there silently rebadges opencode deliveries as claude-code (the wire
+    // guard half is pinned in volunteer-events-delivery.test.ts).
+    await runHook(['user-prompt', '--harness', 'opencode'], {
+      ...out.io,
+      stdin: JSON.stringify({ prompt: 'hello Acme' }),
+    });
     await runHook(['user-prompt', '--harness', 'vim'], {
       ...out.io,
       stdin: JSON.stringify({ prompt: 'hello Acme' }),
     });
-    expect(seen).toHaveLength(2);
+    expect(seen).toHaveLength(3);
     expect(seen[0].channel).toBe('codex');
-    expect(seen[1].channel).toBe('claude-code'); // fail-open to the default
+    expect(seen[1].channel).toBe('opencode');
+    expect(seen[2].channel).toBe('claude-code'); // fail-open to the default
   });
 
   test('hook ∈ STARTUP_HOOK_SKIP_COMMANDS (source grep — maybeEmitUpdateMarker no-ops under NODE_ENV=test, so no runtime test can pin this)', () => {

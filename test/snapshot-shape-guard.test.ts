@@ -12,7 +12,12 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import * as crypto from 'node:crypto';
-import { tryLoadSnapshot, computeSnapshotSchemaHash } from '../src/core/pglite-engine.ts';
+import {
+  tryLoadSnapshot,
+  computeSnapshotSchemaHash,
+  __snapshotMemoStatsForTests,
+  __resetSnapshotMemoForTests,
+} from '../src/core/pglite-engine.ts';
 import { MIGRATIONS } from '../src/core/migrate.ts';
 import { PGLITE_SCHEMA_SQL } from '../src/core/pglite-schema.ts';
 import { getEmbeddingDimensions, getEmbeddingModel } from '../src/core/ai/gateway.ts';
@@ -21,6 +26,7 @@ let dir: string;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'gbrain-snap-guard-'));
+  __resetSnapshotMemoForTests();
 });
 
 afterEach(() => {
@@ -61,6 +67,41 @@ test('matching hash + shape loads the blob', () => {
   const blob = tryLoadSnapshot(tar);
   expect(blob).not.toBeNull();
   expect(blob!.size).toBeGreaterThan(0);
+});
+
+test('memo: same path is read once per process, blob identical across calls', () => {
+  const tar = writeFixture(`${currentHash()}\ndims=${getEmbeddingDimensions()}\nmodel=${getEmbeddingModel()}\n`);
+  const b1 = tryLoadSnapshot(tar);
+  const afterFirst = __snapshotMemoStatsForTests().tarReads;
+  const b2 = tryLoadSnapshot(tar);
+  const afterSecond = __snapshotMemoStatsForTests().tarReads;
+  expect(b1).not.toBeNull();
+  expect(b2).toBe(b1); // same Blob instance — the tar was not re-read
+  expect(afterFirst).toBe(1);
+  expect(afterSecond).toBe(1);
+});
+
+test('memo: shape refusal is per-call, never cached as terminal — and costs zero tar reads', () => {
+  // Hash matches but dims mismatch: the version entry is memoized yet every
+  // call re-runs the shape gate against the CURRENT gateway config — an
+  // engine with a matching config later in the same process could still
+  // load this snapshot (the zembed/1280 poisoning guard staying hot behind
+  // the memo). The 42MB tar read is deferred until a shape-MATCHING caller,
+  // so a process that only ever refuses never reads it at all.
+  const tar = writeFixture(`${currentHash()}\ndims=99999\nmodel=${getEmbeddingModel()}\n`);
+  expect(tryLoadSnapshot(tar)).toBeNull();
+  expect(__snapshotMemoStatsForTests().tarReads).toBe(0);
+  expect(__snapshotMemoStatsForTests().memoEntries).toBe(1); // entry exists — not terminal
+  expect(tryLoadSnapshot(tar)).toBeNull();
+  expect(__snapshotMemoStatsForTests().tarReads).toBe(0);
+});
+
+test('memo: stale hash is terminal — tar never read, repeat calls short-circuit', () => {
+  const tar = writeFixture(`deadbeef\ndims=${getEmbeddingDimensions()}\nmodel=${getEmbeddingModel()}\n`);
+  expect(tryLoadSnapshot(tar)).toBeNull();
+  expect(__snapshotMemoStatsForTests().tarReads).toBe(0);
+  expect(tryLoadSnapshot(tar)).toBeNull();
+  expect(__snapshotMemoStatsForTests().tarReads).toBe(0);
 });
 
 test('D5.13: a migration handler edit changes the hash (sql-only hashing missed 19 handler migrations)', () => {

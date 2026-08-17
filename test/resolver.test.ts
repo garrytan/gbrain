@@ -3,10 +3,10 @@ import { readFileSync, existsSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 import { checkResolvable } from "../src/core/check-resolvable.ts";
 import { PROTECTED_JOB_NAMES } from "../src/core/minions/protected-names.ts";
+import { operations } from "../src/core/operations.ts";
 
 const SKILLS_DIR = join(import.meta.dir, "..", "skills");
 const RESOLVER_PATH = join(SKILLS_DIR, "RESOLVER.md");
-const OPERATIONS_PATH = join(import.meta.dir, "..", "src", "core", "operations.ts");
 
 describe("RESOLVER.md", () => {
   test("exists", () => {
@@ -143,11 +143,7 @@ describe("RESOLVER.md trigger round-trip (D5/C)", () => {
 // bugs where docs reference handler names that don't exist (e.g., the
 // `name="research"` / `name="orchestrate"` bug from PR #381 pre-reframe).
 describe("Skill example-name validator (D13)", () => {
-  const opNames: string[] = (() => {
-    if (!existsSync(OPERATIONS_PATH)) return [];
-    const content = readFileSync(OPERATIONS_PATH, "utf-8");
-    return Array.from(content.matchAll(/^\s+name:\s*'([a-z_]+)',/gm)).map(m => m[1]);
-  })();
+  const opNames: string[] = operations.map((op) => op.name);
 
   const knownNames = new Set<string>([...opNames, ...PROTECTED_JOB_NAMES]);
 

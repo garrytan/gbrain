@@ -303,8 +303,8 @@ Optional:
   --json                               Emit structured JSON output on stdout.
 
 Examples:
-  # Switch from OpenAI/1536 to ZeroEntropy/1280:
-  gbrain reinit-pglite --embedding-model zeroentropyai:zembed-1 --embedding-dimensions 1280
+  # Switch from OpenAI/1536 to Voyage/1024:
+  gbrain reinit-pglite --embedding-model voyage:voyage-4 --embedding-dimensions 1024
 
   # Skip the sync step (do it later):
   gbrain reinit-pglite --embedding-model openai:text-embedding-3-large \\

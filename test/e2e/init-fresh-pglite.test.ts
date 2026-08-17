@@ -135,21 +135,45 @@ describe('v0.45 DX wave — non-TTY no-key defaults to keyless (typo still fail-
   test('--non-interactive with multiple provider keys auto-picks the canonical default', async () => {
     const multiHome = makeTempHome();
     try {
+      // v0.46.3: the canonical new-install default is voyage:voyage-4
+      // (NEW_INSTALL_DEFAULT_EMBEDDING_MODEL); a ZE key no longer counts —
+      // sunset recipes are excluded from auto-pick entirely.
       const r = await runCli(['init', '--pglite', '--non-interactive'], {
         gbrainHome: multiHome,
         env: {
           OPENAI_API_KEY: 'sk-test-only-for-init-resolution-NOT-CALLED',
-          ZEROENTROPY_API_KEY: 'ze-test-only-for-init-resolution-NOT-CALLED',
+          VOYAGE_API_KEY: 'pa-test-only-for-init-resolution-NOT-CALLED',
         },
       });
       expect(r.exitCode).toBe(0);
       expect(r.stderr).toContain('Multiple embedding providers env-ready');
       expect(r.stderr).toContain('Override with --embedding-model');
       const cfg = JSON.parse(readFileSync(join(multiHome, '.gbrain', 'config.json'), 'utf-8'));
-      // Canonical default (DEFAULT_EMBEDDING_MODEL) wins when its key is present.
-      expect(cfg.embedding_model).toBe('zeroentropyai:zembed-1');
+      // Canonical default wins when its key is present — voyage-4, NOT the
+      // quality-sorted models[0] (voyage-4-large).
+      expect(cfg.embedding_model).toBe('voyage:voyage-4');
+      expect(cfg.embedding_dimensions).toBe(1024);
     } finally {
       rmSync(multiHome, { recursive: true, force: true });
+    }
+  }, 240000);
+
+  test('--non-interactive with ONLY a sunset-provider key continues keyless (ZE excluded)', async () => {
+    const zeHome = makeTempHome();
+    try {
+      const r = await runCli(['init', '--pglite', '--non-interactive'], {
+        gbrainHome: zeHome,
+        env: { ZEROENTROPY_API_KEY: 'ze-test-only-for-init-resolution-NOT-CALLED' },
+      });
+      // Sunset exclusion means zero READY providers → keyless continue, not
+      // an auto-pick onto a provider that dies 2026-09-04.
+      expect(r.exitCode).toBe(0);
+      expect(r.stderr).toContain('keyless');
+      const cfg = JSON.parse(readFileSync(join(zeHome, '.gbrain', 'config.json'), 'utf-8'));
+      expect(cfg.embedding_disabled).toBe(true);
+      expect(cfg.embedding_model).toBeUndefined();
+    } finally {
+      rmSync(zeHome, { recursive: true, force: true });
     }
   }, 240000);
 });
@@ -173,16 +197,16 @@ describe('v0.45 DX wave — --supabase non-TTY guard + multi-key no-canonical fa
   }, 120000);
 
   test('multiple provider keys with NO canonical candidate stays fail-loud with disambiguation hint', async () => {
-    // The canonical default provider (zeroentropyai) has no key here, so the
+    // The canonical default provider (voyage, v0.46.3) has no key here, so the
     // non-TTY auto-pick cannot resolve the ambiguity — it must fail loud
-    // (D2/D3), not guess between openai and voyage.
+    // (D2/D3), not guess between openai and mistral.
     const home = makeTempHome();
     try {
       const r = await runCli(['init', '--pglite', '--non-interactive'], {
         gbrainHome: home,
         env: {
           OPENAI_API_KEY: 'sk-test-only-for-init-resolution-NOT-CALLED',
-          VOYAGE_API_KEY: 'pa-test-only-for-init-resolution-NOT-CALLED',
+          MISTRAL_API_KEY: 'mi-test-only-for-init-resolution-NOT-CALLED',
         },
       });
       expect(r.exitCode).toBe(1);

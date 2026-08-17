@@ -123,10 +123,6 @@ export function getEmbeddingDimensions(): number {
   return gatewayGetDims();
 }
 
-// Back-compat exports for tests that imported these from v0.13.
-export const EMBEDDING_MODEL = 'text-embedding-3-large';
-export const EMBEDDING_DIMENSIONS = 1536;
-
 /**
  * USD cost per 1k tokens for text-embedding-3-large. Retained for back-compat
  * with callers/tests that import it directly; new cost math resolves the
@@ -172,14 +168,17 @@ export function estimateEmbeddingCostUsd(tokens: number): number {
  * already tracked per-page via `pages.chunker_version` (used by sync +
  * doctor). This signature is strictly about the EMBEDDING space.
  *
- * Falls back to the OpenAI default signature when the gateway is
- * unconfigured (unit-test context), matching the other estimator fallbacks.
+ * Returns null when the gateway is unconfigured. The old fallback silently
+ * claimed the OpenAI default signature, which STAMPED A LIE onto pages
+ * embedded in a gateway-less context — a wrong signature is worse than none
+ * (NULL = "unknown provenance", which the includeNullSignature machinery
+ * already handles honestly). Callers skip stamping/signature-widening on null.
  */
-export function currentEmbeddingSignature(): string {
+export function currentEmbeddingSignature(): string | null {
   try {
     return `${gatewayGetModel()}:${gatewayGetDims()}`;
   } catch {
-    return `${EMBEDDING_MODEL}:${EMBEDDING_DIMENSIONS}`;
+    return null;
   }
 }
 

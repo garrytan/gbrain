@@ -64,6 +64,9 @@ describe('#1696 — inline sync extract stamps links_extracted_at', () => {
     execSync('git init', { cwd: repoPath, stdio: 'pipe' });
     execSync('git config user.email "t@t.com"', { cwd: repoPath, stdio: 'pipe' });
     execSync('git config user.name "T"', { cwd: repoPath, stdio: 'pipe' });
+    // Never inherit the machine's global commit.gpgsign — a signing gpg-agent can
+    // OOM under full-suite memory pressure and fail the fixture commit (#1696).
+    execSync('git config commit.gpgsign false', { cwd: repoPath, stdio: 'pipe' });
     mkdirSync(join(repoPath, 'people'), { recursive: true });
     mkdirSync(join(repoPath, 'companies'), { recursive: true });
     writeFileSync(join(repoPath, 'people/alice.md'), [

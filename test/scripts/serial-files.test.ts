@@ -18,7 +18,7 @@
 
 import { describe, it, expect } from 'bun:test';
 import { execFileSync } from 'child_process';
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 
 const REPO_ROOT = resolve(import.meta.dir, '..', '..');
@@ -66,5 +66,33 @@ describe('run-serial-tests.sh contract', () => {
     const unitFiles = new Set(dryRunList(SHARD_SH));
     const overlap = [...serialFiles].filter(f => unitFiles.has(f));
     expect(overlap).toEqual([]);
+  });
+});
+
+describe('EXCLUSIVE_FILES (pooled-runner opt-out) guards', () => {
+  const src = () => readFileSync(SERIAL_SH, 'utf-8');
+  const entries = () =>
+    [...src().matchAll(/^\s*"(test\/[^"]+\.serial\.test\.ts)"\s*$/gm)].map(m => m[1]);
+
+  it('every exclusive entry exists on disk and is discovered by the runner', () => {
+    const listed = dryRunList(SERIAL_SH);
+    const e = entries();
+    expect(e.length).toBeGreaterThan(0);
+    for (const f of e) {
+      expect(existsSync(resolve(REPO_ROOT, f))).toBe(true);
+      expect(listed).toContain(f);
+    }
+  });
+
+  it('the exclusive list does not silently grow (quarantine-growth guard)', () => {
+    // Exclusivity re-serializes the runner one file at a time — the exact
+    // 8.5-minute disease the pool removed. Each entry must carry a
+    // justification comment; past 3 entries, stop and rethink the design
+    // (per-file PATH shims are usually the right fix) instead of quarantining.
+    expect(entries().length).toBeLessThanOrEqual(3);
+  });
+
+  it('a missing exit sentinel is a failure, never a silent pass', () => {
+    expect(src()).toMatch(/missing exit sentinel/);
   });
 });

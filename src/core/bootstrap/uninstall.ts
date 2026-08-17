@@ -98,7 +98,7 @@ export function resolveBrainDataDir(gbrainHomeDir: string): string {
 // ---------------------------------------------------------------------------
 
 export interface RegistrationRemovalRequest {
-  host: 'claude-code' | 'codex';
+  host: 'claude-code' | 'codex' | 'opencode';
   scope: string;
   detail?: string;
 }

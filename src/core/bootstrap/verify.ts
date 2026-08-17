@@ -570,7 +570,6 @@ async function runRoundtrip(
   const putPage = findOp('put_page');
   const getPage = findOp('get_page');
   const queryOp = findOp('query');
-  const deletePage = findOp('delete_page');
 
   await sweepProbeLeftovers(engine, ws, sourceId);
 
@@ -675,10 +674,16 @@ async function runRoundtrip(
   }
 
   // 6. Delete the probes [G13] — failure is a WARNING, never a verify fail.
+  // HARD delete via the engine primitive (same as sweepProbeLeftovers): the
+  // probe is not user content and verify is a trusted local caller. The
+  // delete_page OP is a v0.26.5 SOFT delete (sets deleted_at, row stays in
+  // pages until the 72h purge) — using it here left two probe tombstones in
+  // the user's brain after every verify run, visible to include_deleted
+  // readers and pinned as residue by the Postgres e2e cleanup assertion.
   const deleteWarnings: string[] = [];
   for (const slug of [VERIFY_PROBE_SLUG, VERIFY_PROBE_ENTITY_SLUG]) {
     try {
-      await deletePage.handler(ctx, { slug });
+      await engine.deletePage(slug, { sourceId });
     } catch (e) {
       deleteWarnings.push(`${slug}: ${(e as Error).message}`);
     }

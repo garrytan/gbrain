@@ -580,9 +580,23 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     const postgres = (await import('postgres')).default;
     const sql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL || '', { prepare: false });
     try {
+      // Plain-array bind, NOT `sql.array([...])`: sql.array resolves its
+      // array OID (and serializer) through postgres.js's typeArrayMap, which
+      // is fetched asynchronously on connection startup. This INSERT is the
+      // FIRST query on this fresh connection, so the map is still empty and
+      // sql.array falls back to the element OID (25 = text) with scalar
+      // serialization — real Postgres rejects it with 42804 ("column scopes
+      // is of type text[] but expression is of type text"; an explicit
+      // ::text[] cast just shifts the failure to 22P02 "malformed array
+      // literal" because the value still serializes as a bare scalar). A
+      // plain JS array always serializes to the `{...}` literal and binds
+      // with an unspecified OID, so Postgres coerces it from column context
+      // deterministically — same untyped-bind approach as pgArray() in
+      // src/core/oauth-provider.ts. Latent since d61808d80 (v0.42.64.0):
+      // CI's e2e.yml never runs this file.
       await sql`
         INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at)
-        VALUES (${tokenHash}, ${'access'}, ${publicClientId!}, ${sql.array(['read'])}, ${Math.floor(Date.now() / 1000) + 3600})
+        VALUES (${tokenHash}, ${'access'}, ${publicClientId!}, ${['read']}, ${Math.floor(Date.now() / 1000) + 3600})
       `;
     } finally {
       await sql.end();

@@ -1,4 +1,9 @@
 import type { Recipe } from '../types.ts';
+import {
+  ZEROENTROPY_SUNSET_DATE,
+  NEW_INSTALL_DEFAULT_EMBEDDING_MODEL,
+  NEW_INSTALL_DEFAULT_RERANKER_MODEL,
+} from '../defaults.ts';
 
 /**
  * ZeroEntropy ships two specialized small models that target the two weakest
@@ -64,4 +69,16 @@ export const zeroentropyai: Recipe = {
   },
   setup_hint:
     'Get an API key at https://dashboard.zeroentropy.dev, then `export ZEROENTROPY_API_KEY=...`',
+  // ZeroEntropy is winding down; the hosted API dies on the sunset date.
+  // This drives picker/auto-pick exclusion, warn-on-use, and the
+  // `gbrain providers` DEPRECATED annotation. The recipe itself is deleted
+  // in the September removal release (see TODOS.md).
+  sunset: {
+    date: ZEROENTROPY_SUNSET_DATE,
+    message: 'ZeroEntropy is shutting down its hosted API.',
+    replacement: {
+      embedding: NEW_INSTALL_DEFAULT_EMBEDDING_MODEL,
+      reranker: NEW_INSTALL_DEFAULT_RERANKER_MODEL,
+    },
+  },
 };

@@ -30,7 +30,10 @@ export const collectStalledJobs: AdvisorCollector = {
           severity: 'warn',
           title: `${r.n} "${r.name}" job${r.n === 1 ? '' : 's'} look stalled (lock lapsed / retrying).`,
           detail: 'A wedged worker stops backfill/sync from progressing.',
-          fix: { command_argv: ['gbrain', 'jobs', 'status'] },
+          // 'jobs stats' is the real subcommand — 'jobs status' never existed
+          // (the dead fix-command shipped unnoticed because nothing executes
+          // advisor fixes automatically).
+          fix: { command_argv: ['gbrain', 'jobs', 'stats'] },
           collector: 'stalled-jobs',
           ask_user: true,
         });

@@ -16,6 +16,7 @@
 import * as fs from 'node:fs';
 import type { BrainEngine } from '../core/engine.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
+import { isQueueQuotaExceededError } from '../core/minions/admission.ts';
 import { waitForCompletion, TimeoutError } from '../core/minions/wait-for-completion.ts';
 import type { MinionJobInput, SubagentHandlerData, AggregatorHandlerData } from '../core/minions/types.ts';
 import { resolveSourceId, ALL_SOURCES } from '../core/source-resolver.ts';
@@ -313,7 +314,13 @@ export async function runAgentRun(engine: BrainEngine, args: string[]): Promise<
     allowProtectedSubmit: true,
   });
 
-  process.stderr.write(`submitted: job ${job.id} (subagent)\n`);
+  // Honest-dispatch at the interactive surface (codex re-review): a
+  // param-coalesced submit returns an EXISTING waiting job — printing
+  // 'submitted' would tell the operator a new run was queued when it wasn't.
+  process.stderr.write(job.coalesced === true
+    ? `coalesced: identical params matched existing waiting job ${job.id} (subagent). ` +
+      `Vary the prompt/params or pass a fresh idempotency key for an independent run.\n`
+    : `submitted: job ${job.id} (subagent)\n`);
 
   if (flags.detach || !flags.follow) {
     process.stdout.write(String(job.id) + '\n');
@@ -361,7 +368,9 @@ async function runFanout(engine: BrainEngine, queue: MinionQueue, flags: RunFlag
     const job = await queue.add('subagent', data as unknown as Record<string, unknown>, submitOpts, {
       allowProtectedSubmit: true,
     });
-    process.stderr.write(`submitted: job ${job.id} (single-entry manifest short-circuit)\n`);
+    process.stderr.write(job.coalesced === true
+      ? `coalesced: identical params matched existing waiting job ${job.id} (single-entry manifest short-circuit).\n`
+      : `submitted: job ${job.id} (single-entry manifest short-circuit)\n`);
     if (flags.detach || !flags.follow) { process.stdout.write(`${job.id}\n`); return; }
     await followJob(engine, queue, job.id, flags.timeoutMs);
     return;
@@ -394,9 +403,26 @@ async function runFanout(engine: BrainEngine, queue: MinionQueue, flags: RunFlag
       max_stalled: 3,
     };
     if (flags.timeoutMs) submitOpts.timeout_ms = flags.timeoutMs;
-    const child = await queue.add('subagent', data as unknown as Record<string, unknown>, submitOpts, {
-      allowProtectedSubmit: true,
-    });
+    let child;
+    try {
+      child = await queue.add('subagent', data as unknown as Record<string, unknown>, submitOpts, {
+        allowProtectedSubmit: true,
+      });
+    } catch (e) {
+      // Admission quota mid-fanout: a partial tree (some children submitted,
+      // children_ids never written) would leave the aggregator torn — cancel
+      // the WHOLE tree (cascades to already-submitted children) and surface
+      // the quota message. All-or-nothing beats a wedged aggregator.
+      if (isQueueQuotaExceededError(e)) {
+        await queue.cancelJob(aggregator.id).catch(() => {});
+        console.error(
+          `fanout aborted at child ${childIds.length + 1}/${manifest.length}: ${e.message}\n` +
+          `Aggregator ${aggregator.id} and its ${childIds.length} submitted child(ren) were cancelled.`,
+        );
+        process.exit(1);
+      }
+      throw e;
+    }
     childIds.push(child.id);
   }
 

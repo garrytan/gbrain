@@ -37,6 +37,15 @@ export interface BrainWriterOptions {
    * follow-on release after soak).
    */
   strictMode?: StrictMode;
+  /**
+   * Source every read AND write in this writer targets. Default 'default'
+   * (matches engine.putPage's schema default). Pre-fix the writer's reads
+   * were UNSCOPED (first slug match across ANY source) while its writes
+   * landed in 'default' — the exact unscoped-check/scoped-write bug class:
+   * setCompiledTruth could read source B's page and clobber the default
+   * source's row with it.
+   */
+  sourceId?: string;
 }
 
 export interface EntityInput {
@@ -128,8 +137,14 @@ class WriteTxImpl implements WriteTx {
   constructor(
     private engine: BrainEngine,
     public readonly context: ResolverContext,
+    private sourceId?: string,
   ) {
-    this.slugRegistry = new SlugRegistry(engine);
+    this.slugRegistry = new SlugRegistry(engine, sourceId);
+  }
+
+  /** Read+write scope: mirrors engine.putPage's implicit 'default'. */
+  private scope(): { sourceId: string } {
+    return { sourceId: this.sourceId ?? 'default' };
   }
 
   async createEntity(input: EntityInput): Promise<string> {
@@ -163,18 +178,18 @@ class WriteTxImpl implements WriteTx {
       compiled_truth: input.compiledTruth,
       timeline: input.timeline ?? '',
       frontmatter: input.frontmatter ?? {},
-    });
+    }, this.scope());
     this.touchedSlugs.add(slug);
     return slug;
   }
 
   async appendTimeline(slug: string, entry: TimelineInput): Promise<void> {
-    await this.engine.addTimelineEntry(slug, entry); // gbrain-allow-direct-insert: BrainWriter is the canonical synthesize-phase write surface — output gets fenced into pages via putPage in the same transaction
+    await this.engine.addTimelineEntry(slug, entry, this.scope()); // gbrain-allow-direct-insert: BrainWriter is the canonical synthesize-phase write surface — output gets fenced into pages via putPage in the same transaction
     this.touchedSlugs.add(slug);
   }
 
   async setCompiledTruth(slug: string, body: string): Promise<void> {
-    const existing = await this.engine.getPage(slug);
+    const existing = await this.engine.getPage(slug, this.scope());
     if (!existing) throw new WriteError('invalid_input', `setCompiledTruth: page not found: ${slug}`);
     await this.engine.putPage(slug, {
       type: existing.type,
@@ -182,12 +197,12 @@ class WriteTxImpl implements WriteTx {
       compiled_truth: body,
       timeline: existing.timeline,
       frontmatter: existing.frontmatter,
-    });
+    }, this.scope());
     this.touchedSlugs.add(slug);
   }
 
   async setFrontmatterField(slug: string, key: string, value: unknown): Promise<void> {
-    const existing = await this.engine.getPage(slug);
+    const existing = await this.engine.getPage(slug, this.scope());
     if (!existing) throw new WriteError('invalid_input', `setFrontmatterField: page not found: ${slug}`);
     const nextFm = { ...existing.frontmatter, [key]: value };
     await this.engine.putPage(slug, {
@@ -196,21 +211,26 @@ class WriteTxImpl implements WriteTx {
       compiled_truth: existing.compiled_truth,
       timeline: existing.timeline,
       frontmatter: nextFm,
-    });
+    }, this.scope());
     this.touchedSlugs.add(slug);
   }
 
   async putRawData(slug: string, source: string, data: object): Promise<void> {
-    await this.engine.putRawData(slug, source, data);
+    await this.engine.putRawData(slug, source, data, this.scope());
     this.touchedSlugs.add(slug);
   }
 
   async addLink(from: string, to: string, context?: string, linkType?: string): Promise<void> {
-    await this.engine.addLink(from, to, context, linkType); // gbrain-allow-direct-insert: BrainWriter is the canonical synthesize-phase write surface
+    // Both endpoints scoped to this writer's source — synthesize-phase links
+    // are within-source by definition, and unscoped endpoints resolve against
+    // 'default'-source rows (wrong page or missing) in a scoped writer.
+    const sid = this.scope().sourceId;
+    const linkScope = { fromSourceId: sid, toSourceId: sid };
+    await this.engine.addLink(from, to, context, linkType, undefined, undefined, undefined, linkScope); // gbrain-allow-direct-insert: BrainWriter is the canonical synthesize-phase write surface
     // Reverse back-link — both directions inside the same outer transaction.
     // Uses 'backlink' label on the reverse if no linkType was specified so
     // the reverse is distinguishable from the forward semantic type.
-    await this.engine.addLink(to, from, context, linkType ? `${linkType}_back` : 'backlink'); // gbrain-allow-direct-insert: BrainWriter synthesize-phase reverse back-link in the same transaction as the forward addLink above
+    await this.engine.addLink(to, from, context, linkType ? `${linkType}_back` : 'backlink', undefined, undefined, undefined, linkScope); // gbrain-allow-direct-insert: BrainWriter synthesize-phase reverse back-link in the same transaction as the forward addLink above
     this.touchedSlugs.add(from);
     this.touchedSlugs.add(to);
   }
@@ -223,12 +243,14 @@ class WriteTxImpl implements WriteTx {
 export class BrainWriter {
   private validators: PageValidator[] = [];
   private strictMode: StrictMode;
+  private sourceId?: string;
 
   constructor(
     private engine: BrainEngine,
     opts: BrainWriterOptions = {},
   ) {
     this.strictMode = opts.strictMode ?? 'lint';
+    this.sourceId = opts.sourceId;
   }
 
   register(validator: PageValidator): void {
@@ -247,14 +269,15 @@ export class BrainWriter {
 
     let report: ValidationReport | null = null;
 
+    const strictSourceId = this.sourceId;
     const txResult = await this.engine.transaction(async (txEngine) => {
-      const tx = new WriteTxImpl(txEngine, ctx);
+      const tx = new WriteTxImpl(txEngine, ctx, strictSourceId);
       const result = await fn(tx);
 
       // Validators run before the outer transaction commits.
       if (strict !== 'off') {
         report = await runValidators(txEngine, validators, tx.touchedSlugs, {
-          sourceId: 'default',
+          sourceId: strictSourceId ?? 'default',
         });
         // `ctx.logger.info` would be nice but keep validator behavior uniform
         // regardless of strict/lint mode. Caller inspects the report.
