@@ -131,17 +131,93 @@ describe('claude plugin.json', () => {
   });
 });
 
-describe('marketplace equivalence (codex reads BOTH formats)', () => {
-  test('same marketplace name, one plugin, same source', () => {
-    expect(codexMarketplace.name).toBe('gbrain');
+describe('marketplace shape (deliberately asymmetric — prove-before-publish)', () => {
+  test('claude marketplace: full plugin + the two persona variants', () => {
     expect(claudeMarketplace.name).toBe('gbrain');
-    expect(codexMarketplace.plugins).toHaveLength(1);
-    expect(claudeMarketplace.plugins).toHaveLength(1);
-    expect(codexMarketplace.plugins[0].name).toBe('gbrain');
-    expect(claudeMarketplace.plugins[0].name).toBe('gbrain');
-    expect(codexMarketplace.plugins[0].source).toEqual({ source: 'local', path: './' });
-    expect(claudeMarketplace.plugins[0].source).toBe('./');
+    expect(claudeMarketplace.plugins).toHaveLength(3);
+    const byName = Object.fromEntries(claudeMarketplace.plugins.map((p: { name: string }) => [p.name, p]));
+    expect(byName['gbrain'].source).toBe('./');
+    expect(byName['gbrain-coding'].source).toBe('./plugin-variants/gbrain-coding');
+    expect(byName['gbrain-daily'].source).toBe('./plugin-variants/gbrain-daily');
   });
+
+  test('codex marketplace stays at ONE plugin until its multi-plugin observation run', () => {
+    // Codex's installer handling of multi-entry marketplaces is unverified —
+    // a doc "provisional" flag gates nothing once an entry is installable, so
+    // the entries themselves wait for the observation-run follow-up.
+    expect(codexMarketplace.name).toBe('gbrain');
+    expect(codexMarketplace.plugins).toHaveLength(1);
+    expect(codexMarketplace.plugins[0].name).toBe('gbrain');
+    expect(codexMarketplace.plugins[0].source).toEqual({ source: 'local', path: './' });
+  });
+
+  test('marketplace variant entries match the personas block exactly', () => {
+    const personaPluginNames = Object.values(
+      (lanes.personas ?? {}) as Record<string, { plugin_name: string }>,
+    )
+      .map(p => p.plugin_name)
+      .sort();
+    const claudeVariantNames = claudeMarketplace.plugins
+      .map((p: { name: string }) => p.name)
+      .filter((n: string) => n !== 'gbrain')
+      .sort();
+    expect(claudeVariantNames).toEqual(personaPluginNames);
+  });
+});
+
+describe('persona variant trees (committed, generated, self-contained)', () => {
+  const personas: Record<string, { plugin_name: string; skills: Record<string, string> }> = lanes.personas ?? {};
+
+  test('personas block exists with the two launch personas', () => {
+    expect(Object.keys(personas).sort()).toEqual(['coding-agent', 'daily-driver']);
+  });
+
+  for (const [personaName, def] of Object.entries(personas)) {
+    describe(`variant ${def.plugin_name} (persona ${personaName})`, () => {
+      const root = join('plugin-variants', def.plugin_name);
+
+      test('version lockstep + retargeted manifests', () => {
+        const claudeVariant = json(`${root}/.claude-plugin/plugin.json`);
+        const codexVariant = json(`${root}/.codex-plugin/plugin.json`);
+        expect(claudeVariant.version).toBe(pkg.version);
+        expect(codexVariant.version).toBe(pkg.version);
+        expect(claudeVariant.name).toBe(def.plugin_name);
+        expect(codexVariant.name).toBe(def.plugin_name);
+        expect(claudeVariant.skills).toBe('./skills/');
+        expect(codexVariant.skills).toBe('./skills/');
+        // Same MCP server name as the full plugin (tool names stay
+        // mcp__gbrain__*) — docs say install exactly one gbrain plugin.
+        expect(Object.keys(claudeVariant.mcpServers)).toEqual(['gbrain']);
+        expect(claudeVariant.mcpServers.gbrain.command).toBe('${CLAUDE_PLUGIN_ROOT}/.agents/gbrain-launcher');
+        expect(claudeVariant.mcpServers.gbrain.args).toEqual(EXPECTED_ARGS);
+      });
+
+      test('mcp.json is byte-identical to the root lane manifest', () => {
+        expect(read(`${root}/.codex-plugin/mcp.json`)).toBe(read('.codex-plugin/mcp.json'));
+      });
+
+      test('self-contained launcher, executable', () => {
+        const p = join(ROOT, root, '.agents', 'gbrain-launcher');
+        expect(statSync(p).mode & 0o111).toBeGreaterThan(0);
+        expect(readFileSync(p, 'utf8')).toBe(read('.agents/gbrain-launcher'));
+      });
+
+      test('skills dirs == persona slugs + shared conventions', () => {
+        const entries = readdirSync(join(ROOT, root, 'skills'), { withFileTypes: true });
+        const dirs = entries.filter(e => e.isDirectory()).map(e => e.name).sort();
+        expect(dirs).toEqual([...Object.keys(def.skills), 'conventions'].sort());
+        const files = entries.filter(e => e.isFile()).map(e => e.name);
+        expect(files).toContain('_output-rules.md');
+        expect(files).toContain('_brain-filing-rules.md');
+      });
+
+      test('README carries the version stamp and the one-plugin rule', () => {
+        const readme = read(`${root}/README.md`);
+        expect(readme).toContain(`<!-- gbrain-plugin-tree-stamp: ${pkg.version} -->`);
+        expect(readme).toContain('exactly ONE gbrain plugin');
+      });
+    });
+  }
 });
 
 describe('launcher (static)', () => {
@@ -341,7 +417,12 @@ describe('generator negative fixtures (a guard that cannot fail is not coverage)
   function fixtureRoot(lanes: Record<string, unknown>, betaTools: string[] = []): string {
     const root = mkdtempSync(join(tmpdir(), 'gb-lanes-fixture-'));
     writeFileSync(join(root, 'VERSION'), '0.0.0.0\n');
-    writeFileSync(join(root, 'openclaw.plugin.json'), JSON.stringify({ skills: ['skills/alpha'] }));
+    // name/version present so loadBundleManifest (persona validation path)
+    // accepts the fixture; the generator's own read only uses .skills.
+    writeFileSync(
+      join(root, 'openclaw.plugin.json'),
+      JSON.stringify({ name: 'fixture', version: '0.0.0.0', skills: ['skills/alpha'], shared_deps: [] }),
+    );
     mkdirSync(join(root, 'skills', 'alpha'), { recursive: true });
     mkdirSync(join(root, 'skills', 'beta'), { recursive: true });
     mkdirSync(join(root, 'skills', 'conventions'), { recursive: true });
@@ -398,6 +479,104 @@ describe('generator negative fixtures (a guard that cannot fail is not coverage)
       expect(r.status).toBe(1);
       expect(r.stderr).toContain('starter_gaps snapshot');
       expect(r.stderr).toContain('--write-gaps');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // ── Persona negative fixtures (validation shared with the CLI) ──────────
+  const validPersona = {
+    description: 'a fixture persona description long enough',
+    plugin_name: 'gbrain-fixture',
+    skills: { alpha: 'a fixture reason long enough to pass' },
+  };
+
+  test('a persona slug outside the lane set fails', () => {
+    const root = fixtureRoot({
+      personas: { fixture: { ...validPersona, skills: { beta: 'a fixture reason long enough to pass' } } },
+    });
+    try {
+      const r = runGenerator(root);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('not in the plugin lane set');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the reserved persona name 'all' fails", () => {
+    const root = fixtureRoot({ personas: { all: validPersona } });
+    try {
+      const r = runGenerator(root);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('reserved name');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a duplicate plugin_name across personas fails', () => {
+    const root = fixtureRoot({
+      personas: { one: validPersona, two: { ...validPersona, description: 'another fixture persona description' } },
+    });
+    try {
+      const r = runGenerator(root);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('already used by persona');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a sub-10-char persona skill reason fails', () => {
+    const root = fixtureRoot({
+      personas: { fixture: { ...validPersona, skills: { alpha: 'short' } } },
+    });
+    try {
+      const r = runGenerator(root);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('recorded reason of at least');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('--write-gaps spread-preserves the personas block byte-for-byte [OV8]', () => {
+    const root = fixtureRoot({ personas: { fixture: validPersona } });
+    try {
+      const before = JSON.stringify(
+        (JSON.parse(readFileSync(join(root, 'skills', 'plugin-lanes.json'), 'utf8')) as { personas: unknown }).personas,
+      );
+      const out = join(root, 'out');
+      const r = spawnSync(
+        'bun',
+        ['run', join(ROOT, 'scripts/generate-plugin-tree.ts'), '--out', out, '--write-gaps'],
+        { encoding: 'utf8', timeout: 60_000, env: { ...process.env, GBRAIN_PLUGIN_TREE_ROOT: root } },
+      );
+      expect(r.status, r.stderr).toBe(0);
+      const after = JSON.stringify(
+        (JSON.parse(readFileSync(join(root, 'skills', 'plugin-lanes.json'), 'utf8')) as { personas: unknown }).personas,
+      );
+      expect(after).toBe(before);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('--variants-out refuses to delete a non-generated non-empty directory (rmSync guard)', () => {
+    const root = fixtureRoot({ personas: { fixture: validPersona } });
+    try {
+      const precious = join(root, 'precious');
+      mkdirSync(precious, { recursive: true });
+      writeFileSync(join(precious, 'important.txt'), 'do not delete');
+      const r = spawnSync(
+        'bun',
+        ['run', join(ROOT, 'scripts/generate-plugin-tree.ts'), '--out', join(root, 'out'), '--variants-out', precious],
+        { encoding: 'utf8', timeout: 60_000, env: { ...process.env, GBRAIN_PLUGIN_TREE_ROOT: root } },
+      );
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain('refusing --variants-out');
+      expect(readFileSync(join(precious, 'important.txt'), 'utf8')).toBe('do not delete');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

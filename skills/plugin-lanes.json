@@ -18,6 +18,55 @@
     "skillpack-harvest": "writes back to openclaw.plugin.json (host-repo curation surface) — repo-dev only"
   },
   "not_added": {},
+  "personas": {
+    "coding-agent": {
+      "description": "Brain-first coding agent working inside a repo: retrieval, routing, ingest discipline, correction hygiene. Default persona for the claude-code harness bridge; also published as the gbrain-coding marketplace variant.",
+      "plugin_name": "gbrain-coding",
+      "skills": {
+        "query": "core retrieval loop — every coding session asks the brain questions",
+        "ingest": "content routing into the brain — the write half of the core loop",
+        "brain-ops": "day-to-day brain operations (links, sync, timeline) a coding agent performs constantly",
+        "repo-architecture": "repository-structure capture — the coding persona's signature artifact",
+        "signal-detector": "detects durable signals in work sessions worth banking to the brain",
+        "functional-area-resolver": "two-layer skill routing keeps large skill sets navigable in coding contexts",
+        "idea-ingest": "capture engineering ideas with provenance while coding",
+        "idea-lineage": "trace how engineering decisions and ideas evolved across sessions",
+        "concept-synthesis": "synthesize scattered notes into concepts — turns session exhaust into knowledge",
+        "enrich": "backfill entities and links on pages the coding loop creates",
+        "maintain": "brain health checks keep a heavily-written coding brain consistent",
+        "context-audit": "token hygiene over CLAUDE.md/AGENTS.md/MEMORY — direct coding-agent pain",
+        "brain-link-discipline": "backlink discipline for pages the coding loop writes",
+        "resolve-before-asking": "resolve references from the brain before interrupting the user",
+        "correction-pipeline": "user corrections become durable brain updates instead of session-local fixes",
+        "measure-before-you-fix": "measurement discipline before performance/bug fixes — engineering hygiene",
+        "brain-ingest-gate": "gates what session content deserves brain ingestion — noise control",
+        "data-loss-gate": "guards destructive operations touching brain data during coding work"
+      }
+    },
+    "daily-driver": {
+      "description": "Personal knowledge-brain daily use: meetings, tasks, briefings, reading, research. Published as the gbrain-daily marketplace variant.",
+      "plugin_name": "gbrain-daily",
+      "skills": {
+        "query": "core retrieval loop — daily questions against the brain",
+        "ingest": "content routing into the brain — the write half of the core loop",
+        "meeting-ingestion": "meeting notes and transcripts are the daily driver's highest-volume input",
+        "daily-task-manager": "task capture and tracking against the brain",
+        "daily-task-prep": "morning prep pulls tasks, meetings, and salience into one view",
+        "briefing": "daily/weekly briefings synthesized from brain state",
+        "reports": "recurring reports over brain content for personal review",
+        "voice-note-ingest": "voice memos land in the brain with structure",
+        "media-ingest": "images, PDFs, and clips filed with extraction",
+        "strategic-reading": "long-form reading distilled into brain pages",
+        "data-research": "structured research runs with sources filed as raw data",
+        "perplexity-research": "web research capture with citation discipline",
+        "gbrain-advisor": "ranked high-leverage brain actions — the daily health nudge",
+        "conversation-archive": "conversation capture for cross-session memory",
+        "blog-ingest": "blog and article ingestion into the reading graph",
+        "research-compendium": "multi-source research compiled into a living compendium",
+        "bulk-ingestion": "batch imports (folders, exports) with manifest discipline"
+      }
+    }
+  },
   "starter_gaps": {
     "brain-ops": [
       "add_link",

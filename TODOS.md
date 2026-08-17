@@ -1,5 +1,68 @@
 # TODOS
 
+## Skill-bridge (cathedral-7) follow-ups (plan: ~/.claude/plans/system-instruction-you-are-working-witty-fern.md)
+
+- [ ] **P2 — codex/opencode native skills-dir + codex multi-plugin observation
+  runs.** **What:** hermetic observation runs (OPENCODE-CLI-PIN.md style)
+  answering (a) does codex/opencode read a native skills DIR for direct file
+  installs, and (b) does codex's plugin installer handle a multi-entry
+  marketplace. On (a) verified: add the dest default to
+  `src/core/bootstrap/host-specs.ts` (dated TARGETS note) and lift the
+  `--dest`-required refusal in `src/commands/skillpack/harness.ts`. On (b)
+  verified: add `gbrain-coding`/`gbrain-daily` entries to
+  `.agents/plugins/marketplace.json` (the dist branch already carries the
+  variant trees) and flip `test/codex-plugin-manifest.test.ts`'s codex
+  marketplace pin from 1 to 3. Recipe anchor: the Grok bootstrap-harness
+  checklist below. **Why:** prove-before-publish — the claude lane got a
+  real-binary door; these two shipped gated instead. **Effort:** M.
+  **Priority:** P2.
+- [ ] **P2 — STARTER_OPS question: should get_skill/list_skills join the
+  starter surface?** **What:** the stub lane is dead on unmodified plugin
+  installs (starter surface hides skills ops; stdio can't persist a
+  request_tools widening). Decide whether the starter set grows the two
+  read-only skills ops (frozen-surface change: monotonicity test in
+  test/mcp-surface.test.ts, publish gate still applies) or stub mode stays
+  documented full-surface-only. The contract pin lives in
+  test/skillpack-harness-bridge.test.ts (get_skill ∉ STARTER_OPS) and the
+  warn text in src/commands/skillpack/harness.ts must move with it. **Why:**
+  the biggest single unlock for cold-pull stubs. **Effort:** S (decision) +
+  S (change). **Priority:** P2.
+- [ ] **P3 — duplicate-skill-name coexistence doctor check.** **What:** a
+  doctor probe that detects the same skill name loadable from two lanes at
+  once (marketplace plugin snapshot + a bridge install in
+  ~/.claude/skills, or two persona variants) and names the lanes. The
+  bridge prints a static callout today; #4167 built coexistence detection
+  for the MCP server name only. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — shared_deps set reconciliation.** **What:** the plugin tree +
+  bridge variants ship `_friction-protocol.md` (generator regex) though
+  openclaw.plugin.json#shared_deps omits it; RESOLVER.md is referenced by 6
+  skills but shipped by neither; _AGENT_README.md is in shared_deps but
+  referenced by zero SKILL.md. Pick ONE authoritative set, encode it in
+  openclaw.plugin.json#shared_deps, and make the generator + bundle.ts
+  consume it. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — skill-lint rule for repo-relative shared-dep references.**
+  **What:** 20+ SKILL.md bodies reference `skills/conventions/...`
+  repo-relatively; those literal paths break in every copied layout (plugin
+  tree, variants, bridge installs). Lint them toward sibling-relative
+  (`../conventions/...`) which the layouts preserve. **Effort:** S.
+  **Priority:** P3.
+- [ ] **P3 — removal-era label sweep (filed v0.46.18.0).** **What:** code
+  error strings + docs say install/uninstall were "removed in v0.33" while
+  the CHANGELOG history records the retirement shipping in v0.36.0.0; pick
+  the true version and sweep `src/commands/skillpack.ts`, `harness.ts`,
+  `shared.ts`, the guide, KEY_FILES, and `docs/INSTALL.md` together. (The
+  other two gaps the post-ship doc review caught — `lens_error` dropped
+  from `BridgesStatusEntry`, and reference/remove/scaffold help omitting
+  `--scope`/`--workspace`/`--all` — were fixed pre-merge.) **Effort:** S.
+  **Priority:** P3.
+- [ ] **P3 — unify the three harness-id vocabularies.** **What:** bootstrap's
+  `Harness` (src/commands/bootstrap.ts:262, unexported),
+  `HarnessSelector` (src/core/bootstrap/harness.ts), and the bridge's
+  `BRIDGE_HARNESSES` (src/core/skillpack/harness-bridge.ts) into one core
+  registry module (note `HarnessTarget` is taken by the receipt-row type in
+  src/core/bootstrap/format.ts). **Why:** three unions drift; a new harness
+  should be one edit. **Effort:** M. **Priority:** P3. [CEO-F10]
+
 ## Cathedral 5 follow-ups (checkpoint compaction + compiled views)
 
 - [ ] **P2 — `gbrain transcripts checkpoint` manual CLI.** **What:** a thin

@@ -23,7 +23,7 @@ src/core/import-file.ts	2000	ratchet	grown v0.46.11.0 five-issue wave
 src/core/cycle/synthesize.ts	2761	ratchet	grown v0.46.11.0 five-issue wave
 src/commands/embed.ts	1963	ratchet
 src/core/types.ts	1863	ratchet
-src/commands/skillpack.ts	1763	ratchet
+src/commands/skillpack.ts	1360	ratchet
 src/core/minions/queue.ts	2130	ratchet	grown v0.46.11.0 five-issue wave
 src/commands/init.ts	1932	ratchet
 src/commands/integrations.ts	1675	ratchet

@@ -306,15 +306,19 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/plugin-dist
-          cp -R .agents .codex-plugin .claude-plugin plugin /tmp/plugin-dist/
+          cp -R .agents .codex-plugin .claude-plugin plugin plugin-variants /tmp/plugin-dist/
           # Both plugin manifests declare "license": "MIT"; the slim branch is
           # exactly the artifact whose consumers never see the repo root, so
           # it must carry the license text.
           cp LICENSE /tmp/plugin-dist/ 2>/dev/null || cp LICENSE.md /tmp/plugin-dist/LICENSE
           test -f /tmp/plugin-dist/LICENSE
           # Keep the launcher's exec bit explicit (cp -R preserves it, but the
-          # branch contract is load-bearing — assert it).
+          # branch contract is load-bearing — assert it). Persona variants are
+          # self-contained plugin roots, so each carries its own launcher.
           test -x /tmp/plugin-dist/.agents/gbrain-launcher
+          for v in /tmp/plugin-dist/plugin-variants/*/; do
+            test -x "$v/.agents/gbrain-launcher"
+          done
       - name: Force-push the codex-plugin branch
         env:
           RELEASE_VERSION: ${{ needs.version.outputs.version }}

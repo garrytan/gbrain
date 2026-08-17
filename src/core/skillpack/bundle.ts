@@ -182,7 +182,108 @@ export interface EnumerateOptions {
   /** If set, scope enumeration to just this skill by its slug (last
    *  segment of `skills/<slug>`). Undefined enumerates everything. */
   skillSlug?: string;
+  /**
+   * Plural selection (mutually exclusive with `skillSlug`): scope
+   * enumeration to exactly these slugs. Every slug must resolve in the
+   * chosen `universe` or enumeration fails loudly naming the missing ones.
+   */
+  skillSlugs?: readonly string[];
+  /**
+   * Membership universe for slug resolution. 'openclaw' (default)
+   * validates against openclaw.plugin.json#skills — today's behavior.
+   * 'manifest' validates against skills/manifest.json, which also lists
+   * the plugin-lane addition skills that openclaw.plugin.json omits
+   * (the harness bridge needs those; verified 6 of 8 additions are
+   * absent from the openclaw manifest).
+   */
+  universe?: 'openclaw' | 'manifest';
   manifest: BundleManifest;
+}
+
+/**
+ * Skill paths (`skills/<slug>`) from skills/manifest.json — the 'manifest'
+ * universe. Entries carry `path` relative to skills/ (e.g. `query/SKILL.md`);
+ * the slug is the leading directory segment.
+ */
+function manifestUniverseSkillPaths(gbrainRoot: string): string[] {
+  // gbrainRoot is the detected gbrain repo root (findGbrainRoot) joined with
+  // literals, on the local CLI plane — no untrusted input.
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+  const manifestPath = join(gbrainRoot, 'skills', 'manifest.json');
+  if (!existsSync(manifestPath)) {
+    throw new BundleError(
+      `skills/manifest.json not found in ${gbrainRoot}`,
+      'manifest_not_found',
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+  } catch (err) {
+    throw new BundleError(
+      `skills/manifest.json: invalid JSON — ${(err as Error).message}`,
+      'manifest_malformed',
+    );
+  }
+  const skills = (parsed as { skills?: unknown }).skills;
+  if (!Array.isArray(skills)) {
+    throw new BundleError(
+      'skills/manifest.json: "skills" must be an array',
+      'manifest_malformed',
+    );
+  }
+  const paths: string[] = [];
+  for (const entry of skills) {
+    const p = (entry as { path?: unknown }).path;
+    if (typeof p !== 'string' || p.length === 0) continue;
+    const slug = p.split('/')[0];
+    // Relative path label built from the repo's own committed manifest —
+    // consumed under gbrainRoot only, no untrusted input.
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+    if (slug) paths.push(join('skills', slug));
+  }
+  return paths;
+}
+
+/**
+ * Resolve the skill paths an enumeration should cover, honoring the
+ * single/plural selectors and the membership universe. Fail-loud on any
+ * slug that doesn't resolve, naming the universe file so the error is
+ * actionable.
+ */
+function selectSkillPaths(opts: EnumerateOptions): string[] {
+  if (opts.skillSlug && opts.skillSlugs) {
+    // Programmer error at the call site, not a manifest problem — a plain
+    // Error keeps the BundleError code taxonomy pointing at real data issues.
+    throw new Error('enumerate: skillSlug and skillSlugs are mutually exclusive');
+  }
+  const universe = opts.universe ?? 'openclaw';
+  const universePaths =
+    universe === 'manifest' ? manifestUniverseSkillPaths(opts.gbrainRoot) : opts.manifest.skills;
+  const universeName =
+    universe === 'manifest' ? 'skills/manifest.json' : 'openclaw.plugin.json#skills';
+  if (opts.skillSlugs) {
+    const bySlug = new Map(universePaths.map(p => [pathSlug(p), p]));
+    const missing = opts.skillSlugs.filter(s => !bySlug.has(s));
+    if (missing.length > 0) {
+      throw new BundleError(
+        `Skill(s) not listed in ${universeName}: ${missing.join(', ')}`,
+        'skill_not_found',
+      );
+    }
+    return opts.skillSlugs.map(s => bySlug.get(s)!);
+  }
+  if (opts.skillSlug) {
+    const matches = universePaths.filter(p => pathSlug(p) === opts.skillSlug);
+    if (matches.length === 0) {
+      throw new BundleError(
+        `Skill '${opts.skillSlug}' is not listed in ${universeName}`,
+        'skill_not_found',
+      );
+    }
+    return matches;
+  }
+  return universePaths;
 }
 
 /**
@@ -191,19 +292,10 @@ export interface EnumerateOptions {
  * target-relative path.
  */
 export function enumerateBundle(opts: EnumerateOptions): BundleEntry[] {
-  const { gbrainRoot, skillSlug, manifest } = opts;
+  const { gbrainRoot, manifest } = opts;
   const entries: BundleEntry[] = [];
 
-  const skillsToIncludePaths = skillSlug
-    ? manifest.skills.filter(p => pathSlug(p) === skillSlug)
-    : manifest.skills;
-
-  if (skillSlug && skillsToIncludePaths.length === 0) {
-    throw new BundleError(
-      `Skill '${skillSlug}' is not listed in openclaw.plugin.json#skills`,
-      'skill_not_found',
-    );
-  }
+  const skillsToIncludePaths = selectSkillPaths(opts);
 
   for (const rel of skillsToIncludePaths) {
     const abs = join(gbrainRoot, rel);
@@ -467,19 +559,10 @@ export interface ScaffoldEntry {
  * Fail-loud on missing declared paired sources via `loadSkillSources`.
  */
 export function enumerateScaffoldEntries(opts: EnumerateOptions): ScaffoldEntry[] {
-  const { gbrainRoot, skillSlug, manifest } = opts;
+  const { gbrainRoot, manifest } = opts;
   const entries: ScaffoldEntry[] = [];
 
-  const skillsToIncludePaths = skillSlug
-    ? manifest.skills.filter(p => pathSlug(p) === skillSlug)
-    : manifest.skills;
-
-  if (skillSlug && skillsToIncludePaths.length === 0) {
-    throw new BundleError(
-      `Skill '${skillSlug}' is not listed in openclaw.plugin.json#skills`,
-      'skill_not_found',
-    );
-  }
+  const skillsToIncludePaths = selectSkillPaths(opts);
 
   // 1. Skill files — every file under `<gbrainRoot>/skills/<slug>/`.
   //    relWorkspaceTarget = `skills/<slug>/<rest>` (workspace-rooted).

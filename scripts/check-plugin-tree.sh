@@ -33,17 +33,31 @@ TMP="$(mktemp -d /tmp/gbrain-plugin-tree-XXXXXX)"
 [ -n "$TMP" ] || { echo "check-plugin-tree: mktemp failed" >&2; exit 2; }
 trap 'rm -rf "$TMP"' EXIT
 
-if ! bun run "$ROOT/scripts/generate-plugin-tree.ts" --out "$TMP/plugin" >/dev/null; then
+if ! bun run "$ROOT/scripts/generate-plugin-tree.ts" --out "$TMP/plugin" --variants-out "$TMP/plugin-variants" >/dev/null; then
   echo "check-plugin-tree: FAILED — generator reported a curation/gap violation (see above)" >&2
   exit 1
 fi
 
 if ! diff -r "$TMP/plugin" "$ROOT/plugin" >/dev/null 2>&1; then
   echo "check-plugin-tree: FAILED — committed plugin/ tree is stale." >&2
-  echo "  Regenerate:  bun run scripts/generate-plugin-tree.ts --out plugin" >&2
-  echo "  Then stage:  git add plugin/" >&2
+  echo "  Regenerate:  bun run scripts/generate-plugin-tree.ts --out plugin --variants-out plugin-variants" >&2
+  echo "  Then stage:  git add plugin/ plugin-variants/" >&2
   diff -rq "$TMP/plugin" "$ROOT/plugin" 2>&1 | head -20 >&2
   exit 1
 fi
 
-echo "check-plugin-tree: OK (committed plugin/ tree matches the generator)"
+# Persona variant trees (cathedral-7): same byte-diff posture. A missing
+# committed plugin-variants/ after landing means a bad merge — fail loudly.
+if [ ! -d "$ROOT/plugin-variants" ]; then
+  echo "check-plugin-tree: FAILED — committed plugin-variants/ tree is missing. Regenerate: bun run scripts/generate-plugin-tree.ts --out plugin --variants-out plugin-variants" >&2
+  exit 1
+fi
+if ! diff -r "$TMP/plugin-variants" "$ROOT/plugin-variants" >/dev/null 2>&1; then
+  echo "check-plugin-tree: FAILED — committed plugin-variants/ tree is stale." >&2
+  echo "  Regenerate:  bun run scripts/generate-plugin-tree.ts --out plugin --variants-out plugin-variants" >&2
+  echo "  Then stage:  git add plugin/ plugin-variants/" >&2
+  diff -rq "$TMP/plugin-variants" "$ROOT/plugin-variants" 2>&1 | head -20 >&2
+  exit 1
+fi
+
+echo "check-plugin-tree: OK (committed plugin/ + plugin-variants/ trees match the generator)"

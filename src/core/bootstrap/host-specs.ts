@@ -74,7 +74,11 @@ export const TARGETS: Record<string, HostSpecTarget> = {
       'SessionStart stdin carries source:"startup"|"resume"|"clear"|"compact" ' +
       '(+"fork" since Claude Code v2.1.214); source:"compact" fires after auto ' +
       'or manual compaction and is the rehydration re-entry the PreCompact ' +
-      'bank serves a warm pack through.',
+      'bank serves a warm pack through. Skills: user-scope native SKILL.md ' +
+      'discovery reads CLAUDE_CONFIG_DIR-else-HOME /.claude/skills ' +
+      '(claudeUserSkillsDir — the harness-bridge install target, attested by ' +
+      'the gstack convention + plugin lane); project-scope ' +
+      '<workspace>/.claude/skills is provisional-from-docs.',
   },
   [CODEX_SPEC_ID]: {
     id: CODEX_SPEC_ID,
@@ -103,7 +107,10 @@ export const TARGETS: Record<string, HostSpecTarget> = {
       '(hooks.json; PreToolUse…SessionEnd) — CODEX_HAS_HOOKS=false means ' +
       '"gbrain does not wire codex hooks yet" (follow-up filed), NOT "codex ' +
       'has no hooks". Some codex builds gate HTTP MCP servers behind ' +
-      '`experimental_use_rmcp_client = true` — probe at wiring time.',
+      '`experimental_use_rmcp_client = true` — probe at wiring time. Skills: ' +
+      'no attested native skills DIR for direct file installs (the plugin ' +
+      'lane serves codex skills); a direct-copy target needs an observation ' +
+      'run before a default ships (harness-bridge requires an explicit dest).',
   },
   [OPENCODE_SPEC_ID]: {
     id: OPENCODE_SPEC_ID,
@@ -140,7 +147,10 @@ export const TARGETS: Record<string, HostSpecTarget> = {
       'double-loaded. opencode ships a JS plugin/event system — ' +
       'OPENCODE_HAS_HOOKS=false means "gbrain does not wire it yet" (follow-up ' +
       'filed), NOT "opencode has no hooks"; probes run with --pure + ' +
-      'OPENCODE_DISABLE_AUTOUPDATE=1 because mcp list autoloads plugins.',
+      'OPENCODE_DISABLE_AUTOUPDATE=1 because mcp list autoloads plugins. ' +
+      'Skills: no attested native skills DIR for direct file installs; a ' +
+      'direct-copy target needs an observation run before a default ships ' +
+      '(harness-bridge requires an explicit dest).',
   },
 };
 
@@ -231,11 +241,23 @@ export const GBRAIN_HARNESS_MARKER_VALUE = 'bootstrap-harness-v1';
  * HOME would otherwise write into the operator's REAL settings file (this
  * bit us; the write-ahead receipt's remove path self-healed it).
  */
-export function claudeUserSettingsPath(): string {
+/**
+ * The one CLAUDE_CONFIG_DIR-else-HOME-env-else-homedir() resolution (Bun's
+ * homedir() reads the password DB, not $HOME — the sandboxed-test hazard
+ * documented on claudeUserSettingsPath). Returns the directory that plays
+ * the role of `~/.claude` for paths that live INSIDE it (settings.json,
+ * skills/). NOT for claudeUserMcpConfigPath — its default lives at the HOME
+ * level (`~/.claude.json`), a genuinely different shape.
+ */
+function claudeConfigBase(): string {
   const configDir = process.env.CLAUDE_CONFIG_DIR?.trim();
-  if (configDir) return join(configDir, 'settings.json');
+  if (configDir) return configDir;
   const home = process.env.HOME?.trim();
-  return join(home || homedir(), '.claude', 'settings.json');
+  return join(home || homedir(), '.claude');
+}
+
+export function claudeUserSettingsPath(): string {
+  return join(claudeConfigBase(), 'settings.json');
 }
 
 /** permissions.allow entry that pre-approves an MCP server's tools for headless runs. */
@@ -259,6 +281,26 @@ export function claudeUserMcpConfigPath(): string {
 /** Where Claude Code stores session transcripts — the confinement root [S3#8]. */
 export function claudeProjectsDir(): string {
   return join(homedir(), '.claude', 'projects');
+}
+
+/**
+ * User-scope Claude Code skills dir (native SKILL.md discovery — the
+ * harness-bridge install target). Same CLAUDE_CONFIG_DIR-first then
+ * HOME-env-first discipline as claudeUserSettingsPath: Bun's homedir()
+ * reads the password database, not $HOME, so a sandboxed test that remaps
+ * HOME would otherwise write into the operator's REAL skills dir.
+ */
+export function claudeUserSkillsDir(): string {
+  return join(claudeConfigBase(), 'skills');
+}
+
+/**
+ * Project-scope Claude Code skills dir (`<workspace>/.claude/skills`).
+ * Provisional-from-docs: the user-scope dir is the attested location; the
+ * project-scope layout mirrors Claude Code's settings precedence.
+ */
+export function claudeProjectSkillsDir(workspaceDir: string): string {
+  return join(workspaceDir, '.claude', 'skills');
 }
 
 // ── Codex shapes ────────────────────────────────────────────────────────────

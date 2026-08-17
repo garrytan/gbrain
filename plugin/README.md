@@ -1,4 +1,4 @@
-<!-- gbrain-plugin-tree-stamp: 0.46.17.0 -->
+<!-- gbrain-plugin-tree-stamp: 0.46.18.0 -->
 # gbrain plugin skill tree (generated — do not hand-edit)
 
 This tree is the curated skill set for the gbrain Codex and Claude Code

@@ -21,6 +21,22 @@ brain-first skill set:
 /plugin install gbrain@gbrain
 ```
 
+Two **persona variants** ship from the same marketplace — curated subsets
+for sessions that don't want all 65 skills in the native manifest:
+
+```
+/plugin install gbrain-coding@gbrain    # brain-first coding persona
+/plugin install gbrain-daily@gbrain     # daily personal-brain persona
+```
+
+Install exactly ONE gbrain plugin per machine — every variant serves the same
+`gbrain` MCP server name, so two installed variants would double-serve.
+Curation lives in `skills/plugin-lanes.json#personas` (one recorded reason
+per skill). Alternative without a marketplace round-trip:
+`gbrain skillpack scaffold --harness claude-code` copies the same persona set
+into your user-scope skills dir with a local-edit-respecting update lens
+(see docs/guides/skillpacks-as-scaffolding.md).
+
 (CLI form: `claude plugin marketplace add garrytan/gbrain` +
 `claude plugin install gbrain@gbrain`.) Prerequisites and behavior match the
 [Codex plugin](CODEX.md#install-as-a-codex-plugin-recommended): the gbrain CLI
