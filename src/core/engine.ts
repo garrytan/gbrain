@@ -1491,6 +1491,48 @@ export interface BrainEngine {
     opts?: { skipExistenceCheck?: boolean; sourceId?: string },
   ): Promise<void>;
   /**
+   * Timeline mutation by immutable entry id (robert-cos patch; upstream PR
+   * pending). Reads join the owning page so op-layer fences and source
+   * verification can run before any mutation.
+   */
+  getTimelineEntryById(
+    id: number,
+  ): Promise<
+    | {
+        id: number;
+        page_id: number;
+        date: string;
+        source: string;
+        summary: string;
+        detail: string;
+        event_page_id: number | null;
+        page_slug: string;
+        page_source: string;
+      }
+    | null
+  >;
+  /**
+   * Update fields on one entry by id, guarded ATOMICALLY: the expected
+   * identity (summary, date, owning-page slug + source) is part of the
+   * mutation's WHERE predicate, so a concurrent change makes the statement
+   * match zero rows instead of overwriting it. Returns true iff a row
+   * changed. Timeline ids are database-local — the identity predicate is
+   * what makes a cross-brain id collision unable to mutate the wrong row.
+   */
+  updateTimelineEntryById(
+    id: number,
+    expected: { summary: string; date: string; page_slug: string; page_source: string },
+    changes: { date?: string; summary?: string; detail?: string; source?: string },
+  ): Promise<boolean>;
+  /**
+   * Delete one entry by id under the same atomic identity predicate.
+   * Returns true iff a row was deleted (missing id = false, idempotent).
+   */
+  removeTimelineEntryById(
+    id: number,
+    expected: { summary: string; date: string; page_slug: string; page_source: string },
+  ): Promise<boolean>;
+  /**
    * Bulk insert timeline entries via a single multi-row INSERT...SELECT FROM (VALUES)
    * JOIN pages statement with ON CONFLICT DO NOTHING. Returns the count of rows
    * actually inserted (RETURNING excludes conflicts and JOIN-dropped rows whose

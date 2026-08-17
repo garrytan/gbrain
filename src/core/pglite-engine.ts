@@ -4129,6 +4129,86 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   // Timeline
+  // --- Timeline mutation by id (robert-cos patch; upstream PR pending) ---
+  async getTimelineEntryById(id: number): Promise<
+    | {
+        id: number;
+        page_id: number;
+        date: string;
+        source: string;
+        summary: string;
+        detail: string;
+        event_page_id: number | null;
+        page_slug: string;
+        page_source: string;
+      }
+    | null
+  > {
+    const { rows } = await this.db.query(
+      `SELECT t.id, t.page_id, t.date::text AS date, t.source, t.summary,
+              t.detail, t.event_page_id, p.slug AS page_slug,
+              p.source_id AS page_source
+         FROM timeline_entries t
+         JOIN pages p ON p.id = t.page_id
+        WHERE t.id = $1`,
+      [id],
+    );
+    return (rows[0] as any) ?? null;
+  }
+
+  async updateTimelineEntryById(
+    id: number,
+    expected: { summary: string; date: string; page_slug: string; page_source: string },
+    changes: { date?: string; summary?: string; detail?: string; source?: string },
+  ): Promise<boolean> {
+    const sets: string[] = [];
+    const args: unknown[] = [];
+    for (const key of ['date', 'summary', 'detail', 'source'] as const) {
+      if (changes[key] !== undefined) {
+        args.push(changes[key]);
+        sets.push(`${key} = $${args.length}`);
+      }
+    }
+    if (sets.length === 0) return false;
+    // Atomic optimistic check: the full expected identity is part of the
+    // mutation predicate. A concurrent change (or a same-id row in a
+    // different page/source) matches zero rows instead of being clobbered.
+    args.push(id, expected.summary, expected.date, expected.page_slug, expected.page_source);
+    const base = args.length - 5;
+    const { rows } = await this.db.query(
+      `UPDATE timeline_entries SET ${sets.join(', ')}
+         FROM pages p
+        WHERE timeline_entries.id = $${base + 1}
+          AND timeline_entries.page_id = p.id
+          AND timeline_entries.summary = $${base + 2}
+          AND timeline_entries.date::text = $${base + 3}
+          AND p.slug = $${base + 4}
+          AND p.source_id = $${base + 5}
+        RETURNING timeline_entries.id`,
+      args,
+    );
+    return rows.length > 0;
+  }
+
+  async removeTimelineEntryById(
+    id: number,
+    expected: { summary: string; date: string; page_slug: string; page_source: string },
+  ): Promise<boolean> {
+    const { rows } = await this.db.query(
+      `DELETE FROM timeline_entries
+        USING pages p
+        WHERE timeline_entries.id = $1
+          AND timeline_entries.page_id = p.id
+          AND timeline_entries.summary = $2
+          AND timeline_entries.date::text = $3
+          AND p.slug = $4
+          AND p.source_id = $5
+        RETURNING timeline_entries.id`,
+      [id, expected.summary, expected.date, expected.page_slug, expected.page_source],
+    );
+    return rows.length > 0;
+  }
+
   async addTimelineEntry(
     slug: string,
     entry: TimelineInput,

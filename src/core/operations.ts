@@ -2897,6 +2897,263 @@ const get_timeline: Operation = {
   cliHints: { name: 'timeline', positional: ['slug'] },
 };
 
+// --- Timeline mutation (robert-cos patch; upstream PR pending) ---
+// Review-driven contract: entries are addressed by immutable id; mutations
+// carry the FULL expected identity (summary, date, owning-page slug, page
+// source) which the engine enforces ATOMICALLY inside the mutation predicate
+// — a concurrent change matches zero rows instead of being overwritten, and
+// database-local id collisions across brains cannot select the wrong row.
+// The acting brain comes only from trusted ctx.brainId, never from params.
+//
+// Audit is intent-first: an intent record is appended to
+// ~/.gbrain/audit/timeline-mutations-YYYY-Www.jsonl (dir 0700, files 0600)
+// BEFORE the mutation; if that append fails the mutation is refused. The
+// completion record is appended after; if THAT append fails, the intent
+// record still documents the mutation and the result says audit:
+// 'intent-only' — there is no path that silently produces an unaudited
+// mutation. Removal is idempotent: a missing id is a safe noop, never an
+// error.
+
+function parseTimelineEntryId(raw: unknown): number {
+  const n = typeof raw === 'number' ? raw : Number.parseInt(String(raw), 10);
+  if (!Number.isInteger(n) || n <= 0 || String(n) !== String(raw).trim()) {
+    throw new Error(`Invalid timeline entry id "${raw}" (expected a positive integer)`);
+  }
+  return n;
+}
+
+async function auditTimelineMutation(record: Record<string, unknown>): Promise<void> {
+  const { gbrainPath } = await import('./config.ts');
+  const fs = await import('fs');
+  const d = new Date();
+  const jan1 = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const week = String(
+    Math.ceil(((d.getTime() - jan1.getTime()) / 86400000 + jan1.getUTCDay() + 1) / 7),
+  ).padStart(2, '0');
+  const dir = gbrainPath('audit');
+  // Explicit restrictive modes: mkdir's mode is umask-filtered, so chmod
+  // enforces 0700/0600 regardless of the host umask (0002 here would
+  // otherwise leave group-readable audit files).
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(dir, 0o700);
+  const file = `${dir}/timeline-mutations-${d.getUTCFullYear()}-W${week}.jsonl`;
+  fs.appendFileSync(file, JSON.stringify({ ts: d.toISOString(), ...record }) + '\n', {
+    mode: 0o600,
+  });
+  fs.chmodSync(file, 0o600);
+}
+
+/** Best-effort completion record: the intent record is already durable, so a
+ * failure here is reported (audit: 'intent-only'), never thrown. */
+async function auditTimelineMutationResult(record: Record<string, unknown>): Promise<boolean> {
+  try {
+    await auditTimelineMutation(record);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const TIMELINE_EXPECTED_PARAMS = {
+  expected_summary: {
+    type: 'string',
+    required: true,
+    description: 'Current summary of the entry; part of the atomic mutation predicate.',
+  },
+  expected_date: {
+    type: 'string',
+    required: true,
+    description: 'Current date of the entry (YYYY-MM-DD); part of the atomic mutation predicate.',
+  },
+  expected_slug: {
+    type: 'string',
+    required: true,
+    description: 'Slug of the owning page; part of the atomic mutation predicate.',
+  },
+  page_source: {
+    type: 'string',
+    required: true,
+    description: "Page source the entry's owning page must belong to (normally 'default'); part of the atomic mutation predicate. Named page_source because --source is the CLI's global source-selector flag.",
+  },
+} as const;
+
+function timelineExpectedFromParams(
+  p: Record<string, unknown>,
+): { summary: string; date: string; page_slug: string; page_source: string } {
+  return {
+    summary: p.expected_summary as string,
+    date: p.expected_date as string,
+    page_slug: p.expected_slug as string,
+    page_source: p.page_source as string,
+  };
+}
+
+function assertTimelineRowMatches(
+  id: number,
+  row: { summary: string; date: string; page_slug: string; page_source: string },
+  expected: { summary: string; date: string; page_slug: string; page_source: string },
+): void {
+  // Friendly precondition errors. The atomic predicate in the engine is the
+  // authoritative guard; these produce actionable messages for the common
+  // (non-racy) mismatch cases.
+  if (row.page_source !== expected.page_source) {
+    throw new Error(
+      `source mismatch: entry ${id} belongs to page source "${row.page_source}", not "${expected.page_source}"`,
+    );
+  }
+  if (row.page_slug !== expected.page_slug) {
+    throw new Error(
+      `slug mismatch: entry ${id} belongs to page "${row.page_slug}", not "${expected.page_slug}"`,
+    );
+  }
+  if (row.summary !== expected.summary) {
+    throw new Error(
+      `optimistic check failed for entry ${id}: current summary does not match expected_summary`,
+    );
+  }
+  if (String(row.date).slice(0, 10) !== expected.date) {
+    throw new Error(
+      `optimistic check failed for entry ${id}: current date "${String(row.date).slice(0, 10)}" does not match expected_date "${expected.date}"`,
+    );
+  }
+}
+
+function validateStrictDate(date: string): void {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error(`Invalid date format "${date}" (expected YYYY-MM-DD)`);
+  }
+  const parsed = new Date(date);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+    throw new Error(`Invalid calendar date "${date}"`);
+  }
+}
+
+const update_timeline_entry: Operation = {
+  name: 'update_timeline_entry',
+  description:
+    'Update one timeline entry by immutable id. The full expected identity (summary, date, owning slug, page source) is enforced atomically inside the mutation predicate; every mutation is audited intent-first with brain attribution.',
+  params: {
+    id: { type: 'number', required: true, description: 'Immutable timeline entry id.' },
+    ...TIMELINE_EXPECTED_PARAMS,
+    date: { type: 'string', description: 'New date (strict YYYY-MM-DD).' },
+    summary: { type: 'string', description: 'New summary.' },
+    detail: { type: 'string', description: 'New detail.' },
+    entry_source: { type: 'string', description: 'New provenance ref for the entry.' },
+  },
+  mutating: true,
+  scope: 'write',
+  handler: async (ctx, p) => {
+    const id = parseTimelineEntryId(p.id);
+    const expected = timelineExpectedFromParams(p);
+    validateStrictDate(expected.date);
+    const row = await ctx.engine.getTimelineEntryById(id);
+    if (!row) return { status: 'noop', reason: 'not-found', id };
+    enforceSubagentSlugFence(ctx, row.page_slug, 'update_timeline_entry');
+    enforceClientSlugFence(ctx, row.page_slug, 'update_timeline_entry');
+    assertTimelineRowMatches(id, row, expected);
+    const changes: { date?: string; summary?: string; detail?: string; source?: string } = {};
+    if (typeof p.date === 'string') {
+      validateStrictDate(p.date);
+      changes.date = p.date;
+    }
+    if (typeof p.summary === 'string') changes.summary = p.summary;
+    if (typeof p.detail === 'string') changes.detail = p.detail;
+    if (typeof p.entry_source === 'string') changes.source = p.entry_source;
+    if (Object.keys(changes).length === 0) {
+      throw new Error('update_timeline_entry: no new values given (date/summary/detail/entry_source)');
+    }
+    if (ctx.dryRun) return { dry_run: true, action: 'update_timeline_entry', id, changes };
+    const brain = ctx.brainId ?? 'host';
+    // Intent record BEFORE the mutation: if this append fails, nothing mutates.
+    await auditTimelineMutation({
+      phase: 'intent',
+      op: 'update_timeline_entry',
+      brain,
+      id,
+      page_slug: row.page_slug,
+      page_source: row.page_source,
+      before: { date: row.date, summary: row.summary, detail: row.detail, source: row.source },
+      changes,
+    });
+    const changed = await ctx.engine.updateTimelineEntryById(id, expected, changes);
+    if (!changed) {
+      await auditTimelineMutationResult({
+        phase: 'result', op: 'update_timeline_entry', brain, id, changed: false,
+        reason: 'concurrent-modification',
+      });
+      throw new Error(
+        `concurrent modification: entry ${id} changed between check and mutation; re-read and retry`,
+      );
+    }
+    const audited = await auditTimelineMutationResult({
+      phase: 'result', op: 'update_timeline_entry', brain, id, changed: true,
+    });
+    return { status: 'ok', id, audit: audited ? 'complete' : 'intent-only' };
+  },
+  cliHints: { name: 'timeline-update', positional: ['id', 'expected_summary'] },
+};
+
+const remove_timeline_entry: Operation = {
+  name: 'remove_timeline_entry',
+  description:
+    'Remove one timeline entry by immutable id. The full expected identity (summary, date, owning slug, page source) is enforced atomically inside the deletion predicate; idempotent (missing id is a safe noop); audited intent-first with brain attribution.',
+  params: {
+    id: { type: 'number', required: true, description: 'Immutable timeline entry id.' },
+    ...TIMELINE_EXPECTED_PARAMS,
+  },
+  mutating: true,
+  scope: 'write',
+  handler: async (ctx, p) => {
+    const id = parseTimelineEntryId(p.id);
+    const expected = timelineExpectedFromParams(p);
+    validateStrictDate(expected.date);
+    const row = await ctx.engine.getTimelineEntryById(id);
+    if (!row) return { status: 'noop', reason: 'not-found', id };
+    enforceSubagentSlugFence(ctx, row.page_slug, 'remove_timeline_entry');
+    enforceClientSlugFence(ctx, row.page_slug, 'remove_timeline_entry');
+    assertTimelineRowMatches(id, row, expected);
+    if (ctx.dryRun) return { dry_run: true, action: 'remove_timeline_entry', id };
+    const brain = ctx.brainId ?? 'host';
+    // Intent record BEFORE the mutation: if this append fails, nothing mutates.
+    await auditTimelineMutation({
+      phase: 'intent',
+      op: 'remove_timeline_entry',
+      brain,
+      id,
+      page_slug: row.page_slug,
+      page_source: row.page_source,
+      before: {
+        date: row.date,
+        summary: row.summary,
+        detail: row.detail,
+        source: row.source,
+        event_page_id: row.event_page_id,
+      },
+    });
+    const removed = await ctx.engine.removeTimelineEntryById(id, expected);
+    if (!removed) {
+      // Disambiguate: concurrently deleted (idempotent success) vs
+      // concurrently mutated (conflict the caller must re-read).
+      const now = await ctx.engine.getTimelineEntryById(id);
+      await auditTimelineMutationResult({
+        phase: 'result', op: 'remove_timeline_entry', brain, id, removed: false,
+        reason: now ? 'concurrent-modification' : 'already-removed',
+      });
+      if (now) {
+        throw new Error(
+          `concurrent modification: entry ${id} changed between check and removal; re-read and retry`,
+        );
+      }
+      return { status: 'noop', reason: 'already-removed', id };
+    }
+    const audited = await auditTimelineMutationResult({
+      phase: 'result', op: 'remove_timeline_entry', brain, id, removed: true,
+    });
+    return { status: 'ok', id, audit: audited ? 'complete' : 'intent-only' };
+  },
+  cliHints: { name: 'timeline-rm', positional: ['id', 'expected_summary'] },
+};
+
 // --- Admin ---
 
 const get_stats: Operation = {
@@ -7281,6 +7538,7 @@ export const operations: Operation[] = [
   add_link, remove_link, get_links, get_backlinks, list_link_sources, traverse_graph,
   // Timeline
   add_timeline_entry, get_timeline,
+  update_timeline_entry, remove_timeline_entry,
   // Admin
   get_stats, get_health, run_doctor, get_versions, revert_version,
   // v0.31.1 (Issue #734): thin-client banner identity packet (read-scope, banner-only)
@@ -7393,6 +7651,7 @@ const OP_AREAS: Record<string, string> = {
   find_orphans: 'links',
   // timeline
   add_timeline_entry: 'timeline', get_timeline: 'timeline',
+  update_timeline_entry: 'timeline', remove_timeline_entry: 'timeline',
   // life chronicle
   chronicle_day: 'chronicle', chronicle_on_this_day: 'chronicle',
   chronicle_since: 'chronicle', chronicle_last_seen: 'chronicle',

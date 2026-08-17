@@ -4066,6 +4066,78 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // Timeline
+  // --- Timeline mutation by id (robert-cos patch; upstream PR pending) ---
+  async getTimelineEntryById(id: number): Promise<
+    | {
+        id: number;
+        page_id: number;
+        date: string;
+        source: string;
+        summary: string;
+        detail: string;
+        event_page_id: number | null;
+        page_slug: string;
+        page_source: string;
+      }
+    | null
+  > {
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT t.id, t.page_id, t.date::text AS date, t.source, t.summary,
+             t.detail, t.event_page_id, p.slug AS page_slug,
+             p.source_id AS page_source
+        FROM timeline_entries t
+        JOIN pages p ON p.id = t.page_id
+       WHERE t.id = ${id}`;
+    return (rows[0] as any) ?? null;
+  }
+
+  async updateTimelineEntryById(
+    id: number,
+    expected: { summary: string; date: string; page_slug: string; page_source: string },
+    changes: { date?: string; summary?: string; detail?: string; source?: string },
+  ): Promise<boolean> {
+    const sql = this.sql;
+    const cols = (['date', 'summary', 'detail', 'source'] as const).filter(
+      (k) => changes[k] !== undefined,
+    );
+    if (cols.length === 0) return false;
+    const patch: Record<string, string> = {};
+    for (const k of cols) patch[k] = changes[k] as string;
+    // Atomic optimistic check: the full expected identity is part of the
+    // mutation predicate. A concurrent change (or a same-id row in a
+    // different page/source) matches zero rows instead of being clobbered.
+    const rows = await sql`
+      UPDATE timeline_entries SET ${sql(patch, ...cols)}
+        FROM pages p
+       WHERE timeline_entries.id = ${id}
+         AND timeline_entries.page_id = p.id
+         AND timeline_entries.summary = ${expected.summary}
+         AND timeline_entries.date::text = ${expected.date}
+         AND p.slug = ${expected.page_slug}
+         AND p.source_id = ${expected.page_source}
+       RETURNING timeline_entries.id`;
+    return rows.length > 0;
+  }
+
+  async removeTimelineEntryById(
+    id: number,
+    expected: { summary: string; date: string; page_slug: string; page_source: string },
+  ): Promise<boolean> {
+    const sql = this.sql;
+    const rows = await sql`
+      DELETE FROM timeline_entries
+       USING pages p
+       WHERE timeline_entries.id = ${id}
+         AND timeline_entries.page_id = p.id
+         AND timeline_entries.summary = ${expected.summary}
+         AND timeline_entries.date::text = ${expected.date}
+         AND p.slug = ${expected.page_slug}
+         AND p.source_id = ${expected.page_source}
+       RETURNING timeline_entries.id`;
+    return rows.length > 0;
+  }
+
   async addTimelineEntry(
     slug: string,
     entry: TimelineInput,
