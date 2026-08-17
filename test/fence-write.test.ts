@@ -14,7 +14,8 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -60,6 +61,35 @@ const baseInput = (overrides: Partial<FenceInputFact> = {}): FenceInputFact => (
   sessionId: null,
   ...overrides,
 });
+
+function git(cwd: string, ...args: string[]): string {
+  return execFileSync('git', ['-C', cwd, ...args], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+  }).trim();
+}
+
+function initGitRepo(repoPath: string): void {
+  git(repoPath, 'init');
+  git(repoPath, 'config', 'user.email', 't@t.t');
+  git(repoPath, 'config', 'user.name', 'T');
+  writeFileSync(join(repoPath, 'seed.md'), 'seed\n');
+  git(repoPath, 'add', 'seed.md');
+  git(repoPath, 'commit', '-m', 'init');
+}
+
+function installFakeDurabilityHook(repoPath: string): void {
+  const hooksDir = join(repoPath, '.git', 'hooks');
+  mkdirSync(hooksDir, { recursive: true });
+  const hookPath = join(hooksDir, 'post-commit');
+  writeFileSync(hookPath, [
+    '#!/usr/bin/env bash',
+    '# gbrain brain-durability post-commit hook (v0.42.44+)',
+    'exit 0',
+    '',
+  ].join('\n'));
+  chmodSync(hookPath, 0o755);
+}
 
 describe('writeFactsToFence — happy path', () => {
   test('stub-creates entity page when none exists, writes fence, stamps DB', async () => {
@@ -178,6 +208,24 @@ describe('writeFactsToFence — happy path', () => {
     const body = readFileSync(join(brainDir, 'companies/acme.md'), 'utf-8');
     expect(body).toContain('type: company');  // type inferred from slug prefix
   });
+
+  test('commits the fence file on a durability-hardened repo without sweeping unrelated dirt', async () => {
+    initGitRepo(brainDir);
+    installFakeDurabilityHook(brainDir);
+    writeFileSync(join(brainDir, 'seed.md'), 'dirty unrelated edit\n');
+
+    const result = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug: 'people/durable' },
+      [baseInput({ fact: 'Durable fence fact' })],
+    );
+
+    expect(result.inserted).toBe(1);
+    expect(git(brainDir, 'log', '-1', '--format=%s')).toBe('gbrain: write-through people/durable');
+    expect(git(brainDir, 'log', '-1', '--name-only', '--format=')).toBe('people/durable.md');
+    expect(git(brainDir, 'status', '--porcelain', 'people/durable.md')).toBe('');
+    expect(git(brainDir, 'status', '--porcelain', 'seed.md')).not.toBe('');
+  }, 60_000);
 });
 
 describe('writeFactsToFence — legacy fallback', () => {
