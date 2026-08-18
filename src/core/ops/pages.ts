@@ -56,8 +56,18 @@ const get_page: Operation = {
     const sourceOpts = federatedSearchScope(ctx);
     const fuzzyScope = sourceOpts;
 
-    let page = await ctx.engine.getPage(slug, { includeDeleted, ...sourceOpts });
+    // Slug aliases are redirects, not fuzzy suggestions. Resolve them before
+    // the exact read so deleted migration shells cannot shadow their active
+    // canonical page. Keep the lookup inside the caller's visible sources;
+    // an unscoped local CLI read defaults to the default source, matching the
+    // write-path default and the historical single-source behavior.
+    const aliasSources = sourceOpts.sourceIds?.length
+      ? sourceOpts.sourceIds
+      : [sourceOpts.sourceId ?? ctx.sourceId ?? 'default'];
+    const canonicalSlug = await ctx.engine.resolveSlugWithAlias(slug, aliasSources);
+    let page = await ctx.engine.getPage(canonicalSlug, { includeDeleted, ...sourceOpts });
     let resolved_slug: string | undefined;
+    if (canonicalSlug !== slug) resolved_slug = canonicalSlug;
 
     if (!page && fuzzy) {
       const candidates = await ctx.engine.resolveSlugs(slug, fuzzyScope);
