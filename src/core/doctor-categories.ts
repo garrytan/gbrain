@@ -193,6 +193,7 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'supervisor_singleton',
   'sync_consolidation',
   'wedged_queue',
+  'orphaned_private_queue',
   'worker_oom_loop',
   'ze_embedding_health',
 ]);

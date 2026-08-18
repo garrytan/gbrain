@@ -139,6 +139,84 @@ export interface EmbedStaleResult {
  * the run. Caller is responsible for surfacing partial-success via the
  * returned `embedded` vs `chunksProcessed` delta.
  */
+
+/**
+ * #4216 phase-end closure: embed the NULL-embedding chunks of an EXPLICIT
+ * page list (pages a synthesis phase just wrote with deferEmbeds).
+ * Deliberately NOT a source-wide sweep: no cursor walk over the backlog, no
+ * global signature-invalidation pass (both belong to the budget-tracked
+ * embed-backfill job) — the spend here is exactly the deferred cost of the
+ * caller's own writes. Per-page mechanics mirror embedStaleForSource's
+ * worker: stored-CR-mode wrapping, metadata carry, full-restale signature
+ * stamp, title-tier restamp.
+ */
+export async function embedStalePages(
+  engine: BrainEngine,
+  slugs: string[],
+  sourceId: string,
+  opts: {
+    signal?: AbortSignal;
+    embedFn?: (texts: string[], o: { abortSignal?: AbortSignal }) => Promise<Float32Array[]>;
+    embeddingSignature?: string;
+  } = {},
+): Promise<{ embedded: number; pagesProcessed: number; aborted: boolean }> {
+  const embedFn = opts.embedFn ?? (async (texts: string[], fnOpts: { abortSignal?: AbortSignal }) =>
+    embedBatchWithBackoff(texts, { abortSignal: fnOpts.abortSignal }));
+  const result = { embedded: 0, pagesProcessed: 0, aborted: false };
+  for (const slug of slugs) {
+    if (opts.signal?.aborted) {
+      result.aborted = true;
+      return result;
+    }
+    try {
+      const existing = await engine.getChunks(slug, { sourceId });
+      const staleIdx = new Set(
+        (await engine.executeRaw<{ chunk_index: number }>(
+          `SELECT cc.chunk_index
+             FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+            WHERE p.slug = $1 AND p.source_id = $2 AND cc.embedding IS NULL
+            ORDER BY cc.chunk_index`,
+          [slug, sourceId],
+        )).map(r => r.chunk_index),
+      );
+      if (staleIdx.size === 0) continue;
+      const stale = existing.filter(c => staleIdx.has(c.chunk_index));
+      const pageRow = await engine.getPage(slug, { sourceId });
+      const embeddings = await embedFn(
+        wrapChunkTextsForStoredMode(pageRow, stale),
+        { abortSignal: opts.signal },
+      );
+      const staleIdxToEmbedding = new Map<number, Float32Array>();
+      for (let j = 0; j < stale.length; j++) {
+        staleIdxToEmbedding.set(stale[j].chunk_index, embeddings[j]);
+      }
+      const merged: ChunkInput[] = existing.map((c) => carryChunkMetadata(c, {
+        chunk_index: c.chunk_index,
+        chunk_text: c.chunk_text,
+        chunk_source: c.chunk_source,
+        embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
+        token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
+      }));
+      await engine.upsertChunks(slug, merged, { sourceId });
+      if (opts.embeddingSignature && stale.length === existing.length) {
+        await engine.setPageEmbeddingSignature(slug, { sourceId, signature: opts.embeddingSignature });
+      }
+      if (stale.length === existing.length) {
+        await restampIfDemotedToTitleTier(engine, pageRow, slug, sourceId);
+      }
+      result.embedded += stale.length;
+      result.pagesProcessed += 1;
+    } catch (e) {
+      if (opts.signal?.aborted) {
+        result.aborted = true;
+        return result;
+      }
+      process.stderr.write(`\n  [embed-stale] error on ${sourceId}/${slug}: ${e instanceof Error ? e.message : String(e)}\n`);
+    }
+  }
+  return result;
+}
+
 export async function embedStaleForSource(
   engine: BrainEngine,
   sourceId: string,

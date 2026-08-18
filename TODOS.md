@@ -1,5 +1,132 @@
 # TODOS
 
+## Dream freshness split follow-ups (v0.46.20.0)
+
+- [ ] **P2 — automatic background lane for `SOURCE_BACKGROUND_PHASES`.**
+  **What:** a per-source scheduled lane for the LLM-backed/unbounded source
+  phases (extract_atoms, consolidate, propose_takes, enrich_thin,
+  schema-suggest, conversation_facts_backfill) that the v0.46.20.0 freshness
+  split removed from automatic scheduling on multi-source brains. **Why:**
+  today those phases run only on explicit `gbrain dream --source X --phase …`
+  invocation; backlogs (atoms, consolidation) grow silently between manual
+  runs. **Design constraints (verified against code during the #4250
+  review):** MUST be per-source jobs — background phases scope to ONE source
+  per cycle (`cycle.ts` extract_atoms uses `cycleSourceId ?? 'default'`), and
+  per-source jobs hold the correct `gbrain-cycle:<source>` locks (a
+  global-maintenance-job version provably covers at most one source and its
+  bare `gbrain-cycle` lock does not conflict with per-source freshness
+  cycles). Needs its own cadence + stamp key (e.g.
+  `last_source_background_at`), lower dispatch priority than the freshness
+  lane, and the queue-boundary normalization in the `autopilot-cycle` handler
+  relaxed for the new job name (or a dedicated handler). **Blocked by:** the
+  abort-signal threading TODO below (P2 — BasePhaseOpts + dream generators);
+  extract_atoms/consolidate accept neither deadline nor abort today, so a
+  background job can't exit cleanly at its deadline. **Additional constraints
+  from the #4250 ship-stage adversarial reviews:** (a) the lane applies to
+  EVERY brain with registered sources, including single-source ones (the
+  legacy full-cycle fallback fires only when the sources table is empty, so
+  a one-source brain also loses automatic background work today); (b) the
+  taxonomy is scheduling-intent, not runtime scoping — consolidate,
+  enrich_thin, and conversation_facts_backfill iterate the whole brain
+  internally, so the lane must run those ONCE per tick, never once per
+  source (concurrent per-source invocations share no lock and consolidate's
+  take-row assignment can race); (c) the maintenance job runs synthesize →
+  patterns WITHOUT the source-scoped extract phase in between, so patterns
+  reads a graph that hasn't materialized the just-synthesized links until a
+  later freshness cycle runs extract — the lane should sequence extract (or
+  an equivalent materialization) between them; (d) mixed-once synthesis
+  writes attribute to the repoPath-resolved source rather than fanning out
+  attribution per source. Effort: L (CC: M). Priority: P2.
+- [ ] **P2 — maintenance-lane structure: ordering, keeper wall, slot
+  contention.** **What:** three ship-stage adversarial findings about the
+  single global-maintenance job, to resolve alongside (or inside) the
+  background lane above. (a) MAINTENANCE_PHASES runs synthesize →
+  resolve_symbol_edges → patterns with NO extract phase between synthesize
+  and patterns, so patterns reads a graph that hasn't materialized the
+  just-synthesized links until a later freshness cycle runs extract; (b)
+  synthesize runs FIRST in the job, so a large synthesis backlog + the job
+  keeper's timeout starves the brain-wide hygiene phases behind it (embed,
+  orphans, purge) and `last_global_at` never stamps — the next window
+  re-dispatches into the same wall (consider global-before-mixed ordering or
+  splitting mixed into its own job; note runCycle executes in canonical
+  order, so this needs more than reordering the list); (c) freshness jobs
+  share `queue: 'default'` with the hours-long maintenance job — with low
+  worker concurrency, per-source freshness queues behind maintenance
+  synthesis, re-coupling what this release decoupled (a fanout-vs-concurrency
+  doctor check exists but does not cover this pairing). Effort: M-L (CC).
+  Priority: P2.
+- [ ] **P2 — protected-phase submission bypass via unprotected job names.**
+  **What:** `synthesize`/`patterns`/`consolidate` are PROTECTED_JOB_NAMES so
+  scoped remote callers can't burn LLM budget, but `autopilot-global-
+  maintenance` (and no-source `autopilot-cycle`) accept arbitrary
+  `job.data.phases` — a write-scoped remote submitter can reach synthesize
+  through the global job's payload. v0.46.20.0 narrowed the surface
+  (per-source payloads normalize to freshness; maintenance payloads intersect
+  with MAINTENANCE_PHASES) but synthesize is legitimately IN
+  MAINTENANCE_PHASES. **Fix shape:** protect these job names, or require
+  `allowProtectedSubmit` when a payload names a protected-equivalent phase.
+  Pre-existing exposure, narrowed but not closed by this release. Effort: S-M
+  (CC). Priority: P2.
+- [ ] **P3 — freshness-stamp gate: require ≥1 freshness-phase success.**
+  **What:** `runCycle` stamps `last_source_cycle_at`/`last_full_cycle_at`
+  when ANY phase ran and status ∈ {ok, clean, partial} — e.g. `--phase
+  orphans --source X` (global phase, source-narrowed) stamps source
+  freshness. Also note the semantic drift: `last_full_cycle_at` now stamps
+  after a 6-phase deterministic cycle, so any reader treating it as "the
+  full cycle ran" reads more than it means (KEY_FILES documents it as a
+  legacy-reader alias). **Why:** pre-existing looseness (predates #4250,
+  which tightened zero-phase runs and stopped all-failed cycles from
+  stamping); sharpening further re-opens the #2549 freshness-poisoning
+  debate (a too-strict gate starves the dispatch loop) — design carefully.
+  Start: `src/core/cycle.ts` stamp gate. Effort: S (CC). Priority: P3.
+- [ ] **P3 — peel the cycle.ts KEY_FILES mega-entry.** **What:** the
+  `src/core/cycle.ts` entry in `docs/architecture/KEY_FILES.md` is a ~11KB
+  single line carrying six unrelated concern clusters; every cycle-area PR
+  now pays a manual three-way merge on it (#4250 did). `phase-scope.ts` got
+  its own entry in v0.46.20.0; peel the rest (lock/refresher cluster,
+  extract-atoms batching, by-mention resume → op-checkpoint entry, doctor
+  hints) into per-module entries. Effort: M (CC). Priority: P3.
+## Dream-wave follow-ups (#4216 oneshot + #4194/#4217/#4088/#4087/#4155/#4201)
+
+- [ ] **P2 — gateway-loop truncation note for `length` WITH tool calls.**
+  **What:** the legacy Anthropic path injects a truncation note into the
+  tool-result turn when a `max_tokens` stop arrives mid-tool-round
+  (subagent.ts ~:835) so the model re-issues the dropped call; the gateway
+  toolLoop has no equivalent — #4088 fixed only the zero-tool-call honesty
+  arm. Add the same note-injection to `gateway.ts:toolLoop`. **Why:** a
+  capped tool turn on the gateway path silently drops the trailing calls.
+  **Effort:** S. **Priority:** P2.
+- [ ] **P2 — synthesis-quality eval lane (oneshot vs agentic).** **What:** a
+  `gbrain eval` suite scoring synthesis output (faithfulness/link quality/
+  self-containedness) on a synthetic fixture corpus, following the
+  takes-quality 3-judge template + the eval-chronicle deterministic-gold
+  pattern; wire `details.synthesis.fallback_reasons` into the receipt.
+  Adjacent: #4198 (synthesize-concepts evaluator stub). **Why:** the
+  oneshot default currently leans on the soak + fallback telemetry; CI
+  should catch a quality regression, not output review. **Effort:** L.
+  **Priority:** P2.
+- [ ] **P3 — `dream.patterns.max_turns` config.** patterns.ts hardcodes
+  `max_turns: 30`; make it a registered key mirroring
+  `dream.synthesize.max_turns`. **Effort:** S.
+- [ ] **P3 — doctor/advisor collector for oneshot fallback rate.** Surface
+  `details.synthesis.fallback_jobs / oneshot_jobs` over the last N cycles;
+  advise the agentic revert dial when the rate stays high. **Effort:** S.
+- [ ] **P3 — evaluate oneshot for the patterns phase.** One job per cycle so
+  the latency win is small, but the pattern-page output contract is just as
+  structured. **Effort:** M.
+- [ ] **P3 — shared collectPutPageSlugs (ENG-3, deferred at C9).** synthesize
+  and patterns keep private ledger collectors; they differ materially
+  (chunk-slug rewrite + jobRawSource threading vs the simple patterns copy),
+  so unification was deferred rather than forced late in the wave. Unify
+  when patterns gains chunking or the collectors next change together.
+  **Effort:** M.
+- [ ] **P3 — relax the handler-entry capability gate for oneshot jobs
+  (ENG-1).** The oneshot attempt needs no tools, so a tool-incapable model
+  could legitimately run it; today the gate refuses at entry
+  (behavior-preserving v1). Move the check to the fallback boundary for
+  `mode: 'oneshot'` jobs. **Effort:** S.
+
+
 ## Skill-bridge (cathedral-7) follow-ups (plan: ~/.claude/plans/system-instruction-you-are-working-witty-fern.md)
 
 - [ ] **P2 — codex/opencode native skills-dir + codex multi-plugin observation
@@ -7182,3 +7309,9 @@ covers DEAD logs; go-forward capture beyond Claude Code is deliberately absent.
   lane (likely repo-root fallback when the source local_path isn't threaded),
   fix it to fail closed, and add a run-e2e.sh post-run guard that fails the
   lane if `git status` at the host root gained tracked-file changes. Effort: M.
+
+### Dream oneshot wave — adversarial-review follow-ups (v0.46.19.0)
+- [ ] P2 (adversarial F2): a job that dies mid-oneshot-write-phase (wall-clock timeout) releases its idempotency key with a partial ledger; the next nightly's fresh job re-calls the model and can write differently-stemmed siblings next to the survivors (same hash suffix). Window is tiny (writes are DB-fast, chat is sub-budgeted at deadline/4). Consider: route write-phase timeouts to `delayed` when oneshot ledger rows exist, or dedupe at fan-out on existing `-<suffix>` pages.
+- [ ] P2 (adversarial F3): a chronically-failing transcript (always times out / deterministic all-writes-failed) releases its key on dead AND suppresses the cooldown stamp — re-triaged and re-paid every nightly. Add a bounded per-content-hash failure counter (N strikes → skip + surface in doctor/advisor).
+- [ ] P3 (adversarial F6): legacy direct-Anthropic path with the CDX-6 32k thinking default can exceed the SDK's 10-min default request timeout on slow generations (flag-off deployments only; surfaces as a retryable conn error at full token cost). Set an explicit SDK timeout or cap legacy maxTokens.
+- [ ] P3: phase-end `embedStalePages` runs outside BudgetTracker (bounded to the phase's own writes + 120s; fold under the tracker if spend telemetry wants it).

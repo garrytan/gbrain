@@ -27,6 +27,7 @@ import { MinionQueue } from './queue.ts';
 import { runWaitingTtlTick, ttlNoticeGraceMs } from './admission.ts';
 import { calculateBackoff } from './backoff.ts';
 import { RateLeaseUnavailableError } from './handlers/subagent.ts';
+import { leaseFullBackoffMs } from './rate-leases.ts';
 import { logLeasePressure } from './lease-pressure-audit.ts';
 import {
   runLockRenewalTick,
@@ -1438,9 +1439,10 @@ export class MinionWorker extends EventEmitter {
       const isLeaseFull = err instanceof RateLeaseUnavailableError;
       if (isLeaseFull) {
         const leaseErr = err as RateLeaseUnavailableError;
-        // 1-3s jittered backoff. Not the exponential curve — this is "yield
-        // the slot, try again soon", not "give up after a few tries."
-        const leaseBackoffMs = 1000 + Math.floor(Math.random() * 2000);
+        // 1-3s jittered backoff (shared with the inline drain — one curve,
+        // no silent desync). Not the exponential curve — this is "yield the
+        // slot, try again soon", not "give up after a few tries."
+        const leaseBackoffMs = leaseFullBackoffMs();
         const released = await this.queue.releaseLeaseFullJob(
           job.id, lockToken, errorText, leaseBackoffMs,
         );

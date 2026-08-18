@@ -1105,6 +1105,12 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // for busy deployments).
   'dream.synthesize.max_turns',
   'dream.synthesize.max_submissions_per_source_per_day',
+  // #4216/#4194 dream-wave knobs: synthesis execution mode ('oneshot'
+  // default | 'agentic'), pre-retrieval link-candidate manifest (default on),
+  // and inline-drain concurrency (default 1; clamped [1,8]; PGLite forced 1).
+  'dream.synthesize.mode',
+  'dream.synthesize.link_manifest',
+  'dream.synthesize.inline_concurrency',
   // #4152 triage knobs. The triage model's preferred key is
   // `models.dream.triage` (models.* prefix, registered via the models.dream.*
   // family); these tune the gate + sampling + pass budget.

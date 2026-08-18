@@ -146,7 +146,14 @@ async function runPhase(rig: Rig, opts: { date?: string; excludeQueue?: string }
       withSubagentAutoCancel(rig.engine, () =>
         runPhaseSynthesize(rig.engine, { brainDir: rig.brainDir, dryRun: false, ...phaseOpts }),
       { excludeQueue }));
-    expect(result.status).toBe('ok');
+    // CDX-4 (#4217 family): in this keyless harness every submitted child
+    // dies, and an all-children-dead run is now an honest phase failure
+    // (fan-out details preserved). Zero-submission runs still report 'ok'.
+    // This suite's subject is the CAP accounting in details, not the phase
+    // verdict.
+    if (result.status !== 'ok') {
+      expect(result.error?.code).toBe('SYNTH_ALL_CHILDREN_DEAD');
+    }
     return result.details as unknown as CapDetails;
   } finally {
     try { rmSync(tmpHome, { recursive: true, force: true }); } catch { /* */ }

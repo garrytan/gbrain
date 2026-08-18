@@ -14,11 +14,16 @@
 
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
+// Import through the synthesize re-export deliberately: the drain was peeled
+// to inline-drain.ts (dream-wave C7) and the re-export is part of its public
+// surface (patterns.ts + __testing depend on it).
 import { runDrainRenewalTick } from '../src/core/cycle/synthesize.ts';
 
 describe('drain-loop wiring (structural — the shape guard only covers worker.ts)', () => {
+  // The drain body lives in inline-drain.ts post-peel; the structural guard
+  // follows the code.
   const src = readFileSync(
-    new URL('../src/core/cycle/synthesize.ts', import.meta.url),
+    new URL('../src/core/cycle/inline-drain.ts', import.meta.url),
     'utf-8',
   );
   test('the renewTimer interval is guarded and routes through runDrainRenewalTick', () => {

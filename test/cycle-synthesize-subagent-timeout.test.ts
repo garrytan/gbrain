@@ -73,7 +73,12 @@ describe('runPhaseSynthesize subagent timeout config', () => {
         dryRun: false,
       });
 
-      expect(result.status).toBe('ok');
+      // CDX-4 (#4217 family): the child dies in this keyless harness, and a
+      // run whose EVERY child died is now an honest phase failure instead of
+      // 'ok'. This test's subject — the timeout config flowing onto the job
+      // row — is asserted below regardless.
+      expect(result.status).toBe('fail');
+      expect(result.error?.code).toBe('SYNTH_ALL_CHILDREN_DEAD');
 
       const jobs = await engine.executeRaw<{ timeout_ms: string | number | null }>(
         `SELECT timeout_ms
@@ -113,7 +118,11 @@ describe('#4168 sibling — child budgets clamp to the remaining job deadline', 
         dryRun: false,
         deadlineAtMs: Date.now() + 5.5 * 60 * 1000,
       });
-      expect(result.status).toBe('ok');
+      // CDX-4 (#4217 family): the keyless child dies, and a run whose EVERY
+      // child died is an honest phase failure. This test's subject — the
+      // #4168 clamp on the submitted job row — is asserted below regardless.
+      expect(result.status).toBe('fail');
+      expect(result.error?.code).toBe('SYNTH_ALL_CHILDREN_DEAD');
 
       const jobs = await engine.executeRaw<{ timeout_ms: string | number | null }>(
         `SELECT timeout_ms FROM minion_jobs WHERE name = 'subagent' ORDER BY id DESC LIMIT 1`,
@@ -170,7 +179,10 @@ describe('#4168 sibling — child budgets clamp to the remaining job deadline', 
       await seedWorthProcessingVerdict(filePath, content);
 
       const result = await runPhaseSynthesize(engine, { brainDir, dryRun: false });
-      expect(result.status).toBe('ok');
+      // CDX-4: keyless child dies → honest phase failure; the unclamped
+      // timeout on the submitted row is the subject and asserts regardless.
+      expect(result.status).toBe('fail');
+      expect(result.error?.code).toBe('SYNTH_ALL_CHILDREN_DEAD');
       const jobs = await engine.executeRaw<{ timeout_ms: string | number | null }>(
         `SELECT timeout_ms FROM minion_jobs WHERE name = 'subagent' ORDER BY id DESC LIMIT 1`,
       );

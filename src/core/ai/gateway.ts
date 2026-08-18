@@ -2859,10 +2859,20 @@ function estimateChatInputTokens(opts: { system?: string; messages?: Array<{ con
  */
 export type ChatRole = 'system' | 'user' | 'assistant' | 'tool';
 
+/**
+ * Provider-neutral content block. `providerMetadata` is the per-part opaque
+ * provider channel (#4201): some providers attach state to a part that MUST be
+ * echoed back verbatim on the next request (Gemini 3.x `thoughtSignature` on
+ * functionCall parts — dropped, the follow-up turn is refused). Captured from
+ * the SDK part's `providerMetadata` in chat(), re-attached as `providerOptions`
+ * on the rebuilt part in toModelMessages(), and carried through the replay shim
+ * (adaptContentBlocksToChatBlocks). Attached ONLY when the provider sent one —
+ * blocks from providers without per-part state stay byte-identical.
+ */
 export type ChatBlock =
-  | { type: 'text'; text: string }
-  | { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown }
-  | { type: 'tool-result'; toolCallId: string; toolName: string; output: unknown; isError?: boolean };
+  | { type: 'text'; text: string; providerMetadata?: Record<string, unknown> }
+  | { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown; providerMetadata?: Record<string, unknown> }
+  | { type: 'tool-result'; toolCallId: string; toolName: string; output: unknown; isError?: boolean; providerMetadata?: Record<string, unknown> };
 
 export interface ChatMessage {
   role: ChatRole;
@@ -2902,10 +2912,18 @@ export interface ChatToolDef {
  * non-Anthropic subagent users the gateway loop exists to serve.
  */
 const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
-const THINKING_MODEL_MAX_OUTPUT_TOKENS = 32000;
-const THINKING_BY_DEFAULT_MODEL_RE = /(?:^|[:/])anthropic[:/]claude-[a-z0-9]+-5(?:[.-]|$)/i;
+export const THINKING_MODEL_MAX_OUTPUT_TOKENS = 32000;
+// Matches Claude 5-family ids behind ANY provider-prefix chain
+// (`anthropic:claude-sonnet-5`, `openrouter:anthropic/claude-sonnet-5`,
+// `claude-cli:claude-fable-5`, bare `claude-sonnet-5`). The family segment is
+// letters-only so `claude-3-5-sonnet-*` (an 8192-capped 3.5-family id) can
+// never match — pushing 32k onto it would 400 on Anthropic.
+const THINKING_BY_DEFAULT_MODEL_RE = /(?:^|[:/])(?:anthropic[:/])?claude-[a-z]+-5(?:[.-]|$)/i;
+export function isThinkingByDefaultModel(modelStr: string | undefined): boolean {
+  return !!modelStr && THINKING_BY_DEFAULT_MODEL_RE.test(modelStr);
+}
 function defaultMaxOutputTokens(modelStr: string | undefined): number {
-  return modelStr && THINKING_BY_DEFAULT_MODEL_RE.test(modelStr)
+  return isThinkingByDefaultModel(modelStr)
     ? THINKING_MODEL_MAX_OUTPUT_TOKENS
     : DEFAULT_MAX_OUTPUT_TOKENS;
 }
@@ -2961,6 +2979,8 @@ export function toModelMessages(messages: ChatMessage[]): unknown[] {
               : (typeof b.output === 'string'
                 ? { type: 'text' as const, value: b.output }
                 : { type: 'json' as const, value: toJsonSafe(b.output) as never }),
+            // #4201: echo per-part provider state (outbound name is providerOptions).
+            ...(b.providerMetadata ? { providerOptions: b.providerMetadata } : {}),
           })),
       };
     }
@@ -2973,8 +2993,24 @@ export function toModelMessages(messages: ChatMessage[]): unknown[] {
       content: blocks
         .filter((b) => b.type !== 'text' || typeof b.text === 'string')
         .map((b) => {
-          if (b.type === 'text') return { type: 'text' as const, text: b.text };
-          if (b.type === 'tool-call') return { type: 'tool-call' as const, toolCallId: b.toolCallId, toolName: b.toolName, input: b.input };
+          // #4201: `providerOptions` echoes per-part provider state (e.g.
+          // Gemini 3.x thoughtSignature) — attached only when captured.
+          if (b.type === 'text') {
+            return {
+              type: 'text' as const,
+              text: b.text,
+              ...(b.providerMetadata ? { providerOptions: b.providerMetadata } : {}),
+            };
+          }
+          if (b.type === 'tool-call') {
+            return {
+              type: 'tool-call' as const,
+              toolCallId: b.toolCallId,
+              toolName: b.toolName,
+              input: b.input,
+              ...(b.providerMetadata ? { providerOptions: b.providerMetadata } : {}),
+            };
+          }
           return b;
         }),
     };
@@ -3626,13 +3662,21 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     const rawContent: any[] = (result as any).content ?? [];
     if (Array.isArray(rawContent) && rawContent.length > 0) {
       for (const part of rawContent) {
-        if (part.type === 'text') blocks.push({ type: 'text', text: part.text });
+        // #4201: capture per-part providerMetadata (Gemini 3.x thoughtSignature
+        // arrives on functionCall/text parts and must be echoed back next turn).
+        // `reasoning` parts stay deliberately dropped: the echo requirement is
+        // on functionCall parts; reasoning text never re-enters the transcript.
+        const partMeta = part.providerMetadata && typeof part.providerMetadata === 'object'
+          ? { providerMetadata: part.providerMetadata as Record<string, unknown> }
+          : {};
+        if (part.type === 'text') blocks.push({ type: 'text', text: part.text, ...partMeta });
         else if (part.type === 'tool-call') {
           blocks.push({
             type: 'tool-call',
             toolCallId: part.toolCallId,
             toolName: part.toolName,
             input: part.input ?? part.args,
+            ...partMeta,
           });
         }
       }
@@ -3777,9 +3821,26 @@ export interface ToolLoopOpts {
 
   /** Optional per-call heartbeat for observability. */
   onHeartbeat?: (event: string, data: Record<string, unknown>) => void;
+  /**
+   * #4194/CDX-7 — per-turn provider permit. Called before EVERY provider
+   * round-trip; the returned release function (bare, or in the object form)
+   * is invoked in a finally around the call. Throwing (e.g.
+   * RateLeaseUnavailableError when the provider bucket is full) aborts the
+   * turn WITHOUT consuming it — the job requeues under the caller's
+   * lease-full handling. The object form's optional `signal` lets the
+   * permit owner ABORT the in-flight provider call (a heartbeat discovering
+   * its lease row was pruned mid-call must stop the request — continuing
+   * would run above the concurrency ceiling). Absent = unmetered (CLI
+   * one-shots, tests).
+   */
+  acquireTurnPermit?: () => Promise<TurnPermit>;
 }
 
-export type ToolLoopStopReason = 'end' | 'max_turns' | 'refusal' | 'content_filter' | 'aborted' | 'unrecoverable';
+export type TurnPermit =
+  | (() => Promise<void> | void)
+  | { release: () => Promise<void> | void; signal?: AbortSignal };
+
+export type ToolLoopStopReason = 'end' | 'length' | 'max_turns' | 'refusal' | 'content_filter' | 'aborted' | 'unrecoverable';
 
 export interface ToolLoopResult {
   finalText: string;
@@ -3837,6 +3898,24 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
 
     opts.onHeartbeat?.('turn_start', { turn_idx: turnIdx });
 
+    // #4194/CDX-7: per-turn provider permit. Pre-hook, the gateway path made
+    // provider calls with NO rate lease at all — the legacy Anthropic loop
+    // acquired one per turn, so "leases are the API ceiling" was silently
+    // false for every gateway-routed job the moment the inline drain (or a
+    // worker fleet) ran concurrently. The hook acquires BEFORE the provider
+    // call and releases in finally; an acquire failure (lease full)
+    // propagates to the caller's requeue-without-attempt-burn handling.
+    let releaseTurnPermit: (() => Promise<void> | void) | null = null;
+    let turnPermitSignal: AbortSignal | undefined;
+    if (opts.acquireTurnPermit) {
+      const permit = await opts.acquireTurnPermit();
+      if (typeof permit === 'function') {
+        releaseTurnPermit = permit;
+      } else {
+        releaseTurnPermit = permit.release;
+        turnPermitSignal = permit.signal;
+      }
+    }
     let chatResult: ChatResult;
     try {
       chatResult = await chat({
@@ -3845,7 +3924,9 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
         messages,
         tools: opts.tools,
         maxTokens,
-        abortSignal: opts.abortSignal,
+        abortSignal: turnPermitSignal
+          ? (opts.abortSignal ? AbortSignal.any([opts.abortSignal, turnPermitSignal]) : turnPermitSignal)
+          : opts.abortSignal,
         cacheSystem: opts.cacheSystem,
       });
     } catch (err) {
@@ -3854,6 +3935,8 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
         error: err instanceof Error ? err.message : String(err),
       });
       throw err;
+    } finally {
+      if (releaseTurnPermit) await Promise.resolve(releaseTurnPermit()).catch(() => { /* best-effort */ });
     }
 
     totalUsage.input_tokens += chatResult.usage.input_tokens;
@@ -3884,7 +3967,11 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
     );
 
     if (toolCalls.length === 0) {
-      stopReason = 'end';
+      // #4088: an output-cap hit is NOT a clean finish. Folding 'length' into
+      // 'end' made truncated zero-tool-call runs indistinguishable from the
+      // model choosing to stop — the exact honesty bug #2778 fixed on the
+      // direct Anthropic path.
+      stopReason = chatResult.stopReason === 'length' ? 'length' : 'end';
       finalText = chatResult.text;
       break;
     }

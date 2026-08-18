@@ -77,6 +77,7 @@ export {
 export {
   computeQueueHealthCheck,
   computeWedgedQueueCheck,
+  computeOrphanedPrivateQueueCheck,
   computeAutopilotFanoutConcurrencyCheck,
   checkBatchRetryHealth,
 } from './doctor/checks/queue-jobs.ts';
@@ -156,6 +157,7 @@ import {
 import {
   computeQueueHealthCheck,
   computeWedgedQueueCheck,
+  computeOrphanedPrivateQueueCheck,
   computeAutopilotFanoutConcurrencyCheck,
   checkBatchRetryHealth,
 } from './doctor/checks/queue-jobs.ts';
@@ -3696,6 +3698,8 @@ export async function buildChecks(
     // waiting, zero live-lock active, stale completions) as a health error.
     progress.heartbeat('wedged_queue');
     checks.push(await computeWedgedQueueCheck(engine));
+    progress.heartbeat('orphaned_private_queue');
+    checks.push(await computeOrphanedPrivateQueueCheck(engine));
     // #2194 fix #5 — autopilot fan-out vs worker concurrency mismatch.
     progress.heartbeat('autopilot_fanout_concurrency');
     checks.push(await computeAutopilotFanoutConcurrencyCheck(engine));

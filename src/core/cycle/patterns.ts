@@ -207,6 +207,10 @@ export async function runPhasePatterns(
       prompt: buildPatternsPrompt(reflections, config.minEvidence, config.sourceSlugPrefix, config.outputSlugPrefix),
       model: config.model,
       max_turns: 30,
+      // #4217/CDX-12: a patterns child whose every put_page failed must
+      // dead-letter (its whole purpose is writing pattern pages), not report
+      // completed with zero pages.
+      require_writes: true,
       allowed_slug_prefixes: allowedSlugPrefixes,
       // #1586: scope every child tool call to the cycle's resolved source so
       // put_page writes land there instead of the hardcoded 'default'.

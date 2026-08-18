@@ -61,10 +61,12 @@ describe('autopilot-cycle handler — per-source checkout binding (#2227/#2194)'
 
     const handlers = await captureHandlers();
     const handler = handlers.get('autopilot-cycle')!;
-    // DB-only phase keeps the test cheap; brain_dir is stamped from opts.brainDir
-    // regardless of which phases run, so it still proves the binding.
+    // Cheap DB phase from the FRESHNESS set (per-source payloads normalize to
+    // SOURCE_FRESHNESS_PHASES since #4250); brain_dir is stamped from
+    // opts.brainDir regardless of which phases run, so it still proves the
+    // binding.
     const result = await handler({
-      data: { source_id: 'repo-a', phases: ['resolve_symbol_edges'] },
+      data: { source_id: 'repo-a', phases: ['recompute_emotional_weight'] },
       signal: undefined,
     });
 
@@ -84,7 +86,7 @@ describe('autopilot-cycle handler — per-source checkout binding (#2227/#2194)'
     const handlers = await captureHandlers();
     const handler = handlers.get('autopilot-cycle')!;
     const result = await handler({
-      data: { source_id: 'db-only', phases: ['resolve_symbol_edges'] },
+      data: { source_id: 'db-only', phases: ['recompute_emotional_weight'] },
       signal: undefined,
     });
 

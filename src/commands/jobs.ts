@@ -2473,12 +2473,32 @@ export async function registerBuiltinHandlers(
     const effectiveBrainDir: string | null = sourceId ? sourceLocalPath : repoPath;
 
     // Allow callers to select phases via job data (e.g. skip embed for
-    // fast cycles). Validates against ALL_PHASES to prevent injection.
-    const { ALL_PHASES } = await import('../core/cycle.ts');
+    // fast cycles). Validates against ALL_PHASES to prevent injection, then
+    // normalizes per-source payloads to the freshness set (queue payloads
+    // are machine-authored; see normalizeQueuedSourcePhases in cycle.ts).
+    const { ALL_PHASES, normalizeQueuedSourcePhases } = await import('../core/cycle.ts');
     const validPhases = new Set(ALL_PHASES);
     const requestedPhases = Array.isArray(job.data.phases)
       ? (job.data.phases as string[]).filter(p => validPhases.has(p as any))
       : undefined;
+    const { phases: effectivePhases, rejected: phasesRejectedByNormalization } =
+      normalizeQueuedSourcePhases(requestedPhases as any, sourceId);
+    // An explicitly-empty phase list (arrived empty, or emptied by the
+    // normalization) is a no-op — NOT an implicit run. The reason string is
+    // honest about WHICH of the two happened.
+    if (effectivePhases !== undefined && effectivePhases.length === 0) {
+      return {
+        partial: false,
+        status: 'skipped',
+        report: {
+          reason: phasesRejectedByNormalization.length > 0
+            ? 'all_phases_rejected_by_normalization'
+            : 'empty_phase_list',
+          ...(sourceId ? { source_id: sourceId } : {}),
+          phases_rejected_by_normalization: phasesRejectedByNormalization,
+        },
+      };
+    }
 
     const pull = resolveJobPull(job.data);
 
@@ -2503,7 +2523,7 @@ export async function registerBuiltinHandlers(
       signal: job.signal, // propagate abort so cycle bails on timeout/cancel
       deadlineAtMs: job.deadlineAtMs, // #2781: phases budget sub-work from remaining time
       ...(sourceId ? { sourceId } : {}),
-      ...(requestedPhases && requestedPhases.length > 0 ? { phases: requestedPhases as any } : {}),
+      ...(effectivePhases !== undefined ? { phases: effectivePhases as any } : {}),
       yieldBetweenPhases: async () => {
         // Yield to the event loop so worker lock-renewal can fire.
         await new Promise<void>(r => setImmediate(r));
@@ -2514,26 +2534,34 @@ export async function registerBuiltinHandlers(
       partial: report.status === 'partial' || report.status === 'failed',
       status: report.status,
       report,
+      // Surfaced so operators can see the queue-boundary normalization at
+      // work in job results (runCycle never sees rejected phases, so its
+      // excludedPhases skip-reporting cannot cover them).
+      ...(phasesRejectedByNormalization.length > 0
+        ? { phases_rejected_by_normalization: phasesRejectedByNormalization }
+        : {}),
     };
   });
 
-  // #2194 fix #3 / #2227 bug #3 — brain-wide maintenance. Runs the `global`
-  // cycle phases (embed, orphans, purge, resolve_symbol_edges, grade_takes,
-  // calibration_profile, synthesize_concepts, skillopt) ONCE per window instead
-  // of N times concurrently across per-source cycles (the 4→10GB RSS blowout).
+  // Brain-wide maintenance. Runs mixed + global phases ONCE per window instead
+  // of repeating cross-source transcript/reflection reads in every source.
   // No source_id → uses the legacy global cycle lock; stamps autopilot.last_global_at
   // on success so the dispatch gate backs off.
   worker.register('autopilot-global-maintenance', async (job) => {
-    const { runCycle, GLOBAL_PHASES, LAST_GLOBAL_AT_KEY, ALL_PHASES } = await import('../core/cycle.ts');
+    const { runCycle, MAINTENANCE_PHASES, LAST_GLOBAL_AT_KEY } = await import('../core/cycle.ts');
     const repoPath: string | null = typeof job.data.repoPath === 'string'
       ? job.data.repoPath
       : (await engine.getConfig('sync.repo_path')) ?? null;
 
-    const validPhases = new Set(ALL_PHASES);
+    // #4250: queued maintenance payloads are machine-authored too — intersect
+    // with MAINTENANCE_PHASES so a stale (or remote-submitted) payload can't
+    // run source-scoped phases through the global lane, symmetric with the
+    // per-source normalization in the autopilot-cycle handler.
+    const maintenanceSet = new Set<string>(MAINTENANCE_PHASES);
     const requested = Array.isArray(job.data.phases)
-      ? (job.data.phases as string[]).filter((p) => validPhases.has(p as never))
-      : GLOBAL_PHASES;
-    const phases = (requested.length > 0 ? requested : GLOBAL_PHASES) as typeof GLOBAL_PHASES;
+      ? (job.data.phases as string[]).filter((p) => maintenanceSet.has(p))
+      : MAINTENANCE_PHASES;
+    const phases = (requested.length > 0 ? requested : MAINTENANCE_PHASES) as typeof MAINTENANCE_PHASES;
 
     const report = await runCycle(engine, {
       brainDir: repoPath,

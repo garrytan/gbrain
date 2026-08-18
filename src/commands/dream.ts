@@ -393,6 +393,10 @@ Options:
                       completion. When omitted, gbrain derives the
                       source from --dir / the configured checkout
                       when it matches a source's local_path (#1869).
+                      A named non-default source runs the deterministic
+                      freshness phases unless --phase is given
+                      (explicit phases are honored verbatim);
+                      --source default still runs the full cycle.
   --source-id <id>    Alias for --source. Matches the v0.37.7.0+
                       naming used by import/extract/graph-query.
 
