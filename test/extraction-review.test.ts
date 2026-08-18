@@ -72,6 +72,7 @@ beforeEach(async () => {
   await engine.executeRaw('DELETE FROM links');
   await engine.executeRaw('DELETE FROM timeline_entries');
   await engine.executeRaw('DELETE FROM pages');
+  await engine.executeRaw('DELETE FROM slug_aliases');
 });
 
 function ctx(over: Partial<OperationContext> = {}): OperationContext {
@@ -175,6 +176,32 @@ describe('rrfFusion compiled-truth boost skip', () => {
 // ---------------------------------------------------------------------------
 
 describe('enrichEntity trust lane', () => {
+  test('resolves slug aliases before checking or writing entity pages', async () => {
+    await engine.putPage('people/aditya-vikram-singh', {
+      title: 'Aditya Vikram Singh',
+      type: 'person',
+      compiled_truth: '# Aditya Vikram Singh',
+      timeline: '',
+      frontmatter: {},
+    });
+    await engine.executeRaw(
+      `INSERT INTO slug_aliases (source_id, alias_slug, canonical_slug)
+       VALUES ('default', 'people/avsingh', 'people/aditya-vikram-singh')`,
+    );
+
+    const result = await enrichEntity(engine, {
+      entityName: 'Avsingh',
+      entityType: 'person',
+      context: 'canonical identity mention',
+      sourceSlug: 'notes/daily',
+    }, { trusted: true });
+
+    expect(result.slug).toBe('people/aditya-vikram-singh');
+    expect(result.action).toBe('updated');
+    expect(await engine.getPage('people/avsingh')).toBeNull();
+    expect(await engine.getPage('people/aditya-vikram-singh')).not.toBeNull();
+  });
+
   test('default (opts omitted) → fail-closed quarantine markers', async () => {
     const r = await enrichEntity(engine, {
       entityName: 'Mallory Fake',
