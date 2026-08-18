@@ -47,11 +47,28 @@ export interface LoadAllSourcesOpts {
 
 /** Parse `sources.config` to a plain object regardless of driver shape. */
 export function parseSourceConfig(config: unknown): Record<string, unknown> {
-  if (typeof config === 'string') {
-    try { return JSON.parse(config) as Record<string, unknown>; } catch { return {}; }
-  }
-  if (typeof config === 'object' && config !== null) return config as Record<string, unknown>;
-  return {};
+  const out: Record<string, unknown> = {};
+
+  const merge = (value: unknown): void => {
+    if (typeof value === 'string') {
+      try {
+        merge(JSON.parse(value));
+      } catch {
+        // Ignore legacy scalar junk defensively.
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) merge(item);
+      return;
+    }
+    if (typeof value === 'object' && value !== null) {
+      Object.assign(out, value as Record<string, unknown>);
+    }
+  };
+
+  merge(config);
+  return out;
 }
 
 /** True iff the source's config.federated field is the literal boolean true. */

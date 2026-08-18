@@ -63,4 +63,9 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     // fallback path (which is in autopilot-fanout.ts, not autopilot.ts).
     expect(AUTOPILOT_SRC).not.toMatch(/queue\.add\(['"]autopilot-cycle['"][\s\S]{0,400}idempotency_key:\s*`autopilot-cycle:\$\{slot\}`/);
   });
+
+  test('defaults autopilot to hourly and scales stale-lock threshold with interval', () => {
+    expect(AUTOPILOT_SRC).toContain("parseArg(args, '--interval') || '3600'");
+    expect(AUTOPILOT_SRC).toContain('Math.ceil(baseInterval / 60) + 2');
+  });
 });

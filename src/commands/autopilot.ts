@@ -331,7 +331,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   }
 
   const repoPath = parseArg(args, '--repo') || await engine.getConfig('sync.repo_path');
-  const baseInterval = parseInt(parseArg(args, '--interval') || '300', 10);
+  const baseInterval = parseInt(parseArg(args, '--interval') || '3600', 10);
   const jsonMode = args.includes('--json');
   const forceInline = args.includes('--inline');
   const noWorker = !shouldSpawnAutopilotWorker(args);
@@ -353,11 +353,12 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     if (existsSync(lockPath)) {
       const stat = require('fs').statSync(lockPath);
       const ageMinutes = (Date.now() - stat.mtimeMs) / 60000;
-      if (ageMinutes < 10) {
+      const staleLockMinutes = Math.max(10, Math.ceil(baseInterval / 60) + 2);
+      if (ageMinutes < staleLockMinutes) {
         console.error('Another autopilot instance is running (lock file is fresh). Exiting.');
         process.exit(0);
       }
-      console.log('Stale lock file found (>10 min). Taking over.');
+      console.log(`Stale lock file found (>${staleLockMinutes} min). Taking over.`);
     }
     writeFileSync(lockPath, String(process.pid));
   } catch { /* best-effort */ }
@@ -1380,9 +1381,9 @@ echo \$! > ~/.gbrain/autopilot.pid
 }
 
 function installCrontab(wrapperPath: string, home: string) {
-  // Linux/WSL without systemd — crontab runs the wrapper every 5 minutes.
+  // Linux/WSL without systemd — crontab runs the wrapper hourly.
   const safeWrapperPath = wrapperPath.replace(/'/g, "'\\''");
-  const cronLine = `*/5 * * * * '${safeWrapperPath}' >> '${home.replace(/'/g, "'\\''")}/.gbrain/autopilot.log' 2>&1`;
+  const cronLine = `0 * * * * '${safeWrapperPath}' >> '${home.replace(/'/g, "'\\''")}/.gbrain/autopilot.log' 2>&1`;
   try {
     const existing = execSync('crontab -l 2>/dev/null || true', { encoding: 'utf-8' });
     if (existing.includes('gbrain autopilot') || existing.includes('autopilot-run.sh')) {
@@ -1394,7 +1395,7 @@ function installCrontab(wrapperPath: string, home: string) {
     writeFileSync(tmpFile, existing.trimEnd() + '\n' + cronLine + '\n');
     execSync(`crontab '${tmpFile.replace(/'/g, "'\\''")}'`, { stdio: 'pipe' });
     try { unlinkSync(tmpFile); } catch { /* best-effort */ }
-    console.log('Installed crontab entry for gbrain autopilot (every 5 minutes)');
+    console.log('Installed crontab entry for gbrain autopilot (hourly)');
     console.log('  Uninstall: gbrain autopilot --uninstall');
   } catch (e: unknown) {
     console.error(`Failed to install crontab: ${e instanceof Error ? e.message : e}`);

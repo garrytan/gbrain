@@ -464,7 +464,7 @@ Three commands do most of the operational work.
 
 ### Background daemon: `gbrain autopilot`
 
-The personal-brain install already turned this on. For a company brain, the same autopilot covers all your sources because they live in one database. It runs every five minutes; on a healthy brain (health score 95+) it sleeps; on a brain that's drifting it submits targeted maintenance jobs.
+The personal-brain install already turned this on. For a company brain, the same autopilot covers all your sources because they live in one database. It runs hourly by default; on a healthy brain (health score 95+) it sleeps; on a brain that's drifting it submits targeted maintenance jobs.
 
 ### Self-healing: `gbrain doctor --remediate`
 

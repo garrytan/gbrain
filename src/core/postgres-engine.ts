@@ -61,6 +61,7 @@ import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte } from './search/sql-ranking.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
+import { parseSourceConfig } from './sources-load.ts';
 
 function escapeSqlStringLiteral(value: string): string {
   return value.replace(/'/g, "''");
@@ -1269,7 +1270,7 @@ export class PostgresEngine implements BrainEngine {
       name: (r.name as string | null) ?? null,
       local_path: (r.local_path as string | null) ?? null,
       last_sync_at: r.last_sync_at ? new Date(r.last_sync_at as string) : null,
-      config: typeof r.config === 'string' ? JSON.parse(r.config) : ((r.config as Record<string, unknown> | null) ?? {}),
+      config: parseSourceConfig(r.config),
     }));
   }
 
@@ -1289,13 +1290,38 @@ export class PostgresEngine implements BrainEngine {
     // template tag is the canonical safe path — same pattern as
     // putPage + submitJob elsewhere in this file. Empirically verified
     // produces jsonb_typeof = 'object'.
+    //
+    // Legacy incident defense: if an older buggy writer already converted
+    // config into an ARRAY, JSONB `array || object` appends forever. Keep the
+    // atomic fast path for healthy object rows; malformed rows take a
+    // one-time normalize+overwrite path that preserves recoverable keys.
     const sql = this.sql;
     const result = await sql`
       UPDATE sources
          SET config = COALESCE(config, '{}'::jsonb) || ${sql.json(patch as Parameters<typeof sql.json>[0])}
        WHERE id = ${sourceId}
+         AND jsonb_typeof(COALESCE(config, '{}'::jsonb)) = 'object'
     `;
-    return (result.count ?? 0) > 0;
+    if ((result.count ?? 0) > 0) return true;
+
+    const rows = await sql`
+      SELECT config
+        FROM sources
+       WHERE id = ${sourceId}
+       LIMIT 1
+    `;
+    if (rows.length === 0) return false;
+
+    const normalized = {
+      ...parseSourceConfig(rows[0].config),
+      ...patch,
+    };
+    const repaired = await sql`
+      UPDATE sources
+         SET config = ${sql.json(normalized as Parameters<typeof sql.json>[0])}
+       WHERE id = ${sourceId}
+    `;
+    return (repaired.count ?? 0) > 0;
   }
 
   // v0.37.0 — domain-bank engine methods (D14 + D5 + D10).

@@ -101,6 +101,16 @@ describeIfDB('autopilot fan-out — Postgres E2E', () => {
       return data.source_id;
     }).sort();
     expect(sources).toEqual(['alpha', 'beta', 'gamma']);
+
+    const repoPaths = jobs.map(j => {
+      const data = typeof j.data === 'string' ? JSON.parse(j.data) : j.data;
+      return [data.source_id, data.repoPath] as const;
+    });
+    expect(Object.fromEntries(repoPaths)).toEqual({
+      alpha: expect.stringContaining('gbrain-fanout-alpha-'),
+      beta: expect.stringContaining('gbrain-fanout-beta-'),
+      gamma: expect.stringContaining('gbrain-fanout-gamma-'),
+    });
   });
 
   test('re-dispatch within same slot dedupes via idempotency key', async () => {

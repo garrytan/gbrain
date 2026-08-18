@@ -59,6 +59,7 @@ import {
   EmbeddingColumnNotRegisteredError,
 } from './search/embedding-column.ts';
 import { hasCJK, escapeLikePattern } from './cjk.ts';
+import { parseSourceConfig } from './sources-load.ts';
 
 type PGLiteDB = PGlite;
 
@@ -1218,24 +1219,42 @@ export class PGLiteEngine implements BrainEngine {
       name: r.name,
       local_path: r.local_path,
       last_sync_at: r.last_sync_at ? new Date(r.last_sync_at) : null,
-      config: typeof r.config === 'string'
-        ? JSON.parse(r.config) as Record<string, unknown>
-        : ((r.config as Record<string, unknown> | null) ?? {}),
+      config: parseSourceConfig(r.config),
     }));
   }
 
   async updateSourceConfig(sourceId: string, patch: Record<string, unknown>): Promise<boolean> {
-    // v0.38: parity with postgres-engine.updateSourceConfig. JSONB `||`
-    // concat operator (overrides same-key, no deep merge). PGLite passes
-    // `JSON.stringify(patch)` as the param; cast to jsonb on the SQL side.
+    // v0.38: parity with postgres-engine.updateSourceConfig. Healthy object
+    // rows keep the atomic JSONB merge; legacy malformed rows are normalized
+    // once so array-shaped configs cannot keep appending forever.
     const result = await this.db.query<{ id: string }>(
       `UPDATE sources
           SET config = COALESCE(config, '{}'::jsonb) || $1::jsonb
         WHERE id = $2
+          AND jsonb_typeof(COALESCE(config, '{}'::jsonb)) = 'object'
         RETURNING id`,
       [JSON.stringify(patch), sourceId],
     );
-    return result.rows.length > 0;
+    if (result.rows.length > 0) return true;
+
+    const existing = await this.db.query<{ config: unknown }>(
+      `SELECT config FROM sources WHERE id = $1 LIMIT 1`,
+      [sourceId],
+    );
+    if (existing.rows.length === 0) return false;
+
+    const normalized = {
+      ...parseSourceConfig(existing.rows[0].config),
+      ...patch,
+    };
+    const repaired = await this.db.query<{ id: string }>(
+      `UPDATE sources
+          SET config = $1::jsonb
+        WHERE id = $2
+        RETURNING id`,
+      [JSON.stringify(normalized), sourceId],
+    );
+    return repaired.rows.length > 0;
   }
 
   // v0.37.0 — domain-bank engine methods (D14 + D5 + D10).

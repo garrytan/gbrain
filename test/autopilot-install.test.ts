@@ -12,7 +12,7 @@
  *
  * Regression guards:
  *   - macOS launchd plist still writes the same shape it always did.
- *   - Linux crontab still writes the same every-5-min line.
+ *   - Linux crontab still writes the same hourly line.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';

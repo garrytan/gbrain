@@ -19,6 +19,7 @@ import {
   dispatchPerSource,
 } from '../src/commands/autopilot-fanout.ts';
 import type { SourceRow, BrainEngine } from '../src/core/engine.ts';
+import { parseSourceConfig } from '../src/core/sources-load.ts';
 
 function src(id: string, last_full_cycle_at?: string | null, extra: Record<string, unknown> = {}): SourceRow {
   return {
@@ -47,6 +48,21 @@ describe('readLastFullCycleAt', () => {
   });
   test('returns null for unparseable string (codex P0-5 robustness)', () => {
     expect(readLastFullCycleAt(src('a', 'not-a-date'))).toBeNull();
+  });
+});
+
+describe('parseSourceConfig', () => {
+  test('recovers legacy array-shaped configs without dropping later patches', () => {
+    const parsed = parseSourceConfig([
+      '{"federated":true,"remote_url":"https://github.com/x/y"}',
+      { last_full_cycle_at: '2026-05-22T07:00:00.000Z' },
+      { last_full_cycle_at: '2026-05-22T08:00:00.000Z' },
+    ]);
+    expect(parsed).toEqual({
+      federated: true,
+      remote_url: 'https://github.com/x/y',
+      last_full_cycle_at: '2026-05-22T08:00:00.000Z',
+    });
   });
 });
 
@@ -232,6 +248,19 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     );
     expect((byId.get('remote')!.data as Record<string, unknown>).pull).toBe(true);
     expect((byId.get('local')!.data as Record<string, unknown>).pull).toBe(false);
+  });
+
+  test('per-source fan-out uses each source local_path as the job repoPath', async () => {
+    const { engine, queue, added, fanoutOpts } = makeStubs([
+      src('alpha'),
+      { ...src('beta'), local_path: '/srv/brain/beta' },
+    ]);
+    await dispatchPerSource(engine, queue, fanoutOpts);
+    const byId = new Map<string, AddedJob>(
+      added.map(j => [(j.data as Record<string, unknown>).source_id as string, j]),
+    );
+    expect((byId.get('alpha')!.data as Record<string, unknown>).repoPath).toBe('/tmp/alpha');
+    expect((byId.get('beta')!.data as Record<string, unknown>).repoPath).toBe('/srv/brain/beta');
   });
 
   test('fanoutMax cap: 3 sources, fanoutMax=1, 1 dispatched + 2 in skippedCap', async () => {

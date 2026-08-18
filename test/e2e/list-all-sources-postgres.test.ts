@@ -59,6 +59,18 @@ async function seedSource(
   `;
 }
 
+async function seedRawSourceConfig(id: string, config: unknown): Promise<void> {
+  const eng = engine as unknown as { sql: (...args: unknown[]) => Promise<{ count?: number }> };
+  await (eng.sql as any)`
+    INSERT INTO sources (id, name, local_path, config, archived, created_at)
+    VALUES (${id}, ${id}, ${`/tmp/${id}`}, ${(eng.sql as any).json(config)}, ${false}, NOW())
+    ON CONFLICT (id) DO UPDATE
+      SET local_path = EXCLUDED.local_path,
+          config = EXCLUDED.config,
+          archived = EXCLUDED.archived
+  `;
+}
+
 describeIfDB('Postgres parity — listAllSources', () => {
   test('returns rows including default + seeded', async () => {
     await seedSource('alpha');
@@ -98,6 +110,19 @@ describeIfDB('Postgres parity — listAllSources', () => {
     const fred = all.find(s => s.id === 'fred')!;
     expect(fred.config.last_full_cycle_at).toBe('2026-05-22T08:00:00.000Z');
     expect(fred.config.remote_url).toBe('https://x');
+  });
+
+  test('legacy array-shaped config is normalized at the engine boundary', async () => {
+    await seedRawSourceConfig('legacy-array', [
+      '{"federated":true,"remote_url":"https://github.com/x/y"}',
+      { last_full_cycle_at: '2026-05-22T08:00:00.000Z' },
+      { last_full_cycle_at: '2026-05-22T09:00:00.000Z' },
+    ]);
+    const all = await engine.listAllSources();
+    const row = all.find(s => s.id === 'legacy-array')!;
+    expect(row.config.federated).toBe(true);
+    expect(row.config.remote_url).toBe('https://github.com/x/y');
+    expect(row.config.last_full_cycle_at).toBe('2026-05-22T09:00:00.000Z');
   });
 
   test('default source sorts first', async () => {
@@ -159,5 +184,24 @@ describeIfDB('Postgres parity — updateSourceConfig', () => {
     );
     expect(rows[0]?.typeof).toBe('object');
     expect(rows[0]?.value).toBe('2026-05-22T12:00:00.000Z');
+  });
+
+  test('repairs legacy array-shaped config instead of appending forever', async () => {
+    await seedRawSourceConfig('legacy-repair', [
+      '{"federated":true}',
+      { last_full_cycle_at: '2026-05-22T07:00:00.000Z' },
+    ]);
+    await engine.updateSourceConfig('legacy-repair', {
+      last_full_cycle_at: '2026-05-22T08:00:00.000Z',
+    });
+    const rows = await engine.executeRaw<{ typeof: string; value: string | null; federated: boolean | null }>(
+      `SELECT jsonb_typeof(config) AS typeof,
+              config->>'last_full_cycle_at' AS value,
+              (config->>'federated')::boolean AS federated
+         FROM sources WHERE id = 'legacy-repair'`,
+    );
+    expect(rows[0]?.typeof).toBe('object');
+    expect(rows[0]?.federated).toBe(true);
+    expect(rows[0]?.value).toBe('2026-05-22T08:00:00.000Z');
   });
 });
