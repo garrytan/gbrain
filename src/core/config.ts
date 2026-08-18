@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync, renameSync } from 'fs';
 import { isAbsolute, join } from 'path';
 import { homedir } from 'os';
 import type { EngineConfig, EmbeddingColumnConfig } from './types.ts';
@@ -1270,7 +1270,13 @@ export function isConfigTruthy(raw: unknown): boolean {
 
 export function saveConfig(config: GBrainConfig): void {
   mkdirSync(getConfigDir(), { recursive: true });
-  writeFileSync(getConfigPath(), JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
+  // Atomic write (tmp + rename): long-lived workers re-read this file per job
+  // (gateway env refresh, keyed/keyless classification) — a truncate-then-write
+  // here could be read torn, making a keyed install classify as keyless and
+  // calmly consume work it should retry.
+  const tmp = `${getConfigPath()}.tmp-${process.pid}`;
+  writeFileSync(tmp, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
+  renameSync(tmp, getConfigPath());
   try {
     chmodSync(getConfigPath(), 0o600);
   } catch {

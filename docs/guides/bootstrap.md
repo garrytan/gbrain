@@ -106,8 +106,9 @@ automatic fact extraction; Voyage unlocks semantic search; Anthropic unlocks
 fact extraction (Anthropic has no embeddings API, so it does not enable
 semantic search). The key goes to the 0600 config file, never into the repo or
 the interview answers. API spend is metered separately from your subscription and is
-zero in keyless mode; with a key, the standard spend gates apply
-([spend-controls](../operations/spend-controls.md)).
+zero in keyless mode; with a key, the embedding spend gates apply
+([spend-controls](../operations/spend-controls.md)) and automatic fact extraction has
+a kill switch (`gbrain config set facts.extraction_enabled false`).
 
 ## Security posture
 

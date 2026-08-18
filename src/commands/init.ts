@@ -539,9 +539,10 @@ function printNoEmbeddingProviderHint(typos: Array<{ userSet: string; suggested:
   console.error('  (enable semantic search later by re-running with a key:');
   console.error('   gbrain init --force --pglite --embedding-model <id>)');
   console.error('');
-  console.error('Or set a key for semantic search:');
-  console.error('  export VOYAGE_API_KEY=pa-…        # voyage:voyage-4 (1024d) — default');
-  console.error('  export OPENAI_API_KEY=sk-…        # openai:text-embedding-3-large (1536d)');
+  console.error('Or set a key to upgrade capabilities:');
+  console.error('  export VOYAGE_API_KEY=pa-…        # semantic search (voyage:voyage-4, 1024d) — default');
+  console.error('  export OPENAI_API_KEY=sk-…        # semantic search (1536d) + automatic fact extraction');
+  console.error('  export ANTHROPIC_API_KEY=sk-ant-… # automatic fact extraction (no embeddings API)');
   console.error('Then re-run: gbrain init --pglite');
   console.error('');
   console.error('Or pick explicitly:');
@@ -617,9 +618,12 @@ async function writeNewInstallRerankerDefault(
  *  (it would be a silent no-op), so pointing users there is a dead end. */
 function printKeylessContinueNotice(): void {
   console.error(
-    'No embedding provider keys detected — continuing in keyless mode:\n' +
+    'No provider keys detected — continuing in keyless mode:\n' +
     '  keyword search + memory your agent writes down itself. Everything works.\n' +
-    '  One optional key upgrades search to semantic — set the key, then re-run\n' +
+    '  One optional key upgrades capabilities — OpenAI: semantic search + automatic\n' +
+    '  fact extraction; Voyage: semantic search; Anthropic: fact extraction.\n' +
+    '  Fact extraction activates as soon as the key is set (no re-init); semantic\n' +
+    '  search needs a re-run:\n' +
     '  `gbrain init --force --pglite --embedding-model <id>` (re-imports via `gbrain sync`).',
   );
 }
@@ -822,21 +826,33 @@ async function resolveExpansionByEnv(out: ResolvedAIOptions): Promise<void> {
   // and falls back gracefully at call time when key isn't set.
 }
 
-async function resolveChatByEnv(out: ResolvedAIOptions): Promise<void> {
+/** @internal exported for tests — pins the no-persist contract (key-aware
+ *  runtime resolution replaced install-time chat_model pins). */
+export async function resolveChatByEnv(out: ResolvedAIOptions): Promise<void> {
   const ready = await groupReadyByProvider('chat');
   if (ready.length === 1) {
     const r = ready[0].recipe;
     const tp = r.touchpoints.chat!;
     if (Array.isArray(tp.models) && tp.models.length > 0) {
-      out.chat_model = `${r.id}:${tp.models[0]}`;
-      console.error(`Detected ${r.auth_env?.required?.[0] ?? r.id} env var. Using ${out.chat_model} for chat.`);
+      // Deliberately does NOT write out.chat_model: key-aware tier defaults
+      // (model-config.ts resolveTierDefault + resolveEffectiveChatModel)
+      // route chat/extraction to this provider at runtime, and a persisted
+      // install-time pin freezes the provider choice — it goes stale the
+      // moment the user switches keys. Detection stays for the init summary;
+      // the displayed model is the same resolution the runtime will use
+      // (discovered-latest for OpenAI, recipe entry otherwise).
+      const { resolveTierDefault } = await import('../core/model-config.ts');
+      const effective = resolveTierDefault('reasoning');
+      const shown = effective.startsWith(`${r.id}:`) ? effective : `${r.id}:${tp.models[0]}`;
+      console.error(
+        `Detected ${r.auth_env?.required?.[0] ?? r.id} env var. Chat + fact extraction will use ` +
+        `${shown} (key-aware default; nothing written to config).`,
+      );
     }
   }
-  // 0 or >1 → silent: gateway default (`anthropic:claude-sonnet-4-6`) wins.
+  // 0 or >1 → silent: the key-aware tier default wins at runtime.
   // The subagent enforcement at minions/queue.ts already routes subagent jobs
-  // to Anthropic regardless of the chat_model setting (D7 caveat fires from
-  // T6's initPGLite post-config branch when chat_model is non-Anthropic and
-  // ANTHROPIC_API_KEY is missing).
+  // via classifyCapabilities regardless of the chat_model setting.
 }
 
 /**

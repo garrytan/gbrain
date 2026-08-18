@@ -3,29 +3,29 @@
 # Raising a ceiling is a conscious, reviewer-visible act. Lower ceilings in
 # the same commit as any peel (the guard fails on >50 lines of stale slack).
 # Columns: path	max_lines	policy	note
-src/commands/doctor.ts	4270	ratchet	peel target: containment sprint C8-C13; grown v0.46.11.0 five-issue wave
+src/commands/doctor.ts	4291	ratchet	peel target: containment sprint C8-C13; grown v0.46.x keyless not_configured state
 src/core/operations.ts	303	ratchet	peel target: containment sprint C4-C7
 src/core/postgres-engine.ts	5816	ratchet	peel target: containment sprint C15; grown v0.46.11.0 five-issue wave + retrieval wave
 src/core/pglite-engine.ts	5744	ratchet	peel target: containment sprint C15; grown v0.46.11.0 five-issue wave + retrieval wave
 src/core/migrate.ts	668	region-exempt	append-only MIGRATIONS array grows freely; runner logic is ratcheted
 src/commands/sync.ts	4300	ratchet	peel target: containment sprint C13-C14; grown v0.46.11.0 five-issue wave
-src/core/ai/gateway.ts	4364	ratchet	watchlist; merged: master waves + dream-wave C1-C3+C7 (thinking predicate, length, providerMetadata, turn permits) + TurnPermit signal form
+src/core/ai/gateway.ts	4428	ratchet	watchlist; merged: dream-wave turn permits + key-aware effective-model reconfigure + env-only worker refresh + discovery endpoint-trust docstring
 src/cli.ts	3482	ratchet	watchlist; merged unions: cathedral-5 compile-context wiring + gap-closure thin-client routing + cathedral-6 register guards + sources self-help
 src/core/cycle.ts	3080	ratchet	grown v0.46.20.0 phase-boundary split (resolveCyclePhases + normalizeQueuedSourcePhases + deriveStatus exclusion filter)
 src/commands/serve-http.ts	2978	ratchet	grown cathedral-6 multi-agent wave (admin register route composes registerScopedClient in one tx under the name advisory lock; ttl validation + brain_too_old preflight) + chennai no-grant federated scope
-src/commands/jobs.ts	2960	ratchet	grown v0.46.20.0 queue-boundary phase normalization (per-source + maintenance handlers)
+src/commands/jobs.ts	3015	ratchet	merged: v0.46.20.0 queue-boundary phase normalization + facts-absorb refresh/retry conversion
 src/core/search/hybrid.ts	2500	ratchet
 src/core/engine.ts	2345	ratchet
 src/commands/autopilot.ts	2301	ratchet
 src/commands/extract.ts	2161	ratchet
-src/commands/extract-conversation-facts.ts	2032	ratchet
+src/commands/extract-conversation-facts.ts	2045	ratchet	grown v0.46.x per-provider gateway-unavailable copy
 src/core/import-file.ts	2000	ratchet	grown v0.46.11.0 five-issue wave
 src/core/cycle/synthesize.ts	2702	ratchet	merged: five-issue wave + dream-wave C7 peel + C8 manifest + C9 mode/telemetry/backfill + adversarial fix batches
 src/commands/embed.ts	1963	ratchet
 src/core/types.ts	1863	ratchet
 src/commands/skillpack.ts	1360	ratchet
 src/core/minions/queue.ts	2130	ratchet	grown v0.46.11.0 five-issue wave
-src/commands/init.ts	1932	ratchet
+src/commands/init.ts	1950	ratchet	grown v0.46.x keyless capability notices
 src/commands/integrations.ts	1675	ratchet
 src/core/minions/handlers/subagent.ts	1818	ratchet	merged: master v131 settle rework + dream-wave C5 peel + C6 accounting + C7 lease heartbeats/lost-lease aborts + C9 oneshot dispatch + adversarial fix batches
 src/commands/bootstrap.ts	1923	ratchet	grandfathered at merge (grew past the 1500 cap on master)

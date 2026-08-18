@@ -2,6 +2,88 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.46.21.0] - 2026-08-18
+
+**Fact extraction no longer requires an Anthropic key — and OpenAI defaults
+never go stale.** Model routing now honors whichever provider key you have:
+an OpenAI-only install gets automatic fact extraction, query expansion,
+synthesis, and dream cycles routed to OpenAI instead of silently failing
+against Anthropic defaults. On OpenAI-keyed installs, gbrain discovers the
+newest usable models from your own account (priced-only, cached, fail-open)
+so nothing is ever pinned to a model generation that has since been
+superseded. Keyless installs stay useful and honest: `extract_facts` tells
+the calling agent to extract facts itself via the `remember` verb, and
+doctor/bootstrap-verify report the real state instead of certifying a dead
+pipeline.
+
+### Added
+- Key-aware tier defaults: model resolution's final step consults which
+  provider keys are actually present (config-file keys folded with the
+  environment) instead of assuming Anthropic. Anthropic still wins when both
+  keys exist — zero change for working installs.
+- Latest-model discovery for OpenAI (`GET /v1/models` on your own account):
+  per-tier defaults follow the newest model family that has a pricing row,
+  with a conservative id grammar so unfamiliar future names degrade safely.
+  24h cache with atomic writes; stale cache beats static fallback; failures
+  back off across process boundaries; `GBRAIN_MODEL_DISCOVERY=off` disables.
+- Keyless `extract_facts` returns a structured `extraction_unavailable`
+  envelope instructing the agent to self-extract (one `remember` call per
+  fact, visibility pinned so facts stay private); other extractor failures
+  return their specific reason instead of a lying `inserted: 0`.
+- One canonical provider-key/env fold (`src/core/ai/provider-env.ts`) shared
+  by the gateway, capability report, and model routing — the Gemini alias
+  and Azure OpenAI fields now reach every consumer identically.
+
+### Changed
+- An explicit `chat_model` pin in `~/.gbrain/config.json` survives engine
+  reconnect when its provider key is present; a pin whose key is gone falls
+  back to the key-aware default with one clear stderr note (prefix-less pins
+  get their own diagnosis). `gbrain init` no longer persists auto-detected
+  chat pins — runtime resolution replaced install-time pinning.
+- `bootstrap verify` and `gbrain doctor` report extraction health against
+  the model extraction will actually call, per provider; keyless installs
+  read as "keyless" with the fence/`remember` guidance, not as healthy
+  automatic extraction.
+- The jobs worker re-reads file-plane config before facts-absorb jobs, so an
+  API key added to `~/.gbrain/config.json` reaches a long-lived worker at the
+  next job without a restart.
+- Config writes are atomic (temp file + rename), so concurrent readers never
+  see a torn `config.json`.
+- Install/bootstrap copy states per-provider truth: OpenAI = semantic search
+  + automatic fact extraction; Voyage = semantic search; Anthropic =
+  fact extraction.
+
+### Fixed
+- Fact extraction gated on the wrong model: it probed the global chat model,
+  then called the extraction model — the two can disagree in both
+  directions. It now gates on the model it actually calls (classification
+  same fix).
+- Extraction failures were silently swallowed as "0 facts": provider errors
+  and truncation now raise typed errors that the durable job lane retries
+  visibly (5 attempts, 60s backoff, parked as re-runnable failed jobs — a
+  page write never fails because its facts backstop threw); refusals and
+  malformed output are logged with the resolved model named. Keyless
+  installs write no log spam — one calm stderr note.
+- Provider error bodies (which can echo partial credentials) no longer flow
+  into MCP responses or persisted logs from extraction failures.
+
+To take advantage of v0.46.21.0:
+- `gbrain upgrade` (or reinstall the binary), then restart any long-running
+  `gbrain jobs work` daemons so workers pick up the new routing.
+- **Spend note:** if you have an `OPENAI_API_KEY` (env or config), features
+  that previously no-oped without an Anthropic key now actually run against
+  your OpenAI account: automatic fact extraction on eligible page writes,
+  query expansion (only in the `tokenmax` search mode), and LLM dream-cycle
+  phases you invoke. Controls: `gbrain config set facts.extraction_enabled
+  false` (extraction kill switch), `models.*` pins for explicit routing, and
+  your search mode's expansion knob. Anthropic-keyed installs see no routing
+  change.
+- OpenAI-only installs: run `gbrain bootstrap verify` — extraction should
+  report available via openai. Nothing else to configure.
+- Keyless installs: nothing breaks; `extract_facts` now hands your agent
+  explicit self-extraction instructions, and doctor explains the keyless
+  state honestly.
+
 ## [0.46.20.0] - 2026-08-17
 
 **Source freshness decoupled from synthesis.** A per-source maintenance cycle

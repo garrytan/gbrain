@@ -1,4 +1,4 @@
-<!-- gbrain-runbook-stamp: 0.46.20.0 -->
+<!-- gbrain-runbook-stamp: 0.46.21.0 -->
 <!-- This stamp must equal the VERSION file at every release; CI enforces it
      (scripts/check-bootstrap-tag.sh). `gbrain bootstrap status` compares it to
      the installed binary and warns on skew. -->
@@ -96,8 +96,10 @@ registration only with `--mcp-even-if-plugin`.
    INSTALL_FOR_AGENTS.md Step 3.5); they can change it any time with
    `gbrain search modes`. The one thing to raise here is the OPTIONAL provider
    key — with no key you run keyless: keyword search plus memory you author
-   yourself through the write tools; everything works, one key upgrades search to
-   semantic and enables automatic fact extraction. Never pressure for a key. If the
+   yourself through the write tools; everything works. One key upgrades
+   capabilities per provider: OpenAI unlocks semantic search + automatic fact
+   extraction; Voyage unlocks semantic search; Anthropic unlocks automatic fact
+   extraction. Never pressure for a key. If the
    human provides one, pass it to the CLI prompt — it goes to the 0600 config file,
    never into the interview answers, never into chat logs you keep.
 3. **Interview.** `gbrain bootstrap interview --init`, then ask the questions from

@@ -38,4 +38,12 @@ timeout = 60_000
 # GIT_CONFIG_COUNT env config so a dev box's global signing config can't
 # route test-repo commits through gpg-agent (which intermittently fails
 # under full-suite load). See test/helpers/git-hermetic-preload.ts.
-preload = ["./test/helpers/database-url-guard-preload.ts", "./test/helpers/legacy-embedding-preload.ts", "./test/helpers/audit-dir-preload.ts", "./test/helpers/sync-failures-preload.ts", "./test/helpers/gbrain-home-preload.ts", "./test/helpers/git-hermetic-preload.ts"]
+#
+# provider-keys-preload: strip ambient ANTHROPIC_API_KEY/OPENAI_API_KEY so
+# key-aware model routing (resolveTierDefault) resolves identically to
+# keyless CI — a chat key exported in the dev shell otherwise flips default-
+# model assertions AND turns gated paths into real network calls (observed:
+# 183 failures + 15-minute retry hangs on an OPENAI-only shell). The e2e
+# wrapper sets GBRAIN_TEST_KEEP_PROVIDER_KEYS=1 to opt back in. See
+# test/helpers/provider-keys-preload.ts.
+preload = ["./test/helpers/database-url-guard-preload.ts", "./test/helpers/provider-keys-preload.ts", "./test/helpers/legacy-embedding-preload.ts", "./test/helpers/audit-dir-preload.ts", "./test/helpers/sync-failures-preload.ts", "./test/helpers/gbrain-home-preload.ts", "./test/helpers/git-hermetic-preload.ts"]

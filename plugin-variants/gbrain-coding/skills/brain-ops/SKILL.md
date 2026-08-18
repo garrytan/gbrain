@@ -45,6 +45,16 @@ flows through in both directions.
 > `put_page` / `add_link` / `add_timeline_entry` stay the page/graph write path.
 > Fall back to the classic ops when the verbs aren't on the surface. Contract:
 > `docs/protocol/MEMORY_VERBS_v1.md`.
+>
+> **Keyless brains:** when `extract_facts` returns `skipped:
+> extraction_unavailable`, YOU are the extractor — pull the facts from the turn
+> yourself and write each one via `remember` with `kind` set (event | preference
+> | commitment | belief) and the visibility the envelope's `agent_action` names
+> (default private — pin it; `remember` defaults to world), or author a
+> `## Facts` fence on the entity page. A `skipped: extraction_failed` envelope
+> (server-side extractor errored on this turn; `reason` names why) invites the
+> same manual `remember` fallback for that turn — automatic extraction stays
+> on for future writes.
 
 ## Contract
 

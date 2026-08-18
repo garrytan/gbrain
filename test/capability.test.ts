@@ -78,7 +78,11 @@ describe('detectCapabilities — matrix', () => {
     expect(caps.extraction).toEqual({ available: true, provider: 'google' });
   });
 
-  test('unknown provider in model string → unavailable, not a throw', () => {
+  test('unknown provider in model string → no throw; extraction falls back key-aware', () => {
+    // Availability-aware fallback: an unknown chat pin is unservable, so the
+    // effective-model resolution falls through to the key-aware tier default —
+    // with an OpenAI key present, extraction is honestly AVAILABLE via openai
+    // (an openai-only install with a garbage pin must still extract).
     const caps = detectCapabilities({
       config: cfg({
         embedding_model: 'not-a-provider:some-model',
@@ -87,8 +91,49 @@ describe('detectCapabilities — matrix', () => {
       env: { OPENAI_API_KEY: 'sk-test' },
     });
     expect(caps.embeddings.available).toBe(false);
+    expect(caps.extraction).toEqual({ available: true, provider: 'openai' });
+    expect(caps.mode).toBe('keyed');
+  });
+
+  test('unknown provider pin + NO key → unavailable, not a throw', () => {
+    const caps = detectCapabilities({
+      config: cfg({
+        embedding_model: 'not-a-provider:some-model',
+        chat_model: 'also-not-real:x',
+      }),
+      env: {},
+    });
+    expect(caps.embeddings.available).toBe(false);
     expect(caps.extraction.available).toBe(false);
     expect(caps.mode).toBe('keyless');
+  });
+
+  test('openai-key-only, no config → extraction available via openai (key-aware default)', () => {
+    const caps = detectCapabilities({ config: null, env: { OPENAI_API_KEY: 'sk-test' } });
+    expect(caps.extraction).toEqual({ available: true, provider: 'openai' });
+  });
+
+  test('voyage key + voyage embedding pin → embeddings yes, extraction no, mode keyed', () => {
+    // Init writes the voyage embedding pin to config; the Voyage key powers
+    // semantic search but NOT extraction (no chat touchpoint).
+    const caps = detectCapabilities({
+      config: cfg({ embedding_model: 'voyage:voyage-4' }),
+      env: { VOYAGE_API_KEY: 'pa-test' },
+    });
+    expect(caps.embeddings).toEqual({ available: true, provider: 'voyage' });
+    expect(caps.extraction.available).toBe(false);
+    expect(caps.mode).toBe('keyed');
+  });
+
+  test('GBRAIN_MODEL honored by the extraction probe (engine-free env override)', () => {
+    // GBRAIN_MODEL names an openai model; only the OpenAI key is present →
+    // available via openai even though the anthropic-first default would
+    // otherwise win when both keys exist.
+    const caps = detectCapabilities({
+      config: null,
+      env: { GBRAIN_MODEL: 'openai:gpt-4o-mini', OPENAI_API_KEY: 'sk-test', ANTHROPIC_API_KEY: 'sk-ant-test' },
+    });
+    expect(caps.extraction).toEqual({ available: true, provider: 'openai' });
   });
 });
 
@@ -100,7 +145,8 @@ describe('renderCapabilityReport', () => {
     expect(text).toContain('keyless mode');
     expect(text).toContain('keyword-only');
     expect(text).toContain('agent-authored');
-    expect(text).toContain('add ONE key');
+    expect(text).toContain('one optional key upgrades capabilities');
+    expect(text).toContain('OpenAI: semantic search + auto-extraction');
   });
 
   test('keyed report names the providers and drops the upsell', () => {
@@ -116,6 +162,6 @@ describe('renderCapabilityReport', () => {
     );
     expect(text).toContain('keyed mode');
     expect(text).toContain('openai');
-    expect(text).not.toContain('add ONE key');
+    expect(text).not.toContain('one optional key upgrades capabilities');
   });
 });
