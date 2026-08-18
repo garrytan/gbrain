@@ -120,7 +120,8 @@ export async function checkEntityLinkCoverage(
     engine,
     `SELECT COUNT(*) AS count FROM pages
        WHERE type IN ('person', 'company', 'organization', 'entity')
-         AND deleted_at IS NULL`,
+         AND deleted_at IS NULL
+         AND NOT jsonb_exists(COALESCE(frontmatter, '{}'::jsonb), 'quarantine')`,
   );
 
   if (totalEntities === 0) {
@@ -215,7 +216,8 @@ export async function checkTimelineCoverage(
     engine,
     `SELECT COUNT(*) AS count FROM pages
        WHERE type IN ('person', 'company', 'organization', 'entity')
-         AND deleted_at IS NULL`,
+         AND deleted_at IS NULL
+         AND NOT jsonb_exists(COALESCE(frontmatter, '{}'::jsonb), 'quarantine')`,
   );
 
   if (totalEntities === 0) {
@@ -237,6 +239,7 @@ export async function checkTimelineCoverage(
        SELECT p.id FROM pages p ${sampleClause}
        WHERE p.type IN ('person', 'company', 'organization', 'entity')
          AND p.deleted_at IS NULL
+         AND NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'quarantine')
          AND EXISTS (SELECT 1 FROM timeline_entries t WHERE t.page_id = p.id)
      ) sub`,
   );

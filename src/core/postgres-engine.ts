@@ -4050,7 +4050,7 @@ export class PostgresEngine implements BrainEngine {
   async findOrphanPages(opts?: {
     sourceId?: string;
     sourceIds?: string[];
-  }): Promise<Array<{ slug: string; title: string; domain: string | null }>> {
+  }): Promise<Array<{ slug: string; title: string; domain: string | null; type?: string | null; quarantined?: boolean }>> {
     const sql = this.sql;
     // Soft-delete filter on BOTH sides:
     //   - candidate: p.deleted_at IS NULL — soft-deleted pages aren't orphan candidates
@@ -4073,7 +4073,9 @@ export class PostgresEngine implements BrainEngine {
       SELECT
         p.slug,
         COALESCE(p.title, p.slug) AS title,
-        p.frontmatter->>'domain' AS domain
+        p.frontmatter->>'domain' AS domain,
+        p.type,
+        jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'quarantine') AS quarantined
       FROM pages p
       WHERE p.deleted_at IS NULL
         ${sourceFilter}
@@ -4086,7 +4088,7 @@ export class PostgresEngine implements BrainEngine {
         )
       ORDER BY p.slug
     `;
-    return rows as unknown as Array<{ slug: string; title: string; domain: string | null }>;
+    return rows as unknown as Array<{ slug: string; title: string; domain: string | null; type?: string | null; quarantined?: boolean }>;
   }
 
   // Tags
@@ -5076,7 +5078,10 @@ export class PostgresEngine implements BrainEngine {
     // getStats, and destructive-removal counts elsewhere deliberately stay raw.
     const [h] = await sql`
       WITH entity_pages AS (
-        SELECT id, slug FROM pages WHERE type IN ('entity', 'person', 'company') AND deleted_at IS NULL
+        SELECT id, slug FROM pages
+         WHERE type IN ('entity', 'person', 'company')
+           AND deleted_at IS NULL
+           AND NOT jsonb_exists(COALESCE(frontmatter, '{}'::jsonb), 'quarantine')
       )
       SELECT
         (SELECT count(*) FROM pages WHERE deleted_at IS NULL) as page_count,
@@ -5139,7 +5144,9 @@ export class PostgresEngine implements BrainEngine {
       SELECT p.slug,
              (SELECT count(*) FROM links l WHERE l.from_page_id = p.id OR l.to_page_id = p.id)::int as link_count
       FROM pages p
-      WHERE p.type IN ('entity', 'person', 'company') AND p.deleted_at IS NULL
+      WHERE p.type IN ('entity', 'person', 'company')
+        AND p.deleted_at IS NULL
+        AND NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'quarantine')
       ORDER BY link_count DESC
       LIMIT 5
     `;
@@ -5158,8 +5165,8 @@ export class PostgresEngine implements BrainEngine {
     // TARGET is live. Without this, get_health's orphan_pages disagreed with
     // `gbrain orphans` whenever a soft-deleted page still linked to (or was
     // linked from) a live one.
-    const pageScopeRows = await sql<{ slug: string; islanded: boolean; has_timeline: boolean }[]>`
-      SELECT p.slug,
+    const pageScopeRows = await sql<{ slug: string; type: string; islanded: boolean; has_timeline: boolean }[]>`
+      SELECT p.slug, p.type,
              (NOT EXISTS (SELECT 1 FROM links l
                           JOIN pages src ON src.id = l.from_page_id
                           WHERE l.to_page_id = p.id AND src.deleted_at IS NULL)
@@ -5169,13 +5176,16 @@ export class PostgresEngine implements BrainEngine {
              EXISTS (SELECT 1 FROM timeline_entries te WHERE te.page_id = p.id) as has_timeline
       FROM pages p
       WHERE p.deleted_at IS NULL
+        AND NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'quarantine')
     `;
 
     const pageCount = Number(h.page_count);
     const embedCoverage = Number(h.embed_coverage);
     const stalePages = await this.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS });
     const orphanOverrides = await loadOrphanPolicyOverrides(this);
-    const linkablePages = pageScopeRows.filter(row => !shouldExcludeFromOrphanReporting(row.slug, orphanOverrides));
+    const linkablePages = pageScopeRows.filter(row =>
+      !shouldExcludeFromOrphanReporting(row.slug, orphanOverrides, { type: row.type }),
+    );
     const linkablePageCount = linkablePages.length;
     const orphanPages = linkablePages.filter(row => row.islanded).length;
     const linkableTimelinePages = linkablePages.filter(row => row.has_timeline).length;

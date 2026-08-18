@@ -1452,7 +1452,13 @@ export interface BrainEngine {
   findOrphanPages(opts?: {
     sourceId?: string;
     sourceIds?: string[];
-  }): Promise<Array<{ slug: string; title: string; domain: string | null }>>;
+  }): Promise<Array<{
+    slug: string;
+    title: string;
+    domain: string | null;
+    type?: string | null;
+    quarantined?: boolean;
+  }>>;
 
   // Tags
   /**
