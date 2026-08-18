@@ -961,10 +961,19 @@ function fallbackSlugsForFile(
   let proofIntact = true;
   try {
     const abs = join(gitContextRoot, rel);
-    const st = lstatSync(abs);
-    if (!st.isSymbolicLink()) {
-      if (st.size > MAX_FILE_SIZE) proofIntact = false;
-      else contents.push(readFileSync(abs, 'utf-8'));
+    // `rel` comes from `git ls-files`/`git ls-tree` (trackedSlugIndex, above) —
+    // paths git itself tracked, never external input — but assert containment
+    // explicitly rather than trust that invariant silently (semgrep
+    // path-join-resolve-traversal; belt-and-braces alongside the symlink guard
+    // below, which covers the OTHER out-of-repo-read vector).
+    if (relative(gitContextRoot, abs).startsWith('..')) {
+      proofIntact = false;
+    } else {
+      const st = lstatSync(abs);
+      if (!st.isSymbolicLink()) {
+        if (st.size > MAX_FILE_SIZE) proofIntact = false;
+        else contents.push(readFileSync(abs, 'utf-8'));
+      }
     }
     // A symlink's own registrable content is its index blob (the target
     // path text, read below) — matching both git's view and import's
