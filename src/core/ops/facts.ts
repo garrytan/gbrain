@@ -30,7 +30,7 @@ import type { SearchResult } from '../types.ts';
 const extract_facts: Operation = {
   name: 'extract_facts',
   description:
-    'v0.31: extract personal-knowledge facts (events, preferences, commitments, beliefs) from a conversation turn into the per-source hot memory. Sanitizes turn_text via INJECTION_PATTERNS, calls Haiku to extract structured claims, runs the cosine fast-path + classifier dedup pipeline, INSERTs into facts. Returns counts by status. Skips extraction when the turn is dream-generated content (anti-loop). For agent memory writes of a SINGLE already-formed fact, prefer the `remember` verb (zero LLM, mandatory provenance).',
+    'v0.31: extract personal-knowledge facts (events, preferences, commitments, beliefs) from a conversation turn into the per-source hot memory. Sanitizes turn_text via INJECTION_PATTERNS, calls the configured extraction model (key-aware: any servable provider — OpenAI or Anthropic key both work), runs the cosine fast-path + classifier dedup pipeline, INSERTs into facts. Returns counts by status. With NO servable chat model, returns skipped: extraction_unavailable + an agent_action telling YOU to extract and write via `remember` (visibility: "private"). Skips extraction when the turn is dream-generated content (anti-loop). For agent memory writes of a SINGLE already-formed fact, prefer the `remember` verb (zero LLM, mandatory provenance).',
   params: {
     turn_text: { type: 'string', required: true, description: 'The user message or page body to extract facts from. Sanitized via INJECTION_PATTERNS before the LLM call.' },
     session_id: { type: 'string', description: 'Opaque session id (e.g. topic-id from MCP _meta.session_id, or CLI --session). Stored on each fact for the recall --session filter. Not an auth surface.' },
@@ -77,6 +77,46 @@ const extract_facts: Operation = {
       visibility,
       mode: 'inline',  // declarative; runFactsPipeline always inline
     });
+
+    // Reason-specific envelopes — never collapse distinct failures into one
+    // message. `chat_unavailable` means no servable chat model: the calling
+    // agent IS an LLM, so hand it the keyless self-extract path (the
+    // `remember` verb + `## Facts` fences work with zero keys). The
+    // visibility pin in the instruction is mandatory copy: `remember`
+    // defaults to 'world' while extract_facts facts default 'private' —
+    // omitting it would silently widen private data to every connected agent.
+    // The visibility instruction names the RESOLVED visibility for THIS call
+    // (caller param > facts.default_visibility config > private): a caller who
+    // asked for world must not be steered to private, and an unpinned
+    // instruction would silently widen private-default extractions because
+    // `remember` hard-defaults to 'world'.
+    const visibilityPin = `visibility: "${visibility}"` +
+      (visibility === 'private' ? ' (remember defaults to world — omitting it would widen these facts)' : '');
+    if (r.skipped_reason === 'chat_unavailable') {
+      return {
+        inserted: 0, duplicate: 0, superseded: 0, fact_ids: [],
+        skipped: 'extraction_unavailable',
+        agent_action:
+          'No server-side chat model is available. You are an LLM: extract the facts ' +
+          'yourself (up to ~10 per turn) and write each one with the `remember` verb: ' +
+          'one claim per call, provenance required, set `kind` (event | preference | ' +
+          'commitment | belief — it defaults to plain "fact" otherwise), set `entity` ' +
+          `when the fact is about a person/company/project, and ${visibilityPin}. ` +
+          'Or author a `## Facts` fence on the entity page. To enable automatic ' +
+          'extraction, add an OpenAI or Anthropic API key.',
+      };
+    }
+    if (r.skipped_reason) {
+      return {
+        inserted: 0, duplicate: 0, superseded: 0, fact_ids: [],
+        skipped: 'extraction_failed',
+        reason: r.skipped_reason,
+        agent_action:
+          `The extractor failed on this turn (${r.skipped_reason}). You may extract the ` +
+          'facts manually via the `remember` verb (one claim per call, provenance ' +
+          `required, ${visibilityPin}).`,
+      };
+    }
 
     return {
       inserted: r.inserted,

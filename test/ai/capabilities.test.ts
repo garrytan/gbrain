@@ -14,7 +14,7 @@ describe('getProviderCapabilities (v0.38 Slice 1 — D6/D7 recipe-driven capabil
     const caps = getProviderCapabilities('openai:gpt-5.2');
     expect(caps.supportsToolCalling).toBe(true);
     expect(caps.supportsPromptCaching).toBe(false); // OpenAI implicit caching doesn't get marked
-    expect(caps.maxContext).toBe(200000);
+    expect(caps.maxContext).toBe(1_050_000); // gpt-5.6 family window (recipe-driven)
   });
 
   it('returns capabilities for Google Gemini', () => {

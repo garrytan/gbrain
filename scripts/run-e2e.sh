@@ -54,6 +54,11 @@ fi
 # bare `bun test` runs while DATABASE_URL/GBRAIN_DATABASE_URL is ambient; the
 # per-file name floor (test/helpers/db-guard.ts) still applies after this.
 export GBRAIN_TEST_ALLOW_DATABASE_URL=1
+# Provider keys: the unit-lane preload (provider-keys-preload.ts) strips
+# ambient ANTHROPIC/OPENAI keys for keyless-CI parity; e2e is the lane where
+# real keys are deliberate (live embed/parity tests skip-gate on them), so
+# opt back in at this boundary.
+export GBRAIN_TEST_KEEP_PROVIDER_KEYS=1
 # The e2e suite runs on DATABASE_URL only; an ambient GBRAIN_DATABASE_URL
 # would pass the opt-in yet reach CLI-subprocess paths with no name floor —
 # drop it here so only the floored variable crosses the boundary.
@@ -111,6 +116,7 @@ for _e2e_var in $(env | grep -oE '^(CONDUCTOR_|MCP_|OPENCLAW_|HERMES_|GROK_|OPEN
     GBRAIN_HOME) ;;  # required for HOME isolation (set above) — keep
     GBRAIN_PGLITE_SNAPSHOT) ;;  # snapshot fast-path fixture (exported by ci-local.sh / runners) — keep
     GBRAIN_TEST_ALLOW_DATABASE_URL) ;;  # #3485 preload opt-in (set above) — keep
+    GBRAIN_TEST_KEEP_PROVIDER_KEYS) ;;  # provider-keys preload opt-in (set above) — keep
     GBRAIN_E2E_FILE_TIMEOUT) ;;  # per-file cap override — read AFTER this scrub, so it must survive it
     GBRAIN_E2E_ALLOW_DB) ;;  # #3485 name-floor opt-in — the guard's own error
                              # message tells operators to set it; stripping it
