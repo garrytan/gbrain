@@ -8,6 +8,7 @@ import {
   CJK_SENTENCE_DELIMITERS,
   CJK_CLAUSE_DELIMITERS,
   escapeLikePattern,
+  splitCJKQueryTerms,
 } from '../src/core/cjk.ts';
 
 describe('hasCJK', () => {
@@ -128,3 +129,43 @@ describe('escapeLikePattern', () => {
     expect(escapeLikePattern('测试')).toBe('测试');
   });
 });
+
+describe('splitCJKQueryTerms', () => {
+  test('splits query by whitespace into terms', () => {
+    expect(splitCJKQueryTerms('김대리 미팅')).toEqual(['김대리', '미팅']);
+    expect(splitCJKQueryTerms('미팅 김대리')).toEqual(['미팅', '김대리']);
+  });
+
+  test('deduplicates terms while preserving original order', () => {
+    expect(splitCJKQueryTerms('김대리 미팅 김대리')).toEqual(['김대리', '미팅']);
+    expect(splitCJKQueryTerms('미팅 김대리 미팅')).toEqual(['미팅', '김대리']);
+    expect(splitCJKQueryTerms('a b a c b')).toEqual(['a', 'b', 'c']);
+  });
+
+  test('handles consecutive whitespace, tabs, and newlines', () => {
+    expect(splitCJKQueryTerms('김대리   미팅 \t\n 2026')).toEqual(['김대리', '미팅', '2026']);
+    expect(splitCJKQueryTerms('  \t  주간   보고서  \n ')).toEqual(['주간', '보고서']);
+  });
+
+  test('returns single term for single-word queries', () => {
+    expect(splitCJKQueryTerms('김대리')).toEqual(['김대리']);
+    expect(splitCJKQueryTerms(' 한글 ')).toEqual(['한글']);
+  });
+
+  test('returns empty array on empty or whitespace-only input', () => {
+    expect(splitCJKQueryTerms('')).toEqual([]);
+    expect(splitCJKQueryTerms('   ')).toEqual([]);
+    expect(splitCJKQueryTerms('\t\n\r ')).toEqual([]);
+  });
+
+  test('handles mixed CJK and alphanumeric queries', () => {
+    expect(splitCJKQueryTerms('한국어 日本語 中文 English 123')).toEqual([
+      '한국어',
+      '日本語',
+      '中文',
+      'English',
+      '123',
+    ]);
+  });
+});
+

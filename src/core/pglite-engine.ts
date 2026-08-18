@@ -106,7 +106,7 @@ import {
   COLUMN_NAME_REGEX,
   EmbeddingColumnNotRegisteredError,
 } from './search/embedding-column.ts';
-import { hasCJK, escapeLikePattern } from './cjk.ts';
+import { hasCJK } from './cjk.ts';
 import * as factsImpl from './pglite-engine/facts.ts';
 import type { PgliteFactsDeps } from './pglite-engine/facts.ts';
 import * as takesImpl from './pglite-engine/takes.ts';
@@ -115,6 +115,7 @@ import * as codeEdgesImpl from './pglite-engine/code-edges.ts';
 import type { PgliteCodeEdgesDeps } from './pglite-engine/code-edges.ts';
 import * as salienceImpl from './pglite-engine/salience.ts';
 import type { PgliteSalienceDeps } from './pglite-engine/salience.ts';
+import { searchKeywordCJK } from './pglite-engine/cjk-search.ts';
 
 type PGLiteDB = PGlite;
 
@@ -2136,7 +2137,7 @@ export class PGLiteEngine implements BrainEngine {
 
     // v0.32.7: CJK query branch. PGLite uses websearch_to_tsquery('english')
     // which can't tokenize CJK; queries return empty. Switch to ILIKE on
-    // chunk_text with bigram-frequency-count ranking when the query contains
+    // chunk_text with term-frequency-count ranking when the query contains
     // CJK characters. ASCII path stays exactly the same below.
     if (hasCJK(query)) {
       return this._searchKeywordCJK(query, {
@@ -2356,15 +2357,23 @@ export class PGLiteEngine implements BrainEngine {
    * v0.32.7 CJK keyword fallback. PGLite's `websearch_to_tsquery('english')`
    * can't tokenize CJK so the FTS path returns empty for Chinese / Japanese /
    * Korean queries. This routes to an ILIKE substring scan with
-   * bigram-frequency-count ranking as a ts_rank substitute.
+   * term-frequency-count ranking as a ts_rank substitute.
    *
-   * Codex outside-voice C8 corrections in place:
-   *   - Two distinct parameter bindings: $qLike (LIKE-escaped, for ILIKE) and
-   *     $qRaw (un-escaped, for ranking arithmetic via position/replace).
-   *     Escaped chars cannot be reused as ranking substrings.
-   *   - Explicit `ESCAPE '\'` on the ILIKE clause.
-   *   - Symmetric: no asymmetric whitespace strip (caller's query and
-   *     chunk_text are compared as-stored).
+   * Multi-term CJK queries are split via splitCJKQueryTerms and matched
+   * conjunctively (AND) so that documents containing all terms match
+   * regardless of token order (e.g. Korean / Japanese free word order and particles).
+   *
+   * Ranking rules:
+   *   - Individual term occurrences are summed via replace/length arithmetic.
+   *   - Contiguous match of the full raw query receives bonus weight.
+   *   - POSITION()-tiebreaker ensures earlier hits outrank later hits.
+   *   - Single-term queries preserve identical ranking to the single-token path.
+   *
+   * Parameter bindings:
+   *   - LIKE parameters are individually escaped with escapeLikePattern and wrapped with %.
+   *   - Raw terms and raw query are bound unescaped for ranking arithmetic.
+   *   - Explicit `ESCAPE '\'` on ILIKE clauses.
+   *   - Symmetric: no asymmetric whitespace strip on chunk_text.
    *   - Empty-query guard returns no results without binding SQL.
    *
    * Postgres engine is intentionally untouched (multi-tenant deployments
@@ -2384,110 +2393,7 @@ export class PGLiteEngine implements BrainEngine {
       dedup: boolean;
     },
   ): Promise<SearchResult[]> {
-    const { limit, offset, innerLimit, sourceFactorCase, hardExcludeClause, visibilityClause, detailFilter, opts, dedup } = ctx;
-    const qRaw = query;
-    if (qRaw.length === 0) return [];
-    const qLike = escapeLikePattern(qRaw);
-
-    // $1 = qLike (escaped for ILIKE)
-    // $2 = qRaw  (raw for position()/replace() ranking arithmetic)
-    // $3 = inner limit (dedup path) OR final limit (chunk-grain path)
-    // $4 = final limit (dedup path only) — see callers
-    // $5 = offset (dedup path)  /  $4 = offset (chunk-grain path)
-    const params: unknown[] = dedup
-      ? [qLike, qRaw, innerLimit, limit, offset]
-      : [qLike, qRaw, limit, offset];
-
-    let extraFilter = '';
-    if (opts?.language) {
-      params.push(opts.language);
-      extraFilter += ` AND cc.language = $${params.length}`;
-    }
-    if (opts?.symbolKind) {
-      params.push(opts.symbolKind);
-      extraFilter += ` AND cc.symbol_type = $${params.length}`;
-    }
-    if (opts?.afterDate) {
-      params.push(opts.afterDate);
-      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) > $${params.length}::timestamptz`;
-    }
-    if (opts?.beforeDate) {
-      params.push(opts.beforeDate);
-      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
-    }
-    // v0.34.1 (#861 — P0 leak seal): source-isolation on the CJK fallback path.
-    if (opts?.sourceIds && opts.sourceIds.length > 0) {
-      params.push(opts.sourceIds);
-      extraFilter += ` AND p.source_id = ANY($${params.length}::text[])`;
-    } else if (opts?.sourceId) {
-      params.push(opts.sourceId);
-      extraFilter += ` AND p.source_id = $${params.length}`;
-    }
-
-    // Bigram-frequency count: count occurrences of $qRaw in chunk_text via
-    // (length(chunk) - length(replace(chunk, q, ''))) / length(q). Acts as
-    // a ts_rank substitute. position()-tiebreaker so earlier-in-chunk hits
-    // outrank later ones at the same occurrence count.
-    const scoreExpr = `
-      ((LENGTH(cc.chunk_text) - LENGTH(REPLACE(cc.chunk_text, $2, ''))) / NULLIF(LENGTH($2), 0)::real
-        + 1.0 / NULLIF(POSITION($2 IN cc.chunk_text), 0)::real)
-      * ${sourceFactorCase}
-    `;
-
-    if (dedup) {
-      const { rows } = await this.db.query(
-        `WITH ranked AS (
-           SELECT
-             p.slug, p.id as page_id, p.title, p.type, p.source_id,
-             p.effective_date, p.effective_date_source,
-             CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
-               THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
-             CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
-               THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
-             cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-             ${scoreExpr} AS score,
-             CASE WHEN p.updated_at < (
-               SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
-             ) THEN true ELSE false END AS stale
-           FROM content_chunks cc
-           JOIN pages p ON p.id = cc.page_id
-           JOIN sources s ON s.id = p.source_id
-           WHERE cc.chunk_text ILIKE '%' || $1 || '%' ESCAPE '\\' ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
-             AND cc.modality = 'text'
-           ORDER BY score DESC
-           LIMIT $3
-         ),
-         ${buildBestPerPagePoolCte('ranked')}
-         SELECT * FROM best_per_page
-         ORDER BY score DESC, page_id ASC, chunk_id ASC
-         LIMIT $4 OFFSET $5`,
-        params,
-      );
-      return (rows as Record<string, unknown>[]).map(rowToSearchResult);
-    } else {
-      const { rows } = await this.db.query(
-        `SELECT
-           p.slug, p.id as page_id, p.title, p.type, p.source_id,
-           p.effective_date, p.effective_date_source,
-           CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
-             THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
-           CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
-             THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
-           cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-           ${scoreExpr} AS score,
-           CASE WHEN p.updated_at < (
-             SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
-           ) THEN true ELSE false END AS stale
-         FROM content_chunks cc
-         JOIN pages p ON p.id = cc.page_id
-         JOIN sources s ON s.id = p.source_id
-         WHERE cc.chunk_text ILIKE '%' || $1 || '%' ESCAPE '\\' ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
-         ORDER BY score DESC
-         LIMIT $3 OFFSET $4`,
-        params,
-      );
-      return (rows as Record<string, unknown>[]).map(rowToSearchResult);
-    }
+    return searchKeywordCJK({ db: this.db }, query, ctx);
   }
 
   /**

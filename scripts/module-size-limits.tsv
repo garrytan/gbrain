@@ -6,7 +6,7 @@
 src/commands/doctor.ts	4270	ratchet	peel target: containment sprint C8-C13; grown v0.46.11.0 five-issue wave
 src/core/operations.ts	303	ratchet	peel target: containment sprint C4-C7
 src/core/postgres-engine.ts	5816	ratchet	peel target: containment sprint C15; grown v0.46.11.0 five-issue wave + retrieval wave
-src/core/pglite-engine.ts	5744	ratchet	peel target: containment sprint C15; grown v0.46.11.0 five-issue wave + retrieval wave
+src/core/pglite-engine.ts	5650	ratchet	peel target: containment sprint C15; grown v0.46.11.0 five-issue wave + retrieval wave; peeled cjk-search
 src/core/migrate.ts	668	region-exempt	append-only MIGRATIONS array grows freely; runner logic is ratcheted
 src/commands/sync.ts	4300	ratchet	peel target: containment sprint C13-C14; grown v0.46.11.0 five-issue wave
 src/core/ai/gateway.ts	4364	ratchet	watchlist; merged: master waves + dream-wave C1-C3+C7 (thinking predicate, length, providerMetadata, turn permits) + TurnPermit signal form
