@@ -232,6 +232,7 @@ page_types:
       - sources/article
       - source/article
       - transcript
+      - conversation
       - ref
     extractable: true
     expert_routing: false

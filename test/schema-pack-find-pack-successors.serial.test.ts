@@ -6,6 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
+  loadActivePack,
   findPackSuccessors,
   _versionRangeMatches,
   _versionDescCompare,
@@ -61,6 +62,16 @@ describe('_versionDescCompare', () => {
 });
 
 describe('findPackSuccessors (against bundled packs)', () => {
+  it('keeps legacy conversation pages inside the v2 source closure', async () => {
+    const pack = await loadActivePack({
+      cfg: null,
+      remote: false,
+      perCall: 'gbrain-base-v2',
+    });
+    const source = pack.manifest.page_types.find(type => type.name === 'source');
+    expect(source?.aliases).toContain('conversation');
+  });
+
   it('finds gbrain-base-v2 as successor of gbrain-base@1.0.0', async () => {
     const successors = await findPackSuccessors('gbrain-base', '1.0.0');
     expect(successors.length).toBe(1);
