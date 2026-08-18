@@ -960,15 +960,17 @@ function fallbackSlugsForFile(
   const contents: string[] = [];
   let proofIntact = true;
   try {
-    const abs = join(gitContextRoot, rel);
     // `rel` comes from `git ls-files`/`git ls-tree` (trackedSlugIndex, above) —
-    // paths git itself tracked, never external input — but assert containment
-    // explicitly rather than trust that invariant silently (semgrep
-    // path-join-resolve-traversal; belt-and-braces alongside the symlink guard
-    // below, which covers the OTHER out-of-repo-read vector).
-    if (relative(gitContextRoot, abs).startsWith('..')) {
+    // paths git itself tracked, never external input — but reject any `..`
+    // segment before it reaches join() rather than trust that invariant
+    // silently (semgrep path-join-resolve-traversal; belt-and-braces
+    // alongside the symlink guard below, which covers the OTHER
+    // out-of-repo-read vector this function's own docstring calls out).
+    if (rel.split('/').includes('..')) {
       proofIntact = false;
     } else {
+      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+      const abs = join(gitContextRoot, rel);
       const st = lstatSync(abs);
       if (!st.isSymbolicLink()) {
         if (st.size > MAX_FILE_SIZE) proofIntact = false;
