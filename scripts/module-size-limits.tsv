@@ -11,7 +11,7 @@ src/core/migrate.ts	668	region-exempt	append-only MIGRATIONS array grows freely;
 src/commands/sync.ts	4300	ratchet	peel target: containment sprint C13-C14; grown v0.46.11.0 five-issue wave
 src/core/ai/gateway.ts	4364	ratchet	watchlist; merged: master waves + dream-wave C1-C3+C7 (thinking predicate, length, providerMetadata, turn permits) + TurnPermit signal form
 src/cli.ts	3482	ratchet	watchlist; merged unions: cathedral-5 compile-context wiring + gap-closure thin-client routing + cathedral-6 register guards + sources self-help
-src/core/cycle.ts	3030	ratchet
+src/core/cycle.ts	3043	ratchet
 src/commands/serve-http.ts	2978	ratchet	grown cathedral-6 multi-agent wave (admin register route composes registerScopedClient in one tx under the name advisory lock; ttl validation + brain_too_old preflight) + chennai no-grant federated scope
 src/commands/jobs.ts	2950	ratchet	grown v0.46.11.0 five-issue wave
 src/core/search/hybrid.ts	2500	ratchet

@@ -2484,17 +2484,30 @@ export async function runCycle(
 
         if (phases.includes('propose_takes')) {
           checkAborted(cycleSignal);
-          progress.start('cycle.propose_takes');
-          const { runPhaseProposeTakes } = await import('./cycle/propose-takes.ts');
-          // gbrain#4168: thread the job's absolute deadline so the phase's
-          // clean partial-exit fires before the worker's kill switch (same
-          // literal shape as the patterns call above so the structural guard
-          // matches both).
-          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { repoPath: brainDir ?? undefined, deadlineAtMs: opts.deadlineAtMs ?? null }) as Promise<PhaseResult>);
-          result.duration_ms = duration_ms;
-          phaseResults.push(result);
-          progress.finish();
-          await safeYield(opts.yieldBetweenPhases);
+          const enabledRaw = await engine.getConfig('cycle.propose_takes.enabled');
+          const explicitlyDisabled = typeof enabledRaw === 'string' &&
+            ['false', '0', 'no', 'off'].includes(enabledRaw.trim().toLowerCase());
+          if (explicitlyDisabled) {
+            phaseResults.push({
+              phase: 'propose_takes',
+              status: 'skipped',
+              duration_ms: 0,
+              summary: 'propose_takes disabled by cycle.propose_takes.enabled',
+              details: { reason: 'disabled_by_config' },
+            });
+          } else {
+            progress.start('cycle.propose_takes');
+            const { runPhaseProposeTakes } = await import('./cycle/propose-takes.ts');
+            // gbrain#4168: thread the job's absolute deadline so the phase's
+            // clean partial-exit fires before the worker's kill switch (same
+            // literal shape as the patterns call above so the structural guard
+            // matches both).
+            const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { repoPath: brainDir ?? undefined, deadlineAtMs: opts.deadlineAtMs ?? null }) as Promise<PhaseResult>);
+            result.duration_ms = duration_ms;
+            phaseResults.push(result);
+            progress.finish();
+            await safeYield(opts.yieldBetweenPhases);
+          }
         }
 
         if (phases.includes('grade_takes')) {
