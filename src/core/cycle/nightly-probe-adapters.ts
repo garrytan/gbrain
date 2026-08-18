@@ -16,6 +16,26 @@
  */
 
 import { readFileSync, existsSync } from 'node:fs';
+import { loadConfig } from '../config.ts';
+import { buildGatewayConfig } from '../ai/build-gateway-config.ts';
+import { configureGateway, requireConfig } from '../ai/gateway.ts';
+
+/**
+ * The adapter is normally called from autopilot after connectEngine has
+ * configured the gateway. Direct in-process callers (including recovery
+ * probes) do not pass through cli.ts's no-DB LongMemEval bootstrap, however.
+ * Initialize only when absent so an autopilot process keeps its richer merged
+ * DB+file configuration.
+ */
+function ensureProbeGatewayConfigured(): void {
+  try {
+    requireConfig();
+    return;
+  } catch {
+    const config = loadConfig() ?? ({} as NonNullable<ReturnType<typeof loadConfig>>);
+    configureGateway(buildGatewayConfig(config));
+  }
+}
 
 /** Arguments accepted by the longmemeval adapter. */
 export interface LongMemEvalProbeArgs {
@@ -28,6 +48,8 @@ export interface CrossModalProbeArgs {
   batchPath: string;
   summaryPath: string;
   maxUsd: number;
+  /** Optional explicit judge route; defaults to the configured chat model. */
+  judgeModel?: string;
 }
 
 /** Cross-modal batch summary shape (matches `runEvalCrossModal --batch --json`'s envelope). */
@@ -53,8 +75,19 @@ export interface CrossModalBatchSummary {
  * autopilot.
  */
 export async function runLongMemEvalForProbe(args: LongMemEvalProbeArgs): Promise<void> {
+  ensureProbeGatewayConfigured();
   const { runEvalLongMemEval } = await import('../../commands/eval-longmemeval.ts');
-  await runEvalLongMemEval([args.fixturePath, '--output', args.outputPath]);
+  // Match the production max-recall posture while honoring the installation's
+  // explicit lack of a reranker credential. Without --no-reranker the
+  // ephemeral benchmark brain falls back to tokenmax's ZeroEntropy default,
+  // creating auth failures unrelated to retrieval quality.
+  await runEvalLongMemEval([
+    args.fixturePath,
+    '--output', args.outputPath,
+    '--mode', 'tokenmax',
+    '--no-reranker',
+    '--by-type',
+  ]);
 }
 
 /**
@@ -96,6 +129,20 @@ export async function runCrossModalBatchForProbe(
   args: CrossModalProbeArgs,
 ): Promise<{ exitCode: number; summary: CrossModalBatchSummary }> {
   const { runEvalCrossModal } = await import('../../commands/eval-cross-modal.ts');
+  // The general cross-modal command intentionally defaults to three frontier
+  // providers. A nightly installation probe must instead use a route this
+  // installation actually configured; otherwise missing OpenAI/Google keys
+  // make every run inconclusive even when the active provider is healthy.
+  // Repeating the configured model across three slots preserves the runner's
+  // parse/aggregation checks while making provider reachability truthful.
+  const judgeModel = args.judgeModel ?? loadConfig()?.chat_model;
+  const slotArgs = judgeModel
+    ? [
+        '--slot-a-model', judgeModel,
+        '--slot-b-model', judgeModel,
+        '--slot-c-model', judgeModel,
+      ]
+    : [];
   const exitCode = await runEvalCrossModal([
     '--batch',
     args.batchPath,
@@ -105,6 +152,7 @@ export async function runCrossModalBatchForProbe(
     String(args.maxUsd),
     '--dimensions',
     PROBE_QA_DIMENSIONS.join(','),
+    ...slotArgs,
     '--yes',
     '--json',
   ]);
