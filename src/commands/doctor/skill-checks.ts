@@ -240,7 +240,16 @@ export async function skillPreconditionsCheck(
     },
     async listSourceIds() {
       try {
-        const rows = await engine.executeRaw<{ id: string }>(`SELECT id FROM sources WHERE id <> 'default'`);
+        const rows = await engine.executeRaw<{ id: string }>(
+          `SELECT s.id
+             FROM sources s
+            WHERE EXISTS (
+              SELECT 1 FROM pages p
+               WHERE p.source_id = s.id
+                 AND p.deleted_at IS NULL
+            )
+            ORDER BY s.id`,
+        );
         return rows.map(r => r.id);
       } catch { return []; }
     },

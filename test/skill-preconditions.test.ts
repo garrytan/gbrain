@@ -99,6 +99,12 @@ describe('checkPreconditions — source', () => {
     expect(r.hint.length).toBeGreaterThan(0);
   });
 
+  test('bare source accepts a populated default corpus', async () => {
+    const [r] = await checkPreconditions(['source'], fakeCtx({ listSourceIds: async () => ['default'] }));
+    expect(r.met).toBe(true);
+    expect(r.detail).toContain('default');
+  });
+
   test('bare source unmet on empty brain, with remediation hint', async () => {
     const [r] = await checkPreconditions(['source'], fakeCtx({ listSourceIds: async () => [] }));
     expect(r.met).toBe(false);
