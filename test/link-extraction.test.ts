@@ -925,6 +925,13 @@ describe('parseTimelineEntries', () => {
     expect(parseTimelineEntries('Just some plain text.')).toEqual([]);
   });
 
+  test('skips generated backlink receipts because their dates are not entity events', () => {
+    const entries = parseTimelineEntries(
+      '- **2026-06-13** | Referenced in [Acme](../companies/acme.md)',
+    );
+    expect(entries).toEqual([]);
+  });
+
   test('handles mixed content (timeline lines interspersed with prose)', () => {
     const content = `Some intro paragraph.
 

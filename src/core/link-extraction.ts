@@ -1293,6 +1293,12 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
       summary = cm[4].trim();
     }
     if (!isValidDate(date) || summary.length === 0) { i++; continue; }
+    // Backlink materialization writes navigation receipts such as
+    // `- **2026-06-13** | Referenced in [Acme](../companies/acme.md)`.
+    // The date belongs to the backlink write, not to an event involving this
+    // entity. Treating it as timeline evidence both invents event dates and
+    // lets graph-maintenance noise satisfy timeline coverage.
+    if (/^Referenced in\s+\[/i.test(summary)) { i++; continue; }
     // Collect optional detail lines (indented, until next date or heading).
     const detailLines: string[] = [];
     let j = i + 1;
