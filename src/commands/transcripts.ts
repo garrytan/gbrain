@@ -204,7 +204,10 @@ skip). Embedding is OFF by default; run the embed backfill later or opt in.
                     for a multi-GB hermes store). Omit to keep each
                     format's native safety default. Changing it starts a
                     fresh --since last scope (caps are part of the
-                    checkpoint fingerprint)
+                    checkpoint fingerprint). Adapters differ over budget:
+                    codex degrades to a bounded head+tail read, while
+                    claude-code, openclaw and hermes reject the file
+                    outright — so LOWERING this can drop those formats
   --json            Machine-readable result
   --quiet           Suppress the human summary
 

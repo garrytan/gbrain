@@ -14,7 +14,7 @@
  * text only (lossy by design).
  */
 
-import { readFileSync, statSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
 import { basename } from 'node:path';
 import type { HostSpecTarget } from '../bootstrap/host-specs.ts';
 import type {
@@ -25,6 +25,13 @@ import type {
   TranscriptMessage,
 } from './types.ts';
 import { TRANSCRIPT_JSONL_HARD_CAP } from './types.ts';
+
+/**
+ * Head window kept when a rollout exceeds the parse budget. Only needs to
+ * cover `session_meta` (the first record) plus slack; capped at a quarter of
+ * the budget so a small --max-bytes cannot spend everything on the head.
+ */
+const CODEX_HEAD_WINDOW_BYTES = 256 * 1024;
 
 export const CODEX_SPEC_TARGET: HostSpecTarget = {
   id: 'codex-rollout-2026-08',
@@ -79,12 +86,45 @@ export const codexAdapter: TranscriptAdapter = {
   },
 
   async *parse(path: string, opts: ParseSessionsOpts = {}): AsyncGenerator<ParsedSession, FileDiagnostics> {
-    const cap = opts.maxBytes ?? TRANSCRIPT_JSONL_HARD_CAP;
+    const budget = Math.max(1, Math.floor(opts.maxBytes ?? TRANSCRIPT_JSONL_HARD_CAP));
     const size = statSync(path).size;
-    if (size > cap) {
-      throw new Error(`codex rollout too large for import: ${size} bytes (cap ${cap})`);
+    let raw: string;
+    let bytesRead: number;
+    let truncated = false;
+    if (size <= budget) {
+      raw = readFileSync(path, 'utf8');
+      bytesRead = size;
+    } else {
+      // Bounded degrade rather than rejecting the file: the read stays within
+      // budget, but a huge rollout still contributes its session.
+      //
+      // NOTE: this is NOT "what the claude-code adapter does". That adapter's
+      // import path (parseClaudeSessionFile) throws over cap like the others;
+      // only the hook lane's parseTranscript tail-reads. Oversized *claude*
+      // sessions still contribute nothing — this adapter is the first to
+      // degrade, which is a deliberate divergence, not parity.
+      //
+      // HEAD + TAIL, not tail alone: `session_meta` — session_id, cwd,
+      // cli_version, provenance — is the FIRST record of a rollout (verified:
+      // line 0, byte 0). A pure tail read imports the newest turns with no
+      // identity, so the head window is what keeps the session attributable.
+      truncated = true;
+      const head = Math.min(CODEX_HEAD_WINDOW_BYTES, Math.floor(budget / 4));
+      const tail = budget - head;
+      const fd = openSync(path, 'r');
+      try {
+        const hbuf = Buffer.alloc(head);
+        const hn = readSync(fd, hbuf, 0, head, 0);
+        const tbuf = Buffer.alloc(tail);
+        const tn = readSync(fd, tbuf, 0, tail, size - tail);
+        // The join is a line boundary neither side owns; both partials fail
+        // JSON.parse and land in skippedLines, which is the honest accounting.
+        raw = hbuf.subarray(0, hn).toString('utf8') + '\n' + tbuf.subarray(0, tn).toString('utf8');
+        bytesRead = hn + tn;
+      } finally {
+        closeSync(fd);
+      }
     }
-    const raw = readFileSync(path, 'utf8');
     let skippedLines = 0;
     let sessionId = '';
     let cwd: string | undefined;
@@ -151,9 +191,9 @@ export const codexAdapter: TranscriptAdapter = {
       };
     }
     return {
-      bytesRead: size,
+      bytesRead,
       skippedLines,
-      truncated: false,
+      truncated,
       sessions,
       zeroSessionsReason:
         sessions === 0 ? 'no user_message events or assistant message items in rollout' : undefined,
