@@ -37,7 +37,12 @@ export interface SubagentHeartbeatEvent {
   ts: string;
   type: 'heartbeat';
   job_id: number;
-  event: 'llm_call_started' | 'llm_call_completed' | 'tool_called' | 'tool_result' | 'tool_failed';
+  event: 'llm_call_started' | 'llm_call_completed' | 'tool_called' | 'tool_result' | 'tool_failed'
+    | 'oneshot_fallback' | 'oneshot_timeout';
+  /** #4216: set to 'oneshot' on the single-call path's events. */
+  mode?: string;
+  /** #4216: fallback reason for oneshot_fallback events. */
+  reason?: string;
   turn_idx: number;
   /** Tool name for tool_* events. Never the input — that may contain secrets. */
   tool_name?: string;

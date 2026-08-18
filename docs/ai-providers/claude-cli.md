@@ -97,7 +97,13 @@ The adapter does not use `claude`'s own agentic tool-calling — it injects a
 fenced instruction block into the system prompt teaching the model a
 `<use_tools>[{id,name,input}, ...]</use_tools>` JSON emission format
 (`buildToolUseInstructions`), then parses that block back out of the plain
-text response into ai-sdk tool-call parts (`extractToolCalls`). This
+text response into ai-sdk tool-call parts (`extractToolCalls`). Tool-call
+ids are minted locally (`toolu_claude_cli_<counter>_<random>`), never
+trusted from the model: each `--print` turn is a fresh subprocess with no
+memory of prior ids, so model-chosen ids repeat across turns and would
+collide with the per-job tool-id uniqueness constraint; nothing ever echoes
+the original id back to the subprocess, so the substitution is transparent
+to the tool-result pairing. This
 protocol-over-text approach is what lets `supports_subagent_loop: true`
 work through the `--print`, no-built-in-tools subprocess shape described
 above.

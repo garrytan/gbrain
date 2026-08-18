@@ -26,7 +26,7 @@ import { buildThinkSystemPrompt, buildThinkUserMessage } from './prompt.ts';
 import { resolveCitations, type ParsedCitation } from './cite-render.ts';
 import { resolveOwnerHolder } from '../owner-holder.ts';
 import { resolveModel } from '../model-config.ts';
-import { chat as gatewayChat, probeChatModel, type ChatResult } from '../ai/gateway.ts';
+import { chat as gatewayChat, probeChatModel, isThinkingByDefaultModel, type ChatResult } from '../ai/gateway.ts';
 import { getProviderCapabilities } from '../ai/capabilities.ts';
 import { AIConfigError } from '../ai/errors.ts';
 import { normalizeModelId } from '../model-id.ts';
@@ -209,13 +209,14 @@ export interface ThinkResult {
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 4000;
 
-// Thinking-by-default Claude 5 models (`anthropic:claude-*-5`) spend a large
-// share of the output budget on internal reasoning before emitting any answer,
-// so the 4000 default leaves `think` with empty or truncated text. Give those
-// models headroom; providers bill actual tokens, not the cap. Everything else
-// keeps 4000.
+// Thinking-by-default Claude 5 models spend a large share of the output budget
+// on internal reasoning before emitting any answer, so the 4000 default leaves
+// `think` with empty or truncated text. Give those models headroom; providers
+// bill actual tokens, not the cap. Everything else keeps 4000. Detection is
+// shared with the gateway (`isThinkingByDefaultModel`) so provider-prefixed
+// spellings (openrouter:anthropic/claude-*-5, claude-cli:*) get the same
+// treatment; think keeps its own smaller 16000 cap.
 const THINKING_DEFAULT_MAX_OUTPUT_TOKENS = 16000;
-const THINKING_BY_DEFAULT_MODEL_RE = /^anthropic[:/]claude-[a-z0-9]+-5(?:[.-]|$)/i;
 // OpenAI reasoning models spend output budget on internal reasoning tokens
 // the same way — reasoning tokens are billed as output and count against
 // `max_tokens` — so they get the same headroom. Deliberately scoped to the
@@ -228,7 +229,9 @@ const OPENAI_CHAT_SNAPSHOT_RE = /-chat(?:-|$)/i; // gpt-5-chat-latest, gpt-5.2-c
 export function maxOutputTokensFor(modelStr: string): number {
   const openaiReasoning =
     OPENAI_REASONING_MODEL_RE.test(modelStr) && !OPENAI_CHAT_SNAPSHOT_RE.test(modelStr);
-  if (THINKING_BY_DEFAULT_MODEL_RE.test(modelStr) || openaiReasoning) {
+  // Shared name-based predicate (#4087: one source of truth in gateway.ts —
+  // provider-prefixed + bare Claude 5 spellings, never 3.5-era models).
+  if (isThinkingByDefaultModel(modelStr) || openaiReasoning) {
     return THINKING_DEFAULT_MAX_OUTPUT_TOKENS;
   }
   // Recipe-declared thinking-by-default (gbrain#4172, e.g. DeepSeek v4):

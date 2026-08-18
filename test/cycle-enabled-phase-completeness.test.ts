@@ -91,15 +91,14 @@ async function readLastFullCycleAt(sourceId: string): Promise<string | null> {
 }
 
 describe('#2540 (i) — pack omitting optional phases, all enabled phases complete', () => {
-  test('full ALL_PHASES cycle with no active pack declaring extract_atoms/synthesize_concepts stamps last_full_cycle_at', async () => {
+  test('implicit source freshness cycle excludes background phases and stamps last_full_cycle_at', async () => {
     await withEnv({ GBRAIN_HOME: gbrainHome, OPENAI_API_KEY: undefined, ANTHROPIC_API_KEY: undefined }, async () => {
       await seedSource('no-pack');
       expect(await readLastFullCycleAt('no-pack')).toBeNull();
 
-      // No active pack registered → packDeclaresPhase fails open (false)
-      // for extract_atoms/synthesize_concepts → both report 'skipped',
-      // not 'warn'/'fail'. Default ALL_PHASES selection (matches a real
-      // nightly `gbrain dream`/`gbrain dream --dir` run).
+      // Named-source defaults now select the bounded freshness phase set.
+      // Background and global phases are reported as intentionally excluded,
+      // so they cannot hold source freshness hostage.
       const report = await runCycle(engine, {
         brainDir,
         sourceId: 'no-pack',
@@ -108,9 +107,9 @@ describe('#2540 (i) — pack omitting optional phases, all enabled phases comple
       const extractAtoms = report.phases.find(p => p.phase === 'extract_atoms');
       const synthConcepts = report.phases.find(p => p.phase === 'synthesize_concepts');
       expect(extractAtoms?.status).toBe('skipped');
-      expect(extractAtoms?.details?.reason).toBe('not_in_active_pack');
+      expect(extractAtoms?.details?.reason).toBe('excluded_from_implicit_source_cycle');
       expect(synthConcepts?.status).toBe('skipped');
-      expect(synthConcepts?.details?.reason).toBe('not_in_active_pack');
+      expect(synthConcepts?.details?.reason).toBe('excluded_from_implicit_source_cycle');
 
       // The cycle must not be reported 'failed' outright just because two
       // phases the pack never declared were skipped.

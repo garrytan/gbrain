@@ -353,3 +353,30 @@ describe('contextual-retrieval wrapping on re-embed (#3507)', () => {
     expect(seen.some((t) => t.startsWith('<context>'))).toBe(false);
   });
 });
+
+describe('embedStalePages (#4216 phase-end closure)', () => {
+  test('embeds ONLY the listed pages, stamps signature on full re-embeds, leaves the backlog alone', async () => {
+    const { embedStalePages } = await import('../src/core/embed-stale.ts');
+    await seedPageWithStaleChunks('wiki/target-page', 3);
+    await seedPageWithStaleChunks('wiki/backlog-page', 2);
+    const fakeEmbed = async (texts: string[]) => texts.map(() => new Float32Array(1536).fill(0.1));
+    const res = await embedStalePages(engine, ['wiki/target-page'], 'default', {
+      embedFn: fakeEmbed,
+      embeddingSignature: 'test:model:1536',
+    });
+    expect(res.pagesProcessed).toBe(1);
+    expect(res.embedded).toBeGreaterThan(0);
+    const target = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+        WHERE p.slug = 'wiki/target-page' AND cc.embedding IS NULL`);
+    expect(target[0]!.n).toBe(0);
+    // The rest of the backlog is untouched — this is NOT a source sweep.
+    const backlog = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+        WHERE p.slug = 'wiki/backlog-page' AND cc.embedding IS NULL`);
+    expect(backlog[0]!.n).toBeGreaterThan(0);
+    const sig = await engine.executeRaw<{ s: string | null }>(
+      `SELECT embedding_signature AS s FROM pages WHERE slug = 'wiki/target-page'`);
+    expect(sig[0]!.s).toBe('test:model:1536');
+  });
+});

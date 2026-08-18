@@ -390,6 +390,10 @@ function extractToolCalls(raw: string): {
   return { toolCalls, beforeText, afterText };
 }
 
+// Module-scoped so the counter survives the fresh ClaudeCliLanguageModel
+// instance created for every doGenerate call (gateway resolves the provider
+// per-call). Keeps the historical `toolu_claude_cli_` prefix — one grep target.
+
 /**
  * Strip provider prefixes (`anthropic:`, `litellm:`, `claude-cli:`) that the
  * underlying CLI does not understand. The gateway hands us a bare model id

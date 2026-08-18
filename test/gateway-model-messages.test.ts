@@ -177,4 +177,55 @@ describe('toModelMessages — v6 ModelMessage shape', () => {
     expect((out[2] as any).role).toBe('tool');
     expect((out[2] as any).content[0].output).toEqual({ type: 'json', value: { hits: 0 } });
   });
+
+  // #4201 — per-part provider state (Gemini 3.x thoughtSignature) rides
+  // ChatBlock.providerMetadata inbound and MUST re-attach as providerOptions
+  // outbound, and ONLY when present (absent → parts stay byte-identical).
+  describe('per-part providerMetadata echo (#4201)', () => {
+    const sig = { google: { thoughtSignature: 'opaque-sig-abc' } };
+
+    test('tool-call block with providerMetadata emits providerOptions', () => {
+      const msgs: ChatMessage[] = [
+        {
+          role: 'assistant',
+          content: [{ type: 'tool-call', toolCallId: 'c1', toolName: 'search', input: { q: 'x' }, providerMetadata: sig }],
+        },
+      ];
+      const out = toModelMessages(msgs) as any[];
+      expect(out[0].content[0].providerOptions).toEqual(sig);
+      expect(out[0].content[0].providerMetadata).toBeUndefined();
+    });
+
+    test('text block with providerMetadata emits providerOptions', () => {
+      const msgs: ChatMessage[] = [
+        { role: 'assistant', content: [{ type: 'text', text: 'thinking done', providerMetadata: sig }] },
+      ];
+      const out = toModelMessages(msgs) as any[];
+      expect(out[0].content[0].providerOptions).toEqual(sig);
+    });
+
+    test('tool-result block with providerMetadata emits providerOptions on the tool part', () => {
+      const msgs: ChatMessage[] = [
+        { role: 'user', content: [{ type: 'tool-result', toolCallId: 'c1', toolName: 'search', output: 'ok', providerMetadata: sig }] },
+      ];
+      const out = toModelMessages(msgs) as any[];
+      expect(out[0].role).toBe('tool');
+      expect(out[0].content[0].providerOptions).toEqual(sig);
+    });
+
+    test('blocks WITHOUT providerMetadata gain no providerOptions key (byte-identical)', () => {
+      const msgs: ChatMessage[] = [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'hi' },
+            { type: 'tool-call', toolCallId: 'c1', toolName: 'search', input: {} },
+          ],
+        },
+      ];
+      const out = toModelMessages(msgs) as any[];
+      expect('providerOptions' in out[0].content[0]).toBe(false);
+      expect('providerOptions' in out[0].content[1]).toBe(false);
+    });
+  });
 });

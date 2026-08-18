@@ -574,7 +574,10 @@ describe('E2E synthesize — fan-out self-heal for stranded coalesced rows (#415
         // poller firing between coalesce and cancelJob hard-fails the test.
         await withSubagentAutoCancel(rig.engine, async () => {
           const result = await runPhaseSynthesize(rig.engine, { brainDir: rig.brainDir, dryRun: false });
-          expect(result.status).toBe('ok');
+          // CDX-4: the re-added child dies in this keyless harness, and an
+          // all-children-dead run is now an honest phase failure. The
+          // self-heal subject (cancel + re-add) is asserted on the rows below.
+          expect(result.error?.code ?? result.status).toBe('SYNTH_ALL_CHILDREN_DEAD');
           const details = result.details as { children_submitted: number };
           expect(details.children_submitted).toBe(1);
         }, { excludeQueue: 'dream-inline-1700000000000-deadbeef' });

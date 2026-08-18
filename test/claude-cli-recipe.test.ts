@@ -208,6 +208,9 @@ describe('claude-cli LanguageModel — tool use', () => {
       expect(result.finishReason).toBe('tool-calls');
       expect(result.content).toHaveLength(2);
       expect(result.content[0]).toMatchObject({ type: 'text', text: 'I will look up the pattern first.' });
+      // #4155: the model-supplied id is NEVER trusted for uniqueness — gbrain
+      // mints its own (the subprocess has no cross-turn memory and repeats
+      // short ids like toolu_01, violating uniq_subagent_tools_use_id).
       expect(result.content[1]).toMatchObject({
         type: 'tool-call',
         toolName: 'search',
@@ -218,6 +221,64 @@ describe('claude-cli LanguageModel — tool use', () => {
       const call = result.content[1] as { toolCallId: string };
       expect(call.toolCallId).toMatch(/^toolu_claude_cli_/);
       expect(call.toolCallId).not.toBe('toolu_01ABC');
+    });
+  });
+
+  test('repeated model-supplied ids across turns mint DISTINCT ids (#4155)', async () => {
+    // Two doGenerate calls (fresh subprocess each) both emit `toolu_01` —
+    // exactly the production collision that dead-lettered dream patterns jobs.
+    await withStubEnv(async () => {
+      const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+      const block = [
+        '<use_tools>',
+        '[{"id": "toolu_01", "name": "search", "input": {"q": "a"}}]',
+        '</use_tools>',
+      ].join('\n');
+      const tools = [{ type: 'function', name: 'search', description: '', inputSchema: { type: 'object', properties: {} } }];
+
+      stageResponse(baseEnvelope(block));
+      const r1 = await new ClaudeCliLanguageModel('claude-sonnet-4-6').doGenerate({
+        prompt: [userMessage('turn 1')], tools,
+      } as LanguageModelV2CallOptions);
+      stageResponse(baseEnvelope(block));
+      const r2 = await new ClaudeCliLanguageModel('claude-sonnet-4-6').doGenerate({
+        prompt: [userMessage('turn 2')], tools,
+      } as LanguageModelV2CallOptions);
+
+      const id1 = (r1.content.find(c => c.type === 'tool-call') as { toolCallId: string }).toolCallId;
+      const id2 = (r2.content.find(c => c.type === 'tool-call') as { toolCallId: string }).toolCallId;
+      expect(id1).not.toBe(id2);
+    });
+  });
+
+  test('duplicate ids WITHIN one <use_tools> block mint distinct ids (#4155)', async () => {
+    await withStubEnv(async () => {
+      stageResponse(
+        baseEnvelope(
+          [
+            '<use_tools>',
+            '[',
+            '  {"id": "toolu_01", "name": "search", "input": {"q": "a"}},',
+            '  {"id": "toolu_01", "name": "get_page", "input": {"slug": "x"}}',
+            ']',
+            '</use_tools>',
+          ].join('\n'),
+        ),
+      );
+      const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+      const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
+      const result = await model.doGenerate({
+        prompt: [userMessage('dup ids')],
+        tools: [
+          { type: 'function', name: 'search', description: '', inputSchema: { type: 'object', properties: {} } },
+          { type: 'function', name: 'get_page', description: '', inputSchema: { type: 'object', properties: {} } },
+        ],
+      } as LanguageModelV2CallOptions);
+      const ids = result.content
+        .filter(c => c.type === 'tool-call')
+        .map(c => (c as { toolCallId: string }).toolCallId);
+      expect(ids).toHaveLength(2);
+      expect(new Set(ids).size).toBe(2);
     });
   });
 

@@ -436,8 +436,14 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
          FROM minion_jobs
         WHERE name = 'subagent'
           AND status IN ('waiting', 'delayed', 'paused')
-          AND idempotency_key LIKE 'dream:synth-v2:%'`,
+          AND (idempotency_key LIKE 'dream:synth-v2:%' OR queue LIKE 'dream-inline-%')`,
     );
+    // #4250: the queue-LIKE arm pulls in NON-synth children stranded in
+    // private per-run queues (patterns mints dream-inline-* queues too).
+    // Doctor's orphaned_private_queue check points operators HERE; a repair
+    // that can't even select the flagged rows is a dead end. Non-synth rows
+    // skip the verdict pipeline and are handled by the dead-inline
+    // conversion branch below.
     // Two lookups: membership in the discovered corpus (matched at all?) vs a
     // usable scored verdict. A discovered file with no reliable score is
     // "matched but unscored" — kept, never cancelled on missing data. The
@@ -482,19 +488,53 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
     // with several slow sequential children can legitimately exceed the 1h
     // grace. Consult the REAL signal: a live (unexpired) cycle lock means a
     // cycle is running right now, so no dream-inline queue is provably dead.
-    const liveLocks = await engine.executeRaw<{ id: string }>(
-      `SELECT id FROM gbrain_cycle_locks WHERE ttl_expires_at > NOW() AND id LIKE 'gbrain-cycle%'`,
+    // Liveness matches db-lock's model: unexpired TTL OR refreshed within the
+    // steal grace (a starved-but-alive holder must keep suppressing repair).
+    const { resolveStealGraceSeconds } = await import('../core/db-lock.ts');
+    const { LOCK_TTL_MINUTES } = await import('../core/cycle.ts');
+    const stealGraceSecs = resolveStealGraceSeconds(LOCK_TTL_MINUTES);
+    const liveLocks = await engine.executeRaw<{ id: string; acquired_epoch_ms: string | number | null }>(
+      `SELECT id, EXTRACT(EPOCH FROM acquired_at) * 1000 AS acquired_epoch_ms
+         FROM gbrain_cycle_locks
+        WHERE (ttl_expires_at > NOW()
+               OR last_refreshed_at > NOW() - make_interval(secs => ${Number(stealGraceSecs)}))
+          AND id LIKE 'gbrain-cycle%'`,
     );
     // Structured-review round 2 P2: cycle locks are per-source
     // (`gbrain-cycle:<source>`) — a cycle running for source A must not
     // suppress conversions for source B indefinitely. Only the legacy bare
     // `gbrain-cycle` lock is global.
+    //
+    // #4250 ownership correlation (mirrors doctor's orphaned_private_queue):
+    // lock existence is NOT queue ownership. A dream-inline queue whose
+    // name-embedded birth PREDATES the live lock's acquired_at cannot belong
+    // to that holder — an older crashed cycle's queue stays repairable while
+    // a new cycle runs. Unknown birth or unparseable acquired_at stays
+    // fail-safe possibly-live.
+    const lockAcquiredMs = new Map<string, number>(
+      liveLocks.map(l => [l.id, Number(l.acquired_epoch_ms ?? Number.NaN)]),
+    );
     const globalLockLive = liveLocks.some(l => l.id === 'gbrain-cycle');
     const liveLockSources = new Set(
       liveLocks
         .map(l => (l.id.startsWith('gbrain-cycle:') ? l.id.slice('gbrain-cycle:'.length) : null))
         .filter((s): s is string => s !== null),
     );
+    const nowMsForBirth = Date.now();
+    /**
+     * A live lock suppresses a queue only if it could OWN it: queue born
+     * at/after acquisition (or birth/acquisition unknown — fail-safe). The
+     * 60s tolerance absorbs host-clock (queue-name Date.now) vs DB-clock
+     * (acquired_at NOW()) skew — the maintenance lane mints its queue
+     * seconds after acquiring the lock.
+     */
+    const OWNERSHIP_SKEW_TOLERANCE_MS = 60_000;
+    const lockCouldOwnQueue = (lockId: string, queueAgeMs: number | null): boolean => {
+      const acquired = lockAcquiredMs.get(lockId);
+      if (acquired === undefined) return false; // lock not live
+      if (queueAgeMs === null || !Number.isFinite(acquired)) return true; // fail-safe
+      return (nowMsForBirth - queueAgeMs) >= acquired - OWNERSHIP_SKEW_TOLERANCE_MS;
+    };
     if (liveLocks.length > 0) {
       process.stderr.write(
         `[retriage] live cycle lock(s) detected (${liveLocks.map(l => l.id).join(', ')}); ` +
@@ -526,7 +566,9 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
       // possibly-live regardless of age (structured-review P2: slow
       // sequential children can outlive the grace; round 2: per-source, so a
       // busy source A never suppresses source B's cleanup indefinitely).
-      const lockLiveForRow = globalLockLive || liveLockSources.has(row.source_id);
+      const lockLiveForRow =
+        (globalLockLive && lockCouldOwnQueue('gbrain-cycle', inlineQueueAge))
+        || (liveLockSources.has(row.source_id) && lockCouldOwnQueue(`gbrain-cycle:${row.source_id}`, inlineQueueAge));
       const possiblyLiveQueue = isInlineQueue
         && (lockLiveForRow || inlineQueueAge === null || inlineQueueAge <= DREAM_INLINE_LIVE_GRACE_MS);
       if (possiblyLiveQueue) {
@@ -540,7 +582,23 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
       }
       const key = parseSynthV2Key(row.idempotency_key);
       if (!key) {
-        reconcile.unmatched++;
+        // #4250: a NON-synth child (e.g. patterns) stranded in a provably-dead
+        // dream-inline queue has no verdict to consult and will never be
+        // claimed — convert it like the C1 branch below so doctor's
+        // orphaned_private_queue repair path actually repairs. The
+        // possibly-live filter above already kept anything a running cycle
+        // could own. Non-inline rows keep the unmatched bookkeeping.
+        if (isInlineQueue && (row.status === 'waiting' || row.status === 'delayed')) {
+          if (!parsed.dryRun) {
+            const outcome = await cancelRow(row.id);
+            if (outcome === 'cancelled') reconcile.converted_for_resubmit++;
+            else reconcile.already_terminal++;
+          } else {
+            reconcile.converted_for_resubmit++; // dry-run: would convert
+          }
+        } else {
+          reconcile.unmatched++;
+        }
         continue;
       }
       // C9 hardening: the key's encoded source must agree with the payload's

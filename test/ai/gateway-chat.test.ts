@@ -383,3 +383,71 @@ describe('chat touchpoint — provider_chat_options passthrough', () => {
     });
   });
 });
+
+describe('chat touchpoint — per-part providerMetadata round trip (#4201)', () => {
+  beforeEach(() => {
+    resetGateway();
+    __setGenerateTextTransportForTests(null);
+  });
+
+  const SIG = { google: { thoughtSignature: 'opaque-turn1-signature' } };
+
+  test('chat() captures part providerMetadata onto ChatBlocks (inbound half)', async () => {
+    __setGenerateTextTransportForTests(async () => ({
+      content: [
+        { type: 'text', text: 'calling a tool', providerMetadata: SIG },
+        { type: 'tool-call', toolCallId: 'g1', toolName: 'search', input: { q: 'x' }, providerMetadata: SIG },
+      ],
+      finishReason: 'tool-calls',
+      usage: { inputTokens: 5, outputTokens: 5 },
+    }) as any);
+    configureGateway({
+      chat_model: 'google:gemini-3-pro-preview',
+      env: { GOOGLE_GENERATIVE_AI_API_KEY: 'fake' },
+    });
+    const result = await chat({
+      model: 'google:gemini-3-pro-preview',
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+    const toolCall = result.blocks.find(b => b.type === 'tool-call') as any;
+    expect(toolCall.providerMetadata).toEqual(SIG);
+    const text = result.blocks.find(b => b.type === 'text') as any;
+    expect(text.providerMetadata).toEqual(SIG);
+  });
+
+  test('next-turn request echoes the signature as providerOptions (outbound half)', async () => {
+    let capturedMessages: any[] | undefined;
+    __setGenerateTextTransportForTests(async (args: any) => {
+      capturedMessages = args.messages;
+      return {
+        content: [{ type: 'text', text: 'done' }],
+        finishReason: 'stop',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      } as any;
+    });
+    configureGateway({
+      chat_model: 'google:gemini-3-pro-preview',
+      env: { GOOGLE_GENERATIVE_AI_API_KEY: 'fake' },
+    });
+    // Turn-2 request: the transcript contains turn 1's tool-call block WITH
+    // the captured metadata (exactly what toolLoop pushes into messages) plus
+    // the tool-result user turn.
+    await chat({
+      model: 'google:gemini-3-pro-preview',
+      messages: [
+        { role: 'user', content: 'hello' },
+        {
+          role: 'assistant',
+          content: [{ type: 'tool-call', toolCallId: 'g1', toolName: 'search', input: { q: 'x' }, providerMetadata: SIG }],
+        },
+        {
+          role: 'user',
+          content: [{ type: 'tool-result', toolCallId: 'g1', toolName: 'search', output: { hits: 1 } }],
+        },
+      ],
+    });
+    expect(capturedMessages).toBeDefined();
+    const assistant = (capturedMessages as any[]).find(m => m.role === 'assistant');
+    expect(assistant.content[0].providerOptions).toEqual(SIG);
+  });
+});

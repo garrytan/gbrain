@@ -40,7 +40,7 @@ test/child-worker-supervisor.test.ts	issue #1801 — restartCurrentChild + killC
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — abort + error envelopes	7	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — context isolation	2	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — text-only round trip	4	readFileSync
-test/claude-cli-recipe.test.ts	claude-cli LanguageModel — tool use	9	readFileSync
+test/claude-cli-recipe.test.ts	claude-cli LanguageModel — tool use	11	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli recipe registration	2	readFileSync
 test/cli-force-exit-teardown-arming.test.ts	cli.ts — disconnect hard-deadline armed at teardown entry, not before the op body	1	readFileSync
 test/cli.test.ts	BigInt-safe output normalization (#2450)	5	readFileSync

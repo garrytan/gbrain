@@ -428,6 +428,28 @@ describe('runSubagentViaGateway (v0.38 Slice 1 — full handler path through gat
     expect(result.result).toBe('I cannot help with that');
   });
 
+  it("length stop reason: output-cap truncation maps to max_tokens, not end_turn (#4088)", async () => {
+    // Pre-fix, the gateway loop folded 'length' into 'end' and the handler's
+    // else-arm reported 'end_turn' — a capped, truncated run looked like a
+    // clean-but-empty completion (undoing #2778's honesty fix on this path).
+    __setChatTransportForTests(async () => ({
+      text: 'partial truncated outp',
+      blocks: [{ type: 'text', text: 'partial truncated outp' }] as ChatBlock[],
+      stopReason: 'length',
+      usage: { input_tokens: 22000, output_tokens: 8192, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'anthropic:claude-sonnet-4-6',
+      providerId: 'anthropic',
+    } satisfies ChatResult));
+
+    const tools = makeStubTools([]);
+    const handler = buildHandler(tools);
+    const { ctx } = await makeFakeJob({ prompt: 'huge prompt', model: 'anthropic:claude-sonnet-4-6' });
+
+    const result = await handler(ctx);
+    expect(result.stop_reason).toBe('max_tokens');
+    expect(result.result).toBe('partial truncated outp');
+  });
+
   it('non-Anthropic model routes through gateway path (the load-bearing v0.38 unlock)', async () => {
     // This is the headline scenario: openai:gpt-5.2 (no caching) works.
     // Pre-v0.38, this would have refused at queue.ts. With the gateway path

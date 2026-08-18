@@ -326,6 +326,7 @@ export async function computeWedgedQueueCheck(engine: BrainEngine): Promise<Chec
          EXTRACT(EPOCH FROM (now() - max(updated_at) FILTER (WHERE status = 'completed'))) / 60
            AS mins_since_completion
        FROM minion_jobs
+       WHERE queue NOT LIKE 'dream-inline-%'
        GROUP BY queue`,
     );
     const wedged: string[] = [];
@@ -358,6 +359,160 @@ export async function computeWedgedQueueCheck(engine: BrainEngine): Promise<Chec
       name: 'wedged_queue',
       status: 'ok',
       message: `Skipped (${e instanceof Error ? e.message : String(e)})`,
+    };
+  }
+}
+
+/**
+ * Private dream queues are owned by one parent cycle and are intentionally not
+ * consumed by the default worker. If that parent disappears, restarting the
+ * supervisor cannot help; the queue needs reconciliation instead. Keep this
+ * diagnosis separate from wedged_queue so Doctor gives the right repair.
+ *
+ * Liveness model (#4250, mirrors dream-retriage's CX1 rules so the check and
+ * its advertised repair agree):
+ *   - Live cycle locks are the REAL running-cycle signal (queue age alone
+ *     false-positives on a live parent between child claims). Bare
+ *     `gbrain-cycle` is the legacy global lock; `gbrain-cycle:<source>` is
+ *     per-source.
+ *   - Lock existence is NOT queue ownership: a queue whose birth (the
+ *     `dream-inline-<ms>-<uuid8>` name timestamp, else min(created_at) as a
+ *     conservative fallback) predates the live lock's acquired_at cannot
+ *     belong to that holder — an older crashed cycle's orphan stays visible
+ *     even while a new cycle runs.
+ *   - Waiting-class = waiting|delayed — exactly the statuses retriage's
+ *     conversion path repairs. `paused` rows are surfaced in details only
+ *     (flagging them would fail doctor with no advertised fix).
+ */
+export async function computeOrphanedPrivateQueueCheck(engine: BrainEngine): Promise<Check> {
+  if (engine.kind !== 'postgres') {
+    return { name: 'orphaned_private_queue', status: 'ok', message: 'PGLite — no private queues to check' };
+  }
+  const thresholdMin = _resolveEnvNumber('GBRAIN_ORPHANED_PRIVATE_QUEUE_MINUTES', 60);
+  try {
+    const { dreamInlineQueueAgeMs } = await import('../../../core/cycle/synthesize.ts');
+    const { resolveStealGraceSeconds } = await import('../../../core/db-lock.ts');
+    const { LOCK_TTL_MINUTES } = await import('../../../core/cycle.ts');
+    const rows = await engine.executeRaw<{
+      queue: string;
+      source_id: string | null;
+      active_healthy: string | number;
+      waiting: string | number;
+      paused: string | number;
+      oldest_waiting_minutes: string | number | null;
+      birth_epoch_ms: string | number | null;
+    }>(
+      `SELECT queue,
+         min(data->>'source_id') AS source_id,
+         count(*) FILTER (WHERE status = 'active' AND lock_until > now()) AS active_healthy,
+         count(*) FILTER (WHERE status IN ('waiting','delayed')) AS waiting,
+         count(*) FILTER (WHERE status = 'paused') AS paused,
+         EXTRACT(EPOCH FROM (now() - min(created_at) FILTER (WHERE status IN ('waiting','delayed')))) / 60
+           AS oldest_waiting_minutes,
+         EXTRACT(EPOCH FROM min(created_at)) * 1000 AS birth_epoch_ms
+       FROM minion_jobs
+       WHERE queue LIKE 'dream-inline-%'
+       GROUP BY queue`,
+    );
+    // Live cycle locks with their acquisition time, for ownership correlation.
+    // Liveness matches db-lock's own model: an unexpired TTL, OR a lapsed TTL
+    // whose holder refreshed within the steal grace (starved-but-alive —
+    // exactly the holder the steal path refuses to kill; treating it as dead
+    // here would point operators at cancelling a still-draining cycle's queue).
+    const stealGraceSecs = resolveStealGraceSeconds(LOCK_TTL_MINUTES);
+    const locks = await engine.executeRaw<{ id: string; acquired_epoch_ms: string | number }>(
+      `SELECT id, EXTRACT(EPOCH FROM acquired_at) * 1000 AS acquired_epoch_ms
+         FROM gbrain_cycle_locks
+        WHERE (ttl_expires_at > NOW()
+               OR last_refreshed_at > NOW() - make_interval(secs => ${Number(stealGraceSecs)}))
+          AND id LIKE 'gbrain-cycle%'`,
+    );
+    const globalLockAcquiredMs = locks
+      .filter(l => l.id === 'gbrain-cycle')
+      .map(l => Number(l.acquired_epoch_ms))[0];
+    const sourceLockAcquiredMs = new Map<string, number>(
+      locks
+        .filter(l => l.id.startsWith('gbrain-cycle:'))
+        .map(l => [l.id.slice('gbrain-cycle:'.length), Number(l.acquired_epoch_ms)]),
+    );
+    const nowMs = Date.now();
+    const orphaned: string[] = [];
+    let waitingTotal = 0;
+    let pausedTotal = 0;
+    let suppressedByLiveLock = 0;
+    for (const r of rows) {
+      pausedTotal += Number(r.paused ?? 0);
+      const activeHealthy = Number(r.active_healthy ?? 0);
+      const waiting = Number(r.waiting ?? 0);
+      const age = r.oldest_waiting_minutes === null ? null : Number(r.oldest_waiting_minutes);
+      if (activeHealthy !== 0 || waiting === 0 || age === null || age <= thresholdMin) continue;
+      // Queue birth: prefer the name-embedded timestamp; fall back to the
+      // oldest job row. The fallback can only OVERSTATE birth (rows are
+      // created at/after queue creation), which biases toward suppression —
+      // the fail-safe direction.
+      const nameAgeMs = dreamInlineQueueAgeMs(r.queue, nowMs);
+      const birthMs = nameAgeMs !== null
+        ? nowMs - nameAgeMs
+        : (r.birth_epoch_ms === null ? null : Number(r.birth_epoch_ms));
+      // A live lock suppresses the queue only if it could OWN it: the queue
+      // was born at/after the lock was acquired. SKEW_TOLERANCE_MS absorbs
+      // host-clock (queue-name Date.now) vs DB-clock (acquired_at NOW())
+      // drift — the maintenance lane mints its queue seconds after lock
+      // acquisition, so seconds of skew must not flip a live cycle's own
+      // queue into "born before the lock". Unknown birth = possibly owned
+      // (fail-safe suppress).
+      const SKEW_TOLERANCE_MS = 60_000;
+      const candidateLockAcquisitions = [
+        ...(globalLockAcquiredMs !== undefined ? [globalLockAcquiredMs] : []),
+        ...(r.source_id !== null && sourceLockAcquiredMs.has(r.source_id)
+          ? [sourceLockAcquiredMs.get(r.source_id)!]
+          : []),
+      ];
+      const possiblyOwnedByLiveCycle = candidateLockAcquisitions.some(
+        acquiredMs => birthMs === null || !Number.isFinite(acquiredMs) || birthMs >= acquiredMs - SKEW_TOLERANCE_MS,
+      );
+      if (possiblyOwnedByLiveCycle) {
+        suppressedByLiveLock++;
+        continue;
+      }
+      waitingTotal += waiting;
+      orphaned.push(`'${r.queue}' (${waiting} waiting, oldest ${Math.round(age)}m)`);
+    }
+    if (orphaned.length === 0) {
+      return {
+        name: 'orphaned_private_queue',
+        status: 'ok',
+        message: suppressedByLiveLock > 0
+          ? `No provably-orphaned private queues (${suppressedByLiveLock} possibly owned by a live cycle)`
+          : 'No orphaned private queues',
+        ...(pausedTotal > 0 || suppressedByLiveLock > 0
+          ? { details: { paused_jobs: pausedTotal, suppressed_by_live_lock: suppressedByLiveLock } }
+          : {}),
+      };
+    }
+    return {
+      name: 'orphaned_private_queue',
+      status: 'fail',
+      message:
+        `Orphaned private dream queue(s): ${orphaned.join('; ')}. ` +
+        `A supervisor restart cannot consume these parent-owned queues. ` +
+        `Run \`gbrain dream retriage --help\` and use its queue-reconciliation dry run; ` +
+        `apply cancellation only after reviewing that preview.`,
+      details: {
+        orphaned_private_queues: orphaned.length,
+        waiting_jobs: waitingTotal,
+        paused_jobs: pausedTotal,
+        suppressed_by_live_lock: suppressedByLiveLock,
+        threshold_minutes: thresholdMin,
+      },
+    };
+  } catch (e) {
+    // Warn, never ok: a permanently-broken check must not read as
+    // permanently healthy (the fail-open would hide every future orphan).
+    return {
+      name: 'orphaned_private_queue',
+      status: 'warn',
+      message: `Check could not run (${e instanceof Error ? e.message : String(e)}) — orphan detection is NOT covered this run`,
     };
   }
 }
@@ -508,4 +663,3 @@ export async function checkBatchRetryHealth(_engine: BrainEngine): Promise<Check
     };
   }
 }
-
