@@ -2350,7 +2350,7 @@ export async function buildChecks(
       // warn about coverage on pages the rest of the system treats as gone.
       // buildGazetteer (src/core/by-mention.ts) already filters this way, so
       // without it the two disagree about whether entity pages exist at all.
-      "SELECT COUNT(*)::int AS count FROM pages WHERE deleted_at IS NULL AND type IN ('entity', 'person', 'company', 'organization')",
+      "SELECT COUNT(*)::int AS count FROM pages WHERE deleted_at IS NULL AND type IN ('entity', 'person', 'company', 'organization') AND NOT jsonb_exists(COALESCE(frontmatter, '{}'::jsonb), 'quarantine')",
     ))[0]?.count ?? 0;
 
     // Compute coverage against eligible entities only — exclude test fixtures
@@ -2363,6 +2363,7 @@ export async function buildChecks(
         SELECT id FROM pages
         WHERE deleted_at IS NULL
           AND type IN ('entity','person','company','organization')
+          AND NOT jsonb_exists(COALESCE(frontmatter, '{}'::jsonb), 'quarantine')
           AND slug NOT LIKE 'tools/gbrain/test/%'
           AND slug <> 'templates/new-person'
       )

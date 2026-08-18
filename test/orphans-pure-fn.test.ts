@@ -254,6 +254,14 @@ describe('shouldExclude — orphan filter regression (preserve curation)', () =>
     // #2264 — only life/events/ is excluded; human-authored life/diary/ stays counted.
     expect(shouldExclude('life/diary/2026-08-01-xyz')).toBe(false);
   });
+
+  test('machine leaf types and quarantined pages are excluded regardless of slug', () => {
+    expect(shouldExclude('legacy-root-atom', undefined, { type: 'atom' })).toBe(true);
+    expect(shouldExclude('legacy-root-chat', undefined, { type: 'conversation' })).toBe(true);
+    expect(shouldExclude('legacy-root-source', undefined, { type: 'source' })).toBe(true);
+    expect(shouldExclude('legacy-rescue', undefined, { type: 'synthesis', quarantined: true })).toBe(true);
+    expect(shouldExclude('concepts/real-topic', undefined, { type: 'concept' })).toBe(false);
+  });
 });
 
 describe('getHealth orphan_pages uses shared exclusion policy', () => {

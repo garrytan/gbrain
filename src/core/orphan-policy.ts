@@ -69,6 +69,14 @@ export interface OrphanPolicyOverrides {
   excludeSlugs?: string[];
 }
 
+/** Optional page metadata for conventions that cannot be inferred from slug. */
+export interface OrphanPageMeta {
+  type?: string | null;
+  quarantined?: boolean;
+}
+
+const NON_LINKABLE_PAGE_TYPES = new Set(['atom', 'conversation', 'source']);
+
 /** Config keys for per-brain orphan exclusions (comma-separated values). */
 export const ORPHAN_EXCLUDE_PREFIXES_KEY = 'orphans.exclude_prefixes';
 export const ORPHAN_EXCLUDE_SLUGS_KEY = 'orphans.exclude_slugs';
@@ -96,7 +104,10 @@ export async function loadOrphanPolicyOverrides(
 export function shouldExcludeFromOrphanReporting(
   slug: string,
   overrides?: OrphanPolicyOverrides,
+  meta?: OrphanPageMeta,
 ): boolean {
+  if (meta?.quarantined === true) return true;
+  if (meta?.type && NON_LINKABLE_PAGE_TYPES.has(meta.type)) return true;
   if (PSEUDO_SLUGS.has(slug)) return true;
 
   for (const suffix of AUTO_SUFFIX_PATTERNS) {
