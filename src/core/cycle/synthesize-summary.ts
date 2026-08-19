@@ -53,6 +53,7 @@ export async function writeSummaryPage(
   const fullMarkdown = serializeMarkdown(
     {
       dream_generated: true,
+      created: summaryDate,
       dream_cycle_date: summaryDate,
       dream_created_cycle_date: summaryDate,
       // Deterministic index page: source traces live on its child pages.

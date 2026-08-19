@@ -78,6 +78,7 @@ describe('dream-cycle summary graph bounds', () => {
     expect(forward.body).not.toContain(`[[${slugs[20]}]]`);
     expect(forward.body).toContain('dream_generated: true');
     expect(forward.body).toContain('dream_cycle_date: 2026-08-20');
+    expect(forward.markdown).toMatch(/created:\s*['"]?2026-08-20/);
     expect(forward.body).toContain('excluding `dream-cycle-summaries/2026-08-20`');
     expect(Buffer.byteLength(forward.markdown, 'utf8')).toBeLessThan(8_192);
   });
