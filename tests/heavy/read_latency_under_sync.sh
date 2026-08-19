@@ -46,6 +46,10 @@ echo "[read_latency] running baseline + under-load workload..."
 
 unset DATABASE_URL || true
 set +e
+# #4284 canary: arm the out-of-band disconnect watchdog. The drain keeps it
+# silent on a healthy run; a regression of the #4143 wedge class dies loudly
+# at ~30s (SIGTERM 20s + SIGKILL +10s) instead of the 600s deadline kill —
+# and the stderr log names the wedge via the pglite-disconnect-watchdog label.
 timeout 600s env \
   BRAIN_PAGES="${BRAIN_PAGES:-500}" \
   NUM_QUERIES="${NUM_QUERIES:-200}" \
@@ -53,6 +57,8 @@ timeout 600s env \
   WRITES_PER_WRITER="${WRITES_PER_WRITER:-25}" \
   STRICT="${STRICT_LATENCY:-0}" \
   THRESHOLD_PCT="${THRESHOLD_PCT:-50}" \
+  GBRAIN_PGLITE_CLOSE_WATCHDOG_MS="${GBRAIN_PGLITE_CLOSE_WATCHDOG_MS:-20000}" \
+  GBRAIN_PGLITE_CLOSE_WATCHDOG_GRACE_MS="${GBRAIN_PGLITE_CLOSE_WATCHDOG_GRACE_MS:-10000}" \
   bun run tests/heavy/_read_latency_workload.ts > "$WORKLOAD_OUT" 2>>"$LOG_DIR/heavy-read_latency-stderr-$TS.log"
 WORKLOAD_RC=$?
 set -e

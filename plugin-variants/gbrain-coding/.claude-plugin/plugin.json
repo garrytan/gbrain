@@ -1,6 +1,6 @@
 {
   "name": "gbrain-coding",
-  "version": "0.46.21.0",
+  "version": "0.46.22.0",
   "description": "Brain-first coding agent working inside a repo: retrieval, routing, ingest discipline, correction hygiene. Default persona for the claude-code harness bridge; also published as the gbrain-coding marketplace variant. (persona variant of the gbrain plugin — 18 skills)",
   "author": {
     "name": "Garry Tan",

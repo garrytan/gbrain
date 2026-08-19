@@ -2,6 +2,74 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.46.22.0] - 2026-08-18
+
+**A wedged database shutdown can now die fast and loud instead of hanging
+forever.** Issue #4284 (analysis and measurements by @cheRoma — thank you)
+proved that the time-bound around the embedded database's close could never
+fire against the exact deadlock it was written for: a wedge starves the
+event loop, and no timer on a starved loop ever runs. The bound is now
+honest about what it covers, and a new opt-in out-of-band watchdog covers
+what it can't.
+
+### Fixed
+
+- **The in-loop close bound is now honest and correctly armed.** The timer
+  arms *before* the close begins (not after), stays referenced so a quiet
+  process can't exit before the warning and lock release fire, reads its
+  override per call, and clamps oversized values so a huge
+  `GBRAIN_PGLITE_CLOSE_TIMEOUT_MS` means a longer bound — never an instant
+  spurious timeout. Its warning now states plainly that a close which wedges
+  the event loop cannot be caught in-process, and names the watchdog knob
+  that can catch it. Code comments and docs describe the layered defense
+  truthfully: the pre-close drain *prevents* the known wedge, the in-loop
+  bound covers a close that still yields, and only the watchdog observes a
+  wedged one.
+- **The CLI teardown backstop now budgets the real close bound.** Raising
+  the close timeout widens the teardown deadline with it, instead of the
+  backstop force-exiting mid-honest-close against a stale hardcoded copy.
+- **Watchdog timer arithmetic can never overflow into an instant kill.**
+  Deadline, grace, and their sum are clamped below the platform timer
+  ceiling (an overflowed timer fires at ~1ms — for the kill timer that
+  would have meant SIGKILLing a healthy process), and a non-numeric grace
+  is coerced safely instead of arming a ~1ms kill.
+
+### Added
+
+- **Opt-in out-of-band disconnect watchdog** — a diagnostic instrument for
+  CI lanes and wedge hunts, off by default. Set
+  `GBRAIN_PGLITE_CLOSE_WATCHDOG_MS` (and optionally
+  `GBRAIN_PGLITE_CLOSE_WATCHDOG_GRACE_MS`, default 30000; an explicit 0
+  means SIGKILL at the deadline) and a worker-thread watchdog arms around
+  each embedded-database disconnect: SIGTERM at the deadline, SIGKILL at
+  deadline+grace, firing even while the main event loop is completely
+  wedged — converting a silent 10-minute CI kill into a fast, loud,
+  attributed death. A drain-aware floor clamps a too-small deadline UP
+  (with a warning) so a units typo can never kill a healthy slow teardown,
+  garbage values warn instead of silently disarming, and the armed
+  breadcrumb re-fires whenever the effective deadline changes in a
+  long-lived process.
+- **A regression pin that genuinely wedges an event loop.** A new spawned-
+  fixture test suite starves a real Bun loop the way the measured incident
+  did, proving the watchdog SIGKILLs it at deadline+grace, that nothing
+  in-process can fire without the watchdog, and that a healthy disconnect
+  is never harmed. The heavy read-latency reproducer now arms the watchdog
+  as a canary.
+
+### To take advantage of v0.46.22.0
+
+- Nothing changes by default — teardown behavior with the env knobs unset
+  is the same layered defense that already shipped, now honestly
+  documented.
+- In CI lanes or when hunting a suspected shutdown wedge, export
+  `GBRAIN_PGLITE_CLOSE_WATCHDOG_MS=30000` (optionally
+  `GBRAIN_PGLITE_CLOSE_WATCHDOG_GRACE_MS=10000`): a wedge then dies loudly
+  with a `pglite-disconnect-watchdog` stderr label at ~40s instead of
+  hanging until an outer timeout. Values below the safe floor are clamped
+  up with a warning, never applied literally.
+- If you previously raised `GBRAIN_PGLITE_CLOSE_TIMEOUT_MS`, the CLI
+  teardown backstop now automatically widens to match — no action needed.
+
 ## [0.46.21.0] - 2026-08-18
 
 **Fact extraction no longer requires an Anthropic key — and OpenAI defaults
@@ -427,7 +495,9 @@ open community PRs by @Masashi-Ono0611 — thank you.
   shutdown permanently (observed as a 10-minute CI kill; a workload that
   took 19 seconds before the regression). Both engines now settle in-flight
   background work before closing, the close itself is time-bounded
-  (override: `GBRAIN_PGLITE_CLOSE_TIMEOUT_MS`), and a clean CLI exit now
+  (override: `GBRAIN_PGLITE_CLOSE_TIMEOUT_MS`; the bound covers a close
+  that still yields to the event loop — a wedged close cannot be caught
+  in-process, see #4284), and a clean CLI exit now
   also flushes buffered search telemetry — short-lived CLI calls finally
   show up in `gbrain search stats`.
 - **Mixed-case embedding model ids work.** `litellm:Qwen/Qwen3-Embedding-4B`

@@ -359,7 +359,19 @@
 
 - [ ] **P3 — transcript.ts renderBlock still renders v2 gateway blocks as "Unknown block type".** The absorbed #4156 rekeyed the tool ledger to (message_idx, tool_use_id); teaching renderBlock the 'tool-call'/'tool-result' ChatBlock shapes is the remaining half so `gbrain agent logs` shows gateway-path tool use readably. Files: src/core/minions/transcript.ts, test/subagent-transcript.test.ts.
 
-- [ ] **P3 — consolidate the five hand-rolled bounded-wait copies.** Promise.race + setTimeout + clearTimeout now lives in hybrid.ts:151/:898, eval-capture.ts:203, supervisor.ts probeQueueState, telemetry's drain, and pglite-engine's bounded close. A shared `raceBounded(promise, ms)` helper would kill the copy-drift class. Sweep, don't rush — each copy has slightly different timeout/cleanup semantics to preserve.
+- [ ] **P3 — consolidate the five hand-rolled bounded-wait copies.** Promise.race + setTimeout + clearTimeout now lives in hybrid.ts:151/:898, eval-capture.ts:203, supervisor.ts probeQueueState, telemetry's drain, and pglite-engine's bounded close. A shared `raceBounded(promise, ms)` helper would kill the copy-drift class. Sweep, don't rush — each copy has slightly different timeout/cleanup semantics to preserve. NOTE (#4284): the pglite close copy's semantics are now deliberately divergent and load-bearing — timer armed BEFORE the awaited call starts, deliberately REF'D (no unref), delay clamped to 2^31−1 — and are pinned by structural tests in `test/fix-wave-structural.test.ts`; a sweep must preserve (or parameterize) all three, not normalize them away.
+- [ ] **P3 — enable the PGLite disconnect watchdog by default in gbrain's own CI lanes.**
+  **What:** set `GBRAIN_PGLITE_CLOSE_WATCHDOG_MS` (~30s) + `..._GRACE_MS` in the serial/e2e
+  CI lanes (and consider `scripts/run-serial-tests.sh`) after a soak period, so any future
+  #4143-class wedge dies loudly with the `pglite-disconnect-watchdog` stderr label instead
+  of eating the lane's full timeout. **Why:** the watchdog is opt-in (a diagnostic
+  instrument); today only `tests/heavy/read_latency_under_sync.sh` arms it, and the heavy
+  lane runs nightly at best — PR CI wedges would still present as silent timeouts.
+  **Context:** shipped with the #4284 fix; the lethal-knob floor
+  (`max(5000, sinkCount*2000 + closeTimeout + 2000)`) already protects healthy slow
+  teardowns, so the main soak question is worker-spawn overhead per disconnect across
+  thousands of test teardowns, and whether any lane has legitimate >30s disconnects.
+  **Effort:** S. **Priority:** P3.
 
 - [ ] **P2 — Heavy Tests lane gates nothing on in-repo branches.** #4143 shipped broken for a month because the lane comes back `skipped` on branch pushes and only a downstream fork ran it nightly. Either run a bounded subset (the read_latency workload at reduced params) in PR CI, or make the nightly failure page someone. Files: .github/workflows (heavy lane), tests/heavy/.
 

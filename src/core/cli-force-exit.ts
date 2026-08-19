@@ -52,7 +52,12 @@
  * every path directly (cli.ts is a script entrypoint).
  */
 
-import { drainAllBackgroundWorkForCliExit, backgroundWorkSinkCount } from './background-work.ts';
+import {
+  drainAllBackgroundWorkForCliExit,
+  backgroundWorkSinkCount,
+  pgliteCloseTimeoutMs,
+  SINK_DRAIN_TIMEOUT_MS,
+} from './background-work.ts';
 import { POOL_END_TIMEOUT_SECONDS } from './db.ts';
 import { parseGlobalFlags } from './cli-options.ts';
 
@@ -152,13 +157,16 @@ export function computeTeardownDeadlineMs(opts: {
   // ×2 budgets the worst case of two sequential pool ends (direct + read).
   const poolEndBoundMs = POOL_END_TIMEOUT_SECONDS * 1000 + 500;
   // #4143: engine.disconnect() now runs its OWN drain pass (the
-  // in-flight-settle drain, fixed at 2000ms/sink — see
+  // in-flight-settle drain, SINK_DRAIN_TIMEOUT_MS/sink — see
   // drainBackgroundWorkBeforeDisconnect) AFTER the exit-mode drain above it
-  // in finishCliTeardown, plus PGLite's 5s bounded close. Budget both, or
+  // in finishCliTeardown, plus PGLite's bounded close. Budget both, or
   // the backstop fires while every component honored its own bound (the D9
-  // false-backstop class this formula exists to kill).
-  const disconnectDrainBoundMs = opts.sinkCount * 2000;
-  const pgliteCloseBoundMs = 5000;
+  // false-backstop class this formula exists to kill). #4284: the close
+  // bound is env-tunable (its own warn text tells operators to raise it),
+  // so budget the RESOLVED bound, never a hardcoded copy of its default —
+  // a 60s GBRAIN_PGLITE_CLOSE_TIMEOUT_MS must widen this backstop too.
+  const disconnectDrainBoundMs = opts.sinkCount * SINK_DRAIN_TIMEOUT_MS;
+  const pgliteCloseBoundMs = pgliteCloseTimeoutMs();
   const computed =
     opts.sinkCount * opts.drainTimeoutMs +
     disconnectDrainBoundMs +

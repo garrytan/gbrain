@@ -126,7 +126,7 @@ test/fix-wave-structural.test.ts	v0.36.1.x #1090 — admin embed two-tier resolu
 test/fix-wave-structural.test.ts	v0.36.1.x #1124 — query --no-expand actually negates expand	1	readFileSync
 test/fix-wave-structural.test.ts	v0.41.37.0 #1605 — v0.11.0 phaseASchema routes in-process for ALL engines	2	readFileSync
 test/fix-wave-structural.test.ts	v0.41.8.0 #1340 — PGLite WASM init classifier	2	readFileSync
-test/fix-wave-structural.test.ts	v0.42.20.0 — background-work registry drains every sink before disconnect	8	readFileSync
+test/fix-wave-structural.test.ts	v0.42.20.0 — background-work registry drains every sink before disconnect	9	readFileSync
 test/fix-wave-structural.test.ts	v0.42.20.0 — search-cache drained via the background-work registry	1	readFileSync
 test/fix-wave-structural.test.ts	v0.42.43.0 #2095 — volunteer-events sink + cycle purge wiring (structural pins)	2	readFileSync
 test/hook-command.serial.test.ts	user-prompt	14	readFileSync
