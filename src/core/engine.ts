@@ -326,19 +326,8 @@ export interface TakeHit {
   score: number;            // search rank score (ts_rank for keyword, 1-cos_dist for vector)
 }
 
-/** v0.28 stale-takes row (mirrors StaleChunkRow shape). Embedding column intentionally omitted. */
-export interface StaleTakeRow {
-  take_id: number;
-  page_slug: string;
-  row_num: number;
-  claim: string;
-}
-
-/** Vector write for an existing take row. */
-export interface TakeEmbeddingInput {
-  take_id: number;
-  embedding: Float32Array;
-}
+import type { StaleTakeRow, TakeEmbeddingInput } from './takes-row-types.ts';
+export type { StaleTakeRow, TakeEmbeddingInput } from './takes-row-types.ts';
 
 /** Resolution metadata for resolveTake. */
 export interface TakeResolution {
