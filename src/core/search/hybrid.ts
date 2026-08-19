@@ -1094,8 +1094,8 @@ export async function hybridSearch(
     // D2 fix (fix/title-retrieval-arm, Reviewer F1): the hybrid keyword arm
     // is a recall arm — opt in to the engine's AND→OR zero-recall fallback.
     // Direct searchKeyword consumers (countMentions, link-extraction, eval)
-    // do NOT set this and keep the strict-AND contract.
-    orFallback: true,
+    // do NOT set this. Knob: search.keywordOrFallback (rationale: ModeBundle).
+    orFallback: resolvedMode.keywordOrFallback,
     // v0.46.15: collect searchVector's bounded-escalation exhaustion signal —
     // engines have no telemetry sink (R2-10); hybrid owns the meta emit.
     // ACCUMULATES across vector calls (adversarial F8): expansion runs N
